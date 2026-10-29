@@ -126,6 +126,12 @@ test('the quick lane runs from its work order to the merge queue and a lesson, t
         assert.deepEqual(opened, { ok: true, branch: 'wh/card-20', pr: 1, head });
         engine.setOutput(runId, 'open-pr', JSON.stringify({ branch: opened.branch, pr: opened.pr, head }));
 
+        // Archon's git reads come from the helper's fetch mirror, which holds the pushed branch; no key is handed out.
+        assert.deepEqual(await client.broker.refresh({ cwd: worktree }), { ok: true });
+        const mirror = path.join(engineDir(), 'mirrors', `${P}.git`);
+        assert.equal((await run('git', ['rev-parse', 'refs/heads/wh/card-20'], { cwd: mirror })).stdout.trim(), head);
+        assert.equal((await run('git', ['config', '--get-regexp', 'remote'], { cwd: mirror })).stdout.trim(), '', 'the mirror names no remote and holds no key');
+
         // The broker: the pull request's own calls are forwarded; a merge without the permit never is.
         const view = await client.broker.gh({ argv: ['pr', 'view', '1', '--json', 'body'], cwd: worktree });
         assert.doesNotMatch(view.stderr, /broker refused/);

@@ -1,28 +1,18 @@
 // scripts/engine/broker/routes.js
 // The helper's broker routes (Archon design, section 12.4): /broker/gh takes each gh call Archon makes, sorts it by
 // the broker's list and decides it with the rules (rules.js); a call that passes runs as the real gh with the
-// project's connection, and its output goes back unchanged. /broker/credential answers git's credential helper for
-// the project's own repository. Both place the project by the folder the call came from. They know the helper only
-// through what it gives them:
+// project's connection, and its output goes back unchanged. No GitHub key ever leaves the helper: Archon's git reads
+// come from the fetch mirror the helper keeps, and /broker/refresh has the helper bring it up to date. Both place the
+// project by the folder the call came from. They know the helper only through what it gives them:
 //   placeOf(cwd)                          { project, folder, repo } of the registered project holding the folder, or null
 //   permit(project, call)                 the rules' context for the call (rules.js brokerDecision)
 //   forward(project, argv, { cwd, stdin })  runs the real gh: { code, stdout, stderr }
-//   credential(project)                   { username, password } for the project's host, or null
+//   refresh(project)                      brings the project's fetch mirror up to date: { ok } or a refusal
 import { classifyCall, brokerDecision } from './rules.js';
 
 const refused = (reason) => ({ ok: true, code: 1, stdout: '', stderr: `${reason}\n` });
 
-// The fields of git's credential request text, as { protocol, host, path }.
-function requestOf(text) {
-  const fields = {};
-  for (const line of String(text ?? '').split(/\r?\n/)) {
-    const at = line.indexOf('=');
-    if (at > 0) fields[line.slice(0, at)] = line.slice(at + 1);
-  }
-  return fields;
-}
-
-export function brokerRoutes({ placeOf, permit, forward, credential } = {}) {
+export function brokerRoutes({ placeOf, permit, forward, refresh } = {}) {
   async function gh({ argv, cwd, stdin = '' } = {}) {
     if (!Array.isArray(argv) || !argv.every((a) => typeof a === 'string')) return refused("Wheelhouse's broker was sent a call it can't read.");
     const place = placeOf(cwd);
@@ -36,21 +26,13 @@ export function brokerRoutes({ placeOf, permit, forward, credential } = {}) {
     return { ok: true, code: Number.isInteger(result?.code) ? result.code : 1, stdout: String(result?.stdout ?? ''), stderr: String(result?.stderr ?? '') };
   }
 
-  // Answers git's `get` for the project's own repository on its host, and nothing else.
-  async function gitCredential({ cwd, action, request } = {}) {
-    if (action !== 'get') return { ok: false, refused: 'the broker only answers a credential request' };
+  // Brings the project's fetch mirror up to date, the helper fetching with its own key. The answer carries nothing more.
+  async function refreshMirror({ cwd } = {}) {
     const place = placeOf(cwd);
     if (!place) return { ok: false, refused: 'the request came from a folder that isn\'t a registered project\'s' };
-    const asked = requestOf(request);
-    if (asked.protocol !== 'https' || asked.host !== 'github.com') return { ok: false, refused: 'the broker answers only for the project\'s host' };
-    // git names the repository only with credential.useHttpPath, which the helper's git setting turns on; a request
-    // that names none is refused, never answered for whatever repository it is.
-    if (typeof asked.path !== 'string' || asked.path.replace(/\.git$/, '').toLowerCase() !== String(place.repo).toLowerCase()) {
-      return { ok: false, refused: 'the broker answers only for the project\'s own repository' };
-    }
-    const given = await credential(place.project);
-    return given ? { ok: true, username: given.username, password: given.password } : { ok: false, refused: 'the project has no connection to give' };
+    const done = await refresh(place.project);
+    return done?.ok === true ? { ok: true } : { ok: false, refused: done?.refused ?? 'the fetch mirror wasn\'t brought up to date' };
   }
 
-  return { '/broker/gh': gh, '/broker/credential': gitCredential };
+  return { '/broker/gh': gh, '/broker/refresh': refreshMirror };
 }

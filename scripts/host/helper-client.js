@@ -99,10 +99,10 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       preview: post('/engine/preview'), // { runId } -> { ok, folder, pictures }: copies the run's pictures and notes from its own artefacts into previews/<work>/<head>/ and records a preview
       lesson: post('/engine/lesson'), // { runId } -> { ok, written }: writes the lesson the run's lesson step gave, read from the engine's record; at most one a run, none when it is empty
     },
-    // The broker (scripts/engine/broker/): every gh call Archon makes, and git's credential requests in its runs.
+    // The broker (scripts/engine/broker/): every gh call Archon makes, and the fetch mirror Archon's git reads.
     broker: {
       gh: post('/broker/gh'), // { argv, cwd, stdin } -> { ok, code, stdout, stderr }: the real gh's answer, or a refusal as gh's own error output
-      credential: post('/broker/credential'), // { cwd, action, request } -> { ok, username, password }: only for the project's own repository
+      refresh: post('/broker/refresh'), // { cwd } -> { ok } or a refusal: the helper brings the project's fetch mirror up to date with its own key; no key is ever answered
     },
     // The desk (scripts/desk/, spec 5): every front end's one way in. Each body names `v: 'desk/1'` and `project` or `cwd`.
     desk: {

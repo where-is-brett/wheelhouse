@@ -3773,6 +3773,42 @@ export async function startHelper({
     provenance: (project, { branch }) => engineWrite(project, 'provenance', { branch, provenance: engineProvenance({ packDigest: packTreeDigest(path.join(engineDir(), 'pack')) }) }),
   });
 
+  // The engine's fetch mirror (Archon design, section 12.4, as check 76 ran it): no GitHub key ever leaves the helper,
+  // so Archon's git reads come from a bare mirror in the engine's folder, which the project's `url.<mirror>.insteadOf`
+  // rule points git at. The helper fetches the host's branches and pull-request heads into its own mirror with the
+  // connection's key, then copies them into the engine's mirror with no key. The engine's mirror names no remote.
+  const fetchMirrorOf = (project) => path.join(engineDir(), 'mirrors', `${project}.git`);
+  async function refreshFetchMirror(project) {
+    const ctx = await contextFor(project);
+    const pulls = recordOf(project).host === 'gitlab' ? 'refs/merge-requests/*/head' : 'refs/pull/*/head';
+    const into = fetchMirrorOf(project);
+    try {
+      return await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ mirror, keyed }) => {
+        const refusal = await mirrorRefusal(mirror, keyed);
+        if (refusal) return { ok: false, refused: refusal };
+        const fetched = await keyed('git', [
+          ...NO_HOOKS, 'fetch', '-q', '--no-tags', '--no-recurse-submodules', '--no-write-fetch-head', '--prune', REMOTE,
+          '+refs/heads/*:refs/wheelhouse/engine/heads/*', `+${pulls}:refs/wheelhouse/engine/pull/*/head`,
+        ], { cwd: mirror, input: '' });
+        if (fetched.code !== 0) return { ok: false, refused: 'the host\'s branches could not be fetched' };
+        const copy = local(into);
+        if (!fs.existsSync(path.join(into, 'HEAD'))) {
+          fs.mkdirSync(into, { recursive: true, mode: 0o700 });
+          if ((await copy([...NO_HOOKS, 'init', '-q', '--bare'])).code !== 0) return { ok: false, refused: 'the fetch mirror could not be made' };
+        }
+        // From the helper's own mirror on this computer, read strictly, as a folder's push is.
+        const copied = await gitIn({ GIT_NO_LAZY_FETCH: '1', GIT_ATTR_NOSYSTEM: '1' }, FOLDER_MS, 'local')('git', [
+          ...NO_HOOKS, '-c', 'core.fsmonitor=false', '-c', 'protocol.file.allow=always',
+          'fetch', '-q', '--no-tags', '--no-recurse-submodules', '--no-write-fetch-head', '--prune', '--upload-pack=git upload-pack --strict', mirror,
+          '+refs/wheelhouse/engine/heads/*:refs/heads/*', '+refs/wheelhouse/engine/pull/*:refs/pull/*',
+        ], { cwd: into });
+        return copied.code === 0 ? { ok: true } : { ok: false, refused: 'the fetch mirror could not be brought up to date' };
+      }));
+    } finally {
+      tidyAfterAnswer(project, ctx);
+    }
+  }
+
   // The broker (scripts/engine/broker/): every gh call Archon makes, placed by the folder it came from.
   const placeEngineCall = (cwd) => {
     if (typeof cwd !== 'string' || !path.isAbsolute(cwd)) return null;
@@ -3807,10 +3843,7 @@ export async function startHelper({
     placeOf: placeEngineCall,
     permit: brokerPermit,
     forward: async (project, argv, { cwd, stdin }) => run(toolPath('gh'), argv, { env: (await contextFor(project)).env, input: stdin, cwd }),
-    credential: async (project) => {
-      const { env } = await contextFor(project);
-      return typeof env?.GH_TOKEN === 'string' && env.GH_TOKEN !== '' ? { username: 'x-access-token', password: env.GH_TOKEN } : null;
-    },
+    refresh: (project) => refreshFetchMirror(project),
   });
 
   const routes = {
@@ -4182,8 +4215,6 @@ export async function startHelper({
       // A run's steps know the run, not the project: each route finds the project from the run itself.
       try {
         onArrive(url.pathname);
-        // git's credential answer carries the connection's key by design, so it is the one answer not scrubbed.
-        if (url.pathname === '/broker/credential') return send(res, 200, await route(body));
         return send(res, 200, cleanDeep(await route(body), []));
       } catch (error) {
         return send(res, 200, { ok: false, refused: clean(error instanceof Error ? error.message : '', []) || 'the request failed' });
