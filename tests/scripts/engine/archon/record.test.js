@@ -82,6 +82,28 @@ test('readOutputs gives each finished step\'s whole output, the last time it fin
   assert.equal(readRecord(events).source, events.metadata.workflow_source.root);
 });
 
+const loopEvents = () => JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', '..', '..', 'fixtures', 'archon', 'get-events-loop.json'), 'utf8'));
+const completed = (step_name, node_output) => ({ event_type: 'node_completed', step_name, data: { node_output } });
+
+test('a loop body step is given under its own id, from its last round', () => {
+  const outputs = readOutputs(loopEvents());
+  assert.equal(outputs['review-standards'], '{"round":2}');
+  assert.equal(outputs['review.review-standards'], '{"round":2}');
+  assert.equal(outputs.review, '{"round":2}');
+});
+
+test('a top-level step keeps its id over a body step of the same name', () => {
+  const outputs = readOutputs({ events: [completed('lenses', '{"a":1}'), completed('review.lenses', '{"a":2}')] });
+  assert.equal(outputs.lenses, '{"a":1}');
+  assert.equal(readOutputs({ events: [completed('review.lenses', '{"a":2}'), completed('lenses', '{"a":1}')] }).lenses, '{"a":1}');
+});
+
+test('a fan-out instance step is not given a bare id', () => {
+  const outputs = readOutputs(loopEvents());
+  assert.equal(outputs.gate, undefined);
+  assert.equal(outputs.tasks, '["a","b","c"]');
+});
+
 test('each step keeps its four kinds of token apart (check 79)', () => {
   const { steps } = readRecord({ status: 'completed', metadata: {}, nodes: [{
     nodeId: 'implement',
