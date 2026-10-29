@@ -36,13 +36,15 @@ export async function prepareEngine({ cache = engineCache(), build = buildFromSo
 // The broker's launcher, as setup writes it: the Node.js running the evaluation, with the broker's script here.
 export const brokerText = ({ node = process.execPath, root = PLUGIN_ROOT } = {}) => `#!/bin/sh\nexec '${node}' '${path.join(root, 'scripts', 'engine', 'broker', 'gh.js')}' "$@"\n`;
 
-// The world's engine folder over the cache: Bun and the source by link, the launcher and Bun config the folder's own
+// The world's engine folder over the cache: Bun by hard link and the source by symbolic link, the launcher and Bun config the folder's own
 // (the launcher names its folder's paths), the broker's launcher, and the pack built from this checkout.
 export function linkEngine({ cache, engine }) {
   const from = enginePaths(cache);
   const to = enginePaths(engine);
-  fs.mkdirSync(engine, { recursive: true });
-  fs.symlinkSync(path.dirname(from.bunDir), path.dirname(to.bunDir));
+  fs.mkdirSync(to.bunDir, { recursive: true });
+  // Bun by a hard link (a copy where the folders are on different disks), not a symbolic one: a process started from a
+  // symbolic link is listed by its target, and All stop ends only a process listed under the world's own engine folder.
+  try { fs.linkSync(from.bunBin, to.bunBin); } catch { fs.copyFileSync(from.bunBin, to.bunBin); fs.chmodSync(to.bunBin, 0o755); }
   fs.mkdirSync(path.dirname(to.launcher), { recursive: true });
   fs.symlinkSync(from.src, to.src);
   fs.writeFileSync(to.bunfig, '# Empty: Bun reads this in place of a bunfig.toml in the folder Archon starts in.\n');

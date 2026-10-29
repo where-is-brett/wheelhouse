@@ -57,3 +57,10 @@ The world's tests run against a stand-in for Archon's command line. On the real 
 ## Done
 
 The world's tests and the touched scenario and report tests pass; an independent review of the whole branch holds no BLOCKER or HIGH; the pull request is up; the main session is told the expected spend of one real run. The real run itself is the main session's, from main, after merge.
+
+## After the first real run (30 October 2026)
+
+- **The health trial failed with no reason.** The pinned kits weren't installed at project scope in the world's project, so the session start held edits and commands, and the hold refused the trial step's structured output. The world now installs the kits at project scope before the first commit and removes them when it closes. A failed trial, or any real run that ends badly, now gives Archon's error and the refusal the step was told.
+- **Scenario 45.** Archon names its workspace after the project's remote. Setup's fetch mirror makes that mirrors/<owner>__<name>, where the adapter looks for a run's artefacts and its ticket. The world's remote now stands where the mirror would (`<root>/mirrors/o__p.git`, read through `<root>/o/p` by the project's own git), so the order step finds its ticket. The build step still can't read its order file: Archon gives Claude only the project and user settings, never `.claude/settings.local.json`, so the run's overlay isn't loaded (the engine's to fix). The report now says when a run stops to ask, and quotes the question, and gives the error of the step that failed.
+- **Scenario 46** pressed All stop before Archon listed the just-started run, so nothing was cancelled. The play now waits for the first step before it presses All stop. The engine's All stop still misses a run in that first second, which is for the adapter to fix.
+- **Scenario 43** failed once in its recorded play and couldn't be made to fail again.
