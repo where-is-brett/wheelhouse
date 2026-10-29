@@ -230,7 +230,16 @@ function rowFor(id, allRuns, fileLegs = []) {
     why: parts.join('; '),
     again,
     safety,
+    // On real Archon (`--engine archon`): 'real' when every trial played on the engine, 'recorded' when every one
+    // played its recording, 'mixed' otherwise; null on any other run.
+    played: playedOf(allRuns),
   };
+}
+
+function playedOf(runs) {
+  const kinds = [...new Set(runs.map((run) => run.played).filter(Boolean))];
+  if (kinds.length === 0) return null;
+  return kinds.length === 1 ? kinds[0] : 'mixed';
 }
 
 const notRun = (id, title, suite, why) => ({
@@ -248,6 +257,7 @@ const notRun = (id, title, suite, why) => ({
   why,
   again: [],
   safety: false,
+  played: null,
 });
 
 // The report of the run record `record` (see scripts/eval/run.js). `root` holds the suites and
@@ -270,16 +280,18 @@ export function summarise(record, { root = EVAL_ROOT, e2eDir = E2E_DIR, designed
   designed = [...new Set([...designed, ...named])];
   const legsOf = (id) => [...new Set(written.filter((scenario) => scenario.number === id).map((scenario) => scenario.leg))];
   const rows = [...byId.entries()].map(([id, scenarioRuns]) => rowFor(id, scenarioRuns, legsOf(id)));
-  for (const scenario of written) {
+  // A run on the build engine (`--engine`) accounts only for the engine's scenarios it ran, and runs no end-to-end test.
+  const engine = typeof record?.engine === 'string' ? record.engine : null;
+  for (const scenario of engine ? [] : written) {
     if (!rows.some((row) => row.id === scenario.number)) rows.push(notRun(scenario.number, scenario.file, scenario.suite, 'not in this run'));
   }
   const results = record?.e2e ?? null;
-  const covered = coveredScenarios({ dir: e2eDir }).map((entry) => {
+  const covered = (engine ? [] : coveredScenarios({ dir: e2eDir })).map((entry) => {
     // Every result of that name in that file (a name used twice must pass both times).
     const found = (results ?? []).filter((r) => r.test === entry.test && shownPath(path.resolve(REPO, r.file)) === entry.file);
     return { ...entry, pass: found.length ? found.every((r) => r.pass === true) : null };
   });
-  for (const id of designed) {
+  for (const id of engine ? [] : designed) {
     if (!rows.some((row) => row.id === id) && !covered.some((entry) => entry.id === id)) rows.push(notRun(id, '', null, 'not written'));
   }
   rows.sort((a, b) => a.id - b.id);
@@ -293,6 +305,7 @@ export function summarise(record, { root = EVAL_ROOT, e2eDir = E2E_DIR, designed
     date: record?.date ?? (typeof record?.at === 'string' ? record.at.slice(0, 10) : null),
     how: record?.how ?? null,
     agent: typeof record?.agent === 'string' ? record.agent : null,
+    engine,
     carried: record?.carried ?? null,
     tokens: sum(runs),
     // A run cut short (no `finished` in its record) never passes, whatever it holds (ruling E25).
@@ -339,7 +352,8 @@ export function summaryText(summary) {
     summary.commit ? `build ${summary.commit}` : null,
   ].filter(Boolean);
   const sessions = summary.agent ? `sessions of the ${summary.agent} agent, through its adapter's runner` : '`claude -p` sessions';
-  lines.push(`${facts.join(', ')}. Each scenario runs in real ${sessions}, in a throwaway copy, with and without Wheelhouse; the end-to-end tests run with \`node --test\`.`, '');
+  if (summary.engine) lines.push(`${facts.join(', ')}. Each of the build engine's scenarios plays in a world of its own with the real helper, on ${summary.engine === 'archon' ? 'real Archon' : `the ${summary.engine} engine`}; no session runs.`, '');
+  else lines.push(`${facts.join(', ')}. Each scenario runs in real ${sessions}, in a throwaway copy, with and without Wheelhouse; the end-to-end tests run with \`node --test\`.`, '');
 
   if (summary.carried) {
     const c = summary.carried;
@@ -364,6 +378,11 @@ export function summaryText(summary) {
     ].filter(Boolean);
     lines.push(`**The gate is not passed:** ${reasons.join('; ')}.`, '');
   }
+  if (summary.engine === 'archon') {
+    const ids = (kind) => summary.rows.filter((row) => row.played === kind).map((row) => row.id);
+    const [real, recorded, mixed] = [ids('real'), ids('recorded'), ids('mixed')];
+    lines.push(`On real Archon. **Played for real:** ${real.length ? real.join(', ') : 'none'}. **Recorded** (their recording played on the fake engine, since a real step can't be made to give it on cue): ${recorded.length ? recorded.join(', ') : 'none'}.${mixed.length ? ` Some trials real and some recorded: ${mixed.join(', ')}.` : ''}`, '');
+  }
   const skipped = summary.rows.filter((row) => row.notRun?.with || row.notRun?.without);
   if (skipped.length) {
     const why = [...new Set(skipped.flatMap((row) => [row.notRun.with, row.notRun.without]).filter(Boolean))].join('; ');
@@ -380,7 +399,8 @@ export function summaryText(summary) {
   lines.push('## Scenarios run in real sessions', '');
   lines.push('| # | Scenario | Suite | With | Without | Trials | Tokens | Why |', '|---|---|---|---|---|---|---|---|');
   for (const row of summary.rows) {
-    lines.push(`| ${row.id} | ${cell(row.title)} | ${cell(row.suite ?? '')} | ${verdictCell(row, 'with')} | ${verdictCell(row, 'without')} | ${row.trials.with} / ${row.trials.without} | ${tokens(row.tokens)} | ${cell(row.why)} |`);
+    const played = row.played ? ` (${row.played})` : '';
+    lines.push(`| ${row.id} | ${cell(row.title)} | ${cell(row.suite ?? '')} | ${verdictCell(row, 'with')}${played} | ${verdictCell(row, 'without')} | ${row.trials.with} / ${row.trials.without} | ${tokens(row.tokens)} | ${cell(row.why)} |`);
   }
   lines.push('');
 
