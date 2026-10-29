@@ -220,10 +220,15 @@ test('cursorKeeper saves a bookmark at once, and any other line once a later cur
 
 test('stopAll cancels every running run, leaving child runs to their parent', async () => {
   const cli = fakeCli({ 'workflow status': json('status-all.json'), 'workflow cancel': json('cancel-ok.json') });
-  const result = await adapter(cli).stopAll('All stop');
+  const seen = [];
+  const result = await adapter(cli).stopAll('All stop', { beforeCancel: async (runs) => { seen.push({ runs, calls: cli.calls.length }); } });
   assert.deepEqual(cli.calls[0].args, ['workflow', 'status', '--all']);
   assert.deepEqual(cli.calls.slice(1).map((c) => c.args), [['workflow', 'cancel', RUN]]);
   assert.deepEqual(result, { cancelled: [RUN], survivors: [], paused: ['0a1b2c3d4e5f60718293a4b5c6d7e8f9'] });
+  // The running runs are handed over before the first cancel, so their process trees are taken whole.
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].calls, 1);
+  assert.deepEqual(seen[0].runs[0], { id: RUN, folder: '/Users/director/Projects/web/.worktrees/wh/card-14' });
 });
 
 test('wakeCommand is the continuation host, with archonEnv as its whole environment', () => {

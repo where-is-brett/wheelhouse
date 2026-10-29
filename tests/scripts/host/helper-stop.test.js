@@ -14,16 +14,19 @@ import { helperClient } from '../../../scripts/host/helper-client.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
-import { stopState, setStop } from '../../../scripts/lib/stop.js';
+import { stopState, setStop, liftStop } from '../../../scripts/lib/stop.js';
 import { markBypass } from '../../../scripts/lib/bypass.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
-import { makeEvent, eventPath } from '../../../scripts/state/events.js';
+import { makeEvent, eventPath, listEvents } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { takeLock } from '../../../scripts/state/lock.js';
 import { makeBareRemote, push as plainPush, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress } from '../../helpers/homes.js';
 import { prOnHost } from '../../helpers/pr-on-host.js';
 import { matchingBody, writeSessionProvenance } from '../../helpers/provenance.js';
+import { EventEmitter } from 'node:events';
+import { fakeEngine, loadRecordings } from '../../../scripts/engine/fake.js';
+import { until } from '../../helpers/until.js';
 
 // No host tool runs for real: the helper's runs go through this, and the log stays empty.
 const hostLog = [];
@@ -377,6 +380,113 @@ test('close waits for the mirror tidy queued after an answer', async () => {
       await helperClient({ address: helper.address }).merge({ project: 'o__p', number: 7, stop: false, bypass: false });
       await helper.close();
       assert.equal(tidied, true);
+    });
+  } finally { p.cleanup(); }
+});
+
+// --- All stop reaches the build engine (design on Archon, section 12.3) ---
+
+const recordings = loadRecordings(path.join(import.meta.dirname, '..', '..', 'fixtures', 'engine'));
+
+// A spawn whose children are stand-ins that run nothing and end when killed.
+function stubSpawn() {
+  const children = [];
+  const spawn = () => {
+    const child = new EventEmitter();
+    child.pid = 8000 + children.length;
+    child.killed = false;
+    child.kill = (signal = 'SIGTERM') => { child.killed = signal; setImmediate(() => child.emit('exit', null, signal)); return true; };
+    children.push(child);
+    return child;
+  };
+  return { spawn, children };
+}
+
+// The computer's processes for stopEngine: a run's owner with a step that moved itself into its own session (the
+// survivor check 78 found), the helper's own process, and whatever `kill` hasn't taken away.
+function computer() {
+  let table = [{ pid: process.pid, ppid: 1, pgid: process.pid, command: 'node helper' }, { pid: 700, ppid: 1, pgid: 700, command: 'archon run owner' }, { pid: 701, ppid: 700, pgid: 701, command: 'sleep 747' }];
+  const kills = [];
+  return {
+    kills,
+    cancelEnds: () => { table = table.filter((p) => p.pid !== 700); },
+    with: {
+      list: async () => table.map((p) => ({ ...p })),
+      cwds: async () => new Map(),
+      kill: (pid, signal) => { kills.push([pid, signal]); table = table.filter((p) => (pid < 0 ? p.pgid !== -pid : p.pid !== pid)); },
+      sleep: async () => {},
+    },
+  };
+}
+
+const notes = () => listEvents(stateDir('o__p'), { report: () => {} }).filter((e) => e.kind === 'note' && e.data?.about === 'all-stop');
+const runs = () => listEvents(stateDir('o__p'), { report: () => {} }).filter((e) => e.kind === 'run');
+
+test("the desk's All stop cancels every run, ends what the cancel left and names it, leaves a paused run paused, and lifting it starts nothing", async () => {
+  const p = await project();
+  const engine = fakeEngine({ recordings });
+  const running = engine.start({ recording: 'quick-approved', running: true, ownerPid: 700 }).runId;
+  const paused = engine.start({ recording: 'quick-blocked' }).runId;
+  const pc = computer();
+  const stopAll = engine.stopAll.bind(engine);
+  engine.stopAll = async (reason, options) => { const got = await stopAll(reason, options); pc.cancelEnds(); return got; };
+  const { spawn, children } = stubSpawn();
+  try {
+    await as(p.home, async () => {
+      await withHelper(fakeAdapter(), async (client) => {
+        // The host has recorded both runs, so the note can name their work.
+        await until(() => runs().filter((e) => e.data.state === 'started').length >= 2 && children.length === 1, { what: 'both runs recorded and the wake process' });
+        const asked = await client.desk.act({ v: 'desk/1', project: 'o__p', command: 'all-stop', args: { by: 'mod' } });
+        assert.equal(asked.ok, true);
+        assert.equal(stopState().on, true);
+        await until(() => notes().length === 1, { what: "All stop's note" });
+        const note = notes()[0].data;
+        assert.deepEqual(note.cancelled, [{ runId: running, work: 'card-12', lane: 'quick', branch: 'wh/card-12' }]);
+        assert.deepEqual(note.paused, [{ runId: paused, work: 'card-13', lane: 'quick', branch: 'wh/card-13' }]);
+        assert.deepEqual(note.ended, ['"sleep 747" (process 701)']);
+        assert.deepEqual(note.survivors, []);
+        assert.match(note.words, /cancelled 1 run.*1 run waiting on an answer stays paused.*ended 1 process the engine left running: "sleep 747" \(process 701\)/);
+        assert.deepEqual(pc.kills, [[-701, 'SIGTERM']]);
+        assert.ok(pc.kills.every(([pid]) => Math.abs(pid) !== process.pid), "the helper's own process is never ended");
+        assert.equal(engine.inspect(running).status, 'ended');
+        assert.equal(engine.inspect(paused).status, 'paused', 'a paused run stays paused');
+        // The wake process ends, so nothing carries an answered paused run on, and none is started while STOP is on.
+        assert.equal(children[0].killed, 'SIGTERM');
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        assert.equal(children.length, 1);
+
+        // Lifting All stop starts no run; only the wake process starts again, so the engine works once more.
+        const starts = engine.calls.filter((c) => c.call === 'start').length;
+        liftStop();
+        await until(() => children.length === 2, { what: 'the wake process again' });
+        assert.equal(engine.calls.filter((c) => c.call === 'start').length, starts);
+        assert.equal(engine.inspect(running).status, 'ended');
+      }, { spawn, engineFor: () => engine, engineStopWith: pc.with, stopPollMs: 10 });
+    });
+  } finally { p.cleanup(); }
+});
+
+test('STOP set by the route, or without the helper at all, reaches the engine', async () => {
+  const p = await project();
+  const engine = fakeEngine({ recordings });
+  engine.start({ recording: 'quick-approved', running: true });
+  engine.start({ recording: 'quick-blocked', running: true });
+  const quiet = { list: async () => [], cwds: async () => new Map(), kill: () => assert.fail('nothing to end'), sleep: async () => {} };
+  try {
+    await as(p.home, async () => {
+      await withHelper(fakeAdapter(), async (client) => {
+        assert.deepEqual(await client.stop({}), { ok: true });
+        await until(() => engine.calls.some((c) => c.call === 'stopAll'), { what: 'the route to reach the engine' });
+        const waited = await client.stop({ wait: true });
+        assert.equal(waited.ok, true);
+        assert.match(waited.engine.said, /All stop/);
+        liftStop();
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        const before = engine.calls.filter((c) => c.call === 'stopAll').length;
+        // The STOP word's own hook sets STOP in the file, not through the helper.
+        setStop({ by: 'prompt' });
+        await until(() => engine.calls.filter((c) => c.call === 'stopAll').length > before, { what: 'STOP in the file to reach the engine' });
+      }, { spawn: stubSpawn().spawn, engineFor: () => engine, engineStopWith: quiet, stopPollMs: 10 });
     });
   } finally { p.cleanup(); }
 });

@@ -9,7 +9,7 @@
 //   act        archon workflow answer <run> --occurrence <o> --choose <c> --text <w> --json;
 //              archon workflow cancel <run> --json; archon workflow resume <run> --detach --json  (never abandon, spec 12.2)
 //   inspect    archon workflow get <run> --verbose --json
-//   stopAll    archon workflow status --all --json, then cancel each running run   (Task 8 adds the process-tree kill)
+//   stopAll    archon workflow status --all --json, then cancel each running run   (stop.js ends what is left)
 //   health     archon version; bun --version; archon ai tier list --json; archon telemetry status
 //   wake       archon workflow wake --watch --json   (wakeCommand: the continuation host starts and supervises it)
 import { archonCli, archonCommand } from './cli.js';
@@ -312,13 +312,19 @@ export function archonAdapter({
 
     // Cancels every running run. A child run is cancelled with its parent; a paused run is doing nothing and Archon
     // cancels only running ones, so it is listed in `paused`. A run whose cancel is refused is a survivor.
-    async stopAll() {
+    // `beforeCancel(runs)` is awaited with the running runs, [{ id, folder }] (the folder each works in), before any
+    // is cancelled, so All stop can take each run's process tree while it is still whole (check 78).
+    async stopAll(_reason, { beforeCancel } = {}) {
       const listed = await cli(['workflow', 'status', '--all'], { json: true, timeout: CALL_MS });
       if (!Array.isArray(listed.json?.runs)) {
         return { cancelled: [], survivors: [], paused: [], trouble: "The engine couldn't list its runs, so none was cancelled" };
       }
       const running = listed.json.runs.filter((r) => r.status === 'running');
       const ids = new Set(running.map((r) => r.id));
+      if (beforeCancel) {
+        const runs = running.map((r) => ({ id: r.id, folder: typeof r.working_path === 'string' ? r.working_path : null }));
+        try { await beforeCancel(runs); } catch { /* the cancel goes ahead all the same */ }
+      }
       const cancelled = [];
       const survivors = [];
       for (const runRow of running.filter((r) => !r.parent_run_id || !ids.has(r.parent_run_id))) {

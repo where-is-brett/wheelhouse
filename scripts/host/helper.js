@@ -54,6 +54,7 @@ import { delegationReview } from '../frontdesk/learning.js';
 import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/lock.js';
 import { namesOf, readProject, isInsideFolder, projectForFolder, registeredProjects } from '../lib/projects.js';
 import { startEngineHost } from '../engine/host.js';
+import { stopEngine, stopWords } from '../engine/stop.js';
 import { readLean, leanState, LEAN_NO_HOST } from '../lean/project.js';
 import { deskCore, checkVersion } from '../desk/core.js';
 import { fileSource } from '../desk/file-source.js';
@@ -952,6 +953,10 @@ export async function startHelper({
   // or null (design on Archon, section 6.3): the helper keeps its continuation host. None by default; the real helper
   // (helper-main.js) gives Archon's adapter. Its wake process is started with `spawn`.
   engineFor = () => null,
+  // What All stop's ending of the engine's processes uses (scripts/engine/stop.js): `kill`, `list`, `cwds`, `wait` and
+  // `sleep`, each the real one unless a test gives its own. And how often STOP is looked at, so a STOP set without the
+  // helper (the STOP word's hook, the runbook's own) cancels the engine's runs too.
+  engineStopWith = {}, stopPollMs = 2000,
 } = {}) {
   if (typeof adapterFor !== 'function') throw new Error('The helper needs an adapterFor function');
   if (typeof envFor !== 'function') throw new Error('The helper needs an envFor function');
@@ -3683,7 +3688,11 @@ export async function startHelper({
         ? profileRoute(doProfileRecord)({ event }, await profileContext())
         : doRecord({ project, event, ...(target === undefined ? {} : { target }) }, ctx))),
       write: tried(({ kind, data }) => doWrite({ project, kind, data }, ctx, { own: data?.proof !== undefined })),
-      setStop: tried(async ({ by }) => { setStop({ by: STOP_SETTERS.includes(by) ? by : 'helper', now }); return { ok: true }; }),
+      setStop: tried(async ({ by }) => {
+        setStop({ by: STOP_SETTERS.includes(by) ? by : 'helper', now });
+        stopEngines().catch(() => {});
+        return { ok: true };
+      }),
       liftStop: tried(async () => { liftStop(); return { ok: true }; }),
       chatClick: tried((click) => doChatClick({ project, ...click }, ctx)),
       confirm: tried((asked) => doConfirm({ project, ...asked }, ctx)),
@@ -3949,6 +3958,41 @@ export async function startHelper({
       .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0))[0];
     return first ? { work: first.data.work, lane: first.data.lane, branch: first.data.branch ?? null } : null;
   }
+  // All stop for the engine (design on Archon, section 12.3): the wake process ends at once (each host sees STOP), then
+  // stopEngine cancels every run and ends what the cancel left, and each project's record gets a note listing its
+  // cancelled work and its paused runs, for the First Mate's Carry on, and any process ended or left. One at a time:
+  // a second All stop while one runs shares it. Lifting All stop starts no run; the wake starts again by itself.
+  let engineStopping = null;
+  let stopSeen = false;
+  function stopEngines(reason = 'All stop') {
+    if (engineHosts.length === 0) return Promise.resolve(null);
+    stopSeen = true;
+    engineStopping ??= (async () => {
+      for (const { host } of engineHosts) host.check();
+      const got = await stopEngine({ engine: engineHosts[0].engine, processes: engineHosts.flatMap(({ host }) => host.processes()), reason, ...engineStopWith });
+      const said = stopWords(got);
+      for (const { project } of engineHosts) {
+        const theirs = (ids) => ids.flatMap((runId) => {
+          const run = engineRunOf(project, runId);
+          return run ? [{ runId, ...run }] : [];
+        });
+        const cancelled = theirs(got.cancelled);
+        const paused = theirs(got.paused);
+        if (cancelled.length + paused.length + got.ended.length + got.survivors.length === 0 && !got.trouble) continue;
+        await engineWrite(project, 'note', { about: 'all-stop', words: said, cancelled, paused, ended: got.ended, survivors: got.survivors }).catch(() => {});
+      }
+      return { ...got, said };
+    })().finally(() => { engineStopping = null; });
+    return engineStopping;
+  }
+  // STOP set by anything at all reaches the engine: each time it is seen turned on.
+  let stopWatch = null;
+  function watchStop() {
+    const on = stopped();
+    if (on && !stopSeen) stopEngines().catch(() => {});
+    stopSeen = on;
+  }
+
   function startEngineHosts() {
     for (const { project } of registeredProjects()) {
       let engine = null;
@@ -3966,6 +4010,11 @@ export async function startHelper({
         // An engine that can't be followed gets no host; the other projects' hosts start all the same.
       }
     }
+    if (engineHosts.length > 0) {
+      watchStop();
+      stopWatch = setInterval(watchStop, stopPollMs);
+      stopWatch.unref?.();
+    }
   }
 
   // Waits, too, for work queued after an answer (the mirror's tidy): on Windows a folder
@@ -3975,6 +4024,8 @@ export async function startHelper({
   function close() {
     closed ??= (async () => {
       closing = true;
+      if (stopWatch) clearInterval(stopWatch);
+      await engineStopping?.catch(() => {});
       await Promise.allSettled(engineHosts.map(({ host }) => host.stop()));
       await new Promise((resolve) => {
         server.close(() => {
@@ -4016,10 +4067,17 @@ export async function startHelper({
     }
     if (url.pathname === '/stop/set') {
       // Anyone may set STOP: a false alarm costs only a pause. No route lifts it but /confirm, on the director's click in the helper's own window. `by: 'prompt'` records that
-      // the director's STOP word set it, from a hook that only reads (ruling P5-18); anything else is the helper.
+      // the director's STOP word set it, from a hook that only reads (ruling P5-18), and `by: 'runbook'` the runbook's first
+      // step; anything else is the helper.
+      // The engine's runs are cancelled after STOP is set, never before: by default the answer doesn't wait for it;
+      // `wait: true` (the runbook's first step) waits and says what was cancelled.
       try {
-        setStop({ by: body.by === 'prompt' ? 'prompt' : 'helper', now });
-        return send(res, 200, { ok: true });
+        setStop({ by: body.by === 'prompt' || body.by === 'runbook' ? body.by : 'helper', now });
+        const stopping = stopEngines();
+        stopping.catch(() => {});
+        if (body.wait !== true) return send(res, 200, { ok: true });
+        const engine = await stopping.catch(() => null);
+        return send(res, 200, engine ? { ok: true, engine: { said: engine.said, cancelled: engine.cancelled, paused: engine.paused, ended: engine.ended, survivors: engine.survivors } } : { ok: true });
       } catch {
         return send(res, 200, { ok: false, refused: 'All stop could not be recorded' });
       }

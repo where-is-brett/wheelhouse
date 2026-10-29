@@ -230,6 +230,30 @@ test('stop from the phone sets STOP by the mod', () => withHome(async () => {
   assert.deepEqual(stopState(), { on: true, by: 'mod', at: NOW.toISOString() });
 }));
 
+test('a phoned or pressed STOP is set at once when the helper never answers, and the desk is still told', () => withHome(async () => {
+  const told = [];
+  // A desk whose helper hangs: its act never settles.
+  const desk = { act: (command, args) => { told.push([command, args]); return new Promise(() => {}); } };
+  for (const origin of ['bridge', 'pane']) {
+    liftStop();
+    const started = Date.now();
+    const answer = await handle({ cmd: 'stop', origin, cwd: '/work' }, deps({ desk, stopDeskMs: 50 }));
+    assert.deepEqual(answer, { ok: true, says: 'All stop is on.' });
+    assert.ok(Date.now() - started < 5000, 'not held up by the helper');
+    assert.deepEqual(stopState(), { on: true, by: 'mod', at: NOW.toISOString() });
+  }
+  assert.deepEqual(told, [['all-stop', { by: 'mod' }], ['all-stop', { by: 'mod' }]]);
+  // STOP that can't be set here waits on the desk, which sets it.
+  liftStop();
+  const set = [];
+  const answer = await handle({ cmd: 'stop', origin: 'bridge', cwd: '/work' }, deps({
+    desk: { act: async () => { set.push('desk'); return { ok: true }; } },
+    setStop: () => { set.push('here'); throw new Error('no home'); },
+  }));
+  assert.deepEqual(answer, { ok: true, says: 'All stop is on.' });
+  assert.deepEqual(set, ['here', 'desk']);
+}));
+
 test('press is refused for any origin but pane; stop and go accept pane', () => withHome(async () => {
   enrolKey();
   const calls = [];

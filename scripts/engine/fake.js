@@ -1,7 +1,9 @@
 // scripts/engine/fake.js
 // An engine for tests: it plays back recorded EngineEvents (JSON lines, see tests/fixtures/engine) and runs nothing.
 // A run plays until an ask, holds there until the ask is answered, then plays on. Every start and act is kept in
-// `calls`. Cancelling, or stopAll, ends a run with the outcome 'cancelled'.
+// `calls`. Cancelling, or stopAll, ends a running run with the outcome 'cancelled'; stopAll leaves a paused one
+// paused, as Archon does. A run started with `order.ownerPid` (a test's) reports it from inspect, as a real engine
+// reports the process that owns the run.
 import fs from 'node:fs';
 import path from 'node:path';
 import { checkEvent } from './contract.js';
@@ -37,9 +39,11 @@ export function fakeEngine({ recordings = {}, now = () => new Date().toISOString
   const calls = [];
   const answered = new Set();
 
-  // Moves a run's recorded events onto the stream, up to and including the next ask.
+  // Moves a run's recorded events onto the stream, up to and including the next ask. A run started with
+  // `order.running` stops short of its first ask instead, and stays running there (a step under way).
   function play(run) {
     while (run.pending.length > 0 && !run.open) {
+      if (run.holding && run.pending[0].type === 'ask') return;
       const event = { ...run.pending.shift(), runId: run.id };
       stream.push(event);
       if (event.type === 'ask') run.open = event;
@@ -69,7 +73,7 @@ export function fakeEngine({ recordings = {}, now = () => new Date().toISOString
       const name = order.recording ?? (names.length === 1 ? names[0] : undefined);
       if (!name || !recordings[name]) return { ok: false, refused: `There is no recording named ${name ?? '(none given)'}` };
       const id = `fake-${runs.size + 1}-${name}`;
-      const run = { id, pending: recordings[name].map((e) => ({ ...e })), open: null, ended: null, branch: null, pr: null, steps: [] };
+      const run = { id, pending: recordings[name].map((e) => ({ ...e })), open: null, ended: null, branch: null, pr: null, steps: [], ownerPid: order.ownerPid ?? null, folder: order.folder ?? null, holding: order.running === true };
       runs.set(id, run);
       play(run);
       return { ok: true, runId: id };
@@ -132,6 +136,7 @@ export function fakeEngine({ recordings = {}, now = () => new Date().toISOString
       const status = run.ended ? 'ended' : run.open ? 'paused' : 'running';
       return {
         status,
+        ownerPid: run.ownerPid,
         steps,
         branch: run.ended?.branch ?? started?.branch ?? null,
         pr: run.ended?.pr ?? null,
@@ -139,15 +144,15 @@ export function fakeEngine({ recordings = {}, now = () => new Date().toISOString
       };
     },
 
-    stopAll(reason) {
+    // Cancels every running run, as Archon does: a run paused at an ask isn't cancelled, and is listed in `paused`.
+    // `beforeCancel(runs)` is awaited with the running runs first, [{ id, folder }] (a test's `order.folder`).
+    async stopAll(reason, { beforeCancel } = {}) {
       calls.push({ call: 'stopAll', reason });
-      const cancelled = [];
-      for (const run of runs.values()) {
-        if (run.ended) continue;
-        end(run, 'cancelled', { reason: reason ?? null });
-        cancelled.push(run.id);
-      }
-      return { cancelled, survivors: [] };
+      const live = [...runs.values()].filter((run) => !run.ended);
+      const running = live.filter((run) => !run.open);
+      if (beforeCancel) await beforeCancel(running.map((run) => ({ id: run.id, folder: run.folder })));
+      for (const run of running) end(run, 'cancelled', { reason: reason ?? null });
+      return { cancelled: running.map((run) => run.id), survivors: [], paused: live.filter((run) => run.open).map((run) => run.id) };
     },
   };
 }

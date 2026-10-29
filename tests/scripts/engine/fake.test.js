@@ -85,14 +85,20 @@ test('a step with unknown spend has source unknown and null dollars', () => {
   assert.equal(merge.tokens, null);
 });
 
-test('cancel and stopAll end runs and list them', () => {
+test('cancel and stopAll end runs and list them; stopAll leaves a paused run paused, as Archon does', async () => {
   const engine = fakeEngine({ recordings, now });
   const a = engine.start({ recording: 'quick-approved' }).runId;
-  const b = engine.start({ recording: 'quick-blocked' }).runId;
+  const b = engine.start({ recording: 'quick-blocked', running: true, ownerPid: 321 }).runId;
+  const c = engine.start({ recording: 'merge-hold' }).runId;
+  assert.equal(engine.inspect(b).status, 'running');
+  assert.equal(engine.inspect(b).ownerPid, 321);
   assert.deepEqual(engine.act(a, { cancel: { reason: 'director said stop' } }), { ok: true });
   assert.equal(engine.act(a, { cancel: { reason: 'again' } }).ok, false);
-  assert.deepEqual(engine.stopAll('All stop'), { cancelled: [b], survivors: [] });
+  const before = [];
+  assert.deepEqual(await engine.stopAll('All stop', { beforeCancel: (runs) => before.push(...runs.map((r) => r.id)) }), { cancelled: [b], survivors: [], paused: [c] });
+  assert.deepEqual(before, [b]);
   assert.equal(engine.inspect(b).status, 'ended');
+  assert.equal(engine.inspect(c).status, 'paused');
   assert.equal(engine.watch().events.filter((e) => e.outcome === 'cancelled').length, 2);
 });
 

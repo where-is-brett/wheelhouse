@@ -8,7 +8,7 @@
 //   watch(cursor) -> { events: EngineEvent[], cursor }       (follow(cursor) is the same as an async iterator)
 //   act(runId, { answer: { ask, choice, words? } } | { cancel: { reason } } | { resume: {} }) -> { ok } | { ok: false, refused }
 //   inspect(runId) -> { status, steps: [{ id, role, provider, model, tokens, dollars, minutes, source }], branch, pr, digest }
-//   stopAll(reason) -> { cancelled: string[], survivors: string[] }
+//   stopAll(reason, { beforeCancel(runs: [{ id, folder }]) }?) -> { cancelled: string[], survivors: string[], paused: string[] }
 //
 // Beside the interface, for the helper's continuation host (host.js): `name`, the engine's name for the record, and
 // wakeCommand() -> { command, args, env }, the process that carries answered runs on.
