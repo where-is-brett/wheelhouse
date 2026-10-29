@@ -2,7 +2,7 @@
 // The counted evaluation's world on real Archon (Archon design, section 18), beside the fake engine's (engine-world.js),
 // chosen by `npm run eval -- … --engine archon`. It is the fake world's shape (a home of its own in a temporary folder,
 // one project registered with its record open and this computer's key enrolled, the real helper on it, the code host
-// stood in), with the engine installed as setup installs it:
+// stood in), with the engine installed as setup installs it (archon-engine.js):
 //   - Archon built from source at its pin with Wheelhouse's patch (build.js), once, into a cache outside ~/.wheelhouse
 //     (WHEELHOUSE_EVAL_ARCHON, by default ~/.wheelhouse-evals/engine), and reused by every world after;
 //   - each world's engine folder (<home>/engine) holding the cache's Bun and source by link, its own launcher and Bun
@@ -21,10 +21,10 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { startHelper } from '../host/helper.js';
 import { ENGINE_CONFIG } from '../host/helper-main.js';
 import { run as realRun } from '../lib/run.js';
+import { safeGit } from '../lib/safe-git.js';
 import { helperAddress, stateDir, archonHome } from '../lib/paths.js';
 import { writeProject } from '../lib/projects.js';
 import { setStop, liftStop } from '../lib/stop.js';
@@ -33,62 +33,18 @@ import { dataHash, eventPath, listEvents, makeEvent } from '../state/events.js';
 import { makeSigningKey, enrol, ownKey } from '../state/signing.js';
 import { takeLock } from '../state/lock.js';
 import { buildViews } from '../state/views.js';
-import { buildPack } from '../engine/pack-build.js';
 import { engineDirOf } from '../engine/routes.js';
 import { archonAdapter } from '../engine/archon/adapter.js';
 import { archonCli } from '../engine/archon/cli.js';
 import { archonEnv } from '../engine/archon/env.js';
-import { buildFromSource, enginePaths, launcherText } from '../engine/archon/build.js';
 import { PROJECT, until } from './engine-world.js';
+import { standInTools } from './stand-in-tools.js';
+import { engineCache, prepareEngine, linkEngine } from './archon-engine.js';
+
+export { engineCache, prepareEngine, cacheBuilt, linkEngine } from './archon-engine.js';
 
 export const REPO = 'o/p';
 export const WORKTREES = '.wheelhouse/worktrees';
-const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-
-// The cache the engine is built into once: never under ~/.wheelhouse, so the director's own engine is never touched.
-export function engineCache(env = process.env) {
-  return env.WHEELHOUSE_EVAL_ARCHON || path.join(os.homedir(), '.wheelhouse-evals', 'engine');
-}
-
-// Whether `cache` holds a finished build: the launcher, the patched source and the pinned Bun.
-export function cacheBuilt(cache) {
-  const p = enginePaths(cache);
-  return fs.existsSync(p.launcher) && fs.existsSync(p.provider) && fs.existsSync(p.bunBin);
-}
-
-// Builds the engine into `cache` unless it is built already (network: Archon's source and its packages, the pinned
-// Bun). A build cut short is moved aside, never removed, since buildFromSource refuses a folder that holds a source.
-export async function prepareEngine({ cache = engineCache(), build = buildFromSource, log = () => {} } = {}) {
-  if (cacheBuilt(cache)) return cache;
-  if (fs.existsSync(cache)) fs.renameSync(cache, `${cache}.unfinished-${Date.now()}`);
-  fs.mkdirSync(cache, { recursive: true });
-  log(`Building Archon from source into ${cache}; this happens once`);
-  await build({ engine: cache });
-  return cache;
-}
-
-// The broker's launcher, as setup writes it: the Node.js running the evaluation, with the broker's script here.
-export const brokerText = ({ node = process.execPath, root = PLUGIN_ROOT } = {}) => `#!/bin/sh\nexec '${node}' '${path.join(root, 'scripts', 'engine', 'broker', 'gh.js')}' "$@"\n`;
-
-// The world's engine folder over the cache: Bun and the source by link, the launcher and Bun config the folder's own
-// (the launcher names its folder's paths), the broker's launcher, and the pack built from this checkout.
-export function linkEngine({ cache, engine }) {
-  const from = enginePaths(cache);
-  const to = enginePaths(engine);
-  fs.mkdirSync(engine, { recursive: true });
-  fs.symlinkSync(path.dirname(from.bunDir), path.dirname(to.bunDir));
-  fs.mkdirSync(path.dirname(to.launcher), { recursive: true });
-  fs.symlinkSync(from.src, to.src);
-  fs.writeFileSync(to.bunfig, '# Empty: Bun reads this in place of a bunfig.toml in the folder Archon starts in.\n');
-  fs.writeFileSync(to.launcher, launcherText(engine));
-  fs.chmodSync(to.launcher, 0o755);
-  const broker = path.join(engine, 'broker', 'bin', 'gh');
-  fs.mkdirSync(path.dirname(broker), { recursive: true });
-  fs.writeFileSync(broker, brokerText());
-  fs.chmodSync(broker, 0o755);
-  buildPack({ out: path.join(engine, 'pack') });
-  return { broker, packDir: path.join(engine, 'pack') };
-}
 
 // The throwaway project: a git repository on `main` with a bare remote at <root>/o/p, a test script, Archon's project
 // settings (worktrees inside the folder, kept out of git) and a .env for the guards' trial to be refused.
@@ -110,21 +66,6 @@ async function makeProject({ root, folder, git }) {
   const commit = ['-c', 'user.name=Evaluation', '-c', 'user.email=eval@example.invalid', 'commit', '-q', '-m', 'Start'];
   for (const args of [['add', '-A'], commit, ['remote', 'add', 'origin', remote], ['push', '-q', 'origin', 'main']]) await must(args, folder);
   return remote;
-}
-
-// The tools the helper may run in this world: git and Node.js as they are, and gh stood in, each call kept and
-// answered as an empty success. Anything else is refused and kept in `refused`.
-function standInTools({ forwarded, refused }) {
-  return (file, args = [], options) => {
-    const name = String(file).split(/[\\/]/).pop().replace(/\.(exe|cmd|bat|com)$/i, '').toLowerCase();
-    if (name === 'git' || name === 'node') return realRun(file, args, options);
-    if (name === 'gh') {
-      forwarded.push(args.join(' '));
-      return Promise.resolve({ code: 0, stdout: '', stderr: '' });
-    }
-    refused.push([name, ...args].join(' '));
-    return Promise.resolve({ code: 1, stdout: '', stderr: `${name} is not run in the evaluation's world` });
-  };
 }
 
 // The code host's stand-in the helper reads: a default branch, and nothing else to say.
@@ -162,7 +103,9 @@ export async function openArchonWorld({
   let paths = null;
   const records = (kind) => listEvents(stateDir(PROJECT), { report: () => {} }).filter((e) => kind === undefined || e.kind === kind);
   const own = () => { const k = ownKey(); return k ? [{ computer: k.computer, publicKey: k.publicKey }] : []; };
-  const git = (args, cwd) => realRun('git', args, { cwd });
+  // The fence alone, reaching folders on this computer: the project and its remote are the world's own, made here, and
+  // nothing in them runs hooks or filters.
+  const git = (args, cwd) => safeGit({ cwd, reach: 'local', look: 'never', timeoutMs: 60000 })(args);
   // Every Archon command in this world: the world's engine folder, its Archon home, its Claude Code.
   const archon = (args, options = {}) => cli(args, { ...options, engine: engineFolder, home: engineHome, claudeBin });
 
