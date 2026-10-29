@@ -9,8 +9,8 @@ const recordings = loadRecordings(path.join(import.meta.dirname, '..', '..', 'fi
 const now = () => '2026-10-29T09:00:00.000Z';
 const types = (events) => events.map((e) => e.type);
 
-test('the fixtures are well-formed, and there are three', () => {
-  assert.deepEqual(Object.keys(recordings), ['merge-hold', 'quick-approved', 'quick-blocked', 'quick-lane']);
+test('the fixtures are well-formed, and each is listed', () => {
+  assert.deepEqual(Object.keys(recordings), ['merge-hold', 'quick-approved', 'quick-blocked', 'quick-lane', 'small-lane']);
   for (const events of Object.values(recordings)) for (const e of events) assert.equal(checkEvent(e), null);
 });
 
