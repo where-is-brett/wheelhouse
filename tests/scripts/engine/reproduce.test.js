@@ -19,7 +19,7 @@ const CHECK = { test: REPRODUCTION_NAME };
 const GIVEN = { check: CHECK, files: [REPRODUCTION_FILE] };
 const order = workOrder({ work: { id: 'video-length', lane: 'bug', goal: 'A 65-second clip shows as 1:5 on its card', done: [{ command: 'npm test', expect: 0 }] }, config: { testCommand: TEST_COMMAND } });
 
-function project({ reproduce = REPRODUCTION, alsoFix = false } = {}) {
+function project({ reproduce = REPRODUCTION, alsoFix = false, before = null } = {}) {
   const dir = tempFolder('wh-repro-');
   git(dir, 'init', '-q');
   for (const [file, text] of Object.entries(FILES)) {
@@ -29,6 +29,11 @@ function project({ reproduce = REPRODUCTION, alsoFix = false } = {}) {
   git(dir, 'add', '-A');
   git(dir, 'commit', '-qm', 'base');
   git(dir, 'checkout', '-qb', 'wh/video-length');
+  if (before) {
+    for (const [file, text] of Object.entries(before)) fs.writeFileSync(path.join(dir, file), text);
+    git(dir, 'add', '-A');
+    git(dir, 'commit', '-qm', 'An earlier commit on the branch');
+  }
   if (reproduce) {
     fs.writeFileSync(path.join(dir, REPRODUCTION_FILE), reproduce);
     if (alsoFix) fs.writeFileSync(path.join(dir, 'src/duration.js'), FIX);
@@ -76,6 +81,11 @@ test('a reproduction that isn\'t one is not red', async () => {
   const passing = await step('red', project({ reproduce: REPRODUCTION.replace("'1:05'", "'1:5'") }), client());
   assert.equal(passing.got.red, false);
   assert.match(passing.got.line, /passes before any fix/);
+
+  // The product changed in an earlier commit on the branch: the reproduction would fail on a tree the agent made.
+  const earlier = await step('red', project({ before: { 'src/duration.js': FILES['src/duration.js'].replace('seconds % 60', '(seconds + 1) % 60') } }), client());
+  assert.equal(earlier.got.red, false);
+  assert.match(earlier.got.line, /branch changes more than the reproduction's test/);
 
   const dirty = project();
   fs.writeFileSync(path.join(dirty, 'loose.js'), 'x\n');

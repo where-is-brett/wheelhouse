@@ -504,7 +504,7 @@ test('a bug found bigger than a bug goes back to the First Mate in the lane the 
     try {
       const { runId } = await t.ask();
       t.sign(label);
-      ended(t, runId);
+      withRun(t, runId, [['2026-10-29T12:50:00.000Z', 'started', { lane: 'bug' }], ['2026-10-29T13:00:00.000Z', 'ended', { outcome: 'completed', lane: 'bug' }]]);
       await t.runner.tick();
       await t.runner.tick();
       assert.equal(acts(t.engine).length, 1, 'the engine has the answer, so the run ends');
@@ -513,6 +513,22 @@ test('a bug found bigger than a bug goes back to the First Mate in the lane the 
       assert.ok(notes.includes(`The sale banner is bigger than a bug, so it stops in the bug lane; the First Mate records it as ${lane} and asks you to approve it.`), notes.join('\n'));
     } finally { t.cleanup(); }
   }
+});
+
+test('only the bug lane\'s card moves work up a lane: another lane\'s answer of the same words sends it back as before', async () => {
+  const MOVE = [{ id: 'small', label: 'Make it a small change' }, { id: 'stop', label: 'Stop this work' }];
+  const started = [];
+  const t = setUp({ recordings: { one: asking('q1', { kind: 'blocked', topic: 'bigger-than-a-bug', recommend: 'small', options: MOVE, context: { question: 'Bigger?' } }) } });
+  t.runner.onStart(async (args) => { started.push(args); return { ok: true, runId: 'again-1' }; });
+  try {
+    const { runId } = await t.ask();
+    t.sign('Make it a small change');
+    ended(t, runId);
+    await t.runner.tick();
+    await t.runner.tick();
+    assert.equal(started.length, 1, 'a quick-lane run is started again, not moved');
+    assert.ok(!t.writes.some((w) => w.kind === 'note' && /bigger than a bug/.test(w.data.words)));
+  } finally { t.cleanup(); }
 });
 
 test('an answer to a question that isn\'t a blocked exit starts nothing again', async () => {

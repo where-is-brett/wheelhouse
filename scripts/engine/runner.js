@@ -242,7 +242,8 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       }
       state.delivered[key] = got.ok ? 'answered' : 'refused';
       delete state.tries[key];
-      const move = got.ok && kept.ask?.kind === 'blocked' && kept.ask?.topic === BIGGER ? MOVES[answer.choice] : undefined;
+      const runLane = (views.runs?.[kept.work] ?? []).filter((r) => r?.data?.runId === kept.runId).at(-1)?.data?.lane ?? workOf(kept.runId)?.lane;
+      const move = got.ok && runLane === 'bug' && kept.ask?.kind === 'blocked' && kept.ask?.topic === BIGGER && Object.hasOwn(MOVES, answer.choice) ? MOVES[answer.choice] : undefined;
       if (move) {
         keep();
         await note(`${titleOf(kept.work)} is bigger than a bug, so it stops in the bug lane; the First Mate records it as ${move} and asks you to approve it.`, { work: kept.work });

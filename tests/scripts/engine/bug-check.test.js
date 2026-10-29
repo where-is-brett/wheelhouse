@@ -43,15 +43,15 @@ function artefacts() {
   fs.writeFileSync(path.join(dir, TICKET_FILE), `${'a'.repeat(64)}\n`);
   return dir;
 }
-const client = (commit) => ({
+const client = (commit, files = [REPRODUCTION_FILE]) => ({
   engine: {
     order: async () => ({ ok: true, order: { ...order, done: [...order.done, CHECK] } }),
-    reproductionFind: async () => ({ ok: true, kept: { check: CHECK, files: [REPRODUCTION_FILE], commit }, given: null }),
+    reproductionFind: async () => ({ ok: true, kept: { check: CHECK, files, commit }, given: null }),
   },
 });
-async function check(p, { art = artefacts(), blocked = 'false' } = {}) {
+async function check(p, { art = artefacts(), blocked = 'false', files } = {}) {
   const lines = [];
-  const code = await bugCheck(['--run', 'run-1', '--artefacts', art, '--base', 'main', '--most', '5', '--blocked', blocked], { client: client(p.commit), cwd: p.dir, run, out: (l) => lines.push(l) });
+  const code = await bugCheck(['--run', 'run-1', '--artefacts', art, '--base', 'main', '--most', '5', '--blocked', blocked], { client: client(p.commit, files), cwd: p.dir, run, out: (l) => lines.push(l) });
   return { code, lines };
 }
 async function size(p) {
@@ -74,6 +74,15 @@ test('a fix that changes the reproduction\'s test never closes the loop', async 
   write(p.dir, REPRODUCTION_FILE, REPRODUCTION.replace("'1:05'", "'1:5'"));
   commitAll(p.dir, 'Make the test agree');
   const { code, lines } = await check(p);
+  assert.equal(code, 1);
+  assert.ok(lines.some((l) => /reproduction's test changed since it went red/.test(l)), lines.join('\n'));
+});
+
+test('the reproduction\'s files are read as plain paths, so no pathspec hides a change to its test', async () => {
+  const p = project();
+  write(p.dir, REPRODUCTION_FILE, REPRODUCTION.replace("'1:05'", "'1:5'"));
+  commitAll(p.dir, 'Make the test agree');
+  const { code, lines } = await check(p, { files: [REPRODUCTION_FILE, `:!${REPRODUCTION_FILE}`] });
   assert.equal(code, 1);
   assert.ok(lines.some((l) => /reproduction's test changed since it went red/.test(l)), lines.join('\n'));
 });

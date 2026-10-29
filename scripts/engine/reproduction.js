@@ -16,8 +16,10 @@ const MOST_COMMAND_CHARS = 400;
 
 const parsed = (text) => { try { return JSON.parse(text); } catch { return null; } };
 const oneLine = (value, most) => typeof value === 'string' && value.trim() !== '' && value.length <= most && !/[\r\n]/.test(value);
+// A path git reads as itself: no pathspec magic (`:!`, `:(exclude)`) and no glob, which could leave the test out of the
+// check that it is unchanged.
 const isPlainPath = (file) => typeof file === 'string' && file !== '' && !file.startsWith('/') && !file.startsWith('-')
-  && !file.includes('\\') && !file.split('/').includes('..') && isTestFile(file);
+  && !file.startsWith(':') && !/[\\*?[\]]/.test(file) && !file.split('/').includes('..') && isTestFile(file);
 
 // The reproduction in the reproduce step's output (its text, as the engine kept it), or null when there is none.
 export function readReproduction(text) {

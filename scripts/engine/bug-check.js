@@ -41,7 +41,8 @@ export async function fixProblems({ client, runId, cwd, base, run = defaultRun, 
     // The fence alone: the worktree's own settings are an agent's to write.
     const git = safeGit({ run, cwd, look: 'never', timeoutMs: 30000 });
     let same = null;
-    try { same = await git(['diff', '--quiet', kept.commit, '--', ...kept.files]); } catch { same = null; }
+    // Literal paths, so no pathspec in the kept files leaves the test out.
+    try { same = await git(['--literal-pathspecs', 'diff', '--quiet', kept.commit, '--', ...kept.files]); } catch { same = null; }
     if (same?.code !== 0) problems.push('the reproduction\'s test changed since it went red');
   }
   try {

@@ -33,6 +33,11 @@ test('anything else is no reproduction', () => {
     ['absolute', output({ test: 'x', files: ['/abs/x.test.js'] })],
     ['an option', output({ test: 'x', files: ['-x.test.js'] })],
     ['a backslash', output({ test: 'x', files: ['test\\x.test.js'] })],
+    ['a pathspec that excludes', output({ test: 'x', files: ['test/d.test.js', ':!test/d.test.js'] })],
+    ['a pathspec with magic', output({ test: 'x', files: [':(exclude)test/d.test.js'] })],
+    ['a glob', output({ test: 'x', files: ['test/*.test.js'] })],
+    ['a glob of one', output({ test: 'x', files: ['test/d?.test.js'] })],
+    ['a glob of a set', output({ test: 'x', files: ['test/[d].test.js'] })],
     ['not JSON', 'not json'],
     ['not a string', undefined],
   ]) assert.equal(readReproduction(text), null, why);

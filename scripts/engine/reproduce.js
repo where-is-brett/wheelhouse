@@ -5,7 +5,7 @@
 //           so the reproduce step is skipped.
 //   --red   { red, line, commit?, check? }: the reproduce step's check (from the engine's record, through the helper)
 //           fails at the branch's head, which is a commit of its own after the base holding only the test files the
-//           step listed, with nothing left uncommitted. A kept reproduction is red as it was kept.
+//           step listed, on a branch that changes nothing else since the base, with nothing left uncommitted. A kept reproduction is red as it was kept.
 //   --keep  { kept, line }: the helper keeps the reproduction from the engine's record, and the order copy in the
 //           run's artefacts is written again, with the reproduction among its done checks.
 //   node scripts/engine/reproduce.js --gate|--red|--keep --run <run id> --artefacts <folder> --base <ref>
@@ -64,10 +64,14 @@ export async function main(argv = process.argv.slice(2), { client: given = helpe
   if (status.code !== 0 || status.stdout.trim() !== '') return notRed('The reproduction isn\'t committed on its own: there are changes that aren\'t committed.');
   const ahead = await git('rev-list', '--count', `${base}..HEAD`);
   if (ahead.code !== 0 || !(Number(ahead.stdout.trim()) >= 1)) return notRed('The reproduction has no commit of its own after the base.');
-  const changed = await git('diff', '--name-only', 'HEAD~1', 'HEAD');
-  const files = changed.code === 0 ? changed.stdout.split('\n').map((f) => f.trim()).filter(Boolean) : null;
-  if (!files || files.length === 0 || !files.every((f) => found.given.files.includes(f))) {
+  const listed = (got) => (got.code === 0 ? got.stdout.split('\n').map((f) => f.trim()).filter(Boolean) : null);
+  const onlyTests = (files) => files !== null && files.length > 0 && files.every((f) => found.given.files.includes(f));
+  if (!onlyTests(listed(await git('--literal-pathspecs', 'diff', '--name-only', 'HEAD~1', 'HEAD')))) {
     return notRed('The reproduction\'s commit changes more than its test.');
+  }
+  // The whole branch, too: a product change in an earlier commit would make the test fail on a tree the agent made.
+  if (!onlyTests(listed(await git('--literal-pathspecs', 'diff', '--name-only', `${base}...HEAD`)))) {
+    return notRed('The branch changes more than the reproduction\'s test, so the test wouldn\'t show the bug as it was reported.');
   }
   const head = await git('rev-parse', 'HEAD');
   const commit = head.code === 0 ? head.stdout.trim() : '';
