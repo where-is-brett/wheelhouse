@@ -464,6 +464,17 @@ const closer = (closes = []) => (args) => closeOpenTrial({
 const cleaned = (folder, run) => closer()({ setupRun: run, record: (c) => addChanges(run.id, [{ ...c, step: 10 }]) })
   .then(() => readJournal().runs.find((r) => r.id === run.id));
 
+test('a project off the build engine is green without the engine\'s two checks', async () => {
+  await withProject(async ({ folder }) => {
+    const off = GREEN_CHECKS.filter((c) => !['build engine', 'engine trial'].includes(c.name));
+    assert.equal(off.length, GREEN_CHECKS.length - 2);
+    const run = await cleaned(folder, runWith(folder, { checks: off }));
+    const got = await healthCheck({ folder, run, reported: GREEN_LINES, load: OK_BOARD });
+    assert.equal(got.green, true, got.lines.join('\n'));
+    assert.ok(!got.lines.some((l) => /build engine/.test(l)), 'nothing is said of an engine it doesn\'t build on');
+  });
+});
+
 test('a green run gives a green board', async () => {
   await withProject(async ({ folder }) => {
     const run = await cleaned(folder, runWith(folder, { checks: GREEN_CHECKS }));

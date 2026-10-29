@@ -1,4 +1,4 @@
-// scripts/setup/switch.js
+// scripts/engine/switch.js
 // The switch to the new engine for a project set up before v0.2.0 (Archon design, section 17, step 2). A project set
 // up from v0.2.0 on the Mac starts on the new engine (step 4's writes). One set up before is offered the switch once,
 // at the director's next visit: the `engine` setting's own confirm card, level 3, its one option recommended, so the
@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { effectiveSettings } from '../settings/effective.js';
 import { SETTINGS } from '../settings/catalogue.js';
-import { POLICY_FILE, engineInstalled, engineWanted } from './engine-parts.js';
+import { POLICY_FILE, engineInstalled, engineWanted } from './parts.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 

@@ -131,9 +131,11 @@ export const HELPER_CHECKS = Object.freeze({
     todo: 'Run step 7 again, which installs them, then step 10',
     what: 'the installed skills',
   },
-  // The build engine (Archon design, section 14.4), for a project on it: its health, then the hello trial.
+  // The build engine (Archon design, section 14.4), for a project on it: its health, then the hello trial. Only a
+  // project on the engine has them (`onEngine`), so one off it is green without them.
   'build engine': {
     expected: 'ok',
+    onEngine: true,
     passed: 'The build engine is Wheelhouse\'s patched, pinned build, with its usage reporting off',
     failed: 'The build engine isn\'t ready, so no run starts on it',
     todo: 'Run step 2 again, which installs the engine, then step 10; the Logbook says what the engine reported',
@@ -141,6 +143,7 @@ export const HELPER_CHECKS = Object.freeze({
   },
   'engine trial': {
     expected: 'refused',
+    onEngine: true,
     passed: 'In the build engine\'s trial, an agent\'s read of a planted .env was refused',
     failed: 'In the build engine\'s trial, an agent\'s read of a planted .env was not refused, or the trial couldn\'t run',
     todo: 'Type "all stop", so no Crew member works, and report it to Wheelhouse before going on: the engine\'s steps must keep Wheelhouse\'s safeguards',
@@ -656,8 +659,9 @@ export async function healthCheck({ folder, reported = [], run, load = loadBoard
   const tried = new Map((record?.checks ?? []).map((c) => [c.name, c.result]));
   for (const [name, check] of Object.entries(HELPER_CHECKS)) {
     if (!tried.has(name)) {
-      // With no record, a line above says so for every check, and this one prints nothing.
-      if (record !== null) {
+      // With no record, a line above says so for every check, and this one prints nothing. A project off the engine
+      // has no engine checks to try.
+      if (record !== null && check.onEngine !== true) {
         count(false);
         green = false;
         lines.push(`Failed: setup couldn't try ${check.what} before step 10 stopped. ${RERUN}.`);

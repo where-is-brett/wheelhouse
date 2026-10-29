@@ -8,7 +8,7 @@ import path from 'node:path';
 import { dispatch } from '../../../scripts/engine/dispatcher.js';
 import { queueToStart } from '../../../scripts/foreman/wake.js';
 import { onNewEngine } from '../../../scripts/engine/lanes.js';
-import { switchDue, SWITCH_SETTING } from '../../../scripts/setup/switch.js';
+import { switchDue, SWITCH_SETTING } from '../../../scripts/engine/switch.js';
 import { POLICY_FILE } from '../../../scripts/setup/engine-parts.js';
 import { settingCard } from '../../../scripts/frontdesk/cli.js';
 import { settingWords } from '../../../scripts/settings/effective.js';

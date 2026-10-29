@@ -11,7 +11,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { engineDir } from '../lib/paths.js';
-import { enginePaths, launcherText, PATCH_MARK } from '../engine/archon/build.js';
+import { engineWanted, engineInstalled, POLICY_FILE, ARCHON_CONFIG_FILE, ENGINE_FILES, WORKTREE_PATH } from '../engine/parts.js';
+
+// What only reads, kept in scripts/engine/parts.js so the mod's bridge can reach it without setup's writers.
+export { engineWanted, engineInstalled, POLICY_FILE, ARCHON_CONFIG_FILE, ENGINE_FILES, WORKTREE_PATH };
 import { installEngine } from '../engine/install.js';
 import { newId } from './journal.js';
 
@@ -25,8 +28,6 @@ export const engineLine = (scope = PLUGIN_SCOPE) => (scope.install ? ENGINE_LINE
 // Step 6's card line for the plugin's scope.
 export const PLUGIN_SCOPE_LINE = 'Wheelhouse added to Claude Code for your account, so the build engine\'s steps keep its safeguards';
 
-// The engine runs on the Mac only for now (spec 17, step 2); Windows is tried in its own sitting.
-export const engineWanted = ({ platform = process.platform } = {}) => platform === 'darwin';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const brokerLauncher = (engine = engineDir()) => path.join(engine, 'broker', 'bin', 'gh');
@@ -40,11 +41,6 @@ const read = (file) => {
   try { return fs.readFileSync(file, 'utf8'); } catch { return null; }
 };
 
-// Whether the engine is in: Wheelhouse's patched build from source, with its launcher and the pinned Bun.
-export function engineInstalled(engine = engineDir()) {
-  const p = enginePaths(engine);
-  return read(p.launcher) === launcherText(engine) && (read(p.provider) ?? '').includes(PATCH_MARK) && fs.existsSync(p.bunBin);
-}
 
 // Step 2's changes for the engine: the engine's folder (built and checked) and the broker's launcher, each only
 // when it isn't in as it should be.
@@ -104,10 +100,6 @@ export const pluginScopeRemoval = (change) => ['plugin', 'uninstall', change.aft
 // the project folder, under .wheelhouse/ (kept out of git), where the agents' sandbox already lets them work. A new
 // setup puts both in setup's own commit; a project set up already gets them by the switch's pull request. `.archon/`
 // is a guardrail from then on.
-export const POLICY_FILE = '.archon/sdlc/policy/maintainers.json';
-export const ARCHON_CONFIG_FILE = '.archon/config.yaml';
-export const ENGINE_FILES = Object.freeze([POLICY_FILE, ARCHON_CONFIG_FILE]);
-export const WORKTREE_PATH = '.wheelhouse/worktrees';
 
 export const maintainersText = (logins) => `${JSON.stringify(logins)}\n`;
 export const archonConfigText = () => [

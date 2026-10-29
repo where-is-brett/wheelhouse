@@ -19,7 +19,7 @@ import { profileDir, stateDir } from '../lib/paths.js';
 import { BRIEFING_GAP_HOURS } from '../lib/core-numbers.js';
 import { wordsOf } from './context.js';
 import { readProject } from '../lib/projects.js';
-import { switchDue, SWITCH_SETTING } from '../setup/switch.js';
+import { switchDue, SWITCH_SETTING } from '../engine/switch.js';
 
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -88,7 +88,7 @@ export async function visitLearning({ project, cwd, client, at, boardAsks, platf
     ...settingProposals(events, profile, { now: at, outcomes, boardAsks }),
   ];
   for (const data of proposals) await tried(() => writeSetting({ client, cwd, data, words }));
-  // The switch to the new engine, offered once to a project set up before it (scripts/setup/switch.js).
+  // The switch to the new engine, offered once to a project set up before it (scripts/engine/switch.js).
   const due = attempt(() => switchDue({
     settings: views.settings, unconfirmed: views.unconfirmed, cards: events.filter((e) => e.kind === 'card').map((e) => e.data),
     record: readProject(project), folder: readProject(project)?.folder, platform,

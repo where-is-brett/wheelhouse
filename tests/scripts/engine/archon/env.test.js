@@ -98,10 +98,12 @@ test("each project on the engine has its git reads sent to the helper's fetch mi
   const path = (await import('node:path')).default;
   const engine = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-env-mirrors-'));
   const base = { HOME: '/h' };
-  assert.equal(archonEnv({ engine, home: '/a', nodeDir: '/usr/bin', baseEnv: base }).GIT_CONFIG_COUNT, undefined);
+  // A Node.js folder with no gh beside it (a Linux runner's /usr/bin has one).
+  const nodeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-env-node-'));
+  assert.equal(archonEnv({ engine, home: '/a', nodeDir, baseEnv: base }).GIT_CONFIG_COUNT, undefined);
   fs.mkdirSync(path.join(engine, 'mirrors'));
   fs.writeFileSync(path.join(engine, 'mirrors', 'rules.json'), JSON.stringify({ 'tide-tables': 'https://github.com/a/tide-tables.git', 'bad name': 'https://x', odd: 'line\nbreak' }));
-  const env = archonEnv({ engine, home: '/a', nodeDir: '/usr/bin', baseEnv: base });
+  const env = archonEnv({ engine, home: '/a', nodeDir, baseEnv: base });
   assert.equal(env.GIT_CONFIG_COUNT, '1');
   assert.equal(env.GIT_CONFIG_KEY_0, `url.${path.join(engine, 'mirrors', 'tide-tables.git')}.insteadOf`);
   assert.equal(env.GIT_CONFIG_VALUE_0, 'https://github.com/a/tide-tables.git');

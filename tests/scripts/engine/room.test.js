@@ -2,9 +2,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { engineRoom, roomCommand, ROOM_HOST, roomLine } from '../../../scripts/engine/room.js';
 import { ENGINE_ROOM_PORT } from '../../../scripts/protection/archon.js';
 import { archonCommand } from '../../../scripts/engine/archon/cli.js';
+
+// A Node.js folder with no gh beside it (a Linux runner's /usr/bin has one, which the engine's environment swaps out).
+const NODE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-room-node-'));
 
 function stubSpawn() {
   const children = [];
@@ -19,8 +25,8 @@ function stubSpawn() {
 }
 
 test('the engine room binds 127.0.0.1 only and shows on the Logbook', async () => {
-  const command = roomCommand({ engine: '/e', home: '/h', nodeDir: '/usr/bin' });
-  const plain = archonCommand(['serve'], { engine: '/e', home: '/h', nodeDir: '/usr/bin' });
+  const command = roomCommand({ engine: '/e', home: '/h', nodeDir: NODE_DIR });
+  const plain = archonCommand(['serve'], { engine: '/e', home: '/h', nodeDir: NODE_DIR });
   assert.deepEqual(command.args, ['serve']);
   assert.equal(command.command, plain.command);
   assert.equal(command.env.HOST, '127.0.0.1');
@@ -54,7 +60,7 @@ test('the engine room binds 127.0.0.1 only and shows on the Logbook', async () =
 test('the engine room is closed under All stop, and a console that ends is started again while it is on', async () => {
   const { spawn, children } = stubSpawn();
   let held = false;
-  const room = engineRoom({ spawn, command: () => roomCommand({ engine: '/e', home: '/h', nodeDir: '/usr/bin' }), wanted: () => true, held: () => held });
+  const room = engineRoom({ spawn, command: () => roomCommand({ engine: '/e', home: '/h', nodeDir: NODE_DIR }), wanted: () => true, held: () => held });
   room.tend();
   children[0].child.emit('exit', 1, null);
   room.tend();
