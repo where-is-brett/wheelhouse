@@ -5,8 +5,10 @@
 // every lens runs. It also records the commit the reviews will read (`head`) and whether the worktree holds only that
 // commit (`clean`), in Archon's own record, so the helper signs a review only for the head it read. It prints
 // { security, design, head, clean } and exits 0, for the pack to branch on. After a fix round (the small lane),
-// `--held` names the lenses that held in the round before: security and design then run again only if they held.
-//   node scripts/engine/lenses.js --run <run id> --base <ref> [--held <lens,lens>]
+// `--held` names the lenses that held in the round before and `--ran` those that have run in any round: security and
+// design then run again where they apply and either held or haven't run yet. A list naming no lens is the first round,
+// where every lens that applies runs.
+//   node scripts/engine/lenses.js --run <run id> --base <ref> [--held <lens,lens> --ran <lens,lens>]
 import { helperClient } from '../host/helper-client.js';
 import { withTicket } from './ticket.js';
 import { startedAsScript } from '../lib/started-as-script.js';
@@ -21,6 +23,8 @@ const SECURITY_WORDS = new Set([
   'credential', 'credentials', 'apikey', 'crypto', 'encrypt', 'decrypt', 'payment', 'payments', 'billing',
   'invoice', 'stripe', 'refund', 'pii', 'gdpr', 'privacy', 'migration', 'migrations',
 ]);
+
+const LENS_NAMES = ['standards', 'spec', 'security', 'design'];
 
 const wordsOf = (text) => String(text).replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
 const touches = (text) => wordsOf(text).some((word) => SECURITY_WORDS.has(word));
@@ -60,8 +64,10 @@ export async function main(argv = process.argv.slice(2), { client: given = helpe
   const head = named.code === 0 ? named.stdout.trim() : '';
   const status = head ? await git('status', '--porcelain', '--untracked-files=all') : { code: 1, stdout: '' };
   const clean = head !== '' && status.code === 0 && status.stdout.trim() === '';
-  const held = (runArg(argv, '--held') ?? '').split(',').map((lens) => lens.trim()).filter(Boolean);
-  const again = (lens, applies) => applies && (held.length === 0 || held.includes(lens));
+  const lensesIn = (flag) => (runArg(argv, flag) ?? '').split(',').map((lens) => lens.trim()).filter((lens) => LENS_NAMES.includes(lens));
+  const held = lensesIn('--held');
+  const ran = lensesIn('--ran');
+  const again = (lens, applies) => applies && (held.length === 0 || held.includes(lens) || !ran.includes(lens));
   out(JSON.stringify({ security: again('security', security), design: again('design', order === null || order.preview !== null), head, clean }));
   return 0;
 }

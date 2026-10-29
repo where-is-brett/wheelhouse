@@ -109,6 +109,18 @@ test('the small lane plans, builds each task, checks, reviews and fixes, then go
   const body = review.nodes.map((n) => n.id);
   for (const id of ['fix', 'lenses', ...REVIEW_STEPS, 'verdict']) assert.ok(body.includes(id), `the review loop holds ${id}`);
   assert.match(review.nodes.find((n) => n.id === 'verdict').bash, /--most 4/, 'the verdict closes the loop on its last round');
+  // Each fix's change is checked again for loosened tests and changed agent files, before the lenses read it.
+  for (const [id, script] of [['fix-tests', 'protected-check'], ['fix-controls', 'control-check']]) {
+    const check = review.nodes.find((n) => n.id === id);
+    assert.ok(check, `the review loop holds ${id}`);
+    assert.match(check.bash, new RegExp(`${script}\\.js`));
+    assert.equal(check.when, review.nodes.find((n) => n.id === 'fix').when, `${id} runs after each fix`);
+  }
+  assert.deepEqual(review.nodes.find((n) => n.id === 'lenses').depends_on, ['fix', 'fix-tests', 'fix-controls']);
+  const verdict = review.nodes.find((n) => n.id === 'verdict').bash;
+  for (const flag of ['--tests', '--controls', '--round-before', '--ran-before']) assert.ok(verdict.includes(flag), `the verdict reads ${flag}`);
+  assert.match(verdict, /\$LOOP_PREV\.verdict\.output\.round/, 'rounds are counted from Archon\'s record');
+  assert.match(review.nodes.find((n) => n.id === 'lenses').bash, /--ran "\$ran"/);
   assert.equal(small.nodes.find((n) => n.id === 'plan').model, 'medium');
 });
 

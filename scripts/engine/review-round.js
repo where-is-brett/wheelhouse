@@ -1,27 +1,38 @@
 // scripts/engine/review-round.js
 // The small lane's review loop's last step each round (Archon design, section 7.2): which lenses held and whether any
 // did, so the loop closes only when no BLOCKER or HIGH is left, and the next round fixes those and reruns standards,
-// spec and the lenses that held. A lens holds on a BLOCKER or HIGH finding, on a verdict other than CLEAN (the helper
-// signs only CLEAN), or when its output can't be read as a review. Standards and spec run every round, so an empty
-// one holds too, while an empty security or design lens didn't run. A step's blocked exit, the fix step's first,
-// ends the loop with its question. Archon fails a loop that runs out of rounds, so this step counts them in the run's
-// artefacts and closes the loop on the last (`--most`), leaving a review that still holds to the signing, which raises
-// the card. It leaves the round's findings from the lenses that held in review-findings.json, for the fix step.
-// It prints { holds, held, blocked, question, options, recommend, level, topic, round, last, done }; `held` is the
-// lenses that held, comma-joined, or `none`; `done` closes the loop.
-//   node scripts/engine/review-round.js --artefacts <folder> --most <n> --standards <output> --spec <output>
-//     --security <output> --design <output> --fix <output>
+// spec, the lenses that held and any lens that applies and hasn't run yet. A lens holds on a BLOCKER or HIGH finding,
+// on a verdict other than CLEAN (the helper signs only CLEAN), or when its output can't be read as a review. Standards
+// and spec run every round, so an empty one holds too, while an empty security or design lens didn't run. A step's
+// blocked exit, the fix step's first, ends the loop with its question. A fix round whose change deletes, skips or
+// loosens a test or changes a file that steers agents ends it with that question, before any other (`--tests` and
+// `--controls`: the protected-tests and control checks after the fix). Archon fails a loop that runs out of rounds,
+// so this step counts them, from the round before's own output in Archon's record (`--round-before`, `--ran-before`),
+// never from a file an agent could write, and closes the loop on the last (`--most`), leaving a review that still
+// holds to the signing, which raises the card. It leaves the round's findings from the lenses that held in review-findings.json, for the fix step.
+// It prints { holds, held, ran, blocked, question, options, recommend, level, topic, round, last, done }; `held` is
+// the lenses that held, comma-joined, or `none`; `ran` every lens that has run in any round; `done` closes the loop.
+//   node scripts/engine/review-round.js --artefacts <folder> --most <n> --round-before <n> --ran-before <lens,lens>
+//     --standards <output> --spec <output> --security <output> --design <output> --fix <output>
+//     --tests <output> --controls <output>
 import fs from 'node:fs';
 import path from 'node:path';
 import { startedAsScript } from '../lib/started-as-script.js';
 
-export const ROUND_FILE = 'review-round.json';
 export const FINDINGS_FILE = 'review-findings.json';
 
 const LENSES = ['standards', 'spec', 'security', 'design'];
 const ALWAYS = new Set(['standards', 'spec']);
 const HOLDS = new Set(['BLOCKER', 'HIGH']);
 
+// The question a fix round's change to the tests or the agents' files stops on, as the lane's `held` wait asks it.
+const CHECKS_HELD = {
+  question: 'The fix deletes, skips or loosens a test, or changes a file that steers agents, so it stops here.',
+  options: [{ id: 'stop', label: 'Stop this work' }, { id: 'rework', label: 'Send it back for a fresh run' }],
+  recommend: 'stop',
+  level: '3',
+  topic: 'tests-or-agent-files',
+};
 const parsed = (text) => { try { return JSON.parse(text); } catch { return null; } };
 const isReview = (output) => output && ['CLEAN', 'FINDINGS'].includes(output.verdict) && Array.isArray(output.findings);
 
@@ -43,21 +54,24 @@ export async function main(argv = process.argv.slice(2), { out = (line) => proce
   const artefacts = valueOf(argv, 'artefacts');
   const most = Number(valueOf(argv, 'most'));
   if (!argv.includes('--standards') || !argv.includes('--spec') || !path.isAbsolute(artefacts) || !(Number.isInteger(most) && most >= 1)) {
-    out('usage: node scripts/engine/review-round.js --artefacts <folder> --most <n> --standards <output> --spec <output> --security <output> --design <output> --fix <output>');
+    out('usage: node scripts/engine/review-round.js --artefacts <folder> --most <n> --round-before <n> --ran-before <lens,lens> --standards <output> --spec <output> --security <output> --design <output> --fix <output> --tests <output> --controls <output>');
     return 2;
   }
   const held = LENSES.filter((name) => holds(name, valueOf(argv, name)));
-  const asking = ['fix', ...LENSES].map((name) => parsed(valueOf(argv, name))).find((output) => output?.blocked === true);
+  const before = Number(valueOf(argv, 'round-before'));
+  const round = Number.isInteger(before) && before >= 1 && valueOf(argv, 'round-before') !== '' ? before + 1 : 1;
+  const ranBefore = valueOf(argv, 'ran-before').split(',').map((name) => name.trim());
+  const ran = LENSES.filter((name) => ranBefore.includes(name) || valueOf(argv, name) !== '');
+  // After a fix (any round but the first), its change is checked again; an output that can't be read stops it too.
+  const checked = (name) => parsed(valueOf(argv, name))?.clean === true;
+  const fixHeld = round > 1 && (!checked('tests') || !checked('controls'));
+  const asking = fixHeld ? CHECKS_HELD : ['fix', ...LENSES].map((name) => parsed(valueOf(argv, name))).find((output) => output?.blocked === true) ?? null;
   const { question = '', options = [], recommend = '', level = '3', topic = '' } = asking ?? {};
-  let round = 1;
-  try { round = JSON.parse(fs.readFileSync(path.join(artefacts, ROUND_FILE), 'utf8')).round + 1; } catch { /* the first round */ }
-  if (!Number.isInteger(round) || round < 1) round = 1;
-  fs.writeFileSync(path.join(artefacts, ROUND_FILE), `${JSON.stringify({ round })}\n`);
   const findings = Object.fromEntries(held.map((name) => [name, parsed(valueOf(argv, name))?.findings ?? []]));
   fs.writeFileSync(path.join(artefacts, FINDINGS_FILE), `${JSON.stringify({ round, held, findings }, null, 2)}\n`);
   const last = round >= most;
   out(JSON.stringify({
-    holds: held.length > 0, held: held.length > 0 ? held.join(',') : 'none', blocked: Boolean(asking), question, options, recommend, level, topic,
+    holds: held.length > 0, held: held.length > 0 ? held.join(',') : 'none', ran: ran.join(','), blocked: Boolean(asking), question, options, recommend, level, topic,
     round, last, done: held.length === 0 || Boolean(asking) || last,
   }));
   return 0;

@@ -605,12 +605,62 @@
             }
           },
           {
-            "id": "lenses",
+            "id": "fix-tests",
             "depends_on": [
               "fix"
             ],
+            "when": "$LOOP_PREV.verdict.output.holds == 'true'",
+            "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/protected-check.js\" --run \"$WORKFLOW_ID\" --artefacts \"$ARTIFACTS_DIR\" --base \"$BASE_BRANCH\" --json",
+            "timeout": 120000,
+            "output_format": {
+              "type": "object",
+              "properties": {
+                "clean": {
+                  "type": "boolean"
+                },
+                "findings": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "clean",
+                "findings"
+              ]
+            }
+          },
+          {
+            "id": "fix-controls",
+            "depends_on": [
+              "fix"
+            ],
+            "when": "$LOOP_PREV.verdict.output.holds == 'true'",
+            "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/control-check.js\" --base \"$BASE_BRANCH\" --json",
+            "timeout": 120000,
+            "output_format": {
+              "type": "object",
+              "properties": {
+                "clean": {
+                  "type": "boolean"
+                },
+                "paths": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "clean",
+                "paths"
+              ]
+            }
+          },
+          {
+            "id": "lenses",
+            "depends_on": [
+              "fix",
+              "fix-tests",
+              "fix-controls"
+            ],
             "trigger_rule": "all_done",
-            "bash": "held=$LOOP_PREV.verdict.output.held; node \"$WHEELHOUSE_ROOT/scripts/engine/lenses.js\" --run \"$WORKFLOW_ID\" --artefacts \"$ARTIFACTS_DIR\" --base \"$BASE_BRANCH\" --held \"$held\"",
+            "bash": "held=$LOOP_PREV.verdict.output.held; ran=$LOOP_PREV.verdict.output.ran; node \"$WHEELHOUSE_ROOT/scripts/engine/lenses.js\" --run \"$WORKFLOW_ID\" --artefacts \"$ARTIFACTS_DIR\" --base \"$BASE_BRANCH\" --held \"$held\" --ran \"$ran\"",
             "timeout": 60000,
             "output_format": {
               "type": "object",
@@ -1160,7 +1210,7 @@
               "review-design"
             ],
             "trigger_rule": "none_failed_min_one_success",
-            "bash": "standards=$review-standards.output; spec=$review-spec.output; security=$review-security.output; design=$review-design.output; fixed=$fix.output; node \"$WHEELHOUSE_ROOT/scripts/engine/review-round.js\" --artefacts \"$ARTIFACTS_DIR\" --most 4 --standards \"$standards\" --spec \"$spec\" --security \"$security\" --design \"$design\" --fix \"$fixed\"",
+            "bash": "standards=$review-standards.output; spec=$review-spec.output; security=$review-security.output; design=$review-design.output; fixed=$fix.output; tests=$fix-tests.output; controls=$fix-controls.output; round=$LOOP_PREV.verdict.output.round; ran=$LOOP_PREV.verdict.output.ran; node \"$WHEELHOUSE_ROOT/scripts/engine/review-round.js\" --artefacts \"$ARTIFACTS_DIR\" --most 4 --round-before \"$round\" --ran-before \"$ran\" --standards \"$standards\" --spec \"$spec\" --security \"$security\" --design \"$design\" --fix \"$fixed\" --tests \"$tests\" --controls \"$controls\"",
             "timeout": 60000,
             "output_format": {
               "type": "object",
@@ -1223,6 +1273,9 @@
                 },
                 "done": {
                   "type": "boolean"
+                },
+                "ran": {
+                  "type": "string"
                 }
               },
               "required": [

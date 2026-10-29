@@ -77,24 +77,26 @@ test('the lenses step records the commit the reviews read, and whether the workt
   assert.deepEqual([JSON.parse(lines[0]).head, JSON.parse(lines[0]).clean], ['', false], 'no commit to name');
 });
 
-test('after a fix, security and design run again only where they held (small lane, ruling 5)', async () => {
+test('after a fix, security and design run again where they held, or where they apply and haven\'t run yet', async () => {
   const dir = repo();
   fs.mkdirSync(path.join(dir, 'src', 'auth'));
   fs.writeFileSync(path.join(dir, 'src', 'auth', 'login.js'), 'export const ok = true;\n');
   const visible = { pages: ['/'], styleGuide: null };
-  const held = async (list) => {
+  const all = 'standards,spec,security,design';
+  const lenses = async (held, ran = all, { cwd = dir, preview = visible } = {}) => {
     const lines = [];
-    await main(['--run', 'run-1', '--base', 'main', '--held', list], { client: client(visible), cwd: dir, out: (l) => lines.push(l) });
-    return JSON.parse(lines[0]);
+    await main(['--run', 'run-1', '--base', 'main', '--held', held, '--ran', ran], { client: client(preview), cwd, out: (l) => lines.push(l) });
+    const got = JSON.parse(lines[0]);
+    return [got.security, got.design];
   };
-  assert.deepEqual([(await held('standards,spec')).security, (await held('standards,spec')).design], [false, false]);
-  assert.deepEqual([(await held('security')).security, (await held('security')).design], [true, false]);
-  assert.equal((await held('design')).design, true);
-  const first = await held('');
-  assert.deepEqual([first.security, first.design], [true, true], 'the first round runs every lens that applies');
+  assert.deepEqual(await lenses('standards,spec'), [false, false], 'both ran and neither held');
+  assert.deepEqual(await lenses('security'), [true, false]);
+  assert.deepEqual(await lenses('design'), [false, true]);
+  assert.deepEqual(await lenses('standards', 'standards,spec'), [true, true], 'a fix that brings a lens in has it run');
+  assert.deepEqual(await lenses(''), [true, true], 'the first round runs every lens that applies');
+  assert.deepEqual(await lenses('none'), [true, true], 'a list with no lens in it runs every lens that applies');
+  assert.deepEqual(await lenses('$LOOP_PREV.verdict.output.held', '$LOOP_PREV.verdict.output.ran'), [true, true]);
   const plain = repo();
   fs.writeFileSync(path.join(plain, 'src', 'price.js'), 'export const price = () => 13;\n');
-  const lines = [];
-  await main(['--run', 'run-1', '--base', 'main', '--held', 'security'], { client: client(null), cwd: plain, out: (l) => lines.push(l) });
-  assert.equal(JSON.parse(lines[0]).security, false, 'a lens that held but no longer applies doesn\'t run');
+  assert.equal((await lenses('security', all, { cwd: plain, preview: null }))[0], false, 'a lens that held but no longer applies doesn\'t run');
 });

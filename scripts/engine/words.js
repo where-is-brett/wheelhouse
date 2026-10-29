@@ -54,6 +54,8 @@ export const STEP_WORDS = Object.freeze({
   unplan: 'taking the plan out of the change',
   review: 'checking the whole change',
   fix: 'fixing what the checks found',
+  'fix-tests': 'checking the fix left the tests alone',
+  'fix-controls': 'checking the fix left the agents\' files alone',
   verdict: 'weighing what the checks found',
   'review-blocked': 'stopped, with a question from the checks',
 });
