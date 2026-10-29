@@ -15,7 +15,8 @@ import { dataHash } from '../../../scripts/state/events.js';
 import { localViews } from '../../../scripts/hooks/session-start.js';
 import { readProfileViews } from '../../../scripts/profile/store.js';
 import { as, shortHome } from '../../helpers/homes.js';
-import { P, NOW, now, CARD, writeRecord, upClient } from './fixture.js';
+import path from 'node:path';
+import { P, NOW, now, CARD, writeRecord, upClient, put, viewsDir } from './fixture.js';
 
 function withRecord(fn) {
   const home = shortHome();
@@ -90,4 +91,31 @@ test('a view for a project with no record refuses in plain words', () => as(shor
     assert.equal(got.ok, false, view);
     assert.match(got.refused, /no record/, view);
   }
+}));
+
+// The engine's records for the sale banner: one run that finished, merged, with its cost.
+function withRuns(fn) {
+  return withRecord(async (ctx) => {
+    const views = viewsDir();
+    const runId = '7f3c2a10-1111-4222-8333-444455556666';
+    put(path.join(views, 'work.json'), { 'sale-banner': { work: { id: 'w2', at: '2026-10-29T08:00:00.000Z', data: { title: 'The sale banner', lane: 'quick' } }, approved: true } });
+    put(path.join(views, 'runs.json'), { 'sale-banner': [
+      { id: 'r1', at: '2026-10-29T09:00:00.000Z', data: { work: 'sale-banner', lane: 'quick', engine: 'archon', runId, state: 'started' } },
+      { id: 'r2', at: '2026-10-29T09:20:00.000Z', data: { work: 'sale-banner', lane: 'quick', engine: 'archon', runId, state: 'ended', outcome: 'completed', pr: 9 } },
+    ] });
+    put(path.join(views, 'costs.json'), { 'sale-banner': [{ id: 'k1', at: '2026-10-29T09:20:00.000Z', data: { work: 'sale-banner', runId, tokens: 200000, dollars: 0.4, premiumRequests: 0, minutes: 20, source: 'reported', byRole: { implement: { dollars: 0.3 }, 'review-spec': { dollars: 0.1 } } } }] });
+    put(path.join(views, 'reports.json'), { 'sale-banner': { id: 'p1', at: '2026-10-29T10:00:00.000Z', data: { outcome: 'merged', pr: 9 } } });
+    return fn({ ...ctx, runId });
+  });
+}
+
+test('the logbook build tab shows each run\'s steps in plain words and its cost', () => withRuns(async ({ source, runId }) => {
+  const got = await readView('logbook', { tab: 'build' }, source, { now });
+  assert.match(got.data.text, /Runs\nThe sale banner: finished, about \$0\.40\.\n {2}Steps: building it; checking it does what was asked\./);
+  assert.doesNotMatch(got.data.text, new RegExp(runId));
+}));
+
+test('the briefing names a shipped change with its cost', () => withRuns(async ({ source }) => {
+  const got = await readView('briefing', { reserve: 0 }, source, { now });
+  assert.match(got.data.text, /Shipped: the sale banner, for about \$0\.40\./);
 }));
