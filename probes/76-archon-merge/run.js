@@ -15,7 +15,7 @@ import path from 'node:path';
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { archonEnv, archonRun, TELEMETRY } from '../lib/archon.js';
+import { archonEnv, archonRun, TELEMETRY, unfixture } from '../lib/archon.js';
 import { run as defaultRun, withoutGitVars } from '../../scripts/lib/run.js';
 import { startedAsScript } from '../../scripts/lib/started-as-script.js';
 import { handle, callList } from './broker.js';
@@ -427,6 +427,7 @@ const PHASES = {
     fs.mkdirSync(ctx.proj, { recursive: true });
     await git(ctx, ['init', '-q', '-b', 'main']);
     copyDir(path.join(here, 'seed'), ctx.proj);
+    unfixture(ctx.proj);
     await git(ctx, ['config', 'user.name', 'Wheelhouse probe']);
     await git(ctx, ['config', 'user.email', 'probe@wheelhouse.invalid']);
     await git(ctx, ['remote', 'add', 'origin', GITHUB_URL]);

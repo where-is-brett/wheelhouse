@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { archonEnv, archonRun, cleanScratch } from '../lib/archon.js';
+import { archonEnv, archonRun, cleanScratch, unfixture } from '../lib/archon.js';
 import { run as runCommand } from '../../scripts/lib/run.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -246,6 +246,7 @@ async function sh(cmd, args, cwd) {
 async function makeProject(name, withCopies) {
   const dir = path.join(E4, `e4-${name}`);
   fs.cpSync(path.join(HERE, 'task'), dir, { recursive: true });
+  unfixture(dir);
   fs.mkdirSync(path.join(dir, '.archon', 'workflows'), { recursive: true });
   for (const file of fs.readdirSync(path.join(HERE, 'workflows'))) {
     fs.copyFileSync(path.join(HERE, 'workflows', file), path.join(dir, '.archon', 'workflows', file));

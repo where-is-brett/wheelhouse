@@ -161,3 +161,13 @@ export async function cleanScratch(root, { run = defaultRun, platform = process.
   }
   await fs.promises.rm(root, { recursive: true, force: true });
 }
+
+// Gives every file under `dir` named `<name>.fixture` its real name. Test files a probe seeds into a scratch project
+// are kept in the repository with that suffix, so the repository's own test runners never pick them up.
+export function unfixture(dir) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const file = path.join(dir, entry.name);
+    if (entry.isDirectory()) unfixture(file);
+    else if (entry.name.endsWith('.fixture')) fs.renameSync(file, file.slice(0, -'.fixture'.length));
+  }
+}

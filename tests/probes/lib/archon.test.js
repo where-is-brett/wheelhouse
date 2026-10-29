@@ -96,3 +96,15 @@ test('cleanScratch removes the scratch root', async () => {
 test('cleanScratch refuses a folder outside the temporary folder', async () => {
   await assert.rejects(cleanScratch(os.homedir()), /outside the temporary folder/);
 });
+
+test('unfixture gives seeded test files their real names', async () => {
+  const { unfixture } = await import('../../../probes/lib/archon.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wheelhouse-archon-test-'));
+  fs.mkdirSync(path.join(dir, 'test'));
+  fs.writeFileSync(path.join(dir, 'test', 'cart.test.ts.fixture'), 'x');
+  fs.writeFileSync(path.join(dir, 'README.md'), 'y');
+  unfixture(dir);
+  assert.deepEqual(fs.readdirSync(path.join(dir, 'test')), ['cart.test.ts']);
+  assert.ok(fs.existsSync(path.join(dir, 'README.md')));
+  await cleanScratch(dir);
+});

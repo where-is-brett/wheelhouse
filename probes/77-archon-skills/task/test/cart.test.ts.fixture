@@ -1,4 +1,4 @@
-// probes/77-archon-skills/task/test/cart.test.ts
+// probes/77-archon-skills/task/test/cart.test.ts.fixture (seeded as cart.test.ts)
 import { test, expect } from 'bun:test';
 import { subtotal } from '../src/cart.ts';
 

@@ -1,4 +1,4 @@
-// probes/76-archon-merge/seed/tests/add.test.js
+// probes/76-archon-merge/seed/tests/add.test.js.fixture (seeded as add.test.js)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { add, greeting } from '../src/add.js';
