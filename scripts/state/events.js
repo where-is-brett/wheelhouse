@@ -19,7 +19,7 @@ export const PLAIN_KINDS = [
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
   'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey', 'column-ready', 'premium-rest',
-  'run', 'ask', 'cost', 'preview', 'lesson', 'incident-closed',
+  'run', 'ask', 'cost', 'preview', 'lesson', 'incident-closed', 'reproduced',
 ];
 // `control-file` is the watcher's own finding (ruling P7-33): signed, so no session can write one. So is `usage-card`,
 // the front desk's session start's offer (design section 14.6): a click on its card's switch is the director's
@@ -39,12 +39,13 @@ export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 
 // itself), so no session can mark a Thoroughness column ready.
 // The engine's records are the helper's too: it writes `run`, `ask`, `cost` and `preview` from what the engine reports.
 // `incident-closed` is the helper's own reading that a red-main incident is over (the main line's checks green again).
+// `reproduced` is the helper's own keeping of a bug's reproduction, read from the engine's record of the bug lane's steps.
 // An incident's fields that make it a red main line's (scripts/engine/fix-main.js): only the helper's card router writes
 // them, since such an incident holds all work and names the pull request the director is told to undo.
 export const RED_MAIN_FIELDS = ['kind', 'suspect', 'work'];
 export const RED_MAIN_OWN = 'only the helper records a red main line\'s incident';
 
-export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed'];
+export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 
 const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main'];
@@ -332,6 +333,8 @@ const PLAIN_SHAPES = {
   lesson: { must: ['work', 'text'], may: [] },
   // The end of a red-main incident: the incident and why it ended.
   'incident-closed': { must: ['incident', 'why'], may: [] },
+  // A bug's reproduction, kept once for its work: the commit that proved it red, its done check and its test files.
+  reproduced: { must: ['work', 'runId', 'commit', 'check'], may: ['files'] },
 };
 // The lanes a run may be of: the First Mate's, a feature's slices and the helper's own fix for a red main line.
 const RUN_LANES = Object.freeze([...LANES, 'slice', 'fix-main']);
@@ -507,6 +510,14 @@ function checkPlain(kind, data) {
   } else if (kind === 'incident-closed') {
     slug('incident');
     text('why');
+  } else if (kind === 'reproduced') {
+    slug('work');
+    text('runId');
+    if (typeof data.commit !== 'string' || !/^[0-9a-f]{40}$/.test(data.commit)) bad('needs the commit that proved it red');
+    const { check } = data;
+    const keys = isPlain(check) ? Object.keys(check).sort().join(',') : '';
+    if (!((keys === 'test' && isText(check.test)) || (keys === 'command,expect' && isText(check.command) && check.expect === 0))) bad('needs its check to be a test, or a command that ends 0');
+    if (data.files !== undefined && !(Array.isArray(data.files) && data.files.every(isText))) bad('has files that are not a list of paths');
   } else if (kind === 'amendment') {
     slug('work');
     text('change');

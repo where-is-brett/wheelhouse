@@ -40,6 +40,13 @@ test('checkPack passes the shipped pack', () => {
 
 const fixMain = () => readWorkflow(fs.readFileSync(path.join(PACK_DIR, 'wheelhouse-fix-main.yaml'), 'utf8'));
 
+test('checkPack accepts wheelhouse-bug, which takes the work input', () => {
+  const bug = readWorkflow(fs.readFileSync(path.join(PACK_DIR, 'wheelhouse-bug.yaml'), 'utf8'));
+  assert.equal(bug.name, 'wheelhouse-bug');
+  assert.equal(bug.inputs.work.required, true);
+  assert.deepEqual(problems(PACK_DIR), []);
+});
+
 test('checkPack accepts wheelhouse-fix-main, which takes the work input', () => {
   assert.equal(fixMain().name, 'wheelhouse-fix-main');
   assert.equal(fixMain().inputs.work.required, true);
