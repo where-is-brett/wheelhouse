@@ -1015,9 +1015,11 @@ export async function uninstallPlan({
 
   // In order: the phases, newest first within each; Stop and the line for Desktop around them, and
   // the helper last of all, after its answer.
-  // The engine's runs are cancelled first of all, on the last project, while its folder is there to cancel them.
+  // The engine's runs are cancelled first of all, on the last project, while its folder is there to cancel them. While
+  // other projects stay on it, only this project's own runs are (`engine-runs`).
   const stops = [
     ...(last && exists(engineDir()) ? ['engine'] : []),
+    ...(!last && slug !== null && exists(engineDir()) ? ['engine-runs'] : []),
     ...(slug !== null ? ['foreman', 'watcher'] : []),
     ...(last ? ['receiver'] : []),
   ].map((what) => ({ phase: 'stop', put: 'stop', what }));

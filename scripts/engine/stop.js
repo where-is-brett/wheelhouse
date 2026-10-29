@@ -201,6 +201,28 @@ export async function endRun({
   return { ended, survivors, leftAlone };
 }
 
+// cancelRuns({ engine, runIds, end }) -> { cancelled, refused, survivors }
+// Only the runs named, as one project's uninstall cancels its own while other projects stay on the one engine (part
+// 3f, M4): each the engine says is still going or paused is cancelled, then its process tree ended by pid (endRun). A run
+// the engine says has ended, or doesn't know, is left. `refused` names the runs whose cancel the engine refused, and
+// `survivors` the processes still left, by name.
+export async function cancelRuns({ engine, runIds = [], reason = 'Uninstall', end = (run) => endRun({ engine, run }) } = {}) {
+  const cancelled = [];
+  const refused = [];
+  const survivors = [];
+  for (const id of runIds) {
+    let status = 'unknown';
+    try { status = (await engine.inspect(id))?.status ?? 'unknown'; } catch { /* asked to cancel all the same */ }
+    if (status === 'ended') continue;
+    let got;
+    try { got = await engine.act(id, { cancel: { reason } }); } catch { got = null; }
+    if (got?.ok === true) cancelled.push(id);
+    else if (status === 'running' || status === 'paused') refused.push(id);
+    survivors.push(...(await end({ id })).survivors);
+  }
+  return { cancelled, refused, survivors };
+}
+
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 // What All stop did to the engine, in plain words for the Logbook.

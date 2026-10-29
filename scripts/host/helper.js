@@ -111,6 +111,9 @@ import { ALLOWANCE_LABELS, allowanceWindowLines, isBuildQuestion } from '../prot
 import { agentOfConfig } from '../agents/project-agent.js';
 import { routingInForce } from '../routing/in-force.js';
 import { bindingsOf } from '../engine/order.js';
+import { SWITCH_BRANCH, SWITCH_WORK, engineChosen, engineReady, switchBranch } from '../engine/switch.js';
+import { SWITCH_TITLE, switchBody, switchChange, switchTexts } from '../engine/switch-pr.js';
+import { ENGINE_FILES, POLICY_FILE, mirrorRulesFile } from '../engine/parts.js';
 import { briefHash, featurePaths } from '../feature/files.js';
 import { readCapped } from '../feature/status.js';
 
@@ -848,6 +851,7 @@ const PLACED_ROUTES = [
   '/desk/read', '/desk/act', '/desk/watch',
   '/lean/status', '/lean/merge', '/lean/undo', '/lean/copy',
   '/survey/carry-on', '/survey/archive', '/survey/restore', '/premium/card', '/premium/check', '/premium/state', '/premium/failed',
+  '/engine-switch',
 ];
 
 // A Lean project (ruling P5-9) has no code host and no connection: only these routes serve it, on
@@ -964,6 +968,8 @@ export async function startHelper({
   pluginRoot = OWN_ROOT,
   // Wheelhouse's own repository, whose release tags the gate reads (ruling R132).
   wheelhouseRepo = WHEELHOUSE_URL,
+  // The address a switched project's fetch-mirror rule names: its recorded one; a test whose remote is a folder gives one.
+  mirrorAddress = (record) => record.remoteUrl,
   // Setup's steps (a module exporting STEPS), the user's own home, whose Projects folder setup may
   // act in, and how a long step's own process is started (scripts/setup/engine.js).
   setupSteps = STEPS_MODULE, userHome = os.homedir(), spawn = nodeSpawn,
@@ -2458,7 +2464,7 @@ export async function startHelper({
     return oneAtATime(`mirror:${project}`, async () => {
       const mirror = await mirrorFor(project, ctx);
       return changedPaths({
-        mirror, host: recordOf(project).host, number, headSha, defaultBranch, run: keyedFor(ctx), read: [SETTINGS_FILE],
+        mirror, host: recordOf(project).host, number, headSha, defaultBranch, run: keyedFor(ctx), read: [SETTINGS_FILE, ...ENGINE_FILES],
       });
     });
   }
@@ -3209,8 +3215,12 @@ export async function startHelper({
       }
     }
     const pinsOnly = releaseCheck.ok === true;
+    // The switch to the new engine's own pull request (part 3f): the helper wrote every byte of it, so it has no review
+    // and no provenance to check. It touches .archon/, a guardrail, so the director's approval stands in for the
+    // guardrail condition, as for a restore.
+    const switching = readable && !restore && switchChange({ headRef: pr.headRef, paths: changes.paths, files: changes.files }).ok === true;
     // A restore is a release that passed review before; the director's approval stands in for it.
-    const touchesGuardrails = (!restore && !pinsOnly && classified.touchesGuardrails) || body.touchesGuardrails === true;
+    const touchesGuardrails = (!restore && !pinsOnly && !switching && classified.touchesGuardrails) || body.touchesGuardrails === true;
     const found = { guardrailPaths: classified.guardrailPaths, criticalAreas: classified.criticalAreas };
     const release = pinsOnly ? { release: { kind: 'pins-only', ref: releaseCheck.ref, sha: releaseCheck.sha } } : {};
     const ci = await adapter.ciState(headSha);
@@ -3231,7 +3241,7 @@ export async function startHelper({
     // Work shown first needs the director's approval of the pull request. When the changed files
     // couldn't be read, the change already counts as touching the guardrails.
     const shownFirst = readable && shownFirstNeeded({ views, headRef: pr.headRef, paths: changes.paths, config: changes.config });
-    const approvalRequired = body.approvalRequired === true || touchesGuardrails || restore || shownFirst;
+    const approvalRequired = body.approvalRequired === true || touchesGuardrails || restore || switching || shownFirst;
     const holdsLock = await lockHeld(project, ctx);
     const { upToDate, review, approval } = await gateRecords({ project, number, headSha, views, adapter, compare: approvalRequired }, ctx);
     // The kinds of review that count for the agent this computer runs, from the default branch's configuration:
@@ -3249,7 +3259,7 @@ export async function startHelper({
       headSha,
       ci,
       // Every merge needs a review; the caller may only add the approval and guardrail conditions.
-      reviewRequired: !restore,
+      reviewRequired: !restore && !switching,
       approvalRequired,
       touchesGuardrails,
       review,
@@ -3261,7 +3271,7 @@ export async function startHelper({
       // What /pr/open recorded built the pull request's branch, from the signed state, against this
       // Wheelhouse's own manifest (a pull request opened before that record names it in its body). A
       // verified restore has none: it puts back a release that merged before (Ruling 105).
-      provenance: restore ? { ok: true } : checkProvenance({ recorded: views.provenance?.[pr.headRef], body: pr.body, root: pluginRoot }),
+      provenance: restore || switching ? { ok: true } : checkProvenance({ recorded: views.provenance?.[pr.headRef], body: pr.body, root: pluginRoot }),
     });
     if (!decision.allow || stateReasons.length > 0) {
       const said = restoreCheck.matched && !restore ? [`restore pull request: ${restoreCheck.why}`] : [];
@@ -3320,6 +3330,126 @@ export async function startHelper({
     return { ok: true, line: ciPushLine(entry.branch, entry.sha) };
   }
 
+
+  // --- the switch to the new engine, for a project set up before it (part 3f) ---
+  // Once the director confirmed the switch (the `engine` setting is Archon) and while the engine can't yet build the
+  // project, each call takes the next step: the policy on the default branch already, so only the project's fetch-mirror
+  // rule is left; else a pull request adding the engine's files, made here; else that pull request merged through the
+  // gate, once the director approved it. The engine is on from the rule (engineReady). The switch's own record, beside
+  // the project's engine records, keeps its open pull request: { pr, head }.
+  const switchFile = (project) => path.join(engineDirOf(stateDir(project)), 'switch.json');
+  function readSwitch(project) {
+    try {
+      const kept = JSON.parse(fs.readFileSync(switchFile(project), 'utf8'));
+      return Number.isInteger(kept?.pr) && kept.pr > 0 && FULL_SHA.test(kept?.head ?? '') ? kept : null;
+    } catch {
+      return null;
+    }
+  }
+  function writeWhole(file, value) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const temp = `${file}.${process.pid}.tmp`;
+    try {
+      fs.writeFileSync(temp, `${JSON.stringify(value, null, 2)}\n`);
+      fs.renameSync(temp, file);
+    } catch (error) {
+      fs.rmSync(temp, { force: true });
+      throw error;
+    }
+  }
+  // The project's fetch-mirror rule in the engine folder's list, as setup's step 7 writes it for a new setup. Only an
+  // https address can be read from the mirror.
+  function writeMirrorRule(project) {
+    const url = mirrorAddress(recordOf(project));
+    if (typeof url !== 'string' || !/^https:\/\/\S+$/.test(url)) return false;
+    let rules = {};
+    try {
+      const read = JSON.parse(fs.readFileSync(mirrorRulesFile(), 'utf8'));
+      if (read !== null && typeof read === 'object' && !Array.isArray(read)) rules = read;
+    } catch { /* none yet */ }
+    writeWhole(mirrorRulesFile(), { ...rules, [project]: url });
+    return true;
+  }
+  // The approval the merge refusal names, when it is the only condition unmet, as the foreman reads it.
+  function approvalOnly(answer, pr) {
+    const needs = answer?.needs;
+    if (needs === null || typeof needs !== 'object' || Object.keys(needs).length !== 1 || !Array.isArray(answer.reasons) || answer.reasons.length !== 1) return null;
+    const a = needs.approval;
+    return a?.pr === pr && typeof a.commit === 'string' && FULL_SHA.test(a.commit) ? a : null;
+  }
+  const SWITCH_NO_HTTPS = 'the project\'s address isn\'t an https one, so the build engine can\'t read it from Wheelhouse\'s own copy';
+
+  async function doEngineSwitch({ project }, ctx) {
+    if (stopped()) return STOP_REFUSAL;
+    if (recordOf(project).host !== 'github' || engineReady(project)) return { ok: true, step: engineReady(project) ? 'on' : 'off' };
+    const views = buildViews(listEvents(stateDir(project), { report: () => {} }), ownKeyOnly(), { now });
+    if (!engineChosen(views.settings, { now: now() })) return { ok: true, step: 'off' };
+    const on = () => (writeMirrorRule(project) ? { ok: true, step: 'on' } : { ok: false, refused: SWITCH_NO_HTTPS });
+    await lookAtMirror(ctx, project);
+    const adapter = await ctx.adapter();
+    const defaultBranch = await defaultBranchOf(project, adapter);
+    // The policy on the default branch already: the switch merged, here or by hand on the host.
+    const base = await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ must }) => {
+      const { head } = await defaultHistory(must, defaultBranch);
+      const policy = await must(['ls-tree', '-z', '--name-only', BASE_REF, '--', POLICY_FILE], 'looking for the build engine\'s policy');
+      return { head, there: policy !== '' };
+    }));
+    if (base.there) return on();
+    const kept = readSwitch(project);
+    const pr = kept ? await adapter.prState(kept.pr) : null;
+    if (pr?.state === 'open' && SWITCH_BRANCH.test(typeof pr.headRef === 'string' ? pr.headRef : '')) {
+      const merged = await oneAtATime(`merge:${project}`, () => doMerge({ project, number: kept.pr }, ctx));
+      if (merged?.ok === true && merged.merged === true) return on();
+      const approval = approvalOnly(merged, kept.pr);
+      if (approval === null) return { ok: true, step: 'waiting', pr: kept.pr, why: merged?.refused ?? 'the gate gave no answer' };
+      // The director's approval is all it waits for: the click the gate waits for, from which the front desk makes
+      // the usual approval card, once.
+      const asked = listEvents(stateDir(project), { report: () => {} }).some((e) => e.kind === 'gate-asks' && e.data?.pr === kept.pr
+        && e.data.ask === 'approval' && e.data.sha === approval.commit);
+      if (!asked) await engineWrite(project, 'gate-asks', { work: SWITCH_WORK, pr: kept.pr, ask: 'approval', sha: approval.commit });
+      return { ok: true, step: 'approve', pr: kept.pr, head: approval.commit };
+    }
+    // Closed without merging, on the host: the director turned it down there, so no other is opened in its place.
+    if (pr?.state === 'closed') return { ok: true, step: 'closed', pr: kept.pr };
+    // None open: one commit on top of the default branch, made in the mirror, adding the engine's files.
+    let login;
+    try { login = await adapter.login(); } catch { login = null; }
+    const texts = switchTexts(login);
+    if (texts === null) return { ok: false, refused: 'GitHub didn\'t say which account Wheelhouse signs its reviews as, so the build engine\'s policy can\'t name it' };
+    const branch = switchBranch(base.head);
+    const made = await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ mirror, keyed }) => {
+      const index = path.join(mirror, 'wheelhouse-switch.index');
+      const at = now().toISOString();
+      const env = { GIT_INDEX_FILE: index, ...WHEELHOUSE_AUTHOR, GIT_AUTHOR_DATE: at, GIT_COMMITTER_DATE: at };
+      const git = async (args, what, input = '') => {
+        const got = await keyed('git', [...NO_HOOKS, ...args], { cwd: mirror, input, env });
+        if (got.code !== 0) throw new Error(`${what} failed`);
+        return got.stdout.trim();
+      };
+      try {
+        await git(['read-tree', base.head], 'reading the default branch');
+        for (const file of ENGINE_FILES) {
+          const blob = await git(['hash-object', '-w', '--stdin'], 'writing the build engine\'s files', texts[file]);
+          await git(['update-index', '--add', '--cacheinfo', `100644,${blob},${file}`], 'adding the build engine\'s files');
+        }
+        const tree = await git(['write-tree'], 'making the switch\'s tree');
+        const commit = await git(['commit-tree', '--no-gpg-sign', tree, '-p', base.head, '-m', SWITCH_TITLE], 'making the switch\'s commit');
+        await git(['update-ref', `refs/heads/${branch}`, commit], 'keeping the switch\'s commit');
+        return { commit, mirror };
+      } finally {
+        fs.rmSync(index, { force: true });
+      }
+    }));
+    try {
+      const pushed = await pushFrom({ project, branch, source: made.mirror, root: made.mirror, own: true, refspec: branch, defaultBranch }, ctx);
+      if (!pushed.ok) return { ok: false, refused: pushed.rejected ? `the branch ${branch} is already on the host with other contents` : pushed.refused };
+    } finally {
+      await oneAtATime(`mirror:${project}`, () => unkeyed('git', ['update-ref', '-d', `refs/heads/${branch}`], { cwd: made.mirror }));
+    }
+    const opened = await adapter.openPr({ head: branch, base: defaultBranch, title: SWITCH_TITLE, body: switchBody(login) });
+    writeWhole(switchFile(project), { pr: opened.number, head: made.commit });
+    return { ok: true, step: 'opened', pr: opened.number, head: made.commit };
+  }
 
   // --- the runbook (design section 12.7) ---
   // These routes answer under STOP. Each step but the first needs the director's
@@ -3959,6 +4089,7 @@ export async function startHelper({
     '/pull': (body, ctx) => doPull(body, ctx),
     '/base/fetch': (body, ctx) => doFetchBase(body, ctx),
     '/merge': (body, ctx) => oneAtATime(`merge:${body.project}`, () => doMerge(body, ctx)),
+    '/engine-switch': (body, ctx) => oneAtATime(`switch:${body.project}`, () => doEngineSwitch(body, ctx)),
     '/review/run': async (body, ctx) => {
       try {
         return await doReviewRun(body, ctx);
@@ -4005,6 +4136,8 @@ export async function startHelper({
         views,
         // The names the project goes by, which the front desk's plain words leave alone: it can't read the project's record.
         names: namesOf(project),
+        // Whether the new engine can build the project (scripts/engine/switch.js), for the foreman's queue.
+        engineOn: engineReady(project),
         ...(stopped() ? { stop: true } : {}),
         ...(cards === true ? { cards: events.filter((e) => e.kind === 'card') } : {}),
         ...(answers === true ? { answers: events.filter((e) => e.kind === 'card-answer') } : {}),

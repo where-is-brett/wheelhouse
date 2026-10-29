@@ -21,9 +21,10 @@ export function newEngineLanes(settingsView, { now = new Date() } = {}) {
   return Array.isArray(settings.engineLanes?.value) ? settings.engineLanes.value : [];
 }
 
-// Whether the new engine builds `id`, from the project's views.
+// Whether the new engine builds `id`, from the project's views. `engineOn` is the helper's word that the engine can
+// build the project (scripts/engine/switch.js): without it, the old engine builds everything, as before the switch.
 export function onNewEngine(views, id, { now = new Date() } = {}) {
   const entry = isPlain(views?.work) ? views.work[id] : undefined;
-  if (!isPlain(entry?.work?.data)) return false;
+  if (views?.engineOn !== true || !isPlain(entry?.work?.data)) return false;
   return newEngineLanes(views.settings, { now }).includes(entry.work.data.lane) && !startedOnOldEngine(views.features, id, entry);
 }

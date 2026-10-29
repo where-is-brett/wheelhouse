@@ -19,7 +19,7 @@ import { profileDir, stateDir } from '../lib/paths.js';
 import { BRIEFING_GAP_HOURS } from '../lib/core-numbers.js';
 import { wordsOf } from './context.js';
 import { readProject } from '../lib/projects.js';
-import { switchDue, SWITCH_SETTING } from '../engine/switch.js';
+import { switchDue, engineChosen, engineReady, SWITCH_SETTING } from '../engine/switch.js';
 
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -88,12 +88,16 @@ export async function visitLearning({ project, cwd, client, at, boardAsks, platf
     ...settingProposals(events, profile, { now: at, outcomes, boardAsks }),
   ];
   for (const data of proposals) await tried(() => writeSetting({ client, cwd, data, words }));
-  // The switch to the new engine, offered once to a project set up before it (scripts/engine/switch.js).
+  // The switch to the new engine, offered once to a project set up before it (scripts/engine/switch.js). Once it is
+  // confirmed, each visit asks the helper for the switch's next step, until the engine can build the project: its pull
+  // request opened, the director's approval asked for, then its merge.
+  const record = attempt(() => readProject(project));
   const due = attempt(() => switchDue({
-    settings: views.settings, unconfirmed: views.unconfirmed, cards: events.filter((e) => e.kind === 'card').map((e) => e.data),
-    record: readProject(project), folder: readProject(project)?.folder, platform,
+    settings: views.settings, unconfirmed: views.unconfirmed, cards: events.filter((e) => e.kind === 'card').map((e) => e.data), record, platform,
   }), false);
   if (due) await tried(() => writeSetting({ client, cwd, data: SWITCH_SETTING, words }));
+  const switching = record?.host === 'github' && attempt(() => engineChosen(views.settings, { now: at }) && !engineReady(project), false);
+  if (switching) await tried(() => client.engineSwitch({ cwd }));
 }
 
 // The survey a second look follows (one taken again after the host was missed), when a briefing or

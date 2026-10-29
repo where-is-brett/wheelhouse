@@ -222,6 +222,11 @@ export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal
       throw new Error('The merge queue\'s verdict comment is for GitHub only');
     },
 
+    // The merge queue's policy names a GitHub login; there is none to name on GitLab.
+    async login() {
+      throw new Error('The merge queue\'s policy is for GitHub only');
+    },
+
     issue: {
       async create({ title, body, labels }) {
         const args = ['issue', 'create', ...R, `--title=${title}`, '--description-file', '-', ...labels.map((l) => `--label=${l}`), '--yes'];

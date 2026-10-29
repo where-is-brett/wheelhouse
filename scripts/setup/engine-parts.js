@@ -11,10 +11,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { engineDir } from '../lib/paths.js';
-import { engineWanted, engineInstalled, POLICY_FILE, ARCHON_CONFIG_FILE, ENGINE_FILES, WORKTREE_PATH } from '../engine/parts.js';
+import { engineWanted, engineInstalled, POLICY_FILE, ARCHON_CONFIG_FILE, ENGINE_FILES, WORKTREE_PATH, mirrorRulesFile } from '../engine/parts.js';
 
 // What only reads, kept in scripts/engine/parts.js so the mod's bridge can reach it without setup's writers.
-export { engineWanted, engineInstalled, POLICY_FILE, ARCHON_CONFIG_FILE, ENGINE_FILES, WORKTREE_PATH };
+export { engineWanted, engineInstalled, POLICY_FILE, ARCHON_CONFIG_FILE, ENGINE_FILES, WORKTREE_PATH, mirrorRulesFile };
 import { installEngine } from '../engine/install.js';
 import { newId } from './journal.js';
 
@@ -115,9 +115,3 @@ export const archonConfigText = () => [
 export function engineFileTexts(login) {
   return { [POLICY_FILE]: maintainersText([login]), [ARCHON_CONFIG_FILE]: archonConfigText() };
 }
-
-// The fetch mirror's rule (3b): Archon's git reads the project's repository from the helper's mirror in the engine
-// folder, so no key reaches Archon. The rule can't go in the project's own git config, which setup's fenced git
-// refuses to work in once it holds a url rule (ruling R112), so it goes in the engine folder's list, which every
-// Archon command reads into its environment (scripts/engine/archon/env.js): { <project>: <its address> }.
-export const mirrorRulesFile = (engine = engineDir()) => path.join(engine, 'mirrors', 'rules.json');
