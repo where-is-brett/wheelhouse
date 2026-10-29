@@ -119,3 +119,11 @@ test('the briefing names a shipped change with its cost', () => withRuns(async (
   const got = await readView('briefing', { reserve: 0 }, source, { now });
   assert.match(got.data.text, /Shipped: the sale banner, for about \$0\.40\./);
 }));
+
+test('the briefing says how many cards wait for another day, and what was answered for the director', () => withRuns(async ({ source }) => {
+  put(path.join(viewsDir(), 'cardsWaiting.json'), { count: 1 });
+  put(path.join(viewsDir(), 'engineNotes.json'), [{ id: 'n1', at: '2026-10-29T11:00:00.000Z', data: { about: 'engine', words: 'The build\'s question was answered as recommended.', level: 2 } }]);
+  const got = await readView('briefing', { reserve: 0 }, source, { now });
+  assert.match(got.data.text, /One question waits for another day, to keep to your cards a day\./);
+  assert.match(got.data.text, /Answered for you: The build's question was answered as recommended\./);
+}));

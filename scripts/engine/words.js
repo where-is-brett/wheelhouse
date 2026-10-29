@@ -107,7 +107,8 @@ export function runningLines(views, { now = new Date() } = {}) {
 // The build tab's lines: a heading, then each run with its cost and its steps in order. None when there are no runs.
 export function buildLines(views, { now = new Date() } = {}) {
   const runs = runsOf(views);
-  if (runs.length === 0) return [];
+  const notes = Array.isArray(views?.engineNotes) ? views.engineNotes.slice(-NOTES_SHOWN).map((e) => `  ${e.data.words}`) : [];
+  if (runs.length === 0) return notes.length > 0 ? ['From the build', ...notes] : [];
   const lines = ['Runs'];
   for (const r of runs) {
     const cost = costOf(views, r.work, r.runId);
@@ -116,7 +117,17 @@ export function buildLines(views, { now = new Date() } = {}) {
     const steps = isPlain(cost?.byRole) ? [...new Set(Object.keys(cost.byRole).map(stepWords))] : [];
     if (steps.length > 0) lines.push(`  Steps: ${steps.join('; ')}.`);
   }
-  return lines;
+  return notes.length > 0 ? [...lines, 'From the build', ...notes] : lines;
+}
+
+// The build tab shows the latest of the card router's lines.
+const NOTES_SHOWN = 5;
+
+// The briefing's lines for the level-2 answers the router gave since `since` (the director hears of each).
+export function answeredLines(views, { since = null } = {}) {
+  return (Array.isArray(views?.engineNotes) ? views.engineNotes : [])
+    .filter((e) => e.data?.level === 2 && (!since || String(e.at) >= since))
+    .map((e) => `Answered for you: ${e.data.words}`);
 }
 
 // The briefing's shipped lines: each work merged since `since`, with the cost of its runs.

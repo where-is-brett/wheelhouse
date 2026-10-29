@@ -13,7 +13,7 @@ import { cardButtons } from '../mod/buttons.js';
 import { dataHash } from '../state/events.js';
 import { contextText } from './context.js';
 import { paneFrom } from './mod-pane.js';
-import { buildLines, runningLines, shippedLines } from '../engine/words.js';
+import { answeredLines, buildLines, runningLines, shippedLines } from '../engine/words.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const flat = (x) => (typeof x === 'string' ? x.replace(/\s+/g, ' ').trim() : x);
@@ -185,7 +185,7 @@ async function engineBriefing(source, { since }) {
   try { views = (await source.views({}))?.views ?? {}; } catch { views = {}; }
   if (!isPlain(views)) return [];
   const waiting = Array.isArray(views.cardsWaiting) ? views.cardsWaiting.length : Number.isInteger(views.cardsWaiting?.count) ? views.cardsWaiting.count : 0;
-  return [...shippedLines(views, { since }), ...(waiting > 0 ? [waitingLine(waiting)] : [])];
+  return [...shippedLines(views, { since }), ...answeredLines(views, { since }), ...(waiting > 0 ? [waitingLine(waiting)] : [])];
 }
 export const waitingLine = (n) => `${n === 1 ? 'One question waits' : `${n} questions wait`} for another day, to keep to your cards a day.`;
 

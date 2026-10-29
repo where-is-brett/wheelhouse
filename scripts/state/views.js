@@ -324,6 +324,9 @@ export function cardOutcomes(events, enrolled) {
 // longer, so forgetting a concept fails safe (design section 5.3).
 export const countsAtOnce = (e) => e.kind === 'setting' && typeof e.data?.key === 'string' && e.data.key.startsWith('known:') && e.data.value === false;
 
+// The most of the card router's Logbook lines the views keep.
+const ENGINE_NOTES = 30;
+
 // The build loop's views: work and its approvals, features, questions and incidents.
 // Every approval, answer, amendment and lift here is read from a verified action,
 // so a plain event of any kind stands in for none of them.
@@ -432,6 +435,9 @@ function buildLoopViews(sorted, enrolled) {
   return {
     work, features, reports, questions, incidents: { open: [...open.values()] },
     runs: byWork('run'), asks: byWork('ask'), costs: byWork('cost'), previews: byWork('preview'), lessons: byWork('lesson'),
+    // The card router's Logbook lines, the latest last, and how many of its cards wait for another day.
+    engineNotes: sorted.filter((e) => e.kind === 'note' && e.data?.about === 'engine' && typeof e.data.words === 'string').slice(-ENGINE_NOTES).map(mark),
+    cardsWaiting: { count: Number.isInteger(sorted.filter((e) => e.kind === 'note' && e.data?.about === 'cards-waiting').at(-1)?.data?.count) ? sorted.filter((e) => e.kind === 'note' && e.data?.about === 'cards-waiting').at(-1).data.count : 0 },
   };
 }
 
