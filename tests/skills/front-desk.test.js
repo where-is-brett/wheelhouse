@@ -464,3 +464,13 @@ test('the playbooks point at Why? and Suggest a change…, and none offers Expla
     assert.doesNotMatch(read(file), /Explain more/, `${file} offers no Explain more`);
   }
 });
+
+// A feature's design ends with its slices (Archon design, section 7.2): the intake shows the block, and its example is
+// one the engine reads as written.
+test('the intake\'s feature route shows the slices block, and its example is read as written', async () => {
+  const { readSlices, SLICES_FENCE } = await import('../../scripts/engine/feature.js');
+  assert.ok(intake.includes(`\`\`\`${SLICES_FENCE}`), 'the intake shows the slices block');
+  for (const word of ['"flag"', '"demo"', '"done"', 'midpoint']) assert.ok(intake.includes(word), `the intake names ${word}`);
+  const design = readSlices(intake);
+  assert.ok(design.slices.length >= 2);
+});

@@ -68,9 +68,27 @@ At Lean, where no Wheelhouse command runs, follow wheelhouse-lean's Intake at Le
 |---|---|---|
 | "do it" | Quick | Never do it yourself. A short brief; a `work` event, as for a bug but in the `quick` lane. A small removal or an obvious fix is not shown first: record it with `visible: false` and ask no card; it is reported after. Work you would show the director first is the small lane: `record` refuses the quick lane with `visible: true`. |
 | "a small change" | Small | The brief; a `work` event naming it; an `approve-work` card (lane `small`, with `shownFirst`) |
-| "a written design" | Feature | The design; a `work` event naming it; an `approve-work` card (lane `feature`, with `shownFirst`) |
+| "a written design" | Feature | The design, ending with its slices (below); a `work` event naming it; an `approve-work` card (lane `feature`, with `shownFirst`) |
 
 A change users would see that leaves a choice to make is the small lane at least, never quick. An approved design or brief is in the Bosun's queue. **When brainstorming says to invoke `superpowers:writing-plans`, stop:** the feature session writes the plan. You decide at approval whether users would see it (`shownFirst`); when in doubt, show. The lane only goes up.
+
+**A feature's slices.** The design ends with one `wheelhouse-slices` block, which the director approves with the rest. The build engine runs each slice in turn, merged behind the feature's switch, off, and switches it on only once the director approves:
+
+```wheelhouse-slices
+{
+  "goal": "Customers see their past orders",
+  "flag": { "name": "order-history" },
+  "demo": "midpoint",
+  "slices": [
+    { "title": "List the orders", "goal": "A page lists a customer's past orders, newest first", "done": [{ "test": "orders list newest first" }, { "page": "/orders", "mustShow": "Your orders" }] },
+    { "title": "Filter by year", "goal": "The list filters by year", "done": [{ "test": "orders filter by year" }], "notInScope": ["Exporting orders"] }
+  ]
+}
+```
+
+- `slices`: one to twelve, in the order they are built, each a vertical slice a person could use. Each has its `title`, its `goal` and its `done` checks, in the work order's three forms: a test's name, `{ "command", "expect" }`, or a page and what must show on it. `notInScope` and `protectedFiles` are optional.
+- `flag`: the switch's `name`, a short slug. With nothing else, the switch is a key in `config/feature-flags.json`. Where the project sets its switches its own way, say how in `"how"`, in a line.
+- `demo`: `midpoint` when the director chose a demo half way, otherwise `end`.
 
 **Alongside any route:** `mattpocock-skills:domain-modeling` when a new term or domain decision appears; `mattpocock-skills:prototype` for a visible change, after it is sized and before the director approves it.
 
