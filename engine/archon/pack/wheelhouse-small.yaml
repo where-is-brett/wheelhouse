@@ -182,7 +182,7 @@
       "depends_on": [
         "each"
       ],
-      "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/tasks-done.js\" --artefacts \"$ARTIFACTS_DIR\" --base \"$BASE_BRANCH\"",
+      "bash": "records=$each.output; node \"$WHEELHOUSE_ROOT/scripts/engine/tasks-done.js\" --artefacts \"$ARTIFACTS_DIR\" --base \"$BASE_BRANCH\" --records \"$records\"",
       "timeout": 60000,
       "output_format": {
         "type": "object",

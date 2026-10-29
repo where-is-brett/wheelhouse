@@ -1,8 +1,10 @@
 // scripts/engine/task-record.js
-// The last step of each small-lane task (Archon design, section 7.2). A task block can't hold a wait, so a task whose
-// builder took the blocked exit leaves its question in the run's artefacts: the tasks after it skip, and the lane asks
-// once all have settled. The first block is kept; a later one changes nothing. The build step's output comes on
-// standard input; a task that skipped gives none. It prints { blocked }.
+// The last step of each small-lane task (Archon design, section 7.2), and the block's output. A task block can't hold
+// a wait, so a task whose builder took the blocked exit gives its question as its record: the fan-out step's output
+// holds every task's record, and the lane asks from it once all have settled. It also leaves a hint in the run's
+// artefacts, so the tasks after it skip; the hint only ever skips work, and never becomes a question. The first block's
+// hint is kept. The build step's output comes on standard input; a task that skipped gives none. It prints
+// { blocked, task, question, options, recommend, level, topic }.
 //   node scripts/engine/task-record.js --artefacts <folder> --task <n>   < the build step's output
 import fs from 'node:fs';
 import path from 'node:path';
@@ -27,14 +29,13 @@ export async function main(argv = process.argv.slice(2), { stdin, out = (line) =
   }
   const output = parsed(stdin ?? await readStdin());
   const blocked = output?.blocked === true;
+  const { question = '', options = [], recommend = '', level = '3', topic = '' } = blocked ? output : {};
   if (blocked) {
-    const { question = '', options = [], recommend = '', level = '3', topic = '' } = output;
-    const kept = JSON.stringify({ task, question, options, recommend, level, topic }, null, 2);
-    try { fs.writeFileSync(path.join(artefacts, BLOCKED_FILE), `${kept}\n`, { flag: 'wx' }); } catch (error) {
+    try { fs.writeFileSync(path.join(artefacts, BLOCKED_FILE), `${JSON.stringify({ task })}\n`, { flag: 'wx' }); } catch (error) {
       if (error.code !== 'EEXIST') throw error;
     }
   }
-  out(JSON.stringify({ blocked }));
+  out(JSON.stringify({ blocked, task, question, options, recommend, level, topic }));
   return 0;
 }
 

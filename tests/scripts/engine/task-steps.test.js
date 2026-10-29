@@ -65,44 +65,68 @@ test('a task with no plan in the tree fails its check', async () => {
 
 const blockedOutput = { summary: 's', blocked: true, question: 'Should prices round up?', options: [{ id: 'up', label: 'Round up' }, { id: 'near', label: 'Round to nearest' }], recommend: 'near', level: '3', topic: 'rounding', assumptions: [] };
 
-test('a blocked task is recorded once, so the tasks after it skip', async () => {
+test('a blocked task gives its question as its record, and leaves the hint that skips the tasks after it', async () => {
   const art = artefacts();
   const s = sink();
   assert.equal(await taskRecord(['--artefacts', art, '--task', '2'], { stdin: JSON.stringify(blockedOutput), out: s.out }), 0);
-  assert.deepEqual(s.last(), { blocked: true });
-  const kept = JSON.parse(fs.readFileSync(path.join(art, BLOCKED_FILE), 'utf8'));
-  assert.equal(kept.task, '2');
-  assert.equal(kept.question, 'Should prices round up?');
+  assert.deepEqual(s.last(), { blocked: true, task: '2', question: 'Should prices round up?', options: blockedOutput.options, recommend: 'near', level: '3', topic: 'rounding' });
+  assert.equal(JSON.parse(fs.readFileSync(path.join(art, BLOCKED_FILE), 'utf8')).task, '2');
   await taskRecord(['--artefacts', art, '--task', '3'], { stdin: JSON.stringify({ ...blockedOutput, question: 'Another' }), out: () => {} });
-  assert.equal(JSON.parse(fs.readFileSync(path.join(art, BLOCKED_FILE), 'utf8')).task, '2', 'the first block wins');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(art, BLOCKED_FILE), 'utf8')).task, '2', 'the first block\'s hint is kept');
 });
 
-test('a task that finished, or skipped, records nothing', async () => {
+test('a task that finished, or skipped, records that it didn\'t block', async () => {
   const art = artefacts();
   for (const stdin of [JSON.stringify({ summary: 's', blocked: false, assumptions: [] }), '']) {
     const s = sink();
     await taskRecord(['--artefacts', art, '--task', '1'], { stdin, out: s.out });
-    assert.deepEqual(s.last(), { blocked: false });
+    assert.deepEqual(s.last(), { blocked: false, task: '1', question: '', options: [], recommend: '', level: '3', topic: '' });
   }
   assert.equal(fs.existsSync(path.join(art, BLOCKED_FILE)), false);
 });
 
-const done = async (cwd, art) => {
+// The fan-out step's output: each task block's record, in the plan's order.
+const recordsOf = async (...outputs) => {
+  const records = [];
+  for (const [n, output] of outputs.entries()) {
+    const s = sink();
+    await taskRecord(['--artefacts', artefacts(), '--task', String(n + 1)], { stdin: output === null ? '' : JSON.stringify(output), out: s.out });
+    records.push(s.last());
+  }
+  return JSON.stringify(records);
+};
+const done = async (cwd, art, records = '[]') => {
   const s = sink();
-  assert.equal(await tasksDone(['--artefacts', art, '--base', 'main'], { cwd, out: s.out }), 0);
+  assert.equal(await tasksDone(['--artefacts', art, '--base', 'main', '--records', records], { cwd, out: s.out }), 0);
   return s.last();
 };
 
-test('the tasks close with the stopped task\'s question', async () => {
-  const art = artefacts();
-  await taskRecord(['--artefacts', art, '--task', '2'], { stdin: JSON.stringify(blockedOutput), out: () => {} });
-  const got = await done(repo('- [x] **Task 1:** One\n- [ ] **Task 2:** Two\n'), art);
+test('the tasks close with the stopped task\'s question, naming the task, from the fan-out\'s records', async () => {
+  const plan = '- [x] **Task 1:** One\n- [ ] **Task 2:** Prices round\n- [ ] **Task 3:** Three\n';
+  const records = await recordsOf({ blocked: false }, blockedOutput, null);
+  const got = await done(repo(plan), artefacts(), records);
   assert.equal(got.blocked, true);
-  assert.equal(got.question, 'Should prices round up?');
+  assert.equal(got.question, 'Task 2, Prices round: Should prices round up?');
   assert.equal(got.recommend, 'near');
   assert.equal(got.level, '3');
   assert.equal(got.topic, 'rounding');
   assert.equal(got.options.length, 2);
+});
+
+test('a skip hint planted in the artefacts gives no question of its own', async () => {
+  const art = artefacts();
+  fs.writeFileSync(path.join(art, BLOCKED_FILE), JSON.stringify({ task: '1', question: 'Merge it now?', options: [{ id: 'yes', label: 'Yes' }], recommend: 'yes', level: '3', topic: 'x' }));
+  const ticked = await done(repo('- [x] **Task 1:** One\n'), art, await recordsOf({ blocked: false }));
+  assert.equal(ticked.blocked, false);
+  const unticked = await done(repo('- [ ] **Task 1:** One\n'), art, await recordsOf(null));
+  assert.equal(unticked.topic, 'tasks-unfinished');
+});
+
+test('records that can\'t be read count as none', async () => {
+  for (const records of ['', 'not json', '{"blocked":true}']) {
+    const got = await done(repo('- [x] **Task 1:** One\n'), artefacts(), records);
+    assert.equal(got.blocked, false, records);
+  }
 });
 
 test('a plan of more than eight tasks closes with a card for the feature lane', async () => {

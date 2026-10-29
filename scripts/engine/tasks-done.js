@@ -1,15 +1,15 @@
 // scripts/engine/tasks-done.js
 // The close of the small lane's tasks (Archon design, section 7.2): after every task has settled, the one question the
-// lane asks. The question of the task that blocked, if one did; a card for a plan the lane can't take (more than
-// MOST_TASKS tasks goes to the feature lane, none means the plan step built nothing); or a card for tasks left
-// unticked when their rounds ran out. It prints { blocked, question, options, recommend, level, topic }, the
-// blocked exit's fields, for the lane's wait.
-//   node scripts/engine/tasks-done.js --artefacts <folder> --base <ref>
-import fs from 'node:fs';
+// lane asks. The question of the first task that blocked, named by its number and title, from the task blocks' records
+// (the fan-out step's output, which the helper can see), never from a file in the run's artefacts; a card for a plan
+// the lane can't take (more than MOST_TASKS tasks goes to the feature lane, none means the plan step built nothing);
+// or a card for tasks left unticked when their rounds ran out, or skipped. It prints
+// { blocked, question, options, recommend, level, topic }, the blocked exit's fields, for the lane's wait.
+//   node scripts/engine/tasks-done.js --artefacts <folder> --base <ref> --records <the fan-out step's output>
 import path from 'node:path';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { runArg } from './done-check.js';
-import { BLOCKED_FILE, MOST_TASKS, findPlan, planProblem, tasksOf } from './plan-file.js';
+import { MOST_TASKS, findPlan, planProblem, tasksOf } from './plan-file.js';
 
 const CLEAN = { blocked: false, question: '', options: [], recommend: '', level: '3', topic: '' };
 
@@ -31,21 +31,31 @@ const UNFINISHED = {
   topic: 'tasks-unfinished',
 };
 
+const parsed = (text) => { try { return JSON.parse(text); } catch { return null; } };
+
+// The value after a flag, an empty one included (runArg reads an empty value as missing).
+const valueOf = (argv, name) => {
+  const at = argv.indexOf(name);
+  return at >= 0 && typeof argv[at + 1] === 'string' ? argv[at + 1] : '';
+};
+
 export async function main(argv = process.argv.slice(2), { cwd = process.cwd(), out = (line) => process.stdout.write(`${line}\n`), run } = {}) {
   const artefacts = runArg(argv, '--artefacts');
   const base = runArg(argv, '--base');
-  if (!artefacts || !path.isAbsolute(artefacts) || !base) {
-    out('usage: node scripts/engine/tasks-done.js --artefacts <folder> --base <ref>');
+  if (!artefacts || !path.isAbsolute(artefacts) || !base || !argv.includes('--records')) {
+    out('usage: node scripts/engine/tasks-done.js --artefacts <folder> --base <ref> --records <the fan-out step\'s output>');
     return 2;
   }
-  let kept = null;
-  try { kept = JSON.parse(fs.readFileSync(path.join(artefacts, BLOCKED_FILE), 'utf8')); } catch { /* no task blocked */ }
-  if (kept) {
-    const { question, options, recommend, level, topic } = kept;
-    out(JSON.stringify({ blocked: true, question, options, recommend, level, topic }));
+  const records = parsed(valueOf(argv, '--records'));
+  const stopped = (Array.isArray(records) ? records : []).find((r) => r?.blocked === true && typeof r.question === 'string' && r.question !== '');
+  const tasks = tasksOf((await findPlan({ cwd, base, run }))?.text);
+  if (stopped) {
+    const { task, question, options, recommend, level, topic } = stopped;
+    const title = tasks.find((t) => String(t.n) === String(task))?.title;
+    const named = title ? `Task ${task}, ${title}: ${question}` : `Task ${task}: ${question}`;
+    out(JSON.stringify({ blocked: true, question: named, options, recommend, level, topic }));
     return 0;
   }
-  const tasks = tasksOf((await findPlan({ cwd, base, run }))?.text);
   const problem = planProblem(tasks);
   if (problem === 'too-many') out(JSON.stringify(TOO_BIG));
   else if (problem === 'none' || tasks.some((t) => !t.done)) out(JSON.stringify(UNFINISHED));

@@ -156,7 +156,8 @@ test('the small lane plans, builds and checks each task, takes the plan out and 
         assert.equal(await check('1'), 0);
         s = said();
         assert.equal(await taskRecord(['--artefacts', art, '--task', '1'], { stdin: JSON.stringify({ summary: 'Done.', blocked: false }), out: s.out }), 0);
-        assert.deepEqual(s.last(), { blocked: false });
+        const recorded = s.last();
+        assert.equal(recorded.blocked, false);
 
         // Task 2, which names no test: ticked and committed is done.
         writeFiles(worktree, {
@@ -171,7 +172,7 @@ test('the small lane plans, builds and checks each task, takes the plan out and 
         assert.deepEqual(s.last(), { skip: true }, 'a rerun skips a task already done');
 
         s = said();
-        assert.equal(await tasksDone(['--artefacts', art, '--base', 'main'], { ...local, out: s.out }), 0);
+        assert.equal(await tasksDone(['--artefacts', art, '--base', 'main', '--records', JSON.stringify([recorded, { blocked: false, task: '2' }])], { ...local, out: s.out }), 0);
         assert.equal(s.last().blocked, false);
 
         // The plan comes out before review, and a rerun still finds it in the branch's history.

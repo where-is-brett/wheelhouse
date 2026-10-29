@@ -131,11 +131,57 @@
         "type": "object",
         "properties": {
           "blocked": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "true only for a level 3 or 4 question this step must not settle itself"
+          },
+          "question": {
+            "type": "string",
+            "description": "when blocked: the question, in plain words for a product owner"
+          },
+          "options": {
+            "type": "array",
+            "description": "when blocked: two to four answers",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+                },
+                "label": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "label"
+              ]
+            }
+          },
+          "recommend": {
+            "type": "string",
+            "description": "when blocked: the id of the option you recommend"
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "3",
+              "4"
+            ],
+            "description": "when blocked: the decision level"
+          },
+          "topic": {
+            "type": "string",
+            "description": "when blocked: a short kebab-case slug naming what the question is about"
+          },
+          "task": {
+            "type": "string",
+            "description": "the task number"
           }
         },
         "required": [
-          "blocked"
+          "blocked",
+          "task"
         ]
       }
     }
