@@ -144,6 +144,13 @@ function buildLoopOk(c) {
   return true;
 }
 
+// The project's own preview command (Archon design, section 9.1): the command the preview step starts in the run's
+// worktree when the host has no preview, the port it serves on, and the line it prints once it is ready.
+const PREVIEW_KEYS = ['command', 'port', 'ready'];
+const previewOk = (p) => isObject(p) && Object.keys(p).every((k) => PREVIEW_KEYS.includes(k))
+  && typeof p.command === 'string' && p.command.trim() !== '' && Number.isInteger(p.port) && p.port >= 1 && p.port <= 65535
+  && typeof p.ready === 'string' && p.ready !== '';
+
 function shapeOk(c) {
   if (!isObject(c) || c.v !== 1) return false;
   if (!Array.isArray(c.criticalAreas) || !c.criticalAreas.every((a) => (
@@ -158,6 +165,7 @@ function shapeOk(c) {
   }
   if (c.pages !== undefined && !(Array.isArray(c.pages) && c.pages.length <= MOST_PAGES && c.pages.every(isPage))) return false;
   if (c.signsApps !== undefined && typeof c.signsApps !== 'boolean') return false;
+  if (c.preview !== undefined && !previewOk(c.preview)) return false;
   return buildLoopOk(c);
 }
 

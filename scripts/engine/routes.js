@@ -13,8 +13,10 @@
 //   comment(project, { number, id, body })   posts or edits the merge queue's verdict comment, giving { id }
 //   host                  { push(project, { dir }) -> { ok, branch } | refusal: pushes the folder's own branch;
 //                           open(project, { branch, title, body }) -> { pr, url, head }: opens or updates its pull
-//                           request; repo(project) -> 'owner/name' }
+//                           request; repo(project) -> 'owner/name'; previewUrl(project, sha) -> the host's preview of
+//                           the commit, or null }
 //   provenance(project, { branch })   records what built the branch's pull request (the pack's digest and Archon's)
+//   previewsDir(project)  where previews are kept, `previews/<work>/<head>/` under the project's engine files
 // A run is found by its id in the projects' order stores: the only runs these routes serve are ones the helper
 // started itself, with an order.
 import fs from 'node:fs';
@@ -28,6 +30,9 @@ export const REVIEW_STEPS = Object.freeze(['review-standards', 'review-spec', 'r
 const HOLDS = new Set(['BLOCKER', 'HIGH']);
 const SEVERITIES = new Set(['BLOCKER', 'HIGH', 'MEDIUM', 'LOW']);
 const FULL_SHA = /^[0-9a-f]{40}$/;
+// What the helper copies from a run's preview folder: pictures the step named by page and size, and its notes.
+const PREVIEW_FILE = /^([a-z0-9][a-z0-9-]{0,80}-\d{2,5}x\d{2,5}\.png|notes\.json)$/;
+const MOST_PREVIEW_BYTES = 20 * 1024 * 1024;
 
 // The merge queue's verdict comment for `head`, in the form the pinned release's gate reads (check 76).
 export function verdictBody({ head, steps }) {
@@ -61,7 +66,7 @@ function readOpened(text) {
 export function engineRoutes({
   projects, engineFor, ordersDir, write, held = () => false, now = () => new Date(),
   filesDir = (project) => path.join(ordersDir(project), '..'), digests = { installed: () => null, captured: () => null }, comment,
-  host, provenance,
+  host, provenance, previewsDir = (project) => path.join(filesDir(project), 'previews'),
 } = {}) {
   const storeOf = (project) => orderStore(ordersDir(project));
 
@@ -185,6 +190,51 @@ export function engineRoutes({
     return { ok: true, pr: opened.pr, head: opened.head };
   }
 
+  // The preview step's first ask: whether the run's work is visible, its pages, and the host's preview of the head the
+  // run opened (null when there is none, or the host can't say).
+  async function previewFind({ runId } = {}) {
+    const run = runOf(runId);
+    if (!run) return { ok: false, refused: NO_ORDER };
+    const engine = engineFor(run.project);
+    const opened = readOpened(typeof engine?.outputs === 'function' ? (await engine.outputs(runId))['open-pr'] : undefined);
+    if (!opened) return { ok: false, refused: 'the run hasn\'t opened its pull request yet' };
+    const visible = run.order.preview !== null && run.order.preview !== undefined;
+    if (!visible) return { ok: true, visible: false, pages: [], url: null, pr: opened.pr, head: opened.head };
+    let url = null;
+    try { url = (await host?.previewUrl?.(run.project, opened.head)) ?? null; } catch { url = null; }
+    return { ok: true, visible: true, pages: [...run.order.preview.pages], url, pr: opened.pr, head: opened.head };
+  }
+
+  // Keeps the run's preview: copies the pictures and notes from the run's own artefacts folder, which the helper finds
+  // from the run's id (never a folder the step names), into `previews/<work>/<head>/`, so they outlive the engine's
+  // clean-up and can't be planted from another run. Only plain files named as the step names them are copied.
+  async function preview({ runId } = {}) {
+    const run = runOf(runId);
+    if (!run) return { ok: false, refused: NO_ORDER };
+    const engine = engineFor(run.project);
+    if (typeof engine?.artefactsOf !== 'function' || typeof engine?.outputs !== 'function') return { ok: false, refused: 'that project\'s engine keeps no artefacts' };
+    const opened = readOpened((await engine.outputs(runId))['open-pr']);
+    if (!opened) return { ok: false, refused: 'the run hasn\'t opened its pull request yet' };
+    const artefacts = engine.artefactsOf(runId, host?.repo(run.project));
+    const from = artefacts ? path.join(artefacts, 'preview') : null;
+    if (!from || !fs.existsSync(from) || !fs.lstatSync(from).isDirectory()) return { ok: false, refused: 'the run made no preview' };
+    const to = path.join(previewsDir(run.project), run.order.work, opened.head);
+    fs.mkdirSync(to, { recursive: true, mode: 0o700 });
+    let pictures = 0;
+    let notes = null;
+    for (const name of fs.readdirSync(from).filter((n) => PREVIEW_FILE.test(n)).sort()) {
+      const file = path.join(from, name);
+      const found = fs.lstatSync(file);
+      if (!found.isFile() || found.size > MOST_PREVIEW_BYTES) continue;
+      fs.copyFileSync(file, path.join(to, name));
+      if (name === 'notes.json') notes = parsed(fs.readFileSync(file, 'utf8'));
+      else pictures += 1;
+    }
+    const pages = Array.isArray(notes?.pages) && notes.pages.every((p) => typeof p === 'string') ? notes.pages : [];
+    await write(run.project, 'preview', { work: run.order.work, head: opened.head, folder: to, pages });
+    return { ok: true, folder: to, pictures };
+  }
+
   // What the helper knows of a pull request it marked ready: { head, runId, showFirst, work }, or null.
   const readyOf = (project, pr) => readVerdicts(project).ready?.[pr] ?? null;
 
@@ -196,6 +246,8 @@ export function engineRoutes({
       '/engine/review': review,
       '/engine/open-pr': openPr,
       '/engine/ready': ready,
+      '/engine/preview/find': previewFind,
+      '/engine/preview': preview,
       // The order the helper keeps for the run, and nothing for any other id.
       '/engine/order': async ({ runId } = {}) => {
         const run = runOf(runId);

@@ -362,6 +362,16 @@ export function archonAdapter({
       return readOutputs(result.code === 0 && result.json?.ok !== false ? result.json : null);
     },
 
+    // The run's artefacts folder, where Archon's $ARTIFACTS_DIR puts what its steps write:
+    // <home>/workspaces/<owner>/<name>/artifacts/runs/<run>. Null for a run id or repository that isn't a plain name.
+    // Not one of the interface's methods: the helper copies a run's preview from here.
+    artefactsOf(runId, repo) {
+      const parts = typeof repo === 'string' ? repo.split('/') : [];
+      const plain = (name) => typeof name === 'string' && /^[A-Za-z0-9._-]{1,128}$/.test(name) && !/^\.+$/.test(name);
+      if (!plain(runId) || parts.length !== 2 || !parts.every(plain)) return null;
+      return path.join(home, 'workspaces', parts[0], parts[1], 'artifacts', 'runs', runId);
+    },
+
     // Hands a pull request to Archon's merge queue (check 76; ruling 9 of part 3b): writes its `work/<n>` document in
     // the project's state store, marked ready, over whatever revision is there. `item`: { project (its folder), repo,
     // pr, url, runId, at }. Not one of the interface's methods: only this engine has a merge queue.

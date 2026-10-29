@@ -95,6 +95,8 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       review: post('/engine/review'), // { runId, step } -> { ok, ran, verdict?, posted? }: signs the review step from the engine's record and posts the merge queue's verdict once every lens that ran is CLEAN
       openPr: post('/engine/open-pr'), // { runId, cwd, title, body } -> { ok, branch, pr, head }: pushes the run's worktree's own branch and opens or updates its pull request
       ready: post('/engine/ready'), // { runId } -> { ok, pr, head }: hands the pull request to the engine's merge queue once its head is signed CLEAN (and approved, if shown first)
+      previewFind: post('/engine/preview/find'), // { runId } -> { ok, visible, pages, url: address | null, pr, head }: whether the run's work is visible, its pages and the host's preview of the head it opened
+      preview: post('/engine/preview'), // { runId } -> { ok, folder, pictures }: copies the run's pictures and notes from its own artefacts into previews/<work>/<head>/ and records a preview
     },
     // The broker (scripts/engine/broker/): every gh call Archon makes, and git's credential requests in its runs.
     broker: {

@@ -3763,6 +3763,11 @@ export async function startHelper({
         return { pr: number, url: `https://github.com/${recordOf(project).repo}/pull/${number}`, head: await adapter.branchHead(branch) };
       },
       repo: (project) => recordOf(project).repo,
+      // The host's preview of the commit, or null.
+      previewUrl: async (project, sha) => {
+        const url = await (await (await contextFor(project)).adapter()).previewUrl(sha);
+        return typeof url === 'string' ? url : null;
+      },
     },
     // What built an engine run's pull request: Archon's pinned release and the installed pack's digest.
     provenance: (project, { branch }) => engineWrite(project, 'provenance', { branch, provenance: engineProvenance({ packDigest: packTreeDigest(path.join(engineDir(), 'pack')) }) }),
