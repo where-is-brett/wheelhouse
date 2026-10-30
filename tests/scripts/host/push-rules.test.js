@@ -1,12 +1,12 @@
 // tests/scripts/host/push-rules.test.js
-import { test, after } from 'node:test';
+import { test, after, mock } from 'node:test';
 import { guardedRun } from '../../helpers/host-stand-ins.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { checkPush, startHelper, PUSH_REFUSALS } from '../../../scripts/host/helper.js';
+import { checkPush, checkedGitDir, startHelper, PUSH_REFUSALS } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { helperAddress } from '../../../scripts/lib/paths.js';
 import { run } from '../../../scripts/lib/run.js';
@@ -572,4 +572,34 @@ test('a non-authentication failure of the director\'s CI push is reported as git
       assert.match((await client.push({ project: 'o__p', dir: s.work, refspec: 'feature' })).refused, /^git could not push/);
     }, { env, runWith: broken });
   } finally { s.cleanup(); }
+});
+
+test('a loose-object folder that git\'s own tidying removes while the git directory is checked does not make it read as outside the project', async () => {
+  const root = fs.realpathSync.native(tempFolder('wh-tidied-'));
+  await g(root, 'init', '-q', '-b', 'main');
+  fs.writeFileSync(path.join(root, 'a.txt'), 'a\n');
+  await g(root, 'add', '-A');
+  await g(root, 'commit', '-q', '-m', 'a');
+  const objects = path.join(root, '.git', 'objects');
+  const loose = fs.readdirSync(objects).find((name) => /^[0-9a-f]{2}$/.test(name));
+  assert.ok(loose, 'a loose-object folder to remove');
+  // As a background `git repack -d` does, between the folder being looked at and being listed.
+  const lstat = fs.lstatSync;
+  let removed = false;
+  const looked = mock.method(fs, 'lstatSync', (p, ...rest) => {
+    const stat = lstat(p, ...rest);
+    if (!removed && p === path.join(objects, loose)) {
+      removed = true;
+      fs.rmSync(p, { recursive: true });
+    }
+    return stat;
+  });
+  try {
+    await as(shortHome(), async () => {
+      assert.deepEqual(checkedGitDir(root, { root }), { gitdir: path.join(root, '.git') });
+    });
+  } finally {
+    looked.mock.restore();
+  }
+  assert.equal(removed, true, 'the folder went while it was being checked');
 });

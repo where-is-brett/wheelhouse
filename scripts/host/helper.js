@@ -546,13 +546,17 @@ export function checkedGitDir(dir, { root, own = false }) {
   }
 }
 
-// Whether `p`, or anything below it to `depth` levels, is a symlink. A missing `p` holds none.
+// Whether `p`, or anything below it to `depth` levels, is a symlink. A missing `p` holds none, and
+// nor does a folder gone by the time it is listed: git's own background tidying (a repack, run
+// detached after a commit, fetch or merge) removes loose-object folders while they are walked.
 function hasSymlink(p, depth) {
   let stat;
   try { stat = fs.lstatSync(p); } catch (error) { if (error.code === 'ENOENT') return false; throw error; }
   if (stat.isSymbolicLink()) return true;
   if (!stat.isDirectory() || depth <= 0) return false;
-  return fs.readdirSync(p).some((name) => hasSymlink(path.join(p, name), depth - 1));
+  let names;
+  try { names = fs.readdirSync(p); } catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+  return names.some((name) => hasSymlink(path.join(p, name), depth - 1));
 }
 
 function isPartialClone(dir) {
