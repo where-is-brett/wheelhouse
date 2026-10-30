@@ -1,5 +1,5 @@
 // tests/eval/build-loop/engine-recordings.js
-// Recordings for the engine scenarios (42 to 55, 60 to 62, 63 to 69, 70 to 75 and 90 to 94), in the fake engine's
+// Recordings for the engine scenarios (42 to 55, 60 to 62, 63 to 69, 70 to 75, 90 to 94 and 120 to 134), in the fake engine's
 // events: each a run of the quick lane, of the small lane from 51, of fix-main, of the bug lane from 63, or of a
 // feature's slices and its own run from 70, that stops where the scenario needs it. Not a scenario file: it has no number.
 import fs from 'node:fs';
@@ -83,6 +83,22 @@ export function small(work, { tasks = 2, rounds = 1, tokens = 120000, pr = 51 } 
   }
   events.push(ended(minute + 1, 'completed', pr));
   return events;
+}
+
+// A small-lane run whose review still holds once its loop has closed: `rounds` review rounds, its pull request `pr` at
+// `head` opened, and the sign step's held card, asking `question` (scenario 120).
+export function smallHeld(work, { rounds, question, pr, head }) {
+  const events = small(work, { tasks: 1, rounds, pr }).filter((e) => e.type !== 'run-ended');
+  const id = `${work}:review-held:1`;
+  return [
+    ...events,
+    {
+      type: 'ask', at: at(20), id, kind: 'blocked', level: 3, topic: 'review-findings', recommend: 'rework', card: true, setLine: { pr, head },
+      options: [{ id: 'stop', label: 'Stop this work' }, { id: 'rework', label: 'Send it back for a fresh run' }], context: { question },
+    },
+    { type: 'ask-resolved', at: at(21), id },
+    ended(22),
+  ];
 }
 
 // A small-lane run whose tasks block: a task's builder took the blocked exit, and the lane asks its one question once

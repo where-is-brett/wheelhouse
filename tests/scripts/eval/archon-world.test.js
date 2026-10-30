@@ -44,14 +44,16 @@ function standInArchon({ stepTokens = 25000, refused = true, trialFails = false,
       const id = `run-${++n}`;
       const at = args.indexOf('--branch');
       const hello = c === 'wheelhouse-hello';
-      runs.set(id, { status: hello ? (trialFails ? 'failed' : 'completed') : paused ? 'paused' : 'running', hello });
+      // The model the run's medium tier is bound to, which its building step reports it was asked for.
+      const medium = args.map((arg, i) => (args[i - 1] === '--model' ? /^medium=(.+)$/.exec(arg)?.[1] : null)).find(Boolean) ?? null;
+      runs.set(id, { status: hello ? (trialFails ? 'failed' : 'completed') : paused ? 'paused' : 'running', hello, medium });
       return ok({ ok: true, runId: id, branch: at >= 0 ? args[at + 1] : `wh/${id}` });
     }
     if (b === 'get') {
       const run = runs.get(c);
       if (!run) return { code: 1, json: { ok: false }, stdout: '', stderr: 'no such run' };
       const spend = { tokens: { source: 'provider', value: { input: stepTokens, output: 10, cacheRead: 200, cacheWrite: 100 } }, costUsd: { source: 'provider', value: 0.01 } };
-      const nodes = run.hello ? [] : [{ nodeId: 'implement', execution: { binding: { provider: 'claude' }, spend } }];
+      const nodes = run.hello ? [] : [{ nodeId: 'implement', execution: { binding: { provider: 'claude', ...(run.medium ? { model: { requested: run.medium } } : {}) }, spend } }];
       const events = !run.hello ? [] : trialFails ? [
         { event_type: 'provider_event', step_name: 'guarded', data: { event: { type: 'tool_call_update', status: 'failed', output: 'PreToolUse:StructuredOutput hook error: Wheelhouse is holding edits and commands' } } },
         { event_type: 'workflow_failed', data: { error: "DAG workflow 'wheelhouse-hello' completed with failures: 'guarded'\nmore" } },
@@ -341,7 +343,7 @@ test('the engine is built once into its cache, and a build cut short is moved as
   assert.equal(fs.readdirSync(parent).filter((n) => n.startsWith('engine.unfinished-')).length, 1);
 });
 
-for (const name of ['45-cap-blocked-card', '46-all-stop-cancels-runs', '48-unsigned-merge-refused', '62-non-fix-refused-while-red']) {
+for (const name of ['45-cap-blocked-card', '46-all-stop-cancels-runs', '48-unsigned-merge-refused', '62-non-fix-refused-while-red', '133-models']) {
   test(`scenario ${name.split('-')[0]}'s real play passes on the world`, { skip }, async () => {
     const world = await open(standInArchon(), fakeCache());
     try {
@@ -378,6 +380,17 @@ test("the world's spend adds up what Archon's records say each of its runs' step
     await (await scenario('45-cap-blocked-card')).engine.real(world, { until: wait });
     assert.equal(world.runs().length, 1);
     assert.deepEqual(await world.spend(), { input: 25000 + 300, output: 10 });
+  } finally {
+    await world.close();
+  }
+});
+
+test("scenario 133's real play fails when a step ran on a model the world didn't bind", { skip }, async () => {
+  const world = await open(standInArchon(), fakeCache());
+  try {
+    const got = await (await scenario('133-models')).engine.real(Object.assign(Object.create(world), { model: 'another-model' }), { until: wait });
+    assert.equal(got.pass, false);
+    assert.match(got.why, /not another-model/);
   } finally {
     await world.close();
   }
