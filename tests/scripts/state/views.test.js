@@ -585,6 +585,18 @@ test('the wish to see work first stands once any signed approval said it, in any
   });
 });
 
+test('an approval made in the same millisecond as its work carries to an approved amendment, however their ids sort', async () => {
+  await withHome(() => {
+    const w = workEv(1);
+    // An approval stamped the same millisecond as the work, whose id sorts before the work's.
+    let first;
+    do first = approve(1, H1); while (!(first.id < w.id));
+    const amendment = ev('amendment', 3, { work: 'export-csv', change: 'CSV, not Excel', hash: H2 });
+    const moved = build([w, first, amendment, click(4, { action: 'amend', work: 'export-csv', hash: H2, label: 'Change it' })]).work['export-csv'];
+    assert.deepEqual([moved.approved, moved.approval?.hash], [true, H2]);
+  });
+});
+
 test('a revised work document asks for a new approval', async () => {
   await withHome(() => {
     const v = build([workEv(1), approve(2, H1), workEv(3, { doc: { path: 'd.md', hash: H2 } })]);

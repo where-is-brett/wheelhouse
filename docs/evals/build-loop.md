@@ -476,6 +476,8 @@ The build-loop scenarios 20 to 35 rewritten against the pack, as the Archon desi
 
 **On real Archon.** 133 plays for real (`real`, `scripts/eval/archon-world.js`): one quick run of a one-line change, read until Archon's record says which model a step ran on, which must be the one model the world binds every tier to (`WHEELHOUSE_EVAL_MODEL`, by default the cheapest). It costs one cheap step. The others play their recordings or the pack's own scripts there too: a real step can't be made to give its finding, question or commit on cue.
 
+126 found one fault, put right with a test that failed first: an approval stamped in the same millisecond as its work event was read as coming before it whenever its random id sorted first, and then the director's click on an amendment didn't carry it, so the changed design never started (`scripts/state/views.js`; a work event now comes first at the same millisecond).
+
 **Run on the fake engine, 30 October 2026:** all nine passed, each on its one `with` trial, at no cost. Not yet run on real Archon.
 
 ## Live checks of the front desk's allow rule
