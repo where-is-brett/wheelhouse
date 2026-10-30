@@ -91,6 +91,26 @@ test('every script a step runs is in the plugin, and every lane\'s script step r
   for (const script of named) assert.ok(fs.existsSync(path.join(root, script)), `${script} is in the plugin`);
 });
 
+test('every step whose script asks the helper with the run\'s ticket passes the artefacts folder the ticket is in (check 81)', () => {
+  const { read } = built();
+  const root = path.resolve(import.meta.dirname, '..', '..');
+  const ticketed = (script) => /\bwithTicket\(/.test(fs.readFileSync(path.join(root, script), 'utf8'));
+  let seen = 0;
+  for (const name of ALL) {
+    for (const { node } of nodesOf(read(name).nodes)) {
+      for (const bash of [node.bash, node.loop_group?.until_bash].filter((b) => typeof b === 'string')) {
+        for (const line of bash.split(/;|&&|\|\|/)) {
+          const [, script] = /\$WHEELHOUSE_ROOT\/(scripts\/[\w/.-]+\.js)/.exec(line) ?? [];
+          if (!script || !ticketed(script)) continue;
+          seen += 1;
+          assert.match(line, /--artefacts "\$ARTIFACTS_DIR"/, `${name} ${node.id} runs ${script} with no ticket`);
+        }
+      }
+    }
+  }
+  assert.ok(seen >= 10, `${seen} ticketed calls`);
+});
+
 test('the small lane plans, builds each task, checks, reviews and fixes, then goes on as the quick lane does', () => {
   const small = built().read('wheelhouse-small');
   assert.deepEqual(small.nodes.map((n) => n.id), [

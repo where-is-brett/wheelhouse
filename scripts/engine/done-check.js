@@ -4,6 +4,8 @@
 // prints one line a check and exits 0 only when every one passes. A page check is walked in a browser by the preview
 // step, so here it is only listed.
 //   node scripts/engine/done-check.js --run <run id>
+import fs from 'node:fs';
+import path from 'node:path';
 import { run as defaultRun } from '../lib/run.js';
 import { helperClient } from '../host/helper-client.js';
 import { withTicket } from './ticket.js';
@@ -19,6 +21,23 @@ const shell = (command, platform) => (platform === 'win32'
 // A test's name as one word of a shell command.
 const quoted = (name, platform) => (platform === 'win32' ? `"${name.replace(/"/g, '""')}"` : `'${name.replace(/'/g, "'\\''")}'`);
 
+// Node's own test runner reads a bare word as a file to run, so a named test goes in --test-name-pattern instead: for
+// a test command that is `node --test`, or `npm test` (or `npm run test`) where the project's test script is
+// (check 81). Any other runner is given the name as one word, as before.
+const NODE_RUNNER = /^node\s+--test(\s|$)/;
+const asPattern = (name) => name.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+function namedTest(testCommand, name, { cwd, platform }) {
+  const command = String(testCommand).trim();
+  const flag = `--test-name-pattern=${quoted(asPattern(name), platform)}`;
+  if (NODE_RUNNER.test(command)) return `${command} ${flag}`;
+  if (/^npm\s+(run\s+)?test$/.test(command)) {
+    let script = null;
+    try { script = JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf8'))?.scripts?.test; } catch { /* no package.json */ }
+    if (typeof script === 'string' && NODE_RUNNER.test(script.trim())) return `${command} -- ${flag}`;
+  }
+  return `${command} ${quoted(name, platform)}`;
+}
+
 // Each check's result, in order: { check, ok, line }, with `ok` null for a check left to the preview step.
 export async function runDoneChecks(order, { cwd, run = defaultRun, platform = process.platform } = {}) {
   const results = [];
@@ -27,7 +46,7 @@ export async function runDoneChecks(order, { cwd, run = defaultRun, platform = p
       results.push({ check, ok: null, line: `left to the preview step: the page ${check.page} shows ${check.mustShow}` });
       continue;
     }
-    const command = check.test !== undefined ? `${order.testCommand} ${quoted(check.test, platform)}` : check.command;
+    const command = check.test !== undefined ? namedTest(order.testCommand, check.test, { cwd, platform }) : check.command;
     const what = check.test !== undefined ? `the test ${check.test}` : `the command ${check.command}`;
     const { file, args, windowsVerbatimArguments } = shell(command, platform);
     let result;

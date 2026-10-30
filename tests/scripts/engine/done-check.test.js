@@ -66,6 +66,26 @@ test('done-check fails closed when the helper has no order for the run', async (
   assert.equal(await main([], { client, cwd: tempFolder('wh-done-'), out }), 2);
 });
 
+test("a named test runs alone under Node's own runner, which reads a bare word as a file (check 81)", async (t) => {
+  // A run under this suite's runner would report to it and end 0 whatever its tests did.
+  const context = process.env.NODE_TEST_CONTEXT;
+  delete process.env.NODE_TEST_CONTEXT;
+  t.after(() => { if (context !== undefined) process.env.NODE_TEST_CONTEXT = context; });
+  const cwd = tempFolder('wh-done-');
+  fs.writeFileSync(path.join(cwd, 'package.json'), JSON.stringify({ name: 'p', private: true, scripts: { test: 'node --test' } }));
+  fs.mkdirSync(path.join(cwd, 'tests'));
+  fs.writeFileSync(path.join(cwd, 'tests', 'greet.test.js'), [
+    "const { test } = require('node:test');",
+    "test('greet says hello (with the switch off)', () => {});",
+    "test('greet says good day', () => { throw new Error('not yet'); });",
+  ].join('\n'));
+  for (const testCommand of ['npm test', 'node --test']) {
+    const order = { ...orderWith([{ test: 'greet says hello (with the switch off)' }, { test: 'greet says good day' }]), testCommand };
+    const results = await runDoneChecks(order, { cwd });
+    assert.deepEqual(results.map((r) => r.ok), [true, false], `${testCommand}: ${results.map((r) => r.line).join('; ')}`);
+  }
+});
+
 test('runDoneChecks runs each command in the worktree it is given', async () => {
   const cwd = tempFolder('wh-done-');
   fs.writeFileSync(path.join(cwd, 'marker'), 'here');

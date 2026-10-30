@@ -5,8 +5,8 @@
 // checked and switched here; one the project sets its own way, given in words, is left to the AI step and the
 // reviewers. The file is read only when it is a plain file inside the worktree, never through a link. Git runs behind
 // Wheelhouse's fence (safe-git.js), since the worktree is one an agent controls.
-//   node scripts/engine/flag.js --check-off --run <run id>   prints { clean, why? }
-//   node scripts/engine/flag.js --on --run <run id>          prints { switched }: true once the file says on, committed
+//   node scripts/engine/flag.js --check-off --run <run id> --artefacts <folder>   prints { clean, why? }
+//   node scripts/engine/flag.js --on --run <run id> --artefacts <folder>          prints { switched }: true once the file says on, committed
 import fs from 'node:fs';
 import path from 'node:path';
 import { helperClient } from '../host/helper-client.js';
