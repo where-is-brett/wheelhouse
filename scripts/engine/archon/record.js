@@ -27,7 +27,7 @@ const ONE_EACH = () => 1;
 // One node's spend. A node that called no provider (a shell step) spent nothing, which is a known zero. Tokens are
 // known only when both the input and the output figure are: a missing one is unknown, not zero. The four kinds of
 // token are kept apart (check 79). A step on a provider that counts requests counts its prompt at its model's rate,
-// an estimate: the provider reports no cost.
+// an estimate: the provider reports no cost. A step with no provider on record may have counted, so its count is null.
 function spendOf(spend, provider, model, rates) {
   const counts = Object.hasOwn(REQUEST_RATES, provider);
   if (noCall(spend?.tokens) && noCall(spend?.costUsd)) return { tokens: 0, dollars: 0, source: 'reported', kinds: null, requests: 0 };
@@ -36,7 +36,7 @@ function spendOf(spend, provider, model, rates) {
   const output = figure(counted.output);
   const tokens = input === null || output === null ? null : input + output;
   const kinds = reported(spend?.tokens) ? { input, output, cacheRead: figure(counted.cacheRead), cacheWrite: figure(counted.cacheWrite) } : null;
-  const requests = counts ? rates(model) : 0;
+  const requests = provider === null ? null : counts ? rates(model) : 0;
   if (reported(spend?.costUsd) && figure(spend.costUsd.value) !== null) return { tokens, dollars: spend.costUsd.value, source: 'reported', kinds, requests };
   return { tokens, dollars: null, source: counts && tokens !== null ? 'estimated' : 'unknown', kinds, requests };
 }

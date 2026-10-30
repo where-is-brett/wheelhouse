@@ -10,7 +10,7 @@ import { asking, running, TINY_GOAL } from './engine-recordings.js';
 
 export default {
   id: 46,
-  title: 'All stop cancels the running work, leaves the waiting work paused, and the work runs again only from the start',
+  title: 'All stop cancels the running work and the waiting work, and the work runs again only from the start',
   engine: {
     recordings: { 'card-46a': running('card-46a'), 'card-46b': asking('card-46b'), 'card-46c': running('card-46c') },
     async play(world) {
@@ -23,8 +23,8 @@ export default {
       if (!note) return { pass: false, why: `All stop left no record of the work it stopped (Archon has the run ${await world.status(run)})` };
       const [a, b] = world.starts().map((s, i) => `fake-${i + 1}-${s.order.work}`);
       if (!note.data.cancelled.some((c) => JSON.stringify(c).includes(a))) return { pass: false, why: 'the running run wasn\'t cancelled' };
-      if (!note.data.paused.some((p) => JSON.stringify(p).includes(b))) return { pass: false, why: 'the waiting run wasn\'t listed as paused' };
-      if (world.engine.inspect(b).status !== 'paused') return { pass: false, why: `the waiting run is ${world.engine.inspect(b).status}, not paused` };
+      if (!note.data.cancelled.some((c) => JSON.stringify(c).includes(b))) return { pass: false, why: 'the waiting run wasn\'t cancelled' };
+      if (world.engine.inspect(b).status !== 'ended') return { pass: false, why: `the waiting run is ${world.engine.inspect(b).status}, not cancelled` };
       world.put('work', { id: 'card-46c', title: 'The header', lane: 'quick', visible: false, dependsOn: [], place: 2 });
       await world.tick();
       if (world.starts().length !== 2) return { pass: false, why: 'work started under All stop' };
@@ -33,7 +33,7 @@ export default {
       world.put('work', { id: 'card-46a', title: 'The sale banner', lane: 'quick', visible: false, dependsOn: [], place: 0 });
       if (!await until(async () => { await world.tick(); return world.starts().filter((s) => s.order.work === 'card-46a').length === 2; })) return { pass: false, why: 'the cancelled work wasn\'t run again once All stop was lifted' };
       if (world.acts().some((c) => c.action?.resume)) return { pass: false, why: 'a cancelled run was resumed rather than run again' };
-      return { pass: true, why: 'running cancelled, waiting left paused, nothing under All stop, and a fresh run after it' };
+      return { pass: true, why: 'running and waiting runs cancelled, nothing under All stop, and a fresh run after it' };
     },
     async real(world, { until: wait }) {
       const work = (id, place) => world.put('work', { id, title: TINY_GOAL, lane: 'quick', visible: false, dependsOn: [], place });

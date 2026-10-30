@@ -12,17 +12,18 @@ import { openArchonWorld, prepareEngine, runRealScenario, resetProof, cacheBuilt
 import { runEngineScenario } from '../../../scripts/eval/engine-world.js';
 import { CHECKOUT, marketplaceOf, sweepWorldPlugins, worldPlugin } from '../../../scripts/eval/world-plugin.js';
 import { worldPlaces } from '../../../scripts/eval/world-kits.js';
-import { enginePaths, PATCH_MARK } from '../../../scripts/engine/archon/build.js';
+import { CANCEL_PATCH_MARK, enginePaths, PATCH_MARK } from '../../../scripts/engine/archon/build.js';
 import { summarise, summaryText } from '../../../scripts/eval/summary.js';
 
 // A built engine as buildFromSource leaves it, as far as the world and the health check read it.
 function fakeCache() {
   const cache = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-awc-'));
   const p = enginePaths(cache);
-  for (const file of [p.bunBin, p.launcher, p.provider]) fs.mkdirSync(path.dirname(file), { recursive: true });
+  for (const file of [p.bunBin, p.launcher, p.provider, p.cancelOperation]) fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(p.bunBin, '');
   fs.writeFileSync(p.launcher, '#!/bin/sh\n');
   fs.writeFileSync(p.provider, `// ${PATCH_MARK}\n`);
+  fs.writeFileSync(p.cancelOperation, `// ${CANCEL_PATCH_MARK}\n`);
   return cache;
 }
 

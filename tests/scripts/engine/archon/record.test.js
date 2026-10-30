@@ -44,6 +44,12 @@ test('readRecord marks unavailable cost as unknown with null dollars', () => {
   assert.deepEqual(totals, { dollars: 0.1285, tokens: null });
 });
 
+test('a cancelled Copilot step counts its prompt with its spend unknown, and a step with no provider on record counts nothing it can\'t know', () => {
+  const node = (provider) => ({ nodeId: 'build', execution: { binding: { provider, model: { requested: 'auto' } }, spend: { tokens: { source: 'unavailable', reason: 'cancelled' }, costUsd: { source: 'unavailable', reason: 'cancelled' } } } });
+  const { steps } = readRecord({ status: 'cancelled', nodes: [node('copilot'), node('claude'), node(undefined)] });
+  assert.deepEqual(steps.map((s) => [s.source, s.requests]), [['unknown', 1], ['unknown', 0], ['unknown', null]]);
+});
+
 test('readRecord maps the run states the engine reports', () => {
   const at = (status, outcome = null) => readRecord({ ...fixture(), status, outcome });
   assert.deepEqual([at('running').status, at('pending').status, at('paused').status], ['running', 'running', 'paused']);

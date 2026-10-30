@@ -97,6 +97,11 @@ test('applying them installs the CLI and writes the home through their own maker
   for (const change of agentEngineChanges('copilot', { engine })) await applyAgentEngine(change, { engine, record: (c) => records.push(c), install, writeHome });
   assert.deepEqual(done, [['cli', engine], ['home', engine]]);
   assert.deepEqual(records.map((r) => [r.kind, r.target]), [['folder', copilotCliPaths(engine).home]]);
+  assert.equal(records[0].before, null, 'nothing was there');
+  fs.mkdirSync(copilotCliPaths(engine).home, { recursive: true });
+  const again = [];
+  await applyAgentEngine({ part: 'home', target: copilotCliPaths(engine).home }, { engine, record: (c) => again.push(c), install, writeHome });
+  assert.deepEqual(again[0].before, {}, 'a home was there');
   // A refused install throws its plain reason.
   await assert.rejects(applyAgentEngine(agentEngineChanges('copilot', { engine })[0], { engine, install: async () => ({ ok: false, refused: 'no network' }) }), /no network/);
   assert.ok(fs.existsSync(engine));

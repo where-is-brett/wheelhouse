@@ -432,7 +432,7 @@ function computer() {
 const notes = () => listEvents(stateDir('o__p'), { report: () => {} }).filter((e) => e.kind === 'note' && e.data?.about === 'all-stop');
 const runs = () => listEvents(stateDir('o__p'), { report: () => {} }).filter((e) => e.kind === 'run');
 
-test("the desk's All stop cancels every run, ends what the cancel left and names it, leaves a paused run paused, and lifting it starts nothing", async () => {
+test("the desk's All stop cancels every run, ends what the cancel left and names it, cancels a paused run too, and lifting it starts nothing", async () => {
   const p = await project();
   const engine = fakeEngine({ recordings });
   const running = engine.start({ recording: 'quick-approved', running: true, ownerPid: 700 }).runId;
@@ -458,17 +458,17 @@ test("the desk's All stop cancels every run, ends what the cancel left and names
         // The engine is told every run the record has started and not seen end, as a just-started one may not be listed yet.
         assert.deepEqual([...known].sort(), [running, paused].sort());
         const note = notes()[0].data;
-        assert.deepEqual(note.cancelled, [{ runId: running, work: 'card-12', lane: 'quick', branch: 'wh/card-12' }]);
-        assert.deepEqual(note.paused, [{ runId: paused, work: 'card-13', lane: 'quick', branch: 'wh/card-13' }]);
+        assert.deepEqual(note.cancelled, [{ runId: running, work: 'card-12', lane: 'quick', branch: 'wh/card-12' }, { runId: paused, work: 'card-13', lane: 'quick', branch: 'wh/card-13' }]);
+        assert.deepEqual(note.paused, []);
         // The wake's step is in the snapshot, taken before the wake was ended.
         assert.deepEqual(note.ended, ['"bun resumed step" (process 8001)', '"sleep 747" (process 701)']);
         assert.deepEqual(note.survivors, []);
-        assert.match(note.words, /cancelled 1 run.*1 run waiting on an answer stays paused.*ended 2 processes the engine left running/);
+        assert.match(note.words, /cancelled 2 runs.*ended 2 processes the engine left running/);
         assert.deepEqual(pc.kills.sort(), [[-701, 'SIGTERM'], [-8001, 'SIGTERM']]);
         assert.ok(pc.kills.every(([pid]) => Math.abs(pid) !== process.pid), "the helper's own process is never ended");
         assert.equal(engine.inspect(running).status, 'ended');
-        assert.equal(engine.inspect(paused).status, 'paused', 'a paused run stays paused');
-        // The wake process ends, so nothing carries an answered paused run on, and none is started while STOP is on.
+        assert.equal(engine.inspect(paused).status, 'ended', 'a paused run is cancelled, so no answer can carry it on after the lift');
+        // The wake process ends, and none is started while STOP is on.
         assert.equal(children[0].killed, 'SIGTERM');
         await new Promise((resolve) => setTimeout(resolve, 100));
         assert.equal(children.length, 1);

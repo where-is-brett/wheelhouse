@@ -92,7 +92,8 @@ import { canonicalJson } from '../lib/canonical.js';
 import { pendingDir } from '../hooks/pending.js';
 import { branchOf } from '../hooks/session-start.js';
 import { SLUG } from '../lib/build-loop.js';
-import { ROOT as OWN_ROOT } from '../lineage/check.js';
+import { ROOT as OWN_ROOT, recheckCopies } from '../lineage/check.js';
+import { requestMeter, requestsThisMonth } from '../engine/request-meter.js';
 import { checkProvenance, removeProvenance, sessionProvenance, engineProvenance } from '../lineage/provenance.js';
 import { brokerRoutes } from '../engine/broker/routes.js';
 import { queueCall } from '../engine/broker/queue.js';
@@ -112,6 +113,7 @@ import { runReview } from '../review/clean-session.js';
 import { reviewsFor } from '../agents/reviews.js';
 import { ALLOWANCE_LABELS, allowanceWindowLines, isBuildQuestion } from '../protection/windows-builds.js';
 import { agentOfConfig } from '../agents/project-agent.js';
+import { agentInFolder } from '../agents/names.js';
 import { routingInForce } from '../routing/in-force.js';
 import { orderStore } from '../engine/order.js';
 import { engineRouting } from '../agents/engine-parts.js';
@@ -3950,6 +3952,18 @@ export async function startHelper({
     write: (project, kind, data) => engineWrite(project, kind, data),
     held: stopped,
     now,
+    // Which agent the project runs on this computer, by its default branch's configuration and its main checkout's.
+    projectAgents: async (project, folder) => {
+      const context = await contextFor(project);
+      const config = await defaultConfig(project, await context.adapter(), context);
+      const id = computerId();
+      return { branch: config === undefined ? null : agentOfConfig(config, { computerId: id }), checkout: agentInFolder(folder, { computerId: id }) };
+    },
+    recheckCopies: (project, folder) => recheckCopies({
+      project, projectDir: folder, computer: computerId(), now,
+      views: buildViews(listEvents(stateDir(project), { report: () => {} }), ownKeyOnly(), { now }),
+      write: (kind, data) => engineWrite(project, kind, data),
+    }),
     // A run's review is trusted only from the installed pack: the one built into the engine's folder, against the
     // copy Archon froze for the run, under its `project` folder.
     digests: { installed: () => packTreeDigest(path.join(engineDir(), 'pack')), captured: (root) => packTreeDigest(path.join(root, 'project')) },
@@ -4389,6 +4403,8 @@ export async function startHelper({
   // ended or left. One at a time: a second All stop while one runs shares it. Lifting All stop starts no run; the wake starts again by itself.
   let engineStopping = null;
   let stopSeen = false;
+  // One request meter for each account, whichever projects share it.
+  const requestMeters = new Map();
   function stopEngines(reason = 'All stop') {
     if (engineHosts.length === 0) return Promise.resolve(null);
     stopSeen = true;
@@ -4509,26 +4525,26 @@ export async function startHelper({
     const record = registeredProjects().find((p) => p.project === project)?.record;
     const folder = record?.folder;
     const month = () => now().toISOString().slice(0, 7);
-    const estimated = () => Object.values(views().costs ?? {}).flat().filter((c) => String(c.at).startsWith(month())).reduce((n, c) => n + (Number.isFinite(c.data?.premiumRequests) ? c.data.premiumRequests : 0), 0);
-    // This month's counted requests, for the cap: the meter's estimate, or, where the engine checks it against the
+    const costsOf = (name) => Object.values(buildViews(listEvents(stateDir(name), { report: () => {} }), ownKeyOnly(), { now }).costs ?? {}).flat();
+    const counts = (name, where) => engine.countsRequests?.(engineConfigOf(name, where)?.routing ?? {}) === true;
+    // The other projects on this computer whose runs count requests: an allowance is the account's, not a project's.
+    const others = () => registeredProjects().filter((p) => p.project !== project && engineHosts.some((h) => h.project === p.project) && counts(p.project, p.record?.folder));
+    const counted = (name) => ({ costs: () => costsOf(name), going: () => engineRunsGoing(name) });
+    const estimated = () => requestsThisMonth({ projects: [counted(project), ...others().map((p) => counted(p.project))], month: month(), inspect: (id) => engine.inspect(id) });
+    // This month's counted requests, for the cap: the account's estimate, or, where the engine checks it against the
     // provider's own figure once a day (its checkRequests), that figure; a difference is a Logbook line. Only for a
     // project whose runs count requests.
-    const meterFile = path.join(files, 'requests.json');
     async function requestsUsed() {
-      if (typeof engine.checkRequests !== 'function' || engine.countsRequests?.(engineConfigOf(project, folder)?.routing ?? {}) !== true) return estimated();
-      let kept = null;
-      try { kept = JSON.parse(fs.readFileSync(meterFile, 'utf8')); } catch { /* the first check */ }
-      try {
-        const got = await engine.checkRequests({ estimate: estimated, kept, run, now: now() });
-        if (JSON.stringify(got.kept) !== JSON.stringify(kept)) {
-          fs.mkdirSync(files, { recursive: true, mode: 0o700 });
-          fs.writeFileSync(meterFile, `${JSON.stringify(got.kept, null, 2)}\n`, { mode: 0o600 });
-          if (got.line) await write('note', { about: 'engine', words: got.line }).catch(() => {});
-        }
-        return got.used;
-      } catch {
-        return estimated();
+      if (!counts(project, folder)) return requestsThisMonth({ projects: [{ costs: () => costsOf(project), going: () => [] }], month: month() });
+      if (typeof engine.checkRequests !== 'function' || typeof engine.requestsFile !== 'function') return estimated();
+      const file = engine.requestsFile();
+      if (!requestMeters.has(file)) {
+        requestMeters.set(file, requestMeter({
+          file, estimate: estimated, note: (words) => write('note', { about: 'engine', words }),
+          look: ({ kept, estimate }) => engine.checkRequests({ estimate, kept, run, now: now() }),
+        }));
       }
+      return requestMeters.get(file).used();
     }
     const dispatcher = dispatchRun({
       engine, project, folder, file: path.join(files, 'dispatch.json'), readViews: views, settings, stopped, now, write,
