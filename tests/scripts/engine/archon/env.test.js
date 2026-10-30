@@ -78,6 +78,10 @@ test("archonEnv sets ARCHON_HOME outside the Wheelhouse home, and keeps no token
   assert.equal(env.COPILOT_BIN_PATH, '/c/copilot');
   assert.equal(env.HOME, '/h');
   for (const name of ['GH_TOKEN', 'GITHUB_TOKEN', 'GITLAB_TOKEN', 'ANTHROPIC_API_KEY', 'GH_HOST', 'SSH_AUTH_SOCK']) assert.equal(env[name], undefined);
+  // gh's config folder is one of the engine's that isn't there, never the caller's (check 81).
+  const pointed = archonEnv({ engine, nodeDir, baseEnv: { GH_CONFIG_DIR: '/h/.config/gh' } });
+  assert.equal(pointed.GH_CONFIG_DIR, path.join(engine, 'broker', 'no-gh-config'));
+  assert.equal(fs.existsSync(pointed.GH_CONFIG_DIR), false);
 });
 
 test("archonEnv keeps WHEELHOUSE_HOME when it is set, so a step's hooks use the same Wheelhouse home", () => {

@@ -71,6 +71,9 @@ export function archonEnv({ engine = engineDir(), home = archonHome(), claudeBin
   const bin = copilotBin ?? (fs.existsSync(copilot.bin) ? copilot.bin : null);
   if (bin) env.COPILOT_BIN_PATH = bin;
   if (fs.statSync(copilot.home, { throwIfNoEntry: false })?.isDirectory()) env.COPILOT_HOME = copilot.home;
+  // gh's config folder named as one that isn't there, so a real gh reached some other way finds no sign-in in the
+  // caller's folder; the broker's gh reads none (check 81).
+  env.GH_CONFIG_DIR = path.join(engine, 'broker', 'no-gh-config');
   env.WHEELHOUSE_ENGINE_RUN = '1';
   env.WHEELHOUSE_ROOT = root;
   // Wheelhouse's patch (build.js) starts Claude steps in this mode instead of bypass mode, so the sandbox holds.

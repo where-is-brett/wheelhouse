@@ -8,21 +8,35 @@
 //   permit(project, call)                 the rules' context for the call (rules.js brokerDecision)
 //   forward(project, argv, { cwd, stdin })  runs the real gh: { code, stdout, stderr }
 //   refresh(project)                      brings the project's fetch mirror up to date: { ok } or a refusal
+//   queueCall(place, argv, stdin)         for a call from the merge queue's folder (place.queue), the call as the
+//                                         broker sends it on, { ok, argv, stdin }, or { ok: false, refused }
+//   note(project, words)                  a line on the project's Logbook, for each call from the queue's folder refused
 import { classifyCall, brokerDecision } from './rules.js';
 
 const refused = (reason) => ({ ok: true, code: 1, stdout: '', stderr: `${reason}\n` });
 
-export function brokerRoutes({ placeOf, permit, forward, refresh } = {}) {
+export function brokerRoutes({ placeOf, permit, forward, refresh, queueCall = async (place, argv, stdin) => ({ ok: true, argv, stdin }), note = async () => {} } = {}) {
   async function gh({ argv, cwd, stdin = '' } = {}) {
     if (!Array.isArray(argv) || !argv.every((a) => typeof a === 'string')) return refused("Wheelhouse's broker was sent a call it can't read.");
     const place = placeOf(cwd);
     if (!place) return refused("Wheelhouse's broker refused this call: it came from a folder that isn't a registered project's.");
     if (typeof place.repo !== 'string' || place.repo === '') return refused("Wheelhouse's broker refused this call: the project's repository isn't known.");
-    const call = classifyCall(argv, { stdin, repo: place.repo });
+    // A call from the merge queue's folder is shaped first, and each one refused is a line on the Logbook.
+    const turnedDown = async (reason) => {
+      if (place.queue === true) await Promise.resolve(note(place.project, `The broker refused the merge queue's call gh ${argv.slice(0, 3).join(' ')}: ${reason}`)).catch(() => {});
+      return refused(reason);
+    };
+    let sent = { argv, stdin };
+    if (place.queue === true) {
+      const shaped = await queueCall(place, argv, stdin);
+      if (shaped?.ok !== true) return turnedDown(`Wheelhouse's broker refused this call: ${shaped?.refused ?? 'the merge queue may not make it'}.`);
+      sent = { argv: shaped.argv, stdin: shaped.stdin ?? '' };
+    }
+    const call = classifyCall(sent.argv, { stdin: sent.stdin, repo: place.repo });
     const context = call.kind === 'other' || call.kind === 'read' ? {} : await permit(place.project, call);
     const decision = brokerDecision(call, context);
-    if (!decision.allow) return refused(decision.reason);
-    const result = await forward(place.project, argv, { cwd, stdin });
+    if (!decision.allow) return turnedDown(decision.reason);
+    const result = await forward(place.project, sent.argv, { cwd, stdin: sent.stdin });
     return { ok: true, code: Number.isInteger(result?.code) ? result.code : 1, stdout: String(result?.stdout ?? ''), stderr: String(result?.stderr ?? '') };
   }
 

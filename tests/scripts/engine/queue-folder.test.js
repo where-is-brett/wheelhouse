@@ -6,7 +6,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { prepareQueueFolder, queueFolderOf, queueProjectOf, queueSettings, QUEUE_MARK } from '../../../scripts/engine/queue-folder.js';
+import { prepareQueueFolder, queueFolderOf, queueProjectOf, queueSettings, QUEUE_MARK, QUEUE_LIFTED } from '../../../scripts/engine/queue-folder.js';
+import { archonEnv } from '../../../scripts/engine/archon/env.js';
 import { projectSettings } from '../../../scripts/protection/settings.js';
 import { readConfig } from '../../../scripts/gate/guardrails.js';
 import { tempFolder } from '../../helpers/homes.js';
@@ -28,17 +29,58 @@ function mirrorWith(settings) {
   return { mirror, work };
 }
 
-test("the project's sandbox opens no local socket, so the queue's broker call is refused there, and the queue's folder opens the helper's alone", () => {
+test("the project's sandbox opens no local socket and denies gh, and the queue's folder opens the helper's socket and lifts that one deny alone", () => {
   const shared = projectSettings(readConfig(null));
   const socket = '/h/.wheelhouse/helper.sock';
-  // Under the project's own settings the sweep's call to the broker can't reach the helper (seen in check 81).
+  // Under the project's own settings the sweep's call to the broker can't reach the helper, nor can it run gh (seen in
+  // check 81); the project keeps both.
   assert.equal(shared.sandbox?.network?.allowUnixSockets, undefined);
+  assert.ok(shared.permissions.deny.includes(QUEUE_LIFTED));
   const queue = queueSettings(shared, socket);
   assert.deepEqual(queue.sandbox.network.allowUnixSockets, [socket]);
-  // Nothing else is widened: take the socket out and the project's own settings are left.
+  assert.equal(queue.permissions.deny.includes(QUEUE_LIFTED), false);
+  assert.deepEqual(queue.sandbox.credentials.envVars.filter((v) => v.name === 'GH_CONFIG_DIR'), [{ name: 'GH_CONFIG_DIR', mode: 'deny' }]);
+  // Nothing else is widened: take those out and the project's own settings are left.
   const back = structuredClone(queue);
   delete back.sandbox.network.allowUnixSockets;
+  back.sandbox.credentials.envVars = back.sandbox.credentials.envVars.filter((v) => v.name !== 'GH_CONFIG_DIR');
+  back.permissions.deny = shared.permissions.deny;
   assert.deepEqual(back, shared);
+  assert.deepEqual(queue.permissions.deny, shared.permissions.deny.filter((rule) => rule !== QUEUE_LIFTED));
+});
+
+test("in a queue folder's run gh is the broker's alone, and a real gh finds no token, config folder or sign-in it may read", { skip: process.platform === 'win32' }, () => {
+  // A Homebrew folder holding a real gh beside the Node, a caller with tokens and a config folder of its own.
+  const root = fs.realpathSync(tempFolder('wh-qf-reach-'));
+  const brew = path.join(root, 'brew', 'bin');
+  const engine = path.join(root, 'engine');
+  fs.mkdirSync(brew, { recursive: true });
+  fs.mkdirSync(path.join(engine, 'broker', 'bin'), { recursive: true });
+  for (const [file, text] of [[path.join(brew, 'gh'), '#!/bin/sh\necho real\n'], [path.join(brew, 'node'), '#!/bin/sh\n'], [path.join(engine, 'broker', 'bin', 'gh'), '#!/bin/sh\necho broker\n']]) {
+    fs.writeFileSync(file, text);
+    fs.chmodSync(file, 0o755);
+  }
+  const config = path.join(root, 'config', 'gh');
+  fs.mkdirSync(config, { recursive: true });
+  fs.writeFileSync(path.join(config, 'hosts.yml'), 'github.com:\n  user: someone\n');
+  const caller = { PATH: `${brew}:/usr/bin:/bin`, HOME: root, GH_TOKEN: 't', GITHUB_TOKEN: 't', GH_ENTERPRISE_TOKEN: 't', GITHUB_ENTERPRISE_TOKEN: 't', GH_CONFIG_DIR: config };
+  const env = archonEnv({ engine, home: path.join(root, 'engine-home'), nodeDir: brew, baseEnv: caller });
+  // Every gh the run's PATH finds is the broker's.
+  const found = execFileSync('/bin/sh', ['-c', 'IFS=:; for d in $PATH; do [ -x "$d/gh" ] && echo "$d/gh"; done; exit 0'], { env, encoding: 'utf8' }).trim().split('\n');
+  assert.deepEqual(found, [path.join(engine, 'broker', 'bin', 'gh')]);
+  assert.equal(execFileSync('/bin/sh', ['-c', 'gh'], { env, encoding: 'utf8' }).trim(), 'broker');
+  // No token passes, and gh's config folder is none of the caller's.
+  for (const name of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']) assert.equal(env[name], undefined, name);
+  assert.notEqual(env.GH_CONFIG_DIR, config);
+  assert.equal(fs.existsSync(env.GH_CONFIG_DIR), false);
+  // And should a real gh be reached by its full path, the queue's sandbox keeps from it the tokens, a config folder
+  // named in the step's environment, the default config folder and the keychain, as the project's does.
+  const queue = queueSettings(projectSettings(readConfig(null)), '/h/helper.sock');
+  const denied = queue.sandbox.credentials.envVars.filter((v) => v.mode === 'deny').map((v) => v.name);
+  for (const name of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GH_CONFIG_DIR']) assert.ok(denied.includes(name), name);
+  assert.ok(queue.sandbox.filesystem.denyRead.includes('~/.config/gh'));
+  assert.ok(queue.permissions.deny.includes('Read(~/.config/gh)'));
+  if (process.platform === 'darwin') assert.ok(queue.sandbox.credentials.files.some((f) => f.path === '~/Library/Keychains' && f.mode === 'deny'));
 });
 
 test('a socket under a linked folder is opened by its real path too', () => {

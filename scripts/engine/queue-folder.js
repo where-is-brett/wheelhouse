@@ -2,9 +2,10 @@
 // The folder Archon's merge queue runs in (check 81): Wheelhouse's own checkout of a project's fetch mirror, under the
 // engine folder, never the director's project. The queue's gate asks GitHub through the broker, which reaches the
 // helper on its socket, and a Claude step's sandbox refuses every local socket it isn't told of. So this folder's
-// settings are the project's own shared settings as its default branch holds them, with only the helper's socket
-// opened (sandbox.network.allowUnixSockets): the deny lists, the sandbox and the plugins stay as they are, and the
-// broker's call list, its permits and the signed approval stay the only way to merge. The project's own settings never
+// settings are the project's own shared settings as its default branch holds them, with the helper's socket opened
+// (sandbox.network.allowUnixSockets) and the gh deny lifted for the broker's gh (QUEUE_LIFTED): the other deny rules,
+// the sandbox and the plugins stay as they are, and the broker's call list, its permits and the signed approval stay
+// the only way to merge. The project's own settings never
 // change. The folder carries a mark naming its project and remote, and one marked for another (or not marked, or a
 // link) is taken away and made afresh, never reused. Uninstall takes it away with the project's fetch mirror.
 import fs from 'node:fs';
@@ -38,10 +39,22 @@ function realOf(file) {
   }
 }
 
-// The project's shared settings with only the helper's socket opened, by both its spellings.
+// The deny rule lifted in the queue's folder, and only there: the sweep reads a pull request's and its issue's text and
+// corrects a closing keyword with gh, and in its runs gh is the broker alone. The run's PATH holds no other gh
+// (archon/env.js), its sandbox keeps a real gh's sign-in out of reach (the config folder, the keychain and the
+// tokens), and the broker's list decides every call (check 81).
+export const QUEUE_LIFTED = 'Bash(gh:*)';
+// gh's own pointer to a config folder, kept from the queue's steps as the tokens are.
+const QUEUE_ENV_DENIED = ['GH_CONFIG_DIR'];
+
+// The project's shared settings with the helper's socket opened, by both its spellings, and the gh deny lifted.
 export function queueSettings(shared, socket) {
   const sockets = [...new Set([socket, realOf(socket)])];
-  return mergeSettings(isPlain(shared) ? shared : {}, { sandbox: { network: { allowUnixSockets: sockets } } });
+  const merged = mergeSettings(isPlain(shared) ? shared : {}, {
+    sandbox: { network: { allowUnixSockets: sockets }, credentials: { envVars: QUEUE_ENV_DENIED.map((name) => ({ name, mode: 'deny' })) } },
+  });
+  if (Array.isArray(merged.permissions?.deny)) merged.permissions.deny = merged.permissions.deny.filter((rule) => rule !== QUEUE_LIFTED);
+  return merged;
 }
 
 const kindOf = (file) => {

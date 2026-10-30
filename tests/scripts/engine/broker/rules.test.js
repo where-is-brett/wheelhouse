@@ -32,6 +32,21 @@ test('a pull-request read passes', () => {
   assert.ok(BROKER_ALLOW.length >= 10);
 });
 
+test("a pull request, issue or run named by its address is the project's own, or the call is refused", () => {
+  for (const argv of [
+    ['pr', 'view', 'https://github.com/acme/web/pull/14', '--json', 'body'],
+    ['issue', 'view', 'https://github.com/ACME/web/issues/5', '--json', 'body'],
+    ['pr', 'view', 'github.com/acme/web/pull/14'],
+    ['pr', 'view', 'wheelhouse-slice-1'],
+  ]) assert.equal(classifyCall(argv, { repo: 'acme/web' }).kind, 'read', argv.join(' '));
+  for (const argv of [
+    ['pr', 'view', 'https://github.com/other/repo/pull/14', '--json', 'body'],
+    ['issue', 'view', 'https://github.com/other/repo/issues/5'],
+    ['pr', 'diff', 'https://gitlab.com/acme/web/-/merge_requests/1'],
+    ['issue', 'view', 'https://github.com/acme'],
+  ]) assert.equal(classifyCall(argv, { repo: 'acme/web' }).kind, 'other', argv.join(' '));
+});
+
 test('a push to the default branch is refused', () => {
   const ctx = { stop: false, lockHeld: true, defaultBranch: 'main' };
   const onMain = classifyCall(['api', '-X', 'PATCH', 'repos/acme/web/git/refs/heads/main', '-f', `sha=${HEAD}`]);
