@@ -12,7 +12,7 @@
 // seen ready, the clashes, the fixes) is in `file`.
 import fs from 'node:fs';
 import path from 'node:path';
-import { dispatch } from './dispatcher.js';
+import { dispatch, MERGE_WORK } from './dispatcher.js';
 import { workOrder } from './order.js';
 import { limitsFor } from './caps.js';
 import { ENGINE_QUESTIONS } from './router.js';
@@ -22,11 +22,10 @@ import { since, endedBy } from '../foreman/queue.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const isText = (x) => typeof x === 'string' && x.trim() !== '';
-const EMPTY = () => ({ mergeRun: null, mergeRuns: [], lastStart: null, seenReady: [], sentBack: {}, acted: {}, clashAsked: {}, requestsAsked: null, noTestsSaid: false, fixes: {}, features: {}, shipped: {}, closedPrs: [] });
+const EMPTY = () => ({ mergeRun: null, mergeRuns: [], lastStart: null, seenReady: [], queueDue: false, sentBack: {}, acted: {}, clashAsked: {}, requestsAsked: null, noTestsSaid: false, fixes: {}, features: {}, shipped: {}, closedPrs: [] });
 // The dispatcher's own questions take numbers from here, apart from the card router's.
 const OWN_QUESTIONS = ENGINE_QUESTIONS + 90000;
-// The work the merge queue's own runs stand for, which no work record names: their asks are routed under it.
-export const MERGE_WORK = 'merge-queue';
+export { MERGE_WORK };
 const KEPT_MERGE_RUNS = 20;
 export const TRY_AGAIN = 'Try again';
 export const LEAVE_IT = 'Leave it';
@@ -88,7 +87,7 @@ export function orderFor(entry, { settings = {}, raised = false, config = {}, an
 }
 
 // dispatchRun({ engine, project, folder, file, readViews, settings, stopped, now, start, write, readyOf, mainGreen,
-//   stoppedRuns, fixedRuns, prMerged, designOf, orderOf, repoOf, queueFolder, openedBy }) -> { tick, workOf, startAgain, sentBack }.
+//   stoppedRuns, fixedRuns, prMerged, designOf, orderOf, repoOf, queueFolder, openedBy }) -> { tick, workOf, startAgain, sentBack, queueDue }.
 // - `start({ project, order, branch?, carryOn? })` the helper's own start; `readyOf()` the pull requests marked ready,
 //   { [pr]: { work, head } }; `settings()` the project's settings in force; `write(kind, data)` a record;
 // - `mainGreen()` whether the main line's checks read green: true, false, or null when they can't be read (or are
@@ -558,7 +557,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       work: views.work ?? {}, runs: views.runs ?? {}, reports, features: views.features ?? {}, settings: s, stop: stopped(),
       incident: Array.isArray(views.incidents?.open) && views.incidents.open.length > 0,
       capsReached: false,
-      mergeQueue: { running: await mergeQueueRunning(), lastStart: state.lastStart, waiting: waiting.length, newReady },
+      mergeQueue: { running: await mergeQueueRunning(), lastStart: state.lastStart, waiting: waiting.length, newReady: newReady || state.queueDue === true },
       requests, sentBack: Object.entries(state.sentBack).filter(([work, times]) => state.acted[work] !== times).map(([work, times]) => ({ work, times })), now: now(),
     });
     const started = [];
@@ -626,6 +625,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
         state.mergeRuns = [...state.mergeRuns, got.runId].slice(-KEPT_MERGE_RUNS);
         state.lastStart = now().toISOString();
         state.seenReady = waiting.map(([pr]) => pr);
+        state.queueDue = false;
         keep();
       }
     }
@@ -654,6 +654,13 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     // The work a merge-queue run the dispatcher started stands for ({ work: MERGE_WORK, lane: 'merge' }), or null: no
     // `run` record names it, so its asks are found from here.
     workOf: (runId) => (state.mergeRuns.includes(runId) ? { work: MERGE_WORK, lane: 'merge', branch: null } : null),
+    // A ruling to merge: the queue starts on the first tick after the answered run ends, not at the next sweep. Archon's
+    // ruling step tries to start it too, but from there it lacks the project and the run's models, and the helper
+    // wouldn't know the run (docs/engine/archon-upstream-note.md).
+    queueDue() {
+      state.queueDue = true;
+      keep();
+    },
     // Starts a piece again, carrying on from what is there (Give it more), with its cap raised once.
     startAgain: (args) => startPiece(args),
     // A pull request the merge gate sent back for a clash: started again on the next tick, or a card the second time.

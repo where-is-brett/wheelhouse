@@ -4,6 +4,13 @@
 // holds a run id, a step id or the engine's own words; the director never sees them.
 import { runningMinutes } from './spend.js';
 
+// The merge queue's question, for a card: its pull request by number and title, as far as they are known.
+export function mergeQuestionWords(pr, title) {
+  const line = typeof title === 'string' ? title.trim().split('\n')[0].slice(0, 120) : '';
+  const named = Number.isInteger(pr) ? `pull request #${pr}${line ? `, "${line}",` : ''}` : 'this pull request';
+  return `The merge queue won't judge ${named} by itself (it changes a schema, permissions or something the rules keep for a person).`;
+}
+
 // Each step of the pack (engine/archon/pack/) and of the merge queue, in words a sentence takes.
 export const STEP_WORDS = Object.freeze({
   order: 'reading the work order',

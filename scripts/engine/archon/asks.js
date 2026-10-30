@@ -4,6 +4,7 @@
 // becomes a level-3 ask recommending that the work stop, with the reason in plain words. Nothing is dropped.
 import { ASK_KINDS } from '../contract.js';
 import { RED_MAIN, suspectOf } from '../fix-main.js';
+import { mergeQuestionWords } from '../words.js';
 
 const PACK = 'wh.';
 const PACK_LABELS = ['kind', 'level', 'topic', 'work', 'recommend', 'preview', 'pr', 'head', 'holds'];
@@ -14,9 +15,15 @@ const when = (value) => {
   return Number.isNaN(time) ? String(value) : new Date(time).toUTCString().replace(/:\d\d GMT$/, ' UTC');
 };
 
+// The pull request the merge queue's question is about, from the heading its record step writes, or null.
+const askedPr = (message) => {
+  const found = /^\W*Merge queue, PR (\d+): merge decision/.exec(String(message ?? ''));
+  return found ? Number(found[1]) : null;
+};
+
 // Archon's own asks, in the order they are tried (spec 8.3). Each row: `test(item)`, then the ask's kind and level,
 // what it recommends, `answer` when the card router answers it itself, `card` (false: a Logbook line only), `holdsAll`
-// when every piece of work waits on it, `opens` when answering it opens an incident of that kind (with the pull
+// when every piece of work waits on it, `merge` for the merge queue's question about a pull request, `opens` when answering it opens an incident of that kind (with the pull
 // request the queue's words suspect), and `say(item)`, the plain words for the card or the line.
 export const ARCHON_ASKS = Object.freeze([
   Object.freeze({
@@ -29,8 +36,8 @@ export const ARCHON_ASKS = Object.freeze([
     name: 'merge-question',
     test: (item) => item.kind === 'attention' && item.labels?.merge === 'pr',
     // The merge queue waits on it, so every ready pull request does.
-    kind: 'question', level: 3, recommend: null, card: true, holdsAll: true,
-    say: () => "The merge queue won't judge this pull request by itself (it changes a schema, permissions or something the rules keep for a person).",
+    kind: 'question', level: 3, recommend: null, card: true, holdsAll: true, merge: true,
+    say: (item) => mergeQuestionWords(askedPr(item.message)),
   }),
   Object.freeze({
     name: 'rounds-ended',
@@ -132,6 +139,7 @@ export function normaliseAsk(item, { now = () => new Date().toISOString() } = {}
     const ask = { ...base, kind: row.kind, level: row.level, work: null, recommend: row.recommend, labels: {}, card: row.card };
     if (row.answer) ask.answer = row.answer;
     if (row.holdsAll) ask.holdsAll = true;
+    if (row.merge) ask.mergeQuestion = { pr: askedPr(item.message) };
     if (row.opens) {
       ask.opens = row.opens;
       ask.suspect = suspectOf(item.message);

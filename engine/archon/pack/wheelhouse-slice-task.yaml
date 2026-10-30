@@ -251,7 +251,7 @@
         "build"
       ],
       "trigger_rule": "none_failed_min_one_success",
-      "bash": "out=$build.output; printf '%s' \"$out\" | node \"$WHEELHOUSE_ROOT/scripts/engine/task-record.js\" --artefacts \"$ARTIFACTS_DIR\" --task $INPUTS.task",
+      "bash": "out=$build.output; printf '%s' \"$out\" | node \"$WHEELHOUSE_ROOT/scripts/engine/task-record.js\" --artefacts \"$ARTIFACTS_DIR\" --task $INPUTS.task --reviewed",
       "timeout": 60000,
       "output_format": {
         "type": "object",
@@ -303,6 +303,10 @@
           "task": {
             "type": "string",
             "description": "the task number"
+          },
+          "held": {
+            "type": "boolean",
+            "description": "true when the task's review still held as its rounds ran out"
           }
         },
         "required": [

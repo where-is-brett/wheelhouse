@@ -550,6 +550,22 @@ test('a Copilot run doesn\'t start on an engine built without the Copilot patch:
   assert.doesNotMatch(copilotEngineProblem(engine) ?? '', /Copilot patch/, 'past the patch, the clean home is what is checked next');
 });
 
+// What the merge queue's record step asked, as Archon keeps it.
+const recordOutput = (asked) => ({ 'workflow get': { code: 0, json: { ok: true, events: [{ event_type: 'node_completed', step_name: 'record', data: { node_output: JSON.stringify({ merged: [], summary: '', attention: 'a', options: [], class: 'pr', asked }) } }] }, stdout: '', stderr: '' } });
+
+test('mergeAsked reads the pull request, head and merge choice from the record step, not the question\'s words', async () => {
+  const asked = { by: 'pr', pr: { number: 7 }, head: 'a'.repeat(40), attention: { choices: [{ id: 'keep', effect: 'return' }, { id: 'go-ahead', effect: 'merge' }] } };
+  assert.deepEqual(await adapter(fakeCli(recordOutput(asked))).mergeAsked(RUN), { pr: 7, head: 'a'.repeat(40), merge: 'go-ahead' });
+});
+
+test('mergeAsked gives null for anything but a pull request\'s question', async () => {
+  assert.equal(await adapter(fakeCli(recordOutput({ by: 'base', attention: { choices: [] } }))).mergeAsked(RUN), null);
+  assert.equal(await adapter(fakeCli(recordOutput(null))).mergeAsked(RUN), null);
+  assert.equal(await adapter(fakeCli({ 'workflow get': { code: 1, json: { ok: false }, stdout: '', stderr: '' } })).mergeAsked(RUN), null);
+  const none = await adapter(fakeCli(recordOutput({ by: 'pr', pr: { number: 7 }, head: 'a'.repeat(40), attention: { choices: [{ id: 'park', effect: 'park' }] } }))).mergeAsked(RUN);
+  assert.equal(none.merge, null);
+});
+
 test('a run on Copilot names the agent whose steps read Wheelhouse\'s own copies; a Claude run names none', () => {
   const engine = adapter(fakeCli({}));
   const tiers = (model) => ({ tiers: { small: model, medium: model, large: model } });

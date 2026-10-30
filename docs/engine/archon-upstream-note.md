@@ -28,6 +28,16 @@ The root check in the provider's constructor stays as it is. Per-node `sandbox:`
 
 `scripts/engine/archon/patch/provider-cli-path.patch`, added 30 October 2026 after check 74's real Copilot run. Archon's Copilot provider resolves the CLI only in a compiled build (`if (!BUNDLED_IS_BINARY) return undefined`). A source build, which Wheelhouse always runs, ignores `COPILOT_BIN_PATH`, and the Copilot SDK runs its own bundled runtime. So the CLI that setup pins and checks never ran. That runtime doesn't set `COPILOT_CLI_BINARY_VERSION`, so Wheelhouse's guards, registered as the CLI's hooks, took every step for an unknown chat and refused its edits. The patch makes a source build honour the variable, as a compiled build does. Without the variable, Archon behaves as released. The upstream request is the same change: honour `COPILOT_BIN_PATH` whatever the build.
 
+## A report: the merge queue's ruling loses why its follow-up run didn't start
+
+Not a patch; Wheelhouse works around it. Found in check 81 on 30 October 2026, against v0.13.0.
+
+`launchDetached` (`.archon/workflows/sdlc/.shared/launch.ts`) starts `workflow run … --detach --json` and, when it exits non-zero, reports its standard error. With `--json` the CLI puts its refusal on standard output, as `{ "ok": false, "error": … }`, so the ruling logs only "archon-merge-queue did not start:", with nothing after it. Reading `error` from standard output would keep the reason.
+
+We couldn't recover the refusal from our run. The same start, from a copy of the engine's database, in a script step of a real paused-and-woken run, with the same environment shape, started. So we don't know what refused it.
+
+Wheelhouse no longer relies on that start, for a reason of its own: a follow-up from the step names no `--project`, `--workflow-source` or model bindings, and the host that started the first run doesn't know the new one. Without `--project`, on the copy above, it ran under the repository's own project, not the mirror's. So when a ruling merges, Wheelhouse's helper starts the next queue run itself, once the answered run ends. If the step's start works too, the two runs may overlap. Each item's claim keeps them from sweeping it twice.
+
 ## A third patch: cancelling a paused run
 
 `scripts/engine/archon/patch/paused-run-cancel.patch`, added 30 October 2026 after check 74. `cancelWorkflow` refuses any run that isn't running and points at `abandon`, which removes the worktree with its uncommitted work. Wheelhouse never abandons (spec 12.3), so a run paused at an ask couldn't be stopped by a cancel, a cap or All stop, on any provider. A run answered just before All stop then carried on when the wake came back after the lift. The patch makes `cancel` take a paused run: it stops any live owner, records the run cancelled with its children, and leaves the worktree where it is. Checked on a real paused run with no model step: status cancelled, the uncommitted file still there, the ask gone, and a fresh run started on the same branch. Other runs behave as released. The upstream request is the same change: a cancel for a paused run that keeps the checkout.

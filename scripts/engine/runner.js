@@ -20,6 +20,8 @@ import { routeAsk, cardBudget, bundleApprovals, answerFor, dayOf, ignoresBudget,
 import { runCost, runningMinutes } from './spend.js';
 import { capReached, carriedSpend } from './caps.js';
 import { RED_MAIN, FIX_LANE, redMainIncident, openRedMain } from './fix-main.js';
+import { MERGE_WORK } from './dispatcher.js';
+import { mergeQuestionWords } from './words.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const EMPTY = () => ({ routed: {}, waiting: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, tries: {}, later: [], next: {}, noted: null, capped: {}, costed: {}, carried: {}, reworks: {}, answers: {} });
@@ -62,8 +64,10 @@ const inSentence = (title) => (/^[A-Z][a-z]/.test(title) ? title.charAt(0).toLow
 // - `write(kind, data)` a record in the project's history; `stopped()` whether All stop is on;
 // - `settings()` { cardsPerDay, bundleApprovals }; `workOf(runId)` { work, lane } from the project's run records;
 // - `titleOf(work)` the work's title; `endRun(runId)` ends a run's process tree by pid, as All stop does, for a run the
-//   engine wouldn't stop at its cap ({ ended, survivors }).
-export function engineRunner({ engine, file, readViews, write, stopped = () => false, now = () => new Date(), settings = () => ({}), workOf = () => null, titleOf = (work) => work, endRun = async () => ({ ended: [], survivors: [] }) } = {}) {
+//   engine wouldn't stop at its cap ({ ended, survivors });
+// - `openedOf(pr)` the helper's own record of what opened a pull request ({ lane, work, ... }), or null; `prTitleOf(pr)`
+//   its title from the host, or null.
+export function engineRunner({ engine, file, readViews, write, stopped = () => false, now = () => new Date(), settings = () => ({}), workOf = () => null, titleOf = (work) => work, endRun = async () => ({ ended: [], survivors: [] }), openedOf = () => null, prTitleOf = async () => null } = {}) {
   let state = readState(file);
   const keep = () => saveState(file, state);
   const note = (words, extra = {}) => write('note', { about: 'engine', words, ...extra });
@@ -73,6 +77,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   const viewsNow = () => {
     try { return readViews() ?? {}; } catch { return {}; }
   };
+  let mergeRuled = () => {};
   const safely = (fn) => Promise.resolve().then(fn).catch(() => null);
   // A run held at its cap while paused: nothing goes back to it until Give it more.
   const held = (runId) => state.capped[runId]?.held === true;
@@ -90,8 +95,26 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     }
   }
 
+  // The merge queue's question with what its run's record says it asked: the card's words name the pull request, and
+  // `mergeChoice` is the answer that merges.
+  async function mergeQuestionOf(ask) {
+    const asked = await Promise.resolve().then(() => engine.mergeAsked?.(ask.runId)).catch(() => null);
+    const pr = asked?.pr ?? ask.mergeQuestion.pr;
+    const title = Number.isInteger(pr) ? await Promise.resolve().then(() => prTitleOf(pr)).catch(() => null) : null;
+    return { asked, ask: { ...ask, reason: mergeQuestionWords(pr, title), mergeChoice: asked?.merge ?? null } };
+  }
+
+  // Whether the director has already decided this: the pull request is a feature's own, by the helper's record, and a
+  // verified, signed approval names exactly the head the queue asked about. The merge itself still needs that approval
+  // at the gate; this only spares the second question.
+  function alreadyApproved(asked, views) {
+    return isPlain(asked) && typeof asked.merge === 'string' && asked.merge !== '' && openedOf(asked.pr)?.lane === 'feature'
+      && isPlain(views.approvals?.[asked.pr]?.[asked.head]);
+  }
+
   // Routes one ask (an `ask` EngineEvent), once.
-  async function onAsk(ask) {
+  async function onAsk(given) {
+    let ask = given;
     if (!isPlain(ask) || typeof ask.id !== 'string' || state.routed[ask.id]) return;
     // A held run the director stopped is never asked about again.
     if (state.capped[ask.runId]?.stopped === true) return;
@@ -102,11 +125,31 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       return;
     }
     const found = workOf(ask.runId);
-    const work = found?.work ?? ask.work;
+    // A merge-queue run the helper didn't start (Archon's ruling step starts one too) still waits on an answer.
+    const work = found?.work ?? ask.work ?? (isPlain(ask.mergeQuestion) ? MERGE_WORK : null);
     if (typeof work !== 'string') return;
     state.routed[ask.id] = true;
     let views = {};
     try { views = readViews() ?? {}; } catch { views = {}; }
+    if (isPlain(ask.mergeQuestion)) {
+      const { asked, ask: named } = await mergeQuestionOf(ask);
+      ask = named;
+      if (alreadyApproved(asked, views)) {
+        if (stopped()) {
+          // Answered once All stop is lifted, never under it.
+          state.later.push(given);
+          keep();
+          return;
+        }
+        const got = await answerEngine(ask.runId, { ask: ask.id, choice: asked.merge });
+        keep();
+        if (got.ok) {
+          mergeRuled();
+          await note(`The merge queue asked about pull request #${asked.pr} at ${asked.head.slice(0, 7)}. You approved that commit, so it goes ahead on your approval.`, { work, level: 3 });
+          return;
+        }
+      }
+    }
     // A blocked exit asking again what the director has already answered for this work is answered with that answer.
     const earlier = ask.kind === 'blocked' && questionOf(ask) !== null
       ? (state.answers[work] ?? []).filter((a) => a.question === questionOf(ask)).at(-1) : null;
@@ -265,6 +308,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       }
       state.delivered[key] = got.ok ? 'answered' : 'refused';
       delete state.tries[key];
+      if (got.ok && typeof kept.ask?.mergeChoice === 'string' && answer.choice === kept.ask.mergeChoice) mergeRuled();
       const runLane = (views.runs?.[kept.work] ?? []).filter((r) => r?.data?.runId === kept.runId).at(-1)?.data?.lane ?? workOf(kept.runId)?.lane;
       const move = got.ok && runLane === 'bug' && kept.ask?.kind === 'blocked' && kept.ask?.topic === BIGGER && Object.hasOwn(MOVES, answer.choice) ? MOVES[answer.choice] : undefined;
       if (move) {
@@ -496,6 +540,8 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     },
     // How the runner starts a run again (the dispatcher's own start): ({ work, lane, branch, carryOn, raised }) -> { ok, runId }.
     onStart(fn) { if (typeof fn === 'function') startRun = fn; },
+    // Told when an answer to the merge queue's question merges: the queue is then due at once.
+    onMergeRuled(fn) { if (typeof fn === 'function') mergeRuled = fn; },
     // What a run carries: { raised, runs } (the runs before it whose spend counts against its caps).
     carried: (runId) => state.carried[runId] ?? null,
     questionOf: (runId) => state.capped[runId]?.question ?? null,

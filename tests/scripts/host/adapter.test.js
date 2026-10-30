@@ -93,7 +93,7 @@ test('GitHub updatePr changes only what is given', async () => {
 test('GitHub prState reads the recorded pull request', async () => {
   const { a, calls } = adapter('github', { stdout: gh('pr-view-open.json') });
   assert.deepEqual(await a.prState(3), { headSha: SHA, mergeable: 'yes', state: 'open' });
-  assert.deepEqual(calls[0].args, ['pr', 'view', '3', '--repo', REPO, '--json', 'number,url,headRefOid,headRefName,baseRefName,mergeable,state,body']);
+  assert.deepEqual(calls[0].args, ['pr', 'view', '3', '--repo', REPO, '--json', 'number,url,headRefOid,headRefName,baseRefName,mergeable,state,body,title']);
 });
 
 test('GitHub prState names the head branch and gives the body when GitHub does', async () => {
@@ -203,13 +203,13 @@ test('GitLab updatePr changes only what is given', async () => {
 
 test('GitLab prState reads the recorded merge request', async () => {
   const { a, calls } = adapter('gitlab', { stdout: gl('mr-view-closed.json') });
-  assert.deepEqual(await a.prState(1), { headSha: GL_SHA, headRef: 'wheelhouse/welcome-page', baseRef: 'main', mergeable: 'no', state: 'closed', body: '' });
+  assert.deepEqual(await a.prState(1), { headSha: GL_SHA, title: 'Add the welcome page', headRef: 'wheelhouse/welcome-page', baseRef: 'main', mergeable: 'no', state: 'closed', body: '' });
   assert.deepEqual(calls[0].args, ['mr', 'view', '1', '-R', REPO, '--output', 'json']);
 });
 
 test('GitLab prState maps detailed_merge_status and state', async () => {
   const { a } = adapter('gitlab', { stdout: gl('mr-view-open.json') }, { stdout: gl('mr-view-conflict.json') }, { stdout: gl('mr-view-merged.json') });
-  assert.deepEqual(await a.prState(1), { headSha: GL_SHA, headRef: 'wheelhouse/welcome-page', baseRef: 'main', mergeable: 'yes', state: 'open', body: '' });
+  assert.deepEqual(await a.prState(1), { headSha: GL_SHA, title: 'Add the welcome page', headRef: 'wheelhouse/welcome-page', baseRef: 'main', mergeable: 'yes', state: 'open', body: '' });
   assert.equal((await a.prState(1)).mergeable, 'no');
   assert.equal((await a.prState(1)).state, 'merged');
 });

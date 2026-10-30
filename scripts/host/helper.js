@@ -4575,8 +4575,11 @@ export async function startHelper({
       workOf: (runId) => engineRunOf(project, runId) ?? dispatcher.workOf(runId),
       titleOf: (work) => (work === MERGE_WORK ? 'the changes waiting to be added' : views().work?.[work]?.work?.data?.title ?? work),
       endRun: async (runId) => endRun({ engine, run: { id: runId, folder: (await engine.inspect(runId))?.folder ?? null }, ...engineStopWith }),
+      openedOf: (pr) => engineRun.openedOf(project, pr),
+      prTitleOf: async (pr) => (await (await contextFor(project)).adapter().then((adapter) => adapter.prState(pr))).title ?? null,
     });
     runner.onStart((args) => dispatcher.startAgain(args));
+    runner.onMergeRuled(() => dispatcher.queueDue());
     return { runner, dispatcher };
   }
   // One look for every project on the engine, one at a time.

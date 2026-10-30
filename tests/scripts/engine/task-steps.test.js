@@ -10,7 +10,7 @@ import { execFileSync } from 'node:child_process';
 import { main as taskCheck } from '../../../scripts/engine/task-check.js';
 import { main as taskRecord } from '../../../scripts/engine/task-record.js';
 import { main as tasksDone } from '../../../scripts/engine/tasks-done.js';
-import { PLAN_FILE, BLOCKED_FILE } from '../../../scripts/engine/plan-file.js';
+import { MOST_TASKS, PLAN_FILE, BLOCKED_FILE } from '../../../scripts/engine/plan-file.js';
 import { workOrder } from '../../../scripts/engine/order.js';
 import { TICKET_FILE } from '../../../scripts/engine/ticket.js';
 import { tempFolder } from '../../helpers/homes.js';
@@ -110,7 +110,7 @@ const recordsOf = async (...outputs) => {
 };
 const done = async (cwd, art, records = '[]') => {
   const s = sink();
-  assert.equal(await tasksDone(['--artefacts', art, '--base', 'main', '--records', records], { cwd, out: s.out }), 0);
+  assert.equal(await tasksDone(['--run', 'run-1', '--artefacts', art, '--base', 'main', '--records', records], { client, cwd, out: s.out }), 0);
   return s.last();
 };
 
@@ -183,4 +183,122 @@ test('a slice\'s task passes only once its task review finds no BLOCKER or HIGH,
   const art2 = artefacts();
   const closing = (review) => taskCheck(['--run', 'run-1', '--artefacts', art2, '--base', 'main', '--task', '1', '--review', review, '--most', '1'], { client, cwd: dir, out: () => {} });
   assert.equal(await closing(high), 0, 'the last round closes the loop, leaving the whole-change review to hold it');
+});
+
+// A red end: a task's loop closes on its last round whatever the reason, so the close looks again at every ticked task.
+const planOf = (cwd) => fs.readFileSync(path.join(cwd, PLAN_FILE), 'utf8');
+
+test('a ticked task whose test still fails closes with a card and goes back to be built again', async () => {
+  const dir = repo('- [x] **Task 1:** One\n  Test: good\n- [x] **Task 2:** Prices round\n  Test: bad\n');
+  const got = await done(dir, artefacts());
+  assert.equal(got.blocked, true);
+  assert.match(got.question, /^Task 2, Prices round: its test still fails/);
+  assert.equal(got.recommend, 'rework');
+  assert.deepEqual(got.options.map((o) => o.id), ['rework', 'stop']);
+  assert.equal(got.level, '3');
+  assert.equal(got.topic, 'task-red');
+  // Unticked in its own commit, so the fresh run builds it: `--tasks` lists only what isn't ticked.
+  assert.match(planOf(dir), /- \[x\] \*\*Task 1:\*\*/);
+  assert.match(planOf(dir), /- \[ \] \*\*Task 2:\*\*/);
+  assert.equal(git(dir, 'status', '--porcelain', '--untracked-files=all'), '');
+  assert.match(git(dir, 'log', '-1', '--format=%s'), /task 2/);
+});
+
+test('a task that ended with its changes uncommitted closes with a card', async () => {
+  const dir = repo('- [x] **Task 1:** One\n  Test: good\n');
+  fs.writeFileSync(path.join(dir, 'loose.js'), 'x\n');
+  const got = await done(dir, artefacts());
+  assert.equal(got.blocked, true);
+  assert.match(got.question, /^Task 1, One: it left changes that aren't committed/);
+  assert.equal(got.topic, 'task-red');
+  assert.match(planOf(dir), /- \[ \] \*\*Task 1:\*\*/);
+});
+
+test('a slice task whose review still holds closes with a card, read from the fan-out\'s records', async () => {
+  const dir = repo('- [x] **Task 1:** One\n- [x] **Task 2:** Two\n');
+  const review = { verdict: 'FINDINGS', findings: [{ severity: 'HIGH', file: 'a.js', repro: 'r', fix: 'f' }], summary: 's', blocked: false, assumptions: [] };
+  const s = sink();
+  await taskRecord(['--artefacts', artefacts(), '--task', '2', '--reviewed'], { stdin: JSON.stringify(review), out: s.out });
+  assert.equal(s.last().held, true);
+  assert.equal(s.last().blocked, false);
+  const got = await done(dir, artefacts(), JSON.stringify([{ blocked: false, task: '1' }, s.last()]));
+  assert.equal(got.blocked, true);
+  assert.match(got.question, /^Task 2, Two: its review still found/);
+  assert.match(planOf(dir), /- \[x\] \*\*Task 1:\*\*/);
+  assert.match(planOf(dir), /- \[ \] \*\*Task 2:\*\*/);
+});
+
+test('a clean review, and a task that skipped, hold nothing', async () => {
+  for (const stdin of [JSON.stringify({ verdict: 'CLEAN', findings: [], summary: 's', blocked: false, assumptions: [] }), '']) {
+    const s = sink();
+    await taskRecord(['--artefacts', artefacts(), '--task', '1', '--reviewed'], { stdin, out: s.out });
+    assert.equal(s.last().held, undefined);
+  }
+});
+
+test('a test the close can\'t check counts as red', async () => {
+  const dir = repo('- [x] **Task 1:** One\n  Test: good\n');
+  const s = sink();
+  const refusing = { engine: { order: async () => ({ ok: false, refused: 'no order' }) } };
+  assert.equal(await tasksDone(['--run', 'run-1', '--artefacts', artefacts(), '--base', 'main', '--records', '[]'], { client: refusing, cwd: dir, out: s.out }), 0);
+  assert.equal(s.last().blocked, true);
+  assert.equal(s.last().topic, 'task-red');
+});
+
+test('a close with a red task still asks when the untick can\'t be committed', async () => {
+  const dir = repo('- [x] **Task 1:** One\n  Test: bad\n');
+  const s = sink();
+  const refusingGit = async (file, args, options) => (args.includes('commit') ? { code: 1, stdout: '', stderr: 'no' } : (await import('../../../scripts/lib/run.js')).run(file, args, options));
+  assert.equal(await tasksDone(['--run', 'run-1', '--artefacts', artefacts(), '--base', 'main', '--records', '[]'], { client, cwd: dir, out: s.out, run: refusingGit }), 0);
+  assert.equal(s.last().blocked, true);
+  assert.equal(s.last().topic, 'task-red');
+});
+
+test('every ticked task passing closes clean, and asks the helper nothing when no task names a test', async () => {
+  const dir = repo('- [x] **Task 1:** One\n- [x] **Task 2:** Two\n  Test: good\n');
+  assert.equal((await done(dir, artefacts())).blocked, false);
+  const none = repo('- [x] **Task 1:** One\n');
+  const s = sink();
+  const silent = { engine: { order: async () => { throw new Error('not asked'); } } };
+  assert.equal(await tasksDone(['--run', 'run-1', '--artefacts', artefacts(), '--base', 'main', '--records', '[]'], { client: silent, cwd: none, out: s.out }), 0);
+  assert.equal(s.last().blocked, false);
+});
+
+test('a slice\'s task records and both lanes\' closes carry what the close needs', () => {
+  const pack = (name) => JSON.parse(fs.readFileSync(path.join('engine/archon/pack', `${name}.yaml`), 'utf8').replace(/^#.*\n/, ''));
+  assert.match(pack('wheelhouse-slice-task').nodes.find((n) => n.id === 'record').bash, /--reviewed/);
+  assert.doesNotMatch(pack('wheelhouse-small-task').nodes.find((n) => n.id === 'record').bash, /--reviewed/);
+  for (const lane of ['wheelhouse-small', 'wheelhouse-slice']) {
+    const close = pack(lane).nodes.find((n) => n.id === 'tasks-done');
+    assert.match(close.bash, /--run "\$WORKFLOW_ID"/);
+    assert.ok(close.timeout >= MOST_TASKS * 10 * 60 * 1000, 'the close runs each ticked task\'s test, each up to ten minutes');
+  }
+});
+
+test('a review that still holds goes back even when another task stopped with a question, since its record lasts one run', async () => {
+  const dir = repo('- [x] **Task 1:** One\n- [ ] **Task 2:** Two\n');
+  const records = JSON.stringify([{ blocked: false, task: '1', held: true }, { blocked: true, task: '2', question: 'Which?', options: [{ id: 'a', label: 'A' }], recommend: 'a', level: '3', topic: 'which' }]);
+  const got = await done(dir, artefacts(), records);
+  assert.equal(got.question, 'Task 2, Two: Which?');
+  assert.match(planOf(dir), /- \[ \] \*\*Task 1:\*\*/);
+  assert.equal(git(dir, 'status', '--porcelain', '--untracked-files=all'), '');
+});
+
+test('a red task after the plan was taken out comes back into the tree, so the fresh run can build it', async () => {
+  const dir = repo('- [x] **Task 1:** One\n  Test: good\n- [x] **Task 2:** Two\n  Test: bad\n');
+  git(dir, 'rm', '-q', PLAN_FILE);
+  git(dir, 'commit', '-qm', 'Take out the build plan');
+  const got = await done(dir, artefacts());
+  assert.equal(got.blocked, true);
+  assert.match(planOf(dir), /- \[x\] \*\*Task 1:\*\*/);
+  assert.match(planOf(dir), /- \[ \] \*\*Task 2:\*\*/);
+  assert.equal(git(dir, 'status', '--porcelain', '--untracked-files=all'), '');
+});
+
+test('a test that writes a file doesn\'t read as a change the task left', async () => {
+  const dir = repo('- [x] **Task 1:** One\n  Test: good\n');
+  const writing = workOrder({ work: { id: 'card-1', lane: 'small', goal: 'Prices show two decimals', done: [{ command: 'true', expect: 0 }] }, config: { testCommand: `${node} -e "require('fs').writeFileSync('report.txt', 'x')"` } });
+  const s = sink();
+  await tasksDone(['--run', 'run-1', '--artefacts', artefacts(), '--base', 'main', '--records', '[]'], { client: { engine: { order: async () => ({ ok: true, order: writing }) } }, cwd: dir, out: s.out });
+  assert.equal(s.last().blocked, false);
 });

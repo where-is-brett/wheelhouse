@@ -138,7 +138,7 @@ test('the small lane plans, builds and checks each task, takes the plan out and 
         assert.deepEqual(s.last(), { skip: true }, 'a rerun skips a task already done');
 
         s = said();
-        assert.equal(await tasksDone(['--artefacts', art, '--base', 'main', '--records', JSON.stringify([recorded, { blocked: false, task: '2' }])], { ...local, out: s.out }), 0);
+        assert.equal(await tasksDone(['--run', runId, '--artefacts', art, '--base', 'main', '--records', JSON.stringify([recorded, { blocked: false, task: '2' }])], { ...local, client, out: s.out }), 0);
         assert.equal(s.last().blocked, false);
 
         // The plan comes out before review, and a rerun still finds it in the branch's history.

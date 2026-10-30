@@ -109,6 +109,20 @@ That is about $6.30 in all, under the $8 ceiling. The merge queue's sweeps were 
 - The merge queue now runs in a folder of Wheelhouse's own. The project's Standard settings are unchanged, and `gh` there reaches GitHub only through the broker.
 - The double ask for a switch-on pull request costs the director a second click, and holds the queue while it waits. It is a design question, not a defect.
 
+### After the check
+
+Each "seen, not changed" item was settled on 30 October 2026 (`docs/superpowers/plans/2026-10-30-check-81-findings.md`):
+
+- **A task can end red: fixed, HIGH.** A task's loop closes on its last round whatever the reason, and the lane's close asked only about unticked tasks. So a ticked task with its test red, changes uncommitted, or a review still holding, closed clean, and no step after it runs that test. The close now looks again at every ticked task. One that didn't end brings a card and is unticked, so the fresh run builds it.
+- **Two questions for one decision: fixed.** The queue's question about a feature's own pull request is answered with the director's signed approval when that approval names exactly the head the queue asked about. A changed head is asked about again. The gate is unchanged.
+- **The queue's card names its pull request: fixed.** By number and title.
+- **The ruling's follow-up run: fixed in Wheelhouse.** Archon's start keeps no reason (`docs/engine/archon-upstream-note.md`), and the same start worked on a copy of the engine's database, so what refused it is unknown. The helper now starts the queue on the first tick after a ruling to merge.
+- **Allow rules in a fresh worktree: documented, with one change to the steps' rules.** See below.
+
+**Why the allow rules don't apply, and what that costs.** Claude Code reads no `permissions.allow` from a project's settings until its folder is trusted, and Archon's worktrees come from the engine's mirror, which nothing ever trusts. Trust is the director's own to give, folder by folder, so Wheelhouse doesn't set it. A plugin's `PreToolUse` hook answering `allow` does work there (check 75), and the tool guard answers it for a file tool call wholly in the step's own run's artefacts. Shell reads are the sandbox's, which the run's overlay opens. So nothing a run needs is blocked.
+
+That is not what check 81's steps show, because they didn't run that guard. Archon loads `wheelhouse@wheelhouse` as installed, and this computer's install was 0.1.2, which is older than the guard's `allow` and has none of the review skills (`claude.skills_unresolved` in the steps' logs). Their file tools were refused in the artefacts and they used `cat`. Three steps in run 9ed33c1c instead went on without the order at all. The shared rules now say to read it with `cat`, and to take the blocked exit if it still can't be read. A release has one version of the plugin and the pack, so this mismatch is a check's, not a director's. A later real run should load this repository's plugin, so the guard's `allow` is seen working end to end.
+
 ## Needs the director
 
 Nothing for this check.

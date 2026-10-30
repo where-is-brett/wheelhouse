@@ -749,3 +749,111 @@ test('the fresh run asking the question the director answered is answered from t
     assert.equal(cards(), 2, 'a new question still comes to the director');
   } finally { t.cleanup(); }
 });
+
+// The merge queue's question about a pull request, as the adapter gives it, and what its record step says it asked.
+const ASKED_HEAD = 'c'.repeat(40);
+const mergeAsk = (id) => ({ type: 'ask', id, kind: 'question', level: 3, recommend: null, card: true, holdsAll: true, mergeQuestion: { pr: 7 }, reason: 'The merge queue won\'t judge pull request #7 by itself.', options: [{ id: 'go', label: 'Merge at ccc' }, { id: 'back', label: 'Return it' }] });
+function mergeSetUp({ stop = false, title = 'Switch on the greeting', lane = 'feature', head = ASKED_HEAD, askedHead = ASKED_HEAD, merge = 'go', signed = true, act, known = true } = {}) {
+  const t = setUp({ recordings: { one: [ev({ type: 'run-started' }), ev(mergeAsk('q9')), ev({ type: 'ask-resolved', id: 'q9' }), ev({ type: 'run-ended', outcome: 'completed' })] }, stop });
+  t.engine.mergeAsked = async () => ({ pr: 7, head: askedHead, merge });
+  if (act) t.engine.act = act;
+  if (signed) t.views.approvals = { 7: { [head]: { kind: 'approval', data: { pr: 7, commit: head } } } };
+  t.ruled = [];
+  const runner = engineRunner({
+    engine: t.engine, file: path.join(path.dirname(t.runner.file), 'merge.json'), readViews: () => t.views, write: async (kind, data) => { t.writes.push({ kind, data }); },
+    stopped: () => t.world.stop, now: () => t.world.now, settings: () => ({ cardsPerDay: 3 }), workOf: () => (known ? { work: 'merge-queue', lane: 'merge' } : null), titleOf: () => 'the changes waiting to be added',
+    openedOf: (pr) => (pr === 7 ? { lane, work: 'card-81' } : null), prTitleOf: async () => title,
+  });
+  runner.onMergeRuled(() => t.ruled.push(true));
+  const ask = async () => {
+    const { runId } = t.engine.start({ recording: 'one' });
+    await runner.onAsk(t.engine.watch('0').events.filter((e) => e.runId === runId && e.type === 'ask').at(-1));
+  };
+  return { ...t, runner, ask };
+}
+const questions = (t) => t.writes.filter((w) => w.kind === 'question');
+
+test('the merge queue\'s question about a switch-on already approved at its head is answered with that approval', async () => {
+  const t = mergeSetUp();
+  await t.ask();
+  assert.equal(questions(t).length, 0, 'no second question');
+  assert.equal(acts(t.engine).length, 1);
+  assert.match(JSON.stringify(acts(t.engine)[0]), /"choice":"go"/);
+  assert.equal(t.ruled.length, 1, 'the queue is due at once');
+  const line = t.writes.find((w) => w.kind === 'note' && /approved/.test(w.data.words));
+  assert.match(line.data.words, /#7/);
+  assert.match(line.data.words, /ccccccc/);
+  t.cleanup();
+});
+
+test('a head changed since the approval is asked about again', async () => {
+  const t = mergeSetUp({ askedHead: 'd'.repeat(40) });
+  await t.ask();
+  assert.equal(questions(t).length, 1);
+  assert.equal(acts(t.engine).length, 0);
+  t.cleanup();
+});
+
+test('no signed approval, a pull request no feature run opened, or no merge choice is asked about', async () => {
+  for (const over of [{ signed: false }, { lane: 'quick' }, { merge: null }]) {
+    const t = mergeSetUp(over);
+    await t.ask();
+    assert.equal(questions(t).length, 1, JSON.stringify(over));
+    assert.equal(acts(t.engine).length, 0, JSON.stringify(over));
+    t.cleanup();
+  }
+});
+
+test('under All stop the approved question waits, and goes back once it is lifted', async () => {
+  const t = mergeSetUp({ stop: true });
+  await t.ask();
+  assert.equal(acts(t.engine).length, 0);
+  assert.equal(questions(t).length, 0);
+  t.world.stop = false;
+  await t.runner.tick();
+  assert.equal(acts(t.engine).length, 1);
+  t.cleanup();
+});
+
+test('an approved question the engine won\'t take comes as a card', async () => {
+  const t = mergeSetUp({ act: async () => ({ ok: false, refused: 'moved on' }) });
+  await t.ask();
+  assert.equal(questions(t).length, 1);
+  assert.equal(t.ruled.length, 0);
+  t.cleanup();
+});
+
+test('the merge queue\'s card names the pull request and its title', async () => {
+  const t = mergeSetUp({ signed: false });
+  await t.ask();
+  assert.match(questions(t)[0].data.what, /pull request #7, "Switch on the greeting"/);
+  t.cleanup();
+});
+
+test('the card names the number alone when the host gives no title', async () => {
+  const t = mergeSetUp({ signed: false, title: null });
+  await t.ask();
+  assert.match(questions(t)[0].data.what, /pull request #7\b/);
+  assert.doesNotMatch(questions(t)[0].data.what, /"/);
+  t.cleanup();
+});
+
+test('the director\'s merge answer makes the queue due; any other answer doesn\'t', async () => {
+  for (const [label, due] of [['Merge at ccc', 1], ['Return it', 0]]) {
+    const t = mergeSetUp({ signed: false });
+    await t.ask();
+    const q = questions(t)[0].data;
+    t.views.questions[q.id] = { question: { data: q }, answer: { label, at: t.world.now.toISOString() } };
+    await t.runner.tick();
+    assert.equal(t.ruled.length, due, label);
+    t.cleanup();
+  }
+});
+
+test('a question from a merge-queue run the helper didn\'t start still comes as a card', async () => {
+  const t = mergeSetUp({ signed: false, known: false });
+  await t.ask();
+  assert.equal(questions(t).length, 1);
+  assert.equal(questions(t)[0].data.work, 'merge-queue');
+  t.cleanup();
+});
