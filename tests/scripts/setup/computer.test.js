@@ -610,3 +610,38 @@ test('on a computer that runs the engine, step 6 adds Wheelhouse at user scope a
     assert.ok(!(windows.changes ?? []).some((c) => c.what === 'plugin'));
   });
 });
+
+test('a Mac whose projects are all on GitLab gets neither Wheelhouse at user scope nor the login start', async () => {
+  const { engineWanted, pluginScopeChanges, applyPluginScope } = await import('../../../scripts/setup/engine-parts.js');
+  await withProject(async ({ folder, user, config }) => {
+    const engine = { wanted: engineWanted, pluginScope: pluginScopeChanges, applyPlugin: applyPluginScope };
+    const step = computerStep({ engine, run: fakeRun().run, env: { CLAUDE_CONFIG_DIR: config }, manifest: MANIFEST, port: PORT });
+    // The project's host chosen as GitLab at step 3, and no other project here.
+    const ctx = { folder, step: 6, now: () => T0, userHome: user, platform: 'darwin', answers: { '3.host': { label: 'GitLab', at: T0.toISOString() } } };
+    const planned = await step.plan(ctx);
+    assert.ok(!(planned.changes ?? []).some((c) => c.what === 'plugin' || c.what === 'login'));
+  }, { connected: false });
+});
+
+test('off the Mac, a project on the engine gets no login start', async () => {
+  const { engineWanted, pluginScopeChanges, applyPluginScope } = await import('../../../scripts/setup/engine-parts.js');
+  const { writeViews } = await import('../../../scripts/state/views.js');
+  const { makeEvent, eventPath, confirmationFor } = await import('../../../scripts/state/events.js');
+  await withProject(async ({ folder, user, config }) => {
+    // The project on the engine, as its settings say on every computer that joins it.
+    const put = (kind, data) => {
+      const event = makeEvent({ kind, data, now: () => T0 });
+      const file = path.join(stateDir(SLUG), eventPath(event));
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, `${JSON.stringify(event, null, 2)}\n`);
+      return event;
+    };
+    put('confirmation', confirmationFor(put('setting', { key: 'engine', value: 'archon' })).data);
+    await writeViews(SLUG, { now: () => T0 });
+    const engine = { wanted: engineWanted, pluginScope: pluginScopeChanges, applyPlugin: applyPluginScope };
+    const step = computerStep({ engine, run: fakeRun().run, env: { CLAUDE_CONFIG_DIR: config }, manifest: MANIFEST, port: PORT });
+    const ctx = { folder, step: 6, now: () => T0, userHome: user, platform: 'win32', answers: {} };
+    const planned = await step.plan(ctx);
+    assert.ok(!(planned.changes ?? []).some((c) => c.what === 'login'));
+  });
+});

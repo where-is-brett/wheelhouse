@@ -15,6 +15,7 @@ import { buildPack } from '../engine/pack-build.js';
 import { settingsViews } from '../desk/mod-records.js';
 import { effectiveSettings } from '../settings/effective.js';
 import { engineReady } from '../engine/switch.js';
+import { engineWanted } from '../engine/parts.js';
 
 function recordOf(project) {
   const record = readProject(project);
@@ -36,10 +37,12 @@ export function packedArchon({ engine = engineDir(), build = buildPack, adapter 
 
 // The engine for a project whose `engine` setting in force is Archon and which the engine can build (its fetch-mirror
 // rule is in: scripts/engine/switch.js), or null. Every such project shares one Archon adapter: there is one Archon on
-// the computer.
-export function engineForProject({ adapter = () => packedArchon(), now = () => new Date(), views = settingsViews, ready = engineReady } = {}) {
+// the computer. Off the Mac there is none (scripts/engine/parts.js), so a project on the engine there builds on the old
+// engine, and its health has no engine checks it can't clear.
+export function engineForProject({ adapter = () => packedArchon(), now = () => new Date(), views = settingsViews, ready = engineReady, platform = process.platform } = {}) {
   let shared = null;
   return (project) => {
+    if (!engineWanted({ platform })) return null;
     const { project: own, profile } = views(project);
     if (effectiveSettings({ project: own, profile, now })?.engine?.value !== 'archon' || !ready(project)) return null;
     shared ??= adapter();

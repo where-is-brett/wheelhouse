@@ -1413,6 +1413,31 @@ test('a joining computer\'s step 7 lists only this computer\'s files and pins, w
   });
 });
 
+test('a second Mac joining a project on the engine gets its fetch mirror rule; a computer off the Mac does not', async () => {
+  const { mirrorRulesFile } = await import('../../../scripts/setup/engine-parts.js');
+  await withHome(async () => {
+    const w = await world({ engine: 'archon' });
+    const first = await w.apply((await w.plan()).changes);
+    assert.equal(first.ok, true, first.reason);
+    const run = await secondComputer(w);
+    // The project's address on the host, which the engine reads from Wheelhouse's own copy.
+    const url = `https://github.com/${REPO}.git`;
+    writeProject(SLUG, { folder: w.folder, remoteUrl: url, host: 'github', repo: REPO, connection: { host: 'github', mode: 'narrow', project: REPO } });
+    const offMac = await w.step.plan(w.ctx({ runId: run.id, platform: 'win32' }));
+    assert.ok(!(offMac.changes ?? []).some((c) => c.what === 'mirror'));
+    const planned = await w.step.plan(w.ctx({ runId: run.id }));
+    assert.ok(Array.isArray(planned.changes), JSON.stringify(planned));
+    assert.deepEqual(planned.changes.filter((c) => c.what === 'mirror'), [{ kind: 'json-key', target: mirrorRulesFile(), key: [SLUG], after: url, what: 'mirror' }]);
+    assert.match(questionOf(planned.card), /reads this project from Wheelhouse's own copy/);
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, true, done.reason);
+    assert.equal(JSON.parse(fs.readFileSync(mirrorRulesFile(), 'utf8'))[SLUG], url);
+    // Once it is in, nothing more is listed for it.
+    const again = await w.step.plan(w.ctx({ runId: run.id }));
+    assert.ok(!(again.changes ?? []).some((c) => c.what === 'mirror'));
+  });
+});
+
 test('a joining computer\'s settings changed in their keys by the installs are left as they are and named', async () => {
   await withHome(async () => {
     const w = await world();

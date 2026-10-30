@@ -63,6 +63,7 @@ import { receiverPort } from '../telemetry/main.js';
 import { telemetryChanges, telemetryOn, isObject, readText } from './telemetry.js';
 import { LEVELS, launchedIn, lockedAsk } from './host.js';
 import { newId, SAY_CHARS, readJournal } from './journal.js';
+import { projectHosts } from './tools.js';
 import { engineWanted, pluginScopeChanges, applyPluginScope, PLUGIN_SCOPE_LINE, pluginUpdateLine } from './engine-parts.js';
 
 // ---- Step 6 ----
@@ -161,9 +162,10 @@ function projectEngines(now) {
 
 // The sign-in start the helper needs for the new engine, as a change of this computer's: none when no project uses
 // the engine, when one is already made, or on a system with no sign-in start known. An agent whose install makes its
-// own is not asked about here (nor is a work computer, which that install leaves alone and setup can't tell).
+// own is not asked about here (nor is a work computer, which that install leaves alone and setup can't tell). Off the
+// Mac the engine never runs (scripts/engine/parts.js), so a project on it there needs none.
 function loginChanges({ platform, userHome, now, engineHere = false }) {
-  if (!(engineHere || needsLoginStart({ projects: projectEngines(now) })) || loginStartRecord() !== null) return [];
+  if (!(engineHere || (engineWanted({ platform }) && needsLoginStart({ projects: projectEngines(now) }))) || loginStartRecord() !== null) return [];
   const entry = loginEntry({ platform, root: ROOT, script: HELPER_START_SCRIPT, home: userHome });
   return entry === null ? [] : [{ kind: 'login-start', target: entry.path, entry, what: 'login' }];
 }
@@ -272,7 +274,7 @@ export function computerStep({
     const floor = (manifest ?? readManifest()).claudeCode?.floor;
     const telemetry = await telemetryChanges({ port: port ?? receiverPort(), route, platform, run, userSettings, file, userHome, environment: env });
     const changes = computerChanges({ userSettings, manifest: { claudeCode: { floor } }, file, telemetry: telemetry.changes });
-    const engineHere = engine?.wanted({ platform }) === true;
+    const engineHere = engine?.wanted({ platform, hosts: projectHosts({ folder: ctx.folder, answers: ctx.answers }) }) === true;
     const plugin = engineHere ? engine.pluginScope({ claudeHome: env.CLAUDE_CONFIG_DIR || path.join(userHome, '.claude'), platform }) : [];
     return { platform, userSettings, floor, kept: telemetry.kept, changes: [...changes, ...plugin, ...loginChanges({ platform, userHome, now: ctx.now ?? (() => new Date()), engineHere })] };
   };

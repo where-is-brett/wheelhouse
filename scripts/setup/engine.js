@@ -88,6 +88,7 @@ import { jobFolder, wheelhouseHome, stateDir, computerId } from '../lib/paths.js
 import { agentOfProject } from '../agents/names.js';
 import { agentSetupLine } from '../agents/engine-parts.js';
 import { projectForFolder } from '../lib/projects.js';
+import { projectHosts } from './tools.js';
 import { LEAN_FOLDER } from '../lean/project.js';
 import { CLICK_FRESH_MS, STEP_TIMEOUT_MS } from '../lib/setup-numbers.js';
 import { SETUP_TITLES } from '../state/card-lines.js';
@@ -546,7 +547,7 @@ export function setupRoutes({
     const claudeHome = process.env.CLAUDE_CONFIG_DIR || path.join(userHome, '.claude');
     // A project on another agent (its configuration names one for this computer) gets that agent's engine line.
     const agentLine = agentSetupLine(agentOfProject(run.folder, { computerId: computerId() }));
-    const { id, card, choices, writes } = oneCard({ folder: run.folder, list, product, platform, toRun, count: keptAnswers(run.id).length, facts, claudeHome, agentLine });
+    const { id, card, choices, writes } = oneCard({ folder: run.folder, list, product, platform, toRun, count: keptAnswers(run.id).length, facts, claudeHome, hosts: projectHosts({ folder: run.folder, answers: own }), agentLine });
     if (JSON.stringify(cleanDeep(card, [])) !== JSON.stringify(card)) throw new Error('The one card could not be cleaned as it is sent');
     noteAsked({ runId: run.id, folder: run.folder, step: ONE_CARD_STEP, id, card, writes, choices, facts, now });
     return { ok: true, ask: { step: ONE_CARD_STEP, id, card }, progress: [`Setup · ${setupTime(toRun, list)}`, 'One card: the plan for this project.'] };

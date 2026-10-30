@@ -154,7 +154,8 @@ function describedBy(choice) {
 
 // The one card for a run: { id, card, choices, writes }. `list` is openChoices'; `product` is
 // productOf's for the folder (or null); `toRun` which of steps 2, 3, 6, 7 and the health check are still to run; `count`
-// how many answers the run holds. `card` is AskUserQuestion's question, ready; `writes` what Go
+// how many answers the run holds; `hosts` the hosts of the projects on this computer, for the engine's line
+// (scripts/engine/parts.js). `card` is AskUserQuestion's question, ready; `writes` what Go
 // ahead records, as a setup question's writes are kept (scripts/lib/setup-writes.js): the records
 // the choices it stands for make, for those the director hasn't answered themselves.
 // How long what is left of setup takes, as the one card and its heading say it: about a minute
@@ -164,7 +165,7 @@ export function setupTime(toRun, list = []) {
 }
 
 // `agentLine` is the engine's line for a project on another agent (scripts/agents/engine-parts.js), in place of the core's.
-export function oneCard({ folder, list, product, platform, toRun, count, facts = null, claudeHome = null, agentLine = null }) {
+export function oneCard({ folder, list, product, platform, toRun, count, facts = null, claudeHome = null, hosts, agentLine = null }) {
   const name = product?.name ?? productName(folder);
   // Only the health check left, nothing to choose: a run parked near its end (one v0.1.1 left at
   // its phone card, carried on after the update), whose card names what is left.
@@ -181,7 +182,7 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
     if (line !== null) lines.push(line);
   }
   // The plugin's update is step 6's, so the line names it only while step 6 is still to run.
-  if (toRun.includes(2) && engineWanted({ platform })) lines.push(agentLine ?? engineLine(undefined, { claudeHome: toRun.includes(6) ? claudeHome : null }));
+  if (toRun.includes(2) && engineWanted({ platform, hosts })) lines.push(agentLine ?? engineLine(undefined, { claudeHome: toRun.includes(6) ? claudeHome : null }));
   if (toRun.includes(6)) lines.push('On this computer: usage counted here only, and 30 days of chat history kept (older history is deleted).');
   if (toRun.includes(7)) lines.push('Wheelhouse\'s settings saved to the project, then its main line protected.');
   // Never a plan with no lines: the health check is named when nothing else is.
