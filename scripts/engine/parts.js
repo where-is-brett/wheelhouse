@@ -7,8 +7,12 @@ import path from 'node:path';
 import { engineDir } from '../lib/paths.js';
 import { enginePaths, launcherText, PATCH_MARK } from './archon/build.js';
 
-// The engine runs on the Mac only for now (spec 17, step 2); Windows is tried in its own sitting.
-export const engineWanted = ({ platform = process.platform } = {}) => platform === 'darwin';
+// The engine runs on the Mac only for now (spec 17, step 2); Windows is tried in its own sitting. It builds on GitHub
+// only (section 16), so a Mac whose projects are all on GitLab doesn't run it. `hosts` are the hosts of the projects
+// on this computer, the one being set up included, with null for one whose host isn't chosen yet, which may be GitHub;
+// left out, only the platform counts.
+export const engineWanted = ({ platform = process.platform, hosts } = {}) => platform === 'darwin'
+  && (!Array.isArray(hosts) || hosts.length === 0 || hosts.some((host) => host !== 'gitlab'));
 
 const read = (file) => {
   try { return fs.readFileSync(file, 'utf8'); } catch { return null; }

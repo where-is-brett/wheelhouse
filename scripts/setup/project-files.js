@@ -137,7 +137,7 @@ import { LIVE_DATA, SIGNS_APPS } from './questions.js';
 import { newId, readJournal, SAY_CHARS } from './journal.js';
 import { localViews } from '../hooks/session-start.js';
 import { effectiveSettings } from '../settings/effective.js';
-import { ENGINE_FILES, engineFileTexts, mirrorRulesFile } from './engine-parts.js';
+import { ENGINE_FILES, engineFileTexts, mirrorRulesFile, engineWanted } from './engine-parts.js';
 
 export const COMMIT_MESSAGE = 'Set up Wheelhouse';
 // The setup commit's files, and only these (ruling R42). The adapter holds the list (packaging.js).
@@ -217,6 +217,13 @@ Leave out file contents and command output that can be read again. Wheelhouse's 
 `;
 // How long the step waits, when asked before step 3 has registered the project or step 4 has its answer.
 export const PROJECT_WAIT_MS = 30 * 1000;
+
+// Whether setup writes a project's rule into the fetch mirror's list (scripts/engine/archon/env.js): a project on the
+// new engine, on GitHub, with an https address, on a computer that runs the engine. Off the Mac, the rule would put the
+// project on an engine this computer never installs.
+export function mirrorWanted({ host, engine, remoteUrl, platform = process.platform } = {}) {
+  return host === 'github' && engine === 'archon' && /^https:\/\//.test(remoteUrl ?? '') && engineWanted({ platform });
+}
 
 // The build engine in force for a project: its settings' `engine`.
 function engineInForce(project) {
@@ -1274,7 +1281,7 @@ export function projectFilesStep({
       // product already ignores them; then the lines that keep .env files out of git; then the pins.
       changes.push(...engineFiles);
       // The fetch mirror's rule for this project, in the engine folder's list (scripts/engine/archon/env.js).
-      if (host === 'github' && engineOf(found.project) === 'archon' && /^https:\/\//.test(record.remoteUrl ?? '')) {
+      if (mirrorWanted({ host, engine: engineOf(found.project), remoteUrl: record.remoteUrl, platform })) {
         const rules = readJson(mirrorRulesFile());
         if (rules?.[found.project] !== record.remoteUrl) changes.push({ kind: 'json-key', target: mirrorRulesFile(), key: [found.project], after: record.remoteUrl, what: 'mirror' });
       }

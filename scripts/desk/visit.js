@@ -20,6 +20,7 @@ import { BRIEFING_GAP_HOURS } from '../lib/core-numbers.js';
 import { wordsOf } from './context.js';
 import { readProject } from '../lib/projects.js';
 import { switchDue, engineChosen, engineReady, SWITCH_SETTING } from '../engine/switch.js';
+import { engineWanted } from '../engine/parts.js';
 
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -96,7 +97,8 @@ export async function visitLearning({ project, cwd, client, at, boardAsks, platf
     settings: views.settings, unconfirmed: views.unconfirmed, cards: events.filter((e) => e.kind === 'card').map((e) => e.data), record, platform,
   }), false);
   if (due) await tried(() => writeSetting({ client, cwd, data: SWITCH_SETTING, words }));
-  const switching = record?.host === 'github' && attempt(() => engineChosen(views.settings, { now: at }) && !engineReady(project), false);
+  // Off the Mac the engine never runs, so the switch's steps are left to a Mac.
+  const switching = engineWanted({ platform }) && record?.host === 'github' && attempt(() => engineChosen(views.settings, { now: at }) && !engineReady(project), false);
   if (switching) await tried(() => client.engineSwitch({ cwd }));
 }
 

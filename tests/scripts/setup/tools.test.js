@@ -666,3 +666,29 @@ test('a refused engine install fails step 2 with its plain reason', async () => 
     await assert.rejects(step.apply({ ...ctxFor(folder), record: () => {}, applyJsonKey: () => {} }, planned.changes), /checksum 00 is not the pinned 11/);
   });
 });
+
+test('a Mac whose projects are all on GitLab gets no engine in step 2', async () => {
+  const { engineChanges, applyEngine, engineWanted } = await import('../../../scripts/setup/engine-parts.js');
+  // The engine builds on GitHub only: a project whose host isn't chosen yet may be on GitHub.
+  assert.equal(engineWanted({ platform: 'darwin', hosts: ['gitlab'] }), false);
+  assert.equal(engineWanted({ platform: 'darwin', hosts: ['gitlab', 'github'] }), true);
+  assert.equal(engineWanted({ platform: 'darwin', hosts: ['gitlab', null] }), true);
+  assert.equal(engineWanted({ platform: 'win32', hosts: ['github'] }), false);
+  await withHome(async () => {
+    const folder = fs.realpathSync.native(tempFolder('wh-proj '));
+    fs.mkdirSync(path.join(folder, '.git'));
+    fs.writeFileSync(path.join(folder, '.git', 'config'), '[remote "origin"]\n\turl = https://gitlab.com/o/p.git\n');
+    const file = path.join(folder, '.claude', 'settings.local.json');
+    fs.mkdirSync(path.dirname(file));
+    fs.writeFileSync(file, JSON.stringify({ permissions: { allow: SETUP_RULES } }));
+    const engine = { wanted: engineWanted, changes: engineChanges, apply: applyEngine };
+    const step = toolsStep({ engine, run: machine(everythingHere).run, fetch: noFetch, pluginRoot: PLUGIN, env: {} });
+    const planned = await step.plan(ctxFor(folder));
+    assert.ok(!(planned.changes ?? []).some((c) => c.action === 'engine' || c.action === 'broker' || c.action === 'archon-settings'));
+    // With another project on GitHub on this computer, the engine is listed.
+    const { writeProject } = await import('../../../scripts/lib/projects.js');
+    writeProject('o__q', { folder: tempFolder('wh-other '), remoteUrl: 'https://github.com/o/q.git', host: 'github', repo: 'o/q', connection: { host: 'github', mode: 'quick', project: 'o/q' } });
+    const other = await step.plan(ctxFor(folder));
+    assert.ok(other.changes.some((c) => c.action === 'engine'));
+  });
+});
