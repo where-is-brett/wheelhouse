@@ -6,6 +6,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 export const AGENTS = Object.freeze(['claude-code', 'copilot']);
+// The agents whose steps read Wheelhouse's own skill copies rather than the kits, so a project's hold goes by those
+// copies (Archon design, section 7.1).
+const READ_OWN_COPIES = Object.freeze(['copilot']);
+export const readsOwnCopies = (agent) => READ_OWN_COPIES.includes(agent);
 
 const isMap = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -27,6 +31,18 @@ function folderConfig(folder) {
     return JSON.parse(fs.readFileSync(path.join(folder, '.claude', 'wheelhouse.json'), 'utf8'));
   } catch {
     return null;
+  }
+}
+
+// The `agents` map in `folder`'s configuration, or the nearest above it (a command may be run in a project's subfolder),
+// with no computer's id needed; null when there is no configuration or it can't be read.
+export function agentsNamedAbove(folder) {
+  for (let dir = folder; ;) {
+    const config = folderConfig(dir);
+    if (config !== null) return isMap(config.agents) ? config.agents : {};
+    const up = path.dirname(dir);
+    if (up === dir) return null;
+    dir = up;
   }
 }
 

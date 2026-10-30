@@ -4,9 +4,10 @@
 // provenance: a mismatch writes the project's hold file, and while it is there the hold hook
 // (scripts/hooks/lineage-hold.js) refuses edits and commands; a match removes it. So the hold
 // lifts only at a session start whose check matches (ruling R145): a session keeps the skills
-// it loaded at its start. The command is the one the hold lets through: it reads only the
-// installed Wheelhouse's manifest and Claude Code's record of installs, never the Wheelhouse
-// home (a sandboxed command can't), says what still differs, and changes nothing.
+// it loaded at its start. The command is the one the hold lets through: it says what still differs,
+// and changes nothing. It reads the installed Wheelhouse's manifest, Claude Code's record of installs
+// and the project's configuration, and the hold from the Wheelhouse home where it can: a sandboxed
+// command can't, and then says what it can't tell (holdBasis).
 // A hold's card leaves once its hold file is gone: recordLift puts one lineage-lift event in the
 // state for each standing hold, from the session start or the mod's tick (scripts/mod/bridge.js).
 // Reads files only: never git.
@@ -15,7 +16,9 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { stateDir } from '../lib/paths.js';
+import { keptComputerId, stateDir } from '../lib/paths.js';
+import { projectForFolder } from '../lib/projects.js';
+import { agentsNamedAbove, readsOwnCopies } from '../agents/names.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { fingerprintTree } from './fingerprint.js';
 import { MANIFEST_PATH, UPSTREAMS, checkInstalled, claudeHome as defaultClaudeHome, locateInstalled, readManifest } from './manifest.js';
@@ -28,12 +31,15 @@ export const REGISTER_PATH = 'lineage/register.json';
 // The most paths a warning names for one upstream before "and N more".
 const NAMED_PATHS = 5;
 const SESSION_ID = /^[A-Za-z0-9_-]{1,128}$/;
+// The upstream a skill copy's mismatch names.
+const COPIES_UPSTREAM = 'wheelhouse';
 
 // The project's folder under the Wheelhouse home (stateDir checks the name).
 const projectHome = (project) => path.dirname(stateDir(project));
 
-// While this file exists, the project's edits and commands are held: { at, mismatches, recorded? },
-// where `recorded` is the mismatchSet already put in the state as a lineage-hold event.
+// While this file exists, the project's edits and commands are held: { at, mismatches, recorded?, by? },
+// where `recorded` is the mismatchSet already put in the state as a lineage-hold event, and `by` is 'copies' for a
+// hold that went by Wheelhouse's own skill copies rather than the kits.
 export function holdFile(project) {
   return path.join(projectHome(project), 'lineage', 'hold.json');
 }
@@ -221,6 +227,12 @@ export function inspectLineage({ projectDir, root = ROOT, claudeHome = defaultCl
   return { ...result, manifest: manifest !== null, upstreams };
 }
 
+// Whether this copy of Wheelhouse carries its skill copies: Locked's managed copy doesn't (LOCKED_FOLDERS), so it can't
+// check them, and a check there would call every one missing.
+export function hasCopies(root = ROOT) {
+  return fs.existsSync(path.join(root, 'skills'));
+}
+
 // What a project's steps read when they use Wheelhouse's own skill copies rather than the kits (Archon design, section
 // 7.1): each copy in `root` against the manifest's fingerprint, in inspectLineage's shape. A manifest with no copies
 // can't be checked, which is a mismatch at its own path.
@@ -233,7 +245,7 @@ export function inspectCopies({ root = ROOT } = {}) {
   const mismatches = copies.flatMap((copy) => {
     let got = null;
     try { got = fingerprintTree(path.join(root, ...copy.path.split('/'))).hash; } catch { /* not there */ }
-    return got === copy.hash ? [] : [{ upstream: 'wheelhouse', path: copy.path, want: copy.hash, got }];
+    return got === copy.hash ? [] : [{ upstream: COPIES_UPSTREAM, path: copy.path, want: copy.hash, got }];
   });
   return { ok: mismatches.length === 0, mismatches, manifest: true, upstreams: {} };
 }
@@ -249,7 +261,8 @@ export function inspectCopies({ root = ROOT } = {}) {
 // left out, so it writes no hold and no warning. Anything else that differs still holds. The kits
 // left out are given as `pending`, so the session's provenance still says what it loaded.
 //
-// `inspect` is what the hold goes by: the installed kits unless told otherwise (recheckCopies).
+// `inspect` is what the hold goes by: the installed kits unless told otherwise (recheckCopies, or a session start in a
+// project whose agent reads Wheelhouse's own skill copies).
 export function checkLineage({ project, projectDir, root = ROOT, claudeHome = defaultClaudeHome(), locate = locateInstalled, now = () => new Date(), pinsPending = false, inspect = inspectLineage }) {
   const file = holdFile(project);
   const inspected = inspect({ projectDir, root, claudeHome, locate });
@@ -265,7 +278,7 @@ export function checkLineage({ project, projectDir, root = ROOT, claudeHome = de
     else {
       set = mismatchSet(result.mismatches);
       recorded = readJson(file)?.recorded === set;
-      writeFileMade(file, { at: now().toISOString(), mismatches: result.mismatches, ...(recorded ? { recorded: set } : {}) });
+      writeFileMade(file, { at: now().toISOString(), mismatches: result.mismatches, ...(recorded ? { recorded: set } : {}), ...(inspect === inspectCopies ? { by: 'copies' } : {}) });
     }
   } catch {
     kept = false;
@@ -385,6 +398,7 @@ export const MANIFEST_UNREADABLE_NOT_HELD = `Lineage: Wheelhouse's manifest can'
 // file could not be written, and the warning says so.
 export function warningLines(mismatches, { kept = true } = {}) {
   if (mismatches.some((m) => m.upstream === null)) return [kept ? MANIFEST_UNREADABLE : MANIFEST_UNREADABLE_NOT_HELD];
+  if (mismatches.every((m) => m.upstream === COPIES_UPSTREAM)) return [`Lineage: Wheelhouse's own skill copies differ from its manifest (${namedPaths(mismatches.map((m) => m.path))}). ${kept ? HELD_LINE : NOT_HELD_LINE}`];
   const byUpstream = new Map();
   for (const m of mismatches) byUpstream.set(m.upstream, [...(byUpstream.get(m.upstream) ?? []), m.path]);
   return [...byUpstream].map(([upstream, paths]) => `Lineage: the installed ${upstream} files differ from Wheelhouse's manifest (${namedPaths(paths)}). ${kept ? HELD_LINE : NOT_HELD_LINE}`);
@@ -423,6 +437,35 @@ export function report(result) {
   return ['These installed files still differ from Wheelhouse\'s manifest, so edits and commands stay held. Once they match, the hold lifts at the next session start.', ...lines].join('\n');
 }
 
+export const MATCHED_COPIES = 'Wheelhouse\'s own skill copies match its manifest. A hold lifts at the next run\'s start or session start, whose check finds them matching; this command changes nothing.';
+export const CANT_TELL = 'What this project\'s hold went by can\'t be told from here, as the Wheelhouse home is out of reach: its configuration names an agent that reads Wheelhouse\'s own skill copies, for this computer or another. Both checks are below.';
+
+// What the command prints for inspectCopies's result.
+export function copiesReport(result, { known = true } = {}) {
+  if (result.ok) return MATCHED_COPIES;
+  if (!result.manifest) return `Wheelhouse's manifest ${MANIFEST_PATH} can't be read, so its own skill copies can't be checked. Edits and commands stay held.`;
+  const lines = result.mismatches.map((m) => `- ${m.upstream}: ${shown(m.path)}`);
+  const lead = known ? 'This project\'s hold went by Wheelhouse\'s own skill copies, not the installed kits. They' : 'Wheelhouse\'s own skill copies';
+  return [`${lead} still differ from its manifest, so edits and commands stay held. Once they match, the hold lifts at the next run's start or session start.`, ...lines].join('\n');
+}
+
+// What the hold in `folder`'s project goes by, as far as the command can tell: 'copies', 'kits', or null when it can't
+// tell. A hold it can read says for itself. With none to read, the agent this computer runs decides; a sandboxed
+// command can't read this computer's id either, so a project that names an agent reading the copies for any computer
+// can't be told, and any other goes by the kits.
+function holdBasis(folder) {
+  let project = null;
+  try {
+    project = projectForFolder(folder)?.project ?? null;
+  } catch { /* out of reach */ }
+  const held = project === null ? null : readJson(holdFile(project));
+  if (held !== null && Array.isArray(held.mismatches)) return held.by === 'copies' ? 'copies' : 'kits';
+  const agents = agentsNamedAbove(folder) ?? {};
+  const id = keptComputerId();
+  if (id !== null) return readsOwnCopies(agents[id]) ? 'copies' : 'kits';
+  return Object.values(agents).some(readsOwnCopies) ? null : 'kits';
+}
+
 function realFolder(folder) {
   try {
     return fs.realpathSync.native(folder);
@@ -443,7 +486,7 @@ function installedFolder(folder, { claudeHome, locate }) {
   }
 }
 
-// The command: checks what is installed for the folder's project, and changes nothing.
+// The command: checks what the hold of the folder's project goes by, and changes nothing.
 export function main(args, { cwd = process.cwd(), write = (line) => process.stdout.write(line), root = ROOT, claudeHome = defaultClaudeHome(), locate = locateInstalled } = {}) {
   if (args.length > 1) {
     write('usage: node scripts/lineage/check.js [projectDir]\n');
@@ -454,9 +497,22 @@ export function main(args, { cwd = process.cwd(), write = (line) => process.stdo
     write('That folder can\'t be found, so there is nothing to check.\n');
     return 1;
   }
-  const result = inspectLineage({ projectDir: installedFolder(folder, { claudeHome, locate }), root, claudeHome, locate });
-  write(`${report(result)}\n`);
-  return result.ok ? 0 : 1;
+  const basis = holdBasis(folder);
+  const kits = () => inspectLineage({ projectDir: installedFolder(folder, { claudeHome, locate }), root, claudeHome, locate });
+  const copies = () => inspectCopies({ root });
+  if (basis === 'copies') {
+    const result = copies();
+    write(`${copiesReport(result)}\n`);
+    return result.ok ? 0 : 1;
+  }
+  const result = kits();
+  if (basis === 'kits') {
+    write(`${report(result)}\n`);
+    return result.ok ? 0 : 1;
+  }
+  const own = copies();
+  write(`${[CANT_TELL, report(result), copiesReport(own, { known: false })].join('\n')}\n`);
+  return result.ok && own.ok ? 0 : 1;
 }
 
 if (startedAsScript(import.meta.url)) {
