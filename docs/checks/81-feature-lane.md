@@ -109,7 +109,7 @@ That is about $6.30 in all, under the $8 ceiling. The merge queue's sweeps were 
 - The merge queue now runs in a folder of Wheelhouse's own. The project's Standard settings are unchanged, and `gh` there reaches GitHub only through the broker.
 - The double ask for a switch-on pull request costs the director a second click, and holds the queue while it waits. It is a design question, not a defect.
 
-## After the check
+### After the check
 
 Each "seen, not changed" item was settled on 30 October 2026 (`docs/superpowers/plans/2026-10-30-check-81-findings.md`):
 
