@@ -206,8 +206,8 @@ export function engineRoutes({
     }
     keepVerdicts(run.project, verdicts);
     // What holds the work, for the card a held review raises: each BLOCKER or HIGH, without its fix.
-    const held = found.findings.filter((f) => HOLDS.has(f.severity)).map(({ severity, file, line, repro }) => ({ severity, file, line, repro }));
-    return { ok: true, ran: true, verdict, posted, ...(verdict === 'FINDINGS' ? { held } : {}) };
+    const holding = found.findings.filter((f) => HOLDS.has(f.severity)).map(({ severity, file, line, repro }) => ({ severity, file, line, repro }));
+    return { ok: true, ran: true, verdict, posted, ...(verdict === 'FINDINGS' ? { held: holding } : {}) };
   }
 
   // The pack's pull-request step: pushes the run's worktree's own branch from the helper's side and opens (or updates)

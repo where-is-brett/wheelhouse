@@ -45,7 +45,7 @@ export default {
       if (JSON.stringify(order?.bindings?.tiers) !== JSON.stringify(BOUND)) return { pass: false, why: `the work order binds the tiers to ${JSON.stringify(order?.bindings)}` };
       const given = bindingsFor(world.starts()[0].order.bindings);
       for (const tier of TIERS) if (!given.includes(`${tier}=${BOUND[tier]}`)) return { pass: false, why: `the engine isn't given ${tier}=${BOUND[tier]}: ${given.join(' ')}` };
-      for (const tier of named) if (!BOUND[tier]) return { pass: false, why: `the quick lane's ${tier} steps have no binding` };
+      for (const tier of named) if (order.bindings.tiers[tier] !== BOUND[tier]) return { pass: false, why: `the quick lane's ${tier} steps aren't bound to the table's model` };
       return { pass: true, why: `no step names a model; the table's three models reached the order and the engine as the tiers' bindings, covering the quick lane's ${[...named].sort().join(' and ')} steps` };
     },
     // On real Archon: a real quick run's first agent step, as Archon records it, ran on the model the world binds every
@@ -59,6 +59,9 @@ export default {
         try { return (await world.engine.inspect(run)).steps?.find((s) => typeof s.model === 'string' && s.model !== ''); } catch { return null; }
       });
       if (!step) return { pass: false, why: `Archon's record never said which model a step ran on (the run is ${await world.status(run)})${await world.trouble(run)}` };
+      // Archon records the model it resolved, or, when it reports none, the one asked for: a tier's word means the
+      // binding wasn't applied.
+      if (['small', 'medium', 'large'].includes(step.model)) return { pass: false, why: `Archon's record has the step ${step.id} asked for the tier ${step.model}, not a bound model` };
       if (!step.model.includes(world.model)) return { pass: false, why: `the step ${step.id} ran on ${step.model}, not ${world.model}, the model the world bound` };
       return { pass: true, why: `Archon's record has the step ${step.id} on ${step.model}, the bound model` };
     },

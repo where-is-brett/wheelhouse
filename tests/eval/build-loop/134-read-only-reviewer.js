@@ -20,6 +20,19 @@ const READS_ONLY = 'You are a fresh reviewer, and you read only: you change no f
 const READ = '1341341a2b3c4d5e6f708192a3b4c5d6e7f80912';
 const CHANGED = '1341342a2b3c4d5e6f708192a3b4c5d6e7f80912';
 
+// The sign and mark-ready steps over a run whose reviews read READ, with its pull request opened at `head`.
+async function finish(head) {
+  const routes = packRoutes({ work: 'card-134', events: () => [done('lenses', lensesAt(READ)), done('review-standards', review('CLEAN')), done('review-spec', review('CLEAN')), opened(134, head, 'wh/card-134')] });
+  try {
+    await routes.start();
+    const signed = await said(reviewSign, ['--run', routes.runId], { client: routes.client });
+    const ready = await routes.client.engine.ready({ runId: routes.runId });
+    return { signed, ready, reviews: routes.written.filter((w) => w.kind === 'review').length, posted: routes.posted.length, handed: routes.handed.length };
+  } finally {
+    routes.close();
+  }
+}
+
 export default {
   id: 134,
   title: 'Every review is the pack\'s own read-only reviewer, and a change a review makes is never signed',
@@ -45,17 +58,14 @@ export default {
       if (reviews === 0) return { pass: false, why: 'the pack has no review steps' };
       if ([...lenses].sort().join() !== [...REVIEW_STEPS].sort().join()) return { pass: false, why: `the reviewers are ${[...lenses].sort().join(', ')}, and the helper signs ${REVIEW_STEPS.join(', ')}` };
 
+      // The same reviews, with the pull request at the commit they read, are signed: so a refusal below is the head's.
+      const control = await finish(READ);
+      if (control.signed.code !== 0 || control.signed.got?.clean !== true || !control.ready.ok) return { pass: false, why: `reviews of the pull request's own head weren't signed: ${control.signed.lines.join(' ')}` };
       // A review that committed a change: its pull request's head is after what the reviews read.
-      const routes = packRoutes({ work: 'card-134', events: () => [done('lenses', lensesAt(READ)), done('review-standards', review('CLEAN')), done('review-spec', review('CLEAN')), opened(134, CHANGED, 'wh/card-134')] });
-      try {
-        await routes.start();
-        const signed = await said(reviewSign, ['--run', routes.runId], { client: routes.client });
-        if (signed.code === 0) return { pass: false, why: 'the reviews were signed for a head a review had changed' };
-        const ready = await routes.client.engine.ready({ runId: routes.runId });
-        if (routes.written.some((w) => w.kind === 'review') || routes.posted.length > 0 || ready.ok || routes.handed.length > 0) return { pass: false, why: 'a review\'s own change was signed, posted or handed to the merge queue' };
-      } finally {
-        routes.close();
-      }
+      const changed = await finish(CHANGED);
+      if (changed.signed.code === 0) return { pass: false, why: 'the reviews were signed for a head a review had changed' };
+      if (!changed.signed.lines.some((l) => l.includes(`not the pull request's head ${CHANGED.slice(0, 7)}`))) return { pass: false, why: `the refusal doesn't say the reviews read another commit: ${changed.signed.lines.join(' ')}` };
+      if (changed.reviews > 0 || changed.posted > 0 || changed.ready.ok || changed.handed > 0) return { pass: false, why: 'a review\'s own change was signed, posted or handed to the merge queue' };
       return { pass: true, why: `all ${reviews} review steps are the pack's read-only reviewers, fresh, with ${DENIED.join(', ')} denied, and the signed steps are those; a change a review committed was neither signed nor queued` };
     },
   },

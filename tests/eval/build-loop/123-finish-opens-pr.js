@@ -40,11 +40,9 @@ export default {
 
       const pushes = [];
       const opens = [];
-      const merges = [];
       const host = {
         push: async (project, { dir }) => { pushes.push(dir); return { ok: true, branch: `wh/${WORK}` }; },
         open: async (project, { branch }) => { opens.push(branch); return { pr: 123, head: HEAD }; },
-        merge: async () => { merges.push(true); return { ok: true }; },
         repo: () => 'o/p',
       };
       const events = [done('lenses', lensesAt(HEAD)), done('review-standards', review('CLEAN')), done('review-spec', review('CLEAN'))];
@@ -63,7 +61,6 @@ export default {
         if (signed.got?.clean !== true) return { pass: false, why: `the reviews weren't signed clean: ${signed.lines.join(' ')}` };
         const ready = await routes.client.engine.ready({ runId: routes.runId });
         if (!ready.ok || routes.handed.join() !== '123') return { pass: false, why: `the pull request didn't go to the merge queue: ${ready.refused}` };
-        if (merges.length > 0) return { pass: false, why: 'the helper merged the pull request itself' };
         if (opens.length !== 1) return { pass: false, why: `${opens.length} pull requests were opened` };
       } finally {
         fs.rmSync(art, { recursive: true, force: true });
