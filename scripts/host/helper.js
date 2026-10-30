@@ -110,7 +110,8 @@ import { reviewsFor } from '../agents/reviews.js';
 import { ALLOWANCE_LABELS, allowanceWindowLines, isBuildQuestion } from '../protection/windows-builds.js';
 import { agentOfConfig } from '../agents/project-agent.js';
 import { routingInForce } from '../routing/in-force.js';
-import { bindingsOf, orderStore } from '../engine/order.js';
+import { orderStore } from '../engine/order.js';
+import { engineRouting } from '../agents/engine-parts.js';
 import { approvedDocument } from '../feature/approved.js';
 import { SWITCH_BRANCH, SWITCH_WORK, engineChosen, engineReady, switchBranch } from '../engine/switch.js';
 import { SWITCH_TITLE, switchBody, switchChange, switchTexts } from '../engine/switch-pr.js';
@@ -4445,7 +4446,7 @@ export async function startHelper({
   }
 
   // What a project's work orders take from its configuration (Archon design, sections 7.4 and 7.6): the routing
-  // table's column in force as the pack's bindings (an agent's own column when the project runs on another agent),
+  // table's column in force as the pack's bindings (an agent's own column, every tier on that agent, when the project runs on another agent),
   // the command that runs its tests, and the pages its previews take. Null when the configuration can't be read. The
   // test command is the configuration's, or `npm test` when the project's package.json has a test script of its own.
   function engineConfigOf(project, folder) {
@@ -4458,9 +4459,8 @@ export async function startHelper({
       return null;
     }
     const agent = agentOfConfig(config, { computerId: computerId() });
-    const own = agent !== agentOfConfig(null) && config.agentRouting?.[agent];
-    const roles = own ? Object.fromEntries(Object.entries(own).map(([role, model]) => [role, { model }])) : routingInForce(project, config, { now }).roles;
-    return { routing: bindingsOf(roles), testCommand: config.testCommand ?? npmTestOf(folder), pages: config.pages ?? [] };
+    const routing = engineRouting({ config, agent, inForce: () => routingInForce(project, config, { now }).roles });
+    return { routing, testCommand: config.testCommand ?? npmTestOf(folder), pages: config.pages ?? [] };
   }
 
   // The card router and the dispatcher for one project on the engine (Archon design, sections 7.3, 8 and 10).

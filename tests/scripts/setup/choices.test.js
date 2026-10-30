@@ -162,3 +162,14 @@ test('the recommended card gains the engine line and nothing else is asked', asy
   const win = oneCard({ folder: '/x/t', list: [], product: { isNew: true, name: 't' }, platform: 'win32', toRun: [2, 3], count: 1 }).card.question;
   assert.doesNotMatch(win, /build engine/);
 });
+
+test('a project on another agent gets that agent\'s engine line in place of the core\'s', () => {
+  const product = { isNew: true, host: null, repo: null, name: 'tide-tables' };
+  const agentLine = 'Install the build engine, Archon, with its usage reporting off, to run its steps on another agent.';
+  const card = oneCard({ folder: '/x/tide-tables', list: newProductChoices(), product, platform: 'darwin', toRun: [2, 3, 6, 7, 10], count: 0, agentLine });
+  const lines = card.card.question.split('\n').filter((l) => /build engine/.test(l));
+  assert.deepEqual(lines, [`- ${agentLine}`]);
+  // No engine step left, no line, whatever the agent.
+  const none = oneCard({ folder: '/x/tide-tables', list: newProductChoices(), product, platform: 'darwin', toRun: [3, 6, 7, 10], count: 0, agentLine });
+  assert.doesNotMatch(none.card.question, /build engine/);
+});
