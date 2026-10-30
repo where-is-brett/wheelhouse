@@ -1328,6 +1328,9 @@
         "properties": {
           "clean": {
             "type": "boolean"
+          },
+          "question": {
+            "type": "string"
           }
         },
         "required": [
@@ -1342,7 +1345,7 @@
       ],
       "when": "$sign.output.clean == 'false'",
       "wait": {
-        "attention": "A review found a BLOCKER or HIGH problem in this change, so it is not marked ready.",
+        "attention": "$sign.output.question",
         "form": "select",
         "options": [
           {

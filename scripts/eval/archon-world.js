@@ -136,7 +136,8 @@ export async function openArchonWorld({
   const archon = (args, options = {}) => cli(args, { ...options, engine: engineFolder, home: engineHome, claudeBin });
 
   const world = {
-    real: true, home, folder, root, forwarded, hostCalls, host: standInHost(),
+    // `model`: the one model every tier is bound to.
+    real: true, home, folder, root, forwarded, hostCalls, host: standInHost(), model,
     get engine() { return engine; },
     // A record in the project's history, as the First Mate or the director's click writes it.
     put(kind, data, { unsigned = false } = {}) {

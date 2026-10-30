@@ -351,7 +351,10 @@ function buildLoopViews(sorted, enrolled) {
     // the document an approved change already moved to leaves the approval standing.
     let current = null;
     let carried = null;
-    const timeline = [...sorted.filter((e) => e.kind === 'work' && e.data?.id === id), ...ofWork, ...amends.filter((a) => a.data.work === id)].sort(byOrder);
+    // A work event comes before a click stamped the same millisecond: no click approves work not yet recorded, and
+    // their ids, which would otherwise break the tie, are random.
+    const workFirst = (a, b) => (a.at === b.at && (a.kind === 'work') !== (b.kind === 'work') ? (a.kind === 'work' ? -1 : 1) : byOrder(a, b));
+    const timeline = [...sorted.filter((e) => e.kind === 'work' && e.data?.id === id), ...ofWork, ...amends.filter((a) => a.data.work === id)].sort(workFirst);
     for (const e of timeline) {
       if (e.kind === 'work') {
         current = e.data.doc?.hash ?? null;
