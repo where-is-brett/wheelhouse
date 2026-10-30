@@ -26,23 +26,20 @@ export function archonHome() {
     : path.join(os.homedir(), '.wheelhouse-engine');
 }
 
-// This computer's ID as it is kept, or null when it is missing or can't be read: makes none, for a caller the sandbox
-// keeps out of the Wheelhouse home.
-export function keptComputerId() {
-  try {
-    const kept = JSON.parse(fs.readFileSync(path.join(wheelhouseHome(), 'computer.json'), 'utf8'));
-    if (typeof kept?.id === 'string' && /^[0-9a-f]{8}$/.test(kept.id)) return kept.id;
-  } catch {
-    // Missing or unreadable.
-  }
-  return null;
-}
-
 // An eight-hex-character ID for this computer, made once and then kept.
 // Events carry this, never the computer's name.
 export function computerId() {
   const file = path.join(wheelhouseHome(), 'computer.json');
-  const kept = keptComputerId();
+  const readKept = () => {
+    try {
+      const kept = JSON.parse(fs.readFileSync(file, 'utf8'));
+      if (typeof kept?.id === 'string' && /^[0-9a-f]{8}$/.test(kept.id)) return kept.id;
+    } catch {
+      // Missing or unreadable.
+    }
+    return null;
+  };
+  const kept = readKept();
   if (kept) return kept;
   const id = crypto.randomBytes(4).toString('hex');
   const body = `${JSON.stringify({ id })}\n`;
@@ -54,7 +51,7 @@ export function computerId() {
       return id;
     } catch (error) {
       if (error.code !== 'EEXIST') throw error;
-      const winner = keptComputerId();
+      const winner = readKept();
       if (winner) return winner;
     }
   }

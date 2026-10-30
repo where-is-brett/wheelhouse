@@ -1116,7 +1116,6 @@ test('that session start holds on a copy that differs, says so, and records it o
     agentProject(f, folder, { checkout: 'copilot', branch: 'copilot' });
     assert.match(text(await lineageRun(f, fixture, folder)), /^Lineage: Wheelhouse's own skill copies differ from its manifest \(skills\/pr\)\. Edits and commands are held/m);
     const held = JSON.parse(fs.readFileSync(holdFile(P), 'utf8'));
-    assert.equal(held.by, 'copies');
     assert.deepEqual(held.mismatches.map((m) => m.path), ['skills/pr']);
     await lineageRun(f, fixture, folder);
     assert.equal(f.calls.writes.filter((w) => w.kind === 'lineage-hold').length, 1);
