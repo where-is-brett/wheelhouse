@@ -122,7 +122,7 @@ test('the pack\'s sign step asks for each lens and says clean only once the verd
   answers['review-spec'] = { ok: true, ran: true, verdict: 'FINDINGS', posted: false };
   lines.length = 0;
   await main(['--run', 'run-1'], { client, out: (l) => lines.push(l) });
-  assert.deepEqual(JSON.parse(lines[0]), { clean: false });
+  assert.deepEqual(JSON.parse(lines[0]), { clean: false, question: 'A review found a BLOCKER or HIGH problem in this change, so it is not marked ready.' });
   const refusing = { engine: { review: async () => ({ ok: false, refused: 'the run\'s pack isn\'t the installed pack' }) } };
   assert.equal(await main(['--run', 'run-1'], { client: refusing, out: () => {} }), 1);
 });
@@ -159,4 +159,38 @@ test('the whole-feature lens is signed like the others, and its HIGH finding blo
   assert.equal(got.verdict, 'FINDINGS');
   assert.equal(got.posted, false);
   assert.equal(comments.length, 0);
+});
+
+test('a review held by its findings gives them, and the sign step\'s question names them', async () => {
+  const high = { severity: 'HIGH', file: 'src/import.js', line: 7, repro: 'A batch of 0 loops for ever.', fix: 'f' };
+  const { routes, ready } = setup({ outputs: { 'review-spec': review('FINDINGS', [high, finding('LOW')]) } });
+  await ready();
+  const got = await routes['/engine/review']({ runId: 'run-1', step: 'review-spec' });
+  assert.deepEqual(got.held, [{ severity: 'HIGH', file: 'src/import.js', line: 7, repro: 'A batch of 0 loops for ever.' }], 'only what holds the work, with no fix');
+  const { main } = await import('../../../scripts/engine/review-sign.js');
+  const client = { engine: { review: async ({ step }) => (step === 'review-spec' ? got : { ok: true, ran: false }) } };
+  const lines = [];
+  assert.equal(await main(['--run', 'run-1'], { client, out: (l) => lines.push(l) }), 0);
+  const said = JSON.parse(lines[0]);
+  assert.equal(said.clean, false);
+  assert.equal(said.question, 'A review found a BLOCKER or HIGH problem in this change, so it is not marked ready. The spec review found: HIGH in src/import.js, line 7: A batch of 0 loops for ever.');
+});
+
+test('the sign step names at most three findings, and says how many more', async () => {
+  const { main } = await import('../../../scripts/engine/review-sign.js');
+  const held = [1, 2, 3, 4, 5].map((line) => ({ severity: 'BLOCKER', file: 'a.js', line, repro: `Problem ${line}.` }));
+  const client = { engine: { review: async ({ step }) => (step === 'review-standards' ? { ok: true, ran: true, verdict: 'FINDINGS', posted: false, held } : { ok: true, ran: false }) } };
+  const lines = [];
+  await main(['--run', 'run-1'], { client, out: (l) => lines.push(l) });
+  const { question } = JSON.parse(lines[0]);
+  assert.match(question, /The standards review found: BLOCKER in a\.js, line 1: Problem 1\.; BLOCKER in a\.js, line 2: Problem 2\.; BLOCKER in a\.js, line 3: Problem 3\. And 2 more\.$/);
+});
+
+test('the sign step\'s question gives each lens its own sentence', async () => {
+  const { main } = await import('../../../scripts/engine/review-sign.js');
+  const held = { 'review-standards': [{ severity: 'HIGH', file: 'a.js', line: 1, repro: 'One.' }], 'review-spec': [{ severity: 'HIGH', file: 'b.js', line: 2, repro: 'Two' }] };
+  const client = { engine: { review: async ({ step }) => (held[step] ? { ok: true, ran: true, verdict: 'FINDINGS', posted: false, held: held[step] } : { ok: true, ran: false }) } };
+  const lines = [];
+  await main(['--run', 'run-1'], { client, out: (l) => lines.push(l) });
+  assert.match(JSON.parse(lines[0]).question, /ready\. The standards review found: HIGH in a\.js, line 1: One\. The spec review found: HIGH in b\.js, line 2: Two\.$/);
 });
