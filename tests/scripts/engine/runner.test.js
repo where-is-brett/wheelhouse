@@ -720,7 +720,7 @@ test('the fresh run asking the question the director answered is answered from t
 // The merge queue's question about a pull request, as the adapter gives it, and what its record step says it asked.
 const ASKED_HEAD = 'c'.repeat(40);
 const mergeAsk = (id) => ({ type: 'ask', id, kind: 'question', level: 3, recommend: null, card: true, holdsAll: true, mergeQuestion: { pr: 7 }, reason: 'The merge queue won\'t judge pull request #7 by itself.', options: [{ id: 'go', label: 'Merge at ccc' }, { id: 'back', label: 'Return it' }] });
-function mergeSetUp({ stop = false, title = 'Switch on the greeting', lane = 'feature', head = ASKED_HEAD, askedHead = ASKED_HEAD, merge = 'go', signed = true, act } = {}) {
+function mergeSetUp({ stop = false, title = 'Switch on the greeting', lane = 'feature', head = ASKED_HEAD, askedHead = ASKED_HEAD, merge = 'go', signed = true, act, known = true } = {}) {
   const t = setUp({ recordings: { one: [ev({ type: 'run-started' }), ev(mergeAsk('q9')), ev({ type: 'ask-resolved', id: 'q9' }), ev({ type: 'run-ended', outcome: 'completed' })] }, stop });
   t.engine.mergeAsked = async () => ({ pr: 7, head: askedHead, merge });
   if (act) t.engine.act = act;
@@ -728,7 +728,7 @@ function mergeSetUp({ stop = false, title = 'Switch on the greeting', lane = 'fe
   t.ruled = [];
   const runner = engineRunner({
     engine: t.engine, file: path.join(path.dirname(t.runner.file), 'merge.json'), readViews: () => t.views, write: async (kind, data) => { t.writes.push({ kind, data }); },
-    stopped: () => t.world.stop, now: () => t.world.now, settings: () => ({ cardsPerDay: 3 }), workOf: () => ({ work: 'merge-queue', lane: 'merge' }), titleOf: () => 'the changes waiting to be added',
+    stopped: () => t.world.stop, now: () => t.world.now, settings: () => ({ cardsPerDay: 3 }), workOf: () => (known ? { work: 'merge-queue', lane: 'merge' } : null), titleOf: () => 'the changes waiting to be added',
     openedOf: (pr) => (pr === 7 ? { lane, work: 'card-81' } : null), prTitleOf: async () => title,
   });
   runner.onMergeRuled(() => t.ruled.push(true));
@@ -815,4 +815,12 @@ test('the director\'s merge answer makes the queue due; any other answer doesn\'
     assert.equal(t.ruled.length, due, label);
     t.cleanup();
   }
+});
+
+test('a question from a merge-queue run the helper didn\'t start still comes as a card', async () => {
+  const t = mergeSetUp({ signed: false, known: false });
+  await t.ask();
+  assert.equal(questions(t).length, 1);
+  assert.equal(questions(t)[0].data.work, 'merge-queue');
+  t.cleanup();
 });

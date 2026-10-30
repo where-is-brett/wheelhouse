@@ -12,7 +12,7 @@
 // seen ready, the clashes, the fixes) is in `file`.
 import fs from 'node:fs';
 import path from 'node:path';
-import { dispatch } from './dispatcher.js';
+import { dispatch, MERGE_WORK } from './dispatcher.js';
 import { workOrder } from './order.js';
 import { limitsFor } from './caps.js';
 import { ENGINE_QUESTIONS } from './router.js';
@@ -25,8 +25,7 @@ const isText = (x) => typeof x === 'string' && x.trim() !== '';
 const EMPTY = () => ({ mergeRun: null, mergeRuns: [], lastStart: null, seenReady: [], queueDue: false, sentBack: {}, acted: {}, clashAsked: {}, requestsAsked: null, noTestsSaid: false, fixes: {}, features: {}, shipped: {}, closedPrs: [] });
 // The dispatcher's own questions take numbers from here, apart from the card router's.
 const OWN_QUESTIONS = ENGINE_QUESTIONS + 90000;
-// The work the merge queue's own runs stand for, which no work record names: their asks are routed under it.
-export const MERGE_WORK = 'merge-queue';
+export { MERGE_WORK };
 const KEPT_MERGE_RUNS = 20;
 export const TRY_AGAIN = 'Try again';
 export const LEAVE_IT = 'Leave it';

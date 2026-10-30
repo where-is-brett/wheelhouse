@@ -22,6 +22,9 @@ function runsOf(runs, id, entry) {
   return [...byRun.values()];
 }
 
+// The work the merge queue's own runs stand for, which no work record names: their asks are routed under it.
+export const MERGE_WORK = 'merge-queue';
+
 // dispatch({ work, runs, reports, features, settings, stop, incident, capsReached, mergeQueue, requests?, sentBack?, now })
 //   -> { start: [{ work, lane }], hold: [{ work, why }], startMergeQueue, requeue: [{ work, lane, branch }], clashCards: [{ work }] }
 // `work`, `runs` and `reports` are the record's views; `mergeQueue` is { running, lastStart, waiting, newReady };

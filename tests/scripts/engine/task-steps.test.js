@@ -10,7 +10,7 @@ import { execFileSync } from 'node:child_process';
 import { main as taskCheck } from '../../../scripts/engine/task-check.js';
 import { main as taskRecord } from '../../../scripts/engine/task-record.js';
 import { main as tasksDone } from '../../../scripts/engine/tasks-done.js';
-import { PLAN_FILE, BLOCKED_FILE } from '../../../scripts/engine/plan-file.js';
+import { MOST_TASKS, PLAN_FILE, BLOCKED_FILE } from '../../../scripts/engine/plan-file.js';
 import { workOrder } from '../../../scripts/engine/order.js';
 import { TICKET_FILE } from '../../../scripts/engine/ticket.js';
 import { tempFolder } from '../../helpers/homes.js';
@@ -271,6 +271,34 @@ test('a slice\'s task records and both lanes\' closes carry what the close needs
   for (const lane of ['wheelhouse-small', 'wheelhouse-slice']) {
     const close = pack(lane).nodes.find((n) => n.id === 'tasks-done');
     assert.match(close.bash, /--run "\$WORKFLOW_ID"/);
-    assert.ok(close.timeout >= 15 * 60 * 1000, 'the close runs each ticked task\'s test');
+    assert.ok(close.timeout >= MOST_TASKS * 10 * 60 * 1000, 'the close runs each ticked task\'s test, each up to ten minutes');
   }
+});
+
+test('a review that still holds goes back even when another task stopped with a question, since its record lasts one run', async () => {
+  const dir = repo('- [x] **Task 1:** One\n- [ ] **Task 2:** Two\n');
+  const records = JSON.stringify([{ blocked: false, task: '1', held: true }, { blocked: true, task: '2', question: 'Which?', options: [{ id: 'a', label: 'A' }], recommend: 'a', level: '3', topic: 'which' }]);
+  const got = await done(dir, artefacts(), records);
+  assert.equal(got.question, 'Task 2, Two: Which?');
+  assert.match(planOf(dir), /- \[ \] \*\*Task 1:\*\*/);
+  assert.equal(git(dir, 'status', '--porcelain', '--untracked-files=all'), '');
+});
+
+test('a red task after the plan was taken out comes back into the tree, so the fresh run can build it', async () => {
+  const dir = repo('- [x] **Task 1:** One\n  Test: good\n- [x] **Task 2:** Two\n  Test: bad\n');
+  git(dir, 'rm', '-q', PLAN_FILE);
+  git(dir, 'commit', '-qm', 'Take out the build plan');
+  const got = await done(dir, artefacts());
+  assert.equal(got.blocked, true);
+  assert.match(planOf(dir), /- \[x\] \*\*Task 1:\*\*/);
+  assert.match(planOf(dir), /- \[ \] \*\*Task 2:\*\*/);
+  assert.equal(git(dir, 'status', '--porcelain', '--untracked-files=all'), '');
+});
+
+test('a test that writes a file doesn\'t read as a change the task left', async () => {
+  const dir = repo('- [x] **Task 1:** One\n  Test: good\n');
+  const writing = workOrder({ work: { id: 'card-1', lane: 'small', goal: 'Prices show two decimals', done: [{ command: 'true', expect: 0 }] }, config: { testCommand: `${node} -e "require('fs').writeFileSync('report.txt', 'x')"` } });
+  const s = sink();
+  await tasksDone(['--run', 'run-1', '--artefacts', artefacts(), '--base', 'main', '--records', '[]'], { client: { engine: { order: async () => ({ ok: true, order: writing }) } }, cwd: dir, out: s.out });
+  assert.equal(s.last().blocked, false);
 });

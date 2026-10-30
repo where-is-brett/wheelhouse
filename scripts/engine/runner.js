@@ -20,6 +20,7 @@ import { routeAsk, cardBudget, bundleApprovals, answerFor, dayOf, ignoresBudget,
 import { runCost, runningMinutes } from './spend.js';
 import { capReached, carriedSpend } from './caps.js';
 import { RED_MAIN, FIX_LANE, redMainIncident, openRedMain } from './fix-main.js';
+import { MERGE_WORK } from './dispatcher.js';
 import { mergeQuestionWords } from './words.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
@@ -124,7 +125,8 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       return;
     }
     const found = workOf(ask.runId);
-    const work = found?.work ?? ask.work;
+    // A merge-queue run the helper didn't start (Archon's ruling step starts one too) still waits on an answer.
+    const work = found?.work ?? ask.work ?? (isPlain(ask.mergeQuestion) ? MERGE_WORK : null);
     if (typeof work !== 'string') return;
     state.routed[ask.id] = true;
     let views = {};

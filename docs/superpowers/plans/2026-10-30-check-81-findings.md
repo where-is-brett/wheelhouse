@@ -10,8 +10,9 @@ Check 81 saw five things and changed none of them. All five go in one pull reque
 **Fix.**
 - `tasks-done.js` checks every ticked task at the close, from the helper's order: its test passes, and the tree is clean. It trusts nothing in the run's artefacts.
 - `task-record.js`, in a slice's task, carries a review that holds (`--reviewed`), and the close reads it from the fan-out's records.
-- A task that fails is unticked in its own commit, so the fresh run builds it again, and the close raises one card naming the task, with **Send it back for a fresh run** recommended. An order the helper won't give, or an untick that fails, still raises the card.
-- The steps' timeout rises to hold the tests; a timeout fails the run, which is not quiet.
+- A task that fails is unticked in its own commit, with the plan put back in the tree if the lane took it out, so the fresh run builds it again. The close raises one card naming the task, with **Send it back for a fresh run** recommended. An order the helper won't give, or an untick that fails, still raises the card.
+- A held review lasts only in that run's records, so it goes back even when another task stopped with its own question.
+- The step's timeout rises to hold eight tasks' tests at ten minutes each; a timeout fails the run, which is not quiet.
 
 ## 2. One decision, one question
 
@@ -30,7 +31,7 @@ The card says "pull request #7, <title>", from Archon's record of what it asked 
 
 **Cause.** Archon's `launchDetached` reads a refusal from standard error, but `--json` puts it on standard output, so check 81's log kept nothing after "did not start:". The refusal can't be recovered from the run, and the same start from a copy of the engine's database, in a real paused-and-woken script step, started. So the cause in that run stays unknown; the fix doesn't rest on it. A start from a step can't be the way anyway: it lacks `--project`, `--workflow-source` and the routing table's bindings, and the helper wouldn't know the run, so its asks wouldn't route.
 
-**Fix.** Wheelhouse starts the follow-up itself. An answer whose choice has the effect `merge` marks the queue as due, and the dispatcher starts it on the first tick after the ruling's run ends. The upstream note records the lost refusal. If Archon's own start does work, the second sweep finds nothing to do.
+**Fix.** Wheelhouse starts the follow-up itself. An answer whose choice has the effect `merge` marks the queue as due, and the dispatcher starts it on the first tick after the ruling's run ends. The upstream note records the lost refusal. If Archon's own start does work, the two runs may overlap: the queue's claim lets one sweep each item, and a question from the run the helper didn't start still comes as a card under the merge queue.
 
 ## 5. Allow rules in a fresh worktree
 
