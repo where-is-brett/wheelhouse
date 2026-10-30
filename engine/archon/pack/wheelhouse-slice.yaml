@@ -332,7 +332,7 @@
       ],
       "trigger_rule": "none_failed_min_one_success",
       "when": "$tasks-done.output.blocked == 'false'",
-      "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/flag.js\" --check-off --run \"$WORKFLOW_ID\"",
+      "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/flag.js\" --check-off --run \"$WORKFLOW_ID\" --artefacts \"$ARTIFACTS_DIR\"",
       "timeout": 60000,
       "output_format": {
         "type": "object",
@@ -508,7 +508,7 @@
       ],
       "trigger_rule": "none_failed_min_one_success",
       "when": "$repair.output.blocked == 'false'",
-      "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/flag.js\" --check-off --run \"$WORKFLOW_ID\"",
+      "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/flag.js\" --check-off --run \"$WORKFLOW_ID\" --artefacts \"$ARTIFACTS_DIR\"",
       "timeout": 60000,
       "output_format": {
         "type": "object",

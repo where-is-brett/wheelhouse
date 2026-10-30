@@ -51,7 +51,7 @@
       "depends_on": [
         "order"
       ],
-      "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/flag.js\" --on --run \"$WORKFLOW_ID\"",
+      "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/flag.js\" --on --run \"$WORKFLOW_ID\" --artefacts \"$ARTIFACTS_DIR\"",
       "timeout": 120000,
       "output_format": {
         "type": "object",
