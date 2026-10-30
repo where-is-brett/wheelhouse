@@ -64,9 +64,9 @@ function put(kind, data, at) {
 }
 const records = (kind) => listEvents(stateDir(P), { report: () => {} }).filter((e) => e.kind === kind);
 
-const helperFor = (p, engine) => startHelper({
+const helperFor = (p, engine, extra = {}) => startHelper({
   run: hostGuard, address: testAddress(p.home), adapterFor: async () => ({}), envFor: async () => ({}),
-  spawn: stubSpawn(), refreshMirror: noMirror, engineFor: () => engine, dispatchMs: 60 * 60 * 1000,
+  spawn: stubSpawn(), refreshMirror: noMirror, engineFor: () => engine, dispatchMs: 60 * 60 * 1000, ...extra,
 });
 
 test('the dispatcher starts quick work through the helper\'s own start, with its order, its ticket and its run record', async () => {
@@ -151,11 +151,15 @@ test('an ask from the merge queue\'s own run is routed: a red main line\'s hold 
       const files = path.join(stateDir(P), '..', 'engine');
       fs.mkdirSync(files, { recursive: true });
       fs.writeFileSync(path.join(files, 'verdicts.json'), JSON.stringify({ ready: { 7: { work: 'card-7', head: 'a'.repeat(40) } } }));
-      const helper = await helperFor(p, engine);
+      // The queue runs in a folder of Wheelhouse's own, never the director's project (check 81).
+      const asked = [];
+      const helper = await helperFor(p, engine, { queueFolder: async (project) => { asked.push(project); return { ok: true, folder: `/engine/queues/${project}` }; } });
       try {
         await helper.engine.tick();
         const starts = engine.calls.filter((c) => c.call === 'start' && c.order.lane === 'merge');
         assert.equal(starts.length, 1);
+        assert.deepEqual(asked, [P]);
+        assert.equal(starts[0].order.project, `/engine/queues/${P}`);
         // The registered repository, which Archon's queue needs (check 81).
         assert.deepEqual(starts[0].order.repo, { host: 'github.com', path: 'o/p' });
         const held = await until(() => engine.calls.find((c) => c.call === 'act' && c.action?.answer?.choice === 'hold'), { what: 'the hold answered' });

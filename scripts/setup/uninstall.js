@@ -963,7 +963,7 @@ export async function uninstallPlan({
   ] : [];
   if (last) {
     for (const p of HOST_TOOLS.map(toolFolder)) if (exists(p)) remove(p, 'last');
-    // The build engine's folder whole: its Bun, its Archon, the broker and the fetch mirrors.
+    // The build engine's folder whole: its Bun, its Archon, the broker, the fetch mirrors and the merge queue folders.
     if (exists(engineDir())) remove(engineDir(), 'last');
     if (exists(profileDir())) kept(shown(profileDir(), userHome), 'your settings on this computer: yours, so they stay');
     // Setup's own records are listed whether they are there yet or not: showing uninstall's card
@@ -972,10 +972,10 @@ export async function uninstallPlan({
     // too, Wheelhouse's own (ruling R86).
     for (const p of [clicksDir(), usedDir(), shownDir(), askedDir(), answersDir(), answeredDir(), recordsDir(), trustDir(), seenFile()]) remove(p, 'last');
   } else {
-    // The project's own fetch mirror in the engine folder (the helper makes it before a run starts), which nothing
-    // else reads once the project is gone; the engine and the other projects' mirrors stay.
-    const ownMirror = slug === null ? null : path.join(engineDir(), 'mirrors', `${slug}.git`);
-    if (ownMirror !== null && exists(ownMirror)) remove(ownMirror, 'last');
+    // The project's own fetch mirror and merge queue folder in the engine folder (the helper makes them before a run
+    // starts), which nothing else reads once the project is gone; the engine and the other projects' stay.
+    const own = slug === null ? [] : [path.join(engineDir(), 'mirrors', `${slug}.git`), path.join(engineDir(), 'queues', slug)];
+    for (const p of own) if (exists(p)) remove(p, 'last');
     kept('Wheelhouse\'s helper, telemetry, tools, your settings and this computer\'s signing key', `another project on this computer, or one being set up, still uses them${deferred > 0 ? ` (${deferred} change${deferred === 1 ? '' : 's'} of this computer's)` : ''}`);
   }
   // The project's folder first in its phase, as the newest, then the others in their order.

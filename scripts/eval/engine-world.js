@@ -102,8 +102,9 @@ export async function openWorld({ engine: kind = 'fake', recordings = {}, now = 
     helper = await startHelper({
       run: noHostTools(hostCalls), address: helperAddress({ home }), adapterFor: async () => host, envFor: async () => ({}), now,
       spawn, engineFor: () => engine, dispatchMs: 60 * 60 * 1000, stopPollMs: 50,
-      // The fake engine reads no fetch mirror.
+      // The fake engine reads no fetch mirror, so the merge queue runs in the project's folder.
       refreshMirror: async () => ({ ok: true }),
+      queueFolder: async () => ({ ok: true, folder }),
     });
   } catch (error) {
     await world.close();

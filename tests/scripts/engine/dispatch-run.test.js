@@ -79,3 +79,19 @@ test('work routed to a provider that counts requests waits while the count the c
   await d.tick();
   assert.equal(starts.length, 1);
 });
+
+test("the merge queue starts in the folder the helper gives it, never the project's, and not at all when that folder can't be made (check 81)", async () => {
+  for (const [given, want] of [[{ ok: true, folder: '/engine/queues/p' }, '/engine/queues/p'], [{ ok: false, refused: 'no mirror' }, null]]) {
+    const dir = tempFolder('wh-dr-');
+    const engine = fakeEngine();
+    const d = dispatchRun({
+      engine, project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'), readViews: () => ({ work: {}, runs: {}, questions: {} }),
+      config: () => ({ routing: {}, testCommand: 'node --test' }), start: async () => ({ ok: false }),
+      readyOf: () => ({ 7: { work: 'card-7', head: 'a'.repeat(40) } }), repoOf: () => ({ host: 'github.com', path: 'o/p' }),
+      queueFolder: async () => given, now: () => new Date('2026-10-29T10:00:00.000Z'),
+    });
+    await d.tick();
+    const starts = engine.calls.filter((c) => c.call === 'start' && c.order.lane === 'merge');
+    assert.deepEqual(starts.map((c) => c.order.project), want === null ? [] : [want]);
+  }
+});
