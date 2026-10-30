@@ -3035,7 +3035,7 @@ test('a second project\'s uninstall leaves the engine but takes its own mirror r
   });
 });
 
-test("a second project's uninstall removes its own fetch mirror from the engine folder, and leaves the others'", async () => {
+test("a second project's uninstall removes its own fetch mirror and merge queue folder from the engine folder, and leaves the others'", async () => {
   await withHome(async () => {
     const world = makeWorld();
     const { r } = fullSetup(world);
@@ -3045,11 +3045,16 @@ test("a second project's uninstall removes its own fetch mirror from the engine 
     const other = path.join(engineDir(), 'mirrors', 'o__Other.git');
     writeText(path.join(own, 'HEAD'), 'ref: refs/heads/main\n');
     writeText(path.join(other, 'HEAD'), 'ref: refs/heads/main\n');
+    // The merge queue's folders (check 81): a stale one must not be left for another project to pick up.
+    const ownQueue = path.join(engineDir(), 'queues', SLUG);
+    const otherQueue = path.join(engineDir(), 'queues', 'o__Other');
+    writeText(path.join(ownQueue, '.wheelhouse-queue.json'), '{}\n');
+    writeText(path.join(otherQueue, '.wheelhouse-queue.json'), '{}\n');
     try {
       const got = await plan(world);
       assert.equal(got.last, false);
-      const removed = got.changes.filter((c) => c.put === 'remove' && [own, other].includes(c.target));
-      assert.deepEqual(removed.map((c) => c.target), [own]);
+      const removed = got.changes.filter((c) => c.put === 'remove' && [own, other, ownQueue, otherQueue].includes(c.target));
+      assert.deepEqual(removed.map((c) => c.target).sort(), [own, ownQueue].sort());
     } finally {
       fs.rmSync(archonHome(), { recursive: true, force: true });
     }

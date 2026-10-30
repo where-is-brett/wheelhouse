@@ -30,6 +30,7 @@ import { hide, cleanDeep } from '../lib/clean.js';
 import { readKey } from './keys.js';
 import { checkBaseUrl, gitlabApi } from './gitlab-key.js';
 import { DEFAULT_GITLAB, parseRemote } from './gitlab-base.js';
+import { prepareQueueFolder } from '../engine/queue-folder.js';
 import { unreachableRefusal, certificateRefusal, certificateLine, awayLine, outputKind, companyGitEnv, makeAwayLog, gitlabBaseOf, certificateSetting } from './company-ca.js';
 import { childEnv } from './connection.js';
 import { protectionStatus } from './protection.js';
@@ -1014,6 +1015,9 @@ export async function startHelper({
   // How the engine's fetch mirror of a project is brought up to date before a run starts: the helper's own, from the
   // host with the connection's key, unless a test whose engine reads no mirror gives its own.
   refreshMirror = null,
+  // The folder the merge queue runs in, Wheelhouse's own checkout of the project's fetch mirror (queue-folder.js),
+  // unless a test whose engine reads no mirror gives its own: (project) -> { ok, folder } or { ok: false, refused }.
+  queueFolder = null,
 } = {}) {
   if (typeof adapterFor !== 'function') throw new Error('The helper needs an adapterFor function');
   if (typeof envFor !== 'function') throw new Error('The helper needs an envFor function');
@@ -4028,6 +4032,13 @@ export async function startHelper({
   // rule points git at. The helper fetches the host's branches and pull-request heads into its own mirror with the
   // connection's key, then copies them into the engine's mirror with no key. The engine's mirror names no remote.
   const fetchMirrorOf = (project) => path.join(engineDir(), 'mirrors', `${project}.git`);
+  // The merge queue's own folder (check 81): the fetch mirror brought up to date, then checked out under the engine
+  // folder with the project's settings and only this helper's socket opened.
+  async function ownQueueFolder(project) {
+    const fresh = await (refreshMirror ?? refreshFetchMirror)(project);
+    if (!fresh?.ok) return { ok: false, refused: fresh?.refused ?? 'the fetch mirror could not be brought up to date' };
+    return prepareQueueFolder({ project, remoteUrl: recordOf(project)?.remoteUrl, mirror: fetchMirrorOf(project), socket: address, run });
+  }
   async function refreshFetchMirror(project) {
     const ctx = await contextFor(project);
     const pulls = recordOf(project).host === 'gitlab' ? 'refs/merge-requests/*/head' : 'refs/pull/*/head';
@@ -4528,6 +4539,7 @@ export async function startHelper({
       designOf: (work) => (typeof folder === 'string' ? approvedDocument({ checkout: folder, views: views(), work }) : null),
       orderOf: (runId) => orderStore(path.join(engineDirOf(stateDir(project)), 'orders')).load(runId),
       repoOf: () => mergeRepoOf(record),
+      queueFolder: () => (queueFolder ?? ownQueueFolder)(project),
     });
     const runner = engineRunner({
       engine, file: path.join(files, 'router.json'), readViews: views, write, stopped, now, settings,
