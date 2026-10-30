@@ -31,13 +31,16 @@ export const BUN_PIN = Object.freeze({
 });
 
 // The patches applied to the source, in order, from patch/ beside this file.
-export const PATCHES = Object.freeze(['claude-permission-mode.patch']);
+export const PATCHES = Object.freeze(['claude-permission-mode.patch', 'copilot-bin-path.patch']);
 const PATCH_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'patch');
 
 // The value of ARCHON_CLAUDE_PERMISSION_MODE that the patch reads.
 export const PERMISSION_MODE = 'acceptEdits';
 // What the patched provider holds and the unpatched one doesn't; health looks for it.
 export const PATCH_MARK = 'ARCHON_CLAUDE_PERMISSION_MODE';
+// What the Copilot patch's resolver holds (copilot-bin-path.patch): a source build then runs the CLI COPILOT_BIN_PATH
+// names, the one the engine pins, rather than the SDK's own runtime.
+export const COPILOT_PATCH_MARK = 'Wheelhouse: a source build honours COPILOT_BIN_PATH';
 
 const TELEMETRY = { ARCHON_TELEMETRY_DISABLED: '1', DO_NOT_TRACK: '1', POSTHOG_API_KEY: 'off' };
 const SYSTEM_PATH = ['/usr/bin', '/bin', '/usr/sbin', '/sbin'];
@@ -66,6 +69,7 @@ export function enginePaths(engine) {
     launcher: path.join(engine, 'archon', 'bin', 'archon'),
     bunfig: path.join(engine, 'archon', 'bunfig.toml'),
     provider: path.join(engine, 'archon', 'src', 'packages', 'providers', 'src', 'claude', 'provider.ts'),
+    copilotResolver: path.join(engine, 'archon', 'src', 'packages', 'providers', 'src', 'community', 'copilot', 'binary-resolver.ts'),
   };
 }
 

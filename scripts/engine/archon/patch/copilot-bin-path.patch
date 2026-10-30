@@ -1,0 +1,19 @@
+# scripts/engine/archon/patch/copilot-bin-path.patch
+# Lets a source build of Archon run Copilot's steps with the CLI named by COPILOT_BIN_PATH, as a compiled build does.
+# Unpatched, a source build ignores the variable and the SDK runs its own bundled runtime, so the CLI the engine pins
+# (and checks) never runs, and Wheelhouse's guards can't tell it is Copilot (check 74). Without the variable Archon
+# behaves as released. Applied with `git apply` to Archon v0.13.0 (commit 0d39c1f2); see docs/engine/archon-upstream-note.md.
+diff --git a/packages/providers/src/community/copilot/binary-resolver.ts b/packages/providers/src/community/copilot/binary-resolver.ts
+index 49b491b..bfa68a5 100644
+--- a/packages/providers/src/community/copilot/binary-resolver.ts
++++ b/packages/providers/src/community/copilot/binary-resolver.ts
+@@ -102,7 +102,8 @@ function getVendorBinaryName(): string | undefined {
+ export async function resolveCopilotBinaryPath(
+   configCliPath?: string
+ ): Promise<string | undefined> {
+-  if (!BUNDLED_IS_BINARY) return undefined;
++  // Wheelhouse: a source build honours COPILOT_BIN_PATH too, so the CLI the engine pins runs Copilot's steps, never the SDK's own runtime.
++  if (!BUNDLED_IS_BINARY && !process.env.COPILOT_BIN_PATH) return undefined;
+ 
+   // 1. Environment variable override
+   const envPath = process.env.COPILOT_BIN_PATH;

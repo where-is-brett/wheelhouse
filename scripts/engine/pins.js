@@ -8,6 +8,7 @@ import { ARCHON_SOURCE, BUN_PIN, PATCHES } from './archon/build.js';
 // The SHA-256 of each patch file under scripts/engine/archon/patch/, in the order they are applied.
 export const PATCH_DIGESTS = Object.freeze({
   'claude-permission-mode.patch': 'b04c637c86c77431bab733afbbc1cdb5220d3134d81aed6742ed0bcb505b4f14',
+  'copilot-bin-path.patch': '17790ea3eb1bf713559e94f5bebb66166a70a7a70f558d75ab9d69af47668cdb',
 });
 
 export const ENGINE_PINS = Object.freeze({
@@ -15,10 +16,12 @@ export const ENGINE_PINS = Object.freeze({
     ...ARCHON_SOURCE,
     patches: Object.freeze(PATCHES.map((name) => Object.freeze({ name, sha256: PATCH_DIGESTS[name] }))),
     // What the build holds, read on 30 October 2026 from the source at the commit with the patches applied: the
-    // patched Claude provider, and the lockfile its dependencies are installed by.
+    // patched Claude provider, the lockfile its dependencies are installed by, and (30 October 2026, with the Copilot
+    // patch) the patched Copilot resolver.
     built: Object.freeze({
       provider: '6632e04131da968911638029569f3fcb190e3f7db0a1f8a5ebd349d6e89840d2',
       lockfile: '779687777c6a3e73d8cb1e149c252bdbb85457c698f9c5563424805f2c4c19f1',
+      copilotResolver: 'f125692e321d30a464d1619f5c373176753b0bba7fd1a663d83fa8f0bd3e7008',
     }),
   }),
   bun: BUN_PIN,
