@@ -24,7 +24,7 @@ import { readLean, registerLean } from '../../../scripts/lean/project.js';
 import { storeDir } from '../../../scripts/lean/store.js';
 import { releaseProject } from '../../../scripts/lean/release.js';
 import { loginStartRecord } from '../../../scripts/lib/login-start.js';
-import { ownKey, readEnrolled } from '../../../scripts/state/signing.js';
+import { ownKey, readEnrolled, signingKeyFile } from '../../../scripts/state/signing.js';
 import { projectForFolder } from '../../../scripts/lib/projects.js';
 import { registeredLeanProjects, leanState } from '../../../scripts/lean/project.js';
 import {
@@ -197,6 +197,48 @@ test('two installs at once register once, one after the other', async () => {
     assert.equal(fs.readFileSync(path.join(c.folder, '.git'), 'utf8').includes(storeDir('shop-front')), true);
     assert.equal(fs.existsSync(path.join(storeDir('shop-front'), '..', 'lean.lock')), false, 'the lock is freed');
     assert.equal(fs.readdirSync(path.join(c.home, 'projects')).length, 1, 'one project');
+  });
+});
+
+test('an install reads the folder only inside the lock, so one moving it at that moment is never taken for the project\'s own worktree', async () => {
+  const c = await computer();
+  await c.as(async () => {
+    const plan = await planInstall({ folder: c.folder, ...ANSWERS }, c.deps);
+    const lock = path.join(c.home, 'projects', 'shop-front', 'lean.lock');
+    const start = () => install({ folder: c.folder, ...ANSWERS, hash: plan.hash }, c.deps);
+    // The other install starts just as this one reads the folder's worktrees: unless this one holds the lock, the
+    // other moves the git while this one is looking.
+    let other = null;
+    const run = async (file, args, options) => {
+      if (other === null && args.includes('worktree') && args.includes('list')) {
+        other = start();
+        if (!fs.existsSync(lock)) await other;
+      }
+      return hostGuard(file, args, options);
+    };
+    const first = await install({ folder: c.folder, ...ANSWERS, hash: plan.hash }, { ...c.deps, run });
+    assert.equal(first.ok, true);
+    assert.equal((await other).ok, true);
+    assert.equal(readLean('shop-front').store, storeDir('shop-front'));
+    assert.equal(fs.existsSync(lock), false, 'the lock is freed');
+  });
+});
+
+test('a card\'s hash still counts once its signing key has been made, and not the other way round', async () => {
+  const c = await computer();
+  const second = await secondFolder('books');
+  await c.as(async () => {
+    const plan = await planInstall({ folder: c.folder, ...ANSWERS }, c.deps);
+    assert.equal(plan.needsKey, true);
+    // Another project's install makes the key after this card was shown.
+    await installed(c, second);
+    assert.equal((await install({ folder: c.folder, ...ANSWERS, hash: plan.hash }, c.deps)).ok, true);
+    // A card that showed no key doesn't cover making one.
+    const next = await planInstall({ folder: c.folder, ...ANSWERS }, c.deps);
+    assert.equal(next.needsKey, false);
+    fs.rmSync(signingKeyFile());
+    await assert.rejects(install({ folder: c.folder, ...ANSWERS, hash: next.hash }, c.deps), (e) => e.message === CHANGED);
+    assert.equal(ownKey(), null);
   });
 });
 
