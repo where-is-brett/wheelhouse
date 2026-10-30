@@ -1104,6 +1104,13 @@ export function projectFilesStep({
     return parts;
   };
 
+  // The fetch mirror's rule for a project, in the engine folder's list (scripts/engine/archon/env.js), where it isn't
+  // in yet: on a new setup, and on a Mac joining a project already on the engine.
+  const mirrorChange = ({ project, record }, platform) => {
+    if (!mirrorWanted({ host: record.host, engine: engineOf(project), remoteUrl: record.remoteUrl, platform })) return [];
+    return readJson(mirrorRulesFile())?.[project] === record.remoteUrl ? [] : [{ kind: 'json-key', target: mirrorRulesFile(), key: [project], after: record.remoteUrl, what: 'mirror' }];
+  };
+
   // The "this computer" form, on a computer joining a project set up on another (ruling R78): the
   // configuration read from the project's last commit in this folder, and only this computer's
   // own files and pins listed. A run with nothing left to do settles, as R75 does.
@@ -1129,6 +1136,7 @@ export function projectFilesStep({
     const blocked = [];
     const changes = [
       ...localFilesChange({ folder, local: { address: address(), node, pluginRoot, platform, claudeHome: home, model: pin } }),
+      ...mirrorChange(found, platform),
       ...(await computerParts(git, folder, { joining: true, blocked })),
     ];
     if (changes.length === 0) {
@@ -1281,10 +1289,7 @@ export function projectFilesStep({
       // product already ignores them; then the lines that keep .env files out of git; then the pins.
       changes.push(...engineFiles);
       // The fetch mirror's rule for this project, in the engine folder's list (scripts/engine/archon/env.js).
-      if (mirrorWanted({ host, engine: engineOf(found.project), remoteUrl: record.remoteUrl, platform })) {
-        const rules = readJson(mirrorRulesFile());
-        if (rules?.[found.project] !== record.remoteUrl) changes.push({ kind: 'json-key', target: mirrorRulesFile(), key: [found.project], after: record.remoteUrl, what: 'mirror' });
-      }
+      changes.push(...mirrorChange(found, platform));
       changes.push(...(await computerParts(git, folder)));
       if (missing.length > 0) {
         const firstPin = changes.findIndex((c) => c.kind === 'process');
