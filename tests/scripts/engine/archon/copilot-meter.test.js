@@ -100,3 +100,20 @@ test('a figure that can\'t be read is asked for again a day later, not at every 
   const day = await checkRequests({ read: async () => ({ used: 40, entitlement: 200, remaining: 160, resets: '2026-11-01' }), estimate: () => 3, kept: first.kept, now: new Date(at.getTime() + CHECK_EVERY_MS) });
   assert.equal(day.kept.baseline, 40, 'the first figure read is the starting point');
 });
+
+test('requests the meter counted before GitHub\'s first reading stay in the count after it', async () => {
+  // GitHub couldn't be read at first, and 30 requests went by; then its figure is the starting point.
+  const kept = { at: '2026-10-30T09:00:00.000Z', baseline: 70, estimateAt: 30, resets: '2026-11-01', last: 70 };
+  const later = new Date(Date.parse(kept.at) + CHECK_EVERY_MS);
+  const got = await checkRequests({ read: async () => ({ used: 75, entitlement: 200, remaining: 125, resets: '2026-11-01' }), estimate: () => 35, kept, now: later });
+  assert.equal(got.used, 35, 'the 30 before the start and GitHub\'s 5 since');
+  const soon = await checkRequests({ read: async () => assert.fail('not asked'), estimate: () => 31, kept: got.kept, now: new Date(later.getTime() + 1) });
+  assert.equal(soon.used, 35, 'not dropped back between readings');
+});
+
+test('GitHub\'s count going down starts a new month, even with no reset date', async () => {
+  const kept = { at: '2026-10-31T09:00:00.000Z', baseline: 38, estimateAt: 0, resets: null, last: 60 };
+  const got = await checkRequests({ read: async () => ({ used: 3, entitlement: 200, remaining: 197, resets: null }), estimate: () => 2, kept, now: new Date('2026-11-01T10:00:00Z') });
+  assert.equal(got.kept.baseline, 0);
+  assert.equal(got.used, 3);
+});

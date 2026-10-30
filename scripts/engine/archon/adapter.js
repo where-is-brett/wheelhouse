@@ -25,6 +25,8 @@ import { readyWorkItem } from './work-item.js';
 import { PACK_FORMS, COPILOT_SUFFIX, PROVIDER as COPILOT } from './copilot-pack.js';
 import { checkRequests as meterCheck, readGitHubFigure } from './copilot-meter.js';
 import { readAccountModels, requestRates } from '../../agents/copilot/column.js';
+import { engineHomeProblem } from '../../agents/copilot/engine-home.js';
+import { copilotCliInstalled } from './copilot-cli.js';
 import { brokerProblem } from '../parts.js';
 import path from 'node:path';
 import { engineDir, archonHome, projectSlug } from '../../lib/paths.js';
@@ -195,9 +197,18 @@ function refusal(action, result) {
 // `cli` is archonCli or a stand-in; `streamer(args, { signal })` gives a long command's lines (archonStreamer);
 // `run` runs Bun's version check; `pins` are the pinned Archon and Bun (build.js); `now` gives the time; `home` is
 // ARCHON_HOME and `worktreeBases` the absolute folders the config's `worktree.path` places worktrees in.
+// Why a Copilot step can't start in `engine`, or null. Copilot steps have no sandbox, so its guards, registered as the
+// CLI's own hooks in its clean home, are what stand: with the program or the home missing or stale, the CLI would run
+// from the director's own Copilot home, with none of them.
+export function copilotEngineProblem(engine) {
+  if (!copilotCliInstalled(engine)) return 'Copilot\'s command-line program isn\'t in the build engine\'s folder, so no Copilot step can start';
+  return engineHomeProblem({ engine });
+}
+
 export function archonAdapter({
   cli = archonCli, streamer, run = defaultRun, packDir, configFile, engine = engineDir(), home = archonHome(), worktreeBases = [],
   pins = { archon: ARCHON_SOURCE, bun: BUN_PIN }, now = () => new Date().toISOString(),
+  copilotProblem = () => copilotEngineProblem(engine),
 } = {}) {
   const stream = streamer ?? archonStreamer({ cli });
   const answered = new Set();
@@ -336,6 +347,10 @@ export function archonAdapter({
       try { models = bindingsFor(order.bindings); } catch (error) { return refusedWith(error.message); }
       const chosen = workflowFor(workflow, order.bindings);
       if (chosen.refused) return refusedWith(chosen.refused);
+      if (chosen.workflow.endsWith(COPILOT_SUFFIX)) {
+        const problem = copilotProblem();
+        if (problem) return refusedWith(problem);
+      }
       const args = ['workflow', 'run', chosen.workflow];
       if (order.carryOn) args.push(CARRY_ON);
       args.push('--detach', '--workflow-source', packDir, '--config', configFile);

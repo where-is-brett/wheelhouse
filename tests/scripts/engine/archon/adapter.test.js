@@ -468,7 +468,7 @@ test('an answer Archon gave no reply to is unreachable, so it is tried again; on
 
 test('a run whose models are all on Copilot starts the workflow\'s Copilot twin, and a run that mixes providers is refused', async () => {
   const cli = fakeCli({ 'workflow run': json('run-detach.json') });
-  const engine = adapter(cli);
+  const engine = adapter(cli, { copilotProblem: () => null });
   const all = { tiers: { small: 'copilot/auto', medium: 'copilot/auto', large: 'copilot/auto' } };
   assert.equal((await engine.start({ work: 'card-14', lane: 'small', branch: 'b', bindings: all })).ok, true);
   assert.deepEqual(cli.calls[0].args.slice(0, 3), ['workflow', 'run', 'wheelhouse-small-copilot']);
@@ -485,4 +485,22 @@ test('a run whose models are all on Copilot starts the workflow\'s Copilot twin,
   // The merge queue is Archon's own workflow, with no twin.
   assert.equal((await engine.start({ lane: 'merge', bindings: all })).ok, true);
   assert.deepEqual(cli.calls[2].args.slice(0, 3), ['workflow', 'run', 'archon-merge-queue']);
+});
+
+test('a Copilot run doesn\'t start while Copilot\'s program or its clean home isn\'t in the engine as it should be: its guards would not stand', async () => {
+  const all = { tiers: { small: 'copilot/auto', medium: 'copilot/auto', large: 'copilot/auto' } };
+  // An engine folder with neither: refused, and Archon is never asked.
+  const cli = fakeCli({ 'workflow run': json('run-detach.json') });
+  const bare = adapter(cli, { engine: tempFolder('wh-archon-copilot-') });
+  const got = await bare.start({ work: 'card-14', lane: 'quick', branch: 'b', bindings: all });
+  assert.equal(got.ok, false);
+  assert.match(got.refused, /Copilot's command-line program isn't in the build engine's folder/);
+  assert.equal(cli.calls.length, 0);
+  // The program there but the home gone or stale: refused with the home's own reason.
+  const stale = adapter(cli, { copilotProblem: () => 'Wheelhouse\'s guards aren\'t registered in Copilot\'s clean home as they should be, so no Copilot step can start' });
+  assert.match((await stale.start({ work: 'card-14', lane: 'quick', branch: 'b', bindings: all })).refused, /guards aren't registered/);
+  assert.equal(cli.calls.length, 0);
+  // A Claude run never asks.
+  const claude = adapter(cli, { copilotProblem: () => assert.fail('not asked for a Claude run') });
+  assert.equal((await claude.start({ work: 'card-14', lane: 'quick', branch: 'b' })).ok, true);
 });

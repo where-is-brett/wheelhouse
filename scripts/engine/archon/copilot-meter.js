@@ -36,7 +36,10 @@ export async function readGitHubFigure({ run }) {
 export async function checkRequests({ read, estimate, kept = null, now = new Date() }) {
   const ours = estimate();
   const started = kept !== null && whole(kept.baseline) && whole(kept.last);
-  const soFar = started ? Math.max(ours, kept.last - kept.baseline) : ours;
+  // What the meter counted before GitHub's first reading (`estimateAt`) is outside GitHub's count since then, so it is
+  // added to it.
+  const before = started ? kept.estimateAt ?? 0 : 0;
+  const soFar = started ? Math.max(ours, kept.last - kept.baseline + before) : ours;
   if (kept && now.getTime() - Date.parse(kept.at) < CHECK_EVERY_MS) return { kept, used: soFar, line: null };
   const figure = await read();
   if (figure === null) {
@@ -44,8 +47,9 @@ export async function checkRequests({ read, estimate, kept = null, now = new Dat
     const next = { ...(kept ?? { baseline: null, estimateAt: ours, resets: null, last: null }), at: now.toISOString() };
     return { kept: next, used: soFar, line: 'The meter couldn\'t read GitHub\'s figure for Copilot requests today, so its own estimate stands until it can.' };
   }
-  // The first look, or a new month (GitHub's reset date moved): GitHub's figure is the starting point.
-  if (!started || (figure.resets !== null && figure.resets !== kept.resets)) {
+  // The first look, or a new month (GitHub's reset date moved, or its count went down): GitHub's figure is the
+  // starting point.
+  if (!started || (figure.resets !== null && figure.resets !== kept.resets) || figure.used < kept.last) {
     const fresh = { at: now.toISOString(), baseline: started ? 0 : figure.used, estimateAt: started ? 0 : ours, resets: figure.resets, last: figure.used };
     return { kept: fresh, used: Math.max(ours, figure.used - fresh.baseline), line: null };
   }
@@ -54,5 +58,5 @@ export async function checkRequests({ read, estimate, kept = null, now = new Dat
   const line = Math.abs(theirs - estimated) > WITHIN
     ? `The meter estimated ${estimated} Copilot requests and GitHub counted ${theirs} since ${kept.at.slice(0, 10)}. GitHub's figure is the one that counts, and the cap reads it.`
     : null;
-  return { kept: { ...kept, at: now.toISOString(), last: figure.used }, used: theirs, line };
+  return { kept: { ...kept, at: now.toISOString(), last: figure.used }, used: theirs + before, line };
 }
