@@ -138,15 +138,19 @@ test("each visit asks the helper for the switch's next step, until the engine ca
       state: { write: async () => ({ ok: true, id: 'x' }) },
       profile: { write: async () => ({ ok: true, id: 'x' }) },
     };
-    const visit = async () => {
+    const visit = async (platform = 'darwin') => {
       await writeViews('o__p', { now: () => NOW });
-      await visitLearning({ project: 'o__p', cwd: '/w', client, at: NOW, boardAsks: [], platform: 'darwin' });
+      await visitLearning({ project: 'o__p', cwd: '/w', client, at: NOW, boardAsks: [], platform });
     };
     // Not confirmed yet: nothing is asked of the helper.
     await visit();
     assert.deepEqual(asked, []);
     const setting = put('setting', { key: SWITCH_SETTING.key, value: SWITCH_SETTING.value });
     put('confirmation', confirmationFor(setting).data);
+    // Off the Mac, where the engine never runs, nothing is asked either.
+    await visit('win32');
+    await visit('linux');
+    assert.deepEqual(asked, []);
     await visit();
     assert.deepEqual(asked, [{ cwd: '/w' }]);
     // Once the engine can build the project, no more.

@@ -162,9 +162,10 @@ function projectEngines(now) {
 
 // The sign-in start the helper needs for the new engine, as a change of this computer's: none when no project uses
 // the engine, when one is already made, or on a system with no sign-in start known. An agent whose install makes its
-// own is not asked about here (nor is a work computer, which that install leaves alone and setup can't tell).
+// own is not asked about here (nor is a work computer, which that install leaves alone and setup can't tell). Off the
+// Mac the engine never runs (scripts/engine/parts.js), so a project on it there needs none.
 function loginChanges({ platform, userHome, now, engineHere = false }) {
-  if (!(engineHere || needsLoginStart({ projects: projectEngines(now) })) || loginStartRecord() !== null) return [];
+  if (!(engineHere || (engineWanted({ platform }) && needsLoginStart({ projects: projectEngines(now) }))) || loginStartRecord() !== null) return [];
   const entry = loginEntry({ platform, root: ROOT, script: HELPER_START_SCRIPT, home: userHome });
   return entry === null ? [] : [{ kind: 'login-start', target: entry.path, entry, what: 'login' }];
 }
