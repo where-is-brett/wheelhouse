@@ -108,3 +108,16 @@ test('a pack ask labelled as holding up all work says so, and so does the merge 
   const merge = normaliseAsk({ kind: 'attention', runId: 'r2', occurrence: 'o2', message: 'Schema change', options: [{ id: 'approve', label: 'Approve' }], labels: { merge: 'pr' } });
   assert.equal(merge.holdsAll, true, 'the merge queue waits on it, so every ready pull request does');
 });
+
+test('the merge queue\'s question names its pull request, from the heading its record writes', () => {
+  const merge = normaliseAsk({ kind: 'attention', runId: 'r3', occurrence: 'o3', message: '**Merge queue, PR 7: merge decision**\n\nShould it merge?', options: [{ id: 'merge', label: 'Merge' }], labels: { merge: 'pr' } });
+  assert.equal(merge.mergeQuestion.pr, 7);
+  assert.match(merge.reason, /pull request #7\b/);
+  assert.doesNotMatch(merge.reason, /this pull request/);
+});
+
+test('a merge question with no heading is still a card, and names no number it can\'t read', () => {
+  const merge = normaliseAsk({ kind: 'attention', runId: 'r4', occurrence: 'o4', message: 'Schema change in PR 99', options: [{ id: 'a', label: 'A' }], labels: { merge: 'pr' } });
+  assert.equal(merge.mergeQuestion.pr, null);
+  assert.match(merge.reason, /this pull request/);
+});

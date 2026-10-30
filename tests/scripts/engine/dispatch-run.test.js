@@ -95,3 +95,27 @@ test("the merge queue starts in the folder the helper gives it, never the projec
     assert.deepEqual(starts.map((c) => c.order.project), want === null ? [] : [want]);
   }
 });
+
+test('a ruled merge starts the queue on the first tick after the ruling\'s run ends, not at the next sweep', async () => {
+  let status = 'paused';
+  const starts = [];
+  const dir = tempFolder('wh-due-');
+  const at = new Date('2026-10-30T06:00:00Z');
+  const run = dispatchRun({
+    engine: { inspect: async () => ({ status }), start: async (order) => { starts.push(order); return { ok: true, runId: `queue-${starts.length}` }; } },
+    project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'), readViews: () => ({ work: {}, runs: {}, reports: {} }),
+    settings: () => ({}), now: () => at, start: async () => ({ ok: false }), write: async () => {},
+    readyOf: () => ({ 7: { work: 'card-7', head: 'a'.repeat(40) } }), repoOf: () => ({ host: 'github.com', path: 'o/p' }),
+    queueFolder: async () => ({ ok: true, folder: dir }),
+  });
+  await run.tick();
+  assert.equal(starts.length, 1, 'the first sweep');
+  run.queueDue();
+  await run.tick();
+  assert.equal(starts.length, 1, 'the answered run hasn\'t ended, so its ruling isn\'t recorded yet');
+  status = 'completed';
+  await run.tick();
+  assert.equal(starts.length, 2, 'started at once, well inside the fifteen minutes');
+  await run.tick();
+  assert.equal(starts.length, 2, 'once');
+});

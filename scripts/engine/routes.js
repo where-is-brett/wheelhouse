@@ -437,6 +437,8 @@ export function engineRoutes({
       const found = Object.entries(readVerdicts(project).opened ?? {}).find(([, o]) => o?.runId === runId);
       return found ? Number(found[0]) : null;
     },
+    // The helper's own record of what opened a pull request: { runId, head, work, lane, ... }, or null.
+    openedOf: (project, pr) => readVerdicts(project).opened?.[pr] ?? null,
     // Every pull request the helper marked ready for the project: { [pr]: { head, runId, showFirst, work } }.
     readyAll: (project) => readVerdicts(project).ready ?? {},
     // The fix-main runs whose fix the helper added.

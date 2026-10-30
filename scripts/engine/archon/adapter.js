@@ -443,6 +443,18 @@ export function archonAdapter({
       return readOutputs(result.code === 0 && result.json?.ok !== false ? result.json : null);
     },
 
+    // What the merge queue's paused run asked, from its record step's output, which holds the pull request, the head and
+    // each choice's effect as the queue will act on them: { pr, head, merge }, `merge` being the id of the choice that
+    // merges, or null. Null when it asked nothing about a pull request. Not one of the interface's methods.
+    async mergeAsked(runId) {
+      const result = await cli(['workflow', 'get', runId, '--verbose', '--events'], { json: true, timeout: CALL_MS });
+      let asked = null;
+      try { asked = JSON.parse(readOutputs(result.code === 0 && result.json?.ok !== false ? result.json : null).record ?? 'null')?.asked ?? null; } catch { return null; }
+      if (asked?.by !== 'pr' || !Number.isInteger(asked.pr?.number) || typeof asked.head !== 'string') return null;
+      const choices = Array.isArray(asked.attention?.choices) ? asked.attention.choices : [];
+      return { pr: asked.pr.number, head: asked.head, merge: choices.find((c) => c?.effect === 'merge')?.id ?? null };
+    },
+
     // The run's artefacts folder, where Archon's $ARTIFACTS_DIR puts what its steps write:
     // <home>/workspaces/mirrors/<owner>__<name>/artifacts/runs/<run>. Null for a run id or repository that isn't a plain name.
     // Not one of the interface's methods: the helper copies a run's preview from here.
