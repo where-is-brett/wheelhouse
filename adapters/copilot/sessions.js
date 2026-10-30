@@ -121,12 +121,18 @@ export function copilotSessionEnv(env, { home, platform = process.platform } = {
   return { ...Object.fromEntries(kept), COPILOT_HOME: home };
 }
 
+// A Copilot config.json's object: the CLI (1.0.101) opens the file with `//` comment lines of its own, which are
+// passed over; anything after them must be plain JSON.
+export function readCopilotConfig(text) {
+  return JSON.parse(String(text).replace(/^(?:[ \t]*\/\/[^\n]*(?:\r?\n|$))+/, ''));
+}
+
 // The sign-in keys of the Copilot home `signedInFrom`'s config.json (SIGN_IN_KEYS), and nothing else of the file.
 // Throws, in plain words, when it holds none: no session starts unsigned.
 export function signInOf(signedInFrom = copilotHome()) {
   let source;
   try {
-    source = JSON.parse(fs.readFileSync(path.join(signedInFrom, 'config.json'), 'utf8'));
+    source = readCopilotConfig(fs.readFileSync(path.join(signedInFrom, 'config.json'), 'utf8'));
   } catch {
     source = null;
   }

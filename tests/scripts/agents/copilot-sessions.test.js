@@ -22,7 +22,7 @@ import { levelRules } from '../../../adapters/copilot/permissions.js';
 import sessions, {
   CMD_LINE_MOST, MOST_COMMANDS, REFUSAL_KIND_NAMES, SIGN_IN_KEYS, activityFile, activitySummary, checkFeature, checkForeman, copilotSessionEnv,
   featureResumeCall as resumeCallOff, featureStartCall as startCallOff, finalAnswer, foremanCall as foremanCallOff, pruneActivity, refusalOf,
-  refusalsOf, sessionHome, sessionIdOf, sessionUsage, sessionsPart, writeSessionHome,
+  refusalsOf, sessionHome, sessionIdOf, sessionUsage, sessionsPart, signInOf, writeSessionHome,
 } from '../../../adapters/copilot/sessions.js';
 
 // Every call checks the switch itself (ruling P8-1), so the calls are built here from the part switched on; the
@@ -512,4 +512,13 @@ test('the activity limits are the same in the adapter and in the state\'s record
 
 test('none of the real copilot, gh or glab ran', () => {
   assert.deepEqual(stand.calls(), []);
+});
+
+test('the sign-in is read from a config.json that opens with Copilot CLI\'s own comment lines, as 1.0.101 writes it', () => {
+  const home = tempFolder('wh-cp-signin-');
+  fs.writeFileSync(path.join(home, 'config.json'), '// User settings belong in settings.json.\n// This file is managed automatically.\n{\n  "loggedInUsers": [{ "host": "https://github.com", "login": "someone" }],\n  "firstLaunchAt": "2026-10-29T11:30:29.037Z"\n}\n');
+  assert.deepEqual(signInOf(home), { loggedInUsers: [{ host: 'https://github.com', login: 'someone' }] });
+  // Comment lines alone, as a fresh install leaves the file before any sign-in: not signed in.
+  fs.writeFileSync(path.join(home, 'config.json'), '// User settings belong in settings.json.\n{\n  "firstLaunchAt": "2026-10-29T11:30:29.037Z"\n}\n');
+  assert.throws(() => signInOf(home), /isn't signed in/);
 });
