@@ -52,6 +52,7 @@ function setUp({ design = { text: DESIGN } } = {}) {
     stoppedRuns: () => world.stoppedRuns,
     designOf: () => design,
     orderOf: (runId) => world.orders[runId] ?? null,
+    openedBy: (runId) => world.opened?.[runId] ?? null,
     now: () => new Date('2026-10-29T10:00:00.000Z'),
   });
   // The run the last start began, recorded as the helper records it, ended with `pr` or still going.
@@ -89,6 +90,20 @@ test('slice 2 starts only after slice 1\'s pull request reads merged, with a lin
   assert.ok(notes(world).some((w) => /Slice 1 of 2 of Order history is added, behind its switch/.test(w)));
   await d.tick();
   assert.equal(world.starts.length, 2, 'slice 2 starts once');
+});
+
+test("slice 2 starts after slice 1 merged when only the helper's record names the pull request slice 1 opened (check 81)", async () => {
+  const { d, world, recordLast } = setUp();
+  await d.tick();
+  // Archon's end of the run names no pull request; the helper's record of what it opened does.
+  recordLast();
+  world.opened = { 'run-1': 70 };
+  world.ready[70] = { work: 'orders', head: sha('7') };
+  world.merged.add(70);
+  await d.tick();
+  assert.equal(world.starts.length, 2);
+  assert.deepEqual(world.starts[1].order.slice, { n: 2, of: 2, title: 'Filter them' });
+  assert.ok(notes(world).some((w) => /Slice 1 of 2 of Order history is added, behind its switch/.test(w)));
 });
 
 test('the feature\'s own run starts once every slice merged, and its merge ends the work with a report', async () => {

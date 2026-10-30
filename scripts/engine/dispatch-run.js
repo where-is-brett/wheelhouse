@@ -88,7 +88,7 @@ export function orderFor(entry, { settings = {}, raised = false, config = {}, an
 }
 
 // dispatchRun({ engine, project, folder, file, readViews, settings, stopped, now, start, write, readyOf, mainGreen,
-//   stoppedRuns, fixedRuns, prMerged, designOf, orderOf, repoOf, queueFolder }) -> { tick, workOf, startAgain, sentBack }.
+//   stoppedRuns, fixedRuns, prMerged, designOf, orderOf, repoOf, queueFolder, openedBy }) -> { tick, workOf, startAgain, sentBack }.
 // - `start({ project, order, branch?, carryOn? })` the helper's own start; `readyOf()` the pull requests marked ready,
 //   { [pr]: { work, head } }; `settings()` the project's settings in force; `write(kind, data)` a record;
 // - `mainGreen()` whether the main line's checks read green: true, false, or null when they can't be read (or are
@@ -97,9 +97,11 @@ export function orderFor(entry, { settings = {}, raised = false, config = {}, an
 //   approved design, { text } or { problem } (or null when it names none); `orderOf(runId)` the order a run was given;
 // - `prState(pr)` what the host says of a pull request, 'merged', 'open' or 'closed' (null when it can't say); without
 //   it, `prMerged` gives merged or open; `repoOf()` the repository the merge queue merges in, { host, path }, or null.
+// - `openedBy(runId)` the pull request the helper's record says a run opened, or null: an engine that doesn't say so
+//   at a run's end (Archon) is read through it, for records already written without one (check 81);
 // - `queueFolder()` the folder the merge queue runs in, Wheelhouse's own and never the project's (check 81):
 //   { ok, folder } or { ok: false, refused }; the queue doesn't start without it.
-export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), spentThisMonth = () => 0, mainGreen = async () => null, stoppedRuns = () => [], fixedRuns = () => [], prMerged = async () => null, prState = null, designOf = () => null, orderOf = () => null, repoOf = () => null, queueFolder = async () => ({ ok: false, refused: 'no folder for the merge queue' }) } = {}) {
+export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), spentThisMonth = () => 0, mainGreen = async () => null, stoppedRuns = () => [], fixedRuns = () => [], prMerged = async () => null, prState = null, designOf = () => null, orderOf = () => null, repoOf = () => null, queueFolder = async () => ({ ok: false, refused: 'no folder for the merge queue' }), openedBy = () => null } = {}) {
   let state = readState(file);
   const keep = () => {
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
@@ -166,8 +168,14 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   }
   // The feature's progress from its runs (what merged from all of them, what has run from those since it was queued),
   // the orders the helper kept and the merges seen.
+  // A work's run records, each naming the pull request its run opened where the engine's record didn't.
+  const runsOfWork = (views, work) => (views.runs?.[work] ?? []).map((r) => {
+    if (Number.isInteger(r?.data?.pr) || typeof r?.data?.runId !== 'string') return r;
+    const pr = openedBy(r.data.runId);
+    return Number.isInteger(pr) ? { ...r, data: { ...r.data, pr } } : r;
+  });
   function progressFor(views, work, entry, kept, design) {
-    const all = views.runs?.[work] ?? [];
+    const all = runsOfWork(views, work);
     const now = all.filter((r) => since(r, entry.work));
     return featureProgress({ design, all, now, orderOf, merged: new Map(Object.entries(kept.merged).map(([pr, head]) => [Number(pr), head])) });
   }
@@ -234,7 +242,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       const ready = readyOf() ?? {};
       // A pull request seen closed isn't asked about again.
       kept.closed ??= {};
-      for (const pr of new Set((views.runs?.[work] ?? []).map((r) => r?.data?.pr).filter((pr) => Number.isInteger(pr) && !Object.hasOwn(kept.merged, pr) && !kept.closed[pr]))) {
+      for (const pr of new Set(runsOfWork(views, work).map((r) => r?.data?.pr).filter((pr) => Number.isInteger(pr) && !Object.hasOwn(kept.merged, pr) && !kept.closed[pr]))) {
         const got = await stateOf(pr);
         if (got === 'closed') {
           kept.closed[pr] = true;
