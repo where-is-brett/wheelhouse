@@ -49,32 +49,37 @@ test("the project's sandbox opens no local socket and denies gh, and the queue's
   assert.deepEqual(queue.permissions.deny, shared.permissions.deny.filter((rule) => rule !== QUEUE_LIFTED));
 });
 
-test("in a queue folder's run gh is the broker's alone, and a real gh finds no token, config folder or sign-in it may read", { skip: process.platform === 'win32' }, () => {
+test("in a queue folder's run a bare gh is the broker's, and any other gh on its PATH finds no token, config folder or sign-in it may read", { skip: process.platform === 'win32' }, () => {
   // A Homebrew folder holding a real gh beside the Node, a caller with tokens and a config folder of its own.
   const root = fs.realpathSync(tempFolder('wh-qf-reach-'));
   const brew = path.join(root, 'brew', 'bin');
+  const system = path.join(root, 'usr', 'bin');
   const engine = path.join(root, 'engine');
-  fs.mkdirSync(brew, { recursive: true });
-  fs.mkdirSync(path.join(engine, 'broker', 'bin'), { recursive: true });
-  for (const [file, text] of [[path.join(brew, 'gh'), '#!/bin/sh\necho real\n'], [path.join(brew, 'node'), '#!/bin/sh\n'], [path.join(engine, 'broker', 'bin', 'gh'), '#!/bin/sh\necho broker\n']]) {
+  const config = path.join(root, 'config', 'gh');
+  for (const dir of [brew, system, config, path.join(engine, 'broker', 'bin')]) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(config, 'hosts.yml'), 'github.com:\n  user: someone\n  oauth_token: secret\n');
+  // A gh that says what sign-in it finds: the token variables, and the hosts file in the config folder it is pointed at.
+  const real = '#!/bin/sh\necho "token=${GH_TOKEN}${GITHUB_TOKEN}${GH_ENTERPRISE_TOKEN}${GITHUB_ENTERPRISE_TOKEN}"\n[ -n "$GH_CONFIG_DIR" ] && cat "$GH_CONFIG_DIR/hosts.yml" 2>/dev/null\nexit 0\n';
+  for (const [file, text] of [[path.join(brew, 'gh'), real], [path.join(system, 'gh'), real], [path.join(brew, 'node'), '#!/bin/sh\n'], [path.join(engine, 'broker', 'bin', 'gh'), '#!/bin/sh\necho broker\n']]) {
     fs.writeFileSync(file, text);
     fs.chmodSync(file, 0o755);
   }
-  const config = path.join(root, 'config', 'gh');
-  fs.mkdirSync(config, { recursive: true });
-  fs.writeFileSync(path.join(config, 'hosts.yml'), 'github.com:\n  user: someone\n');
   const caller = { PATH: `${brew}:/usr/bin:/bin`, HOME: root, GH_TOKEN: 't', GITHUB_TOKEN: 't', GH_ENTERPRISE_TOKEN: 't', GITHUB_ENTERPRISE_TOKEN: 't', GH_CONFIG_DIR: config };
   const env = archonEnv({ engine, home: path.join(root, 'engine-home'), nodeDir: brew, baseEnv: caller });
-  // Every gh the run's PATH finds is the broker's.
-  const found = execFileSync('/bin/sh', ['-c', 'IFS=:; for d in $PATH; do [ -x "$d/gh" ] && echo "$d/gh"; done; exit 0'], { env, encoding: 'utf8' }).trim().split('\n');
-  assert.deepEqual(found, [path.join(engine, 'broker', 'bin', 'gh')]);
+  // (a) The first gh on the run's PATH is the broker's, so a bare gh is always the broker. The caller's folders are gone.
+  const dirs = env.PATH.split(path.delimiter);
+  assert.equal(dirs.find((d) => fs.existsSync(path.join(d, 'gh'))), path.join(engine, 'broker', 'bin'));
+  assert.equal(dirs.includes(brew), false);
   assert.equal(execFileSync('/bin/sh', ['-c', 'gh'], { env, encoding: 'utf8' }).trim(), 'broker');
-  // No token passes, and gh's config folder is none of the caller's.
-  for (const name of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']) assert.equal(env[name], undefined, name);
+  // (b) A real gh further along it, as a system folder may hold one (here a stand-in for /usr/bin), finds no token and
+  // no config folder of the caller's.
+  const later = { ...env, PATH: `${env.PATH}${path.delimiter}${system}` };
+  assert.equal(execFileSync(path.join(system, 'gh'), [], { env: later, encoding: 'utf8' }).trim(), 'token=');
   assert.notEqual(env.GH_CONFIG_DIR, config);
   assert.equal(fs.existsSync(env.GH_CONFIG_DIR), false);
-  // And should a real gh be reached by its full path, the queue's sandbox keeps from it the tokens, a config folder
-  // named in the step's environment, the default config folder and the keychain, as the project's does.
+  // And the queue's sandbox keeps from it the tokens and a config folder named in the step, should a command set them,
+  // and the default config folder and the keychain, as the project's does: on the Mac a sandboxed step in the queue
+  // folder found Homebrew's signed-in gh not signed in (check 81). The tool guard refuses gh by a path there.
   const queue = queueSettings(projectSettings(readConfig(null)), '/h/helper.sock');
   const denied = queue.sandbox.credentials.envVars.filter((v) => v.mode === 'deny').map((v) => v.name);
   for (const name of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GH_CONFIG_DIR']) assert.ok(denied.includes(name), name);

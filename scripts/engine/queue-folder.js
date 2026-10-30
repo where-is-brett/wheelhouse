@@ -14,21 +14,13 @@ import { engineDir } from '../lib/paths.js';
 import { safeGit } from '../lib/safe-git.js';
 import { run as realRun } from '../lib/run.js';
 import { mergeSettings } from '../protection/settings.js';
-import { isInsideFolder } from '../lib/projects.js';
+import { queueFolderOf } from './queue-place.js';
 
 export const QUEUE_MARK = '.wheelhouse-queue.json';
 const SHARED = '.claude/settings.json';
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 
-// The queue's folder for a project, under the engine folder.
-export const queueFolderOf = (project, engine = engineDir()) => path.join(engine, 'queues', project);
-
-// Which of `projects` owns the queue folder holding `cwd`, or null: the broker places the queue's gh calls by it, as
-// it places a run's by the project's own folder. Nothing else is placed by it.
-export function queueProjectOf(cwd, projects, engine = engineDir()) {
-  if (typeof cwd !== 'string' || !path.isAbsolute(cwd)) return null;
-  return projects.find((project) => isInsideFolder(queueFolderOf(project, engine), cwd)) ?? null;
-}
+export { queueFolderOf, queueProjectOf } from './queue-place.js';
 
 // A path's real spelling, or for one not made yet, its nearest made parent's with the rest as named. The sandbox
 // matches a socket by its real path, as it does a folder (check 81).
@@ -40,9 +32,10 @@ function realOf(file) {
 }
 
 // The deny rule lifted in the queue's folder, and only there: the sweep reads a pull request's and its issue's text and
-// corrects a closing keyword with gh, and in its runs gh is the broker alone. The run's PATH holds no other gh
-// (archon/env.js), its sandbox keeps a real gh's sign-in out of reach (the config folder, the keychain and the
-// tokens), and the broker's list decides every call (check 81).
+// corrects a closing keyword with gh. A bare gh there is the broker, the first gh on the run's PATH (archon/env.js), and
+// the tool guard refuses gh named by a path or with its variables set. Any other gh a system folder on that PATH holds
+// finds no sign-in: no token passes, GH_CONFIG_DIR names a folder that isn't there, and the sandbox keeps the config
+// folder, the keychain and those variables from the step. The broker's list decides every call (check 81).
 export const QUEUE_LIFTED = 'Bash(gh:*)';
 // gh's own pointer to a config folder, kept from the queue's steps as the tokens are.
 const QUEUE_ENV_DENIED = ['GH_CONFIG_DIR'];

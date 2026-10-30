@@ -23,7 +23,8 @@ import { segmentsWithOperators } from './shell-words.js';
 import { AGENT_CONTROL, CONTROL_FILE, homeControlFolders } from '../lib/agent-control.js';
 import { credentialPaths } from '../lib/credentials.js';
 import { wheelhouseHome, archonHome } from '../lib/paths.js';
-import { projectForFolder } from '../lib/projects.js';
+import { projectForFolder, registeredProjects } from '../lib/projects.js';
+import { queueFolderOf, queueProjectOf } from '../engine/queue-place.js';
 import { matchGlob } from '../gate/glob.js';
 import { readConfig } from '../gate/guardrails.js';
 import { startedAsScript } from '../lib/started-as-script.js';
@@ -597,6 +598,10 @@ function bashRefused(command, ctx, depth = 0) {
     for (let i = 0; i < seg.length; i += 1) {
       const word = seg[i];
       const value = word.slice(word.indexOf('=') + 1);
+      // In the merge queue's folder a bare `gh` is the broker's, the first on the run's PATH (queue-folder.js); gh named
+      // by a path, or one of gh's own variables set in the command, is refused there as everywhere.
+      if (ctx.queue && /^(?:GH|GITHUB)_[A-Za-z0-9_]*=/i.test(word)) return true;
+      if (ctx.queue && word === 'gh') continue;
       if (['gh', 'glab'].includes(names[i]) || ['gh', 'glab'].includes(nameOf(value))) return true;
       if (/^(?:gh|glab)\$/.test(names[i]) || /^(?:gh|glab)\$/.test(nameOf(value))) return true; // a host tool named with a variable
       if (GIT_PUSHERS.has(names[i])) return true;
@@ -929,6 +934,16 @@ function connectorRefusal(input, server, mainFolder, entrypoint, projectDir) {
   return null;
 }
 
+// The registered project whose merge queue folder holds `cwd`, as { project, folder }, or null.
+function queuePlace(cwd) {
+  try {
+    const project = queueProjectOf(cwd, registeredProjects().map((p) => p.project));
+    return project === null ? null : { project, folder: queueFolderOf(project) };
+  } catch {
+    return null;
+  }
+}
+
 export async function decide(input, { dir, projectOf: find = projectOf, home = os.homedir(), platform = process.platform, pluginRoot = PLUGIN_ROOT, entrypoint = process.env.CLAUDE_CODE_ENTRYPOINT, projectDir = process.env.CLAUDE_PROJECT_DIR, env = process.env, engineHome = archonHome() } = {}) {
   const tool = input.tool_name;
   const isConnector = typeof tool === 'string' && (tool.startsWith('mcp__') || RESOURCE_TOOLS.includes(tool));
@@ -945,8 +960,10 @@ export async function decide(input, { dir, projectOf: find = projectOf, home = o
   const found = find(cwd, { dir });
   const byPath = found ? false : registeredByPath(cwd);
   const setup = !found && byPath === false ? beingSetUp(cwd) : null;
+  // The merge queue's own folder (queue-folder.js) is guarded as its project's.
+  const queue = !found && byPath === false && setup === null ? queuePlace(cwd) : null;
   // A folder that cannot be placed is guarded, not waved through.
-  if (!found && byPath === false && setup === null) return undefined;
+  if (!found && byPath === false && setup === null && queue === null) return undefined;
   if (isConnector) {
     let main = found?.record?.folder ?? setup?.folder;
     if (!main) {
@@ -966,14 +983,14 @@ export async function decide(input, { dir, projectOf: find = projectOf, home = o
     // PowerShell exists on every system but is read as on Windows.
     const windows = platform === 'win32' || tool === 'PowerShell';
     const fold = foldFor(windows ? 'win32' : platform);
-    const root = found?.record?.folder ?? setup?.folder ?? cwd;
+    const root = found?.record?.folder ?? setup?.folder ?? queue?.folder ?? cwd;
     // In PowerShell a backtick before a new line continues the command, as a space does.
     const text = tool === 'PowerShell' ? command.replace(/(?<!`)((?:``)*)`\n/g, '$1 ') : command;
     const state = { unreadable: false, keychain: false, engine: false, nested: false };
     if (readsPlugin(text, { windows, fold, home, pluginRoots: [path.resolve(pluginRoot), resolveReal(pluginRoot, pluginRoot)] })) return answer.deny(PLUGIN_READ);
     if (reachesEngineRoom(text, windows)) return answer.deny(ENGINE);
     if (readsEngine(text, { windows, fold, home, cwd, engine: engineOf({ engineHome, env, projectDir, cwd }) })) return answer.deny(ENGINE_FILES);
-    if (!bashRefused(text, { windows, fold, cwd, home, root, state })) return undefined;
+    if (!bashRefused(text, { windows, fold, cwd, home, root, state, queue: queue !== null })) return undefined;
     if (state.keychain) return answer.deny(KEYCHAIN);
     if (state.engine) return answer.deny(ENGINE);
     if (state.nested) return answer.deny(NESTED);
