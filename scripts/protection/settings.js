@@ -271,15 +271,24 @@ export function ownRunRules(runId, artifactsDir) {
   // In the engine's ordinary mode (acceptEdits) the Read tool asks before reading outside the worktree, and no one
   // answers in a run, so the run's own artefacts are allowed by a rule, by each spelling of the folder (a home under a
   // linked folder such as /tmp is read by its real path too).
-  let real = own;
-  try { real = fs.realpathSync.native(own); } catch { /* not made yet: its own spelling only */ }
-  const allow = unique([own, real].map(readRule));
+  // A folder's real path, or for one not made yet, its nearest made parent's real path with the rest as named.
+  const realOf = (dir) => {
+    for (let at = dir, rest = ''; ; rest = path.join(path.basename(at), rest), at = path.dirname(at)) {
+      try { return path.join(fs.realpathSync.native(at), rest); } catch { /* not made yet: look higher */ }
+      if (path.dirname(at) === at) return dir;
+    }
+  };
+  const allow = unique([own, realOf(own)].map(readRule));
+  // The sandbox matches a file by its real path, so each folder is listed by both spellings: one listed only through
+  // a link (a home under /tmp) would shut every run's artefacts and never open the own (check 81).
+  const both = (dirs) => unique(dirs.flatMap((dir) => [dir, realOf(dir)]));
+  const runs = path.join(workspace, 'artifacts', 'runs');
   return {
     permissions: { allow },
     sandbox: {
       enabled: true,
       allowUnsandboxedCommands: false,
-      filesystem: { denyRead: [...folders, path.join(workspace, 'artifacts', 'runs')], denyWrite: folders, allowRead: [own], allowWrite: [own] },
+      filesystem: { denyRead: both([...folders, runs]), denyWrite: both(folders), allowRead: both([own]), allowWrite: both([own]) },
     },
   };
 }

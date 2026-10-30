@@ -538,6 +538,25 @@ test('a run\'s overlay shuts its workspace\'s transcripts and every run\'s artef
   }
 });
 
+test('a run\'s overlay under a linked home names each sandbox folder by its real path too, so the own folder opens (check 81)', (t) => {
+  // The sandbox matches a file by its real path: a folder listed only through a link shuts the runs but never opens the own.
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-ovl-')));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const realWs = path.join(root, 'real', 'workspaces', 'mirrors', 'o__n');
+  fs.mkdirSync(path.join(realWs, 'artifacts', 'runs', 'run-1'), { recursive: true });
+  fs.symlinkSync(path.join(root, 'real'), path.join(root, 'link'), 'dir');
+  const ws = path.join(root, 'link', 'workspaces', 'mirrors', 'o__n');
+  const own = path.join(ws, 'artifacts', 'runs', 'run-1');
+  const realOwn = path.join(realWs, 'artifacts', 'runs', 'run-1');
+  const { filesystem } = ownRunRules('run-1', own).sandbox;
+  assert.deepEqual(filesystem.allowRead, [own, realOwn]);
+  assert.deepEqual(filesystem.allowWrite, [own, realOwn]);
+  for (const sub of ['logs', 'workflow-source', path.join('artifacts', 'runs')]) {
+    assert.ok(filesystem.denyRead.includes(path.join(ws, sub)) && filesystem.denyRead.includes(path.join(realWs, sub)), sub);
+  }
+  for (const sub of ['logs', 'workflow-source']) assert.ok(filesystem.denyWrite.includes(path.join(realWs, sub)), sub);
+});
+
 test('a folder\'s read rule is in the full-path form, a Windows drive as //c/', () => {
   assert.equal(readRule('/Users/d/.wheelhouse-engine/workspaces/mirrors/a__b/artifacts/runs/r1'), 'Read(//Users/d/.wheelhouse-engine/workspaces/mirrors/a__b/artifacts/runs/r1/**)');
   assert.equal(readRule('C:\\Users\\d\\.wheelhouse-engine\\workspaces\\runs\\r1'), 'Read(//c/Users/d/.wheelhouse-engine/workspaces/runs/r1/**)');
