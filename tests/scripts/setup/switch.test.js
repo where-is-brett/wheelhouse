@@ -81,7 +81,7 @@ test('the engine is on for a project once its fetch-mirror rule is in the engine
   fs.writeFileSync(mirrorRulesFile(engine), `${JSON.stringify({ o__p: 'https://github.com/o/p.git' })}\n`);
   assert.equal(engineReady('o__p', { engine }), true);
   // The real helper gives Archon to the project only from then.
-  const engineFor = (ready) => engineForProject({ adapter: () => ({ name: 'archon' }), views: () => ({ project: ON_ARCHON, profile: {} }), ready: () => ready })('o__p');
+  const engineFor = (ready) => engineForProject({ adapter: () => ({ name: 'archon' }), views: () => ({ project: ON_ARCHON, profile: {} }), ready: () => ready, platform: 'darwin' })('o__p');
   assert.equal(engineFor(false), null);
   assert.equal(engineFor(true).name, 'archon');
 });
@@ -155,4 +155,22 @@ test("each visit asks the helper for the switch's next step, until the engine ca
     await visit();
     assert.equal(asked.length, 1);
   });
+});
+
+test('off the Mac, a project on the engine is given no engine, so its health has no engine checks', () => {
+  const engineFor = (platform) => engineForProject({ adapter: () => ({ name: 'archon' }), views: () => ({ project: ON_ARCHON, profile: {} }), ready: () => true, platform })('o__p');
+  assert.equal(engineFor('darwin').name, 'archon');
+  assert.equal(engineFor('win32'), null);
+  assert.equal(engineFor('linux'), null);
+});
+
+test('setup writes the fetch mirror\'s rule only where the engine runs', async () => {
+  const { mirrorWanted } = await import('../../../scripts/setup/project-files.js');
+  const on = { host: 'github', engine: 'archon', remoteUrl: 'https://github.com/o/p.git', platform: 'darwin' };
+  assert.equal(mirrorWanted(on), true);
+  assert.equal(mirrorWanted({ ...on, platform: 'win32' }), false);
+  assert.equal(mirrorWanted({ ...on, platform: 'linux' }), false);
+  assert.equal(mirrorWanted({ ...on, host: 'gitlab' }), false);
+  assert.equal(mirrorWanted({ ...on, engine: 'wheelhouse' }), false);
+  assert.equal(mirrorWanted({ ...on, remoteUrl: 'git@github.com:o/p.git' }), false);
 });

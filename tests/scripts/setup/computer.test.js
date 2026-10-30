@@ -610,3 +610,15 @@ test('on a computer that runs the engine, step 6 adds Wheelhouse at user scope a
     assert.ok(!(windows.changes ?? []).some((c) => c.what === 'plugin'));
   });
 });
+
+test('a Mac whose projects are all on GitLab gets neither Wheelhouse at user scope nor the login start', async () => {
+  const { engineWanted, pluginScopeChanges, applyPluginScope } = await import('../../../scripts/setup/engine-parts.js');
+  await withProject(async ({ folder, user, config }) => {
+    const engine = { wanted: engineWanted, pluginScope: pluginScopeChanges, applyPlugin: applyPluginScope };
+    const step = computerStep({ engine, run: fakeRun().run, env: { CLAUDE_CONFIG_DIR: config }, manifest: MANIFEST, port: PORT });
+    // The project's host chosen as GitLab at step 3, and no other project here.
+    const ctx = { folder, step: 6, now: () => T0, userHome: user, platform: 'darwin', answers: { '3.host': { label: 'GitLab', at: T0.toISOString() } } };
+    const planned = await step.plan(ctx);
+    assert.ok(!(planned.changes ?? []).some((c) => c.what === 'plugin' || c.what === 'login'));
+  }, { connected: false });
+});

@@ -63,6 +63,7 @@ import { receiverPort } from '../telemetry/main.js';
 import { telemetryChanges, telemetryOn, isObject, readText } from './telemetry.js';
 import { LEVELS, launchedIn, lockedAsk } from './host.js';
 import { newId, SAY_CHARS, readJournal } from './journal.js';
+import { projectHosts } from './tools.js';
 import { engineWanted, pluginScopeChanges, applyPluginScope, PLUGIN_SCOPE_LINE, pluginUpdateLine } from './engine-parts.js';
 
 // ---- Step 6 ----
@@ -272,7 +273,7 @@ export function computerStep({
     const floor = (manifest ?? readManifest()).claudeCode?.floor;
     const telemetry = await telemetryChanges({ port: port ?? receiverPort(), route, platform, run, userSettings, file, userHome, environment: env });
     const changes = computerChanges({ userSettings, manifest: { claudeCode: { floor } }, file, telemetry: telemetry.changes });
-    const engineHere = engine?.wanted({ platform }) === true;
+    const engineHere = engine?.wanted({ platform, hosts: projectHosts({ folder: ctx.folder, answers: ctx.answers }) }) === true;
     const plugin = engineHere ? engine.pluginScope({ claudeHome: env.CLAUDE_CONFIG_DIR || path.join(userHome, '.claude'), platform }) : [];
     return { platform, userSettings, floor, kept: telemetry.kept, changes: [...changes, ...plugin, ...loginChanges({ platform, userHome, now: ctx.now ?? (() => new Date()), engineHere })] };
   };

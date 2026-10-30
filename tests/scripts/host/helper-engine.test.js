@@ -131,6 +131,7 @@ test('the real helper gives Archon only to a project whose engine setting is Arc
     views: (project) => ({ project: project === 'o__on' || project === 'o__waiting' ? { engine: { key: 'engine', value: 'archon' } } : {}, profile: {} }),
     // The engine can build o__on; o__waiting's switch hasn't merged yet (scripts/engine/switch.js).
     ready: (project) => project === 'o__on',
+    platform: 'darwin',
   });
   assert.equal(engineFor('o__waiting'), null);
   assert.equal(engineFor('o__off'), null);

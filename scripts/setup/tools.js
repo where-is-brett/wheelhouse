@@ -56,6 +56,7 @@ import { composeCard, isTooLong } from '../cards/compose.js';
 import { WHEELHOUSE_REPO } from '../lineage/manifest.js';
 import { readJournal, newId } from './journal.js';
 import { runClosed } from '../lib/setup-run.js';
+import { projectForFolder, registeredProjects } from '../lib/projects.js';
 import { engineWanted, engineChanges, applyEngine } from './engine-parts.js';
 
 // Step 2's changes the engine's own apply makes (scripts/setup/engine-parts.js).
@@ -552,6 +553,19 @@ export function hostToolsFor(folder) {
   }
 }
 
+// The hosts of the projects on this computer, for whether it runs the build engine (scripts/engine/parts.js): each
+// registered project's, and, while the project in `folder` isn't registered yet, its host from step 3's answer or its
+// origin, or null while neither says.
+export function projectHosts({ folder, answers = {} } = {}) {
+  const hosts = registeredProjects().map(({ record }) => (record.host === 'github' || record.host === 'gitlab' ? record.host : null));
+  if (projectForFolder(folder) !== null) return hosts;
+  const chosen = answers?.['3.host']?.label;
+  const tools = hostToolsFor(folder);
+  if (chosen === 'GitHub' || chosen === 'GitLab') hosts.push(chosen === 'GitHub' ? 'github' : 'gitlab');
+  else hosts.push(tools.length === 1 ? (tools[0] === 'gh' ? 'github' : 'gitlab') : null);
+  return hosts;
+}
+
 // What is on this computer, tool by tool: whether it was found, its version and path, and whether
 // it is good enough (`ok`): Node.js at NODE_FLOOR or later; git, gh and glab when they run. `tools`
 // names which to look at: git, node, and the host tools given (both when none are).
@@ -887,7 +901,7 @@ export function toolsStep({
         if (missing.length > 0) changes.push({ kind: 'json-key', target: file, key: ['permissions', 'allow'], after: [...allow, ...missing], added: missing.length });
       }
       // The build engine and its broker, where this computer runs it (scripts/setup/engine-parts.js).
-      if (engine?.wanted({ platform })) changes.push(...engine.changes());
+      if (engine?.wanted({ platform, hosts: projectHosts({ folder: ctx.folder, answers: ctx.answers }) })) changes.push(...engine.changes());
       // Nothing to do settles the step, with no Go ahead (ruling R75).
       if (changes.length === 0) return { settled: { record: { nothing: true } } };
       return { changes, card: cardFor(changes, status, platform), director: directorFor(changes, platform) };

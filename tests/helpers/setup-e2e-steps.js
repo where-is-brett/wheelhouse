@@ -68,7 +68,7 @@ const MAKE = {
     checkPins: world().checkPins, readProtection: world().readProtection,
     // A project on the new engine (a Mac's setup starts it there) gets a stand-in engine that is healthy and refuses
     // the hello trial's read; nothing of Archon's runs here.
-    engineChecks: async ({ project, kits }) => (engineForProject({ adapter: () => ({}), ready: () => true })(project)
+    engineChecks: async ({ project, kits }) => (engineForProject({ adapter: () => ({}), ready: () => true, platform: 'darwin' })(project)
       ? { engine: 'ok', trial: kits ? 'refused' : 'not run', findings: [] }
       : null),
   }),

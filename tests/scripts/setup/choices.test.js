@@ -161,4 +161,7 @@ test('the recommended card gains the engine line and nothing else is asked', asy
   // Windows has no engine yet, so no line.
   const win = oneCard({ folder: '/x/t', list: [], product: { isNew: true, name: 't' }, platform: 'win32', toRun: [2, 3], count: 1 }).card.question;
   assert.doesNotMatch(win, /build engine/);
+  // Nor on a Mac whose projects are all on GitLab: the engine builds on GitHub only.
+  const gitlab = oneCard({ folder: '/x/t', list: [], product: { isNew: false, host: 'gitlab', repo: 'a/t', name: 't' }, platform: 'darwin', toRun: [2, 3], count: 1, hosts: ['gitlab'] }).card.question;
+  assert.doesNotMatch(gitlab, /build engine/);
 });
