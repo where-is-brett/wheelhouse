@@ -441,7 +441,8 @@ test('handOver writes the pull request\'s ready work item over the revision ther
   assert.equal(cli.calls[1].options.cwd, '/p');
   const item = JSON.parse(cli.calls[1].options.input);
   assert.equal(item.facts.build.status, 'ready');
-  assert.deepEqual(item.subject, { repo: 'acme/web', number: 14 });
+  // Archon reads the subject's repository as { host, path }, and skips an item that names it otherwise (check 81).
+  assert.deepEqual(item.subject, { repo: { host: 'github.com', path: 'acme/web' }, number: 14 });
   assert.equal((await adapter(cli).handOver({ project: '/p' })).ok, false);
 });
 

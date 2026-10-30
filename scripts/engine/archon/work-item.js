@@ -3,11 +3,13 @@
 // takes only work items marked ready by the build queue, which Wheelhouse is. Written at mark-ready, one per pull
 // request; a lane run again hands the item back with one more round (part 3c's).
 
-// A version 1 work item for pull request `pr` of `repo`, ready for the queue, delivered by run `runId` at `at`.
-export function readyWorkItem({ repo, pr, url, at, runId }) {
+// A version 1 work item for pull request `pr` of `repo` (owner/name) on `host`, ready for the queue, delivered by run
+// `runId` at `at`. Archon reads the subject's repository as { host, path } and skips an item that names it otherwise
+// (check 81); its merge queue works on GitHub only, so the host is GitHub's unless named.
+export function readyWorkItem({ repo, host = 'github.com', pr, url, at, runId }) {
   return {
     version: 1,
-    subject: { repo, number: pr },
+    subject: { repo: { host, path: repo }, number: pr },
     created_at: at,
     stage: 'deliver',
     trust: 'maintainer',
