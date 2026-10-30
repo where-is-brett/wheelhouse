@@ -2,7 +2,7 @@
 
 # Check 74: Copilot through Archon's compiled binary (early check E1)
 
-**Answer:** Run on 30 October 2026, with the director's yes, for 10 premium requests (GitHub: 37 used before, 47 after; the stop was 15). With two defects fixed, a Copilot project's quick change ran on real Archon on Copilot's Auto:
+**Answer:** Partly. Run on 30 October 2026, with the director's yes, for 10 premium requests (GitHub: 37 used before, 47 after; the stop was 15). With two defects fixed, a Copilot project's quick change ran on real Archon on Copilot's Auto:
 - a build that added the function and its test, with the checks passing;
 - two clean reviews and the pull request's text, each step on Copilot (the signing step comes after the pull request opens, so it didn't run).
 
