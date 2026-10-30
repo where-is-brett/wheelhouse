@@ -2,7 +2,67 @@
 
 # Check 74: Copilot through Archon's compiled binary (early check E1)
 
-**Answer:** Deferred. The account has no included Copilot model: every model it offers uses the monthly allowance. Running E1 would spend some of it, and that waits for the director's yes. The probe is built and its guard path was checked by hand. Two findings already change the design: no Copilot model is free on this account, and Archon finds a Copilot step's skills in the project or `$HOME`, not in the clean home.
+**Answer:** Run on 30 October 2026, with the director's yes, for 10 premium requests (GitHub: 37 used before, 47 after; the stop was 15). With two defects fixed, a Copilot project's quick change ran on real Archon on Copilot's Auto:
+- a build that added the function and its test, with the checks passing;
+- two clean reviews and the pull request's text, each step on Copilot (the signing step comes after the pull request opens, so it didn't run).
+
+It stopped at opening the pull request, because another check held the trial repository's lock. The small change was not run, to stay within the stop. The meter's check against GitHub's figure worked as designed, and it showed that the meter's own estimate undercounts cancelled runs.
+
+The earlier tries found:
+- two defects, now fixed: pull request #141 (merged) and pull request #144;
+- three findings, left for later parts.
+
+The 29 October note, from "Question" on, is kept as it was.
+
+
+## The real run, 30 October 2026
+
+**Tested on.** The Mac, from a checkout of main at 72e0386e plus the fixes, with Node.js 22.22.1.
+- **Engine and project.** Setup's own step 2 for a Copilot project (`engineChanges({ agent: 'copilot' })` and `applyEngine`) installed the engine, Copilot CLI 1.0.101 at its pin and the clean home into a scratch Wheelhouse home. The clean home was signed in from the probes' login home. The project was the throwaway private repository `where-is-brett/wheelhouse-merge-trial` (check 80's), with this computer's configuration naming Copilot.
+- **The run.** The real helper ran with the real GitHub adapter. Every tier was bound to `copilot/auto` from the project's own routing (`engineRouting`). The probe is `probes/74-archon-copilot/lanes.js` (`prepare`, `quick`, `small`, `meter`). It watches GitHub's figure and cancels a run at a ceiling.
+
+**The tries.**
+
+| Try | What happened | Requests |
+|---|---|---|
+| 1 | The probe built its work order without the project's routing (the dispatcher adds it, the probe didn't), so Claude ran the build. It failed in 30 seconds. | 0 |
+| 2 | The Copilot twin started. Every edit and command was refused: "Wheelhouse doesn't run in this kind of chat". Defect 2 below. | 3 |
+| 3 | On the patched engine, the guard knew Copilot. Edits were then refused by the kits hold that try 1's Claude step had set. Finding 1 below. | about 3 |
+| 4 | The pinned kits were installed at project scope. The hold stood: only a Claude session start re-checks it. | about 1 |
+| 5 | The hold was lifted by the session start's own check (`checkLineage`, unchanged: the kits matched the manifest, so it removed the hold file itself). Then the quick change ran: the build (`double(n)` in `src/add.js`, a test, `node --test` green), review-spec CLEAN, review-standards CLEAN, the pull request's text. `open-pr` stopped: "this computer no longer holds the lock". Check 81's key had held the trial repository's lock since 02:05. | 4 |
+
+GitHub's figure trailed the steps by a minute or two. Its total, read once it had settled, was 10.
+
+**Defects, fixed.**
+1. **Copilot's sign-in file was misread** (pull request #141, merged). CLI 1.0.101 starts `config.json` with two `//` comment lines. `signInOf` parsed the file as plain JSON, so a signed-in computer read as not signed in, and setup's step 2 refused to write the clean home.
+2. **A source build of Archon ignores `COPILOT_BIN_PATH`** (pull request #144). The Copilot provider resolves the CLI only in a compiled build. Wheelhouse always builds from source (check 75), so the Copilot SDK ran its own bundled runtime, never the pinned and checked CLI. That runtime doesn't set `COPILOT_CLI_BINARY_VERSION`, so the guards in the clean home took every step for an unknown chat and refused its edits. They failed closed, but the run built nothing for 3 requests. A second Archon patch makes a source build honour the variable. With it, the SDK started the pinned CLI (ping: protocol 3), and the guard recognised Copilot.
+
+**Findings, for later parts.**
+1. **For a Copilot project, a lineage hold never lifts by itself.**
+   - The kits hold (`lineage/hold.json`) is written by a Claude session start when the pinned Claude kits are missing, and only a Claude session start re-checks it. Copilot steps never do. Once any Claude session starts in the project without the kits, every Copilot step's edits are refused until a Claude session starts again with the kits in.
+   - A Copilot-only Mac may have no Claude kits, or no Claude Code at all, so nothing there would ever lift the hold.
+   - The Copilot steps don't use the Claude kits at all. They read Wheelhouse's own skill copies, which the pack's digest already covers.
+   - **Recommendation:** the hold should accept the Copilot side's own skills, rather than setup installing Claude kits for a Copilot project. A Copilot step's start would check the skills Copilot actually uses, and re-check and lift a hold that doesn't apply to it. Installing Claude Code plugins on a Mac that runs Copilot only would add a tool the project doesn't use, just to satisfy a check meant for it.
+2. **The meter's estimate undercounts cancelled and abandoned runs.**
+   - The completed run's cost record estimated 4, one per Copilot step, which matches its steps.
+   - The two cancelled Copilot runs' cost records carry `premiumRequests: null` (source `unknown`), and a run left paused at an ask wrote none. So the meter estimated 4 where GitHub counted 10.
+   - The daily check caught it, and it wrote its Logbook line: "The meter estimated 4 Copilot requests and GitHub counted 10 since 2026-10-30. GitHub's figure is the one that counts, and the cap reads it." So the cap was right after the check, but between checks it reads low.
+   - A cancelled run's counted steps should be counted at their rate, never as unknown.
+3. **A run paused at an ask couldn't be cancelled.** The adapter's cancel answered "The run isn't running, so there is nothing to cancel". Here the paused run went away with the scratch home. On a real computer, it would stay paused in Archon's history.
+
+**The five items, as far as they ran.**
+1. A Copilot step runs with the pinned CLI only with defect 2's patch, since the engine is a source build.
+2. No included model exists, so the item reads as requests matching the estimate. Each Copilot step counted one prompt at Auto. The estimate matched for the completed run and undercounted the cancelled ones (finding 2).
+3. The guards, as the CLI's own hooks in the clean home, fired under Archon and failed closed in tries 2 to 4. The planted `.env` read was not repeated.
+4. Each step's tokens are recorded with source `provider` (input and output; cache not reported).
+5. The worktree skill copies were written (`copilot-skills`: codebase-design, frontend-design, pr, review-spec, review-standards). The reviews ran to clean verdicts. Whether each skill loaded was not read from the session.
+
+**The account's model list, without a prompt.** Through the SDK on the pinned CLI, `listModels` gives `auto` alone, as `{ id, name, capabilities }` with no rate. Setup doesn't yet write the list (`writeAccountModels` has no caller), so the column falls back to Auto. That fits this account.
+
+**Cleaned up.**
+- The two kits were uninstalled, and Claude Code's record of installs names no trial folder.
+- The scratch home was removed, with its engine, the CLI, the clean home and its sign-in copy, and Archon's history.
+- The runs pushed no branch to the trial repository, and no pull request was opened.
 
 ## Question
 
