@@ -133,14 +133,14 @@
           "sha256": "b04c637c86c77431bab733afbbc1cdb5220d3134d81aed6742ed0bcb505b4f14"
         },
         {
-          "name": "copilot-bin-path.patch",
-          "sha256": "17790ea3eb1bf713559e94f5bebb66166a70a7a70f558d75ab9d69af47668cdb"
+          "name": "provider-cli-path.patch",
+          "sha256": "e09bad09b4c2c97dfe2ad43aa0648d13bf973e0084c8d3759f1e7c4592bf2ce1"
         }
       ],
       "built": {
         "provider": "6632e04131da968911638029569f3fcb190e3f7db0a1f8a5ebd349d6e89840d2",
         "lockfile": "779687777c6a3e73d8cb1e149c252bdbb85457c698f9c5563424805f2c4c19f1",
-        "copilotResolver": "f125692e321d30a464d1619f5c373176753b0bba7fd1a663d83fa8f0bd3e7008"
+        "cliResolver": "f125692e321d30a464d1619f5c373176753b0bba7fd1a663d83fa8f0bd3e7008"
       }
     },
     "bun": {

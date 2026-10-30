@@ -1,4 +1,4 @@
-# scripts/engine/archon/patch/copilot-bin-path.patch
+# scripts/engine/archon/patch/provider-cli-path.patch
 # Lets a source build of Archon run Copilot's steps with the CLI named by COPILOT_BIN_PATH, as a compiled build does.
 # Unpatched, a source build ignores the variable and the SDK runs its own bundled runtime, so the CLI the engine pins
 # (and checks) never runs, and Wheelhouse's guards can't tell it is Copilot (check 74). Without the variable Archon

@@ -61,7 +61,7 @@ export async function installEngine({
       return { ok: false, refused: error instanceof Refusal ? error.message : `The engine was not installed: ${error.message}` };
     }
     const built = enginePaths(staging);
-    const got = { provider: digest(built.provider), lockfile: digest(path.join(built.src, 'bun.lock')), copilotResolver: digest(built.copilotResolver) };
+    const got = { provider: digest(built.provider), lockfile: digest(path.join(built.src, 'bun.lock')), cliResolver: digest(built.cliResolver) };
     for (const [part, want] of Object.entries(pins.archon.built)) {
       if (got[part] !== want) return { ok: false, refused: `The engine built from Archon ${pins.archon.tag} isn't the pinned build (its ${part} is ${got[part] ?? 'missing'}, not ${want}), so it was not installed` };
     }

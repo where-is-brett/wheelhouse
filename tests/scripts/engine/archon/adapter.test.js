@@ -514,16 +514,16 @@ test('a Copilot run doesn\'t start while Copilot\'s program or its clean home is
 
 test('a Copilot run doesn\'t start on an engine built without the Copilot patch: the SDK\'s own runtime would run, not the pinned program', async () => {
   const { copilotEngineProblem } = await import('../../../../scripts/engine/archon/adapter.js');
-  const { COPILOT_PATCH_MARK } = await import('../../../../scripts/engine/archon/build.js');
+  const { CLI_PATCH_MARK } = await import('../../../../scripts/engine/archon/build.js');
   const { copilotCliPaths } = await import('../../../../scripts/engine/archon/copilot-cli.js');
   const engine = builtEngine();
   const { bin } = copilotCliPaths(engine);
   fs.mkdirSync(path.dirname(bin), { recursive: true });
   fs.writeFileSync(bin, 'copilot', { mode: 0o755 });
-  const resolver = enginePaths(engine).copilotResolver;
+  const resolver = enginePaths(engine).cliResolver;
   fs.mkdirSync(path.dirname(resolver), { recursive: true });
   fs.writeFileSync(resolver, '  if (!BUNDLED_IS_BINARY) return undefined;\n');
   assert.match(copilotEngineProblem(engine), /built before Wheelhouse's Copilot patch/);
-  fs.writeFileSync(resolver, `  // ${COPILOT_PATCH_MARK}\n  if (!BUNDLED_IS_BINARY && !process.env.COPILOT_BIN_PATH) return undefined;\n`);
+  fs.writeFileSync(resolver, `  // ${CLI_PATCH_MARK}\n  if (!BUNDLED_IS_BINARY && !process.env.COPILOT_BIN_PATH) return undefined;\n`);
   assert.doesNotMatch(copilotEngineProblem(engine) ?? '', /Copilot patch/, 'past the patch, the clean home is what is checked next');
 });
