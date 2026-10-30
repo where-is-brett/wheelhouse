@@ -79,7 +79,7 @@ test("a named test runs alone under Node's own runner, which reads a bare word a
     "test('greet says hello (with the switch off)', () => {});",
     "test('greet says good day', () => { throw new Error('not yet'); });",
   ].join('\n'));
-  for (const testCommand of ['npm test', 'node --test']) {
+  for (const testCommand of ['npm test', 'npm test --', 'node --test']) {
     const order = { ...orderWith([{ test: 'greet says hello (with the switch off)' }, { test: 'greet says good day' }]), testCommand };
     const results = await runDoneChecks(order, { cwd });
     assert.deepEqual(results.map((r) => r.ok), [true, false], `${testCommand}: ${results.map((r) => r.line).join('; ')}`);

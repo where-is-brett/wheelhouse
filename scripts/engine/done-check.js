@@ -22,18 +22,23 @@ const shell = (command, platform) => (platform === 'win32'
 const quoted = (name, platform) => (platform === 'win32' ? `"${name.replace(/"/g, '""')}"` : `'${name.replace(/'/g, "'\\''")}'`);
 
 // Node's own test runner reads a bare word as a file to run, so a named test goes in --test-name-pattern instead: for
-// a test command that is `node --test`, or `npm test` (or `npm run test`) where the project's test script is
-// (check 81). Any other runner is given the name as one word, as before.
+// a test command that is `node --test`, or `npm test` (or `npm run test`, or either with a closing `--`, the
+// default) where the project's test script is (check 81). A command ending with the flag itself, or any other runner,
+// is given the name as one word, as before.
 const NODE_RUNNER = /^node\s+--test(\s|$)/;
 const asPattern = (name) => name.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
 function namedTest(testCommand, name, { cwd, platform }) {
   const command = String(testCommand).trim();
   const flag = `--test-name-pattern=${quoted(asPattern(name), platform)}`;
-  if (NODE_RUNNER.test(command)) return `${command} ${flag}`;
-  if (/^npm\s+(run\s+)?test$/.test(command)) {
-    let script = null;
-    try { script = JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf8'))?.scripts?.test; } catch { /* no package.json */ }
-    if (typeof script === 'string' && NODE_RUNNER.test(script.trim())) return `${command} -- ${flag}`;
+  // A command that already ends with the pattern flag takes the name as its value.
+  if (!/--test-name-pattern$/.test(command)) {
+    if (NODE_RUNNER.test(command)) return `${command} ${flag}`;
+    const npm = /^(npm\s+(?:run\s+)?test)(?:\s+--)?$/.exec(command);
+    if (npm) {
+      let script = null;
+      try { script = JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf8'))?.scripts?.test; } catch { /* no package.json */ }
+      if (typeof script === 'string' && NODE_RUNNER.test(script.trim())) return `${npm[1]} -- ${flag}`;
+    }
   }
   return `${command} ${quoted(name, platform)}`;
 }
