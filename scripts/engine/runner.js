@@ -24,7 +24,7 @@ import { MERGE_WORK } from './dispatcher.js';
 import { mergeQuestionWords } from './words.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
-const EMPTY = () => ({ routed: {}, waiting: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, tries: {}, later: [], next: {}, noted: null, capped: {}, costed: {}, carried: {}, reworks: {}, answers: {} });
+const EMPTY = () => ({ routed: {}, waiting: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, tries: {}, later: [], next: {}, noted: null, capped: {}, costed: {}, reviewsKept: {}, carried: {}, reworks: {}, answers: {} });
 // The failed tries after which the director is told an answer hasn't reached the build yet.
 const UNREACHABLE_SAID = 3;
 // The cap card's options: Give it more carries the work on with the cap raised once; Stop leaves it stopped.
@@ -66,8 +66,9 @@ const inSentence = (title) => (/^[A-Z][a-z]/.test(title) ? title.charAt(0).toLow
 // - `titleOf(work)` the work's title; `endRun(runId)` ends a run's process tree by pid, as All stop does, for a run the
 //   engine wouldn't stop at its cap ({ ended, survivors });
 // - `openedOf(pr)` the helper's own record of what opened a pull request ({ lane, work, ... }), or null; `prTitleOf(pr)`
-//   its title from the host, or null.
-export function engineRunner({ engine, file, readViews, write, stopped = () => false, now = () => new Date(), settings = () => ({}), workOf = () => null, titleOf = (work) => work, endRun = async () => ({ ended: [], survivors: [] }), openedOf = () => null, prTitleOf = async () => null } = {}) {
+//   its title from the host, or null; `keepReviews(runId)` keeps what an ended run's task reviews last said, in the
+//   helper's own record, true once done.
+export function engineRunner({ engine, file, readViews, write, stopped = () => false, now = () => new Date(), settings = () => ({}), workOf = () => null, titleOf = (work) => work, endRun = async () => ({ ended: [], survivors: [] }), openedOf = () => null, prTitleOf = async () => null, keepReviews = async () => true } = {}) {
   let state = readState(file);
   const keep = () => saveState(file, state);
   const note = (words, extra = {}) => write('note', { about: 'engine', words, ...extra });
@@ -125,7 +126,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       return;
     }
     const found = workOf(ask.runId);
-    // A merge-queue run the helper didn't start (Archon's ruling step starts one too) still waits on an answer.
+    // A merge-queue run the helper didn't start, not yet seen by the dispatcher, still waits on an answer.
     const work = found?.work ?? ask.work ?? (isPlain(ask.mergeQuestion) ? MERGE_WORK : null);
     if (typeof work !== 'string') return;
     state.routed[ask.id] = true;
@@ -436,6 +437,11 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       for (const [runId, records] of byRun) {
         const latest = records.at(-1).data;
         if (latest.state === 'ended') {
+          // However it ended: a hold in a run cancelled before its close lasts from here (routes.js).
+          if (!state.reviewsKept[runId] && (await safely(() => keepReviews(runId))) === true) {
+            state.reviewsKept[runId] = true;
+            keep();
+          }
           if (!state.costed[runId]) await costOf(runId, work, records);
           continue;
         }

@@ -7,10 +7,11 @@
 // or a card for tasks left unticked when their rounds ran out, or skipped. A loop closes on its last round whatever the
 // reason, so this is where a red end becomes a question: never from the run's artefacts, always by looking again. A
 // task that didn't end is unticked in a commit of its own, the plan put back first if it was taken out, so the fresh
-// run builds it again. A held review lasts only in this run's records, so it goes back even when another task stopped
-// with its own question. It prints
+// run builds it again. A held review goes back even when another task stopped with its own question. A slice's close
+// (`--reviewed`) also asks the helper for the holds it keeps, so a review held in a run cancelled before its close is
+// still answered here, in the next run, though that run skips the ticked task; holds it can't get count as red. It prints
 // { blocked, question, options, recommend, level, topic }, the blocked exit's fields, for the lane's wait.
-//   node scripts/engine/tasks-done.js --run <run id> --artefacts <folder> --base <ref> --records <the fan-out step's output>
+//   node scripts/engine/tasks-done.js --run <run id> --artefacts <folder> --base <ref> [--reviewed] --records <the fan-out step's output>
 import fs from 'node:fs';
 import path from 'node:path';
 import { helperClient } from '../host/helper-client.js';
@@ -64,16 +65,17 @@ const EMPTY = {
   topic: 'plan-empty',
 };
 
-// The ticked tasks whose review still held when their rounds ran out.
+// The ticked tasks whose latest review still holds.
 const heldTasks = (tasks, records) => tasks.filter((t) => t.done && records.some((r) => r?.held === true && String(r.task) === String(t.n)));
 
 // The ticked tasks that didn't truly end, in the plan's order: [{ n, title, why }], each task's first reason. `why` is
 // plain words for the card. A test that can't be checked counts as failing.
-async function unended({ tasks, records, runId, client, cwd, run, platform }) {
+async function unended({ tasks, records, unread, runId, client, cwd, run, platform }) {
   const done = tasks.filter((t) => t.done);
   const found = new Map();
   const add = (task, why) => { if (!found.has(task.n)) found.set(task.n, { ...task, why }); };
-  for (const task of heldTasks(tasks, records)) add(task, 'its review still found a serious problem when its rounds ran out');
+  for (const task of heldTasks(tasks, records)) add(task, 'its review still found a serious problem');
+  if (unread && done.length > 0) add(done[0], "whether its review still holds couldn't be checked");
   // Before the tests: a test may write files of its own.
   const status = await (run ?? defaultRun)('git', ['status', '--porcelain', '--untracked-files=all'], { cwd, timeoutMs: 30000 }).catch(() => ({ code: 1, stdout: '' }));
   const named = done.filter((t) => t.test);
@@ -110,12 +112,14 @@ export async function main(argv = process.argv.slice(2), { client: given = helpe
   const artefacts = runArg(argv, '--artefacts');
   const base = runArg(argv, '--base');
   if (!runId || !artefacts || !path.isAbsolute(artefacts) || !base || !argv.includes('--records')) {
-    out('usage: node scripts/engine/tasks-done.js --run <run id> --artefacts <folder> --base <ref> --records <the fan-out step\'s output>');
+    out('usage: node scripts/engine/tasks-done.js --run <run id> --artefacts <folder> --base <ref> [--reviewed] --records <the fan-out step\'s output>');
     return 2;
   }
   const client = withTicket(given, argv);
   const records = parsed(valueOf(argv, '--records'));
-  const list = Array.isArray(records) ? records : [];
+  const kept = argv.includes('--reviewed') ? await client.engine.taskHolds({ runId }).catch(() => null) : { ok: true, tasks: [] };
+  const unread = kept?.ok !== true;
+  const list = [...(Array.isArray(records) ? records : []), ...(unread ? [] : kept.tasks.map((task) => ({ task, held: true })))];
   const stopped = list.find((r) => r?.blocked === true && typeof r.question === 'string' && r.question !== '');
   const plan = await findPlan({ cwd, base, run });
   const tasks = tasksOf(plan?.text);
@@ -129,7 +133,7 @@ export async function main(argv = process.argv.slice(2), { client: given = helpe
     return 0;
   }
   const problem = planProblem(tasks);
-  const red = problem ? [] : await unended({ tasks, records: list, runId, client, cwd, run, platform });
+  const red = problem ? [] : await unended({ tasks, records: list, unread, runId, client, cwd, run, platform });
   if (red.length > 0) {
     await sendBack(red.map((t) => t.n), plan, { cwd, run });
     const [{ n, title, why }] = red;

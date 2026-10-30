@@ -119,3 +119,62 @@ test('a ruled merge starts the queue on the first tick after the ruling\'s run e
   await run.tick();
   assert.equal(starts.length, 2, 'once');
 });
+
+// The merge queue's world over the fake engine, which holds a run at its ask as a paused queue does.
+function queueWorld({ queueRuns } = {}) {
+  const dir = tempFolder('wh-one-queue-');
+  const engine = fakeEngine({ recordings: { merge: [{ type: 'run-started', runId: 'x', at: '2026-10-30T06:00:00.000Z' }, { type: 'ask', runId: 'x', at: '2026-10-30T06:00:01.000Z', id: 'a1', kind: 'question', level: 3, recommend: 'b', options: [{ id: 'b', label: 'B' }] }] } });
+  if (queueRuns) engine.queueRuns = queueRuns;
+  const at = new Date('2026-10-30T06:00:00Z');
+  const repo = { host: 'github.com', path: 'o/p' };
+  // How many queue runs were live each time the folder was reset for a start.
+  const prepared = [];
+  const d = dispatchRun({
+    engine, project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'), readViews: () => ({ work: {}, runs: {}, reports: {} }),
+    now: () => at, start: async () => ({ ok: false }), readyOf: () => ({ 7: { work: 'card-7', head: 'a'.repeat(40) } }), repoOf: () => repo,
+    queueFolder: async () => { prepared.push(engine.queueRuns({ folder: dir }).length); return { ok: true, folder: dir }; }, queuePlace: () => dir,
+  });
+  // Archon's ruling step starting a queue run by itself, which the helper never hears of.
+  const ownStart = (folder = dir) => engine.start({ lane: 'merge', project: folder, repo, running: true }).runId;
+  return { dir, engine, d, ownStart, prepared, starts: () => engine.calls.filter((c) => c.call === 'start' && c.order.lane === 'merge').length };
+}
+
+test('a queue run Archon started itself folds the helper\'s start: one live run, known to the helper, its place taken after it ends', async () => {
+  const t = queueWorld();
+  const theirs = t.ownStart();
+  t.d.queueDue();
+  await t.d.tick();
+  assert.equal(t.starts(), 1, 'the helper started none beside it');
+  assert.equal(t.d.workOf(theirs).work, 'merge-queue', 'its asks are the queue\'s');
+  await t.d.tick();
+  assert.equal(t.starts(), 1, 'nor on the next tick');
+  assert.deepEqual(t.prepared, [], 'its folder wasn\'t reset under it');
+  t.engine.act(theirs, { cancel: {} });
+  await t.d.tick();
+  assert.equal(t.starts(), 2, 'the ruling is still due, so the helper starts the queue once that run has ended');
+  await t.d.tick();
+  assert.equal(t.starts(), 2, 'and once');
+});
+
+test('two ticks at once start one queue run', async () => {
+  const t = queueWorld();
+  await Promise.all([t.d.tick(), t.d.tick()]);
+  assert.equal(t.starts(), 1);
+});
+
+test('a queue run in another project\'s folder doesn\'t hold this project\'s', async () => {
+  const t = queueWorld();
+  t.ownStart('/engine/queues/another');
+  await t.d.tick();
+  assert.equal(t.starts(), 2);
+});
+
+test('no queue run starts while the engine can\'t say what is live, and it starts once it can', async () => {
+  let listing = null;
+  const t = queueWorld({ queueRuns: async () => listing });
+  await t.d.tick();
+  assert.equal(t.starts(), 0);
+  listing = [];
+  await t.d.tick();
+  assert.equal(t.starts(), 1);
+});
