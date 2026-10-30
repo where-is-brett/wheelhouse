@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { buildFromSource, ARCHON_SOURCE, BUN_PIN, PATCHES, enginePaths, launcherText, archonSettingsFile, archonSettingsOk, writeArchonSettings } from '../../../../scripts/engine/archon/build.js';
+import { buildFromSource, ARCHON_SOURCE, BUN_PIN, PATCHES, CLI_PATCH_MARK, enginePaths, launcherText, archonSettingsFile, archonSettingsOk, writeArchonSettings } from '../../../../scripts/engine/archon/build.js';
 
 const sha = (buffer) => crypto.createHash('sha256').update(buffer).digest('hex');
 
@@ -109,6 +109,17 @@ test('the patch applies to the pinned source as a git patch and names only the C
   const files = [...text.matchAll(/^diff --git a\/(\S+)/gm)].map((m) => m[1]);
   assert.deepEqual(files, ['packages/providers/src/claude/provider.ts']);
   assert.match(text, /ARCHON_CLAUDE_PERMISSION_MODE === 'acceptEdits'/);
+});
+
+test('the Copilot patch lets a source build run the CLI COPILOT_BIN_PATH names, and names only the Copilot resolver', () => {
+  assert.deepEqual(PATCHES, ['claude-permission-mode.patch', 'provider-cli-path.patch']);
+  const text = fs.readFileSync(new URL('../../../../scripts/engine/archon/patch/provider-cli-path.patch', import.meta.url), 'utf8');
+  const files = [...text.matchAll(/^diff --git a\/(\S+)/gm)].map((m) => m[1]);
+  assert.deepEqual(files, ['packages/providers/src/community/copilot/binary-resolver.ts']);
+  assert.match(text, /^-  if \(!BUNDLED_IS_BINARY\) return undefined;$/m);
+  assert.match(text, /^\+  if \(!BUNDLED_IS_BINARY && !process\.env\.COPILOT_BIN_PATH\) return undefined;$/m);
+  assert.ok(text.split('\n').some((l) => l.startsWith('+') && l.includes(CLI_PATCH_MARK)), 'the patched resolver carries the mark health and setup look for');
+  assert.equal(enginePaths('/e').cliResolver, path.join('/e', 'archon', 'src', 'packages', 'providers', 'src', 'community', 'copilot', 'binary-resolver.ts'));
 });
 
 test('the build refuses Windows for now', async () => {

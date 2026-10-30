@@ -18,7 +18,7 @@
 import fs from 'node:fs';
 import { archonCli, archonCommand } from './cli.js';
 import { roomCommand } from '../room.js';
-import { ARCHON_SOURCE, BUN_PIN, PATCH_MARK, enginePaths, launcherText } from './build.js';
+import { ARCHON_SOURCE, BUN_PIN, CLI_PATCH_MARK, PATCH_MARK, enginePaths, launcherText } from './build.js';
 import { normaliseAsk, askOccurrence } from './asks.js';
 import { readRecord, readOutputs } from './record.js';
 import { readyWorkItem } from './work-item.js';
@@ -202,6 +202,9 @@ function refusal(action, result) {
 // from the director's own Copilot home, with none of them.
 export function copilotEngineProblem(engine) {
   if (!copilotCliInstalled(engine)) return 'Copilot\'s command-line program isn\'t in the build engine\'s folder, so no Copilot step can start';
+  let resolver = '';
+  try { resolver = fs.readFileSync(enginePaths(engine).cliResolver, 'utf8'); } catch { /* read as unpatched */ }
+  if (!resolver.includes(CLI_PATCH_MARK)) return 'The build engine was built before Wheelhouse\'s Copilot patch, so its Copilot steps would run without the pinned program and its guards; setup builds the engine again';
   return engineHomeProblem({ engine });
 }
 

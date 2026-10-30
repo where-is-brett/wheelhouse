@@ -23,3 +23,7 @@ Wheelhouse runs Archon for a product owner who doesn't read code. Its guards res
 ## What isn't changed
 
 The root check in the provider's constructor stays as it is. Per-node `sandbox:` settings pass through as before.
+
+## A second patch: COPILOT_BIN_PATH in a source build
+
+`scripts/engine/archon/patch/provider-cli-path.patch`, added 30 October 2026 after check 74's real Copilot run. Archon's Copilot provider resolves the CLI only in a compiled build (`if (!BUNDLED_IS_BINARY) return undefined`). A source build, which Wheelhouse always runs, ignores `COPILOT_BIN_PATH`, and the Copilot SDK runs its own bundled runtime. So the CLI that setup pins and checks never ran. That runtime doesn't set `COPILOT_CLI_BINARY_VERSION`, so Wheelhouse's guards, registered as the CLI's hooks, took every step for an unknown chat and refused its edits. The patch makes a source build honour the variable, as a compiled build does. Without the variable, Archon behaves as released. The upstream request is the same change: honour `COPILOT_BIN_PATH` whatever the build.
