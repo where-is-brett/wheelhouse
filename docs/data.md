@@ -36,7 +36,16 @@ If you set a project up with an earlier Wheelhouse (v0.1.x), its records were on
 
 ## The build engine
 
-On the Mac, from v0.2.0, Wheelhouse's build engine, Archon, keeps its own records on your computer, in `~/.wheelhouse-engine`: a database of its runs, and each run's transcript, which hold the prompts and code of that run. Its usage reporting is always off. Now and then it asks GitHub for its own release list; it has no switch for that, and the request carries nothing of yours. If you switch on **Engine room**, Archon's console downloads its files from Archon's GitHub release the first time, and it listens on your computer only.
+On a Mac, from v0.2.0, for a product on GitHub, setup installs Wheelhouse's build engine, Archon. It keeps two folders on your computer:
+
+- `~/.wheelhouse/engine`, the engine itself: Archon, built from its pinned source with Wheelhouse's patch; the pinned Bun it needs; the broker, Wheelhouse's go-between for every GitHub call the engine makes; and a local copy of each project's history that the engine's git reads from, refreshed by Wheelhouse's helper, so the engine never holds a key. For a product that builds with Copilot, it also holds Copilot's pinned command-line tool and its clean home: Wheelhouse's guards, Wheelhouse's skills and your Copilot sign-in, and nothing else of your Copilot settings.
+- `~/.wheelhouse-engine`, Archon's own records: a database of its runs, and each run's transcript, which hold the prompts and code of that run.
+
+Its usage reporting is always off. Now and then it asks GitHub for its own release list; it has no switch for that, and the request carries nothing of yours. If you switch on **Engine room**, Archon's console downloads its files from Archon's GitHub release the first time, and it listens on your computer only.
+
+So that the engine's steps keep Wheelhouse's guards, setup also adds the Wheelhouse plugin to Claude Code for your account, not just this project (an older Wheelhouse already there is brought up to date instead), and a sign-in start that starts Wheelhouse's helper when you sign in to the Mac. In the project, setup's commit adds Archon's project settings (`.archon/config.yaml`) and the merge queue's policy (`.archon/sdlc/policy/maintainers.json`). A project set up before v0.2.0 gets these two files by a pull request you approve.
+
+A product on GitLab, and a computer other than a Mac, gets none of this, and keeps Wheelhouse's own Crew for now.
 
 ## Optional channels
 
@@ -48,10 +57,13 @@ Typing `/wheelhouse:uninstall` in a session on the project shows a card listing 
 
 **What it puts back or removes:**
 
+- The build engine's runs for the project are cancelled first. If they don't stop, uninstall stops there and removes nothing else.
 - Its jobs for the project stop: the Bosun and its watcher.
 - Locked, if you chose it, is taken off. It asks for your computer password.
-- Its settings, its configuration, its part of `CLAUDE.md` and the pinned kits come out of the project's files, by a pull request you merge (or straight from the folder, if setup's own commit never reached the host).
+- Its settings, its configuration, its part of `CLAUDE.md`, the pinned kits and the engine's two `.archon` files come out of the project's files, by a pull request you merge (or straight from the folder, if setup's own commit never reached the host). Engine files that came by the switch's pull request, rather than setup's commit, stay for now.
 - The changes setup made to this computer (the 30 days for transcripts, the usage counts, Claude Code's update channel and phone notifications) are put back, but only with the last project on this computer that uses Wheelhouse, since the others still need them. While another project here still uses the GitHub app, the app stays, and you get its installation page to untick this project's repository there.
+- With a project other than the last, its own copy of the project's history in the engine folder goes; the engine stays for the others.
+- With the last project, the engine goes: its folder, with Archon, Bun, the broker, the copies of history and Copilot's tool and clean home; the Wheelhouse plugin setup added for your account (one setup only brought up to date stays); and the sign-in start.
 - With that last project, the keys it made are deleted or withdrawn (for the GitHub app you get its page, to remove it there), the usage receiver and the host helper stop, and Wheelhouse's own folders and files in `~/.wheelhouse` are removed: the tools it fetched, its records of setup's clicks and answers, and last of all this computer's own signing key and its id.
 - A setting you changed yourself after setup is left as you set it, and the card names it. A settings file or section setup made for its own keys goes with them once nothing else is in it.
 
@@ -61,6 +73,7 @@ Typing `/wheelhouse:uninstall` in a session on the project shows a card listing 
 
 - Your product's repository stays, unless you choose **Delete it** on its own card. It gets a card only if setup made it: one you already had is kept, with no card. **Keep it** is recommended, since it can't be brought back. Its settings page on GitHub or GitLab opens, and you click Delete there yourself.
 - The project's private record on this computer stays, unless you choose **Delete it** on its own card. **Keep it** is recommended, since a deleted record can't be brought back.
+- The build engine's run history, `~/.wheelhouse-engine`, stays, unless you choose **Delete it** on its own card with the last project. **Keep it** is recommended, since it can't be brought back.
 - A `wheelhouse-state` branch or `wheelhouse-profile` repository left from an earlier Wheelhouse stays where it is; uninstall offers no card for either.
 - Branch protection on the host stays on.
 - Setup's journal stays in `~/.wheelhouse`, so what setup did stays on record, and so does uninstall's own record of how it went. So do the usage counts already gathered, which hold counts only; delete that folder yourself if you want them gone.
