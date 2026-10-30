@@ -30,7 +30,7 @@ And a briefing opens like this:
 
 **What it protects.** Agents never hold your GitHub or GitLab keys, your clicks are signed so an agent can't approve for you, and on a Mac the agents' commands run fenced off from the rest of your computer. What it doesn't protect you from is in [`SECURITY.md`](SECURITY.md).
 
-**What builds it.** On a Mac, quick changes are built by a build engine, [Archon](https://github.com/coleam00/Archon), which setup installs with its usage reporting off. Larger work is still built by Wheelhouse's own Crew for now. A project set up before is offered the switch once, on a card. How the engine fits, and its fallback, are in [`docs/engine/`](docs/engine/).
+**What builds it.** On a Mac, for a product on GitHub, all the building runs on a build engine, [Archon](https://github.com/coleam00/Archon), which setup installs with its usage reporting off: quick changes, small pieces of work, bugs, features (in slices, each with its own pull request) and the fix when the main version breaks. Wheelhouse's checks and guards still wrap every step, and the engine never holds your GitHub keys. A product that builds with Copilot instead of Claude runs on the same engine too, except at Lean (below), which installs nothing. Products on GitLab, and work on Windows or Linux, are still built by Wheelhouse's own Crew for now. A project set up before `v0.2.0` is offered the switch once, on a card: you approve a pull request that adds the engine's files, and work already under way finishes where it started. How the engine fits, and its fallback, are in [`docs/engine/`](docs/engine/).
 
 **How to take it out again.** Type `/wheelhouse:uninstall` in a conversation on your product. What it removes, and what it keeps, is in [`docs/data.md`](docs/data.md).
 
