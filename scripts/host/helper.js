@@ -19,7 +19,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
-import { computerId, helperAddress, profileDir, oldProfileDir, stateDir, oldStateDir, wheelhouseHome, engineDir } from '../lib/paths.js';
+import { computerId, helperAddress, profileDir, oldProfileDir, stateDir, oldStateDir, wheelhouseHome, engineDir, archonHome } from '../lib/paths.js';
 import { stopState, setStop, liftStop } from '../lib/stop.js';
 import { bypassActive } from '../lib/bypass.js';
 import { run as realRun, withoutGitVars } from '../lib/run.js';
@@ -31,6 +31,7 @@ import { readKey } from './keys.js';
 import { checkBaseUrl, gitlabApi } from './gitlab-key.js';
 import { DEFAULT_GITLAB, parseRemote } from './gitlab-base.js';
 import { prepareQueueFolder } from '../engine/queue-folder.js';
+import { queueProjectOf } from '../engine/queue-place.js';
 import { unreachableRefusal, certificateRefusal, certificateLine, awayLine, outputKind, companyGitEnv, makeAwayLog, gitlabBaseOf, certificateSetting } from './company-ca.js';
 import { childEnv } from './connection.js';
 import { protectionStatus } from './protection.js';
@@ -94,6 +95,7 @@ import { SLUG } from '../lib/build-loop.js';
 import { ROOT as OWN_ROOT } from '../lineage/check.js';
 import { checkProvenance, removeProvenance, sessionProvenance, engineProvenance } from '../lineage/provenance.js';
 import { brokerRoutes } from '../engine/broker/routes.js';
+import { queueCall } from '../engine/broker/queue.js';
 import { toolPath } from '../lib/host-tools.js';
 import { RELEASE_BRANCH, SETTINGS_FILE, briefingLine, checkRelease, pinsOnlyChange } from '../lineage/release.js';
 import { WHEELHOUSE_URL } from '../lineage/manifest.js';
@@ -4075,11 +4077,14 @@ export async function startHelper({
     }
   }
 
-  // The broker (scripts/engine/broker/): every gh call Archon makes, placed by the folder it came from.
+  // The broker (scripts/engine/broker/): every gh call Archon makes, placed by the folder it came from, the project's
+  // own or its merge queue's (queue-folder.js). Either way the call meets the same rules.
   const placeEngineCall = (cwd) => {
     if (typeof cwd !== 'string' || !path.isAbsolute(cwd)) return null;
-    const found = registeredProjects().find(({ record }) => typeof record?.folder === 'string' && isInsideFolder(record.folder, cwd));
-    return found ? { project: found.project, folder: found.record.folder, repo: found.record.repo } : null;
+    const projects = registeredProjects();
+    const queued = queueProjectOf(cwd, projects.map(({ project }) => project));
+    const found = projects.find(({ project, record }) => project === queued || (typeof record?.folder === 'string' && isInsideFolder(record.folder, cwd)));
+    return found ? { project: found.project, folder: found.record.folder, repo: found.record.repo, ...(found.project === queued ? { queue: true } : {}) } : null;
   };
   // The rules' context for a call (rules.js brokerDecision): the push rules for every call, and for a verdict or a
   // merge the signed review and approval of its head, the incident and whether the work needs the director's approval.
@@ -4122,6 +4127,11 @@ export async function startHelper({
     permit: brokerPermit,
     forward: async (project, argv, { cwd, stdin }) => run(toolPath('gh'), argv, { env: (await contextFor(project)).env, input: stdin, cwd }),
     refresh: (project) => refreshFetchMirror(project),
+    queueCall: async (place, argv, stdin) => queueCall({
+      argv, stdin, repo: place.repo, ready: engineRun.readyAll(place.project),
+      artefacts: path.join(archonHome(), 'workspaces', 'mirrors', place.project, 'artifacts', 'runs'),
+    }),
+    note: async (project, words) => doWrite({ project, kind: 'note', data: { about: 'engine', words } }, await contextFor(project)),
   });
 
   const routes = {

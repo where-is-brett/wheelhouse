@@ -98,6 +98,12 @@ function repoOf(text) {
   if (parts.length === 3 && parts[0].toLowerCase() === HOST) parts.shift();
   return parts.length === 2 && parts.every((p) => /^[A-Za-z0-9._-]+$/.test(p)) ? parts.join('/') : null;
 }
+// Whether a positional word is no address, or the address of something in `repo` (not checked when not given).
+function addressIsOwn(word, repo) {
+  if (!/^(https?:\/\/|[^/\s]+\.[a-z]{2,}\/)/i.test(word)) return true;
+  const found = /^(?:https?:\/\/)?([^/\s]+)\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)(?:[/?#]|$)/.exec(word);
+  return found !== null && found[1].toLowerCase() === HOST && (!repo || sameRepo(`${found[2]}/${found[3]}`, repo));
+}
 const sameRepo = (a, b) => typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase();
 
 // The fields of an api call (-f, -F), as { name: value }, or null when one is read from a file (`-F name=@file`), is
@@ -206,6 +212,8 @@ function readCall(words, { repo }) {
   if (host !== undefined && host !== HOST) return null;
   const named = one(parsed, '--repo');
   if (named !== undefined && (repoOf(named) === null || (repo && !sameRepo(repoOf(named), repo)))) return null;
+  // A pull request, issue or run named by its address must be the project's own.
+  if (command !== 'api' && command !== 'repo view' && parsed.positionals.some((p) => !addressIsOwn(p, repo))) return null;
   if (command === 'repo view' && parsed.positionals[0] !== undefined && (repoOf(parsed.positionals[0]) === null || (repo && !sameRepo(repoOf(parsed.positionals[0]), repo)))) return null;
   const call = { command, parsed };
   if (command !== 'api') return call;

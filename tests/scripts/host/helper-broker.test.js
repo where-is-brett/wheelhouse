@@ -69,3 +69,29 @@ test('a re-run of the main line\'s failed jobs reaches the real gh only while th
   assert.match(got.stderr, /red main line/);
   assert.equal(green.forwarded.length, 0);
 });
+
+test("a call from the merge queue's folder is shaped before the list decides it, and each one refused is a Logbook line", async () => {
+  const forwarded = [];
+  const notes = [];
+  const routes = brokerRoutes({
+    placeOf: (cwd) => (String(cwd).startsWith('/engine/queues/p') ? { project: 'p', folder: '/p', repo: 'acme/web', queue: true } : String(cwd).startsWith('/p') ? { project: 'p', folder: '/p', repo: 'acme/web' } : null),
+    permit: async () => ({ stop: false, lockHeld: true, defaultBranch: 'main', incident: { open: false } }),
+    forward: async (project, argv, opts) => { forwarded.push({ argv, stdin: opts.stdin }); return { code: 0, stdout: '', stderr: '' }; },
+    refresh: async () => ({ ok: true }),
+    queueCall: async (place, argv) => (argv[1] === 'edit' ? { ok: true, argv: ['pr', 'edit', '5', '--body-file', '-'], stdin: 'Closes #5\n' } : argv[1] === 'create' ? { ok: false, refused: 'not from the queue' } : { ok: true, argv, stdin: '' }),
+    note: async (project, words) => { notes.push({ project, words }); },
+  });
+  const edit = await routes['/broker/gh']({ argv: ['pr', 'edit', '5', '--body-file', '/a/pr-body-5.md'], cwd: '/engine/queues/p' });
+  assert.equal(edit.code, 0);
+  assert.deepEqual(forwarded.at(-1), { argv: ['pr', 'edit', '5', '--body-file', '-'], stdin: 'Closes #5\n' });
+  const create = await routes['/broker/gh']({ argv: ['pr', 'create', '--head', 'b'], cwd: '/engine/queues/p' });
+  assert.match(create.stderr, /not from the queue/);
+  const off = await routes['/broker/gh']({ argv: ['repo', 'delete', 'acme/web'], cwd: '/engine/queues/p' });
+  assert.match(off.stderr, /isn't on Wheelhouse's list/);
+  assert.equal(forwarded.length, 1);
+  assert.deepEqual(notes.map((n) => n.project), ['p', 'p']);
+  assert.match(notes[0].words, /merge queue's call gh pr create/);
+  // A run's own call is neither shaped nor noted.
+  await routes['/broker/gh']({ argv: ['repo', 'delete', 'acme/web'], cwd: '/p/wt' });
+  assert.equal(notes.length, 2);
+});

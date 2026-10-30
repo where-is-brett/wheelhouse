@@ -436,6 +436,30 @@ test('tools it does not name pass untouched, and a folder outside any project is
   });
 });
 
+test("the merge queue's own folder is guarded as its project's, where a bare gh is the broker's and gh by a path or with its variables set is refused", async () => {
+  await withHome(async (home) => {
+    const { base } = makeProject();
+    const queue = path.join(process.env.WHEELHOUSE_HOME, 'engine', 'queues', 'owner__name');
+    const other = path.join(process.env.WHEELHOUSE_HOME, 'engine', 'queues', 'owner__gone');
+    fs.mkdirSync(path.join(queue, 'src'), { recursive: true });
+    fs.mkdirSync(other, { recursive: true });
+    try {
+      for (const cmd of ['gh pr view 5 --repo github.com/owner/name --json body', 'gh issue view 5 --json body && git diff --stat']) {
+        assert.equal(await run(base, home, call(queue, 'Bash', { command: cmd })), undefined, cmd);
+      }
+      assert.equal(await run(base, home, call(path.join(queue, 'src'), 'Bash', { command: 'gh pr view 5' })), undefined, 'from a folder inside it');
+      for (const cmd of [
+        '/opt/homebrew/bin/gh auth status', '/usr/local/bin/gh pr view 5', './gh pr view 5', 'env /usr/bin/gh pr view 5',
+        'GH_CONFIG_DIR=/tmp/x gh pr view 5', 'env GH_TOKEN=t gh pr view 5', 'export GITHUB_TOKEN=t', 'gh_host=x GH_HOST=github.com gh pr view 5',
+        'glab mr list', 'git push origin main', 'cat .env',
+      ]) assert.ok(denied(await run(base, home, call(queue, 'Bash', { command: cmd }))), cmd);
+      // A queue folder of no registered project is no place of Wheelhouse's, and a project's own folder keeps gh refused.
+      assert.equal(await run(base, home, call(other, 'Bash', { command: 'gh pr merge 3' })), undefined);
+      assert.ok(denied(await run(base, home, call(path.join(base, 'main'), 'Bash', { command: 'gh pr view 5' }))));
+    } finally { fs.rmSync(base, { recursive: true, force: true }); }
+  });
+});
+
 test('a folder inside a registered project is guarded by path even when .git does not lead to it', async () => {
   await withHome(async (home) => {
     const { base, main } = makeProject();
