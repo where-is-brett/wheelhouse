@@ -22,6 +22,7 @@ import { ARCHON_SOURCE, BUN_PIN, PATCH_MARK, enginePaths, launcherText } from '.
 import { normaliseAsk, askOccurrence } from './asks.js';
 import { readRecord, readOutputs } from './record.js';
 import { readyWorkItem } from './work-item.js';
+import { PACK_FORMS, COPILOT_SUFFIX, PROVIDER as COPILOT } from './copilot-pack.js';
 import { brokerProblem } from '../parts.js';
 import path from 'node:path';
 import { engineDir, archonHome, projectSlug } from '../../lib/paths.js';
@@ -38,6 +39,9 @@ export const LANE_WORKFLOWS = Object.freeze({
   merge: 'archon-merge-queue',
 });
 const MERGE_QUEUE = LANE_WORKFLOWS.merge;
+
+// The forms of the pack this engine's runs may start, beside the pack's own (pack-build.js): a Copilot project's twins.
+export const ENGINE_PACK_FORMS = PACK_FORMS;
 
 // The run's message when work carries on after a cancel: a cancelled run can't be resumed (check 78), so a fresh run
 // starts on the same branch, over what the last one left, and every step runs again.
@@ -66,6 +70,20 @@ export function bindingsFor(bindings) {
     out.push(`@${name}=${model(value, `@${name}`)}`);
   }
   return out;
+}
+
+const onCopilot = (model) => new RegExp(`^${COPILOT}(?:[:/]|$)`, 'i').test(String(model));
+
+// The workflow a run starts: the lane's own, or its Copilot twin (copilot-pack.js) when the run's models are all on
+// Copilot. A Copilot run binds every tier, since a tier left unbound falls back to Claude's own model; a run whose
+// models are on more than one provider is refused. { workflow } or { refused }.
+export function workflowFor(workflow, bindings) {
+  const models = [...Object.values(bindings?.tiers ?? {}), ...Object.values(bindings?.aliases ?? {})];
+  const copilot = models.filter(onCopilot);
+  if (workflow === MERGE_QUEUE || copilot.length === 0) return { workflow };
+  if (copilot.length !== models.length) return { refused: 'A run\'s models must all be on one provider, and these are on more than one' };
+  if (!TIERS.every((tier) => onCopilot(bindings.tiers?.[tier]))) return { refused: 'A run on Copilot binds every tier (small, medium and large), so none falls back to another provider' };
+  return { workflow: `${workflow}${COPILOT_SUFFIX}` };
 }
 
 // The cursor rule of the attention stream (check 78, Archon's Operate page): a bookmark or the end of the snapshot
@@ -238,7 +256,7 @@ export function archonAdapter({
     name: 'archon',
     // Copilot's plan counts each prompt sent (checks 74 and 79): a run routed to it uses the monthly requests. Its
     // count isn't confirmed against GitHub's own figure yet (check 79's Copilot half), so no such run starts.
-    countsRequests: (routing = {}) => [...Object.values(routing.tiers ?? {}), ...Object.values(routing.aliases ?? {})].some((model) => /^copilot(?:[:/]|$)/i.test(String(model))),
+    countsRequests: (routing = {}) => [...Object.values(routing.tiers ?? {}), ...Object.values(routing.aliases ?? {})].some(onCopilot),
     requestsConfirmed: false,
     words: {
       requestsHeld: 'Some work is set to use Copilot, and every Copilot prompt uses your plan\'s monthly requests (about 200 a month), since your plan has no free model. The cap is 0, so no Copilot runs until you allow some.',
@@ -308,7 +326,9 @@ export function archonAdapter({
       if (order.carryOn && !order.branch) return refusedWith('Carrying on needs the branch the work was on');
       let models;
       try { models = bindingsFor(order.bindings); } catch (error) { return refusedWith(error.message); }
-      const args = ['workflow', 'run', workflow];
+      const chosen = workflowFor(workflow, order.bindings);
+      if (chosen.refused) return refusedWith(chosen.refused);
+      const args = ['workflow', 'run', chosen.workflow];
       if (order.carryOn) args.push(CARRY_ON);
       args.push('--detach', '--workflow-source', packDir, '--config', configFile);
       if (order.project) args.push('--cwd', order.project);
