@@ -23,6 +23,8 @@ import { normaliseAsk, askOccurrence } from './asks.js';
 import { readRecord, readOutputs } from './record.js';
 import { readyWorkItem } from './work-item.js';
 import { PACK_FORMS, COPILOT_SUFFIX, PROVIDER as COPILOT } from './copilot-pack.js';
+import { checkRequests as meterCheck, readGitHubFigure } from './copilot-meter.js';
+import { readAccountModels, requestRates } from '../../agents/copilot/column.js';
 import { brokerProblem } from '../parts.js';
 import path from 'node:path';
 import { engineDir, archonHome, projectSlug } from '../../lib/paths.js';
@@ -258,6 +260,12 @@ export function archonAdapter({
     // count isn't confirmed against GitHub's own figure yet (check 79's Copilot half), so no such run starts.
     countsRequests: (routing = {}) => [...Object.values(routing.tiers ?? {}), ...Object.values(routing.aliases ?? {})].some(onCopilot),
     requestsConfirmed: false,
+    // The count of this month's requests the cap reads (copilot-meter.js): GitHub's own, checked once a day against
+    // the meter's estimate. `estimate()` is the meter's count, `kept` what the last check kept, `run` runs `gh` with
+    // the director's own sign-in. Not one of the interface's methods: only a provider that counts requests has it.
+    checkRequests({ estimate, kept = null, run: ghRun = run, now: at = new Date() } = {}) {
+      return meterCheck({ read: () => readGitHubFigure({ run: ghRun }), estimate, kept, now: at });
+    },
     words: {
       requestsHeld: 'Some work is set to use Copilot, and every Copilot prompt uses your plan\'s monthly requests (about 200 a month), since your plan has no free model. The cap is 0, so no Copilot runs until you allow some.',
     },
@@ -394,7 +402,7 @@ export function archonAdapter({
     async inspect(runId) {
       const result = await cli(['workflow', 'get', runId, '--verbose'], { json: true, timeout: CALL_MS });
       const json = result.code === 0 && result.json?.ok !== false ? result.json : null;
-      return { ...readRecord(json), folder: worktreeOf(json?.working_path, { home, worktreeBases }) };
+      return { ...readRecord(json, { rates: requestRates(readAccountModels(engine)) }), folder: worktreeOf(json?.working_path, { home, worktreeBases }) };
     },
 
     // Each finished step's whole output, by its id (record.js), for the helper to sign a review from Archon's own

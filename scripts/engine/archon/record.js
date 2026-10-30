@@ -18,16 +18,17 @@ function outcomeOf(json) {
   return null;
 }
 
-// The providers whose plan counts each prompt sent as a request, and the rate each model counts at. The account
-// has no included model (checks 74 and 79), so Copilot's Auto, and any model not listed, counts one a prompt.
-export const REQUEST_RATES = Object.freeze({ copilot: Object.freeze({ auto: 1 }) });
-const rateOf = (provider, model) => REQUEST_RATES[provider]?.[model] ?? 1;
+// The providers whose plan counts each prompt sent as a request. The rate each model counts at comes from the
+// account's list (scripts/agents/copilot/column.js's requestRates): an included model 0, and any model the list doesn't
+// rate one, never zero (checks 74 and 79).
+export const REQUEST_RATES = Object.freeze({ copilot: true });
+const ONE_EACH = () => 1;
 
 // One node's spend. A node that called no provider (a shell step) spent nothing, which is a known zero. Tokens are
 // known only when both the input and the output figure are: a missing one is unknown, not zero. The four kinds of
 // token are kept apart (check 79). A step on a provider that counts requests counts its prompt at its model's rate,
 // an estimate: the provider reports no cost.
-function spendOf(spend, provider, model) {
+function spendOf(spend, provider, model, rates) {
   const counts = Object.hasOwn(REQUEST_RATES, provider);
   if (noCall(spend?.tokens) && noCall(spend?.costUsd)) return { tokens: 0, dollars: 0, source: 'reported', kinds: null, requests: 0 };
   const counted = reported(spend?.tokens) && isObject(spend.tokens.value) ? spend.tokens.value : {};
@@ -35,14 +36,14 @@ function spendOf(spend, provider, model) {
   const output = figure(counted.output);
   const tokens = input === null || output === null ? null : input + output;
   const kinds = reported(spend?.tokens) ? { input, output, cacheRead: figure(counted.cacheRead), cacheWrite: figure(counted.cacheWrite) } : null;
-  const requests = counts ? rateOf(provider, model) : 0;
+  const requests = counts ? rates(model) : 0;
   if (reported(spend?.costUsd) && figure(spend.costUsd.value) !== null) return { tokens, dollars: spend.costUsd.value, source: 'reported', kinds, requests };
   return { tokens, dollars: null, source: counts && tokens !== null ? 'estimated' : 'unknown', kinds, requests };
 }
 
 // A step for each node that ran with its own spend. A node whose row restates spend that other rows carry (a loop
 // group, a fan-out) is left out, so adding the steps up never counts anything twice.
-function stepsOf(nodes) {
+function stepsOf(nodes, rates) {
   if (!Array.isArray(nodes)) return [];
   return nodes.filter((n) => isObject(n?.execution) && (n.execution.accounting ?? 'node') === 'node').map((n) => {
     const { binding = {}, timing = {}, spend } = n.execution;
@@ -53,7 +54,7 @@ function stepsOf(nodes) {
       role: n.nodeId,
       provider: binding.provider ?? null,
       model,
-      ...spendOf(spend, binding.provider ?? null, model),
+      ...spendOf(spend, binding.provider ?? null, model, rates),
       minutes: duration === null ? null : Math.round(duration / 600) / 100,
     };
   });
@@ -92,7 +93,8 @@ export function readOutputs(json) {
 // The inspect shape: { status, outcome, steps, branch, pr, head, digest, source, ownerPid, totals }. The branch, pull request
 // and head come from the run's returned value (the pack's last step returns them); `digest` is the digest of the
 // workflow source the run froze and `source` the folder Archon froze it into; `ownerPid` is the process that owns the run (All stop ends its tree).
-export function readRecord(json) {
+// `rates(model)` is the rate a counted provider's model counts at, one for each when no list is given.
+export function readRecord(json, { rates = ONE_EACH } = {}) {
   const metadata = isObject(json?.metadata) ? json.metadata : {};
   const returns = json?.terminal_record?.returns;
   const value = returns?.availability === 'available' && isObject(returns.value) ? returns.value : {};
@@ -100,7 +102,7 @@ export function readRecord(json) {
   return {
     status: STATUS[json?.status] ?? 'unknown',
     outcome: outcomeOf(json ?? {}),
-    steps: stepsOf(json?.nodes),
+    steps: stepsOf(json?.nodes, rates),
     branch: typeof value.branch === 'string' ? value.branch : null,
     pr: typeof value.pr === 'string' || typeof value.pr === 'number' ? value.pr : null,
     head: typeof value.head === 'string' ? value.head : null,

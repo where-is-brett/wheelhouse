@@ -542,7 +542,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     const waiting = Object.entries(ready).filter(([pr, r]) => !ended(r.work) && !closedPrs.has(Number(pr)));
     const newReady = waiting.some(([pr]) => !state.seenReady.includes(pr));
     const requests = typeof engine.countsRequests === 'function'
-      ? { counts: () => engine.countsRequests(config()?.routing ?? {}) === true, used: spentThisMonth(), cap: Number.isFinite(s.capRequests) ? s.capRequests : 0, confirmed: engine.requestsConfirmed === true }
+      ? { counts: () => engine.countsRequests(config()?.routing ?? {}) === true, used: await spentThisMonth(), cap: Number.isFinite(s.capRequests) ? s.capRequests : 0, confirmed: engine.requestsConfirmed === true }
       : null;
     const decided = dispatch({
       work: views.work ?? {}, runs: views.runs ?? {}, reports, features: views.features ?? {}, settings: s, stop: stopped(),

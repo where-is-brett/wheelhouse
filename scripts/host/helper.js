@@ -4471,12 +4471,33 @@ export async function startHelper({
     const write = (kind, data) => engineWrite(project, kind, data);
     const folder = registeredProjects().find((p) => p.project === project)?.record.folder;
     const month = () => now().toISOString().slice(0, 7);
+    const estimated = () => Object.values(views().costs ?? {}).flat().filter((c) => String(c.at).startsWith(month())).reduce((n, c) => n + (Number.isFinite(c.data?.premiumRequests) ? c.data.premiumRequests : 0), 0);
+    // This month's counted requests, for the cap: the meter's estimate, or, where the engine checks it against the
+    // provider's own figure once a day (its checkRequests), that figure; a difference is a Logbook line. Only for a
+    // project whose runs count requests.
+    const meterFile = path.join(files, 'requests.json');
+    async function requestsUsed() {
+      if (typeof engine.checkRequests !== 'function' || engine.countsRequests?.(engineConfigOf(project, folder)?.routing ?? {}) !== true) return estimated();
+      let kept = null;
+      try { kept = JSON.parse(fs.readFileSync(meterFile, 'utf8')); } catch { /* the first check */ }
+      try {
+        const got = await engine.checkRequests({ estimate: estimated, kept, run, now: now() });
+        if (JSON.stringify(got.kept) !== JSON.stringify(kept)) {
+          fs.mkdirSync(files, { recursive: true, mode: 0o700 });
+          fs.writeFileSync(meterFile, `${JSON.stringify(got.kept, null, 2)}\n`, { mode: 0o600 });
+          if (got.line) await write('note', { about: 'engine', words: got.line }).catch(() => {});
+        }
+        return got.used;
+      } catch {
+        return estimated();
+      }
+    }
     const dispatcher = dispatchRun({
       engine, project, folder, file: path.join(files, 'dispatch.json'), readViews: views, settings, stopped, now, write,
       config: () => engineConfigOf(project, folder),
       start: (args) => engineRun.start(args),
       readyOf: () => engineRun.readyAll(project),
-      spentThisMonth: () => Object.values(views().costs ?? {}).flat().filter((c) => String(c.at).startsWith(month())).reduce((n, c) => n + (Number.isFinite(c.data?.premiumRequests) ? c.data.premiumRequests : 0), 0),
+      spentThisMonth: () => requestsUsed(),
       mainGreen: () => mainGreen(project),
       stoppedRuns: () => stoppedRunsOf(project),
       fixedRuns: () => engineRun.fixedRuns(project),
