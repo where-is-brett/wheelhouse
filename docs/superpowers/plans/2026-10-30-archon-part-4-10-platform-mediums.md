@@ -11,6 +11,7 @@
 |---|---|---|---|
 | 1 | #120 M5 | The engine builds on GitHub only (design on Archon, section 16). A Mac whose projects are all on GitLab still got the engine in step 2, Wheelhouse at user scope and the login start in step 6, and the engine's line on the one card. `engineWanted` now takes the hosts of the projects on this computer, the one being set up included. A project whose host isn't chosen yet counts as one that may be on GitHub. | `scripts/engine/parts.js`, `scripts/setup/tools.js`, `scripts/setup/computer.js`, `scripts/setup/choices.js`, `scripts/setup/engine.js` |
 | 2 | #120 M7 | A Windows or Linux computer with a project on the engine could get a 'build engine' health finding that it can't clear, since step 2 installs the engine on the Mac only. The engine is now given to a project only on a computer that runs it, so off the Mac the project's work goes to the old engine and health has no engine checks. Setup's step 7 writes the fetch mirror's rule only where the engine runs. | `scripts/host/helper-main.js`, `scripts/setup/project-files.js` |
+| 3 | foreman | A second Mac joining a project already on the engine never got the fetch mirror's rule, since step 7's joining path didn't write it, so the project stayed on the old engine there. The joining path now writes it, on the same terms as a new setup. | `scripts/setup/project-files.js` |
 
 ## Review
 
