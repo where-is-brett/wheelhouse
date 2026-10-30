@@ -482,9 +482,16 @@ test('a run whose models are all on Copilot starts the workflow\'s Copilot twin,
   assert.equal(part.ok, false);
   assert.match(part.refused, /every tier/);
   assert.equal(cli.calls.length, 2);
-  // The merge queue is Archon's own workflow, with no twin.
-  assert.equal((await engine.start({ lane: 'merge', bindings: all })).ok, true);
+  // The merge queue is Archon's own workflow, with no twin, and is told the repository it merges in (check 81).
+  assert.equal((await engine.start({ lane: 'merge', bindings: all, repo: { host: 'github.com', path: 'o/p' } })).ok, true);
   assert.deepEqual(cli.calls[2].args.slice(0, 3), ['workflow', 'run', 'archon-merge-queue']);
+  const inputs = cli.calls[2].args.flatMap((a, i, all) => (a === '--input' ? [all[i + 1]] : []));
+  assert.deepEqual(inputs, ['repo_host=github.com', 'repo_path=o/p']);
+  // With no repository, its first step would fail every time: nothing starts.
+  const bare = await engine.start({ lane: 'merge' });
+  assert.equal(bare.ok, false);
+  assert.match(bare.refused, /repository/);
+  assert.equal(cli.calls.length, 3);
 });
 
 test('a Copilot run doesn\'t start while Copilot\'s program or its clean home isn\'t in the engine as it should be: its guards would not stand', async () => {
