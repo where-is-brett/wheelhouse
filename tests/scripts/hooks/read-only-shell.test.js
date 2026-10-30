@@ -31,7 +31,7 @@ test('a reading command passes: git\'s reading commands, the file readers, searc
     'git diff main...HEAD', 'git -C sub log --oneline -5', 'git show HEAD:src/a.js', 'git status --short', 'git diff --stat 2>&1 | head -50',
     'cat src/a.js', 'sed -n 1,80p src/a.js', 'sed -n \'10,$p\' a.js', 'grep -rn "TODO" src', 'rg -n foo src | wc -l', 'ls -la',
     'find src -name "*.test.js"', 'head -20 a.js; tail -5 b.js', 'cd src && ls', 'sort a.txt | uniq -c', 'wc -l a.js 2>/dev/null',
-    'diff a.js b.js || true', 'echo done', '(cd src; ls) | head', 'git diff HEAD...abc123', 'git log --format=%s -3 && git diff HEAD~1 --name-only', 'jq .name package.json',
+    'diff a.js b.js || true', 'file src/a.js', 'git cat-file -p HEAD:a', 'echo done', '(cd src; ls) | head', 'git diff HEAD...abc123', 'git log --format=%s -3 && git diff HEAD~1 --name-only', 'jq .name package.json',
   ]) assert.equal(shellWrite(command), null, command);
 });
 
@@ -44,6 +44,6 @@ test('a command that writes, or might, is named: redirects to a file, editors in
     'find . -name x -delete', 'find . -exec rm {} ;', 'find . -fprint out', 'sort -o a a', 'sort --output=a a', 'uniq a b', 'rg --pre sh x',
     'node -e "require(\'fs\').writeFileSync(\'a\',\'\')"', 'npm test', 'python3 x.py', 'sh -c "touch a"', 'bash x.sh', 'awk \'{print > "f"}\' a',
     'xargs rm < list', 'env touch a', 'FOO=1 touch a', 'echo $(touch a)', 'echo `touch a`', 'perl -pi -e s/a/b/ a', 'dd of=a', 'curl -o a x',
-    'cat <<EOF > a.txt\nhi\nEOF', 'echo "unclosed', 'git diff $(git merge-base a HEAD) a', 'diff <(ls) b', '(ls) | touch a',
+    'cat <<EOF > a.txt\nhi\nEOF', 'echo "unclosed', 'git diff $(git merge-base a HEAD) a', 'sort --compress-program=sh a', 'sort -T /tmp a', 'sort --temporary-directory=x a', 'file -C -m x', 'file --compile -m x', 'git cat-file --filters HEAD:a', 'diff <(ls) b', '(ls) | touch a',
   ]) assert.ok(typeof shellWrite(command) === 'string' && shellWrite(command) !== '', command);
 });

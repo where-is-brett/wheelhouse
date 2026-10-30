@@ -32,14 +32,14 @@ const GIT_READS = new Set(['diff', 'log', 'show', 'status', 'ls-files', 'ls-tree
   'merge-base', 'grep', 'shortlog', 'describe', 'name-rev', 'diff-tree', 'diff-index', 'diff-files', 'show-ref', 'for-each-ref',
   'whatchanged', 'cherry', 'range-diff', 'show-branch', 'count-objects']);
 const GIT_VALUE_OPTIONS = new Set(['-C', '--git-dir', '--work-tree', '--namespace']);
-const GIT_REFUSED_OPTION = /^(-c|--config-env|--exec-path|--output|-O|--open-files-in-pager|--ext-diff|--textconv)(=|$)|^-O./;
+const GIT_REFUSED_OPTION = /^(-c|--config-env|--exec-path|--output|-O|--open-files-in-pager|--ext-diff|--textconv|--filters)(=|$)|^-O./;
 // Commands that only read, and for each the options that would make it write or run something.
 const READERS = {
   cat: null, head: null, tail: null, wc: null, ls: null, pwd: null, echo: null, printf: null, grep: null, egrep: null,
-  fgrep: null, diff: null, cmp: null, file: null, stat: null, basename: null, dirname: null, realpath: null, which: null,
+  fgrep: null, diff: null, cmp: null, stat: null, basename: null, dirname: null, realpath: null, which: null,
   true: null, false: null, test: null, '[': null, cut: null, tr: null, nl: null, column: null, comm: null, jq: null, cd: null,
   od: null, hexdump: null, du: null, df: null, date: null, git: null, sed: null, find: null, sort: null, uniq: null, rg: null,
-  tree: /^-o$/,
+  tree: /^-o$/, file: /^(-[A-Za-z]*C|--compile)/,
 };
 const FIND_REFUSED = /^-(delete|exec|execdir|ok|okdir|fprint|fprint0|fprintf|fls)$/;
 // A sed script that only prints lines: `N`, `N,M`, `N,$` or `$`, then p, perhaps several joined by ;.
@@ -73,7 +73,7 @@ function commandWrite(words) {
     return scripts.every((s) => SED_PRINT.test(s)) ? null : 'only sed\'s scripts that print lines (sed -n 1,80p) are read here';
   }
   if (name === 'find') return args.some((a) => FIND_REFUSED.test(a)) ? 'find deletes, writes or runs a program with that option' : null;
-  if (name === 'sort') return args.some((a) => /^(-o|--output)/.test(a)) ? 'sort writes a file with that option' : null;
+  if (name === 'sort') return args.some((a) => /^(-o|--output|-T|--temporary-directory|--compress-program)/.test(a)) ? 'sort writes a file or runs a program with that option' : null;
   if (name === 'uniq') return args.filter((a) => !a.startsWith('-')).length > 1 ? 'uniq writes its second file' : null;
   if (name === 'rg') return args.some((a) => /^--pre(=|$)/.test(a)) ? 'rg runs a program with that option' : null;
   return null;
