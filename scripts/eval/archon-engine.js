@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildPack } from '../engine/pack-build.js';
+import { ENGINE_PACK_FORMS } from '../engine/archon/adapter.js';
 import { WHEELHOUSE_PLUGIN } from '../engine/pack-check.js';
 import { buildFromSource, enginePaths, launcherText } from '../engine/archon/build.js';
 
@@ -73,7 +74,7 @@ export function linkEngine({ cache, engine, plugin = null }) {
   fs.mkdirSync(path.dirname(broker), { recursive: true });
   fs.writeFileSync(broker, brokerText());
   fs.chmodSync(broker, 0o755);
-  buildPack({ out: path.join(engine, 'pack') });
+  buildPack({ out: path.join(engine, 'pack'), forms: ENGINE_PACK_FORMS });
   if (plugin) namePlugin(path.join(engine, 'pack'), plugin);
   return { broker, packDir: path.join(engine, 'pack') };
 }

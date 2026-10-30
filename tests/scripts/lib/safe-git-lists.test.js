@@ -588,9 +588,23 @@ function ghCallsIn(root) {
   return found;
 }
 
+// gh calls that are about the signed-in account, not a repository, so there is none to name. Each row is one call: its
+// file and its api path.
+const ACCOUNT_CALLS = Object.freeze([
+  { file: 'scripts/engine/archon/copilot-meter.js', path: '/copilot_internal/user', reason: 'the account\'s Copilot premium-request figure, read once a day by the helper (never in the engine\'s environment) with the director\'s own gh sign-in; it is per user, so no repository applies' },
+]);
+const accountCall = (c) => ACCOUNT_CALLS.some((a) => a.file === c.file && c.call.includes(`'api', '${a.path}'`));
+
+test('9: every account call is still in its file, with a reason', () => {
+  for (const a of ACCOUNT_CALLS) {
+    assert.ok(a.reason.length > 0);
+    assert.ok(ghCallsIn(ROOT).some((c) => c.file === a.file && accountCall(c)), `${a.file} still calls ${a.path}, or its row goes`);
+  }
+});
+
 test('9: scan - every gh and glab call in scripts/ names its repository', () => {
   assert.equal(PROJECT_CONDITIONS.ghNamesRepository, true);
-  const calls = ghCallsIn(ROOT);
+  const calls = ghCallsIn(ROOT).filter((c) => !accountCall(c));
   assert.ok(calls.length > 30, 'the scan sees the adapter\'s command lines');
   assert.ok(calls.some((c) => c.file === 'scripts/host/github.js' && c.named));
   assert.ok(calls.some((c) => c.file === 'scripts/host/gitlab.js' && c.named));

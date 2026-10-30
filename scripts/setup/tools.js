@@ -46,7 +46,8 @@ import { fileURLToPath } from 'node:url';
 import { run as realRun } from '../lib/run.js';
 import { NODE_FLOOR } from '../lib/setup-numbers.js';
 import { HOST_TOOLS, toolFolder, fetchedPath, toolPath } from '../lib/host-tools.js';
-import { wheelhouseHome } from '../lib/paths.js';
+import { wheelhouseHome, computerId } from '../lib/paths.js';
+import { agentOfProject } from '../agents/names.js';
 import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
 import { setupCommand, allowRule } from '../protection/settings.js';
 import { detectHost } from '../host/adapter.js';
@@ -60,7 +61,7 @@ import { projectForFolder, registeredProjects } from '../lib/projects.js';
 import { engineWanted, engineChanges, applyEngine } from './engine-parts.js';
 
 // Step 2's changes the engine's own apply makes (scripts/setup/engine-parts.js).
-const ENGINE_ACTIONS = ['engine', 'archon-settings', 'broker'];
+const ENGINE_ACTIONS = ['engine', 'archon-settings', 'broker', 'agent-engine'];
 
 export const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -794,6 +795,7 @@ function cardFor(changes, status, platform) {
   }
   if (changes.some((c) => c.action === 'archon-settings')) full.push('the build engine set to run its steps with Claude');
   if (changes.some((c) => c.action === 'broker')) full.push('the engine\'s broker, so the engine reaches GitHub only through Wheelhouse\'s helper and never holds a key');
+  for (const c of changes.filter((x) => x.action === 'agent-engine')) full.push(c.words.full);
   if (rule) full.push(`${ruleWords} in this project's .claude/settings.local.json, so setup's own command is not asked about each time`);
   const terse = [];
   for (const c of processes) terse.push(c.action === 'wait' ? 'git: waiting for its installer' : 'git: its installer');
@@ -806,6 +808,7 @@ function cardFor(changes, status, platform) {
   if (changes.some((c) => c.action === 'engine')) terse.push('the build engine, Archon: pinned and checked, usage reporting off');
   if (changes.some((c) => c.action === 'archon-settings')) terse.push('the engine set to use Claude');
   if (changes.some((c) => c.action === 'broker')) terse.push('its broker to GitHub');
+  for (const c of changes.filter((x) => x.action === 'agent-engine')) terse.push(c.words.terse);
   if (rule) terse.push(ruleWords);
   const card = (what) => ({
     kind: 'setup',
@@ -901,7 +904,7 @@ export function toolsStep({
         if (missing.length > 0) changes.push({ kind: 'json-key', target: file, key: ['permissions', 'allow'], after: [...allow, ...missing], added: missing.length });
       }
       // The build engine and its broker, where this computer runs it (scripts/setup/engine-parts.js).
-      if (engine?.wanted({ platform, hosts: projectHosts({ folder: ctx.folder, answers: ctx.answers }) })) changes.push(...engine.changes());
+      if (engine?.wanted({ platform, hosts: projectHosts({ folder: ctx.folder, answers: ctx.answers }) })) changes.push(...engine.changes({ agent: agentOfProject(ctx.folder, { computerId: computerId() }) }));
       // Nothing to do settles the step, with no Go ahead (ruling R75).
       if (changes.length === 0) return { settled: { record: { nothing: true } } };
       return { changes, card: cardFor(changes, status, platform), director: directorFor(changes, platform) };

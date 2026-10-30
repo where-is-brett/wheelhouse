@@ -10,7 +10,7 @@ import { run } from '../lib/run.js';
 import { makeAdapter } from './adapter.js';
 import { startHelper, envForConnection } from './helper.js';
 import { startedAsScript } from '../lib/started-as-script.js';
-import { archonAdapter } from '../engine/archon/adapter.js';
+import { archonAdapter, ENGINE_PACK_FORMS } from '../engine/archon/adapter.js';
 import { buildPack } from '../engine/pack-build.js';
 import { settingsViews } from '../desk/mod-records.js';
 import { effectiveSettings } from '../settings/effective.js';
@@ -31,7 +31,7 @@ export const ENGINE_CONFIG = path.resolve(path.dirname(fileURLToPath(import.meta
 export function packedArchon({ engine = engineDir(), build = buildPack, adapter = archonAdapter } = {}) {
   const packDir = path.join(engine, 'pack');
   let built = true;
-  try { build({ out: packDir }); } catch { built = false; }
+  try { build({ out: packDir, forms: ENGINE_PACK_FORMS }); } catch { built = false; }
   return adapter({ engine, packDir: built ? packDir : undefined, configFile: ENGINE_CONFIG });
 }
 

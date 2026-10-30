@@ -57,3 +57,25 @@ test('work started again carries the director\'s answers in its order, and no ot
   await t.d.startAgain({ work: 'card-1', lane: 'quick', branch: 'wh/card-1', carryOn: true });
   assert.deepEqual(t.starts[1].order.answers, []);
 });
+
+test('work routed to a provider that counts requests waits while the count the cap reads, given in its own time, is at the cap', async () => {
+  const dir = tempFolder('wh-dr-');
+  const starts = [];
+  const engine = { ...fakeEngine(), countsRequests: () => true, requestsConfirmed: true };
+  let used = 0;
+  const d = dispatchRun({
+    engine, project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'), readViews: views,
+    config: () => ({ routing: { tiers: { medium: 'counted/model' } }, testCommand: 'node --test' }),
+    settings: () => ({ capRequests: 5 }),
+    // The provider's own figure is read in its own time, so the count may come as a promise.
+    spentThisMonth: async () => used,
+    start: async (args) => { starts.push(args); return { ok: true, runId: `run-${starts.length}` }; },
+    now: () => new Date('2026-10-29T10:00:00.000Z'),
+  });
+  used = 5;
+  await d.tick();
+  assert.equal(starts.length, 0, 'at the cap');
+  used = 4;
+  await d.tick();
+  assert.equal(starts.length, 1);
+});
