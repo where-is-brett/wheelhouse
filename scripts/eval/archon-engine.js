@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { buildPack } from '../engine/pack-build.js';
 import { ENGINE_PACK_FORMS } from '../engine/archon/adapter.js';
 import { WHEELHOUSE_PLUGIN } from '../engine/pack-check.js';
-import { buildFromSource, enginePaths, launcherText } from '../engine/archon/build.js';
+import { buildFromSource, CANCEL_PATCH_MARK, enginePaths, launcherText } from '../engine/archon/build.js';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -21,7 +21,9 @@ export function engineCache(env = process.env) {
 // Whether `cache` holds a finished build: the launcher, the patched source and the pinned Bun.
 export function cacheBuilt(cache) {
   const p = enginePaths(cache);
-  return fs.existsSync(p.launcher) && fs.existsSync(p.provider) && fs.existsSync(p.bunBin);
+  let cancel = '';
+  try { cancel = fs.readFileSync(p.cancelOperation, 'utf8'); } catch { /* read as unpatched */ }
+  return fs.existsSync(p.launcher) && fs.existsSync(p.provider) && fs.existsSync(p.bunBin) && cancel.includes(CANCEL_PATCH_MARK);
 }
 
 // Builds the engine into `cache` unless it is built already (network: Archon's source and its packages, the pinned

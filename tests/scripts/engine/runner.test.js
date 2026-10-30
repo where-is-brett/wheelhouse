@@ -152,6 +152,25 @@ test('a second hold while a red-main incident is open writes no second incident'
   } finally { t.cleanup(); }
 });
 
+test('an ask of a run All stop cancelled never comes back, and its answer says so', async () => {
+  const t = setUp();
+  try {
+    const { runId } = t.engine.start({ recording: 'one' });
+    await t.runner.onAsk(t.engine.watch('0').events.find((e) => e.type === 'ask'));
+    const q = t.writes.find((w) => w.kind === 'question').data;
+    t.world.stop = true;
+    await t.engine.stopAll('All stop');
+    t.views.questions[q.id] = { question: { data: q }, answer: { label: q.options[0].label } };
+    await t.runner.tick();
+    assert.match(t.writes.filter((w) => w.kind === 'note').at(-1).data.words, /it had cancelled that work/);
+    t.world.stop = false;
+    await t.runner.tick();
+    assert.equal(t.writes.filter((w) => w.kind === 'question').length, 1, 'no new card for a run that has ended');
+    assert.equal(t.engine.inspect(runId).status, 'ended');
+    assert.equal(acts(t.engine).length, 0);
+  } finally { t.cleanup(); }
+});
+
 test('a hold under All stop opens no incident until it is answered after the lift', async () => {
   const t = setUp({ recordings: { hold: holding('h1') }, stop: true });
   try {
@@ -408,7 +427,7 @@ test('a paused run at its cap is held, not cancelled: it spends nothing while it
   try {
     assert.equal(t.engine.inspect(runId).status, 'paused');
     await t.runner.tick();
-    assert.equal(acts(t.engine).length, 0, 'Archon cancels only running runs, so none is asked for');
+    assert.equal(acts(t.engine).length, 0, 'a paused run spends nothing, and Give it more can still carry it on, so it is held, not cancelled');
     assert.deepEqual(ended, [], 'a paused run has no processes to end');
     const q = capCard(t);
     assert.equal(q.level, 3);
@@ -447,13 +466,13 @@ test("an ask a held run raises waits for the hold, and Stop never sends it", asy
     answerCap(t, 'Stop');
     await t.runner.tick();
     await t.runner.tick();
-    assert.equal(acts(t.engine).length, 0);
+    assert.ok(acts(t.engine).every((c) => c.action.cancel), 'no answer goes to it');
     assert.equal(t.writes.filter((w) => w.kind === 'question').length, 1, 'its ask never becomes a card');
     assert.ok(t.writes.some((w) => w.kind === 'note' && /stays stopped/.test(w.data.words ?? '')));
   } finally { t.cleanup(); }
 });
 
-test('Stop on a held run ends it in the record, so it gives back its build slot, and nothing is sent to the engine', async () => {
+test('Stop on a held run cancels it in the engine and ends it in the record, so it gives back its build slot', async () => {
   const { t, runId } = pausedAtCap();
   try {
     await t.runner.tick();
@@ -462,13 +481,27 @@ test('Stop on a held run ends it in the record, so it gives back its build slot,
     const ended = t.writes.filter((w) => w.kind === 'run' && w.data.runId === runId);
     assert.equal(ended.length, 1);
     assert.deepEqual(ended[0].data, { work: 'sale-banner', lane: 'quick', engine: 'fake', runId, state: 'ended', outcome: 'stopped', branch: 'wh/sale-banner' });
-    assert.equal(acts(t.engine).length, 0, 'a paused run is never abandoned, so its worktree is kept');
-    assert.equal(t.engine.inspect(runId).status, 'paused');
+    assert.deepEqual(acts(t.engine).map((c) => Object.keys(c.action)), [['cancel']], 'cancelled, never abandoned, so its worktree is kept');
+    assert.equal(t.engine.inspect(runId).status, 'ended');
     assert.ok(t.writes.some((w) => w.kind === 'note' && /no longer holds a build slot/.test(w.data.words ?? '')));
     await t.runner.tick();
     assert.equal(t.writes.filter((w) => w.kind === 'run').length, 1, 'once');
     await t.runner.onAsk({ ...t.engine.watch('0').events.filter((e) => e.runId === runId && e.type === 'ask').at(-1), id: 'again' });
     assert.equal(t.writes.filter((w) => w.kind === 'question').length, 1, 'an ask the stopped run shows again is no card');
+  } finally { t.cleanup(); }
+});
+
+test('Stop on a held run an engine built without the patch refuses to cancel leaves it paused, and the record still ends it', async () => {
+  const { t, runId } = pausedAtCap();
+  try {
+    await t.runner.tick();
+    const act = t.engine.act;
+    t.engine.act = (id, action) => (action.cancel ? { ok: false, refused: "The run isn't running, so there is nothing to cancel" } : act(id, action));
+    answerCap(t, 'Stop');
+    await t.runner.tick();
+    assert.equal(t.engine.inspect(runId).status, 'paused');
+    assert.equal(t.writes.filter((w) => w.kind === 'run' && w.data.runId === runId).length, 1);
+    assert.ok(t.writes.some((w) => w.kind === 'note' && /stays paused in the build engine/.test(w.data.words ?? '')));
   } finally { t.cleanup(); }
 });
 
@@ -483,7 +516,7 @@ test("an answer to a stopped held run's own earlier card never reaches the engin
     t.views.questions[asked.id] = { question: { data: asked }, answer: { label: 'A' } };
     await t.runner.tick();
     await t.runner.tick();
-    assert.equal(acts(t.engine).length, 0, 'nothing is sent to the stopped run');
+    assert.ok(acts(t.engine).every((c) => c.action.cancel), 'no answer is sent to the stopped run');
     assert.ok(t.writes.some((w) => w.kind === 'note' && /you stopped it at its cap/.test(w.data.words ?? '')));
   } finally { t.cleanup(); }
 });

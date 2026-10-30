@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { CLAUDE_CODE_FLOOR } from '../lib/build-loop.js';
 import { run } from '../lib/run.js';
 import { reachFor, safeGit } from '../lib/safe-git.js';
+import { readCopies } from './copies.js';
 import { fingerprintFile, fingerprintTree } from './fingerprint.js';
 import { checkAnchors, checkCarried, readRegister } from './register.js';
 import { startedAsScript } from '../lib/started-as-script.js';
@@ -90,6 +91,7 @@ export function readManifest(root = repoRoot()) {
     && typeof manifest.claudeCode?.floor === 'string'
     && typeof manifest.models === 'string'
     && (manifest.agents === undefined || pinsOk(manifest.agents))
+    && (manifest.copies === undefined || isHashed(manifest.copies))
     && Array.isArray(manifest.upstreams)
     && manifest.upstreams.every((u) => isObject(u)
       && ['name', 'plugin', 'repo', 'ref', 'sha'].every((key) => typeof u[key] === 'string')
@@ -189,7 +191,7 @@ export async function fetchUpstream(upstream, dir) {
 export const agentPins = (pins = AGENT_PINS) => Object.fromEntries(Object.entries(pins).map(([name, pin]) => [name, { cli: pin.cli }]));
 
 // The manifest for the upstream copies in `roots` (name -> folder), fingerprinted.
-export function buildManifest({ roots, version, upstreams = UPSTREAMS, pins = AGENT_PINS, engine = ENGINE_PINS }) {
+export function buildManifest({ roots, version, upstreams = UPSTREAMS, pins = AGENT_PINS, engine = ENGINE_PINS, copiesRoot = repoRoot() }) {
   return {
     v: 1,
     wheelhouse: { version },
@@ -205,6 +207,8 @@ export function buildManifest({ roots, version, upstreams = UPSTREAMS, pins = AG
         files: upstream.files.map((file) => ({ path: file, hash: fingerprintFile(path.join(root, ...file.split('/'))).hash })),
       };
     }),
+    // Wheelhouse's own skill copies, for the hold of a project whose steps read them (scripts/lineage/check.js).
+    copies: readCopies(copiesRoot).map(({ name }) => ({ path: `skills/${name}`, hash: fingerprintTree(path.join(copiesRoot, 'skills', name)).hash })),
     claudeCode: { floor: CLAUDE_CODE_FLOOR },
     agents: agentPins(pins),
     engine: manifestPins(engine),

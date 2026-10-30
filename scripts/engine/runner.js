@@ -11,8 +11,8 @@
 // cancelled, its worktree kept, and a cap card asks Give it more or Stop. Give it more resumes a run that stopped on
 // a failure, skipping finished steps; a cancelled run can't be resumed (check 78), so it is started again on its
 // branch to carry on from what's there, with the cap raised once and the spend before it carried. A run paused at its
-// cap spends nothing, and the engine cancels only running runs, so it is held instead: none of its answers goes back
-// until Give it more lifts the hold. A run that ended gets one `cost` record.
+// cap spends nothing, so it is held instead, which keeps Give it more's way of carrying it on: none of its answers goes
+// back until Give it more lifts the hold, and Stop cancels it. A run that ended gets one `cost` record.
 import fs from 'node:fs';
 import path from 'node:path';
 import { composeCard } from '../cards/compose.js';
@@ -275,10 +275,13 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       }
       if (stopped()) {
         state.delivered[key] = 'stop';
-        // The ask is still open in the engine: it comes back as a new card once All stop is lifted.
-        if (kept.ask?.type === 'ask') state.later.push(kept.ask);
+        const over = (await inspect(kept.runId))?.status === 'ended';
+        // The ask is still open in the engine unless All stop cancelled its run: it comes back as a new card once All stop is lifted.
+        if (!over && kept.ask?.type === 'ask') state.later.push(kept.ask);
         keep();
-        await note(`All stop was on when you answered about ${titled(kept.work)}, so the build didn't get that answer; the question comes back once All stop is lifted.`, { work: kept.work });
+        await note(over
+          ? `All stop was on when you answered about ${titled(kept.work)}, and it had cancelled that work, so the answer isn't used. What the work did is kept on its branch.`
+          : `All stop was on when you answered about ${titled(kept.work)}, so the build didn't get that answer; the question comes back once All stop is lifted.`, { work: kept.work });
         continue;
       }
       // Stopped at its cap by the director: the record has ended it, so no answer goes back to carry it on.
@@ -356,8 +359,10 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   async function capAnswer(kept, label) {
     if (label !== MORE) {
       if (held(kept.runId)) {
-        // The engine can't cancel a paused run, and abandoning one would remove its worktree's uncommitted work, so
-        // it stays paused there, spending nothing; the record ends it, which gives back its build slot.
+        // The cancel keeps its worktree; abandoning it would remove the uncommitted work. An engine built without the
+        // patch for paused runs refuses, and the run stays paused there, spending nothing. Either way the record ends
+        // it, which gives back its build slot.
+        const cancelled = (await safely(() => engine.act(kept.runId, { cancel: { reason: 'the director stopped it at its cap' } })))?.ok === true;
         state.capped[kept.runId].held = false;
         state.capped[kept.runId].stopped = true;
         // Its asks not yet shown never become cards.
@@ -373,7 +378,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
             runId: kept.runId, state: 'ended', outcome: 'stopped', ...(branch ? { branch } : {}),
           });
         }
-        await note(`${titleOf(kept.work)} stays stopped, as you chose. It stays paused in the build engine, spending nothing, and no longer holds a build slot; what it has done so far is kept on its branch.`, { work: kept.work });
+        await note(`${titleOf(kept.work)} stays stopped, as you chose. ${cancelled ? 'It' : 'It stays paused in the build engine, spending nothing, and'} no longer holds a build slot; what it has done so far is kept on its branch.`, { work: kept.work });
         return;
       }
       await note(`${titleOf(kept.work)} stays stopped, as you chose.`, { work: kept.work });
@@ -518,7 +523,8 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     state.later = state.later.filter((ask) => held(ask.runId));
     for (const ask of later) delete state.routed[ask.id];
     keep();
-    for (const ask of later) await onAsk(ask);
+    // A run All stop cancelled has nothing left to ask.
+    for (const ask of later) if ((await inspect(ask.runId))?.status !== 'ended') await onAsk(ask);
   }
 
   return {

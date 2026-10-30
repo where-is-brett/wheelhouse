@@ -97,6 +97,7 @@ function readOpened(text) {
 export function engineRoutes({
   projects, engineFor, ordersDir, write, held = () => false, now = () => new Date(),
   filesDir = (project) => path.join(ordersDir(project), '..'), digests = { installed: () => null, captured: () => null }, comment,
+  projectAgents = async () => null, recheckCopies = async () => ({ ok: true }),
   host, provenance, previewsDir = (project) => path.join(filesDir(project), 'previews'),
   incidentOf = () => null, changesOf = async () => null, merge = async () => ({ ok: false, refused: 'the helper can\'t merge here' }),
   refresh = async () => ({ ok: true }),
@@ -116,6 +117,20 @@ export function engineRoutes({
   // The hash of a run's ticket, kept beside its order.
   const ticketFile = (project, runId) => path.join(ordersDir(project), `${runId}.ticket`);
 
+  // Where a run starts on an agent whose steps read Wheelhouse's own skill copies, the project's hold is re-checked
+  // against those copies, so it lifts by itself once they match. Only when the default branch's configuration and the
+  // main checkout's both name that agent (ruling P8-33): otherwise the hold stands as it is, and the kits decide it.
+  // Gives why the run can't start, or null.
+  async function recheckHold(project, folder, engine, bindings) {
+    const agent = engine.stepAgent?.(bindings) ?? null;
+    if (agent === null) return null;
+    let agents = null;
+    try { agents = await projectAgents(project, folder); } catch { /* the hold stands */ }
+    if (agents?.branch !== agent || agents?.checkout !== agent) return null;
+    const result = await recheckCopies(project, folder);
+    return result?.ok === true ? null : "Wheelhouse's own skill copies differ from its manifest, so the project is held and no run started";
+  }
+
   // Starts a run of `order` for `project` and keeps its order under the run's id; writes the run's ticket into the
   // run's artefacts folder and keeps its hash; writes the run's start in the project's record, which is how the
   // continuation host knows the run is the project's. The helper's own: no route reaches it.
@@ -132,6 +147,8 @@ export function engineRoutes({
     let fresh;
     try { fresh = await refresh(project); } catch (error) { fresh = { ok: false, refused: error instanceof Error ? error.message : null }; }
     if (fresh?.ok !== true) return { ok: false, refused: `the engine's copy of the project couldn't be brought up to date${fresh?.refused ? ` (${fresh.refused})` : ''}, so no run started` };
+    const stands = await recheckHold(project, found.folder, engine, order.bindings);
+    if (stands) return { ok: false, refused: stands };
     const started = await engine.start({ work: order.work, lane: order.lane, branch, carryOn: carryOn === true, project: found.folder, bindings: order.bindings });
     if (!started?.ok) return { ok: false, refused: started?.refused ?? 'the engine didn\'t start the run' };
     storeOf(project).save(started.runId, order);

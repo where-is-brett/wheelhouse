@@ -31,7 +31,7 @@ export const BUN_PIN = Object.freeze({
 });
 
 // The patches applied to the source, in order, from patch/ beside this file.
-export const PATCHES = Object.freeze(['claude-permission-mode.patch', 'provider-cli-path.patch']);
+export const PATCHES = Object.freeze(['claude-permission-mode.patch', 'provider-cli-path.patch', 'paused-run-cancel.patch']);
 const PATCH_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'patch');
 
 // The value of ARCHON_CLAUDE_PERMISSION_MODE that the patch reads.
@@ -41,6 +41,8 @@ export const PATCH_MARK = 'ARCHON_CLAUDE_PERMISSION_MODE';
 // What the Copilot patch's resolver holds (provider-cli-path.patch): a source build then runs the CLI COPILOT_BIN_PATH
 // names, the one the engine pins, rather than the SDK's own runtime.
 export const CLI_PATCH_MARK = 'Wheelhouse: a source build honours COPILOT_BIN_PATH';
+// What the cancel operation holds once paused-run-cancel.patch is applied: `workflow cancel` then takes a paused run.
+export const CANCEL_PATCH_MARK = 'Wheelhouse: a paused run cancels too';
 
 const TELEMETRY = { ARCHON_TELEMETRY_DISABLED: '1', DO_NOT_TRACK: '1', POSTHOG_API_KEY: 'off' };
 const SYSTEM_PATH = ['/usr/bin', '/bin', '/usr/sbin', '/sbin'];
@@ -70,6 +72,7 @@ export function enginePaths(engine) {
     bunfig: path.join(engine, 'archon', 'bunfig.toml'),
     provider: path.join(engine, 'archon', 'src', 'packages', 'providers', 'src', 'claude', 'provider.ts'),
     cliResolver: path.join(engine, 'archon', 'src', 'packages', 'providers', 'src', 'community', 'copilot', 'binary-resolver.ts'),
+    cancelOperation: path.join(engine, 'archon', 'src', 'packages', 'core', 'src', 'operations', 'workflow', 'cancel.ts'),
   };
 }
 

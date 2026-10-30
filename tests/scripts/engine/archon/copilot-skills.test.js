@@ -23,6 +23,7 @@ test('the copies a step names are written to the worktree\'s .agents/skills/ by 
 });
 
 import { execFileSync } from 'node:child_process';
+import os from 'node:os';
 import { writeWorktreeSkills, main } from '../../../../scripts/engine/archon/copilot-skills.js';
 
 const gitIn = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t.invalid', ...args], { cwd, encoding: 'utf8' }).trim();
@@ -52,8 +53,8 @@ test('the copies are written into a run\'s worktree and kept out of git, so noth
   const excluded = fs.existsSync(exclude) ? fs.readFileSync(exclude, 'utf8') : '';
   assert.doesNotMatch(excluded, /agents/);
   assert.equal(fs.readFileSync(path.join(worktree, '.agents', 'skills', 'pr', '.gitignore'), 'utf8'), '*\n');
-  // Written again (a later step, or a carried-on run): nothing changes.
-  assert.deepEqual(writeWorktreeSkills({ worktree, names: ['pr'] }), { written: [], kept: ['pr'] });
+  // Written again (a later step, or a carried-on run): still kept out of git.
+  assert.deepEqual(writeWorktreeSkills({ worktree, names: ['pr'] }), { written: ['pr'], kept: [] });
   assert.equal(gitIn(worktree, 'status', '--porcelain', '--untracked-files=all'), '');
 });
 
@@ -86,4 +87,20 @@ test('the step\'s command writes the names it is given into the folder it runs i
   assert.deepEqual(JSON.parse(lines[0]), { written: ['codebase-design', 'pr'], kept: [] });
   assert.equal(main([], { cwd: worktree, out: (l) => lines.push(l) }), 2);
   assert.equal(main(['--names', 'nope'], { cwd: worktree, out: (l) => lines.push(l) }), 1);
+});
+
+test('a reused worktree\'s copy is written afresh, and a project\'s own skill of the same name is kept', () => {
+  const { worktree } = projectWithWorktree();
+  const from = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-skills-'));
+  const skill = (text) => { fs.mkdirSync(path.join(from, 'pr'), { recursive: true }); fs.writeFileSync(path.join(from, 'pr', 'SKILL.md'), text); };
+  skill('first\n');
+  writeWorktreeSkills({ worktree, names: ['pr'], copies: ['pr', 'tdd'], from });
+  fs.writeFileSync(path.join(worktree, '.agents', 'skills', 'pr', 'stale.md'), 'old\n');
+  skill('second\n');
+  assert.deepEqual(writeWorktreeSkills({ worktree, names: ['pr'], copies: ['pr', 'tdd'], from }), { written: ['pr'], kept: [] });
+  assert.equal(fs.readFileSync(path.join(worktree, '.agents', 'skills', 'pr', 'SKILL.md'), 'utf8'), 'second\n');
+  assert.ok(!fs.existsSync(path.join(worktree, '.agents', 'skills', 'pr', 'stale.md')));
+  fs.mkdirSync(path.join(worktree, '.agents', 'skills', 'tdd'));
+  fs.writeFileSync(path.join(worktree, '.agents', 'skills', 'tdd', 'SKILL.md'), 'the project\'s own\n');
+  assert.deepEqual(writeWorktreeSkills({ worktree, names: ['tdd'], copies: ['pr', 'tdd'], from }), { written: [], kept: ['tdd'] });
 });

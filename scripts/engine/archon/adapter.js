@@ -11,22 +11,23 @@
 //   inspect    archon workflow get <run> --verbose --json
 //   outputs    archon workflow get <run> --verbose --events --json
 //   stopAll    archon workflow status --all --json, and workflow get <run> --verbose --json for each known run it left out,
-//              then cancel each running or pending run   (stop.js ends what is left)
+//              then cancel each running, pending or paused run   (stop.js ends what is left)
 //   health     the launcher and the patch on disk; archon version; bun --version; archon ai tier list --json;
 //              archon telemetry status
 //   wake       archon workflow wake --watch --json   (wakeCommand: the continuation host starts and supervises it)
 import fs from 'node:fs';
 import { archonCli, archonCommand } from './cli.js';
 import { roomCommand } from '../room.js';
-import { ARCHON_SOURCE, BUN_PIN, CLI_PATCH_MARK, PATCH_MARK, enginePaths, launcherText } from './build.js';
+import { ARCHON_SOURCE, BUN_PIN, CANCEL_PATCH_MARK, CLI_PATCH_MARK, PATCH_MARK, enginePaths, launcherText } from './build.js';
 import { normaliseAsk, askOccurrence } from './asks.js';
 import { readRecord, readOutputs } from './record.js';
 import { readyWorkItem } from './work-item.js';
 import { PACK_FORMS, COPILOT_SUFFIX, PROVIDER as COPILOT } from './copilot-pack.js';
-import { checkRequests as meterCheck, readGitHubFigure } from './copilot-meter.js';
+import { checkRequests as meterCheck, readGitHubFigure, requestsFile as accountFile } from './copilot-meter.js';
 import { readAccountModels, requestRates } from '../../agents/copilot/column.js';
 import { engineHomeProblem } from '../../agents/copilot/engine-home.js';
-import { copilotCliInstalled } from './copilot-cli.js';
+import { copilotCliInstalled, copilotCliPaths } from './copilot-cli.js';
+import { signInOf } from '../../../adapters/copilot/sessions.js';
 import { brokerProblem } from '../parts.js';
 import path from 'node:path';
 import { engineDir, archonHome, projectSlug } from '../../lib/paths.js';
@@ -280,6 +281,15 @@ export function archonAdapter({
     checkRequests({ estimate, kept = null, run: ghRun = run, now: at = new Date() } = {}) {
       return meterCheck({ read: () => readGitHubFigure({ run: ghRun }), estimate, kept, now: at });
     },
+    // The file that count is kept in: one for the account signed in to the engine's clean home.
+    requestsFile() {
+      let signIn = null;
+      try { signIn = signInOf(copilotCliPaths(engine).home); } catch { /* the account can't be told */ }
+      return accountFile(engine, signIn);
+    },
+    // The agent whose steps a run with these models takes, when its steps read Wheelhouse's own skill copies rather
+    // than the kits the session start checks, or null. Its hold is re-checked where the run starts (routes.js).
+    stepAgent: (bindings) => (workflowFor('wheelhouse-quick', bindings).workflow?.endsWith(COPILOT_SUFFIX) ? 'copilot' : null),
     words: {
       requestsHeld: 'Some work is set to use Copilot, and every Copilot prompt uses your plan\'s monthly requests (about 200 a month), since your plan has no free model. The cap is 0, so no Copilot runs until you allow some.',
     },
@@ -313,6 +323,8 @@ export function archonAdapter({
       const read = (file) => { try { return fs.readFileSync(file, 'utf8'); } catch { return null; } };
       if (read(p.launcher) !== launcherText(engine) || !read(p.provider)?.includes(PATCH_MARK)) {
         findings.push("Archon isn't Wheelhouse's patched build from source, so its steps would run without the sandbox; no run starts until the engine is built again");
+      } else if (!read(p.cancelOperation)?.includes(CANCEL_PATCH_MARK)) {
+        findings.push("Archon was built before Wheelhouse's patch for paused runs, so All stop and the caps couldn't reach a run waiting at an ask; no run starts until the engine is built again");
       }
       const version = await cli(['version'], { timeout: CALL_MS });
       const got = /Archon CLI (v\S+)/.exec(version.stdout ?? '')?.[1];
@@ -480,9 +492,10 @@ export function archonAdapter({
       return refusedWith(refusal('take the pull request into its merge queue', put));
     },
 
-    // Cancels every running run, and every pending one (just started with --detach). A child run is cancelled with
-    // its parent; a paused run is doing nothing and Archon cancels only running ones, so it is listed in `paused`. A
-    // run whose cancel is refused is a survivor. `beforeCancel(runs)` is awaited with those runs, [{ id, folder }]
+    // Cancels every running run, every pending one (just started with --detach) and every paused one, whose worktree
+    // the cancel keeps (paused-run-cancel.patch). A child run is cancelled with its parent. A run whose cancel is
+    // refused is a survivor, but a paused one is listed in `paused`: it is doing nothing, and only an engine built
+    // without the patch refuses it. `beforeCancel(runs)` is awaited with those runs, [{ id, folder }]
     // (the worktree each works in, or null: worktreeOf), before any is cancelled, so All stop can take each run's
     // process tree while it is still whole (check 78). `known` are the runs the helper started and hasn't seen end:
     // `status --all` doesn't list a run started under about a second ago, so each one it left out is read by itself.
@@ -498,19 +511,19 @@ export function archonAdapter({
         const got = await cli(['workflow', 'get', id, '--verbose'], { json: true, timeout: CALL_MS });
         if (got.code === 0 && got.json?.ok !== false && got.json?.id === id) rows.push(got.json);
       }
-      const running = rows.filter((r) => r.status === 'running' || r.status === 'pending');
-      const ids = new Set(running.map((r) => r.id));
+      const going = rows.filter((r) => ['running', 'pending', 'paused'].includes(r.status));
+      const ids = new Set(going.map((r) => r.id));
       if (beforeCancel) {
-        const runs = running.map((r) => ({ id: r.id, folder: worktreeOf(r.working_path, { home, worktreeBases }) }));
+        const runs = going.map((r) => ({ id: r.id, folder: worktreeOf(r.working_path, { home, worktreeBases }) }));
         try { await beforeCancel(runs); } catch { /* the cancel goes ahead all the same */ }
       }
       const cancelled = [];
       const survivors = [];
-      for (const runRow of running.filter((r) => !r.parent_run_id || !ids.has(r.parent_run_id))) {
+      const paused = [];
+      for (const runRow of going.filter((r) => !r.parent_run_id || !ids.has(r.parent_run_id))) {
         const result = await cli(['workflow', 'cancel', runRow.id], { json: true, timeout: CALL_MS });
-        (result.json?.ok === true ? cancelled : survivors).push(runRow.id);
+        (result.json?.ok === true ? cancelled : runRow.status === 'paused' ? paused : survivors).push(runRow.id);
       }
-      const paused = rows.filter((r) => r.status === 'paused').map((r) => r.id);
       return { cancelled, survivors, paused };
     },
   };

@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { archonAdapter, archonStreamer, bindingsFor, cursorKeeper } from '../../../../scripts/engine/archon/adapter.js';
-import { enginePaths, launcherText } from '../../../../scripts/engine/archon/build.js';
+import { CANCEL_PATCH_MARK, enginePaths, launcherText } from '../../../../scripts/engine/archon/build.js';
 import { tempFolder } from '../../../helpers/homes.js';
 import { normaliseAsk } from '../../../../scripts/engine/archon/asks.js';
 import { checkEngine, checkEvent } from '../../../../scripts/engine/contract.js';
@@ -242,14 +242,14 @@ test('cursorKeeper saves a bookmark at once, and any other line once a later cur
 
 const WORKTREES = '/Users/director/Projects/web/.worktrees';
 
-test('stopAll cancels every running run, leaving child runs to their parent', async () => {
+test('stopAll cancels every run, a paused one too, leaving child runs to their parent', async () => {
   const cli = fakeCli({ 'workflow status': json('status-all.json'), 'workflow cancel': json('cancel-ok.json') });
   const seen = [];
   const result = await adapter(cli, { worktreeBases: [WORKTREES] }).stopAll('All stop', { beforeCancel: async (runs) => { seen.push({ runs, calls: cli.calls.length }); } });
   assert.deepEqual(cli.calls[0].args, ['workflow', 'status', '--all']);
-  assert.deepEqual(cli.calls.slice(1).map((c) => c.args), [['workflow', 'cancel', RUN]]);
-  assert.deepEqual(result, { cancelled: [RUN], survivors: [], paused: ['0a1b2c3d4e5f60718293a4b5c6d7e8f9'] });
-  // The running runs are handed over before the first cancel, so their process trees are taken whole.
+  assert.deepEqual(cli.calls.slice(1).map((c) => c.args), [['workflow', 'cancel', RUN], ['workflow', 'cancel', '0a1b2c3d4e5f60718293a4b5c6d7e8f9']]);
+  assert.deepEqual(result, { cancelled: [RUN, '0a1b2c3d4e5f60718293a4b5c6d7e8f9'], survivors: [], paused: [] });
+  // The runs are handed over before the first cancel, so their process trees are taken whole.
   assert.equal(seen.length, 1);
   assert.equal(seen[0].calls, 1);
   assert.deepEqual(seen[0].runs[0], { id: RUN, folder: '/Users/director/Projects/web/.worktrees/wh/card-14' });
@@ -270,6 +270,12 @@ test('stopAll cancels a pending run as it does a running one, and a refused canc
   assert.deepEqual(result, { cancelled: ['run-a', 'run-b'], survivors: ['run-c'], paused: [] });
 });
 
+test('a paused run an engine built without the patch refuses stays listed as paused, never a survivor', async () => {
+  const refused = { code: 1, json: { ok: false, error: "Cannot cancel run with status 'paused'. Only a running run has live work to stop; abandon a paused or failed run instead." }, stdout: '', stderr: '' };
+  const cli = fakeCli({ 'workflow status': status(row('run-a', 'running', null), row('run-b', 'paused', null)), 'workflow cancel': (args) => (args[2] === 'run-b' ? refused : json('cancel-ok.json')) });
+  assert.deepEqual(await adapter(cli).stopAll('All stop'), { cancelled: ['run-a'], survivors: [], paused: ['run-b'] });
+});
+
 test('stopAll reads each run the helper knows that the list left out, and cancels one just started', async () => {
   const got = { 'run-new': 'pending', 'run-going': 'running', 'run-waits': 'paused', 'run-done': 'completed' };
   const cli = fakeCli({
@@ -285,9 +291,9 @@ test('stopAll reads each run the helper knows that the list left out, and cancel
   });
   // A listed run isn't read again.
   assert.deepEqual(cli.calls.filter((c) => c.args[1] === 'get').map((c) => c.args[2]), ['run-new', 'run-going', 'run-waits', 'run-done', 'run-gone']);
-  assert.deepEqual(handed.map((r) => r.id), ['run-listed', 'run-new', 'run-going']);
+  assert.deepEqual(handed.map((r) => r.id), ['run-listed', 'run-new', 'run-going', 'run-waits']);
   assert.equal(handed[1].folder, `${WORKTREES}/wh/run-new`);
-  assert.deepEqual(result, { cancelled: ['run-listed', 'run-new', 'run-going'], survivors: [], paused: ['run-waits'] });
+  assert.deepEqual(result, { cancelled: ['run-listed', 'run-new', 'run-going', 'run-waits'], survivors: [], paused: [] });
 });
 
 test("stopAll hands over only a run's worktree folder, never the project folder or anything broader", async () => {
@@ -348,7 +354,7 @@ const bunRun = (stdout = '1.4.3\n') => async () => ({ code: 0, stdout, stderr: '
 // An engine folder as the build leaves it: the source launcher, and the provider with Wheelhouse's patch in it.
 // The broker's launcher as setup writes it: this Node.js and the broker's script in this checkout.
 const SOUND_BROKER = `#!/bin/sh\nexec '${process.execPath}' '${path.resolve('scripts', 'engine', 'broker', 'gh.js')}' "$@"\n`;
-function builtEngine({ launcher, provider = "permissionMode: process.env.ARCHON_CLAUDE_PERMISSION_MODE === 'acceptEdits'", broker = SOUND_BROKER } = {}) {
+function builtEngine({ launcher, provider = "permissionMode: process.env.ARCHON_CLAUDE_PERMISSION_MODE === 'acceptEdits'", cancelOperation = CANCEL_PATCH_MARK, broker = SOUND_BROKER } = {}) {
   const engine = tempFolder('wh-archon-health-');
   const p = enginePaths(engine);
   if (broker !== null) {
@@ -360,12 +366,22 @@ function builtEngine({ launcher, provider = "permissionMode: process.env.ARCHON_
   const file = path.join(p.src, 'packages', 'providers', 'src', 'claude', 'provider.ts');
   fs.mkdirSync(path.dirname(file), { recursive: true });
   if (provider !== null) fs.writeFileSync(file, provider);
+  if (cancelOperation !== null) {
+    fs.mkdirSync(path.dirname(p.cancelOperation), { recursive: true });
+    fs.writeFileSync(p.cancelOperation, cancelOperation);
+  }
   return engine;
 }
 
 test('health passes with the pinned version, Bun, Claude, the patch and telemetry off', async () => {
   const result = await adapter(healthyCli(), { pins, run: bunRun(), engine: builtEngine() }).health();
   assert.deepEqual(result, { ok: true, findings: [] });
+});
+
+test('health fails closed on an engine built before the patch for paused runs', async () => {
+  const stale = await adapter(healthyCli(), { pins, run: bunRun(), engine: builtEngine({ cancelOperation: 'if (run.status !== "running")' }) }).health();
+  assert.equal(stale.ok, false);
+  assert.match(stale.findings.join(' '), /built before Wheelhouse's patch for paused runs/);
 });
 
 test("health fails closed on an engine that isn't the patched source build", async () => {
@@ -548,4 +564,24 @@ test('mergeAsked gives null for anything but a pull request\'s question', async 
   assert.equal(await adapter(fakeCli({ 'workflow get': { code: 1, json: { ok: false }, stdout: '', stderr: '' } })).mergeAsked(RUN), null);
   const none = await adapter(fakeCli(recordOutput({ by: 'pr', pr: { number: 7 }, head: 'a'.repeat(40), attention: { choices: [{ id: 'park', effect: 'park' }] } }))).mergeAsked(RUN);
   assert.equal(none.merge, null);
+});
+
+test('a run on Copilot names the agent whose steps read Wheelhouse\'s own copies; a Claude run names none', () => {
+  const engine = adapter(fakeCli({}));
+  const tiers = (model) => ({ tiers: { small: model, medium: model, large: model } });
+  assert.equal(engine.stepAgent(tiers('copilot/auto')), 'copilot');
+  assert.equal(engine.stepAgent(tiers('claude-big')), null);
+  assert.equal(engine.stepAgent({ tiers: { small: 'copilot/auto', medium: 'claude-big', large: 'claude-big' } }), null, 'a mixed run starts nothing');
+  assert.equal(engine.stepAgent(undefined), null);
+});
+
+test('the meter\'s file is one for the account signed in to the engine\'s clean home', () => {
+  const engine = tempFolder('wh-archon-meter-');
+  const unknown = adapter(fakeCli({}), { engine }).requestsFile();
+  const home = path.join(engine, 'copilot', 'home');
+  fs.mkdirSync(home, { recursive: true });
+  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ lastLoggedInUser: { host: 'https://github.com', login: 'ann' } }));
+  const ann = adapter(fakeCli({}), { engine }).requestsFile();
+  assert.notEqual(ann, unknown);
+  assert.equal(path.dirname(ann), path.join(engine, 'requests'));
 });

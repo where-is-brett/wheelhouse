@@ -519,7 +519,7 @@ Archon records what providers report and caps almost nothing. Its run budget can
 
 - **Sources.** Each step's spend from Archon's record: tokens, cost where reported, provider and model. Claude Code's telemetry for the front desk (the existing receiver). The mod's weekly allowance reading.
 - **Claude.** Archon reports cost and tokens per step. Within a subscription the figure is the API-equivalent dollar amount, shown as today beside the share of the weekly allowance.
-- **Copilot.** Archon reports tokens only. Copilot's plan counts premium requests: each prompt sent counts once, times the model's multiplier, and the included models count zero. The meter counts the prompts each Copilot step sends (attempts, loop rounds, and structured-output re-asks), times the routing table's multiplier for the model, and marks the figure **estimated**. Where GitHub reports the account's premium-request use, a daily job compares the two and shows GitHub's figure as the true one. Early check E6 confirms both. *Designer's call.*
+- **Copilot.** Archon reports tokens only. Copilot's plan counts premium requests: each prompt sent counts once, times the model's multiplier, and the included models count zero. The meter counts the prompts each Copilot step sends (attempts, loop rounds, and structured-output re-asks), times the routing table's multiplier for the model, and marks the figure **estimated**. Where GitHub reports the account's premium-request use, a daily job compares the two and shows GitHub's figure as the true one. An allowance is the account's, so the meter is kept once for each account, over every project on it (after check 74). Early check E6 confirms both. *Designer's call.*
 - **A cost record per job:** one `cost` event per run, in the private record, with tokens, dollars, premium requests, minutes and each step's share by role. It never goes into a pull request, since repositories may be public.
 
 ### 10.2 The caps
@@ -567,7 +567,7 @@ The numbers are a starting point. *Designer's call*, to be tuned from the first 
 - **The tool guard refuses `archon`,** as a command, behind wrappers and runners, as it refuses `gh` and `copilot`. Otherwise an agent could approve its own wait.
 - **The sandbox and deny rules** keep Archon's database, credentials, configuration, transcripts and plugins from every agent (section 6.4).
 - **The engine room's port** is denied to agents, and is closed unless the director turned it on (section 5.6).
-- **Archon's own clean-up** never removes a worktree with uncommitted work, but `abandon` does. Wheelhouse never calls `abandon`, only `cancel`.
+- **Archon's own clean-up** never removes a worktree with uncommitted work, but `abandon` does. Wheelhouse never calls `abandon`, only `cancel`, which takes a paused run too and keeps its worktree (`paused-run-cancel.patch`, after check 74).
 
 ### 12.3 All stop
 
