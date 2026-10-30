@@ -333,8 +333,8 @@ export function archonAdapter({
       return { ok: findings.length === 0, findings };
     },
 
-    // `order`: { work, lane, branch?, project?, bindings?, carryOn? }. Only the work's id goes to Archon: a run's
-    // first step asks the helper for the order by it (spec 7.4).
+    // `order`: { work, lane, branch?, project?, bindings?, carryOn?, repo? }, `repo` ({ host, path }) for the merge
+    // queue. Only the work's id goes to Archon: a run's first step asks the helper for the order by it (spec 7.4).
     async start(order = {}) {
       const workflow = LANE_WORKFLOWS[order.lane];
       if (!workflow) return refusedWith(`There is no engine workflow for the ${order.lane ?? '(unnamed)'} lane`);
@@ -342,6 +342,10 @@ export function archonAdapter({
       if (broker) return refusedWith(broker);
       if (!packDir || !configFile) return refusedWith("The engine's pack or its settings file isn't known, so nothing can start");
       if (workflow !== MERGE_QUEUE && !order.work) return refusedWith('A run needs the id of its work');
+      // Archon's merge queue reads the repository it merges in from its inputs, and fails its first step without them.
+      if (workflow === MERGE_QUEUE && !(typeof order.repo?.host === 'string' && order.repo.host && typeof order.repo?.path === 'string' && order.repo.path)) {
+        return refusedWith('The merge queue needs the repository it merges in');
+      }
       if (order.carryOn && !order.branch) return refusedWith('Carrying on needs the branch the work was on');
       let models;
       try { models = bindingsFor(order.bindings); } catch (error) { return refusedWith(error.message); }
@@ -357,6 +361,7 @@ export function archonAdapter({
       if (order.project) args.push('--cwd', order.project);
       if (order.branch) args.push('--branch', order.branch);
       if (workflow !== MERGE_QUEUE) args.push('--input', `work=${order.work}`);
+      else args.push('--input', `repo_host=${order.repo.host}`, '--input', `repo_path=${order.repo.path}`);
       for (const binding of models) args.push('--model', binding);
       // Not started in the project (--cwd names it), so Bun reads nothing of the project's own.
       const result = await cli(args, { json: true, timeout: START_MS });

@@ -29,7 +29,7 @@ import { scrub } from './adapter.js';
 import { hide, cleanDeep } from '../lib/clean.js';
 import { readKey } from './keys.js';
 import { checkBaseUrl, gitlabApi } from './gitlab-key.js';
-import { DEFAULT_GITLAB } from './gitlab-base.js';
+import { DEFAULT_GITLAB, parseRemote } from './gitlab-base.js';
 import { unreachableRefusal, certificateRefusal, certificateLine, awayLine, outputKind, companyGitEnv, makeAwayLog, gitlabBaseOf, certificateSetting } from './company-ca.js';
 import { childEnv } from './connection.js';
 import { protectionStatus } from './protection.js';
@@ -4463,13 +4463,24 @@ export async function startHelper({
     return { routing, testCommand: config.testCommand ?? npmTestOf(folder), pages: config.pages ?? [] };
   }
 
+  // The repository Archon's merge queue merges in (check 81): the host name from the registered remote (GitHub's for a
+  // GitHub project whose remote isn't a host's address) and the owner/name path. Null when the record names none.
+  function mergeRepoOf(record) {
+    if (typeof record?.repo !== 'string' || record.repo === '') return null;
+    let host = null;
+    try { host = parseRemote(record.remoteUrl).hostname; } catch { /* not a host's address */ }
+    if (!host && record.host === 'github') host = 'github.com';
+    return host ? { host, path: record.repo } : null;
+  }
+
   // The card router and the dispatcher for one project on the engine (Archon design, sections 7.3, 8 and 10).
   function engineDesk(project, engine) {
     const views = () => buildViews(listEvents(stateDir(project), { report: () => {} }), ownKeyOnly(), { now });
     const settings = () => Object.fromEntries(Object.entries(effectiveSettings({ project: views().settings ?? {}, now })).map(([k, v]) => [k, v.value]));
     const files = path.join(stateDir(project), '..', 'engine');
     const write = (kind, data) => engineWrite(project, kind, data);
-    const folder = registeredProjects().find((p) => p.project === project)?.record.folder;
+    const record = registeredProjects().find((p) => p.project === project)?.record;
+    const folder = record?.folder;
     const month = () => now().toISOString().slice(0, 7);
     const estimated = () => Object.values(views().costs ?? {}).flat().filter((c) => String(c.at).startsWith(month())).reduce((n, c) => n + (Number.isFinite(c.data?.premiumRequests) ? c.data.premiumRequests : 0), 0);
     // This month's counted requests, for the cap: the meter's estimate, or, where the engine checks it against the
@@ -4512,6 +4523,7 @@ export async function startHelper({
       },
       designOf: (work) => (typeof folder === 'string' ? approvedDocument({ checkout: folder, views: views(), work }) : null),
       orderOf: (runId) => orderStore(path.join(engineDirOf(stateDir(project)), 'orders')).load(runId),
+      repoOf: () => mergeRepoOf(record),
     });
     const runner = engineRunner({
       engine, file: path.join(files, 'router.json'), readViews: views, write, stopped, now, settings,

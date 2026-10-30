@@ -154,7 +154,10 @@ test('an ask from the merge queue\'s own run is routed: a red main line\'s hold 
       const helper = await helperFor(p, engine);
       try {
         await helper.engine.tick();
-        assert.equal(engine.calls.filter((c) => c.call === 'start' && c.order.lane === 'merge').length, 1);
+        const starts = engine.calls.filter((c) => c.call === 'start' && c.order.lane === 'merge');
+        assert.equal(starts.length, 1);
+        // The registered repository, which Archon's queue needs (check 81).
+        assert.deepEqual(starts[0].order.repo, { host: 'github.com', path: 'o/p' });
         const held = await until(() => engine.calls.find((c) => c.call === 'act' && c.action?.answer?.choice === 'hold'), { what: 'the hold answered' });
         assert.equal(held.action.answer.ask, 'mq:red:1');
         assert.equal(records('question').length + records('card').length, 0);
