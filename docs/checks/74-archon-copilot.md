@@ -12,10 +12,40 @@ The earlier tries found:
 - two defects, now fixed: pull request #141 (merged) and pull request #144;
 - three findings, left for later parts.
 
-The 29 October note, from "Question" on, is kept as it was.
+The real run is the first part of Evidence; the rest of the note is the 29 October one, kept as it was.
 
 
-## The real run, 30 October 2026
+## Question
+
+Spec 15's E1, five items. (1) Does Archon v0.13.0's compiled binary run a Copilot step with the CLI found by `COPILOT_BIN_PATH`, signed in by `copilot login`? (2) Does an included model run with no premium requests used? (3) Do Wheelhouse's guards, registered as the CLI's own hooks in a clean home, fire under Archon (a planted `.env` read refused)? (4) Does the run record show the step's tokens? (5) Does a skill from the clean home load?
+
+## Tested on
+
+29 October 2026, on the Mac (macOS 27, Apple silicon), with Node.js 22.22.1. The scratch engine was Archon v0.13.0's `archon-darwin-arm64` and Bun 1.4.3, both checked against pinned checksums (`probes/lib/archon.js`), with Archon's home under the temporary folder and telemetry reported off. Copilot CLI 1.0.101 was the probes' own copy in `~/.wheelhouse-probes`, with its native program, signed in from the probes' login home. No Copilot step was run through Archon.
+
+## Method
+
+The probe, `probes/74-archon-copilot/run.js`, has four steps: `setup`, `trial`, `tally` and `clean`.
+
+- **setup** makes a clean Copilot home under the temporary folder. It holds only three things:
+  - the sign-in's `config.json`;
+  - the Lean kit's guard (`adapters/copilot/home/hooks/wheelhouse-lean-guard.sh`), registered as the CLI's own `preToolUse` hook through `hook-wrap.js`, which logs each answer;
+  - a copy of Matt Pocock's `tdd` skill (1.3.1, with its licence), with one probe-marker line added.
+
+  It also makes a scratch project: a Lean project, with `.git` and `.wheelhouse/record/` committed, a planted fake `.env`, and a local bare remote. The project carries `hello.yaml`, one Copilot step that quotes the skill's marker and then tries to read `.env`.
+- **trial** reads GitHub's premium-request figure, runs the workflow through `archonRun` with `COPILOT_BIN_PATH` and `COPILOT_HOME` set, waits, and reads the record. It reads the figure again a minute later.
+- **tally** scores the five items with `tallyE1`. A run that never started, a figure that couldn't be read or an empty hook log fails, never passes (`tests/probes/74-archon-copilot/run.test.js`).
+
+Before running, the agent read three things:
+- the account's model list, from the Copilot CLI's ACP mode (`session/new`'s `availableModels`);
+- the account's Copilot record, from `gh api /copilot_internal/user`, with the director's existing gh sign-in;
+- Archon's Copilot provider source, at the v0.13.0 tag.
+
+It also fed the guard two hand-made hook inputs.
+
+## Evidence
+
+### The real run, 30 October 2026
 
 **Tested on.** The Mac, from a checkout of main at 72e0386e plus the fixes, with Node.js 22.22.1.
 - **Engine and project.** Setup's own step 2 for a Copilot project (`engineChanges({ agent: 'copilot' })` and `applyEngine`) installed the engine, Copilot CLI 1.0.101 at its pin and the clean home into a scratch Wheelhouse home. The clean home was signed in from the probes' login home. The project was the throwaway private repository `where-is-brett/wheelhouse-merge-trial` (check 80's), with this computer's configuration naming Copilot.
@@ -64,35 +94,7 @@ GitHub's figure trailed the steps by a minute or two. Its total, read once it ha
 - The scratch home was removed, with its engine, the CLI, the clean home and its sign-in copy, and Archon's history.
 - The runs pushed no branch to the trial repository, and no pull request was opened.
 
-## Question
-
-Spec 15's E1, five items. (1) Does Archon v0.13.0's compiled binary run a Copilot step with the CLI found by `COPILOT_BIN_PATH`, signed in by `copilot login`? (2) Does an included model run with no premium requests used? (3) Do Wheelhouse's guards, registered as the CLI's own hooks in a clean home, fire under Archon (a planted `.env` read refused)? (4) Does the run record show the step's tokens? (5) Does a skill from the clean home load?
-
-## Tested on
-
-29 October 2026, on the Mac (macOS 27, Apple silicon), with Node.js 22.22.1. The scratch engine was Archon v0.13.0's `archon-darwin-arm64` and Bun 1.4.3, both checked against pinned checksums (`probes/lib/archon.js`), with Archon's home under the temporary folder and telemetry reported off. Copilot CLI 1.0.101 was the probes' own copy in `~/.wheelhouse-probes`, with its native program, signed in from the probes' login home. No Copilot step was run through Archon.
-
-## Method
-
-The probe, `probes/74-archon-copilot/run.js`, has four steps: `setup`, `trial`, `tally` and `clean`.
-
-- **setup** makes a clean Copilot home under the temporary folder. It holds only three things:
-  - the sign-in's `config.json`;
-  - the Lean kit's guard (`adapters/copilot/home/hooks/wheelhouse-lean-guard.sh`), registered as the CLI's own `preToolUse` hook through `hook-wrap.js`, which logs each answer;
-  - a copy of Matt Pocock's `tdd` skill (1.3.1, with its licence), with one probe-marker line added.
-
-  It also makes a scratch project: a Lean project, with `.git` and `.wheelhouse/record/` committed, a planted fake `.env`, and a local bare remote. The project carries `hello.yaml`, one Copilot step that quotes the skill's marker and then tries to read `.env`.
-- **trial** reads GitHub's premium-request figure, runs the workflow through `archonRun` with `COPILOT_BIN_PATH` and `COPILOT_HOME` set, waits, and reads the record. It reads the figure again a minute later.
-- **tally** scores the five items with `tallyE1`. A run that never started, a figure that couldn't be read or an empty hook log fails, never passes (`tests/probes/74-archon-copilot/run.test.js`).
-
-Before running, the agent read three things:
-- the account's model list, from the Copilot CLI's ACP mode (`session/new`'s `availableModels`);
-- the account's Copilot record, from `gh api /copilot_internal/user`, with the director's existing gh sign-in;
-- Archon's Copilot provider source, at the v0.13.0 tag.
-
-It also fed the guard two hand-made hook inputs.
-
-## Evidence
+### The deferred note, 29 October 2026
 
 - **No included model.** The CLI's ACP model list for this account holds only `auto` ("Let Copilot pick the best model"), marked `copilotUsage: 1x`. Asking for any other model fails before a prompt is sent: "Model … is not available".
 - **The plan and its allowance.** GitHub reports `access_type_sku: free_educational_quota`, `copilot_plan: individual` and token-based billing. Premium interactions: entitlement 200, 37 used, 162 remaining, resetting on 1 November 2026, with `overage_permitted: false`, so nothing can be spent beyond the plan. GitHub moved Copilot to usage-based billing on 1 June 2026, which retired the old "included models count zero" rule for most plans.
@@ -130,6 +132,5 @@ It also fed the guard two hand-made hook inputs.
 
 ## Needs the director
 
-- **A yes to spend part of the Copilot allowance.** The card went to the main session on 29 October 2026 and is queued for the director's return. It offers at most 40 requests from this month's 162, for E1 (about 3), E6 (about 23) and E4's item 11.
-- If the yes comes, an agent runs `node probes/74-archon-copilot/run.js setup`, then `trial --allowance 3`, then `tally`, then `clean`, and this note is rewritten with the results.
-- Nothing else is needed. The probes' Copilot sign-in from 21 October 2026 still works.
+- The director said yes to the spend on 30 October 2026, and the run used 10 premium requests.
+- The small change, and the quick change's last steps (opening the pull request, signing, the lesson), are still unrun. Running them needs another yes for the requests: about 8 to 10 for the small change, and about 2 to finish the quick one. The trial repository's lock must also be free, or taken by the run's own home.
