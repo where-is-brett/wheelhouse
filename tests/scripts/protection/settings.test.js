@@ -11,6 +11,7 @@ import { credentialPaths } from '../../../scripts/lib/credentials.js';
 import { helperAddress, archonHome } from '../../../scripts/lib/paths.js';
 import { WINDOWS_LINE } from '../../../scripts/lib/platform-lines.js';
 import { CLAUDE_CODE_FLOOR } from '../../../scripts/lib/build-loop.js';
+import { MARKETPLACE, UPSTREAMS } from '../../../scripts/lineage/manifest.js';
 
 const config = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: ['example.com', 'docs.example.org'] };
 const allCredentials = [...new Set(['darwin', 'linux', 'win32'].flatMap((p) => credentialPaths(p)))];
@@ -519,7 +520,7 @@ test('archonDenyRules names the engine\'s home from the home folder, or whole wh
 test('a run\'s overlay shuts its workspace\'s transcripts and every run\'s artefacts, and opens its own', () => {
   const ws = path.join(path.sep, 'h', 'workspaces', 'owner', 'name');
   const own = path.join(ws, 'artifacts', 'runs', 'run-1');
-  assert.deepEqual(ownRunRules('run-1', own), {
+  assert.deepEqual(ownRunRules('run-1', own, { configDir: path.join(ws, 'no-claude-config') }), {
     // In the engine's ordinary mode (acceptEdits) a read outside the worktree needs a rule that allows it (check 80).
     permissions: { allow: [`Read(/${own.replaceAll('\\', '/')}/**)`] },
     sandbox: {
@@ -532,10 +533,39 @@ test('a run\'s overlay shuts its workspace\'s transcripts and every run\'s artef
         allowWrite: [own],
       },
     },
+    enabledPlugins: Object.fromEntries(SWITCHED_OFF_PLUGINS.map((id) => [id, false])),
   });
   for (const [id, dir] of [['run-2', own], ['run-1', path.join(ws, 'runs', 'run-1')], ['..', path.join(ws, 'artifacts', 'runs', '..')], ['run-1', 'artifacts/runs/run-1'], ['run-1', undefined]]) {
     assert.throws(() => ownRunRules(id, dir), `${id} ${dir}`);
   }
+});
+
+test('a run\'s overlay switches off every plugin Claude Code records but Wheelhouse\'s and the pinned kits, so none of the director\'s reaches a step', (t) => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-ovl-')));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const configDir = path.join(root, 'claude');
+  const kit = `${UPSTREAMS[0].plugin}@${MARKETPLACE}`;
+  fs.mkdirSync(path.join(configDir, 'plugins'), { recursive: true });
+  fs.writeFileSync(path.join(configDir, 'plugins', 'installed_plugins.json'), JSON.stringify({ version: 2, plugins: {
+    'superpowers@claude-plugins-official': [{ scope: 'user' }], 'wheelhouse@wheelhouse': [{ scope: 'user' }],
+    'wheelhouse@wheelhouse-eval-ab12': [{ scope: 'project' }], [kit]: [{ scope: 'project' }], 'founder@emotix': [{ scope: 'project' }],
+  } }));
+  // The user's own settings may switch on a plugin the record of installs doesn't list (one synced or added by hand).
+  fs.writeFileSync(path.join(configDir, 'settings.json'), JSON.stringify({ enabledPlugins: { 'feature-dev@claude-plugins-official': true, 'off@x': false } }));
+  const ws = path.join(root, 'workspaces', 'owner', 'name');
+  const overlay = ownRunRules('run-1', path.join(ws, 'artifacts', 'runs', 'run-1'), { configDir });
+  assert.deepEqual(overlay.enabledPlugins, {
+    ...Object.fromEntries(SWITCHED_OFF_PLUGINS.map((id) => [id, false])),
+    'superpowers@claude-plugins-official': false, 'founder@emotix': false, 'feature-dev@claude-plugins-official': false, 'off@x': false,
+  });
+  // Merged over the branch's shared settings, the kits the project switches on stay on and the rest go off.
+  const merged = mergeSettings(projectSettings(config), overlay);
+  assert.equal(merged.enabledPlugins[kit], true);
+  assert.equal(merged.enabledPlugins['superpowers@claude-plugins-official'], false);
+  // An unreadable record of installs switches off only the kits' synced copies.
+  fs.writeFileSync(path.join(configDir, 'plugins', 'installed_plugins.json'), 'not json');
+  fs.rmSync(path.join(configDir, 'settings.json'));
+  assert.deepEqual(ownRunRules('run-1', path.join(ws, 'artifacts', 'runs', 'run-1'), { configDir }).enabledPlugins, Object.fromEntries(SWITCHED_OFF_PLUGINS.map((id) => [id, false])));
 });
 
 test('a run\'s overlay under a linked home names each sandbox folder by its real path too, so the own folder opens (check 81)', (t) => {

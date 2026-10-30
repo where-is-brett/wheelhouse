@@ -396,6 +396,29 @@ test("scenario 133's real play fails when a step ran on a model the world didn't
   }
 });
 
+// The world as scenario 124's real play sees it, with the run's worktree at `folder` and Claude Code's list there `on`.
+function withPlugins(world, folder, on) {
+  const seen = Object.create(world);
+  Object.defineProperty(seen, 'engine', { value: { ...world.engine, inspect: async (id) => ({ ...(await world.engine.inspect(id)), folder }) } });
+  seen.pluginsOn = async (cwd) => (cwd === folder ? on : null);
+  return seen;
+}
+
+test("scenario 124's real play passes when only Wheelhouse and the kits are on in the run's worktree, and fails naming another", { skip }, async () => {
+  const world = await open(standInArchon(), fakeCache());
+  try {
+    const play = (await scenario('124-rules-win')).engine.real;
+    const tree = path.join(world.root, 'tree');
+    const kept = await play(withPlugins(world, tree, ['wheelhouse@wheelhouse-eval-x', ...KITS]), { until: wait });
+    assert.equal(kept.pass, true, kept.why);
+    const leaked = await play(withPlugins(world, tree, ['wheelhouse@wheelhouse-eval-x', 'superpowers@claude-plugins-official']), { until: wait });
+    assert.equal(leaked.pass, false);
+    assert.match(leaked.why, /superpowers@claude-plugins-official on/);
+  } finally {
+    await world.close();
+  }
+});
+
 test("scenario 48's real play fails when the broker lets the unsigned merge through", { skip }, async () => {
   const world = await open(standInArchon(), fakeCache());
   try {

@@ -262,7 +262,11 @@ export function readRule(dir) {
 // the sandbox's list, `Edit(/.claude/settings.json)`, and the tool guard), so an agent can't name another run as its
 // own; and the tool guard learns the own run from its environment, not from this file. `artifactsDir` is the run's
 // folder, `<workspace>/artifacts/runs/<runId>`.
-export function ownRunRules(runId, artifactsDir) {
+// It also switches off, at project scope, every plugin Claude Code records as installed or the user's own settings
+// switch on, but Wheelhouse's own and the pinned kits (otherPlugins): Archon's provider loads user settings, and a
+// project-level false beats the user's true, so a plugin the director installed for themselves never reaches a step
+// even where Archon's own switch-off misses it. `configDir` is Claude Code's settings folder, which is only read.
+export function ownRunRules(runId, artifactsDir, { configDir = claudeConfigDir() } = {}) {
   const workspace = workspaceOfRun(artifactsDir, runId);
   const own = path.resolve(artifactsDir);
   const folders = WORKSPACE_FOLDERS.map((f) => path.join(workspace, f));
@@ -290,7 +294,30 @@ export function ownRunRules(runId, artifactsDir) {
       allowUnsandboxedCommands: false,
       filesystem: { denyRead: both([...folders, runs]), denyWrite: both(folders), allowRead: both([own]), allowWrite: both([own]) },
     },
+    enabledPlugins: Object.fromEntries(otherPlugins(configDir).map((id) => [id, false])),
   };
+}
+
+// Claude Code's settings folder: CLAUDE_CONFIG_DIR, or ~/.claude.
+const claudeConfigDir = () => process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+
+// The plugins a run keeps on: Wheelhouse's own, from any marketplace (an evaluation world installs it from one of its
+// own), and the kits setup pins for each project.
+const RUN_PLUGINS = new Set(UPSTREAMS.map((u) => `${u.plugin}@${MARKETPLACE}`));
+const runKeeps = (id) => /^wheelhouse@[^@\s]+$/.test(id) || RUN_PLUGINS.has(id);
+
+// Every plugin id Claude Code's record of installs lists, in any scope, every one the user's own settings name, and
+// the synced copies of the kits (SWITCHED_OFF_PLUGINS), but those a run keeps on. A file that can't be read gives none.
+// Other plugins synced from claude.ai are in no file read here: Archon's own switch-off hides them, and its check of
+// each step's start fails a step that loads one.
+function otherPlugins(configDir) {
+  const read = (file) => {
+    try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
+  };
+  const installed = read(path.join(configDir, 'plugins', 'installed_plugins.json'))?.plugins;
+  const named = read(path.join(configDir, 'settings.json'))?.enabledPlugins;
+  const ids = [...SWITCHED_OFF_PLUGINS, ...(isObject(installed) ? Object.keys(installed) : []), ...(isObject(named) ? Object.keys(named) : [])];
+  return unique(ids.filter((id) => typeof id === 'string' && id.includes('@') && !runKeeps(id)));
 }
 
 // Host names that reach this computer itself. The sandbox's proxy reaches only the domains listed, by host and not by

@@ -13,6 +13,8 @@ import { REVIEW_STEPS, FEATURE_REVIEW } from '../../scripts/engine/routes.js';
 import { LANE_CAPS } from '../../scripts/engine/order.js';
 import { MOST_TASKS } from '../../scripts/engine/plan-file.js';
 import { tempFolder } from '../helpers/homes.js';
+import { READ_ONLY_STEPS } from '../../scripts/hooks/read-only-shell.js';
+import { PACK_DIR, readWorkflow } from '../../scripts/engine/pack-check.js';
 
 function built() {
   const out = tempFolder('wh-built-');
@@ -256,4 +258,17 @@ test('the bug lane reproduces first, proves it red and keeps it, then fixes it a
   const from = (w) => w.nodes.slice(w.nodes.findIndex((n) => n.id === 'lenses'));
   assert.deepEqual(from(bug), from(quick));
   assert.deepEqual(LANE_CAPS.bug, { minutes: 30, tokens: 2000000 });
+});
+
+test('the steps the tool guard holds to a reading shell are exactly the pack\'s agent steps that deny the write tools', () => {
+  const denying = new Set();
+  for (const file of fs.readdirSync(PACK_DIR).filter((n) => n.endsWith('.yaml'))) {
+    const workflow = readWorkflow(fs.readFileSync(path.join(PACK_DIR, file), 'utf8'));
+    for (const { node } of nodesOf(workflow.nodes)) {
+      const denied = node.denied_tools ?? [];
+      if (['Write', 'Edit', 'NotebookEdit'].every((t) => denied.includes(t))) denying.add(node.id);
+      else assert.ok(!READ_ONLY_STEPS.includes(node.id), `${workflow.name}'s ${node.id} may write, and shares its id with a step that reads only`);
+    }
+  }
+  assert.deepEqual([...denying].sort(), [...READ_ONLY_STEPS].sort());
 });
