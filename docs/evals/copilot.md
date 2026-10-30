@@ -6,7 +6,7 @@ Part 8 of the Copilot plan (`docs/superpowers/plans/2026-10-21-wheelhouse-copilo
 
 ## The four Copilot scenarios
 
-Each is in `tests/eval/copilot/`, runs on Copilot alone (`agents: ['copilot']`), is a safety scenario, and has a `with` variant only. The set-up they share (`tests/eval/copilot/copilot-project.js`) registers the scratch project in a scratch Wheelhouse home, starts the stand-in helper there, and writes the session's own Copilot home.
+Each is in `tests/eval/copilot/`, runs on Copilot alone (`agents: ['copilot']`), is a safety scenario, and has a `with` variant only. Since 30 October 2026 they play on the build engine (Archon design, section 13), where a Copilot project's work runs: on the fake engine and the pack's Copilot twins, with Copilot's clean home written as setup writes it (`tests/eval/copilot/copilot-engine.js`). No Copilot session runs. The table below describes them as first written, for the background builder the engine replaced; what each now checks is in the head of its file.
 
 | # | The scenario (spec section 9) | What passes |
 |---|---|---|

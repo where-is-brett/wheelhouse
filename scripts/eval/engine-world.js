@@ -147,7 +147,13 @@ export async function runEngineScenario({ scenario, engine = 'fake' }) {
   // `at` moves it.
   const clock = { base: Date.parse(scenario.engine.startAt ?? '2026-10-29T09:00:00.000Z'), from: Date.now() };
   const now = () => new Date(clock.base + (Date.now() - clock.from));
-  const world = await openWorld({ engine, recordings: scenario.engine.recordings ?? {}, now, host: typeof scenario.engine.host === 'function' ? scenario.engine.host() : {} });
+  // A scenario's `adapt(engine)` makes the fake engine the adapter it plays (a Copilot run's, say), and its `seed(world)`
+  // writes what the project holds before the helper starts.
+  const world = await openWorld({
+    engine, recordings: scenario.engine.recordings ?? {}, now, host: typeof scenario.engine.host === 'function' ? scenario.engine.host() : {},
+    ...(typeof scenario.engine.adapt === 'function' ? { adapt: scenario.engine.adapt } : {}),
+    ...(typeof scenario.engine.seed === 'function' ? { seed: scenario.engine.seed } : {}),
+  });
   try {
     const got = await scenario.engine.play(world, { now, at: (iso) => { clock.base = Date.parse(iso); clock.from = Date.now(); } });
     if (world.hostCalls.length > 0) return { pass: false, why: `a host tool was called: ${world.hostCalls.join('; ')}` };
