@@ -67,7 +67,7 @@ GitHub's figure trailed the steps by a minute or two. Its total, read once it ha
 1. **Copilot's sign-in file was misread** (pull request #141, merged). CLI 1.0.101 starts `config.json` with two `//` comment lines. `signInOf` parsed the file as plain JSON, so a signed-in computer read as not signed in, and setup's step 2 refused to write the clean home.
 2. **A source build of Archon ignores `COPILOT_BIN_PATH`** (pull request #144). The Copilot provider resolves the CLI only in a compiled build. Wheelhouse always builds from source (check 75), so the Copilot SDK ran its own bundled runtime, never the pinned and checked CLI. That runtime doesn't set `COPILOT_CLI_BINARY_VERSION`, so the guards in the clean home took every step for an unknown chat and refused its edits. They failed closed, but the run built nothing for 3 requests. A second Archon patch makes a source build honour the variable. With it, the SDK started the pinned CLI (ping: protocol 3), and the guard recognised Copilot.
 
-**Findings, for later parts.**
+**Findings, for later parts.** All three were taken up on 30 October 2026; `docs/superpowers/plans/2026-10-30-archon-check-74-findings.md` says how.
 1. **For a Copilot project, a lineage hold never lifts by itself.**
    - The kits hold (`lineage/hold.json`) is written by a Claude session start when the pinned Claude kits are missing, and only a Claude session start re-checks it. Copilot steps never do. Once any Claude session starts in the project without the kits, every Copilot step's edits are refused until a Claude session starts again with the kits in.
    - A Copilot-only Mac may have no Claude kits, or no Claude Code at all, so nothing there would ever lift the hold.

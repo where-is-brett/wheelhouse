@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { CLAUDE_CODE_FLOOR } from '../../../scripts/lib/build-loop.js';
+import { SKILL_COPIES } from '../../../scripts/lineage/copies.js';
 import { COPILOT_VERSION } from '../../../scripts/lib/copilot-numbers.js';
 import {
   MANIFEST_PATH, MODELS, UPSTREAMS, buildManifest, checkInstalled, claudeHome, fetchUpstream, locateInstalled, readManifest, verifyManifest, writeManifest,
@@ -42,6 +43,14 @@ function tiny() {
   return { dir, manifest };
 }
 
+const REPO_ROOT = path.resolve(import.meta.dirname, '..', '..', '..');
+
+test('the manifest fingerprints each of Wheelhouse\'s own skill copies', () => {
+  const { manifest } = tiny();
+  assert.deepEqual(manifest.copies.map((c) => c.path), SKILL_COPIES.map((name) => `skills/${name}`));
+  for (const copy of manifest.copies) assert.equal(copy.hash, fingerprintTree(path.join(REPO_ROOT, ...copy.path.split('/'))).hash);
+});
+
 test('the manifest names each upstream folder and file with its fingerprint, and the floor and the models', () => {
   const { dir, manifest } = tiny();
   assert.deepEqual(manifest, {
@@ -55,6 +64,7 @@ test('the manifest names each upstream folder and file with its fingerprint, and
       ],
       files: [{ path: 'LICENSE', hash: fingerprintFile(path.join(dir, 'LICENSE')).hash }],
     }],
+    copies: manifest.copies,
     claudeCode: { floor: CLAUDE_CODE_FLOOR },
     agents: { copilot: { cli: COPILOT_VERSION } },
     engine: manifestPins(),

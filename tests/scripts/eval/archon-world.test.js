@@ -333,7 +333,7 @@ test('the engine is built once into its cache, and a build cut short is moved as
   const build = async ({ engine }) => {
     built.push(engine);
     const p = enginePaths(engine);
-    for (const file of [p.bunBin, p.launcher, p.provider]) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, ''); }
+    for (const file of [p.bunBin, p.launcher, p.provider, p.cancelOperation]) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, CANCEL_PATCH_MARK); }
   };
   fs.mkdirSync(cache);
   fs.writeFileSync(path.join(cache, 'half'), '');
