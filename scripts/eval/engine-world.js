@@ -147,7 +147,7 @@ export async function runEngineScenario({ scenario, engine = 'fake' }) {
   // `at` moves it.
   const clock = { base: Date.parse(scenario.engine.startAt ?? '2026-10-29T09:00:00.000Z'), from: Date.now() };
   const now = () => new Date(clock.base + (Date.now() - clock.from));
-  // A scenario's `adapt(engine)` makes the fake engine the adapter it plays (a Copilot run's, say), and its `seed(world)`
+  // A scenario's `adapt(engine)` makes the fake engine the adapter it plays (another agent's run's, say), and its `seed(world)`
   // writes what the project holds before the helper starts.
   const world = await openWorld({
     engine, recordings: scenario.engine.recordings ?? {}, now, host: typeof scenario.engine.host === 'function' ? scenario.engine.host() : {},
