@@ -10,6 +10,7 @@
 //     (`unreachable: true` beside a refusal when the engine gave no reply at all, so the caller may try again)
 //   inspect(runId) -> { status, steps: [{ id, role, provider, model, tokens, dollars, minutes, source }], branch, pr, digest }
 //   stopAll(reason, { beforeCancel(runs: [{ id, folder }]), known: string[] }?) -> { cancelled: string[], survivors: string[], paused: string[] }
+//     every run going or paused is cancelled; `paused` lists a paused run the engine wouldn't cancel
 //     (`known`: the runs the caller started and hasn't seen end, for an engine whose list may not show one yet)
 //
 // Beside the interface, for the helper's continuation host (host.js): `name`, the engine's name for the record, and

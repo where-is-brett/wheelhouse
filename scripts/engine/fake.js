@@ -1,8 +1,7 @@
 // scripts/engine/fake.js
 // An engine for tests: it plays back recorded EngineEvents (JSON lines, see tests/fixtures/engine) and runs nothing.
 // A run plays until an ask, holds there until the ask is answered, then plays on. Every start and act is kept in
-// `calls`. Cancelling, or stopAll, ends a running run with the outcome 'cancelled'; stopAll leaves a paused one
-// paused, as Archon does. A run started with `order.ownerPid` (a test's) reports it from inspect, as a real engine
+// `calls`. Cancelling, or stopAll, ends a running or a paused run with the outcome 'cancelled'. A run started with `order.ownerPid` (a test's) reports it from inspect, as a real engine
 // reports the process that owns the run. Like Archon, it keeps each finished step's output (a recorded step-finished
 // event's `output`), hands work to a merge queue (kept in `calls`) and has an artefacts folder for each run, under
 // `artefacts`; a step whose output depends on the test's world (the pull request a run opened) is given by `setOutput`.
@@ -181,15 +180,14 @@ export function fakeEngine({ recordings = {}, now = () => new Date().toISOString
       return artefacts && runs.has(runId) ? path.join(artefacts, runId) : null;
     },
 
-    // Cancels every running run, as Archon does: a run paused at an ask isn't cancelled, and is listed in `paused`.
-    // `beforeCancel(runs)` is awaited with the running runs first, [{ id, folder }] (a test's `order.folder`).
+    // Cancels every run, as the patched Archon does: one paused at an ask too.
+    // `beforeCancel(runs)` is awaited with the runs first, [{ id, folder }] (a test's `order.folder`).
     async stopAll(reason, { beforeCancel } = {}) {
       calls.push({ call: 'stopAll', reason });
       const live = [...runs.values()].filter((run) => !run.ended);
-      const running = live.filter((run) => !run.open);
-      if (beforeCancel) await beforeCancel(running.map((run) => ({ id: run.id, folder: run.folder })));
-      for (const run of running) end(run, 'cancelled', { reason: reason ?? null });
-      return { cancelled: running.map((run) => run.id), survivors: [], paused: live.filter((run) => run.open).map((run) => run.id) };
+      if (beforeCancel) await beforeCancel(live.map((run) => ({ id: run.id, folder: run.folder })));
+      for (const run of live) end(run, 'cancelled', { reason: reason ?? null });
+      return { cancelled: live.map((run) => run.id), survivors: [], paused: [] };
     },
   };
 }

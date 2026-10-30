@@ -4,6 +4,7 @@
 // folder for the agent. For the command line's own
 // agent, the bindings are the column in force and setup's line is the core's own; another agent's column is bound to
 // that agent's provider in the engine, every tier of it.
+import fs from 'node:fs';
 import { bindingsOf } from '../engine/order.js';
 import { PROVIDER as COPILOT } from '../engine/archon/copilot-pack.js';
 import { copilotColumn, readAccountModels } from './copilot/column.js';
@@ -66,7 +67,7 @@ export async function applyAgentEngine(change, { engine = engineDir(), record = 
     return;
   }
   if (change.part === 'home') {
-    record({ id: newId('chg'), kind: 'folder', target: change.target, before: null, after: { tool: 'copilot-home' } });
+    record({ id: newId('chg'), kind: 'folder', target: change.target, before: fs.existsSync(change.target) ? {} : null, after: { tool: 'copilot-home' } });
     writeHome({ engine });
   }
 }

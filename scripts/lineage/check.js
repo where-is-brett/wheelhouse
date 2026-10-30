@@ -17,6 +17,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stateDir } from '../lib/paths.js';
 import { canonicalJson } from '../lib/canonical.js';
+import { fingerprintTree } from './fingerprint.js';
 import { MANIFEST_PATH, UPSTREAMS, checkInstalled, claudeHome as defaultClaudeHome, locateInstalled, readManifest } from './manifest.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { keep, pendingDir, taken } from '../hooks/pending.js';
@@ -220,6 +221,23 @@ export function inspectLineage({ projectDir, root = ROOT, claudeHome = defaultCl
   return { ...result, manifest: manifest !== null, upstreams };
 }
 
+// What a project's steps read when they use Wheelhouse's own skill copies rather than the kits (Archon design, section
+// 7.1): each copy in `root` against the manifest's fingerprint, in inspectLineage's shape. A manifest with no copies
+// can't be checked, which is a mismatch at its own path.
+export function inspectCopies({ root = ROOT } = {}) {
+  let copies = null;
+  try {
+    copies = readManifest(root).copies ?? null;
+  } catch { /* a mismatch below */ }
+  if (copies === null) return { ok: false, mismatches: [{ upstream: null, path: MANIFEST_PATH, want: null, got: null }], manifest: false, upstreams: {} };
+  const mismatches = copies.flatMap((copy) => {
+    let got = null;
+    try { got = fingerprintTree(path.join(root, ...copy.path.split('/'))).hash; } catch { /* not there */ }
+    return got === copy.hash ? [] : [{ upstream: 'wheelhouse', path: copy.path, want: copy.hash, got }];
+  });
+  return { ok: mismatches.length === 0, mismatches, manifest: true, upstreams: {} };
+}
+
 // The session start's check: inspectLineage for `project` (its folder `projectDir`), then the
 // hold file written on a mismatch and removed on a match. Returns inspectLineage's answer with
 // kept (whether the hold file now says so; false when it could not be written or removed),
@@ -230,9 +248,11 @@ export function inspectLineage({ projectDir, root = ROOT, claudeHome = defaultCl
 // the kits; ruling R136), a kit not installed at all is setup's own expected state, not drift: it is
 // left out, so it writes no hold and no warning. Anything else that differs still holds. The kits
 // left out are given as `pending`, so the session's provenance still says what it loaded.
-export function checkLineage({ project, projectDir, root = ROOT, claudeHome = defaultClaudeHome(), locate = locateInstalled, now = () => new Date(), pinsPending = false }) {
+//
+// `inspect` is what the hold goes by: the installed kits unless told otherwise (recheckCopies).
+export function checkLineage({ project, projectDir, root = ROOT, claudeHome = defaultClaudeHome(), locate = locateInstalled, now = () => new Date(), pinsPending = false, inspect = inspectLineage }) {
   const file = holdFile(project);
-  const inspected = inspectLineage({ projectDir, root, claudeHome, locate });
+  const inspected = inspect({ projectDir, root, claudeHome, locate });
   const notInstalled = (m) => m.path === '*' && m.got === null && typeof m.upstream === 'string';
   const left = pinsPending ? inspected.mismatches.filter((m) => !notInstalled(m)) : inspected.mismatches;
   const pending = inspected.mismatches.filter((m) => !left.includes(m));
@@ -326,6 +346,24 @@ export async function recordLift({ project, views, computer, now = () => new Dat
   } catch {
     return false;
   }
+}
+
+// Where a run of a project whose steps read Wheelhouse's own copies starts: the hold goes by those copies, not the kits,
+// and lifts here by itself once they match, with its card closed; a mismatch writes it, and the state hears once. Only
+// for a project whose agent is known to be one that reads them, which the caller has settled (ruling P8-33). `write(kind,
+// data)` puts a record in the state; `views` holds the project's lineage holds. Gives checkLineage's answer.
+export async function recheckCopies({ project, projectDir, root = ROOT, views, computer, write, now = () => new Date() }) {
+  const result = checkLineage({ project, projectDir, root, now, inspect: inspectCopies });
+  if (!result.ok) {
+    if (result.kept && !result.recorded) {
+      await write('lineage-hold', holdEvent(now().toISOString(), result.mismatches));
+      markRecorded(project, result.set);
+    }
+    return result;
+  }
+  const client = { state: { write: async (body) => { await write(body.kind, body.data); return { ok: true }; } } };
+  await recordLift({ project, views, computer, now, client });
+  return result;
 }
 
 const shown = (relative) => ({ '*': 'not installed', '@commit': 'another commit' }[relative] ?? relative);

@@ -3,7 +3,7 @@
 // 79), on recordings: no Copilot request is sent.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readGitHubFigure, checkRequests, CHECK_EVERY_MS } from '../../../../scripts/engine/archon/copilot-meter.js';
+import { readGitHubFigure, checkRequests, accountKey, requestsFile, CHECK_EVERY_MS } from '../../../../scripts/engine/archon/copilot-meter.js';
 import { readRecord } from '../../../../scripts/engine/archon/record.js';
 import { requestRates, parseAccountModels } from '../../../../scripts/agents/copilot/column.js';
 
@@ -116,4 +116,32 @@ test('GitHub\'s count going down starts a new month, even with no reset date', a
   const got = await checkRequests({ read: async () => ({ used: 3, entitlement: 200, remaining: 197, resets: null }), estimate: () => 2, kept, now: new Date('2026-11-01T10:00:00Z') });
   assert.equal(got.kept.baseline, 0);
   assert.equal(got.used, 3);
+});
+
+test('the line for a figure that can\'t be read is said once, until a reading works', async () => {
+  const at = Date.parse('2026-10-30T09:00:00Z');
+  const day = (n) => new Date(at + n * CHECK_EVERY_MS);
+  const first = await checkRequests({ read: async () => null, estimate: () => 3, kept: null, now: day(0) });
+  assert.match(first.line, /couldn't read/);
+  const second = await checkRequests({ read: async () => null, estimate: () => 3, kept: first.kept, now: day(1) });
+  assert.equal(second.line, null);
+  const read = await checkRequests({ read: async () => ({ used: 40, entitlement: 200, remaining: 160, resets: '2026-11-01' }), estimate: () => 3, kept: second.kept, now: day(2) });
+  const lastRead = await checkRequests({ read: async () => ({ used: 41, entitlement: 200, remaining: 159, resets: '2026-11-01' }), estimate: () => 4, kept: read.kept, now: day(3) });
+  assert.equal(lastRead.kept.unread, undefined);
+  const again = await checkRequests({ read: async () => null, estimate: () => 4, kept: lastRead.kept, now: day(4) });
+  assert.match(again.line, /couldn't read/);
+});
+
+test('an estimate may be a promise', async () => {
+  const got = await checkRequests({ read: async () => null, estimate: async () => 6, kept: null, now: new Date('2026-10-30T09:00:00Z') });
+  assert.equal(got.used, 6);
+});
+
+test('each account has its own file, named by no login, and accounts that can\'t be told apart share one', () => {
+  const ann = { lastLoggedInUser: { host: 'https://github.com', login: 'ann' } };
+  const bob = { loggedInUsers: [{ host: 'https://github.com', login: 'bob' }] };
+  assert.notEqual(accountKey(ann), accountKey(bob));
+  assert.doesNotMatch(requestsFile('/e', ann), /ann/);
+  assert.equal(accountKey({ last_logged_in_user: { host: 'https://github.com', login: 'ann' } }), accountKey(ann));
+  assert.equal(accountKey(null), accountKey({}));
 });

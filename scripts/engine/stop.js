@@ -148,8 +148,8 @@ async function endSnapshot(snapshot, { list, kill, wait, grace, sleep }) {
 // `processes` are those the continuation host started ([{ pid, name }]); `list()` gives [{ pid, ppid, pgid, command }]
 // and `cwds()` a Map of pid to working folder (ps and lsof by default); `kill(pid, signal)` ends one (a negative pid,
 // its group); `self` is the helper's own pid. `ended` and `survivors` are the processes ended and those still left,
-// by name; `refused` the runs whose cancel the engine refused; `paused` the runs waiting on an answer, which the
-// engine doesn't cancel and which stay paused; `leftAlone` the processes named as a run's owner that
+// by name; `refused` the runs whose cancel the engine refused; `paused` the runs waiting on an answer that the engine
+// wouldn't cancel and that stay paused (an engine built without Wheelhouse's patch for them); `leftAlone` the processes named as a run's owner that
 // `engine.ownsProcess(command)` doesn't own. `afterSnapshot()` is awaited once the processes are taken and before any
 // run is cancelled (or once the engine has failed), so what it ends (the continuation host's wake) is in the snapshot.
 // `known` are the runs started and not seen end, handed to the engine's stopAll for a run its list may not show yet.

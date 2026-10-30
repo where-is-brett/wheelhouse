@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { buildFromSource, ARCHON_SOURCE, BUN_PIN, PATCHES, CLI_PATCH_MARK, enginePaths, launcherText, archonSettingsFile, archonSettingsOk, writeArchonSettings } from '../../../../scripts/engine/archon/build.js';
+import { buildFromSource, ARCHON_SOURCE, BUN_PIN, PATCHES, CANCEL_PATCH_MARK, CLI_PATCH_MARK, enginePaths, launcherText, archonSettingsFile, archonSettingsOk, writeArchonSettings } from '../../../../scripts/engine/archon/build.js';
 
 const sha = (buffer) => crypto.createHash('sha256').update(buffer).digest('hex');
 
@@ -112,7 +112,7 @@ test('the patch applies to the pinned source as a git patch and names only the C
 });
 
 test('the Copilot patch lets a source build run the CLI COPILOT_BIN_PATH names, and names only the Copilot resolver', () => {
-  assert.deepEqual(PATCHES, ['claude-permission-mode.patch', 'provider-cli-path.patch']);
+  assert.deepEqual(PATCHES, ['claude-permission-mode.patch', 'provider-cli-path.patch', 'paused-run-cancel.patch']);
   const text = fs.readFileSync(new URL('../../../../scripts/engine/archon/patch/provider-cli-path.patch', import.meta.url), 'utf8');
   const files = [...text.matchAll(/^diff --git a\/(\S+)/gm)].map((m) => m[1]);
   assert.deepEqual(files, ['packages/providers/src/community/copilot/binary-resolver.ts']);
@@ -120,6 +120,16 @@ test('the Copilot patch lets a source build run the CLI COPILOT_BIN_PATH names, 
   assert.match(text, /^\+  if \(!BUNDLED_IS_BINARY && !process\.env\.COPILOT_BIN_PATH\) return undefined;$/m);
   assert.ok(text.split('\n').some((l) => l.startsWith('+') && l.includes(CLI_PATCH_MARK)), 'the patched resolver carries the mark health and setup look for');
   assert.equal(enginePaths('/e').cliResolver, path.join('/e', 'archon', 'src', 'packages', 'providers', 'src', 'community', 'copilot', 'binary-resolver.ts'));
+});
+
+test('the paused-run patch lets cancel take a paused run through the path that keeps its worktree, and changes nothing else', () => {
+  const text = fs.readFileSync(new URL('../../../../scripts/engine/archon/patch/paused-run-cancel.patch', import.meta.url), 'utf8');
+  assert.deepEqual([...text.matchAll(/^diff --git a\/(\S+)/gm)].map((m) => m[1]), ['packages/core/src/operations/workflow/cancel.ts']);
+  assert.ok(text.split('\n').some((l) => l.startsWith('+') && l.includes(CANCEL_PATCH_MARK)), 'the patched file carries the mark health and setup look for');
+  assert.match(text, /^\+  if \(run\.status === 'paused'\) return cancelPaused\(ctx, run\);$/m);
+  assert.doesNotMatch(text, /^\+.*(releaseRunWorktree|reclaimRunWorktree)/m, 'the worktree is never released');
+  assert.doesNotMatch(text, /^-(?!--)/m, 'it only adds');
+  assert.equal(enginePaths('/e').cancelOperation, path.join('/e', 'archon', 'src', 'packages', 'core', 'src', 'operations', 'workflow', 'cancel.ts'));
 });
 
 test('the build refuses Windows for now', async () => {

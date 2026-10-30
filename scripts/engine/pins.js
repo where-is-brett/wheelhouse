@@ -9,6 +9,7 @@ import { ARCHON_SOURCE, BUN_PIN, PATCHES } from './archon/build.js';
 export const PATCH_DIGESTS = Object.freeze({
   'claude-permission-mode.patch': 'b04c637c86c77431bab733afbbc1cdb5220d3134d81aed6742ed0bcb505b4f14',
   'provider-cli-path.patch': 'e09bad09b4c2c97dfe2ad43aa0648d13bf973e0084c8d3759f1e7c4592bf2ce1',
+  'paused-run-cancel.patch': '86b41eab40572985af313760ed1e851b26255df4b86d0b5a7b91cf082f7eb180',
 });
 
 export const ENGINE_PINS = Object.freeze({
@@ -16,12 +17,13 @@ export const ENGINE_PINS = Object.freeze({
     ...ARCHON_SOURCE,
     patches: Object.freeze(PATCHES.map((name) => Object.freeze({ name, sha256: PATCH_DIGESTS[name] }))),
     // What the build holds, read on 30 October 2026 from the source at the commit with the patches applied: the
-    // patched Claude provider, the lockfile its dependencies are installed by, and (30 October 2026, with the provider-cli-path
-    // patch) the patched resolver of the second provider patch.
+    // patched Claude provider, the lockfile its dependencies are installed by, the patched resolver of the second
+    // provider patch, and the cancel operation paused-run-cancel.patch changes.
     built: Object.freeze({
       provider: '6632e04131da968911638029569f3fcb190e3f7db0a1f8a5ebd349d6e89840d2',
       lockfile: '779687777c6a3e73d8cb1e149c252bdbb85457c698f9c5563424805f2c4c19f1',
       cliResolver: 'f125692e321d30a464d1619f5c373176753b0bba7fd1a663d83fa8f0bd3e7008',
+      cancelOperation: 'cd063fecf6653bfac1285cdc7d273dc102072e69450f05860bd3f00122aff84d',
     }),
   }),
   bun: BUN_PIN,

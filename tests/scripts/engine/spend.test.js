@@ -1,7 +1,7 @@
 // tests/scripts/engine/spend.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { runCost, runningMinutes } from '../../../scripts/engine/spend.js';
+import { countedRequests, runCost, runningMinutes } from '../../../scripts/engine/spend.js';
 import { capReached, limitsFor, carriedSpend } from '../../../scripts/engine/caps.js';
 
 const step = (over) => ({ id: 'implement', role: 'implement', provider: 'claude', model: 'mid', tokens: 100000, dollars: 0.3, minutes: 4, source: 'reported', ...over });
@@ -24,6 +24,22 @@ test('a run with one unknown step has null dollars and a floor', () => {
   assert.equal(got.source, 'unknown');
   assert.equal(got.premiumRequests, null, 'an unknown run says nothing it doesn\'t know');
   assert.equal(got.tokens, 100000);
+});
+
+test('a cancelled step counts its prompt though its spend is unknown, and only a count that can\'t be known is null', () => {
+  const cancelled = runCost({ steps: [step({ source: 'estimated', dollars: null, requests: 1 }), step({ id: 'build', role: 'build', tokens: null, dollars: null, source: 'unknown', requests: 1 })] });
+  assert.equal(cancelled.source, 'unknown');
+  assert.equal(cancelled.premiumRequests, 2, 'check 74 estimated 0 for these');
+  assert.equal(runCost({ steps: [step({ id: 'x', role: 'x', tokens: null, dollars: null, source: 'unknown', requests: null })] }).premiumRequests, null);
+  assert.equal(runCost({ status: 'unknown', steps: [] }).premiumRequests, null, 'a run the engine no longer has');
+});
+
+test('a count that can\'t be known is never read as 0', () => {
+  assert.equal(countedRequests({ premiumRequests: 0 }), 0);
+  assert.equal(countedRequests({ premiumRequests: 3, byRole: { a: {} } }), 3);
+  assert.equal(countedRequests({ premiumRequests: null, byRole: { a: {}, b: {} } }), 2);
+  assert.equal(countedRequests({ premiumRequests: null }), 1);
+  assert.equal(countedRequests({}), 1);
 });
 
 test('estimated requests make the run estimated, never zero dollars', () => {

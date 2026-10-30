@@ -34,21 +34,21 @@ function computer(rows, { stubborn = [], undying = [], cwds = {} } = {}) {
 
 const base = [[1, 0, 1, '/sbin/launchd'], [SELF, 1, SELF, 'node helper-main.js']];
 
-test('All stop cancels every run, and a paused run stays paused and is listed', async () => {
+test('All stop cancels every run, a paused one among them', async () => {
   const engine = fakeEngine({ recordings });
   const a = engine.start({ recording: 'quick-approved', running: true }).runId;
   const b = engine.start({ recording: 'quick-blocked', running: true }).runId;
   const c = engine.start({ recording: 'merge-hold' }).runId;
   const pc = computer(base);
   const got = await stopEngine({ engine, ...pc, self: SELF });
-  assert.deepEqual(got.cancelled, [a, b]);
-  assert.deepEqual(got.paused, [c]);
+  assert.deepEqual(got.cancelled, [a, b, c]);
+  assert.deepEqual(got.paused, []);
   assert.deepEqual(got.survivors, []);
   assert.deepEqual(got.ended, []);
   assert.deepEqual(pc.kills, []);
   assert.deepEqual(pc.waits, [], 'with no process to look at again, there is nothing to wait for');
   assert.equal(engine.inspect(a).status, 'ended');
-  assert.equal(engine.inspect(c).status, 'paused');
+  assert.equal(engine.inspect(c).status, 'ended');
   assert.deepEqual(engine.calls.filter((x) => x.call === 'stopAll').length, 1);
 });
 

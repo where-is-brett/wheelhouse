@@ -21,7 +21,7 @@ function standIn({ provider = 'patched', lockfile = 'lock', fail = null, url = '
     await response.arrayBuffer();
     if (fail) throw new Error(fail);
     const p = enginePaths(engine);
-    for (const [file, text] of [[p.bunBin, 'bun'], [p.provider, provider], [p.cliResolver, 'resolver'], [path.join(p.src, 'bun.lock'), lockfile], [p.launcher, 'launcher'], [p.bunfig, '']]) {
+    for (const [file, text] of [[p.bunBin, 'bun'], [p.provider, provider], [p.cliResolver, 'resolver'], [p.cancelOperation, 'cancel'], [path.join(p.src, 'bun.lock'), lockfile], [p.launcher, 'launcher'], [p.bunfig, '']]) {
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, text);
     }

@@ -95,11 +95,11 @@ test('cancel and stopAll end runs and list them; stopAll leaves a paused run pau
   assert.deepEqual(engine.act(a, { cancel: { reason: 'director said stop' } }), { ok: true });
   assert.equal(engine.act(a, { cancel: { reason: 'again' } }).ok, false);
   const before = [];
-  assert.deepEqual(await engine.stopAll('All stop', { beforeCancel: (runs) => before.push(...runs.map((r) => r.id)) }), { cancelled: [b], survivors: [], paused: [c] });
-  assert.deepEqual(before, [b]);
+  assert.deepEqual(await engine.stopAll('All stop', { beforeCancel: (runs) => before.push(...runs.map((r) => r.id)) }), { cancelled: [b, c], survivors: [], paused: [] });
+  assert.deepEqual(before, [b, c]);
   assert.equal(engine.inspect(b).status, 'ended');
-  assert.equal(engine.inspect(c).status, 'paused');
-  assert.equal(engine.watch().events.filter((e) => e.outcome === 'cancelled').length, 2);
+  assert.equal(engine.inspect(c).status, 'ended');
+  assert.equal(engine.watch().events.filter((e) => e.outcome === 'cancelled').length, 3);
 });
 
 test('start refuses a recording it does not have; readRecording names a bad line', () => {
