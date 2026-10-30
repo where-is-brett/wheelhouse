@@ -3,13 +3,22 @@
 // lane asks. The question of the first task that blocked, named by its number and title, from the task blocks' records
 // (the fan-out step's output, which the helper can see), never from a file in the run's artefacts; a card for a plan
 // the lane can't take (more than MOST_TASKS tasks goes to the feature lane, none means the plan step built nothing);
-// or a card for tasks left unticked when their rounds ran out, or skipped. It prints
+// a card for a ticked task that didn't truly end (its test fails, it left changes uncommitted, its review still holds);
+// or a card for tasks left unticked when their rounds ran out, or skipped. A loop closes on its last round whatever the
+// reason, so this is where a red end becomes a question: never from the run's artefacts, always by looking again. A
+// task that didn't end is unticked in a commit of its own, so the fresh run builds it again. It prints
 // { blocked, question, options, recommend, level, topic }, the blocked exit's fields, for the lane's wait.
-//   node scripts/engine/tasks-done.js --artefacts <folder> --base <ref> --records <the fan-out step's output>
+//   node scripts/engine/tasks-done.js --run <run id> --artefacts <folder> --base <ref> --records <the fan-out step's output>
+import fs from 'node:fs';
 import path from 'node:path';
+import { helperClient } from '../host/helper-client.js';
+import { run as defaultRun } from '../lib/run.js';
+import { safeGit } from '../lib/safe-git.js';
 import { startedAsScript } from '../lib/started-as-script.js';
-import { runArg } from './done-check.js';
-import { MOST_TASKS, findPlan, planProblem, tasksOf } from './plan-file.js';
+import { runArg, runDoneChecks } from './done-check.js';
+import { MOST_TASKS, PLAN_FILE, findPlan, planProblem, tasksOf, untick } from './plan-file.js';
+import { withTicket } from './ticket.js';
+import { authorEnv } from './unplan.js';
 
 const CLEAN = { blocked: false, question: '', options: [], recommend: '', level: '3', topic: '' };
 
@@ -31,6 +40,14 @@ const UNFINISHED = {
   topic: 'tasks-unfinished',
 };
 
+const RED = {
+  blocked: true,
+  options: [{ id: 'rework', label: 'Send it back for a fresh run' }, { id: 'stop', label: 'Stop this work' }],
+  recommend: 'rework',
+  level: '3',
+  topic: 'task-red',
+};
+
 const parsed = (text) => { try { return JSON.parse(text); } catch { return null; } };
 
 // The value after a flag, an empty one included (runArg reads an empty value as missing).
@@ -45,16 +62,56 @@ const EMPTY = {
   topic: 'plan-empty',
 };
 
-export async function main(argv = process.argv.slice(2), { cwd = process.cwd(), out = (line) => process.stdout.write(`${line}\n`), run } = {}) {
+// The ticked tasks that didn't truly end, in the plan's order: [{ n, title, why }], each task's first reason. `why` is
+// plain words for the card. A test that can't be checked counts as failing.
+async function unended({ tasks, records, runId, client, cwd, run, platform }) {
+  const done = tasks.filter((t) => t.done);
+  const found = new Map();
+  const add = (task, why) => { if (!found.has(task.n)) found.set(task.n, { ...task, why }); };
+  for (const record of records) {
+    const task = done.find((t) => String(t.n) === String(record?.task));
+    if (task && record.held === true) add(task, 'its review still found a serious problem when its rounds ran out');
+  }
+  const named = done.filter((t) => t.test);
+  if (named.length > 0) {
+    const answer = await client.engine.order({ runId }).catch(() => null);
+    const order = answer?.ok === true ? answer.order : null;
+    for (const task of named) {
+      const [result] = order ? await runDoneChecks({ ...order, done: [{ test: task.test }] }, { cwd, run, platform }) : [{ ok: false }];
+      if (!result.ok) add(task, order ? 'its test still fails after its rounds' : "its test couldn't be checked");
+    }
+  }
+  const status = await (run ?? defaultRun)('git', ['status', '--porcelain', '--untracked-files=all'], { cwd, timeoutMs: 30000 }).catch(() => ({ code: 1, stdout: '' }));
+  if ((status.code !== 0 || status.stdout.trim() !== '') && done.length > 0) add(done.at(-1), "it left changes that aren't committed");
+  return [...found.values()].sort((a, b) => a.n - b.n);
+}
+
+// Unticks `numbers` in the plan in the tree, in a commit of its own. A commit that can't be made leaves the question
+// standing: the card is what matters, and the director's rework then finds the same tasks to ask about.
+async function sendBack(numbers, { cwd, run = defaultRun }) {
+  const file = path.join(cwd, PLAN_FILE);
+  const fenced = safeGit({ run, cwd, look: 'never', timeoutMs: 30000 });
+  const git = (args, options) => fenced(args, options);
+  const before = fs.readFileSync(file, 'utf8');
+  fs.writeFileSync(file, untick(before, numbers));
+  const committed = await git(['commit', '-q', '-m', `Send task ${numbers.join(', ')} back to be built again`, '--', PLAN_FILE], { env: await authorEnv(git) }).catch(() => ({ code: 1 }));
+  if (committed.code !== 0) fs.writeFileSync(file, before);
+}
+
+export async function main(argv = process.argv.slice(2), { client: given = helperClient({ timeout: 30000 }), cwd = process.cwd(), out = (line) => process.stdout.write(`${line}\n`), run, platform } = {}) {
+  const runId = runArg(argv);
   const artefacts = runArg(argv, '--artefacts');
   const base = runArg(argv, '--base');
-  if (!artefacts || !path.isAbsolute(artefacts) || !base || !argv.includes('--records')) {
-    out('usage: node scripts/engine/tasks-done.js --artefacts <folder> --base <ref> --records <the fan-out step\'s output>');
+  if (!runId || !artefacts || !path.isAbsolute(artefacts) || !base || !argv.includes('--records')) {
+    out('usage: node scripts/engine/tasks-done.js --run <run id> --artefacts <folder> --base <ref> --records <the fan-out step\'s output>');
     return 2;
   }
+  const client = withTicket(given, argv);
   const records = parsed(valueOf(argv, '--records'));
-  const stopped = (Array.isArray(records) ? records : []).find((r) => r?.blocked === true && typeof r.question === 'string' && r.question !== '');
-  const tasks = tasksOf((await findPlan({ cwd, base, run }))?.text);
+  const list = Array.isArray(records) ? records : [];
+  const stopped = list.find((r) => r?.blocked === true && typeof r.question === 'string' && r.question !== '');
+  const plan = await findPlan({ cwd, base, run });
+  const tasks = tasksOf(plan?.text);
   if (stopped) {
     const { task, question, options, recommend, level, topic } = stopped;
     const title = tasks.find((t) => String(t.n) === String(task))?.title;
@@ -63,7 +120,13 @@ export async function main(argv = process.argv.slice(2), { cwd = process.cwd(), 
     return 0;
   }
   const problem = planProblem(tasks);
-  if (problem === 'too-many') out(JSON.stringify(TOO_BIG));
+  const red = problem ? [] : await unended({ tasks, records: list, runId, client, cwd, run, platform });
+  if (red.length > 0) {
+    // Taken out of the tree already, the plan has nothing to untick; the card still comes.
+    if (plan.where === 'tree') await sendBack(red.map((t) => t.n), { cwd, run });
+    const [{ n, title, why }] = red;
+    out(JSON.stringify({ ...RED, question: `Task ${n}, ${title}: ${why}.` }));
+  } else if (problem === 'too-many') out(JSON.stringify(TOO_BIG));
   else if (problem === 'none') out(JSON.stringify(EMPTY));
   else if (tasks.some((t) => !t.done)) out(JSON.stringify(UNFINISHED));
   else out(JSON.stringify(CLEAN));

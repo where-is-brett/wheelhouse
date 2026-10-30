@@ -198,8 +198,8 @@
       "depends_on": [
         "each"
       ],
-      "bash": "records=$each.output; node \"$WHEELHOUSE_ROOT/scripts/engine/tasks-done.js\" --artefacts \"$ARTIFACTS_DIR\" --base \"$BASE_BRANCH\" --records \"$records\"",
-      "timeout": 60000,
+      "bash": "records=$each.output; node \"$WHEELHOUSE_ROOT/scripts/engine/tasks-done.js\" --run \"$WORKFLOW_ID\" --artefacts \"$ARTIFACTS_DIR\" --base \"$BASE_BRANCH\" --records \"$records\"",
+      "timeout": 1500000,
       "output_format": {
         "type": "object",
         "properties": {

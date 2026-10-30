@@ -15,6 +15,14 @@ import { PLAN_FILE } from './plan-file.js';
 
 export const UNPLAN_MESSAGE = 'Take out the build plan';
 
+// The environment that commits as the branch's last author when the worktree names no git identity: the fence shuts
+// out the global config. `git` is a fenced git.
+export async function authorEnv(git) {
+  if ((await git(['config', 'user.email'])).code === 0) return {};
+  const [name, email] = String((await git(['log', '-1', '--format=%an%n%ae'])).stdout ?? '').trim().split('\n');
+  return name && email ? { GIT_AUTHOR_NAME: name, GIT_AUTHOR_EMAIL: email, GIT_COMMITTER_NAME: name, GIT_COMMITTER_EMAIL: email } : {};
+}
+
 export async function main(argv = process.argv.slice(2), { cwd = process.cwd(), out = (line) => process.stdout.write(`${line}\n`), run = defaultRun } = {}) {
   if (!runArg(argv, '--base')) {
     out('usage: node scripts/engine/unplan.js --base <ref>');
@@ -27,12 +35,7 @@ export async function main(argv = process.argv.slice(2), { cwd = process.cwd(), 
   // The fence alone: the worktree's own settings are an agent's to write, and nothing here runs its hooks or filters.
   const fenced = safeGit({ run, cwd, look: 'never', timeoutMs: 30000 });
   const git = (args, options) => fenced(args, options);
-  // The fence shuts out the global config, so the commit is the branch's last author's unless the worktree names one.
-  let env = {};
-  if ((await git(['config', 'user.email'])).code !== 0) {
-    const [name, email] = String((await git(['log', '-1', '--format=%an%n%ae'])).stdout ?? '').trim().split('\n');
-    if (name && email) env = { GIT_AUTHOR_NAME: name, GIT_AUTHOR_EMAIL: email, GIT_COMMITTER_NAME: name, GIT_COMMITTER_EMAIL: email };
-  }
+  const env = await authorEnv(git);
   const removed = await git(['rm', '-q', '--', PLAN_FILE]);
   const committed = removed.code === 0 ? await git(['commit', '-q', '-m', UNPLAN_MESSAGE, '--', PLAN_FILE], { env }) : removed;
   if (committed.code !== 0) {

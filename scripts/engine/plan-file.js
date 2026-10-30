@@ -44,6 +44,14 @@ export function tasksOf(text) {
   return tasks;
 }
 
+// The plan's text with tasks `numbers` unticked, so a fresh run builds them again.
+export function untick(text, numbers) {
+  return String(text ?? '').split('\n').map((line) => {
+    const found = TASK.exec(line);
+    return found && numbers.includes(Number(found[2])) ? line.replace(/\[[xX]\]/, '[ ]') : line;
+  }).join('\n');
+}
+
 // The plan: { text, where: 'tree' } from the worktree, { text, where: 'history' } as it was before a commit on
 // `base..HEAD` took it out, or null.
 export async function findPlan({ cwd, base, run = defaultRun }) {

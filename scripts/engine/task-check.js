@@ -4,7 +4,7 @@
 // with the work order's test command. The order comes from the helper by the run's id, never from the run's copy.
 // It prints one line and exits 0 only when the task is done, or, with `--most`, on the task's last round: Archon fails a
 // loop that runs out of rounds, so the check counts each task's rounds in the run's artefacts and closes the loop on
-// the last, leaving the task unticked for the lane's close to ask about. A feature's slice adds its task review's output
+// the last, leaving what it found for the lane's close (tasks-done.js), which looks again at every task. A feature's slice adds its task review's output
 // (`--review`): the task is done only once that review finds no BLOCKER or HIGH.
 //   node scripts/engine/task-check.js --run <run id> --artefacts <folder> --base <ref> --task <n> [--most <rounds>]
 //     [--review <output>]

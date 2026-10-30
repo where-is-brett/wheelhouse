@@ -57,7 +57,7 @@ async function runTasks(cwd, artefacts, { blockAt = null } = {}) {
     }
     records.push(await said(taskRecord, ['--artefacts', artefacts, '--task', n], { stdin: JSON.stringify(output) }));
   }
-  const closed = await said(tasksDone, ['--artefacts', artefacts, '--base', 'main', '--records', JSON.stringify(records)], { cwd });
+  const closed = await said(tasksDone, ['--run', 'run-1', '--artefacts', artefacts, '--base', 'main', '--records', JSON.stringify(records)], { cwd });
   return { built, closed };
 }
 
