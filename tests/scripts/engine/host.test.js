@@ -288,3 +288,30 @@ test('a host without the wake keeps only the stream', async () => {
     assert.equal(children.length, 0);
   } finally { f.cleanup(); }
 });
+
+test("a run's end that names no pull request takes the one the helper's record says the run opened (check 81)", async () => {
+  const f = folder();
+  try {
+    // Archon's end of a run names no pull request; the helper opened #5 for r1 and none for r2.
+    const ends = [
+      { type: 'run-ended', runId: 'r1', at: now(), outcome: 'completed', branch: null, pr: null },
+      { type: 'run-ended', runId: 'r2', at: now(), outcome: 'completed', branch: null, pr: null },
+    ];
+    const engine = {
+      name: 'archon',
+      async *follow(cursor, { signal } = {}) {
+        yield* ends;
+        await new Promise((resolve) => (signal ? signal.addEventListener('abort', resolve, { once: true }) : null));
+      },
+      watch: async () => ({ events: [], cursor: null }),
+    };
+    const { kept, write } = writes();
+    const workOf = (id) => ({ work: `card-${id}`, lane: 'slice', branch: `wh/${id}` });
+    const host = startEngineHost({ engine, spawn: stubSpawn().spawn, write, cursorFile: f.file, workOf, prOf: (id) => (id === 'r1' ? 5 : null), wake: false, ...quick });
+    await until(() => kept.filter((w) => w.kind === 'run').length === 2, { what: 'both ends' });
+    await host.stop();
+    const ended = Object.fromEntries(kept.map((w) => [w.data.runId, w.data]));
+    assert.equal(ended.r1.pr, 5);
+    assert.equal(ended.r2.pr, undefined);
+  } finally { f.cleanup(); }
+});

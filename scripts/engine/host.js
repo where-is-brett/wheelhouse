@@ -58,7 +58,7 @@ const present = (data) => Object.fromEntries(Object.entries(data).filter(([, val
 // - `now()` gives a Date; `restartMs`, `stuckMs` and `backstopMs` are for tests.
 export function startEngineHost({
   engine, spawn, write, cursorFile, now = () => new Date(), backstopMs = BACKSTOP_MS, stuckMs = STUCK_MS, restartMs = RESTART_MS,
-  wake = true, held = () => false, workOf = () => null, onAsk = () => {}, onTrouble = () => {},
+  wake = true, held = () => false, workOf = () => null, prOf = () => null, onAsk = () => {}, onTrouble = () => {},
 } = {}) {
   if (!engine || typeof engine.follow !== 'function') throw new Error('The continuation host needs an engine that can be followed');
   const saved = readCursorFile(cursorFile);
@@ -137,7 +137,7 @@ export function startEngineHost({
     delete extra.key;
     await once(key, 'run', present({
       work: run.work, lane: run.lane, engine: engine.name ?? 'engine', runId: event.runId, state,
-      branch: extra.branch ?? run.branch, pr: prNumber(extra.pr), outcome: extra.outcome,
+      branch: extra.branch ?? run.branch, pr: prNumber(extra.pr) ?? (state === 'ended' ? prNumber(prOf(event.runId)) : undefined), outcome: extra.outcome,
     }));
   }
 

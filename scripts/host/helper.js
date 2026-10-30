@@ -4446,6 +4446,8 @@ export async function startHelper({
           write: (kind, data) => engineWrite(project, kind, data),
           cursorFile: path.join(stateDir(project), '..', 'engine', 'cursor.json'),
           workOf: (runId) => engineRunOf(project, runId) ?? dispatcher.workOf(runId),
+          // Archon's end of a run names no pull request; the helper opened it, and its record says which (check 81).
+          prOf: (runId) => engineRun.openedBy(project, runId),
         });
         host.onAsk((event) => { runner.onAsk(event).catch(() => {}); });
         engineHosts.push({ project, engine, host, runner, dispatcher });
@@ -4549,6 +4551,7 @@ export async function startHelper({
       designOf: (work) => (typeof folder === 'string' ? approvedDocument({ checkout: folder, views: views(), work }) : null),
       orderOf: (runId) => orderStore(path.join(engineDirOf(stateDir(project)), 'orders')).load(runId),
       repoOf: () => mergeRepoOf(record),
+      openedBy: (runId) => engineRun.openedBy(project, runId),
       queueFolder: () => (queueFolder ?? ownQueueFolder)(project),
     });
     const runner = engineRunner({
