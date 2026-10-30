@@ -362,6 +362,14 @@ export function archonAdapter({
       if (order.carryOn) args.push(CARRY_ON);
       args.push('--detach', '--workflow-source', packDir, '--config', configFile);
       if (order.project) args.push('--cwd', order.project);
+      // The merge queue runs in Wheelhouse's own checkout of the project (queue-folder.js), which Archon would refuse
+      // as a second clone of a registered remote: it is bound to the project the runs registered, which Archon names
+      // after the fetch mirror, mirrors/<project>, and works in place there (check 81).
+      if (workflow === MERGE_QUEUE && order.project) {
+        const [owner, name] = order.repo.path.split('/');
+        if (!owner || !name) return refusedWith('The merge queue needs the repository it merges in');
+        args.push('--project', `mirrors/${projectSlug(owner, name)}`);
+      }
       if (order.branch) args.push('--branch', order.branch);
       if (workflow !== MERGE_QUEUE) args.push('--input', `work=${order.work}`);
       else args.push('--input', `repo_host=${order.repo.host}`, '--input', `repo_path=${order.repo.path}`);
