@@ -1,7 +1,8 @@
 // scripts/engine/dispatch-run.js
 // The dispatcher's runner, in the helper: reads the record's views, asks `dispatch` what to start, and starts it
 // through the helper's own start (no route starts a run). Each piece gets its work order, with the project's caps and
-// the work's decision level; the merge queue is started from here too, one run at a time. Work held because it would
+// the work's decision level; the merge queue is started from here too, one run at a time, and a queue run Archon's own
+// ruling step started counts as that run: the helper folds its start into it. Work held because it would
 // use the plan's counted requests brings one card, once, in the engine's own words. A red main line's incident comes
 // first each tick (section 7.7, fix-main.js): one fix run for it, the incident closed once the main line reads green,
 // and one card when a fix didn't make it green. A feature runs its slices one after another (feature.js): each next one
@@ -87,7 +88,7 @@ export function orderFor(entry, { settings = {}, raised = false, config = {}, an
 }
 
 // dispatchRun({ engine, project, folder, file, readViews, settings, stopped, now, start, write, readyOf, mainGreen,
-//   stoppedRuns, fixedRuns, prMerged, designOf, orderOf, repoOf, queueFolder, openedBy }) -> { tick, workOf, startAgain, sentBack, queueDue }.
+//   stoppedRuns, fixedRuns, prMerged, designOf, orderOf, repoOf, queueFolder, queuePlace, openedBy }) -> { tick, workOf, startAgain, sentBack, queueDue }.
 // - `start({ project, order, branch?, carryOn? })` the helper's own start; `readyOf()` the pull requests marked ready,
 //   { [pr]: { work, head } }; `settings()` the project's settings in force; `write(kind, data)` a record;
 // - `mainGreen()` whether the main line's checks read green: true, false, or null when they can't be read (or are
@@ -99,8 +100,9 @@ export function orderFor(entry, { settings = {}, raised = false, config = {}, an
 // - `openedBy(runId)` the pull request the helper's record says a run opened, or null: an engine that doesn't say so
 //   at a run's end (Archon) is read through it, for records already written without one (check 81);
 // - `queueFolder()` the folder the merge queue runs in, Wheelhouse's own and never the project's (check 81):
-//   { ok, folder } or { ok: false, refused }; the queue doesn't start without it.
-export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), spentThisMonth = () => 0, mainGreen = async () => null, stoppedRuns = () => [], fixedRuns = () => [], prMerged = async () => null, prState = null, designOf = () => null, orderOf = () => null, repoOf = () => null, queueFolder = async () => ({ ok: false, refused: 'no folder for the merge queue' }), openedBy = () => null } = {}) {
+//   { ok, folder } or { ok: false, refused }; the queue doesn't start without it. `queuePlace()` that folder's path,
+//   touching nothing, for asking the engine what is live there.
+export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), spentThisMonth = () => 0, mainGreen = async () => null, stoppedRuns = () => [], fixedRuns = () => [], prMerged = async () => null, prState = null, designOf = () => null, orderOf = () => null, repoOf = () => null, queueFolder = async () => ({ ok: false, refused: 'no folder for the merge queue' }), queuePlace = null, openedBy = () => null } = {}) {
   let state = readState(file);
   const keep = () => {
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
@@ -537,6 +539,42 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     }
   }
 
+  // Keeps a merge-queue run as the project's one queue run.
+  function ownQueueRun(runId) {
+    state.mergeRun = runId;
+    state.mergeRuns = [...state.mergeRuns, runId].slice(-KEPT_MERGE_RUNS);
+  }
+  // One start at a time, and none beside a live queue run the helper didn't start, which is taken as the queue's run
+  // instead: what is due stays due, so a run that started without the project's models is followed once it ends. An
+  // engine that can't say what is live starts nothing this tick.
+  let startingQueue = null;
+  async function startQueue(waiting) {
+    if (await mergeQueueRunning()) return;
+    // Asked before `queueFolder()`, which resets the folder a live run would be working in.
+    const place = queuePlace?.() ?? null;
+    if (place !== null && typeof engine.queueRuns === 'function') {
+      let live = null;
+      try { live = await engine.queueRuns({ folder: place }); } catch { live = null; }
+      if (!Array.isArray(live)) return;
+      if (live.length > 0) {
+        ownQueueRun(live[0]);
+        keep();
+        return;
+      }
+    }
+    let where = null;
+    try { where = await queueFolder(); } catch { where = null; }
+    if (where?.ok !== true) return;
+    const got = await engine.start({ lane: 'merge', project: where.folder, repo: repoOf() });
+    if (got?.ok) {
+      ownQueueRun(got.runId);
+      state.lastStart = now().toISOString();
+      state.seenReady = waiting.map(([pr]) => pr);
+      state.queueDue = false;
+      keep();
+    }
+  }
+
   async function tick() {
     await fixTick();
     await featureTick();
@@ -617,17 +655,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       });
     }
     if (decided.startMergeQueue && !stopped()) {
-      let where = null;
-      try { where = await queueFolder(); } catch { where = null; }
-      const got = where?.ok === true ? await engine.start({ lane: 'merge', project: where.folder, repo: repoOf() }) : null;
-      if (got?.ok) {
-        state.mergeRun = got.runId;
-        state.mergeRuns = [...state.mergeRuns, got.runId].slice(-KEPT_MERGE_RUNS);
-        state.lastStart = now().toISOString();
-        state.seenReady = waiting.map(([pr]) => pr);
-        state.queueDue = false;
-        keep();
-      }
+      startingQueue ??= startQueue(waiting).finally(() => { startingQueue = null; });
+      await startingQueue;
     }
     // Work held for the plan's counted requests: one card, once, in the engine's own words.
     const held = decided.hold.find((h) => h.why === 'requests' || h.why === 'requests-unconfirmed');
@@ -656,7 +685,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     workOf: (runId) => (state.mergeRuns.includes(runId) ? { work: MERGE_WORK, lane: 'merge', branch: null } : null),
     // A ruling to merge: the queue starts on the first tick after the answered run ends, not at the next sweep. Archon's
     // ruling step tries to start it too, but from there it lacks the project and the run's models, and the helper
-    // wouldn't know the run (docs/engine/archon-upstream-note.md).
+    // wouldn't know the run (docs/engine/archon-upstream-note.md); if that start works, the helper folds its own into it.
     queueDue() {
       state.queueDue = true;
       keep();

@@ -83,7 +83,7 @@ export function fakeEngine({ recordings = {}, now = () => new Date().toISOString
       const played = [...runs.values()].filter((r) => r.recording === name).length;
       const events = recording[Math.min(played, recording.length - 1)];
       const id = `fake-${runs.size + 1}-${name}`;
-      const run = { id, recording: name, pending: events.map((e) => ({ ...e })), open: null, ended: null, branch: null, pr: null, steps: [], ownerPid: order.ownerPid ?? null, folder: order.folder ?? null, holding: order.running === true, given: {} };
+      const run = { id, recording: name, pending: events.map((e) => ({ ...e })), open: null, ended: null, branch: null, pr: null, steps: [], ownerPid: order.ownerPid ?? null, folder: order.folder ?? null, holding: order.running === true, given: {}, lane: order.lane ?? null, project: order.project ?? null };
       runs.set(id, run);
       play(run);
       // The branch the run is on, as the real engine gives it: the one asked for, else the recording's.
@@ -169,6 +169,16 @@ export function fakeEngine({ recordings = {}, now = () => new Date().toISOString
     setOutput(runId, step, text) {
       const run = runs.get(runId);
       if (run) run.given[step] = text;
+    },
+
+    // Its runs review no tasks; null for a run it doesn't have, as the real engine.
+    taskReviews(runId) {
+      return runs.has(runId) ? {} : null;
+    },
+
+    // The merge-queue runs not yet ended in `folder`, as the real engine lists them.
+    queueRuns({ folder } = {}) {
+      return [...runs.values()].filter((run) => run.lane === 'merge' && !run.ended && run.project === folder).map((run) => run.id);
     },
 
     handOver(item) {

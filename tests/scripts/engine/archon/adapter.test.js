@@ -2,6 +2,7 @@
 // The adapter with a stood-in command line: `cli` answers from recorded Archon output and keeps every call.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { archonAdapter, archonStreamer, bindingsFor, cursorKeeper } from '../../../../scripts/engine/archon/adapter.js';
@@ -564,6 +565,46 @@ test('mergeAsked gives null for anything but a pull request\'s question', async 
   assert.equal(await adapter(fakeCli({ 'workflow get': { code: 1, json: { ok: false }, stdout: '', stderr: '' } })).mergeAsked(RUN), null);
   const none = await adapter(fakeCli(recordOutput({ by: 'pr', pr: { number: 7 }, head: 'a'.repeat(40), attention: { choices: [{ id: 'park', effect: 'park' }] } }))).mergeAsked(RUN);
   assert.equal(none.merge, null);
+});
+
+// A task's step in Archon's record: `<fan-out>__<the task's identity>__<step>`, the identity the first 16 hex of the
+// SHA-256 of the item (fan-out-identity.ts, v0.13.0).
+const stepOf = (task, step) => {
+  const id = crypto.createHash('sha256').update(task).digest('hex').slice(0, 16);
+  return `__archon_fan_out__each__root__${id}__each__${id}__${step}`;
+};
+const stepRow = (step_name, node_output) => ({ event_type: 'node_completed', step_name, data: { node_output } });
+
+test('taskReviews gives each task\'s last review from the record, with no task-record step needed, as in a cancelled run', async () => {
+  const events = [
+    stepRow('tasks', '["2","3"]'),
+    stepRow(stepOf('2', 'build.task-review'), 'round one'),
+    stepRow(stepOf('3', 'build.implement'), 'built'),
+    stepRow(stepOf('2', 'build.task-review'), 'round two'),
+  ];
+  assert.deepEqual(await adapter(fakeCli({ 'workflow get': { code: 0, json: { ok: true, events }, stdout: '', stderr: '' } })).taskReviews(RUN), { 2: 'round two' });
+});
+
+test('taskReviews gives null when the engine has no such run, and nothing for a run that reached no task', async () => {
+  assert.equal(await adapter(fakeCli({ 'workflow get': { code: 1, json: { ok: false }, stdout: '', stderr: '' } })).taskReviews(RUN), null);
+  assert.deepEqual(await adapter(fakeCli({ 'workflow get': { code: 0, json: { ok: true, events: [] }, stdout: '', stderr: '' } })).taskReviews(RUN), {});
+});
+
+test('queueRuns lists the live merge-queue runs in the project\'s queue folder, whoever started them', async () => {
+  const QUEUE = '/engine/queues/o__p';
+  const runs = [
+    { id: 'mine', workflow_name: 'archon-merge-queue', status: 'running', working_path: QUEUE },
+    { id: 'waiting', workflow_name: 'archon-merge-queue', status: 'paused', working_path: `${QUEUE}/sub` },
+    { id: 'just-begun', workflow_name: 'archon-merge-queue', status: 'pending', working_path: QUEUE },
+    { id: 'over', workflow_name: 'archon-merge-queue', status: 'completed', working_path: QUEUE },
+    { id: 'other-project', workflow_name: 'archon-merge-queue', status: 'running', working_path: '/engine/queues/o__q' },
+    { id: 'a-build', workflow_name: 'wheelhouse-quick', status: 'running', working_path: QUEUE },
+  ];
+  assert.deepEqual(await adapter(fakeCli({ 'workflow status': { code: 0, json: { runs }, stdout: '', stderr: '' } })).queueRuns({ folder: QUEUE }), ['mine', 'waiting', 'just-begun']);
+});
+
+test('queueRuns gives null when the engine can\'t list its runs', async () => {
+  assert.equal(await adapter(fakeCli({ 'workflow status': { code: 1, json: null, stdout: '', stderr: 'locked' } })).queueRuns({ folder: '/q' }), null);
 });
 
 test('a run on Copilot names the agent whose steps read Wheelhouse\'s own copies; a Claude run names none', () => {

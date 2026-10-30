@@ -20,7 +20,7 @@ import { archonCli, archonCommand } from './cli.js';
 import { roomCommand } from '../room.js';
 import { ARCHON_SOURCE, BUN_PIN, CANCEL_PATCH_MARK, CLI_PATCH_MARK, PATCH_MARK, enginePaths, launcherText } from './build.js';
 import { normaliseAsk, askOccurrence } from './asks.js';
-import { readRecord, readOutputs } from './record.js';
+import { readRecord, readOutputs, readTaskReviews } from './record.js';
 import { readyWorkItem } from './work-item.js';
 import { PACK_FORMS, COPILOT_SUFFIX, PROVIDER as COPILOT } from './copilot-pack.js';
 import { checkRequests as meterCheck, readGitHubFigure, requestsFile as accountFile } from './copilot-meter.js';
@@ -53,6 +53,8 @@ export const ENGINE_PACK_FORMS = PACK_FORMS;
 export const CARRY_ON = "Carry on from what's there.";
 
 const TIERS = ['small', 'medium', 'large'];
+// The statuses of a run that hasn't ended.
+const LIVE = ['running', 'pending', 'paused'];
 const START_MS = 120000;
 const CALL_MS = 60000;
 
@@ -467,6 +469,23 @@ export function archonAdapter({
       return { pr: asked.pr.number, head: asked.head, merge: choices.find((c) => c?.effect === 'merge')?.id ?? null };
     },
 
+    // Each task's last review in a slice's run, { [task]: output }, from Archon's own record, or null when it has no
+    // such run. Not one of the interface's methods.
+    async taskReviews(runId) {
+      const result = await cli(['workflow', 'get', runId, '--verbose', '--events'], { json: true, timeout: CALL_MS });
+      return result.code === 0 && result.json?.ok !== false ? readTaskReviews(result.json) : null;
+    },
+
+    // The merge-queue runs live in a project's queue folder, whoever started them: Archon's ruling step can start one
+    // the helper never hears of, and it runs in the same folder. Their ids, or null when the engine can't list its runs,
+    // which says nothing about what is live. Not one of the interface's methods.
+    async queueRuns({ folder } = {}) {
+      const listed = await cli(['workflow', 'status', '--all'], { json: true, timeout: CALL_MS });
+      if (!Array.isArray(listed.json?.runs)) return null;
+      const inFolder = (where) => typeof where === 'string' && (where === folder || below(where, folder) !== null);
+      return listed.json.runs.filter((r) => r.workflow_name === MERGE_QUEUE && LIVE.includes(r.status) && inFolder(r.working_path)).map((r) => r.id);
+    },
+
     // The run's artefacts folder, where Archon's $ARTIFACTS_DIR puts what its steps write:
     // <home>/workspaces/mirrors/<owner>__<name>/artifacts/runs/<run>. Null for a run id or repository that isn't a plain name.
     // Not one of the interface's methods: the helper copies a run's preview from here.
@@ -511,7 +530,7 @@ export function archonAdapter({
         const got = await cli(['workflow', 'get', id, '--verbose'], { json: true, timeout: CALL_MS });
         if (got.code === 0 && got.json?.ok !== false && got.json?.id === id) rows.push(got.json);
       }
-      const going = rows.filter((r) => ['running', 'pending', 'paused'].includes(r.status));
+      const going = rows.filter((r) => LIVE.includes(r.status));
       const ids = new Set(going.map((r) => r.id));
       if (beforeCancel) {
         const runs = going.map((r) => ({ id: r.id, folder: worktreeOf(r.working_path, { home, worktreeBases }) }));

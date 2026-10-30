@@ -34,6 +34,7 @@ import { SCREEN_SIZES } from '../lib/front-desk.js';
 import { newTicket, ticketHash, ticketMatches, writeTicket } from './ticket.js';
 import { FIX_LANE, weakensChecks } from './fix-main.js';
 import { readReproduction, sameReproduction } from './reproduction.js';
+import { reviewHolds } from './review-round.js';
 
 const NO_ORDER = 'there is no work order for that run';
 const NO_TICKET = 'the call didn\'t carry the run\'s own ticket';
@@ -78,6 +79,11 @@ export function verdictBody({ head, steps }) {
 }
 
 const parsed = (text) => { try { return JSON.parse(text); } catch { return null; } };
+
+// The one lane whose tasks are each reviewed (wheelhouse-slice-task.yaml), and the key of a slice's plan: a run carried
+// on works the same plan, and a slice's tasks are numbered afresh.
+const SLICE_LANE = 'slice';
+const planOf = (order) => `${order.work}#${order.slice?.n ?? 0}`;
 
 // A review step's output as { verdict, findings, blocked }, or null when it isn't one.
 function readReview(text) {
@@ -162,6 +168,11 @@ export function engineRoutes({
       await engine.act(started.runId, { cancel: { reason: 'the run\'s ticket couldn\'t be written' } });
       return { ok: false, refused: 'the run\'s ticket couldn\'t be written, so it was stopped' };
     }
+    if (order.lane === SLICE_LANE) {
+      const verdicts = readVerdicts(project);
+      verdicts.taskReviews[planOf(order)] = [...(verdicts.taskReviews[planOf(order)] ?? []), { runId: started.runId, tasks: null }];
+      keepVerdicts(project, verdicts);
+    }
     const runBranch = started.branch ?? branch;
     await write(project, 'run', { work: order.work, lane: order.lane, engine: engine.name ?? 'engine', runId: started.runId, state: 'started', ...(runBranch ? { branch: runBranch } : {}) });
     return { ok: true, runId: started.runId };
@@ -170,13 +181,14 @@ export function engineRoutes({
   // The verdicts kept for a project: { runs: { [runId]: { head, signed: { [step]: verdict } } }, comments: { [pr]: id },
   // ready: { [pr]: { head, runId, showFirst, work } }, lessons: { [runId]: at },
   // opened: { [pr]: { runId, head, showFirst, work, level, lane, incident? } }, previews: { [runId]: head },
-  // fixed: { [runId]: { pr, head, at } }, reproduced: { [work]: { check, files, commit, runId, at } } }.
+  // fixed: { [runId]: { pr, head, at } }, reproduced: { [work]: { check, files, commit, runId, at } },
+  // taskReviews: { [plan]: [{ runId, tasks: { [task]: held } | null }] }, a slice's runs in the order they started }.
   const verdictsFile = (project) => path.join(filesDir(project), 'verdicts.json');
   function readVerdicts(project) {
     const kept = parsed(fs.existsSync(verdictsFile(project)) ? fs.readFileSync(verdictsFile(project), 'utf8') : 'null');
     return kept && typeof kept === 'object'
-      ? { runs: kept.runs ?? {}, comments: kept.comments ?? {}, ready: kept.ready ?? {}, lessons: kept.lessons ?? {}, opened: kept.opened ?? {}, previews: kept.previews ?? {}, fixed: kept.fixed ?? {}, reproduced: kept.reproduced ?? {} }
-      : { runs: {}, comments: {}, ready: {}, lessons: {}, opened: {}, previews: {}, fixed: {}, reproduced: {} };
+      ? { runs: kept.runs ?? {}, comments: kept.comments ?? {}, ready: kept.ready ?? {}, lessons: kept.lessons ?? {}, opened: kept.opened ?? {}, previews: kept.previews ?? {}, fixed: kept.fixed ?? {}, reproduced: kept.reproduced ?? {}, taskReviews: kept.taskReviews ?? {} }
+      : { runs: {}, comments: {}, ready: {}, lessons: {}, opened: {}, previews: {}, fixed: {}, reproduced: {}, taskReviews: {} };
   }
   function keepVerdicts(project, verdicts) {
     fs.mkdirSync(filesDir(project), { recursive: true, mode: 0o700 });
@@ -225,6 +237,41 @@ export function engineRoutes({
     // What holds the work, for the card a held review raises: each BLOCKER or HIGH, without its fix.
     const holding = found.findings.filter((f) => HOLDS.has(f.severity)).map(({ severity, file, line, repro }) => ({ severity, file, line, repro }));
     return { ok: true, ran: true, verdict, posted, ...(verdict === 'FINDINGS' ? { held: holding } : {}) };
+  }
+
+  // What a slice run's task reviews last said, { [task]: held }, from the engine's own record, never from anything a
+  // step hands in, kept in the helper's record: the run's records die with a run cancelled before its close. A review
+  // that took the blocked exit says nothing either way. False when the engine can't say.
+  async function keepReviews(project, runId, order) {
+    const engine = engineFor(project);
+    let reviews = null;
+    try { reviews = await engine?.taskReviews?.(runId); } catch { reviews = null; }
+    if (!reviews) return false;
+    const said = Object.entries(reviews).filter(([, text]) => parsed(text)?.blocked !== true).map(([task, text]) => [task, reviewHolds(text)]);
+    const verdicts = readVerdicts(project);
+    const runs = (verdicts.taskReviews[planOf(order)] ??= []);
+    const entry = runs.find((r) => r.runId === runId) ?? runs[runs.push({ runId }) - 1];
+    entry.tasks = Object.fromEntries(said);
+    keepVerdicts(project, verdicts);
+    return true;
+  }
+
+  // The tasks of the run's slice whose latest review, across every run of that slice, holds. Nothing clears a hold but
+  // a later review: a task sent back and built again is reviewed again, so no step can answer one by saying so. The
+  // run's own reviews are read afresh; a run before it that wasn't kept when it ended is read now, and one that can't be
+  // is refused, so the close never reads it as clear.
+  async function taskHolds({ runId } = {}) {
+    const run = runOf(runId);
+    if (!run) return { ok: false, refused: NO_ORDER };
+    if (run.order.lane !== SLICE_LANE) return { ok: true, tasks: [] };
+    const plan = planOf(run.order);
+    const unread = (readVerdicts(run.project).taskReviews[plan] ?? []).filter((r) => r.runId !== runId && r.tasks === null).map((r) => r.runId);
+    for (const id of [...unread, runId]) {
+      if (!(await keepReviews(run.project, id, run.order))) return { ok: false, refused: `the task reviews of run ${id} couldn't be read` };
+    }
+    const latest = {};
+    for (const { tasks } of readVerdicts(run.project).taskReviews[plan] ?? []) Object.assign(latest, tasks);
+    return { ok: true, tasks: Object.keys(latest).filter((task) => latest[task] === true) };
   }
 
   // The pack's pull-request step: pushes the run's worktree's own branch from the helper's side and opens (or updates)
@@ -461,8 +508,14 @@ export function engineRoutes({
     // The fix-main runs whose fix the helper added.
     fixedRuns: (project) => Object.keys(readVerdicts(project).fixed ?? {}),
     start,
+    // Keeps an ended run's task reviews in the helper's record. True once there is nothing more to keep.
+    keepTaskReviews: async (project, runId) => {
+      const order = storeOf(project).load(runId);
+      return order?.lane === SLICE_LANE ? keepReviews(project, runId, order) : true;
+    },
     routes: {
       '/engine/review': ticketed(review),
+      '/engine/task-holds': ticketed(taskHolds),
       '/engine/open-pr': ticketed(openPr),
       '/engine/ready': ticketed(ready),
       '/engine/preview/find': ticketed(previewFind),

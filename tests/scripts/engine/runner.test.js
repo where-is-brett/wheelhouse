@@ -857,3 +857,21 @@ test('a question from a merge-queue run the helper didn\'t start still comes as 
   assert.equal(questions(t)[0].data.work, 'merge-queue');
   t.cleanup();
 });
+
+test('a run that ended, cancelled or not, has its task reviews kept once, tried again until they are', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-runner-'));
+  const views = { runs: { 'card-1': [{ data: { runId: 'run-1', lane: 'slice', state: 'started' } }, { data: { runId: 'run-1', lane: 'slice', state: 'ended', outcome: 'cancelled' } }] } };
+  const kept = [];
+  let answer = false;
+  const runner = engineRunner({
+    engine: fakeEngine(), file: path.join(dir, 'router.json'), readViews: () => views, write: async () => {}, stopped: () => true,
+    keepReviews: async (runId) => { kept.push(runId); return answer; },
+  });
+  await runner.tick();
+  assert.deepEqual(kept, ['run-1'], 'under All stop too');
+  answer = true;
+  await runner.tick();
+  await runner.tick();
+  assert.deepEqual(kept, ['run-1', 'run-1']);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
