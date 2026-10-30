@@ -3,7 +3,8 @@
 // record of installs points at a copy of it for a project, and ways to change that copy.
 import fs from 'node:fs';
 import path from 'node:path';
-import { buildManifest } from '../../scripts/lineage/manifest.js';
+import { MANIFEST_PATH, buildManifest } from '../../scripts/lineage/manifest.js';
+import { fingerprintTree } from '../../scripts/lineage/fingerprint.js';
 import { tempFolder } from './homes.js';
 
 export const SHA = 'a'.repeat(40);
@@ -52,4 +53,15 @@ export function lineageFixture(projectDir, { version = '1.2.3', register = '0.4.
     put: (files) => writeFiles(installed, files),
     restore: () => writeFiles(installed, COPY),
   };
+}
+
+// Gives the fixture's root one skill copy, with a manifest that fingerprints it. Returns the copy's folder.
+export function addCopy(fixture) {
+  const copy = path.join(fixture.root, 'skills', 'pr');
+  writeFiles(copy, { 'SKILL.md': 'the copy\n', 'SOURCE.md': '- Upstream: superpowers\n' });
+  const file = path.join(fixture.root, ...MANIFEST_PATH.split('/'));
+  const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+  manifest.copies = [{ path: 'skills/pr', hash: fingerprintTree(copy).hash }];
+  fs.writeFileSync(file, JSON.stringify(manifest));
+  return copy;
 }
