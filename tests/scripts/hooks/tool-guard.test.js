@@ -1455,3 +1455,26 @@ test('the engine room\'s port is refused to the shell; other local ports are not
     }
   });
 });
+
+// A step that reads only (Archon design, section 7.5): its shell is held to reading commands, wherever it runs, and a
+// building step's is not.
+test('in a review step the shell may only read: a write is refused, a read passes, and a building step is left alone', async () => {
+  await inProject(async (ctx) => {
+    const e = plantEngine(ctx);
+    const node = (id) => ({ ...engineEnv('run-own'), ARCHON_NODE_EXECUTION: JSON.stringify({ runId: 'run-own', path: id, invocation: 1, attempt: 1 }) });
+    const shell = (id, command, tool = 'Bash') => inEngine(ctx, call(e.tree, tool, { command }), { env: node(id), projectDir: e.tree });
+    for (const command of ['touch a.txt', 'echo x > src.js', 'git commit -am x', 'sed -i s/a/b/ a.js', 'git stash']) {
+      const out = await shell('review.review-standards', command);
+      assert.ok(denied(out), command);
+      assert.match(out.hookSpecificOutput.permissionDecisionReason, /reads only/, command);
+    }
+    assert.ok(denied(await shell('task-review', 'touch a.txt')));
+    assert.ok(denied(await shell('tester', 'touch a.txt', 'Monitor')));
+    assert.ok(denied(await shell('review-spec', 'Get-ChildItem', 'PowerShell')));
+    for (const command of ['git diff main...HEAD', 'sed -n 1,40p a.js', 'grep -rn x . | head']) assert.equal(await shell('review-spec', command), undefined, command);
+    assert.equal(await shell('implement', 'touch a.txt'), undefined);
+    // Outside a project too: the step, not the folder, is what reads only.
+    const out = await decide(call(os.tmpdir(), 'Bash', { command: 'touch a.txt' }), { dir: path.join(ctx.base, 'managed'), home: ctx.home, platform: 'darwin', pluginRoot: PLUGIN, env: node('review-design'), projectDir: os.tmpdir() });
+    assert.ok(denied(out));
+  });
+});

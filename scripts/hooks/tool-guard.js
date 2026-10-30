@@ -11,7 +11,8 @@
 // the plugin's scripts with node, as its playbook names them, and reads none of them, so a gap in a
 // playbook is reported rather than worked round from the code (scenario 27's route leg). And the build
 // engine (spec 12.2): its program, the engine room's port, and its home but for the step's own run's
-// artefacts and its own worktree (scripts/protection/archon.js). It backs up the deny rules and the
+// artefacts and its own worktree (scripts/protection/archon.js). In a step that reads only (a review), any shell
+// command but a reading one (read-only-shell.js). It backs up the deny rules and the
 // sandbox; it does not replace them. Any other tool passes untouched.
 import fs from 'node:fs';
 import os from 'node:os';
@@ -28,6 +29,7 @@ import { readConfig } from '../gate/guardrails.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { NESTED_PACKAGES, NESTED_REFUSED } from '../agents/programs.js';
 import { ARCHON_PROGRAMS, ENGINE_ROOM_PORT, ownRun, placeInHome } from '../protection/archon.js';
+import { readOnlyStep, shellWrite } from './read-only-shell.js';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -47,6 +49,7 @@ const refuse = (what) => answer.deny(`Wheelhouse does not let an agent ${what}: 
 const ENGINE = 'Wheelhouse does not let an agent run or reach the build engine: it answers only to the helper. Say what the work needs instead';
 const ENGINE_FILES = 'Wheelhouse does not let an agent open the build engine\'s own files: only its own run\'s artefacts and its own worktree. Say what the work needs instead';
 const OWN_ARTEFACTS = 'The step\'s own run\'s artefacts';
+const READS_ONLY = (step, why) => `This step (${step}) reads only, so Wheelhouse lets its shell run only commands that read: ${why}. Read the change with git diff, git show, cat, sed -n, grep or rg, and say in your findings what you could not check`;
 const PLUGIN_READ = 'Wheelhouse does not let an agent read its own scripts and files: your playbook names each command and what it takes. '
   + 'Run the command as the playbook gives it; where the playbook doesn\'t say how, tell the director what is missing instead of looking in Wheelhouse\'s code';
 
@@ -930,6 +933,14 @@ export async function decide(input, { dir, projectOf: find = projectOf, home = o
   const tool = input.tool_name;
   const isConnector = typeof tool === 'string' && (tool.startsWith('mcp__') || RESOURCE_TOOLS.includes(tool));
   if (!isConnector && !SHELL_TOOLS.includes(tool) && !FILE_TOOLS.includes(tool)) return undefined;
+  // A step that reads only (read-only-shell.js), wherever it runs: its shell may only read.
+  const reading = SHELL_TOOLS.includes(tool) ? readOnlyStep(env) : null;
+  if (reading) {
+    const command = input.tool_input?.command;
+    if (tool === 'Monitor' && command === undefined && input.tool_input?.ws !== undefined) return undefined;
+    const why = tool === 'PowerShell' ? 'PowerShell is not read here' : shellWrite(command);
+    if (why) return answer.deny(READS_ONLY(reading, why));
+  }
   const cwd = input.cwd;
   const found = find(cwd, { dir });
   const byPath = found ? false : registeredByPath(cwd);

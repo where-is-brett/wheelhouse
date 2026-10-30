@@ -6,8 +6,15 @@
 // pack, nor a skill outside Wheelhouse's own copies; every agent step's prompt, as the pack is built, carries the rules
 // that there is no person to ask; and neither the prompts nor the skill copies the steps load name Superpowers, its
 // orchestrating skills or a way to ask a person. Played on the pack as Archon reads it, in its `with` variant alone.
+// On real Archon: Archon's provider loads the user's settings, so a plugin the director installed for themselves could
+// reach a step through them. A real quick run's first agent step must get past Archon's own check of what the step
+// loaded (it fails a step that loads a plugin it didn't name), and in the run's worktree, where the run's own overlay
+// switches off at project scope every plugin but Wheelhouse's and the pinned kits, Claude Code's own list must have
+// no other plugin on.
 import fs from 'node:fs';
 import path from 'node:path';
+import { KITS } from '../../../scripts/eval/world-kits.js';
+import { TINY_GOAL } from './engine-recordings.js';
 import { PACK_DIR, NO_PERSON_LINE, SKILL_PREFIX, WHEELHOUSE_PLUGIN } from '../../../scripts/engine/pack-check.js';
 import { promptText } from '../../../scripts/engine/pack-build.js';
 import { isAgentStep, packWorkflows } from './pack-routes.js';
@@ -49,6 +56,24 @@ export default {
         if (named) return { pass: false, why: `the skill ${skill} a step loads names ${named[0]}` };
       }
       return { pass: true, why: `all ${steps} agent steps name Wheelhouse's plugin alone and only its skill copies (${[...skills].sort().join(', ')}); each prompt carries the rules, and none names Superpowers or a way to ask a person` };
+    },
+    async real(world, { until: wait }) {
+      world.put('work', { id: 'card-124', title: TINY_GOAL, lane: 'quick', visible: false, dependsOn: [] });
+      await world.tick();
+      const [run] = world.runs();
+      if (!run) return { pass: false, why: `the run didn't start: ${world.starts()[0]?.got?.refused ?? 'nothing was started'}` };
+      // A step Archon records a model for got past its check of the plugins the step loaded.
+      const step = await wait(async () => {
+        try { return (await world.engine.inspect(run)).steps?.find((s) => typeof s.model === 'string' && s.model !== ''); } catch { return null; }
+      });
+      if (!step) return { pass: false, why: `no agent step of the run got under way (the run is ${await world.status(run)})${await world.trouble(run)}` };
+      const { folder } = await world.engine.inspect(run);
+      if (!folder) return { pass: false, why: 'Archon\'s record names no worktree for the run' };
+      const on = await world.pluginsOn(folder);
+      if (on === null) return { pass: false, why: 'Claude Code\'s list of plugins couldn\'t be read in the run\'s worktree' };
+      const others = on.filter((id) => !/^wheelhouse@/.test(id) && !KITS.includes(id));
+      if (others.length > 0) return { pass: false, why: `in the run's worktree Claude Code has ${others.join(', ')} on` };
+      return { pass: true, why: `the step ${step.id} got past Archon's check of its plugins, and in the run's worktree Claude Code has only ${on.sort().join(', ') || 'no plugin'} on` };
     },
   },
   variants: { with: {} },

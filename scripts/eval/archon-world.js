@@ -157,6 +157,14 @@ export async function openArchonWorld({
     tick: () => helper.engine.tick(),
     // Whether the steps ran this checkout's Wheelhouse: { ok, why } (world-plugin.js).
     pluginCheck: () => plugin.check(),
+    // The plugins Claude Code has on for a session started in `cwd`, by its own list (the one Archon reads), or null
+    // when the list can't be had.
+    async pluginsOn(cwd) {
+      const listed = await realRun(claudeBin, ['plugin', 'list', '--json'], { cwd, timeoutMs: 60000 });
+      let all;
+      try { all = JSON.parse(listed.stdout); } catch { return null; }
+      return listed.code === 0 && Array.isArray(all) ? [...new Set(all.filter((p) => p?.enabled === true).map((p) => p.id))] : null;
+    },
     stop: () => setStop({ by: 'prompt', now }),
     lift: () => liftStop(),
     starts: () => calls.filter((c) => c.call === 'start'),
