@@ -47,10 +47,14 @@ test('the copies are written into a run\'s worktree and kept out of git, so noth
   assert.deepEqual(got, { written: ['codebase-design', 'pr'], kept: [] });
   assert.ok(fs.existsSync(path.join(worktree, '.agents', 'skills', 'pr', 'SKILL.md')));
   assert.equal(gitIn(worktree, 'status', '--porcelain', '--untracked-files=all'), '');
-  // Written again (a later step, or a carried-on run): nothing changes and the exclude line isn't doubled.
+  // Each copy keeps itself out of git, so the exclude file the director's own checkout shares is never touched.
+  const exclude = gitIn(worktree, 'rev-parse', '--path-format=absolute', '--git-path', 'info/exclude');
+  const excluded = fs.existsSync(exclude) ? fs.readFileSync(exclude, 'utf8') : '';
+  assert.doesNotMatch(excluded, /agents/);
+  assert.equal(fs.readFileSync(path.join(worktree, '.agents', 'skills', 'pr', '.gitignore'), 'utf8'), '*\n');
+  // Written again (a later step, or a carried-on run): nothing changes.
   assert.deepEqual(writeWorktreeSkills({ worktree, names: ['pr'] }), { written: [], kept: ['pr'] });
-  const exclude = fs.readFileSync(gitIn(worktree, 'rev-parse', '--path-format=absolute', '--git-path', 'info/exclude'), 'utf8');
-  assert.equal(exclude.split('\n').filter((l) => l === '/.agents/skills/pr/').length, 1);
+  assert.equal(gitIn(worktree, 'status', '--porcelain', '--untracked-files=all'), '');
 });
 
 test('a project\'s own skill of the same name is kept, never written over', () => {

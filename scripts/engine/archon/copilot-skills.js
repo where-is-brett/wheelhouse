@@ -3,10 +3,9 @@
 // skill with the plugin's prefix (wheelhouse:tdd) and loads it from the plugin; Copilot loads no plugins, and Archon
 // finds a Copilot step's skills only in the run's worktree or $HOME (check 74), so the first step of the pack's Copilot
 // form (copilot-pack.js) writes the copies its workflow names into the worktree's .agents/skills/, by their plain
-// names. They are kept out of git by the worktree's exclude file, so nothing commits them, and a project's own skill of
-// the same name is kept, never written over.
+// names. Each copy keeps itself out of git with a .gitignore of its own, so nothing commits it and no git file the
+// director's own checkout shares is touched; a project's own skill of the same name is kept, never written over.
 //   node scripts/engine/archon/copilot-skills.js --names <name>,<name>   (in the run's worktree)
-import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,16 +33,6 @@ function refuseLinked(worktree, dir) {
   }
 }
 
-// Adds `line` to the worktree's exclude file, once.
-function exclude(worktree, line) {
-  const file = execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-path', 'info/exclude'], { cwd: worktree, encoding: 'utf8' }).trim();
-  let text = '';
-  try { text = fs.readFileSync(file, 'utf8'); } catch { /* not there yet */ }
-  if (text.split(/\r?\n/).includes(line)) return;
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.appendFileSync(file, `${text === '' || text.endsWith('\n') ? '' : '\n'}${line}\n`);
-}
-
 // Writes the copies `names` (plain names) into `worktree`/.agents/skills/, each folder whole and kept out of git.
 // A name whose folder is there already is kept as it is. { written, kept }.
 export function writeWorktreeSkills({ worktree, names = [], copies = SKILL_COPIES, from = SKILLS }) {
@@ -59,7 +48,7 @@ export function writeWorktreeSkills({ worktree, names = [], copies = SKILL_COPIE
       continue;
     }
     fs.cpSync(path.join(from, name), target, { recursive: true });
-    exclude(worktree, `/.agents/skills/${name}/`);
+    fs.writeFileSync(path.join(target, '.gitignore'), '*\n');
     written.push(name);
   }
   return { written, kept };
