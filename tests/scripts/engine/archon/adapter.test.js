@@ -487,11 +487,17 @@ test('a run whose models are all on Copilot starts the workflow\'s Copilot twin,
   assert.deepEqual(cli.calls[2].args.slice(0, 3), ['workflow', 'run', 'archon-merge-queue']);
   const inputs = cli.calls[2].args.flatMap((a, i, all) => (a === '--input' ? [all[i + 1]] : []));
   assert.deepEqual(inputs, ['repo_host=github.com', 'repo_path=o/p']);
+  assert.equal(cli.calls[2].args.includes('--project'), false, 'started in no folder of its own, it binds no project');
+  // Started in Wheelhouse's own checkout, it is bound to the project the runs registered, named after its fetch mirror.
+  assert.equal((await engine.start({ lane: 'merge', project: '/engine/queues/o__p', repo: { host: 'github.com', path: 'o/p' } })).ok, true);
+  const bound = cli.calls[3].args;
+  assert.equal(bound[bound.indexOf('--cwd') + 1], '/engine/queues/o__p');
+  assert.equal(bound[bound.indexOf('--project') + 1], 'mirrors/o__p');
   // With no repository, its first step would fail every time: nothing starts.
   const bare = await engine.start({ lane: 'merge' });
   assert.equal(bare.ok, false);
   assert.match(bare.refused, /repository/);
-  assert.equal(cli.calls.length, 3);
+  assert.equal(cli.calls.length, 4);
 });
 
 test('a Copilot run doesn\'t start while Copilot\'s program or its clean home isn\'t in the engine as it should be: its guards would not stand', async () => {

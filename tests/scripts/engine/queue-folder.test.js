@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { prepareQueueFolder, queueFolderOf, queueSettings, QUEUE_MARK } from '../../../scripts/engine/queue-folder.js';
+import { prepareQueueFolder, queueFolderOf, queueProjectOf, queueSettings, QUEUE_MARK } from '../../../scripts/engine/queue-folder.js';
 import { projectSettings } from '../../../scripts/protection/settings.js';
 import { readConfig } from '../../../scripts/gate/guardrails.js';
 import { tempFolder } from '../../helpers/homes.js';
@@ -99,4 +99,17 @@ test("a queue's folder that isn't this project's, or is a link, is never reused:
   // A missing part: refused, and nothing made.
   assert.equal((await prepareQueueFolder({ project: 'o__q', remoteUrl: REMOTE, socket, engine })).ok, false);
   assert.equal(fs.existsSync(queueFolderOf('o__q', engine)), false);
+});
+
+test("the broker places a call from a project's queue folder as that project's, and from nowhere else under the engine", () => {
+  const engine = fs.realpathSync(tempFolder('wh-qf-engine-'));
+  for (const p of ['o__p', 'o__q']) fs.mkdirSync(path.join(queueFolderOf(p, engine), 'src'), { recursive: true });
+  fs.mkdirSync(path.join(engine, 'mirrors', 'o__p.git'), { recursive: true });
+  assert.equal(queueProjectOf(queueFolderOf('o__p', engine), ['o__p', 'o__q'], engine), 'o__p');
+  assert.equal(queueProjectOf(path.join(queueFolderOf('o__q', engine), 'src'), ['o__p', 'o__q'], engine), 'o__q');
+  // A queue folder of a project no longer registered, the mirror, the engine folder itself, or a relative path: none.
+  assert.equal(queueProjectOf(queueFolderOf('o__q', engine), ['o__p'], engine), null);
+  assert.equal(queueProjectOf(path.join(engine, 'mirrors', 'o__p.git'), ['o__p'], engine), null);
+  assert.equal(queueProjectOf(engine, ['o__p'], engine), null);
+  assert.equal(queueProjectOf('queues/o__p', ['o__p'], engine), null);
 });

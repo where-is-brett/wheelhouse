@@ -30,7 +30,7 @@ import { hide, cleanDeep } from '../lib/clean.js';
 import { readKey } from './keys.js';
 import { checkBaseUrl, gitlabApi } from './gitlab-key.js';
 import { DEFAULT_GITLAB, parseRemote } from './gitlab-base.js';
-import { prepareQueueFolder } from '../engine/queue-folder.js';
+import { prepareQueueFolder, queueProjectOf } from '../engine/queue-folder.js';
 import { unreachableRefusal, certificateRefusal, certificateLine, awayLine, outputKind, companyGitEnv, makeAwayLog, gitlabBaseOf, certificateSetting } from './company-ca.js';
 import { childEnv } from './connection.js';
 import { protectionStatus } from './protection.js';
@@ -4075,10 +4075,13 @@ export async function startHelper({
     }
   }
 
-  // The broker (scripts/engine/broker/): every gh call Archon makes, placed by the folder it came from.
+  // The broker (scripts/engine/broker/): every gh call Archon makes, placed by the folder it came from, the project's
+  // own or its merge queue's (queue-folder.js). Either way the call meets the same rules.
   const placeEngineCall = (cwd) => {
     if (typeof cwd !== 'string' || !path.isAbsolute(cwd)) return null;
-    const found = registeredProjects().find(({ record }) => typeof record?.folder === 'string' && isInsideFolder(record.folder, cwd));
+    const projects = registeredProjects();
+    const queued = queueProjectOf(cwd, projects.map(({ project }) => project));
+    const found = projects.find(({ project, record }) => project === queued || (typeof record?.folder === 'string' && isInsideFolder(record.folder, cwd)));
     return found ? { project: found.project, folder: found.record.folder, repo: found.record.repo } : null;
   };
   // The rules' context for a call (rules.js brokerDecision): the push rules for every call, and for a verdict or a

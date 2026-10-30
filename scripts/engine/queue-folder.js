@@ -13,6 +13,7 @@ import { engineDir } from '../lib/paths.js';
 import { safeGit } from '../lib/safe-git.js';
 import { run as realRun } from '../lib/run.js';
 import { mergeSettings } from '../protection/settings.js';
+import { isInsideFolder } from '../lib/projects.js';
 
 export const QUEUE_MARK = '.wheelhouse-queue.json';
 const SHARED = '.claude/settings.json';
@@ -20,6 +21,13 @@ const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 
 // The queue's folder for a project, under the engine folder.
 export const queueFolderOf = (project, engine = engineDir()) => path.join(engine, 'queues', project);
+
+// Which of `projects` owns the queue folder holding `cwd`, or null: the broker places the queue's gh calls by it, as
+// it places a run's by the project's own folder. Nothing else is placed by it.
+export function queueProjectOf(cwd, projects, engine = engineDir()) {
+  if (typeof cwd !== 'string' || !path.isAbsolute(cwd)) return null;
+  return projects.find((project) => isInsideFolder(queueFolderOf(project, engine), cwd)) ?? null;
+}
 
 // A path's real spelling, or for one not made yet, its nearest made parent's with the rest as named. The sandbox
 // matches a socket by its real path, as it does a folder (check 81).
