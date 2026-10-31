@@ -1358,7 +1358,7 @@ export function protectionPlanLine(host) {
 export async function switchOnAsDirector({ host, repo, run = realRun, api, realUsers = false }) {
   const made = await switchOnProtection({ host, repo, run, api, env: {}, realUsers });
   const read = await protectionStatus({ host, repo, run, api, env: {}, realUsers, director: true });
-  if (host !== 'gitlab') return { available: read.available, on: read.on, line: read.line, required: made?.required };
+  if (host !== 'gitlab') return { available: read.available, on: read.on, line: read.line, ...(made?.required ? { required: made.required } : {}) };
   const project = await api.get(projectPath(repo));
   const branch = project.body?.default_branch;
   const rule = typeof branch === 'string' ? await readGitlabProtection({ api, projectId: repo, branch }) : null;
