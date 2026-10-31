@@ -166,3 +166,8 @@ test('a feature field on the wrong lane, or out of shape, is refused', () => {
   assert.throws(() => workOrder({ work: SLICE, extra: { flag: { name: 'x', how: 'y'.repeat(501) } } }), /flag/i);
   assert.throws(() => workOrder({ work: { ...SLICE, lane: 'feature' }, extra: { feature: { slices: [{ n: 1, title: 'x', pr: 0, head: 'a'.repeat(40) }] } } }), /feature/i);
 });
+
+test('a test check on a project with no command is refused, in words', () => {
+  const config = { testCommand: null, testsNotCounting: true };
+  assert.throws(() => workOrder({ work: { ...WORK, done: [{ test: 'prices' }] }, routing: {}, config }), /test check needs the project's test command/);
+});

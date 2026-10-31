@@ -210,7 +210,7 @@ async function oneCheck({
   let tmp;
   try {
     paths = await prepareFolder({ project, commit, main, work, source, ...(git ? { git } : {}) });
-    ownHome = main ? paths.mainHome : paths.home;
+    ownHome = paths.home;
     tmp = path.join(ownHome, 'tmp');
     realFolder(tmp);
   } catch (error) {

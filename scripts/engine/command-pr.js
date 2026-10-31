@@ -20,7 +20,8 @@ const parsed = (text) => {
 // The configuration `base` (its text, or null with none) with the command in it.
 export function commandText(base, { testCommand, prepare }) {
   const config = base === null ? readConfig(null) : JSON.parse(base);
-  const checks = prepare ? { ...config.checks, prepare } : config.checks;
+  // A prepare the project chose stands: the finder only fills a gap.
+  const checks = prepare ? { ...config.checks, prepare: config.checks?.prepare ?? prepare } : config.checks;
   return `${JSON.stringify({ ...config, testCommand, ...(checks ? { checks } : {}) }, null, 2)}\n`;
 }
 

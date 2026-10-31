@@ -51,7 +51,7 @@ test('checkPaths names the folders under the engine', async () => {
   await withHome(() => {
     const p = checkPaths('p');
     assert.equal(p.root, path.join(engineDir(), 'checks', 'p'));
-    assert.deepEqual([p.tree, p.gitDir, p.home, p.mainHome].map((x) => path.basename(x)), ['tree', 'tree.git', 'home', 'main-home']);
+    assert.deepEqual([p.tree, p.gitDir, p.home].map((x) => path.basename(x)), ['tree', 'tree.git', 'home']);
   });
 });
 
@@ -244,12 +244,12 @@ test('a head check puts a real folder back where a test left a link, and the lin
     const first = await prepareFolder({ project: 'p', commit: s.first, main: false, source: s.url });
     const target = tempFolder('wh-swap-');
     fs.writeFileSync(path.join(target, 'keep.txt'), 'keep');
-    for (const folder of [first.tree, first.home, first.mainHome]) {
+    for (const folder of [first.tree, first.home]) {
       fs.rmSync(folder, { recursive: true });
       fs.symlinkSync(target, folder);
     }
     const next = await prepareFolder({ project: 'p', commit: s.first, main: false, source: s.url });
-    for (const folder of [next.tree, next.home, next.mainHome]) assert.equal(fs.lstatSync(folder).isDirectory(), true);
+    for (const folder of [next.tree, next.home]) assert.equal(fs.lstatSync(folder).isDirectory(), true);
     assert.deepEqual(fs.readdirSync(target), ['keep.txt']);
   });
 });
@@ -279,5 +279,28 @@ test('a link left in the tree isn\'t followed out of it', unix, async () => {
     fs.symlinkSync(outside, path.join(p.tree, 'out'));
     await prepareFolder({ project: 'p', commit: s.second, main: false, source: s.url });
     assert.equal(fs.readFileSync(path.join(outside, 'keep'), 'utf8'), 'keep');
+  });
+});
+
+test('each main-line check has a home of its own, and the one before it goes', unix, async () => {
+  await withHome(async () => {
+    const s = await source();
+    const first = await prepareFolder({ project: 'p', commit: s.first, main: true, source: s.url });
+    fs.writeFileSync(path.join(first.home, '.npmrc'), 'script-shell=/tmp/fake\n');
+    const next = await prepareFolder({ project: 'p', commit: s.first, main: true, source: s.url });
+    assert.notEqual(next.home, first.home);
+    assert.deepEqual(fs.readdirSync(next.home), []);
+    assert.equal(fs.existsSync(first.home), false);
+  });
+});
+
+test('a locked file left by a main-line check doesn\'t stop the next one', unix, async () => {
+  await withHome(async () => {
+    const s = await source();
+    const first = await prepareFolder({ project: 'p', commit: s.first, main: true, source: s.url });
+    fs.writeFileSync(path.join(first.tree, 'locked'), 'x');
+    if (process.platform === 'darwin') spawnSync('chflags', ['uchg', path.join(first.tree, 'locked')]);
+    const next = await prepareFolder({ project: 'p', commit: s.first, main: true, source: s.url });
+    assert.equal(fs.existsSync(next.tree), true);
   });
 });

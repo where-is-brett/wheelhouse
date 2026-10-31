@@ -4124,8 +4124,8 @@ export async function startHelper({
     const keptOnly = named.testCommand === null && found !== null;
     const settings = keptOnly ? { ...named, testCommand: found.testCommand, prepare: named.prepare ?? found.prepare } : named;
     const contexts = await adapter.checkContexts(read.main);
-    // The rules matter only once something else reports: until then the checks run here whatever they say.
-    const ownOnly = !read.hasWorkflows && contexts.every((c) => c.name === STATUS_CONTEXT);
+    // The rules matter only once something else reports or the setting says the host: until then the checks run here whatever they say.
+    const ownOnly = settings.where !== 'host' && !read.hasWorkflows && contexts.every((c) => c.name === STATUS_CONTEXT);
     const required = ownOnly ? [] : await adapter.requiredChecks(defaultBranch).catch(() => null);
     return {
       setting: settings.where, host: 'github', contexts, hasWorkflows: read.hasWorkflows, required, main: read.main, settings, digest: commandDigest(settings.testCommand),

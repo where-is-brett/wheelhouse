@@ -63,3 +63,8 @@ test('after that a change to the command is a guardrail change', () => {
   const config = readConfig(commandText(BASE, FOUND));
   assert.equal(classifyChange({ paths: [FILE], config }).touchesGuardrails, true);
 });
+
+test('a project\'s own prepare stands', () => {
+  const base = JSON.stringify({ ...readConfig(null), checks: { prepare: 'npm ci --ignore-scripts' } });
+  assert.equal(JSON.parse(commandText(base, { testCommand: 'npm test', prepare: 'npm ci' })).checks.prepare, 'npm ci --ignore-scripts');
+});

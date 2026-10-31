@@ -12,7 +12,7 @@ import { writeCheck } from './record.js';
 import { runCheck } from './run.js';
 import { keepQueue, readQueue, whereNow } from './standing.js';
 import { rulesNameOurs, stuckHostChecks } from './where.js';
-import { CARRY_ON, GET_THEM_PASSING, checksRanLine, firstCheck } from '../setup/first-check.js';
+import { CARRY_ON, FIRST_RED_CARD, GET_THEM_PASSING, checksRanLine, firstCheck } from '../setup/first-check.js';
 import { LEAVE_THEM, RUN_CHECKS_HERE } from '../state/card-lines.js';
 
 export const CHECK_CARD_WORK = 'checks';
@@ -189,7 +189,10 @@ export function checkRunner({
 
   // A check has ended on the main line: not counting may end with it.
   async function afterMain(answer, f) {
-    if (!countingEnds(f.notCounting === true, answer)) return;
+    const { firstFor } = readQueue(project);
+    if (!countingEnds(f.notCounting === true || Boolean(firstFor), answer)) return;
+    // A red first check's card may still be open: its answer has nothing left to decide.
+    change((q) => { q.firstFor = null; });
     await record('checks-state', { state: 'counting', why: 'passed' });
     await note(checksRanLine(answer));
   }
@@ -215,7 +218,7 @@ export function checkRunner({
     const event = await writeCheck(project, answer, { write });
     const kept = settleTries(answer, commit, digest, controller.signal.aborted);
     if (main && !controller.signal.aborted) {
-      await firstHeard(answer, wasFirst, f);
+      await firstHeard(answer, wasFirst, f).catch(() => {});
       await afterMain(answer, f);
     }
     // Under All stop the report waits; the dispatcher holds what is sent back until it lifts.
@@ -245,7 +248,8 @@ export function checkRunner({
     if (label === CARRY_ON && mayStopCounting(states())) await record('checks-state', { state: 'not-counting', why: 'director' });
     if (label === GET_THEM_PASSING) await onFix(firstFor);
     change((q) => { q.firstFor = null; });
-    await report(firstFor, f.digest);
+    // Carry on anyway stays pending until the check that doesn't count: a red here would start the fix just declined.
+    if (label === GET_THEM_PASSING) await report(firstFor, f.digest);
   }
 
   // The director's answer to the card for a check that couldn't run: Try again gives every held head its tries back.
@@ -271,9 +275,10 @@ export function checkRunner({
 
   // A card that couldn't be written when it was due.
   async function askedAgain() {
-    const { streak, waitingForPermission } = readQueue(project);
+    const { streak, waitingForPermission, firstFor, asked } = readQueue(project);
     if (waitingForPermission) await askPermission().catch(() => {});
     if (streak >= NOT_RAN_LIMIT) await askNotRan().catch(() => {});
+    if (firstFor && !asked.first) await ask('first', FIRST_RED_CARD).catch(() => {});
   }
 
   // What the host's checks are doing on the newest heads seen, read while the project's checks are the host's.
@@ -332,11 +337,18 @@ export function checkRunner({
       return;
     }
     if (stopped()) return;
-    // No command to run and nothing kept: the finder's answer settles it, and the next tick goes on from there.
-    if (typeof f.settings?.testCommand !== 'string' && f.notCounting !== true) {
-      if (f.finder) await record('checks-found', f.finder);
-      else await firstCheck({ found: null, state: (data) => record('checks-state', data) });
-      return;
+    // No command to run and nothing kept: the finder's answer settles it, and the next tick goes on from there. One the
+    // record can't keep, or a project that counted and lost its command, is the director's card, never a quiet stop.
+    if (typeof f.settings?.testCommand !== 'string') {
+      if (f.finder) {
+        await record('checks-found', f.finder).catch(() => askNotRan().catch(() => {}));
+        return;
+      }
+      if (f.notCounting !== true) {
+        if (mayStopCounting(states())) await firstCheck({ found: null, state: (data) => record('checks-state', data) });
+        else await askNotRan().catch(() => {});
+        return;
+      }
     }
     answered();
     await askedAgain();

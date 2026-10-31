@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { checksWorld, P } from '../../helpers/checks-world.js';
+import { checksWorld, COMMAND, P } from '../../helpers/checks-world.js';
 import { redMainIncident, fixOrder } from '../../../scripts/engine/fix-main.js';
 import { workOrder } from '../../../scripts/engine/order.js';
 import { withTicket } from '../../../scripts/engine/ticket.js';
@@ -113,3 +113,11 @@ test('a pull request named like the helper\'s, with anything else in it, gets no
   assert.match(answer.refused, /no CLEAN review/);
   assert.match(answer.refused, /no approval/);
 }, FOUND_WORLD));
+
+test('rules naming Wheelhouse\'s check beat a setting of host, with nothing else reporting', { timeout: 300000 }, () => checksWorld(async ({ helper, statuses, reported, stand }) => {
+  await reported(await stand.branchHead('main'), 'success');
+  assert.ok(statuses.length > 0);
+}, {
+  files: { '.claude/wheelhouse.json': JSON.stringify({ ...readConfig(null), testCommand: COMMAND, checks: { where: 'host' } }) },
+  host: { requiredChecks: async () => ['wheelhouse/checks'] },
+}));

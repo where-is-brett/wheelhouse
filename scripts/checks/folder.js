@@ -6,8 +6,8 @@
 //
 // A job a test starts in a session of its own outlives its check, still holding the sandbox of that check: it can write
 // what that profile names, for as long as it lives. So what a profile names decides whose checks it can reach:
-// - A main-line check gets a new folder each time, which no earlier check's profile names, so nothing left running can
-//   write it, and nothing the helper does there can be raced.
+// - A main-line check gets a new folder each time, its home inside it, which no earlier check's profile names, so nothing
+//   left running can write it, and nothing the helper does there can be raced. It fetches its tools from nothing.
 // - Each work has its own tree, git directory and home, which keep its build output between its heads. Another work's job
 //   can't reach them, so it can't decide this work's check. A work's own job can, and the main line's clean check is what
 //   stands behind that (spec 4.6).
@@ -38,7 +38,7 @@ export function checkPaths(project, { main = false, work = null, run = null } = 
   if (typeof project !== 'string' || !PROJECT.test(project)) throw new Error('A check needs a project\'s own name');
   const root = path.join(checksDir(), project);
   const place = main ? path.join(root, MAIN, run) : path.join(root, HEADS, slotOf(work));
-  return { root, tree: path.join(place, 'tree'), gitDir: path.join(place, 'tree.git'), home: path.join(place, 'home'), mainHome: path.join(root, 'main-home') };
+  return { root, tree: path.join(place, 'tree'), gitDir: path.join(place, 'tree.git'), home: path.join(place, 'home') };
 }
 
 // The sandbox of the helper's own steps in a tree something left running may still write: they can write that tree and what
@@ -62,7 +62,7 @@ const narrowed = (paths, run = realRun, platform = process.platform) => (platfor
 async function removed(given) {
   const folder = fs.realpathSync(given);
   const step = narrowed({ tree: folder, gitDir: folder });
-  const got = await step('/bin/sh', ['-c', 'chmod -R u+rwx -- "$0" 2>/dev/null; rm -rf -- "$0"', folder], {});
+  const got = await step('/bin/sh', ['-c', 'chflags -R nouchg -- "$0" 2>/dev/null; chmod -R u+rwx -- "$0" 2>/dev/null; rm -rf -- "$0"', folder], {});
   if (got.code !== 0) throw new Error(`A check folder could not be taken away: ${String(got.stderr).trim()}`);
 }
 
@@ -107,9 +107,10 @@ export async function prepareFolder({ project, commit, main, work = null, source
     const places = path.join(named.root, MAIN);
     let earlier = [];
     try { earlier = fs.readdirSync(places); } catch { /* the first */ }
-    for (const place of earlier) await removed(path.join(places, place));
+    // One that won't go holds nothing up: this check has a path of its own.
+    for (const place of earlier) await removed(path.join(places, place)).catch(() => {});
   }
-  for (const dir of [named.tree, named.home, named.mainHome]) realFolder(dir);
+  for (const dir of [named.tree, named.home]) realFolder(dir);
   const paths = realPaths(named);
   if (!fs.existsSync(path.join(paths.gitDir, 'HEAD'))) await must(git({ cwd: paths.root, reach: 'local', look: 'never' }), ['init', '-q', '--bare', paths.gitDir], 'start');
   const step = narrowed(paths, runner);

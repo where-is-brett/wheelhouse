@@ -277,11 +277,11 @@ test('the check runs in its own home, with a temporary folder of its own and no 
   });
 });
 
-test('a main-line check has main-home for its home', unix, async () => {
+test('a main-line check has a home of its own for its home', unix, async () => {
   await withHome(async () => {
     const s = await source();
     const got = await runCheck({ project: 'p', commit: s.commit, main: true, settings: settings('echo "home=$HOME"'), source: s.url, platform: 'darwin', sandbox: standIn() });
-    assert.ok(got.tail.includes(path.join(fs.realpathSync(checkPaths('p').root), 'main-home')));
+    assert.match(got.tail, /home=.*\/main\/[0-9a-f]{16}\/home/);
   });
 });
 

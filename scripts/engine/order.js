@@ -144,6 +144,7 @@ export function checkOrder(order) {
   if (order.showFirst !== undefined && typeof order.showFirst !== 'boolean') return 'a work order says yes or no to being shown first';
   if (order.level !== undefined && ![1, 2, 3, 4].includes(order.level)) return 'a work order\'s level is 1, 2, 3 or 4';
   if (!isText(order.testCommand) && !(order.testCommand === null && order.testsNotCounting === true)) return 'a work order needs the project\'s test command';
+  if (order.testCommand === null && order.done.some((check) => Object.hasOwn(check, 'test'))) return 'a test check needs the project\'s test command, and this project has none yet';
   if (!isObject(order.bindings)) return 'a work order needs its model bindings';
   if (order.answers !== undefined && !(Array.isArray(order.answers) && order.answers.length <= MOST_ANSWERS && order.answers.every(isAnswer))) {
     return 'a work order\'s answers are each a question and its answer, in short text';

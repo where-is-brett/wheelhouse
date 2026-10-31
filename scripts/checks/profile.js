@@ -77,7 +77,7 @@ function foldersAbove(folder) {
 // The SBPL text for one stage of a check. `stage` is `prepare` or `test`. `denied` is the deny list as real paths and
 // `temp` the temporary folders a check may write, which leave out the per-user ones (above).
 export function checkProfile({ paths, main, stage, network, denied, temp, userHome }) {
-  const ownHome = main ? paths.mainHome : paths.home;
+  const ownHome = paths.home;
   const online = stage === 'prepare' || network === true;
   const lines = [
     '(version 1)',

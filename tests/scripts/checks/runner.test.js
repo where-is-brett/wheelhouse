@@ -64,12 +64,20 @@ function world({ word = () => 'passed', status = () => ({ ok: true }), ...given 
     keep: async () => given.keep?.(),
     note: async (words) => { w.notes.push(words); },
     record: async (kind, data) => {
+      if (w.recordFails) throw new Error('too long');
       w.records.push({ kind, data });
       if (kind === 'checks-state') w.facts = { ...w.facts, notCounting: data.state === 'not-counting' };
       if (kind === 'checks-found') w.facts = { ...w.facts, settings: { ...w.facts.settings, testCommand: data.testCommand, prepare: data.prepare }, digest: commandDigest(data.testCommand), keptOnly: true };
     },
-    states: () => w.records.filter((r) => r.kind === 'checks-state').map((r) => r.data),
-    card: async (data) => { w.log.push('card'); w.cards.push(data); },
+    states: () => [...(w.statesBefore ?? []), ...w.records.filter((r) => r.kind === 'checks-state').map((r) => r.data)],
+    card: async (data) => {
+      if (w.cardFails > 0) {
+        w.cardFails -= 1;
+        throw new Error('not now');
+      }
+      w.log.push('card');
+      w.cards.push(data);
+    },
     answerOf: (id) => w.answers[id] ?? null,
     ended: (work) => w.ended.includes(work),
     stopped: () => w.stopped,
@@ -798,4 +806,65 @@ test('it stays in the record while the main line hasn\'t passed', () => withHome
   await ticked(runner);
   await ticked(runner);
   assert.equal(kept.length, 0);
+}));
+
+// --- what a review of the first check found ---
+
+const commandless = (w, more = {}) => { w.facts = { ...w.facts, settings: { ...w.facts.settings, testCommand: null }, digest: null, finder: null, ...more }; };
+
+test('after Carry on anyway the main line never reads red, so no fix starts', () => withHome(async () => {
+  const { w, runner } = world({ word: (commit, settings) => (settings.notCounting ? 'not-counted' : 'failed') });
+  await ticked(runner);
+  w.answers[w.cards[0].id] = CARRY_ON;
+  await ticked(runner);
+  await ticked(runner);
+  await ticked(runner);
+  assert.equal(w.posts.some((p) => p.state === 'failure'), false);
+}));
+
+test('a Carry on anyway answered after the tests passed leaves them counting', () => withHome(async () => {
+  let passes = false;
+  const { w, runner } = world({ word: () => (passes ? 'passed' : 'failed') });
+  await ticked(runner);
+  passes = true;
+  w.facts = { ...w.facts, main: 'c'.repeat(40) };
+  await ticked(runner);
+  await ticked(runner);
+  assert.deepEqual(w.records.filter((r) => r.kind === 'checks-state').at(-1).data, { state: 'counting', why: 'passed' });
+  w.answers[w.cards[0].id] = CARRY_ON;
+  await ticked(runner);
+  await ticked(runner);
+  assert.equal(w.records.some((r) => r.data.state === 'not-counting'), false);
+}));
+
+test('a first card that could not be written is asked again, and the check still reports', () => withHome(async () => {
+  const { w, runner } = world({ word: () => 'failed', cardFails: 1 });
+  await ticked(runner);
+  assert.equal(w.cards.length, 0);
+  assert.equal(w.posts.at(-1).state, 'pending');
+  await ticked(runner);
+  assert.equal(w.cards.length, 1);
+}));
+
+test('a project that counted and lost its command doesn\'t stop counting', () => withHome(async () => {
+  const { w, runner } = world({ statesBefore: [{ state: 'counting', why: 'passed' }] });
+  commandless(w);
+  await ticked(runner);
+  assert.equal(w.records.some((r) => r.data?.state === 'not-counting'), false);
+  assert.equal(w.cards.length, 1);
+}));
+
+test('a not-counting project that gains tests has them found', () => withHome(async () => {
+  const finder = { testCommand: 'npm test', prepare: null, why: 'a test script in package.json' };
+  const { w, runner } = world();
+  commandless(w, { notCounting: true, finder });
+  await ticked(runner);
+  assert.deepEqual(w.records.at(-1), { kind: 'checks-found', data: finder });
+}));
+
+test('a found command the record can\'t keep raises a card', () => withHome(async () => {
+  const { w, runner } = world({ recordFails: true });
+  commandless(w, { finder: { testCommand: 'x'.repeat(600), prepare: null, why: 'x' } });
+  await ticked(runner);
+  assert.equal(w.cards.length, 1);
 }));
