@@ -99,6 +99,13 @@ test('a timeout has no second try', unix, async () => {
   });
 });
 
+test('a stall on the run after a red one is timed-out, never red', unix, async () => {
+  await withHome(async () => {
+    const got = await check('if [ -f MARKS ]; then sleep 30; else echo ran > MARKS; exit 1; fi', { limitMs: 400 });
+    assert.equal(got.result, 'timed-out');
+  });
+});
+
 test('the time limit is kept even when something still holds the output open', unix, async () => {
   await withHome(async () => {
     const started = Date.now();
