@@ -127,23 +127,33 @@ The checks run the project's own code, which an agent wrote, so they run sandbox
 
 ```
 (version 1)
-(allow default)
+(deny default)
+(allow process-exec) (allow process-fork)
+(allow process-info* (target same-sandbox)) (allow signal (target same-sandbox))
+(allow sysctl-read) (allow pseudo-tty) (allow ipc-posix-shm) (allow ipc-posix-sem)
+(allow file-ioctl <the /dev files>)
+(allow mach-lookup <a short list of services, each named>)
+(allow file-read*)
 (deny file-read*  <the deny list of scripts/protection/settings.js: ~/.wheelhouse, the keychain, ssh and cloud keys, Archon's private files>)
-(allow file-read* <the check folder>)
-(deny file-write*)
-(allow file-write* <the check folder, the system's temporary folders>)
-(deny network-outbound)                       ; left out for `prepare`
-(allow network-outbound (remote ip "localhost:*") (remote unix-socket))
+(deny file-read*  <the home folder>)                 ; prepare only
+(allow file-read-metadata <each folder above the check folder, by literal>)
+(allow file-read* <the check folder, tree.git, the check's own home>)
+(allow file-write* <the check folder, the check's own home, /private/tmp, /private/var/tmp, the /dev files>)
+(allow network-* <localhost; unix sockets inside the check folder and its own home>)
+(allow network-outbound (remote ip "*:*"))           ; prepare, or checks.network
 ```
 
-- It allows by default and denies what matters, rather than the other way round, since a build tool talks to many system services and a list of those would break on each macOS update.
-- **It fails closed.** No `sandbox-exec`, or a profile that won't load, gives `could-not-run` and one card. Nothing ever runs unsandboxed.
-- **The network.** `prepare` has it, as a CI job does, and the tests don't. `prepare` always comes from the default branch, and its profile also denies reading the rest of the home folder. A test that needs the internet fails, and the fix is the project's: `checks.network: true`, a guardrail change the director approves. **A risk accepted:** the install scripts of a branch's dependencies run during `prepare` with the network on, so they could send out the project's own code. Nothing else is in reach, and a CI job has the same exposure. *Designer's call.*
-- **Tool caches stay inside.** `HOME` for a check is a folder of its own, so `~/.npm`, `~/.cargo`, `~/.swiftpm` and the like land there, and the director's own caches are neither read nor written. Heads use `<engine>/checks/<project>/home`, and the main line uses `main-home` beside it, which no head can write. So a head can't poison what a main-line check reads.
-- **No way out.** The profile allows by default, so a test might ask a system service to run something outside the sandbox (`launchctl`, `open`, Apple Events), where the signing key could be read. Check 82 tries each. Should one get through, the profile starts from deny-by-default instead, as Claude Code's does. One try of `launchctl submit` under the draft profile failed, but that doesn't settle it.
+- **It denies by default.** Check 82 showed an allow-by-default draft isn't safe: `open`, a compiled program and `xcodebuild test` each started the project's own app outside the sandbox, with the signing key in reach. A list of denials shuts only the ways someone thought of. So what isn't named is refused: Apple Events, opening apps, launchd jobs, the clipboard, the keychain's services. A macOS update that a build tool needs a new service for then fails as `could-not-run`, which is safe, and the line is added after looking at the service.
+- **The services named** answer questions and start nothing: system logging, notifications, file events and looking up the user, and for the network names and certificates. Three are left out on purpose. `launchservicesd` and `testmanagerd.control` start programs outside the sandbox. `dirhelper` names the per-user temporary and cache folders: without it the tools fall back to the check's own `TMPDIR`, so those folders stay shut. They have to, because programs outside the sandbox trust what is in them: `xcrun` keeps its lookup of tools there, so a test could plant what the director's next build runs.
+- **It fails closed.** No `sandbox-exec`, or a profile that won't load, gives `could-not-run` and one card. Each stage first runs a command that does nothing under its profile, so the project's own command never starts until the profile has loaded. Nothing ever runs unsandboxed.
+- **The network.** `prepare` has it, as a CI job does, and the tests don't. `prepare` always comes from the default branch, and its profile also denies reading the rest of the home folder. A test that needs the internet fails, and the fix is the project's: `checks.network: true`, a guardrail change the director approves. A test can still reach this computer's own ports, as a test server needs, but no socket outside the check's folders, so the SSH agent is out of reach. **A risk accepted:** the install scripts of a branch's dependencies run during `prepare` with the network on, so they could send out the project's own code. Nothing else is in reach, and a CI job has the same exposure. *Designer's call.*
+- **Tool caches stay inside.** `HOME` for a check is a folder of its own, so `~/.npm`, `~/.cargo`, `~/.swiftpm` and the like land there, and the director's own caches are neither read nor written. `TMPDIR` is a folder inside it. Heads use `<engine>/checks/<project>/home`, and the main line uses `main-home` beside it, which no head can write. So a head can't poison what a main-line check reads.
+- **The folders above.** The check folder sits inside `~/.wheelhouse`, which is denied, and a program must be able to look at each folder on its way down to start there. Those get `file-read-metadata` by `literal`, which doesn't let a program list them.
+- **`DEVELOPER_DIR` is set** to a full Xcode: `xcode-select` may point at the Command Line Tools, which have no `xctest`.
+- **The time limit is kept.** At the limit the check's process group is ended, and the wait for its output stops 5 seconds later, whatever still holds it open. Check 82 saw a 2-minute limit take 21 minutes without this. A job a test leaves behind ends with its process group at the end of each stage.
 - **All stop** ends the check's process tree with the others. Its result is `could-not-run`, and it runs again after All stop lifts.
 
-**Tried on this Mac, 31 October 2026.** A draft of the profile denied reading the keychain and `~/.wheelhouse`, and stopped an outbound `curl`. Swift's own tools sandbox themselves, and macOS refuses a sandbox inside a sandbox: `swift test` failed with "sandbox_apply: Operation not permitted", and `swift test --disable-sandbox` passed. `xcodebuild` failed the same way, and got past it with `-IDEPackageSupportDisableManifestSandbox=YES -IDEPackageSupportDisablePackageSandbox=YES`; a full `xcodebuild test` of a real app wasn't tried. The same refusal hits an agent's own Bash, so the test command must carry these switches everywhere it runs. Check 82 settles Xcode projects.
+**Tried on this Mac, 31 October 2026.** Check 82 records every way out shut under this profile, in both stages, and `curl` out only in `prepare`. Swift's own tools sandbox themselves, and macOS refuses a sandbox inside a sandbox, so `swift test` needs `--disable-sandbox`; `xcodebuild` needs `-IDEPackageSupportDisableManifestSandbox=YES -IDEPackageSupportDisablePackageSandbox=YES`. A tool refused in this way gives `could-not-run`, not red. The same refusal hits an agent's own Bash, so the test command must carry these switches everywhere it runs.
 
 ### 4.5 Finding the test command
 
@@ -152,13 +162,17 @@ A script, not an agent, finds `testCommand` for setup and the survey with no que
 | The project holds | `testCommand` | `prepare` |
 |---|---|---|
 | `testCommand` already set | as set | as set |
-| `*.xcworkspace` or `*.xcodeproj` | `xcodebuild test -scheme <its shared scheme> -destination 'platform=macOS' -derivedDataPath .build/checks`, with the switches of section 4.4 and `CODE_SIGNING_ALLOWED=NO` | `xcodebuild -resolvePackageDependencies`, with the same switches |
+| `*.xcworkspace` or `*.xcodeproj` | `xcodebuild test -scheme <its shared scheme> -destination 'platform=macOS' -derivedDataPath .build/checks`, with the switches of section 4.4 and `CODE_SIGNING_ALLOWED=NO`, and the second try below | `xcodebuild -resolvePackageDependencies`, with the same switches |
 | `Package.swift` | `swift test --disable-sandbox` | `swift package resolve --disable-sandbox` |
 | `package.json` with a test script | `npm test` | `npm ci` |
 | `Cargo.toml` | `cargo test` | `cargo fetch` |
 | `go.mod` | `go test ./...` | `go mod download` |
 | `pyproject.toml` or `pytest.ini` | `python3 -m pytest` | none |
 | a `Makefile` with a `test` target | `make test` | none |
+
+**Xcode's tests.** The sandbox always refuses `xcodebuild test` itself, since it needs `testmanagerd` and hosted tests need LaunchServices, and both start programs outside the sandbox. So when the first run shows that refusal, the check takes one second try: `xcodebuild build-for-testing` with `TEST_HOST=` and `BUNDLE_LOADER=` set empty, then `xcrun xctest` on each test bundle, which stays inside the sandbox. On that try a pass counts, as tests with no host, and anything else is `could-not-run`, never red. Tests that can't build without their app, or that need one running, end at the card in section 4.8. This takes the place of the ordinary second try. *Designer's call.*
+
+**A generated Xcode project.** A project may hold an XcodeGen `project.yml` with its `.xcodeproj` ignored by git. It has no committed Xcode project, so it reads as its `Package.swift` row, which reaches every test in the package's own test targets. Tests that live only in `project.yml`'s targets would need `xcodegen generate` in `prepare`.
 
 Then the check runs once on the default branch, and the first result decides what the director hears:
 
@@ -451,7 +465,9 @@ Each part is one fresh session, with the named test files. Counted evaluation ru
 
 | Risk | How it's handled |
 |---|---|
-| Xcode projects won't run under the profile | Check 82 first. The profile can widen, for Mac builds, without giving up the deny list. If `xcodebuild test` can't run sandboxed at all, the director gets the card and no check runs unsandboxed without their say |
+| Xcode projects won't run under the profile | `xcodebuild test` can't, by design (section 4.5). The second try runs tests with no host. Tests that need their app get the card, and no check runs unsandboxed without the director's say |
+| A macOS or Xcode update needs a service the profile doesn't name | The check gives `could-not-run` and its card, never a way out. The service is looked at and added by hand |
+| A process a test leaves in a new session of its own outlives the check, and writes to `tree` during the next one | The process group's end misses it, and a main-line check shares `tree`. It holds no key and stays in the sandbox. Open: a main-line tree no head's profile can write would shut it |
 | A long build on a laptop | One check at a time, build output kept, a time limit. The check's minutes are on the Logbook |
 | A check on a sleeping computer | It pauses and carries on, as builds do. A hosted project's status stays `pending` meanwhile, which holds no other work |
 | The local queue drifts from Archon's gate | The monthly reading above, and the same permit in both |
@@ -475,7 +491,7 @@ The director may override any of these.
 3. One check at a time on the computer (section 4.3).
 4. Main-line checks start clean; heads keep build output (section 4.3).
 5. A red result gets one second try (section 4.3).
-6. The checks' sandbox is `sandbox-exec` with an allow-by-default profile (section 4.4).
+6. The checks' sandbox is `sandbox-exec` with a deny-by-default profile, which starts nothing outside it (section 4.4); `xcodebuild test` therefore can't run, and has the second try of section 4.5.
 7. Only `prepare` has the network; tests need `checks.network`, a guardrail change. A dependency's install script could send out the project's own code during `prepare`, a risk accepted (section 4.4).
 8. A project whose tests fail at setup can carry on in the not-counting state, which ends the first time they pass (section 4.5).
 9. A separate home, not Lean's store, with the folder left alone (section 5.1).

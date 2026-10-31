@@ -1,7 +1,7 @@
 // probes/82-check-sandbox/run.js
 // Check 82: a real Mac app's tests under the check sandbox (spec section 4.4). Three phases:
 //
-//   node probes/82-check-sandbox/run.js ways [--profile deny|draft|tight] [--prompts]    every way out, from inside the sandbox
+//   node probes/82-check-sandbox/run.js ways [--profile deny|draft|tight] [--stage test|prepare] [--prompts]    every way out, from inside the sandbox
 //                                          (--prompts includes the Apple Events ways under draft: they raise a prompt)
 //   node probes/82-check-sandbox/run.js fixture [--profile draft|tight|open] [--once]    a made-up app: is a test still inside?
 //   node probes/82-check-sandbox/run.js swift [--profile ...]              a made-up Swift package: the table's next row
@@ -252,7 +252,7 @@ async function phaseWays() {
     report.control = [];
     for (const entry of entries.filter((e) => e.control)) report.control.push(await tryWay(entry, null, ctx));
     for (const variant of variants) {
-      const profile = profileFor({ paths, variant, temp });
+      const profile = profileFor({ paths, variant, stage: option('stage', 'test'), temp });
       const loads = await jailed(profile, 'echo loaded', { paths });
       report.runs[variant] = { loads: loads.code === 0, loadError: loads.code === 0 ? '' : loads.stderr.trim().slice(0, 300), ways: [] };
       if (loads.code !== 0) continue;

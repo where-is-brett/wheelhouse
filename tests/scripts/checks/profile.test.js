@@ -122,7 +122,7 @@ test('a new line in a folder name is refused', () => {
   assert.throws(() => profile({ denied: ['/Users/a\nb'] }), /new line/);
 });
 
-test('sandboxDenyPaths names the private record, the keychain, the keys and the engine\'s private files', () => {
+test('sandboxDenyPaths names the private record, the keychain, the keys and the engine\'s private files', { skip: process.platform === 'win32' }, () => {
   const list = sandboxDenyPaths({ userHome: USER, platform: 'darwin' });
   assert.ok(list.some((p) => p === process.env.WHEELHOUSE_HOME || p === `${USER}/.wheelhouse`));
   for (const p of [`${USER}/Library/Keychains`, `${USER}/.ssh`, `${USER}/.aws`]) assert.ok(list.includes(p), p);

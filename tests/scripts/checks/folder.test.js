@@ -10,6 +10,8 @@ import { tempFolder } from '../../helpers/homes.js';
 import { run } from '../../../scripts/lib/run.js';
 import { engineDir } from '../../../scripts/lib/paths.js';
 
+const unix = { skip: process.platform === 'win32' };
+
 async function withHome(fn) {
   const home = path.join(tempFolder('wh-folder-'), 'home');
   const before = process.env.WHEELHOUSE_HOME;
@@ -50,7 +52,7 @@ test('checkPaths names the folders under the engine', async () => {
   });
 });
 
-test('a commit is fetched and nothing links back to the source', async () => {
+test('a commit is fetched and nothing links back to the source', unix, async () => {
   await withHome(async () => {
     const s = await source();
     const p = await prepareFolder({ project: 'p', commit: s.first, main: false, source: s.url });
@@ -62,7 +64,7 @@ test('a commit is fetched and nothing links back to the source', async () => {
   });
 });
 
-test('a commit that isn\'t the tip of any branch is fetched too', async () => {
+test('a commit that isn\'t the tip of any branch is fetched too', unix, async () => {
   await withHome(async () => {
     const s = await source();
     const p = await prepareFolder({ project: 'p', commit: s.first, main: false, source: s.url });
@@ -70,7 +72,7 @@ test('a commit that isn\'t the tip of any branch is fetched too', async () => {
   });
 });
 
-test('no ref is left behind in the source', async () => {
+test('no ref is left behind in the source', unix, async () => {
   await withHome(async () => {
     const s = await source();
     await prepareFolder({ project: 'p', commit: s.first, main: false, source: s.url });
@@ -78,7 +80,7 @@ test('no ref is left behind in the source', async () => {
   });
 });
 
-test('the tree\'s .git points at tree.git, beside it', async () => {
+test('the tree\'s .git points at tree.git, beside it', unix, async () => {
   await withHome(async () => {
     const s = await source();
     const p = await prepareFolder({ project: 'p', commit: s.first, main: false, source: s.url });
@@ -87,7 +89,7 @@ test('the tree\'s .git points at tree.git, beside it', async () => {
   });
 });
 
-test('a head keeps ignored build output', async () => {
+test('a head keeps ignored build output', unix, async () => {
   await withHome(async () => {
     const s = await source();
     const p = await prepareFolder({ project: 'p', commit: s.first, main: false, source: s.url });
@@ -102,7 +104,7 @@ test('a head keeps ignored build output', async () => {
   });
 });
 
-test('a main-line check starts from an empty tree', async () => {
+test('a main-line check starts from an empty tree', unix, async () => {
   await withHome(async () => {
     const s = await source();
     const p = await prepareFolder({ project: 'p', commit: s.first, main: false, source: s.url });
@@ -114,7 +116,7 @@ test('a main-line check starts from an empty tree', async () => {
   });
 });
 
-test('a commit the source doesn\'t hold is refused', async () => {
+test('a commit the source doesn\'t hold is refused', unix, async () => {
   await withHome(async () => {
     const s = await source();
     await assert.rejects(prepareFolder({ project: 'p', commit: 'f'.repeat(40), main: false, source: s.url }), /could not/);
@@ -128,7 +130,7 @@ test('a project name with a path in it is refused', async () => {
 });
 
 // Review Focus 3. The planted files are what a test could leave; the proof is written only if git runs them.
-test('a hook and core.fsmonitor planted in the tree never run on the next prepareFolder', async () => {
+test('a hook and core.fsmonitor planted in the tree never run on the next prepareFolder', unix, async () => {
   await withHome(async () => {
     const s = await source();
     const p = await prepareFolder({ project: 'p', commit: s.first, main: false, source: s.url });
@@ -148,7 +150,7 @@ test('a hook and core.fsmonitor planted in the tree never run on the next prepar
   });
 });
 
-test('a link left in the tree isn\'t followed out of it', async () => {
+test('a link left in the tree isn\'t followed out of it', unix, async () => {
   await withHome(async () => {
     const s = await source();
     const p = await prepareFolder({ project: 'p', commit: s.first, main: false, source: s.url });

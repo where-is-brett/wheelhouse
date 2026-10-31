@@ -93,7 +93,7 @@ The test bundle's process stayed under the check's own process in every sighting
 
 **Other findings.**
 
-- **Time.** On the made-up Swift package, the sandbox added over a minute: `swift package resolve` took 78 seconds under tight and 2 with no sandbox, and `swift test` took about 90 against 15. The no-sandbox run may have had caches warm. The real project's 84 seconds of `prepare` is likely the same wait, and it would explain why kept output saved only 30 seconds. The cause wasn't found.
+- **Time.** On the made-up Swift package, the sandbox seemed to add over a minute: `swift package resolve` took 78 seconds under tight and 2 with no sandbox, and `swift test` took about 90 against 15. That minute was the probe's own reading of the log, not the sandbox (see part 1, below).
 - **`/dev`.** The spec's blanket `(deny file-write*)` also denies `/dev/null` and `/dev/ptmx`. Without those, `xcodebuild` stops with "Pseudo Terminal Setup Error".
 - **`prepare`'s denial of the home folder** also denies the folders on the way down to the check folder. Swift stops with "unable to set working directory" until each is allowed by `literal`.
 - **`HOME` isn't the whole story.** Foundation's `NSHomeDirectory()` still gave the real home, with `HOME` and `CFFIXED_USER_HOME` both set. SwiftPM's writes to the real `~/Library/Caches` are refused and only warn.
@@ -101,11 +101,24 @@ The test bundle's process stayed under the check's own process in every sighting
 - **Ending a run.** A check can't end what launchd started: hung apps outlived `xcodebuild` and were ended by process number. Waiting for the output to close also overran: one 2-minute limit took 21 minutes, and one 8-minute limit took over two hours, while the Mac may have slept. The probe now stops waiting past the limit.
 - **The kernel's denial lines.** `log show` gave no lines for the check's own processes, so the probe's `refused` lists show only other programs. They prove nothing either way.
 
+### Part 1: the deny-by-default profile
+
+Main ruled for deny-by-default (spec 4.4). `checkProfile` (`scripts/checks/profile.js`) is that profile, and `--profile deny` is now the probe's default. These ran on the same Mac on 31 October 2026.
+
+**Every way out is shut.** All 25 ways of `ways` under the test stage, and all but `curl` under `--stage prepare`, whose network is its purpose. The control got out on 17 of the 18 ways it tries. The probe now lays the check folder out as the real one is, deep inside a folder on the deny list, and added four ways: listing a folder above the check folder, planting a file in the per-user temporary folder, writing a preference, and the SSH agent's socket. All four are shut.
+
+**The extra minute was the probe.** It gave `log show --start` UTC time, which that reads as local, so at 11 hours from UTC it searched 11 hours of logs, inside the stage's timer. Each stage's time in the tables above is about a minute too long. Measured with that taken out, `swift package resolve` took 2 seconds and `swift test` of the made-up package under 20. The sandbox costs nothing to notice.
+
+**A new way out, found on the way.** `xcrun` keeps its lookup of tools in the per-user temporary folder, which the draft and tight profiles let a check write. A test could plant a lookup there and the director's next build, outside the sandbox, would run what it names. It wasn't tried, since the fix is simple. Leaving `com.apple.bsd.dirhelper` off the service list sends `xcrun`, SwiftPM and `xcodebuild` to the check's own `TMPDIR`, and those folders stay shut.
+
+**Swift.** `runner` runs the whole of `runCheck`: a made-up package with a real dependency fetched from GitHub, on the main line from nothing, passed in 0.9 minutes. `prepare` fetched over https through git, and `ls` of the real home was refused.
+
+**Xcode.** `xcodebuild test` can't run under this profile: it first stopped on holding off sleep, and given that it stopped on `testmanagerd.control`. Allowing that service once got it further, and it still failed; it wasn't kept, since that service starts programs. `xcodebuild build-for-testing` with `TEST_HOST=` and `BUNDLE_LOADER=` empty, then `xcrun xctest` on each bundle, passed both the made-up app's bundles inside the sandbox with no service added. `runner --fixture` took that second try and passed in 0.4 minutes, with no proof beside the secret.
+
 ### What was not tested
 
 - `xcodebuild test` on a real app. The real project has no committed Xcode project, and its generated one wasn't built. So the hosted-test finding comes from the made-up app, and whether `TEST_HOST=` builds when tests link the app's own code is unknown.
 - Whether the real app's tests that live only in XcodeGen's targets were reached. `swift test` ran the package's one test target.
-- A profile that starts from deny-by-default. The tightened one shut everything tried, so it wasn't built, and allow-by-default can still hold a way nobody tried.
 - `crontab`, which might have changed the director's own table, and other Apple services by name.
 - The ways out run from inside a real test, as opposed to the shell under the same profile, except the three reports of the made-up app.
 - Tight on a project whose test needs `NSApplication`. With `launchservicesd` denied, such a test aborts.
