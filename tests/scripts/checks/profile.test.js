@@ -58,6 +58,14 @@ test('only the tests have the map of file types, and never the service that writ
   for (const stage of ['test', 'prepare']) assert.doesNotMatch(profile({ stage }), /lsd\.modifydb/);
 });
 
+test('only the tests have the services a media or free-space call waits on', () => {
+  for (const name of ['com.apple.audio.AudioComponentRegistrar', 'com.apple.cache_delete.public', 'com.apple.PerfPowerTelemetryClientRegistrationService']) {
+    assert.ok(profile({ stage: 'test' }).includes(`"${name}"`), name);
+    assert.ok(!profile({ stage: 'prepare' }).includes(`"${name}"`), name);
+  }
+  assert.doesNotMatch(profile({ stage: 'test' }), /"com\.apple\.cache_delete"/);
+});
+
 test('a head writes its own folders and never main-home', () => {
   const writes = rules(profile(), '(allow file-write*').join('\n');
   assert.ok(writes.includes(`(subpath "${paths().tree}")`));

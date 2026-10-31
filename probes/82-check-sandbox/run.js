@@ -167,6 +167,22 @@ async function compiledOpener(paths) {
   return got.code === 0 ? program : null;
 }
 
+// An audio component in the check's own home, whose loading runs the payload, and a program that looks for it and asks
+// for it out of process: the one thing the audio registrar could do for a test is have a host outside the sandbox load it.
+async function audioLoader(paths) {
+  const bundle = path.join(paths.home, 'Library', 'Audio', 'Plug-Ins', 'Components', 'Way.component', 'Contents');
+  fs.mkdirSync(path.join(bundle, 'MacOS'), { recursive: true });
+  fs.writeFileSync(path.join(bundle, 'Info.plist'), `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>CFBundleExecutable</key><string>Way</string><key>CFBundleIdentifier</key><string>invalid.wheelhouse.check82.audio</string><key>CFBundlePackageType</key><string>BNDL</string><key>AudioComponents</key><array><dict><key>type</key><string>aufx</string><key>subtype</key><string>Wy82</string><key>manufacturer</key><string>Whse</string><key>name</key><string>Whse: Way</string><key>version</key><integer>1</integer><key>factoryFunction</key><string>WayFactory</string></dict></array></dict></plist>\n`);
+  const library = path.join(paths.root, 'way.c');
+  fs.writeFileSync(library, `#include <stdlib.h>\n__attribute__((constructor)) static void go(void) { system("/bin/sh ${payload(paths, 'audio-component-host')}"); }\nvoid *WayFactory(const void *d) { return 0; }\n`);
+  const built = await run('/usr/bin/xcrun', ['clang', '-dynamiclib', library, '-o', path.join(bundle, 'MacOS', 'Way')], { env: { DEVELOPER_DIR: XCODE }, timeoutMs: 60000 });
+  const source = path.join(paths.root, 'audio.swift');
+  const program = path.join(paths.root, 'audio');
+  fs.writeFileSync(source, `import AudioToolbox\nimport Foundation\nfunc code(_ s: String) -> OSType { s.utf8.reduce(0) { ($0 << 8) | OSType($1) } }\nvar d = AudioComponentDescription(componentType: kAudioUnitType_Effect, componentSubType: code("Wy82"), componentManufacturer: code("Whse"), componentFlags: 0, componentFlagsMask: 0)\nvar c = AudioComponentFindNext(nil, &d)\nprint(c == nil ? "not listed" : "listed")\nif c == nil { d.componentSubType = code("dely"); d.componentManufacturer = code("appl"); c = AudioComponentFindNext(nil, &d) }\nif let c { AudioComponentInstantiate(c, .loadOutOfProcess) { _, status in print("asked:", status) } }\nRunLoop.current.run(until: Date().addingTimeInterval(4))\n`);
+  const got = await run('/usr/bin/xcrun', ['swiftc', '-O', source, '-o', program], { env: { DEVELOPER_DIR: XCODE }, timeoutMs: 180000 });
+  return built.code === 0 && got.code === 0 ? program : null;
+}
+
 async function listener(file) {
   const seen = { connected: false };
   const server = net.createServer((socket) => { seen.connected = true; socket.end('hello\n'); });
@@ -195,6 +211,7 @@ function ways(paths, opener, ctx) {
       { way: 'compiled-open-app', run: (way) => `${shq(opener)} ${shq(payloadApp(paths, way))}`, control: true, proof: 'compiled-open-app' },
       { way: 'compiled-ls-open-app', run: (way) => `${shq(opener)} ${shq(payloadApp(paths, way))} ls`, control: true, proof: 'compiled-ls-open-app' },
     ] : []),
+    ...(ctx.audio ? [{ way: 'audio-component-host', run: shq(ctx.audio) }] : []),
     { way: 'osascript-finder-open', run: (way) => `/usr/bin/osascript -e ${shq(`tell application "Finder" to open POSIX file ${JSON.stringify(payloadApp(paths, way))}`)}`, proof: 'osascript-finder-open' },
     { way: 'osascript-terminal-script', run: (way) => `/usr/bin/osascript -e ${shq(`tell application "Terminal" to do script ${JSON.stringify(`/bin/sh ${payload(paths, way)}; exit`)}`)}`, proof: 'osascript-terminal-script' },
     { way: 'login-item-events', run: (way) => `/usr/bin/osascript -e ${shq(`tell application "System Events" to make login item at end with properties {path:${JSON.stringify(payloadApp(paths, way))}, hidden:true}`)}`, proof: null, loginItem: (way) => `Way${way.replaceAll('-', '')}` },
@@ -250,10 +267,10 @@ async function phaseWays() {
   const temp = [await darwinFolder('DARWIN_USER_TEMP_DIR'), await darwinFolder('DARWIN_USER_CACHE_DIR'), '/private/tmp', '/private/var/tmp'];
   const opener = await compiledOpener(paths);
   const victim = spawn('/bin/sleep', ['600'], { env: { WHEELHOUSE_CHECK_82_CANARY: '1' }, stdio: 'ignore' });
-  const ctx = { paths, victim, userTemp: temp[0] };
+  const ctx = { paths, victim, userTemp: temp[0], audio: await audioLoader(paths) };
   const variants = [option('profile', 'deny')];
   const prompts = process.argv.includes('--prompts');
-  const report = { compiledOpener: opener !== null, runs: {} };
+  const report = { compiledOpener: opener !== null, audioLoader: ctx.audio !== null, runs: {} };
   try {
     // Under a profile that lets Apple Events out, these reach macOS's consent prompt on the director's screen.
     const entries = ways(paths, opener, ctx).filter((e) => prompts || variants[0] !== 'draft' || !/^osascript|^login-item-events/.test(e.way));
@@ -654,7 +671,7 @@ function cleanSample(text, mask, checkFolder) {
     if (frame && (images.has(frame[4]) || /\.swift:\d|<compiler-generated>/.test(line))) return `${frame[1]}${frame[2]}<project code>`;
     return line.replace(/ \+ \d+ \[0x[0-9a-f]+\]| \[0x[0-9a-f]+\]/g, '').replace(/(DispatchQueue_\d+: )(?!com\.apple)\S+/, '$1<a queue>');
   });
-  return mask(shown.filter(Boolean).join('\n')).split('\n').slice(0, 220);
+  return mask(shown.filter(Boolean).join('\n')).split('\n').slice(0, 900);
 }
 
 // Where --issues may write: never where a commit could pick it up.

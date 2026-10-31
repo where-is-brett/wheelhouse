@@ -27,7 +27,19 @@ export const CHECK_SERVICES = Object.freeze([
 // and a project's passing tests read as red (the real project of check 82). It hands out the map and starts nothing:
 // starting an app takes `launchservicesd` and the `lsopen` operation, and both stay refused. Its partner that writes the
 // map, `com.apple.lsd.modifydb`, stays out, as `prepare` needs neither.
-const TEST_SERVICES = Object.freeze(['com.apple.lsd.mapdb']);
+//
+// The other three are here because a refusal can stall a test. A framework's first call to a service waits for its answer,
+// and a refused service's answer doesn't arrive once as many tests as the Mac has cores are waiting at once: the tests sit
+// until the time limit (check 82). The audio registrar lists the audio components the system knows, `cache_delete.public`
+// answers how much disk space is free, and it alone gives the true figure, and the telemetry one says whether a framework
+// may report. None starts a program a test chooses. `cache_delete.public` can also be asked to purge, and refuses a caller
+// with no Apple entitlement. `com.apple.cache_delete`, its private partner, stays out.
+const TEST_SERVICES = Object.freeze([
+  'com.apple.audio.AudioComponentRegistrar',
+  'com.apple.cache_delete.public',
+  'com.apple.lsd.mapdb',
+  'com.apple.PerfPowerTelemetryClientRegistrationService',
+]);
 // What fetching over the internet also needs: names and certificates.
 const NETWORK_SERVICES = Object.freeze([
   'com.apple.dnssd.service',
