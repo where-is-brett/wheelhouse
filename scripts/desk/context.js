@@ -12,6 +12,7 @@ import { sourcesText } from '../sources/check.js';
 import { glossaryOf, knownConcepts, plainWords } from '../frontdesk/glossary.js';
 import { isBriefingLine } from '../lib/release-line.js';
 import { localViews } from '../hooks/session-start.js';
+import { readSafekeepingSaid } from '../briefing/seen.js';
 import { namesOf, readProject } from '../lib/projects.js';
 import { listEvents } from '../state/events.js';
 import { reviewDue } from '../frontdesk/learning.js';
@@ -118,7 +119,8 @@ const wordsIn = (text) => text.split(/\s+/).filter(Boolean).length;
 export function briefingIn({
   project, model, usage, sources, settings, since, weeklySince, review, at, briefingModel = realBriefingModel, room, survey, surveyAt, host, leaveOut, carrying, earlier, holdLocked,
 }) {
-  const briefing = briefingModel({ model, usage, sources, since, weeklySince, now: at, review, survey, surveyAt, host, leaveOut, carrying, earlier, holdLocked });
+  const safekeepingSaid = attempt(() => readSafekeepingSaid(project), null);
+  const briefing = briefingModel({ model, usage, sources, since, weeklySince, now: at, review, survey, surveyAt, host, leaveOut, carrying, earlier, holdLocked, safekeepingSaid });
   const length = settings?.briefing?.value;
   const limit = Object.hasOwn(BRIEFING_WORDS, length) ? BRIEFING_WORDS[length] : BRIEFING_WORDS.standard;
   const words = wordsOf(project, settings, model);
@@ -147,7 +149,10 @@ export function briefingIn({
   const found = Array.isArray(briefing?.found) ? briefing.found.length : 0;
   // A survey with no lines here had them all said elsewhere, so a cut can't have lost them.
   const surveyShown = typeof briefing?.foundId === 'string' && (found === 0 || (parts.shownFound >= found && !fitted.cut)) ? briefing.foundId : null;
-  return { text: fitted.text, raise: fitted.cut ? [] : raise, weeklyShown: weeklyShown && !fitted.cut, surveyShown };
+  // The safekeeping sentence counts as said only when the text showed it, so a cut one comes again.
+  const said = briefing?.safekeeping ?? null;
+  const safekeeping = said !== null && parts.shownWatch > said.at && !fitted.cut ? said.level : null;
+  return { text: fitted.text, raise: fitted.cut ? [] : raise, weeklyShown: weeklyShown && !fitted.cut, surveyShown, safekeeping };
 }
 
 
@@ -172,7 +177,7 @@ export function contextText(want, inputs, { project, at, tab, since, weeklySince
     // At Trusting the work in flight is being carried on, and its line says so (ruling A9).
     const carrying = settings?.autonomy?.value === 'trusting';
     const given = briefingIn({ project, model, usage, sources, settings, since, weeklySince, review, at, briefingModel, room, survey, surveyAt, host, leaveOut, carrying, earlier });
-    return { text: `${HEADINGS.briefing}\n\n${given.text}`, raise: given.raise, weeklyShown: given.weeklyShown, surveyShown: given.surveyShown };
+    return { text: `${HEADINGS.briefing}\n\n${given.text}`, raise: given.raise, weeklyShown: given.weeklyShown, surveyShown: given.surveyShown, safekeeping: given.safekeeping };
   }
   let body;
   let make;

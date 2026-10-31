@@ -15,7 +15,7 @@ const KEPT_LINES = 'wheelhouse-home';
 export const OWN_CHANGES_LINE = 'Your folder has changes of its own, so the newest version waits.';
 
 const FOLDER_WHAT = 'the project\'s folder';
-const tracking = (branch) => `refs/remotes/${FOLDER_REMOTE}/${branch}`;
+const tracking = (branch, remote = FOLDER_REMOTE) => `refs/remotes/${remote}/${branch}`;
 const inFolder = (folder, git) => git(folder, { reach: 'local', what: FOLDER_WHAT });
 
 // Gives the folder its one remote: a plain path to the engine's mirror, so Archon reads the mirror and never the home. A
@@ -31,12 +31,14 @@ export async function addFolderRemote({ folder, mirror, git = gitRoute() }) {
 }
 
 // Fetches the home's main version into the folder's tracking ref and compares. The fetch names the home by its path, so no
-// remote's setting is followed, and it is also what `archon complete` reads a merge from (check 83).
-async function reading({ project, folder, branch, git }) {
+// remote's setting is followed, and it is also what `archon complete` reads a merge from (check 83). `from` is another
+// repository of Wheelhouse's to read in the home's place, with the remote the folder knows it by: a hosted project's mirror.
+async function reading({ project, folder, branch, git, from = null }) {
   if (!isBranchName(branch)) throw new Error('That branch\'s name can\'t be used for the main version');
   const here = inFolder(folder, git);
-  const home = await homeGit(project, git).must(['rev-parse', '--verify', '-q', `refs/heads/${branch}^{commit}`], 'The main version could not be read');
-  await here.must(['fetch', '--quiet', '--no-tags', '--no-write-fetch-head', '--no-recurse-submodules', homeDir(project), `+refs/heads/${branch}:${tracking(branch)}`], 'The folder could not be brought the newest version');
+  const source = from === null ? homeGit(project, git) : git(from.dir, { list: 'own', what: 'the mirror' });
+  const home = await source.must(['rev-parse', '--verify', '-q', `refs/heads/${branch}^{commit}`], 'The main version could not be read');
+  await here.must(['fetch', '--quiet', '--no-tags', '--no-write-fetch-head', '--no-recurse-submodules', from?.dir ?? homeDir(project), `+refs/heads/${branch}:${tracking(branch, from?.remote)}`], 'The folder could not be brought the newest version');
   const held = await here.call(['rev-parse', '--verify', '-q', `refs/heads/${branch}^{commit}`]);
   if (held.code !== 0) return { state: 'home-ahead', tip: null, home };
   const tip = String(held.stdout).trim();
@@ -67,8 +69,8 @@ export async function folderFree({ folder, branch, git = gitRoute() }) {
 // Brings the folder up to the home's main version, fast-forward only: { moved } says whether it moved, or { line } why it
 // waits. Only a folder on that branch with nothing uncommitted. A file git doesn't track holds nothing up, and one in the
 // way makes the merge refuse, ignored or not.
-export async function bringFolderUp({ project, folder, branch, git = gitRoute() }) {
-  const { state, home } = await reading({ project, folder, branch, git });
+export async function bringFolderUp({ project, folder, branch, git = gitRoute(), from = null }) {
+  const { state, home } = await reading({ project, folder, branch, git, from });
   if (state !== 'home-ahead') return { moved: false };
   if (!(await folderFree({ folder, branch, git }))) return { line: OWN_CHANGES_LINE };
   const here = inFolder(folder, git);

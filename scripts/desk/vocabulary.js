@@ -6,7 +6,7 @@ export const DESK_VERSION = 'desk/1';
 
 export const VIEWS = Object.freeze(['glance', 'briefing', 'logbook', 'waiting', 'card', 'work', 'settings', 'usage', 'preview', 'why', 'survey']);
 
-export const COMMANDS = Object.freeze(['answer', 'suggest', 'not-now', 'request', 'set', 'all-stop', 'lift-all-stop', 'pair']);
+export const COMMANDS = Object.freeze(['answer', 'suggest', 'not-now', 'request', 'set', 'all-stop', 'lift-all-stop', 'pair', 'safekeeping']);
 
 export const WATCH_EVENTS = Object.freeze(['card-added', 'card-closed', 'glance-changed', 'work-changed', 'all-stop', 'notice']);
 

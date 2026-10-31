@@ -12,6 +12,7 @@ import { cardTextOf, hashOf } from '../mod/status.js';
 import { cardButtons } from '../mod/buttons.js';
 import { dataHash } from '../state/events.js';
 import { contextText } from './context.js';
+import { readStatus } from '../safekeeping/readings.js';
 import { paneFrom } from './mod-pane.js';
 import { answeredLines, buildLines, runningLines, shippedLines } from '../engine/words.js';
 
@@ -228,7 +229,7 @@ const VIEWS = {
     const inputs = await boardOf(source, { offline: true });
     if (inputs.refused) return { ok: false, refused: inputs.refused };
     const glance = glanceLine(inputs.model);
-    return { ok: true, data: { glance, model: inputs.model }, lines: [glance] };
+    return { ok: true, data: { glance, model: inputs.model, safekeeping: readStatus(source.project) }, lines: [glance] };
   },
 
   // `context` (with `reserve`, `since`, `weeklySince`, `survey`, `surveyAt`, `leaveOut`, `earlier`)

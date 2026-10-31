@@ -26,6 +26,7 @@ import { recordAllowance } from '../../../scripts/usage/store.js';
 import { setStop, liftStop } from '../../../scripts/lib/stop.js';
 import { stopFile, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { withHome, tempFolder } from '../../helpers/homes.js';
+import { safekeepingFile } from '../../../scripts/safekeeping/readings.js';
 
 const P = 'owner__name';
 const NOW = new Date('2026-10-19T12:00:00.000Z');
@@ -568,4 +569,13 @@ test('a slow or failing preview call counts as none for the tick and is not kept
   assert.equal(await previewFor({ ...base, client: { preview: async () => ({ ok: true, url: 'https://preview.example.test/13' }) } }), 'https://preview.example.test/13');
   // With no client, only what is kept is read.
   assert.equal(await previewFor({ ...base, pr: 99 }), null);
+}));
+
+test('the pane carries the Safekeeping row with the status\'s own buttons, and nothing where no status is kept', () => withHome(async () => {
+  const cwd = tempFolder('wh-row-');
+  writeProject(P, { folder: cwd, remoteUrl: null, host: 'local', repo: `local/${P}`, connection: { host: 'local', mode: 'none' } });
+  assert.equal((await paneModel({ project: P, cwd, now: () => NOW })).safekeeping, null);
+  fs.mkdirSync(path.dirname(safekeepingFile(P)), { recursive: true });
+  fs.writeFileSync(safekeepingFile(P), `${JSON.stringify({ status: { level: 'watch', line: 'Only here', detail: 'Lost with it', actions: [{ action: 'choose-folder', label: 'Choose a backup folder' }] } })}\n`);
+  assert.deepEqual((await paneModel({ project: P, cwd, now: () => NOW })).safekeeping, { level: 'watch', line: 'Only here', detail: 'Lost with it', actions: [{ action: 'choose-folder', label: 'Choose a backup folder' }] });
 }));

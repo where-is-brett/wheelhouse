@@ -108,6 +108,14 @@ const ACTS = {
     const got = await recorder.write({ kind: 'card', data: card });
     return got?.ok === true ? { ok: true, changed: ['card'], card: got.id, fingerprint: asked.fingerprint } : no(got?.refused ?? 'The card wasn\'t written');
   },
+  // A button on the Safekeeping row: the signed press goes on the record, and the helper does what it names.
+  async safekeeping(args, checked, { recorder }) {
+    const refused = await recordAll(recorder, checked.records ?? []);
+    if (refused !== null) return no(`That wasn't recorded: ${refused}`);
+    if (typeof recorder.safekeeping !== 'function') return no('The helper isn\'t running, so nothing was done');
+    const got = await recorder.safekeeping({ action: args.action });
+    return got?.ok === true ? { ok: true, changed: ['safekeeping'], ...(got.says ? { says: got.says } : {}), ...(got.submit ? { submit: got.submit } : {}) } : no(got?.refused ?? 'That wasn\'t done');
+  },
   async 'lift-all-stop'(args, checked, { recorder }) {
     const records = checked.records ?? [];
     if (!records.some((r) => r.event?.kind === 'action' && r.event.data?.action === 'lift-stop')) return no('Lifting All stop needs the director\'s signed Lift All stop');

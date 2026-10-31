@@ -6,7 +6,8 @@
 // mentioned, `surveyAgainAt`, when a briefing offered the work in flight once more after the
 // director's Leave it for now on setup's carry-on card (ruling A9), and `boardAsks`, the last
 // BOARD_ASKS board commands as { at, tab, visit } (`tab` the command's word or null, `visit` the
-// visitAt it was asked in), which learning reads.
+// visitAt it was asked in), which learning reads; and `safekeepingLevel` and `safekeepingAt`, the
+// safekeeping level a briefing last said and when, so a watch comes back once a month and no oftener.
 // Kept in projects/<project>/seen.json, beside the private record, and written whole (a temporary file
 // in the same folder, then a rename).
 //
@@ -17,7 +18,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { stateDir } from '../lib/paths.js';
 
-const FIELDS = ['promptAt', 'briefedAt', 'weeklyAt', 'visitAt', 'surveyAgainAt'];
+const FIELDS = ['promptAt', 'briefedAt', 'weeklyAt', 'visitAt', 'surveyAgainAt', 'safekeepingAt'];
+const LEVELS = ['safe', 'watch'];
 // How many board commands are kept.
 export const BOARD_ASKS = 10;
 const TABS = ['director', 'build'];
@@ -61,11 +63,11 @@ function asksOf(value) {
 // The times as written, each null when it isn't one, and the board commands; all none when the
 // file can't be read.
 function readKept(project) {
-  const none = { ...Object.fromEntries(FIELDS.map((field) => [field, null])), surveyAt: null, boardAsks: [] };
+  const none = { ...Object.fromEntries(FIELDS.map((field) => [field, null])), surveyAt: null, boardAsks: [], safekeepingLevel: null };
   try {
     const kept = JSON.parse(fs.readFileSync(seenFile(project), 'utf8'));
     if (!isRecord(kept)) return none;
-    return { ...Object.fromEntries(FIELDS.map((field) => [field, timeText(kept[field])])), surveyAt: idText(kept.surveyAt), boardAsks: asksOf(kept.boardAsks) };
+    return { ...Object.fromEntries(FIELDS.map((field) => [field, timeText(kept[field])])), surveyAt: idText(kept.surveyAt), boardAsks: asksOf(kept.boardAsks), safekeepingLevel: LEVELS.includes(kept.safekeepingLevel) ? kept.safekeepingLevel : null };
   } catch {
     return none;
   }
@@ -92,6 +94,12 @@ export function readSurveyAgainAt(project) {
   return readKept(project).surveyAgainAt;
 }
 
+// readSafekeepingSaid(project) -> { level, at }: the safekeeping level a briefing last said, and when, each null before one has.
+export function readSafekeepingSaid(project) {
+  const kept = readKept(project);
+  return { level: kept.safekeepingLevel, at: kept.safekeepingAt };
+}
+
 // readVisits(project, { now }) -> { visitAt, boardAsks }: when the latest visit began, or null,
 // and the board commands kept, oldest first, leaving out any asked after now.
 export function readVisits(project, { now } = {}) {
@@ -110,6 +118,7 @@ export function markSeen(project, times = {}) {
     const value = timeText(isRecord(times) ? times[field] : undefined);
     if (value !== null) next[field] = value;
   }
+  if (isRecord(times) && LEVELS.includes(times.safekeepingLevel)) next.safekeepingLevel = times.safekeepingLevel;
   const surveyed = idText(isRecord(times) ? times.surveyAt : undefined);
   if (surveyed !== null) next.surveyAt = surveyed;
   const ask = isRecord(times) && isRecord(times.boardAsk)

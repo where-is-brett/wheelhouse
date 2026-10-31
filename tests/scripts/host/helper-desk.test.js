@@ -20,6 +20,7 @@ import { hashOf, cardTextOf } from '../../../scripts/mod/status.js';
 import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress } from '../../helpers/homes.js';
 import { CARD } from '../desk/fixture.js';
+import { safekeepingFile } from '../../../scripts/safekeeping/readings.js';
 
 const hostLog = [];
 const hostGuard = guardedRun(realRun, { log: hostLog });
@@ -164,4 +165,34 @@ test('under STOP, a declared form doesn\'t let an act that needs no evidence wri
   const pair = await client.desk.act({ v, project: P, command: 'pair', args: { client: { id: 'app', name: 'App', publicKey: 'AAAA' } }, evidence: { form: 'signed' } });
   assert.equal(pair.refused, 'All stop is on');
   assert.equal(listEvents(stateDir(P), { report: () => {} }).length, before);
+}));
+
+// A press on the Safekeeping row, signed as the bridge signs it.
+const safekeepingPress = (action, n = 5) => makeEvent({ kind: 'action', data: { action: 'safekeeping', press: action, question: 'Safekeeping', label: action }, now: at(n) });
+const pressRow = (client, action, event = safekeepingPress(action)) => client.desk.act({ v, project: P, command: 'safekeeping', args: { action }, evidence: { form: 'signed', records: [{ event }] } });
+function offer(project, actions, readings) {
+  fs.writeFileSync(safekeepingFile(project), `${JSON.stringify({ status: { place: 'github', level: 'watch', line: 'x', detail: 'y', actions: actions.map((action) => ({ action, label: action })) }, readings })}\n`);
+}
+
+test('a press the status offers is recorded and done, and one it doesn\'t offer does nothing', inProject(async (client) => {
+  offer(P, ['ask-save'], null);
+  const refused = await pressRow(client, 'keep-online');
+  assert.equal(refused.ok, false);
+  assert.match(refused.refused, /isn't offered/);
+  offer(P, ['ask-save'], null);
+  const done = await pressRow(client, 'ask-save', safekeepingPress('ask-save', 6));
+  assert.equal(done.ok, true);
+  assert.match(done.submit[0], /^Wheelhouse pane: /);
+  assert.equal(listEvents(stateDir(P)).filter((e) => e.data?.action === 'safekeeping').length, 2, 'each press is on the record');
+}));
+
+test('a press needs the signed press it names, and All stop holds it', inProject(async (client) => {
+  offer(P, ['ask-save'], null);
+  const other = await pressRow(client, 'ask-save', safekeepingPress('keep-online'));
+  assert.equal(other.ok, false);
+  assert.equal(listEvents(stateDir(P)).filter((e) => e.data?.action === 'safekeeping').length, 0);
+  setStop({ by: 'prompt', now: at(7) });
+  const held = await pressRow(client, 'ask-save');
+  assert.equal(held.ok, false);
+  assert.equal(held.submit, undefined);
 }));
