@@ -53,9 +53,13 @@ export function developerDir({ env = process.env, real = fs.realpathSync, exists
 export function secondTryOf(command) {
   if (!/^\s*xcodebuild\s/.test(command) || !/\stest(\s|$)/.test(command) || /[;&|`$<>\n]/.test(command)) return null;
   const output = /-derivedDataPath\s+(\S+)/.exec(command)?.[1] ?? '.build/checks';
-  const build = command.trim().replace(/\stest(?=\s|$)/, ' build-for-testing');
-  return `${build} TEST_HOST= BUNDLE_LOADER= && for bundle in ${output}/Build/Products/*/*.xctest; do xcrun xctest "$bundle" || exit 1; done`;
+  return hostlessTests(command.trim().replace(/\stest(?=\s|$)/, ' build-for-testing'), output);
 }
+
+// Tests with no host, from `xcodebuild build-for-testing ...`: what the finder writes, since `xcodebuild test` never runs here.
+export const hostlessTests = (build, output) => `${build} TEST_HOST= BUNDLE_LOADER= && for bundle in ${output}/Build/Products/*/*.xctest; do xcrun xctest "$bundle" || exit 1; done`;
+// Whether a command is that already. Tests that can't build or run with no host fail it too, so only a pass says anything.
+export const isHostless = (command) => /^\s*xcodebuild\s+build-for-testing\s/.test(command) && /\sTEST_HOST=\s/.test(command) && /\sxcrun xctest\s/.test(command);
 
 const killGroup = (pid) => {
   try { process.kill(-pid, 'SIGKILL'); } catch { /* it has gone */ }

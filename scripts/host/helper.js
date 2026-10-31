@@ -55,6 +55,7 @@ import { readEnrolled, verify, sign, ownKey } from '../state/signing.js';
 import { delegationReview } from '../frontdesk/learning.js';
 import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/lock.js';
 import { namesOf, readProject, isInsideFolder, projectForFolder, registeredProjects } from '../lib/projects.js';
+import { hasTestScript } from '../checks/find-command.js';
 import { commandDigest } from '../checks/record.js';
 import { runCheck } from '../checks/run.js';
 import { checkRunner } from '../checks/runner.js';
@@ -447,8 +448,7 @@ export function fixOfRun({ views, opened, call, headSha } = {}) {
 // which only fails), or null.
 function npmTestOf(folder) {
   try {
-    const test = JSON.parse(fs.readFileSync(path.join(folder, 'package.json'), 'utf8'))?.scripts?.test;
-    return typeof test === 'string' && test.trim() !== '' && !/no test specified/.test(test) ? 'npm test' : null;
+    return hasTestScript(fs.readFileSync(path.join(folder, 'package.json'), 'utf8')) ? 'npm test' : null;
   } catch {
     return null;
   }
