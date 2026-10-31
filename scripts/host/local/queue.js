@@ -52,7 +52,7 @@ export function headReading({ records, head, digest, notCounting = false }) {
   return newest.result === 'failed' || newest.result === 'timed-out' ? 'red' : 'waiting';
 }
 
-// A change the director clicks for (spec 7.4): the permit's own cases, and from Archon's "unclear" list as a fixed rule, a
+// A change the director clicks for (spec 7.4): the permit's own cases, and from Archon's "unclear" list as a set rule, a
 // project's critical area or anything under `.archon/`.
 export function needsApprovalOf({ permit = {}, paths = [], config }) {
   if (permit.shownFirst === true || permit.level === 4 || permit.guardrail === true) return true;
@@ -64,7 +64,7 @@ export function needsApprovalOf({ permit = {}, paths = [], config }) {
 // the main line. Gives what happened to each change, [{ n, act, reason }]. `facts` is:
 // - `changes()` the open changes, oldest first; `ready()` the changes marked ready, { [n]: { head, work } };
 // - `main()` the main line's reading; `moved()` whether something moved the main version outside the helper; `stopped()`;
-// - `about(change)` { incident, check, review, clashes, needsApproval, approval, permit }, what sweepDecision needs;
+// - `about(change)` { incident, check, review, clashes, needsApproval, approval, permit, level }, what sweepDecision needs;
 // and `acts` is { merge(change), sendBack(change, reason, work), raise(change, ready), wait(change, reason) }.
 export async function localSweep({ project, facts, acts, lock = withLocalLock, now = () => new Date() }) {
   return lock({ dir: projectFolder(project) }, async () => {
@@ -75,12 +75,13 @@ export async function localSweep({ project, facts, acts, lock = withLocalLock, n
       const marked = ready[change.n];
       // A head that moved since it was marked belongs to the run that moved it, which marks it again.
       if (marked === undefined || marked.head !== change.head) continue;
-      const decided = sweepDecision({ main: await facts.main(), stopped: facts.stopped(), ...(await facts.about(change)) });
+      const about = await facts.about(change);
+      const decided = sweepDecision({ main: await facts.main(), stopped: facts.stopped(), ...about });
       done.push({ n: change.n, ...decided });
       if (decided.act === 'hold') break;
       if (decided.act === 'merge') await acts.merge(change, marked);
       else if (decided.act === 'send-back') await acts.sendBack(change, decided.reason, marked.work);
-      else if (decided.act === 'raise') await acts.raise(change, marked);
+      else if (decided.act === 'raise') await acts.raise(change, { ...marked, level: about.level });
       else await acts.wait(change, decided.reason);
     }
     return done;

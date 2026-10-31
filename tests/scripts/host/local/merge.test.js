@@ -7,7 +7,7 @@ import path from 'node:path';
 import { localChanges } from '../../../../scripts/host/local/changes.js';
 import { bringFolderUp, compareFolder, addFolderRemote, FOLDER_REMOTE } from '../../../../scripts/host/local/folder.js';
 import { homeDir, makeHome } from '../../../../scripts/host/local/home.js';
-import { carriesFolderWork, cleanMerged, keepSeenMain, mergeChange, revertOnHome, seenMain } from '../../../../scripts/host/local/merge.js';
+import { carriesFolderWork, cleanMerged, dropNextMain, finishMerge, keepSeenMain, mergeChange, nextMain, revertOnHome, seenMain } from '../../../../scripts/host/local/merge.js';
 import { commitIn, git, projectFolderWith, withKeyedHome } from '../../../helpers/local-home.js';
 import { tempFolder } from '../../../helpers/homes.js';
 
@@ -141,6 +141,7 @@ test('a hand-made change behind a moved main version merges with both parents, a
   await git(home, ['fetch', '-q', folder, `+refs/heads/main:refs/heads/${branch}`]);
   const c = await changes.openChange({ branch, base: 'main', title: 'By hand', head: tip });
   await mergeChange({ project: P, n: made.n, head: made.head });
+  dropNextMain(P);
   assert.equal(await compareFolder({ project: P, folder, branch: 'main' }), 'parted');
   const got = await mergeChange({ project: P, n: c.n, head: tip, keepHistory: true });
   assert.equal(got.merged, true);
@@ -243,4 +244,53 @@ test('a seen main version is kept beside the home', () => world(async () => {
   assert.equal(seenMain(P), null);
   keepSeenMain(P, 'c'.repeat(40));
   assert.equal(seenMain(P), 'c'.repeat(40));
+}));
+
+test('a main version moved outside the helper is built on by no merge', () => world(async ({ folder, home, changes }) => {
+  const tree = path.join(folder, '.wheelhouse', 'worktrees', 'wh-a');
+  await git(folder, ['worktree', 'add', '-q', '-b', 'wh/a', tree]);
+  const head = await commitIn(tree, 'a2.txt');
+  await git(home, ['fetch', '-q', folder, '+refs/heads/wh/a:refs/heads/wh/a']);
+  const c = await changes.openChange({ branch: 'wh/a', base: 'main', title: 'A', head });
+  keepSeenMain(P, 'a'.repeat(40));
+  const got = await mergeChange({ project: P, n: c.n, head });
+  assert.deepEqual(got, { merged: false, reason: 'The main version moved outside the helper' });
+}));
+
+test('a merge a crash left behind is finished once, with its records, and reads as no outside move', () => world(async (w) => {
+  const { change } = await merged(w);
+  const main = (await git(w.home, ['rev-parse', 'refs/heads/main'])).trim();
+  assert.deepEqual(nextMain(P), { n: change.n, commit: main, from: nextMain(P).from, base: 'main' });
+  const { from } = nextMain(P);
+  keepSeenMain(P, from);
+  assert.equal((await finishMerge({ project: P })).commit, main);
+  assert.equal(seenMain(P), main);
+  assert.equal(w.changes.changeOf(change.n).state, 'merged');
+  dropNextMain(P);
+  assert.equal(await finishMerge({ project: P }), null);
+}));
+
+test('a move that never happened is dropped', () => world(async (w) => {
+  const { change } = await merged(w);
+  const { from } = nextMain(P);
+  await git(w.home, ['update-ref', 'refs/heads/main', from]);
+  keepSeenMain(P, from);
+  assert.equal(await finishMerge({ project: P }), null);
+  assert.equal(nextMain(P), null);
+  assert.equal(seenMain(P), from);
+  assert.equal(w.changes.changeOf(change.n).state, 'merged', 'the record stands as it was');
+}));
+
+test('an ignored file that nothing makes again keeps the worktree, and what a build makes doesn\'t', () => world(async (w) => {
+  const { tree, change } = await merged(w);
+  const excludes = (await git(tree, ['rev-parse', '--git-path', 'info/exclude'])).trim();
+  fs.mkdirSync(path.dirname(path.resolve(tree, excludes)), { recursive: true });
+  fs.writeFileSync(path.resolve(tree, excludes), 'node_modules/\n.env\n');
+  fs.mkdirSync(path.join(tree, 'node_modules'));
+  fs.writeFileSync(path.join(tree, 'node_modules', 'a.js'), 'made\n');
+  const { calls, complete } = completing();
+  assert.equal(await cleanMerged({ project: P, folder: w.folder, change, complete }), 'removed');
+  fs.writeFileSync(path.join(tree, '.env'), 'SECRET=1\n');
+  assert.equal(await cleanMerged({ project: P, folder: w.folder, change, complete }), 'kept');
+  assert.equal(calls.length, 1);
 }));

@@ -37,7 +37,7 @@ import { childEnv } from './connection.js';
 import { localChanges } from './local/changes.js';
 import { FOLDER_REMOTE, bringFolderUp, folderWatch } from './local/folder.js';
 import { gitRoute, homeDir, homeGit, homeReadable, projectFolder } from './local/home.js';
-import { HAND_MADE_BRANCH, carriesFolderWork, cleanMerged, keepSeenMain, mergeChange, revertOnHome, seenMain } from './local/merge.js';
+import { HAND_MADE_BRANCH, carriesFolderWork, cleanMerged, dropNextMain, finishMerge, keepSeenMain, mergeChange, revertOnHome, seenMain } from './local/merge.js';
 import { headReading, localSweep, needsApprovalOf } from './local/queue.js';
 import { protectionStatus } from './protection.js';
 import { cutAccess, INSTALLATIONS_PAGE } from './cut-access.js';
@@ -2185,6 +2185,8 @@ export async function startHelper({
   };
   // The steps the window serves while STOP is on: Lift STOP, and a Lean undo, as the runbook's local steps carry on.
   const UNDER_STOP = ['lift-stop', 'undo-merge', 'undo-main'];
+  // The labels of Lean's cards a project in git alone answers the same way, on its home. Its approval is a pull request's, as any.
+  const HOME_ANSWERS = ['Keep it', 'Undo it', 'Undo'];
   const servedUnderStop = (deciding) => deciding.filter((d) => d.made.kind === 'action' && UNDER_STOP.includes(d.made.data?.action));
   // What /confirm's `card` is for the Lift STOP card, which has no id in the state.
   const LIFT_STOP_NAME = 'lift-stop';
@@ -2215,7 +2217,7 @@ export async function startHelper({
   async function windowEarned(project, card, label, ctx) {
     const question = card.data?.question;
     if (typeof question !== 'string' || PUT_OFF.includes(label)) return null;
-    if (ctx.lean) {
+    if (ctx.lean || (readProject(project)?.host === 'local' && HOME_ANSWERS.includes(label))) {
       const lean = await leanEarned(project, card.data, label);
       if (lean !== undefined) return lean;
     }
@@ -2322,7 +2324,7 @@ export async function startHelper({
     if (card !== LIFT_STOP_NAME && (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash))) refuse('the card\'s hash must be its sha256, in lower case');
     // Under STOP a card of a project that isn't Lean is refused before it is looked up (no read of the code host);
     // a Lean card is looked at, and only its undo offered.
-    if (card !== LIFT_STOP_NAME && stopped() && !ctx.lean) return STOP_REFUSAL;
+    if (card !== LIFT_STOP_NAME && stopped() && !ctx.lean && readProject(project)?.host !== 'local') return STOP_REFUSAL;
     const look = () => stateRoute((body) => windowCard(body, ctx))({ project, card, hash }, ctx);
     const shown = await look();
     if (card !== LIFT_STOP_NAME && stopped()) {
@@ -3338,7 +3340,10 @@ export async function startHelper({
     // couldn't be read, the change already counts as touching the guardrails.
     const shownFirst = readable && shownFirstNeeded({ views, headRef: pr.headRef, paths: changes.paths, config: changes.config });
     const guarded = touchesGuardrails && !keeping;
-    const approvalRequired = body.approvalRequired === true || guarded || restore || switching || shownFirst;
+    // On a project in git alone a merge by this route answers to the queue's rows too: the sweep is the only other way in.
+    const queueRows = recordOf(project).host === 'local' && !fixCall && !keeping && !restore;
+    const queueApproval = queueRows && readable && needsApprovalOf({ paths: changes.paths, config: changes.config });
+    const approvalRequired = body.approvalRequired === true || guarded || restore || switching || shownFirst || queueApproval;
     const holdsLock = await lockHeld(project, ctx);
     const { upToDate, review, approval } = await gateRecords({ project, number, headSha, views, adapter, compare: approvalRequired }, ctx);
     // The kinds of review that count for the agent this computer runs, from the default branch's configuration:
@@ -3358,6 +3363,9 @@ export async function startHelper({
         // The record stands and its report hasn't reached the host yet.
         checkWaiting = true;
       }
+    }
+    if (queueRows && (await adapter.ciState(await adapter.branchHead(await defaultBranchOf(project, adapter)))).state !== 'success') {
+      stateReasons.push('the main version\'s own check hasn\'t passed yet');
     }
     // STOP and bypass are read last, just before the decision, so one set during the
     // fetches above is seen. The caller may only raise them.
@@ -4735,22 +4743,32 @@ export async function startHelper({
   // What follows a merge on the home, whichever way it came. The merge stands by now, so none of this can undo it, and each
   // step is taken up again: the tick brings the folder up, and the next refresh the mirror. The branch goes from the home, its
   // commits staying under the change's own place there, so the mirror drops it too (check 83). The main line's check starts on
-  // the next tick, and part 8's backup goes here.
+  // the next tick, and part 8's backup goes here. `main-next` goes last, so a crash in here is finished by finishLocalMerge.
   async function afterLocalMerge(project, n, commit) {
     const changes = localChanges({ project, git: gitRoute({ run }), write: ({ event }) => checkWrite(project, event), now });
     const change = changes.changeOf(n);
-    await engineWrite(project, 'merge', { pr: n, commit, head: change?.head ?? null, forUsers: change?.title ?? null }).catch(() => {});
+    const said = listEvents(stateDir(project), { report: () => {} }).some((e) => e.kind === 'merge' && e.data?.commit === commit);
+    if (!said) await engineWrite(project, 'merge', { pr: n, commit, head: change?.head ?? null, forUsers: change?.title ?? null }).catch(() => {});
     const git = gitRoute({ run });
     if (change !== null) await homeGit(project, git).call(['update-ref', '-d', `refs/heads/${change.branch}`, change.head]).catch(() => {});
     await (refreshMirror ?? refreshFetchMirror)(project).catch(() => {});
-    if (change === null) return;
-    const said = await bringFolderUp({ project, folder: recordOf(project).folder, branch: change.base, git }).catch(() => null);
-    if (said?.line !== undefined) await engineWrite(project, 'note', { about: 'engine', words: said.line }).catch(() => {});
+    if (change !== null) {
+      const up = await bringFolderUp({ project, folder: recordOf(project).folder, branch: change.base, git }).catch(() => null);
+      if (up?.line !== undefined) await engineWrite(project, 'note', { about: 'engine', words: up.line }).catch(() => {});
+    }
+    dropNextMain(project);
+  }
+
+  // A merge a crash left part done: finishes it, so what the queue itself did never reads as moved outside the helper.
+  async function finishLocalMerge(project) {
+    const finished = await finishMerge({ project, run, write: ({ event }) => checkWrite(project, event), now });
+    if (finished !== null) await afterLocalMerge(project, finished.n, finished.commit);
   }
 
   // Whether the home's main version is where the helper left it. One that moved outside the helper raises Main moved, which
-  // holds the queue until the director decides (spec 5.4).
+  // holds the queue until the director decides (spec 5.4). The caller holds the project's lock.
   async function homeMoved(project) {
+    await finishLocalMerge(project);
     const adapter = await (await contextFor(project)).adapter();
     const branch = await defaultBranchOf(project, adapter);
     const seen = seenMain(project);
@@ -4785,15 +4803,18 @@ export async function startHelper({
       const current = await adapter.branchHead(branch);
       const seen = seenMain(project);
       let commits;
+      let click;
       if (moved === true) {
         if (seen === current) refuse('The main version is where the helper last moved it, so there is nothing to undo');
-        if (windowClick(project, 'undo-main', (d) => d.from === seen && d.to === current) === null) refuse(UNDO_NEEDS_WINDOW);
+        click = windowClick(project, 'undo-main', (d) => d.from === seen && d.to === current);
+        if (click === null) refuse(UNDO_NEEDS_WINDOW);
         if (!(await homeGit(project, git).ok(['merge-base', '--is-ancestor', seen, current]))) refuse('The main version\'s history was rewritten, not added to, so it can\'t be undone here: look into it');
         commits = (await homeGit(project, git).must(['rev-list', '--first-parent', `${seen}..${current}`], 'unread')).split('\n').filter(Boolean);
       } else {
         if (typeof merge !== 'string' || !FULL_SHA.test(merge)) refuse('The merge to undo must be written in full');
         if (seen !== null && seen !== current) refuse('The main version moved outside the helper, so that comes first');
-        if (windowClick(project, 'undo-merge', (d) => d.merge === merge) === null) {
+        click = windowClick(project, 'undo-merge', (d) => d.merge === merge);
+        if (click === null) {
           return { ok: false, refused: UNDO_NEEDS_WINDOW, needs: 'window', card: await raiseCard(project, undoCards(merge)[0], (p, kind, data) => engineWrite(p, kind, data)) };
         }
         if (!(await homeGit(project, git).ok(['merge-base', '--is-ancestor', merge, current]))) refuse('That merge is not in the main version');
@@ -4801,7 +4822,8 @@ export async function startHelper({
       }
       const undo = await revertOnHome({ project, branch, commits, folder: recordOf(project).folder, run });
       await (refreshMirror ?? refreshFetchMirror)(project).catch(() => {});
-      await engineWrite(project, 'note', { about: 'engine', words: 'A change was taken back out of the main version, on your click. Nothing was deleted.' }).catch(() => {});
+      // Signed and naming the click, so one click undoes once.
+      await writeEvent({ project, event: sign(makeEvent({ kind: 'note', data: { lean: 'undo', click: click.id, undo, text: 'A change was taken back out of the main version, on your click. Nothing was deleted.' }, now })), now });
       return { undo };
     }, { now }));
   }
@@ -4863,6 +4885,7 @@ export async function startHelper({
             clashes: (await adapter.prState(change.n)).mergeable === 'no',
             needsApproval,
             approval: approvalCounts(permit.approval, change.head, permit.enrolled),
+            level: permit.level,
             permit: { allow: decided.allow === true, reason: decided.reason },
           };
         },
@@ -4877,16 +4900,20 @@ export async function startHelper({
           else if (once(`said:${change.n}:${change.head}:${got.reason}`)) await say(`Change ${change.n} wasn't added yet: ${got.reason}. It is tried again shortly.`);
         },
         async raise(change, marked) {
-          if (!once(`asked:${change.n}:${change.head}`)) return;
+          const key = `asked:${change.n}:${change.head}`;
+          if (kept[key] === true) return;
+          const level = marked.level === 4 ? 4 : 3;
           const { card } = composeCard({
-            kind: 'approval', level: 3, recommend: 'Approve',
-            what: `${change.title} is ready for you to look at before it is added.`,
-            why: 'It touches something that takes your say, at level 3.', because: 'its checks passed and its review was clean',
+            kind: 'approval', level, recommend: 'Approve',
+            what: `Pull request #${change.n} is ${change.title}, ready for you to look at before it is added.`,
+            why: `It touches something that takes your say, at level ${level}.`, because: 'its checks passed and its review was clean',
             meanwhile: 'Nothing is added until you approve it.',
             options: [{ label: 'Approve', says: 'It approves the change, and it is added to the product.' }],
+            ...(level === 4 ? { checks: 'It changes no checks: the change is still checked before it is added.' } : {}),
             target: { pr: change.n, sha: change.head },
           });
-          await write('card', { ...card, work: marked.work });
+          await write('card', card);
+          once(key);
         },
         async wait(change, reason) {
           if (reason === 'main-waiting' || reason === 'check-waiting') return;
@@ -5104,7 +5131,7 @@ export async function startHelper({
         try {
           const adapter = await adapterNow();
           for (const { branch } of await adapter.openRequests()) await adapter.followBranch(branch).catch(() => {});
-          await homeMoved(project);
+          await oneAtATime(`merge:${project}`, () => withLocalLock({ dir: projectFolder(project) }, () => homeMoved(project), { now }));
           await watch.tick();
           if (!stopped()) await tidyLocal(project, engine, write, views);
           trouble = null;

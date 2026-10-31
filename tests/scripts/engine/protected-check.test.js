@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { main as protectedMain } from '../../../scripts/engine/protected-check.js';
+import { main as protectedMain, protectedFindings } from '../../../scripts/engine/protected-check.js';
 import { main as controlMain } from '../../../scripts/engine/control-check.js';
 import { tempFolder } from '../../helpers/homes.js';
 
@@ -210,4 +210,33 @@ test('a build tag on a Go test file is a finding', async () => {
 
 test('a conftest changed or added is a finding', async () => {
   assert.equal((await edited('a = 1\n', 'collect_ignore_glob = ["*"]\n', 'conftest.py')).code, 1);
+});
+
+// One changed file, as changeOf gives it.
+const one = (path, before, after, status = before === null ? 'A' : 'M') => ({ path, status, before: async () => before, after: async () => after });
+
+for (const [name, change, options] of [
+  ['a new GNUmakefile', one('GNUmakefile', null, 'test:\n\ttrue\n')],
+  ['a new pytest.ini', one('pytest.ini', null, '[pytest]\naddopts = -k none\n')],
+  ['a new jest config', one('jest.config.js', null, 'module.exports = { testMatch: [] };\n')],
+  ['a changed jest config in JSON', one('jest.config.json', '{"bail":false}\n', '{"testMatch":[]}\n')],
+  ['a vitest workspace', one('vitest.workspace.ts', null, 'export default [];\n')],
+  ['an .npmrc', one('.npmrc', null, 'script-shell=/usr/bin/true\n')],
+  ['a script reached by node --run', one('package.json', SCRIPTS({ test: 'node --run unit', unit: 'node a' }), SCRIPTS({ test: 'node --run unit', unit: 'true' }))],
+  ['a script reached by a workspace filter', one('package.json', SCRIPTS({ test: 'pnpm --filter app unit', unit: 'node a' }), SCRIPTS({ test: 'pnpm --filter app unit', unit: 'true' }))],
+  ['a script reached by turbo', one('package.json', SCRIPTS({ test: 'turbo run unit', unit: 'node a' }), SCRIPTS({ test: 'turbo run unit', unit: 'true' }))],
+  ['a script the test command starts from', one('package.json', SCRIPTS({ verify: 'node a' }), SCRIPTS({ verify: 'true' })), { command: 'npm run verify' }],
+  ['a make target the test command starts from', one('Makefile', 'check:\n\t./run\n', 'check:\n\ttrue\n'), { command: 'make check' }],
+  ['a jest key added to a package with no test scripts', one('package.json', SCRIPTS({ build: 'tsc' }), `${JSON.stringify({ scripts: { build: 'tsc' }, jest: { testMatch: [] } })}\n`)],
+  ['a recipe after a comment', one('Makefile', 'test:\n# the suite\n\t./run\n', 'test:\n# the suite\n\ttrue\n')],
+  ['a dotted pytest key above the tables', one('pyproject.toml', '[project]\nname = "a"\n', 'tool.pytest.ini_options.addopts = "-k none"\n[project]\nname = "a"\n')],
+]) {
+  test(`the guard finds ${name}`, async () => {
+    assert.equal((await protectedFindings([change], [], options)).length, 1);
+  });
+}
+
+test('a first test script in a package with none is no finding, and nor is a script no test reaches', async () => {
+  assert.deepEqual(await protectedFindings([one('package.json', SCRIPTS({ build: 'tsc' }), SCRIPTS({ build: 'tsc', test: 'node a' }))]), []);
+  assert.deepEqual(await protectedFindings([one('package.json', SCRIPTS({ test: 'node a', build: 'tsc' }), SCRIPTS({ test: 'node a', build: 'esbuild' }))]), []);
 });

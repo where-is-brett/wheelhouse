@@ -10,10 +10,10 @@ import { withTicket } from './ticket.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { runArg } from './done-check.js';
 import { changeOf } from './change.js';
-import { isTestFile, isTestSettings, isSwiftPackage, skipCount, assertionCount, listed, settingsAppear, testRunner, testTargetCount } from './test-guard.js';
+import { isMakefile, isPackage, isTestFile, isTestSettings, isSwiftPackage, packageTools, skipCount, assertionCount, listed, settingsAppear, testRunner, testTargetCount } from './test-guard.js';
 
 // The findings for `changes` (changeOf's), as plain lines, leaving out the files `protectedFiles` lists.
-export async function protectedFindings(changes, protectedFiles = []) {
+export async function protectedFindings(changes, protectedFiles = [], { command = '' } = {}) {
   const findings = [];
   for (const change of changes) {
     const file = change.path;
@@ -22,16 +22,20 @@ export async function protectedFindings(changes, protectedFiles = []) {
       continue;
     }
     if (listed(file, protectedFiles)) continue;
-    // A new conftest.py or .cargo/config can leave every test out, where it stands for nothing a project had before.
-    if (isTestSettings(file) && (change.status !== 'A' || /(^|\/)(conftest\.py|config(\.toml)?)$/.test(file))) {
+    // A settings file that is new can win over the ones the project had, so new ones count as changed ones do.
+    if (isTestSettings(file)) {
       findings.push(`changes the test settings in ${file}`);
       continue;
     }
-    const runner = testRunner(file);
+    const runner = testRunner(file, command);
     if (runner !== null) {
       const before = await change.before();
+      const after = await change.after();
       const had = runner(before);
-      if ((had !== null || (before !== null && settingsAppear(file))) && had !== runner(await change.after())) findings.push(`changes what the tests run in ${file}`);
+      // A new makefile is what make reads first, so what it says of the tests stands over the old one's.
+      const appears = settingsAppear(file) ? before !== null : isMakefile(file) && before === null;
+      const gained = isPackage(file) && before !== null && packageTools(before) !== packageTools(after);
+      if (((had !== null || appears) && had !== runner(after)) || gained) findings.push(`changes what the tests run in ${file}`);
       continue;
     }
     if (isSwiftPackage(file)) {
@@ -68,7 +72,7 @@ export async function main(argv = process.argv.slice(2), { client: given = helpe
   if (got?.ok !== true || !got.order) findings = [`the helper gave no work order for this run (${got?.refused ?? 'no answer'})`];
   else {
     try {
-      findings = await protectedFindings(await changeOf({ cwd, base, run }), got.order.protectedFiles);
+      findings = await protectedFindings(await changeOf({ cwd, base, run }), got.order.protectedFiles, { command: got.order.testCommand ?? '' });
     } catch (error) {
       findings = [`the change could not be read: ${error.message}`];
     }

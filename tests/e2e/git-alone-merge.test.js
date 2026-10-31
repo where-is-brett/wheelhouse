@@ -12,11 +12,12 @@ import { FIX_LANE } from '../../scripts/engine/fix-main.js';
 import { workOrder } from '../../scripts/engine/order.js';
 import { withTicket } from '../../scripts/engine/ticket.js';
 import { localChanges } from '../../scripts/host/local/changes.js';
-import { keepSeenMain } from '../../scripts/host/local/merge.js';
+import { keepSeenMain, seenMain } from '../../scripts/host/local/merge.js';
 import { stateDir } from '../../scripts/lib/paths.js';
 import { run } from '../../scripts/lib/run.js';
 import { liftStop, setStop } from '../../scripts/lib/stop.js';
-import { eventPath, listEvents, makeEvent } from '../../scripts/state/events.js';
+import { g } from '../helpers/git-fixture.js';
+import { dataHash, eventPath, listEvents, makeEvent } from '../../scripts/state/events.js';
 
 waitLongerOnTheHelper();
 
@@ -41,10 +42,18 @@ function checks(said = () => 'passed') {
 }
 
 // A run's change: opened, signed CLEAN if `reviewed`, and marked ready as the run's mark-ready step would.
-async function readyChange({ helper, client, engine, worktreeWith }, id, text, { reviewed = true } = {}) {
+async function readyChange({ helper, client, engine, worktreeWith }, id, text, { reviewed = true, also = null } = {}) {
   const started = await helper.engine.start({ project: P, order: orderOf(id) });
   assert.equal(started.ok, true, started.refused);
-  const { worktree, head } = await worktreeWith(`wh/${id}`, text);
+  const made = await worktreeWith(`wh/${id}`, text);
+  const { worktree } = made;
+  if (also !== null) {
+    fs.mkdirSync(path.dirname(path.join(worktree, also)), { recursive: true });
+    fs.writeFileSync(path.join(worktree, also), 'A setting.\n');
+    await run('git', ['add', '-A'], { cwd: worktree });
+    await run('git', ['-c', 'user.name=Run', '-c', 'user.email=run@localhost', 'commit', '-q', '-m', 'And a setting'], { cwd: worktree });
+  }
+  const head = await headIn(worktree, 'HEAD');
   const opened = await withTicket(client, ['--artefacts', engine.artefactsOf(started.runId)]).engine.openPr({ runId: started.runId, cwd: worktree, title: `Change ${id}`, body: 'Prices show two decimals.' });
   assert.equal(opened.ok, true, opened.refused);
   if (reviewed) {
@@ -159,3 +168,87 @@ test('the merge route needs the signed check too', { timeout: 120000 }, () => gi
   assert.equal(changeOf(n).state, 'open');
   assert.equal(await headIn(home, 'refs/heads/main'), main);
 }, { check: checks(() => 'could-not-run') }));
+
+// The main version moved by hand, as something outside the helper would.
+async function moveOutside(home) {
+  const tree = await headIn(home, 'refs/heads/main^{tree}');
+  const moved = (await run('git', ['-c', 'user.name=Outside', '-c', 'user.email=out@localhost', 'commit-tree', tree, '-p', 'refs/heads/main', '-m', 'From outside'], { cwd: home })).stdout.trim();
+  await run('git', ['update-ref', 'refs/heads/main', moved], { cwd: home });
+  return moved;
+}
+const cardOf = (found) => records('card').find((e) => found(e.data));
+const confirm = (client, card) => client.confirm({ project: P, card: card.id, hash: dataHash(card.data) });
+const atWindow = (label) => async () => ({ choice: label });
+
+test('Keep it answers Main moved at the window, and the queue goes on', { timeout: 120000 }, () => gitAloneWorld(async (world) => {
+  const { helper, client, home } = world;
+  await ticksUntil(helper, () => seenMain(P) !== null, 'the first look');
+  const moved = await moveOutside(home);
+  const card = await ticksUntil(helper, () => cardOf((d) => String(d.question).includes(moved)), 'the Main moved card');
+  const { n } = await readyChange(world, 'card-10', 'export const price = () => 10;\n');
+  await ticks(helper, 3);
+  assert.equal(changeOf(n).state, 'open', 'the queue holds');
+  const kept = await confirm(client, card);
+  assert.equal(kept.kept, true, JSON.stringify(kept));
+  assert.equal(seenMain(P), moved);
+  await ticksUntil(helper, () => changeOf(n).state === 'merged', 'the merge');
+  assert.equal((await run('git', ['merge-base', '--is-ancestor', moved, 'refs/heads/main'], { cwd: home })).code, 0, 'what moved it stays');
+}, { check: checks(), askWindow: atWindow('Keep it') }));
+
+test('Undo it takes what moved the main version back out, under All stop too, and one click does it once', { timeout: 120000 }, () => gitAloneWorld(async (world) => {
+  const { helper, client, home, worktreeWith } = world;
+  await ticksUntil(helper, () => seenMain(P) !== null, 'the first look');
+  const { worktree, head: moved } = await worktreeWith('wh/outside', 'export const price = () => 0;\n');
+  await g(worktree, 'push', '-q', home, 'HEAD:refs/heads/main');
+  const card = await ticksUntil(helper, () => cardOf((d) => String(d.question).includes(moved)), 'the Main moved card');
+  setStop({ by: 'helper' });
+  try {
+    const undone = await confirm(client, card);
+    assert.equal(typeof undone.undone?.undo, 'string', JSON.stringify(undone));
+    assert.equal(await headIn(home, 'refs/heads/main'), undone.undone.undo);
+    assert.equal(seenMain(P), undone.undone.undo);
+  } finally {
+    liftStop();
+  }
+}, { check: checks(), askWindow: atWindow('Undo it') }));
+
+test('Undo takes a merge back out on the director\'s click, and one click does it once', { timeout: 120000 }, () => gitAloneWorld(async (world) => {
+  const { helper, client, home } = world;
+  const { n } = await readyChange(world, 'card-13', 'export const price = () => 13;\n');
+  await ticksUntil(helper, () => changeOf(n).state === 'merged', 'the merge');
+  const merge = changeOf(n).mergeCommit;
+  const asked = await client.local.undo({ project: P, merge });
+  assert.equal(asked.needs, 'window');
+  const card = cardOf((d) => String(d.question).includes(merge));
+  const undone = await confirm(client, card);
+  assert.equal(await headIn(home, 'refs/heads/main'), undone.undone.undo);
+  assert.equal(seenMain(P), undone.undone.undo);
+  assert.equal((await client.local.undo({ project: P, merge })).needs, 'window', 'the click is spent');
+  assert.equal(await headIn(home, 'refs/heads/main'), undone.undone.undo);
+}, { check: checks(), askWindow: atWindow('Undo') }));
+
+test('a change that takes the director\'s say raises its card once, and goes in on their Approve', { timeout: 120000 }, () => gitAloneWorld(async (world) => {
+  const { helper, client } = world;
+  const { n } = await readyChange(world, 'card-11', 'export const price = () => 11;\n', { also: '.archon/settings.yaml' });
+  const card = await ticksUntil(helper, () => cardOf((d) => String(d.question).includes(`#${n}`)), 'the approval card');
+  assert.match(card.data.question, new RegExp(`Pull request #${n}`));
+  await ticks(helper, 3);
+  assert.equal(records('card').filter((e) => e.id !== card.id && String(e.data.question).includes(`#${n}`)).length, 0);
+  assert.equal(changeOf(n).state, 'open');
+  const answered = await confirm(client, card);
+  assert.equal(answered.recorded, true, JSON.stringify(answered));
+  await ticksUntil(helper, () => changeOf(n).state === 'merged', 'the merge');
+}, { check: checks(), askWindow: atWindow('Approve') }));
+
+test('the merge route answers to the main line and to a main version moved outside', { timeout: 120000 }, () => gitAloneWorld(async (world) => {
+  const { helper, client, home } = world;
+  const { n } = await readyChange(world, 'card-12', 'export const price = () => 12;\n');
+  await ticks(helper, 2);
+  const early = await client.merge({ project: P, number: n });
+  assert.match(String(early.refused), /own check/);
+  assert.equal(changeOf(n).state, 'open');
+  await moveOutside(home);
+  const moved = await client.merge({ project: P, number: n });
+  assert.notEqual(moved.ok, true);
+  assert.equal(changeOf(n).state, 'open');
+}, { check: checks((commit, onMain) => (onMain ? 'could-not-run' : 'passed')) }));

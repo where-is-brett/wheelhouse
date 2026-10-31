@@ -14,7 +14,7 @@ export function isTestFile(file) {
 }
 
 // The files that set how tests run and what coverage they need: loosening one passes a change without its tests.
-const TEST_SETTINGS = /(^|\/)(jest|vitest|karma|mocha|ava|playwright|cypress|babel\.test)\.config\.[cm]?[jt]s$|(^|\/)\.(nycrc|c8rc|mocharc)(\.[a-z]+)?$|(^|\/)(pytest\.ini|tox\.ini|noxfile\.py|conftest\.py|\.coveragerc|codecov\.ya?ml|phpunit\.xml(\.dist)?)$|(^|\/)\.cargo\/config(\.toml)?$/i;
+const TEST_SETTINGS = /(^|\/)(jest|vitest|karma|mocha|ava|playwright|cypress|babel\.test)\.config\.([cm]?[jt]s|json)$|(^|\/)vitest\.workspace\.[a-z]+$|(^|\/)\.(npmrc|yarnrc(\.yml)?)$|(^|\/)\.(nycrc|c8rc|mocharc)(\.[a-z]+)?$|(^|\/)(pytest\.ini|tox\.ini|noxfile\.py|conftest\.py|\.coveragerc|codecov\.ya?ml|phpunit\.xml(\.dist)?)$|(^|\/)\.cargo\/config(\.toml)?$/i;
 
 // An Xcode scheme or test plan says which tests run, so unticking them is the same thing.
 const XCODE_TESTS = /\.(xcscheme|xctestplan)$/;
@@ -51,10 +51,26 @@ const SCRIPT_CALL = /\b(?:npm\s+run(?:-script)?|pnpm(?:\s+run)?|yarn(?:\s+run)?|
 function scriptCalls(body) {
   return [...String(body).matchAll(SCRIPT_CALL)].flatMap((m) => (m[3] ?? m[1] ?? m[2]).split(/\s+/)).filter((word) => word !== '' && !word.startsWith('-'));
 }
+// The scripts `body` leads to: those it calls in a known way, and any other it names, since `node --run unit`, `bun unit`,
+// `turbo run unit` and whatever comes next all do the same, and a script named by chance costs only a look.
+function scriptsIn(body, names) {
+  const words = new Set(String(body).split(/[\s'"=;&|()]+/));
+  return [...new Set([...scriptCalls(body), ...names.filter((name) => words.has(name))])];
+}
 // The settings a test tool takes from package.json itself.
 const PACKAGE_TOOLS = ['jest', 'mocha', 'ava', 'vitest', 'c8', 'nyc'];
 
-function packageTests(text) {
+// Those settings as they stand: one a package.json gains changes what its tests run, whatever its scripts.
+export function packageTools(text) {
+  try {
+    const manifest = JSON.parse(text);
+    return JSON.stringify(PACKAGE_TOOLS.map((tool) => manifest?.[tool] ?? null));
+  } catch {
+    return null;
+  }
+}
+
+function packageTests(text, command = '') {
   if (text === null) return null;
   let manifest;
   try {
@@ -65,7 +81,9 @@ function packageTests(text) {
   const scripts = manifest?.scripts ?? {};
   const held = (name) => Object.hasOwn(scripts, name);
   const beside = (name) => [`pre${name}`, `post${name}`].filter(held);
-  const named = reachable(Object.keys(scripts).filter((name) => /^(pre|post)?test/.test(name)), (name) => [...scriptCalls(scripts[name]).filter(held).flatMap((call) => [call, ...beside(call)])]);
+  const names = Object.keys(scripts);
+  const entry = [...names.filter((name) => /^(pre|post)?test/.test(name)), ...scriptsIn(command, names).filter(held)];
+  const named = reachable(entry, (name) => scriptsIn(scripts[name], names).filter(held).flatMap((call) => [call, ...beside(call)]));
   const tools = PACKAGE_TOOLS.filter((tool) => manifest?.[tool] !== undefined).map((tool) => [tool, manifest[tool]]);
   return named.length > 0 || tools.length > 0 ? JSON.stringify([named.map((name) => [name, scripts[name]]), tools]) : null;
 }
@@ -86,15 +104,16 @@ function makeRules(text) {
       const [needs, inline] = rule[2].split(';');
       current = { needs: needs.trim().split(/\s+/).filter(Boolean), recipe: inline === undefined ? [] : [inline.trim()] };
       for (const target of rule[1].trim().split(/\s+/)) rules[target] = current;
-    } else if (line.trim() !== '') current = null;
+    } else if (line.trim() !== '' && !line.startsWith('#')) current = null;
   }
   return { rules, variables };
 }
 
-function makeTests(text) {
+function makeTests(text, command = '') {
   if (text === null) return null;
   const { rules, variables } = makeRules(text);
-  if (rules.test === undefined) return null;
+  const entry = ['test', ...[...String(command).matchAll(/\bmake\s+((?:[\w./-]+\s*)+)/g)].flatMap((m) => m[1].trim().split(/\s+/))].filter((name) => rules[name] !== undefined);
+  if (entry.length === 0) return null;
   const used = (words) => [...words.matchAll(/\$[({]([A-Za-z_][\w.-]*)[)}]/g)].map((m) => `$${m[1]}`);
   const next = (name) => {
     if (name.startsWith('$')) return used(variables[name.slice(1)] ?? '');
@@ -104,7 +123,7 @@ function makeTests(text) {
     const called = [...recipe.matchAll(/(?:\$\(MAKE\)|\$\{MAKE\}|\bmake)\s+((?:[\w./-]+\s*)+)/g)].flatMap((m) => m[1].trim().split(/\s+/));
     return [...rule.needs, ...called.filter((c) => !c.startsWith('-')), ...used(recipe), ...used(rule.needs.join(' '))];
   };
-  return JSON.stringify(reachable(['test'], next).map((name) => [name, name.startsWith('$') ? variables[name.slice(1)] ?? null : rules[name]?.recipe ?? null, name.startsWith('$') ? null : rules[name]?.needs ?? null]));
+  return JSON.stringify(reachable(entry, next).map((name) => [name, name.startsWith('$') ? variables[name.slice(1)] ?? null : rules[name]?.recipe ?? null, name.startsWith('$') ? null : rules[name]?.needs ?? null]));
 }
 
 // The tables of an ini-like file (TOML's, or setup.cfg's) whose names pass `wanted`, as they stand.
@@ -118,7 +137,14 @@ function tablesOf(text, wanted) {
   }
   return kept.length > 0 ? kept.join('\n') : null;
 }
-const pythonTests = (text) => (text === null ? null : tablesOf(text, (name) => /^(tool\.(pytest|coverage|tox|nox|hatch\.envs)|tool:pytest|coverage:)/.test(name)));
+// TOML can also write such a setting whole, as a dotted key above any table.
+const PYTHON_TABLE = /^(tool\.(pytest|coverage|tox|nox|hatch\.envs)|tool:pytest|coverage:)/;
+function pythonTests(text) {
+  if (text === null) return null;
+  const dotted = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => PYTHON_TABLE.test(l));
+  const held = [tablesOf(text, (name) => PYTHON_TABLE.test(name)) ?? '', ...dotted].join('\n').trim();
+  return held === '' ? null : held;
+}
 
 // Cargo's switches for what `cargo test` builds: `test = false` on a target, `harness`, `autotests`, `[[test]]` tables, the test
 // profile.
@@ -130,10 +156,11 @@ function cargoTests(text) {
   return held === '' ? null : held;
 }
 
-export const testRunner = (file) => {
+// `command` is the project's test command, for one that starts somewhere other than `test`: `npm run verify`, `make check`.
+export const testRunner = (file, command = '') => {
   const rel = String(file).replace(/\\/g, '/');
-  if (PACKAGE.test(rel)) return packageTests;
-  if (MAKEFILE.test(rel)) return makeTests;
+  if (PACKAGE.test(rel)) return (text) => packageTests(text, command);
+  if (MAKEFILE.test(rel)) return (text) => makeTests(text, command);
   if (PYTHON_BUILD.test(rel)) return pythonTests;
   return CARGO.test(rel) ? cargoTests : null;
 };
@@ -142,6 +169,8 @@ export const settingsAppear = (file) => {
   const rel = String(file).replace(/\\/g, '/');
   return PYTHON_BUILD.test(rel) || CARGO.test(rel);
 };
+export const isPackage = (file) => PACKAGE.test(String(file).replace(/\\/g, '/'));
+export const isMakefile = (file) => MAKEFILE.test(String(file).replace(/\\/g, '/'));
 export const isSwiftPackage = (file) => SWIFT_PACKAGE.test(String(file).replace(/\\/g, '/'));
 export const testTargetCount = (text) => (String(text ?? '').match(/\.testTarget\s*\(/g) ?? []).length;
 
