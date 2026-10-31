@@ -35,6 +35,7 @@ import { spawn as nodeSpawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { startHelper, envForConnection } from '../../scripts/host/helper.js';
 import { helperClient } from '../../scripts/host/helper-client.js';
+import { adapterOf as realAdapterFor } from '../../scripts/host/adapter-for.js';
 import { readProject } from '../../scripts/lib/projects.js';
 import { run as realRun } from '../../scripts/lib/run.js';
 import { main as cli } from '../../scripts/setup/cli.js';
@@ -341,6 +342,9 @@ export function makeComputer(host, clock, { name = 'Café Menu' } = {}) {
     return answer(`Successfully installed plugin: ${args[2]} (scope: project)\n`);
   }
 
+  // A project kept on this computer has the real local stand-in for a host; any other, the fake.
+  const adapterOf = (record) => (record.host === 'local' ? realAdapterFor(record, { run: c.run }) : host.adapter(record.repo ?? ''));
+
   // The world setup's steps read (setup-e2e-steps.js).
   const world = {
     run: c.run,
@@ -350,7 +354,7 @@ export function makeComputer(host, clock, { name = 'Café Menu' } = {}) {
     config,
     manifest: k.manifest,
     managedDir,
-    adapterFor: ({ repo }) => host.adapter(repo),
+    adapterFor: (record) => adapterOf(record),
     // Protection as switchOnAsDirector gives it, kept on the host.
     switchOn: async ({ repo }) => {
       host.protected.add(repo);
@@ -384,7 +388,7 @@ export function makeComputer(host, clock, { name = 'Café Menu' } = {}) {
     pages: [],
     stops: [],
     findGit: async () => ({ ok: true, path: 'git' }),
-    adapterFor: ({ repo }) => host.adapter(repo),
+    adapterFor: (record) => adapterOf(record),
     findOpenPr: async ({ repo, branch }) => {
       const found = [...host.prs].find(([, pr]) => pr.repo === repo && pr.head === branch && pr.state === 'open');
       return found ? { number: found[0], url: `https://github.com/${repo}/pull/${found[0]}` } : null;
@@ -419,7 +423,7 @@ export function makeComputer(host, clock, { name = 'Café Menu' } = {}) {
   c.start = () => c.act(async () => {
     if (c.helper !== null) return c.helper;
     c.helper = await startHelper({
-      address: testAddress(home), adapterFor: async (project) => host.adapter(readProject(project)?.repo ?? ''),
+      address: testAddress(home), adapterFor: async (project) => adapterOf(readProject(project) ?? {}),
       envFor: envForConnection((project) => readProject(project)?.connection), profileEnvFor: async () => ({ mode: 'quick', env: {} }),
       now: clock.now, run: c.run, fetch: noFetch, setupSteps: STEPS_MODULE, userHome: user, spawn: c.spawn,
       onStop: (close) => { c.helper = null; return close(); },
@@ -579,7 +583,7 @@ export async function follow(c, { answer, through = 10, lines = GREEN_LINES, mos
       await c.click(plan.ask.card, label);
     } else if (plan.done) {
       log.push({ step: plan.step, settled: true, ...(plan.said ? { said: plan.said } : {}) });
-    } else if (plan.wait !== undefined && plan.step === 10 && /trial pull request/.test(plan.why)) {
+    } else if (plan.wait !== undefined && plan.step === 10 && /trial (?:pull request|change)/.test(plan.why)) {
       const named = await c.cli('health');
       await c.standInWatcher(named.trials.project);
       const health = await c.cli('health', ...lines);

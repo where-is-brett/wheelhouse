@@ -51,6 +51,7 @@ import { agentOfProject } from '../agents/names.js';
 import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
 import { setupCommand, allowRule } from '../protection/settings.js';
 import { detectHost } from '../host/adapter.js';
+import { branchesOf, chosenHost, remotesOf } from './local.js';
 import { readGitlabHosts } from '../host/gitlab-base.js';
 import { caFile, exportSystemRoots, stageCaFile, caEnv, glabCaArgs, gitCaConfig, addressOf, failureKind, CERTIFICATE_NOT_IN_STORE } from '../host/company-ca.js';
 import { composeCard, isTooLong } from '../cards/compose.js';
@@ -542,13 +543,14 @@ export function originUrl(folder) {
   return /^\s*url\s*=\s*(.+?)\s*$/m.exec(section)?.[1] ?? null;
 }
 
-// The host tools this project needs: the one for the host its `origin` names, or both while it
-// names none (a new product's host is chosen at step 3).
-export function hostToolsFor(folder) {
-  const url = originUrl(folder);
-  if (url === null) return [...HOST_TOOLS];
-  const host = detectHost(url, readGitlabHosts(folder));
-  return host === 'local' ? [...HOST_TOOLS] : [host === 'github' ? 'gh' : 'glab'];
+// The host tools this project needs: the one for the host a remote names, or the one step 3's answers chose; none for a project
+// kept on this computer; both while a new product's place isn't chosen yet.
+export function hostToolsFor(folder, answers = {}) {
+  const host = detectHost(remotesOf(folder), readGitlabHosts(folder));
+  if (host !== 'local') return [host === 'github' ? 'gh' : 'glab'];
+  const chosen = chosenHost(answers);
+  if (chosen === 'github' || chosen === 'gitlab') return [chosen === 'github' ? 'gh' : 'glab'];
+  return chosen === 'local' || remotesOf(folder).length > 0 || branchesOf(folder).length > 0 ? [] : [...HOST_TOOLS];
 }
 
 // The hosts of the projects on this computer, for whether it runs the build engine (scripts/engine/parts.js): each
@@ -557,10 +559,8 @@ export function hostToolsFor(folder) {
 export function projectHosts({ folder, answers = {} } = {}) {
   const hosts = registeredProjects().map(({ record }) => (record.host === 'github' || record.host === 'gitlab' ? record.host : null));
   if (projectForFolder(folder) !== null) return hosts;
-  const chosen = answers?.['3.host']?.label;
-  const tools = hostToolsFor(folder);
-  if (chosen === 'GitHub' || chosen === 'GitLab') hosts.push(chosen === 'GitHub' ? 'github' : 'gitlab');
-  else hosts.push(tools.length === 1 ? (tools[0] === 'gh' ? 'github' : 'gitlab') : null);
+  const tools = hostToolsFor(folder, answers);
+  hosts.push(tools.length === 1 ? (tools[0] === 'gh' ? 'github' : 'gitlab') : null);
   return hosts;
 }
 
@@ -870,7 +870,7 @@ export function toolsStep({
     long: true,
     async plan(ctx) {
       const platform = ctx.platform ?? process.platform;
-      const hostTools = hostToolsFor(ctx.folder);
+      const hostTools = hostToolsFor(ctx.folder, ctx.answers);
       const status = await toolsStatus({ platform, run, hostTools, env });
       if (!status.node.ok) throw new Error(nodeRefusal(status.node));
       const changes = [];

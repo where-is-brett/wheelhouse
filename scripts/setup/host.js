@@ -84,7 +84,7 @@ import { toolPath } from '../lib/host-tools.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
 import { QUICK_LINE } from '../lib/host-lines.js';
-import { detectHost, notHostedLine } from '../host/adapter.js';
+import { detectHost } from '../host/adapter.js';
 import { startDeviceSignIn, waitForSignIn, installUrl } from '../host/github-app.js';
 import { installationCovers } from '../host/connection.js';
 import { gitlabApi, makeProjectKey, isKeysSwitchedOff, checkBaseUrl, projectPath } from '../host/gitlab-key.js';
@@ -101,6 +101,9 @@ import { listEvents } from '../state/events.js';
 import { joinedRepo, runClosed, JOIN_STEP } from '../lib/setup-run.js';
 import { readProfileViews, PROFILE_BRANCH } from '../profile/store.js';
 import { toolsStatus, originUrl, applyCompanyCa } from './tools.js';
+import {
+  KEEP_HERE, PUT_ON_GITHUB, applyLocal, branchAsk, branchesOf, chooseBranch, headBranch, keptAsk, localCard, localName, localSteps, remotesOf,
+} from './local.js';
 import { caFile, probeCertificate, companyGitEnv } from '../host/company-ca.js';
 import {
   appName, appSlug, checkOwnApp, ensureOwnApp, ownAppCode, ownAppFrom, readOwnApp, recordOwnApp, helperProfile, sameLogin, shadowedOwnApp,
@@ -181,7 +184,6 @@ export const CERTIFICATE_GIVEN = (base) => `Setup has given this computer your c
 export const STOPPED = 'All stop came on, so setup stopped here; once All stop is lifted, a fresh Go ahead carries on';
 // How often the browser sign-in looks at STOP while it waits.
 export const STOP_LOOK_MS = 1000;
-export const HISTORY_LINE = 'This folder has its own git history but no GitHub or GitLab address, so setup has left it as it is: connect it to its repository (git remote add origin <address>), then ask again';
 // The join question's first option; the second names the folder (ruling R77).
 export const NEW_PRODUCT = 'A new product';
 export const fromOtherComputer = (name) => `${name}, from my other computer`;
@@ -317,19 +319,21 @@ function hasHistory(folder) {
   }
 }
 
-// The product: an existing one, whose folder's `origin` names its repository, or a new one.
+// The product: an existing one, whose folder names a repository on GitHub or GitLab, `origin` before any other remote; one
+// kept on this computer; or a new one.
 // A company's own GitLab, named in `config.gitlabHosts`, gives its address as `base`; the public
 // service's is the default and is left out.
 export function productOf(folder, { config } = {}) {
-  const origin = originUrl(folder);
-  if (origin !== null) {
-    const host = detectHost(origin, { gitlabHosts: config?.gitlabHosts });
-    if (host === 'local') throw new Error(notHostedLine(origin));
-    const repo = repoOf(origin);
-    const base = host === 'gitlab' ? gitlabBase({ config, remoteUrl: origin }) : DEFAULT_GITLAB;
+  const remotes = remotesOf(folder);
+  const hosted = remotes.find((r) => detectHost(r, { gitlabHosts: config?.gitlabHosts }) !== 'local') ?? null;
+  if (hosted !== null) {
+    const host = detectHost(hosted, { gitlabHosts: config?.gitlabHosts });
+    const repo = repoOf(hosted);
+    const base = host === 'gitlab' ? gitlabBase({ config, remoteUrl: hosted }) : DEFAULT_GITLAB;
     return { isNew: false, host, repo, name: repo.split('/').at(-1), ...(base === DEFAULT_GITLAB ? {} : { base }) };
   }
-  if (hasHistory(folder)) throw new Error(HISTORY_LINE);
+  // A folder with a history, or remotes of its own, stays on this computer with no question (spec 10).
+  if (hasHistory(folder) || remotes.length > 0) return { isNew: false, host: 'local', repo: null, name: repoName(folder), others: remotes };
   return { isNew: true, host: null, repo: null, name: repoName(folder) };
 }
 
@@ -435,14 +439,15 @@ function hostAsk(name) {
     id: 'host',
     card: {
       level: 2,
-      what: `Where should ${name} be kept: GitHub or GitLab? No account on either yet? You can make one at the sign-in, from the host's sign-up page.`,
-      why: 'Setup makes the new product a private repository there, and connects this folder to it.',
+      what: `Where should ${name} be kept? No account on GitHub or GitLab yet? You can make one at the sign-in.`,
+      why: 'On this computer it needs no account. On GitHub or GitLab, setup makes a private repository and connects this folder to it.',
       options: [
+        { label: KEEP_HERE, says: 'Nothing goes online, and it can move later in one click.' },
         { label: HOST_LABELS.github, says: 'A private repository on your GitHub account.' },
         { label: HOST_LABELS.gitlab, says: 'A private project on your GitLab account.' },
       ],
-      recommend: HOST_LABELS.github,
-      because: 'it is the one most people use, and Wheelhouse\'s app works there',
+      recommend: KEEP_HERE,
+      because: 'it needs no account, and it can move later in one click',
       meanwhile: MEANWHILE,
     },
   };
@@ -462,16 +467,18 @@ function joinAsk(id, name, { missed }) {
     typed: true,
     card: {
       level: 2,
-      what: `${found}Is ${name} a new product, or one you set up with Wheelhouse on your other computer? If it is kept under another name, or to say which one, type its owner/name.`,
-      why: 'A product set up on another computer is checked out into this folder with its plans and settings, never made again.',
+      what: `${found}Where should ${name} be kept? If it is one you set up with Wheelhouse on your other computer under another name, or to say which one, type its owner/name.`,
+      why: 'On this computer it needs no account. A product set up on another computer is checked out into this folder with its plans and settings, never made again.',
       options: [
-        { label: NEW_PRODUCT, says: 'Setup makes a private repository for it and connects this folder to it.' },
+        { label: KEEP_HERE, says: 'A new product. Nothing goes online, and it can move later in one click.' },
+        { label: HOST_LABELS.github, says: 'A new product, in a private repository on your GitHub account.' },
+        { label: HOST_LABELS.gitlab, says: 'A new product, in a private project on your GitLab account.' },
         { label: other, says: `Setup finds ${name} on your account or organisations, set up with Wheelhouse, and checks it out into this folder.` },
       ],
       // An empty folder is far more often a new product, whether or not this computer knows
-      // Wheelhouse yet (the director's first setup, design section 15.1).
-      recommend: NEW_PRODUCT,
-      because: 'an empty folder is most often a new product',
+      // Wheelhouse yet (the director's first setup, design section 15.1), and one kept here needs no account.
+      recommend: KEEP_HERE,
+      because: 'it needs no account, and it can move later in one click',
       meanwhile: MEANWHILE,
     },
   };
@@ -513,8 +520,8 @@ export function joinedFolder(folder, run = null) {
 // Whether this computer is joining a product, from the join question's answer (ruling R77): { ask }
 // while the question is open; { join, known } for a product from another computer, `join` the name
 // asked for (a bare name or owner/name) and `known` the owner/name an attempt found, or null (the
-// list then names `known`, so a retry checks that repository and never searches again); or
-// null for a new product, and in a folder where the question isn't asked (one holding more than
+// list then names `known`, so a retry checks that repository and never searches again); { host }
+// for a new product kept where the answer says; or null for a new product with no answer yet of where, and in a folder where the question isn't asked (one holding more than
 // step 1's install, unless the run is already joining). Each name an attempt missed, and each
 // typed text that names no repository, asks the question again under an id naming them (ruling
 // R51), so no answer is used again for a name that wasn't found.
@@ -535,6 +542,9 @@ function joinChoice(ctx) {
     const got = ctx.answers?.[`3.${id}`] ?? null;
     if (got === null) return { ask: joinAsk(id, name, { missed: tried.at(-1) }) };
     if (got.label === NEW_PRODUCT) return null;
+    if (got.label === KEEP_HERE) return { host: 'local' };
+    if (got.label === HOST_LABELS.github) return { host: 'github' };
+    if (got.label === HOST_LABELS.gitlab) return { host: 'gitlab' };
     if (typeof got.text === 'string') {
       const wanted = repoNamed(got.text);
       if (wanted === null) {
@@ -762,6 +772,8 @@ export async function directorGitlabApi({ run = realRun, fetch = globalThis.fetc
 // git's only credential helper, never the narrow key, with git's global and system config shut
 // out and no hooks (ruling R109, scripts/setup/git.js, setupGitEnv).
 export function directorGitEnv({ host, gitPath = 'git', env = process.env, platform = process.platform, base } = {}) {
+  // A project kept on this computer takes no sign-in.
+  if (host === 'local') return setupGitEnv({ gitPath, env, platform });
   // With the company's certificate for a company GitLab's address, once setup has made it (company-ca.js).
   return companyGitEnv(setupGitEnv({ host, gitPath, env, platform }), { host, base }, { platform });
 }
@@ -809,10 +821,11 @@ async function repoInfo({ host, repo, run, api }) {
 }
 
 // Makes a private repository on the director's own account, with a first commit on main (a README).
-async function createRepo({ host, owner, name, run, api }) {
+// A repository the folder's own history goes to starts empty.
+async function createRepo({ host, owner, name, run, api, empty = false }) {
   const repo = `${owner}/${name}`;
   if (host === 'github') {
-    const args = ['repo', 'create', repo, '--private', '--add-readme'];
+    const args = ['repo', 'create', repo, '--private', ...(empty ? [] : ['--add-readme'])];
     const made = await ask(run, host, args);
     if (made.code !== 0) throw new Error(`GitHub did not make the private repository ${repo}`);
   } else {
@@ -868,6 +881,19 @@ async function connectFolder({ folder, remoteUrl, gitPath, env, run, record }) {
   if (head.code !== 0 || head.stdout.trim() === theirs) {
     const missing = (await must(['ls-files', '--deleted', '-z'], 'git could not read the folder')).stdout.split('\0').filter(Boolean);
     if (missing.length > 0) await must(['checkout', '-q', '--', ...missing], 'git could not write out the repository\'s files');
+  }
+}
+
+// Sends a folder's own history to its new, empty repository: `branch`, which becomes the repository's default. An `origin` of
+// the folder's own stays as it is, so the record's address is the only way there; a folder with none gets it. Safe to repeat.
+async function publishFolder({ folder, remoteUrl, branch, gitPath, env, run, record }) {
+  const git = setupGit({ run, gitPath, env: reaching(env, remoteUrl), cwd: folder, workTree: folder });
+  if (originUrl(folder) === null) {
+    record({ id: newId('chg'), kind: 'folder', target: path.join(folder, '.git'), before: { origin: null }, after: { origin: remoteUrl, branch } });
+    if ((await git(['remote', 'add', 'origin', remoteUrl])).code !== 0) throw new Error('git could not name the repository in this folder');
+  }
+  if ((await git(['push', '-q', '--no-verify', remoteUrl, `refs/heads/${branch}:refs/heads/${branch}`])).code !== 0) {
+    throw new Error('Your project could not be sent to its new repository; a fresh Go ahead tries again');
   }
 }
 
@@ -1044,7 +1070,7 @@ function connectionFor({ host, mode, repo, id, locked = false, installationId = 
 // address on the GitLab at `base`. Gives the changes made.
 export async function makeRepos({
   host, owner, user = owner, name, isNew, run = realRun, api, folder, record = () => {}, gitPath = 'git', env = {},
-  hostUrl = httpsRemote, base = DEFAULT_GITLAB,
+  hostUrl = httpsRemote, base = DEFAULT_GITLAB, publish = null,
 }) {
   const made = [];
   if (!isNew) return made;
@@ -1061,9 +1087,11 @@ export async function makeRepos({
   if (info !== null && !madeBySetup(target)) throw new Error(`${repo} on ${NAME[host]} already exists, so setup has not used it for a new product: if it is this product from your other computer, say so, and setup brings it into this folder instead; otherwise rename this folder, or connect it to that repository, then ask again`);
   if (info === null) {
     keep({ id: newId('chg'), kind: 'host', target, before: null, after: { repository: repo, private: true, made: true } });
-    info = await createRepo({ host, owner: user, name, run, api });
+    info = await createRepo({ host, owner: user, name, run, api, empty: publish !== null });
   }
-  await connectFolder({ folder, remoteUrl: hostUrl({ host, repo: info.repo, base }), gitPath, env, run, record: keep });
+  const remoteUrl = hostUrl({ host, repo: info.repo, base });
+  if (publish !== null) await publishFolder({ folder, remoteUrl, branch: publish, gitPath, env, run, record: keep });
+  else await connectFolder({ folder, remoteUrl, gitPath, env, run, record: keep });
   return made;
 }
 
@@ -1416,7 +1444,8 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
   } else if (!signedIn) parts.push(bare ? `sign in to ${name} in your browser` : `sign in to ${name} in your browser (no account? sign up at ${signUpUrl(host, base)})`);
   if (product.isNew) {
     const where = owner ? `${owner}/${product.name} on ${name}` : `${product.name} on your ${name} account`;
-    parts.push(bare ? `a private repository on ${name}, connected to this folder` : tight ? `a private repository ${where}, connected to this folder` : `a private repository ${where} with a README, this folder connected to it, its files kept`);
+    parts.push(bare ? `a private repository on ${name}, connected to this folder` : tight ? `a private repository ${where}, connected to this folder`
+      : product.publish ? `a private repository ${where}, with your project's history sent to it` : `a private repository ${where} with a README, this folder connected to it, its files kept`);
   } else if (product.joining) {
     const accounts = host === 'gitlab' ? 'account or groups' : 'account or organisations';
     parts.push(bare ? `the repository set up with Wheelhouse, checked out here with its settings`
@@ -1500,7 +1529,7 @@ export function hostStep({
       // holding only step 1's install.
       const join = joinChoice(ctx);
       if (join?.ask) return { ask: join.ask };
-      const product = join === null ? productOf(ctx.folder, { config: readGitlabHosts(ctx.folder) })
+      let product = join === null || join.host !== undefined ? productOf(ctx.folder, { config: readGitlabHosts(ctx.folder) })
         : { isNew: false, joining: true, host: null, repo: join.join.includes('/') ? join.join : join.known, name: join.join.split('/').at(-1) };
       // Real users and Locked are the first computer's questions; a joining computer reads whether
       // the product is launched from what it checks out, and its step 8 asks Locked.
@@ -1517,11 +1546,33 @@ export function hostStep({
       // so (its checked-out .claude/wheelhouse.json, or a v0.1.x state branch's phase); before then,
       // apply refuses Quick once it has.
       const launched = product.joining === true && (launchedInFolder(ctx.folder) || launchedFound(product.repo));
-      let host = product.host;
+      let host = product.host ?? join?.host ?? null;
       if (host === null) {
         if (answer('host') === null) return { ask: hostAsk(product.name) };
-        host = answer('host').label === HOST_LABELS.gitlab ? 'gitlab' : 'github';
+        const { label } = answer('host');
+        host = label === KEEP_HERE ? 'local' : label === HOST_LABELS.gitlab ? 'gitlab' : 'github';
       }
+      if (product.host === 'local') {
+        if (answer('kept') === null) return { ask: keptAsk(product.name, product.others) };
+        if (answer('kept').label === PUT_ON_GITHUB) host = 'github';
+      }
+      // The main line of a folder with history: asked only where the folder doesn't say.
+      const branches = branchesOf(ctx.folder);
+      let branch = branches.length === 0 ? headBranch(ctx.folder) ?? 'main' : chooseBranch(branches);
+      if (branch === null && (host === 'local' || product.host === 'local')) {
+        const id = `branch-${digest(branches)}`;
+        if (answer(id) === null) return { ask: branchAsk(product.name, branches, id) };
+        branch = answer(id).label;
+      }
+      if (host === 'local') {
+        if (ctx.choicesOnly === true) return { wait: 0, why: 'every choice of step 3 is made' };
+        const project = localName(ctx.folder, product.name);
+        const noGit = !fs.existsSync(path.join(ctx.folder, '.git'));
+        const changes = localSteps({ folder: ctx.folder, project, branch, noGit, noCommit: noGit || !hasHistory(ctx.folder), locked });
+        return { changes, card: localCard({ changes, branch, others: product.others ?? [] }), director: 'One click' };
+      }
+      // A folder with its own history, sent to a new private repository on the director's account.
+      if (product.host === 'local') product = { isNew: true, publish: branch, host, repo: null, name: product.name };
       const where = product.isNew ? `the new private repository ${product.name} on ${NAME[host]}` : `${product.repo ?? product.name} on ${NAME[host]}`;
       // On a Mac, Quick first and the narrow ways behind Make it stricter; elsewhere a narrow way
       // recommended. A joining computer can't know whether the product is launched before it is
@@ -1617,8 +1668,8 @@ export function hostStep({
         changes.push({ kind: 'host', target: host, action: 'sign-in', ...(via === null ? {} : { via }) });
       }
       if (product.isNew) {
-        changes.push({ kind: 'host', target: host, action: 'repository', name: product.name, repo, private: true });
-        changes.push({ kind: 'folder', target: ctx.folder, action: 'connect', branch: 'main' });
+        changes.push({ kind: 'host', target: host, action: 'repository', name: product.name, repo, private: true, ...(product.publish ? { publish: product.publish } : {}) });
+        changes.push({ kind: 'folder', target: ctx.folder, action: 'connect', branch: product.publish ?? 'main' });
       }
       if (product.joining) {
         // Once an attempt found the repository, the list names it, so every retry uses it (R102).
@@ -1677,7 +1728,7 @@ export function hostStep({
       const recorded = changes.find((c) => c.action === 'project');
       const join = changes.find((c) => c.action === 'join') ?? null;
       if (join !== null && (typeof join.name !== 'string' || repoNamed(join.name) !== join.name)) throw new Error('Step 3\'s list names no repository to join');
-      if (made === null && join === null && typeof recorded?.repo !== 'string') throw new Error('Step 3\'s list names no repository');
+      if (made === null && join === null && host !== 'local' && typeof recorded?.repo !== 'string') throw new Error('Step 3\'s list names no repository');
       // Whether this computer is joining a product, recorded before anything else is done (ruling
       // R77), so the run's steps are a joining computer's from here on, before step 4's or 5's
       // questions could come; a new product chosen after a joining attempt records that it is not.
@@ -1691,6 +1742,11 @@ export function hostStep({
       }
       if (join !== null) answerRecord({ joined: join.name });
       else if (joinedRepo(thisRun) !== null) answerRecord({ joined: null });
+      if (host === 'local') {
+        const found = await findGit({ platform, run });
+        if (!found?.ok || typeof found.path !== 'string') throw new Error('git is not on this computer yet; step 2 installs it');
+        return applyLocal({ ctx, changes, run, gitPath: found.path, say, halt });
+      }
       // The company's certificate comes before anything reaches the host. The address is the connection's
       // own, checked before anything is run; the certificate and glab's setting are made, and the git
       // settings for that address kept in the journal (git gets them in the environment of its calls).
@@ -1757,7 +1813,7 @@ export function hostStep({
       // A new product's repository, under the director's own account.
       if (made !== null) {
         await makeRepos({
-          host, owner: projectOwner, user, name: projectRepo.split('/').at(-1), isNew: true, run, api, folder: ctx.folder, record, gitPath: git.path, env: gitEnv, hostUrl, base,
+          host, owner: projectOwner, user, name: projectRepo.split('/').at(-1), isNew: true, run, api, folder: ctx.folder, record, gitPath: git.path, env: gitEnv, hostUrl, base, publish: made.publish ?? null,
         });
       }
       const project = await repoInfo({ host, repo: projectRepo, run, api });

@@ -17,7 +17,7 @@ import path from 'node:path';
 import {
   standInHost, makeClock, makeComputer, shimTools, shutOutGitConfig, follow, listing, differences,
 } from '../helpers/setup-e2e.js';
-import { NEW_PRODUCT, HOST_LABELS, WAYS, REAL_USERS } from '../../scripts/setup/host.js';
+import { HOST_LABELS, WAYS, REAL_USERS } from '../../scripts/setup/host.js';
 import { LIVE_DATA, PRODUCT } from '../../scripts/setup/questions.js';
 import { rulesOf } from '../../scripts/setup/rules.js';
 import { READY, ARRIVED } from '../../scripts/setup/notify.js';
@@ -39,6 +39,8 @@ import { clicksDir, usedDir, keptAnswers } from '../../scripts/lib/setup-clicks.
 import { readEnrolled, ownKey, verify } from '../../scripts/state/signing.js';
 import { readProject } from '../../scripts/lib/projects.js';
 import { stateDir } from '../../scripts/lib/paths.js';
+import { homeDir } from '../../scripts/host/local/home.js';
+import { mirrorOf } from '../../scripts/setup/local.js';
 import { toolPath } from '../../scripts/lib/host-tools.js';
 import { STATE_BRANCH } from '../../scripts/state/record.js';
 import { run as realRun, withoutGitVars } from '../../scripts/lib/run.js';
@@ -90,7 +92,7 @@ function fresh() {
 // The director's answers to a new product's questions, by the question's id (an id may carry a
 // digest after its name).
 const NEW_ANSWERS = {
-  join: NEW_PRODUCT, 'real-users': REAL_USERS.no, host: HOST_LABELS.github, connection: WAYS.quick,
+  join: HOST_LABELS.github, 'real-users': REAL_USERS.no, connection: WAYS.quick,
   product: 'Tide tables for sailors, used by the harbour\'s skippers.', 'live-data': LIVE_DATA.no,
   'phone-ready': READY.ready, 'push-arrived': ARRIVED.yes,
 };
@@ -153,12 +155,13 @@ test('a new product: one card, its Go ahead, every step with no more cards, a gr
 
     // The phone card as the session asks it, to read what it opens with.
     const phoneCards = [];
-    const answers = byId(NEW_ANSWERS);
-    const log = await follow(a, { answer: (id, plan, ask) => { if (id.startsWith('phone')) phoneCards.push(plan.ask.card); return answers(id, plan, ask); }, phone: true });
+    const answers = customiseOnce(NEW_ANSWERS);
+    const whole = await follow(a, { answer: (id, plan, ask) => { if (id.startsWith('phone')) phoneCards.push(plan.ask.card); return answers(id, plan, ask); }, phone: true });
 
     // The one card first, its Go ahead, then every step in order with no card: each list the Go
     // ahead covers is applied as it comes, and the steps with nothing to click settle on their own.
     // The phone comes last, once the board is green (design section 15.1).
+    const log = whole.slice(whole.findLastIndex((e) => e.ask?.startsWith('plan-')));
     assert.deepEqual(log.map((e) => [e.step, e.ask?.replace(/-[0-9a-f]{10,12}$/, '') ?? (e.covered ? 'covered' : e.goAhead ? 'go ahead' : e.settled ? 'settled' : e.health ? 'health' : 'wait')]), [
       [0, 'plan'],
       [1, 'settled'],
@@ -180,9 +183,8 @@ test('a new product: one card, its Go ahead, every step with no more cards, a gr
     // key, stood for each of them, and was never used up.
     assert.deepEqual(await keptClicks(a), []);
     const consent = await a.act(() => keptAnswers((readJournal().runs[0]).id).filter((e) => e.data.step === 0));
-    assert.equal(consent.length, 1);
-    assert.equal(consent[0].data.label, 'Go ahead');
-    assert.equal(await a.act(() => verify(consent[0], readEnrolled())), true);
+    assert.deepEqual(consent.map((e) => e.data.label), ['Customise', 'Go ahead']);
+    assert.equal(await a.act(() => verify(consent[1], readEnrolled())), true);
 
     // Step 2 fetched gh, missing here, into Wheelhouse's own tools folder, from its release page
     // as tools.js checks it, and every later gh call ran that copy.
@@ -246,6 +248,36 @@ test('a new product: one card, its Go ahead, every step with no more cards, a gr
     assert.deepEqual(shims.calls(), [`gh pr close 12 --repo ${REPO}`, ...SURVEY_CALLS]);
     const surveys = await a.act(() => listEvents(stateDir(SLUG)).filter((e) => e.kind === 'survey'));
     assert.deepEqual(surveys.map((e) => [e.data.hostReached, e.data.again]), [[false, undefined]]);
+  } finally {
+    await a.cleanup();
+  }
+});
+
+test('a project kept on this computer: the Go ahead alone reaches a green board, and nothing goes online', { skip: SKIP }, async () => {
+  const { host, a } = fresh();
+  try {
+    await a.start();
+    await a.sessionStart();
+    const pick = byId(NEW_ANSWERS);
+    const log = await follow(a, { answer: (id, plan, ask) => (id.startsWith('plan-') ? 'Go ahead' : pick(id, plan, ask)), phone: true });
+    const { health } = log.find((e) => e.health);
+    assert.equal(health.green, true, health.lines.join('\n'));
+    assert.match(health.lines.join('\n'), /Passed: .*private copy/i);
+    assert.doesNotMatch(health.lines.join('\n'), /pull request|on the host/);
+    assert.match(health.lines.join('\n'), /Passed: The trial change was closed/, 'step 10\'s trial uses a local change');
+    const project = 'Cafe-Menu';
+    const record = await a.act(() => readProject(project));
+    assert.equal(record.host, 'local');
+    assert.equal(record.remoteUrl, null);
+    assert.equal(record.folder, a.folder);
+    assert.equal(host.has(REPO), false, 'nothing was made on a host');
+    assert.deepEqual(a.refused, []);
+    const home = await a.act(() => homeDir(project));
+    assert.equal(await g(home, 'log', '-1', '--format=%s', 'main'), COMMIT_MESSAGE);
+    assert.equal(await g(a.folder, 'rev-parse', 'HEAD'), await g(home, 'rev-parse', 'main'));
+    assert.equal(await g(home, 'for-each-ref', `refs/heads/${HEALTH_BRANCH}`), '', 'the trial is closed and gone');
+    assert.equal(await g(a.folder, 'config', '--get', 'remote.wheelhouse.url'), await a.act(() => mirrorOf(project)));
+    assert.equal(fs.existsSync(path.join(a.folder, '.github')), false, 'no workflow on a project with no host');
   } finally {
     await a.cleanup();
   }
@@ -328,7 +360,7 @@ test('setup stopped after Customise\'s cards resumes at the one card in the next
     assert.equal(one.plan.step, 0);
     await a.click(one.plan.ask.card, 'Customise');
     const { plan } = await a.cli('resume');
-    assert.deepEqual(plan.asks.map((x) => x.id.replace(/-[0-9a-f]{10}$/, '')), ['join', 'real-users', 'host', 'connection']);
+    assert.deepEqual(plan.asks.map((x) => x.id.replace(/-[0-9a-f]{10}$/, '')), ['join', 'real-users', 'product-before-launch', 'live-data'], 'how agents reach the project waits for where it is kept');
     await a.clickAll(plan.asks.map((x) => x.card), plan.asks.map((x) => byId(NEW_ANSWERS)(x.id)));
     const stopped = await a.setupRun();
     await a.stop();
@@ -338,7 +370,7 @@ test('setup stopped after Customise\'s cards resumes at the one card in the next
     await a.sessionStart();
     // The rest of the choices (step 4's), then the one card with the director's choices on it.
     const next = (await a.cli('resume')).plan;
-    assert.deepEqual(next.asks.map((x) => x.id.replace(/-[0-9a-f]{10}$/, '')), ['product-before-launch', 'live-data'], 'the questions already answered are not asked again');
+    assert.deepEqual(next.asks.map((x) => x.id.replace(/-[0-9a-f]{10}$/, '')), ['connection'], 'the questions already answered are not asked again');
     await a.clickAll(next.asks.map((x) => x.card), next.asks.map((x) => byId(NEW_ANSWERS)(x.id)));
     const card = (await a.cli('resume')).plan;
     assert.equal(card.step, 0);
@@ -366,7 +398,7 @@ test('setup stopped after step 3 carries on at step 4 in the next session, on th
   try {
     await a.start();
     await a.sessionStart();
-    await follow(a, { answer: byId(NEW_ANSWERS), through: 3 });
+    await follow(a, { answer: customiseOnce(NEW_ANSWERS), through: 3 });
     const stopped = await a.setupRun();
     const made = a.calls.filter((call) => call[0] === 'gh' && call[1] === 'repo' && call[2] === 'create');
     assert.deepEqual(made.map((call) => call[3]), [REPO]);
@@ -451,13 +483,13 @@ test('an answer changed before its step runs comes back on the one card; one cha
     await a.start();
     await a.sessionStart();
     // Go ahead on the one card, then setup stops after step 4 has settled on no live data.
-    await follow(a, { answer: byId(NEW_ANSWERS), through: 4 });
+    await follow(a, { answer: customiseOnce(NEW_ANSWERS), through: 4 });
     // The director meant live data after all: step 7 hasn't saved it, so its own card is asked again,
     // and step 4 settles again on the new answer.
     const { choices } = await a.cli('choices');
     const live = choices.find((c) => c.about === 'live data');
     assert.deepEqual([live.key, live.chosen, live.acted], ['4.live-data', LIVE_DATA.no, false]);
-    const host = choices.find((c) => c.about === 'GitHub or GitLab');
+    const host = choices.find((c) => c.key === '3.join');
     assert.equal(host.acted, true, 'step 3 has made the repository');
     const { asks } = await a.cli('change', '4.live-data');
     assert.deepEqual(asks.map((x) => x.id), ['live-data']);
@@ -478,7 +510,7 @@ test('an answer changed before its step runs comes back on the one card; one cha
     assert.match(after.asks[0].card.question, /saved in the project's settings now/);
     await a.click(after.asks[0].card, 'Change it after setup');
     // The host, once step 3 has made the repository: Set up again, or Keep it.
-    const moved = await a.cli('change', '3.host');
+    const moved = await a.cli('change', '3.join');
     assert.deepEqual(moved.asks[0].card.options.map((o) => o.label), ['Set up again', 'Keep it']);
     await a.click(moved.asks[0].card, 'Keep it');
     assert.equal((await a.cli('resume')).setUpAgain, undefined);
@@ -505,7 +537,7 @@ test('a git address added to the folder after the Go ahead lapses it before step
   try {
     await a.start();
     await a.sessionStart();
-    await follow(a, { answer: byId(NEW_ANSWERS), through: 2 });
+    await follow(a, { answer: customiseOnce(NEW_ANSWERS), through: 2 });
     await g(a.folder, 'init', '-q', '-b', 'main');
     await g(a.folder, 'remote', 'add', 'origin', 'https://github.com/someone/elsewhere.git');
     // Step 3 now asks its own question for the project the folder names, which the Go ahead never
@@ -532,7 +564,7 @@ test('uninstall after setup leaves the home folder as it was, but for what the d
     const settingsBefore = JSON.parse(fs.readFileSync(userSettings, 'utf8'));
     await a.start();
     await a.sessionStart();
-    await follow(a, { answer: byId(NEW_ANSWERS) });
+    await follow(a, { answer: customiseOnce(NEW_ANSWERS) });
     const product = host.url({ repo: REPO });
     const main = await g(product, 'rev-parse', 'main');
     // After setup, the director sets their own transcript retention (Review Focus 2).

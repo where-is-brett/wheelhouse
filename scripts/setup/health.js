@@ -79,6 +79,9 @@ import { readProfileViews } from '../profile/store.js';
 import { effectiveSettings } from '../settings/effective.js';
 import { engineDir } from '../lib/paths.js';
 import { engineCheck, helloTrial } from '../engine/hello.js';
+import { homeDir, lookAtHome } from '../host/local/home.js';
+import { seenMain } from '../host/local/merge.js';
+import { localWords } from '../lib/host-lines.js';
 
 export { HEALTH_STEP };
 // The trial's branch: one name, so a retry pushes over its own branch and never makes another.
@@ -151,11 +154,21 @@ export const HELPER_CHECKS = Object.freeze({
   },
   'host protection': {
     expected: 'on',
+    hosted: true,
     ok: ['on', 'not offered'],
     passed: 'The host\'s protection of the main branch is on, or your plan doesn\'t offer it and the Logbook says so',
     failed: 'The host\'s protection of the main branch is off',
     todo: 'Run step 7 again, which switches it on with your sign-in, then step 10',
     what: 'the host\'s protection',
+  },
+  // A project kept on this computer has its home's look in place of the host's protection (spec 7.7).
+  'private copy': {
+    expected: 'ok',
+    local: true,
+    passed: 'Only you can reach the project\'s private copy on this computer, and it is whole',
+    failed: 'The project\'s private copy on this computer isn\'t as it should be',
+    todo: 'Report it to Wheelhouse before going on',
+    what: 'the project\'s private copy',
   },
 });
 
@@ -202,7 +215,7 @@ export const SESSION_CHECKS = Object.freeze({
     // The trial looks where setup finds gh (trials.js). On GitLab a computer with no gh has none for
     // an agent to run. On GitHub setup uses gh, so one the trial didn't find was missed, not absent:
     // that fails, since an agent's use of the sign-in would then read green untried.
-    okOn: { gitlab: ['refused', 'not installed'] },
+    okOn: { gitlab: ['refused', 'not installed'], local: ['refused', 'not installed'] },
     passed: 'An agent couldn\'t use your GitHub sign-in',
     failed: 'An agent could use your GitHub sign-in',
     todo: 'The sandbox isn\'t on in this session: reload this project in Claude Desktop, then run step 10 again',
@@ -265,7 +278,25 @@ function projectHere(folder) {
   return found === null ? null : { project: found.project, record: found.record };
 }
 
-function card(repo) {
+function card(repo, local) {
+  if (local) {
+    return {
+      kind: 'setup',
+      level: 3,
+      what: `Setup step ${HEALTH_STEP}, ${SETUP_TITLES[HEALTH_STEP]}: setup tries Wheelhouse's safety checks for real on this computer. `
+        + `It opens a change holding nothing, and asks the merge gate to merge it without your approval, which the gate must refuse. `
+        + 'It checks All stop halts an agent, the installed skills and the project\'s private copy. '
+        + 'The session then tries the sandbox\'s checks and shows the Logbook; setup then closes the change.',
+      why: 'A check never tried can\'t be trusted: these show the Logbook is green for real.',
+      options: [
+        { label: SETUP_LABEL, says: 'Setup runs the checks, then shows the Logbook, with what to do about any that didn\'t pass.' },
+        { label: 'Not now', says: 'Setup waits at this step; nothing changes.' },
+      ],
+      recommend: SETUP_LABEL,
+      because: 'it is the last step, and it takes about a minute',
+      meanwhile: 'Setup waits at this step; nothing changes.',
+    };
+  }
   return {
     kind: 'setup',
     level: 3,
@@ -320,6 +351,9 @@ async function withTrialGit({ run, findGit, gitEnvFor, host, platform, remoteUrl
   }
 }
 
+// Where the trial's branch goes: the host, or for a project kept on this computer its home, by its path.
+const trialPlace = (project, record) => (record.host === 'local' ? homeDir(project) : record.remoteUrl);
+
 const answerChange = (after, project) => ({ id: newId('chg'), kind: 'answer', target: `step ${HEALTH_STEP}`, before: null, after, ...(project ? { project } : {}) });
 
 // Closes the trial pull request and deletes its branch, each recorded (`record`) before it is
@@ -338,7 +372,7 @@ async function closeTrial({ project, projectRecord, pr, sha, adapter, gitFor, re
   if (sha !== null) {
     record({ id: newId('chg'), kind: 'host', target: `${projectRecord.repo} branch ${HEALTH_BRANCH}`, before: { branch: HEALTH_BRANCH, sha }, after: null, project });
     try {
-      await gitFor((git) => gitIn(git.run, git, ['push', '-q', projectRecord.remoteUrl, `:refs/heads/${HEALTH_BRANCH}`]));
+      await gitFor((git) => gitIn(git.run, git, ['push', '-q', trialPlace(project, projectRecord), `:refs/heads/${HEALTH_BRANCH}`]));
       deleted = true;
     } catch { /* left there: recorded so below */ }
   }
@@ -372,9 +406,9 @@ export async function closeOpenTrial({
   if (trial === null) return null;
   const projectRecord = readProject(trial.project);
   if (projectRecord === null) return null;
-  const adapter = (adapterFor ?? (({ host, repo, base }) => adapterOf({ host, repo, connection: { baseUrl: base } }, { run })))({ host: projectRecord.host, repo: projectRecord.repo, base: projectRecord.connection?.baseUrl });
+  const adapter = (adapterFor ?? (({ host, repo, base, folder }) => adapterOf({ host, repo, folder, connection: { baseUrl: base } }, { run })))({ host: projectRecord.host, repo: projectRecord.repo, base: projectRecord.connection?.baseUrl, folder: projectRecord.folder });
   const finder = findGit ?? (async ({ platform: p }) => (await toolsStatus({ platform: p, run, tools: ['git'] })).git);
-  const gitFor = (use) => withTrialGit({ run, findGit: finder, gitEnvFor, host: projectRecord.host, platform, remoteUrl: projectRecord.remoteUrl, base: projectRecord.connection?.baseUrl }, (git) => use({ ...git, run }));
+  const gitFor = (use) => withTrialGit({ run, findGit: finder, gitEnvFor, host: projectRecord.host, platform, remoteUrl: trialPlace(trial.project, projectRecord), base: projectRecord.connection?.baseUrl }, (git) => use({ ...git, run }));
   return closeTrial({ project: trial.project, projectRecord, pr: trial.pr, sha: trial.sha, adapter, gitFor, record });
 }
 
@@ -478,7 +512,7 @@ const applied = (run) => typeof run?.steps?.[HEALTH_STEP]?.doneAt === 'string';
 // `checkPins({ folder })` and `readProtection({ host, repo, realUsers, base })` the other checks. All for tests.
 export function healthStep({
   run = realRun,
-  adapterFor = ({ host, repo, base }) => adapterOf({ host, repo, connection: { baseUrl: base } }, { run }),
+  adapterFor = ({ host, repo, base, folder }) => adapterOf({ host, repo, folder, connection: { baseUrl: base } }, { run }),
   client,
   findGit = async ({ platform }) => (await toolsStatus({ platform, run, tools: ['git'] })).git,
   gitEnvFor = directorGitEnv,
@@ -486,6 +520,7 @@ export function healthStep({
   checkPins = checkPinsNow,
   readProtection = ({ host, repo, realUsers, base }) => readProtectionNow({ host, repo, run, realUsers, base }),
   engineChecks = engineChecksNow,
+  lookHome = lookAtHome,
 } = {}) {
   return {
     n: HEALTH_STEP,
@@ -502,16 +537,15 @@ export function healthStep({
       const setupRun = readJournal().runs.find((r) => r?.id === ctx.runId) ?? null;
       const trial = openTrial(setupRun);
       if (trial !== null) {
-        return {
-          wait: 30 * 1000,
-          why: `step 10's own checks are done and its trial pull request, number ${trial.pr}, is open: run cli.js health, then the trials it names in this session's Bash, then cli.js health with every line they printed, and show its Logbook`,
-        };
+        const why = `step 10's own checks are done and its trial pull request, number ${trial.pr}, is open: run cli.js health, then the trials it names in this session's Bash, then cli.js health with every line they printed, and show its Logbook`;
+        return { wait: 30 * 1000, why: record.host === 'local' ? localWords(why) : why };
       }
+      const local = record.host === 'local';
       const changes = [{
-        kind: 'host', what: 'health-check', target: `${record.repo}: branch ${HEALTH_BRANCH} and a pull request from it, closed once the session's trials are done`,
+        kind: 'host', what: 'health-check', target: `${record.repo}: branch ${HEALTH_BRANCH} and a ${local ? 'change' : 'pull request'} from it, closed once the session's trials are done`,
         project, host: record.host, repo: record.repo, branch: HEALTH_BRANCH,
       }];
-      return { changes, card: card(record.repo), director: 'One click, then read the Logbook' };
+      return { changes, card: card(record.repo, local), director: 'One click, then read the Logbook' };
     },
     async apply(ctx, changes) {
       const platform = ctx.platform ?? process.platform;
@@ -524,9 +558,10 @@ export function healthStep({
         if (ctx.stopped?.() === true) throw new Error(STOPPED);
       };
       halt();
-      const adapter = adapterFor({ host: record.host, repo: record.repo, base: record.connection?.baseUrl });
+      const adapter = adapterFor({ host: record.host, repo: record.repo, base: record.connection?.baseUrl, folder: record.folder });
+      const place = trialPlace(project, record);
       const asker = client ?? helperClient({ timeout: HEALTH_MERGE_WAIT_MS });
-      const gitFor = (use) => withTrialGit({ run, findGit, gitEnvFor, host: record.host, platform, remoteUrl: record.remoteUrl, base: record.connection?.baseUrl }, (git) => use({ ...git, run }));
+      const gitFor = (use) => withTrialGit({ run, findGit, gitEnvFor, host: record.host, platform, remoteUrl: place, base: record.connection?.baseUrl }, (git) => use({ ...git, run }));
       // A trial an earlier attempt left open is closed first: a pull request from the same branch
       // can't be opened twice (ruling R68).
       await closeOpenTrial({ setupRun: readJournal().runs.find((r) => r?.id === ctx.runId) ?? null, record: ctx.record, run, adapterFor, findGit, gitEnvFor, platform });
@@ -541,13 +576,13 @@ export function healthStep({
         // the director's own folder.
         const base = await adapter.defaultBranch();
         await gitFor(async (git) => {
-          await gitIn(run, git, ['fetch', '-q', '--depth=1', record.remoteUrl, `refs/heads/${base}`]);
+          await gitIn(run, git, ['fetch', '-q', '--depth=1', place, `refs/heads/${base}`]);
           const parent = await gitIn(run, git, ['rev-parse', 'FETCH_HEAD']);
           const tree = await gitIn(run, git, ['rev-parse', 'FETCH_HEAD^{tree}']);
           const sha = await gitIn(run, git, [...TRIAL_AUTHOR, 'commit-tree', '--no-gpg-sign', tree, '-p', parent, '-m', TRIAL_MESSAGE]);
           halt();
           ctx.record({ id: newId('chg'), kind: 'host', target: `${record.repo} branch ${HEALTH_BRANCH}`, before: null, after: { branch: HEALTH_BRANCH, sha }, project });
-          await gitIn(run, git, ['push', '-q', '--force', record.remoteUrl, `${sha}:refs/heads/${HEALTH_BRANCH}`]);
+          await gitIn(run, git, ['push', '-q', '--force', place, `${sha}:refs/heads/${HEALTH_BRANCH}`]);
           pushed = sha;
         });
         // Recorded just before it is opened, as pending, since its number comes only with it;
@@ -583,11 +618,19 @@ export function healthStep({
           for (const line of engine.findings ?? []) ctx.say?.(line);
         }
         halt();
-        let protection = 'could not run';
-        try {
-          protection = await readProtection({ host: record.host, repo: record.repo, realUsers: launchedIn(project), ...(record.connection?.baseUrl ? { base: record.connection.baseUrl } : {}) });
-        } catch { /* could not run */ }
-        add('host protection', protection);
+        if (record.host === 'local') {
+          let look = 'could not run';
+          try {
+            look = (await lookHome({ project, seen: seenMain(project) })).ok ? 'ok' : 'not as it should be';
+          } catch { /* could not run */ }
+          add('private copy', look);
+        } else {
+          let protection = 'could not run';
+          try {
+            protection = await readProtection({ host: record.host, repo: record.repo, realUsers: launchedIn(project), ...(record.connection?.baseUrl ? { base: record.connection.baseUrl } : {}) });
+          } catch { /* could not run */ }
+          add('host protection', protection);
+        }
       } catch (error) {
         failure = error;
       }
@@ -655,13 +698,15 @@ export async function healthCheck({ folder, reported = [], run, load = loadBoard
     green = false;
     lines.push(`Failed: step 10's record of its checks is missing. ${RERUN}.`);
   }
+  const found = projectForFolder(folder);
+  const host = found?.record.host;
   // The helper's checks: each as recorded, and any not tried named.
   const tried = new Map((record?.checks ?? []).map((c) => [c.name, c.result]));
   for (const [name, check] of Object.entries(HELPER_CHECKS)) {
     if (!tried.has(name)) {
       // With no record, a line above says so for every check, and this one prints nothing. A project off the engine
       // has no engine checks to try.
-      if (record !== null && check.onEngine !== true) {
+      if (record !== null && check.onEngine !== true && (host === 'local' ? check.hosted !== true : check.local !== true)) {
         count(false);
         green = false;
         lines.push(`Failed: setup couldn't try ${check.what} before step 10 stopped. ${RERUN}.`);
@@ -683,8 +728,6 @@ export async function healthCheck({ folder, reported = [], run, load = loadBoard
       lines.push(`Waiting: the trial pull request, number ${record.pr}, is open for this session's trials; it is closed once their lines are in.`);
     }
   }
-  const found = projectForFolder(folder);
-  const host = found?.record.host;
   // The session's trials, by name: the last line given for each, and any missing named.
   const given = new Map();
   let unreadable = 0;
@@ -726,6 +769,7 @@ export async function healthCheck({ folder, reported = [], run, load = loadBoard
   // One verdict ends the lines.
   const verdict = healthVerdict(passed, total, waiting);
   lines.push(verdict);
+  if (host === 'local') lines.splice(0, lines.length, ...lines.map(localWords));
   const board = inputs?.model ? renderBoard(inputs.model) : null;
   const trials = Number.isInteger(record?.pr) ? { pr: record.pr, project: record.project } : null;
   return { green, lines, verdict, board, trials, project: found?.project ?? null };

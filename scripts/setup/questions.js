@@ -21,6 +21,7 @@
 // The answers write to the project's records, which step 3 sets up, so until the folder is a
 // registered project with its records in place, the step waits rather than ask.
 import { engineWanted } from './engine-parts.js';
+import { chosenHost } from './local.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { SETUP_TITLES } from '../state/card-lines.js';
@@ -275,7 +276,7 @@ export function questionsStep() {
       if (!real) return { wait: PROJECT_WAIT_MS, why: 'step 3 has not asked whether the product has real users yet' };
       const realUsers = real.label === REAL_USERS.yes;
       // The new engine builds on GitHub only (Archon design, section 16): a GitLab project stays on the old engine.
-      const onGitlab = project?.record?.host === 'gitlab' || answers['3.host']?.label === 'GitLab';
+      const onGitlab = project?.record?.host === 'gitlab' || chosenHost(answers) === 'gitlab';
       const asked = productAsk(name, { described: readmeDescription(ctx.folder), realUsers, engine: !onGitlab && engineWanted({ platform: ctx.platform ?? process.platform }) });
       const product = answers[`4.${asked.id}`];
       if (!product) return { ask: asked };
