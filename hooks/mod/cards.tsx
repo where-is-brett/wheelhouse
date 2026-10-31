@@ -10,7 +10,7 @@
 // passed as a Button's onPress, an Input's onSubmit or a Select's onSelect; scripts/mod/validate.js checks it.
 import type { EngineInterface, PluginState, RenderInput } from 'claude-code'
 import { ask, FAILED, type Answer, type PaneModel } from './ask'
-import { body, caption, filled, footnote, heading, link, outlined, small, stop as stopButton } from './calm'
+import { band, body, caption, ends, filled, footnote, heading, link, outlined, small, stop as stopButton, tableOf } from './calm'
 import type { Table } from './calm'
 import { HIDE_WHY, NOT_HANDED, PANE_LEAD, RECORDING, SHOW_ME, SUGGEST, WHAT_WOULD_YOU_CHANGE, WHY, suggestedAt, typeYourChange, WHAT_CHANGED } from './numbers'
 
@@ -286,9 +286,9 @@ function drawSuggest($: EngineInterface, t: Table, typeable: boolean, card: Card
   const send = words.trim() === '' || pressing !== null ? (recording ? body(t, RECORDING) : footnote(t, 'Send')) : filled(t, 'suggest-send', 'Send', () => pressSuggest($, card, after))
   return (
     <t.Box flexDirection="column" gap="xs">
+      {footnote(t, WHAT_WOULD_YOU_CHANGE)}
       <t.Input
         key={SUGGEST_BOX(id)}
-        label={WHAT_WOULD_YOU_CHANGE}
         value={words}
         rows={SUGGEST_ROWS}
         autoFocus
@@ -307,7 +307,7 @@ function drawSuggest($: EngineInterface, t: Table, typeable: boolean, card: Card
 // is a link or a heading but the ask. `suggesting` is the words typed in its Suggest a change… box
 // while that is open, else null.
 function drawParts($: EngineInterface, e: RenderInput<'Pane'>, card: Card, parts: Card, place: string | null, pressing: Pressing, open: boolean, suggesting: string | null, live: boolean, after: After) {
-  const t = $.ui.resolve(e)
+  const t = tableOf($, e)
   const { Box } = t
   const id = typeof card.id === 'string' ? card.id : null
   const header = text(parts.header) ?? text(card.header)
@@ -324,22 +324,25 @@ function drawParts($: EngineInterface, e: RenderInput<'Pane'>, card: Card, parts
   const checking = [text(parts.line), text(parts.code)].filter((x) => x !== null).join(' · ')
   const changed = text(parts.changed)
   return (
-    <Box flexDirection="column" gap="xs">
-      <Box flexDirection="row" justifyContent="space-between">
-        {footnote(t, [header, where].filter((x) => x !== null).join(' · '))}
-        {corner !== undefined && draw(corner)}
+    <Box flexDirection="column" gap="md">
+      <Box flexDirection="column" gap="xs">
+        {ends(t, footnote(t, [header, where].filter((x) => x !== null).join(' · ')), corner !== undefined && draw(corner))}
+        {text(parts.ask) !== null && heading(t, parts.ask as string)}
+        {text(parts.what) !== null && text(parts.what) !== text(parts.ask) && body(t, parts.what as string)}
+        {smallLine !== '' && footnote(t, smallLine)}
       </Box>
-      {text(parts.ask) !== null && heading(t, parts.ask as string)}
-      {text(parts.what) !== null && text(parts.what) !== text(parts.ask) && body(t, parts.what as string)}
-      {smallLine !== '' && footnote(t, smallLine)}
-      {text(parts.recommendation) !== null && body(t, parts.recommendation as string)}
+      {text(parts.recommendation) !== null && band(t, body(t, parts.recommendation as string))}
       {card.revised === true && changed !== null && body(t, `${WHAT_CHANGED} ${changed}`)}
-      {row.length > 0 && <Box flexDirection="row" gap="sm">{row.map(draw)}</Box>}
-      {open && reasons.filter((r) => r !== null).map((r) => body(t, r as string))}
+      {open && (
+        <Box flexDirection="column" gap="xs">
+          {reasons.filter((r) => r !== null).map((r) => body(t, r as string))}
+        </Box>
+      )}
       {typeof card.steered === 'string' && footnote(t, suggestedAt(card.steered))}
-      {answers.length > 0 && <Box flexDirection="row" gap="sm" flexWrap="wrap">{answers.map(draw)}</Box>}
-      {suggesting !== null && id !== null && given.some((b) => b.does === 'suggest') && drawSuggest($, t, e.surface !== 'mobile', card, id, suggesting, pressing, after)}
       {typeof card.note === 'string' && footnote(t, card.note)}
+      {answers.length > 0 && <Box flexDirection="row" gap="sm" flexWrap="wrap" alignItems="center">{answers.map(draw)}</Box>}
+      {suggesting !== null && id !== null && given.some((b) => b.does === 'suggest') && drawSuggest($, t, e.surface !== 'mobile', card, id, suggesting, pressing, after)}
+      {row.length > 0 && <Box flexDirection="row" gap="md" alignItems="center">{row.map(draw)}</Box>}
       {checking !== '' && caption(t, checking)}
     </Box>
   )
