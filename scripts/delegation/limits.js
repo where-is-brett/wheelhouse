@@ -19,3 +19,14 @@ export const FACT_TRIES = 3;
 export const SEAL_TRIES = 6;
 // How long a read card may wait for its answer and its reading before it is let go with no score.
 export const SCORE_WAIT_DAYS = 30;
+// The reader's view: the longest question and label read whole, and the longest cleaned change.
+export const QUESTION_MOST = 600;
+export const LABEL_MOST = 120;
+export const VIEW_MOST_BYTES = 64 * 1024;
+// A reader run: how long it may go and what it may spend before it is cancelled, how long the engine may not know it,
+// how long its reply may be, and how many cards may wait for one.
+export const READER_MS = 10 * 60_000;
+export const READER_TOKENS = 100_000;
+export const READER_UNKNOWN_MS = 60_000;
+export const READING_MOST_BYTES = 16 * 1024;
+export const READERS_WAITING_MOST = 20;
