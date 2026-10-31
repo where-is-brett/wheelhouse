@@ -144,82 +144,9 @@ function text(value, what, { optional = false, empty = false } = {}) {
   return value;
 }
 
-// `base` is the GitLab address: for a company's own, glab is told its host (GITLAB_HOST, under any the
-// given `env` already names), and it is the address in the line said when it cannot be reached
-// (company-ca.js).
-export function makeAdapter({ host, repo, run, env: given, base = DEFAULT_GITLAB }) {
-  const commands = HOSTS[host];
-  if (!commands) throw new Error('The host must be github or gitlab');
-  if (typeof repo !== 'string' || !REPO.test(repo)) throw new Error('The repository must be written owner/name');
-  if (typeof run !== 'function') throw new Error('The adapter needs a run function');
-  const file = host === 'github' ? 'gh' : 'glab';
-  const env = host === 'gitlab' && base !== DEFAULT_GITLAB && given?.GITLAB_HOST === undefined ? { GITLAB_HOST: new URL(base).host, ...given } : given;
-
-  // Runs one command, with the copy setup fetched into Wheelhouse's tools folder when there is one
-  // (scripts/lib/host-tools.js). Resolves with the exit code and output.
-  async function attempt(args, input) {
-    return run(toolPath(file), args, { env, input });
-  }
-  // Runs one command and returns its standard output, or throws a plain error
-  // naming the command (never its environment) with the output scrubbed.
-  async function call(args, input) {
-    const { code, stdout, stderr } = await attempt(args, input);
-    if (code !== 0) {
-      // A server that is not there, or a certificate not trusted, is said in our own words, with a code.
-      // Read from glab's standard error alone: its standard output is the host's answer, not its own words.
-      const failure = host === 'gitlab' ? hostFailure(stderr, base) : null;
-      if (failure !== null) throw failure;
-      const said = scrub(stderr || stdout, env);
-      throw new Error(`${file} ${args.slice(0, 2).join(' ')} failed${said ? `: ${said}` : ''}`);
-    }
-    return stdout;
-  }
-  function json(args, stdout) {
-    try {
-      return JSON.parse(stdout);
-    } catch {
-      throw new Error(`${file} ${args.slice(0, 2).join(' ')} did not answer in JSON`);
-    }
-  }
-  // After a merge command that exited 0: the state is read back. Merged is merged; open means
-  // the host queued the merge instead of making it, so it is taken back out of the queue and
-  // refused; anything else, or a state that cannot be read, is unknown and refused.
-  async function settle({ state, merged, open, takeBack }) {
-    let seen = null;
-    try { seen = await state(); } catch { /* unknown */ }
-    if (seen === merged) return { merged: true };
-    if (seen !== open) return { merged: false, reason: 'the host did not confirm that the pull request was merged, so it is treated as not merged: could not confirm' };
-    try {
-      await takeBack();
-    } catch {
-      return { merged: false, queued: true, reason: `${QUEUE_LINE}, and it could not be taken back out of the queue: take it out on the host` };
-    }
-    return { merged: false, queued: true, reason: QUEUE_LINE };
-  }
-  // What a failed command says about reaching the host: null, or { kind, line } for a server that is
-  // not there or a certificate not trusted, which a merge reports apart from a refusal (`timedOut`:
-  // the command waited and gave up, so whether it took effect is not known).
-  function hostFault(output) {
-    const kind = host === 'gitlab' ? outputKind(output) : null;
-    return kind === null ? null : { kind, line: lineFor(kind, base), timedOut: kind === 'unreachable' && timedOut(output) };
-  }
-  // A read whose refusal is an answer: { status, body }, with status 200 when it exited 0 and the
-  // HTTP status glab named when it did not. A host that cannot be reached, or a certificate not
-  // trusted, is thrown in our own words with its code, as `call` does; so is a failure that names no
-  // status.
-  async function read(args) {
-    const { code, stdout, stderr } = await attempt(args);
-    if (code === 0) return { status: 200, body: json(args, stdout) };
-    const failure = host === 'gitlab' ? hostFailure(stderr, base) : null;
-    if (failure !== null) throw failure;
-    const named = /\(HTTP (\d{3})\)/.exec(stderr);
-    if (named) return { status: Number(named[1]), body: null };
-    const said = scrub(stderr || stdout, env);
-    throw new Error(`${file} ${args.slice(0, 2).join(' ')} failed${said ? `: ${said}` : ''}`);
-  }
-  const tools = { call, settle, attempt, json, repo, fromAddress, refusal: refusalOf, httpsOnly, hostFault, read };
-  const c = commands(tools);
-
+// The adapter's methods over a host's commands `c`, with each argument checked before anything runs. The local host's
+// adapter is built on it too, so every host has the same methods and takes the same arguments.
+export function adapterFrom(c) {
   async function history(name, ...args) {
     if (typeof c[name] !== 'function') throw new Error(HISTORY_GITLAB_ONLY);
     return c[name](...args);
@@ -294,4 +221,81 @@ export function makeAdapter({ host, repo, run, env: given, base = DEFAULT_GITLAB
       list: async ({ label } = {}) => c.issue.list({ label: text(label, 'label') }),
     },
   };
+}
+
+// `base` is the GitLab address: for a company's own, glab is told its host (GITLAB_HOST, under any the
+// given `env` already names), and it is the address in the line said when it cannot be reached
+// (company-ca.js).
+export function makeAdapter({ host, repo, run, env: given, base = DEFAULT_GITLAB }) {
+  const commands = HOSTS[host];
+  if (!commands) throw new Error('The host must be github or gitlab');
+  if (typeof repo !== 'string' || !REPO.test(repo)) throw new Error('The repository must be written owner/name');
+  if (typeof run !== 'function') throw new Error('The adapter needs a run function');
+  const file = host === 'github' ? 'gh' : 'glab';
+  const env = host === 'gitlab' && base !== DEFAULT_GITLAB && given?.GITLAB_HOST === undefined ? { GITLAB_HOST: new URL(base).host, ...given } : given;
+
+  // Runs one command, with the copy setup fetched into Wheelhouse's tools folder when there is one
+  // (scripts/lib/host-tools.js). Resolves with the exit code and output.
+  async function attempt(args, input) {
+    return run(toolPath(file), args, { env, input });
+  }
+  // Runs one command and returns its standard output, or throws a plain error
+  // naming the command (never its environment) with the output scrubbed.
+  async function call(args, input) {
+    const { code, stdout, stderr } = await attempt(args, input);
+    if (code !== 0) {
+      // A server that is not there, or a certificate not trusted, is said in our own words, with a code.
+      // Read from glab's standard error alone: its standard output is the host's answer, not its own words.
+      const failure = host === 'gitlab' ? hostFailure(stderr, base) : null;
+      if (failure !== null) throw failure;
+      const said = scrub(stderr || stdout, env);
+      throw new Error(`${file} ${args.slice(0, 2).join(' ')} failed${said ? `: ${said}` : ''}`);
+    }
+    return stdout;
+  }
+  function json(args, stdout) {
+    try {
+      return JSON.parse(stdout);
+    } catch {
+      throw new Error(`${file} ${args.slice(0, 2).join(' ')} did not answer in JSON`);
+    }
+  }
+  // After a merge command that exited 0: the state is read back. Merged is merged; open means
+  // the host queued the merge instead of making it, so it is taken back out of the queue and
+  // refused; anything else, or a state that cannot be read, is unknown and refused.
+  async function settle({ state, merged, open, takeBack }) {
+    let seen = null;
+    try { seen = await state(); } catch { /* unknown */ }
+    if (seen === merged) return { merged: true };
+    if (seen !== open) return { merged: false, reason: 'the host did not confirm that the pull request was merged, so it is treated as not merged: could not confirm' };
+    try {
+      await takeBack();
+    } catch {
+      return { merged: false, queued: true, reason: `${QUEUE_LINE}, and it could not be taken back out of the queue: take it out on the host` };
+    }
+    return { merged: false, queued: true, reason: QUEUE_LINE };
+  }
+  // What a failed command says about reaching the host: null, or { kind, line } for a server that is
+  // not there or a certificate not trusted, which a merge reports apart from a refusal (`timedOut`:
+  // the command waited and gave up, so whether it took effect is not known).
+  function hostFault(output) {
+    const kind = host === 'gitlab' ? outputKind(output) : null;
+    return kind === null ? null : { kind, line: lineFor(kind, base), timedOut: kind === 'unreachable' && timedOut(output) };
+  }
+  // A read whose refusal is an answer: { status, body }, with status 200 when it exited 0 and the
+  // HTTP status glab named when it did not. A host that cannot be reached, or a certificate not
+  // trusted, is thrown in our own words with its code, as `call` does; so is a failure that names no
+  // status.
+  async function read(args) {
+    const { code, stdout, stderr } = await attempt(args);
+    if (code === 0) return { status: 200, body: json(args, stdout) };
+    const failure = host === 'gitlab' ? hostFailure(stderr, base) : null;
+    if (failure !== null) throw failure;
+    const named = /\(HTTP (\d{3})\)/.exec(stderr);
+    if (named) return { status: Number(named[1]), body: null };
+    const said = scrub(stderr || stdout, env);
+    throw new Error(`${file} ${args.slice(0, 2).join(' ')} failed${said ? `: ${said}` : ''}`);
+  }
+  const tools = { call, settle, attempt, json, repo, fromAddress, refusal: refusalOf, httpsOnly, hostFault, read };
+  return adapterFrom(commands(tools));
 }

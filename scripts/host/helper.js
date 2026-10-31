@@ -1116,7 +1116,7 @@ export async function startHelper({
       reach: reachFor(readProject(project)?.remoteUrl),
       secrets: secretsOf(env),
       adapter: async () => {
-        adapter ??= Promise.resolve(adapterFor(project, { env, envFor: async () => env, now }));
+        adapter ??= Promise.resolve(adapterFor(project, { env, envFor: async () => env, now, write: ({ event }) => checkWrite(project, event) }));
         return adapter;
       },
     };
@@ -3783,7 +3783,7 @@ export async function startHelper({
       reach: reachFor(readProject(project)?.remoteUrl),
       signedOut: true,
       adapter: async () => {
-        own ??= Promise.resolve(adapterFor(project, { env: {}, envFor: async () => ({}), now }));
+        own ??= Promise.resolve(adapterFor(project, { env: {}, envFor: async () => ({}), now, write: ({ event }) => checkWrite(project, event) }));
         return own;
       },
     };
@@ -4534,7 +4534,7 @@ export async function startHelper({
       await freshViews(() => writeViews(project, { now }));
     });
   }
-  // Keeps a check's signed record: made by the runner in the helper, from what the helper saw the check do.
+  // Keeps a signed record the helper made: a check, from what the helper saw it do, or a local change.
   function checkWrite(project, event) {
     return oneAtATime(`state:${project}`, async () => {
       await ensureStateClone(project, engineCtx());

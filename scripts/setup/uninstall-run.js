@@ -65,7 +65,7 @@ import { stopState } from '../lib/stop.js';
 import { removeLoginStart } from '../lib/login-start.js';
 import { STEP_TIMEOUT_MS } from '../lib/setup-numbers.js';
 import { profileRemote } from '../profile/store.js';
-import { makeAdapter } from '../host/adapter.js';
+import { adapterOf } from '../host/adapter-for.js';
 import { deleteKey } from '../host/keys.js';
 import { checkBaseUrl, projectPath } from '../host/gitlab-key.js';
 import { GITLAB_URL, appKeys, connectionInstallationPage, installationPages, revokeGitlabKey } from '../host/cut-access.js';
@@ -249,7 +249,7 @@ function archiveSays(view) {
 // The real host work, with the director's own sign-in: git in a scratch repository, the host's tool
 // through the adapter, and GitLab's API for a merge request's search.
 function hostWork({ platform, run, fetch }) {
-  const adapterFor = ({ host, repo, base }) => makeAdapter({ host, repo, run, env: {}, base });
+  const adapterFor = ({ host, repo, base }) => adapterOf({ host, repo, connection: { baseUrl: base } }, { run });
   return {
     findGit: async () => (await toolsStatus({ platform, run, tools: ['git'] })).git,
     gitEnvFor: ({ host, gitPath, base }) => directorGitEnv({ host, gitPath, platform, base }),

@@ -36,7 +36,7 @@ import { stateDir } from '../lib/paths.js';
 import { readProject } from '../lib/projects.js';
 import { run } from '../lib/run.js';
 import { startedAsScript } from '../lib/started-as-script.js';
-import { makeAdapter } from '../host/adapter.js';
+import { adapterOf } from '../host/adapter-for.js';
 import { childEnv } from '../host/connection.js';
 import { keepingProtection, protectionLogPlace } from './protection-log.js';
 
@@ -459,7 +459,7 @@ function argumentsOf(argv) {
 // in the report), 1 when it could not be made whole or at all, 2 when the arguments are wrong.
 export async function main(argv, {
   out = process.stdout, err = process.stderr, now = () => new Date(),
-  adapterFor = (record, env) => makeAdapter({ host: record.host, repo: record.repo, run, env, base: record.connection?.baseUrl }),
+  adapterFor = (record, env) => adapterOf(record, { run, env }),
   envFor = (record) => childEnv(record.connection),
   eventsFor = (project, skipped) => listEvents(stateDir(project), { report: () => {}, skipped }),
   enrolledFor = () => readEnrolled(),

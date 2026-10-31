@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { helperAddress, engineDir } from '../lib/paths.js';
 import { readProject } from '../lib/projects.js';
 import { run } from '../lib/run.js';
-import { makeAdapter } from './adapter.js';
+import { adapterOf } from './adapter-for.js';
 import { startHelper, envForConnection } from './helper.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { archonAdapter, ENGINE_PACK_FORMS } from '../engine/archon/adapter.js';
@@ -60,10 +60,7 @@ export function startRealHelper({
     address,
     now,
     onStop,
-    adapterFor: (project, { env }) => {
-      const record = recordOf(project);
-      return makeAdapter({ host: record.host, repo: record.repo, run, env, base: record.connection?.baseUrl });
-    },
+    adapterFor: (project, { env, write }) => adapterOf(recordOf(project), { run, env, write }),
     envFor: envForConnection((project) => recordOf(project).connection, { fetch, now }),
     engineFor: engineForProject({ now }),
   });

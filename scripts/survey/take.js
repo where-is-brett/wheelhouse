@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import { surveyOf } from './look.js';
 import { setupGit } from '../setup/git.js';
-import { makeAdapter } from '../host/adapter.js';
+import { adapterOf } from '../host/adapter-for.js';
 import { readProject } from '../lib/projects.js';
 import { stateDir } from '../lib/paths.js';
 import { run as realRun } from '../lib/run.js';
@@ -111,9 +111,7 @@ async function defaultBranchOf(adapter, git) {
 // lines, by default from the state; `rules` are the rules found (step 5). `look` is surveyOf, for tests.
 export async function takeSurvey({
   project, record = project === undefined ? null : readProject(project), run = realRun,
-  adapter = async (r) => makeAdapter({
-    host: r.host, repo: r.repo, run: (file, args, options = {}) => run(file, args, { ...options, timeoutMs: SURVEY_HOST_MS }), env: {}, base: r.connection?.baseUrl,
-  }),
+  adapter = async (r) => adapterOf(r, { run: (file, args, options = {}) => run(file, args, { ...options, timeoutMs: SURVEY_HOST_MS }) }),
   rules = [], own = project === undefined ? [] : ownLines(project), look = surveyOf, deadlineMs = SURVEY_DEADLINE_MS,
 } = {}) {
   let timer;

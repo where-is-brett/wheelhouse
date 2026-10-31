@@ -9,6 +9,7 @@ import { spawn } from 'node:child_process';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { makeHome } from '../../../scripts/host/local/home.js';
 import { startHelper, PUSH_REFUSALS, secretsOf, GITLAB_MAINTAINERS_ONLY } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { helperAddress, profileDir, stateDir, stopFile } from '../../../scripts/lib/paths.js';
@@ -384,6 +385,21 @@ test('a push is refused when a Wheelhouse record\'s root commits can\'t be read'
         assert.deepEqual(await client.push({ project: 'o__p', dir, refspec: 'feature' }), { ok: false, refused: PUSH_REFUSALS.unchecked });
       });
       assert.doesNotMatch(await remoteHeads(p.remote.url), /refs\/heads\/feature /);
+    });
+  } finally { p.cleanup(); }
+});
+
+test('a project in git alone holds the lock while its home names this computer', async () => {
+  const p = await project();
+  try {
+    await as(p.home, async () => {
+      const dir = await folderWith();
+      writeProject('alone', { folder: dir, remoteUrl: null, host: 'local', repo: 'local/alone', connection: { mode: 'none' } });
+      await withHelper(fakeAdapter(), async (client) => {
+        assert.deepEqual(await client.push({ project: 'alone', dir, refspec: 'feature' }), { ok: false, refused: LOCK_REASON }, 'no home here');
+        await makeHome({ project: 'alone', folder: dir });
+        assert.notEqual((await client.push({ project: 'alone', dir, refspec: 'feature' })).refused, LOCK_REASON);
+      });
     });
   } finally { p.cleanup(); }
 });
