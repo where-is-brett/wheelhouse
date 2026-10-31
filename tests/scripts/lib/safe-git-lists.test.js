@@ -650,7 +650,7 @@ function subcommandsIn(text) {
 test('10: scan - no route whose look is the project list pushes, commits, tags, rebases or applies', () => {
   const read = (file) => withoutComments(fs.readFileSync(path.join(ROOT, file), 'utf8'));
   // The Lean store's every call takes the project list too (ruling P5-25), so it is scanned with them (ruling P5-50).
-  const routes = ['scripts/foreman/act.js', 'scripts/feature/cli.js', 'scripts/install/survey.js', 'scripts/lean/store.js'];
+  const routes = ['scripts/foreman/act.js', 'scripts/feature/cli.js', 'scripts/install/survey.js', 'scripts/lean/store.js', 'scripts/lib/local-git.js'];
   const subs = routes.flatMap((file) => subcommandsIn(read(file)).map((s) => [file, s]));
   assert.ok(subs.length >= 10, 'the scan sees the routes\' calls');
   for (const [, s] of subs) assert.ok(s !== '', 'every call has a subcommand the scan can read');
@@ -669,7 +669,8 @@ test('10: scan - no route whose look is the project list pushes, commits, tags, 
 });
 
 test('10: the Lean store sends nothing out: its copy fetches from it, naming the store by its path', () => {
-  const store = withoutComments(fs.readFileSync(path.join(ROOT, 'scripts/lean/store.js'), 'utf8'));
+  // The store's copy step lives in the module it shares with the home.
+  const store = ['scripts/lean/store.js', 'scripts/lib/local-git.js'].map((file) => withoutComments(fs.readFileSync(path.join(ROOT, file), 'utf8'))).join('\n');
   const subs = subcommandsIn(store);
   assert.ok(subs.includes('fetch'), 'the scan sees the copy\'s fetch');
   assert.deepEqual(subs.filter((s) => s === 'push'), [], 'no push from the store');
