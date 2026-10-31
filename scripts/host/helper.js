@@ -34,7 +34,8 @@ import { prepareQueueFolder } from '../engine/queue-folder.js';
 import { queueFolderOf, queueProjectOf } from '../engine/queue-place.js';
 import { unreachableRefusal, certificateRefusal, certificateLine, awayLine, outputKind, companyGitEnv, makeAwayLog, gitlabBaseOf, certificateSetting } from './company-ca.js';
 import { childEnv } from './connection.js';
-import { homeReadable } from './local/home.js';
+import { FOLDER_REMOTE, folderWatch } from './local/folder.js';
+import { gitRoute, homeDir, homeReadable } from './local/home.js';
 import { protectionStatus } from './protection.js';
 import { cutAccess, INSTALLATIONS_PAGE } from './cut-access.js';
 import { checkRecord, listEvents, makeEvent, writeEvent, eventPath, eventHash, dataHash, PLAIN_KINDS, PROTECTED_KINDS, HELPER_ONLY_KINDS, CONFIRMABLE_KINDS, RED_MAIN_FIELDS, RED_MAIN_OWN } from '../state/events.js';
@@ -1112,8 +1113,8 @@ export async function startHelper({
       // certificate for this project's GitLab address when setup has made it (company-ca.js). The
       // certificate's pairs are added after the sign-in's, and safeGitEnv (the route every call
       // takes) keeps any pair that is not a fence key.
-      gitEnv: companyGit(gitEnvOf(mode, env, readProject(project)?.host, readProject(project)?.remoteUrl), readProject(project)),
-      reach: reachFor(readProject(project)?.remoteUrl),
+      gitEnv: companyGit(gitEnvOf(mode, env, readProject(project)?.host, remoteOf(project)), readProject(project)),
+      reach: reachFor(remoteOf(project)),
       secrets: secretsOf(env),
       adapter: async () => {
         adapter ??= Promise.resolve(adapterFor(project, { env, envFor: async () => env, now, write: ({ event }) => checkWrite(project, event) }));
@@ -1231,12 +1232,18 @@ export async function startHelper({
     });
   }
 
+  // Where the project's mirror pushes to: the recorded address, or for a project in git alone the place its adapter names.
+  async function pushTargetOf(project, ctx) {
+    if (readProject(project)?.host !== 'local') return readProject(project)?.remoteUrl;
+    return (await ctx.adapter()).pushTarget()?.url;
+  }
+
   // The project's mirror, made if missing, with origin set from Wheelhouse's record of the project:
   // the private record has no remote to find it from (design section 24.1).
   async function mirrorFor(project, ctx) {
     await lookAtMirror(ctx, project);
     const plain = unkeyed;
-    const url = String(readProject(project)?.remoteUrl ?? '').trim();
+    const url = String((await pushTargetOf(project, ctx)) ?? '').trim();
     if (url === '') refuse('the project has no repository recorded to find it from');
     if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/@\s]*:[^/@\s]*@/.test(url)) {
       refuse('the project\'s repository address carries credentials, so nothing is pushed: keys travel only in the environment');
@@ -1314,8 +1321,8 @@ export async function startHelper({
   // connection's key. `source` is a folder the helper trusts: a code push's
   // folder (read for objects only), or one of the helper's own clones.
   // One at a time per project: the mirror and its incoming ref are shared.
-  function pushFrom(args, ctx) {
-    return oneAtATime(`mirror:${args.project}`, async () => {
+  async function pushFrom(args, ctx) {
+    const pushed = await oneAtATime(`mirror:${args.project}`, async () => {
       try {
         return await pushToHost(args, ctx);
       } finally {
@@ -1323,6 +1330,20 @@ export async function startHelper({
         tidyAfterAnswer(args.project, ctx);
       }
     });
+    return pushed.ok && readProject(args.project)?.host === 'local' ? afterHomePush(args, pushed, ctx) : pushed;
+  }
+
+  // A branch has reached a project's home. Its open change's head moves with it, as nothing else moves one, and the engine's
+  // mirror follows. The push stands either way: one that can't finish here is refused and sent again, which changes nothing
+  // in the home and does this part over.
+  async function afterHomePush({ project, branch }, pushed, ctx) {
+    try {
+      await (await ctx.adapter()).followBranch(branch);
+    } catch (error) {
+      return { ok: false, refused: error instanceof Error ? error.message : 'the change could not follow its branch' };
+    }
+    const fresh = await (refreshMirror ?? refreshFetchMirror)(project);
+    return fresh?.ok === true ? pushed : { ok: false, refused: fresh?.refused ?? 'the engine\'s copy of the project couldn\'t be brought up to date' };
   }
 
   // Copies `branch` in from `source` into the mirror's INCOMING ref, as described in pushToHost.
@@ -1646,12 +1667,17 @@ export async function startHelper({
   const LOOPBACK_HTTP = { GIT_ALLOW_PROTOCOL: 'https:http' };
   // Always an explicit value, laid last, so a GIT_ALLOW_PROTOCOL in a connection's env never widens an https remote.
   const reachEnv = (remoteUrl) => ({ local: LOCAL_PATHS, loopback: LOOPBACK_HTTP })[reachFor(remoteUrl)] ?? { GIT_ALLOW_PROTOCOL: 'https' };
+  // Where a project's git reaches: its recorded remote, or for a project in git alone its home.
+  const remoteOf = (project) => {
+    const record = readProject(project);
+    return record?.host === 'local' ? homeDir(project) : record?.remoteUrl;
+  };
   // The git environment of a connection: the key's own pairs (narrow), or the director's sign-in
   // through the host tool (quick), with the transport the recorded remote needs laid last.
   const signInHost = (project) => hostOf(readProject(project)?.host);
   // An unknown host maps to null: quick then has no credential helper at all and fails closed.
   const hostOf = (host) => (host === 'github' || host === 'gitlab' ? host : null);
-  const gitEnvOf = (mode, env, host, remoteUrl) => ({ ...(mode === 'narrow' ? env : directorSignIn(hostOf(host))), ...reachEnv(remoteUrl) });
+  const gitEnvOf = (mode, env, host, remoteUrl) => ({ ...(host === 'local' ? {} : mode === 'narrow' ? env : directorSignIn(hostOf(host))), ...reachEnv(remoteUrl) });
 
   // The project's private record (design section 24.1), opened, never cloned: its events are
   // committed and never pushed, for every project as for a Lean one.
@@ -1982,9 +2008,9 @@ export async function startHelper({
   // fetches only from the project's recorded address. One at a time per project; refused under STOP,
   // read again once the state is in hand. The answer says the work id chosen, whose line
   // (feature/<work>) is no request's own and not on the host, and the `from` to record.
-  const readyGit = (record) => folderGit({
+  const readyGit = (project, record) => folderGit({
     run, folder: record.folder,
-    env: reaching({ ...directorGitEnv({ host: hostOf(record.host), base: record.connection?.baseUrl }), GIT_NO_REPLACE_OBJECTS: '1' }, record.remoteUrl),
+    env: reaching({ ...(record.host === 'local' ? {} : directorGitEnv({ host: hostOf(record.host), base: record.connection?.baseUrl })), GIT_NO_REPLACE_OBJECTS: '1' }, remoteOf(project)),
   });
   const readyRoute = (fn) => (body, ctx) => oneAtATime(`ready:${body.project}`, async () => {
     if (stopped()) return STOP_REFUSAL;
@@ -1995,7 +2021,7 @@ export async function startHelper({
     if (stopped()) return STOP_REFUSAL;
     const record = recordOf(body.project);
     if (typeof record.folder !== 'string' || !path.isAbsolute(record.folder) || !fs.existsSync(record.folder)) refuse('the project\'s folder isn\'t on this computer');
-    const git = readyGit(record);
+    const git = readyGit(body.project, record);
     // Work recorded already, under any id, or a ready record kept for it, is never chosen again.
     const used = (id) => (views.work !== null && typeof views.work === 'object' && Object.hasOwn(views.work, id)) || fs.existsSync(readyRecordFile(body.project, id));
     try {
@@ -2026,8 +2052,8 @@ export async function startHelper({
     const listed = adapter.openRequests();
     const open = { ...adapter, openRequests: () => listed };
     const lines = (await listed).map((r) => r?.branch).filter((b) => typeof b === 'string');
-    const work = await freeWork({ git, remoteUrl: record.remoteUrl, base: `carry-on-${number}`, lines, used });
-    const made = await carryOn({ git, adapter: open, remoteUrl: record.remoteUrl, number, work });
+    const work = await freeWork({ git, remoteUrl: remoteOf(project), base: `carry-on-${number}`, lines, used });
+    const made = await carryOn({ git, adapter: open, remoteUrl: remoteOf(project), number, work });
     await keepReady(project, git, work, { sha: made.sha, ref: made.ref, request: number, branch: made.branch });
     const { sha, ref, request, ...details } = made;
     return { ok: true, work, from: { sha, ref, request }, ...details };
@@ -2050,9 +2076,9 @@ export async function startHelper({
       && (await git(['merge-base', '--is-ancestor', pushed.head, local.head])).code === 0) where = 'local';
     const piece = where === 'pushed' ? pushed : local;
     const defaultBranch = await defaultBranchOf(project, await ctx.adapter());
-    const work = await freeWork({ git, remoteUrl: record.remoteUrl, base: pieceWork(line), lines: [line], used });
+    const work = await freeWork({ git, remoteUrl: remoteOf(project), base: pieceWork(line), lines: [line], used });
     const made = await carryOnPiece({
-      git, remoteUrl: record.remoteUrl, piece, where, work, base: plainBranch(defaultBranch) ? `refs/remotes/origin/${defaultBranch}` : null,
+      git, remoteUrl: remoteOf(project), piece, where, work, base: plainBranch(defaultBranch) ? `refs/remotes/${record.host === 'local' ? FOLDER_REMOTE : 'origin'}/${defaultBranch}` : null,
     });
     await keepReady(project, git, work, { sha: made.sha, ref: made.ref, request: null, branch: made.branch });
     const { sha, ref, request: _request, ...details } = made;
@@ -2065,10 +2091,10 @@ export async function startHelper({
     const author = await authorFor(record);
     const defaultBranch = await defaultBranchOf(project, await ctx.adapter());
     if (!plainBranch(defaultBranch)) refuse('the host didn\'t name its main line');
-    const work = await freeWork({ git, remoteUrl: record.remoteUrl, base: name, used });
+    const work = await freeWork({ git, remoteUrl: remoteOf(project), base: name, used });
     // Built on the commit fetched, never on the ref read again: an agent could point it elsewhere
     // meanwhile, and the ref is moved on only while it still names that commit.
-    const base = await fetchInto({ git, remoteUrl: record.remoteUrl, source: `refs/heads/${defaultBranch}`, work });
+    const base = await fetchInto({ git, remoteUrl: remoteOf(project), source: `refs/heads/${defaultBranch}`, work });
     let made;
     try {
       made = await build({ work, base, author });
@@ -3779,8 +3805,8 @@ export async function startHelper({
       ...ctx,
       mode: 'quick',
       env: {},
-      gitEnv: companyGit(gitEnvOf('quick', {}, readProject(project)?.host, readProject(project)?.remoteUrl), readProject(project)),
-      reach: reachFor(readProject(project)?.remoteUrl),
+      gitEnv: companyGit(gitEnvOf('quick', {}, readProject(project)?.host, remoteOf(project)), readProject(project)),
+      reach: reachFor(remoteOf(project)),
       signedOut: true,
       adapter: async () => {
         own ??= Promise.resolve(adapterFor(project, { env: {}, envFor: async () => ({}), now, write: ({ event }) => checkWrite(project, event) }));
@@ -4063,9 +4089,12 @@ export async function startHelper({
         let number = open?.number;
         if (number) await adapter.updatePr({ number, title, body: removeProvenance(body) });
         else number = (await adapter.openPr({ head: branch, base: await defaultBranchOf(project, adapter), title, body: removeProvenance(body) })).number;
-        return { pr: number, url: `https://github.com/${recordOf(project).repo}/pull/${number}`, head: await adapter.branchHead(branch) };
+        const url = recordOf(project).host === 'local' ? null : `https://github.com/${recordOf(project).repo}/pull/${number}`;
+        return { pr: number, url, head: await adapter.branchHead(branch) };
       },
-      repo: (project) => recordOf(project).repo,
+      // A project in git alone is named after its own mirror, with no owner: Archon's workspace is mirrors/<project>.
+      repo: (project) => (recordOf(project).host === 'local' ? project : recordOf(project).repo),
+      local: (project) => recordOf(project).host === 'local',
       // The host's preview of the commit, or null.
       previewUrl: async (project, sha) => {
         const url = await (await (await contextFor(project)).adapter()).previewUrl(sha);
@@ -4102,7 +4131,8 @@ export async function startHelper({
   // default branch says is read once for each of its heads. Null on a host that takes no status.
   const checksRead = new Map();
   async function checksFacts(project) {
-    if (recordOf(project).host !== 'github') return null;
+    const { host } = recordOf(project);
+    if (host !== 'github' && host !== 'local') return null;
     const ctx = await contextFor(project);
     const adapter = await ctx.adapter();
     const defaultBranch = await defaultBranchOf(project, adapter);
@@ -4131,7 +4161,7 @@ export async function startHelper({
     const ownOnly = settings.where !== 'host' && !read.hasWorkflows && contexts.every((c) => c.name === STATUS_CONTEXT);
     const required = ownOnly ? [] : await adapter.requiredChecks(defaultBranch).catch(() => null);
     return {
-      setting: settings.where, host: 'github', contexts, hasWorkflows: read.hasWorkflows, required, main: read.main, settings, digest: commandDigest(settings.testCommand),
+      setting: settings.where, host, contexts, hasWorkflows: read.hasWorkflows, required, main: read.main, settings, digest: commandDigest(settings.testCommand),
       notCounting: notCounting(signedOf(project, 'checks-state').map((e) => e.data)), finder: read.finder, keptOnly,
     };
   }
@@ -4147,7 +4177,8 @@ export async function startHelper({
   // What the merge condition reads for a head. What can't be read counts as checks that run here with none passed, so a
   // merge is refused rather than let through; only a project whose checks are known to run on the host goes as before.
   async function checkPermit(project, head) {
-    if (recordOf(project).host !== 'github') return { checksHere: false };
+    const { host } = recordOf(project);
+    if (host !== 'github' && host !== 'local') return { checksHere: false };
     let facts;
     try {
       facts = await checksFacts(project);
@@ -4250,7 +4281,7 @@ export async function startHelper({
     const projects = registeredProjects();
     const queued = queueProjectOf(cwd, projects.map(({ project }) => project));
     const found = projects.find(({ project, record }) => project === queued || (typeof record?.folder === 'string' && isInsideFolder(record.folder, cwd)));
-    return found ? { project: found.project, folder: found.record.folder, repo: found.record.repo, ...(found.project === queued ? { queue: true } : {}) } : null;
+    return found ? { project: found.project, folder: found.record.folder, repo: found.record.repo, ...(found.record.host === 'local' ? { noHost: true } : {}), ...(found.project === queued ? { queue: true } : {}) } : null;
   };
   // The rules' context for a call (rules.js brokerDecision): the push rules for every call, and for a verdict or a
   // merge the signed review and approval of its head, the incident and whether the work needs the director's approval.
@@ -4619,7 +4650,7 @@ export async function startHelper({
       try { engine = engineFor(project); } catch { engine = null; }
       if (!engine) continue;
       try {
-        const { runner, dispatcher, checks } = engineDesk(project, engine);
+        const { runner, dispatcher, checks, inStep } = engineDesk(project, engine);
         const host = startEngineHost({
           engine, spawn, now, held: stopped, wake: engineHosts.length === 0,
           write: (kind, data) => engineWrite(project, kind, data),
@@ -4629,7 +4660,7 @@ export async function startHelper({
           prOf: (runId) => engineRun.openedBy(project, runId),
         });
         host.onAsk((event) => { runner.onAsk(event).catch(() => {}); });
-        engineHosts.push({ project, engine, host, runner, dispatcher, checks });
+        engineHosts.push({ project, engine, host, runner, dispatcher, checks, inStep });
       } catch {
         // An engine that can't be followed gets no host; the other projects' hosts start all the same.
       }
@@ -4679,6 +4710,38 @@ export async function startHelper({
     try { host = parseRemote(record.remoteUrl).hostname; } catch { /* not a host's address */ }
     if (!host && record.host === 'github') host = 'github.com';
     return host ? { host, path: record.repo } : null;
+  }
+
+  // The director's Check and add them on the card for changes made by hand (spec 5.4): the folder's work goes to the home by
+  // the same push as any other, on a branch of its own that the folder doesn't keep, and waits as a local change. Parted from
+  // the main version, it is brought up to date first. The survey lists it, so it is carried on as any request is, with a
+  // brief, a review and the checks.
+  async function addHandMade(project, tip, { parted }) {
+    const ctx = await contextFor(project);
+    const adapter = await ctx.adapter();
+    const { folder } = recordOf(project);
+    const inFolder = gitRoute({ run })(folder, { reach: 'local', what: 'the project\'s folder' });
+    const branch = `feature/by-hand-${tip.slice(0, 12)}`;
+    await inFolder.must(['update-ref', `refs/heads/${branch}`, tip], 'The changes could not be set aside to be sent');
+    let pushed;
+    try {
+      pushed = await oneAtATime(`push:${project}`, () => doPush({ project, dir: folder, refspec: branch }, ctx));
+    } finally {
+      await inFolder.call(['update-ref', '-d', `refs/heads/${branch}`]);
+    }
+    if (!pushed.ok) return pushed;
+    const subjects = await inFolder.must(['log', '--format=%s', '--max-count=20', tip, '--not', `refs/remotes/${FOLDER_REMOTE}/${await defaultBranchOf(project, adapter)}`], 'The changes could not be read');
+    const number = (await adapter.openRequests()).find((r) => r.branch === branch)?.number
+      ?? (await adapter.openPr({ head: branch, base: await defaultBranchOf(project, adapter), title: 'Changes made by hand in the project folder', body: subjects })).number;
+    if (parted) {
+      const updated = await doUpdateBranch({ project, number }, ctx);
+      // One that clashes stays as it is: the lane that carries it on brings it up to date.
+      if (!updated.ok && updated.conflicts === undefined) return updated;
+    }
+    const latest = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'survey').sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0)).at(-1);
+    const taken = await takeSurvey({ project, run, adapter: () => ctx.adapter(), rules: shapedSurvey({ rules: latest?.data?.rules }).rules });
+    await oneAtATime(`state:${project}`, () => recordSurvey({ write: (data) => writeSurvey(project, data, ctx), take: async () => taken }));
+    return { ok: true, number };
   }
 
   // The card router and the dispatcher for one project on the engine (Archon design, sections 7.3, 8 and 10).
@@ -4755,8 +4818,9 @@ export async function startHelper({
         checkContexts: async (sha) => (await adapterNow()).checkContexts(sha),
       },
       facts: () => checksFacts(project),
-      // The helper's mirror, with every head of the host's in it.
+      // The helper's mirror, with every head of the host's in it; a project in git alone has them all in its home.
       source: async () => {
+        if (record?.host === 'local') return homeDir(project);
         const got = await (refreshMirror ?? refreshFetchMirror)(project);
         if (got?.ok === false) throw new Error(got.refused);
         return path.join(stateDir(project), '..', 'mirror.git');
@@ -4792,16 +4856,34 @@ export async function startHelper({
         return opened ? [{ head: r.head, work: opened.work }] : [];
       }),
     });
-    return { runner, dispatcher, checks };
+    // A project in git alone: its open changes follow their branches, whatever broke off after a push, and its folder is
+    // kept in step with its home.
+    const inStep = record?.host !== 'local' ? null : (() => {
+      const watch = folderWatch({
+        project, folder, file: path.join(files, 'folder.json'), stopped, git: gitRoute({ run }),
+        branchOf: async () => defaultBranchOf(project, await adapterNow()),
+        card: (data) => write('question', data),
+        answerOf: (id) => views().questions?.[id]?.answer?.label ?? null,
+        note: (words) => write('note', { about: 'engine', words }),
+        add: (tip, how) => addHandMade(project, tip, how),
+      });
+      return async () => {
+        const adapter = await adapterNow();
+        for (const { branch } of await adapter.openRequests()) await adapter.followBranch(branch).catch(() => {});
+        await watch.tick();
+      };
+    })();
+    return { runner, dispatcher, checks, inStep };
   }
   // One look for every project on the engine, one at a time.
   let ticking = null;
   function engineTick() {
     ticking ??= (async () => {
-      for (const { runner, dispatcher, checks } of engineHosts) {
+      for (const { runner, dispatcher, checks, inStep } of engineHosts) {
         if (closing) break;
         await runner.tick().catch(() => {});
         await dispatcher.tick().catch(() => {});
+        await inStep?.().catch(() => {});
         await checks.tick().catch(() => {});
       }
     })().finally(() => { ticking = null; });

@@ -14,6 +14,10 @@ const sha12 = (sha) => String(sha).slice(0, 12);
 export const RUN_CHECKS_HERE = 'Run the checks here';
 export const LEAVE_THEM = 'Leave them';
 
+// The buttons of the card for changes made by hand in a project's folder (spec 5.4).
+export const CHECK_AND_ADD = 'Check and add them';
+export const LEAVE_THEM_OUT = 'Leave them out';
+
 // The line on the card that asks the director to approve a pull request.
 export function approvalLine(pr, sha) {
   return `Approve pull request #${pr} at commit ${sha12(sha)}`;

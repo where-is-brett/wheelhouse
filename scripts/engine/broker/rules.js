@@ -11,6 +11,7 @@ import { reviewCounts, approvalCounts, incidentReason, checkCounts } from '../..
 const VERDICT_MARK = '<!-- archon-review-report -->';
 const FULL_SHA = /^[0-9a-f]{40}$/;
 const HOST = 'github.com';
+export const NO_HOST = 'this project has no code host';
 // A branch name the broker lets a call write to: plain characters, no `..`, never a ref outside refs/heads.
 const BRANCH = /^(?!.*\.\.)(?!.*\/\/)[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
 const NUMBER = /^[1-9]\d{0,9}$/;

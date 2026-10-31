@@ -5,7 +5,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { commandDigest } from '../../../../scripts/checks/record.js';
-import { classifyCall, brokerDecision, isOneQuery, BROKER_ALLOW } from '../../../../scripts/engine/broker/rules.js';
+import { classifyCall, brokerDecision, isOneQuery, BROKER_ALLOW, NO_HOST } from '../../../../scripts/engine/broker/rules.js';
+import { brokerRoutes } from '../../../../scripts/engine/broker/routes.js';
 import { makeEvent } from '../../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../../scripts/state/signing.js';
 import { withHome } from '../../../helpers/homes.js';
@@ -289,4 +290,21 @@ test('a rerun without --failed, of every job, or of another repository is refuse
   for (const argv of [['run', 'rerun', '77'], ['run', 'rerun', '77', '--failed', '--job', '5'], ['run', 'rerun', '--failed'], ['run', 'rerun', 'x7', '--failed'], ['run', 'rerun', '77', '--failed', '--repo', 'other/repo']]) {
     assert.equal(classifyCall(argv, { repo: 'acme/web' }).kind, 'other', argv.join(' '));
   }
+});
+
+test('the broker refuses every call for a local project with one line', async () => {
+  const asked = [];
+  const routes = brokerRoutes({
+    placeOf: () => ({ project: 'shop', folder: '/work/shop', repo: 'local/shop', noHost: true }),
+    permit: async () => { asked.push('permit'); return {}; },
+    forward: async () => { asked.push('forward'); return { code: 0 }; },
+    refresh: async () => ({ ok: true }),
+  });
+  for (const argv of [['pr', 'list', '--head', 'wh/card-1'], ['pr', 'merge', '14', '--squash'], ['issue', 'create', '--title', 'x'], ['repo', 'delete', 'acme/web']]) {
+    const answer = await routes['/broker/gh']({ argv, cwd: '/work/shop' });
+    assert.equal(answer.code, 1);
+    assert.equal(answer.stderr, `Wheelhouse's broker refused this call: ${NO_HOST}.\n`);
+  }
+  assert.deepEqual(asked, []);
+  assert.deepEqual(await routes['/broker/refresh']({ cwd: '/work/shop' }), { ok: true }, 'the engine\'s mirror still comes up to date');
 });
