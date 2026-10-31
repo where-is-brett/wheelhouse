@@ -3,12 +3,17 @@
 // and the fix lane is told the main line's result where there is no job on the host to run again.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import { checksWorld, P } from '../../helpers/checks-world.js';
 import { redMainIncident, fixOrder } from '../../../scripts/engine/fix-main.js';
 import { workOrder } from '../../../scripts/engine/order.js';
 import { withTicket } from '../../../scripts/engine/ticket.js';
 import { makeEvent, writeEvent } from '../../../scripts/state/events.js';
-import { waitLongerOnTheHelper } from '../../helpers/until.js';
+import { readConfig } from '../../../scripts/gate/guardrails.js';
+import { commandDigest } from '../../../scripts/checks/record.js';
+import { run } from '../../../scripts/lib/run.js';
+import { until, waitLongerOnTheHelper } from '../../helpers/until.js';
 
 waitLongerOnTheHelper();
 
@@ -58,3 +63,53 @@ test('the fix\'s merge needs its signed check', { timeout: 300000 }, () => check
   assert.doesNotMatch(String(after.refused), /no passing check/);
   assert.ok(statuses.length > 0);
 }));
+
+// --- the command the first check found ---
+
+const FOUND = 'npm test';
+const NO_COMMAND = { '.claude/wheelhouse.json': JSON.stringify({ ...readConfig(null), testCommand: undefined }), 'package.json': JSON.stringify({ scripts: { test: 'node --test' } }) };
+const passing = ({ commit, main }) => ({ commit, command: commandDigest(FOUND), result: 'passed', minutes: 0, tail: '', clean: main === true, at: new Date().toISOString() });
+
+// The stand-in host keeps a pull request's head where the gate reads it, and notes each merge it is asked for.
+const hostWithRefs = (host, remote) => {
+  const asked = [];
+  const openPr = host.openPr;
+  host.openPr = async (pr) => {
+    const opened = await openPr(pr);
+    await run('git', ['update-ref', `refs/pull/${opened.number}/head`, `refs/heads/${pr.head}`], { cwd: remote.url });
+    return opened;
+  };
+  host.merge = async (args) => { asked.push(args); return { merged: true }; };
+  return asked;
+};
+const FOUND_WORLD = { files: NO_COMMAND, check: { check: async (args) => passing(args) }, host: { ciState: async (sha) => ({ sha, state: 'success' }) } };
+
+test('a found command runs from the record, and reaches the default branch by the helper\'s own change', { timeout: 300000 }, () => checksWorld(async ({ helper, host, remote, statuses }) => {
+  const asked = hostWithRefs(host, remote);
+  await until(async () => {
+    await helper.engine.tick();
+    return asked.length > 0;
+  }, { what: 'the helper merging its change', within: 60000 });
+  const { headRef } = await host.prState(1);
+  const changed = (await run('git', ['show', `${headRef}:.claude/wheelhouse.json`], { cwd: remote.url })).stdout;
+  assert.equal(JSON.parse(changed).testCommand, FOUND);
+  assert.ok(statuses.some((s) => s.state === 'success'), 'its head had its check');
+}, FOUND_WORLD));
+
+test('a pull request named like the helper\'s, with anything else in it, gets no way round the gate', { timeout: 300000 }, () => checksWorld(async ({ helper, host, remote, checkout, client }) => {
+  hostWithRefs(host, remote);
+  await until(async () => {
+    await helper.engine.tick();
+    return (await host.prState(1).catch(() => null)) !== null;
+  }, { what: 'the helper opening its change', within: 60000 });
+  const branch = 'wheelhouse-test-command-0123456789ab';
+  await run('git', ['checkout', '-q', '-b', branch], { cwd: checkout });
+  fs.writeFileSync(path.join(checkout, '.claude/wheelhouse.json'), JSON.stringify({ ...readConfig(null), testCommand: 'true' }));
+  await run('git', ['commit', '-q', '-am', 'Another command'], { cwd: checkout });
+  await run('git', ['push', '-q', remote.url, branch], { cwd: checkout });
+  const { number } = await host.openPr({ head: branch, base: 'main', title: 'Name the test command', body: '' });
+  const answer = await client.merge({ project: P, number });
+  assert.equal(answer.ok, false);
+  assert.match(answer.refused, /no CLEAN review/);
+  assert.match(answer.refused, /no approval/);
+}, FOUND_WORLD));

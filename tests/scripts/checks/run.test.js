@@ -341,6 +341,44 @@ test('a signal stops a check as endCheck does', unix, async () => {
   });
 });
 
+// --- not counting ---
+
+test('a failing command gives not-counted, with no second try', unix, async () => {
+  await withHome(async () => {
+    const marks = path.join(tempFolder('wh-marks-'), 'marks');
+    const got = await check(`echo ran >> '${marks}'; exit 1`, { extra: { notCounting: true } });
+    assert.equal(got.result, 'not-counted');
+    assert.equal(fs.readFileSync(marks, 'utf8'), 'ran\n');
+  });
+});
+
+test('a head that passes while tests aren\'t counting gives not-counted, and the main line keeps its pass', unix, async () => {
+  await withHome(async () => {
+    assert.equal((await check('exit 0', { extra: { notCounting: true } })).result, 'not-counted');
+    const s = await source();
+    const got = await runCheck({ project: 'p', commit: s.commit, main: true, settings: settings('exit 0', { notCounting: true }), source: s.url, platform: 'darwin', sandbox: standIn() });
+    assert.equal(got.result, 'passed');
+    assert.equal(got.clean, true);
+  });
+});
+
+test('a check that couldn\'t run while tests aren\'t counting holds nothing up, unless All stop ended it', unix, async () => {
+  await withHome(async () => {
+    assert.equal((await check('exit 0', { extra: { notCounting: true }, sandbox: '/no/such/sandbox' })).result, 'not-counted');
+    const controller = new AbortController();
+    controller.abort();
+    const s = await source();
+    const got = await runCheck({ project: 'p', commit: s.commit, main: false, settings: settings('exit 0', { notCounting: true }), source: s.url, platform: 'darwin', sandbox: standIn(), signal: controller.signal });
+    assert.equal(got.result, 'could-not-run');
+  });
+});
+
+test('no command gives a record with command null, and runs nothing', async () => {
+  const commit = 'a'.repeat(40);
+  const got = await runCheck({ project: 'p', commit, main: true, settings: settings(null, { notCounting: true }), platform: 'linux' });
+  assert.deepEqual(got, { commit, command: null, result: 'not-counted', minutes: 0, tail: '', clean: true });
+});
+
 // --- tools, and what a red result can say ---
 
 test('a tool that isn\'t found is could-not-run, never red, with no second try, and says so', unix, async () => {

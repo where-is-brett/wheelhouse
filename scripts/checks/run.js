@@ -171,9 +171,21 @@ function deniedPaths() {
   return [...new Set(sandboxDenyPaths().flatMap((p) => [p, real(p)]))];
 }
 
+// While a project's tests aren't counting (spec 4.5) a check still runs where there is a command, and its result is
+// not-counted, whatever the exit: a check that can't run holds nothing up either, but All stop's end is still could-not-run,
+// and it runs again. Only a pass on the main line keeps its word, which is what ends the state. With no command nothing
+// runs, and the record stands alone (the plan's choice 5).
+export async function runCheck(args) {
+  const { commit, main, settings, signal } = args;
+  if (settings.notCounting !== true) return oneCheck(args);
+  if (typeof settings.testCommand !== 'string') return { commit, command: null, result: 'not-counted', minutes: 0, tail: '', ...(main ? { clean: true } : {}) };
+  const got = await oneCheck(args);
+  return (main && got.result === 'passed') || signal?.aborted ? got : { ...got, result: 'not-counted' };
+}
+
 // Runs the check at `commit`, a head of `work` or the main line, and gives `{ commit, command, result, minutes, tail, clean? }`, with `command` the digest of the
 // test command, `tail` the end of the output, up to 64 KB, and `clean` on a main-line check, which starts from an empty tree. `settings` come from the default branch (settings.js).
-export async function runCheck({
+async function oneCheck({
   project, commit, main, work = null, settings, source, signal, git, spawn = nodeSpawn, now = () => new Date(), platform = process.platform,
   sandbox = SANDBOX, profile = checkProfile, limitMs = (settings.minutes ?? DEFAULT_MINUTES) * 60000, graceMs = GRACE_MS,
 }) {
@@ -234,6 +246,7 @@ export async function runCheck({
       const second = await attempt(hosted);
       return answer(wordOf(second) === 'passed' ? 'passed' : 'could-not-run', second.output);
     }
+    if (settings.notCounting === true) return answer('failed', explained(first));
     const again = await attempt();
     return answer(wordOf(again) ?? 'failed', explained(again));
   } finally {

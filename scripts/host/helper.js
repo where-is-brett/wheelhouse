@@ -55,7 +55,8 @@ import { readEnrolled, verify, sign, ownKey } from '../state/signing.js';
 import { delegationReview } from '../frontdesk/learning.js';
 import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/lock.js';
 import { namesOf, readProject, isInsideFolder, projectForFolder, registeredProjects } from '../lib/projects.js';
-import { hasTestScript } from '../checks/find-command.js';
+import { findCommand, hasTestScript } from '../checks/find-command.js';
+import { keptCommand, notCounting } from '../checks/not-counting.js';
 import { commandDigest } from '../checks/record.js';
 import { runCheck } from '../checks/run.js';
 import { checkRunner } from '../checks/runner.js';
@@ -68,7 +69,7 @@ import { stopEngine, endRun, stopWords } from '../engine/stop.js';
 import { engineRoutes, engineDirOf } from '../engine/routes.js';
 import { engineRunner } from '../engine/runner.js';
 import { dispatchRun, MERGE_WORK } from '../engine/dispatch-run.js';
-import { FIX_LANE, openRedMain } from '../engine/fix-main.js';
+import { FIX_LANE, openRedMain, redMainIncident } from '../engine/fix-main.js';
 import { endedBy } from '../foreman/queue.js';
 import { packTreeDigest } from '../engine/pack-build.js';
 import { readLean, leanState, LEAN_NO_HOST } from '../lean/project.js';
@@ -128,6 +129,7 @@ import { engineRouting } from '../agents/engine-parts.js';
 import { approvedDocument } from '../feature/approved.js';
 import { SWITCH_BRANCH, SWITCH_WORK, engineChosen, engineReady, switchBranch } from '../engine/switch.js';
 import { SWITCH_TITLE, switchBody, switchChange, switchTexts } from '../engine/switch-pr.js';
+import { COMMAND_BODY, COMMAND_TITLE, COMMAND_WORK, commandBranch, commandChange, commandText } from '../engine/command-pr.js';
 import { ENGINE_FILES, POLICY_FILE, mirrorRulesFile } from '../engine/parts.js';
 import { briefHash, featurePaths } from '../feature/files.js';
 import { readCapped } from '../feature/status.js';
@@ -2494,7 +2496,7 @@ export async function startHelper({
     return oneAtATime(`mirror:${project}`, async () => {
       const mirror = await mirrorFor(project, ctx);
       return changedPaths({
-        mirror, host: recordOf(project).host, number, headSha, defaultBranch, run: keyedFor(ctx), read: [SETTINGS_FILE, ...ENGINE_FILES],
+        mirror, host: recordOf(project).host, number, headSha, defaultBranch, run: keyedFor(ctx), read: [SETTINGS_FILE, ...ENGINE_FILES, CONFIG_FILE],
       });
     });
   }
@@ -3259,6 +3261,17 @@ export async function startHelper({
         switching = false;
       }
     }
+    // The helper's own change naming the found command (spec 4.2), which it compares with what the record keeps: every byte
+    // is the helper's, so it needs no review, no provenance and no approval. It needs its check like any other.
+    const commandCheck = readable && !restore ? commandChange({ headRef: pr.headRef, paths: changes.paths, files: changes.files, found: keptCommand(signedOf(project, 'checks-found').map((e) => e.data)) }) : { matched: false };
+    let keeping = false;
+    if (commandCheck.ok === true) {
+      try {
+        keeping = pr.baseRef === await defaultBranchOf(project, adapter);
+      } catch (error) {
+        if (error instanceof LookRefusal) throw error;
+      }
+    }
     // A restore is a release that passed review before; the director's approval stands in for it.
     const touchesGuardrails = (!restore && !pinsOnly && !switching && classified.touchesGuardrails) || body.touchesGuardrails === true;
     const found = { guardrailPaths: classified.guardrailPaths, criticalAreas: classified.criticalAreas };
@@ -3281,7 +3294,8 @@ export async function startHelper({
     // Work shown first needs the director's approval of the pull request. When the changed files
     // couldn't be read, the change already counts as touching the guardrails.
     const shownFirst = readable && shownFirstNeeded({ views, headRef: pr.headRef, paths: changes.paths, config: changes.config });
-    const approvalRequired = body.approvalRequired === true || touchesGuardrails || restore || switching || shownFirst;
+    const guarded = touchesGuardrails && !keeping;
+    const approvalRequired = body.approvalRequired === true || guarded || restore || switching || shownFirst;
     const holdsLock = await lockHeld(project, ctx);
     const { upToDate, review, approval } = await gateRecords({ project, number, headSha, views, adapter, compare: approvalRequired }, ctx);
     // The kinds of review that count for the agent this computer runs, from the default branch's configuration:
@@ -3292,7 +3306,7 @@ export async function startHelper({
     const reviewKinds = reviewKindsOf(changes?.config ?? await defaultConfig(project, adapter, ctx));
     // Where a project's checks run here, a fix passes the condition the broker asks of every other merge.
     let checkWaiting = false;
-    if (fixCall) {
+    if (fixCall || keeping) {
       const permit = await checkPermit(project, headSha);
       if (permit.checksHere === true && !checkCounts(permit.check, headSha, permit.digest, enrolled, { notCounting: permit.notCounting })) {
         stateReasons.push(`there is no passing check on this computer of ${headSha.slice(0, 7)}`);
@@ -3311,9 +3325,9 @@ export async function startHelper({
       headSha,
       ci,
       // Every merge needs a review; the caller may only add the approval and guardrail conditions.
-      reviewRequired: !restore && !switching,
+      reviewRequired: !restore && !switching && !keeping,
       approvalRequired,
-      touchesGuardrails,
+      touchesGuardrails: guarded,
       review,
       reviewKinds,
       approval,
@@ -3323,7 +3337,7 @@ export async function startHelper({
       // What /pr/open recorded built the pull request's branch, from the signed state, against this
       // Wheelhouse's own manifest (a pull request opened before that record names it in its body). A
       // verified restore has none: it puts back a release that merged before (Ruling 105).
-      provenance: restore || switching ? { ok: true } : checkProvenance({ recorded: views.provenance?.[pr.headRef], body: pr.body, root: pluginRoot }),
+      provenance: restore || switching || keeping ? { ok: true } : checkProvenance({ recorded: views.provenance?.[pr.headRef], body: pr.body, root: pluginRoot }),
     });
     if (!decision.allow || stateReasons.length > 0) {
       const said = restoreCheck.matched && !restore ? [`restore pull request: ${restoreCheck.why}`] : [];
@@ -3433,6 +3447,78 @@ export async function startHelper({
   }
   const SWITCH_NO_HTTPS = 'the project\'s address isn\'t an https one, so the build engine can\'t read it from Wheelhouse\'s own copy';
 
+  // One commit on top of the default branch, made in the mirror with no worktree and pushed to `branch`, holding `files`
+  // ({ path: text }). `base` is { head, at }, the commit's date its base's, so the same base always gives the same commit, and a
+  // push made again after one whose pull request never opened finds its branch as it left it.
+  async function ownChange(project, ctx, { branch, base, files, title, defaultBranch }) {
+    const made = await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ mirror, keyed }) => {
+      const index = path.join(mirror, 'wheelhouse-switch.index');
+      const env = { GIT_INDEX_FILE: index, ...WHEELHOUSE_AUTHOR, GIT_AUTHOR_DATE: base.at, GIT_COMMITTER_DATE: base.at };
+      const git = async (args, what, input = '') => {
+        const got = await keyed('git', [...NO_HOOKS, ...args], { cwd: mirror, input, env });
+        if (got.code !== 0) throw new Error(`${what} failed`);
+        return got.stdout.trim();
+      };
+      try {
+        await git(['read-tree', base.head], 'reading the default branch');
+        for (const [file, text] of Object.entries(files)) {
+          const blob = await git(['hash-object', '-w', '--stdin'], 'writing the change\'s files', text);
+          await git(['update-index', '--add', '--cacheinfo', `100644,${blob},${file}`], 'adding the change\'s files');
+        }
+        const tree = await git(['write-tree'], 'making the change\'s tree');
+        const commit = await git(['commit-tree', '--no-gpg-sign', tree, '-p', base.head, '-m', title], 'making the change\'s commit');
+        await git(['update-ref', `refs/heads/${branch}`, commit], 'keeping the change\'s commit');
+        return { commit, mirror };
+      } finally {
+        fs.rmSync(index, { force: true });
+      }
+    }));
+    try {
+      const pushed = await pushFrom({ project, branch, source: made.mirror, root: made.mirror, own: true, refspec: branch, defaultBranch }, ctx);
+      if (!pushed.ok) return { refused: pushed.rejected ? `the branch ${branch} is already on the host with other contents` : pushed.refused };
+    } finally {
+      await oneAtATime(`mirror:${project}`, () => unkeyed('git', ['update-ref', '-d', `refs/heads/${branch}`], { cwd: made.mirror }));
+    }
+    return { commit: made.commit };
+  }
+
+  // Puts the found command on the default branch by the helper's own pull request (spec 4.2). Each call takes it a step on: it
+  // opens one on the newest main line, the check runner checks its head, and the gate merges it. One left behind by a main
+  // line that moved on is closed and made again.
+  const commandFile = (project) => path.join(engineDirOf(stateDir(project)), 'command.json');
+  function readCommand(project) {
+    try { return JSON.parse(fs.readFileSync(commandFile(project), 'utf8')); } catch { return null; }
+  }
+  async function doKeepCommand({ project }, ctx) {
+    if (stopped()) return STOP_REFUSAL;
+    const found = keptCommand(signedOf(project, 'checks-found').map((e) => e.data));
+    if (found === null) return { ok: true, step: 'none' };
+    await lookAtMirror(ctx, project);
+    const adapter = await ctx.adapter();
+    const defaultBranch = await defaultBranchOf(project, adapter);
+    const base = await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ must }) => {
+      const { head } = await defaultHistory(must, defaultBranch);
+      const dated = (await must(['log', '--no-walk', '--format=%ct', head], 'reading the default branch\'s date')).trim();
+      const present = await must(['ls-tree', '-z', '--name-only', BASE_REF, '--', CONFIG_FILE], 'looking for the configuration');
+      return { head, at: `${dated} +0000`, text: present === '' ? null : await must(['show', `${BASE_REF}:${CONFIG_FILE}`], 'reading the configuration') };
+    }));
+    const kept = readCommand(project);
+    const pr = kept ? await adapter.prState(kept.pr) : null;
+    if (pr?.state === 'open' && kept.base === base.head) {
+      const merged = await oneAtATime(`merge:${project}`, () => doMerge({ project, number: kept.pr }, ctx));
+      if (merged?.ok === true && merged.merged === true) writeWhole(commandFile(project), { ...kept, merged: true });
+      return { ok: true, step: 'waiting', pr: kept.pr };
+    }
+    if (pr?.state === 'open') await adapter.closePr(kept.pr);
+    const branch = commandBranch(base.head);
+    const made = await ownChange(project, ctx, { branch, base, files: { [CONFIG_FILE]: commandText(base.text, found) }, title: COMMAND_TITLE, defaultBranch });
+    if (made.refused) return { ok: false, refused: made.refused };
+    const opened = await adapter.openPr({ head: branch, base: defaultBranch, title: COMMAND_TITLE, body: COMMAND_BODY });
+    writeWhole(commandFile(project), { pr: opened.number, head: made.commit, base: base.head });
+    await engineHosts.find((h) => h.project === project)?.checks.took(made.commit, COMMAND_WORK);
+    return { ok: true, step: 'opened', pr: opened.number, head: made.commit };
+  }
+
   async function doEngineSwitch({ project }, ctx) {
     if (stopped()) return STOP_REFUSAL;
     if (recordOf(project).host !== 'github' || engineReady(project)) return { ok: true, step: engineReady(project) ? 'on' : 'off' };
@@ -3488,34 +3574,8 @@ export async function startHelper({
     const texts = switchTexts(login);
     if (texts === null) return { ok: false, refused: 'GitHub didn\'t say which account Wheelhouse signs its reviews as, so the build engine\'s policy can\'t name it' };
     const branch = switchBranch(base.head);
-    const made = await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ mirror, keyed }) => {
-      const index = path.join(mirror, 'wheelhouse-switch.index');
-      const env = { GIT_INDEX_FILE: index, ...WHEELHOUSE_AUTHOR, GIT_AUTHOR_DATE: base.at, GIT_COMMITTER_DATE: base.at };
-      const git = async (args, what, input = '') => {
-        const got = await keyed('git', [...NO_HOOKS, ...args], { cwd: mirror, input, env });
-        if (got.code !== 0) throw new Error(`${what} failed`);
-        return got.stdout.trim();
-      };
-      try {
-        await git(['read-tree', base.head], 'reading the default branch');
-        for (const file of ENGINE_FILES) {
-          const blob = await git(['hash-object', '-w', '--stdin'], 'writing the build engine\'s files', texts[file]);
-          await git(['update-index', '--add', '--cacheinfo', `100644,${blob},${file}`], 'adding the build engine\'s files');
-        }
-        const tree = await git(['write-tree'], 'making the switch\'s tree');
-        const commit = await git(['commit-tree', '--no-gpg-sign', tree, '-p', base.head, '-m', SWITCH_TITLE], 'making the switch\'s commit');
-        await git(['update-ref', `refs/heads/${branch}`, commit], 'keeping the switch\'s commit');
-        return { commit, mirror };
-      } finally {
-        fs.rmSync(index, { force: true });
-      }
-    }));
-    try {
-      const pushed = await pushFrom({ project, branch, source: made.mirror, root: made.mirror, own: true, refspec: branch, defaultBranch }, ctx);
-      if (!pushed.ok) return { ok: false, refused: pushed.rejected ? `the branch ${branch} is already on the host with other contents` : pushed.refused };
-    } finally {
-      await oneAtATime(`mirror:${project}`, () => unkeyed('git', ['update-ref', '-d', `refs/heads/${branch}`], { cwd: made.mirror }));
-    }
+    const made = await ownChange(project, ctx, { branch, base, files: texts, title: SWITCH_TITLE, defaultBranch });
+    if (made.refused) return { ok: false, refused: made.refused };
     const opened = await adapter.openPr({ head: branch, base: defaultBranch, title: SWITCH_TITLE, body: switchBody(login) });
     writeWhole(switchFile(project), { pr: opened.number, head: made.commit, base: base.head });
     return { ok: true, step: 'opened', pr: opened.number, head: made.commit };
@@ -4049,25 +4109,37 @@ export async function startHelper({
         const { head } = await defaultHistory(must, defaultBranch);
         const config = await checksConfig({ git: (args) => keyed('git', args, { cwd: mirror, input: '' }), ref: BASE_REF });
         const workflows = await must(['ls-tree', '-r', '--name-only', BASE_REF, '--', '.github/workflows'], 'listing the workflows');
-        return { main: head, config, hasWorkflows: workflows.trim() !== '' };
+        // The finder reads the default branch itself, never the folder, where a person's unfinished work could be.
+        const files = (await must(['ls-tree', '-r', '-z', '--name-only', BASE_REF], 'listing the default branch')).split('\0').filter(Boolean);
+        const texts = {};
+        for (const file of ['package.json', 'Makefile'].filter((f) => files.includes(f))) texts[file] = await must(['show', `${BASE_REF}:${file}`], `reading ${file}`);
+        return { main: head, config, hasWorkflows: workflows.trim() !== '', finder: findCommand({ config, list: () => files, read: (file) => texts[file] ?? null }) };
       }));
       checksRead.set(project, read);
     }
-    const settings = checksSettings(read.config);
+    // Until the default branch names a command, the one the record keeps runs (spec 4.2).
+    const named = checksSettings(read.config);
+    const found = keptCommand(signedOf(project, 'checks-found').map((e) => e.data));
+    const keptOnly = named.testCommand === null && found !== null;
+    const settings = keptOnly ? { ...named, testCommand: found.testCommand, prepare: named.prepare ?? found.prepare } : named;
     const contexts = await adapter.checkContexts(read.main);
     // The rules matter only once something else reports: until then the checks run here whatever they say.
     const ownOnly = !read.hasWorkflows && contexts.every((c) => c.name === STATUS_CONTEXT);
     const required = ownOnly ? [] : await adapter.requiredChecks(defaultBranch).catch(() => null);
-    return { setting: settings.where, host: 'github', contexts, hasWorkflows: read.hasWorkflows, required, main: read.main, settings, digest: commandDigest(settings.testCommand) };
+    return {
+      setting: settings.where, host: 'github', contexts, hasWorkflows: read.hasWorkflows, required, main: read.main, settings, digest: commandDigest(settings.testCommand),
+      notCounting: notCounting(signedOf(project, 'checks-state').map((e) => e.data)), finder: read.finder, keptOnly,
+    };
   }
   const checksRunHere = (project, facts) => whereNow(project, facts) === 'here';
-  // The project's check records this computer signed, oldest first.
-  function signedChecks(project) {
+  // The project's records of a kind this computer signed, oldest first.
+  function signedOf(project, kind) {
     const enrolled = ownKeyOnly();
     return listEvents(stateDir(project), { report: () => {} })
-      .filter((e) => e.kind === 'check' && verify(e, enrolled))
+      .filter((e) => e.kind === kind && verify(e, enrolled))
       .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
   }
+  const signedChecks = (project) => signedOf(project, 'check');
   // What the merge condition reads for a head. What can't be read counts as checks that run here with none passed, so a
   // merge is refused rather than let through; only a project whose checks are known to run on the host goes as before.
   async function checkPermit(project, head) {
@@ -4081,7 +4153,7 @@ export async function startHelper({
     }
     if (!checksRunHere(project, facts)) return { checksHere: false };
     const check = signedChecks(project).filter((e) => e.data?.commit === head && e.data?.command === facts.digest).at(-1) ?? null;
-    return { checksHere: true, check, digest: facts.digest, notCounting: false };
+    return { checksHere: true, check, digest: facts.digest, notCounting: facts.notCounting };
   }
   // The main line's latest counted check, for the fix lane, where there is no job on the host to run again. A check that
   // ran on a head doesn't count: only a clean run stands for the main line.
@@ -4090,7 +4162,7 @@ export async function startHelper({
       const facts = await checksFacts(project);
       if (facts === null || !checksRunHere(project, facts)) return { ok: true, here: false };
       const latest = signedChecks(project).filter((e) => e.data?.commit === facts.main && e.data?.command === facts.digest && e.data?.clean === true).at(-1) ?? null;
-      return { ok: true, here: true, green: checkCounts(latest, facts.main, facts.digest, ownKeyOnly()), rerun: false };
+      return { ok: true, here: true, green: checkCounts(latest, facts.main, facts.digest, ownKeyOnly(), { notCounting: facts.notCounting }), rerun: false };
     } catch {
       return { ok: false, refused: 'where the project\'s checks run couldn\'t be read' };
     }
@@ -4590,7 +4662,9 @@ export async function startHelper({
     }
     const agent = agentOfConfig(config, { computerId: computerId() });
     const routing = engineRouting({ config, agent, inForce: () => routingInForce(project, config, { now }).roles });
-    return { routing, testCommand: config.testCommand ?? npmTestOf(folder), pages: config.pages ?? [] };
+    const found = keptCommand(signedOf(project, 'checks-found').map((e) => e.data));
+    const holding = notCounting(signedOf(project, 'checks-state').map((e) => e.data));
+    return { routing, testCommand: config.testCommand ?? found?.testCommand ?? npmTestOf(folder), ...(holding ? { testsNotCounting: true } : {}), pages: config.pages ?? [] };
   }
 
   // The repository Archon's merge queue merges in (check 81): the host name from the registered remote (GitHub's for a
@@ -4687,10 +4761,22 @@ export async function startHelper({
       write: ({ event }) => checkWrite(project, event),
       onRed: (head, work, tail) => dispatcher.sentBack(work, 'red', tail),
       onPassed: (work) => dispatcher.passed(work),
+      // A first red the director chose to mend: the same incident as a red main line, which holds other work.
+      onFix: async (commit) => {
+        if (!openRedMain(views())) await write('incident', redMainIncident({ id: `first-${commit}` }));
+      },
+      keep: async () => {
+        const got = await doKeepCommand({ project }, await contextFor(project));
+        if (got?.ok === false) throw new Error(got.refused);
+      },
+      note: (words) => write('note', { about: 'engine', words }),
+      record: (kind, data) => engineWrite(project, kind, data),
+      states: () => signedOf(project, 'checks-state').map((e) => e.data),
       card: (data) => write('question', data),
       answerOf: (id) => views().questions?.[id]?.answer?.label ?? null,
       // A fix's work is its incident's, and no piece of the queue: it has ended when the incident has.
       ended: (work) => {
+        if (work === COMMAND_WORK) return readCommand(project)?.merged === true;
         const seen = views();
         const entry = seen.work?.[work];
         if (!entry) return work.startsWith(`${FIX_LANE}-`) && openRedMain(seen)?.work !== work;

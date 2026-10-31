@@ -8,6 +8,7 @@ import path from 'node:path';
 import { checkRunner, CHECK_TRY_AGAIN as TRY_AGAIN, CHECK_LEAVE_IT as LEAVE_IT, KEEP_REPORTING } from '../../../scripts/checks/runner.js';
 import { commandDigest } from '../../../scripts/checks/record.js';
 import { checksStanding, keepQueue, readQueue } from '../../../scripts/checks/standing.js';
+import { CARRY_ON, GET_THEM_PASSING } from '../../../scripts/setup/first-check.js';
 import { enrol, makeSigningKey } from '../../../scripts/state/signing.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { RUN_CHECKS_HERE, LEAVE_THEM } from '../../../scripts/state/card-lines.js';
@@ -37,7 +38,7 @@ async function withHome(fn) {
 // One project: `w` holds what the host says, the records and everything that happened, in order.
 function world({ word = () => 'passed', status = () => ({ ok: true }), ...given } = {}) {
   const w = {
-    log: [], calls: [], posts: [], events: [], cards: [], reds: [], ran: [], answers: {}, stopped: false, ended: [], time: Date.parse('2026-10-31T01:00:00.000Z'),
+    log: [], calls: [], posts: [], events: [], cards: [], records: [], notes: [], settings: [], reds: [], ran: [], answers: {}, stopped: false, ended: [], time: Date.parse('2026-10-31T01:00:00.000Z'),
     facts: { setting: null, host: 'github', contexts: [], hasWorkflows: false, main: MAIN, settings: { testCommand: COMMAND, prepare: null, minutes: 20, network: false }, digest: DIGEST },
     ...given,
   };
@@ -59,18 +60,28 @@ function world({ word = () => 'passed', status = () => ({ ok: true }), ...given 
     },
     onRed: async (head, work, tail) => { w.log.push('red'); w.reds.push({ head, work, tail }); },
     onPassed: (work) => given.onPassed?.(work),
+    onFix: async (commit) => given.onFix?.(commit),
+    keep: async () => given.keep?.(),
+    note: async (words) => { w.notes.push(words); },
+    record: async (kind, data) => {
+      w.records.push({ kind, data });
+      if (kind === 'checks-state') w.facts = { ...w.facts, notCounting: data.state === 'not-counting' };
+      if (kind === 'checks-found') w.facts = { ...w.facts, settings: { ...w.facts.settings, testCommand: data.testCommand, prepare: data.prepare }, digest: commandDigest(data.testCommand), keptOnly: true };
+    },
+    states: () => w.records.filter((r) => r.kind === 'checks-state').map((r) => r.data),
     card: async (data) => { w.log.push('card'); w.cards.push(data); },
     answerOf: (id) => w.answers[id] ?? null,
     ended: (work) => w.ended.includes(work),
     stopped: () => w.stopped,
     openHeads: async () => { if (w.openFails) throw new Error('unreachable'); return w.open ?? []; },
     now: () => new Date(w.time),
-    run: async ({ commit, main, signal }) => {
+    run: async ({ commit, main, signal, settings }) => {
       w.log.push('check');
       w.ran.push({ commit, main });
+      w.settings.push(settings);
       if (w.hold) await w.hold(signal);
-      const result = signal?.aborted ? 'could-not-run' : word(commit);
-      return { commit, command: DIGEST, result, minutes: 1, tail: `${result} output`, ...(main ? { clean: true } : {}) };
+      const result = signal?.aborted ? 'could-not-run' : word(commit, settings);
+      return { commit, command: commandDigest(settings?.testCommand), result, minutes: 1, tail: `${result} output`, ...(main ? { clean: true } : {}) };
     },
     turn: async (fn) => { if (w.stopBeforeTurn) w.stopped = true; return fn(); },
   });
@@ -371,6 +382,7 @@ test('a head out of time is red as well', () => withHome(async () => {
 
 test('a red main line sends nothing back: the host\'s red holds the queue', () => withHome(async () => {
   const { w, runner } = world({ word: () => 'failed' });
+  w.records.push({ kind: 'checks-state', data: { state: 'counting', why: 'passed' } });
   await settled(runner);
   assert.equal(w.posts.at(-1).state, 'failure');
   assert.deepEqual(w.reds, []);
@@ -663,4 +675,127 @@ test('a head that passes tells the dispatcher', () => withHome(async () => {
   await runner.idle();
   assert.ok(w.ran.some((r) => r.commit === HEAD));
   assert.deepEqual(passed, ['w-1']);
+}));
+
+// --- no command yet, the first check, and not counting ---
+
+const FOUND = { testCommand: COMMAND, prepare: null, why: 'a test script' };
+const noCommand = (more) => ({ settings: { testCommand: null, prepare: null, minutes: 20, network: false }, digest: null, ...more });
+const ticked = async (runner) => {
+  await runner.tick();
+  await runner.idle();
+};
+
+test('no command on the default branch: what the finder found is kept, and that is what runs', () => withHome(async () => {
+  const { w, runner } = world();
+  w.facts = { ...w.facts, ...noCommand({ finder: FOUND }) };
+  await ticked(runner);
+  assert.deepEqual(w.records.map((r) => r.kind), ['checks-found']);
+  assert.equal(w.ran.length, 0, 'it runs on the next tick, under the kept command');
+  await ticked(runner);
+  assert.equal(w.ran[0].main, true);
+  assert.equal(w.settings[0].testCommand, COMMAND);
+  assert.equal(w.records.filter((r) => r.kind === 'checks-found').length, 1);
+}));
+
+test('nothing to find: not counting, and a record with no command, so nothing waits and no card is raised', () => withHome(async () => {
+  const { w, runner } = world({ word: () => 'not-counted' });
+  w.facts = { ...w.facts, ...noCommand({ finder: null }) };
+  await ticked(runner);
+  assert.deepEqual(w.records.at(-1), { kind: 'checks-state', data: { state: 'not-counting', why: 'nothing-found' } });
+  await ticked(runner);
+  assert.equal(w.settings[0].notCounting, true);
+  assert.equal(w.settings[0].testCommand, null);
+  assert.equal(w.cards.length, 0);
+  assert.equal(w.posts.at(-1).state, 'success');
+  assert.match(w.posts.at(-1).description, /not counted/i);
+}));
+
+test('a first pass on the main line says so once, and counts from then on', () => withHome(async () => {
+  const { w, runner } = world();
+  await ticked(runner);
+  assert.deepEqual(w.records, [{ kind: 'checks-state', data: { state: 'counting', why: 'passed' } }]);
+  assert.deepEqual(w.notes, ['Checks ran on this computer: passed, 1 minute.']);
+  await ticked(runner);
+  assert.equal(w.notes.length, 1);
+}));
+
+test('a first red holds the report back and raises one card', () => withHome(async () => {
+  const { w, runner } = world({ word: () => 'failed' });
+  await ticked(runner);
+  await ticked(runner);
+  assert.equal(w.cards.length, 1);
+  assert.equal(w.cards[0].options[0].label, GET_THEM_PASSING);
+  assert.equal(w.posts.at(-1).state, 'pending');
+  assert.ok(!w.posts.some((p) => p.state === 'failure'), 'a red the director hasn\'t seen would start the fix by itself');
+}));
+
+test('Get them passing first starts the fix and tells the host the truth', () => withHome(async () => {
+  const fixes = [];
+  const { w, runner } = world({ word: () => 'failed', onFix: (commit) => fixes.push(commit) });
+  await ticked(runner);
+  w.answers[w.cards[0].id] = GET_THEM_PASSING;
+  await ticked(runner);
+  assert.deepEqual(fixes, [MAIN]);
+  assert.equal(w.posts.at(-1).state, 'failure');
+  await ticked(runner);
+  assert.equal(fixes.length, 1);
+}));
+
+test('Carry on anyway sets not counting, and the main line reads not counted', () => withHome(async () => {
+  const { w, runner } = world({ word: (commit, settings) => (settings.notCounting ? 'not-counted' : 'failed') });
+  await ticked(runner);
+  w.answers[w.cards[0].id] = CARRY_ON;
+  await ticked(runner);
+  assert.deepEqual(w.records.at(-1), { kind: 'checks-state', data: { state: 'not-counting', why: 'director' } });
+  await ticked(runner);
+  await ticked(runner);
+  assert.equal(w.posts.at(-1).state, 'success');
+}));
+
+test('the first pass on the main line ends not counting for good, and a head that fails after that is red', () => withHome(async () => {
+  let passes = false;
+  const { w, runner } = world({ word: (commit, settings) => {
+    if (commit === HEAD) return settings.notCounting ? 'not-counted' : 'failed';
+    return passes ? 'passed' : 'not-counted';
+  } });
+  w.facts = { ...w.facts, notCounting: true };
+  await runner.took(HEAD, 'w');
+  await ticked(runner);
+  await ticked(runner);
+  assert.equal(w.reds.length, 0);
+  passes = true;
+  w.facts = { ...w.facts, main: NEXT };
+  await ticked(runner);
+  assert.deepEqual(w.records.at(-1), { kind: 'checks-state', data: { state: 'counting', why: 'passed' } });
+  await ticked(runner);
+  assert.equal(w.reds.length, 1, 'checked again once counting began, and sent back');
+}));
+
+test('a pass on a head doesn\'t end not counting', () => withHome(async () => {
+  const { w, runner } = world({ word: (commit) => (commit === HEAD ? 'passed' : 'not-counted') });
+  w.facts = { ...w.facts, notCounting: true };
+  await runner.took(HEAD, 'w');
+  await ticked(runner);
+  await ticked(runner);
+  assert.ok(!w.records.some((r) => r.data.state === 'counting'));
+}));
+
+test('a command kept only in the record goes to the default branch once the main line has passed', () => withHome(async () => {
+  const kept = [];
+  const { w, runner } = world({ keep: async () => { kept.push(1); } });
+  w.facts = { ...w.facts, keptOnly: true };
+  await ticked(runner);
+  assert.equal(kept.length, 0, 'not before the first check has passed');
+  await ticked(runner);
+  assert.equal(kept.length, 1);
+}));
+
+test('it stays in the record while the main line hasn\'t passed', () => withHome(async () => {
+  const kept = [];
+  const { w, runner } = world({ word: () => 'failed', keep: async () => { kept.push(1); } });
+  w.facts = { ...w.facts, keptOnly: true };
+  await ticked(runner);
+  await ticked(runner);
+  assert.equal(kept.length, 0);
 }));

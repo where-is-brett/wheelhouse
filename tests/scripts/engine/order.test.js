@@ -59,6 +59,14 @@ test('visible work is shown first unless the work record waives it', () => {
   }
 });
 
+test('while tests aren\'t counting an order may have no test command and no done checks', () => {
+  const order = workOrder({ work: { ...WORK, done: [] }, routing: {}, config: { testCommand: null, testsNotCounting: true } });
+  assert.equal(order.testCommand, null);
+  assert.equal(order.testsNotCounting, true);
+  assert.deepEqual(order.done, []);
+  assert.throws(() => workOrder({ work: { ...WORK, done: [] }, routing: {}, config: { testCommand: null } }), /done check/);
+});
+
 test('work with nothing visible has no preview, and a work with no done checks is refused', () => {
   assert.equal(workOrder({ work: { ...WORK, visible: false }, routing: {}, config: {} }).preview, null);
   assert.throws(() => workOrder({ work: { ...WORK, done: [] }, routing: {}, config: {} }), /done check/);

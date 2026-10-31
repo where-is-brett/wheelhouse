@@ -7,7 +7,7 @@ import path from 'node:path';
 import { engineDir } from '../lib/paths.js';
 import { whereChecks } from './where.js';
 
-const EMPTY = () => ({ heads: [], unposted: [], tries: {}, streak: 0, asked: {}, cards: 0, readings: [], taken: [], hostChecksOff: false, keepReporting: false, required: null, rulesUnread: 0, checkingUntil: null, waitingForPermission: false });
+const EMPTY = () => ({ heads: [], unposted: [], tries: {}, streak: 0, asked: {}, cards: 0, readings: [], taken: [], hostChecksOff: false, keepReporting: false, required: null, rulesUnread: 0, firstFor: null, checkingUntil: null, waitingForPermission: false });
 
 // Where this project's checks run, with what is kept here taken into account.
 export const whereNow = (project, facts) => {

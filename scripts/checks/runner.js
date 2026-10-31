@@ -6,11 +6,13 @@
 // changed command or the director's Try again, so it can't keep running or keep raising cards. On a project whose checks
 // run on the host nothing is run or reported: the runner only watches for host checks that have stopped reporting.
 import { sweepHeads } from './folder.js';
+import { countingEnds, mayStopCounting } from './not-counting.js';
 import { dueChecks, withCheckTurn } from './queue.js';
 import { writeCheck } from './record.js';
 import { runCheck } from './run.js';
 import { keepQueue, readQueue, whereNow } from './standing.js';
 import { rulesNameOurs, stuckHostChecks } from './where.js';
+import { CARRY_ON, GET_THEM_PASSING, checksRanLine, firstCheck } from '../setup/first-check.js';
 import { LEAVE_THEM, RUN_CHECKS_HERE } from '../state/card-lines.js';
 
 export const CHECK_CARD_WORK = 'checks';
@@ -32,18 +34,22 @@ const STATUS = {
   'could-not-run': { state: 'pending', description: 'The tests couldn\'t run on this computer yet' },
 };
 const CHECKING = { state: 'pending', description: 'Checking on this computer' };
+// A first red waits for the director's answer: reported as red, it would start the host's merge queue on the fix by itself.
+const FIRST_WAITS = { state: 'pending', description: 'Waiting for the director' };
 const isRed = (word) => word === 'failed' || word === 'timed-out';
 
-// checkRunner({ project, repo, permissionLink, adapter, facts, source, results, write, onRed, onPassed = () => {}, card, answerOf, ended, stopped,
+// checkRunner({ project, repo, permissionLink, adapter, facts, source, results, write, onRed, onPassed = () => {}, onFix = async () => {}, keep = async () => {}, note = async () => {}, record = async () => {}, states = () => [], card, answerOf, ended, stopped,
 //   openHeads, now, run, turn, sweep }) -> { took(head, work), tick(), stop(), idle() }.
-// - `facts()` what the helper reads from the default branch and the host: { setting, host, contexts, hasWorkflows, main,
-//   settings, digest }; `source()` the folder a check fetches from, brought up to date;
+// - `facts()` what the helper reads from the default branch and the host: { setting, host, contexts, hasWorkflows, required, main,
+//   settings, digest, notCounting, finder (what the finder found on the default branch), keptOnly (the command is the record's) }; `source()` the folder a check fetches from, brought up to date;
 // - `results()` the data of the signed `check` events, verified, oldest first; `write({ project, event })` signs and keeps one;
-// - `onRed(head, work, tail)` sends a change back; `onPassed(work)` says a work's head passed; `card(data)` raises a question; `answerOf(id)` the label the director chose;
+// - `onRed(head, work, tail)` sends a change back; `onPassed(work)` says a work's head passed; `onFix(commit)` starts mending a
+//   main line whose first check failed; `keep()` takes a command kept only in the record to the default branch; `note(words)`
+//   writes to the Logbook; `record(kind, data)` signs a `checks-state` or `checks-found`; `states()` the verified `checks-state`s; `card(data)` raises a question; `answerOf(id)` the label the director chose;
 // - `ended(work)` whether a work's change has merged or closed; `stopped()` whether All stop is on;
 // - `openHeads()` [{ head, work }], the open changes' heads as the host has them, for a head nothing told the helper of.
 export function checkRunner({
-  project, repo, permissionLink, adapter, facts, source, results, write, onRed, onPassed = () => {}, card, answerOf = () => null, ended = () => false, stopped = () => false,
+  project, repo, permissionLink, adapter, facts, source, results, write, onRed, onPassed = () => {}, onFix = async () => {}, keep = async () => {}, note = async () => {}, record = async () => {}, states = () => [], card, answerOf = () => null, ended = () => false, stopped = () => false,
   openHeads = async () => [], now = () => new Date(), run = runCheck, turn = withCheckTurn, sweep = sweepHeads,
 }) {
   let active = null;
@@ -126,8 +132,9 @@ export function checkRunner({
   // Reports a commit, from the signed record: 'pending' while it has none for this command. A status that can't post is kept
   // and tried again on the next tick; the record stands meanwhile.
   async function report(commit, digest, checking = false) {
-    const record = checking ? null : latest(commit, digest);
-    const status = record ? STATUS[record.result] : CHECKING;
+    const held = checking ? null : latest(commit, digest);
+    const waits = readQueue(project).firstFor === commit && isRed(held?.result);
+    const status = waits ? FIRST_WAITS : held ? STATUS[held.result] : CHECKING;
     let got;
     try {
       got = await adapter.setStatus({ sha: commit, ...status });
@@ -166,7 +173,31 @@ export function checkRunner({
     });
   }
 
-  async function checkOne({ commit, main, work }, { settings, digest }) {
+  // The first check on the default branch that says anything decides what the director hears (spec 4.5).
+  async function firstHeard(answer, wasFirst, f) {
+    if (!wasFirst) return;
+    const got = await firstCheck({
+      found: { testCommand: f.settings.testCommand }, check: answer, note,
+      state: (data) => record('checks-state', data),
+      card: async (data) => {
+        change((q) => { q.firstFor = answer.commit; });
+        await ask('first', data);
+      },
+    });
+    return got;
+  }
+
+  // A check has ended on the main line: not counting may end with it.
+  async function afterMain(answer, f) {
+    if (!countingEnds(f.notCounting === true, answer)) return;
+    await record('checks-state', { state: 'counting', why: 'passed' });
+    await note(checksRanLine(answer));
+  }
+
+  async function checkOne({ commit, main, work }, f) {
+    const { digest } = f;
+    const settings = { ...f.settings, ...(f.notCounting === true ? { notCounting: true } : {}) };
+    const wasFirst = main && f.notCounting !== true && mayStopCounting(states()) && !results().some((r) => r.clean === true && r.result !== 'could-not-run');
     const controller = new AbortController();
     abort = controller;
     await report(commit, digest, true);
@@ -183,6 +214,10 @@ export function checkRunner({
     if (answer === null) return;
     const event = await writeCheck(project, answer, { write });
     const kept = settleTries(answer, commit, digest, controller.signal.aborted);
+    if (main && !controller.signal.aborted) {
+      await firstHeard(answer, wasFirst, f);
+      await afterMain(answer, f);
+    }
     // Under All stop the report waits; the dispatcher holds what is sent back until it lifts.
     if (stopped()) {
       change((q) => { if (!q.unposted.includes(commit)) q.unposted.push(commit); });
@@ -199,6 +234,18 @@ export function checkRunner({
     if (!head || head.redFor === digest) return;
     change((q) => { q.heads.find((h) => h.commit === commit).redFor = digest; });
     await onRed(commit, head.work, event.data.tail);
+  }
+
+  // The director's answer to the first red's card.
+  async function firstAnswered(f) {
+    const { asked, firstFor } = readQueue(project);
+    if (!firstFor || !asked.first) return;
+    const label = answerOf(asked.first);
+    if (label !== GET_THEM_PASSING && label !== CARRY_ON) return;
+    if (label === CARRY_ON && mayStopCounting(states())) await record('checks-state', { state: 'not-counting', why: 'director' });
+    if (label === GET_THEM_PASSING) await onFix(firstFor);
+    change((q) => { q.firstFor = null; });
+    await report(firstFor, f.digest);
   }
 
   // The director's answer to the card for a check that couldn't run: Try again gives every held head its tries back.
@@ -268,6 +315,9 @@ export function checkRunner({
     }
   }
 
+  const mainPassed = (f) => results().filter((r) => r.commit === f.main && r.command === f.digest && r.clean === true).at(-1)?.result === 'passed';
+  const readNotCounting = (f) => f.notCounting === true;
+
   async function tick() {
     if (stopped()) return;
     const f = await facts();
@@ -281,15 +331,23 @@ export function checkRunner({
       await watchHost(f);
       return;
     }
-    if (typeof f.settings?.testCommand !== 'string' || stopped()) return;
+    if (stopped()) return;
+    // No command to run and nothing kept: the finder's answer settles it, and the next tick goes on from there.
+    if (typeof f.settings?.testCommand !== 'string' && f.notCounting !== true) {
+      if (f.finder) await record('checks-found', f.finder);
+      else await firstCheck({ found: null, state: (data) => record('checks-state', data) });
+      return;
+    }
     answered();
     await askedAgain();
+    await firstAnswered(f);
     for (const commit of kept.unposted) await report(commit, f.digest);
     await takeOpenHeads(f.digest);
     if (active !== null) return;
     const { tries: held, heads } = readQueue(project);
     const workOf = (commit) => heads.find((h) => h.commit === commit)?.work ?? null;
-    const due = dueChecks({ main: f.main, heads: heads.map((h) => h.commit), results: results(), digest: f.digest })
+    if (f.keptOnly === true && mainPassed(f)) await keep().catch(() => {});
+    const due = dueChecks({ main: f.main, heads: heads.map((h) => h.commit), results: results(), digest: f.digest, notCounting: readNotCounting(f) })
       .filter(({ commit }) => (held[`${commit}:${f.digest}`] ?? 0) < NOT_RAN_LIMIT).map((c) => ({ ...c, work: workOf(c.commit) }));
     // Ended work's folders go while no check runs.
     await sweep(project, heads.map((h) => h.work)).catch(() => {});
@@ -308,7 +366,7 @@ export function checkRunner({
     async took(head, work) {
       queued(head, work);
       const f = await facts();
-      if (!f || stopped() || typeof f.settings?.testCommand !== 'string') return;
+      if (!f || stopped() || (typeof f.settings?.testCommand !== 'string' && f.notCounting !== true)) return;
       if (whereNow(project, f) !== 'here') return;
       // Reported from the record, so a head taken again doesn't lose its result. One that came back red with nothing
       // changed goes back again, which the second time is the director's card.
