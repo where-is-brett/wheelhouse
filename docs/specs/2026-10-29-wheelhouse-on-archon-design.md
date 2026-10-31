@@ -47,6 +47,8 @@ The director added one requirement for this redesign: **a UI can be built later 
 - Windows in the first release.
 - Writing Wheelhouse's own engine again if Archon fails. The fallback is another engine behind the same seam (section 6.5).
 
+*Changed by `docs/specs/2026-10-31-local-checks-and-git-alone-design.md`: a project with no code host is now supported, and a hosted project needs no CI. GitLab on Archon stays a non-goal.*
+
 **Anti-goals** (failures even if everything technically works)
 
 - The director sees Archon's words: run ids, node names, "attention item", YAML.
@@ -189,6 +191,8 @@ Parts are named as the main design names them, with the crew name the director s
 | Routing table | **Keep** | It stays the only place that names a model. The engine adapter turns it into tier bindings per run |
 
 ### 4.5 Host
+
+*Changed by `docs/specs/2026-10-31-local-checks-and-git-alone-design.md`, section 6: a third host adapter, for a project with no host.*
 
 | Part | Decision | What happens |
 |---|---|---|
@@ -419,6 +423,8 @@ The pack (`engine/archon/pack/` in Wheelhouse's repository) holds one workflow p
 
 ### 7.3 The dispatcher
 
+*Changed by `docs/specs/2026-10-31-local-checks-and-git-alone-design.md`, section 7.4: for a project with no host, the runner calls a local queue in place of Archon's merge queue.*
+
 The Bosun was a model session woken in batches. The dispatcher is a script in the core:
 
 - It takes work records in the order the First Mate gave them, and starts at most `pace` runs at once (three by default, one of them in the feature lane). A feature counts as one: its slices run one after another as child runs. The merge queue's run is on top, so Archon never has more than `pace` + 2 runs going.
@@ -581,6 +587,8 @@ The numbers are a starting point. *Designer's call*, to be tuned from the first 
 
 ### 12.4 Only the helper talks to the host: the broker
 
+*Changed by `docs/specs/2026-10-31-local-checks-and-git-alone-design.md`, sections 4.6 and 7.5: the permit gains a signed check where checks run on this computer, and a project with no host has a broker that refuses every call.*
+
 Archon's merge queue calls `gh` itself, so the rule that only the helper holds the key and talks to the host would break. The director ruled on 29 October 2026 to keep the rule with a go-between, **the broker** (section 19):
 
 - **Archon never holds a GitHub key.** Its `PATH` has no real `gh`, no `GH_TOKEN` is set, and its home has no `gh` sign-in.
@@ -617,6 +625,8 @@ How Wheelhouse uses it:
 3. Orchestrator.inc (section 6.5).
 
 ## 14. Setup
+
+*Changed by `docs/specs/2026-10-31-local-checks-and-git-alone-design.md`, section 10: setup keeps a folder with no host on this computer, and skips the host's steps.*
 
 Setup's engine (cards naming what changes, the helper making every change, the journal, the one recommended card) stays as built. Its steps change as below.
 
@@ -687,6 +697,8 @@ E3 no longer waits on a ruling: the director chose the broker on 29 October 2026
 
 ## 16. Risks
 
+*Changed by `docs/specs/2026-10-31-local-checks-and-git-alone-design.md`, section 11: its own risks, among them the local queue drifting from Archon's gate.*
+
 | Risk | How Wheelhouse handles it |
 |---|---|
 | **Archon is below 1.0.** Minor releases break things: v0.13.0 alone had five breaking changes | Pin v0.13.0 exactly, by checksum. Upgrade on purpose, once a month, only after the counted evaluation passes on the new release, as models are upgraded today. Lineage's hold and undo cover the engine and the pack |
@@ -723,6 +735,8 @@ The first public release is v0.3.0 or later, once the director's measures have h
 
 ## 18. Testing
 
+*Changed by `docs/specs/2026-10-31-local-checks-and-git-alone-design.md`, section 11: its tests, and six more scenarios in the one counted evaluation.*
+
 - **Unit and end-to-end tests run the core against the fake engine,** which plays back recorded Archon events (asks, steps, spend, outcomes) taken from real runs at the pinned version. When the pin moves, the recordings are taken again.
 - **The counted evaluation runs real Archon.** The build-loop scenarios (20 to 35) are rewritten against the pack. The front-desk and mod scenarios are unchanged, except where they read the build. New scenarios: an ask answered at level 1 without a card; the daily card budget; a preview card; a cap reached and its blocked card; All stop cancelling runs; a planted review in an artefact refused; an unsigned merge refused by the broker; a red main line; a clash re-run.
 - **Each monthly Archon upgrade** runs the safety subset and the counted evaluation before the pin moves, and lists the merge queue's `gh` calls for the broker (section 12.4).
@@ -745,6 +759,8 @@ The card, as it was put to the director through the main session:
 > **My recommendation:** option 1. It keeps the protection you have today and works with the ordinary sign-in.
 >
 > **What happens meanwhile:** Nothing reaches GitHub. The design and the early checks go ahead, and the merge check (E3) waits for your answer.
+
+**A later ruling, 31 October 2026.** The director ruled that Wheelhouse must not insist on GitHub or GitLab, that a project kept only on this computer in git alone is fully supported on Archon, and that a project with no CI minutes has its tests run on this computer inside the sandbox, the result counting as the check. They turned down a self-hosted GitHub Actions runner, since it runs agent code outside the sandbox. They approved `docs/specs/2026-10-31-local-checks-and-git-alone-design.md` the same day; it wins where the two differ.
 
 ## 20. The designer's calls
 
