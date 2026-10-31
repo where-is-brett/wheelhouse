@@ -698,7 +698,7 @@ function checkProvenance(data) {
 // The words a check ends in, and what it must carry: the whole commit, its command's digest (none where the project has
 // no command), the minutes it took, and the end of its output.
 export const CHECK_RESULTS = ['passed', 'failed', 'timed-out', 'could-not-run', 'not-counted'];
-const CHECK_KEYS = ['commit', 'command', 'result', 'minutes', 'tail'];
+const CHECK_KEYS = ['commit', 'command', 'result', 'minutes', 'tail', 'clean'];
 function checkCheck(data) {
   const bad = (why) => { throw new Error(`A check event ${why}`); };
   if (!isPlain(data)) bad('needs data');
@@ -708,6 +708,7 @@ function checkCheck(data) {
   if (!CHECK_RESULTS.includes(data.result)) bad('needs a result Wheelhouse knows');
   if (typeof data.minutes !== 'number' || !Number.isFinite(data.minutes) || data.minutes < 0) bad('needs its minutes');
   if (typeof data.tail !== 'string' || data.tail.length > 4096) bad('needs the end of its output, 4 KB at most');
+  if (data.clean !== undefined && data.clean !== true) bad('says it ran clean or says nothing');
 }
 
 // What a shown record must carry: the reply code, the question put to the director

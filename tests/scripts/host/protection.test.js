@@ -267,17 +267,19 @@ test('a refusal on create (the upgrade message) is on:false with the free-plan l
     'GET user': ok(gh('user-pro.json')),
     'GET repos/a-director/product/rulesets': ok(gh('rulesets-empty.json')),
     'POST graphql': ok(gh('ci-contexts-none.json')),
+    'GET repos/a-director/product/contents/.github/workflows?ref=main': { code: 1, stderr: 'gh: Not Found (HTTP 404)' },
     'POST repos/a-director/product/rulesets': refusedFree(),
   });
   assert.deepEqual(await switchOnProtection({ host: 'github', repo: 'a-director/product', run }), { on: false, line: FREE_LINE });
 });
 
 // A stateful fake of a public repository's rulesets.
-function publicRepo({ checks = gh('ci-contexts-none.json') } = {}) {
+function publicRepo({ checks = gh('ci-contexts-none.json'), workflows = { code: 1, stderr: 'gh: Not Found (HTTP 404)' } } = {}) {
   const store = [];
   const routes = {
     'GET repos/a-director/product': ok(gh('repo-public.json')),
     'POST graphql': ok(checks),
+    'GET repos/a-director/product/contents/.github/workflows?ref=main': workflows,
     'GET repos/a-director/product/rulesets': () => ok(JSON.stringify(store.map(({ id, name }) => ({ id, name })))),
     'POST repos/a-director/product/rulesets': (c) => { store.push({ id: 100 + store.length, ...c.input }); return ok(gh('ruleset-created.json')); },
   };
@@ -295,12 +297,13 @@ test('on a public repository, switching on makes the two rulesets with the agree
   assert.equal(before.available, true);
   const result = await switchOnProtection({ host: 'github', repo: 'a-director/product', run, env: { GH_TOKEN: 'secret-token' } });
   assert.equal(result.on, true);
-  assert.match(result.line, /the project has no checks yet, so Wheelhouse won't merge anything until it has CI\.$/);
+  assert.match(result.line, /the project has no CI, so its checks run on this computer\.$/);
   assert.doesNotMatch(result.line, /isn't required/);
   const [main, side] = store;
   assert.equal(main.name, 'Wheelhouse: default branch');
   assert.deepEqual(main.conditions.ref_name.include, ['refs/heads/main']);
-  assert.deepEqual(main.rules.map((r) => r.type), ['pull_request', 'deletion', 'non_fast_forward']);
+  assert.deepEqual(main.rules.map((r) => r.type), ['pull_request', 'deletion', 'non_fast_forward', 'required_status_checks']);
+  assert.deepEqual(main.rules[3].parameters.required_status_checks, [{ context: 'wheelhouse/checks' }]);
   assert.equal(main.rules[0].parameters.required_approving_review_count, 0);
   assert.equal(side.name, 'Wheelhouse: state and lock');
   assert.deepEqual(side.conditions.ref_name.include, ['refs/heads/wheelhouse-state', 'refs/heads/wheelhouse-lock']);
@@ -331,6 +334,19 @@ test('where the default branch already has checks, they are required', async () 
   // Records stay on the computer (section 24): no state branch goes to the host, so the line names the lock branch alone.
   assert.match(result.line, /force-pushes and deletion of Wheelhouse's lock branch/);
   assert.doesNotMatch(result.line, /state/);
+});
+
+test('workflows that have left no check on the default branch yet name nothing that would never report', async () => {
+  const { run, store } = publicRepo({ workflows: ok(JSON.stringify([{ name: 'ci.yml' }])) });
+  const result = await switchOnProtection({ host: 'github', repo: 'a-director/product', run });
+  assert.deepEqual(store[0].rules.map((r) => r.type), ['pull_request', 'deletion', 'non_fast_forward']);
+  assert.equal(result.on, true);
+});
+
+test('a project whose workflows can\'t be read names nothing, and protection still goes on', async () => {
+  const { run, store } = publicRepo({ workflows: { code: 1, stderr: 'gh: Server Error (HTTP 502)' } });
+  assert.equal((await switchOnProtection({ host: 'github', repo: 'a-director/product', run })).on, true);
+  assert.deepEqual(store[0].rules.map((r) => r.type), ['pull_request', 'deletion', 'non_fast_forward']);
 });
 
 test('a paid-plan private repository is available', async () => {

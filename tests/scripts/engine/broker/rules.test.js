@@ -4,6 +4,7 @@
 // of that head, a merge needs the permit, and anything not on the list is refused with a plain reason.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { commandDigest } from '../../../../scripts/checks/record.js';
 import { classifyCall, brokerDecision, isOneQuery, BROKER_ALLOW } from '../../../../scripts/engine/broker/rules.js';
 import { makeEvent } from '../../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../../scripts/state/signing.js';
@@ -111,6 +112,29 @@ test('a merge without a signed CLEAN review of that head is refused', async () =
     assert.match(brokerDecision(unpinned, { ...ctx, review }).reason, /names no head/);
     const rest = classifyCall(['api', '-X', 'PUT', 'repos/acme/web/pulls/14/merge', '-f', `sha=${HEAD}`]);
     assert.deepEqual([rest.kind, rest.pr, rest.sha], ['merge', 14, HEAD]);
+  });
+});
+
+test('where checks run here, a merge needs a signed passing check of that head and command', async () => {
+  await withHome(async () => {
+    const { computer, publicKey } = makeSigningKey();
+    enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
+    const enrolled = [{ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' }];
+    const digest = commandDigest('npm test');
+    const review = makeEvent({ kind: 'review', data: { pr: 14, commit: HEAD, verdict: 'CLEAN', findings: 0 } });
+    const signed = (commit, command = digest, result = 'passed') => makeEvent({ kind: 'check', data: { commit, command, result, minutes: 1, tail: '' } });
+    const call = classifyCall(['pr', 'merge', '14', '--repo', R, '--squash', '--match-head-commit', HEAD]);
+    const ctx = { stop: false, lockHeld: true, incident: { open: false }, enrolled, review, shownFirst: false, level: 1, guardrail: false, checksHere: true, digest };
+    // A green status at the host gets a change past Archon's gate and is no check here: no record, no merge.
+    assert.match(brokerDecision(call, ctx).reason, /no passing check on this computer/);
+    assert.deepEqual(brokerDecision(call, { ...ctx, check: signed(HEAD) }), { allow: true });
+    assert.match(brokerDecision(call, { ...ctx, check: signed('1'.repeat(40)) }).reason, /no passing check/, 'an old head\'s record doesn\'t stand in');
+    assert.match(brokerDecision(call, { ...ctx, check: signed(HEAD, commandDigest('exit 0')) }).reason, /no passing check/, 'a changed command');
+    assert.match(brokerDecision(call, { ...ctx, check: signed(HEAD, digest, 'failed') }).reason, /no passing check/);
+    const planted = { ...signed(HEAD), sig: 'AAAA' };
+    assert.match(brokerDecision(call, { ...ctx, check: planted }).reason, /no passing check/, 'a planted record');
+    assert.deepEqual(brokerDecision(call, { ...ctx, check: null, checksHere: false }), { allow: true }, 'a project whose checks run on the host is unchanged');
+    assert.deepEqual(brokerDecision(call, { stop: false, lockHeld: true, incident: { open: false }, enrolled, review, shownFirst: false, level: 1, guardrail: false }), { allow: true });
   });
 });
 

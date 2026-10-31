@@ -5,6 +5,10 @@
 import { runningMinutes } from './spend.js';
 
 // The merge queue's question, for a card: its pull request by number and title, as far as they are known.
+// The pane's lines about a project's checks (spec 4.3 and 4.8).
+export const CHECKING_WORDS = 'Checking on this computer';
+export const REPORT_WAITS_WORDS = 'Waiting for you to let Wheelhouse report checks';
+
 export function mergeQuestionWords(pr, title) {
   const line = typeof title === 'string' ? title.trim().split('\n')[0].slice(0, 120) : '';
   const named = Number.isInteger(pr) ? `pull request #${pr}${line ? `, "${line}",` : ''}` : 'this pull request';

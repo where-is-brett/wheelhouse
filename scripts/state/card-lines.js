@@ -10,6 +10,10 @@ export function ciPushLine(branch, sha) {
 
 const sha12 = (sha) => String(sha).slice(0, 12);
 
+// The buttons of the card for a host whose checks aren't running (local checks, spec 4.1).
+export const RUN_CHECKS_HERE = 'Run the checks here';
+export const LEAVE_THEM = 'Leave them';
+
 // The line on the card that asks the director to approve a pull request.
 export function approvalLine(pr, sha) {
   return `Approve pull request #${pr} at commit ${sha12(sha)}`;

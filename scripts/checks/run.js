@@ -72,6 +72,7 @@ function jailed({ sandbox, profile, command, cwd, env, spawn, untilMs, graceMs, 
     let settled = false;
     let timer = null;
     let lastWait = null;
+    let exited = false;
     const finish = (answer) => {
       if (settled) return;
       settled = true;
@@ -84,6 +85,7 @@ function jailed({ sandbox, profile, command, cwd, env, spawn, untilMs, graceMs, 
       resolve({ output, timedOut, stopped, ...answer });
     };
     const end = (mark) => {
+      if (exited) return;
       mark();
       if (Number.isInteger(child?.pid)) killGroup(child.pid);
       lastWait = setTimeout(() => finish({ code: null }), graceMs);
@@ -98,6 +100,13 @@ function jailed({ sandbox, profile, command, cwd, env, spawn, untilMs, graceMs, 
     child.stdout.on('data', keep);
     child.stderr.on('data', keep);
     child.on('error', () => finish({ code: null, unstarted: true }));
+    // The shell's own exit is the answer. A job it left holding the output open is ended with the group, and one in a
+    // session of its own gets the grace, so it can't turn a finished test into a timeout.
+    child.on('exit', (code) => {
+      exited = true;
+      killGroup(child.pid);
+      lastWait ??= setTimeout(() => finish({ code }), graceMs);
+    });
     child.on('close', (code) => finish({ code }));
     watch(() => end(() => { stopped = true; }));
     timer = setTimeout(() => end(() => { timedOut = true; }), Math.max(untilMs - now().getTime(), 0));
@@ -117,8 +126,8 @@ async function stage({ sandbox, profile, command, cwd, env, spawn, untilMs, grac
 // The check's word for an attempt, or null when it was a red result.
 function wordOf(attempt) {
   if (attempt.unstarted || attempt.stopped) return 'could-not-run';
-  if (attempt.timedOut) return 'timed-out';
   if (attempt.prepareFailed) return 'could-not-run';
+  if (attempt.timedOut) return 'timed-out';
   if (attempt.code === 0) return 'passed';
   return NESTED.test(attempt.output) ? 'could-not-run' : null;
 }
@@ -133,16 +142,28 @@ function deniedPaths() {
   return [...new Set(sandboxDenyPaths().flatMap((p) => [p, real(p)]))];
 }
 
-// Runs the check at `commit` and gives `{ commit, command, result, minutes, tail }`, with `command` the digest of the test
-// command and `tail` the end of the output, up to 64 KB. `settings` come from the default branch (settings.js).
+// Runs the check at `commit` and gives `{ commit, command, result, minutes, tail, clean? }`, with `command` the digest of the
+// test command, `tail` the end of the output, up to 64 KB, and `clean` on a main-line check, which starts from an empty tree. `settings` come from the default branch (settings.js).
 export async function runCheck({
   project, commit, main, settings, source, signal, git, spawn = nodeSpawn, now = () => new Date(), platform = process.platform,
   sandbox = SANDBOX, profile = checkProfile, limitMs = (settings.minutes ?? DEFAULT_MINUTES) * 60000, graceMs = GRACE_MS,
 }) {
   const startedAt = now().getTime();
   const { testCommand, prepare, network } = settings;
-  const answer = (result, tail = '') => ({ commit, command: commandDigest(testCommand), result, minutes: Math.round((now().getTime() - startedAt) / 6000) / 10, tail });
+  const answer = (result, tail = '') => ({ commit, command: commandDigest(testCommand), result, minutes: Math.round((now().getTime() - startedAt) / 6000) / 10, tail, ...(main ? { clean: true } : {}) });
   if (platform !== 'darwin') return answer('could-not-run', 'Checks run in macOS\'s sandbox, and this computer has none.');
+  // All stop can reach a check from here on, while its folder is being prepared as well.
+  let stop = null;
+  let ended = false;
+  const watch = (fn) => { stop = fn; };
+  const endIt = () => { ended = true; stop?.(); };
+  running.set(project, endIt);
+  if (signal?.aborted) ended = true;
+  signal?.addEventListener('abort', endIt, { once: true });
+  const over = () => {
+    running.delete(project);
+    signal?.removeEventListener('abort', endIt);
+  };
   let paths;
   let ownHome;
   let tmp;
@@ -152,20 +173,13 @@ export async function runCheck({
     tmp = path.join(ownHome, 'tmp');
     realFolder(tmp);
   } catch (error) {
+    over();
     return answer('could-not-run', String(error?.message ?? error));
   }
   const xcode = developerDir();
   const env = { ...checkEnv(), HOME: ownHome, CFFIXED_USER_HOME: ownHome, TMPDIR: tmp, ...(xcode ? { DEVELOPER_DIR: xcode } : {}) };
   const denied = deniedPaths();
   const textFor = (name) => profile({ paths, main, stage: name, network, denied, temp: TEMP, userHome: real(os.homedir()) });
-
-  let stop = null;
-  let ended = false;
-  const watch = (fn) => { stop = fn; };
-  const endIt = () => { ended = true; stop?.(); };
-  running.set(project, endIt);
-  if (signal?.aborted) ended = true;
-  signal?.addEventListener('abort', endIt, { once: true });
 
   const inSandbox = (name, command, untilMs) => stage({ sandbox, profile: textFor(name), command, cwd: paths.tree, env, spawn, untilMs, graceMs, now, watch });
   // `prepare` then the tests, within one time limit.
@@ -192,8 +206,7 @@ export async function runCheck({
     const again = await attempt();
     return answer(wordOf(again) ?? 'failed', again.output);
   } finally {
-    running.delete(project);
-    signal?.removeEventListener('abort', endIt);
+    over();
   }
 }
 

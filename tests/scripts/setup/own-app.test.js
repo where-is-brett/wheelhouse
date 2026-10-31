@@ -39,7 +39,7 @@ const NOW = new Date('2026-10-20T03:00:00.000Z');
 const USER = 'a-director';
 const OWN = { clientId: 'Iv23li.ownapp0001', slug: 'wheelhouse-a-director', owner: USER };
 const WHEELHOUSE = { clientId: 'Iv1.wheelhouse0001', slug: 'wheelhouse-test', owner: 'wheelhouse-org' };
-const MANIFEST_PERMISSIONS = { contents: 'write', pull_requests: 'write', issues: 'write', metadata: 'read' };
+const MANIFEST_PERMISSIONS = { contents: 'write', pull_requests: 'write', issues: 'write', statuses: 'write', metadata: 'read' };
 
 // A fake `gh`: the apps GitHub has (by slug), and the director's organisation memberships.
 function fakeGh({ apps = {}, memberships = [] } = {}) {
@@ -139,6 +139,17 @@ test('their own app is registered with public=false, whatever the manifest says'
     assert.equal(url.searchParams.get('public'), 'false');
     assert.equal(url.searchParams.getAll('public').length, 1);
   }
+});
+
+test('the manifest and an own app\'s list both have statuses: write', () => {
+  const manifest = readManifest();
+  assert.equal(manifest.default_permissions.statuses, 'write');
+  assert.equal(new URL(newAppUrl({ manifest, owner: { kind: 'user' }, name: 'Wheelhouse x' })).searchParams.get('statuses'), 'write');
+  assert.deepEqual(grownPermissions({ statuses: 'write' }, manifest), []);
+});
+
+test('NEVER is unchanged', () => {
+  assert.deepEqual([...NEVER], ['workflows', 'administration', 'secrets']);
 });
 
 test('the manifest asks for no Workflows, Administration or Secrets', () => {

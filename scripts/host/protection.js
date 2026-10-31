@@ -7,6 +7,7 @@ import { projectPath } from './gitlab-key.js';
 import { scrub } from './adapter.js';
 import { toolPath } from '../lib/host-tools.js';
 import { hostApprovalReady } from './approval-ready.js';
+import { STATUS_CONTEXT } from '../checks/where.js';
 
 const NO_ONE = 0;
 const DEVELOPERS = 30;
@@ -209,8 +210,11 @@ const STATE_RULESET = 'Wheelhouse: state and lock';
 
 export const FREE_PLAN_LINE = "GitHub's free plan doesn't protect private projects; Wheelhouse's helper and checks hold the line.";
 // A commit with no pipeline has not passed (design section 12.3), so with no
-// checks at all nothing merges: the line must not suggest otherwise.
-const NO_CI = "the project has no checks yet, so Wheelhouse won't merge anything until it has CI.";
+// checks at all nothing merges on GitLab: the line must not suggest otherwise.
+const NO_PIPELINES = "the project has no checks yet, so Wheelhouse won't merge anything until it has CI.";
+// On GitHub the project's tests run on this computer instead (local checks, spec 4.1). The permit holds the line for a
+// project protected before that, so nothing blocks on the required check being named.
+const NO_CI = 'the project has no CI, so its checks run on this computer.';
 
 const CI_QUERY = 'query($owner:String!,$name:String!,$branch:String!){repository(owner:$owner,name:$name){ref(qualifiedName:$branch){target{... on Commit{statusCheckRollup{contexts(first:50){nodes{__typename ... on CheckRun{name} ... on StatusContext{context}}}}}}}}}';
 
@@ -325,7 +329,8 @@ async function githubStatus(gh, repo) {
   const on = hasRules(main, ['pull_request', 'deletion', 'non_fast_forward']) && covers(main, [defaultBranch])
     && hasRules(side, ['deletion', 'non_fast_forward'], ['pull_request']) && covers(side, [STATE_BRANCH, LOCK_BRANCH]);
   if (!on) return { available: true, on: false, line: "GitHub's protection is available but not switched on for this project yet.", defaultBranch };
-  const checks = (main.rules ?? []).some((r) => r.type === 'required_status_checks');
+  const checks = (main.rules ?? []).some((r) => r.type === 'required_status_checks'
+    && r.parameters?.required_status_checks?.some((c) => c.context !== STATUS_CONTEXT));
   return {
     available: true,
     on: true,
@@ -344,11 +349,21 @@ async function seenChecks(gh, repo, branch) {
   return [...new Set(nodes.map((n) => n.name ?? n.context).filter((n) => typeof n === 'string' && n))];
 }
 
+// Whether the default branch holds workflows, yes when it can't be told: a required check that would never report holds
+// every merge, and the permit stands either way.
+async function holdsWorkflows(gh, repo, branch) {
+  const found = await gh('GET', `repos/${repo}/contents/.github/workflows?ref=${encodeURIComponent(branch)}`);
+  if (found.status === 404) return false;
+  return found.status !== 200 || !Array.isArray(found.body) || found.body.length > 0;
+}
+
 async function switchOnGithub(gh, repo) {
   const status = await githubStatus(gh, repo);
   if (!status.available) return { on: false, line: status.line };
   const { defaultBranch } = status;
-  const contexts = await seenChecks(gh, repo, defaultBranch);
+  const seen = await seenChecks(gh, repo, defaultBranch);
+  // Nothing reports and nothing is set up to: the checks run on this computer, and report as Wheelhouse's own.
+  const contexts = seen.length === 0 && !(await holdsWorkflows(gh, repo, defaultBranch)) ? [STATUS_CONTEXT] : seen;
   const mainRules = [
     { type: 'pull_request', parameters: {
       required_approving_review_count: 0,
@@ -452,7 +467,7 @@ async function gitlabStatus(api, repo, { realUsers = false, director = false } =
   return {
     available: true,
     on: true,
-    line: `GitLab blocks direct pushes to ${defaultBranch}, and force-pushes and deletion of Wheelhouse's lock branch${main.pipelinesMustSucceed ? ', and requires pipelines to pass.' : `; ${NO_CI}`}`,
+    line: `GitLab blocks direct pushes to ${defaultBranch}, and force-pushes and deletion of Wheelhouse's lock branch${main.pipelinesMustSucceed ? ', and requires pipelines to pass.' : `; ${NO_PIPELINES}`}`,
     defaultBranch,
     main,
     gaps,

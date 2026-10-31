@@ -23,7 +23,7 @@ import { computerId, helperAddress, profileDir, oldProfileDir, stateDir, oldStat
 import { stopState, setStop, liftStop } from '../lib/stop.js';
 import { bypassActive } from '../lib/bypass.js';
 import { run as realRun, withoutGitVars } from '../lib/run.js';
-import { gateDecision } from '../gate/conditions.js';
+import { checkCounts, gateDecision } from '../gate/conditions.js';
 import { classifyChange, readConfig, isModelName, CI_FILES, PLUGIN_MANIFEST } from '../gate/guardrails.js';
 import { scrub } from './adapter.js';
 import { hide, cleanDeep } from '../lib/clean.js';
@@ -35,7 +35,7 @@ import { queueFolderOf, queueProjectOf } from '../engine/queue-place.js';
 import { unreachableRefusal, certificateRefusal, certificateLine, awayLine, outputKind, companyGitEnv, makeAwayLog, gitlabBaseOf, certificateSetting } from './company-ca.js';
 import { childEnv } from './connection.js';
 import { protectionStatus } from './protection.js';
-import { cutAccess } from './cut-access.js';
+import { cutAccess, INSTALLATIONS_PAGE } from './cut-access.js';
 import { checkRecord, listEvents, makeEvent, writeEvent, eventPath, eventHash, dataHash, PLAIN_KINDS, PROTECTED_KINDS, HELPER_ONLY_KINDS, CONFIRMABLE_KINDS, RED_MAIN_FIELDS, RED_MAIN_OWN } from '../state/events.js';
 import { git as stateGit } from '../state/git.js';
 import { directorSignIn, reachFor, safeGitEnv } from '../lib/safe-git.js';
@@ -55,13 +55,20 @@ import { readEnrolled, verify, sign, ownKey } from '../state/signing.js';
 import { delegationReview } from '../frontdesk/learning.js';
 import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/lock.js';
 import { namesOf, readProject, isInsideFolder, projectForFolder, registeredProjects } from '../lib/projects.js';
+import { commandDigest } from '../checks/record.js';
+import { runCheck } from '../checks/run.js';
+import { checkRunner } from '../checks/runner.js';
+import { checksConfig, checksSettings } from '../checks/settings.js';
+import { readQueue } from '../checks/standing.js';
+import { whereChecks } from '../checks/where.js';
 import { startEngineHost } from '../engine/host.js';
 import { engineRoom } from '../engine/room.js';
 import { stopEngine, endRun, stopWords } from '../engine/stop.js';
 import { engineRoutes, engineDirOf } from '../engine/routes.js';
 import { engineRunner } from '../engine/runner.js';
 import { dispatchRun, MERGE_WORK } from '../engine/dispatch-run.js';
-import { openRedMain } from '../engine/fix-main.js';
+import { FIX_LANE, openRedMain } from '../engine/fix-main.js';
+import { endedBy } from '../foreman/queue.js';
 import { packTreeDigest } from '../engine/pack-build.js';
 import { readLean, leanState, LEAN_NO_HOST } from '../lean/project.js';
 import { deskCore, checkVersion } from '../desk/core.js';
@@ -239,6 +246,9 @@ const GIT_BASE = { GIT_TERMINAL_PROMPT: '0', GIT_NO_REPLACE_OBJECTS: '1' };
 
 const UNREADABLE_CHANGES = 'the changed files couldn\'t be read, so this needs the director\'s approval';
 const BASE_REF = 'refs/wheelhouse/base';
+const CHECK_REFS = 'refs/wheelhouse/check/';
+// How long closing waits for a running check to end: a check's grace, and a little more.
+const CHECK_END_MS = 6000;
 const CONFIG_FILE = '.claude/wheelhouse.json';
 
 // What a pull request changes, and the project's configuration. The pull
@@ -1016,6 +1026,8 @@ export async function startHelper({
   // How often the card router and the dispatcher look again for each project on the engine (scripts/engine/runner.js,
   // dispatch-run.js): answers to send, caps to keep, cost records to write, and work to start.
   dispatchMs = 60 * 1000,
+  // Runs one check (scripts/checks/run.js); a test on a computer with no sandbox stands in for it.
+  check = runCheck,
   // How the engine's fetch mirror of a project is brought up to date before a run starts: the helper's own, from the
   // host with the connection's key, unless a test whose engine reads no mirror gives its own.
   refreshMirror = null,
@@ -1247,7 +1259,8 @@ export async function startHelper({
       if (!fs.existsSync(path.join(mirror, 'HEAD'))) return;
       const listed = await unkeyed('git', ['for-each-ref', '--format=%(refname)', 'refs/wheelhouse/'], { cwd: mirror });
       for (const name of listed.stdout.split('\n').map((l) => l.trim()).filter(Boolean)) {
-        if (name !== BASE_REF) await unkeyed('git', ['update-ref', '-d', name], { cwd: mirror });
+        // A check's own ref is there only while its folder fetches the commit, outside this queue, and it removes it.
+        if (name !== BASE_REF && !name.startsWith(CHECK_REFS)) await unkeyed('git', ['update-ref', '-d', name], { cwd: mirror });
       }
     } catch { /* tidying is best effort */ }
   }
@@ -3277,6 +3290,18 @@ export async function startHelper({
     // default branch's configuration itself can't be read does today's rule stand (the approval is then needed
     // anyway, since unreadable changes count as touching the guardrails).
     const reviewKinds = reviewKindsOf(changes?.config ?? await defaultConfig(project, adapter, ctx));
+    // Where a project's checks run here, a fix passes the condition the broker asks of every other merge.
+    let checkWaiting = false;
+    if (fixCall) {
+      const permit = await checkPermit(project, headSha);
+      if (permit.checksHere === true && !checkCounts(permit.check, headSha, permit.digest, enrolled, { notCounting: permit.notCounting })) {
+        stateReasons.push(`there is no passing check on this computer of ${headSha.slice(0, 7)}`);
+        checkWaiting = !['failed', 'timed-out'].includes(permit.check?.data?.result);
+      } else if (permit.checksHere === true && ci?.state !== 'success') {
+        // The record stands and its report hasn't reached the host yet.
+        checkWaiting = true;
+      }
+    }
     // STOP and bypass are read last, just before the decision, so one set during the
     // fetches above is seen. The caller may only raise them.
     const decision = gateDecision({
@@ -3316,6 +3341,7 @@ export async function startHelper({
         reasons,
         ...(releaseLine === null ? {} : { releaseApproval: releaseLine }),
         ...needs,
+        ...(checkWaiting ? { waiting: true } : {}),
         ...found,
         ...release,
       };
@@ -4004,7 +4030,70 @@ export async function startHelper({
         return { ok: false, refused: error instanceof Error ? error.message : 'the helper\'s gate didn\'t add the fix' };
       }
     },
+    checkTook: (project, { head, work }) => engineHosts.find((h) => h.project === project)?.checks.took(head, work),
+    mainCheck: (project) => mainCheck(project),
   });
+
+  // What a project's checks go by, from the host and the default branch and never from a change or a folder. What the
+  // default branch says is read once for each of its heads. Null on a host that takes no status.
+  const checksRead = new Map();
+  async function checksFacts(project) {
+    if (recordOf(project).host !== 'github') return null;
+    const ctx = await contextFor(project);
+    const adapter = await ctx.adapter();
+    const defaultBranch = await defaultBranchOf(project, adapter);
+    const main = await adapter.branchHead(defaultBranch);
+    let read = checksRead.get(project);
+    if (read?.main !== main) {
+      read = await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ mirror, keyed, must }) => {
+        const { head } = await defaultHistory(must, defaultBranch);
+        const config = await checksConfig({ git: (args) => keyed('git', args, { cwd: mirror, input: '' }), ref: BASE_REF });
+        const workflows = await must(['ls-tree', '-r', '--name-only', BASE_REF, '--', '.github/workflows'], 'listing the workflows');
+        return { main: head, config, hasWorkflows: workflows.trim() !== '' };
+      }));
+      checksRead.set(project, read);
+    }
+    const settings = checksSettings(read.config);
+    return {
+      setting: settings.where, host: 'github', contexts: await adapter.checkContexts(read.main), hasWorkflows: read.hasWorkflows,
+      main: read.main, settings, digest: commandDigest(settings.testCommand),
+    };
+  }
+  const checksRunHere = (project, facts) => whereChecks({ ...facts, hostChecksOff: readQueue(project).hostChecksOff }) === 'here';
+  // The project's check records this computer signed, oldest first.
+  function signedChecks(project) {
+    const enrolled = ownKeyOnly();
+    return listEvents(stateDir(project), { report: () => {} })
+      .filter((e) => e.kind === 'check' && verify(e, enrolled))
+      .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+  }
+  // What the merge condition reads for a head. What can't be read counts as checks that run here with none passed, so a
+  // merge is refused rather than let through; only a project whose checks are known to run on the host goes as before.
+  async function checkPermit(project, head) {
+    if (recordOf(project).host !== 'github') return { checksHere: false };
+    let facts;
+    try {
+      facts = await checksFacts(project);
+    } catch (error) {
+      if (error instanceof LookRefusal) throw error;
+      return { checksHere: true, check: null, digest: null, notCounting: false };
+    }
+    if (!checksRunHere(project, facts)) return { checksHere: false };
+    const check = signedChecks(project).filter((e) => e.data?.commit === head && e.data?.command === facts.digest).at(-1) ?? null;
+    return { checksHere: true, check, digest: facts.digest, notCounting: false };
+  }
+  // The main line's latest counted check, for the fix lane, where there is no job on the host to run again. A check that
+  // ran on a head doesn't count: only a clean run stands for the main line.
+  async function mainCheck(project) {
+    try {
+      const facts = await checksFacts(project);
+      if (facts === null || !checksRunHere(project, facts)) return { ok: true, here: false };
+      const latest = signedChecks(project).filter((e) => e.data?.commit === facts.main && e.data?.command === facts.digest && e.data?.clean === true).at(-1) ?? null;
+      return { ok: true, here: true, green: checkCounts(latest, facts.main, facts.digest, ownKeyOnly()), rerun: false };
+    } catch {
+      return { ok: false, refused: 'where the project\'s checks run couldn\'t be read' };
+    }
+  }
 
   // Whether the project's main line reads green: its default branch's head's checks, from the host (true, false, or
   // null when they can't be read or are still running). A red-main incident ends only on a true.
@@ -4120,7 +4209,8 @@ export async function startHelper({
     // Whether the work is shown first comes from the run that opened the pull request; one no run of the helper's
     // opened needs the director's approval, as shown-first work does.
     const opened = engineRun.openedOf(project, call.pr);
-    return { ...base, enrolled, review, approval, incident: incidentFor(views, call.pr), shownFirst: opened ? opened.showFirst === true : true, level: opened?.level ?? null, guardrail, stop: stopped() };
+    const checked = call.kind === 'merge' ? await checkPermit(project, call.sha) : {};
+    return { ...base, enrolled, review, approval, incident: incidentFor(views, call.pr), shownFirst: opened ? opened.showFirst === true : true, level: opened?.level ?? null, guardrail, ...checked, stop: stopped() };
   }
   const broker = brokerRoutes({
     placeOf: placeEngineCall,
@@ -4367,6 +4457,14 @@ export async function startHelper({
       await freshViews(() => writeViews(project, { now }));
     });
   }
+  // Keeps a check's signed record: made by the runner in the helper, from what the helper saw the check do.
+  function checkWrite(project, event) {
+    return oneAtATime(`state:${project}`, async () => {
+      await ensureStateClone(project, engineCtx());
+      await writeEvent({ project, event, now });
+      await freshViews(() => writeViews(project, { now }));
+    });
+  }
   // The work a run is for, from the project's `run` records (the first names its work, lane and branch), or null for
   // a run the project doesn't hold.
   function engineRunOf(project, runId) {
@@ -4393,6 +4491,8 @@ export async function startHelper({
   const requestMeters = new Map();
   function stopEngines(reason = 'All stop') {
     if (engineHosts.length === 0) return Promise.resolve(null);
+    // Not waited for: a check waiting its turn behind another process's runs on until that one ends.
+    for (const { checks } of engineHosts) checks.stop().catch(() => {});
     stopSeen = true;
     engineStopping ??= (async () => {
       const got = await stopEngine({
@@ -4442,7 +4542,7 @@ export async function startHelper({
       try { engine = engineFor(project); } catch { engine = null; }
       if (!engine) continue;
       try {
-        const { runner, dispatcher } = engineDesk(project, engine);
+        const { runner, dispatcher, checks } = engineDesk(project, engine);
         const host = startEngineHost({
           engine, spawn, now, held: stopped, wake: engineHosts.length === 0,
           write: (kind, data) => engineWrite(project, kind, data),
@@ -4452,7 +4552,7 @@ export async function startHelper({
           prOf: (runId) => engineRun.openedBy(project, runId),
         });
         host.onAsk((event) => { runner.onAsk(event).catch(() => {}); });
-        engineHosts.push({ project, engine, host, runner, dispatcher });
+        engineHosts.push({ project, engine, host, runner, dispatcher, checks });
       } catch {
         // An engine that can't be followed gets no host; the other projects' hosts start all the same.
       }
@@ -4568,16 +4668,49 @@ export async function startHelper({
     });
     runner.onStart((args) => dispatcher.startAgain(args));
     runner.onMergeRuled(() => dispatcher.queueDue());
-    return { runner, dispatcher };
+    const adapterNow = async () => (await contextFor(project)).adapter();
+    const checks = checkRunner({
+      project, repo: record?.repo, permissionLink: INSTALLATIONS_PAGE, stopped, now, run: check,
+      adapter: {
+        setStatus: async (args) => (await adapterNow()).setStatus(args),
+        checkContexts: async (sha) => (await adapterNow()).checkContexts(sha),
+      },
+      facts: () => checksFacts(project),
+      // The helper's mirror, with every head of the host's in it.
+      source: async () => {
+        const got = await (refreshMirror ?? refreshFetchMirror)(project);
+        if (got?.ok === false) throw new Error(got.refused);
+        return path.join(stateDir(project), '..', 'mirror.git');
+      },
+      results: () => signedChecks(project).map((e) => e.data),
+      write: ({ event }) => checkWrite(project, event),
+      onRed: (head, work, tail) => dispatcher.sentBack(work, 'red', tail),
+      card: (data) => write('question', data),
+      answerOf: (id) => views().questions?.[id]?.answer?.label ?? null,
+      // A fix's work is its incident's, and no piece of the queue: it has ended when the incident has.
+      ended: (work) => {
+        const seen = views();
+        const entry = seen.work?.[work];
+        if (!entry) return work.startsWith(`${FIX_LANE}-`) && openRedMain(seen)?.work !== work;
+        return seen.reports?.[work]?.data?.outcome === 'merged' || endedBy(seen.reports ?? {}, work, entry.work);
+      },
+      // The heads of the changes runs opened, as the host has them: the merge queue brings a change up to date itself.
+      openHeads: async () => (await (await adapterNow()).openRequests()).flatMap((r) => {
+        const opened = r.fork || typeof r.head !== 'string' ? null : engineRun.openedOf(project, r.number);
+        return opened ? [{ head: r.head, work: opened.work }] : [];
+      }),
+    });
+    return { runner, dispatcher, checks };
   }
   // One look for every project on the engine, one at a time.
   let ticking = null;
   function engineTick() {
     ticking ??= (async () => {
-      for (const { runner, dispatcher } of engineHosts) {
+      for (const { runner, dispatcher, checks } of engineHosts) {
         if (closing) break;
         await runner.tick().catch(() => {});
         await dispatcher.tick().catch(() => {});
+        await checks.tick().catch(() => {});
       }
     })().finally(() => { ticking = null; });
     return ticking;
@@ -4594,6 +4727,10 @@ export async function startHelper({
       if (dispatchWatch) clearInterval(dispatchWatch);
       await ticking?.catch(() => {});
       await engineStopping?.catch(() => {});
+      await Promise.race([
+        Promise.allSettled(engineHosts.map(({ checks }) => checks.stop())),
+        new Promise((resolve) => { setTimeout(resolve, CHECK_END_MS).unref?.(); }),
+      ]);
       await Promise.allSettled(engineHosts.map(({ host }) => host.stop()));
       // The engine room's console goes with the helper that keeps it.
       try { room?.stop(); } catch { /* it has gone */ }

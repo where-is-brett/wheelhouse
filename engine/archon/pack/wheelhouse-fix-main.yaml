@@ -1076,7 +1076,7 @@
       "trigger_rule": "none_failed_min_one_success",
       "when": "$sign.output.clean == 'true'",
       "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/merge-fix.js\" --run \"$WORKFLOW_ID\" --artefacts \"$ARTIFACTS_DIR\"",
-      "timeout": 600000
+      "timeout": 1800000
     },
     {
       "id": "lesson",

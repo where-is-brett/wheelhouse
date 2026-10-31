@@ -32,6 +32,21 @@ test('merge-fix prints the refusal and exits 1', async () => {
   assert.match(lines.join('\n'), /deletes the test tests\/a\.test\.js/);
 });
 
+test('merge-fix waits while the fix\'s check is running, and only then', async () => {
+  const answers = [{ ok: false, refused: 'checking', waiting: true }, { ok: false, refused: 'checking', waiting: true }, { ok: true, pr: 12, head: 'a'.repeat(40) }];
+  let slept = 0;
+  const client = { engine: { mergeFix: async () => answers.shift() } };
+  assert.equal(await main(['--run', 'r1', '--artefacts', artefacts()], { client, out: () => {}, sleep: async () => { slept += 1; } }), 0);
+  assert.equal(slept, 2);
+});
+
+test('merge-fix stops waiting at its limit, with the refusal', async () => {
+  const client = { engine: { mergeFix: async () => ({ ok: false, refused: 'no passing check', waiting: true }) } };
+  const lines = [];
+  assert.equal(await main(['--run', 'r1', '--artefacts', artefacts()], { client, out: (l) => lines.push(l), sleep: async () => {}, waitMs: 30, everyMs: 10 }), 1);
+  assert.match(lines.join('\n'), /no passing check/);
+});
+
 test('merge-fix needs the run', async () => {
   assert.equal(await main([], { client: { engine: { mergeFix: async () => ({ ok: true }) } }, out: () => {} }), 2);
 });

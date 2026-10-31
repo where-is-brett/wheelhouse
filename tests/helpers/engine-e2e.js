@@ -25,6 +25,7 @@ export function standInHost(remoteUrl) {
     prState: async (number) => ({ number, headSha: await headOf(prs.get(number).head), headRef: prs.get(number).head, baseRef: 'main', mergeable: 'yes', state: 'open', body: '' }),
     verdictComment: async ({ number, id, body }) => { comments.push({ number, id, body }); return { id: id ?? 500 }; },
     ciState: async (sha) => ({ sha, state: 'pending' }),
+    checkContexts: async () => [{ name: 'ci', state: 'pending' }],
     issue: { create: async () => ({ number: 1 }), update: async () => ({ number: 1 }), list: async () => [] },
   };
 }

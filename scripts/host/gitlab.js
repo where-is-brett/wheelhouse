@@ -130,6 +130,14 @@ export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal
       return { headSha: mr.sha, ...(typeof mr.title === 'string' ? { title: mr.title } : {}), ...(typeof mr.source_branch === 'string' ? { headRef: mr.source_branch } : {}), ...(typeof mr.target_branch === 'string' ? { baseRef: mr.target_branch } : {}), mergeable: mergeable(mr.detailed_merge_status), state: STATE[mr.state] ?? 'unknown', ...(typeof mr.description === 'string' ? { body: mr.description } : {}) };
     },
 
+    // GitLab stays on the old engine, whose checks run on the host (spec, non-goals).
+    async setStatus() {
+      return { refused: 'GitLab projects run their checks on the host' };
+    },
+    async checkContexts() {
+      throw new Error('GitLab projects run their checks on the host');
+    },
+
     async hasCi(sha, branch) {
       // Any pipeline on the head counts, a skipped one too: it was run, and ran nothing.
       const pipelines = await ask(['api', `${project}/pipelines?sha=${sha}&per_page=1&order_by=id&sort=desc`]);

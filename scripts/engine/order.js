@@ -113,6 +113,8 @@ export function checkProblem(check) {
 // each side at most ANSWER_CHARS long, for the builder to read as data.
 export const MOST_ANSWERS = 10;
 export const ANSWER_CHARS = 500;
+// The longest end of a red check's output an order carries; the signed record keeps no more.
+const MOST_CHECK_TAIL = 4096;
 const isAnswer = (a) => isObject(a) && Object.keys(a).sort().join() === 'answer,question'
   && isText(a.question) && isText(a.answer) && a.question.length <= ANSWER_CHARS && a.answer.length <= ANSWER_CHARS;
 
@@ -146,6 +148,7 @@ export function checkOrder(order) {
     return 'a work order\'s answers are each a question and its answer, in short text';
   }
   // A fix for a red main line names its incident (section 7.7); no other lane does.
+  if (order.checkTail !== undefined && !(typeof order.checkTail === 'string' && order.checkTail.length <= MOST_CHECK_TAIL)) return 'a work order\'s check tail is text, 4 KB at most';
   if (order.incident !== undefined && !(order.lane === 'fix-main' && typeof order.incident === 'string' && SLUG.test(order.incident))) return 'only a fix-main order names an incident, as a short slug';
   return featureProblem(order);
 }

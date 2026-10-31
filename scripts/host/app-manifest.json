@@ -8,6 +8,7 @@
     "contents": "write",
     "pull_requests": "write",
     "issues": "write",
+    "statuses": "write",
     "metadata": "read"
   }
 }
