@@ -195,3 +195,51 @@ test('a card\'s context names the done check, and any other open question on the
   assert.equal(cardContext({ views: more, card: question }).openDecision, true);
   assert.equal(cardContext({ views: {}, card: question }).doneCheck, undefined);
 });
+
+test('a change that can\'t be read yet is tried again, then sealed as unreadable', async () => {
+  let reads = 0;
+  const { seals, writes } = setUp({ factsOf: async () => { reads += 1; return { readable: false }; } });
+  seals.onCard({ ...question, branch: 'wh/x', folder: '/w/x' });
+  for (let i = 0; i < FACT_TRIES; i += 1) await seals.tick();
+  assert.equal(writes.length, 0);
+  await seals.tick();
+  assert.equal(reads, FACT_TRIES);
+  assert.equal(writes.length, 1);
+});
+
+test('facts a tick read aren\'t lost to failed writes', async () => {
+  let fail = FACT_TRIES + 1;
+  const kept = [];
+  const { seals } = setUp({ write: async (kind, data) => { if (fail > 0) { fail -= 1; throw new Error('busy'); } kept.push(data); } });
+  seals.onCard(question);
+  for (let i = 0; i < FACT_TRIES + 2; i += 1) await seals.tick();
+  assert.equal(kept[0].head, FACTS.head);
+});
+
+test('a slow write isn\'t raced by the look that takes over', async () => {
+  let wake;
+  let writes = 0;
+  const { seals, world } = setUp({ write: () => { writes += 1; return new Promise((resolve) => { wake = resolve; }); } });
+  seals.onCard(question);
+  const first = seals.tick();
+  await new Promise((resolve) => { setImmediate(resolve); });
+  world.now = new Date(world.now.getTime() + SEAL_TICK_MS + 1);
+  await seals.tick();
+  assert.equal(writes, 1);
+  wake();
+  await first;
+});
+
+test('a look under way can be waited for', async () => {
+  let wake;
+  const { seals } = setUp({ factsOf: () => new Promise((resolve) => { wake = resolve; }) });
+  seals.onCard(question);
+  seals.tick();
+  await new Promise((resolve) => { setImmediate(resolve); });
+  let done = false;
+  seals.settled().then(() => { done = true; });
+  await new Promise((resolve) => { setImmediate(resolve); });
+  assert.equal(done, false);
+  wake(FACTS);
+  await seals.settled();
+});

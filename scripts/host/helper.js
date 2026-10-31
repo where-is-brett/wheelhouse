@@ -4918,7 +4918,7 @@ export async function startHelper({
             target: { pr: change.n, sha: change.head },
           });
           await write('card', card);
-          onCard({ id: `${change.n}:${change.head}`, kind: 'approval', work: change.work ?? MERGE_WORK, level });
+          onCard({ id: `${change.n}:${change.head}`, kind: 'approval', work: marked.work ?? MERGE_WORK, level, branch: change.branch });
           once(key);
         },
         async wait(change, reason) {
@@ -5024,8 +5024,14 @@ export async function startHelper({
     // The seals beside the cards (scripts/delegation/record-only.js), ticked apart from engineTick.
     const seals = recordOnly({
       file: path.join(files, 'shadow.json'), write, now, stopped: () => closing || stopped(),
-      factsOf: async (card) => cardFacts({ card, git: gitRoute({ run }), defaultBranch: await defaultBranchOf(project, await adapterNow()) }),
-      contextOf: (card) => cardContext({ views: views(), card, testCommand: engineConfigOf(project, folder)?.testCommand }),
+      factsOf: async (card) => {
+        const adapter = await adapterNow();
+        return cardFacts({ card, git: gitRoute({ run }), baseCommit: await adapter.branchHead(await defaultBranchOf(project, adapter)) });
+      },
+      contextOf: (card) => {
+        const config = engineConfigOf(project, folder);
+        return cardContext({ views: views(), card, testCommand: config?.testsNotCounting ? null : config?.testCommand });
+      },
       stampOf: () => setupStamp({ bindings: engineConfigOf(project, folder)?.routing, packDigest: packTreeDigest(path.join(engineDir(), 'pack')), exclusionsHash: exclusionsHash() }),
     });
     const ownCard = (kind) => async (data) => {
@@ -5193,7 +5199,7 @@ export async function startHelper({
       await ticking?.catch(() => {});
       await engineStopping?.catch(() => {});
       await Promise.race([
-        Promise.allSettled(engineHosts.map(({ checks }) => checks.stop())),
+        Promise.allSettled([...engineHosts.map(({ checks }) => checks.stop()), ...engineHosts.map(({ seals }) => seals.settled())]),
         new Promise((resolve) => { setTimeout(resolve, CHECK_END_MS).unref?.(); }),
       ]);
       await Promise.allSettled(engineHosts.map(({ host }) => host.stop()));

@@ -11,12 +11,12 @@ import { SEAL_TICK_MS, FACT_TRIES, SEAL_TRIES } from './limits.js';
 import { UNREAD_FACTS } from './facts.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
-const EMPTY = () => ({ waiting: [], sealed: {}, tries: {} });
+const EMPTY = () => ({ waiting: [], sealed: {}, tries: {}, fails: {} });
 
 function readState(file) {
   try {
     const kept = JSON.parse(fs.readFileSync(file, 'utf8'));
-    return isPlain(kept) && Array.isArray(kept.waiting) && isPlain(kept.sealed) && isPlain(kept.tries) ? kept : EMPTY();
+    return isPlain(kept) && Array.isArray(kept.waiting) && isPlain(kept.sealed) && isPlain(kept.tries) && isPlain(kept.fails) ? kept : EMPTY();
   } catch {
     return EMPTY();
   }
@@ -29,7 +29,7 @@ export function cardContext({ views, card, testCommand }) {
   return { doneCheck: testCommand ?? undefined, openDecision: open };
 }
 
-// recordOnly({ file, write, stopped, now, factsOf, contextOf, stampOf }) -> { onCard(card), tick() }.
+// recordOnly({ file, write, stopped, now, factsOf, contextOf, stampOf }) -> { onCard(card), tick(), settled() }.
 // - `write(kind, data)` a signed record in the project's history; `stopped()` whether nothing should be read now;
 // - `factsOf(card)` the change's facts (facts.js); `contextOf(card)` what the candidates read beside them;
 // - `stampOf()` the setup's stamp (stamp.js). `card` is { id, kind, work, runId?, level, branch?, folder? }.
@@ -47,6 +47,7 @@ export function recordOnly({ file, write, stopped = () => false, now = () => new
   const forget = (id) => {
     state.waiting = state.waiting.filter((c) => c.id !== id);
     delete state.tries[id];
+    delete state.fails[id];
   };
 
   function onCard(card) {
@@ -62,33 +63,44 @@ export function recordOnly({ file, write, stopped = () => false, now = () => new
     return (await Promise.resolve().then(() => factsOf(card)).catch(() => null)) ?? UNREAD_FACTS;
   }
 
+  // Whether a card's change may yet be read: it has a place to read, and said nothing of a head.
+  const worthAnotherTry = (card, facts, tried) => facts.readable !== true && facts.head === undefined && Boolean(card.branch && card.folder) && tried <= FACT_TRIES;
+
   // One look over what waits. `flight` is this look's own mark: a look given up for hanging stops where it wakes, so
-  // it can't write beside the one that took over.
+  // it can't write beside the one that took over. `writing` holds the seal a given-up look may still be writing.
   let flight = null;
   let startedAt = 0;
+  let going = Promise.resolve();
+  const writing = new Set();
   async function look(mine) {
     for (const card of [...state.waiting]) {
       if (mine !== flight || stopped()) return;
-      const tried = (state.tries[card.id] ?? 0) + 1;
-      if (tried > SEAL_TRIES) {
+      if (writing.has(card.id)) continue;
+      if ((state.fails[card.id] ?? 0) >= SEAL_TRIES) {
         forget(card.id);
         quietly(keep);
         continue;
       }
+      const tried = (state.tries[card.id] ?? 0) + 1;
       state.tries[card.id] = tried;
       quietly(keep);
       const facts = await factsFor(card, tried);
       if (mine !== flight || stopped()) return;
+      if (worthAnotherTry(card, facts, tried)) continue;
+      // Facts in hand: a write that fails doesn't count against reading them.
+      if (facts.readable === true) delete state.tries[card.id];
       const ctx = quietly(() => contextOf(card), {}) ?? {};
       const seal = sealOf({ card, facts, ctx, stamp: quietly(stampOf, setupStamp()), at: now().toISOString() });
+      writing.add(card.id);
       try {
         await write('shadow', seal);
+        state.sealed[card.id] = true;
+        forget(card.id);
       } catch {
         // Tried again on the next tick, and given up after SEAL_TRIES.
-        continue;
+        state.fails[card.id] = (state.fails[card.id] ?? 0) + 1;
       }
-      state.sealed[card.id] = true;
-      forget(card.id);
+      writing.delete(card.id);
       quietly(keep);
     }
   }
@@ -100,10 +112,11 @@ export function recordOnly({ file, write, stopped = () => false, now = () => new
     const mine = {};
     flight = mine;
     startedAt = at;
-    return look(mine).catch(() => {}).finally(() => {
+    going = look(mine).catch(() => {}).finally(() => {
       if (flight === mine) flight = null;
     });
+    return going;
   }
 
-  return { onCard, tick };
+  return { onCard, tick, settled: () => going };
 }

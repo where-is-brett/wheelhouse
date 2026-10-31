@@ -58,6 +58,10 @@ test('a card with no change to read seals as unreadable, with every exclusion un
   assert.equal(seal.candidates.land, null);
 });
 
+test('a change that can\'t be read keeps its head', () => {
+  assert.equal(sealOf({ card: card(), facts: { readable: false, head: 'a'.repeat(40) }, stamp, at: AT }).head, 'a'.repeat(40));
+});
+
 test('what a card\'s context says reaches the candidates', () => {
   assert.equal(sealOf({ card: card(), facts, ctx: { hostPrivate: true }, stamp, at: AT }).candidates['push-draft'], true);
 });

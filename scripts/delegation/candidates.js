@@ -28,7 +28,7 @@ function mergedOrTest(ctx) {
 export const CANDIDATES = Object.freeze([
   {
     id: 'land', undo: 'allowed', words: 'Land finished, reviewed, green work',
-    applies: (facts, ctx = {}) => all(not(fact(facts, 'guardrail')), said(ctx.permitHolds), ctx.openDecision !== true),
+    applies: (facts, ctx = {}) => all(not(fact(facts, 'guardrail')), said(ctx.permitHolds), not(said(ctx.openDecision))),
   },
   {
     id: 'push-draft', undo: 'allowed', words: 'Push a branch or open a draft on the project\'s own private host',

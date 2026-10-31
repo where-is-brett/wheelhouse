@@ -99,19 +99,50 @@ test('git refusing reads as unreadable, not as a failure', async () => {
   assert.deepEqual(got, UNREAD_FACTS);
 });
 
+test('a secret in a file marked binary shows, and a line that opens with two pluses is read', async () => {
+  const r = repo();
+  const key = `AKIA${'A'.repeat(16)}`;
+  r.put('.gitattributes', 'data.bin binary\n');
+  const binary = r.put('data.bin', `${key}\n`);
+  assert.equal((await facts(r, binary)).secrets, true);
+  const other = repo();
+  assert.equal((await facts(other, other.put('src/k.txt', `++${key}\n`))).secrets, true);
+});
+
+test('a binary change is never small', async () => {
+  const r = repo();
+  const head = r.put('logo.png', Buffer.from([0, 1, 2, 3]));
+  assert.ok((await facts(r, head)).lines > 1_000_000);
+});
+
 // The route the helper hands in: git(folder) -> { call }.
 const routed = (dir) => () => ({ call: safeGit({ cwd: dir, look: 'never' }) });
+const cardIn = (r, branch = 'work') => ({ branch, folder: r.dir });
+const onCard = (r, baseCommit = r.git('rev-parse', 'main'), card = cardIn(r)) => cardFacts({ card, git: routed(r.dir), baseCommit });
 
 test('a card\'s change is read from its branch in its folder, judged by the default branch\'s configuration', async () => {
   const r = repo();
-  r.git('update-ref', 'refs/remotes/origin/main', 'main');
   r.put('.claude/wheelhouse.json', JSON.stringify({ v: 1, criticalAreas: [{ name: 'pay', paths: ['src/**'], checks: [] }], ciFiles: [], mcpServers: [], webDomains: [] }));
   const head = r.put('src/a.js', 'x\n');
-  const got = await cardFacts({ card: { branch: 'work', folder: r.dir }, git: routed(r.dir), defaultBranch: 'main' });
+  const got = await onCard(r);
   assert.equal(got.head, head);
   assert.equal(got.critical, false);
   assert.equal(got.guardrail, true);
   assert.deepEqual(got.paths, ['.claude/wheelhouse.json', 'src/a.js']);
+});
+
+test('a ref the run can move doesn\'t move the base: the change still shows', async () => {
+  const r = repo();
+  const head = r.put('.claude/settings.json', '{}\n');
+  r.git('update-ref', 'refs/remotes/origin/main', head);
+  const got = await onCard(r);
+  assert.equal(got.guardrail, true);
+});
+
+test('a base the folder doesn\'t hold is unreadable', async () => {
+  const r = repo();
+  r.put('src/a.js', 'x\n');
+  assert.deepEqual(await onCard(r, 'c'.repeat(40)), UNREAD_FACTS);
 });
 
 test('a plugin\'s parts are guardrails where the default branch is a plugin', async () => {
@@ -124,15 +155,40 @@ test('a plugin\'s parts are guardrails where the default branch is a plugin', as
   r.git('checkout', '-q', 'work');
   r.git('merge', '-q', 'main');
   const head = r.put('skills/a.md', 'x\n');
-  const got = await cardFacts({ card: { branch: 'work', folder: r.dir }, git: routed(r.dir), defaultBranch: 'main' });
+  const got = await onCard(r);
   assert.equal(got.head, head);
   assert.equal(got.guardrail, true);
 });
 
+test('nothing committed yet isn\'t a clean change: it can\'t be read, and the head is kept', async () => {
+  const r = repo();
+  const head = r.git('rev-parse', 'HEAD');
+  assert.deepEqual(await onCard(r), { readable: false, head });
+});
+
+test('uncommitted work can\'t be read, tracked or new', async () => {
+  const r = repo();
+  const head = r.put('src/a.js', 'x\n');
+  fs.writeFileSync(path.join(r.dir, 'src/a.js'), 'y\n');
+  assert.deepEqual(await onCard(r), { readable: false, head });
+  r.git('checkout', '--', 'src/a.js');
+  fs.writeFileSync(path.join(r.dir, 'new.js'), 'y\n');
+  assert.deepEqual(await onCard(r), { readable: false, head });
+});
+
+test('the run\'s own settings overlay isn\'t uncommitted work', async () => {
+  const r = repo();
+  r.put('.claude/settings.json', '{}\n');
+  fs.writeFileSync(path.join(r.dir, '.claude/settings.json'), '{"overlay":true}\n');
+  assert.equal((await onCard(r)).readable, true);
+});
+
 test('a card with no branch or no folder is unreadable, and so is a folder that has gone', async () => {
   const r = repo();
-  assert.deepEqual(await cardFacts({ card: { branch: null, folder: r.dir }, git: routed(r.dir), defaultBranch: 'main' }), UNREAD_FACTS);
-  assert.deepEqual(await cardFacts({ card: { branch: 'work' }, git: routed(r.dir), defaultBranch: 'main' }), UNREAD_FACTS);
-  assert.deepEqual(await cardFacts({ card: { branch: 'work', folder: path.join(r.dir, 'gone') }, git: routed(path.join(r.dir, 'gone')), defaultBranch: 'main' }), UNREAD_FACTS);
-  assert.deepEqual(await cardFacts({ card: { branch: '-x', folder: r.dir }, git: routed(r.dir), defaultBranch: 'main' }), UNREAD_FACTS);
+  const base = r.git('rev-parse', 'main');
+  assert.deepEqual(await onCard(r, base, { branch: null, folder: r.dir }), UNREAD_FACTS);
+  assert.deepEqual(await onCard(r, base, { branch: 'work' }), UNREAD_FACTS);
+  assert.deepEqual(await cardFacts({ card: { branch: 'work', folder: path.join(r.dir, 'gone') }, git: routed(path.join(r.dir, 'gone')), baseCommit: base }), UNREAD_FACTS);
+  assert.deepEqual(await onCard(r, base, { branch: '-x', folder: r.dir }), UNREAD_FACTS);
+  assert.deepEqual(await onCard(r, null), UNREAD_FACTS);
 });

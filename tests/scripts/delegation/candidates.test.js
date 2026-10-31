@@ -25,11 +25,12 @@ test('landing never applies to work that touches a guardrail', () => {
 });
 
 test('landing applies only where the permit holds and no decision is open', () => {
-  assert.equal(byId('land').applies(clean, { permitHolds: true }), true);
+  assert.equal(byId('land').applies(clean, { permitHolds: true, openDecision: false }), true);
+  assert.equal(byId('land').applies(clean, { permitHolds: true }), null);
   assert.equal(byId('land').applies(clean, { permitHolds: false }), false);
   assert.equal(byId('land').applies(clean, { permitHolds: true, openDecision: true }), false);
   assert.equal(byId('land').applies(clean, {}), null);
-  assert.equal(byId('land').applies({ readable: false }, { permitHolds: true }), null);
+  assert.equal(byId('land').applies({ readable: false }, { permitHolds: true, openDecision: false }), null);
 });
 
 test('a candidate that needs a done check, a mock-up or a private host can\'t say without it', () => {
