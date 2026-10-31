@@ -235,6 +235,8 @@ export function makeAdapter({ host, repo, run, env: given, base = DEFAULT_GITLAB
     },
     // What reports on the commit, by name: [{ name, state, startedAt, app }].
     checkContexts: async (sha) => c.checkContexts(commit(sha)),
+    // The checks the default branch's rules require, by name; null when they can't be read.
+    requiredChecks: async (branch) => c.requiredChecks(text(branch, 'branch')),
     // The commit a branch points at, in full: the health read asks the default branch's CI with it.
     // Whether the commit has any checks or pipeline, or the branch holds CI configuration. Unlike
     // ciState it never turns a failed read into 'none': an error is thrown, so a failure to look

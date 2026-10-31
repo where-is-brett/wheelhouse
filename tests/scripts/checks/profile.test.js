@@ -15,7 +15,7 @@ import { tempFolder } from '../../helpers/homes.js';
 const mac = { skip: process.platform !== 'darwin' };
 const USER = '/Users/someone';
 const ROOT = `${USER}/.wheelhouse/engine/checks/p`;
-const paths = (root = ROOT) => ({ root, tree: `${root}/tree`, gitDir: `${root}/tree.git`, home: `${root}/home`, mainHome: `${root}/main-home` });
+const paths = (root = ROOT) => ({ root, tree: `${root}/tree`, gitDir: `${root}/tree.git`, home: `${root}/home` });
 const DENIED = [`${USER}/.wheelhouse`, `${USER}/Library/Keychains`, `${USER}/.ssh`];
 const TEMP = ['/private/tmp', '/private/var/tmp'];
 const profile = (extra = {}) => checkProfile({ paths: paths(), main: false, stage: 'test', network: false, denied: DENIED, temp: TEMP, userHome: USER, ...extra });
@@ -75,10 +75,10 @@ test('a head writes its own folders and never main-home', () => {
   assert.ok(!writes.includes('main-home'));
 });
 
-test('a main-line check writes main-home and not a head\'s home', () => {
+test('a main-line check writes its own home and no other', () => {
   const writes = rules(profile({ main: true }), '(allow file-write*').join('\n');
-  assert.ok(writes.includes(`(subpath "${paths().mainHome}")`));
-  assert.ok(!writes.includes(`(subpath "${paths().home}")`));
+  assert.ok(writes.includes(`(subpath "${paths().home}")`));
+  assert.ok(!writes.includes('main-home'));
 });
 
 test('the git folder is readable and never writable', () => {
@@ -159,7 +159,7 @@ function world() {
   const outer = path.join(base, 'outer');
   const root = path.join(outer, 'engine', 'checks', 'p');
   const p = paths(root);
-  for (const dir of [p.tree, p.gitDir, p.home, p.mainHome]) fs.mkdirSync(dir, { recursive: true });
+  for (const dir of [p.tree, p.gitDir, p.home]) fs.mkdirSync(dir, { recursive: true });
   const secret = path.join(outer, 'secret.txt');
   fs.writeFileSync(secret, 'the secret');
   return { base, outer, p, secret };
@@ -184,8 +184,21 @@ test('a test can write in its tree and its home, and nowhere else', mac, () => {
   const w = world();
   assert.equal(sandboxed(w, `echo x > '${w.p.tree}/a' && echo x > '${w.p.home}/a'`).status, 0);
   assert.notEqual(sandboxed(w, `echo x > '${w.outer}/a'`).status, 0);
-  assert.notEqual(sandboxed(w, `echo x > '${w.p.mainHome}/a'`).status, 0);
   assert.notEqual(sandboxed(w, `echo x > '${os.homedir()}/wheelhouse-check-test'`).status, 0);
+});
+
+test('a head\'s sandbox can\'t write a main-line check\'s tree, and one main-line check\'s can\'t write the next one\'s', mac, () => {
+  const w = world();
+  const next = path.join(w.p.root, 'main', 'next', 'tree');
+  fs.mkdirSync(next, { recursive: true });
+  assert.notEqual(sandboxed(w, `echo x > '${next}/a'`).status, 0);
+  const earlier = { ...w.p, tree: path.join(w.p.root, 'main', 'earlier', 'tree') };
+  fs.mkdirSync(earlier.tree, { recursive: true });
+  const text = checkProfile({ paths: earlier, main: true, stage: 'test', network: false, denied: [w.outer], temp: TEMP, userHome: w.base });
+  const got = spawnSync('/usr/bin/sandbox-exec', ['-p', text, '/bin/sh', '-c', `echo x > '${earlier.tree}/a' && echo x > '${next}/a'`], { cwd: earlier.tree, encoding: 'utf8', env: { PATH: '/usr/bin:/bin', HOME: w.p.mainHome } });
+  assert.notEqual(got.status, 0);
+  assert.equal(fs.existsSync(path.join(earlier.tree, 'a')), true);
+  assert.equal(fs.existsSync(path.join(next, 'a')), false);
 });
 
 test('a test can\'t swap its tree or its home for a link, and can still work inside them', mac, () => {

@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { checkEnv, developerDir, endCheck, runCheck, secondTryOf } from '../../../scripts/checks/run.js';
+import { checkEnv, developerDir, endCheck, hostlessTests, runCheck, secondTryOf, toolHomes } from '../../../scripts/checks/run.js';
 import { dueChecks, withCheckTurn } from '../../../scripts/checks/queue.js';
 import { commandDigest, writeCheck } from '../../../scripts/checks/record.js';
 import { checkPaths } from '../../../scripts/checks/folder.js';
@@ -264,11 +264,12 @@ test('the check runs in its own home, with a temporary folder of its own and no 
     try {
       const got = await check('echo "home=$HOME tmp=$TMPDIR token=[$GH_TOKEN] pwd=$(pwd)"; test -d "$TMPDIR"');
       assert.equal(got.result, 'passed', got.tail);
-      const root = fs.realpathSync(checkPaths('p').root);
-      assert.ok(got.tail.includes(`home=${path.join(root, 'home')} `));
-      assert.ok(got.tail.includes(`tmp=${path.join(root, 'home', 'tmp')} `));
+      const { home, tree } = checkPaths('p');
+      const real = fs.realpathSync(path.dirname(tree));
+      assert.ok(got.tail.includes(`home=${path.join(real, path.basename(home))} `));
+      assert.ok(got.tail.includes(`tmp=${path.join(real, path.basename(home), 'tmp')} `));
       assert.ok(got.tail.includes('token=[]'));
-      assert.ok(got.tail.includes(`pwd=${path.join(root, 'tree')}`));
+      assert.ok(got.tail.includes(`pwd=${path.join(real, 'tree')}`));
     } finally {
       if (before === undefined) delete process.env.GH_TOKEN;
       else process.env.GH_TOKEN = before;
@@ -276,11 +277,11 @@ test('the check runs in its own home, with a temporary folder of its own and no 
   });
 });
 
-test('a main-line check has main-home for its home', unix, async () => {
+test('a main-line check has a home of its own for its home', unix, async () => {
   await withHome(async () => {
     const s = await source();
     const got = await runCheck({ project: 'p', commit: s.commit, main: true, settings: settings('echo "home=$HOME"'), source: s.url, platform: 'darwin', sandbox: standIn() });
-    assert.ok(got.tail.includes(path.join(fs.realpathSync(checkPaths('p').root), 'main-home')));
+    assert.match(got.tail, /home=.*\/main\/[0-9a-f]{16}\/home/);
   });
 });
 
@@ -337,6 +338,120 @@ test('a signal stops a check as endCheck does', unix, async () => {
     const running = check('sleep 30', { signal: stop.signal });
     setTimeout(() => stop.abort(), 300);
     assert.equal((await running).result, 'could-not-run');
+  });
+});
+
+// --- not counting ---
+
+test('a failing command gives not-counted, with no second try', unix, async () => {
+  await withHome(async () => {
+    const marks = path.join(tempFolder('wh-marks-'), 'marks');
+    const got = await check(`echo ran >> '${marks}'; exit 1`, { extra: { notCounting: true } });
+    assert.equal(got.result, 'not-counted');
+    assert.equal(fs.readFileSync(marks, 'utf8'), 'ran\n');
+  });
+});
+
+test('a head that passes while tests aren\'t counting gives not-counted, and the main line keeps its pass', unix, async () => {
+  await withHome(async () => {
+    assert.equal((await check('exit 0', { extra: { notCounting: true } })).result, 'not-counted');
+    const s = await source();
+    const got = await runCheck({ project: 'p', commit: s.commit, main: true, settings: settings('exit 0', { notCounting: true }), source: s.url, platform: 'darwin', sandbox: standIn() });
+    assert.equal(got.result, 'passed');
+    assert.equal(got.clean, true);
+  });
+});
+
+test('a check that couldn\'t run while tests aren\'t counting holds nothing up, unless All stop ended it', unix, async () => {
+  await withHome(async () => {
+    assert.equal((await check('exit 0', { extra: { notCounting: true }, sandbox: '/no/such/sandbox' })).result, 'not-counted');
+    const controller = new AbortController();
+    controller.abort();
+    const s = await source();
+    const got = await runCheck({ project: 'p', commit: s.commit, main: false, settings: settings('exit 0', { notCounting: true }), source: s.url, platform: 'darwin', sandbox: standIn(), signal: controller.signal });
+    assert.equal(got.result, 'could-not-run');
+  });
+});
+
+test('no command gives a record with command null, and runs nothing', async () => {
+  const commit = 'a'.repeat(40);
+  const got = await runCheck({ project: 'p', commit, main: true, settings: settings(null, { notCounting: true }), platform: 'linux' });
+  assert.deepEqual(got, { commit, command: null, result: 'not-counted', minutes: 0, tail: '', clean: true });
+});
+
+// --- tools, and what a red result can say ---
+
+test('a tool that isn\'t found is could-not-run, never red, with no second try, and says so', unix, async () => {
+  await withHome(async () => {
+    const marks = path.join(tempFolder('wh-marks-'), 'marks');
+    const got = await check(`echo ran >> '${marks}'; no-such-tool-here --version`);
+    assert.equal(got.result, 'could-not-run');
+    assert.equal(fs.readFileSync(marks, 'utf8'), 'ran\n');
+    assert.match(got.tail, /tool this project needs/);
+  });
+});
+
+test('a tool the sandbox refuses to start is could-not-run too', unix, async () => {
+  await withHome(async () => {
+    assert.equal((await check('exit 126')).result, 'could-not-run');
+  });
+});
+
+test('a test server on the engine room\'s port reads red, and says why', unix, async () => {
+  await withHome(async () => {
+    const got = await check('echo "connect EPERM 127.0.0.1:3090"; exit 1');
+    assert.equal(got.result, 'failed');
+    assert.match(got.tail, /3090 is kept for Wheelhouse/);
+  });
+});
+
+test('a red result with no port in it has no such line', unix, async () => {
+  await withHome(async () => {
+    assert.doesNotMatch((await check('echo "3 tests failed"; exit 1')).tail, /kept for Wheelhouse/);
+  });
+});
+
+test('where a version manager keeps its tools is kept, and what could break prepare or send a key elsewhere isn\'t', () => {
+  const kept = checkEnv({
+    SWIFTLY_HOME_DIR: '/a', SWIFTLY_BIN_DIR: '/a/bin', SWIFTLY_TOOLCHAINS_DIR: '/t', ASDF_DATA_DIR: '/b', ASDF_DIR: '/b2', MISE_DATA_DIR: '/c', PNPM_HOME: '/d', BUN_INSTALL: '/e', DENO_INSTALL: '/f', FNM_DIR: '/g', FNM_MULTISHELL_PATH: '/h',
+    RUSTUP_HOME: '/r', CARGO_HOME: '/x', HTTP_PROXY: 'http://u:p@proxy', https_proxy: 'http://u:p@proxy', ALL_PROXY: 'socks://proxy', NO_PROXY: 'x',
+  });
+  for (const name of ['SWIFTLY_HOME_DIR', 'SWIFTLY_BIN_DIR', 'SWIFTLY_TOOLCHAINS_DIR', 'ASDF_DATA_DIR', 'ASDF_DIR', 'MISE_DATA_DIR', 'PNPM_HOME', 'BUN_INSTALL', 'DENO_INSTALL', 'FNM_DIR', 'FNM_MULTISHELL_PATH', 'RUSTUP_HOME']) assert.ok(name in kept, name);
+  for (const name of ['CARGO_HOME', 'HTTP_PROXY', 'https_proxy', 'ALL_PROXY', 'NO_PROXY']) assert.ok(!(name in kept), name);
+});
+
+test('a version manager\'s home is named where the check\'s own HOME would hide it', () => {
+  const got = toolHomes({ env: { VOLTA_HOME: '/mine' }, userHome: '/Users/d', exists: (p) => ['/Users/d/.rustup', '/Users/d/.asdf', '/Users/d/.volta'].includes(p) });
+  assert.deepEqual(got, { RUSTUP_HOME: '/Users/d/.rustup', ASDF_DATA_DIR: '/Users/d/.asdf' });
+});
+
+// --- a job a test leaves behind, in a session of its own, which the end of the process group misses ---
+
+// A command that starts a job in its own session, which tries to write `target` for as long as it lives, and leaves.
+const leavesJob = (target, mark) => `perl -e 'use POSIX; exit 0 if fork; POSIX::setsid(); exit 0 if fork; open(STDIN, "<", "/dev/null"); open(STDOUT, ">", "/dev/null"); open(STDERR, ">", "/dev/null"); for (1..400) { for my $f (glob("${target}")) { if (open(O, ">>", $f)) { print O "planted\\n"; close(O); } } select(undef, undef, undef, 0.05); }' ; echo left > '${mark}' 2>/dev/null; exit 0`;
+
+test('a job one work left can\'t write another work\'s tree during its check, though it can name the file', mac, async () => {
+  await withHome(async () => {
+    const s = await source();
+    fs.mkdirSync(checkPaths('p').root, { recursive: true });
+    const root = fs.realpathSync(checkPaths('p').root);
+    const named = checkPaths('p', { work: 'b' }).tree.replace(checkPaths('p').root, root);
+    const left = await runCheck({ project: 'p', commit: s.commit, main: false, work: 'a', settings: settings(leavesJob(`${named}/a.txt`, '/private/tmp/wh-left')), source: s.url });
+    assert.equal(left.result, 'passed', left.tail);
+    const got = await runCheck({ project: 'p', commit: s.commit, main: false, work: 'b', settings: settings('sleep 3; ! grep -q planted a.txt'), source: s.url });
+    assert.equal(got.result, 'passed', got.tail);
+  });
+});
+
+test('a job a head left does write its own work\'s tree, which is why only the main line\'s clean check stands', mac, async () => {
+  await withHome(async () => {
+    const s = await source();
+    fs.mkdirSync(checkPaths('p').root, { recursive: true });
+    const root = fs.realpathSync(checkPaths('p').root);
+    const named = checkPaths('p', { work: 'a' }).tree.replace(checkPaths('p').root, root);
+    await runCheck({ project: 'p', commit: s.commit, main: false, work: 'a', settings: settings(leavesJob(`${named}/a.txt`, '/private/tmp/wh-left')), source: s.url });
+    const got = await runCheck({ project: 'p', commit: s.commit, main: false, work: 'a', settings: settings('sleep 3; grep -q planted a.txt'), source: s.url });
+    assert.equal(got.result, 'passed', got.tail);
   });
 });
 
@@ -401,6 +516,38 @@ test('hosted tests that fail on the second try are could-not-run, never red', un
     const got = await xcodeCheck(1);
     assert.equal(got.result, 'could-not-run');
     assert.equal(got.marks.match(/xcodebuild test/g).length, 1, 'no red second try on top');
+  });
+});
+
+const DIRECT = hostlessTests("xcodebuild build-for-testing -scheme App -derivedDataPath .build/checks CODE_SIGNING_ALLOWED=NO", '.build/checks');
+
+async function directCheck(xctestExit) {
+  const marks = path.join(tempFolder('wh-marks-'), 'marks');
+  const before = process.env.PATH;
+  process.env.PATH = `${fakeXcode(xctestExit, marks)}:${before}`;
+  try {
+    const s = await source();
+    const got = await runCheck({ project: 'p', commit: s.commit, main: false, settings: settings(DIRECT), source: s.url, platform: 'darwin', sandbox: standIn() });
+    return { ...got, marks: fs.readFileSync(marks, 'utf8') };
+  } finally {
+    process.env.PATH = before;
+  }
+}
+
+test('the finder\'s Xcode command goes straight to tests with no host, and its pass counts', unix, async () => {
+  await withHome(async () => {
+    const got = await directCheck(0);
+    assert.equal(got.result, 'passed');
+    assert.doesNotMatch(got.marks, /xcodebuild test/);
+    assert.match(got.marks, /xcodebuild build-for-testing\nxcrun xctest/);
+  });
+});
+
+test('anything but a pass from the finder\'s Xcode command is could-not-run, tried once', unix, async () => {
+  await withHome(async () => {
+    const got = await directCheck(1);
+    assert.equal(got.result, 'could-not-run');
+    assert.equal(got.marks.match(/xcodebuild build-for-testing/g).length, 1);
   });
 });
 

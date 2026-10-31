@@ -109,6 +109,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { SETUP_FILES } from '../../adapters/claude-code/packaging.js';
+import { findCommand } from '../checks/find-command.js';
 import { run as realRun, withoutGitVars } from '../lib/run.js';
 import { joinedRepo } from '../lib/setup-run.js';
 import { toolPath } from '../lib/host-tools.js';
@@ -130,6 +131,7 @@ import { protectionStatus as realProtectionStatus } from '../host/protection.js'
 import { projectPath } from '../host/gitlab-key.js';
 import { DEFAULT_GITLAB, commitEmailOf } from '../host/gitlab-base.js';
 import { MARKETPLACE, WHEELHOUSE_REPO, readManifest, checkInstalled, locateInstalled, claudeHome as defaultClaudeHome } from '../lineage/manifest.js';
+import { keepQueue, readQueue } from '../checks/standing.js';
 import { switchOnAsDirector, directorGitEnv, directorGitlabApi, madeBySetup, STOPPED, launchedIn, REAL_USERS } from './host.js';
 import { isolated, refuseUnlistedSettings, reaching } from './git.js';
 import { toolsStatus, PLUGIN_ROOT } from './tools.js';
@@ -300,17 +302,31 @@ function sameContent(rel, a, b) {
 // command line's own default), the front desk's `pages` (none, so no approval carries over a
 // screenshot), and `liveData` from step 4's answer (ruling R31). Real users are the `phase` setting
 // in state, never a key here (ruling R38). The configuration is the same on GitHub and GitLab.
-export function starterConfig({ answers = {}, frontDesk = null, midSized = null } = {}) {
+export function starterConfig({ answers = {}, frontDesk = null, midSized = null, found = null } = {}) {
   const live = answers['4.live-data'];
   if (live?.label !== LIVE_DATA.yes && live?.label !== LIVE_DATA.no) throw new Error('Step 4 has not been told whether the product holds live data yet');
   const starter = { ...readConfig(null), pages: [], liveData: live.label === LIVE_DATA.yes };
   // Only the director's Yes on step 4's question opens the keychain (check 73), never the working copy.
   if (answers['4.apple-apps']?.label === SIGNS_APPS.yes) starter.signsApps = true;
+  // What the finder found in the project as committed (spec 4.5).
+  if (found) {
+    starter.testCommand = found.testCommand;
+    if (found.prepare) starter.checks = { prepare: found.prepare };
+  }
   const out = frontDesk ? { ...starter, routing: { ...starter.routing, frontDesk } } : starter;
   // The most capable class is the front desk's model; the mid-sized class is what its alias stands for.
   // No premium pin is ever written here: it is the director's separate opt-in (design section 14.6).
   const pins = { ...(frontDesk ? { mostCapable: frontDesk } : {}), ...(midSized ? { midSized } : {}) };
   return Object.keys(pins).length > 0 ? { ...out, tiers: { pins } } : out;
+}
+
+// The finder's answer for what is committed in the folder, read through setup's git: never what is only in the folder,
+// where a person's unfinished work could be.
+export async function foundAtHead(git) {
+  const files = ((await git.raw(['ls-files', '-z'])) ?? '').split('\0').filter(Boolean);
+  const texts = {};
+  for (const file of ['package.json', 'Makefile'].filter((f) => files.includes(f))) texts[file] = await git.out(['show', `HEAD:${file}`]);
+  return findCommand({ list: () => files, read: (file) => texts[file] ?? null });
 }
 
 // The front desk's model a configuration pins (design section 8), or null when it pins none.
@@ -1209,7 +1225,7 @@ export function projectFilesStep({
       // The lighter model for Lean and Lightest the same way: the pin held, else what its alias stands for, asked once.
       const held = midSizedPin(objectIn(CONFIG, readText(at(CONFIG))));
       const mid = held ?? await bestOnce(found.project, ctx.runId, MID_SIZED_ALIAS, best);
-      const config = starterConfig({ answers: ctx.answers, frontDesk: pin, midSized: mid });
+      const config = starterConfig({ answers: ctx.answers, frontDesk: pin, midSized: mid, found: await foundAtHead(git) });
       const home = claudeHome();
       const release = wheelhouseRelease({ folder, claudeHome: home });
       const targets = targetsFor({ folder, config, release });
@@ -1483,6 +1499,8 @@ export function projectFilesStep({
           after: { action: 'protect', branch: protect.branch, on: true }, project,
         });
         const got = await switchOn({ host, repo, run, api, realUsers });
+        // What the rules ask for, so a helper that later can't read them still knows whether they name its own check.
+        if (Array.isArray(got.required)) keepQueue(project, { ...readQueue(project), required: got.required });
         // What a step says is its latest line, so protection's read-back, what the real users
         // changed and each gap the read-back found go in one line, in plain words.
         // The gaps about the project's secrets come last: there can be many, and "(and N more)" then

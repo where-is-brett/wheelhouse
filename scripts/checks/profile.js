@@ -9,6 +9,7 @@
 //
 // The last matching rule wins, so the order of the lines below carries meaning.
 
+import path from 'node:path';
 import { ENGINE_ROOM_PORT } from '../protection/archon.js';
 
 // The system services a build tool can't work without, each answering a question and starting nothing. Three are left out
@@ -53,7 +54,7 @@ const NETWORK_SERVICES = Object.freeze([
 // alone because `.cargo` holds a registry token. A key someone puts in a tool's own settings here is in reach of `prepare`.
 const TOOLS = Object.freeze([
   '.asdf', '.bun', '.cargo/bin', '.deno', '.fnm', '.local/share/mise', '.local/share/pnpm', '.mise', '.nvm',
-  '.pyenv', '.rbenv', '.rustup', '.sdkman', '.swiftly', '.volta', 'Library/pnpm',
+  '.pyenv', '.rbenv', '.rustup', '.sdkman', '.swiftly', '.volta', 'Library/Application Support/fnm', 'Library/Developer/Toolchains', 'Library/pnpm',
 ]);
 const DEVICES = '(literal "/dev/null") (literal "/dev/zero") (literal "/dev/random") (literal "/dev/urandom") (literal "/dev/tty") (literal "/dev/dtracehelper") (literal "/dev/ptmx") (regex #"^/dev/(fd|ttys)")';
 const NAME_SERVICE = '/private/var/run/mDNSResponder';
@@ -76,7 +77,7 @@ function foldersAbove(folder) {
 // The SBPL text for one stage of a check. `stage` is `prepare` or `test`. `denied` is the deny list as real paths and
 // `temp` the temporary folders a check may write, which leave out the per-user ones (above).
 export function checkProfile({ paths, main, stage, network, denied, temp, userHome }) {
-  const ownHome = main ? paths.mainHome : paths.home;
+  const ownHome = paths.home;
   const online = stage === 'prepare' || network === true;
   const lines = [
     '(version 1)',
@@ -102,7 +103,7 @@ export function checkProfile({ paths, main, stage, network, denied, temp, userHo
   // A program must be able to look at the folders on the way down to the check folder to start there, though nothing here
   // lets it list them.
   lines.push(
-    `(allow file-read-metadata ${foldersAbove(paths.root).map(literal).join(' ')})`,
+    `(allow file-read-metadata ${foldersAbove(path.dirname(paths.tree)).map(literal).join(' ')})`,
     `(allow file-read* ${subpaths([paths.tree, paths.gitDir, ownHome])})`,
     `(allow file-write* ${subpaths([paths.tree, ownHome, ...temp])} ${DEVICES})`,
     // The folders themselves stay: a test that swapped one for a link would have the helper's next git calls write and

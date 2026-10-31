@@ -27,6 +27,23 @@ test('a 403 reads permission', async () => {
   assert.deepEqual(await a.setStatus({ sha: SHA, state: 'success', description: 'Passed' }), { refused: 'permission' });
 });
 
+test('a 403 for going too fast isn\'t a missing permission', async () => {
+  for (const stderr of ['gh: API rate limit exceeded for installation (HTTP 403)', 'gh: You have exceeded a secondary rate limit (HTTP 403)']) {
+    const { adapter: a } = adapter([{ code: 1, stdout: '', stderr }]);
+    const got = await a.setStatus({ sha: SHA, state: 'success', description: 'Passed' });
+    assert.equal(typeof got.refused, 'string');
+    assert.notEqual(got.refused, 'permission');
+  }
+});
+
+test('a status that says failure came from something that ran', async () => {
+  const nodes = [{ __typename: 'StatusContext', context: 'jenkins', state: 'FAILURE', createdAt: '2026-10-31T01:00:00Z', creator: { login: 'ci' } }, { __typename: 'StatusContext', context: 'other', state: 'PENDING', createdAt: '2026-10-31T01:00:00Z', creator: null }];
+  const { adapter: a } = adapter([{ code: 0, stdout: JSON.stringify({ data: { repository: { object: { statusCheckRollup: { contexts: { nodes } } } } } }), stderr: '' }]);
+  const [failed, waiting] = await a.checkContexts(SHA);
+  assert.equal(failed.startedAt, '2026-10-31T01:00:00Z');
+  assert.equal(waiting.startedAt, null);
+});
+
 test('another failure reads as a refusal in plain words, not a throw', async () => {
   const { adapter: a } = adapter([{ code: 1, stdout: '', stderr: 'gh: Server Error (HTTP 502)' }]);
   const got = await a.setStatus({ sha: SHA, state: 'success', description: 'Passed' });
@@ -77,4 +94,18 @@ test('a commit with no rollup has no contexts, and an answer with errors is thro
   assert.deepEqual(await none.adapter.checkContexts(SHA), []);
   const bad = adapter([{ code: 0, stdout: JSON.stringify({ errors: [{ message: 'x' }], data: null }), stderr: '' }]);
   await assert.rejects(bad.adapter.checkContexts(SHA));
+});
+
+test('requiredChecks reads the names from the branch\'s rules', async () => {
+  const rules = [{ type: 'deletion' }, { type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'wheelhouse/checks' }, { context: 'ci' }] } }];
+  const { adapter: a, calls } = adapter([{ code: 0, stdout: JSON.stringify(rules), stderr: '' }]);
+  assert.deepEqual(await a.requiredChecks('main'), ['wheelhouse/checks', 'ci']);
+  assert.ok(calls[0].args.join(' ').includes('repos/o/p/rules/branches/main'));
+});
+
+test('requiredChecks is empty where a plan has no rules, and null where they can\'t be read', async () => {
+  const read = (answer) => adapter([answer]).adapter.requiredChecks('main');
+  assert.deepEqual(await read({ code: 1, stdout: '', stderr: 'gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)' }), []);
+  assert.equal(await read({ code: 1, stdout: '', stderr: 'gh: Bad gateway (HTTP 502)' }), null);
+  assert.equal(await read({ code: 0, stdout: '{ not json', stderr: '' }), null);
 });

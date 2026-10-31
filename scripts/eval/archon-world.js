@@ -90,6 +90,7 @@ const standInHost = () => ({
   defaultBranch: async () => 'main',
   branchHead: async () => null,
   checkContexts: async () => [{ name: 'ci', state: 'success', startedAt: '2026-10-31T00:00:00.000Z' }],
+  requiredChecks: async () => [],
 });
 
 // The wake process: a stand-in that runs nothing. No real play answers an ask, so none needs carrying on.

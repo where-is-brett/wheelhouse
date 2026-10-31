@@ -59,8 +59,8 @@ function makeRoot() {
   // Laid out as the real check folder is, deep inside a folder on the deny list (~/.wheelhouse/engine/checks/<project>).
   const outer = path.join(REAL_HOME, 'Library', 'Caches', `${MARK}-${crypto.randomBytes(3).toString('hex')}`);
   const root = path.join(outer, 'engine', 'checks', 'project');
-  const paths = { outer, root, tree: path.join(root, 'tree'), gitDir: path.join(root, 'tree.git'), home: path.join(root, 'home'), mainHome: path.join(root, 'main-home'), outside: path.join(outer, 'outside') };
-  for (const dir of [paths.tree, paths.home, paths.mainHome, path.join(paths.home, 'tmp'), paths.outside]) fs.mkdirSync(dir, { recursive: true });
+  const paths = { outer, root, tree: path.join(root, 'tree'), gitDir: path.join(root, 'tree.git'), home: path.join(root, 'home'), outside: path.join(outer, 'outside') };
+  for (const dir of [paths.tree, paths.home, path.join(paths.home, 'tmp'), paths.outside]) fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(paths.outside, 'secret.txt'), crypto.randomBytes(16).toString('hex'));
   return paths;
 }

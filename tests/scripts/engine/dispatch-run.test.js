@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { dispatchRun, TRY_AGAIN } from '../../../scripts/engine/dispatch-run.js';
+import { dispatchRun, orderFor, TRY_AGAIN } from '../../../scripts/engine/dispatch-run.js';
 import { fakeEngine } from '../../../scripts/engine/fake.js';
 import { tempFolder } from '../../helpers/homes.js';
 
@@ -107,6 +107,17 @@ test('a second red raises a card', async () => {
   assert.equal(cards[0].data.level, 3);
   assert.match(cards[0].data.what, /tests/);
   assert.doesNotMatch(JSON.stringify(cards[0].data), /commit status|pull request/);
+});
+
+test('a head that passes wipes the slate, so a later slice\'s first red goes back with no card', async () => {
+  const t = sentBackWorld();
+  t.d.sentBack('card-1', 'red', 'one');
+  await t.d.tick();
+  t.d.passed('card-1');
+  t.d.sentBack('card-1', 'red', 'a later piece');
+  await t.d.tick();
+  assert.equal(t.starts.length, 2);
+  assert.equal(t.written.filter((w) => w.kind === 'question').length, 0);
 });
 
 test('Try again on that card starts it with the newest tail', async () => {
@@ -260,4 +271,15 @@ test('no queue run starts while the engine can\'t say what is live, and it start
   listing = [];
   await t.d.tick();
   assert.equal(t.starts(), 1);
+});
+
+// --- while tests aren't counting ---
+
+test('the order has no default test check while not counting', () => {
+  const entry = { work: { key: 'card-1', data: { id: 'card-1', lane: 'quick', title: 'A title', done: [] } } };
+  const order = orderFor(entry, { config: { testCommand: 'npm test', testsNotCounting: true, routing: {} } });
+  assert.deepEqual(order.done, []);
+  assert.equal(order.testsNotCounting, true);
+  const counted = orderFor(entry, { config: { testCommand: 'npm test', routing: {} } });
+  assert.deepEqual(counted.done, [{ command: 'npm test', expect: 0 }]);
 });

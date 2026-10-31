@@ -128,7 +128,8 @@ export function checkOrder(order) {
   if (!texts(order.notInScope) || !texts(order.rulings) || !texts(order.decisionRules) || !texts(order.protectedFiles)) {
     return 'a work order\'s lists must hold text';
   }
-  if (!Array.isArray(order.done) || order.done.length === 0) return 'a work order needs at least one done check';
+  // While a project's tests aren't counting a change rests on review, so a lane may start with nothing to run (spec 4.5).
+  if (!Array.isArray(order.done) || (order.done.length === 0 && order.testsNotCounting !== true)) return 'a work order needs at least one done check';
   for (const check of order.done) {
     const problem = checkProblem(check);
     if (problem) return problem;
@@ -142,7 +143,8 @@ export function checkOrder(order) {
   }
   if (order.showFirst !== undefined && typeof order.showFirst !== 'boolean') return 'a work order says yes or no to being shown first';
   if (order.level !== undefined && ![1, 2, 3, 4].includes(order.level)) return 'a work order\'s level is 1, 2, 3 or 4';
-  if (!isText(order.testCommand)) return 'a work order needs the project\'s test command';
+  if (!isText(order.testCommand) && !(order.testCommand === null && order.testsNotCounting === true)) return 'a work order needs the project\'s test command';
+  if (order.testCommand === null && order.done.some((check) => Object.hasOwn(check, 'test'))) return 'a test check needs the project\'s test command, and this project has none yet';
   if (!isObject(order.bindings)) return 'a work order needs its model bindings';
   if (order.answers !== undefined && !(Array.isArray(order.answers) && order.answers.length <= MOST_ANSWERS && order.answers.every(isAnswer))) {
     return 'a work order\'s answers are each a question and its answer, in short text';
@@ -191,7 +193,8 @@ export function workOrder({ work, rulings = [], routing = {}, config = {}, caps 
     preview: work.visible === true ? { pages: [...(config.pages ?? [])], styleGuide: config.styleGuide ?? null } : null,
     showFirst: work.visible === true && work.shownFirst !== false,
     level: [1, 2, 3, 4].includes(work.level) ? work.level : 3,
-    testCommand: config.testCommand ?? DEFAULT_TEST_COMMAND,
+    testCommand: config.testsNotCounting === true ? config.testCommand ?? null : config.testCommand ?? DEFAULT_TEST_COMMAND,
+    ...(config.testsNotCounting === true ? { testsNotCounting: true } : {}),
     bindings: { ...(routing.tiers ? { tiers: { ...routing.tiers } } : {}), ...(routing.aliases ? { aliases: { ...routing.aliases } } : {}) },
     answers: (Array.isArray(answers) ? answers : []).slice(-MOST_ANSWERS).map((a) => ({
       question: typeof a?.question === 'string' ? a.question.slice(0, ANSWER_CHARS) : a?.question,

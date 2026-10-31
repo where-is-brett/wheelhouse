@@ -137,6 +137,9 @@ export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal
     async checkContexts() {
       throw new Error('GitLab projects run their checks on the host');
     },
+    async requiredChecks() {
+      return [];
+    },
 
     async hasCi(sha, branch) {
       // Any pipeline on the head counts, a skipped one too: it was run, and ran nothing.

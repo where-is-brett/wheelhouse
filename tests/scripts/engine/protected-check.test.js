@@ -106,3 +106,53 @@ test('the check fails closed when the helper has no order', async () => {
   const found = await check(dir, { engine: { order: async () => ({ ok: false, refused: 'there is no work order for that run' }) } });
   assert.equal(found.code, 1);
 });
+
+// --- what a test command runs ---
+
+const edited = (before, after, file) => {
+  const dir = repo({ ...BASE, [file]: before });
+  fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+  fs.writeFileSync(path.join(dir, file), after);
+  git(dir, 'add', '-A');
+  git(dir, 'commit', '-qm', 'A change');
+  return check(dir);
+};
+const PACKAGE = (test, more = {}) => `${JSON.stringify({ scripts: { test }, ...more }, null, 2)}\n`;
+
+test('an emptied test script is a finding', async () => {
+  const { code, lines } = await edited(PACKAGE('node --test'), PACKAGE('exit 0'), 'package.json');
+  assert.equal(code, 1);
+  assert.match(lines.join('\n'), /changes what the tests run in package\.json/);
+});
+
+test('a dependency added to package.json is no finding', async () => {
+  assert.equal((await edited(PACKAGE('node --test'), PACKAGE('node --test', { dependencies: { a: '1.0.0' } }), 'package.json')).code, 0);
+});
+
+test('a package.json that no longer parses is a finding', async () => {
+  assert.equal((await edited(PACKAGE('node --test'), '{', 'package.json')).code, 1);
+});
+
+test('a changed scheme or test plan is a finding', async () => {
+  for (const file of ['App.xcodeproj/xcshareddata/xcschemes/App.xcscheme', 'App.xctestplan']) {
+    const { code, lines } = await edited('<a/>\n', '<b/>\n', file);
+    assert.equal(code, 1, file);
+    assert.match(lines.join('\n'), /test settings/);
+  }
+});
+
+test('a dropped test target is a finding', async () => {
+  const two = 'targets: [.target(name: "A"), .testTarget(name: "ATests"), .testTarget(name: "BTests")]\n';
+  const one = 'targets: [.target(name: "A"), .testTarget(name: "ATests")]\n';
+  const { code, lines } = await edited(two, one, 'Package.swift');
+  assert.equal(code, 1);
+  assert.match(lines.join('\n'), /fewer test targets in Package\.swift \(1, was 2\)/);
+  assert.equal((await edited(one, two, 'Package.swift')).code, 0, 'one added is no finding');
+});
+
+test('a changed test target in a Makefile is a finding, and another target isn\'t', async () => {
+  const make = (test, build = 'cc a.c') => `build:\n\t${build}\n\ntest: build\n\t${test}\n`;
+  assert.equal((await edited(make('./run'), make('true'), 'Makefile')).code, 1);
+  assert.equal((await edited(make('./run'), make('./run', 'cc b.c'), 'Makefile')).code, 0);
+  assert.equal((await edited('test := 1\nall:\n\tcc\n', 'test := 2\nall:\n\tcc\n', 'Makefile')).code, 0, 'a variable named test is no target');
+});

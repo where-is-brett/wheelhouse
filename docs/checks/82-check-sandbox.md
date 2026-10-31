@@ -139,6 +139,12 @@ What the three can do: none starts a program a test chooses. The new `audio-comp
 - The ways out run from inside a real test, as opposed to the shell under the same profile, except the three reports of the made-up app.
 - Tight on a project whose test needs `NSApplication`. With `launchservicesd` denied, such a test aborts.
 
+**Part 1's final results, at cadb856b.** `checkProfile` as built: all 29 ways of `ways` shut in the test stage, in `prepare` only `curl` gets out, and `runner` passed in 0.7 minutes on the real project.
+
+**`swift test --no-parallel`, 1 November 2026.** The finder's Swift command, through `runner` on the real project: all its tests passed in 0.8 minutes, and its folder was left as it was.
+
+**The direct Xcode path has tests only, 1 November 2026.** The finder's row for an Xcode project, `xcodebuild build-for-testing` then `xcrun xctest`, has run in the code's tests and not on a real Xcode project: the real project here is a Swift package.
+
 ## What it means for the design
 
 For the main session as cards, not yet changed in the design:

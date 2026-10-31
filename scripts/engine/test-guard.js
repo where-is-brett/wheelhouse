@@ -16,7 +16,47 @@ export function isTestFile(file) {
 // The files that set how tests run and what coverage they need: loosening one passes a change without its tests.
 const TEST_SETTINGS = /(^|\/)(jest|vitest|karma|mocha|ava|playwright|cypress|babel\.test)\.config\.[cm]?[jt]s$|(^|\/)\.(nycrc|c8rc|mocharc)(\.[a-z]+)?$|(^|\/)(pytest\.ini|tox\.ini|\.coveragerc|codecov\.ya?ml|phpunit\.xml(\.dist)?)$/i;
 
-export const isTestSettings = (file) => TEST_SETTINGS.test(String(file).replace(/\\/g, '/'));
+// An Xcode scheme or test plan says which tests run, so unticking them is the same thing.
+const XCODE_TESTS = /\.(xcscheme|xctestplan)$/;
+
+export const isTestSettings = (file) => {
+  const rel = String(file).replace(/\\/g, '/');
+  return TEST_SETTINGS.test(rel) || XCODE_TESTS.test(rel);
+};
+
+// What a file says the tests run, for the three files whose other changes are nobody's business: a dependency added to
+// package.json is no finding. Each gives text to compare, and null when the file has none of it or can't be read as one.
+const PACKAGE = /(^|\/)package\.json$/;
+const MAKEFILE = /(^|\/)(GNUmakefile|[Mm]akefile)$/;
+const SWIFT_PACKAGE = /(^|\/)Package\.swift$/;
+
+function packageTests(text) {
+  if (text === null) return null;
+  let scripts;
+  try {
+    scripts = JSON.parse(text)?.scripts;
+  } catch {
+    return 'unreadable';
+  }
+  const named = Object.entries(scripts ?? {}).filter(([name]) => /^(pre|post)?test/.test(name)).sort(([a], [b]) => (a < b ? -1 : 1));
+  return named.length > 0 ? JSON.stringify(named) : null;
+}
+
+function makeTests(text) {
+  if (text === null) return null;
+  const lines = text.split(/\r?\n/);
+  const start = lines.findIndex((l) => /^test\s*:(?!=)/.test(l));
+  if (start === -1) return null;
+  const end = lines.findIndex((l, i) => i > start && l.trim() !== '' && !l.startsWith('\t'));
+  return lines.slice(start, end === -1 ? undefined : end).join('\n').trim();
+}
+
+export const testRunner = (file) => {
+  const rel = String(file).replace(/\\/g, '/');
+  return PACKAGE.test(rel) ? packageTests : MAKEFILE.test(rel) ? makeTests : null;
+};
+export const isSwiftPackage = (file) => SWIFT_PACKAGE.test(String(file).replace(/\\/g, '/'));
+export const testTargetCount = (text) => (String(text ?? '').match(/\.testTarget\s*\(/g) ?? []).length;
 
 // Markers that skip, park or narrow a test, across the common test tools.
 export const SKIP_MARKERS = Object.freeze([

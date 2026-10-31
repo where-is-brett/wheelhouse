@@ -46,6 +46,8 @@ const STALL_QUESTIONS = FEATURE_QUESTIONS + 500;
 export const FEATURE_STOPPED = 'Stopped before it was switched on; the slices already added stay behind their switch.';
 // The summary of the report for quick, small and bug work whose pull request merged.
 export const MERGED_WORDS = 'Added to the main line.';
+// On every merge while a project's tests aren't counting (ruling 2): it rests on review and the work's own done checks.
+export const NOT_COUNTING_WORDS = 'Tests aren\'t counting yet';
 export const CLOSED_WORDS = 'Its pull request was closed without being added.';
 // The fix card's numbers, after the clash cards' and the requests card's.
 const FIX_QUESTIONS = OWN_QUESTIONS + 5000;
@@ -68,6 +70,9 @@ function readState(file) {
   }
 }
 
+// Whether work can start: it needs a command to tell when it is done, unless the project's tests aren't counting yet.
+const canTest = (config) => isText(config?.testCommand) || config?.testsNotCounting === true;
+
 // The Logbook's line when no work can start because Wheelhouse can't run the project's tests.
 export const NO_TESTS_WORDS = 'Build work waits: Wheelhouse doesn\'t know how to run this project\'s tests, so it couldn\'t tell when a change is done. Setup can add the command.';
 
@@ -79,7 +84,7 @@ export const REQUESTS_WORDS = 'Some work would use your AI plan\'s counted reque
 // `answers` the director's answers to the work's earlier questions, from the helper's own record.
 export function orderFor(entry, { settings = {}, raised = false, config = {}, answers = [] } = {}) {
   const data = entry.work.data;
-  const done = Array.isArray(data.done) && data.done.length > 0 ? data.done : [{ command: config.testCommand, expect: 0 }];
+  const done = Array.isArray(data.done) && data.done.length > 0 ? data.done : config.testsNotCounting === true ? [] : [{ command: config.testCommand, expect: 0 }];
   return workOrder({
     work: { id: data.id ?? entry.work.key, lane: data.lane, goal: data.goal ?? data.title, done, visible: data.visible === true, level: data.level, notInScope: data.notInScope ?? [], protectedFiles: data.protectedFiles ?? [] },
     config,
@@ -146,7 +151,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     const views = readViews() ?? {};
     const entry = views.work?.[work];
     if (!isPlain(entry?.work?.data)) return { ok: false, refused: 'there is no such work' };
-    if (!isText(config()?.testCommand)) return { ok: false, refused: 'Wheelhouse doesn\'t know how to run the project\'s tests' };
+    if (!canTest(config())) return { ok: false, refused: 'Wheelhouse doesn\'t know how to run the project\'s tests' };
     if (entry.work.data.lane === 'feature') return startFeature({ views, entry, work, lane, branch, carryOn, raised, answers, checkTail });
     let order;
     try { order = orderFor({ ...entry, work: { ...entry.work, key: work } }, { settings: settings() ?? {}, raised, config: config() ?? {}, answers }); } catch (error) { return { ok: false, refused: error.message }; }
@@ -433,7 +438,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
           keep();
         }
         if (got !== 'merged') continue;
-        await write('report', { work, outcome: 'merged', pr, summary: MERGED_WORDS, rulings: [] });
+        await write('report', { work, outcome: 'merged', pr, summary: config()?.testsNotCounting === true ? `${MERGED_WORDS} ${NOT_COUNTING_WORDS}.` : MERGED_WORDS, rulings: [] });
         state.shipped[work] = queued;
         keep();
         merged = true;
@@ -618,7 +623,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     // The project's configuration and test command: without one Wheelhouse can run, nothing starts (a run would have
     // no done check), and the Logbook says so once.
     let pieces = [...decided.requeue.map((r) => ({ ...r, carryOn: true, again: true })), ...decided.start];
-    if (pieces.length > 0 && !isText(config()?.testCommand)) {
+    if (pieces.length > 0 && !canTest(config())) {
       decided.hold.push(...pieces.map((p) => ({ work: p.work, why: 'no-tests' })));
       decided.start = [];
       decided.requeue = [];
@@ -749,6 +754,12 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     sentBack(work, reason = 'clash', tail = null) {
       if (reason === 'red') state.reds[work] = { times: (state.reds[work]?.times ?? 0) + 1, tail };
       else state.sentBack[work] = (state.sentBack[work] ?? 0) + 1;
+      keep();
+    },
+    // A head of `work` passed: its reds are behind it, so a later slice's first red is a first red.
+    passed(work) {
+      if (state.reds[work] === undefined) return;
+      for (const kept of [state.reds, state.redActed, state.redAsked, state.redNoted]) delete kept[work];
       keep();
     },
   };

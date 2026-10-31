@@ -1102,7 +1102,7 @@ test('/host/facts says whether protection is on and whether the default branch h
       const asked = [];
       const none = fakeAdapter({ hasCi: async (sha, branch) => { asked.push([sha, branch]); return false; } });
       await withHelper(none, async (client) => {
-        assert.deepEqual(await client.host.facts({ project: 'o__p' }), { ok: true, protection: 'none', ci: 'none' });
+        assert.deepEqual(await client.host.facts({ project: 'o__p' }), { ok: true, protection: 'none', ci: 'here' });
         assert.deepEqual(asked, [[HEAD, 'main']], 'the default branch\'s head and name are what is asked about');
       }, { run: freePlanRun });
       await withHelper(fakeAdapter({ hasCi: async () => true }), async (client) => {

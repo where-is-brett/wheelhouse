@@ -26,6 +26,7 @@ export function standInHost(remoteUrl) {
     verdictComment: async ({ number, id, body }) => { comments.push({ number, id, body }); return { id: id ?? 500 }; },
     ciState: async (sha) => ({ sha, state: 'pending' }),
     checkContexts: async () => [{ name: 'ci', state: 'pending' }],
+    requiredChecks: async () => [],
     issue: { create: async () => ({ number: 1 }), update: async () => ({ number: 1 }), list: async () => [] },
   };
 }
