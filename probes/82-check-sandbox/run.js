@@ -6,6 +6,8 @@
 //   node probes/82-check-sandbox/run.js fixture [--profile draft|tight|open] [--once]    a made-up app: is a test still inside?
 //   node probes/82-check-sandbox/run.js swift [--profile ...]              a made-up Swift package: the table's next row
 //   node probes/82-check-sandbox/run.js project <folder> [--profile ...] [--scheme S] [--container rel] [--minutes 20]
+//   node probes/82-check-sandbox/run.js runner <folder>|--fixture [--test "command"] [--prepare "command"] [--minutes 20]
+//                                          the check runner itself, from fetch to word, on a copy of the folder's head
 //
 // `deny` is the check runner's own profile (scripts/checks/profile.js) and the default. Don't use draft or open on a
 // project: `xcodebuild test` has the system start the project's app outside the sandbox (see docs/checks/82-check-sandbox.md).
@@ -29,6 +31,7 @@ import { testEnv } from '../../scripts/lib/local-git.js';
 import { credentialPaths } from '../../scripts/lib/credentials.js';
 import { archonDenyRules, KEYCHAINS } from '../../scripts/protection/settings.js';
 import { checkProfile } from '../../scripts/checks/profile.js';
+import { runCheck } from '../../scripts/checks/run.js';
 import { writeFixture } from './fixture.js';
 
 const REAL_HOME = os.homedir();
@@ -531,6 +534,54 @@ async function phaseSwift() {
   }
 }
 
+// runCheck itself, in a Wheelhouse home of its own under a throwaway folder, on a bare copy of the folder's head. The
+// helper's mirror stands for the same thing in real use. Swift's commands unless told otherwise; `--fixture` is the made-up
+// app, whose `xcodebuild test` the sandbox refuses, so it shows the second try.
+async function phaseRunner() {
+  const fixture = process.argv.includes('--fixture');
+  const folder = fixture ? null : path.resolve(process.argv[3] ?? '');
+  if (!fixture && (!process.argv[3] || !fs.existsSync(path.join(folder, '.git')))) throw new Error('Give the project folder, or --fixture');
+  const paths = makeRoot();
+  const report = {};
+  process.env.WHEELHOUSE_HOME = path.join(paths.outer, 'wheelhouse');
+  try {
+    const made = path.join(paths.outer, 'made');
+    let names = [];
+    if (fixture) {
+      fs.mkdirSync(made);
+      const { scheme, container } = writeFixture(made, { outside: paths.outside, keychains: expand(KEYCHAINS) });
+      process.argv.push('--test', `xcodebuild test -project ${container} -scheme ${scheme} -destination 'platform=macOS' -derivedDataPath .build/checks ${SWITCHES.join(' ')} CODE_SIGNING_ALLOWED=NO`);
+      await git(paths.root, 'init', '-q', made);
+      await git(made, 'add', '-A');
+      await git(made, '-c', 'user.name=probe', '-c', 'user.email=probe@wheelhouse.invalid', 'commit', '-qm', 'The made-up app');
+    } else {
+      const text = fs.existsSync(path.join(folder, 'Package.swift')) ? fs.readFileSync(path.join(folder, 'Package.swift'), 'utf8') : '';
+      const remote = await git(folder, 'remote', 'get-url', 'origin');
+      names = [path.basename(folder), path.basename(remote.stdout.trim()).replace(/\.git$/, ''), ...[...text.matchAll(/name:\s*"([^"]+)"/g)].map((m) => m[1])];
+    }
+    const from = fixture ? made : folder;
+    const source = path.join(paths.outer, 'source.git');
+    const cloned = await git(paths.outer, 'clone', '-q', '--bare', '--no-hardlinks', from, source);
+    if (cloned.code !== 0) throw new Error(`git clone: ${cloned.stderr.trim()}`);
+    await git(source, 'remote', 'remove', 'origin');
+    const commit = (await git(source, 'rev-parse', 'HEAD')).stdout.trim();
+    const settings = {
+      testCommand: option('test', 'swift test --disable-sandbox'),
+      prepare: option('prepare', fixture ? null : 'swift package resolve --disable-sandbox'),
+      minutes: Number(option('minutes', 20)),
+      network: false,
+    };
+    const mask = maskerOf(names);
+    const got = await runCheck({ project: 'project', commit, main: true, settings, source });
+    report.result = got.result;
+    report.minutes = got.minutes;
+    report.tail = mask(got.tail).split('\n').slice(-12);
+    report.proofsBesideTheSecret = fs.readdirSync(paths.outside).filter((n) => n.startsWith('proof-'));
+  } finally {
+    await finish(paths, report);
+  }
+}
+
 // The report goes to the screen and the check folder; the folder goes to the Trash unless --keep. Never deleted outright.
 async function finish(paths, report) {
   const text = `${JSON.stringify(report, null, 2)}\n`;
@@ -544,7 +595,7 @@ async function finish(paths, report) {
   process.stdout.write(got.code === 0 ? 'The check folder went to the Trash.\n' : `The check folder stays at ${paths.outer.replace(REAL_HOME, '~')}: ${got.stderr.trim()}\n`);
 }
 
-const phases = { ways: phaseWays, fixture: phaseFixture, swift: phaseSwift, project: phaseProject };
+const phases = { ways: phaseWays, fixture: phaseFixture, swift: phaseSwift, project: phaseProject, runner: phaseRunner };
 const phase = phases[process.argv[2]];
-if (!phase) throw new Error('Give ways, fixture, swift or project');
+if (!phase) throw new Error('Give ways, fixture, swift, project or runner');
 await phase();
