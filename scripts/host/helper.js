@@ -60,8 +60,8 @@ import { commandDigest } from '../checks/record.js';
 import { runCheck } from '../checks/run.js';
 import { checkRunner } from '../checks/runner.js';
 import { checksConfig, checksSettings } from '../checks/settings.js';
-import { readQueue } from '../checks/standing.js';
-import { whereChecks } from '../checks/where.js';
+import { keepQueue, readQueue, whereNow } from '../checks/standing.js';
+import { STATUS_CONTEXT } from '../checks/where.js';
 import { startEngineHost } from '../engine/host.js';
 import { engineRoom } from '../engine/room.js';
 import { stopEngine, endRun, stopWords } from '../engine/stop.js';
@@ -4054,12 +4054,13 @@ export async function startHelper({
       checksRead.set(project, read);
     }
     const settings = checksSettings(read.config);
-    return {
-      setting: settings.where, host: 'github', contexts: await adapter.checkContexts(read.main), hasWorkflows: read.hasWorkflows,
-      main: read.main, settings, digest: commandDigest(settings.testCommand),
-    };
+    const contexts = await adapter.checkContexts(read.main);
+    // The rules matter only once something else reports: until then the checks run here whatever they say.
+    const ownOnly = !read.hasWorkflows && contexts.every((c) => c.name === STATUS_CONTEXT);
+    const required = ownOnly ? [] : await adapter.requiredChecks(defaultBranch).catch(() => null);
+    return { setting: settings.where, host: 'github', contexts, hasWorkflows: read.hasWorkflows, required, main: read.main, settings, digest: commandDigest(settings.testCommand) };
   }
-  const checksRunHere = (project, facts) => whereChecks({ ...facts, hostChecksOff: readQueue(project).hostChecksOff }) === 'here';
+  const checksRunHere = (project, facts) => whereNow(project, facts) === 'here';
   // The project's check records this computer signed, oldest first.
   function signedChecks(project) {
     const enrolled = ownKeyOnly();

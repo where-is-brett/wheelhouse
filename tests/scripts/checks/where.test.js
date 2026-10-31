@@ -2,7 +2,7 @@
 // Where a project's checks run (spec 4.1), worked out and never asked.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { whereChecks, stuckHostChecks } from '../../../scripts/checks/where.js';
+import { rulesNameOurs, whereChecks, stuckHostChecks } from '../../../scripts/checks/where.js';
 
 const own = { name: 'wheelhouse/checks', state: 'success', startedAt: null, app: 'me' };
 const job = { name: 'build', state: 'success', startedAt: '2026-10-31T01:00:00Z', app: 'github-actions' };
@@ -31,6 +31,31 @@ test('checks.where fixes the answer', () => {
 
 test('a local project reads here', () => {
   assert.equal(whereChecks({ host: 'local', contexts: [], hasWorkflows: true }), 'here');
+});
+
+test('while the rules still name our check, the runner keeps reporting, whatever else reports', () => {
+  assert.equal(whereChecks({ host: 'github', contexts: [own, job], hasWorkflows: true, required: ['wheelhouse/checks'] }), 'here');
+  assert.equal(whereChecks({ setting: 'host', host: 'github', contexts: [job], hasWorkflows: true, required: ['ci', 'wheelhouse/checks'] }), 'here');
+});
+
+test('rules that no longer name our check leave the checks with the host', () => {
+  assert.equal(whereChecks({ host: 'github', contexts: [job], hasWorkflows: true, required: ['ci'], recorded: ['wheelhouse/checks'] }), 'host');
+});
+
+test('what setup recorded answers when the host can\'t be read', () => {
+  assert.equal(whereChecks({ host: 'github', contexts: [job], hasWorkflows: true, required: null, recorded: ['wheelhouse/checks'] }), 'here');
+  assert.equal(whereChecks({ host: 'github', contexts: [job], hasWorkflows: true, required: null, recorded: ['ci'] }), 'host');
+});
+
+test('neither the host nor setup can tell: no answer of its own, and the card says so', () => {
+  assert.equal(rulesNameOurs({ required: null, recorded: null }), null);
+  assert.equal(rulesNameOurs({ required: [], recorded: null }), false);
+  assert.equal(rulesNameOurs({ required: ['wheelhouse/checks'], recorded: null }), true);
+  assert.equal(whereChecks({ host: 'github', contexts: [job], hasWorkflows: true, required: null, recorded: null }), 'host');
+});
+
+test('the director\'s Keep reporting holds the checks here', () => {
+  assert.equal(whereChecks({ host: 'github', contexts: [job], hasWorkflows: true, required: null, recorded: null, keepReporting: true }), 'here');
 });
 
 const T0 = '2026-10-31T01:00:00.000Z';

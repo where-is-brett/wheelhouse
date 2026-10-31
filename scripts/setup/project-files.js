@@ -130,6 +130,7 @@ import { protectionStatus as realProtectionStatus } from '../host/protection.js'
 import { projectPath } from '../host/gitlab-key.js';
 import { DEFAULT_GITLAB, commitEmailOf } from '../host/gitlab-base.js';
 import { MARKETPLACE, WHEELHOUSE_REPO, readManifest, checkInstalled, locateInstalled, claudeHome as defaultClaudeHome } from '../lineage/manifest.js';
+import { keepQueue, readQueue } from '../checks/standing.js';
 import { switchOnAsDirector, directorGitEnv, directorGitlabApi, madeBySetup, STOPPED, launchedIn, REAL_USERS } from './host.js';
 import { isolated, refuseUnlistedSettings, reaching } from './git.js';
 import { toolsStatus, PLUGIN_ROOT } from './tools.js';
@@ -1483,6 +1484,8 @@ export function projectFilesStep({
           after: { action: 'protect', branch: protect.branch, on: true }, project,
         });
         const got = await switchOn({ host, repo, run, api, realUsers });
+        // What the rules ask for, so a helper that later can't read them still knows whether they name its own check.
+        if (Array.isArray(got.required)) keepQueue(project, { ...readQueue(project), required: got.required });
         // What a step says is its latest line, so protection's read-back, what the real users
         // changed and each gap the read-back found go in one line, in plain words.
         // The gaps about the project's secrets come last: there can be many, and "(and N more)" then

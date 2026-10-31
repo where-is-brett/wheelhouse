@@ -403,7 +403,7 @@ async function switchOnGithub(gh, repo) {
   }
   const after = await githubStatus(gh, repo);
   if (lost && !after.on) throw new Error('GitHub did not answer while asking it to protect the branches, and the protection is not in place');
-  return { on: after.on, line: after.line };
+  return { on: after.on, line: after.line, required: contexts };
 }
 
 // GitLab ----------------------------------------------------------------

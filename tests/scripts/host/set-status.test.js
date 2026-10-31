@@ -78,3 +78,17 @@ test('a commit with no rollup has no contexts, and an answer with errors is thro
   const bad = adapter([{ code: 0, stdout: JSON.stringify({ errors: [{ message: 'x' }], data: null }), stderr: '' }]);
   await assert.rejects(bad.adapter.checkContexts(SHA));
 });
+
+test('requiredChecks reads the names from the branch\'s rules', async () => {
+  const rules = [{ type: 'deletion' }, { type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'wheelhouse/checks' }, { context: 'ci' }] } }];
+  const { adapter: a, calls } = adapter([{ code: 0, stdout: JSON.stringify(rules), stderr: '' }]);
+  assert.deepEqual(await a.requiredChecks('main'), ['wheelhouse/checks', 'ci']);
+  assert.ok(calls[0].args.join(' ').includes('repos/o/p/rules/branches/main'));
+});
+
+test('requiredChecks is empty where a plan has no rules, and null where they can\'t be read', async () => {
+  const read = (answer) => adapter([answer]).adapter.requiredChecks('main');
+  assert.deepEqual(await read({ code: 1, stdout: '', stderr: 'gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)' }), []);
+  assert.equal(await read({ code: 1, stdout: '', stderr: 'gh: Bad gateway (HTTP 502)' }), null);
+  assert.equal(await read({ code: 0, stdout: '{ not json', stderr: '' }), null);
+});

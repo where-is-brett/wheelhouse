@@ -105,6 +105,19 @@ export function githubCommands({ call, attempt, json, repo, fromAddress, refusal
       return (Array.isArray(nodes) ? nodes : []).map(contextOf).filter((c) => typeof c.name === 'string' && c.name !== '');
     },
 
+    // The checks the rules on a branch require, by name, from what a connection with no administration may read. Empty on a
+    // plan with no rules, and null when they can't be read.
+    async requiredChecks(branch) {
+      const { code, stdout, stderr } = await attempt(['api', `repos/${repo}/rules/branches/${encodeURIComponent(branch)}?per_page=100`]);
+      if (code !== 0) return /upgrade to github pro/i.test(`${stderr}\n${stdout}`) ? [] : null;
+      try {
+        const rules = JSON.parse(stdout);
+        return Array.isArray(rules) ? rules.filter((r) => r?.type === 'required_status_checks').flatMap((r) => r.parameters?.required_status_checks ?? []).map((c) => c?.context) : null;
+      } catch {
+        return null;
+      }
+    },
+
     // Reports a check on the commit (check 84). Each post adds an entry and the rollup takes the newest, so one repeated
     // does no harm. A refusal is an answer: a connection set up before Wheelhouse asked for this permission reads 'permission'.
     async setStatus({ sha, state, description }) {

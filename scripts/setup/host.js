@@ -1356,9 +1356,9 @@ export function protectionPlanLine(host) {
 // says the project has no pipeline, so "pipelines must succeed" was left off and the director is
 // asked (design section 12.3).
 export async function switchOnAsDirector({ host, repo, run = realRun, api, realUsers = false }) {
-  await switchOnProtection({ host, repo, run, api, env: {}, realUsers });
+  const made = await switchOnProtection({ host, repo, run, api, env: {}, realUsers });
   const read = await protectionStatus({ host, repo, run, api, env: {}, realUsers, director: true });
-  if (host !== 'gitlab') return { available: read.available, on: read.on, line: read.line };
+  if (host !== 'gitlab') return { available: read.available, on: read.on, line: read.line, required: made?.required };
   const project = await api.get(projectPath(repo));
   const branch = project.body?.default_branch;
   const rule = typeof branch === 'string' ? await readGitlabProtection({ api, projectId: repo, branch }) : null;

@@ -5,12 +5,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { checkRunner, CHECK_TRY_AGAIN as TRY_AGAIN, CHECK_LEAVE_IT as LEAVE_IT } from '../../../scripts/checks/runner.js';
+import { checkRunner, CHECK_TRY_AGAIN as TRY_AGAIN, CHECK_LEAVE_IT as LEAVE_IT, KEEP_REPORTING } from '../../../scripts/checks/runner.js';
 import { commandDigest } from '../../../scripts/checks/record.js';
-import { checksStanding } from '../../../scripts/checks/standing.js';
+import { checksStanding, keepQueue, readQueue } from '../../../scripts/checks/standing.js';
 import { enrol, makeSigningKey } from '../../../scripts/state/signing.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { RUN_CHECKS_HERE, LEAVE_THEM } from '../../../scripts/state/card-lines.js';
+import { answerInput, composeCard, questionProblem } from '../../../scripts/cards/compose.js';
+import { cardProblems } from '../../../scripts/hooks/card-check.js';
 
 const COMMAND = 'npm test';
 const DIGEST = commandDigest(COMMAND);
@@ -513,4 +515,67 @@ test('a real job on the main line after the press takes the checks back to the h
   w.facts = { ...w.facts, contexts: [{ name: 'build', state: 'running', startedAt: '2026-10-31T03:00:00Z', app: 'github-actions' }] };
   await settled(runner);
   assert.deepEqual(w.ran, []);
+}));
+
+// A card from the runner as the front desk asks it: the real composer, and the real check of the words.
+function asAsked(card) {
+  assert.equal(questionProblem(card), null);
+  const composed = composeCard(answerInput(card, 'the checks'));
+  assert.deepEqual(cardProblems(composed.question), []);
+}
+
+// --- a project protected with our check that later adds a workflow ---
+
+const withWorkflow = (more) => ({ hasWorkflows: true, contexts: [{ name: 'ci', state: 'success', startedAt: 'x' }], ...more });
+
+test('a project whose rules name our check keeps reporting after it adds a workflow', () => withHome(async () => {
+  const { w, runner } = world();
+  w.facts = { ...w.facts, ...withWorkflow({ required: ['wheelhouse/checks'] }) };
+  await runner.took(HEAD, 'w');
+  await runner.tick();
+  await runner.idle();
+  assert.ok(w.posts.some((p) => p.state === 'pending'));
+  assert.ok(w.ran.some((r) => r.commit === MAIN));
+  assert.equal(w.cards.length, 0);
+}));
+
+test('a project whose rules can\'t be read by anyone gets one card, with no merge stopped silently', () => withHome(async () => {
+  const { w, runner } = world();
+  w.facts = { ...w.facts, ...withWorkflow({ required: null }) };
+  for (let i = 0; i < 8; i += 1) await runner.tick();
+  assert.equal(w.cards.length, 1);
+  const [card] = w.cards;
+  assert.equal(card.level, 3);
+  assert.equal(card.recommendation, KEEP_REPORTING);
+  assert.equal(card.options[0].label, KEEP_REPORTING);
+  assert.doesNotMatch(`${card.what} ${card.why} ${card.options.map((o) => o.says).join(' ')}`, /commit status|bare repository|\bremote\b|\bforge\b/i);
+  asAsked(card);
+  assert.equal(w.ran.length, 0);
+  w.answers[card.id] = KEEP_REPORTING;
+  await runner.tick();
+  await runner.idle();
+  assert.ok(w.ran.some((r) => r.commit === MAIN));
+}));
+
+test('one unreadable look raises nothing, and a read that comes back clears the count', () => withHome(async () => {
+  const { w, runner } = world();
+  w.facts = { ...w.facts, ...withWorkflow({ required: null }) };
+  await runner.tick();
+  await runner.tick();
+  w.facts = { ...w.facts, required: ['ci'] };
+  await runner.tick();
+  w.facts = { ...w.facts, required: null };
+  await runner.tick();
+  await runner.tick();
+  assert.equal(w.cards.length, 0);
+}));
+
+test('setup\'s record answers for a host that can\'t be read', () => withHome(async () => {
+  keepQueue('p', { ...readQueue('p'), required: ['wheelhouse/checks'] });
+  const { w, runner } = world();
+  w.facts = { ...w.facts, ...withWorkflow({ required: null }) };
+  await runner.tick();
+  await runner.idle();
+  assert.equal(w.cards.length, 0);
+  assert.ok(w.ran.some((r) => r.commit === MAIN));
 }));

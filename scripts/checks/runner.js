@@ -9,14 +9,17 @@ import { sweepHeads } from './folder.js';
 import { dueChecks, withCheckTurn } from './queue.js';
 import { writeCheck } from './record.js';
 import { runCheck } from './run.js';
-import { keepQueue, readQueue } from './standing.js';
-import { stuckHostChecks, whereChecks } from './where.js';
+import { keepQueue, readQueue, whereNow } from './standing.js';
+import { rulesNameOurs, stuckHostChecks } from './where.js';
 import { LEAVE_THEM, RUN_CHECKS_HERE } from '../state/card-lines.js';
 
 export const CHECK_CARD_WORK = 'checks';
 export const CHECK_TRY_AGAIN = 'Try again';
 export const CHECK_LEAVE_IT = 'Leave it';
+export const KEEP_REPORTING = 'Keep reporting';
 const NOT_RAN_LIMIT = 2;
+// How many looks in a row at rules nobody can read before it is the director's: about five minutes, past a passing fault.
+const UNREAD_LIMIT = 5;
 const KEPT_READINGS = 3;
 const KEPT_TAKEN = 200;
 
@@ -91,6 +94,29 @@ export function checkRunner({
     ],
     recommendation: RUN_CHECKS_HERE,
   });
+
+  const askUnread = () => ask('rulesUnread', {
+    what: 'Wheelhouse can\'t read this project\'s rules on GitHub, so it can\'t tell whether they still ask for its own check. If they do and it stops reporting, nothing can be added to the main line.',
+    why: 'Running the checks here as well as on GitHub costs this computer some time, and only you can say whether that is wanted, at level 3.',
+    options: [
+      { label: KEEP_REPORTING, says: 'The checks run on this computer as well, and report to GitHub, so nothing waits for a report that never comes.' },
+      { label: CHECK_LEAVE_IT, says: 'Only GitHub\'s own checks run. If the rules still ask for Wheelhouse\'s check, finished work waits.' },
+    ],
+    recommendation: KEEP_REPORTING,
+  });
+
+  // A project whose checks read as the host's, when nobody can say whether the rules still ask for ours. A read that comes
+  // back settles it, and only looks in a row count, so a passing fault raises nothing.
+  async function watchRules(f) {
+    const kept = readQueue(project);
+    const unread = rulesNameOurs({ required: f.required, recorded: kept.required }) === null;
+    if (!unread) {
+      if (kept.rulesUnread !== 0) change((q) => { q.rulesUnread = 0; });
+      return;
+    }
+    const seen = change((q) => { q.rulesUnread += 1; });
+    if (seen.rulesUnread >= UNREAD_LIMIT) await askUnread();
+  }
 
   // Reports a commit, from the signed record: 'pending' while it has none for this command. A status that can't post is kept
   // and tried again on the next tick; the record stands meanwhile.
@@ -221,7 +247,9 @@ export function checkRunner({
     change((q) => { q.heads = q.heads.filter((h) => !ended(h.work)); });
     let kept = readQueue(project);
     if (!kept.hostChecksOff && kept.asked.broken && answerOf(kept.asked.broken) === RUN_CHECKS_HERE) kept = change((q) => { q.hostChecksOff = true; });
-    if (whereChecks({ ...f, hostChecksOff: kept.hostChecksOff }) !== 'here') {
+    if (!kept.keepReporting && kept.asked.rulesUnread && answerOf(kept.asked.rulesUnread) === KEEP_REPORTING) change((q) => { q.keepReporting = true; });
+    if (whereNow(project, f) !== 'here') {
+      await watchRules(f);
       await watchHost(f);
       return;
     }
@@ -252,7 +280,7 @@ export function checkRunner({
       queued(head, work);
       const f = await facts();
       if (!f || stopped() || typeof f.settings?.testCommand !== 'string') return;
-      if (whereChecks({ ...f, hostChecksOff: readQueue(project).hostChecksOff }) !== 'here') return;
+      if (whereNow(project, f) !== 'here') return;
       // Reported from the record, so a head taken again doesn't lose its result. One that came back red with nothing
       // changed goes back again, which the second time is the director's card.
       await report(head, f.digest);

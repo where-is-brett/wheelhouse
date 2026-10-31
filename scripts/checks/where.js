@@ -6,11 +6,21 @@ const STUCK_MS = 30 * 60 * 1000;
 
 const others = (contexts) => (Array.isArray(contexts) ? contexts : []).filter((c) => c?.name !== STATUS_CONTEXT);
 
-// 'here' or 'host'. `setting` is `checks.where` from the default branch, and wins; `contexts` what reports on the default
+// Whether the default branch's rules name our check: `required` what the host's rules say now, null when they can't be read,
+// and `recorded` what setup wrote into them, null when it wrote none. Null when neither can tell.
+export function rulesNameOurs({ required = [], recorded = null }) {
+  const known = Array.isArray(required) ? required : recorded;
+  return Array.isArray(known) ? known.includes(STATUS_CONTEXT) : null;
+}
+
+// 'here' or 'host'. Rules that name our check come first: nothing else can answer them, so the runner keeps reporting or every
+// merge would stop, whatever else now reports and whatever the setting says. `setting` is `checks.where` from the default branch, and wins; `contexts` what reports on the default
 // branch's head, never a change's head, since a change could add a workflow of its own. `hostChecksOff` is the director's
 // press on the card for checks that aren't running: the workflows stay in the project with the host's switch off, so they
 // no longer count, and neither does what never ran. A job that really runs still takes the checks back to the host.
-export function whereChecks({ setting = null, host, contexts = [], hasWorkflows = false, hostChecksOff = false }) {
+// `keepReporting` is the director's press on the card for rules nobody can read.
+export function whereChecks({ setting = null, host, contexts = [], hasWorkflows = false, hostChecksOff = false, keepReporting = false, required = [], recorded = null }) {
+  if (rulesNameOurs({ required, recorded }) === true || keepReporting) return 'here';
   if (setting === 'here' || setting === 'host') return setting;
   if (host === 'local') return 'here';
   if (hostChecksOff) return others(contexts).some((c) => !neverRan(c, Infinity)) ? 'host' : 'here';
