@@ -8,6 +8,7 @@ import { LINE_CHARS, WEEK_MS } from '../lib/core-numbers.js';
 import { latestFor } from '../state/views.js';
 import { SAFETY_LINES } from '../agents/safety-lines.js';
 import { HOST_UNREACHABLE } from '../host/company-ca.js';
+import { localWords } from '../lib/host-lines.js';
 import { BUILD_QUESTION_LABELS, isBuildQuestion, settingKey } from '../protection/windows-builds.js';
 import { SEE_BEFORE_MERGE, SEE_IN_BRIEFING } from '../lib/calm-words.js';
 import { REST_LINE, restOf } from '../routing/premium.js';
@@ -373,7 +374,14 @@ function part(missing, name, build, fallback) {
 
 // `hostUnreachable` is the GitLab address (a string) while the host can't be reached, else absent.
 // `since` (optional) is the time of the director's last briefing: what is new since it is counted.
-export function boardModel({ project, views, profileUnconfirmed, events, usage, health, settings, sources, hostUnreachable, agent, now, since } = {}) {
+// Every line of a project kept on this computer's model, as such a project says it.
+const inLocalWords = (value) => {
+  if (typeof value === 'string') return localWords(value);
+  if (Array.isArray(value)) return value.map(inLocalWords);
+  return isRecord(value) ? Object.fromEntries(Object.entries(value).map(([key, part]) => [key, inLocalWords(part)])) : value;
+};
+
+export function boardModel({ project, views, profileUnconfirmed, events, usage, health, settings, sources, hostUnreachable, agent, now, since, local = false } = {}) {
   const missing = [];
   // A clock that can't be read is named, never replaced by this computer's.
   // Only a Date, a finite number, or a function giving one of those, is a clock.
@@ -546,5 +554,6 @@ export function boardModel({ project, views, profileUnconfirmed, events, usage, 
     },
   };
 
-  return { project, builtAt, director, build, missing: [...new Set(missing)] };
+  const model = { project, builtAt, director, build, missing: [...new Set(missing)] };
+  return local ? inLocalWords(model) : model;
 }

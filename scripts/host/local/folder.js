@@ -11,6 +11,7 @@ import { gitRoute, homeDir, homeGit, isBranchName } from './home.js';
 
 export const FOLDER_REMOTE = 'wheelhouse';
 export const HAND_MADE_WORK = 'by-hand';
+const KEPT_LINES = 'wheelhouse-home';
 export const OWN_CHANGES_LINE = 'Your folder has changes of its own, so the newest version waits.';
 
 const FOLDER_WHAT = 'the project\'s folder';
@@ -54,18 +55,54 @@ export async function compareFolder(args) {
   return (await reading({ git: gitRoute(), ...args })).state;
 }
 
+// Whether the folder is on `branch` with nothing uncommitted, so its main line can move.
+export async function folderFree({ folder, branch, git = gitRoute() }) {
+  const here = inFolder(folder, git);
+  const on = await here.call(['symbolic-ref', '-q', 'HEAD']);
+  if (on.code !== 0 || String(on.stdout).trim() !== `refs/heads/${branch}`) return false;
+  const dirty = await here.call(['--no-optional-locks', 'status', '--porcelain', '--untracked-files=no']);
+  return dirty.code === 0 && String(dirty.stdout).trim() === '';
+}
+
 // Brings the folder up to the home's main version, fast-forward only: { moved } says whether it moved, or { line } why it
 // waits. Only a folder on that branch with nothing uncommitted. A file git doesn't track holds nothing up, and one in the
 // way makes the merge refuse, ignored or not.
 export async function bringFolderUp({ project, folder, branch, git = gitRoute() }) {
   const { state, home } = await reading({ project, folder, branch, git });
   if (state !== 'home-ahead') return { moved: false };
+  if (!(await folderFree({ folder, branch, git }))) return { line: OWN_CHANGES_LINE };
   const here = inFolder(folder, git);
-  const on = await here.call(['symbolic-ref', '-q', 'HEAD']);
-  if (on.code !== 0 || String(on.stdout).trim() !== `refs/heads/${branch}`) return { line: OWN_CHANGES_LINE };
-  const dirty = await here.call(['--no-optional-locks', 'status', '--porcelain', '--untracked-files=no']);
-  if (dirty.code !== 0 || String(dirty.stdout).trim() !== '') return { line: OWN_CHANGES_LINE };
   return (await here.ok(['merge', '--ff-only', '--no-overwrite-ignore', '--quiet', home])) ? { moved: true } : { line: OWN_CHANGES_LINE };
+}
+
+// Uninstall's: gives the folder all the home holds, so the folder's git is a full copy once the home has gone. The main line
+// comes by bringFolderUp, or by a merge where the two parted. { line } says why it waits, and { kept } names the line that
+// holds the home's main version where the merge clashed. A line the folder has no copy of comes as itself, and one that
+// differs comes under KEPT_LINES, so nothing of the folder's moves. Wheelhouse's own lines stay behind.
+export async function takeHome({ project, folder, branch, env = {}, git = gitRoute() }) {
+  const up = await bringFolderUp({ project, folder, branch, git });
+  if (up.line !== undefined) return up;
+  const here = inFolder(folder, git);
+  const home = homeGit(project, git);
+  const keepAs = (from, to) => here.must(['fetch', '--quiet', '--no-tags', '--no-write-fetch-head', '--no-recurse-submodules', homeDir(project), `+refs/heads/${from}:refs/heads/${to}`], 'The folder could not take a line from the home');
+  let kept = null;
+  if ((await reading({ project, folder, branch, git })).state === 'parted') {
+    if (!(await folderFree({ folder, branch, git }))) return { line: OWN_CHANGES_LINE };
+    const joining = git(folder, { reach: 'local', what: FOLDER_WHAT, env });
+    if (!(await joining.ok(['merge', '--no-edit', '--no-verify', '--no-gpg-sign', '--no-overwrite-ignore', '--quiet', tracking(branch)]))) {
+      await here.call(['merge', '--abort']);
+      kept = `${KEPT_LINES}/${branch}`;
+      await keepAs(branch, kept);
+    }
+  }
+  const lines = (await home.must(['for-each-ref', '--format=%(refname:lstrip=2) %(objectname)', 'refs/heads'], 'The main version could not be read')).split('\n').filter(Boolean).map((l) => l.split(' '));
+  for (const [name, tip] of lines) {
+    if (name === branch || name.startsWith('wheelhouse/')) continue;
+    const held = await here.call(['rev-parse', '--verify', '-q', `refs/heads/${name}^{commit}`]);
+    if (held.code !== 0) await keepAs(name, name);
+    else if (!(await here.ok(['merge-base', '--is-ancestor', tip, String(held.stdout).trim()]))) await keepAs(name, `${KEPT_LINES}/${name}`);
+  }
+  return { kept };
 }
 
 // The card for work the folder holds and the home doesn't (spec 5.4).

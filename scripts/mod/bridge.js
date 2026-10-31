@@ -61,6 +61,8 @@ import { isOwnStatusLine } from '../protection/settings.js';
 import { LIFT_STOP } from '../state/card-lines.js';
 import { FOREMAN_TICK_MS, TICK_MS, WATCH_BRIDGE_MS } from '../lib/mod-numbers.js';
 import { digestText as defaultDigest } from './digest.js';
+import { localWords } from '../lib/host-lines.js';
+import { readProject } from '../lib/projects.js';
 import { columnsReadyOf, premiumViewOf } from '../routing/in-force.js';
 import { paneModel, writePaneStatus as defaultWritePaneStatus } from './status.js';
 import { needsYou, courierWake as defaultCourierWake, courierUnsent as defaultCourierUnsent, courierCursor, LOCK_WAIT_MS } from './courier.js';
@@ -113,6 +115,14 @@ export const SAYS = {
 
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const no = (says) => ({ ok: false, says });
+// What a press or a reply says, as a project kept on this computer says it.
+function inWords(project, says) {
+  try {
+    return readProject(project)?.host === 'local' ? localWords(says) : says;
+  } catch {
+    return says;
+  }
+}
 const fromDirector = (origin) => typeof origin === 'string' && DIRECTOR.includes(origin);
 
 const DEFAULTS = {
@@ -225,7 +235,7 @@ async function reply(req, d) {
   const project = placeOf(req.cwd, d);
   if (!project) return no(SAYS.notProject);
   const { made, says } = await d.replyRecord({ project, text: req.text, client: clientOf(d), desk: deskOf(project, req.cwd, d), now: d.now, liftStop: d.liftStop, stopState: d.stopState, budget: helperMs() });
-  return typeof says === 'string' ? { ok: made === true, says } : { ok: made === true };
+  return typeof says === 'string' ? { ok: made === true, says: inWords(project, says) } : { ok: made === true };
 }
 
 // What the build loop has in progress, from the board read offline: the desk's glance (or the
@@ -252,7 +262,7 @@ async function press(req, d) {
     project, card: req.card, hash: req.hash, label: req.label, client: clientOf(d), desk: deskOf(project, req.cwd, d), now: d.now, liftStop: d.liftStop, stopState: d.stopState, budget: helperMs(),
   });
   const answer = { ok: made === true || strings(submit) };
-  if (typeof says === 'string') answer.says = says;
+  if (typeof says === 'string') answer.says = inWords(project, says);
   if (strings(submit)) answer.submit = submit;
   return answer;
 }
@@ -277,7 +287,7 @@ async function suggest(req, d) {
     project, card: req.card, hash: req.hash, words: req.words, client: clientOf(d), now: d.now, stopState: d.stopState, budget: helperMs(),
   });
   const answer = { ok: made === true || strings(submit) };
-  if (typeof says === 'string') answer.says = says;
+  if (typeof says === 'string') answer.says = inWords(project, says);
   if (strings(submit)) answer.submit = submit;
   return answer;
 }
@@ -313,7 +323,7 @@ async function setting(req, d) {
   const project = placeOf(req.cwd, d);
   if (!project) return no(SAYS.notProject);
   const { made, says } = await d.pressSetting({ project, key: req.key, choice: req.choice, client: clientOf(d), desk: deskOf(project, req.cwd, d), now: d.now, timeZone: d.timeZone, budget: helperMs(), stopState: d.stopState, ready: readyOf(project, d) });
-  return typeof says === 'string' ? { ok: made === true, says } : { ok: made === true };
+  return typeof says === 'string' ? { ok: made === true, says: inWords(project, says) } : { ok: made === true };
 }
 
 // /wheelhouse-go, or Lift STOP on the pane: the signed lift-stop action is kept first, by the prompt
