@@ -2009,6 +2009,12 @@ test("a new setup's own commit holds the policy file", async () => {
   });
 });
 
+test('a project with no host names its folder's remote and main version to Archon, and a hosted project names neither', async () => {
+  const { archonConfigText } = await import('../../../scripts/setup/engine-parts.js');
+  assert.match(archonConfigText({ remote: 'wheelhouse', baseBranch: 'trunk' }), /worktree:\n  path: \.wheelhouse\/worktrees\n  remote: wheelhouse\n  baseBranch: trunk\n/);
+  assert.doesNotMatch(archonConfigText(), /remote|baseBranch/);
+});
+
 test('a new project\'s configuration names the command the finder found, and reads back as written', () => {
   const answers = { '4.live-data': { label: LIVE_DATA.no, text: null } };
   const found = { testCommand: 'swift test --disable-sandbox --no-parallel', prepare: 'swift package resolve', why: 'a Swift package' };

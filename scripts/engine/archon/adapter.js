@@ -487,14 +487,15 @@ export function archonAdapter({
     },
 
     // The run's artefacts folder, where Archon's $ARTIFACTS_DIR puts what its steps write:
-    // <home>/workspaces/mirrors/<owner>__<name>/artifacts/runs/<run>. Null for a run id or repository that isn't a plain name.
+    // <home>/workspaces/mirrors/<owner>__<name>/artifacts/runs/<run>. A project in git alone has no owner, so `repo` is its
+    // name, and the mirror its own name gives: mirrors/<project>. Null for a run id or repository that isn't a plain name.
     // Not one of the interface's methods: the helper copies a run's preview from here.
     artefactsOf(runId, repo) {
       const parts = typeof repo === 'string' ? repo.split('/') : [];
       const plain = (name) => typeof name === 'string' && /^[A-Za-z0-9._-]{1,128}$/.test(name) && !/^\.+$/.test(name);
-      if (!plain(runId) || parts.length !== 2 || !parts.every(plain)) return null;
+      if (!plain(runId) || parts.length < 1 || parts.length > 2 || !parts.every(plain)) return null;
       // Archon names the workspace after the project's remote, which is its fetch mirror (env.js): mirrors/<project>.
-      return path.join(home, 'workspaces', 'mirrors', projectSlug(parts[0], parts[1]), 'artifacts', 'runs', runId);
+      return path.join(home, 'workspaces', 'mirrors', parts.length === 1 ? parts[0] : projectSlug(parts[0], parts[1]), 'artifacts', 'runs', runId);
     },
 
     // Hands a pull request to Archon's merge queue (check 76; ruling 9 of part 3b): writes its `work/<n>` document in

@@ -5,7 +5,7 @@
 import { adapterFrom } from '../adapter.js';
 import { STATUS_CONTEXT } from '../../checks/where.js';
 import { readQueue } from '../../checks/standing.js';
-import { gitRoute, homeGit, isBranchName } from './home.js';
+import { gitRoute, homeDir, homeGit, isBranchName } from './home.js';
 import { localChanges, signedOf } from './changes.js';
 
 const NO_ISSUES = 'This project is kept on this computer, so it has no issues to read or write';
@@ -54,12 +54,21 @@ function localCommands({ project, git, write, now }) {
   return {
     defaultBranch,
     branchHead,
+    // The home takes pushes by its path, with no key.
+    pushTarget: () => ({ url: homeDir(project), keyed: false }),
+    // A change's stored head is the only truth about it, so each push to its branch brings it along.
+    async followBranch(branch) {
+      const change = changes.openChanges().find((c) => c.branch === branch);
+      if (change === undefined) return;
+      const head = await branchHead(branch);
+      if (head !== change.head) await changes.updateChange({ n: change.n, head });
+    },
     async openPr({ head, base, title, body }) {
       const change = await changes.openChange({ branch: head, base, title, body, head: await branchHead(head) });
       return { number: change.n, url: null };
     },
     async updatePr({ number, title, body }) {
-      await changes.updateChange({ n: number, title, body });
+      await changes.updateChange({ n: number, title, body, head: await branchHead(held(number).branch) });
       return { number };
     },
     async closePr(number) {

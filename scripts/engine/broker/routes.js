@@ -4,14 +4,15 @@
 // project's connection, and its output goes back unchanged. No GitHub key ever leaves the helper: Archon's git reads
 // come from the fetch mirror the helper keeps, and /broker/refresh has the helper bring it up to date. Both place the
 // project by the folder the call came from. They know the helper only through what it gives them:
-//   placeOf(cwd)                          { project, folder, repo } of the registered project holding the folder, or null
+//   placeOf(cwd)                          { project, folder, repo, noHost } of the registered project holding the folder, or null;
+//                                         `noHost` for a project in git alone, which has nothing for any gh call to reach
 //   permit(project, call)                 the rules' context for the call (rules.js brokerDecision)
 //   forward(project, argv, { cwd, stdin })  runs the real gh: { code, stdout, stderr }
 //   refresh(project)                      brings the project's fetch mirror up to date: { ok } or a refusal
 //   queueCall(place, argv, stdin)         for a call from the merge queue's folder (place.queue), the call as the
 //                                         broker sends it on, { ok, argv, stdin }, or { ok: false, refused }
 //   note(project, words)                  a line on the project's Logbook, for each call from the queue's folder refused
-import { classifyCall, brokerDecision } from './rules.js';
+import { classifyCall, brokerDecision, NO_HOST } from './rules.js';
 
 const refused = (reason) => ({ ok: true, code: 1, stdout: '', stderr: `${reason}\n` });
 
@@ -20,6 +21,7 @@ export function brokerRoutes({ placeOf, permit, forward, refresh, queueCall = as
     if (!Array.isArray(argv) || !argv.every((a) => typeof a === 'string')) return refused("Wheelhouse's broker was sent a call it can't read.");
     const place = placeOf(cwd);
     if (!place) return refused("Wheelhouse's broker refused this call: it came from a folder that isn't a registered project's.");
+    if (place.noHost === true) return refused(`Wheelhouse's broker refused this call: ${NO_HOST}.`);
     if (typeof place.repo !== 'string' || place.repo === '') return refused("Wheelhouse's broker refused this call: the project's repository isn't known.");
     // A call from the merge queue's folder is shaped first, and each one refused is a line on the Logbook.
     const turnedDown = async (reason) => {

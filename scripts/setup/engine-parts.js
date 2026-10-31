@@ -151,12 +151,16 @@ export const pluginScopeRemoval = (change) => ['plugin', 'uninstall', change.aft
 // is a guardrail from then on.
 
 export const maintainersText = (logins) => `${JSON.stringify(logins)}\n`;
-export const archonConfigText = () => [
+// `remote` names the folder's remote for a project with no host, which Archon must be told (check 83), and `baseBranch` its
+// main version.
+export const archonConfigText = ({ remote = null, baseBranch = null } = {}) => [
   `# ${ARCHON_CONFIG_FILE}`,
   "# Archon's settings for this project, written by Wheelhouse's setup. Its worktrees go inside the project folder,",
   '# under .wheelhouse/, which git ignores here.',
   'worktree:',
   `  path: ${WORKTREE_PATH}`,
+  ...(remote === null ? [] : [`  remote: ${remote}`]),
+  ...(baseBranch === null ? [] : [`  baseBranch: ${baseBranch}`]),
   '',
 ].join('\n');
 

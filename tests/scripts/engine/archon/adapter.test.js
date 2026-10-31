@@ -468,7 +468,8 @@ test('artefactsOf is the run\'s own artefacts folder in the engine\'s home, and 
   // Archon names a project's workspace after its remote, which is the fetch mirror <engine>/mirrors/<owner>__<name>.git
   // (seen in check 80), so its runs' artefacts are under workspaces/mirrors/<owner>__<name>/.
   assert.equal(a.artefactsOf(RUN, 'acme/web'), path.join(home, 'workspaces', 'mirrors', 'acme__web', 'artifacts', 'runs', RUN));
-  for (const [runId, repo] of [['../x', 'acme/web'], [RUN, '../web'], [RUN, 'acme'], [RUN, 'acme/web/x'], [RUN, null], ['', 'acme/web']]) {
+  assert.equal(a.artefactsOf(RUN, 'shop'), path.join(home, 'workspaces', 'mirrors', 'shop', 'artifacts', 'runs', RUN), 'a project in git alone is named after its own mirror');
+  for (const [runId, repo] of [['../x', 'acme/web'], [RUN, '../web'], [RUN, 'acme/web/x'], [RUN, null], ['', 'acme/web']]) {
     assert.equal(a.artefactsOf(runId, repo), null, `${runId} ${repo}`);
   }
 });

@@ -154,6 +154,10 @@ export function adapterFrom(c) {
 
   return {
     defaultBranch: () => c.defaultBranch(),
+    // Where the helper's mirror pushes, for a host with no address of its own in the record: { url, keyed }, or null.
+    pushTarget: () => c.pushTarget?.() ?? null,
+    // Moves the open change on `branch` to the branch's head, where a push doesn't do that by itself.
+    followBranch: async (branch) => c.followBranch?.(text(branch, 'branch')),
     openPr: async ({ head, base, title, body } = {}) => c.openPr({
       head: text(head, 'head branch'), base: text(base, 'base branch'), title: text(title, 'title'), body: text(body, 'body', { empty: true }),
     }),
