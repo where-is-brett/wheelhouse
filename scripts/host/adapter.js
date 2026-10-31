@@ -92,13 +92,23 @@ const MOST_COMMITS = 50;
 const QUEUE_LINE = 'This project\'s host queues merges; Wheelhouse merges only directly for now';
 
 // 'github' for github.com; 'gitlab' for the public GitLab service, or for another address when
-// the project setting `gitlabHosts` names it (a host name, with its port when it has one).
-export function detectHost(remoteUrl, { gitlabHosts = [] } = {}) {
-  const parts = parseRemote(remoteUrl);
-  if (parts.hostname === 'github.com') return 'github';
-  if (isDefaultHost(parts) || listed(parts, gitlabHosts)) return 'gitlab';
-  throw new Error(`The repository is at ${hostWords(parts)}, which is not GitHub or GitLab. If it is a GitLab address, name it in the project settings`);
+// the project setting `gitlabHosts` names it (a host name, with its port when it has one); 'local'
+// for a folder with no remote, or whose remotes are neither, such as a server of the director's own
+// or a plain path: those are left as they are and the project is kept in git alone (spec 5.2). Takes
+// one address or a list, the remote that counts most first.
+export function detectHost(remotes, { gitlabHosts = [] } = {}) {
+  for (const remote of (Array.isArray(remotes) ? remotes : [remotes])) {
+    if (typeof remote !== 'string' || remote.trim() === '') continue;
+    let parts;
+    try { parts = parseRemote(remote); } catch { continue; }
+    if (parts.hostname === 'github.com') return 'github';
+    if (isDefaultHost(parts) || listed(parts, gitlabHosts)) return 'gitlab';
+  }
+  return 'local';
 }
+
+// What setup says of an address that is neither host, until it sets up a project in git alone.
+export const notHostedLine = (remoteUrl) => `The repository is at ${hostWords(parseRemote(remoteUrl))}, which is not GitHub or GitLab. If it is a GitLab address, name it in the project settings`;
 
 const REPO = /^[A-Za-z0-9_.][A-Za-z0-9_.-]*(\/[A-Za-z0-9_.][A-Za-z0-9_.-]*)+$/;
 const SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;

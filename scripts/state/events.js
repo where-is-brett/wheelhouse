@@ -34,7 +34,8 @@ export const PLAIN_KINDS = [
 // `check` is the helper's result of a project's tests on this computer (local checks, spec 4.3): signed, so the permit
 // reads a run that happened, never a status anyone could post. `checks-state` says whether the project's tests count, which
 // lets merges pass with none, and `checks-found` is the command the finder found, which a check runs: both the helper's.
-export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file', 'usage-card', 'premium-card', 'premium-check', 'premium-failed', 'provenance', 'check', 'checks-state', 'checks-found'];
+// `change` is a local change as it stands (spec 7.1), the helper's too: it names the head the local queue merges.
+export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file', 'usage-card', 'premium-card', 'premium-check', 'premium-failed', 'provenance', 'check', 'checks-state', 'checks-found', 'change'];
 // Plain kinds only the helper itself records, from what it read itself: no caller writes one
 // through /state/write. The survey (design section 15, ruling A1) is taken and recorded in the
 // helper, when setup finishes and when it is taken again. A column-ready record (design section 14.6) is the
@@ -48,7 +49,7 @@ export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 
 export const RED_MAIN_FIELDS = ['kind', 'suspect', 'work'];
 export const RED_MAIN_OWN = 'only the helper records a red main line\'s incident';
 
-export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found'];
+export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 
 const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main'];
@@ -712,6 +713,20 @@ function checkCheck(data) {
   if (data.clean !== undefined && data.clean !== true) bad('says it ran clean or says nothing');
 }
 
+// A local change as it stands (spec 7.1). `rev` counts its records, so the newest is known whatever the clock did.
+export const CHANGE_STATES = ['open', 'merged', 'closed'];
+const CHANGE_KEYS = ['n', 'rev', 'branch', 'base', 'title', 'body', 'state', 'head', 'mergeCommit'];
+const FULL_COMMIT = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+function checkChange(data) {
+  const bad = (why) => { throw new Error(`A change event ${why}`); };
+  if (!isPlain(data) || Object.keys(data).length !== CHANGE_KEYS.length || CHANGE_KEYS.some((k) => !Object.hasOwn(data, k))) bad('needs its fields and no others');
+  if (!Number.isInteger(data.n) || data.n < 1 || !Number.isInteger(data.rev) || data.rev < 1) bad('needs its number and its count');
+  if (['branch', 'base', 'title'].some((k) => typeof data[k] !== 'string' || data[k] === '') || typeof data.body !== 'string') bad('needs its branches and its words');
+  if (!CHANGE_STATES.includes(data.state)) bad('needs a state Wheelhouse knows');
+  if (typeof data.head !== 'string' || !FULL_COMMIT.test(data.head)) bad('needs the whole commit');
+  if (data.state === 'merged' ? !(typeof data.mergeCommit === 'string' && FULL_COMMIT.test(data.mergeCommit)) : data.mergeCommit !== null) bad('names a merge only once merged');
+}
+
 // Whether a project's tests count, and why (spec 4.5).
 function checkChecksState(data) {
   const fits = data?.state === 'counting' ? data.why === 'passed' : data?.state === 'not-counting' && ['nothing-found', 'director'].includes(data.why);
@@ -746,6 +761,7 @@ export function makeEvent({ kind, data, now = () => new Date() }) {
   if (kind === 'check') checkCheck(data);
   if (kind === 'checks-state') checkChecksState(data);
   if (kind === 'checks-found') checkChecksFound(data);
+  if (kind === 'change') checkChange(data);
   if (Object.hasOwn(PLAIN_SHAPES, kind)) checkPlain(kind, data);
   const event = {
     v: 1,
@@ -791,6 +807,7 @@ export function checkRecord(event, { enrolled, held = [], computer = computerId(
   if (event.kind === 'premium-failed') return 'only the helper records the premium model\'s evaluation failing';
   if (event.kind === 'provenance') return 'only the helper records what built a pull request';
   if (event.kind === 'check' || event.kind === 'checks-state' || event.kind === 'checks-found') return 'only the helper records a check';
+  if (event.kind === 'change') return 'only the helper records a local change';
   if (held.some((e) => canonicalJson(e) !== canonicalJson(event))) return 'another event in the state carries this record\'s id, so it was not recorded';
   return null;
 }

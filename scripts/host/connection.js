@@ -1,6 +1,7 @@
 // scripts/host/connection.js
 // The two ways the helper reaches the host (design section 11), and the
-// environment it gives `gh`, `glab` and `git` for each.
+// environment it gives `gh`, `glab` and `git` for each. A project in git alone
+// has no host, so its connection is only `{ mode: 'none' }`.
 //
 //   Connection = {
 //     host: 'github' | 'gitlab',
@@ -36,6 +37,7 @@ const timeOf = (now) => (typeof now === 'function' ? now() : now ?? new Date()).
 function check(connection) {
   if (connection === null || typeof connection !== 'object') throw new Error('The connection is missing');
   const { host, mode, project, projectId } = connection;
+  if (mode === 'none') return connection;
   if (host !== 'github' && host !== 'gitlab') throw new Error('The connection\'s host must be github or gitlab');
   if (mode !== 'quick' && mode !== 'narrow') throw new Error('The connection must be quick or narrow');
   if (typeof project !== 'string' || !project.includes('/')) throw new Error('The connection\'s project must be written owner/name');
@@ -124,6 +126,7 @@ async function githubAccessKey({ fetch, now }) {
 // The environment the helper gives gh, glab and git for this connection.
 export async function childEnv(connection, { fetch = globalThis.fetch, now = () => new Date() } = {}) {
   check(connection);
+  if (connection.mode === 'none') return {};
   if (connection.mode === 'quick') {
     if (connection.locked) throw new Error('Locked needs the narrow connection');
     return {};
