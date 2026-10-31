@@ -16,7 +16,7 @@ const PANE_PROPS = {
   scroll: { offset: 0, bodyRows: 40 }, view: {},
 }
 // The theme keys the mod may colour with.
-const THEME = ['text', 'dimColor', 'subtle', 'suggestion', 'error', 'warning', 'success']
+const THEME = ['text', 'dimColor', 'subtle', 'suggestion', 'error', 'warning', 'success', 'composerSidebarBackground', 'selectionBg', 'diffRemovedDimmed', 'rate_limit_fill', 'rate_limit_empty']
 const STOP_HALTS = 'Halts the whole Crew at once.'
 const ONLY_YOU_LIFT = 'Only you can lift it.'
 
@@ -148,10 +148,13 @@ test('the verdict is a title, and the since line follows it in footnote', async 
   }
 })
 
-test('Nothing needs you. stands in the card\'s place, in success', async ($, on) => {
+test('Nothing needs you. stands in the card\'s place in success, unless the verdict already says it', async ($, on) => {
   const { drawn } = setup(on)
   for (const surface of SURFACES) {
-    const ui = await drawn($, surface, model({ cards: [], verdict: 'Nothing needs you. Nothing is broken.' }))
+    const said = await drawn($, surface, model({ cards: [], verdict: 'Nothing needs you. Nothing is broken.' }))
+    expect(await texts(said)).not.toContain('Nothing needs you.')
+    await said.unmount()
+    const ui = await drawn($, surface, model({ cards: [], verdict: 'One thing to watch.' }))
     expect((await textOf(ui, 'Nothing needs you.')).props.color).toBe('success')
     expect((await texts(ui)).some((t: string) => t.startsWith('Card '))).toBe(false)
     expect(await ui.find({ key: 'next' })).toBeUndefined()
@@ -159,18 +162,23 @@ test('Nothing needs you. stands in the card\'s place, in success', async ($, on)
   }
 })
 
-test('each part is a rounded subtle group, and an empty part is left out', async ($, on) => {
+test('each part is a raised panel with the quiet line, named above it, and an empty part is left out', async ($, on) => {
   const { drawn } = setup(on)
   for (const surface of SURFACES) {
     const full = await drawn($, surface)
     const groups = (await full.findAll({ type: 'Box' })).filter((b: any) => b.props.borderStyle !== undefined)
-    // Being built, Launch, Health and this week, and the foot.
+    // The card, Being built, Launch, and Health and this week. The foot stands on the page.
     expect(groups).toHaveLength(4)
     for (const g of groups) {
       expect(g.props.borderStyle).toBe('round')
-      expect(g.props.borderColor).toBe('subtle')
-      expect(g.props.padding).toBe('sm')
+      expect(g.props.borderColor).toBeUndefined()
+      // The terminal draws a fill as a block, so it keeps the line alone.
+      expect(g.props.backgroundColor).toBe(surface === 'terminal' ? undefined : 'composerSidebarBackground')
     }
+    const name = await textOf(full, 'Being built')
+    expect(name.props.size).toBe('footnote')
+    expect(name.props.weight).toBe('medium')
+    expect(name.props.dimColor).toBe(true)
     await full.unmount()
 
     const bare = await drawn($, surface, model({ building: [], launch: null, ideas: { count: 0, fresh: 0 }, healthNote: { allWell: false, protection: null, week: null } }))
@@ -219,19 +227,47 @@ test('the stale line is in warning and the figures are not shown as current', as
   }
 })
 
+test('the launch bar is drawn on a surface with fills, one step per blocker', async ($, on) => {
+  const { drawn } = setup(on)
+  const steps = async (ui: any, key: string) => (await ui.findAll({ type: 'Box' })).filter((b: any) => b.props.backgroundColor === key)
+  const ui = await drawn($, 'desktop')
+  expect(await steps(ui, 'rate_limit_fill')).toHaveLength(3)
+  expect(await steps(ui, 'rate_limit_empty')).toHaveLength(2)
+  await ui.unmount()
+  const terminal = await drawn($, 'terminal')
+  expect(await steps(terminal, 'rate_limit_fill')).toHaveLength(0)
+  await terminal.unmount()
+})
+
+test('a card\'s recommendation sits in the soft band, and All stop in its red panel', async ($, on) => {
+  const { drawn } = setup(on)
+  const held = model({ cards: [card(1, 'Put the banner live?', { parts: { ask: 'Put the banner live?', recommendation: 'Approve, because the checks passed.' } })] })
+  const band = async (ui: any, key: string) => (await ui.findAll({ type: 'Box' })).filter((b: any) => b.props.backgroundColor === key)
+  const ui = await drawn($, 'desktop', held)
+  expect(await band(ui, 'selectionBg')).toHaveLength(1)
+  await ui.unmount()
+  const stopped = await drawn($, 'desktop', model({ stop: { on: true, since: null } }))
+  expect(await band(stopped, 'diffRemovedDimmed')).toHaveLength(1)
+  await stopped.unmount()
+  const terminal = await drawn($, 'terminal', held)
+  expect(await band(terminal, 'selectionBg')).toHaveLength(0)
+  await terminal.unmount()
+})
+
 test('Back and Next are small, and the next card\'s subject is shown', async ($, on) => {
   const { drawn } = setup(on)
   for (const surface of SURFACES) {
     const ui = await drawn($, surface)
     expect(await texts(ui)).toContain('Next: how exported files are named · optional · 3 min')
     const next = await ui.find({ key: 'next' })
-    expect(next.props.variant).toBe('secondary')
+    expect(next.props.plain).toBe(true)
+    expect(next.props.dimColor).toBe(true)
     expect((await textOf(ui, 'Next')).props.size).toBe('footnote')
     expect(await ui.find({ key: 'back' })).toBeUndefined()
     await ui.press({ key: 'next' })
     expect(await texts(ui)).not.toContain('Next: how exported files are named · optional · 3 min')
     const back = await ui.find({ key: 'back' })
-    expect(back.props.variant).toBe('secondary')
+    expect(back.props.plain).toBe(true)
     expect((await textOf(ui, 'Back')).props.size).toBe('footnote')
     // The session's state outlasts the surface: the next one starts on the first card.
     await ui.press({ key: 'back' })

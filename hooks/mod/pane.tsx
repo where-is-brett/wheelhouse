@@ -25,7 +25,7 @@
 import type { EngineInterface, RenderInput, SessionStartInput, TurnStartInput, TurnCompleteInput } from 'claude-code'
 import { ask, type Answer, type PaneModel } from './ask'
 import { PANE_ID, TICK_MS, STALE_TICKS, TICK_ASK_MS, STOP_HALTS, ONLY_YOU_LIFT, NOTHING_NEEDS_YOU, NOT_HANDED, NOT_HERE, SETTING_UP, staleLine as staleWords } from './numbers'
-import { body, footnote, group, heading, small, status, title } from './calm'
+import { alarm, alert, bar, body, ends, footnote, group, panel, small, status, tableOf, title } from './calm'
 import { drawCard, drawStop, pressingNow, releaseAll, submitAll, NOT_HANDED_FOREMAN } from './cards'
 import { drawSettings, forgetAsks, showSettings } from './settings'
 
@@ -382,7 +382,7 @@ function nextLine(card: Record<string, unknown>): string {
 // one is left out. Every line is plain Text: a card's text is drawn whole, as written, and the
 // bridge has made every other line one line of plain words. Or the settings view.
 export async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
-  const t = $.ui.resolve(e)
+  const t = tableOf($, e)
   const { Box } = t
   const [pane, last, shown, now, view, pressing] = await Promise.all([$.state.get(PANE), $.state.get(TICK), $.state.get(CARD), $.clock.now(), $.state.get(VIEW), pressingNow($)])
   // Busy is read only while it holds the buttons back, so a turn's start and end redraw nothing else.
@@ -391,7 +391,7 @@ export async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
   const kept = pane.value
   const model: PaneModel = isRecord(kept?.model) ? kept.model : {}
   const stale = staleLine(kept, last.value, now)
-  const staleNode = stale !== null && status(t, stale, 'warning')
+  const staleNode = stale !== null && alert(t, stale)
   // Before the first picture, STOP heads the pane, as STOP needs only the session's folder. Once a
   // tick has given the session no pane (another role's, setup's included, or a front desk outside
   // a project), a pane /wheelhouse opened before it says why, with no STOP, as /wheelhouse would.
@@ -426,18 +426,16 @@ export async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
   const control = await drawStop($, e, model, pressing, live, after)
   const stopOn = isRecord(model.stop) && model.stop.on === true
 
-  // STOP, outlined with what it does beside it; or, while it is on, the group that leads the pane.
+  // STOP with what it does beside it, at the right on the board and at the left above the settings'
+  // filled Done; or, while it is on, the panel that leads the pane.
   const stopPart = stopOn
-    ? group(t, (
-      <Box flexDirection="column" gap="xs">
-        {title(t, STOP_IS_ON)}
-        {stopSince(model, stopLine) !== null && body(t, stopSince(model, stopLine) as string)}
-        {control}
-        {footnote(t, ONLY_YOU_LIFT)}
-      </Box>
-    ))
+    ? alarm(t, [
+      title(t, STOP_IS_ON),
+      stopSince(model, stopLine) !== null && body(t, stopSince(model, stopLine) as string),
+      ends(t, footnote(t, ONLY_YOU_LIFT), control),
+    ])
     : (
-      <Box flexDirection="row" gap="sm">
+      <Box flexDirection={view.value === 'settings' ? 'row' : 'row-reverse'} justifyContent={view.value === 'settings' ? 'flex-start' : 'space-between'} alignItems="center" gap="sm">
         {control}
         {footnote(t, STOP_HALTS)}
       </Box>
@@ -445,7 +443,7 @@ export async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
 
   if (view.value === 'settings') {
     return (
-      <Box flexDirection="column" gap="sm">
+      <Box flexDirection="column" gap="lg">
         {staleNode}
         {stopPart}
         {await drawSettings($, e, (await $.state.get(SETTINGS)).value, pressing, live, now)}
@@ -456,52 +454,54 @@ export async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
   const verdict = text(model.verdict) ?? text(model.glance) ?? PLAIN_TITLE
   const since = text(model.since)
 
-  // The card, with its place: a card of parts says it in its own header row, one with none above it.
+  // The card on the first panel, with its place: a card of parts says it in its own header row, one
+  // with none above it. With no card, the words the verdict hasn't already said.
   const cardPart = card !== undefined
     ? (
       <Box flexDirection="column" gap="xs">
-        {!isRecord(card.parts) && footnote(t, `Card ${at + 1} of ${cards.length}`)}
-        {await drawCard($, e, card, `${at + 1} of ${cards.length}`, pressing, live, after)}
-        {later !== undefined && footnote(t, nextLine(cards[at + 1]))}
-        {live && cards.length > 1 && (
+        {panel(t, [
+          !isRecord(card.parts) && footnote(t, `Card ${at + 1} of ${cards.length}`),
+          await drawCard($, e, card, `${at + 1} of ${cards.length}`, pressing, live, after),
+        ])}
+        {ends(t, later !== undefined && footnote(t, nextLine(cards[at + 1])), live && cards.length > 1 && (
           <Box flexDirection="row" gap="sm">
             {before !== undefined && small(t, 'back', 'Back', () => $.state.set(CARD, before))}
             {later !== undefined && small(t, 'next', 'Next', () => $.state.set(CARD, later))}
           </Box>
-        )}
+        ))}
       </Box>
     )
-    : status(t, NOTHING_NEEDS_YOU, 'success')
+    : !verdict.startsWith(NOTHING_NEEDS_YOU) && status(t, NOTHING_NEEDS_YOU, 'success')
 
   const building = (Array.isArray(model.building) ? model.building : [])
     .map((item) => (typeof item === 'string' ? { text: item, see: null } : isRecord(item) ? { text: text(item.text), see: text(item.see) } : { text: null, see: null }))
     .filter((item) => item.text !== null)
-  const buildingPart = building.length > 0 && group(t, (
-    <Box flexDirection="column" gap="xs">
-      {heading(t, 'Being built')}
-      {building.map((item) => (
-        <Box flexDirection="column">
-          {body(t, item.text as string)}
-          {item.see !== null && footnote(t, item.see)}
-        </Box>
-      ))}
+  const buildingPart = building.length > 0 && group(t, building.map((item) => (
+    <Box flexDirection="column">
+      {body(t, item.text as string)}
+      {item.see !== null && footnote(t, item.see)}
     </Box>
-  ))
+  )), 'Being built')
 
   const launch = isRecord(model.launch) ? model.launch : null
   const resolved = count(launch?.resolved)
   const total = count(launch?.total)
   const gained = count(launch?.gained)
   const upNext = launch !== null && Array.isArray(launch.next) ? records(launch.next).filter((n) => typeof n.text === 'string') : []
-  const launchPart = launch !== null && resolved !== null && total !== null && group(t, (
-    <Box flexDirection="column" gap="xs">
-      {heading(t, 'Launch')}
-      {body(t, `${resolved} of ${total} blockers cleared`)}
-      {gained !== null && gained > 0 && footnote(t, `+${gained} since ${timeIn(since) ?? 'you were last here'}`)}
-      {upNext.length > 0 && footnote(t, 'What\'s next')}
-      {upNext.map((n) => body(t, n.yours === true ? `${n.text as string} (yours)` : (n.text as string)))}
-    </Box>
-  ))
+  const launchPart = launch !== null && resolved !== null && total !== null && group(t, [
+    (
+      <Box flexDirection="column" gap="xs">
+        {ends(t, body(t, `${resolved} of ${total} blockers cleared`), gained !== null && gained > 0 && footnote(t, `+${gained} since ${timeIn(since) ?? 'you were last here'}`))}
+        {bar(t, resolved, total)}
+      </Box>
+    ),
+    upNext.length > 0 && (
+      <Box flexDirection="column" gap="xs">
+        {footnote(t, 'What\'s next')}
+        {upNext.map((n) => body(t, n.yours === true ? `${n.text as string} (yours)` : (n.text as string)))}
+      </Box>
+    ),
+  ], 'Launch')
 
   const note = isRecord(model.healthNote) ? model.healthNote : {}
   const watch = health.filter((line) => line.of !== 'stop' && (line.level === 'watch' || line.level === 'stop'))
@@ -521,27 +521,13 @@ export async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     ideasCount !== null && ideasCount > 0 && body(t, `${ideasCount} ${ideasCount === 1 ? 'idea' : 'ideas'}${fresh !== null && fresh > 0 ? ` · ${fresh} new since yesterday` : ''}`),
     ...missing.map((line) => footnote(t, line)),
   ].filter((row) => row !== false)
-  const healthPart = healthRows.length > 0 && group(t, (
-    <Box flexDirection="column" gap="xs">
-      {heading(t, 'Health and this week')}
-      {healthRows}
-    </Box>
-  ))
+  const healthPart = healthRows.length > 0 && group(t, healthRows, 'Health and this week')
 
   const updated = text(model.updated)
-  const footPart = group(t, (
-    <Box flexDirection="column" gap="xs">
-      {live && (
-        <Box flexDirection="row" gap="sm">
-          {small(t, 'settings', 'Settings', () => showSettings($))}
-        </Box>
-      )}
-      {updated !== null && footnote(t, `Updated ${updated}`)}
-    </Box>
-  ))
+  const footPart = ends(t, live && small(t, 'settings', 'Settings', () => showSettings($)), updated !== null && footnote(t, `Updated ${updated}`))
 
   return (
-    <Box flexDirection="column" gap="sm">
+    <Box flexDirection="column" gap="lg">
       {staleNode}
       {stopPart}
       <Box flexDirection="column">

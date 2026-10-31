@@ -10,7 +10,7 @@
 // that minute is up, so Undo leaves then.
 import type { EngineInterface, PluginState, RenderInput } from 'claude-code'
 import { ask } from './ask'
-import { body, filled, footnote, group, heading, outlined, small, title } from './calm'
+import { body, ends, filled, footnote, group, heading, outlined, small, tableOf, title } from './calm'
 import type { Table } from './calm'
 import { PANE_LEAD, RECORDING, UNDO_MS } from './numbers'
 import { carry, claim, release, submitAll, type After } from './cards'
@@ -161,8 +161,8 @@ function undoEnds(row: Row): number | null {
 
 // Whether a row's latest change is under a minute old and can still be undone.
 function justChanged(row: Row, now: number): boolean {
-  const ends = undoEnds(row)
-  return ends !== null && (!Number.isFinite(ends) || now < ends)
+  const until = undoEnds(row)
+  return until !== null && (!Number.isFinite(until) || now < until)
 }
 
 // The times a redraw is asked for, so an Undo leaves when its minute is up although nothing else
@@ -181,7 +181,7 @@ function redrawAt($: EngineInterface, due: number, now: number) {
 // choices on their own page. `live` is false while pane.tsx's HIDE_WHILE_BUSY holds every button
 // back; `now` is the time the pane is drawn at.
 export async function drawSettings($: EngineInterface, e: RenderInput<'Pane'>, settings: Settings | undefined, pressing: Pressing, live: boolean, now: number) {
-  const t: Table = $.ui.resolve(e)
+  const t: Table = tableOf($, e)
   if (settings === null || settings === undefined) return body(t, READING)
   const phone = e.surface === 'mobile'
   const [asked, choosing] = await Promise.all([$.state.get(ASKED), $.state.get(CHOOSING)])
@@ -260,10 +260,10 @@ export async function drawSettings($: EngineInterface, e: RenderInput<'Pane'>, s
 
   const rowOf = (row: Row) => {
     const name = row.label as string
-    const ends = undoEnds(row)
-    if (row.kind === 'select' && ends !== null && Number.isFinite(ends) && now < ends) redrawAt($, ends, now)
+    const until = undoEnds(row)
+    if (row.kind === 'select' && until !== null && Number.isFinite(until) && now < until) redrawAt($, until, now)
     const changed = row.kind === 'select' && justChanged(row, now) && (
-      <t.Box flexDirection="row" gap="sm">
+      <t.Box flexDirection="row" justifyContent="flex-end" alignItems="center" gap="sm">
         {footnote(t, JUST_NOW)}
         {undoOf(row)}
       </t.Box>
@@ -275,50 +275,32 @@ export async function drawSettings($: EngineInterface, e: RenderInput<'Pane'>, s
         <t.Box flexDirection="column">
           {phone && live && pressing === null && optionsOf(row).length > 0
             ? picker
-            : (
-              <t.Box flexDirection="row" gap="sm">
-                {body(t, name)}
-                {picker}
-              </t.Box>
-            )}
+            : ends(t, body(t, name), picker)}
           {changed}
         </t.Box>
       )
     }
     if (row.kind === 'change') {
-      return (
-        <t.Box flexDirection="column">
-          <t.Box flexDirection="row" gap="sm">
-            {body(t, name)}
-            {changeOf(row)}
-          </t.Box>
+      return ends(t, body(t, name), (
+        <t.Box flexDirection="row" alignItems="center" gap="sm">
           {typeof row.value === 'string' && row.value !== '' && footnote(t, row.value)}
+          {changeOf(row)}
         </t.Box>
-      )
+      ))
     }
-    return (
-      <t.Box flexDirection="row" gap="sm">
-        {body(t, name)}
-        {typeof row.value === 'string' && row.value !== '' && footnote(t, row.value)}
-      </t.Box>
-    )
+    return ends(t, body(t, name), typeof row.value === 'string' && row.value !== '' && footnote(t, row.value))
   }
 
   return (
-    <t.Box flexDirection="column" gap="sm">
-      <t.Box flexDirection="row" gap="sm">
-        {title(t, 'Settings')}
-        {live && filled(t, 'done', 'Done', () => showBoard($))}
-      </t.Box>
+    <t.Box flexDirection="column" gap="lg">
+      {ends(t, title(t, 'Settings'), live && filled(t, 'done', 'Done', () => showBoard($)))}
       {settings.failed && body(t, NOT_READ)}
-      {groups.map((g) => group(
-        t,
-        <t.Box flexDirection="column" gap="xs">
-          {typeof g.title === 'string' && heading(t, g.title)}
-          {rowsOf(g).map(rowOf)}
-        </t.Box>,
-        typeof g.note === 'string' && g.note !== '' ? g.note : undefined,
-      ))}
+      {groups.map((g) => {
+        const rows = rowsOf(g)
+        // A group of one row of the same name is named by that row.
+        const named = typeof g.title === 'string' && !(rows.length === 1 && rows[0].label === g.title)
+        return group(t, rows.map(rowOf), named ? (g.title as string) : undefined, typeof g.note === 'string' && g.note !== '' ? g.note : undefined)
+      })}
     </t.Box>
   )
 }

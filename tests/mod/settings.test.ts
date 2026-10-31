@@ -140,12 +140,12 @@ test('Settings draws its groups with their notes, and Done filled in the header'
     expect(done?.props.label).toBe('Done')
     const drawn = await texts(ui)
     for (const words of ['All stop', 'This project', 'You, in every project', 'Advanced settings', PROJECT_NOTE, YOU_NOTE, 'All stop halts the whole Crew at once. Only you can lift it.']) expect(drawn).toContain(words)
-    // Four groups, each rounded and quiet; the Advanced group has no note, so no empty line under it.
+    // Four panels, each with the quiet line; the Advanced group has no note, so no empty line under it.
     const boxes = (await ui.findAll({ type: 'Box' })).filter((b: any) => b.props.borderStyle !== undefined)
     expect(boxes).toHaveLength(4)
     for (const b of boxes) {
       expect(b.props.borderStyle).toBe('round')
-      expect(b.props.borderColor).toBe('subtle')
+      expect(b.props.borderColor).toBeUndefined()
     }
     expect(drawn).not.toContain('')
     // A value row is its name and value; a change row its name, its value in footnote and a small Change….
@@ -155,9 +155,10 @@ test('Settings draws its groups with their notes, and Done filled in the header'
     expect(standard?.props.size).toBe('footnote')
     expect(standard?.props.dimColor).toBe(true)
     const change = await ui.find({ key: choiceKey('protection', 'change') })
-    expect(change?.props.variant).toBe('secondary')
+    expect(change?.props.plain).toBe(true)
     expect(change?.props.label).toBe('Change…')
-    expect((await ui.findAll({ type: 'Text' })).filter((n: any) => n.text === 'Advanced settings')).toHaveLength(2)
+    // The Advanced group is its one row, so the name is said once.
+    expect((await ui.findAll({ type: 'Text' })).filter((n: any) => n.text === 'Advanced settings')).toHaveLength(1)
     // Done goes back to the board view.
     await ui.press({ key: 'done' })
     expect(await ui.find({ key: 'done' })).toBeUndefined()
@@ -362,7 +363,7 @@ test('a row changed just now shows Undo, which sends undo', async ($, on) => {
     const line = (await textNodes(ui)).find((n: any) => n.text === 'Changed just now')
     expect(line?.props.size).toBe('footnote')
     const undo = await ui.find({ key: choiceKey('autonomy', 'undo') })
-    expect(undo?.props.variant).toBe('secondary')
+    expect(undo?.props.plain).toBe(true)
     expect(undo?.props.label).toBe('Undo')
     // Only the row that changed has one.
     expect(await ui.findAll({ type: 'Button' }).then((b: any[]) => b.filter((x) => x.key.endsWith(':undo')))).toHaveLength(1)

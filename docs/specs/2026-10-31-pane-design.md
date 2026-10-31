@@ -2,7 +2,7 @@
 
 # The pane's visual design
 
-31 October 2026. Design notes for the pane's first real design pass, with **the choice of direction left open** for the director. The chosen direction is recorded here, and in section 23 of the design, before it is built.
+31 October 2026. Design notes for the pane's first real design pass. **The director chose A, Inset,** on 31 October 2026. The choice is recorded here and in section 23 of the design.
 
 Calm (design section 23) settled what the pane says and in what order. It was built as far as the drawing kit knew how, and never had a look of its own. The director found the cards "ugly" and hard to read on 20 October 2026. These notes keep Calm's order, words and rules, and change how it looks.
 
@@ -91,7 +91,7 @@ An open page with no panels. Thin rules divide the sections, a narrow blue bar m
 
 The most on screen. It is drier to read, its rules and bar draw only in Desktop, and those figures need small changes to the pane's model.
 
-**The designer's recommendation is B.** The director's complaint was that the card is hard to read, and B answers that directly: the biggest type on the pane is the question, and each answer says what it does. A is the fallback if the director wants everything in view.
+The designer recommended B, for its reading of the card. **The director chose A,** which keeps everything in view.
 
 ## The same in every direction
 
@@ -101,7 +101,7 @@ The most on screen. It is drier to read, its rules and bar draw only in Desktop,
 - The checking line stays whole and word for word, in caption.
 - Colours stay theme keys. The keys in the table above join `calm.tsx`'s list.
 - No motion of the pane's own. A press still shows "Recording…".
-- Small buttons become `plain` and dim, and each Button's dead children go.
+- Small buttons become `plain` and dim. A Button's children stay, since the terminal draws them in place of the label, so its tint and All stop's red show there.
 - The launch bar is drawn.
 - Not a card's words as Markdown, and no literal colours.
 
@@ -116,8 +116,14 @@ Words, keys, order and behaviour stay held as they are, and the mod proof (`scri
 - the green "Nothing needs you." line;
 - the Input's `label`, which moves to a line above.
 
-B changes more: a folded group's rows aren't drawn while a card waits, and the question's size changes. C needs model changes in `scripts/desk/mod-pane.js` and `desk-parity` fixtures to match.
+## The build
 
-## After the choice
+Short plan, in order: the look-pinning tests change first, then the drawing kit (`hooks/mod/calm.tsx`), then the pane, the card and Settings use it. Words, keys and behaviour stay. Each of these follows the picture the director chose:
 
-The director's choice goes here and into section 23, which gains the corrections from "What the surface can draw". Section 23.10's open questions on colour inside buttons are closed by those facts. The build is checked in Desktop itself, in light and dark, before it merges.
+- **The card:** Why? and Show me sit under the answers, so the answer comes first (section 23.3 now says so). The note moves above the answers.
+- **Panels:** the card is the first panel. Group names sit above their panels. The foot stands on the page.
+- **"Nothing needs you."** is left out when the verdict already says it. It still shows under any other verdict.
+- **Settings:** each row's value sits at the right, and a group that is one row of the same name isn't named twice.
+- **The terminal:** it draws no fill and no bar, and keeps the quiet line.
+
+Three things stay as they were rather than as drawn in the picture, because the words are held: "Protection: Standard", "(yours)" and "What's next".

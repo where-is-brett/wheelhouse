@@ -559,7 +559,7 @@ test('an approval card draws its header row with Not now in the corner, its ask 
     expect(nodes.filter((n: any) => n.props.size === 'heading').map(textOfNode)).not.toContain('Approve, because the checks passed.')
     expect((await ui.findAll({ type: 'Link' })).map((l: any) => l.props.label)).toEqual(['Show me ↗'])
     expect(await ui.findAll({ type: 'Markdown' })).toHaveLength(0)
-    expect((await ui.find({ key: cardKey('card-1', 'Not now') }))?.props.variant).toBe('secondary')
+    expect((await ui.find({ key: cardKey('card-1', 'Not now') }))?.props.plain).toBe(true)
     await ui.unmount()
   }
 })
@@ -817,7 +817,8 @@ test('Suggest a change… opens a box with What would you change?, Send and Canc
     await ui.redraw()
     const box = await ui.find({ key: BOX })
     expect(box?.type).toBe('Input')
-    expect(box?.props.label).toBe('What would you change?')
+    expect(box?.props.label).toBeUndefined()
+    expect(await texts(ui)).toContain('What would you change?')
     expect(box?.props.autoFocus).toBe(true)
     // A few lines tall, so what the director types stays in sight. Input takes rows from Claude
     // Code 2.1.301; on the releases below it, down to Wheelhouse's floor (2.1.299), the box works

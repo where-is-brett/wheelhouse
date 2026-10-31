@@ -2063,8 +2063,11 @@ Apple's Human Interface Guidelines, as far as each place can draw them. Where a 
 |---|---|
 | `text` | Words |
 | dim text | Secondary words: labels, values, notes |
-| `subtle` | The outline of a group or a quiet button |
-| `suggestion` | **The tint: everything you can press,** and nothing else |
+| `composerSidebarBackground` | A raised panel |
+| `selectionBg` | The soft band behind a card's recommendation |
+| `rate_limit_fill`, `rate_limit_empty` | The launch bar |
+| `diffRemovedDimmed` | All stop's panel |
+| `suggestion` | **The tint: everything you can press,** in the terminal, where a Button's label can take a colour |
 | `error` | STOP |
 | `warning` | To watch; out of date |
 | `success` | All well |
@@ -2073,13 +2076,13 @@ The tint is the theme's blue, not Claude's orange accent, because orange sits to
 
 **Spacing.** The pane's spacing steps, from `xs` to `xl`: small inside a group, large between groups, so the grouping shows without extra lines. The pane keeps one inset on both sides.
 
-**What you can press: one tint, four shapes.** Everything you can press takes the tint and is also a shape, so colour is never the only sign:
+**What you can press: one tint, four shapes.** Everything you can press is a shape, so colour is never the only sign. Desktop draws a Button's label alone and in its own colours, so the tint shows only in the terminal:
 
 | Shape | How it's drawn | Used for |
 |---|---|---|
 | **Filled** | `Button`, `variant="primary"` | The one thing to press: a card's deciding answer (Approve, Confirm, Push it, Do it), Lift STOP, Send, Done |
 | **Outlined** | `Button`, `variant="secondary"`, label in the tint | The other choice: Suggest a change…, Cancel, a feature question's other options |
-| **Small outlined** | the same, at footnote size | Why?, Not now, Back, Next, Board, Settings, Undo, Change… |
+| **Small** | `Button`, `plain` and dim, at full strength under the pointer | Why?, Not now, Back, Next, Settings, Undo, Change… |
 | **Link** | `Link`, ending "↗" | What opens elsewhere: "See 'save a search' ↗" |
 
 - **STOP** is the one exception. It is outlined with its label in `error`, sits apart at the top, and is never beside a filled button, so it can't be pressed by habit.
@@ -2092,10 +2095,12 @@ The tint is the theme's blue, not Claude's orange accent, because orange sits to
 - **Done:** a one-line note ("Approved. It goes live within the hour."), and the next card takes its place.
 - **Changed:** "That card changed while you were reading. Here is the new one."
 - **Out of date:** "Couldn't read the latest at 14:05. Showing 14:02's.", in `warning`. No figures are shown as current.
-- **Nothing waits:** "Nothing needs you.", in `success`, then what is being built.
+- **Nothing waits:** "Nothing needs you.", in `success`, then what is being built. The line is left out when the verdict already says it.
 - **STOP on:** the pane leads with it until the director lifts it.
 
 ### 23.3 The pane
+
+The look is the director's choice of 31 October 2026, direction A, Inset (`docs/specs/2026-10-31-pane-design.md`), which also sets out what the surface can draw. Each part sits on a raised panel, like a grouped list in iPhone Settings, and the card is the first panel.
 
 **Top to bottom:**
 
@@ -2113,9 +2118,9 @@ The tint is the theme's blue, not Claude's orange accent, because orange sits to
 1. **The header row:** its kind and place ("Approval · 1 of 2"), dim, with a small Not now at the right.
 2. **The question,** as a heading: "Put 'save a search' live?" Under it, **what this is**, in body text, left out only when it is the same words as the question.
 3. **The small line,** in footnote: its size, why it is the director's and how long it has waited ("Small feature · changes what users see · asked 2 hours ago"). An optional card adds "optional · 3 min".
-4. **The recommendation and why,** in one sentence of body text.
-5. **The thing itself and Why?** "See 'save a search' ↗" is a link where the work has a preview address. Where it has none, it is a small "Show me" button that starts a front-desk turn. Why? is a small button that opens, in place and with no Claude turn: why it's the director's, what each choice means, and what happens meanwhile. It then reads "Hide why".
-6. **Two buttons,** as an Apple alert has them: the filled deciding answer, and Suggest a change….
+4. **The recommendation and why,** in one sentence of body text, in a soft blue band.
+5. **The buttons,** as an Apple alert has them: the filled deciding answer, and Suggest a change….
+6. **The thing itself and Why?,** under the answer. "See 'save a search' ↗" is a link where the work has a preview address. Where it has none, it is a small "Show me" button that starts a front-desk turn. Why? is a small button that opens, in place and with no Claude turn: why it's the director's, what each choice means, and what happens meanwhile. It then reads "Hide why".
 7. **The checking line,** in caption, at the foot: the card's set line and its reply code, word for word ("Approve pull request #42 at commit 3f9c2a7b81d0 · K7QD").
 
 The card's five parts are all still there (section 5.3). The pane shows them as parts, never with their labels. The card's own words are still never drawn as a link or a heading. The only link is the one the bridge builds from the helper's preview address. *Designer's call* for each.
@@ -2206,7 +2211,7 @@ Settings is a grouped, inset list, like System Settings on the Mac and Settings 
 - **A switch.** The pane has none, and a picture of one can't be pressed, because a button holds only words. No setting is simply on or off today. One that becomes so gets a pop-up with On and Off.
 - **A pop-up on a phone's pane.** It has no `Select`, so it does what iPhone Settings does: each row shows its value and "›", and a press opens the choices on their own page, headed "‹ Settings", with a tick on the one in force. The "›" appears only there. On the Mac a pop-up opens in place, as in System Settings, so it needs none.
 - **A whole row you press.** Desktop would draw it as one wide button, so on the Mac a row is its name and its pop-up. Only the phone's pane makes the row the button.
-- **A raised group.** The theme has no colour for one, so each group is a rounded `subtle` outline.
+- **A raised group** is drawn: a panel filled with `composerSidebarBackground` and the theme's quiet line, with its name above it. The terminal keeps the line alone.
 
 *Designer's call* for each, apart from the names.
 
@@ -2285,7 +2290,6 @@ Wheelhouse speaks as the front desk: a calm, capable manager who has done the re
 
 These can only be seen on the real thing. Each has its fallback, so none holds up the build.
 
-- **Whether Desktop shows a theme colour inside its own button.** If not, the outline alone marks a button, and nothing plain is ever blue.
 - **Whether Desktop's link colour is the tint.** If not, the link still reads as a link (its ↗ and Desktop's link look), or becomes a small outlined button.
 - **The main button's fill.** If Desktop fills it with Claude's dark colour rather than the tint, Approve is still the one filled button.
 - **Contrast.** The light theme's blue on white is about 4.4 to 1, a touch under Apple's 4.5 for small text. Check it, and again with higher contrast on. If it falls short, labels go back to `text`, and the outline carries them.
@@ -2296,7 +2300,6 @@ These can only be seen on the real thing. Each has its fallback, so none holds u
 - **Whether pressing Enter in the Suggest box sends.** The test kit can't reach it. If not, the filled Send is the way.
 - **Whether a Select with no option picked ever sends by itself.** It should never. A pick of the value already in force sends nothing.
 - **Whether Not now sits at the card's right.** The header row uses space-between. If not, it moves to the card's foot.
-- **Whether STOP's label is red inside Desktop's button.** If not, STOP keeps its words and its place apart from the filled button.
 - **A Settings pop-up's look and the Suggest box's focus.**
 
 The run sheet, with each check's fallback and numbered steps for the Mac, about 15 minutes, is check 42 (`docs/checks/42-calm-desktop.md`). It is held for the director's sitting.
