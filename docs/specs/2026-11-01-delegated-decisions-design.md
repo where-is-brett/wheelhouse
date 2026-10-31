@@ -157,7 +157,7 @@ A question is real only if **all three** hold: there are several defensible read
 
 Where it fails, the step takes the one reading, names it in its report, and goes on. The step must look in the project first, and a line of the project on main at the piece's base may be what selects the reading.
 
-**This is no clearance.** Steps already settle such matters silently today. This test gives that a written form and adds no authority. It makes no `decision`, can't answer an ask, and a question already raised can't be withdrawn as "not real". A step can't be trusted to apply it to itself, so a wrong "not real" is a missed question. Two things stand behind that. The audit in section 12 samples the named lines. And from stage 1, when a piece is marked ready, the script runs the exclusions it can test against the whole change (section 9, guardrail 1). One that hits with no card or rule behind it parks at that point.
+**This is no clearance.** Steps already settle such matters silently today. This test gives that a written form and adds no authority. It makes no `decision`, can't answer an ask, and a question already raised can't be withdrawn as "not real". A step can't be trusted to apply it to itself, so a wrong "not real" is a missed question. Two things stand behind that. The audit in section 12 samples the named lines. And from stage 1, when a piece is marked ready, the script tests the whole change against the common exclusions (section 9, guardrail 1). One that hits parks the piece unless the director has answered a card on that matter. No rule can answer it.
 
 ### 7.2 The six kinds
 
@@ -192,8 +192,8 @@ In the first cut 28% of questions were answered outside the offered options, and
 
 This needs no delegation, and removes about 6% of questions (first cut).
 
-- **One decision, one card.** The helper gives each ask a decision key from its piece and its normalised words, by script. The step's topic label plays no part. An ask with an open key joins that card and raises no other. An ask with an answered key takes the director's earlier answer, as a blocked exit does today, and never at level 4.
-- **Close matches never answer.** A model's reading may only help the director. Where the reader says an ask is the same decision as an open card, that card gains the second wording, so the director sees both and their one click knowingly answers both. Where it matches an answered card, a new card says "You said this before" with that answer first, for one click. Where it can't say, an ordinary card is raised.
+- **One decision, one card.** The helper gives each ask a decision key from its piece and its normalised words, by script. The step's topic label plays no part. An ask with an open key and the same options joins that card and raises no other. An ask with an answered key takes the director's earlier answer, as a blocked exit does today, only where all of these hold: it's a `question` or `blocked` ask, neither ask is at level 4, the options are the same, the piece has no commits since that answer, and no common exclusion hits. That is the director's own answer to the same question, not a delegated decision. Otherwise it's a card that says "You said this before", with that answer first, for one click.
+- **Close matches never answer.** A model's reading may only help the director. From part 3 the reader also sees the piece's open and answered cards, and its reading arrives after the card is written, so no card waits for it. Where it says an ask is the same decision as an open card with the same options, the cards join, so the director sees both wordings and their one click knowingly answers both. Where it matches an answered card, the card gains the "You said this before" line. Where it can't say, the card stands as it is.
 - **An answer given in chat.** Where the director has already said what they want in chat, the card carries their words and asks for one click. Typed words still steer and never approve.
 - **Stale answers die.** An earlier answer isn't reused once the director has spoken on that piece since, or has changed that answer.
 
@@ -247,7 +247,7 @@ Parked pieces could return together, and no piece today passes through the dispa
 
 1. **The click counts at once.** The answer is signed and recorded straight away. The card closes, and the piece enters a kept `returning` list.
 2. **Delivery waits for a place.** The helper sends the answer to the engine only once `dispatch` admits the piece. An answer that stops the work needs no place and goes at once. This changes "the core then calls the engine's act" in the Archon design, section 8.4.
-3. **Every restart passes one check.** A delivered answer, a resume, a rework, a cap's Give it more, a feature's next slice, a requeue and a Try again all ask for a place in the same way. `dispatch` gains an `admit` list. The fix lane keeps its own rules, since a red main line must be mended.
+3. **Every restart passes one check.** A delivered answer, a resume, a rework, a cap's Give it more, a feature's next slice, a requeue and a Try again all ask for a place in the same way. `dispatch` gains an `admit` list. The fix lane and the merge queue keep their own rules: a red main line must be mended, and a merge-queue run sits on top of `pace` and has no work record to admit.
 4. **"Not yet" loses nothing.** Each restart path is one-shot today: it clears its entry, then starts. Under this design "no place yet" isn't a refusal. The entry stays on `returning` and is tried on the next tick. It leaves only when its run is seen to start.
 5. **An admitted piece holds its place at once,** from the moment `dispatch` names it until its run is seen running, so the next tick can't admit past `pace`. If the start is refused for a real reason, the place goes back, the refusal is said in one plain line as today, and the piece stays on `returning`, with **Try again** and **Stop** on a card after a second refusal.
 6. **Returning work goes first,** ahead of anything not yet started, oldest answer first, because it has spent and holds files. It keeps the First Mate's place otherwise.
@@ -257,9 +257,9 @@ Parked pieces could return together, and no piece today passes through the dispa
 
 ### 8.4 A limit on parked pieces
 
-If every piece parks, the dispatcher would go on starting new work that also parks, spending allowance on things the director hasn't seen. So **at most twice `pace` pieces may wait at once** (6 at the default), after which new work holds with the reason `parked`, and returning work is unaffected. *Designer's call*: a small number chosen to keep a return readable, not drawn from the study.
+If every piece parks, the dispatcher would go on starting new work that also parks, spending allowance on things the director hasn't seen. So **new work starts only while pieces waiting plus pieces running stay under twice `pace`** (6 at the default), which also bounds how many can end up waiting. Past that, new work holds with the reason `parked`, and returning work is unaffected. *Designer's call*: a small number chosen to keep a return readable, not drawn from the study.
 
-Keeping pace at three kept Archon below the six to eight live runs at which its database has locked up in the field. Paused rows should add little load, but that's *Inference*, so check D1 tries it. The reader adds at most one run on top of `pace` + 2. If D1 fails, the limit comes down to what held.
+Keeping pace at three kept Archon below the six to eight live runs at which its database has locked up in the field. Paused rows should add little load, but that's *Inference*, so check D1 tries it. A reader, of either sort, runs one at a time, and only while fewer than `pace` + 2 runs are going, so it never raises that peak. If D1 fails, the limit comes down to what held.
 
 ### 8.5 The card budget on a long run
 
@@ -274,7 +274,7 @@ Keeping pace at three kept Archon below the six to eight live runs at which its 
 
 ## 9. The guardrails
 
-Each rests on what a script can see. Where a script can't see a thing, the decision parks. Every guardrail has a test that proves it moves the outcome, because a setting nothing obeys isn't a control.
+Each rests on what a script can see. Where a script can't run a check, the decision parks. Some matters no check can read at all, and guardrail 1 says what stands in for one there. Every guardrail has a test that proves it moves the outcome, because a setting nothing obeys isn't a control.
 
 | # | Guardrail | What the script sees | If it's missing |
 |---|---|---|---|
@@ -300,9 +300,9 @@ A class is a kind of decision the director signed in advance, as a hospital sign
 
 **Every class also carries the same exclusions, which no rule can lift:** level 4 in full (money; legal, compliance and privacy; contacting anyone outside; visibility, secrets, DNS, live data and deployment settings; changing a director rule; publishing; the guardrails; anything the project reserves); a data model change; a new paid service; a new dependency on an outside account; access, or where records live; any matter resting on a fact the project can't show; and the main design's triggers as section 14.3 states. A class never covers an approval, the merge queue's question, a cap, trouble or a card only the director's click can give.
 
-**What a script can and can't see of these.** "Touches a guardrail" is read from the change by the permit's own test, not a label, so a rule can't cover work that changes the safety rules, even where a step calls it routine. Secrets, protected tests, the project's critical areas, a schema or migration path, and a changed dependency list are read from the change too, where the project has them. **Legal, privacy, outside contact and the meaning of a claim to users can't be read by a script at all.** No check can show they're absent. So those rest on three layers, and none of the three is a clearance alone: the word screen and the reader can only park; every condition of the rule must hold; and undo means a wrong call can't reach a user before someone sees it. That's why a decision about product code needs switch or held undo at every stage, and why Tell also needs the whole change inside paths the rule names.
+**What a script can and can't see of these.** "Touches a guardrail" is read from the change by the permit's own test, not a label, so a rule can't cover work that changes the safety rules, even where a step calls it routine. Secrets, protected tests, the project's critical areas, a schema or migration path, and a changed dependency list are read from the change too, where the project has them. **Legal, privacy, outside contact and the meaning of a claim to users can't be read by a script at all.** No check can show they're absent. So those rest on three layers, and none of the three is a clearance alone: the word screen and the reader can only park; every condition of the rule must hold; and undo means a wrong call about product code can't reach a user before someone sees it. That's why a decision about product code needs switch or held undo at every stage, and why Tell also needs the whole change inside paths the rule names.
 
-**Whether a class fits the question** is the reader's reading, since conditions test the change. That reading is needed and is never enough: it can only park, and the conditions and undo bound what a wrong fit can cost.
+**Whether a class fits the question** is the reader's reading, since conditions test the change. That reading is required, and it's never enough alone: a yes clears nothing without the conditions, and the conditions and undo bound what a wrong fit can cost.
 
 A class that fits one project may mean nothing in another. A project with no tests, host, mock-ups or switches simply has classes that can't settle there. The First Mate says so once when the classes are offered, and the questions park as they do today.
 
@@ -318,13 +318,13 @@ Rule 6 of the goals draft carries the most weight and keeps it. Reversible isn't
 
 - **Switch.** The piece is a slice behind its feature's switch, and all of these hold: the switch is kept in a file, so `flag.js --check-off` really reads it (a switch given in words passes that check today without being looked at, so it doesn't count); its name was new when this feature began, recorded by the helper, since a reused name wakes old code (the Knight Capital loss came that way); with the switch off, the project's tests pass with no test changed; and where the project lists `pages`, screenshots with the switch off match main's exactly, by the existing comparison.
 - **Held.** The piece can't merge without the director: the helper's record marks it shown first, so the permit refuses it until the director signs. This is the fallback for a project with no switch or no tests. It costs the piece's merge, not other work.
-- **Already allowed.** Only for a decision that changes no product code and adds nothing to what the push rules and the permit allow anyway. The script reads this from a fixed list of actions: a push or draft on the project's own branch, removing a branch that's merged or that the helper's record shows was made for a test (its name and head are recorded), the order of a plan's tasks, and landing a piece for which the permit's conditions already hold with no approval needed. *Designer's call.*
+- **Already allowed.** Only for a decision that changes no product code and adds nothing to what the push rules and the permit allow anyway. The script reads this from a fixed list of actions: a push or draft on the project's own branch, removing a branch that's merged or that the helper's record shows was made for a test (its name and head are recorded), the order and number of a plan's tasks and agents, and landing a piece for which the permit's conditions already hold with no approval needed. *Designer's call.*
 
-A check that can't run means this undo kind isn't available, and the next is tried. A piece with no switch that changes product code can only ever be held, at every stage, so its decisions are always flagged. Merging such a change unseen would widen rule 6 of the goals draft, and this design doesn't. A passing off-path check isn't proof: code can change the off path where no test looks. That limit is why decisions are sampled (section 12). Reversible and actually reversed also differ, so section 12 measures what a reversal cost.
+A check that can't run means this undo kind isn't available, and the next is tried. A decision about product code in a piece with no switch can only ever be held, at every stage, so it's always flagged. Merging such a decision unseen would widen rule 6 of the goals draft, and this design doesn't. **Landing is the one case to be plain about.** Routine work merges today on a signed clean review, with no director and no question, and this class doesn't change that. It only stops a step asking about a merge the permit would allow anyway. So it adds no reach, and it never applies to a piece that is shown first or carries an open decision. A passing off-path check isn't proof: code can change the off path where no test looks. That limit is why decisions are sampled (section 12). Reversible and actually reversed also differ, so section 12 measures what a reversal cost.
 
 ### Guardrail 4: the separate reader
 
-A small read-only workflow, `wheelhouse-reader`, one at a time, started by the helper. At stage 0 it reads every level-3 question card, after the card is written, so no card waits for it and it can't see the answer. From stage 1 it reads each ask that passed guardrails 1 to 3, plus a sample of those that didn't, for the evidence.
+A small read-only workflow, `wheelhouse-reader`, one at a time, started by the helper. At stage 0 the helper seals every level-3 card, and the reader reads the question cards among them, after the card is written, so no card waits for it and it can't see the answer. An approval is sealed as a signed kind that no rule can decide, with no reader. Where a reader run would use a plan's counted requests, it doesn't run at stage 0, since those requests are a limit other work is held by, and the seal holds the script checks alone. From stage 1 it reads each ask that passed guardrails 1 to 3, plus a sample of those that didn't, for the evidence.
 
 - **It sees:** the question, the options as bare labels in shuffled order with no recommendation mark, the rule's conditions and principle, any quote cited, the brief and the sheet, and the change as a diff from a fixed base.
 - **It doesn't see:** the step's reasoning, the options' `says` lines, its recommendation, its proposed kind, the rule's set answer, its commit messages, comments it wrote, or any other agent's view.
@@ -344,12 +344,12 @@ Each later choice raises the cost of undoing the first, so stacks are limited by
 - At most **5 flagged decisions open** across a project, so an unreviewed pile stops growing.
 - **A decision that builds on an open one counts as two.** The script sees this from `dependsOn` and from a shared branch.
 
-The next question over a limit parks. Anything that isn't a decision goes on.
+Outside a goal, at stage 2, the goal's 5 applies per project over a rolling day. The next question over a limit parks. Anything that isn't a decision goes on.
 
 ### Guardrail 6: stop on reversals
 
 - **One Change… or Wrong question…** on a decision ends deciding under that rule for the rest of the goal, at once.
-- **Two** in one goal ends all deciding for that goal.
+- **Two** in one goal, or outside a goal in one rolling day, ends all deciding for that goal or day.
 - **Script-seen trouble counts too:** a settled piece failing its done checks, or a BLOCKER finding that names the decided matter.
 - **Two reader disagreements in a row** under a rule pause it for that goal. Repeated refusal is a signal that something upstream is off.
 - Stops affect only what is yet to be decided. Work already under way carries on, and what it decided stays open to change.
@@ -366,9 +366,11 @@ The goals draft's word screen stays, as a lead. String matching gets walked arou
 
 If the head moves or the director speaks on that piece while the reader works, its verdict is void. Past verdicts are context, never precedent. Only a signed rule is precedent.
 
+**A decision is checked again at ready.** A step could ask early on a small change and then grow it. So when a piece that took a decision is marked ready, the script runs every condition, exclusion and undo check again on the whole change. A failure voids the decision and parks the piece, whatever was checked at the ask.
+
 ### The permit keeps its conditions, and gains one
 
-`brokerDecision` keeps every condition it has. A `decision` is never a signature, and `approvalCounts` reads only the director's signed records, so no decision can satisfy a level 4, guardrail or shown-first merge. A held piece's shown-first mark is written by the helper. One condition is added: a switch-on's permit also refuses while any decision on that feature is open and flagged, so that rule isn't only the card's. A held piece's merge still needs a signed approval of its head, so its approval card lists its open decisions, and that click closes them.
+`brokerDecision` keeps every condition it has. A `decision` is never a signature, and `approvalCounts` reads only the director's signed records, so no decision can satisfy a level 4, guardrail or shown-first merge. A held piece's shown-first mark is written by the helper. One condition is added: the permit refuses a switch-on, or a held piece's merge, while a decision on that work is open and flagged, so that rule isn't only the card's. The approval card isn't raised until each of those decisions has its own Keep or Change. An approval never closes a decision.
 
 ## 10. The three outcomes
 
@@ -398,7 +400,8 @@ Preferences account for about 69% of departures and facts only the director held
 
 After the director answers a card, where the script finds a like question has been answered before or the answer departed from the recommendation, one line follows: **"Same answer for this kind of thing from now on?"** It shows the rule as it would read, with its scope. The click is signed as any confirmation of a ruling is. So a rule can exist long before any review, and only the director makes one. *Designer's call.*
 
-- **A script composes the scope, narrowly, from what it can see.** This project, the paths the piece changed, the piece's lane, the card's answer in the director's words, and every standard exclusion. The step's topic label plays no part, and neither do an agent's words, because agents have been seen to talk people into broad allow-rules, and narrow grants are taken up more readily than broad ones.
+- **A script composes the scope, narrowly, from what it can see.** This project, the paths the piece changed, the piece's lane, and every standard exclusion. The step's topic label plays no part, because agents have been seen to talk people into broad allow-rules, and narrow grants are taken up more readily than broad ones.
+- **An agent's words can't shape what a rule means.** Where the director typed their answer, the rule carries those words. Where they clicked an option, its label is step-written, so the rule holds it only as a literal match: "when exactly these options come up, take this one". Nothing reads meaning into it, so it can't widen.
 - **It can't touch level 4,** and the composer refuses to offer it.
 - **It's offered rarely:** at most one offer a sitting, and a declined offer isn't made again for 30 days, as learnt proposals work today.
 - **A new rule starts at record-only,** so it decides nothing yet. Where its paths overlap a rule that has fallen, that rule's fall stands. Moving up works as for any rule (section 13.2).
@@ -416,20 +419,20 @@ Eight candidates, from repeated kinds in the first cut. Shares are of past quest
 
 | Candidate | Share | Script-checked limit |
 |---|---:|---|
-| Land finished, reviewed, green work | 9% | Answers only a step's "shall I land this?" when the permit's conditions already hold with no approval needed. **Not work that touches the safety rules or guardrails.** Set answer: land. Undo: already allowed. An approval and the merge queue's own question stay as they are |
+| Land finished, reviewed, green work | 9% | Answers only a step's "shall I land this?" when the permit's conditions already hold with no approval needed and the piece carries no open decision. **Not work that touches the safety rules or guardrails.** Set answer: land. Undo: already allowed (guardrail 3). An approval and the merge queue's own question stay as they are |
 | Push a branch or open a draft on the project's own private host | 3% | The host says private. Publishing stays with the director. Undo: already allowed. No meaning for a project with no host |
 | Remove merged branches and test leftovers | 2% | Merged, or the helper's record shows the agent made it for a test. The branch's name and head go in the decision. Undo: already allowed |
 | Fix a defect found in the same work | 2% | Inside the piece's files, small, with a test that failed first. Undo: switch or held |
 | How to run a plan (agents per task, order) | 3% | Inside the agreed spend. Undo: already allowed |
 | A technical choice tests can prove, on the principle of the proper long-term option | 6% | A named done check. No new paid service, no data change. Undo: switch or held |
 | Spec and mock-up disagree: follow the mock-up, fall back safely, note it | 3% | The mock-up is a file in the project. **Wording stays with the director.** Undo: switch or held |
-| A written rule already answers it | 1% | Quotes a signed record, checked word for word, on main at the piece's base. Undo: switch or held |
+| A written rule already answers it | 1% | Quotes a signed record in the private record, checked word for word. Undo: switch or held |
 
 **The landing rule carries a set answer** because early recommendations leaned the wrong way on that very kind (first cut). This is how a known lean gets corrected: the rule states the answer, so the recommendation no longer carries it.
 
 **Wording and layout aren't first classes.** The goals draft lists both as small topics, and its report's example decides wording. But "can see" held only half the time on the blind re-sort, moving mostly to "only the director knows" (first cut), and wording is the limit named on the mock-up rule. So both park until a rule of the director's own covers them.
 
-**These needn't be signed yet.** In record-only mode the eight are unsigned candidates, so the sealed record can say which one would have applied.
+**These needn't be signed yet.** In record-only mode the eight are unsigned candidates, so the sealed record can say which one would have applied. A candidate's evidence carries over when it's signed with the same hash.
 
 ## 12. Evidence
 
@@ -438,7 +441,7 @@ Eight candidates, from repeated kinds in the first cut. Shares are of past quest
 | Measure | How | What it answers |
 |---|---|---|
 | **Sealed against actual** | When a card is written, the helper seals its script checks, with a hash and time, and the reader's answer joins them unseen by anyone. Neither can see the director's answer. Later it scores match, miss or **outside** (typed, challenged, added to or asked back). Outside counts as a miss | Would it have matched? |
-| **Blind sample** (main measure) | On a random sample of cards, the options come first with no recommendation. After the pick the recommendation shows, and the director may change their mind. Both answers are kept. Never on level 4 or a card holding up all work. Blind cards don't feed the existing delegation review | Agreement without anchoring, and the anchoring itself |
+| **Blind sample** (main measure) | On about 1 in 5 question cards, at most one a day, the options come first in shuffled order with no recommendation. After the pick the recommendation shows, and the director may change their mind. Both answers are kept. Never on level 4, an approval or a card holding up all work. Blind cards don't count in the existing delegation review | Agreement without anchoring, and the anchoring itself |
 | **Direction** | The reader tags each option on a short list of axes, blind: sooner or later, more or less testing, faster or safer, paid or free, more or less scope, keep or remove. The review shows departures and takes by axis, by kind | Whether the recommendations lean one way. Take rates can't show this |
 | **Outcomes** | Decisions changed later, by kind, with the number of decisions as the denominator; work later redone because of one; failed checks on settled pieces | What happened, not what was clicked |
 | **Cost of a reversal** | Time and tokens spent per reversal, against the card avoided | Whether delegating paid for itself |
@@ -450,7 +453,9 @@ Eight candidates, from repeated kinds in the first cut. Shares are of past quest
 
 **Selective labels.** A wrong answer that stood is invisible, and a reversal needs someone to notice. So outcomes are always read beside the samples. A clean fortnight proves nothing.
 
-**The review changes.** The delegation review stays every `delegationReviewDays`. It stops counting approvals and shows the table above, by kind, along with any proposals. A proposal is one card that says what the evidence shows and what it can't show, and the director decides. Direction leans come as draft rules, with no threshold, since one lean is reason enough to ask.
+**Results stay sealed until the bars are set.** Until the director has set the bars (section 13.3), the evidence view shows volume only: how many cards were sealed, read and sampled. It shows no match, miss or direction by rule, so the bars can't be fitted to the results.
+
+**The review changes from part 5.** Until then it runs as it does today. The delegation review stays every `delegationReviewDays`. It stops counting approvals and shows the table above, by kind, along with any proposals. A proposal is one card that says what the evidence shows and what it can't show, and the director decides. Direction leans come as draft rules, with no threshold, since one lean is reason enough to ask.
 
 **Sample sizes are small by nature.** Blind samples cost the director's time, and real cards are few. So expect one kind at a time, slowly. *Inference*: pooled evaluation runs give an early signal only.
 
@@ -464,17 +469,17 @@ In this section **a kind of question means one rule**. Each signed rule, and eac
 |---|---|---|---:|
 | **0. Record-only** | Seals what it would decide. Changes no outcome | Answers as now, sometimes before seeing a recommendation | 100% |
 | **1. Within one goal** | Decides under the signed rules ticked on the sheet. Every decision is flagged | Keep or Change each | 80% to 95% |
-| **2. Standing** | Decides under that rule on all work, goal or not. Tell or flag by section 10 | Reviews flagged items, a sample and every exception | 65% to 85% |
+| **2. Standing** | Decides under that rule on all work, goal or not, unless a sheet leaves it out for that goal. Tell or flag by section 10 | Reviews flagged items, a sample and every exception | 65% to 85% |
 | **3. Shaping** | Turns outcomes into pieces inside the sheet's limits, and changes the list as work teaches | Sets outcomes and limits, and judges results against the sheet | 45% to 70% |
 | **Never** | Level 4 | Director only | Always |
 
 The ranges are judgement, not measurement, and the lower ends assume the first sort. Never-delegated matters, facts, risk, machine blockers and domain rules are about 35% or more (first cut), so **that floor holds at every stage**. A flagged decision isn't counted as reaching the director, though it still costs attention.
 
-**Stage 3 is outlined here and needs its own design.** The dispatcher stays a script. New pieces would come from a read-only shaping run, each one checked by the helper against the sheet's areas, spend and no-gos, and each with a done check of its own. It's the stage that would answer the director's doubt about planning ahead, and the one with the least evidence behind it.
+**Stage 3 is outlined here and needs its own design.** It belongs to no single rule, so it's a stage of the goal, and that design sets what earns it, by the director's signature. The dispatcher stays a script. New pieces would come from a read-only shaping run, each one checked by the helper against the sheet's areas, spend and no-gos, and each with a done check of its own. It's the stage that would answer the director's doubt about planning ahead, and the one with the least evidence behind it.
 
 ### 13.2 Moving
 
-- **Up: on evidence, by the director's click.** The review proposes a move only on evidence, and a clean count alone proposes nothing. Only the director signs a move, and nothing rises by itself. The director may also ask to move a rule from stage 0 to stage 1 sooner, since stage 1 flags every use and only they can sign. The card then says plainly what evidence there is, even if that's none. No rule reaches stage 2 that way.
+- **Up: on evidence, by the director's click.** The review proposes a move only on evidence, and a clean count alone proposes nothing. Only the director signs a move, and nothing rises by itself. The director may also ask to move a rule from stage 0 to stage 1 sooner, since stage 1 flags every use and only they can sign. The card then says plainly that the evidence is thin or still sealed. No rule reaches stage 2 that way.
 - **Down: fast, and by script.** Falling needs no signature, since it only returns a decision to the director.
 
 | Event | What falls |
@@ -491,7 +496,7 @@ The ranges are judgement, not measurement, and the lower ends assume the first s
 Each decision carries a **setup stamp**: the models pinned for the step and the reader, the pack's version, the rule's hash and the hash of the common exclusions. Evidence counts only for the stamp that earned it.
 
 - **A new model or pack** resets the evidence for every rule it touches, and each such rule falls to stage 1 at most.
-- **A changed rule set** resets what it touches. A change to the common exclusions touches every rule. A changed rule touches itself. A new rule touches any rule whose paths overlap it. So a rule set can change often without clearing rules it has no bearing on. *Designer's call.*
+- **A changed rule set** resets what it touches. A change to the common exclusions touches every rule. A changed rule touches itself. A new rule touches any rule whose named paths overlap it, and a candidate names none, so it touches nothing. So a rule set can change often without clearing rules it has no bearing on. *Designer's call.*
 - **Stage 1, not 0,** because the director's signature still stands and every use is flagged. *Designer's call.*
 - **The counted evaluation** runs for a new setup, under the token rules, so a reset isn't blind.
 
@@ -512,7 +517,7 @@ Each decision carries a **setup stamp**: the models pinned for the step and the 
 | Rule 3: the topic is on a short list | **Replaces** | Signed classes with exclusions. The step's topic label counts for nothing. `wording` and `layout` go (section 11.2) |
 | Rule 4: the step states no trigger raises it, and how to undo it | **Replaces** | Triggers are tested by script where they can be. A step can raise and can't clear. The undo line stays as words for the director, and the undo itself is checked |
 | Rule 5: a word screen | **Keeps, raise-only** | Guardrail 8 |
-| Rule 6: undone by construction | **Keeps, and tightens,** for product code | Guardrail 3. The switch path needs a checked off path. Held stays. **Added:** already allowed, for decisions that change no product code and add nothing to what the push rules and permit allow anyway |
+| Rule 6: undone by construction | **Keeps, and tightens,** for decisions about product code | Guardrail 3. The switch path needs a checked off path. Held stays. **Added:** already allowed, for what adds nothing to what the push rules and permit allow anyway, including landing a piece that would merge today with no question |
 | "How it is recorded" | **Keeps, with more fields** | Section 10 |
 | Report: **Keep**, **Change…**, **Keep all** | **Changes** | Keep all goes. **Wrong question…** joins. Tell needs no click |
 | "Keep counts as approved unchanged" | **Replaces** | Keep is no evidence (section 12) |
@@ -546,7 +551,7 @@ None of these is a ruling of the director's in section 22 of the main design. Ea
 | "The core then calls the engine's act" | Archon design, section 8.4 | The answer is signed at once and delivered when admitted |
 | Cards past the budget wait for the next day's visit | Archon design, section 8.3 | They exist at once and aren't pushed. The director can pull them. Still a target |
 | Five approvals propose a topic | Main design, section 6, the delegation review and how it counts | Replaced by sections 12 and 13. `delegationReviewDays` stays |
-| At level 2 the topic's questions are decided by their recommendation | Main design, section 6; `routeAsk`, `lowered` | **That path closes at stage 1's build.** A level-2 entry for a topic becomes a rule at stage 1, shown to the director first. Until then it stays as it is, so record-only changes no outcome |
+| At level 2 the topic's questions are decided by their recommendation | Main design, section 6; `routeAsk`, `lowered` | **That path closes at part 5.** Until then it stays as it is, proposals included, so record-only changes no outcome. A level-2 entry has no conditions, so from part 5 it decides nothing. The director is offered a composed rule for it, which starts at record-only like any other, and until they sign one those questions park |
 | Triggers raise a decision a level | Main design, section 6 | **Keeps,** with one change. "It's ambiguous" no longer raises a question a signed class covers, since that's what the class was signed for. "First of its kind" flags. "It can't be undone" parks, by guardrail 3. Costs money, overruns, a conflict with a rule or rejection, three failures or round 3, and no named check all park |
 | Reversible answers: assume, flag, record | Main design, section 7.5 | **Keeps** for what isn't a real question. Otherwise this design's path applies |
 | Autonomy setting | Main design, section 14.1 | Autonomy moves no rule. **Cautious** turns deciding off. **Trusting** widens nothing here. Level 4 never moves |
@@ -559,18 +564,18 @@ For the build plan to work from. Nothing here is a plan.
 
 | Part | What it is | Changes an outcome? |
 |---|---|---|
-| **1. Record-only** | The reader workflow, after each card is written; the sealed `shadow` record; the reader's sort and direction tags; `chat-question` counts; the evidence view; the eight candidates as unsigned data; blind cards if decision 1 allows | **No,** with blind cards the one stated exception. No card waits, no piece's spend or cap moves, and the existing delegation review runs unchanged |
-| **2. Parked pieces and budget** | Section 8: `waiting` and `returning`, the `admit` list, reserved paths, the parked limit, `park` for all work, `heldBack`, the pull, the top card rising | No decision moves. How work runs does |
-| **3. Asked once** | Section 7.4: decision keys, exact-match answers, joining an open card | Exact repeats only, with the director's own earlier answer |
+| **1. Record-only** | The reader workflow, after each card is written; the sealed `shadow` record; the reader's sort and direction tags; `chat-question` counts; the evidence view; the eight candidates as unsigned data; blind cards if decision 1 allows | **No,** with blind cards the one stated exception. No card waits, no piece's spend, cap or counted requests move, and the existing delegation review runs as it does, with blind cards left out of its count |
+| **2. Parked pieces and budget** | Section 8: `waiting` and `returning`, the `admit` list, reserved paths, the parked limit, `park` for all work, `heldBack`, the pull, bundling, the top card rising | No decision moves. How work runs does |
+| **3. Asked once** | Section 7.4: decision keys, exact-match answers, joining an open card, the "You said this before" line | Exact repeats only, with the director's own earlier answer |
 | **4. Rules** | The `rule` record, the one click, the brief and the sheet's lines, the composer's scope. Rules sit at stage 0 and do nothing yet | No |
-| **5. Stage 1** | The checks in section 9, the off-path check, `decision` records, the report's parts, the falls, naming a reading (section 7.1), sending back an ask that didn't look, and the exclusions run at ready. Closes `lowered`. Needs the goals draft built | **Yes**, and only for signed, ticked rules |
-| **6. Audit and direction** | The weekly audit; direction shown in the review | No |
+| **5. Stage 1** | The checks in section 9, the off-path check, `decision` records, the report's parts, the falls, naming a reading (section 7.1), sending back an ask that didn't look, and the checks run again at ready. Closes `lowered`. Needs the goals draft built | **Yes**, and only for signed, ticked rules |
+| **6. Audit and direction** | The weekly audit; direction shown in the review | Only by a fall, never a rise |
 | **7. Stage 2** | Standing rules, and tell | Yes, by the director's click per rule |
 | **8. Stage 3** | Its own design first | Yes |
 
-**By file.** Records: new kinds `rule`, `shadow`, `missed`, `brief`, `chat-question`; `decision` and `reversal` gain fields. Dispatcher and `dispatch-run.js`: section 8. Runner: delivery gated by `admit`, `heldBack`, decision keys. Router: the guardrails in place of `lowered`. Pack: a `wheelhouse-reader` workflow; the blocked exit gains its citation fields. `flag.js`: the off-path checks. Permit: the switch-on refusal. `learning.js`: the review reads evidence, not approvals, from part 5 on, and leaves out blind cards from part 1. `cli.js` and the courier's `needsYou`: both pass over `heldBack`. Cards: the blind form, Wrong question…, the one-click offer.
+**By file.** Records: new kinds `rule`, `shadow`, `missed`, `brief`, `chat-question`; `decision` and `reversal` gain fields. Dispatcher and `dispatch-run.js`: section 8. Runner: delivery gated by `admit`, `heldBack`, decision keys. Router: the guardrails in place of `lowered`. Pack: a `wheelhouse-reader` workflow; the blocked exit gains its citation fields. `flag.js`: the off-path checks. Permit: the switch-on refusal. `learning.js`: leaves out blind cards from part 1, and from part 5 the review reads evidence, not approvals. `cli.js` and the courier's `needsYou`: both pass over `heldBack`. Cards: the blind form, Wrong question…, the one-click offer.
 
-**Evaluation.** Scenarios join the one counted evaluation, once for the plan, as the token rules say: a card sealed and shown unchanged; a builder claiming the director agreed; a level-4 matter mislabelled; a step calling a question not real; options that miss the right answer, with the reader saying doubtful; a reused switch; a switch in words; a reader timing out; three parked pieces with other work merging; answers bringing runs back over pace; a waiting feature with a second one starting; a fourth card pulled; a chat "yes" cited as authority; a close match that must not answer; a citation the step wrote itself; an answer waiting for a place through All stop and through a goal's end; a start refused after admission; each fall.
+**Evaluation.** Scenarios join the one counted evaluation, once for the plan, as the token rules say: a card sealed and shown unchanged; a builder claiming the director agreed; a level-4 matter mislabelled; a step calling a question not real; a change grown after its decision; options that miss the right answer, with the reader saying doubtful; a reused switch; a switch in words; a reader timing out; three parked pieces with other work merging; answers bringing runs back over pace; a waiting feature with a second one starting; a fourth card pulled; a chat "yes" cited as authority; a close match that must not answer; a citation the step wrote itself; an answer waiting for a place through All stop and through a goal's end; a start refused after admission; each fall.
 
 ## 16. Early checks
 
@@ -651,7 +656,7 @@ The director may override any of these.
 9. Returning work goes first; an answered feature may take the place at a slice boundary (section 8.3).
 10. At most twice `pace` pieces waiting (section 8.4).
 11. A class's common exclusions, and a quote never standing in for a rule (section 9, guardrails 1 and 2).
-12. The three undo kinds and the off-path checks, with no way to merge product code unseen (section 9, guardrail 3).
+12. The three undo kinds and the off-path checks, with no way to merge a decision about product code unseen; landing only what would merge today with no question (section 9, guardrail 3).
 13. What the reader sees, and what agreement means (section 9, guardrail 4).
 14. The stack limits: 5, 2, 5 and counting double (section 9, guardrail 5).
 15. The reversal stops (section 9, guardrail 6).
