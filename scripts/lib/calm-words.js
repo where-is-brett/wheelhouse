@@ -181,7 +181,7 @@ export const SETUP_DOING = Object.freeze({
   10: 'Checking that everything is safe',
 });
 // Step 3 names the host once it is known.
-export const connectingTo = (host) => (host === 'github' ? 'Connecting to GitHub' : host === 'gitlab' ? 'Connecting to GitLab' : SETUP_DOING[3]);
+export const connectingTo = (host) => (host === 'github' ? 'Connecting to GitHub' : host === 'gitlab' ? 'Connecting to GitLab' : host === 'local' ? 'Setting your project up on this computer' : SETUP_DOING[3]);
 export const SETUP_DONE = Object.freeze({
   1: 'Wheelhouse is installed.',
   2: 'The tools are in place.',

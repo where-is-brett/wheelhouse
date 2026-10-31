@@ -21,6 +21,7 @@ import { makeAdapter } from '../../../scripts/host/adapter.js';
 import { protectionStatus } from '../../../scripts/host/protection.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { setupLine, setLineOf } from '../../../scripts/state/card-lines.js';
+import { KEEP_HERE } from '../../../scripts/setup/local.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
 import { fileURLToPath } from 'node:url';
 
@@ -176,7 +177,7 @@ test('on a Mac, git counts only once Apple\'s command-line tools are in, and /us
   assert.equal((await toolsStatus({ platform: 'darwin', run: own.run, env: {} })).git.ok, true);
 });
 
-test('the project\'s host decides which of gh and glab it needs, by its origin, both while it names none', () => {
+test('the project\'s host decides which of gh and glab it needs, none for one kept here, both while a new product\'s place is open', () => {
   const folder = tempFolder('wh-host Zoë ');
   assert.deepEqual(hostToolsFor(folder), ['gh', 'glab']);
   fs.mkdirSync(path.join(folder, '.git'));
@@ -186,7 +187,14 @@ test('the project\'s host decides which of gh and glab it needs, by its origin, 
   config('https://gitlab.com/group/product.git');
   assert.deepEqual(hostToolsFor(folder), ['glab']);
   config('https://git.example.org/team/product.git');
-  assert.deepEqual(hostToolsFor(folder), ['gh', 'glab']);
+  assert.deepEqual(hostToolsFor(folder), ['glab'], 'another remote names GitLab');
+  fs.writeFileSync(path.join(folder, '.git', 'config'), '[remote "origin"]\n\turl = https://git.example.org/team/product.git\n');
+  assert.deepEqual(hostToolsFor(folder), []);
+  const empty = tempFolder('wh-host Zoë ');
+  const said = (label) => ({ label, text: null, at: 'x' });
+  assert.deepEqual(hostToolsFor(empty, { '3.join': said(KEEP_HERE) }), []);
+  assert.deepEqual(hostToolsFor(empty, { '3.host': said('GitLab') }), ['glab']);
+  assert.deepEqual(hostToolsFor(empty, { '3.join': said('GitHub') }), ['gh']);
 });
 
 // ---- The installers ----

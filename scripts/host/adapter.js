@@ -9,7 +9,7 @@ import { githubCommands } from './github.js';
 import { gitlabCommands } from './gitlab.js';
 import { toolPath } from '../lib/host-tools.js';
 import { publicHttps } from '../screens/pages.js';
-import { parseRemote, listed, isDefaultHost, hostWords, DEFAULT_GITLAB } from './gitlab-base.js';
+import { parseRemote, listed, isDefaultHost, DEFAULT_GITLAB } from './gitlab-base.js';
 import { hostFailure, outputKind, lineFor, timedOut } from './company-ca.js';
 
 const HOSTS = { github: githubCommands, gitlab: gitlabCommands };
@@ -106,9 +106,6 @@ export function detectHost(remotes, { gitlabHosts = [] } = {}) {
   }
   return 'local';
 }
-
-// What setup says of an address that is neither host, until it sets up a project in git alone.
-export const notHostedLine = (remoteUrl) => `The repository is at ${hostWords(parseRemote(remoteUrl))}, which is not GitHub or GitLab. If it is a GitLab address, name it in the project settings`;
 
 const REPO = /^[A-Za-z0-9_.][A-Za-z0-9_.-]*(\/[A-Za-z0-9_.][A-Za-z0-9_.-]*)+$/;
 const SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;

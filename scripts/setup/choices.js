@@ -27,12 +27,15 @@
 // the director's that differs. While it holds, each of its choices counts as answered as it says,
 // unless the director answered that question again since.
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { canonicalJson } from '../lib/canonical.js';
 import { engineWanted, engineLine } from './engine-parts.js';
 import { HEALTH_STEP, onRunList, stepDone } from '../lib/setup-run.js';
 import { askedRecord, answersFor } from './clicks.js';
 import { HOST_LABELS, LEVELS, NEW_PRODUCT, REAL_USERS, STRICTER, WAYS } from './host.js';
 import { LIVE_DATA, PRODUCT, SIGNS_APPS, productName } from './questions.js';
+import { FIRST_CHECK_LINE, KEEP_HERE, KEPT_LINE, STARTED_LINE } from './local.js';
 
 // The one card's step: none of setup's ten.
 export const ONE_CARD_STEP = 0;
@@ -55,7 +58,9 @@ export function aboutOf(key) {
   if (id === 'join' || id.startsWith('join-')) return 'new or from your other computer';
   if (id === 'real-users') return 'real users';
   if (id === 'locked') return 'Locked';
-  if (id === 'host') return 'GitHub or GitLab';
+  if (id === 'host') return 'where the project is kept';
+  if (id === 'kept') return 'where the project is kept';
+  if (id.startsWith('branch-')) return 'the main version\'s line';
   if (id.startsWith('connection')) return 'how agents reach the project';
   if (id.startsWith('product-')) return 'the description';
   if (id === 'live-data') return 'live data';
@@ -99,21 +104,28 @@ export async function openChoices({ steps, run, answers, planOf }) {
       if (Object.hasOwn(taken, key)) break;
       const chosen = answers[key] ?? null;
       const answer = chosen ?? { label: card.recommend, text: null, at: null };
-      list.push({ step: step.n, id, key, card, typed: typed === true, writes, chosen, label: answer.label, text: answer.text });
+      list.push({ step: step.n, id, key, card, typed: typed === true, writes, chosen, label: answer.label, text: answer.text, ...(got.ask.line ? { line: got.ask.line } : {}) });
       taken[key] = answer;
     }
   }
   return list;
 }
 
+const NOT_JOINING = [NEW_PRODUCT, KEEP_HERE, HOST_LABELS.github, HOST_LABELS.gitlab];
 // Whether the answers taken say this computer joins a product from another (the join question
 // answered with anything but a new product).
-const joining = (taken) => Object.entries(taken).some(([key, a]) => /^3\.join(?:-|$)/.test(key) && a.label !== NEW_PRODUCT);
+const joining = (taken) => Object.entries(taken).some(([key, a]) => /^3\.join(?:-|$)/.test(key) && !NOT_JOINING.includes(a.label));
 
 // The plain line a choice adds to the one card, or null when it adds none. `name` is the product's,
 // `platform` the computer's.
-function lineOf({ id, label, text }, { name, platform, choices }) {
-  const host = choices.find((c) => c.id === 'host')?.label === HOST_LABELS.gitlab ? 'GitLab' : 'GitHub';
+function lineOf({ id, label, text, line }, { name, platform, choices }) {
+  const host = choices.some((c) => (c.id === 'host' || c.id === 'join' || c.id.startsWith('join-')) && c.label === HOST_LABELS.gitlab) ? 'GitLab' : 'GitHub';
+  if (id === 'kept') return label === KEEP_HERE ? line : `Put on GitHub: a private repository on your account, with your project's history sent to it.`;
+  if (id.startsWith('branch-')) return `Finished work goes on ${label}, the main version.`;
+  if (label === KEEP_HERE && (id === 'host' || id === 'join' || id.startsWith('join-'))) return KEPT_LINE;
+  if (label === HOST_LABELS.github || label === HOST_LABELS.gitlab) {
+    if (id === 'join' || id.startsWith('join-')) return `A new product, in a private repository on your ${host} account.`;
+  }
   if (id === 'join' || id.startsWith('join-')) return label === NEW_PRODUCT ? null : `${name}, from your other computer, brought into this folder.`;
   if (id === 'real-users') {
     const live = choices.find((c) => c.id === 'live-data')?.label;
@@ -171,20 +183,23 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
   // its phone card, carried on after the update), whose card names what is left.
   const nearlyDone = setupTime(toRun, list) === 'about a minute';
   const lines = [];
-  if (toRun.includes(3) && product && product.isNew === false) lines.push(`${name} on ${product.host === 'gitlab' ? 'GitLab' : 'GitHub'}, as it is.`);
+  const keptHere = list.some((c) => c.label === KEEP_HERE);
+  if (toRun.includes(3) && product && product.isNew === false && product.host !== 'local') lines.push(`${name} on ${product.host === 'gitlab' ? 'GitLab' : 'GitHub'}, as it is.`);
   // In the card's order: where it is kept, how agents reach it, its phase and data, Locked, the
   // description, then Apple signing.
-  const rank = ({ id }) => ['join', 'host', 'connection', 'real-users', 'live-data', 'locked', 'product-', 'apple-apps']
+  const rank = ({ id }) => ['join', 'host', 'kept', 'branch-', 'connection', 'real-users', 'live-data', 'locked', 'product-', 'apple-apps']
     .findIndex((p) => id === p || id.startsWith(p.endsWith('-') ? p : `${p}-`));
   for (const c of [...list].sort((x, y) => rank(x) - rank(y))) {
     const readme = describedBy(c);
     const line = readme === null ? lineOf(c, { name, platform, choices: list }) : `Described as: ${readme}`;
     if (line !== null) lines.push(line);
   }
+  if (keptHere && toRun.includes(3) && !fs.existsSync(path.join(folder, '.git'))) lines.push(STARTED_LINE('main'));
   // The plugin's update is step 6's, so the line names it only while step 6 is still to run.
   if (toRun.includes(2) && engineWanted({ platform, hosts })) lines.push(agentLine ?? engineLine(undefined, { claudeHome: toRun.includes(6) ? claudeHome : null }));
   if (toRun.includes(6)) lines.push('On this computer: usage counted here only, and 30 days of chat history kept (older history is deleted).');
-  if (toRun.includes(7)) lines.push('Wheelhouse\'s settings saved to the project, then its main line protected.');
+  if (toRun.includes(7)) lines.push(keptHere ? 'Wheelhouse\'s settings saved to the project.' : 'Wheelhouse\'s settings saved to the project, then its main line protected.');
+  if (toRun.includes(7) && keptHere) lines.push(FIRST_CHECK_LINE);
   // Never a plan with no lines: the health check is named when nothing else is.
   if (lines.length === 0 && toRun.includes(HEALTH_STEP)) lines.push('A last check that everything is safe.');
   const yours = list.some((c) => c.chosen !== null);
@@ -206,7 +221,7 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
     question,
     header: 'Setup',
     options: [
-      { label: GO_AHEAD, description: 'Recommended: I do all of this now. You\'ll only be asked to sign in, or for your password.' },
+      { label: GO_AHEAD, description: `Recommended: I do all of this now. You'll only be asked ${keptHere ? 'for your password, if at all' : 'to sign in, or for your password'}.` },
       { label: CUSTOMISE, description: 'See every choice, and change any before anything runs.' },
     ],
     multiSelect: false,
