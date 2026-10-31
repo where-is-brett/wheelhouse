@@ -10,10 +10,10 @@ import { sealOf, scoreOf, scoreLine, firstLines } from './seal.js';
 import { setupStamp } from './stamp.js';
 import { SEAL_TICK_MS, FACT_TRIES, SEAL_TRIES, SCORE_WAIT_DAYS } from './limits.js';
 import { UNREAD_FACTS } from './facts.js';
-import { cardOutcomes } from '../state/views.js';
 import { verify } from '../state/signing.js';
 import { answerLine } from '../state/card-lines.js';
 import { SUGGEST } from '../lib/calm-words.js';
+import { PUT_OFF } from '../lib/front-desk.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const EMPTY = () => ({ waiting: [], sealed: {}, tries: {}, fails: {}, open: {} });
@@ -36,11 +36,26 @@ export function cardContext({ views, card, testCommand }) {
   return { doneCheck: testCommand ?? undefined, openDecision: open };
 }
 
+// The lines of the cards on which the director stepped out of the options: a Suggest a change…, however the click named
+// its card, words typed in place of an option, or a pick of Suggest in the chat, which writes only `chat-steer`.
+function steppedOut(events) {
+  const answers = events.filter((e) => e.kind === 'card-answer');
+  const told = new Set(events.filter((e) => e.kind === 'chat-steer').map((e) => e.data?.card));
+  const out = new Set();
+  for (const card of events.filter((e) => e.kind === 'card' && typeof e.data?.line === 'string')) {
+    const offered = Array.isArray(card.data.options) ? card.data.options : [];
+    const leaves = (label) => label === SUGGEST || (typeof label === 'string' && !PUT_OFF.includes(label) && !offered.includes(label));
+    const mine = (a) => a.at >= card.at && [a.data?.card, a.data?.question].some((name) => name === card.id || name === card.data.question);
+    if (told.has(card.id) || answers.some((a) => mine(a) && leaves(a.data?.label))) out.add(card.data.line);
+  }
+  return out;
+}
+
 // What the signed record says of a card, for scoring. `lines(id)` its first seal, reading and score, from lines this
 // computer can verify; `answer(id)` its answer, and whether the director stepped out of the options on any of its cards.
 export function historyOf({ events, enrolled, views }) {
   const lines = firstLines(events.filter((e) => e.kind === 'shadow' && typeof e.data?.card === 'string' && verify(e, enrolled)));
-  const steered = new Set(cardOutcomes(events, enrolled).filter((o) => o.steered !== null).map((o) => o.card.data?.line));
+  const steered = steppedOut(events);
   return {
     lines: (id) => lines.get(id) ?? {},
     answer: (id) => ({ answer: views?.questions?.[id]?.answer ?? null, steered: steered.has(answerLine(id)) }),
@@ -133,7 +148,7 @@ export function recordOnly({ file, write, stopped = () => false, now = () => new
   // One look over the cards waiting for a score. A reading may come after the answer, so a card with an answer and no
   // reading stays open, and a reader that gave nothing closes it with no score.
   async function score(mine) {
-    if (Object.keys(state.open).length === 0) return;
+    if (mine !== flight || Object.keys(state.open).length === 0) return;
     const record = quietly(history, null);
     if (record === null) return;
     for (const [id, sealedAt] of Object.entries(state.open)) {

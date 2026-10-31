@@ -463,3 +463,25 @@ test('the signed record gives the first seal, the answer, and whether the card w
   assert.equal(got.steered, true);
   assert.equal(history.answer('q-w-9').steered, false);
 }));
+
+test('stepping out of a card\'s options by any way the record holds counts as steered', () => withHome(() => {
+  const { computer, publicKey } = makeSigningKey();
+  enrol({ computer, publicKey, enrolledAt: '2026-11-01T00:00:00.000Z' });
+  const at = (n) => () => new Date(`2026-11-01T02:00:0${n}.000Z`);
+  const card = (id, n = 1) => makeEvent({ kind: 'card', data: { question: `Which ${id}?`, header: 'Which', kind: 'answer', level: 3, line: answerLine(id), options: ['Keep', 'Remove', SUGGEST_LABEL, 'Not now'] }, now: at(n) });
+  const answered = (question, label, n = 2) => makeEvent({ kind: 'card-answer', data: { question, label }, now: at(n) });
+  const byId = card('q-byid');
+  const told = card('q-told');
+  const events = [
+    card('q-typed'), answered('Which q-typed?', 'Keep it, but smaller'),
+    byId, answered(byId.id, SUGGEST_LABEL),
+    told, makeEvent({ kind: 'chat-steer', data: { card: told.id }, now: at(2) }),
+    card('q-kept'), answered('Which q-kept?', 'Keep'),
+    card('q-put-off'), answered('Which q-put-off?', 'Not now'), answered('Which q-put-off?', 'Explain more', 3),
+    answered('Which q-later?', 'Something typed on an older card'), card('q-later', 3),
+  ];
+  const enrolled = readEnrolled();
+  const history = historyOf({ events, enrolled, views: {} });
+  for (const id of ['q-typed', 'q-byid', 'q-told']) assert.equal(history.answer(id).steered, true, id);
+  for (const id of ['q-kept', 'q-put-off', 'q-later']) assert.equal(history.answer(id).steered, false, id);
+}));
