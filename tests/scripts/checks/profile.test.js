@@ -47,6 +47,10 @@ test('the system services are named one by one', () => {
   assert.doesNotMatch(profile(), /\(allow mach-lookup\)/);
 });
 
+test('the services that start programs, or name the per-user folders, are left out', () => {
+  for (const name of ['com.apple.bsd.dirhelper', 'com.apple.testmanagerd.control', 'com.apple.coreservices.launchservicesd']) assert.ok(!CHECK_SERVICES.includes(name), name);
+});
+
 test('a head writes its own folders and never main-home', () => {
   const writes = rules(profile(), '(allow file-write*').join('\n');
   assert.ok(writes.includes(`(subpath "${paths().tree}")`));

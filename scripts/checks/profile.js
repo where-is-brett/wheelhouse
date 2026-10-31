@@ -9,9 +9,13 @@
 //
 // The last matching rule wins, so the order of the lines below carries meaning.
 
-// The system services a build tool can't work without, each answering a question and starting nothing.
+// The system services a build tool can't work without, each answering a question and starting nothing. Three are left out
+// on purpose. `com.apple.bsd.dirhelper` names the per-user temporary and cache folders: without it the tools fall back to
+// the check's own TMPDIR, and those folders can stay shut. What is written there is read by programs outside the sandbox
+// (xcrun keeps its lookup of tools there), so a test could plant something the director's next build would run.
+// `com.apple.testmanagerd.control` and `com.apple.coreservices.launchservicesd` start programs outside the sandbox, so
+// `xcodebuild test` can't run here; run.js has a second try for that.
 export const CHECK_SERVICES = Object.freeze([
-  'com.apple.bsd.dirhelper',
   'com.apple.diagnosticd',
   'com.apple.FSEvents',
   'com.apple.logd',
@@ -45,9 +49,7 @@ function foldersAbove(folder) {
 }
 
 // The SBPL text for one stage of a check. `stage` is `prepare` or `test`. `denied` is the deny list as real paths and
-// `temp` the temporary folders a check may write. The per-user temporary and cache folders are left off: what is written
-// there is read by programs outside the sandbox (xcrun keeps its lookup of tools there), so the check's TMPDIR is a
-// folder of its own.
+// `temp` the temporary folders a check may write, which leave out the per-user ones (above).
 export function checkProfile({ paths, main, stage, network, denied, temp, userHome }) {
   const ownHome = main ? paths.mainHome : paths.home;
   const online = stage === 'prepare' || network === true;
