@@ -56,7 +56,7 @@ export async function compareFolder(args) {
 
 // Brings the folder up to the home's main version, fast-forward only: { moved } says whether it moved, or { line } why it
 // waits. Only a folder on that branch with nothing uncommitted. A file git doesn't track holds nothing up, and one in the
-// way makes the merge refuse.
+// way makes the merge refuse, ignored or not.
 export async function bringFolderUp({ project, folder, branch, git = gitRoute() }) {
   const { state, home } = await reading({ project, folder, branch, git });
   if (state !== 'home-ahead') return { moved: false };
@@ -65,7 +65,7 @@ export async function bringFolderUp({ project, folder, branch, git = gitRoute() 
   if (on.code !== 0 || String(on.stdout).trim() !== `refs/heads/${branch}`) return { line: OWN_CHANGES_LINE };
   const dirty = await here.call(['--no-optional-locks', 'status', '--porcelain', '--untracked-files=no']);
   if (dirty.code !== 0 || String(dirty.stdout).trim() !== '') return { line: OWN_CHANGES_LINE };
-  return (await here.ok(['merge', '--ff-only', '--quiet', home])) ? { moved: true } : { line: OWN_CHANGES_LINE };
+  return (await here.ok(['merge', '--ff-only', '--no-overwrite-ignore', '--quiet', home])) ? { moved: true } : { line: OWN_CHANGES_LINE };
 }
 
 // The card for work the folder holds and the home doesn't (spec 5.4).

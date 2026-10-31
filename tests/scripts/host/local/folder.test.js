@@ -80,6 +80,20 @@ test('a file git doesn\'t track holds nothing up', () => level(async (folder) =>
   assert.deepEqual(await bringFolderUp({ project: P, folder, branch: 'main' }), { moved: true });
 }));
 
+test('a file git ignores in the way stays as it is, and the folder waits with one line', () => level(async (folder) => {
+  await commitIn(folder, '.gitignore', '.env\n');
+  await git(homeDir(P), ['fetch', '-q', folder, '+refs/heads/main:refs/heads/main']);
+  fs.writeFileSync(path.join(folder, '.env'), 'mine\n');
+  const copy = path.join(tempFolder('wh-copy-'), 'copy');
+  await git(path.dirname(copy), ['clone', '-q', homeDir(P), copy]);
+  fs.writeFileSync(path.join(copy, '.env'), 'theirs\n');
+  await git(copy, ['add', '-f', '.env']);
+  await git(copy, ['commit', '-q', '-m', 'Add .env']);
+  await git(copy, ['push', '-q', 'origin', 'HEAD:refs/heads/main']);
+  assert.deepEqual(await bringFolderUp({ project: P, folder, branch: 'main' }), { line: OWN_CHANGES_LINE });
+  assert.equal(fs.readFileSync(path.join(folder, '.env'), 'utf8'), 'mine\n');
+}));
+
 test('home ahead, on another branch: stays', () => level(async (folder) => {
   await git(folder, ['switch', '-q', '-c', 'mine']);
   const before = await git(folder, ['rev-parse', 'refs/heads/main']);
