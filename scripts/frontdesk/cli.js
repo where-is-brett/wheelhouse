@@ -90,7 +90,7 @@ export const RECORD_KINDS = Object.freeze([
   'ruling', 'idea', 'rejection', 'glossary', 'decision', 'risk', 'blocker', 'reversal', 'setting',
   'work', 'amendment', 'incident', 'note',
 ]);
-export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey']);
+export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey', 'evidence']);
 const COMMANDS = ['cards', 'card', 'again', 'why', 'suggest', 'record', 'similar', 'views', 'explain', 'review', 'preview', 'undo', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check'];
 // How long `confirm` waits for the helper: one window at a time on the computer, so it may wait for another's.
 const CONFIRM_WAIT_MS = 3 * WINDOW_MS;
@@ -927,6 +927,11 @@ const listed = (lines, none) => (lines.length > 0 ? lines : [none]);
 export async function view({ client, cwd, name, now }) {
   if (!VIEW_NAMES.includes(name)) throw new CliError(`views takes one of: ${VIEW_NAMES.join(', ')}`);
   const { views, cards: events, answers, names } = await viewsOf(client, cwd, { cards: name === 'waiting' || name === 'levels', answers: name === 'work' });
+  // Volume only: until the director has set the bars, no result of a seal is shown (delegated decisions design, section 12).
+  if (name === 'evidence') {
+    const { sealed = 0, read = 0, sampled = 0 } = isPlain(views.evidence) ? views.evidence : {};
+    return [`${sealed} ${sealed === 1 ? 'card' : 'cards'} sealed, ${read} read, ${sampled} sampled.`];
+  }
   if (name === 'rulebook') {
     const rules = (Array.isArray(views.rulebook) ? views.rulebook : []).filter((r) => r?.status !== 'superseded');
     // A Lean ruling confirmed by a click in the chat (ruling P5-52) says what that proof is.

@@ -177,6 +177,10 @@ test('a card the router writes gets its signed seal, and the card doesn\'t wait 
         assert.equal(seal.data.card, ofKind('question')[0].data.id);
         assert.ok(seal.sig, 'the line is signed');
         assert.equal(ofKind('shadow').length, 1);
+        // Read by nothing yet, so the card stays open for its score, and a look at the record writes nothing.
+        assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(kept, 'utf8')).open), [seal.data.card]);
+        await helper.engine.seal();
+        assert.equal(ofKind('shadow').length, 1);
         assert.equal(JSON.parse(fs.readFileSync(kept, 'utf8')).waiting.length, 0);
       } finally {
         await helper.close();

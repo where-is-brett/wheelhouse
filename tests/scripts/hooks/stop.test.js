@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { spawnSync } from 'node:child_process';
-import { decide as guard, scriptArguments, READ_TOOLS, HALT_TOOLS, NOTIFY_TOOLS, DENIED, SANDBOX_NEEDED } from '../../../scripts/hooks/stop-guard.js';
+import { decide as guard, isFrontDeskRead, scriptArguments, READ_TOOLS, HALT_TOOLS, NOTIFY_TOOLS, DENIED, SANDBOX_NEEDED } from '../../../scripts/hooks/stop-guard.js';
 import { decide as word, CONTEXT } from '../../../scripts/hooks/stop-word.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { stopState, setStop, liftStop } from '../../../scripts/lib/stop.js';
@@ -809,6 +809,14 @@ test('the managed copy lets the plugin\'s runbook through under STOP, by the roo
     } finally {
       fs.rmSync(base, { recursive: true, force: true });
     }
+  });
+});
+
+test('views evidence is a read the guard lets through under STOP', async () => {
+  await withHome(async () => {
+    const desk = `${PLUGIN}/scripts/frontdesk/cli.js`;
+    assert.equal(isFrontDeskRead(`node ${desk} views evidence`, [PLUGIN], 'linux'), true);
+    assert.equal(isFrontDeskRead(`node ${desk} views seals`, [PLUGIN], 'linux'), false);
   });
 });
 

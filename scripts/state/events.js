@@ -18,7 +18,7 @@ export const PLAIN_KINDS = [
   'request', 'ruling', 'level', 'glossary', 'idea', 'rejection', 'card', 'card-answer',
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
-  'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey', 'column-ready', 'premium-rest',
+  'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey', 'column-ready', 'premium-rest', 'chat-question', 'chat-steer',
   'run', 'ask', 'cost', 'preview', 'lesson', 'incident-closed', 'reproduced',
 ];
 // `control-file` is the watcher's own finding (ruling P7-33): signed, so no session can write one. So is `usage-card`,
@@ -240,6 +240,10 @@ const PLAIN_SHAPES = {
   // Words typed into a front end without a First Mate (a later UI), queued for the First Mate's next
   // turn and shown as waiting (spec 5.2); `via` names the front end.
   request: { must: ['words', 'via'], may: [] },
+  // A First Mate turn that ended on a question with no card (scripts/hooks/chat-question.js): a count, never the words.
+  'chat-question': { must: ['at'], may: [] },
+  // A pick in the chat of Suggest a change… on a build's question: the card's id, for its score, and never the words.
+  'chat-steer': { must: ['card'], may: [] },
   // `from`: the ready-made change the work starts from (ruling P4): its commit, the ref that keeps
   // it (`refs/wheelhouse/from/<id>`) and, when it carries on a pull request, that request's number.
   work: { must: ['id', 'title', 'lane', 'visible', 'dependsOn'], may: ['doc', 'place', 'parent', 'from', 'level'] },
@@ -731,16 +735,25 @@ function checkChange(data) {
 
 // A seal as scripts/delegation/seal.js makes it. Part of a card's sealed record, so nothing is added to one later.
 const SEAL_KEYS = ['line', 'card', 'work', 'head', 'signed', 'reader', 'candidates', 'exclusions', 'stamp', 'at', 'hash'];
+// A score, the same: what the card scored against the director's answer, tied to its seal by the seal's hash.
+const SCORE_KEYS = ['line', 'card', 'work', 'seal', 'score', 'at', 'hash'];
+const SHADOW_KEYS = { seal: SEAL_KEYS, score: SCORE_KEYS };
+const SHA256 = /^[0-9a-f]{64}$/;
 function checkShadow(data) {
   const bad = (why) => { throw new Error(`A shadow event ${why}`); };
-  if (!isPlain(data) || data.line !== 'seal') bad('needs to be a seal');
-  if (Object.keys(data).length !== SEAL_KEYS.length || SEAL_KEYS.some((k) => !Object.hasOwn(data, k))) bad('needs its fields and no others');
+  if (!isPlain(data) || !Object.hasOwn(SHADOW_KEYS, data.line)) bad('needs to be a seal or a score');
+  const keys = SHADOW_KEYS[data.line];
+  if (Object.keys(data).length !== keys.length || keys.some((k) => !Object.hasOwn(data, k))) bad('needs its fields and no others');
   if (typeof data.card !== 'string' || data.card === '' || typeof data.work !== 'string') bad('needs its card and its work');
+  if (typeof data.at !== 'string' || typeof data.hash !== 'string' || !SHA256.test(data.hash)) bad('needs its time and its hash');
+  if (data.line === 'score') {
+    if (typeof data.seal !== 'string' || !SHA256.test(data.seal) || !['match', 'miss', 'outside'].includes(data.score)) bad('needs its seal and a score');
+    return;
+  }
   if (data.head !== null && !(typeof data.head === 'string' && FULL_COMMIT.test(data.head))) bad('needs the whole commit, or none');
   if (data.signed !== null && typeof data.signed !== 'string') bad('says what signed it, or nothing');
   if (typeof data.reader !== 'boolean') bad('says whether it is read');
   if (!isPlain(data.candidates) || !isPlain(data.exclusions) || !isPlain(data.stamp)) bad('needs what the checks said');
-  if (typeof data.at !== 'string' || typeof data.hash !== 'string' || !/^[0-9a-f]{64}$/.test(data.hash)) bad('needs its time and its hash');
 }
 
 // Whether a project's tests count, and why (spec 4.5).

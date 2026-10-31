@@ -1427,6 +1427,16 @@ test('shadow isn\'t in the views an agent reads', async () => {
   });
 });
 
+test('the evidence view shows volume, and no match, miss or direction', async () => {
+  await withHome(async () => {
+    const score = { line: 'score', card: 'q-1', work: 'w', seal: 'a'.repeat(64), score: 'miss', at: T(2), hash: 'b'.repeat(64) };
+    const { evidence } = build([ev('shadow', 1, sealed('q-1')), ev('shadow', 2, score)]);
+    assert.deepEqual(Object.keys(evidence).sort(), ['read', 'sampled', 'sealed']);
+    assert.deepEqual(evidence, { sealed: 1, read: 0, sampled: 0 });
+    assert.ok(!JSON.stringify(build([ev('shadow', 2, score)])).includes('miss'));
+  });
+});
+
 test('the evidence view counts a card once, and only a seal this computer can verify', async () => {
   await withHome(async () => {
     const one = ev('shadow', 1, sealed('q-1'));

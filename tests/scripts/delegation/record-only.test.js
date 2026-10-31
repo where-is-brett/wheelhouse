@@ -5,8 +5,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { recordOnly, cardContext } from '../../../scripts/delegation/record-only.js';
-import { SEAL_TICK_MS, FACT_TRIES, SEAL_TRIES } from '../../../scripts/delegation/limits.js';
+import { recordOnly, cardContext, historyOf } from '../../../scripts/delegation/record-only.js';
+import { SEAL_TICK_MS, FACT_TRIES, SEAL_TRIES, SCORE_WAIT_DAYS } from '../../../scripts/delegation/limits.js';
+import { buildViews } from '../../../scripts/state/views.js';
+import { makeEvent, dataHash } from '../../../scripts/state/events.js';
+import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
+import { answerLine } from '../../../scripts/state/card-lines.js';
+import { SUGGEST_LABEL } from '../../../scripts/engine/router.js';
+import { withHome } from '../../helpers/homes.js';
 
 const FACTS = { readable: true, head: 'a'.repeat(40), paths: [], lines: 0, testsChanged: false, depsChanged: false, schemaChanged: false, guardrail: false, secrets: false, critical: false };
 const question = { id: 'q-w-1', kind: 'question', work: 'w', runId: 'r', level: 3 };
@@ -15,7 +21,7 @@ function setUp({ factsOf = async () => FACTS, write, stop = false, contextOf, fi
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-seal-'));
   const writes = [];
   const world = { now: new Date('2026-11-01T02:00:00.000Z'), stop };
-  const made = () => recordOnly({
+  const made = (over = {}) => recordOnly({
     file: file ?? path.join(dir, 'engine', 'shadow.json'),
     write: write ?? (async (kind, data) => { writes.push({ kind, data }); }),
     stopped: () => world.stop,
@@ -23,6 +29,7 @@ function setUp({ factsOf = async () => FACTS, write, stop = false, contextOf, fi
     factsOf,
     contextOf,
     stampOf: () => ({ models: {}, pack: null, rule: null, exclusions: null }),
+    ...over,
   });
   return { seals: made(), made, writes, world, dir };
 }
@@ -243,3 +250,238 @@ test('a look under way can be waited for', async () => {
   wake(FACTS);
   await seals.settled();
 });
+
+// A world of signed lines as a helper's `history` gives them: a seal written by the fake `write` joins the lines.
+function scoring({ write, file, stop = false } = {}) {
+  const lines = new Map();
+  const remember = (data) => {
+    const line = lines.get(data.card) ?? {};
+    line[data.line] ??= data;
+    lines.set(data.card, line);
+  };
+  const made = setUp({
+    file, stop,
+    write: async (kind, data) => {
+      await write?.(kind, data);
+      remember(data);
+      made.writes.push({ kind, data });
+    },
+  });
+  const { world } = made;
+  Object.assign(world, { answers: {}, reads: 0, broken: false });
+  const history = () => {
+    world.reads += 1;
+    if (world.broken) throw new Error('no record');
+    return { lines: (id) => lines.get(id) ?? {}, answer: (id) => world.answers[id] ?? null };
+  };
+  return { ...made, lines, history, seals: made.made, read: (id, pick) => lines.set(id, { ...lines.get(id), reading: { line: 'reading', card: id, pick } }) };
+}
+
+test('an answered card is scored in a third line, once', async () => {
+  const t = scoring();
+  const seals = t.seals({ history: t.history });
+  seals.onCard(question);
+  await seals.tick();
+  t.read(question.id, 'Keep');
+  t.world.answers[question.id] = { answer: { label: 'Keep' }, steered: false };
+  await seals.tick();
+  await seals.tick();
+  const scores = t.writes.filter((w) => w.data.line === 'score');
+  assert.equal(scores.length, 1);
+  assert.equal(scores[0].data.score, 'match');
+  assert.equal(scores[0].data.card, question.id);
+});
+
+test('a card with no answer waits for one, and a reading that comes after the answer still counts', async () => {
+  const t = scoring();
+  const seals = t.seals({ history: t.history });
+  seals.onCard(question);
+  await seals.tick();
+  t.read(question.id, 'Keep');
+  await seals.tick();
+  assert.equal(t.writes.filter((w) => w.data.line === 'score').length, 0);
+  t.lines.get(question.id).reading = undefined;
+  t.world.answers[question.id] = { answer: { label: 'Remove' }, steered: false };
+  await seals.tick();
+  assert.equal(t.writes.filter((w) => w.data.line === 'score').length, 0);
+  t.read(question.id, 'Keep');
+  await seals.tick();
+  assert.equal(t.writes.at(-1).data.score, 'miss');
+});
+
+test('a card steered and never answered is scored outside', async () => {
+  const t = scoring();
+  const seals = t.seals({ history: t.history });
+  seals.onCard(question);
+  await seals.tick();
+  t.read(question.id, 'Keep');
+  t.world.answers[question.id] = { answer: null, steered: true };
+  await seals.tick();
+  assert.equal(t.writes.at(-1).data.score, 'outside');
+});
+
+test('a reader that gave nothing ends the wait with no score', async () => {
+  const t = scoring();
+  const seals = t.seals({ history: t.history });
+  seals.onCard(question);
+  await seals.tick();
+  t.read(question.id, null);
+  t.world.answers[question.id] = { answer: { label: 'Keep' }, steered: false };
+  await seals.tick();
+  await seals.tick();
+  assert.equal(t.writes.filter((w) => w.data.line === 'score').length, 0);
+  const reads = t.world.reads;
+  await seals.tick();
+  assert.equal(t.world.reads, reads);
+});
+
+test('a card no reader reads is never waited on, so the record isn\'t read for it', async () => {
+  const t = scoring();
+  const seals = t.seals({ history: t.history });
+  seals.onCard({ id: '12:abc', kind: 'approval', work: 'w', level: 3 });
+  seals.onCard({ ...question, id: 'q-w-2', level: 4 });
+  await seals.tick();
+  await seals.tick();
+  assert.equal(t.world.reads, 0);
+});
+
+test('a helper started again writes no second score, and keeps the cards it waits on', async () => {
+  const t = scoring();
+  const first = t.seals({ history: t.history });
+  first.onCard(question);
+  await first.tick();
+  t.read(question.id, 'Keep');
+  const again = t.seals({ history: t.history });
+  t.lines.get(question.id).score = { line: 'score', card: question.id, score: 'match' };
+  t.world.answers[question.id] = { answer: { label: 'Keep' }, steered: false };
+  await again.tick();
+  assert.equal(t.writes.filter((w) => w.data.line === 'score').length, 0);
+  const reads = t.world.reads;
+  await again.tick();
+  assert.equal(t.world.reads, reads);
+});
+
+test('a score that fails to write says nothing, is tried again, and is given up', async () => {
+  let fail = true;
+  const t = scoring({ write: async (kind, data) => { if (data.line === 'score' && fail) throw new Error('refused'); } });
+  const seals = t.seals({ history: t.history });
+  seals.onCard(question);
+  await seals.tick();
+  t.read(question.id, 'Keep');
+  t.world.answers[question.id] = { answer: { label: 'Keep' }, steered: false };
+  await seals.tick();
+  fail = false;
+  await seals.tick();
+  assert.equal(t.writes.filter((w) => w.data.line === 'score').length, 1);
+
+  fail = true;
+  const other = { ...question, id: 'q-w-2' };
+  seals.onCard(other);
+  await seals.tick();
+  t.read(other.id, 'Keep');
+  t.world.answers[other.id] = { answer: { label: 'Keep' }, steered: false };
+  for (let i = 0; i < SEAL_TRIES + 2; i += 1) await seals.tick();
+  const reads = t.world.reads;
+  await seals.tick();
+  assert.equal(t.world.reads, reads);
+});
+
+test('a card left open is let go after its wait, so the record isn\'t read for ever', async () => {
+  const t = scoring();
+  const seals = t.seals({ history: t.history });
+  seals.onCard(question);
+  await seals.tick();
+  t.world.now = new Date(t.world.now.getTime() + (SCORE_WAIT_DAYS * 24 * 60 * 60 * 1000) + 1000);
+  await seals.tick();
+  const reads = t.world.reads;
+  await seals.tick();
+  assert.equal(t.world.reads, reads);
+});
+
+test('a record that can\'t be read costs nothing, and the card is scored when it can', async () => {
+  const t = scoring();
+  const seals = t.seals({ history: t.history });
+  seals.onCard(question);
+  await seals.tick();
+  t.read(question.id, 'Keep');
+  t.world.answers[question.id] = { answer: { label: 'Keep' }, steered: false };
+  t.world.broken = true;
+  await seals.tick();
+  t.world.broken = false;
+  await seals.tick();
+  assert.equal(t.writes.at(-1).data.score, 'match');
+});
+
+test('under All stop nothing is scored, and the card is scored once it lifts', async () => {
+  const t = scoring();
+  const seals = t.seals({ history: t.history });
+  seals.onCard(question);
+  await seals.tick();
+  t.read(question.id, 'Keep');
+  t.world.answers[question.id] = { answer: { label: 'Keep' }, steered: false };
+  t.world.stop = true;
+  await seals.tick();
+  assert.equal(t.writes.filter((w) => w.data.line === 'score').length, 0);
+  t.world.stop = false;
+  await seals.tick();
+  assert.equal(t.writes.at(-1).data.score, 'match');
+});
+
+test('what was kept before scoring still seals what waits', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-seal-'));
+  const file = path.join(dir, 'shadow.json');
+  fs.writeFileSync(file, JSON.stringify({ waiting: [question], sealed: { 'q-w-0': true }, tries: {}, fails: {} }));
+  const t = scoring({ file });
+  const seals = t.seals({ history: t.history });
+  await seals.tick();
+  assert.equal(t.writes[0].data.card, question.id);
+});
+
+test('the signed record gives the first seal, the answer, and whether the card was steered', () => withHome(() => {
+  const { computer, publicKey } = makeSigningKey();
+  enrol({ computer, publicKey, enrolledAt: '2026-11-01T00:00:00.000Z' });
+  const at = (n) => () => new Date(`2026-11-01T02:00:0${n}.000Z`);
+  const data = { line: 'seal', card: 'q-w-1', work: 'w', head: null, signed: null, reader: true, candidates: {}, exclusions: { hit: [], unread: [] }, stamp: { models: null, pack: null, rule: null, exclusions: null }, at: 'x', hash: 'a'.repeat(64) };
+  const question1 = { id: 'q-w-1', work: 'w', what: 'Which?', why: 'Because', options: [{ label: 'Keep', says: 'k' }, { label: 'Remove', says: 'r' }], recommendation: 'Keep', level: 3 };
+  const card = (id) => makeEvent({ kind: 'card', data: { question: `Which ${id}?`, header: 'Which', kind: 'answer', level: 3, line: answerLine(id), options: ['Keep', 'Remove', SUGGEST_LABEL] }, now: at(3) });
+  const steered = card('q-w-1');
+  const events = [
+    makeEvent({ kind: 'shadow', data: { ...data, head: 'b'.repeat(40) }, now: at(2) }),
+    makeEvent({ kind: 'shadow', data: { ...data, head: 'c'.repeat(40) }, now: at(1) }),
+    makeEvent({ kind: 'question', data: question1, now: at(1) }),
+    steered,
+    makeEvent({ kind: 'card-answer', data: { question: 'Which q-w-1?', label: SUGGEST_LABEL }, now: at(4) }),
+    makeEvent({ kind: 'action', data: { action: 'answer', question: 'Which?', questionId: 'q-w-1', questionHash: dataHash(question1), label: 'Keep' }, now: at(5) }),
+    { ...makeEvent({ kind: 'shadow', data: { ...data, card: 'q-w-2' }, now: at(1) }), sig: undefined },
+  ];
+  const enrolled = readEnrolled();
+  const history = historyOf({ events, enrolled, views: buildViews(events, enrolled) });
+  assert.equal(history.lines('q-w-1').seal.head, 'c'.repeat(40));
+  assert.deepEqual(history.lines('q-w-2'), {});
+  const got = history.answer('q-w-1');
+  assert.equal(got.answer.label, 'Keep');
+  assert.equal(got.steered, true);
+  assert.equal(history.answer('q-w-9').steered, false);
+}));
+
+test('stepping out of a card\'s options by any way the record holds counts as steered', () => withHome(() => {
+  const { computer, publicKey } = makeSigningKey();
+  enrol({ computer, publicKey, enrolledAt: '2026-11-01T00:00:00.000Z' });
+  const at = (n) => () => new Date(`2026-11-01T02:00:0${n}.000Z`);
+  const card = (id, n = 1) => makeEvent({ kind: 'card', data: { question: `Which ${id}?`, header: 'Which', kind: 'answer', level: 3, line: answerLine(id), options: ['Keep', 'Remove', SUGGEST_LABEL, 'Not now'] }, now: at(n) });
+  const answered = (question, label, n = 2) => makeEvent({ kind: 'card-answer', data: { question, label }, now: at(n) });
+  const byId = card('q-byid');
+  const told = card('q-told');
+  const events = [
+    card('q-typed'), answered('Which q-typed?', 'Keep it, but smaller'),
+    byId, answered(byId.id, SUGGEST_LABEL),
+    told, makeEvent({ kind: 'chat-steer', data: { card: told.id }, now: at(2) }),
+    card('q-kept'), answered('Which q-kept?', 'Keep'),
+    card('q-put-off'), answered('Which q-put-off?', 'Not now'), answered('Which q-put-off?', 'Explain more', 3),
+    answered('Which q-later?', 'Something typed on an older card'), card('q-later', 3),
+  ];
+  const enrolled = readEnrolled();
+  const history = historyOf({ events, enrolled, views: {} });
+  for (const id of ['q-typed', 'q-byid', 'q-told']) assert.equal(history.answer(id).steered, true, id);
+  for (const id of ['q-kept', 'q-put-off', 'q-later']) assert.equal(history.answer(id).steered, false, id);
+}));
