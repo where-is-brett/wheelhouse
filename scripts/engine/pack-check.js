@@ -36,7 +36,7 @@ const VERDICT = /archon-review-report|\bgh\s+pr\s+review\b/;
 
 // A git command that moves the worktree's files, which skip-worktree on the run's overlay makes git refuse where it
 // changes .claude/settings.json; a step takes the overlay out first (order-copy.js --release).
-const MOVES_WORKTREE = /\bgit\s+(?:-[Cc]\s+\S+\s+|-\S+\s+)*(rebase|pull|checkout|merge|switch|reset|stash|cherry-pick|revert|am|restore|read-tree)(?![\w-])/;
+const MOVES_WORKTREE = /\bgit\s+(?:-[Cc]\s+\S+\s+|-(?![Cc]\s)\S+\s+)*(rebase|pull|checkout|merge|switch|reset|stash|cherry-pick|revert|am|restore|read-tree)(?![\w-])/;
 const RELEASE = /order-copy\.js"?\s+--release\b/;
 function movesBeforeRelease(text) {
   const move = MOVES_WORKTREE.exec(text);

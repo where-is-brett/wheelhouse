@@ -59,7 +59,7 @@ export const unlinked = (line) => line.split(' ').map((word) => {
 }).join(' ');
 
 // A table cell: one line, with no bar to end it early.
-const cell = (value) => words(value).replace(/\|/g, '\\|');
+const cell = (value) => words(value).replace(/\\/g, '\\\\').replace(/\|/g, '\\|');
 
 // A section is { key, heading, items, ...}: `key` names it in the folded line of empty parts,
 // `note` is a line under the heading, `head` the lines before a table's rows, and `tail` a line
