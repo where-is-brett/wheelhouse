@@ -619,15 +619,16 @@ async function processTable() {
 // <project code>, so only what it was waiting in remains.
 function cleanSample(text, mask, checkFolder) {
   const images = new Set();
-  for (const m of text.matchAll(/^\s*0x[0-9a-f]+ -\s+0x[0-9a-f]+\s+\+?(.+?)\s+(?:\(.*?\)\s+)?<[0-9A-F-]+>\s+(\/.*)$/gm)) {
-    if (m[2].includes(checkFolder)) images.add(m[1]);
+  for (const line of text.split('\n')) {
+    const image = line.includes(checkFolder) ? /-\s+0x[0-9a-f]+\s+\+?(.+?)\s+[(<]/.exec(line) : null;
+    if (image) images.add(image[1]);
   }
   const start = text.indexOf('Call graph:');
   const end = text.indexOf('Binary Images:');
   const body = text.slice(start === -1 ? 0 : start, end === -1 ? undefined : end);
   const shown = body.split('\n').map((line) => {
     const frame = /^(.*?[+!:|\s])(\d+\s+)(.+?)\s+\(in ([^)]+)\)/.exec(line);
-    if (frame && images.has(frame[4])) return `${frame[1]}${frame[2]}<project code>`;
+    if (frame && (images.has(frame[4]) || /\.swift:\d|<compiler-generated>/.test(line))) return `${frame[1]}${frame[2]}<project code>`;
     return line.replace(/ \+ \d+ \[0x[0-9a-f]+\]| \[0x[0-9a-f]+\]/g, '').replace(/(DispatchQueue_\d+: )(?!com\.apple)\S+/, '$1<a queue>');
   });
   return mask(shown.filter(Boolean).join('\n')).split('\n').slice(0, 220);
