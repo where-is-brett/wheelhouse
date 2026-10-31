@@ -54,7 +54,7 @@ export function phonePushLine(at) {
 // After a helper that did not answer in time, the next reading does not wait on it again for this long.
 const TRIED_FOR_MS = 10 * 60 * 1000;
 const PROTECTION = ['on', 'none', 'unknown'];
-const CI = ['present', 'none', 'unknown'];
+const CI = ['present', 'none', 'here', 'unknown'];
 const PLANS = ['free', 'premium', 'unknown'];
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
@@ -213,6 +213,7 @@ export function healthLines({ record, locked, stop, lock, helperUp, facts, renew
   if (faked) add('watch', faked);
   for (const gap of facts?.gaps ?? []) add('watch', gap);
   if (facts?.ci === 'none') add('watch', 'This project has no CI, so nothing can merge');
+  if (facts?.ci === 'here') add('ok', 'Checks run on this computer');
   if (screens?.pages === true && screens.chrome === false) add('ok', NO_CHROME_LINE);
   if (lock && lock.computer !== computerId()) add('watch', 'Another computer holds this project, so this one is read-only');
   if (helperUp === false) add('watch', NO_HELPER);

@@ -3933,7 +3933,8 @@ export async function startHelper({
         const branch = await defaultBranchOf(project, adapter);
         const has = await adapter.hasCi(await adapter.branchHead(branch), branch);
         awayLog.clear(project);
-        return has ? 'present' : 'none';
+        // Only GitHub takes a check from this computer so far: a GitLab project with no CI still can't merge.
+        return has ? 'present' : host === 'github' ? 'here' : 'none';
       } catch (error) {
         if (error?.code === 'HOST_UNREACHABLE') awayLog.set(project, gitlabBaseOf(recordOf(project)));
         return 'unknown';

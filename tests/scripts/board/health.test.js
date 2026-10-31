@@ -376,3 +376,7 @@ test('a helper that accepts and never answers is given up on in about two second
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+test('a project with no CI whose checks run on this computer can merge, and says so', () => {
+  assert.deepEqual(texts({ facts: { protection: 'on', ci: 'here' } }), ['Protection: Standard', 'Checks run on this computer']);
+});

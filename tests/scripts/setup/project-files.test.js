@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  projectFilesStep, yoursAsk, NEGATED_LINE, starterConfig, projectFilesChange, projectFilesCard, commitAuthor, COMMIT_MESSAGE, SETUP_FILES, COMPACT_HEADING,
+  projectFilesStep, yoursAsk, NEGATED_LINE, starterConfig, foundAtHead, projectFilesChange, projectFilesCard, commitAuthor, COMMIT_MESSAGE, SETUP_FILES, COMPACT_HEADING,
   EXCLUDE_LINE, WHEELHOUSE_LINE, putYoursIn, LEAVE_YOURS, leftYoursLine,
 } from '../../../scripts/setup/project-files.js';
 import { STEPS, planHash } from '../../../scripts/setup/steps.js';
@@ -2007,4 +2007,23 @@ test("a new setup's own commit holds the policy file", async () => {
     assert.ok(!commit.files.some((f) => f.startsWith('.archon/')));
     assert.ok(!planned.changes.some((c) => c.what === 'mirror'));
   });
+});
+
+test('a new project\'s configuration names the command the finder found, and reads back as written', () => {
+  const answers = { '4.live-data': { label: LIVE_DATA.no, text: null } };
+  const found = { testCommand: 'swift test --disable-sandbox --no-parallel', prepare: 'swift package resolve', why: 'a Swift package' };
+  const config = starterConfig({ answers, found });
+  assert.equal(config.testCommand, found.testCommand);
+  assert.equal(config.checks.prepare, found.prepare);
+  assert.deepEqual(readConfig(JSON.stringify(config)), config);
+  assert.equal(Object.hasOwn(starterConfig({ answers, found: { testCommand: 'npm test', prepare: null } }), 'checks'), false);
+  assert.equal(Object.hasOwn(starterConfig({ answers }), 'testCommand'), false);
+});
+
+test('the finder reads what is committed in the folder, never what is only in it', async () => {
+  const shown = { 'package.json': '{"scripts":{"test":"node --test"}}' };
+  const git = { raw: async () => 'package.json\0src/a.js\0', out: async ([, name]) => shown[name.replace('HEAD:', '')] };
+  assert.deepEqual((await foundAtHead(git)).testCommand, 'npm test');
+  assert.equal(await foundAtHead({ raw: async () => '', out: async () => null }), null);
+  assert.equal(await foundAtHead({ raw: async () => null, out: async () => null }), null, 'a folder with no commit has nothing to find');
 });

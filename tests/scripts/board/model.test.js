@@ -564,3 +564,19 @@ test('while the premium model rests, the board says so in one line, until its re
   assert.deepEqual(lines('2026-10-27T02:00:00.000Z'), []);
   assert.deepEqual(lines(NOW, []), []);
 });
+
+test('the Logbook says checks ran on this computer, and no director-facing line holds commit status', () => {
+  const check = (result, minutes, at) => ({ kind: 'check', at, data: { result, minutes } });
+  const lines = (events) => model({ events }).director.health.map((l) => l.text).filter((t) => /[Cc]hecks ran|counting|commit status/.test(t));
+  assert.deepEqual(lines([check('failed', 1, '2026-10-30T00:00:00Z'), check('passed', 3, '2026-10-31T00:00:00Z')]), ['Checks ran on this computer: passed, 3 minutes.']);
+  assert.deepEqual(lines([check('failed', 0.4, '2026-10-31T00:00:00Z')]), ['Checks ran on this computer: failed, 1 minute.']);
+  assert.deepEqual(lines([check('could-not-run', 0, '2026-10-31T00:00:00Z')]), ['Checks ran on this computer: couldn\'t run.']);
+  assert.deepEqual(lines([]), []);
+});
+
+test('while tests aren\'t counting, the First Mate offers to add or repair them', () => {
+  const state = (s, at) => ({ kind: 'checks-state', at, data: { state: s, why: 'director' } });
+  const watch = (events) => model({ events }).director.health.filter((l) => l.level === 'watch' && /counting/.test(l.text)).map((l) => l.text);
+  assert.deepEqual(watch([state('not-counting', '2026-10-30T00:00:00Z')]), ['Tests aren\'t counting yet: ask the First Mate to add tests or repair them']);
+  assert.deepEqual(watch([state('not-counting', '2026-10-30T00:00:00Z'), state('counting', '2026-10-31T00:00:00Z')]), []);
+});

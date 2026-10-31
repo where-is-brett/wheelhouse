@@ -11,6 +11,7 @@ import { HOST_UNREACHABLE } from '../host/company-ca.js';
 import { BUILD_QUESTION_LABELS, isBuildQuestion, settingKey } from '../protection/windows-builds.js';
 import { SEE_BEFORE_MERGE, SEE_IN_BRIEFING } from '../lib/calm-words.js';
 import { REST_LINE, restOf } from '../routing/premium.js';
+import { NOT_COUNTING_LINE, checksRanLine } from '../setup/first-check.js';
 
 const LANES = ['quick', 'small', 'feature', 'bug'];
 const WHEN = ['now', 'next', 'later'];
@@ -312,6 +313,16 @@ const AGENT_LINES_SHOWN = 2;
 // own adapter. `agent` is the agent's name, or { name, ...what the adapter's safetyLine reads } (the tier, the
 // level, the system and what is added). An agent with no safety line adds none, so a project on such an agent
 // reads as it always has. An agent that isn't known, or options the adapter refuses, throw.
+// The newest check's line, and the First Mate's offer while tests aren't counting.
+function checkLines(events) {
+  const newest = (kind) => events.filter((e) => e.kind === kind && isRecord(e.data)).sort(newestFirst)[0] ?? null;
+  const check = newest('check');
+  return [
+    ...(check ? [{ level: 'ok', text: checksRanLine(check.data) }] : []),
+    ...(newest('checks-state')?.data.state === 'not-counting' ? [{ level: 'watch', text: NOT_COUNTING_LINE }] : []),
+  ];
+}
+
 function agentHealth(agent) {
   const { name, ...options } = typeof agent === 'string' ? { name: agent } : agent;
   if (typeof name !== 'string' || !Object.hasOwn(SAFETY_LINES, name)) throw new Error(`The Logbook has no safety line for the agent ${JSON.stringify(name)}`);
@@ -457,7 +468,7 @@ export function boardModel({ project, views, profileUnconfirmed, events, usage, 
       ...(oneLine(m.data.forUsers) ? {} : { behind: true }),
     })), []),
     ideas,
-    health: [...(lines ?? []).map((l) => ({ level: l.level, text: l.text })), ...part(missing, 'agent line', () => (agent === undefined ? [] : agentHealth(agent)), []), ...part(missing, 'update line', () => updateLines(all, agent, nowMs), []), ...part(missing, 'premium line', () => premiumRestLines(all, nowMs), []), ...part(missing, 'health', () => extraHealth(loop?.incidents, report, hostUnreachable), [])],
+    health: [...(lines ?? []).map((l) => ({ level: l.level, text: l.text })), ...part(missing, 'checks line', () => checkLines(all), []), ...part(missing, 'agent line', () => (agent === undefined ? [] : agentHealth(agent)), []), ...part(missing, 'update line', () => updateLines(all, agent, nowMs), []), ...part(missing, 'premium line', () => premiumRestLines(all, nowMs), []), ...part(missing, 'health', () => extraHealth(loop?.incidents, report, hostUnreachable), [])],
     budget: {
       week: week ? {
         from: timeOf(week.from), to: timeOf(week.to), tokens: numberOrNull(week.tokens), usd: numberOrNull(week.usd),
