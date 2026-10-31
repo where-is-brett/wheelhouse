@@ -8,9 +8,11 @@
 //   node probes/82-check-sandbox/run.js project <folder> [--profile ...] [--scheme S] [--container rel] [--minutes 20]
 //   node probes/82-check-sandbox/run.js runner <folder>|--fixture [--test "command"] [--prepare "command"] [--minutes 20]
 //                                          the check runner itself, from fetch to word, on a copy of the folder's head
-//   node probes/82-check-sandbox/run.js hang <folder> [--test "command"] [--prepare "command"] [--after 120] [--minutes 15]
+//   node probes/82-check-sandbox/run.js hang <folder> [--test "command"] [--prepare "command"] [--after 120] [--minutes 15] [--issues <file>]
 //                                          runner, with the sandbox's refusals read live; once a test process has lived
-//                                          --after seconds it and all it started are sampled, and the check is ended
+//                                          --after seconds it and all it started are sampled, and the check is ended.
+//                                          --issues also writes the test output and every refusal in time order to <file>,
+//                                          outside this repository and the project: that file holds the project's names
 //
 // `deny` is the check runner's own profile (scripts/checks/profile.js) and the default. Don't use draft or open on a
 // project: `xcodebuild test` has the system start the project's app outside the sandbox (see docs/checks/82-check-sandbox.md).
@@ -600,25 +602,31 @@ async function phaseRunner() {
   }
 }
 
+// A `log stream` time, 2026-10-31 12:34:56.123456+1100, in milliseconds.
+const logTime = (stamp) => Date.parse(String(stamp).replace(' ', 'T').replace(/(\.\d{3})\d*/, '$1').replace(/([+-]\d{2})(\d{2})$/, '$1:$2'));
+
 // The kernel's lines about what the profile refused, read as they come. Only the check's own processes, or a program a
 // check uses, count: the system's daemons have sandboxes of their own and are refused things all day.
 function watchRefusals(belongs) {
   const log = spawn('/usr/bin/log', ['stream', '--style', 'ndjson', '--predicate', 'process == "kernel" AND eventMessage CONTAINS "Sandbox:"'], { stdio: ['ignore', 'pipe', 'ignore'] });
   const counts = new Map();
+  const events = [];
   let held = '';
   log.stdout.on('data', (chunk) => {
     const lines = (held + chunk).split('\n');
     held = lines.pop();
     for (const line of lines) {
-      let message;
-      try { message = JSON.parse(line).eventMessage; } catch { continue; }
-      const m = /(?:(\d+) duplicate reports for )?Sandbox:\s+(.+?)\((\d+)\)\s+deny\(\d+\)\s+(\S+)\s*(.*)$/.exec(String(message));
-      if (!m || !belongs(m[2], Number(m[3]))) continue;
+      let entry;
+      try { entry = JSON.parse(line); } catch { continue; }
+      const m = /(?:(\d+) duplicate reports for )?Sandbox:\s+(.+?)\((\d+)\)\s+deny\(\d+\)\s+(\S+)\s*(.*)$/.exec(String(entry.eventMessage));
+      if (!m) continue;
       const key = `${m[4]} ${m[5]}`.trim();
+      if (events.length < 20000) events.push({ at: logTime(entry.timestamp), process: m[2], pid: Number(m[3]), what: key });
+      if (!belongs(m[2], Number(m[3]))) continue;
       counts.set(key, (counts.get(key) ?? 0) + Number(m[1] ?? 1));
     }
   });
-  return { counts, stop: () => log.kill() };
+  return { counts, events, stop: () => log.kill() };
 }
 
 async function processTable() {
@@ -649,10 +657,37 @@ function cleanSample(text, mask, checkFolder) {
   return mask(shown.filter(Boolean).join('\n')).split('\n').slice(0, 220);
 }
 
+// Where --issues may write: never where a commit could pick it up.
+function issuesFile(folder) {
+  const given = option('issues', null);
+  if (given === null) return null;
+  const file = path.resolve(expand(given));
+  for (const inside of [path.resolve(import.meta.dirname, '../..'), folder]) if (file.startsWith(`${inside}${path.sep}`)) throw new Error('--issues holds the project\'s names: give a file outside this repository and the project');
+  return file;
+}
+
+// Everything a test said and everything the sandbox refused, in time order, with the lines of tests that passed left out.
+// Short-lived children can slip between two looks at the process table, so the rest are counted by program. The build's
+// own refusals are left out: they are many, and a test's failure isn't in them.
+const BUILDERS = /^(?:swift-build|swift-package|swift-driver|swift-frontend|swiftc|xcrun|xcodebuild|clang|ld|libtool|codesign|git)$/;
+const PASSING = /^\W*(?:Test|Suite|Test Case|Test Suite)\b.*\b(?:started|passed)\b/;
+function writeIssues(file, { heard, events, seen, tools, from }) {
+  const said = heard.filter((row) => row.line.trim() && !PASSING.test(row.line)).map((row) => ({ seconds: (row.at - from) / 1000, said: row.line }));
+  const during = events.filter((row) => row.at >= from && !BUILDERS.test(row.process));
+  const ours = during.filter((row) => seen.has(row.pid) || tools.has(row.process));
+  const others = {};
+  for (const row of during) if (!ours.includes(row)) others[row.process] = (others[row.process] ?? 0) + 1;
+  const refused = ours.map((row) => ({ seconds: (row.at - from) / 1000, refused: row.what, by: row.process }));
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify({ timeline: [...said, ...refused].sort((a, b) => a.seconds - b.seconds), others }, null, 2)}\n`);
+  return { linesKept: said.length, refusals: refused.length };
+}
+
 // What a hung check is waiting on: the runner as `phaseRunner` runs it, on the real profile, with the refusals read live.
 async function phaseHang() {
   const folder = path.resolve(process.argv[3] ?? '');
   if (!process.argv[3] || !fs.existsSync(path.join(folder, '.git'))) throw new Error('Give the project folder');
+  const issues = issuesFile(folder);
   const paths = makeRoot();
   const report = {};
   process.env.WHEELHOUSE_HOME = path.join(paths.outer, 'wheelhouse');
@@ -671,8 +706,15 @@ async function phaseHang() {
     const commit = (await git(source, 'rev-parse', 'HEAD')).stdout.trim();
     const settings = { testCommand: option('test', 'swift test --disable-sandbox'), prepare: option('prepare', 'swift package resolve --disable-sandbox'), minutes: Number(option('minutes', 15)), network: false };
     let finished = false;
-    const checked = runCheck({ project: 'project', commit, main: true, settings, source, spawn: (...args) => { const child = spawn(...args); roots.add(child.pid); return child; } })
-      .finally(() => { finished = true; });
+    const heard = [];
+    const from = Date.now();
+    const hear = (chunk) => { for (const line of chunk.toString('utf8').split('\n')) heard.push({ at: Date.now(), line }); };
+    const checked = runCheck({ project: 'project', commit, main: true, settings, source, spawn: (...args) => {
+      const child = spawn(...args);
+      roots.add(child.pid);
+      if (issues !== null) { child.stdout?.on('data', hear); child.stderr?.on('data', hear); }
+      return child;
+    } }).finally(() => { finished = true; });
     const after = Number(option('after', 120));
     const samples = [];
     const below = (table) => {
@@ -684,11 +726,11 @@ async function phaseHang() {
       return table.filter((row) => all.has(row.pid));
     };
     while (!finished) {
-      await sleep(2000);
+      await sleep(200);
       const table = await processTable();
       const ours = below(table);
       for (const row of ours) seen.add(row.pid);
-      if (!ours.some((row) => /xctest|swiftpm-testing-helper/.test(row.command) && row.seconds >= after)) continue;
+      if (!ours.some((row) => /swift-test|xctest|swiftpm-testing-helper/.test(row.command) && row.seconds >= after)) continue;
       report.processes = ours.map((row) => ({ name: mask(path.basename(row.command.split(' ')[0])), seconds: row.seconds, parent: row.ppid, pid: row.pid }));
       for (const row of ours.filter((r) => !/^(?:\/usr\/bin\/sandbox-exec|\/bin\/sh)\b/.test(r.command))) {
         const file = path.join(paths.outer, `sample-${row.pid}.txt`);
@@ -712,6 +754,7 @@ async function phaseHang() {
     report.refused = [...places.entries()].sort((a, b) => b[1] - a[1]).slice(0, 80);
     report.samples = samples;
     report.proofsBesideTheSecret = fs.readdirSync(paths.outside).filter((n) => n.startsWith('proof-'));
+    if (issues !== null) report.issues = writeIssues(issues, { heard, events: refusals.events, seen, tools: TOOLS, from });
   } finally {
     refusals.stop();
     await finish(paths, report);
