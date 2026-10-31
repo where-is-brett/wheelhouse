@@ -113,7 +113,7 @@ function directorSections(d, nowMs) {
       { tail: behind > 0 ? behindTheScenes(behind) : null }),
     section('ideas', 'Ideas, in order', WHEN.flatMap(([when, name]) => list(ideas[when]).map(words).filter(Boolean).map((idea) => `${name}: ${idea}`))),
     section('health', 'Health and this week', [
-      ...records(d.health).map((line) => words(line.text)).filter(Boolean),
+      ...records(d.health).map((line) => words(typeof line.detail === 'string' ? `${line.text}. ${line.detail}` : line.text)).filter(Boolean),
       ...(weekWords ? [`This week: ${weekWords}`] : []),
       ...list(budget.unusual).map(words).filter(Boolean),
       ...(budget.setting === 'report' ? ['Budget: spending is reported, with no limit set'] : []),

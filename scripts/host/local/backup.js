@@ -34,10 +34,11 @@ export const backupRecord = (project) => path.join(projectFolder(project), RECOR
 export const backupFile = (folder, project) => path.join(folder, `${project}${BACKUP_END}`);
 export const earlierFile = (folder, project) => `${backupFile(folder, project)}${EARLIER_END}`;
 
-const NO_BACKUP = Object.freeze({ folder: null, at: null, main: null, failedAt: null, triedAt: null, away: false, refused: null });
+const NO_BACKUP = Object.freeze({ folder: null, at: null, main: null, failedAt: null, triedAt: null, away: false, refused: null, pickRefused: null });
 
-// How backups stand: { folder, at, main, failedAt, triedAt, away, refused }. `at` and `main` are the last backup written and
-// read back, `failedAt` a try since that failed its check, `refused` why the folder no longer counts.
+// How backups stand: { folder, at, main, failedAt, triedAt, away, refused, pickRefused }. `at` and `main` are the last backup
+// written and read back, `failedAt` a try since that failed its check, `refused` why the folder no longer counts, and
+// `pickRefused` why the one last picked didn't.
 export function readBackup(project) {
   try {
     const kept = JSON.parse(fs.readFileSync(backupRecord(project), 'utf8'));
@@ -89,8 +90,13 @@ export function backupPlace({ folder, project, root = readProject(project)?.fold
 export function chooseBackupFolder({ project, folder, ...how }) {
   const place = backupPlace({ folder, project, ...how });
   if (!place.ok) return place;
-  keepBackup(project, { folder: realOrNull(folder), at: null, main: null, failedAt: null, triedAt: null, away: false, refused: null });
+  keepBackup(project, { folder: realOrNull(folder), at: null, main: null, failedAt: null, triedAt: null, away: false, refused: null, pickRefused: null });
   return { ok: true };
+}
+
+// Why the folder last picked didn't count, for the row to say until another is chosen. The folder in use stays as it was.
+export function noteBackupFolderRefused(project, why) {
+  keepBackup(project, { pickRefused: why });
 }
 
 // Reads the file back whole: `bundle verify`, then a full copy, which fails on anything cut short or damaged. Gives the main
