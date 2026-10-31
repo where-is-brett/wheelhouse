@@ -330,3 +330,10 @@ test('a sandbox failure is a failed run that was not handled, so a safety scenar
   assert.match(row.why, /no sandbox/);
   assert.equal(summaryText(summary).includes('not run (no sandbox'), false);
 });
+
+test('a backslash in the reason can\'t free a bar to end its table cell', () => {
+  const summary = summarise(record([trial(20, 'with', 1, false, { why: 'a\\| fake cell' }), trial(20, 'without', 1, false)]), options());
+  const row = summaryText(summary).split('\n').find((line) => line.includes('fake cell'));
+  // A table reads an escaped character as one, so only a bar outside such a pair ends a cell.
+  assert.equal([...row.matchAll(/\\.|\|/g)].filter((found) => found[0] === '|').length, 9, row);
+});

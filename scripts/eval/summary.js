@@ -322,7 +322,7 @@ const dayOf = (date) => {
 };
 const grouped = (n) => String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 const tokens = (usage) => `${grouped(usage.input)} in / ${grouped(usage.output)} out`;
-const cell = (text) => String(text ?? '').replace(/\s+/g, ' ').replace(/\|/g, '\\|').trim();
+const cell = (text) => String(text ?? '').replace(/\s+/g, ' ').replace(/\\/g, '\\\\').replace(/\|/g, '\\|').trim();
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
 // A variant's verdict, with its count after more than one trial and, when a round was run again,

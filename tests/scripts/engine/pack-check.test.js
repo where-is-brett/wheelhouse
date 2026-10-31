@@ -3,9 +3,10 @@
 // and each rule the check holds is shown refusing a pack that breaks it.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { checkPack, packDigest, readWorkflow, nodesOf, PACK_DIR, WHEELHOUSE_PLUGIN } from '../../../scripts/engine/pack-check.js';
 import { tempFolder } from '../../helpers/homes.js';
 
@@ -111,7 +112,7 @@ test('checkPack refuses a step that posts a verdict or calls gh outside the brok
 });
 
 test('checkPack refuses a step that moves the worktree with git before it takes the run\'s overlay out', () => {
-  for (const command of ['git rebase origin/main', 'git pull --ff-only', 'git checkout main', 'git merge origin/main', 'git switch other', 'git reset --hard HEAD~1', 'git stash', 'git -C . rebase main', 'git restore .']) {
+  for (const command of ['git rebase origin/main', 'git pull --ff-only', 'git checkout main', 'git merge origin/main', 'git switch other', 'git reset --hard HEAD~1', 'git stash', 'git -C . rebase main', 'git -c core.editor=true rebase main', 'git --no-pager rebase main', 'git restore .']) {
     assert.match(problems(packWith((w) => { node(w, 'open-pr').bash = `${command} && ${node(w, 'open-pr').bash}`; })).join('\n'), /open-pr moves the worktree with git/, command);
   }
   const released = 'node "$WHEELHOUSE_ROOT/scripts/engine/order-copy.js" --release && git rebase origin/main';
@@ -120,6 +121,15 @@ test('checkPack refuses a step that moves the worktree with git before it takes 
   assert.match(problems(packWith((w) => { node(w, 'open-pr').bash = `git rebase origin/main && node "$WHEELHOUSE_ROOT/scripts/engine/order-copy.js" --release`; })).join('\n'), /open-pr moves the worktree with git/);
   // Reading git is no move.
   assert.deepEqual(problems(packWith((w) => { node(w, 'open-pr').bash = `git log --oneline && git diff HEAD~1 && git merge-base HEAD main && ${node(w, 'open-pr').bash}`; })), []);
+});
+
+test('checkPack reads a long run of git options at once', () => {
+  const options = '-c '.repeat(200);
+  const dir = packWith((w) => { node(w, 'open-pr').bash = `git ${options}x && ${node(w, 'open-pr').bash}`; });
+  const check = `import { checkPack } from ${JSON.stringify(pathToFileURL(path.join(ROOT, 'scripts', 'engine', 'pack-check.js')).href)}; checkPack(${JSON.stringify(dir)}, { skillCopies: ${JSON.stringify(COPIES)} });`;
+  const got = spawnSync(process.execPath, ['--input-type=module', '-e', check], { timeout: 20000, encoding: 'utf8' });
+  assert.equal(got.signal, null, 'the check did not finish in time');
+  assert.equal(got.status, 0, got.stderr);
 });
 
 test('checkPack refuses a prompt without the shared rules', () => {

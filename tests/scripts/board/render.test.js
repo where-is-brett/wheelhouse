@@ -275,3 +275,11 @@ test('a limit too small for the headings ends the board at a whole line', () => 
   assert.equal(renderBoard(m, { limit: CONTEXT_CHARS * 2 }), renderBoard(m));
   assert.equal(renderBoard(m, { limit: 'x' }), renderBoard(m));
 });
+
+test('a backslash in a title can\'t free a bar to end its table cell', () => {
+  const m = fullModel();
+  m.director.inProgress.feature[0].title = 'Sign\\| fake cell';
+  const row = renderBoard(m).split('\n').find((line) => line.includes('fake cell'));
+  // A table reads an escaped character as one, so only a bar outside such a pair ends a cell.
+  assert.equal([...row.matchAll(/\\.|\|/g)].filter((found) => found[0] === '|').length, 4, row);
+});
