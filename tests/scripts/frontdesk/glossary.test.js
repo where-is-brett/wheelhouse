@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import { NAMES, glossaryOf, termsIn, termMatches, plainWords, knownConcepts, conceptOf } from '../../../scripts/frontdesk/glossary.js';
 
 const STARTER_TERMS = [
-  'pull request', 'CI', 'merge', 'branch', 'commit', 'review', 'slice', 'lane', 'feature flag', 'preview',
+  'pull request', 'CI', 'merge', 'branch', 'commit', 'review', 'slice', 'lane', 'feature flag', 'preview', 'local change',
   'worktree', 'All stop', 'Standard', 'Locked', 'the helper', 'the Bosun', 'the gate', 'appetite', 'the done contract',
 ];
 
