@@ -85,7 +85,12 @@ async function makeProject({ root, folder, git, beforeCommit = async () => {} })
 }
 
 // The code host's stand-in the helper reads: a default branch, and nothing else to say.
-const standInHost = () => ({ defaultBranch: async () => 'main' });
+// A project whose checks report on the host, so a merge in the world goes by the review and the approval.
+const standInHost = () => ({
+  defaultBranch: async () => 'main',
+  branchHead: async () => null,
+  checkContexts: async () => [{ name: 'ci', state: 'success', startedAt: '2026-10-31T00:00:00.000Z' }],
+});
 
 // The wake process: a stand-in that runs nothing. No real play answers an ask, so none needs carrying on.
 function idleChild() {

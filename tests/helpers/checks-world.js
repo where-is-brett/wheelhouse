@@ -53,6 +53,7 @@ export async function checksWorld(fn, { files = {}, host: more = {}, check } = {
   const statuses = [];
   // The host's own tools never run: the guard refuses them and notes what the broker forwarded.
   const forwarded = [];
+  const hostGuard = guardedRun(run, { log: forwarded });
   const merged = [];
   const stand = standInHost(remote.url);
   const contextsOf = (sha) => statuses.filter((s) => s.sha === sha).map((s) => ({ name: STATUS_CONTEXT, state: s.state }));
@@ -70,7 +71,7 @@ export async function checksWorld(fn, { files = {}, host: more = {}, check } = {
       buildPack({ out: path.join(frozen, 'project') });
       const given = check ?? (process.platform === 'darwin' ? {} : { check: standInCheck(remote.url) });
       const helper = await startHelper({
-        run: guardedRun(run, { log: forwarded }), address: testAddress(home), adapterFor: async () => host, envFor: async () => ({}), spawn: stubSpawn(),
+        run: hostGuard, address: testAddress(home), adapterFor: async () => host, envFor: async () => ({}), spawn: stubSpawn(),
         engineFor: (project) => (project === P ? engine : null), ...given,
       });
       const client = helperClient({ address: helper.address });
