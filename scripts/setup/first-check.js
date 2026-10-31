@@ -1,20 +1,10 @@
 // scripts/setup/first-check.js
 // What the first check on the default branch means (spec 4.5): the project's tests as they stand decide what the director
 // hears, and a red start holds nothing up unless the director says so.
+import { checksRanLine } from '../checks/not-counting.js';
+
 export const GET_THEM_PASSING = 'Get them passing first';
 export const CARRY_ON = 'Carry on anyway';
-
-// The Logbook's line for a check that ran (spec 4.8), the same on every host.
-const RESULT_WORDS = { passed: 'passed', failed: 'failed', 'timed-out': 'ran out of time', 'not-counted': 'tests not counted yet' };
-export const checksRanLine = ({ result, minutes }) => {
-  const words = RESULT_WORDS[result];
-  if (!words) return 'Checks ran on this computer: couldn\'t run.';
-  const shown = Math.max(1, Math.round(minutes));
-  return `Checks ran on this computer: ${words}, ${shown} ${shown === 1 ? 'minute' : 'minutes'}.`;
-};
-
-// The standing offer while tests aren't counting (spec 4.5).
-export const NOT_COUNTING_LINE = 'Tests aren\'t counting yet: ask the First Mate to add tests or repair them';
 
 export const FIRST_RED_CARD = Object.freeze({
   level: 3,

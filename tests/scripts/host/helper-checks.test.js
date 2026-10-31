@@ -13,6 +13,7 @@ import { makeEvent, writeEvent } from '../../../scripts/state/events.js';
 import { readConfig } from '../../../scripts/gate/guardrails.js';
 import { commandDigest } from '../../../scripts/checks/record.js';
 import { run } from '../../../scripts/lib/run.js';
+import { g } from '../../helpers/git-fixture.js';
 import { until, waitLongerOnTheHelper } from '../../helpers/until.js';
 
 waitLongerOnTheHelper();
@@ -103,10 +104,10 @@ test('a pull request named like the helper\'s, with anything else in it, gets no
     return (await host.prState(1).catch(() => null)) !== null;
   }, { what: 'the helper opening its change', within: 60000 });
   const branch = 'wheelhouse-test-command-0123456789ab';
-  await run('git', ['checkout', '-q', '-b', branch], { cwd: checkout });
+  await g(checkout, 'checkout', '-q', '-b', branch);
   fs.writeFileSync(path.join(checkout, '.claude/wheelhouse.json'), JSON.stringify({ ...readConfig(null), testCommand: 'true' }));
-  await run('git', ['commit', '-q', '-am', 'Another command'], { cwd: checkout });
-  await run('git', ['push', '-q', remote.url, branch], { cwd: checkout });
+  await g(checkout, 'commit', '-q', '-am', 'Another command');
+  await g(checkout, 'push', '-q', remote.url, branch);
   const { number } = await host.openPr({ head: branch, base: 'main', title: 'Name the test command', body: '' });
   const answer = await client.merge({ project: P, number });
   assert.equal(answer.ok, false);

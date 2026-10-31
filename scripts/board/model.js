@@ -11,7 +11,7 @@ import { HOST_UNREACHABLE } from '../host/company-ca.js';
 import { BUILD_QUESTION_LABELS, isBuildQuestion, settingKey } from '../protection/windows-builds.js';
 import { SEE_BEFORE_MERGE, SEE_IN_BRIEFING } from '../lib/calm-words.js';
 import { REST_LINE, restOf } from '../routing/premium.js';
-import { NOT_COUNTING_LINE, checksRanLine } from '../setup/first-check.js';
+import { NOT_COUNTING_LINE, checksRanLine } from '../checks/not-counting.js';
 
 const LANES = ['quick', 'small', 'feature', 'bug'];
 const WHEN = ['now', 'next', 'later'];

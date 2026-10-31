@@ -6,13 +6,13 @@
 // changed command or the director's Try again, so it can't keep running or keep raising cards. On a project whose checks
 // run on the host nothing is run or reported: the runner only watches for host checks that have stopped reporting.
 import { sweepHeads } from './folder.js';
-import { countingEnds, mayStopCounting } from './not-counting.js';
+import { checksRanLine, countingEnds, mayStopCounting } from './not-counting.js';
 import { dueChecks, withCheckTurn } from './queue.js';
 import { writeCheck } from './record.js';
 import { runCheck } from './run.js';
 import { keepQueue, readQueue, whereNow } from './standing.js';
 import { rulesNameOurs, stuckHostChecks } from './where.js';
-import { CARRY_ON, FIRST_RED_CARD, GET_THEM_PASSING, checksRanLine, firstCheck } from '../setup/first-check.js';
+import { CARRY_ON, FIRST_RED_CARD, GET_THEM_PASSING, firstCheck } from '../setup/first-check.js';
 import { LEAVE_THEM, RUN_CHECKS_HERE } from '../state/card-lines.js';
 
 export const CHECK_CARD_WORK = 'checks';
