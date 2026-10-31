@@ -188,6 +188,20 @@ test('a test can write in its tree and its home, and nowhere else', mac, () => {
   assert.notEqual(sandboxed(w, `echo x > '${os.homedir()}/wheelhouse-check-test'`).status, 0);
 });
 
+test('a head\'s sandbox can\'t write a main-line check\'s tree, and one main-line check\'s can\'t write the next one\'s', mac, () => {
+  const w = world();
+  const next = path.join(w.p.root, 'main', 'next', 'tree');
+  fs.mkdirSync(next, { recursive: true });
+  assert.notEqual(sandboxed(w, `echo x > '${next}/a'`).status, 0);
+  const earlier = { ...w.p, tree: path.join(w.p.root, 'main', 'earlier', 'tree') };
+  fs.mkdirSync(earlier.tree, { recursive: true });
+  const text = checkProfile({ paths: earlier, main: true, stage: 'test', network: false, denied: [w.outer], temp: TEMP, userHome: w.base });
+  const got = spawnSync('/usr/bin/sandbox-exec', ['-p', text, '/bin/sh', '-c', `echo x > '${earlier.tree}/a' && echo x > '${next}/a'`], { cwd: earlier.tree, encoding: 'utf8', env: { PATH: '/usr/bin:/bin', HOME: w.p.mainHome } });
+  assert.notEqual(got.status, 0);
+  assert.equal(fs.existsSync(path.join(earlier.tree, 'a')), true);
+  assert.equal(fs.existsSync(path.join(next, 'a')), false);
+});
+
 test('a test can\'t swap its tree or its home for a link, and can still work inside them', mac, () => {
   const w = world();
   for (const folder of [w.p.tree, w.p.home]) {

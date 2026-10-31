@@ -344,28 +344,29 @@ test('a signal stops a check as endCheck does', unix, async () => {
 // --- a job a test leaves behind, in a session of its own, which the end of the process group misses ---
 
 // A command that starts a job in its own session, which tries to write `target` for as long as it lives, and leaves.
-const leavesJob = (target, mark) => `perl -e 'use POSIX; exit 0 if fork; POSIX::setsid(); exit 0 if fork; open(STDIN, "<", "/dev/null"); open(STDOUT, ">", "/dev/null"); open(STDERR, ">", "/dev/null"); for (1..400) { for my $f (glob("${target}")) { open(my $o, ">>", $f) and print $o "planted\\n"; } select(undef, undef, undef, 0.05); }' ; echo left > '${mark}' 2>/dev/null; exit 0`;
+const leavesJob = (target, mark) => `perl -e 'use POSIX; exit 0 if fork; POSIX::setsid(); exit 0 if fork; open(STDIN, "<", "/dev/null"); open(STDOUT, ">", "/dev/null"); open(STDERR, ">", "/dev/null"); for (1..400) { for my $f (glob("${target}")) { if (open(O, ">>", $f)) { print O "planted\\n"; close(O); } } select(undef, undef, undef, 0.05); }' ; echo left > '${mark}' 2>/dev/null; exit 0`;
 
-test('a job a head left can\'t write the main line\'s tree during its check', mac, async () => {
-  await withHome(async () => {
-    const s = await source();
-    const root = () => fs.realpathSync(checkPaths('p').root);
-    fs.mkdirSync(checkPaths('p').root, { recursive: true });
-    const left = await runCheck({ project: 'p', commit: s.commit, main: false, work: 'a', settings: settings(leavesJob(`${root()}/main/*/tree/a.txt`, '/private/tmp/wh-left')), source: s.url });
-    assert.equal(left.result, 'passed', left.tail);
-    const got = await runCheck({ project: 'p', commit: s.commit, main: true, settings: settings('sleep 3; ! grep -q planted a.txt'), source: s.url });
-    assert.equal(got.result, 'passed', got.tail);
-  });
-});
-
-test('a job one work left can\'t write another work\'s tree during its check', mac, async () => {
+test('a job one work left can\'t write another work\'s tree during its check, though it can name the file', mac, async () => {
   await withHome(async () => {
     const s = await source();
     fs.mkdirSync(checkPaths('p').root, { recursive: true });
     const root = fs.realpathSync(checkPaths('p').root);
-    const left = await runCheck({ project: 'p', commit: s.commit, main: false, work: 'a', settings: settings(leavesJob(`${root}/heads/*/tree/a.txt`, '/private/tmp/wh-left')), source: s.url });
+    const named = checkPaths('p', { work: 'b' }).tree.replace(checkPaths('p').root, root);
+    const left = await runCheck({ project: 'p', commit: s.commit, main: false, work: 'a', settings: settings(leavesJob(`${named}/a.txt`, '/private/tmp/wh-left')), source: s.url });
     assert.equal(left.result, 'passed', left.tail);
     const got = await runCheck({ project: 'p', commit: s.commit, main: false, work: 'b', settings: settings('sleep 3; ! grep -q planted a.txt'), source: s.url });
+    assert.equal(got.result, 'passed', got.tail);
+  });
+});
+
+test('a job a head left does write its own work\'s tree, which is why only the main line\'s clean check stands', mac, async () => {
+  await withHome(async () => {
+    const s = await source();
+    fs.mkdirSync(checkPaths('p').root, { recursive: true });
+    const root = fs.realpathSync(checkPaths('p').root);
+    const named = checkPaths('p', { work: 'a' }).tree.replace(checkPaths('p').root, root);
+    await runCheck({ project: 'p', commit: s.commit, main: false, work: 'a', settings: settings(leavesJob(`${named}/a.txt`, '/private/tmp/wh-left')), source: s.url });
+    const got = await runCheck({ project: 'p', commit: s.commit, main: false, work: 'a', settings: settings('sleep 3; grep -q planted a.txt'), source: s.url });
     assert.equal(got.result, 'passed', got.tail);
   });
 });
