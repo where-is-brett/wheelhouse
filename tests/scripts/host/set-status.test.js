@@ -19,7 +19,7 @@ test('setStatus posts the context and state', async () => {
   const { adapter: a, calls } = adapter([]);
   assert.deepEqual(await a.setStatus({ sha: SHA, state: 'pending', description: 'Checking on this computer' }), { ok: true });
   assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0].args, ['api', '-X', 'POST', `repos/o/p/statuses/${SHA}`, '-f', 'state=pending', '-f', 'context=wheelhouse/checks', '-f', 'description=Checking on this computer']);
+  assert.deepEqual(calls[0].args, ['api', '--method', 'POST', `repos/o/p/statuses/${SHA}`, '-f', 'state=pending', '-f', 'context=wheelhouse/checks', '-f', 'description=Checking on this computer']);
 });
 
 test('a 403 reads permission', async () => {

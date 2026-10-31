@@ -108,7 +108,7 @@ export function githubCommands({ call, attempt, json, repo, fromAddress, refusal
     // Reports a check on the commit (check 84). Each post adds an entry and the rollup takes the newest, so one repeated
     // does no harm. A refusal is an answer: a connection set up before Wheelhouse asked for this permission reads 'permission'.
     async setStatus({ sha, state, description }) {
-      const got = await attempt(['api', '-X', 'POST', `repos/${repo}/statuses/${sha}`, '-f', `state=${state}`, '-f', `context=${STATUS_CONTEXT}`, '-f', `description=${description}`]);
+      const got = await attempt(['api', '--method', 'POST', `repos/${repo}/statuses/${sha}`, '-f', `state=${state}`, '-f', `context=${STATUS_CONTEXT}`, '-f', `description=${description}`]);
       if (got.code === 0) return { ok: true };
       return { refused: /\b403\b|not accessible/i.test(`${got.stderr}\n${got.stdout}`) ? 'permission' : 'GitHub did not take the report' };
     },
