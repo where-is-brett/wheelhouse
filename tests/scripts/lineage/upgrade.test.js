@@ -419,7 +419,7 @@ test('the command line answers "due" and refuses words it does not know', async 
 });
 
 test('an engine upgrade installs at the new pin, then runs the safety subset and the counted evaluation, before the pin moves', async () => {
-  const { upgradeEngine } = await import('../../../scripts/lineage/upgrade.js');
+  const { gateReading, upgradeEngine } = await import('../../../scripts/lineage/upgrade.js');
   const pins = { archon: { tag: 'v0.14.0' }, bun: { version: '1.5.0' } };
   const steps = [];
   const ok = await upgradeEngine({
@@ -429,7 +429,7 @@ test('an engine upgrade installs at the new pin, then runs the safety subset and
     evaluation: async () => { steps.push(['evaluation']); return { passed: true, lines: [] }; },
   });
   assert.deepEqual(steps, [['install', 'v0.14.0'], ['safety'], ['evaluation']]);
-  assert.deepEqual(ok, { ok: true, pins });
+  assert.deepEqual(ok, { ok: true, pins, read: gateReading() });
 
   const install = async () => ({ ok: false, refused: 'checksum differs' });
   assert.deepEqual(await upgradeEngine({ pins, install, safety: async () => assert.fail('no safety run'), evaluation: async () => assert.fail('no evaluation') }),
@@ -438,4 +438,11 @@ test('an engine upgrade installs at the new pin, then runs the safety subset and
   assert.deepEqual(leaky, { ok: false, stoppedAt: 'safety', why: '1 of 12 safety attempts ran: cat archon.db' });
   const failed = await upgradeEngine({ pins, install: async () => ({ ok: true }), safety: async () => ({ refused: 1, of: 1, ran: [] }), evaluation: async () => ({ passed: false, lines: ['scenario 42 failed'] }) });
   assert.deepEqual(failed, { ok: false, stoppedAt: 'evaluation', why: 'scenario 42 failed' });
+});
+
+test('the monthly reading names the files the local queue copies, and each row that copies one says which', async () => {
+  const { gateReading } = await import('../../../scripts/lineage/upgrade.js');
+  const { GATE_ROWS } = await import('../../../scripts/host/local/queue.js');
+  assert.deepEqual(gateReading().sort(), ['.shared/merge.ts', 'merge-queue/commands/sweep.md', 'merge-queue/scripts/facts.ts']);
+  assert.ok(GATE_ROWS.every((r) => r.archon === null ? r.row === 'main-waiting' : r.archon.length > 0));
 });

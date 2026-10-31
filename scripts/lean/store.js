@@ -498,7 +498,7 @@ export async function mergeApproved({
 // computer, by an enrolled key, naming the window's proof. Or null.
 // Each click is used once: one an undo's own signed record names (`click`) counts no more, so a later undo needs a
 // new click. Only signed undo records count as using one, so a plain note can't use up the director's click.
-function windowClick(project, action, matches) {
+export function windowClick(project, action, matches) {
   const me = computerId();
   const enrolled = readEnrolled();
   const events = eventsOf(project);

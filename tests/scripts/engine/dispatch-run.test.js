@@ -283,3 +283,38 @@ test('the order has no default test check while not counting', () => {
   const counted = orderFor(entry, { config: { testCommand: 'npm test', routing: {} } });
   assert.deepEqual(counted.done, [{ command: 'npm test', expect: 0 }]);
 });
+
+test('a project with no host sweeps its own queue, and starts no merge run', async () => {
+  const dir = tempFolder('wh-dr-');
+  const engine = fakeEngine();
+  let swept = 0;
+  const started = [];
+  const d = dispatchRun({
+    engine: { ...engine, start: async (args) => { started.push(args); return { ok: true, runId: 'r' }; } }, project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'), readViews: () => ({ work: {}, runs: {} }), config: () => ({ testCommand: 'npm test' }),
+    start: async () => ({ ok: true, runId: 'x' }), readyOf: () => ({ 1: { work: 'a', head: 'h' } }), localQueue: async () => { swept += 1; },
+  });
+  await d.tick();
+  await d.tick();
+  assert.equal(swept, 2, 'every tick, so a check that comes back is seen at once');
+  assert.deepEqual(started, []);
+});
+
+test('nothing waiting, or All stop, sweeps nothing', async () => {
+  const dir = tempFolder('wh-dr-');
+  let swept = 0;
+  const common = { engine: fakeEngine(), project: 'p', folder: dir, readViews: () => ({ work: {}, runs: {} }), config: () => ({ testCommand: 'npm test' }), localQueue: async () => { swept += 1; } };
+  await dispatchRun({ ...common, file: path.join(dir, 'a.json') }).tick();
+  await dispatchRun({ ...common, file: path.join(dir, 'b.json'), readyOf: () => ({ 1: { work: 'a', head: 'h' } }), stopped: () => true }).tick();
+  assert.equal(swept, 0);
+});
+
+test('a project with a host still starts Archon\'s queue', async () => {
+  const dir = tempFolder('wh-dr-');
+  const starts = [];
+  const engine = fakeEngine();
+  await dispatchRun({
+    engine: { ...engine, start: async (args) => { starts.push(args); return { ok: true, runId: 'q' }; } }, project: 'p', folder: dir, file: path.join(dir, 'q.json'), readViews: () => ({ work: {}, runs: {} }), config: () => ({ testCommand: 'npm test' }),
+    readyOf: () => ({ 1: { work: 'a', head: 'h' } }), repoOf: () => ({ host: 'github.com', path: 'o/p' }), queueFolder: async () => ({ ok: true, folder: dir }),
+  }).tick();
+  assert.equal(starts[0]?.lane, 'merge');
+});

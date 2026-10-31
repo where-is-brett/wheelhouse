@@ -190,6 +190,12 @@ export function fakeEngine({ recordings = {}, now = () => new Date().toISOString
       return artefacts && runs.has(runId) ? path.join(artefacts, runId) : null;
     },
 
+    // A run's worktree and branch taken out of the folder.
+    async complete({ folder, branch }) {
+      calls.push({ call: 'complete', folder, branch });
+      return { ok: true };
+    },
+
     // Cancels every run, as the patched Archon does: one paused at an ask too.
     // `beforeCancel(runs)` is awaited with the runs first, [{ id, folder }] (a test's `order.folder`).
     async stopAll(reason, { beforeCancel } = {}) {

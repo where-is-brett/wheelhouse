@@ -18,6 +18,7 @@ import { MANIFEST_PATH, MARKETPLACE_PATH, buildManifest, fetchUpstream, readMani
 import { REGISTER_PATH, checkAnchors, checkCarried, readRegister } from './register.js';
 import { changedCopies, readCopies } from './copies.js';
 import { startedAsScript } from '../lib/started-as-script.js';
+import { GATE_ROWS } from '../host/local/queue.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 export const SOURCE_PATH = 'scripts/lineage/manifest.js';
@@ -265,6 +266,10 @@ export class UpgradeStopped extends Error {
   }
 }
 
+// What the monthly reading looks at, since the local queue's table copies Archon's gate (spec 11): each file its rows copy, for
+// comparing with GATE_ROWS in scripts/host/local/queue.js, and whether a change there moves a row is a person's to judge.
+export const gateReading = () => [...new Set(GATE_ROWS.filter((r) => r.archon !== null).map((r) => r.archon.split(' ')[0]))];
+
 // The build engine's upgrade (Archon design, sections 14.1 and 16): the install again at the new pins, then the safety
 // subset, then the counted evaluation, each on the new engine. The pin moves only when all three pass; the first that
 // doesn't stops it, named. A source build carries its providers, so none is added again. `install(pins)` is
@@ -279,7 +284,7 @@ export async function upgradeEngine({ pins, install, safety, evaluation }) {
   }
   const evaluated = await evaluation();
   if (evaluated?.passed !== true) return { ok: false, stoppedAt: 'evaluation', why: (evaluated?.lines ?? []).join('; ') || 'the counted evaluation did not pass' };
-  return { ok: true, pins };
+  return { ok: true, pins, read: gateReading() };
 }
 
 // `land` is the maintainer's deliberate exception to the fenced git route: it commits in the

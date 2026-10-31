@@ -605,12 +605,20 @@ test('a GitHub project is told plainly that the report is for GitLab, and no too
   }, { host: 'github' });
 });
 
-test('a project kept on this computer is told so, and no tool is asked', async () => {
-  await inProject(async ({ options, err, made, folder }) => {
+test('the audit says there is no second record, and still compares with the home', async () => {
+  const record = { mergedRequests: async () => [{ number: 1, title: 'A', url: null, mergedAt: '2026-10-02T00:00:00.000Z', mergedBy: 'this computer', author: null, target: 'main', sha: 'a'.repeat(40), mergeCommit: 'b'.repeat(40) }], pipelinesFor: async () => [], prState: async () => ({}), protectionEvents: async () => ({ source: 'none', compared: false, events: [] }) };
+  const report = await auditReport({ events: [], host: record, since: SINCE, now: NOW, enrolled: [] });
+  assert.ok(report.limits.includes('This project is kept on this computer, so there is no second record to compare with.'));
+  assert.equal(report.rows.length, 1, 'the home\'s merges are still compared');
+  assert.ok(report.gaps.length > 0, 'a merge the record doesn\'t hold is a gap');
+  assert.equal(report.protection.compared, false);
+});
+
+test('a project kept on this computer gets a report, and no tool is asked', async () => {
+  await inProject(async ({ options, out, made, folder }) => {
     writeProject('shop', { folder, remoteUrl: null, host: 'local', repo: 'local/shop', connection: { mode: 'none' } });
-    assert.equal(await main(['--project', 'shop', '--since', '2026-10-01'], options), 1);
-    assert.match(err.text(), /kept on this computer/);
-    assert.doesNotMatch(err.text(), /GitHub/);
+    await main(['--project', 'shop', '--since', '2026-10-01'], options);
+    assert.match(out.text(), /no second record to compare with/);
     assert.equal(made.length, 0);
   });
 });
