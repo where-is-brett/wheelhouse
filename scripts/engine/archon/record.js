@@ -2,6 +2,7 @@
 // Reads `archon workflow get <run> --json --verbose` into the engine interface's inspect shape. Spend is taken as the
 // provider reported it, step by step; where Archon has no figure the step's source is 'unknown' and the figure is
 // null, never zero (spec 6.1, 10).
+import crypto from 'node:crypto';
 
 const STATUS = { pending: 'running', running: 'running', paused: 'paused', completed: 'ended', failed: 'ended', cancelled: 'ended' };
 
@@ -88,6 +89,26 @@ export function readOutputs(json) {
     if (body && !rows.some((r) => r.step_name === body)) outputs[body] = row.data.node_output;
   }
   return outputs;
+}
+
+// A task block's review step in Archon's record, once a round: `<fan-out>__<identity>__build.task-review`, the identity
+// being the first 16 hex of the SHA-256 of the task's item (Archon's fan-out-identity.ts).
+const TASK_REVIEW = /^__archon_fan_out__each__.*__([0-9a-f]{16})__build\.task-review$/;
+const identityOf = (item) => crypto.createHash('sha256').update(item).digest('hex').slice(0, 16);
+
+// Each task's last review in a slice's run, by the task's number, from the same record as readOutputs: its rows are
+// there however the run ended, where the fan-out's own output is written only once every task has settled.
+export function readTaskReviews(json) {
+  const outputs = readOutputs(json);
+  let items = [];
+  try { items = JSON.parse(outputs.tasks ?? '[]'); } catch { /* it listed no tasks */ }
+  const byIdentity = new Map((Array.isArray(items) ? items : []).map((item) => [identityOf(String(item)), String(item)]));
+  const reviews = {};
+  for (const [step, output] of Object.entries(outputs)) {
+    const task = byIdentity.get(TASK_REVIEW.exec(step)?.[1]);
+    if (task) reviews[task] = output;
+  }
+  return reviews;
 }
 
 // The inspect shape: { status, outcome, steps, branch, pr, head, digest, source, ownerPid, totals }. The branch, pull request

@@ -36,7 +36,7 @@ Not a patch; Wheelhouse works around it. Found in check 81 on 30 October 2026, a
 
 We couldn't recover the refusal from our run. The same start, from a copy of the engine's database, in a script step of a real paused-and-woken run, with the same environment shape, started. So we don't know what refused it.
 
-Wheelhouse no longer relies on that start, for a reason of its own: a follow-up from the step names no `--project`, `--workflow-source` or model bindings, and the host that started the first run doesn't know the new one. Without `--project`, on the copy above, it ran under the repository's own project, not the mirror's. So when a ruling merges, Wheelhouse's helper starts the next queue run itself, once the answered run ends. If the step's start works too, the two runs may overlap. Each item's claim keeps them from sweeping it twice.
+Wheelhouse no longer relies on that start, for a reason of its own: a follow-up from the step names no `--project`, `--workflow-source` or model bindings, and the host that started the first run doesn't know the new one. Without `--project`, on the copy above, it ran under the repository's own project, not the mirror's. So when a ruling merges, Wheelhouse's helper starts the next queue run itself, once the answered run ends. If the step's start works too, the helper finds that run live in the queue's folder and folds its own start into it, so one queue run is live for a project.
 
 ## A third patch: cancelling a paused run
 

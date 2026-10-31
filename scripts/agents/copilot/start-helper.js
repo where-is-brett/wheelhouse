@@ -12,9 +12,10 @@
 //        the card with these lines.
 //   install --hash <hash> and the same answers
 //        on the card's Approve: makes the changes plan listed, refused if they are no longer the ones the card
-//        showed (the hash) or while STOP is on. The move into the store and then the registration are made holding
-//        the project's lock, so two installs at once never both register, and an adoption refused or failed leaves
-//        nothing registered. A STOP the folder's record leaves on is STOP from then on. Then it starts the helper.
+//        showed (the hash) or while STOP is on. All of it, from reading the folder to the registration, is done
+//        holding the project's lock, so two installs at once never both register and neither reads a folder the
+//        other is moving, and an adoption refused or failed leaves nothing registered. A STOP the folder's record
+//        leaves on is STOP from then on. Then it starts the helper.
 //   start
 //        starts the helper detached if it isn't answering, and the watcher for each project on an agent whose
 //        sessions part is built (none at Lean, so the waker is never made for one); the usage receiver only with
@@ -132,12 +133,19 @@ const defaults = (deps) => ({
   ...deps,
 });
 
-// planInstall({ folder, workComputer, realUsers, test }, deps) -> { project, folder, changes, lines, hash, entry }
+// The folder the answers name, in full.
+function folderOf(answers) {
+  const folder = realOrNull(answers.folder ?? process.cwd());
+  if (folder === null) refuse('This folder isn\'t there');
+  return folder;
+}
+
+// planInstall({ folder, workComputer, realUsers, test }, deps) -> { project, folder, changes, lines, hash, hashes, entry }
+// `hashes` are the cards install still takes: this plan's, and, with the key made since, the one that also showed it.
 export async function planInstall(answers, deps = {}) {
   const d = defaults(deps);
   const { workComputer, realUsers, test } = answersOf(answers);
-  const folder = realOrNull(answers.folder ?? process.cwd());
-  if (folder === null) refuse('This folder isn\'t there');
+  const folder = folderOf(answers);
   const dotGit = path.join(folder, '.git');
   if (!fs.existsSync(dotGit)) refuse('Run this in the project\'s own folder, where its git is');
   const project = projectNameFor(folder);
@@ -147,16 +155,17 @@ export async function planInstall(answers, deps = {}) {
   const entry = workComputer ? null : loginEntry({ platform: d.platform, node: d.node, root: d.root, script: START_SCRIPT, home: d.userHome });
   const store = storeDir(project);
   const needsKey = ownKey() === null;
-  const changes = [
+  const changesWith = (key) => [
     { change: 'hook-file', path: hooks },
     entry === null ? { change: 'no-sign-in-start', workComputer } : { change: 'sign-in-start', kind: entry.kind, path: entry.path, content: entry.content },
-    ...(needsKey ? [{ change: 'signing-key' }] : []),
+    ...(key ? [{ change: 'signing-key' }] : []),
     { change: 'register', project, folder },
     { change: 'store', path: store },
     { change: 'real-users', value: realUsers },
     { change: 'test', value: test },
     ...(look.stop ? [{ change: 'stop-carried' }] : []),
   ];
+  const changes = changesWith(needsKey);
   const lines = [
     `Wheelhouse's guards are registered with ${LABEL} in ${hooks}, for every project on this computer`,
     entry === null
@@ -175,22 +184,26 @@ export async function planInstall(answers, deps = {}) {
       : `Before each merge the helper runs \`${test}\` on the approved commit`,
     ...(look.stop ? [STOP_CARRIED] : []),
   ];
-  const hash = crypto.createHash('sha256').update(canonicalJson({ folder, project, changes })).digest('hex');
-  return { project, folder, changes, lines, hash, entry, store, hooks, needsKey };
+  const hashOf = (list) => crypto.createHash('sha256').update(canonicalJson({ folder, project, changes: list })).digest('hex');
+  const hash = hashOf(changes);
+  return { project, folder, changes, lines, hash, hashes: needsKey ? [hash] : [hash, hashOf(changesWith(true))], entry, store, hooks, needsKey };
 }
 
 // install({ folder, hash, workComputer, realUsers, test }, deps) -> { ok, lines } after the card's Approve.
 export async function install(answers, deps = {}) {
   const d = defaults(deps);
-  const plan = await planInstall(answers, d);
-  if (typeof answers.hash !== 'string' || answers.hash !== plan.hash) refuse(CHANGED);
-  if (stopState().on) refuse(STOP_ON);
-  const { project, folder } = plan;
   const { realUsers, test } = answersOf(answers);
-  // One install at a time per project: the second waits, then finds the project registered and in the store.
+  const folder = folderOf(answers);
+  // One install at a time per project, with the folder read only inside the lock: the second waits, then finds the
+  // project registered and in the store, never a move half made, which reads as a worktree of the project's own.
+  let plan;
   let adopted;
-  await withLocalLock(project, async () => {
-    const answers = { test, realUsers, agent: AGENT };
+  await withLocalLock(projectNameFor(folder), async () => {
+    plan = await planInstall(answers, d);
+    if (typeof answers.hash !== 'string' || !plan.hashes.includes(answers.hash)) refuse(CHANGED);
+    if (stopState().on) refuse(STOP_ON);
+    const { project } = plan;
+    const fields = { test, realUsers, agent: AGENT };
     if (readLean(project) === null) {
       // The git moves into the store first, and the project is registered only then (ruling P5-58): an adoption the
       // store refuses, or one that fails on the way, leaves nothing registered.
@@ -205,11 +218,11 @@ export async function install(answers, deps = {}) {
           } catch (error) {
             refuse(`The project could not be registered: ${error.message}`);
           }
-          updateLean(project, { ...answers, store, main, ...(copy === null ? {} : { copy }) });
+          updateLean(project, { ...fields, store, main, ...(copy === null ? {} : { copy }) });
         },
       });
     } else {
-      updateLean(project, answers);
+      updateLean(project, fields);
       adopted = await adoptProject({ project, folder, run: d.run, now: d.now });
     }
     // Made inside the lock, so a second install of this project finds it; an install of another project that made
@@ -226,7 +239,7 @@ export async function install(answers, deps = {}) {
   writeRegistration({ home: copilotHome({ env: d.env, homedir: d.userHome }), node: d.node, root: d.root, platform: d.platform });
   if (plan.entry !== null) await installLoginStart({ entry: plan.entry, run: d.regRun, now: d.now });
   const started = await d.start();
-  return { ok: started.ok === true, lines: [`Wheelhouse's helper is installed for ${project}`, ...(adopted.stop ? [STOP_CARRIED] : []), started.line] };
+  return { ok: started.ok === true, lines: [`Wheelhouse's helper is installed for ${plan.project}`, ...(adopted.stop ? [STOP_CARRIED] : []), started.line] };
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

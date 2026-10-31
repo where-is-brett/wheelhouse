@@ -7,7 +7,10 @@
 // in the state once) and records the session's provenance (all but when the session
 // starts from a compaction, which leaves lineage alone), and adds a short
 // reload as context. The reload names things; it never pastes whole files
-// (design section 19.1, point 5). In the project's main folder it also keeps
+// (design section 19.1, point 5). What the hold goes by follows the project's agent: an agent whose steps read
+// Wheelhouse's own skill copies has them checked in place of the kits, as its run's start does, once the default
+// branch's configuration and the main checkout's both name it (ruling P8-33). Only then is the helper needed, so that
+// check comes after it, and any doubt goes by the kits. In the project's main folder it also keeps
 // `.wheelhouse/` in the main checkout's local git exclusions, as the foreman does.
 //
 // Limits. The hook has ten seconds (hooks.json); it keeps to eight: at most
@@ -57,6 +60,7 @@ import { isLeanProject } from '../lean/project.js';
 import { startBackground, startDetached } from '../lib/background.js';
 import { sessionRole } from '../lib/role.js';
 import { projectConfig } from '../watcher/main.js';
+import { agentInFolder, agentOfConfig, readsOwnCopies } from '../agents/names.js';
 import { CLAUDE_CODE_FLOOR } from '../lib/build-loop.js';
 import { readProject } from '../lib/projects.js';
 import { ensureIgnored } from '../feature/files.js';
@@ -64,7 +68,7 @@ import { run as runProgram } from '../lib/run.js';
 import {
   LOW_NODE_SCRIPT, guardedReady, lowNodeReady, needsSelfTest, selfTest, SELF_TEST_MS,
 } from '../windows/low.js';
-import { checkLineage, holdEvent, markRecorded, recordLift, warningLines, writeProvenance } from '../lineage/check.js';
+import { checkLineage, hasCopies, holdEvent, inspectCopies, inspectLineage, markRecorded, recordLift, warningLines, writeProvenance } from '../lineage/check.js';
 import { claudeCodeOf } from '../lineage/provenance.js';
 import { MARKETPLACE } from '../lineage/manifest.js';
 import { makeSigningKey, ownKey, readEnrolled, enrol } from '../state/signing.js';
@@ -346,22 +350,42 @@ function recordHold(project, result, now) {
 // The lineage check (scripts/lineage/check.js) for the project's folder: writes the hold file on
 // a mismatch and removes it on a match, records the hold in the state, and records this
 // session's provenance. Gives the warning lines. It informs, so anything that goes wrong is
-// passed over.
-function lineageCheck(found, input, version, { check, root, claudeHome, now, pinsPending = false }) {
+// passed over. With `copies` the hold goes by Wheelhouse's own skill copies, and the hold is left alone where this copy
+// of Wheelhouse carries none; the provenance still says what this session loaded, which is the kits.
+function lineageCheck(found, input, version, { check, root, claudeHome, now, pinsPending = false, copies = false }) {
   try {
     const folder = found.record?.folder ?? readProject(found.project)?.folder;
-    const result = check({ project: found.project, projectDir: folder, root, claudeHome, now, pinsPending });
-    recordHold(found.project, result, now);
+    const held = copies && !hasCopies(root) ? null : check({ project: found.project, projectDir: folder, root, claudeHome, now, pinsPending, ...(copies ? { inspect: inspectCopies } : {}) });
+    if (held !== null) recordHold(found.project, held, now);
+    const result = copies ? inspectLineage({ projectDir: folder, root, claudeHome }) : held;
     try {
       writeProvenance({
         project: found.project, sessionId: input.session_id, root, upstreams: result.upstreams, ok: result.ok && !(result.pending?.length > 0),
         claudeCode: version === null ? null : version.join('.'), transcript: input.transcript_path,
       });
     } catch { /* the session carries on without it */ }
-    return result.ok ? [] : warningLines(result.mismatches, { kept: result.kept !== false });
+    return held === null || held.ok ? [] : warningLines(held.mismatches, { kept: held.kept !== false });
   } catch {
     return [];
   }
+}
+
+// The agent the main checkout's configuration names for this computer, when its steps read Wheelhouse's own skill
+// copies: the one case where the session start must ask the default branch before it checks. Null otherwise.
+function copiesAgent(found) {
+  try {
+    const agent = agentInFolder(found.record?.folder ?? readProject(found.project)?.folder, { computerId: computerId() });
+    return readsOwnCopies(agent) ? agent : null;
+  } catch {
+    return null;
+  }
+}
+
+// Whether the default branch's configuration names `agent` for this computer too (ruling P8-33). No answer is no.
+async function branchNames(agent, project, client, left) {
+  if (typeof client?.config !== 'function') return false;
+  const read = await left(projectConfig(project, client));
+  return Boolean(read?.config) && agentOfConfig(read.config, { computerId: computerId() }) === agent;
 }
 
 // In a Shape 1 project, starts the watcher when it isn't running, as the
@@ -744,8 +768,12 @@ async function started(input, deps) {
   // A compaction installs nothing, so the check belongs to the session's real start: no check,
   // the hold file neither written nor removed (a lift may still be recorded, elsewhere, for a hold
   // whose file is gone), no provenance rewritten, and a hold already standing stands.
-  const lineage = input.source === 'compact' ? [] : lineageCheck(found, input, version, { check, root: lineageRoot, claudeHome, now, pinsPending });
+  const checked = input.source !== 'compact';
+  const agent = checked ? copiesAgent(found) : null;
+  const lineageWith = (copies) => lineageCheck(found, input, version, { check, root: lineageRoot, claudeHome, now, pinsPending, copies });
+  let lineage = checked && agent === null ? lineageWith(false) : [];
   const up = await ensureHelper(given ?? helperClient({ timeout: Math.min(3000 + helperGrace(), totalMs) }), { spawn, pluginRoot, waitMs: startWaitMs, pause, end });
+  if (agent !== null) lineage = lineageWith(Boolean(up) && await branchNames(agent, project, clientNow(), left));
   // Records what this session is for and starts the usage receiver, alongside the import below.
   const usage = Promise.resolve().then(() => background({ pluginRoot, session: input.session_id, cwd: input.cwd, project, spawn, now })).catch(() => null);
   let views = null;

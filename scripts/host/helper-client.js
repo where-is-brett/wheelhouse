@@ -100,6 +100,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       reproductionFind: post('/engine/reproduction/find'), // { runId } -> { ok, kept, given }: the work's kept reproduction, and the one the run's reproduce step gave
       previewFind: post('/engine/preview/find'), // { runId } -> { ok, visible, pages, url: address | null, pr, head }: whether the run's work is visible, its pages and the host's preview of the head it opened
       preview: post('/engine/preview'), // { runId } -> { ok, folder, pictures }: copies the run's pictures and notes from its own artefacts into previews/<work>/<head>/ and records a preview
+      taskHolds: post('/engine/task-holds'), // { runId } -> { ok, tasks }: the tasks of the run's slice whose review last held, in this run or one before it, from the helper's own record and the engine's
       lesson: post('/engine/lesson'), // { runId } -> { ok, written }: writes the lesson the run's lesson step gave, read from the engine's record; at most one a run, none when it is empty
     },
     // The broker (scripts/engine/broker/): every gh call Archon makes, and the fetch mirror Archon's git reads.

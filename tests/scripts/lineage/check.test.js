@@ -5,11 +5,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { checkLineage, holdEvent, holdFile, holdsToLift, inspectCopies, isHeld, liftEvent, liftsDue, recheckCopies, ROOT } from '../../../scripts/lineage/check.js';
+import { checkLineage, holdEvent, holdFile, holdsToLift, inspectCopies, isHeld, liftEvent, liftsDue, main, recheckCopies, ROOT } from '../../../scripts/lineage/check.js';
 import { MANIFEST_PATH } from '../../../scripts/lineage/manifest.js';
 import path from 'node:path';
-import { fingerprintTree } from '../../../scripts/lineage/fingerprint.js';
-import { lineageFixture } from '../../helpers/lineage.js';
+import { addCopy, lineageFixture } from '../../helpers/lineage.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
 
 const P = 'owner__name';
@@ -67,19 +66,6 @@ test('the lift event names the holds it lifts', () => {
   assert.deepEqual(liftEvent('t', ['h1']), { at: 't', holds: ['h1'] });
 });
 
-// A Wheelhouse root with one skill copy and a manifest that fingerprints it.
-function rootWithCopy(fixture) {
-  const copy = path.join(fixture.root, 'skills', 'pr');
-  fs.mkdirSync(copy, { recursive: true });
-  fs.writeFileSync(path.join(copy, 'SKILL.md'), 'the copy\n');
-  fs.writeFileSync(path.join(copy, 'SOURCE.md'), '- Upstream: superpowers\n');
-  const file = path.join(fixture.root, ...MANIFEST_PATH.split('/'));
-  const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
-  manifest.copies = [{ path: 'skills/pr', hash: fingerprintTree(copy).hash }];
-  fs.writeFileSync(file, JSON.stringify(manifest));
-  return copy;
-}
-
 test('this copy\'s manifest fingerprints every skill copy it carries', () => {
   const got = inspectCopies({ root: ROOT });
   assert.deepEqual(got.mismatches, []);
@@ -90,7 +76,7 @@ test('the copies are checked against the manifest, and a manifest with none can\
   withHome(() => {
     const fixture = lineageFixture();
     assert.equal(inspectCopies({ root: fixture.root }).ok, false);
-    const copy = rootWithCopy(fixture);
+    const copy = addCopy(fixture);
     assert.equal(inspectCopies({ root: fixture.root }).ok, true);
     fs.appendFileSync(path.join(copy, 'SKILL.md'), 'changed\n');
     assert.deepEqual(inspectCopies({ root: fixture.root }).mismatches.map((m) => m.path), ['skills/pr']);
@@ -100,7 +86,7 @@ test('the copies are checked against the manifest, and a manifest with none can\
 test('a Claude session start\'s check still goes by the kits, with the copies matching', () => {
   withHome((home) => {
     const fixture = lineageFixture();
-    rootWithCopy(fixture);
+    addCopy(fixture);
     const folder = tempFolder('wh-kits-');
     assert.equal(checkLineage({ project: P, projectDir: folder, root: fixture.root, claudeHome: fixture.claudeHome }).ok, false);
     assert.equal(isHeld(P), true);
@@ -110,7 +96,7 @@ test('a Claude session start\'s check still goes by the kits, with the copies ma
 test('a run\'s start lifts a hold the kits wrote once the copies match, with no Claude kit in, and closes its card', async () => {
   await withHome(async () => {
     const fixture = lineageFixture();
-    rootWithCopy(fixture);
+    addCopy(fixture);
     const folder = tempFolder('wh-kits-');
     checkLineage({ project: P, projectDir: folder, root: fixture.root, claudeHome: fixture.claudeHome });
     assert.equal(isHeld(P), true);
@@ -126,7 +112,7 @@ test('a run\'s start lifts a hold the kits wrote once the copies match, with no 
 test('a run\'s start holds the project when a copy differs, and says so once', async () => {
   await withHome(async () => {
     const fixture = lineageFixture();
-    const copy = rootWithCopy(fixture);
+    const copy = addCopy(fixture);
     fs.appendFileSync(path.join(copy, 'SKILL.md'), 'changed\n');
     const written = [];
     const look = () => recheckCopies({ project: P, projectDir: tempFolder('wh-kits-'), root: fixture.root, views: {}, computer: 'mac', write: async (kind, data) => written.push({ kind, data }) });
@@ -135,5 +121,55 @@ test('a run\'s start holds the project when a copy differs, and says so once', a
     assert.equal((await look()).ok, false);
     assert.deepEqual(written.map((w) => w.kind), ['lineage-hold']);
     assert.deepEqual(written[0].data.mismatches, [{ upstream: 'wheelhouse', path: 'skills/pr' }]);
+  });
+});
+
+// The command run in a project's folder whose configuration names `agents`, with the fixture's kits not installed there.
+function command(fixture, folder, agents) {
+  fs.mkdirSync(path.join(folder, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(folder, '.claude', 'wheelhouse.json'), JSON.stringify({ v: 1, agents }));
+  const said = [];
+  const code = main([folder], { write: (line) => said.push(line), root: fixture.root, claudeHome: fixture.claudeHome });
+  return { code, said: said.join('') };
+}
+
+test('a project that names an agent reading the copies gets both checks, each named, and the command stays out of the home', () => {
+  withHome((home) => {
+    const fixture = lineageFixture();
+    const copy = addCopy(fixture);
+    const folder = tempFolder('wh-kits-');
+    const { code, said } = command(fixture, folder, { aaaaaaaa: 'copilot' });
+    assert.equal(fs.existsSync(home), false, 'the command makes nothing in the home');
+    assert.equal(code, 1, 'the kits differ');
+    assert.match(said, /gives both/);
+    assert.match(said, /By the installed kits: .*\n- superpowers: not installed/);
+    assert.match(said, /By Wheelhouse's own skill copies: Wheelhouse's own skill copies match/);
+    fs.appendFileSync(path.join(copy, 'SKILL.md'), 'changed\n');
+    assert.match(command(fixture, folder, { aaaaaaaa: 'copilot' }).said, /wheelhouse: skills\/pr/);
+  });
+});
+
+test('a project\'s subfolder finds its configuration, and the command passes once both checks match', () => {
+  withHome(() => {
+    const folder = tempFolder('wh-kits-');
+    const fixture = lineageFixture(folder);
+    addCopy(fixture);
+    const inside = path.join(folder, 'src');
+    fs.mkdirSync(inside);
+    const first = command(fixture, folder, { aaaaaaaa: 'copilot' });
+    assert.equal(first.code, 0);
+    const said = [];
+    assert.equal(main([inside], { write: (line) => said.push(line), root: fixture.root, claudeHome: fixture.claudeHome }), 0);
+    assert.match(said.join(''), /gives both/);
+  });
+});
+
+test('a project with no other agent named gets the command\'s kits report as it was', () => {
+  withHome(() => {
+    const fixture = lineageFixture();
+    addCopy(fixture);
+    const { code, said } = command(fixture, tempFolder('wh-kits-'), {});
+    assert.equal(code, 1);
+    assert.equal(said, "These installed files still differ from Wheelhouse's manifest, so edits and commands stay held. Once they match, the hold lifts at the next session start.\n- superpowers: not installed\n");
   });
 });

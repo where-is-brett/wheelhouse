@@ -284,6 +284,53 @@ test('a review that still holds goes back even when another task stopped with a 
   assert.equal(git(dir, 'status', '--porcelain', '--untracked-files=all'), '');
 });
 
+test('a hold the helper kept from a run cancelled before its close sends the ticked task back, with the one card', async () => {
+  const dir = repo('- [x] **Task 1:** One\n- [x] **Task 2:** Two\n');
+  const s = sink();
+  const asked = [];
+  const holding = { engine: { taskHolds: async (args) => { asked.push(args); return { ok: true, tasks: ['2'] }; } } };
+  const art = artefacts();
+  assert.equal(await tasksDone(['--run', 'run-2', '--artefacts', art, '--base', 'main', '--reviewed', '--records', '[]'], { client: holding, cwd: dir, out: s.out }), 0);
+  assert.equal(asked[0].runId, 'run-2');
+  assert.equal(asked[0].ticket, 'a'.repeat(64));
+  assert.equal(s.lines.length, 1);
+  assert.equal(s.last().topic, 'task-red');
+  assert.equal(s.last().recommend, 'rework');
+  assert.match(s.last().question, /^Task 2, Two: its review still found a serious problem/);
+  assert.deepEqual(s.last().options.map((o) => o.label), ['Send it back for a fresh run', 'Stop this work']);
+  assert.match(planOf(dir), /- \[x\] \*\*Task 1:\*\*/);
+  assert.match(planOf(dir), /- \[ \] \*\*Task 2:\*\*/);
+  assert.equal(git(dir, 'status', '--porcelain', '--untracked-files=all'), '');
+});
+
+test('a hold the helper kept goes back even when a task of this run stopped with its question', async () => {
+  const dir = repo('- [x] **Task 1:** One\n- [ ] **Task 2:** Two\n');
+  const s = sink();
+  const holding = { engine: { taskHolds: async () => ({ ok: true, tasks: ['1'] }) } };
+  const records = JSON.stringify([{ blocked: true, task: '2', question: 'Which?', options: [{ id: 'a', label: 'A' }], recommend: 'a', level: '3', topic: 'which' }]);
+  assert.equal(await tasksDone(['--run', 'run-2', '--artefacts', artefacts(), '--base', 'main', '--reviewed', '--records', records], { client: holding, cwd: dir, out: s.out }), 0);
+  assert.equal(s.last().question, 'Task 2, Two: Which?');
+  assert.match(planOf(dir), /- \[ \] \*\*Task 1:\*\*/);
+});
+
+test('holds the helper won\'t give count as red, so a close never reads them as clear', async () => {
+  for (const taskHolds of [async () => ({ ok: false, refused: 'no' }), async () => { throw new Error('no helper'); }]) {
+    const dir = repo('- [x] **Task 1:** One\n- [x] **Task 2:** Two\n');
+    const s = sink();
+    assert.equal(await tasksDone(['--run', 'run-2', '--artefacts', artefacts(), '--base', 'main', '--reviewed', '--records', '[]'], { client: { engine: { taskHolds } }, cwd: dir, out: s.out }), 0);
+    assert.equal(s.last().topic, 'task-red');
+    assert.match(s.last().question, /^Task 1, One: whether its review still holds couldn't be checked/);
+  }
+});
+
+test('a lane with no task reviews asks the helper for no holds', async () => {
+  const dir = repo('- [x] **Task 1:** One\n');
+  const s = sink();
+  const silent = { engine: { taskHolds: async () => { throw new Error('not asked'); } } };
+  assert.equal(await tasksDone(['--run', 'run-1', '--artefacts', artefacts(), '--base', 'main', '--records', '[]'], { client: silent, cwd: dir, out: s.out }), 0);
+  assert.equal(s.last().blocked, false);
+});
+
 test('a red task after the plan was taken out comes back into the tree, so the fresh run can build it', async () => {
   const dir = repo('- [x] **Task 1:** One\n  Test: good\n- [x] **Task 2:** Two\n  Test: bad\n');
   git(dir, 'rm', '-q', PLAN_FILE);
