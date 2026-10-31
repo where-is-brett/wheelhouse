@@ -47,10 +47,10 @@ const NETWORK_SERVICES = Object.freeze([
   'com.apple.trustd',
   'com.apple.trustd.agent',
 ]);
-// Where version managers keep a project's tools in the home folder, the one part of it a check reads. These hold programs,
-// not keys: `.cargo/bin` is named alone because `.cargo` holds a registry token.
+// Where version managers keep a project's tools in the home folder, the one part of it a check reads. `.cargo/bin` is named
+// alone because `.cargo` holds a registry token. A key someone puts in a tool's own settings here is in reach of `prepare`.
 const TOOLS = Object.freeze([
-  '.asdf', '.bun', '.cargo/bin', '.deno', '.fnm', '.local/bin', '.local/share/mise', '.local/share/pnpm', '.mise', '.nvm',
+  '.asdf', '.bun', '.cargo/bin', '.deno', '.fnm', '.local/share/mise', '.local/share/pnpm', '.mise', '.nvm',
   '.pyenv', '.rbenv', '.rustup', '.sdkman', '.swiftly', '.volta', 'Library/pnpm',
 ]);
 const DEVICES = '(literal "/dev/null") (literal "/dev/zero") (literal "/dev/random") (literal "/dev/urandom") (literal "/dev/tty") (literal "/dev/dtracehelper") (literal "/dev/ptmx") (regex #"^/dev/(fd|ttys)")';

@@ -43,7 +43,7 @@ function clearFolder(folder) {
 }
 
 // A folder of the check, where a link or a file left in its place is taken away, never followed.
-function realFolder(folder) {
+export function realFolder(folder) {
   const seen = fs.lstatSync(folder, { throwIfNoEntry: false });
   if (seen && !seen.isDirectory()) fs.rmSync(folder, { force: true });
   fs.mkdirSync(folder, { recursive: true });
@@ -69,7 +69,8 @@ export async function prepareFolder({ project, commit, main, source, git = safeG
   if (!fs.existsSync(path.join(paths.gitDir, 'HEAD'))) await must(git({ cwd: paths.root, reach: 'local', look: 'never' }), ['init', '-q', '--bare', paths.gitDir], 'start');
   const mark = path.join(paths.tree, '.git');
   clearFolder(mark);
-  fs.writeFileSync(mark, `gitdir: ${paths.gitDir}\n`);
+  // `wx`, so a link a leftover job puts here in the meantime is refused, never written through.
+  fs.writeFileSync(mark, `gitdir: ${paths.gitDir}\n`, { flag: 'wx' });
   const inFolder = git({ cwd: paths.gitDir, workTree: paths.tree, reach: 'local' });
   const inSource = git({ cwd: source, reach: 'local', list: 'project' });
   const ref = `refs/wheelhouse/check/${commit}`;

@@ -166,6 +166,23 @@ test('a head check puts a real folder back where a test left a link, and the lin
   });
 });
 
+test('a link a leftover job puts where the .git file goes is never written through', unix, async (t) => {
+  await withHome(async () => {
+    const s = await source();
+    const first = await prepareFolder({ project: 'p', commit: s.first, main: false, source: s.url });
+    const target = path.join(tempFolder('wh-race-'), 'keep.txt');
+    fs.writeFileSync(target, 'keep');
+    const mark = path.join(first.tree, '.git');
+    const remove = fs.rmSync;
+    t.mock.method(fs, 'rmSync', (file, options) => {
+      remove(file, options);
+      if (file === mark) fs.symlinkSync(target, mark);
+    });
+    await assert.rejects(prepareFolder({ project: 'p', commit: s.first, main: false, source: s.url }));
+    assert.equal(fs.readFileSync(target, 'utf8'), 'keep');
+  });
+});
+
 test('a link left in the tree isn\'t followed out of it', unix, async () => {
   await withHome(async () => {
     const s = await source();

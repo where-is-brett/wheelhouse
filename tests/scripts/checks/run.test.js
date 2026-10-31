@@ -99,6 +99,15 @@ test('a timeout has no second try', unix, async () => {
   });
 });
 
+test('a file a test left where the temporary folder goes is put right, and the check still runs', unix, async () => {
+  await withHome(async () => {
+    const got = await check('echo x > "$HOME/tmp/a" && rm -rf "$HOME/tmp" && : > "$HOME/tmp"');
+    assert.equal(got.result, 'passed');
+    const again = await check('echo x > "$TMPDIR/a"');
+    assert.equal(again.result, 'passed');
+  });
+});
+
 test('a stall on the run after a red one is timed-out, never red', unix, async () => {
   await withHome(async () => {
     const got = await check('if [ -f MARKS ]; then sleep 30; else echo ran > MARKS; exit 1; fi', { limitMs: 400 });

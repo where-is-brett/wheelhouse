@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { shellFor, testEnv } from '../lib/local-git.js';
 import { sandboxDenyPaths } from '../protection/settings.js';
-import { prepareFolder } from './folder.js';
+import { prepareFolder, realFolder } from './folder.js';
 import { checkProfile } from './profile.js';
 import { commandDigest } from './record.js';
 import { DEFAULT_MINUTES } from './settings.js';
@@ -115,11 +115,13 @@ function wordOf(attempt) {
   return NESTED.test(attempt.output) ? 'could-not-run' : null;
 }
 
-// The real paths of the deny list too: the sandbox matches a file by its real path.
+// The sandbox matches a file by its real path.
+const real = (p) => {
+  try { return fs.realpathSync(p); } catch { return p; }
+};
+
+// The real paths of the deny list too.
 function deniedPaths() {
-  const real = (p) => {
-    try { return fs.realpathSync(p); } catch { return p; }
-  };
   return [...new Set(sandboxDenyPaths().flatMap((p) => [p, real(p)]))];
 }
 
@@ -134,18 +136,20 @@ export async function runCheck({
   const answer = (result, tail = '') => ({ commit, command: commandDigest(testCommand), result, minutes: Math.round((now().getTime() - startedAt) / 6000) / 10, tail });
   if (platform !== 'darwin') return answer('could-not-run', 'Checks run in macOS\'s sandbox, and this computer has none.');
   let paths;
+  let ownHome;
+  let tmp;
   try {
     paths = await prepareFolder({ project, commit, main, source, ...(git ? { git } : {}) });
+    ownHome = main ? paths.mainHome : paths.home;
+    tmp = path.join(ownHome, 'tmp');
+    realFolder(tmp);
   } catch (error) {
     return answer('could-not-run', String(error?.message ?? error));
   }
-  const ownHome = main ? paths.mainHome : paths.home;
-  const tmp = path.join(ownHome, 'tmp');
-  fs.mkdirSync(tmp, { recursive: true });
   const xcode = developerDir();
   const env = { ...testEnv(), HOME: ownHome, CFFIXED_USER_HOME: ownHome, TMPDIR: tmp, ...(xcode ? { DEVELOPER_DIR: xcode } : {}) };
   const denied = deniedPaths();
-  const textFor = (name) => profile({ paths, main, stage: name, network, denied, temp: TEMP, userHome: os.homedir() });
+  const textFor = (name) => profile({ paths, main, stage: name, network, denied, temp: TEMP, userHome: real(os.homedir()) });
 
   let stop = null;
   let ended = false;
