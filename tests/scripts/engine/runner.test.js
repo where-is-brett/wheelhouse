@@ -20,7 +20,7 @@ const asking = (id, over = {}) => [
   ev({ type: 'run-ended', outcome: 'completed' }),
 ];
 
-function setUp({ recordings = { one: asking('q1') }, settings = {}, at = '2026-10-29T13:00:00.000Z', stop = false, slow = false, endRun } = {}) {
+function setUp({ recordings = { one: asking('q1') }, settings = {}, at = '2026-10-29T13:00:00.000Z', stop = false, slow = false, endRun, onCard } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-runner-'));
   const engine = fakeEngine({ recordings });
   const writes = [];
@@ -37,6 +37,7 @@ function setUp({ recordings = { one: asking('q1') }, settings = {}, at = '2026-1
     workOf: () => ({ work: 'sale-banner', lane: 'quick' }),
     titleOf: () => 'The sale banner',
     ...(endRun ? { endRun } : {}),
+    ...(onCard ? { onCard } : {}),
   });
   // Starts a run of `name` and hands the runner its open ask, as the host does.
   const ask = async (name = 'one') => {
@@ -874,4 +875,60 @@ test('a run that ended, cancelled or not, has its task reviews kept once, tried 
   await runner.tick();
   assert.deepEqual(kept, ['run-1', 'run-1']);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('the card is written whether or not onCard throws', async () => {
+  const t = setUp({ onCard: () => { throw new Error('the seal broke'); } });
+  try {
+    await t.ask();
+    assert.equal(t.writes.filter((w) => w.kind === 'question').length, 1);
+    assert.equal(t.writes.filter((w) => w.kind === 'note' && w.data.about === 'engine').length, 0, 'nothing is said');
+  } finally { t.cleanup(); }
+});
+
+test('a question card is told to the seals after it is written, with its branch and folder', async () => {
+  const seen = [];
+  const t = setUp({
+    recordings: { one: asking('q1', { context: { branch: 'wh/x', folder: '/w/x' } }) },
+    onCard: (card) => { seen.push({ card, written: t.writes.filter((w) => w.kind === 'question').length }); },
+  });
+  try {
+    const { runId } = await t.ask();
+    const q = t.writes.find((w) => w.kind === 'question').data;
+    assert.deepEqual(seen, [{ card: { id: q.id, kind: 'question', work: 'sale-banner', runId, level: 3, branch: 'wh/x', folder: '/w/x' }, written: 1 }]);
+  } finally { t.cleanup(); }
+});
+
+test('a level 4 question is told with its level, and the merge queue\'s and trouble cards by what they are', async () => {
+  const seen = [];
+  const t = setUp({
+    recordings: {
+      one: asking('q1', { level: 4 }),
+      two: asking('q2', { mergeQuestion: { pr: 7 } }),
+      three: asking('q3', { kind: 'trouble', card: true, options: [] }),
+    },
+    onCard: (card) => { seen.push(card); },
+  });
+  try {
+    await t.ask('one');
+    await t.ask('two');
+    await t.ask('three');
+    assert.deepEqual(seen.map((c) => [c.kind, c.level]), [['question', 4], ['merge', 3], ['trouble', seen[2]?.level]]);
+  } finally { t.cleanup(); }
+});
+
+test('an approval card and a cap card are told to the seals', async () => {
+  const seen = [];
+  const t = setUp({
+    recordings: { one: asking('q1', { kind: 'approval', pr: 7, sha: HEAD, approve: 'b' }) },
+    onCard: (card) => { seen.push(card); },
+  });
+  try {
+    const { runId } = await t.ask();
+    await t.runner.capped({ runId, work: 'sale-banner', lane: 'quick', branch: 'wh/x', reached: { cap: 'minutes', limit: 30 } });
+    const kinds = seen.map((c) => c.kind);
+    assert.ok(kinds.includes('cap'));
+    assert.equal(seen.find((c) => c.kind === 'cap').branch, 'wh/x');
+    assert.equal(seen.find((c) => c.kind === 'cap').level, 3);
+  } finally { t.cleanup(); }
 });

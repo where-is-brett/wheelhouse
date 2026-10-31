@@ -30,6 +30,8 @@ A project kept on this computer goes nowhere: its history stays in your folder a
 
 For a project on a host, nothing of yours goes to GitHub or GitLab, even if the repository is public. The one thing Wheelhouse keeps there is the `wheelhouse-lock` branch, which stops two computers driving one project at once: it holds only a computer id and a counter.
 
+Each card the build engine raises also gets a seal in that record: a signed line of what Wheelhouse's own checks could tell from the change when the card was written. It stays in the private record. No agent, board or review reads what a seal says, and only a count of them is shown. It changes nothing about a card.
+
 Your history doesn't follow you to another computer, as Claude's chats don't: a second computer starts its own record. Wheelhouse keeps no backup of it anywhere else, so if a computer is lost, its private record is lost with it unless a backup of the computer (Time Machine, or File History on Windows) has it.
 
 On your computer, Wheelhouse also keeps in `~/.wheelhouse` setup's journal of every change it made, the keys agents work with, the tools it fetched and the usage counts. Keys never appear in the chat.

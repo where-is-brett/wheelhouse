@@ -73,6 +73,10 @@ import { engineRoom } from '../engine/room.js';
 import { stopEngine, endRun, stopWords } from '../engine/stop.js';
 import { engineRoutes, engineDirOf } from '../engine/routes.js';
 import { engineRunner } from '../engine/runner.js';
+import { recordOnly, cardContext } from '../delegation/record-only.js';
+import { cardFacts } from '../delegation/facts.js';
+import { setupStamp } from '../delegation/stamp.js';
+import { exclusionsHash } from '../delegation/candidates.js';
 import { dispatchRun, MERGE_WORK } from '../engine/dispatch-run.js';
 import { FIX_LANE, openRedMain, redMainIncident } from '../engine/fix-main.js';
 import { endedBy } from '../foreman/queue.js';
@@ -4676,7 +4680,7 @@ export async function startHelper({
       try { engine = engineFor(project); } catch { engine = null; }
       if (!engine) continue;
       try {
-        const { runner, dispatcher, checks, inStep } = engineDesk(project, engine);
+        const { runner, dispatcher, checks, inStep, seals } = engineDesk(project, engine);
         const host = startEngineHost({
           engine, spawn, now, held: stopped, wake: engineHosts.length === 0,
           write: (kind, data) => engineWrite(project, kind, data),
@@ -4686,7 +4690,7 @@ export async function startHelper({
           prOf: (runId) => engineRun.openedBy(project, runId),
         });
         host.onAsk((event) => { runner.onAsk(event).catch(() => {}); });
-        engineHosts.push({ project, engine, host, runner, dispatcher, checks, inStep });
+        engineHosts.push({ project, engine, host, runner, dispatcher, checks, inStep, seals });
       } catch {
         // An engine that can't be followed gets no host; the other projects' hosts start all the same.
       }
@@ -4702,6 +4706,7 @@ export async function startHelper({
       }
       dispatchWatch = setInterval(() => {
         engineTick().catch(() => {});
+        sealTick();
         try { room?.tend(); } catch { /* tried again next time */ }
       }, dispatchMs);
       dispatchWatch.unref?.();
@@ -4829,7 +4834,7 @@ export async function startHelper({
   }
 
   // One sweep of the local queue. What was sent back, asked or said is kept for each head, so a change waiting says each once.
-  async function sweepLocal(project, dispatcher, write) {
+  async function sweepLocal(project, dispatcher, write, onCard) {
     const ctx = await contextFor(project);
     const adapter = await ctx.adapter();
     const { folder } = recordOf(project);
@@ -4913,6 +4918,7 @@ export async function startHelper({
             target: { pr: change.n, sha: change.head },
           });
           await write('card', card);
+          onCard({ id: `${change.n}:${change.head}`, kind: 'approval', work: change.work ?? MERGE_WORK, level });
           once(key);
         },
         async wait(change, reason) {
@@ -5015,9 +5021,20 @@ export async function startHelper({
       }
       return requestMeters.get(file).used();
     }
+    // The seals beside the cards (scripts/delegation/record-only.js), ticked apart from engineTick.
+    const seals = recordOnly({
+      file: path.join(files, 'shadow.json'), write, now, stopped: () => closing || stopped(),
+      factsOf: async (card) => cardFacts({ card, git: gitRoute({ run }), defaultBranch: await defaultBranchOf(project, await adapterNow()) }),
+      contextOf: (card) => cardContext({ views: views(), card, testCommand: engineConfigOf(project, folder)?.testCommand }),
+      stampOf: () => setupStamp({ bindings: engineConfigOf(project, folder)?.routing, packDigest: packTreeDigest(path.join(engineDir(), 'pack')), exclusionsHash: exclusionsHash() }),
+    });
+    const ownCard = (kind) => async (data) => {
+      await write('question', data);
+      seals.onCard({ id: data.id, kind, work: data.work, level: data.level });
+    };
     let sweepTrouble = null;
     const dispatcher = dispatchRun({
-      engine, project, folder, file: path.join(files, 'dispatch.json'), readViews: views, settings, stopped, now, write,
+      engine, project, folder, file: path.join(files, 'dispatch.json'), readViews: views, settings, stopped, now, write, onCard: seals.onCard,
       config: () => engineConfigOf(project, folder),
       start: (args) => engineRun.start(args),
       readyOf: () => engineRun.readyAll(project),
@@ -5042,7 +5059,7 @@ export async function startHelper({
       queuePlace: () => queueFolderOf(project),
       localQueue: record?.host !== 'local' ? null : async () => {
         try {
-          await oneAtATime(`merge:${project}`, () => sweepLocal(project, dispatcher, write));
+          await oneAtATime(`merge:${project}`, () => sweepLocal(project, dispatcher, write, seals.onCard));
           sweepTrouble = null;
         } catch (error) {
           const line = error instanceof Error ? error.message : 'the helper didn\'t say why';
@@ -5052,7 +5069,7 @@ export async function startHelper({
       },
     });
     const runner = engineRunner({
-      engine, file: path.join(files, 'router.json'), readViews: views, write, stopped, now, settings,
+      engine, file: path.join(files, 'router.json'), readViews: views, write, stopped, now, settings, onCard: seals.onCard,
       workOf: (runId) => engineRunOf(project, runId) ?? dispatcher.workOf(runId),
       titleOf: (work) => (work === MERGE_WORK ? 'the changes waiting to be added' : views().work?.[work]?.work?.data?.title ?? work),
       endRun: async (runId) => endRun({ engine, run: { id: runId, folder: (await engine.inspect(runId))?.folder ?? null }, ...engineStopWith }),
@@ -5099,7 +5116,7 @@ export async function startHelper({
       note: (words) => write('note', { about: 'engine', words }),
       record: (kind, data) => engineWrite(project, kind, data),
       states: () => signedOf(project, 'checks-state').map((e) => e.data),
-      card: (data) => write('question', data),
+      card: ownCard('checks'),
       answerOf: (id) => views().questions?.[id]?.answer?.label ?? null,
       // A fix's work is its incident's, and no piece of the queue: it has ended when the incident has.
       ended: (work) => {
@@ -5121,7 +5138,7 @@ export async function startHelper({
       const watch = folderWatch({
         project, folder, file: path.join(files, 'folder.json'), stopped, git: gitRoute({ run }),
         branchOf: async () => defaultBranchOf(project, await adapterNow()),
-        card: (data) => write('question', data),
+        card: ownCard('folder'),
         answerOf: (id) => views().questions?.[id]?.answer?.label ?? null,
         note: (words) => write('note', { about: 'engine', words }),
         add: (tip, how) => addHandMade(project, tip, how),
@@ -5144,7 +5161,7 @@ export async function startHelper({
         }
       };
     })();
-    return { runner, dispatcher, checks, inStep };
+    return { runner, dispatcher, checks, inStep, seals };
   }
   // One look for every project on the engine, one at a time.
   let ticking = null;
@@ -5160,6 +5177,9 @@ export async function startHelper({
     })().finally(() => { ticking = null; });
     return ticking;
   }
+
+  // The seals' look for every project, never awaited by a tick of the engine: a hang there stops no delivery.
+  const sealTick = () => Promise.all(engineHosts.map(({ seals }) => seals.tick()));
 
   // Waits, too, for work queued after an answer (the mirror's tidy): on Windows a folder
   // a git process is working in can't be removed. Photographing and comparing stop after the
@@ -5327,5 +5347,5 @@ export async function startHelper({
   startEngineHosts();
 
   // `engine.start` is the helper's own way to start a run (the dispatcher's): no route starts one.
-  return { address, close, engine: { start: (args) => engineRun.start(args), tick: () => engineTick() } };
+  return { address, close, engine: { start: (args) => engineRun.start(args), tick: () => engineTick(), seal: () => sealTick() } };
 }

@@ -95,7 +95,7 @@ export function orderFor(entry, { settings = {}, raised = false, config = {}, an
 }
 
 // dispatchRun({ engine, project, folder, file, readViews, settings, stopped, now, start, write, readyOf, mainGreen,
-//   stoppedRuns, fixedRuns, prMerged, designOf, orderOf, repoOf, queueFolder, queuePlace, openedBy }) -> { tick, workOf, startAgain, sentBack(work, reason, tail), queueDue }.
+//   stoppedRuns, fixedRuns, prMerged, designOf, orderOf, repoOf, queueFolder, queuePlace, openedBy, onCard }) -> { tick, workOf, startAgain, sentBack(work, reason, tail), queueDue }.
 // - `start({ project, order, branch?, carryOn? })` the helper's own start; `readyOf()` the pull requests marked ready,
 //   { [pr]: { work, head } }; `settings()` the project's settings in force; `write(kind, data)` a record;
 // - `mainGreen()` whether the main line's checks read green: true, false, or null when they can't be read (or are
@@ -111,8 +111,13 @@ export function orderFor(entry, { settings = {}, raised = false, config = {}, an
 //   touching nothing, for asking the engine what is live there.
 // - `localQueue()` one sweep of the local queue, for a project with no host, which has no merge queue to start. It runs on
 //   every tick while a change waits, since its own table says what is ready.
-export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), spentThisMonth = () => 0, mainGreen = async () => null, stoppedRuns = () => [], fixedRuns = () => [], prMerged = async () => null, prState = null, designOf = () => null, orderOf = () => null, repoOf = () => null, queueFolder = async () => ({ ok: false, refused: 'no folder for the merge queue' }), queuePlace = null, openedBy = () => null, localQueue = null } = {}) {
+export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), spentThisMonth = () => 0, mainGreen = async () => null, stoppedRuns = () => [], fixedRuns = () => [], prMerged = async () => null, prState = null, designOf = () => null, orderOf = () => null, repoOf = () => null, queueFolder = async () => ({ ok: false, refused: 'no folder for the merge queue' }), queuePlace = null, openedBy = () => null, localQueue = null, onCard = () => {} } = {}) {
   let state = readState(file);
+  // A question of the dispatcher's own, and then a word to the seals, whose trouble is never the card's.
+  async function askDirector(kind, data) {
+    await write('question', data);
+    try { onCard({ id: data.id, kind, work: data.work, level: data.level }); } catch { /* it costs a seal, never a card */ }
+  }
   const keep = () => {
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
     fs.writeFileSync(file, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
@@ -328,7 +333,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     }
     kept.asked = `q-${work}-${FEATURE_QUESTIONS + (kept.cards ?? 0)}`;
     keep();
-    await write('question', {
+    await askDirector('cap', {
       id: kept.asked, work, level: 3,
       what: `${title} has used the tokens set aside for the whole feature, so its next slice waits.`,
       why: 'Spending more on a feature than was set aside for it is yours to decide, at level 3.',
@@ -399,7 +404,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       { label: BUILD_AGAIN, says: `It builds ${what} again from its branch, with a new pull request${step.finish || demo ? ', and shows it to you again' : ''}.` },
       { label: STOP_HERE, says: 'The feature ends here; the slices already added stay behind their switch, and its place is free for other work.' },
     ];
-    await write('question', {
+    await askDirector('stall', {
       id, work, level: 3,
       what: `${happened} Nothing more of it starts until you say.`,
       why: 'Whether a feature goes on when one of its steps was turned down is yours to decide, at level 3.',
@@ -539,7 +544,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
         { label: FIX_FORWARD, says: 'It tries again to make the main line\'s checks pass, with a fresh run.' },
         { label: LEAVE_RED, says: 'Nothing more is tried; all other work keeps waiting until the main line is green.' },
       ];
-      await write('question', {
+      await askDirector('fix', {
         id, work: incident.work, level: 3,
         what: `${WHY_FIX[decided.why] ?? WHY_FIX.failed} Nothing else is added until the main line is green again.`,
         why: 'A red main line holds up all work, and how to mend it when the first fix didn\'t is yours to decide, at level 3.',
@@ -672,7 +677,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       state.clashAsked[work] = id;
       keep();
       const title = views.work?.[work]?.work?.data?.title ?? work;
-      await write('question', {
+      await askDirector('clash', {
         id, work, level: 3,
         what: `${title} clashed with other changes twice when it was to be added, so it waits.`,
         why: 'Work that keeps clashing may need a different plan, which is yours to decide at level 3.',
@@ -702,7 +707,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       state.redAsked[work] = id;
       keep();
       const title = views.work?.[work]?.work?.data?.title ?? work;
-      await write('question', {
+      await askDirector('red', {
         id, work, level: 3,
         what: `${title} failed the project's tests on this computer twice, so it waits and nothing of it is added.`,
         why: 'Work that keeps failing the tests may need a different plan, which is yours to decide at level 3.',
@@ -725,7 +730,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       const id = `q-${held.work}-${OWN_QUESTIONS}`;
       state.requestsAsked = id;
       keep();
-      await write('question', {
+      await askDirector('requests', {
         id, work: held.work, level: 3,
         what: engine.words?.requestsHeld ?? REQUESTS_WORDS,
         why: 'Spending your plan\'s requests is yours to allow; nothing is spent without your yes.',

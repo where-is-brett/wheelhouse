@@ -223,7 +223,7 @@ test('/state/write refuses a protected kind, an unknown kind and a missing kind'
   const c = await computer(repo);
   try {
     await c.as(async () => {
-      for (const kind of ['approval', 'review', 'confirmation', 'nonsense', undefined]) {
+      for (const kind of ['approval', 'review', 'confirmation', 'shadow', 'nonsense', undefined]) {
         const answer = await c.client.state.write({ project: PROJECT, kind, data: { pr: 1 } });
         assert.equal(answer.ok, false, String(kind));
         assert.match(answer.refused, /plain|kind/);

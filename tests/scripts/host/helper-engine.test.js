@@ -154,3 +154,33 @@ test("the real helper's Archon reads the pack built into the engine's folder, wi
   assert.equal(seen[1].packDir, undefined);
   fs.rmSync(engine, { recursive: true, force: true });
 });
+
+test('a card the router writes gets its signed seal, and the card doesn\'t wait for it', async () => {
+  const p = await projects(['o__on']);
+  const engine = fakeEngine({ recordings });
+  const { runId } = engine.start({ recording: 'quick-blocked' });
+  try {
+    await as(p.home, async () => {
+      started('o__on', runId, 'card-13');
+      const helper = await startHelper({
+        run: hostGuard, address: testAddress(p.home), adapterFor: async () => ({ defaultBranch: async () => 'main' }), envFor: async () => ({}),
+        spawn: stubSpawn().spawn, engineFor: () => engine, dispatchMs: 60 * 60 * 1000,
+      });
+      try {
+        const ofKind = (kind) => listEvents(stateDir('o__on'), { report: () => {} }).filter((e) => e.kind === kind);
+        await until(() => ofKind('question').length === 1, { what: 'the card' });
+        assert.deepEqual(ofKind('shadow'), [], 'no seal before a tick');
+        const kept = path.join(stateDir('o__on'), '..', 'engine', 'shadow.json');
+        await until(() => fs.existsSync(kept), { what: 'the card queued for its seal' });
+        await helper.engine.seal();
+        const [seal] = ofKind('shadow');
+        assert.equal(seal.data.card, ofKind('question')[0].data.id);
+        assert.ok(seal.sig, 'the line is signed');
+        assert.equal(ofKind('shadow').length, 1);
+        assert.equal(JSON.parse(fs.readFileSync(kept, 'utf8')).waiting.length, 0);
+      } finally {
+        await helper.close();
+      }
+    });
+  } finally { p.cleanup(); }
+});

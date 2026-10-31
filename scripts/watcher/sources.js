@@ -331,7 +331,7 @@ export async function observe({ project, client, now = () => new Date(), interva
   const since = ms - LOOKBACK_MS;
   const recent = events.filter((e) => {
     const when = Date.parse(e.at);
-    return !Number.isNaN(when) && when >= since;
+    return e.kind !== 'shadow' && !Number.isNaN(when) && when >= since;
   });
   const stateIds = recent.map((e) => e.id);
   const known = isPlain(prev) && Array.isArray(prev.stateIds) ? new Set(prev.stateIds) : null;
