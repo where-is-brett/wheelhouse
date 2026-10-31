@@ -2,11 +2,13 @@
 
 # Local checks and git alone: design
 
-**Status:** draft for the director's approval, 31 October 2026. Nothing in it is built.
+**Status:** draft. The director has asked to see it before saying "Build it". Nothing in it is built.
 
 **The ruling this answers (the director, 31 October 2026).** Wheelhouse must not insist on GitHub or GitLab. A project kept only on this computer, in git alone with no code host, is fully supported, building included, on the Archon engine.
 
 **The ruling on checks (the director, 31 October 2026).** A project with no CI minutes has its tests run on this computer inside Wheelhouse's sandbox, and the result counts as the check. A self-hosted GitHub Actions runner was turned down, because it runs agent code outside the sandbox, and so was waiting for CI minutes. Local checks are the first part built, and they work for a hosted project with no CI as well as for git alone.
+
+**The rulings on backups and tests (the director, 31 October 2026).** Section 12 records both: one warning at setup and then a calm status, in place of reminders; and a project with no passing tests still merges, with the tests counting for good once they pass.
 
 **What it changes.** Two pieces, designed together and built in this order:
 
@@ -162,9 +164,10 @@ Then the check runs once on the default branch, and the first result decides wha
 
 - **Passed:** one line on the Logbook.
 - **Failed:** the project's tests don't pass as they stand. A level-3 card offers **Get them passing first**, recommended, which starts a fix-main run. **Carry on anyway** sets the project to *not counting*, below. Wheelhouse fits a project as it stands, so a red start doesn't hold the project up unless the director says so. *Designer's call.*
-- **Could not run, or nothing found:** section 12, question 2.
+- **Nothing found:** the project starts in the not-counting state below.
+- **Could not run:** the card in section 4.8.
 
-**Not counting.** A project whose tests already fail, or which has none, has nothing a check can show. It is one state in the project's private record, set only by the director's click or by the finder finding nothing. While it holds, each check still runs where there is a command, and its result is `not-counted`, whatever the exit. The status is `success`, described as "tests not counted yet", so Archon's gate reads green, and a local queue or permit accepts `not-counted` only for a project in this state. The Logbook says "Tests aren't counting yet" on every merge, and the First Mate offers to get them passing. The first time the command passes on the main line, the state ends for good: every check counts from then on, and a head that fails is red.
+**Not counting.** A project whose tests already fail, or which has none, has nothing a check can show. It is one state in the project's private record, set only by the director's click or by the finder finding nothing. While it holds, each check still runs where there is a command, and its result is `not-counted`, whatever the exit. The status is `success`, described as "tests not counted yet", so Archon's gate reads green, and a local queue or permit accepts `not-counted` only for a project in this state. The Logbook says "Tests aren't counting yet" on every merge, and the First Mate offers to add tests or repair them. Merges rest on the review and the work's own done checks (ruling 2, section 12). The first time the command passes on the main line, the state ends for good: every check counts from then on, and a head that fails is red.
 
 ### 4.6 Why the result can be trusted
 
@@ -310,25 +313,78 @@ The check after a merge is the main line's CI. A red result, after its second tr
 ### 7.7 The reports
 
 - **The Logbook and briefing** read the same records. Host words come through `hostWords` and the glossary: "on this computer", as ruling A6 says.
-- **The pane** adds the place to its project line: "On this computer · backed up today" (section 8).
+- **The pane** shows the safekeeping status (section 8.2).
 - **The audit report** compares the computer's record with the host's second record. In git alone there is none, so it says plainly: "This project is kept on this computer, so there is no second record to compare with." It still compares merges with the home's history.
 - **Provenance** is unchanged: it goes with the merge event.
 - **Protection reads** go. In their place, the weekly job looks at the home's main version and its permissions, and runs `git fsck` on the home.
 
-## 8. Backups
+## 8. Backups and safekeeping
 
-**A host was a free second copy, and git alone has none.** The director hears this once, at setup, in plain words, and the pane keeps showing where things stand.
+A host was a free second copy, and git alone has none. The director hears this once, at setup, and after that a calm status keeps it in view (ruling 1, section 12).
+
+### 8.1 Backups
 
 - **What a backup is.** One file, `<project>.wheelhouse-backup` (a `git bundle` of the home), in a folder the director picks: an external drive, or any folder a cloud service keeps. A bundle is one file, so a sync service can't corrupt it the way it can a live repository. It is written beside its old copy and renamed, `git bundle verify` passes before the old one goes, and one earlier copy is kept. *Designer's call.*
-- **When.** After each merge, and once a day while there's anything new. It is `updateCopy`'s job with a bundle in place of a fetch.
+- **When.** After each merge, and once a day while there's anything new. It is `updateCopy`'s job with a bundle in place of a fetch. A drive that isn't plugged in is no fault: the next try is when it comes back.
 - **What it holds.** The project's whole history, with the product documents. Not the private record: the director's cards and clicks stay on this computer, as they ruled (main design, section 24.7, answer 4). Time Machine covers those, and the words say so.
-- **Time Machine.** Setup reads `tmutil destinationinfo`. Where a destination exists, it counts as a backup for the pane's line, since it covers the folder, the home and the private record, and no card is needed. A second copy off the computer is still offered once.
-- **Refusing.** A folder inside the project, or one on the same disk with no Time Machine, doesn't count as a backup. The card says it is on the same disk.
-- **The pane's line:** "On this computer · backed up today", "… · last backup 12 days ago", "… · not backed up". The third shows in the attention colour.
+- **Time Machine.** `tmutil destinationinfo` says whether a destination exists. Where one does, it counts as a backup, since it covers the folder, the home and the private record. Where Wheelhouse can't read the date of the last one, the status says "Time Machine is on" and gives no date, rather than guess.
+- **What doesn't count.** A folder inside the project, or one on the same disk as the project. The status says why.
 
-Whether a project may build with no backup at all is section 12, question 1.
+**The warning at setup.** A project in git alone gets one card in setup, and it is the only card about this, ever: "This project is only on this computer. If the computer is lost or breaks, the project goes with it." **Choose a backup folder** (recommended), **Not now**. With Time Machine on, the card names it and offers a second copy off the computer. **Not now** closes it for good, and building goes on.
 
-**Restoring.** On a new computer, setup in an empty folder offers **From a backup** beside its other choices. The director picks the file. The helper clones it into the home and the folder, and the project carries on with a fresh private record, as a joining computer does (main design, section 24.3, item 3).
+### 8.2 The safekeeping status
+
+Every project has one, with or without a host. It answers one question: **if this computer were lost today, what would go with it?** It isn't an alarm and it isn't a to-do, and it raises no cards.
+
+**How it is read.** `scripts/safekeeping/status.js` works it out on the dispatcher's tick, with no agent, no model and no tokens. Local git readings go through `safeGit`, and the host is read at most once an hour by the fetch the helper already makes. It writes nothing and pushes nothing. The desk's glance view carries it as `{ place, level, line, detail, actions, readAt }`, where `level` is `safe` or `watch`.
+
+**What it counts.**
+
+| Reading | On this computer | On GitHub or GitLab |
+|---|---|---|
+| The main version | Is the newest merge in the backup? | Is the main version the same here and on the host? |
+| Work only here | Not counted: all of it is only here, and the backup covers what has merged | Commits on the folder's branches that the host doesn't have, and uncommitted changes in the folder |
+| When last safe | When the last backup was written and verified | When the host was last reached |
+
+Work in a running lane isn't counted, since Wheelhouse is about to send it up, and neither are branches a person deleted. The private record is never counted: the detail says once that it stays on this computer on every project.
+
+**How it reads, and when it turns to watch.** These are the only states. The word "backup" is the one technical word the director meets here.
+
+| State | Line | Level |
+|---|---|---|
+| Local, newest merge in the backup | "Backed up today, up to date" | safe |
+| Local, backup a little behind | "Backed up 2 days ago, 1 change since" | safe |
+| Local, Time Machine and no date | "Time Machine is on" | safe |
+| Local, a change has gone unbacked-up for 7 days | "Last backup 9 days ago, 4 changes since" | watch |
+| Local, no backup, or one on the same disk | "Only on this computer, no backup" | watch |
+| Local, a backup that failed its check | "Your last backup couldn't be checked" | watch |
+| Hosted, all the same | "On GitHub, up to date, synced 5 minutes ago" | safe |
+| Hosted, the host is newer | "On GitHub, your folder is 2 changes behind" | safe |
+| Hosted, work only here, under 3 days old | "On GitHub, 3 changes only on this computer" | safe |
+| Hosted, work only here for 3 days or more | "3 changes only on this computer, for 4 days" | watch |
+| Hosted, host not reached for a day or more | "Couldn't reach GitHub since Tuesday" | watch |
+
+A project is safe the moment the reading clears. Seven days and three days are defaults, kept in the project's settings as `safekeeping.days` and `safekeeping.hereDays`. *Designer's call.*
+
+A project with both a host and a Time Machine reads as hosted. A project on an old engine reads the same way, since the readings come through the host adapter, so GitLab projects have it too. Lean projects keep their own copy step and aren't part of this.
+
+**Where it shows.**
+
+- **The pane.** A plain row in the calm view, under health, on every project and always there: "Safekeeping" and the line. At watch it is also a health line of level `watch`, so it joins **To watch** by the existing path (`scripts/desk/mod-pane.js`), and "All well" gives way to it. The verdict still says nothing needs the director, since nothing does: watch asks for no answer, and it never blocks a merge or a run.
+- **The briefing.** One sentence among the things to watch when the level turns to watch, and one when it turns back to safe. An unchanged watch comes back once a month, not every briefing. The date goes in `seen.json`, in the way the weekly lines do. *Designer's call.*
+- **The Logbook.** The Health tab shows the full detail, and nothing else changes.
+- **Cards.** None, on any project, after the one at setup.
+
+**What the director can do from it.** Pressing the row opens the detail in place: what would be lost, in a sentence, and up to two buttons. They go through the desk's `act`, with the press as evidence. None of them can reach the main version.
+
+| The state | Buttons |
+|---|---|
+| Local, no backup | **Choose a backup folder**, **Put it on GitHub** (section 9) |
+| Local, behind, or a failed check | **Back up now**, **Choose another folder** |
+| Hosted, work only here | **Keep a copy online**, which sends each branch to `keep/<branch>` by `doPush`, never to the default branch and with no merge. It names what goes up, since it puts code on the host |
+| Hosted, uncommitted changes | **Ask the First Mate to save them**, which starts the usual conversation. Wheelhouse doesn't commit in the folder on its own |
+| Hosted, folder behind | **Bring my folder up to date**, fast-forward only, refused with a plain line if the folder has changes of its own |
+| Couldn't reach the host | **Try again** |
 
 ## 9. Moving to a host later
 
@@ -357,7 +413,7 @@ Checks stay here if the project still has no CI, reported as statuses from then 
 **The steps** for a local project:
 
 - **Skipped:** the host sign-in, the host tools, the own app, protection, the lock branch and the trial pull request.
-- **Added:** the home; the `wheelhouse` remote; finding the test command and the first check (section 4.5); the backup card (section 8).
+- **Added:** the home; the `wheelhouse` remote; finding the test command and the first check (section 4.5); the one backup card (section 8.1).
 - **Kept:** the engine, the sandbox and deny rules, the project files. Project files go straight into the folder's default branch and then into the home, as setup's own commit does on a host before protection is on. The `.archon/config.yaml` setup writes names the remote. No `maintainers.json` is needed, since Archon's queue isn't used.
 - **Step 10's health check:** its trials use a local change in place of the trial pull request, and run `wheelhouse-hello` through the same engine.
 
@@ -369,7 +425,7 @@ The card's words never say "host" unless it has to: "Your project stays on this 
 
 ## 11. Build parts
 
-Local checks come first, and ship alone: part 3's end is a release in which a hosted project with no CI builds and merges. If the first project stays on the computer, parts 4 to 7 come before real use; parts 8 and 9 can follow, but a git-alone project is in real use with backup only once part 8 is in.
+Local checks come first, and ship alone: part 3's end is a release in which a hosted project with no CI builds and merges. If the first project stays on the computer, parts 4 to 7 come before real use; parts 8 and 9 can follow, and until part 8 is in, a git-alone project has neither a backup nor the status that shows it. The status's hosted half depends on nothing else here, so it can be built at any time.
 
 Each part is one fresh session, with the named test files. Counted evaluation runs once for the plan, at the end. The whole suite stays with CI.
 
@@ -383,7 +439,7 @@ Each part is one fresh session, with the named test files. Counted evaluation ru
 | **5. Builds on it** | `mirrorFor`, `doPush`, `refreshMirror` and the folder remote; the folder brought up to date; changes made by hand; the broker with no repository | `tests/scripts/host/local/push.test.js`, `folder.test.js` (dirty, other branch, ahead, parted), `tests/scripts/engine/broker/rules.test.js`, `tests/e2e/git-alone-build.test.js`: a quick run from work order to an open change, on the fake engine and a real git folder |
 | **6. The local queue** | `queue.js`, the table in section 7.4, the merge, the red main line, undo, All stop, the audit's line | `tests/scripts/host/local/queue.test.js` (a row a case), `merge.test.js`, `tests/scripts/engine/fix-main.test.js`, `tests/e2e/git-alone-merge.test.js`: a merge, a clash, a red main line and its fix, All stop during a merge |
 | **7. Setup and uninstall** | Section 10, the pane's and glossary's words, the runbook, `SECURITY.md`, the data note, and the README's line that a host is optional | `tests/scripts/setup/local.test.js`, `tests/scripts/setup/uninstall-local.test.js`, the setup skill's scenarios, the pane tests |
-| **8. Backups** | Section 8: the bundle, the card, the pane's line, the restore | `tests/scripts/host/local/backup.test.js` (a partial write never replaces a good copy; a backup on the same disk refused), `restore.test.js` |
+| **8. Backups and safekeeping** | Section 8: the bundle, the one card, the restore, the status and its readings, the pane's row and detail, the briefing's sentence, the Logbook's Health line, the buttons | `tests/scripts/host/local/backup.test.js` (a partial write never replaces a good copy; a backup on the same disk refused), `restore.test.js`, `tests/scripts/safekeeping/status.test.js` (a row a state, and a running lane not counted), `actions.test.js` (no button reaches the default branch), the pane and briefing tests (no card raised at watch; the once-a-month line) |
 | **9. Moving to a host** | Section 9 | `tests/scripts/host/local/move.test.js`, `tests/e2e/move-to-host.test.js` on the stand-in host |
 | **10. Evaluation** | New scenarios in the one counted evaluation, with real Archon: a hosted project with no CI, build to merge; a git-alone quick lane to merge; a planted passing check refused; a red check sent back; a red main line in git alone; an agent's commit to the folder's main branch raises the hand-made card and merges nothing | The scenarios, and the safety subset unchanged |
 
@@ -402,13 +458,13 @@ Each part is one fresh session, with the named test files. Counted evaluation ru
 | `sandbox-exec` is marked as deprecated by Apple | It is what Claude Code's own sandbox uses on the Mac, so the two would move together. It fails closed if it goes |
 | A disk fault in the home | The folder's `.git` is a full second copy on the same computer, the weekly `git fsck` finds it, and a backup covers both |
 
-## 12. The director's questions
+## 12. The director's rulings
 
-Each goes to the director through the main session. Until they answer, the parts they touch aren't built, and everything else goes on.
+Both given on 31 October 2026.
 
-**1. Building with no backup.** On a project kept only on this computer, a lost or broken computer loses everything. Option A, recommended: building goes ahead, with one card at setup, and a reminder a week while there is none, and the pane always shows it. Option B: no merges until a backup is set. Option C: one card at setup and nothing after.
+**1. Backups: warn once, then show it.** A project may build with no backup. There is one warning at setup and no stream of reminders after it. A calm, always-visible status shows whether the work is safe, on a local project and on a hosted one alike, and it is designed in section 8.2.
 
-**2. A project with no tests at all.** Wheelhouse can't find any tests, so nothing can show a change is safe, and no check exists for the gate. Option A, recommended: changes still merge in the not-counting state (section 4.5), on the review and the work's own done checks, the Logbook says "Tests aren't counting yet", and the First Mate offers adding a first test as the first piece of work. It is what Lean does today (ruling P5-26). Option B: nothing merges until the project has a passing test, as on hosted projects today. Option B also takes away **Carry on anyway** in section 4.5.
+**2. No passing tests: changes still merge.** On a project with no tests, or tests that already fail, changes merge on the review and the work's own done checks. The Logbook says "Tests aren't counting yet", and the First Mate offers to add tests or repair them. The tests count for good once they pass on the main line (section 4.5).
 
 ## 13. The designer's calls
 
@@ -425,13 +481,16 @@ The director may override any of these.
 9. A separate home, not Lean's store, with the folder left alone (section 5.1).
 10. Everything enters the home through a local change, hand-made work included (section 5.4).
 11. A script stands in for Archon's merge queue on local projects, rather than a forge plugin or a stand-in `gh` (section 7.4).
-12. The bundle file as the backup, holding no private record (section 8).
+12. The bundle file as the backup, holding no private record (section 8.1).
 13. **Keep it on this computer** is the recommended option for a new product (section 10).
+14. The safekeeping status's 7-day and 3-day limits, and that watch asks for nothing and blocks nothing (section 8.2).
+15. The briefing repeats an unchanged watch once a month (section 8.2).
+16. **Keep a copy online** sends work to a `keep/` branch, with a press naming what goes up (section 8.2).
 
 ## 14. Left to the builder
 
 - The exact table in section 4.5, from what check 82 finds.
 - The layout under `<engine>/checks/` and the home's folder.
 - How the check's `tail` reaches a lane's order.
-- The words of each card, within Calm's voice and the card rules.
+- The words of each card and status line, within Calm's voice and the card rules.
 - How the Logbook lays out checks' minutes.
