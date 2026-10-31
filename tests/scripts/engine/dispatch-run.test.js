@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { dispatchRun } from '../../../scripts/engine/dispatch-run.js';
+import { dispatchRun, TRY_AGAIN } from '../../../scripts/engine/dispatch-run.js';
 import { fakeEngine } from '../../../scripts/engine/fake.js';
 import { tempFolder } from '../../helpers/homes.js';
 
@@ -46,6 +46,75 @@ test('with no test command Wheelhouse can run, no work starts, and the Logbook s
     assert.equal(said.length, 1);
     assert.match(said[0].data.words, /waits/);
   }
+});
+
+const ranOnce = () => ({
+  ...views(),
+  runs: { 'card-1': [{ at: '2026-10-29T09:00:00.000Z', data: { work: 'card-1', runId: 'run-0', lane: 'quick', state: 'started', branch: 'wh/card-1' } }, { at: '2026-10-29T09:05:00.000Z', data: { work: 'card-1', runId: 'run-0', lane: 'quick', state: 'ended', branch: 'wh/card-1', outcome: 'completed', pr: 3 } }] },
+});
+
+function sentBackWorld() {
+  const dir = tempFolder('wh-dr-');
+  const starts = [];
+  const written = [];
+  let seen = ranOnce();
+  const d = dispatchRun({
+    engine: fakeEngine(), project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'), readViews: () => seen,
+    config: () => ({ routing: {}, testCommand: 'node --test' }), settings: () => ({ engineLanes: ['quick'] }),
+    start: async (args) => { starts.push(args); return { ok: true, runId: `run-${starts.length}` }; },
+    write: async (kind, data) => { written.push({ kind, data }); },
+    now: () => new Date('2026-10-29T10:00:00.000Z'),
+  });
+  return { d, starts, written, see: (v) => { seen = v; } };
+}
+
+test('a red head goes back with its tail in the order, reason red', async () => {
+  const t = sentBackWorld();
+  t.d.sentBack('card-1', 'red', 'a test failed');
+  await t.d.tick();
+  assert.equal(t.starts.length, 1);
+  assert.equal(t.starts[0].order.checkTail, 'a test failed');
+  assert.equal(t.starts[0].carryOn, true);
+  assert.equal(t.starts[0].branch, 'wh/card-1');
+  await t.d.tick();
+  assert.equal(t.starts.length, 1, 'started once for each red');
+});
+
+test('a second red raises a card', async () => {
+  const t = sentBackWorld();
+  t.d.sentBack('card-1', 'red', 'one');
+  await t.d.tick();
+  t.d.sentBack('card-1', 'red', 'two');
+  await t.d.tick();
+  await t.d.tick();
+  assert.equal(t.starts.length, 1);
+  const cards = t.written.filter((w) => w.kind === 'question');
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].data.level, 3);
+  assert.match(cards[0].data.what, /tests/);
+  assert.doesNotMatch(JSON.stringify(cards[0].data), /commit status|pull request/);
+});
+
+test('Try again on that card starts it with the newest tail', async () => {
+  const t = sentBackWorld();
+  t.d.sentBack('card-1', 'red', 'one');
+  await t.d.tick();
+  t.d.sentBack('card-1', 'red', 'two');
+  await t.d.tick();
+  const id = t.written.find((w) => w.kind === 'question').data.id;
+  t.see({ ...ranOnce(), questions: { [id]: { answer: { label: TRY_AGAIN } } } });
+  await t.d.tick();
+  await t.d.tick();
+  assert.equal(t.starts.length, 2);
+  assert.equal(t.starts[1].order.checkTail, 'two');
+});
+
+test('a clash still re-queues as before, with no tail', async () => {
+  const t = sentBackWorld();
+  t.d.sentBack('card-1');
+  await t.d.tick();
+  assert.equal(t.starts.length, 1);
+  assert.equal(Object.hasOwn(t.starts[0].order, 'checkTail'), false);
 });
 
 test('work started again carries the director\'s answers in its order, and no others', async () => {

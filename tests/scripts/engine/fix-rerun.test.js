@@ -21,6 +21,28 @@ function gh(answers) {
 const ok = (json) => ({ code: 0, stdout: `${JSON.stringify(json)}\n`, stderr: '' });
 const said = () => { const lines = []; return { lines, out: (line) => lines.push(line) }; };
 const ARGS = ['--run', 'r1', '--base', 'main', '--every-ms', '1', '--wait-ms', '50'];
+const asked = (answer) => ({ engine: { mainCheck: async () => answer } });
+const hosted = asked({ ok: true, here: false });
+
+test('fix-rerun asks the helper and never calls gh where checks run here', async () => {
+  for (const [green, said_] of [[true, { green: true, rerun: false }], [false, { green: false, rerun: false }]]) {
+    const { run, calls } = gh({});
+    const o = said();
+    assert.equal(await main(ARGS, { run, out: o.out, client: asked({ ok: true, here: true, green, rerun: false }) }), 0);
+    assert.deepEqual(JSON.parse(o.lines.at(-1)), said_);
+    assert.deepEqual(calls, []);
+  }
+});
+
+test('a helper that can\'t say where checks run means not green, and no gh', async () => {
+  for (const client of [asked({ ok: false, refused: 'no' }), { engine: { mainCheck: async () => { throw new Error('gone'); } } }]) {
+    const { run, calls } = gh({});
+    const o = said();
+    assert.equal(await main(ARGS, { run, out: o.out, client }), 0);
+    assert.deepEqual(JSON.parse(o.lines.at(-1)), { green: false, rerun: false });
+    assert.deepEqual(calls, []);
+  }
+});
 
 test('fix-rerun re-runs the newest failed run on the base head and reports green', async () => {
   const { run, calls } = gh({
@@ -29,7 +51,7 @@ test('fix-rerun re-runs the newest failed run on the base head and reports green
     'run view': [ok({ status: 'in_progress', conclusion: '' }), ok({ status: 'completed', conclusion: 'success' })],
   });
   const o = said();
-  assert.equal(await main(ARGS, { run, out: o.out }), 0);
+  assert.equal(await main(ARGS, { run, out: o.out, client: hosted }), 0);
   assert.deepEqual(JSON.parse(o.lines.at(-1)), { green: true, rerun: true });
   assert.deepEqual(calls.find((c) => c[1] === 'run' && c[2] === 'rerun'), ['gh', 'run', 'rerun', '77', '--failed']);
   assert.ok(calls.every((c) => c[0] === 'gh'), 'only the broker on PATH');
@@ -42,7 +64,7 @@ test('fix-rerun reports not green when the re-run fails again', async () => {
     'run view': ok({ status: 'completed', conclusion: 'failure' }),
   });
   const o = said();
-  assert.equal(await main(ARGS, { run, out: o.out }), 0);
+  assert.equal(await main(ARGS, { run, out: o.out, client: hosted }), 0);
   assert.deepEqual(JSON.parse(o.lines.at(-1)), { green: false, rerun: true });
 });
 
@@ -52,7 +74,7 @@ test('fix-rerun reports not green when no failed run of the base head is found',
   for (const list of [ok([]), ok(older)]) {
     const { run, calls } = gh({ 'run list': list });
     const o = said();
-    assert.equal(await main(ARGS, { run, out: o.out }), 0);
+    assert.equal(await main(ARGS, { run, out: o.out, client: hosted }), 0);
     assert.deepEqual(JSON.parse(o.lines.at(-1)), { green: false, rerun: false });
     assert.equal(calls.some((c) => c[2] === 'rerun'), false);
   }
@@ -61,7 +83,7 @@ test('fix-rerun reports not green when no failed run of the base head is found',
 test('fix-rerun reports not green when the broker refuses', async () => {
   const { run } = gh({ 'run list': ok([{ databaseId: 77, headSha: HEAD, status: 'completed', conclusion: 'failure' }]) });
   const o = said();
-  assert.equal(await main(ARGS, { run, out: o.out }), 0);
+  assert.equal(await main(ARGS, { run, out: o.out, client: hosted }), 0);
   assert.deepEqual(JSON.parse(o.lines.at(-1)), { green: false, rerun: false });
 });
 
@@ -72,7 +94,7 @@ test('fix-rerun stops waiting at its limit', async () => {
     'run view': { code: 0, stdout: JSON.stringify({ status: 'in_progress', conclusion: '' }), stderr: '' },
   });
   const o = said();
-  assert.equal(await main(ARGS, { run, out: o.out }), 0);
+  assert.equal(await main(ARGS, { run, out: o.out, client: hosted }), 0);
   assert.deepEqual(JSON.parse(o.lines.at(-1)), { green: false, rerun: true });
 });
 
@@ -84,7 +106,7 @@ test('fix-rerun lists the base branch\'s runs, and re-runs each failed one of it
   ];
   const { run, calls } = gh({ 'run list': ok(runs), 'run rerun': [ok({}), ok({})], 'run view': ok({ status: 'completed', conclusion: 'success' }) });
   const o = said();
-  assert.equal(await main(ARGS, { run, out: o.out }), 0);
+  assert.equal(await main(ARGS, { run, out: o.out, client: hosted }), 0);
   assert.deepEqual(JSON.parse(o.lines.at(-1)), { green: true, rerun: true });
   assert.deepEqual(calls.find((c) => c[2] === 'list'), ['gh', 'run', 'list', '--branch', 'main', '--limit', '20', '--json', 'databaseId,headSha,status,conclusion']);
   assert.deepEqual(calls.filter((c) => c[2] === 'rerun').map((c) => c[3]), ['81', '79']);

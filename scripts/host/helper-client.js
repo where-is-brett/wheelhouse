@@ -95,6 +95,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       review: post('/engine/review'), // { runId, step } -> { ok, ran, verdict?, posted? }: signs the review step from the engine's record and posts the merge queue's verdict once every lens that ran is CLEAN
       openPr: post('/engine/open-pr'), // { runId, cwd, title, body } -> { ok, branch, pr, head }: pushes the run's worktree's own branch and opens or updates its pull request
       ready: post('/engine/ready'), // { runId } -> { ok, pr, head }: hands the pull request to the engine's merge queue once its head is signed CLEAN (and approved, if shown first)
+      mainCheck: post('/engine/main-check'), // { runId } -> { ok, here, green?, rerun? }: whether the project's checks run on this computer, and if so whether the main line's latest counted check passed
       mergeFix: post('/engine/merge-fix'), // { runId } -> { ok, pr, head }: adds a fix-main run's own pull request to the main line through the helper's gate, as the open red-main incident's fix
       reproduction: post('/engine/reproduction'), // { runId } -> { ok, check, commit }: keeps a bug run's reproduction once for its work, from the engine's record
       reproductionFind: post('/engine/reproduction/find'), // { runId } -> { ok, kept, given }: the work's kept reproduction, and the one the run's reproduce step gave

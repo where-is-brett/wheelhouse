@@ -5,7 +5,8 @@
 // check, as a hint); nothing starts under All stop, an open incident or a reached spend cap. It starts the merge queue
 // when a pull request is newly ready, and again every 15 minutes while any wait, one merge-queue run at a time, so the
 // engine never has more than pace + 2 runs going. A pull request the merge gate sent back for a clash is started again
-// to bring it up to date; a second clash on the same work raises a card instead.
+// to bring it up to date; a second clash on the same work raises a card instead. A head whose check on this computer
+// came back red goes back the same way, counted apart.
 import { paceOf, PACE } from '../lib/build-loop.js';
 import { clashCheck, endedBy, since, STARTS_UNAPPROVED } from '../foreman/queue.js';
 import { startedOnOldEngine } from './lanes.js';
@@ -26,11 +27,12 @@ function runsOf(runs, id, entry) {
 export const MERGE_WORK = 'merge-queue';
 
 // dispatch({ work, runs, reports, features, settings, stop, incident, capsReached, mergeQueue, requests?, sentBack?, now })
-//   -> { start: [{ work, lane }], hold: [{ work, why }], startMergeQueue, requeue: [{ work, lane, branch }], clashCards: [{ work }] }
+//   -> { start: [{ work, lane }], hold: [{ work, why }], startMergeQueue, requeue: [{ work, lane, branch, reason? }], clashCards: [{ work }], redCards: [{ work }] }
 // `work`, `runs` and `reports` are the record's views; `mergeQueue` is { running, lastStart, waiting, newReady };
 // `requests` is { counts(workId), used, cap, confirmed }: whether a piece's run would use the plan's counted requests,
 // how many this month's runs used, the most the director allows, and whether the engine's count of them is confirmed;
-// `sentBack` is [{ work, times }], the pull requests the merge gate sent back for a clash.
+// `sentBack` is [{ work, times, reason? }], the pull requests sent back: for a clash by the merge gate, and with reason
+// `red` by the check runner.
 export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeatures = {}, settings = {}, stop = false, incident = false, capsReached = false, mergeQueue = {}, requests = null, sentBack = [], now = new Date() } = {}) {
   const lanes = Array.isArray(settings.engineLanes) ? settings.engineLanes : ['quick'];
   const pace = paceOf(settings);
@@ -49,22 +51,26 @@ export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeat
   let features = live.filter(([, e]) => e.work.data.lane === FEATURE).length;
   const running = live.map(([id, e]) => ({ work: id, files: e.files ?? [] }));
 
-  const sent = new Map((Array.isArray(sentBack) ? sentBack : []).map((s) => [s.work, s.times]));
+  const sent = Array.isArray(sentBack) ? sentBack.filter((s) => s.times > 0) : [];
   const requeue = [];
   const clashCards = [];
+  const redCards = [];
   for (const [id, e] of entries) {
-    const times = sent.get(id);
-    if (!times || runsOf(runs, id, e.work).some((r) => r.data.state !== 'ended')) continue;
-    if (times >= 2) clashCards.push({ work: id });
+    const own = sent.filter((s) => s.work === id);
+    if (own.length === 0 || runsOf(runs, id, e.work).some((r) => r.data.state !== 'ended')) continue;
+    const red = own.find((s) => s.reason === 'red');
+    const clash = own.find((s) => s.reason !== 'red');
+    if (red?.times >= 2) redCards.push({ work: id });
+    else if (clash?.times >= 2) clashCards.push({ work: id });
     else {
       const last = runsOf(runs, id, e.work).at(-1);
-      requeue.push({ work: id, lane: e.work.data.lane, branch: last?.data?.branch ?? null });
+      requeue.push({ work: id, lane: e.work.data.lane, branch: last?.data?.branch ?? null, ...(red ? { reason: 'red' } : {}) });
     }
   }
 
   // The work not yet run, in the First Mate's order: a placed piece first, by its place, then oldest first.
   const queued = entries
-    .filter(([id, e]) => runsOf(runs, id, e.work).length === 0 && !endedBy(reports, id, e.work) && !sent.has(id))
+    .filter(([id, e]) => runsOf(runs, id, e.work).length === 0 && !endedBy(reports, id, e.work) && !sent.some((s) => s.work === id))
     .sort(([a, x], [b, y]) => {
       const pa = x.work.data.place;
       const pb = y.work.data.place;
@@ -106,5 +112,5 @@ export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeat
 
   const due = mergeQueue.newReady === true || !mergeQueue.lastStart || now.getTime() - Date.parse(mergeQueue.lastStart) >= MERGE_QUEUE_EVERY_MS;
   const startMergeQueue = !stopping && mergeQueue.running !== true && (mergeQueue.waiting ?? 0) > 0 && due;
-  return { start, hold, startMergeQueue, requeue: stopping ? [] : requeue, clashCards };
+  return { start, hold, startMergeQueue, requeue: stopping ? [] : requeue, clashCards, redCards };
 }

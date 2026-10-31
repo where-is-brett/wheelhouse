@@ -99,6 +99,23 @@ test('two missed ticks start one merge-queue run', () => {
   assert.strictEqual(got.startMergeQueue, true, 'a yes, never a count');
 });
 
+test('a red head goes back as a clash does, and says why; a second red raises its own card', () => {
+  const work = Object.fromEntries([piece('a', { place: 0 }), piece('b', { place: 1 })]);
+  const runs = { a: [runOf('a', 'ended', { outcome: 'completed', pr: 3 })], b: [runOf('b', 'ended', { outcome: 'completed', pr: 4 })] };
+  const got = dispatch(base({ work, runs, sentBack: [{ work: 'a', times: 1, reason: 'red' }, { work: 'b', times: 2, reason: 'red' }] }));
+  assert.deepEqual(got.requeue, [{ work: 'a', lane: 'quick', branch: null, reason: 'red' }]);
+  assert.deepEqual(got.redCards, [{ work: 'b' }]);
+  assert.deepEqual(got.clashCards, []);
+});
+
+test('reds and clashes are counted apart', () => {
+  const work = Object.fromEntries([piece('a', { place: 0 })]);
+  const runs = { a: [runOf('a', 'ended', { outcome: 'completed', pr: 3 })] };
+  const got = dispatch(base({ work, runs, sentBack: [{ work: 'a', times: 1, reason: 'clash' }, { work: 'a', times: 1, reason: 'red' }] }));
+  assert.deepEqual(got.requeue, [{ work: 'a', lane: 'quick', branch: null, reason: 'red' }]);
+  assert.deepEqual([got.redCards, got.clashCards], [[], []]);
+});
+
 test('a pull request sent back for a clash is started again to bring it up to date; a second clash raises a card', () => {
   const work = Object.fromEntries([piece('a', { place: 0 }), piece('b', { place: 1 })]);
   const runs = { a: [runOf('a', 'ended', { outcome: 'completed', pr: 3 })], b: [runOf('b', 'ended', { outcome: 'completed', pr: 4 })] };

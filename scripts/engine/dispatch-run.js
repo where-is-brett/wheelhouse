@@ -23,7 +23,7 @@ import { since, endedBy } from '../foreman/queue.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const isText = (x) => typeof x === 'string' && x.trim() !== '';
-const EMPTY = () => ({ mergeRun: null, mergeRuns: [], lastStart: null, seenReady: [], queueDue: false, sentBack: {}, acted: {}, clashAsked: {}, requestsAsked: null, noTestsSaid: false, fixes: {}, features: {}, shipped: {}, closedPrs: [] });
+const EMPTY = () => ({ mergeRun: null, mergeRuns: [], lastStart: null, seenReady: [], queueDue: false, sentBack: {}, acted: {}, clashAsked: {}, reds: {}, redActed: {}, redAsked: {}, requestsAsked: null, noTestsSaid: false, fixes: {}, features: {}, shipped: {}, closedPrs: [] });
 // The dispatcher's own questions take numbers from here, apart from the card router's.
 const OWN_QUESTIONS = ENGINE_QUESTIONS + 90000;
 export { MERGE_WORK };
@@ -49,6 +49,8 @@ export const MERGED_WORDS = 'Added to the main line.';
 export const CLOSED_WORDS = 'Its pull request was closed without being added.';
 // The fix card's numbers, after the clash cards' and the requests card's.
 const FIX_QUESTIONS = OWN_QUESTIONS + 5000;
+// The second-red cards' numbers, after the clash cards'.
+const RED_QUESTIONS = OWN_QUESTIONS + 3000;
 export const STARTED_FIX_WORDS = 'The main line is red, so Wheelhouse started fixing it; other work waits until it is green.';
 export const GREEN_WORDS = 'The main line is green again, so held work goes on.';
 const WHY_FIX = {
@@ -88,7 +90,7 @@ export function orderFor(entry, { settings = {}, raised = false, config = {}, an
 }
 
 // dispatchRun({ engine, project, folder, file, readViews, settings, stopped, now, start, write, readyOf, mainGreen,
-//   stoppedRuns, fixedRuns, prMerged, designOf, orderOf, repoOf, queueFolder, queuePlace, openedBy }) -> { tick, workOf, startAgain, sentBack, queueDue }.
+//   stoppedRuns, fixedRuns, prMerged, designOf, orderOf, repoOf, queueFolder, queuePlace, openedBy }) -> { tick, workOf, startAgain, sentBack(work, reason, tail), queueDue }.
 // - `start({ project, order, branch?, carryOn? })` the helper's own start; `readyOf()` the pull requests marked ready,
 //   { [pr]: { work, head } }; `settings()` the project's settings in force; `write(kind, data)` a record;
 // - `mainGreen()` whether the main line's checks read green: true, false, or null when they can't be read (or are
@@ -129,16 +131,19 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     }
   }
 
-  async function startPiece({ work, lane, branch = null, carryOn = false, raised = false, answers = [] }) {
+  // The end of a red check's output, as data for the run that goes back: kept by the helper, never by the run.
+  const withTail = (order, checkTail) => (isText(checkTail) ? { ...order, checkTail } : order);
+
+  async function startPiece({ work, lane, branch = null, carryOn = false, raised = false, answers = [], checkTail = null }) {
     const views = readViews() ?? {};
     const entry = views.work?.[work];
     if (!isPlain(entry?.work?.data)) return { ok: false, refused: 'there is no such work' };
     if (!isText(config()?.testCommand)) return { ok: false, refused: 'Wheelhouse doesn\'t know how to run the project\'s tests' };
-    if (entry.work.data.lane === 'feature') return startFeature({ views, entry, work, lane, branch, carryOn, raised, answers });
+    if (entry.work.data.lane === 'feature') return startFeature({ views, entry, work, lane, branch, carryOn, raised, answers, checkTail });
     let order;
     try { order = orderFor({ ...entry, work: { ...entry.work, key: work } }, { settings: settings() ?? {}, raised, config: config() ?? {}, answers }); } catch (error) { return { ok: false, refused: error.message }; }
     if (order.lane !== lane) return { ok: false, refused: 'the work\'s lane changed' };
-    return start({ project, order, ...(branch ? { branch } : {}), carryOn });
+    return start({ project, order: withTail(order, checkTail), ...(branch ? { branch } : {}), carryOn });
   }
 
   // A feature's approved design read into its slices, or { refused }, said on the Logbook once for each problem.
@@ -182,7 +187,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   }
   // Starts the feature's next run: slice 1 from the dispatcher, a later slice or its own run from featureTick, or the
   // run under way again on a carry-on (Give it more, or an answer), on its branch.
-  async function startFeature({ views, entry, work, lane, branch, carryOn, raised, answers }) {
+  async function startFeature({ views, entry, work, lane, branch, carryOn, raised, answers, checkTail }) {
     if (!['feature', 'slice'].includes(lane)) return { ok: false, refused: 'the work\'s lane changed' };
     const found = await designFor(work, entry);
     if (found.refused) return { ok: false, refused: found.refused };
@@ -214,7 +219,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     let order;
     const args = { entry: { ...entry, work: { ...entry.work, key: work } }, design, config: config() ?? {}, settings: settings() ?? {}, raised, answers };
     try { order = step.finish ? finishOrder({ ...args, progress }) : sliceOrder({ ...args, n: step.slice }); } catch (error) { return { ok: false, refused: error.message }; }
-    const got = await start({ project, order, ...(branch ? { branch } : {}), carryOn });
+    const got = await start({ project, order: withTail(order, checkTail), ...(branch ? { branch } : {}), carryOn });
     if (got?.ok && typeof got.runId === 'string') {
       kept.started.push(got.runId);
       keep();
@@ -596,7 +601,10 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       incident: Array.isArray(views.incidents?.open) && views.incidents.open.length > 0,
       capsReached: false,
       mergeQueue: { running: await mergeQueueRunning(), lastStart: state.lastStart, waiting: waiting.length, newReady: newReady || state.queueDue === true },
-      requests, sentBack: Object.entries(state.sentBack).filter(([work, times]) => state.acted[work] !== times).map(([work, times]) => ({ work, times })), now: now(),
+      requests, sentBack: [
+        ...Object.entries(state.sentBack).filter(([work, times]) => state.acted[work] !== times).map(([work, times]) => ({ work, times })),
+        ...Object.entries(state.reds).filter(([work, red]) => state.redActed[work] !== red.times).map(([work, red]) => ({ work, times: red.times, reason: 'red' })),
+      ], now: now(),
     });
     const started = [];
     // The project's configuration and test command: without one Wheelhouse can run, nothing starts (a run would have
@@ -618,10 +626,11 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     }
     for (const piece of pieces) {
       if (stopped()) break;
-      const { again, ...args } = piece;
-      const got = await startPiece(args);
+      const { again, reason, ...args } = piece;
+      const got = await startPiece({ ...args, ...(reason === 'red' ? { checkTail: state.reds[piece.work]?.tail } : {}) });
       if (again) {
         state.acted[piece.work] = state.sentBack[piece.work];
+        if (reason === 'red') state.redActed[piece.work] = state.reds[piece.work].times;
         keep();
       }
       started.push({ ...args, ...got });
@@ -649,6 +658,34 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
         why: 'Work that keeps clashing may need a different plan, which is yours to decide at level 3.',
         options: [
           { label: TRY_AGAIN, says: 'It brings the change up to date with the main line once more, and checks it again.' },
+          { label: LEAVE_IT, says: 'It waits; nothing more is done to it until you say.' },
+        ],
+        recommendation: TRY_AGAIN,
+      });
+    }
+    // A second red on the same work: one card, level 3. Try again goes back once more with the newest tail.
+    for (const { work } of decided.redCards) {
+      const { times, tail } = state.reds[work];
+      const id = `q-${work}-${RED_QUESTIONS + times}`;
+      if (state.redAsked[work] === id) {
+        const label = views.questions?.[id]?.answer?.label;
+        if (label === TRY_AGAIN && state.redActed[work] !== times && !stopped()) {
+          const last = (views.runs?.[work] ?? []).at(-1)?.data;
+          await startPiece({ work, lane: views.work?.[work]?.work?.data?.lane, branch: last?.branch ?? null, carryOn: true, checkTail: tail });
+          state.redActed[work] = times;
+          keep();
+        }
+        continue;
+      }
+      state.redAsked[work] = id;
+      keep();
+      const title = views.work?.[work]?.work?.data?.title ?? work;
+      await write('question', {
+        id, work, level: 3,
+        what: `${title} failed the project's tests on this computer twice, so it waits and nothing of it is added.`,
+        why: 'Work that keeps failing the tests may need a different plan, which is yours to decide at level 3.',
+        options: [
+          { label: TRY_AGAIN, says: 'It goes back to be mended once more, with what the tests said.' },
           { label: LEAVE_IT, says: 'It waits; nothing more is done to it until you say.' },
         ],
         recommendation: TRY_AGAIN,
@@ -692,9 +729,11 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     },
     // Starts a piece again, carrying on from what is there (Give it more), with its cap raised once.
     startAgain: (args) => startPiece(args),
-    // A pull request the merge gate sent back for a clash: started again on the next tick, or a card the second time.
-    sentBack(work) {
-      state.sentBack[work] = (state.sentBack[work] ?? 0) + 1;
+    // A pull request sent back, by the merge gate for a clash or by the check runner for a red head, with the end of the
+    // check's output: started again on the next tick, or a card the second time. Reds and clashes count apart.
+    sentBack(work, reason = 'clash', tail = null) {
+      if (reason === 'red') state.reds[work] = { times: (state.reds[work]?.times ?? 0) + 1, tail };
+      else state.sentBack[work] = (state.sentBack[work] ?? 0) + 1;
       keep();
     },
   };
