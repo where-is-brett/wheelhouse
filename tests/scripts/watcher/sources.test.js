@@ -525,3 +525,15 @@ test('intervals given are laid over the plan\'s', () => withHome(async () => {
   }
   assert.deepEqual(calls, ['testMerge', 'testMerge', 'testMerge']);
 }));
+
+test('a seal never reaches the watcher: it is sent to no session', () => withHome(async () => {
+  enrolHere();
+  record('incident', { id: 'one', what: 'x' }, 0);
+  const first = await observe({ project: P, client: fakeClient(), now: at(SEC) });
+  const prev = step({ seen: [], prev: null }, first).cursor.prev;
+  const seal = { line: 'seal', card: 'q-1', work: 'w', head: null, signed: null, reader: true, candidates: {}, exclusions: { hit: [], unread: [] }, stamp: {}, at: new Date(0).toISOString(), hash: 'a'.repeat(64) };
+  const line = record('shadow', seal, 2 * SEC);
+  const next = await observe({ project: P, client: fakeClient(), now: at(3 * SEC), prev });
+  assert.equal(next.stateIds.includes(line.id), false);
+  assert.equal((next.state ?? []).some((e) => e.kind === 'shadow'), false);
+}));
