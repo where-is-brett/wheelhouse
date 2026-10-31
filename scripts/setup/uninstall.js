@@ -332,7 +332,7 @@ function cardWhats({ name, changes, keep, asks, pullRequest, archive, local }) {
     keys > 0 ? `delete or untick ${plural(keys, 'key')}` : null,
     removed > 0 ? `remove ${removed} of Wheelhouse's folders` : null,
   ].filter(Boolean);
-  const said = archiveSaid(archive);
+  const said = archiveSaid(archive, local);
   const head = `Remove Wheelhouse from ${name}: ${groups.join(', ')}.`;
   const changed = keep.filter((k) => k.why === 'changed since setup').map((k) => k.brief ?? k.what);
   // The project's .wheelhouse/ folder and its exclude line are named (ruling R131), not counted.
@@ -610,13 +610,13 @@ function someOf(list) {
 }
 
 // What the card says of the archive, in full and in short.
-function archiveSaid(archive) {
+function archiveSaid(archive, local) {
   if (archive === null || archive === undefined) return { full: '', short: '' };
   if (archive.refused !== undefined) {
     const line = ` ${ARCHIVE}/ stays as it is: ${archive.refused}.`;
     return { full: line, short: line };
   }
-  const back = archive.moves.length > 0 ? ` By the pull request too: ${ARCHIVE_BACK}.` : '';
+  const back = archive.moves.length > 0 ? ` By the ${local ? 'last change' : 'pull request'} too: ${ARCHIVE_BACK}.` : '';
   const one = archive.taken.length === 1;
   const taken = archive.taken.length > 0 ? ` Left in ${ARCHIVE}/, as ${one ? 'its place is' : 'their places are'} taken: ${someOf(archive.taken)}.` : '';
   const counted = archive.taken.length > 0 ? ` ${archive.taken.length} left in ${ARCHIVE}/: ${STATUS_FORM}.` : '';

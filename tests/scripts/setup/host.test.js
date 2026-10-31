@@ -44,7 +44,7 @@ import { QUICK_LINE } from '../../../scripts/lib/host-lines.js';
 import { QUICK_LINE as BOARD_QUICK_LINE } from '../../../scripts/board/health.js';
 import { FREE_PLAN_LINE } from '../../../scripts/host/protection.js';
 import { g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
-import { KEEP_HERE, PUT_ON_GITHUB } from '../../../scripts/setup/local.js';
+import { KEEP_HERE, PUT_ON_GITHUB, remotesOf } from '../../../scripts/setup/local.js';
 import { homeDir } from '../../../scripts/host/local/home.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
 
@@ -1161,6 +1161,32 @@ test('a folder with a history put on GitHub sends that history to a new private 
     assert.equal(readProject(slugFor(repo)).host, 'github');
     assert.equal(await g(folder, 'config', '--get', 'remote.origin.url'), w.hostUrl({ repo }));
     assert.equal(fs.existsSync(homeDir('shop')), false);
+  });
+});
+
+test('a push that fails on the way to GitHub leaves the folder as it was, and a fresh Go ahead sends it', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    let failing = true;
+    const run = async (file, args, options) => {
+      if (failing && args.includes('push')) return { code: 1, stdout: '', stderr: 'refused' };
+      return w.run(file, args, options);
+    };
+    const folder = productFolder('shop');
+    await g(folder, 'init', '-q', '-b', 'main');
+    await g(folder, 'add', 'notes.txt');
+    await g(folder, 'commit', '-q', '-m', 'Begin');
+    const pick = (id, card) => (id === 'kept' ? PUT_ON_GITHUB : choose()(id, card));
+    const first = await answerAll(stepFor(w, { run }), ctxFor(folder), pick);
+    await assert.rejects(applyStep(stepFor(w, { run }), folder, first.changes, { answers: first.answers }), /a fresh Go ahead tries again/);
+    assert.deepEqual(remotesOf(folder), [], 'the folder has no address until its history is there');
+    failing = false;
+    const again = await answerAll(stepFor(w), ctxFor(folder), pick);
+    assert.ok(again.changes.some((c) => c.action === 'repository'), 'the same step, again');
+    await applyStep(stepFor(w), folder, again.changes, { answers: again.answers });
+    const repo = `${USER}/shop`;
+    assert.equal(await g(w.hostUrl({ repo }), 'rev-parse', 'refs/heads/main'), await g(folder, 'rev-parse', 'HEAD'));
+    assert.equal(await g(folder, 'config', '--get', 'remote.origin.url'), w.hostUrl({ repo }));
   });
 });
 

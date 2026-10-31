@@ -57,7 +57,7 @@ export function choiceList({ open, answers, doneOrRunning }) {
   return [...now, ...used];
 }
 
-const HOST_NAME = { github: 'GitHub', gitlab: 'GitLab' };
+const HOST_NAME = { github: 'GitHub', gitlab: 'GitLab', local: 'this computer' };
 
 // The redo card for a choice a step has used: { id, card, typed, writes, found }, `card` the
 // composer's question input. `answers` are the run's; `name` the product's; `record` its project
@@ -138,7 +138,7 @@ export function redoCard({ key, answers, name, record, described, count, stepRan
       card: {
         level: 3,
         what: `${name} is already set up on ${host}, so changing ${aboutOf(key)} means setting it up again.`,
-        why: 'The repository and the connection already exist, and setup changes neither in place.',
+        why: record?.host === 'local' ? 'Its private copy already exists, and setup doesn\'t change that in place.' : 'The repository and the connection already exist, and setup changes neither in place.',
         options: [
           { label: AGAIN, says: 'Wheelhouse is removed from the project, on uninstall\'s own card, and setup then starts afresh. Your project\'s files stay.' },
           { label: KEEP, says: 'It stays as it is.' },
