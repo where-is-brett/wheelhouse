@@ -1,0 +1,129 @@
+<!-- docs/checks/82-check-sandbox.md -->
+
+# Check 82: a real Mac app's tests under the check sandbox
+
+**Answer:** Partly. The real project's tests passed under the sandbox, but only by the Swift package row, since it holds no committed Xcode project. The draft profile of spec 4.4 failed: a program started by `open` ran outside the sandbox and read a planted secret, and `xcodebuild test` did the same with the project's own app. Apple Events got as far as macOS's consent prompt, which the director saw. A tightened profile, still allow-by-default, shut every way tried. Under it tests with no test host run, and hosted tests are refused in about two minutes, never run outside. So hosted tests can't count yet: clearing `TEST_HOST` is the only way forward found, and it passed only on a made-up app.
+
+## Question
+
+Spec sections 3 and 4.4, and the plan's part 0. Does a real Mac app's test run work under the profile: `xcodebuild test` with the switches and `CODE_SIGNING_ALLOWED=NO`, `prepare`, a separate `HOME`, and the time with and without kept build output? Does every way out fail from inside: `launchctl submit`, `open`, `osascript`, an Apple Event, reading the keychain, a login item? Which row of the table in 4.5 works, and does the profile stay allow-by-default?
+
+## Tested on
+
+31 October 2026, on macOS 27.0.1 (arm64) with Node.js 22.22.1 and Xcode 27.2. The real project is a Mac app: a `Package.swift` with one test target and an XcodeGen `project.yml`, whose `.xcodeproj` is generated and ignored by git. The main session ran the probe on it. It isn't named here, and the probe's report has its names taken out. The ways out and the made-up app ran on the same Mac.
+
+## Method
+
+`probes/82-check-sandbox/run.js` has four phases. Each works in a check folder of its own under `~/Library/Caches`, outside the temporary folders a check may write, as the real check folder is, and that folder goes to the Trash at the end.
+
+- **`ways`.** A secret is planted in a folder on the profile's deny list. A way out counts as open only on proof: a job started from inside the sandbox reads that secret and writes it beside itself, in a folder the profile can't write. Near a real key, only characters are counted, and nothing is printed. Each way also ran with no sandbox as a control, leaving out those that touch a key or send an Apple Event.
+- **`fixture`.** A made-up Mac app with hosted tests and tests with no host (`fixture.js`). The app's first line and each test report whether they can read the secret, write beside it and list the keychain folder.
+- **`swift`.** A made-up Swift package, the next row of the table.
+- **`project <folder>`.** The real project. It reads the folder's head commit by `git fetch` into the check folder and changes nothing in the folder. With a workspace or Xcode project it takes the Xcode route; with only `Package.swift` it takes the Swift route: `prepare`, the tests from nothing, then a reset and clean that keeps ignored output, and the tests again.
+
+**The profiles.** `draft` is spec 4.4 with the device files any program needs. `tight` adds these lines, and is what ran on the real project:
+
+```
+(deny appleevent-send)
+(deny lsopen)
+(deny job-creation)
+(deny mach-lookup (global-name "com.apple.coreservices.launchservicesd")
+                  (global-name "com.apple.coreservices.sharedfilelistd")
+                  (global-name "com.apple.coreservices.sharedfilelistd.xpc")
+                  (global-name "com.apple.pasteboard.1"))
+(deny process-info*)     (allow process-info* (target self))
+(deny signal)            (allow signal (target same-sandbox))
+(deny network-outbound (remote unix-socket (path-regex "^<home>/")))
+```
+
+They name services and operations, not programs, so a compiled program gets no further than `open` does. A first version also denied running `launchctl`, `open` and `osascript` by path; that was taken out, and the ways stayed shut.
+
+`open` is a profile with nothing denied at all (`(allow default)`), under `sandbox-exec`, as a control for the made-up app.
+
+## Evidence
+
+**The ways out.** "Shut" means no proof appeared.
+
+| Way | With no sandbox | Draft | Tight |
+|---|---|---|---|
+| Read the file on the deny list | Read | Shut | Shut |
+| Write outside the allowed folders | Written | Shut | Shut |
+| Read the login keychain file | Read | Shut | Shut |
+| `security show-keychain-info` | Not run | Shut | Shut |
+| `git-credential-osxkeychain get` | Not run | Shut, 0 characters | Shut, 0 characters |
+| `gh auth token` | Not run | Shut, 0 characters | Shut, 0 characters |
+| List `~/.wheelhouse` and `~/.ssh` | Listed | Shut | Shut |
+| `curl` to the internet | 200 | Shut | Shut |
+| `launchctl submit` | **Out** | Shut, exit 1 | Shut, exit 1 |
+| `launchctl bootstrap` | **Out** | Shut, exit 5 | Shut, exit 5 |
+| `open` on an app | **Out** | **Out: read the secret** | Shut, error -54 |
+| A compiled program calling `NSWorkspace` | **Out** | **Out: read the secret** | Shut, exit 3 |
+| `osascript` to Finder | Not run | "privilege violation" (-10004) | Shut, -54 |
+| `osascript` to Terminal, `do script` | Not run | **Reached the consent prompt.** Timed out at 25 seconds, unanswered | Shut, -54 |
+| `osascript` to System Events, login item | Not run | "privilege violation" (-10004) | Shut, -54 |
+| Copy a plist into `~/Library/LaunchAgents` | Not run | Shut | Shut |
+| A socket in a folder on the deny list | Connected | **Connected** | Shut |
+| Read another process's environment with `ps eww` | Shut | Shut | Shut |
+| Signal another process | Allowed | **Allowed** | Shut |
+| Read the clipboard | Read | **Read, 43 characters** | Shut, 0 characters |
+
+The Terminal line counts as open under draft. Only macOS's prompt stood in the way, and the main session told the director to press Don't Allow. On a computer where that permission was once granted, the event would have run a command outside the sandbox. The -10004 lines may rest on the same kind of consent, so they aren't counted as the profile's doing. Under tight, no Apple Event left the process and no prompt appeared. The probe no longer sends these under draft unless given `--prompts`. The probe's own table marks the clipboard as open under tight, as its test reads only the exit code; 0 characters came back.
+
+**`xcodebuild test` on the made-up app.**
+
+| Profile | Tests with no host | Hosted tests | The app's own first line |
+|---|---|---|---|
+| `open` | Passed; read the secret, as the control should | Hung, then failed: "The test runner hung before establishing connection" | Not measured |
+| `draft` | Passed; no secret, no write outside, no keychain files | Hung until killed | **Ran outside, started by launchd (parent 1): read the secret, wrote outside, listed 10 keychain files** |
+| `tight` | Passed; no secret, no write, no keychain files | Refused: "LaunchServices has returned error -54". The stage ended in about 130 seconds | Never ran |
+| `tight`, with `TEST_HOST=` and `BUNDLE_LOADER=` set empty | Passed | **Passed, as tests with no host: no secret, no write, no keychain files.** 109 seconds | Not started |
+| No sandbox at all | Not run | Passed | Not measured |
+
+So the hang comes from `xcodebuild` being under `sandbox-exec` at all, even with nothing denied, and not from the profile's rules. One try at a way round: `xcodebuild` unsandboxed, with the app's program replaced by a small launcher that sandboxes itself and then starts the real program. It held: the app stayed inside although launchd started it. But the tests hung the same way, or the app aborted if `launchservicesd` was denied. That line was stopped, and the launcher isn't in the probe.
+
+**The real project,** under tight, on the Swift route:
+
+| Stage | Result | Time |
+|---|---|---|
+| `swift package resolve --disable-sandbox` (`prepare`) | Passed | 84 seconds |
+| `swift test --disable-sandbox`, nothing kept | Passed | 116 seconds |
+| `swift test --disable-sandbox`, build output kept | Passed | 86 seconds |
+
+The test bundle's process stayed under the check's own process in every sighting. No macOS prompt appeared. `.build` is ignored by the project and survived the clean, at 277 MB. The separate `HOME` took 104 KB: `.swiftpm`, and `Library/HTTPStorages`.
+
+**Other findings.**
+
+- **Time.** On the made-up Swift package, the sandbox added over a minute: `swift package resolve` took 78 seconds under tight and 2 with no sandbox, and `swift test` took about 90 against 15. The no-sandbox run may have had caches warm. The real project's 84 seconds of `prepare` is likely the same wait, and it would explain why kept output saved only 30 seconds. The cause wasn't found.
+- **`/dev`.** The spec's blanket `(deny file-write*)` also denies `/dev/null` and `/dev/ptmx`. Without those, `xcodebuild` stops with "Pseudo Terminal Setup Error".
+- **`prepare`'s denial of the home folder** also denies the folders on the way down to the check folder. Swift stops with "unable to set working directory" until each is allowed by `literal`.
+- **`HOME` isn't the whole story.** Foundation's `NSHomeDirectory()` still gave the real home, with `HOME` and `CFFIXED_USER_HOME` both set. SwiftPM's writes to the real `~/Library/Caches` are refused and only warn.
+- **`xcode-select`** points at the Command Line Tools on this Mac, so the tools need `DEVELOPER_DIR` set to Xcode's folder. `testEnv` doesn't set it.
+- **Ending a run.** A check can't end what launchd started: hung apps outlived `xcodebuild` and were ended by process number. Waiting for the output to close also overran: one 2-minute limit took 21 minutes, and one 8-minute limit took over two hours, while the Mac may have slept. The probe now stops waiting past the limit.
+- **The kernel's denial lines.** `log show` gave no lines for the check's own processes, so the probe's `refused` lists show only other programs. They prove nothing either way.
+
+### What was not tested
+
+- `xcodebuild test` on a real app. The real project has no committed Xcode project, and its generated one wasn't built. So the hosted-test finding comes from the made-up app, and whether `TEST_HOST=` builds when tests link the app's own code is unknown.
+- Whether the real app's tests that live only in XcodeGen's targets were reached. `swift test` ran the package's one test target.
+- A profile that starts from deny-by-default. The tightened one shut everything tried, so it wasn't built, and allow-by-default can still hold a way nobody tried.
+- `crontab`, which might have changed the director's own table, and other Apple services by name.
+- The ways out run from inside a real test, as opposed to the shell under the same profile, except the three reports of the made-up app.
+- Tight on a project whose test needs `NSApplication`. With `launchservicesd` denied, such a test aborts.
+
+## What it means for the design
+
+For the main session as cards, not yet changed in the design:
+
+- **Section 4.4's profile must change.** The draft isn't safe: on an Xcode project it runs an agent's code outside the sandbox with the signing key in reach. Part 1's `checkProfile` should be the tight profile, plus the `/dev` lines and `prepare`'s `literal` lines.
+- **The spec says one escape moves the profile to deny-by-default.** The recommendation is to stay allow-by-default with the lines above, since they block by operation and service, not by name. The spec's reason still stands: a deny-by-default list breaks on each macOS update. This is a change to a designer's call (13.6), and it's the main session's to rule on. Part 1 can build either: the lines all sit in `checkProfile`.
+- **The table in 4.5.** The `Package.swift` row works as written, on a real project. The `*.xcworkspace or *.xcodeproj` row works only for tests with no host. A project with hosted tests gets `could-not-run` from the sandbox, which is safe, and the risk table's card covers it: no check runs unsandboxed without the director's say. The finder could try `TEST_HOST= BUNDLE_LOADER=` as the row's command, if a real project shows it builds.
+- **A new row, or a note on the first.** `project.yml` with an ignored `.xcodeproj` is a real shape. The real project reads as a `Package.swift` project, and it passed. If its tests live in XcodeGen's targets, the finder would need `xcodegen generate` first, in `prepare`.
+- **Later parts may go ahead.** The way forward holds for Swift packages and tests with no host, and part 1 waits on no other answer. A hosted Xcode project stays at `could-not-run` until a route is found.
+- **Part 1's run** must also set `DEVELOPER_DIR`, stop waiting at the time limit, and find out what the minute of waiting is. Tests that read `NSHomeDirectory()` see the real home's name, though nothing there can be read.
+- **`checks.network`, and a test's localhost.** Tight still lets a test reach any localhost port and sockets outside the home. Nothing listening there was tried.
+
+## Needs the director
+
+Nothing to do. One macOS prompt reached the director during this check, with word to press Don't Allow. Whether a project with hosted tests gets a way to run is for the main session, and it reaches the director only as the card already designed.
+
+Nothing was changed in the real project. No login item, launch agent or job was left behind: `launchctl list`, `~/Library/LaunchAgents` and the login items were read after the runs. Each check folder went to the Trash, and so did the crash reports the made-up app left.
