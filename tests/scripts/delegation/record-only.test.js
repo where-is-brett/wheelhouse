@@ -6,12 +6,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { recordOnly, cardContext, historyOf } from '../../../scripts/delegation/record-only.js';
-import { SEAL_TICK_MS, FACT_TRIES, SEAL_TRIES, SCORE_WAIT_DAYS } from '../../../scripts/delegation/limits.js';
+import { SEAL_TICK_MS, FACT_TRIES, SEAL_TRIES, SCORE_WAIT_DAYS, READER_MS, READER_TOKENS, READER_UNKNOWN_MS, READERS_WAITING_MOST } from '../../../scripts/delegation/limits.js';
 import { buildViews } from '../../../scripts/state/views.js';
 import { makeEvent, dataHash } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
 import { answerLine } from '../../../scripts/state/card-lines.js';
 import { SUGGEST_LABEL } from '../../../scripts/engine/router.js';
+import { READER_WORK } from '../../../scripts/delegation/reader.js';
+import { fakeEngine } from '../../../scripts/engine/fake.js';
 import { withHome } from '../../helpers/homes.js';
 
 const FACTS = { readable: true, head: 'a'.repeat(40), paths: [], lines: 0, testsChanged: false, depsChanged: false, schemaChanged: false, guardrail: false, secrets: false, critical: false };
@@ -485,3 +487,256 @@ test('stepping out of a card\'s options by any way the record holds counts as st
   for (const id of ['q-typed', 'q-byid', 'q-told']) assert.equal(history.answer(id).steered, true, id);
   for (const id of ['q-kept', 'q-put-off', 'q-later']) assert.equal(history.answer(id).steered, false, id);
 }));
+
+// The reader's side: a card read on the fake engine.
+const VIEW = { question: 'Which?', labels: ['Keep', 'Remove'], rule: null, quote: null, brief: null, sheet: null, diff: '', pathsOnly: [] };
+const READING = { frame: 'sound', why: 'They fit.', kind: 'can-see', fits: 'no-rule', pick: 'Keep', tags: [{ label: 'Keep', leans: ['keep'] }, { label: 'Remove', leans: ['remove'] }] };
+const spend = { tokens: 900, dollars: 0.01, source: 'reported' };
+const finished = (output = JSON.stringify(READING)) => [
+  { type: 'step-finished', at: 't', step: 'read', role: 'reader', spend, output },
+  { type: 'run-ended', at: 't', outcome: 'completed', branch: null, pr: null },
+];
+
+function reading({ events = finished(), gate = () => ({ running: 0, pace: 3 }), startReader, viewOf = async () => VIEW, readViews = () => ({}), trusted, fake, stop = false } = {}) {
+  const engine = fake ?? fakeEngine({ recordings: { reader: events } });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-read-'));
+  const writes = [];
+  const world = { now: new Date('2026-11-01T02:00:00.000Z'), stop };
+  const seals = recordOnly({
+    file: path.join(dir, 'shadow.json'), write: async (kind, data) => { writes.push({ kind, data }); }, stopped: () => world.stop, now: () => world.now,
+    factsOf: async () => FACTS, stampOf: () => ({ models: {}, pack: null, rule: null, exclusions: null }),
+    engine, viewOf, gate, readViews, trusted,
+    startReader: startReader ?? (async (card) => engine.start({ work: READER_WORK, lane: 'reader', card })),
+  });
+  const lines = () => writes.filter((w) => w.kind === 'shadow' && w.data.line === 'reading').map((w) => w.data);
+  const later = async (ms) => {
+    world.now = new Date(world.now.getTime() + ms);
+    await seals.tick();
+  };
+  return { seals, engine, writes, world, lines, later };
+}
+
+test('a question card gains the reader\'s reading, with no card waiting and no question raised', async () => {
+  const { seals, writes, lines, later } = reading();
+  seals.onCard(question);
+  await seals.tick();
+  await later(1);
+  const [line] = lines();
+  assert.equal(line.reader, 'read');
+  assert.equal(line.card, question.id);
+  for (const key of Object.keys(READING)) assert.deepEqual(line[key], READING[key]);
+  assert.equal(line.afterAnswer, false);
+  assert.match(line.hash, /^[0-9a-f]{64}$/);
+  assert.deepEqual([...new Set(writes.map((w) => w.kind))].sort(), ['cost', 'shadow']);
+});
+
+test('an approval, a level 4 card and a refused view start no reader', async () => {
+  const { seals, engine, writes } = reading({ viewOf: async () => ({ refused: 'it claims agreement' }) });
+  seals.onCard({ id: '12:abc', kind: 'approval', work: 'w', level: 3 });
+  seals.onCard({ ...question, id: 'q-w-2', level: 4 });
+  seals.onCard(question);
+  await seals.tick();
+  assert.equal(engine.calls.length, 0);
+  assert.equal(writes.find((w) => w.data.card === question.id).data.reader, 'refused');
+});
+
+test('a reader that fails leaves the seal whole and the card alone', async () => {
+  const cases = [
+    ['empty', () => reading({ events: finished('') })],
+    ['bad shape', () => reading({ events: finished('{"frame":"fine"}') })],
+    ['a failed run', () => reading({ events: [{ type: 'run-ended', at: 't', outcome: 'failed', branch: null, pr: null }] })],
+    ['a refused start', () => reading({ startReader: async () => ({ ok: false, refused: 'no' }) })],
+    ['a start that throws', () => reading({ startReader: async () => { throw new Error('no'); } })],
+    ['another pack', () => reading({ trusted: () => false })],
+    ['a view that throws', () => reading({ viewOf: async () => { throw new Error('no'); } })],
+  ];
+  for (const [name, made] of cases) {
+    const { seals, writes, lines, later } = made();
+    seals.onCard(question);
+    await seals.tick();
+    await later(1);
+    assert.equal(writes.filter((w) => w.data.line === 'seal').length, 1, name);
+    assert.ok(!writes.some((w) => ['question', 'note', 'card'].includes(w.kind)), name);
+    if (name !== 'a view that throws') assert.deepEqual(lines().map((l) => l.reader), ['none'], name);
+    if (name !== 'a view that throws') assert.equal(lines()[0].pick, null, name);
+  }
+});
+
+test('a reader that never ends times out, is cancelled and leaves no card', async () => {
+  const fake = fakeEngine({ recordings: { reader: [{ type: 'step-finished', at: 't', step: 'read', role: 'reader', spend, output: 'x' }] } });
+  const { seals, writes, lines, later } = reading({ fake });
+  seals.onCard(question);
+  await seals.tick();
+  await later(READER_MS - 1);
+  assert.deepEqual(lines(), []);
+  await later(2);
+  assert.deepEqual(lines().map((l) => [l.reader, l.why]), [['none', 'past-its-limit']]);
+  assert.ok(fake.calls.some((c) => c.action?.cancel));
+  assert.ok(!writes.some((w) => w.kind === 'question'));
+});
+
+test('a reader past a cap is cancelled with no cap card', async () => {
+  const fake = fakeEngine({ recordings: { reader: [{ type: 'step-finished', at: 't', step: 'read', role: 'reader', spend: { ...spend, tokens: READER_TOKENS + 1 }, output: 'x' }] } });
+  const { seals, writes, lines, later } = reading({ fake });
+  seals.onCard(question);
+  await seals.tick();
+  await later(1);
+  assert.ok(fake.calls.some((c) => c.action?.cancel));
+  assert.deepEqual(lines().map((l) => l.why), ['past-its-limit']);
+  assert.ok(!writes.some((w) => ['question', 'card', 'note'].includes(w.kind)));
+});
+
+test('a reader\'s tokens fall under their own line and on no piece', async () => {
+  const { seals, writes, later } = reading();
+  seals.onCard(question);
+  await seals.tick();
+  await later(1);
+  const costs = writes.filter((w) => w.kind === 'cost');
+  assert.equal(costs.length, 1);
+  assert.equal(costs[0].data.work, READER_WORK);
+  assert.equal(costs[0].data.tokens, 900);
+});
+
+test('a reader\'s own trouble never becomes a card', async () => {
+  const fake = fakeEngine({ recordings: { reader: [] } });
+  const start = fake.start.bind(fake);
+  fake.start = (order) => start({ ...order, running: true });
+  const { seals, writes, lines, later } = reading({ fake });
+  seals.onCard(question);
+  await seals.tick();
+  const { runId } = seals.reading();
+  assert.deepEqual(seals.readerOf(runId), { work: READER_WORK, lane: 'reader', branch: null });
+  seals.onReaderAsk({ runId, id: `${runId}:owner-lost` });
+  await later(1);
+  assert.ok(fake.calls.some((c) => c.action?.cancel));
+  assert.deepEqual(lines().map((l) => [l.reader, l.why]), [['none', 'lost']]);
+  assert.ok(!writes.some((w) => ['question', 'card', 'note'].includes(w.kind)));
+  assert.equal(seals.readerOf(runId), null);
+});
+
+test('a run the engine has lost is given up, and not at once', async () => {
+  const fake = { calls: [], start: () => ({ ok: true, runId: 'gone' }), inspect: () => ({ status: 'unknown', steps: [] }), outputs: () => ({}), act: () => ({ ok: true }) };
+  const { seals, lines, later } = reading({ fake });
+  seals.onCard(question);
+  await seals.tick();
+  await later(READER_UNKNOWN_MS - 1);
+  assert.deepEqual(lines(), []);
+  await later(2);
+  assert.deepEqual(lines().map((l) => l.why), ['lost']);
+});
+
+test('no reader starts under All stop or an incident', async () => {
+  const held = reading({ gate: () => ({ running: 0, pace: 3, incident: true }) });
+  held.seals.onCard(question);
+  await held.seals.tick();
+  await held.later(1);
+  assert.equal(held.engine.calls.length, 0);
+  assert.deepEqual(held.lines(), []);
+  const stopped = reading({ gate: () => ({ running: 9, pace: 3 }) });
+  stopped.seals.onCard(question);
+  await stopped.seals.tick();
+  stopped.world.stop = true;
+  await stopped.later(1);
+  assert.equal(stopped.engine.calls.length, 0);
+});
+
+test('on a plan\'s counted requests the seal holds the script checks alone', async () => {
+  const { seals, engine, lines, later } = reading({ gate: () => ({ running: 0, pace: 3, counted: true }) });
+  seals.onCard(question);
+  await seals.tick();
+  await later(1);
+  assert.equal(engine.calls.length, 0);
+  assert.deepEqual(lines().map((l) => [l.reader, l.why]), [['none', 'counted']]);
+});
+
+test('a busy project keeps the card waiting, and it is read when there is room', async () => {
+  const world = { running: 5 };
+  const { seals, engine, lines, later } = reading({ gate: () => ({ running: world.running, pace: 3 }) });
+  seals.onCard(question);
+  await seals.tick();
+  assert.equal(engine.calls.length, 0);
+  world.running = 1;
+  await later(1);
+  await later(1);
+  assert.deepEqual(lines().map((l) => l.reader), ['read']);
+});
+
+test('one reader at a time, in the order of the cards', async () => {
+  const { seals, engine, lines, later } = reading();
+  seals.onCard(question);
+  seals.onCard({ ...question, id: 'q-w-2' });
+  await seals.tick();
+  assert.equal(engine.calls.filter((c) => c.call === 'start').length, 1);
+  await later(1);
+  await later(1);
+  assert.deepEqual(lines().map((l) => l.card), [question.id, 'q-w-2']);
+  assert.equal(engine.calls.filter((c) => c.call === 'start').length, 2);
+});
+
+test('the cards waiting for a reader are bounded, and a card past that has no reading', async () => {
+  const { seals, lines } = reading({ gate: () => ({ running: 9, pace: 3 }) });
+  for (let n = 0; n <= READERS_WAITING_MOST; n += 1) seals.onCard({ ...question, id: `q-w-${n}` });
+  await seals.tick();
+  assert.deepEqual(lines().map((l) => l.why), ['too-many-waiting']);
+});
+
+test('an answer before the reader ends is marked, and the reading kept', async () => {
+  const world = { views: {} };
+  const { seals, lines, later } = reading({ readViews: () => world.views });
+  seals.onCard(question);
+  await seals.tick();
+  world.views = { questions: { [question.id]: { answer: { label: 'Keep' } } } };
+  await later(1);
+  assert.equal(lines()[0].afterAnswer, true);
+  assert.equal(lines()[0].pick, READING.pick);
+});
+
+test('the view is frozen at the seal, and given only while that card is read', async () => {
+  let built = 0;
+  const { seals, later } = reading({ viewOf: async () => { built += 1; return VIEW; } });
+  seals.onCard(question);
+  await seals.tick();
+  assert.deepEqual(seals.viewFor(question.id), VIEW);
+  assert.equal(seals.viewFor('q-w-9'), null);
+  await later(1);
+  assert.equal(built, 1);
+  assert.equal(seals.viewFor(question.id), null);
+});
+
+test('a helper started again carries on with the reader under way', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-read-'));
+  const fake = fakeEngine({ recordings: { reader: finished() } });
+  const writes = [];
+  const made = () => recordOnly({
+    file: path.join(dir, 'shadow.json'), write: async (kind, data) => { writes.push({ kind, data }); }, factsOf: async () => FACTS,
+    stampOf: () => ({ models: {}, pack: null, rule: null, exclusions: null }),
+    engine: fake, viewOf: async () => VIEW, gate: () => ({ running: 0, pace: 3 }), startReader: async () => fake.start({ work: READER_WORK, lane: 'reader' }),
+  });
+  const first = made();
+  first.onCard(question);
+  await first.tick();
+  await made().tick();
+  assert.equal(writes.filter((w) => w.data.line === 'reading').length, 1);
+  assert.equal(fake.calls.filter((c) => c.call === 'start').length, 1);
+});
+
+test('a reading line that fails to write is tried again, and then given up', async () => {
+  let fail = 0;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-read-'));
+  const fake = fakeEngine({ recordings: { reader: finished() } });
+  const writes = [];
+  const world = { now: new Date('2026-11-01T02:00:00.000Z') };
+  const seals = recordOnly({
+    file: path.join(dir, 'shadow.json'), now: () => world.now, factsOf: async () => FACTS, stampOf: () => ({ models: {}, pack: null, rule: null, exclusions: null }),
+    write: async (kind, data) => {
+      if (data.line === 'reading' && fail < 1) { fail += 1; throw new Error('no'); }
+      writes.push({ kind, data });
+    },
+    engine: fake, viewOf: async () => VIEW, gate: () => ({ running: 0, pace: 3 }), startReader: async () => fake.start({ work: READER_WORK, lane: 'reader' }),
+  });
+  seals.onCard(question);
+  await seals.tick();
+  await seals.tick();
+  await seals.tick();
+  assert.equal(writes.filter((w) => w.data.line === 'reading').length, 1);
+});

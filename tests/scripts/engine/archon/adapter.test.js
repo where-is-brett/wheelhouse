@@ -469,6 +469,7 @@ test('artefactsOf is the run\'s own artefacts folder in the engine\'s home, and 
   // (seen in check 80), so its runs' artefacts are under workspaces/mirrors/<owner>__<name>/.
   assert.equal(a.artefactsOf(RUN, 'acme/web'), path.join(home, 'workspaces', 'mirrors', 'acme__web', 'artifacts', 'runs', RUN));
   assert.equal(a.artefactsOf(RUN, 'shop'), path.join(home, 'workspaces', 'mirrors', 'shop', 'artifacts', 'runs', RUN), 'a project in git alone is named after its own mirror');
+  assert.equal(a.artefactsOf(RUN, 'acme/web', { folder: '/engine/readers/ab12' }), path.join(home, 'workspaces', '_folder', 'ab12', 'artifacts', 'runs', RUN), 'a reader\'s folder is a folder project of its own');
   for (const [runId, repo] of [['../x', 'acme/web'], [RUN, '../web'], [RUN, 'acme/web/x'], [RUN, null], ['', 'acme/web']]) {
     assert.equal(a.artefactsOf(runId, repo), null, `${runId} ${repo}`);
   }
@@ -626,4 +627,20 @@ test('the meter\'s file is one for the account signed in to the engine\'s clean 
   const ann = adapter(fakeCli({}), { engine }).requestsFile();
   assert.notEqual(ann, unknown);
   assert.equal(path.dirname(ann), path.join(engine, 'requests'));
+});
+
+test('a reader runs in place in its own folder, with its card and no branch or work', async () => {
+  const cli = fakeCli({ 'workflow run': json('run-detach.json') });
+  const engine = adapter(cli);
+  assert.equal((await engine.start({ work: 'reader', lane: 'reader', card: 'q-w-1', project: '/engine/readers/ab12', bindings: { tiers: { medium: 'm' } } })).ok, true);
+  const { args } = cli.calls[0];
+  assert.deepEqual(args.slice(0, 3), ['workflow', 'run', 'wheelhouse-reader']);
+  assert.equal(args[args.indexOf('--cwd') + 1], '/engine/readers/ab12');
+  assert.ok(args.includes('--folder'));
+  assert.equal(args[args.indexOf('--input') + 1], 'card=q-w-1');
+  assert.equal(args.includes('--branch'), false);
+  assert.equal(args.includes('--project'), false);
+  assert.equal(args.some((a) => a.startsWith('work=')), false);
+  assert.equal((await engine.start({ work: 'reader', lane: 'reader', project: '/engine/readers/ab12' })).ok, false);
+  assert.equal((await engine.start({ work: 'reader', lane: 'reader', card: 'q-w-1' })).ok, false);
 });

@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { CODE_ALPHABET, takeOverLine, TAKEOVER_LABEL } from '../../../scripts/state/card-lines.js';
 import { PUT_OFF } from '../../../scripts/lib/front-desk.js';
+import { readingOf } from '../../../scripts/delegation/seal.js';
 import { makeEvent, eventPath, writeEvent, listEvents, checkRecord, PLAIN_KINDS, PROTECTED_KINDS, HELPER_ONLY_KINDS } from '../../../scripts/state/events.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
@@ -941,6 +942,25 @@ test('a caller can\'t write a shadow line', async () => {
     assert.ok(HELPER_ONLY_KINDS.includes('shadow'));
     const data = { line: 'seal', card: 'q-1', work: 'w', head: null, signed: null, reader: true, candidates: {}, exclusions: { hit: [], unread: [] }, stamp: {}, at: '2026-11-01T02:00:00.000Z', hash: 'a'.repeat(64) };
     assert.match(checkRecord(makeEvent({ kind: 'shadow', data }), { enrolled: readEnrolled() }), /only the helper/);
+  } finally {
+    if (before === undefined) delete process.env.WHEELHOUSE_HOME;
+    else process.env.WHEELHOUSE_HOME = before;
+  }
+});
+
+test('a reading line carries its fields, and a line with no reading has no pick', async () => {
+  const home = tempFolder('wh-shadow-');
+  const before = process.env.WHEELHOUSE_HOME;
+  process.env.WHEELHOUSE_HOME = home;
+  try {
+    const { computer, publicKey } = makeSigningKey();
+    enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
+    const at = '2026-11-01T02:00:00.000Z';
+    const reading = { frame: 'sound', why: 'It fits.', kind: 'can-see', fits: 'no-rule', pick: 'Keep', tags: [] };
+    assert.equal(makeEvent({ kind: 'shadow', data: readingOf({ card: 'q-1', work: 'w', reading, at }) }).data.pick, 'Keep');
+    assert.equal(makeEvent({ kind: 'shadow', data: readingOf({ card: 'q-1', work: 'w', why: 'lost', at }) }).data.pick, null);
+    assert.throws(() => makeEvent({ kind: 'shadow', data: { ...readingOf({ card: 'q-1', work: 'w', why: 'lost', at }), pick: 'Keep' } }), /whether it read/);
+    assert.throws(() => makeEvent({ kind: 'shadow', data: { ...readingOf({ card: 'q-1', work: 'w', why: 'lost', at }), more: 'x' } }), /no others/);
   } finally {
     if (before === undefined) delete process.env.WHEELHOUSE_HOME;
     else process.env.WHEELHOUSE_HOME = before;

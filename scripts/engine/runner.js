@@ -21,6 +21,7 @@ import { runCost, runningMinutes } from './spend.js';
 import { capReached, carriedSpend } from './caps.js';
 import { RED_MAIN, FIX_LANE, redMainIncident, openRedMain } from './fix-main.js';
 import { MERGE_WORK } from './dispatcher.js';
+import { READER_WORK } from '../delegation/reader.js';
 import { mergeQuestionWords } from './words.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
@@ -65,13 +66,14 @@ const inSentence = (title) => (/^[A-Z][a-z]/.test(title) ? title.charAt(0).toLow
 // - `readViews()` the project's views (questions, approvals, levels), as the helper builds them;
 // - `write(kind, data)` a record in the project's history; `stopped()` whether All stop is on;
 // - `settings()` { cardsPerDay, bundleApprovals }; `workOf(runId)` { work, lane } from the project's run records;
-// - `onCard(card)` tells the seals of a card once it is written (scripts/delegation/record-only.js);
+// - `onCard(card)` tells the seals of a card once it is written (scripts/delegation/record-only.js); `onReaderAsk(ask)`
+//   tells them of an ask on a reader's run, which never becomes a card;
 // - `titleOf(work)` the work's title; `endRun(runId)` ends a run's process tree by pid, as All stop does, for a run the
 //   engine wouldn't stop at its cap ({ ended, survivors });
 // - `openedOf(pr)` the helper's own record of what opened a pull request ({ lane, work, ... }), or null; `prTitleOf(pr)`
 //   its title from the host, or null; `keepReviews(runId)` keeps what an ended run's task reviews last said, in the
 //   helper's own record, true once done.
-export function engineRunner({ engine, file, readViews, write, stopped = () => false, now = () => new Date(), settings = () => ({}), workOf = () => null, titleOf = (work) => work, endRun = async () => ({ ended: [], survivors: [] }), openedOf = () => null, prTitleOf = async () => null, keepReviews = async () => true, onCard = () => {} } = {}) {
+export function engineRunner({ engine, file, readViews, write, stopped = () => false, now = () => new Date(), settings = () => ({}), workOf = () => null, titleOf = (work) => work, endRun = async () => ({ ended: [], survivors: [] }), openedOf = () => null, prTitleOf = async () => null, keepReviews = async () => true, onCard = () => {}, onReaderAsk = () => {} } = {}) {
   let state = readState(file);
   const keep = () => saveState(file, state);
   const note = (words, extra = {}) => write('note', { about: 'engine', words, ...extra });
@@ -134,6 +136,10 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       return;
     }
     const found = workOf(ask.runId);
+    if (found?.work === READER_WORK) {
+      try { onReaderAsk(ask); } catch { /* it costs a reading, never a card */ }
+      return;
+    }
     // A merge-queue run the helper didn't start, not yet seen by the dispatcher, still waits on an answer.
     const work = found?.work ?? ask.work ?? (isPlain(ask.mergeQuestion) ? MERGE_WORK : null);
     if (typeof work !== 'string') return;
@@ -443,6 +449,8 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     const v = viewsNow();
     const { capMinutes = {}, capTokens = {} } = settings() ?? {};
     for (const [work, list] of Object.entries(isPlain(v.runs) ? v.runs : {})) {
+      // A reader's limits are its own (scripts/delegation/record-only.js): no cap reads it, and no piece pays for it.
+      if (work === READER_WORK) continue;
       const byRun = new Map();
       for (const e of Array.isArray(list) ? list : []) if (typeof e?.data?.runId === 'string') (byRun.get(e.data.runId) ?? byRun.set(e.data.runId, []).get(e.data.runId)).push(e);
       for (const [runId, records] of byRun) {

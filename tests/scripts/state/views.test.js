@@ -12,6 +12,7 @@ import { makeSigningKey, enrol, readEnrolled, sign } from '../../../scripts/stat
 import { approvalLine, ciPushLine, confirmLine } from '../../../scripts/state/card-lines.js';
 import { computerId, profileDir, stateDir } from '../../../scripts/lib/paths.js';
 import { tempFolder } from '../../helpers/homes.js';
+import { readingOf } from '../../../scripts/delegation/seal.js';
 import { SUGGEST, WHY } from '../../../scripts/lib/calm-words.js';
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
@@ -1443,5 +1444,13 @@ test('the evidence view counts a card once, and only a seal this computer can ve
     const unsigned = { ...ev('shadow', 2, sealed('q-2')), sig: undefined };
     assert.equal(build([one, ev('shadow', 2, sealed('q-1')), unsigned]).evidence.sealed, 1);
     assert.equal(build([]).evidence.sealed, 0);
+  });
+});
+
+test('a card counts as read only with a reading, not a reader that gave none', async () => {
+  await withHome(async () => {
+    const line = (card, reader) => ev('shadow', 2, { ...readingOf({ card, work: 'w', why: 'no-start', at: T(1), ...(reader ? { reading: { frame: 'sound', why: 'It fits.', kind: 'can-see', fits: 'no-rule', pick: 'Keep', tags: [] } } : {}) }) });
+    const views = build([ev('shadow', 1, sealed('q-1')), line('q-1', true), line('q-2', false)]);
+    assert.equal(views.evidence.read, 1);
   });
 });

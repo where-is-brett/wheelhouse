@@ -27,6 +27,7 @@ const TOOLS = Object.freeze({
   Write: [...copilotToolNames.edit],
   Edit: [...copilotToolNames.edit],
   NotebookEdit: [...copilotToolNames.edit],
+  AskUserQuestion: ['ask_user'],
 });
 // What only Claude steps take, left out of the twin.
 const CLAUDE_ONLY = ['plugins', 'hooks', 'agents', 'maxBudgetUsd', 'settingSources', 'betas', 'fallbackModel'];

@@ -42,8 +42,10 @@ export const LANE_WORKFLOWS = Object.freeze({
   bug: 'wheelhouse-bug',
   'fix-main': 'wheelhouse-fix-main',
   merge: 'archon-merge-queue',
+  reader: 'wheelhouse-reader',
 });
 const MERGE_QUEUE = LANE_WORKFLOWS.merge;
+const READER = LANE_WORKFLOWS.reader;
 
 // The forms of the pack this engine's runs may start, beside the pack's own (pack-build.js): a Copilot project's twins.
 export const ENGINE_PACK_FORMS = PACK_FORMS;
@@ -359,6 +361,7 @@ export function archonAdapter({
       if (broker) return refusedWith(broker);
       if (!packDir || !configFile) return refusedWith("The engine's pack or its settings file isn't known, so nothing can start");
       if (workflow !== MERGE_QUEUE && !order.work) return refusedWith('A run needs the id of its work');
+      if (workflow === READER && !(order.card && order.project)) return refusedWith('A reader needs its card and its folder');
       // Archon's merge queue reads the repository it merges in from its inputs, and fails its first step without them.
       if (workflow === MERGE_QUEUE && !(typeof order.repo?.host === 'string' && order.repo.host && typeof order.repo?.path === 'string' && order.repo.path)) {
         return refusedWith('The merge queue needs the repository it merges in');
@@ -384,9 +387,11 @@ export function archonAdapter({
         if (!owner || !name) return refusedWith('The merge queue needs the repository it merges in');
         args.push('--project', `mirrors/${projectSlug(owner, name)}`);
       }
-      if (order.branch) args.push('--branch', order.branch);
-      if (workflow !== MERGE_QUEUE) args.push('--input', `work=${order.work}`);
-      else args.push('--input', `repo_host=${order.repo.host}`, '--input', `repo_path=${order.repo.path}`);
+      // A reader runs in place in a folder of its own, which Archon holds as a folder project: no git and no worktree.
+      if (workflow === READER) args.push('--folder', '--input', `card=${order.card}`);
+      else if (order.branch) args.push('--branch', order.branch);
+      if (workflow === MERGE_QUEUE) args.push('--input', `repo_host=${order.repo.host}`, '--input', `repo_path=${order.repo.path}`);
+      else if (workflow !== READER) args.push('--input', `work=${order.work}`);
       for (const binding of models) args.push('--model', binding);
       // Not started in the project (--cwd names it), so Bun reads nothing of the project's own.
       const result = await cli(args, { json: true, timeout: START_MS });
@@ -489,10 +494,12 @@ export function archonAdapter({
     // The run's artefacts folder, where Archon's $ARTIFACTS_DIR puts what its steps write:
     // <home>/workspaces/mirrors/<owner>__<name>/artifacts/runs/<run>. A project in git alone has no owner, so `repo` is its
     // name, and the mirror its own name gives: mirrors/<project>. Null for a run id or repository that isn't a plain name.
-    // Not one of the interface's methods: the helper copies a run's preview from here.
-    artefactsOf(runId, repo) {
+    // A folder project's are under workspaces/_folder/<folder's name>. Not one of the interface's methods: the helper
+    // copies a run's preview from here.
+    artefactsOf(runId, repo, { folder } = {}) {
       const parts = typeof repo === 'string' ? repo.split('/') : [];
       const plain = (name) => typeof name === 'string' && /^[A-Za-z0-9._-]{1,128}$/.test(name) && !/^\.+$/.test(name);
+      if (folder) return plain(runId) && plain(path.basename(folder)) ? path.join(home, 'workspaces', '_folder', path.basename(folder), 'artifacts', 'runs', runId) : null;
       if (!plain(runId) || parts.length < 1 || parts.length > 2 || !parts.every(plain)) return null;
       // Archon names the workspace after the project's remote, which is its fetch mirror (env.js): mirrors/<project>.
       return path.join(home, 'workspaces', 'mirrors', parts.length === 1 ? parts[0] : projectSlug(parts[0], parts[1]), 'artifacts', 'runs', runId);

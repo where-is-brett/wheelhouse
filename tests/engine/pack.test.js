@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { buildPack } from '../../scripts/engine/pack-build.js';
-import { nodesOf, NO_PERSON_LINE, LOOP_LINE, RULES_MARK } from '../../scripts/engine/pack-check.js';
+import { nodesOf, NO_PERSON_LINE, LOOP_LINE, READ_ONLY, RULES_MARK } from '../../scripts/engine/pack-check.js';
 import { LANE_WORKFLOWS } from '../../scripts/engine/archon/adapter.js';
 import { REVIEW_STEPS, FEATURE_REVIEW } from '../../scripts/engine/routes.js';
 import { LANE_CAPS } from '../../scripts/engine/order.js';
@@ -24,7 +24,7 @@ function built() {
 }
 const LABELS = ['wh.kind', 'wh.level', 'wh.topic', 'wh.work', 'wh.recommend'];
 
-const ALL = [LANE_WORKFLOWS.bug, LANE_WORKFLOWS.feature, LANE_WORKFLOWS['fix-main'], 'wheelhouse-hello', LANE_WORKFLOWS.quick, 'wheelhouse-slice-task', LANE_WORKFLOWS.slice, 'wheelhouse-small-task', LANE_WORKFLOWS.small];
+const ALL = [LANE_WORKFLOWS.bug, LANE_WORKFLOWS.feature, LANE_WORKFLOWS['fix-main'], 'wheelhouse-hello', LANE_WORKFLOWS.quick, LANE_WORKFLOWS.reader, 'wheelhouse-slice-task', LANE_WORKFLOWS.slice, 'wheelhouse-small-task', LANE_WORKFLOWS.small];
 // Check 77's mean tokens for one implement round, on the mid-sized model.
 const ROUND_TOKENS = 127000;
 
@@ -41,7 +41,8 @@ test('every AI step carries its prompt with the shared rules, and no prompt file
     for (const { node } of nodesOf(read(name).nodes)) {
       assert.equal(node.prompt_file, undefined, node.id);
       if (node.prompt === undefined) continue;
-      assert.ok(node.prompt.includes(NO_PERSON_LINE) && node.prompt.includes(LOOP_LINE), `${node.id} has the rules`);
+      // The reader can't ask, and has no order: the shared rules would tell it to read one and take a blocked exit.
+      if (!READ_ONLY.has(name)) assert.ok(node.prompt.includes(NO_PERSON_LINE) && node.prompt.includes(LOOP_LINE), `${node.id} has the rules`);
       assert.ok(!node.prompt.includes(RULES_MARK) && !node.prompt.startsWith('<!--'), node.id);
     }
   }
@@ -184,7 +185,7 @@ test('the slice lane is the small lane plus its task review, switch check, teste
   assert.match(slice.nodes.find((n) => n.id === 'unplan').when, /\$flag-off\.output\.clean == 'true'/);
   assert.match(slice.nodes.find((n) => n.id === 'preview').bash, /--walk --flag-on/);
   const tester = slice.nodes.find((n) => n.id === 'tester');
-  assert.deepEqual(tester.denied_tools, ['Write', 'Edit', 'NotebookEdit'], 'the tester reads only');
+  assert.deepEqual(tester.denied_tools, ['Write', 'Edit', 'NotebookEdit', 'AskUserQuestion'], 'the tester reads only');
   assert.equal(tester.when, "$preview.output.walk == 'true'", 'a slice with no page check passes straight through');
   assert.match(slice.nodes.find((n) => n.id === 'ready').when, /\$tester\.output\.met == 'true'/, 'a page check not met is never marked ready');
   const approval = slice.nodes.find((n) => n.id === 'approval');
@@ -208,7 +209,7 @@ test('the feature lane switches the feature on, reviews it whole on the large ti
   const loop = feature.nodes.find((n) => n.id === 'review').loop_group;
   const whole = loop.nodes.find((n) => n.id === FEATURE_REVIEW);
   assert.equal(whole.model, 'large');
-  assert.deepEqual(whole.denied_tools, ['Write', 'Edit', 'NotebookEdit']);
+  assert.deepEqual(whole.denied_tools, ['Write', 'Edit', 'NotebookEdit', 'AskUserQuestion']);
   assert.match(loop.nodes.find((n) => n.id === 'verdict').bash, /--feature "\$whole"/);
   assert.equal(loop.max_iterations, 4);
   assert.ok(ids.indexOf('approval') > ids.indexOf('preview'), 'the switch-on is approved on the preview of the switched-on head');

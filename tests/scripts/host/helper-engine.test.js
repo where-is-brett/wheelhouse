@@ -16,6 +16,8 @@ import { writeProject } from '../../../scripts/lib/projects.js';
 import { listEvents, makeEvent, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
+import { helperClient } from '../../../scripts/host/helper-client.js';
+import { TICKET_FILE } from '../../../scripts/engine/ticket.js';
 import { fakeEngine, loadRecordings } from '../../../scripts/engine/fake.js';
 import { readCursorFile } from '../../../scripts/engine/host.js';
 import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
@@ -176,12 +178,53 @@ test('a card the router writes gets its signed seal, and the card doesn\'t wait 
         const [seal] = ofKind('shadow');
         assert.equal(seal.data.card, ofKind('question')[0].data.id);
         assert.ok(seal.sig, 'the line is signed');
-        assert.equal(ofKind('shadow').length, 1);
-        // Read by nothing yet, so the card stays open for its score, and a look at the record writes nothing.
-        assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(kept, 'utf8')).open), [seal.data.card]);
+        assert.equal(ofKind('shadow').filter((e) => e.data.line === 'seal').length, 1);
+        // A reader that couldn't start leaves a line saying so, and the card has no score to wait for.
+        assert.equal(ofKind('shadow').filter((e) => e.data.line === 'reading' && e.data.reader === 'none').length, 1);
+        assert.deepEqual(JSON.parse(fs.readFileSync(kept, 'utf8')).open, {});
         await helper.engine.seal();
-        assert.equal(ofKind('shadow').length, 1);
+        assert.equal(ofKind('shadow').length, 2);
         assert.equal(JSON.parse(fs.readFileSync(kept, 'utf8')).waiting.length, 0);
+      } finally {
+        await helper.close();
+      }
+    });
+  } finally { p.cleanup(); }
+});
+
+test('a question card\'s reader starts from the helper, gets its view by its ticket, and costs no card', async () => {
+  const p = await projects(['o__on']);
+  const artefacts = path.join(p.home, 'artefacts');
+  const spend = { tokens: 10, dollars: 0.01, source: 'reported' };
+  const engine = fakeEngine({ artefacts, recordings: { ...recordings, reader: [{ type: 'step-finished', at: 't', step: 'read', role: 'reader', spend, output: 'not a reading' }] } });
+  const { runId } = engine.start({ recording: 'quick-blocked' });
+  try {
+    await as(p.home, async () => {
+      started('o__on', runId, 'card-13');
+      const helper = await startHelper({
+        run: hostGuard, address: testAddress(p.home), adapterFor: async () => ({ defaultBranch: async () => 'main' }), envFor: async () => ({}),
+        spawn: stubSpawn().spawn, engineFor: () => engine, dispatchMs: 60 * 60 * 1000,
+      });
+      try {
+        const ofKind = (kind) => listEvents(stateDir('o__on'), { report: () => {} }).filter((e) => e.kind === kind);
+        await until(() => ofKind('question').length === 1, { what: 'the card' });
+        const card = ofKind('question')[0].data;
+        await until(() => fs.existsSync(path.join(stateDir('o__on'), '..', 'engine', 'shadow.json')), { what: 'the card queued for its seal' });
+        await helper.engine.seal();
+        const start = engine.calls.find((c) => c.call === 'start' && c.order.lane === 'reader');
+        assert.equal(start.order.card, card.id);
+        assert.equal(start.order.work, 'reader');
+        const reader = [...engine.calls].filter((c) => c.call === 'start').length;
+        assert.equal(reader, 2);
+        const run = fs.readdirSync(artefacts).find((name) => name.endsWith('reader'));
+        const ticket = fs.readFileSync(path.join(artefacts, run, TICKET_FILE), 'utf8').trim();
+        const client = helperClient({ address: testAddress(p.home) });
+        const given = await client.engine.readerView({ runId: run, ticket });
+        assert.equal(given.ok, true);
+        assert.equal(given.view.question, card.what);
+        assert.equal((await client.engine.readerView({ runId: run })).ok, false);
+        assert.equal(ofKind('question').length, 1);
+        assert.equal(ofKind('card').length, 0);
       } finally {
         await helper.close();
       }

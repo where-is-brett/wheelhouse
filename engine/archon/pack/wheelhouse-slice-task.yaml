@@ -113,7 +113,10 @@
                 "blocked",
                 "assumptions"
               ]
-            }
+            },
+            "denied_tools": [
+              "AskUserQuestion"
+            ]
           },
           {
             "id": "task-review",
@@ -128,7 +131,8 @@
             "denied_tools": [
               "Write",
               "Edit",
-              "NotebookEdit"
+              "NotebookEdit",
+              "AskUserQuestion"
             ],
             "idle_timeout": 600000,
             "prompt_file": "prompts/task-review.md",

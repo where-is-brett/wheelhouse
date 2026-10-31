@@ -34,6 +34,8 @@ Each card the build engine raises also gets a seal in that record: a signed line
 
 When the First Mate ends a turn on a question with no card, Claude Code's Stop hook adds one line to the same record with the time and none of the words, so those questions can be counted. A pick of Suggest a change… in the chat on a build's question keeps only the card's id, for its score.
 
+A question card's seal may gain a second line: a small read-only run's own reading of the question, made after the card is written. That run sees the question, the bare options and the change with its comments taken out, in a folder of its own on this computer, and reads nothing else. What it was shown is kept only until it has read it. Its reading stays in the private record with the seal, and its tokens are kept under a line of their own, against no piece. It changes nothing about a card, and no card waits for it.
+
 If you choose a backup folder for a project kept on this computer, Wheelhouse writes one file there, `<project>.wheelhouse-backup`, with the project's code and its history, and keeps one earlier copy beside it. The file holds none of the records above and none of Wheelhouse's own branches. Where it goes from there is up to the folder you chose: a cloud service sends it off your computer under its own terms.
 
 Beside each project, `backup.json` says where its backups go and how the last one went, and `safekeeping.json` holds what the Safekeeping line last found: names of branches and how many changes are only here, never your code. **Keep a copy online** sends a branch to your host under `keep/<branch>`, and only when you press it.

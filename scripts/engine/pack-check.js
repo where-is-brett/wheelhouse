@@ -23,8 +23,16 @@ export const RULES_MARK = '{{rules}}';
 export const NO_PERSON_LINE = 'There is no person to ask';
 export const LOOP_LINE = "Earlier rounds' committed code stands";
 
-// Workflows that are not lanes, so take no work: setup's health trial.
-const NOT_LANES = new Set(['wheelhouse-hello']);
+// Workflows that are not lanes, so take no work: setup's health trial, and the reader.
+const NOT_LANES = new Set(['wheelhouse-hello', 'wheelhouse-reader']);
+// The workflows that can only read (choice 6 of the delegated decisions plan): a step of one can't ask, so it has no
+// blocked exit, no wait and no shared rules, which tell a step to read an order and take that exit. What holds it to its
+// own folder is its tool list and the project settings alone, so neither it nor a plugin may add to them (check 87).
+export const READ_ONLY = new Set(['wheelhouse-reader']);
+const READ_TOOLS = ['Read', 'Grep', 'Glob'];
+const sameList = (a, b) => Array.isArray(a) && a.length === b.length && a.every((x, i) => x === b[i]);
+// The tool that would put a question to a person. A step's only way to the director is its blocked exit (check 86).
+export const QUESTION_TOOL = 'AskUserQuestion';
 // The model a step may name: one of Archon's tiers, or an alias the routing table binds.
 const TIERS = new Set(['small', 'medium', 'large']);
 // Words that name a model or its family. The routing table is the one place that names a model (section 7.6).
@@ -70,11 +78,14 @@ const filesOf = (dir) => fs.readdirSync(dir, { recursive: true, withFileTypes: t
   .map((entry) => path.relative(dir, path.join(entry.parentPath ?? entry.path, entry.name)).split(path.sep).join('/'))
   .sort();
 
+const deniesQuestion = (node) => (Array.isArray(node.denied_tools) && node.denied_tools.includes(QUESTION_TOOL) ? [] : [`${node.id} doesn't deny ${QUESTION_TOOL}, so nothing but the engine keeps it from a person`]);
+
 // The problems with one AI node, as plain lines. `waitedAfter` is true for a step of a task block that a lane waits on
 // after the block's fan-out: a block can't hold a wait, so its blocked exit is the lane's.
 function aiProblems(node, group, nodes, copies, waitedAfter = false) {
   const found = [];
   const id = node.id;
+  found.push(...deniesQuestion(node));
   const plugins = Array.isArray(node.plugins) ? node.plugins : [];
   if (!plugins.includes(WHEELHOUSE_PLUGIN)) found.push(`${id} doesn't name the Wheelhouse plugin (${WHEELHOUSE_PLUGIN}), so its guards wouldn't load`);
   if (plugins.some((plugin) => plugin !== WHEELHOUSE_PLUGIN)) found.push(`${id} names a plugin other than Wheelhouse`);
@@ -90,6 +101,21 @@ function aiProblems(node, group, nodes, copies, waitedAfter = false) {
   const exit = `$${owner}.output.blocked == 'true'`;
   const waits = nodes.some(({ node: n }) => n.wait !== undefined && Array.isArray(n.depends_on) && n.depends_on.includes(owner) && String(n.when ?? '').includes(exit));
   if (!waits && !waitedAfter) found.push(`${id} has no wait for its blocked exit`);
+  if (!promptFileOf(node)) found.push(`${id} has no prompt file in prompts/`);
+  return found;
+}
+
+// The problems with one step of a read-only workflow.
+function readerProblems(node) {
+  const found = [];
+  const id = node.id;
+  found.push(...deniesQuestion(node));
+  if (!sameList(node.allowed_tools, READ_TOOLS)) found.push(`${id} has to carry exactly the tools ${READ_TOOLS.join(', ')}`);
+  if (!sameList(node.settingSources, ['project'])) found.push(`${id} has to read the project's settings alone, so no allow rule of the computer's widens what it reads`);
+  if (node.plugins !== undefined || node.skills !== undefined) found.push(`${id} takes no plugin and no skill, which would add to what it reads`);
+  if (node.model !== undefined && !(TIERS.has(node.model) || /^@[A-Za-z0-9][\w-]*$/.test(node.model))) found.push(`${id} names a model; a step names a tier or an alias`);
+  if (Object.keys(node.output_format?.properties ?? {})[0] !== 'frame') found.push(`${id} has to answer the frame first`);
+  if (node.output_format?.properties?.blocked !== undefined) found.push(`${id} has no blocked exit: it can't ask`);
   if (!promptFileOf(node)) found.push(`${id} has no prompt file in prompts/`);
   return found;
 }
@@ -139,7 +165,8 @@ export function checkPack(dir = PACK_DIR, { skillCopies = skillCopyNames() } = {
     const nodes = nodesOf(workflow.nodes);
     if (nodes.length === 0) found.push(`${title} has no steps`);
     for (const { node, group } of nodes) {
-      if (isAI(node)) found.push(...aiProblems(node, group, nodes, skillCopies, block && blocks.get(workflow.name)));
+      if (isAI(node)) found.push(...(READ_ONLY.has(workflow.name) ? readerProblems(node) : aiProblems(node, group, nodes, skillCopies, block && blocks.get(workflow.name))));
+      if (READ_ONLY.has(workflow.name) && node.wait !== undefined) found.push(`${node.id} waits, and a read-only workflow can't ask`);
       if (node.loop_group !== undefined && !(Number.isInteger(node.loop_group?.max_iterations) && node.loop_group.max_iterations >= 1)) found.push(`${node.id} is a loop with no max_iterations`);
       const file = promptFileOf(node);
       if (file) used.add(file);
@@ -157,10 +184,11 @@ export function checkPack(dir = PACK_DIR, { skillCopies = skillCopyNames() } = {
   try { rules = fs.readFileSync(path.join(prompts, 'rules.md'), 'utf8'); } catch { found.push('prompts/rules.md, the shared rules, is missing'); }
   if (rules && !rules.includes(NO_PERSON_LINE)) found.push(`rules.md lacks the no-person line ("${NO_PERSON_LINE}")`);
   if (rules && !rules.includes(LOOP_LINE)) found.push(`rules.md lacks the loop line ("${LOOP_LINE}")`);
+  const readOnlyPrompts = new Set(read.filter(({ workflow }) => READ_ONLY.has(workflow.name)).flatMap(({ workflow }) => nodesOf(workflow.nodes).map(({ node }) => promptFileOf(node))));
   const promptFiles = fs.existsSync(prompts) ? fs.readdirSync(prompts).filter((name) => name.endsWith('.md') && name !== 'rules.md').sort() : [];
   for (const name of promptFiles) {
     const text = fs.readFileSync(path.join(prompts, name), 'utf8');
-    if (!text.includes(RULES_MARK)) found.push(`prompts/${name} doesn't include the shared rules (${RULES_MARK})`);
+    if (!text.includes(RULES_MARK) && !readOnlyPrompts.has(`prompts/${name}`)) found.push(`prompts/${name} doesn't include the shared rules (${RULES_MARK})`);
     if (MODEL_WORDS.test(text)) found.push(`prompts/${name} names a model`);
     if (VERDICT.test(text)) found.push(`prompts/${name} posts a review verdict; only the helper does, from a signed review`);
   }
