@@ -11,7 +11,7 @@ This is the one-page runbook. Each step is a card that the First Mate puts in fr
 
 ## 2. Cut the agents' access to the host
 
-**What you click:** "Cut the agents' access to the host". Steps 2, 4 and 5 use each click once.
+**What you click:** "Cut the agents' access to the host". Steps 2, 4 and 5 use each click once. A project kept on this computer has no connection to cut, so the First Mate leaves this step out.
 
 **What happens:**
 

@@ -26,7 +26,9 @@ Claude Code sends your email and account IDs with every figure. The receiver kee
 
 The project's decisions and records (your requests and ideas, rulings, cards and your clicks on them, approvals and reviews) stay on your computer, in the project's private record, `~/.wheelhouse/projects/<project>/record/`. It is a git repository with no remote: Wheelhouse adds to it and never sends it anywhere. Your personal settings, and your own GitHub app if you made one, are kept the same way in `~/.wheelhouse/settings/`, one for each computer.
 
-Nothing of yours goes to GitHub or GitLab, even if the repository is public. The one thing Wheelhouse keeps there is the `wheelhouse-lock` branch, which stops two computers driving one project at once: it holds only a computer id and a counter.
+A project kept on this computer goes nowhere: its history stays in your folder and in a private copy, `~/.wheelhouse/projects/<project>/home.git`, which only Wheelhouse's helper changes.
+
+For a project on a host, nothing of yours goes to GitHub or GitLab, even if the repository is public. The one thing Wheelhouse keeps there is the `wheelhouse-lock` branch, which stops two computers driving one project at once: it holds only a computer id and a counter.
 
 Your history doesn't follow you to another computer, as Claude's chats don't: a second computer starts its own record. Wheelhouse keeps no backup of it anywhere else, so if a computer is lost, its private record is lost with it unless a backup of the computer (Time Machine, or File History on Windows) has it.
 
@@ -62,7 +64,8 @@ Typing `/wheelhouse:uninstall` in a session on the project shows a card listing 
 - The build engine's runs for the project are cancelled first. If they don't stop, uninstall stops there and removes nothing else.
 - Its jobs for the project stop: the Bosun and its watcher.
 - Locked, if you chose it, is taken off. It asks for your computer password.
-- Its settings, its configuration, its part of `CLAUDE.md`, the pinned kits and the engine's two `.archon` files come out of the project's files, by a pull request you merge (or straight from the folder, if setup's own commit never reached the host). Engine files that came by the switch's pull request, rather than setup's commit, stay for now.
+- A project kept on this computer first brings its folder up to the main version, with every line its private copy holds; uninstall stops there, with nothing of the folder touched, if the folder has changes of its own or is on another line.
+- Its settings, its configuration, its part of `CLAUDE.md`, the pinned kits and the engine's two `.archon` files come out of the project's files, by a pull request you merge (for a project kept on this computer, by a last change merged at once, into the folder too; its `wheelhouse` git setting and its check folder go after it) (or straight from the folder, if setup's own commit never reached the host). Engine files that came by the switch's pull request, rather than setup's commit, stay for now.
 - The changes setup made to this computer (the 30 days for transcripts, the usage counts, Claude Code's update channel and phone notifications) are put back, but only with the last project on this computer that uses Wheelhouse, since the others still need them. While another project here still uses the GitHub app, the app stays, and you get its installation page to untick this project's repository there.
 - With a project other than the last, its own copy of the project's history in the engine folder goes; the engine stays for the others.
 - With the last project, the engine goes: its folder, with Archon, Bun, the broker, the copies of history and Copilot's tool and clean home; the Wheelhouse plugin setup added for your account (one setup only brought up to date stays); and the sign-in start.
@@ -74,6 +77,7 @@ Typing `/wheelhouse:uninstall` in a session on the project shows a card listing 
 **What it keeps:**
 
 - Your product's repository stays, unless you choose **Delete it** on its own card. It gets a card only if setup made it: one you already had is kept, with no card. **Keep it** is recommended, since it can't be brought back. Its settings page on GitHub or GitLab opens, and you click Delete there yourself.
+- A project kept on this computer's private copy, `~/.wheelhouse/projects/<project>/home.git`, stays, unless you choose **Delete it** on its own card. Your folder's git holds the whole history by then, so nothing depends on the copy.
 - The project's private record on this computer stays, unless you choose **Delete it** on its own card. **Keep it** is recommended, since a deleted record can't be brought back.
 - The build engine's run history, `~/.wheelhouse-engine`, stays, unless you choose **Delete it** on its own card with the last project. **Keep it** is recommended, since it can't be brought back.
 - A `wheelhouse-state` branch or `wheelhouse-profile` repository left from an earlier Wheelhouse stays where it is; uninstall offers no card for either.

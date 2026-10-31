@@ -879,7 +879,7 @@ const FALL_BACK_ROUTES = ['/pr/state', '/state/record', '/foreman/run'];
 const PLACED_ROUTES = [
   '/state/views', '/state/write', '/pr/state', '/pr/preview', '/session/mark', '/cards/chat-click', '/confirm',
   '/desk/read', '/desk/act', '/desk/watch',
-  '/lean/status', '/lean/merge', '/lean/undo', '/lean/copy',
+  '/lean/status', '/lean/merge', '/lean/undo', '/lean/copy', '/local/undo',
   '/survey/carry-on', '/survey/archive', '/survey/restore', '/premium/card', '/premium/check', '/premium/state', '/premium/failed',
   '/engine-switch',
 ];

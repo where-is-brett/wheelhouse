@@ -1821,6 +1821,17 @@ test('carry-on --line <name> asks the helper to make that piece of work ready, b
   assert.deepEqual(made.json, printed);
 });
 
+test('undo asks the helper by the folder, and gives what it answers, its card included', async () => {
+  const asked = [];
+  const helper = { client: { local: { undo: async (body) => { asked.push(body); return { ok: false, refused: 'needs the window', needs: 'window', card: { id: 'c-1' } }; } } } };
+  const got = await run(helper, ['undo', FULL]);
+  assert.equal(got.code, 0, got.err);
+  assert.equal(got.json.card.id, 'c-1');
+  assert.deepEqual(asked, [{ cwd: CWD, merge: FULL }]);
+  const refused = await run(helper, ['undo', 'abc']);
+  assert.deepEqual([refused.code, refused.err], [1, 'Give the merge in full: undo <merge>\n']);
+});
+
 test('archive and restore ask the helper to make the change ready, and print the work, the from to record and the files moved', async () => {
   const asked = [];
   const answer = (work) => ({ ok: true, work, from: { sha: FULL, ref: `refs/wheelhouse/from/${work}` }, moved: ['AGENTS.md', '.cursorrules'] });
@@ -1850,7 +1861,7 @@ test('an unknown command, or a helper that can\'t be reached, is one line on sta
     const helper = fakeHelper();
     const unknown = await run(helper, ['show', '7']);
     assert.equal(unknown.code, 1);
-    assert.match(unknown.err, /^Commands: cards, card, again, why, suggest, record, similar, views, explain, review, preview, carry-on, archive, restore, confirm, premium-card, premium-check\n$/);
+    assert.match(unknown.err, /^Commands: cards, card, again, why, suggest, record, similar, views, explain, review, preview, undo, carry-on, archive, restore, confirm, premium-card, premium-check\n$/);
     const away = { client: { desk: { read: async () => ({ ok: false, refused: 'the host helper could not be reached: is it running?' }) } } };
     const out = await run(away, ['cards']);
     assert.equal(out.code, 1);
@@ -1910,7 +1921,7 @@ test('through the real helper, the command places the project from its folder an
 test('run as a script, an unknown command is refused with the list of commands', async () => {
   const done = spawnSync(process.execPath, [SCRIPT, 'nonsense'], { encoding: 'utf8' });
   assert.equal(done.status, 1);
-  assert.equal(done.stderr, 'Commands: cards, card, again, why, suggest, record, similar, views, explain, review, preview, carry-on, archive, restore, confirm, premium-card, premium-check\n');
+  assert.equal(done.stderr, 'Commands: cards, card, again, why, suggest, record, similar, views, explain, review, preview, undo, carry-on, archive, restore, confirm, premium-card, premium-check\n');
   assert.equal(done.stdout, '');
 });
 

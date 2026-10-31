@@ -282,6 +282,11 @@ test('a home others can reach, or a main version moved, is found', () => withKey
   const folder = await projectFolderWith();
   await makeHome({ project: 'shop', folder });
   assert.match((await lookAtHome({ project: 'shop', seen: 'a'.repeat(40) })).why, /moved outside/);
+  // Windows has no permission bits to read, so a home's look there leaves them out.
+  fs.chmodSync(homeDir('shop'), 0o755);
+  assert.match((await lookAtHome({ project: 'shop', platform: 'darwin' })).why ?? '', process.platform === 'win32' ? /^$/ : /other people/);
+  assert.equal((await lookAtHome({ project: 'shop', platform: 'win32' })).ok, true);
+  fs.chmodSync(homeDir('shop'), 0o700);
   fs.chmodSync(homeDir('shop'), 0o755);
   assert.match((await lookAtHome({ project: 'shop' })).why, /other people/);
 }));

@@ -132,7 +132,7 @@ import { projectPath } from '../host/gitlab-key.js';
 import { DEFAULT_GITLAB, commitEmailOf } from '../host/gitlab-base.js';
 import { MARKETPLACE, WHEELHOUSE_REPO, readManifest, checkInstalled, locateInstalled, claudeHome as defaultClaudeHome } from '../lineage/manifest.js';
 import { keepQueue, readQueue } from '../checks/standing.js';
-import { gitRoute, homeDir } from '../host/local/home.js';
+import { gitRoute, homeBranch, homeDir } from '../host/local/home.js';
 import { FOLDER_REMOTE } from '../host/local/folder.js';
 import { identityOf, keepSeenMain } from '../host/local/merge.js';
 import { startedBySetup } from './local.js';
@@ -510,7 +510,7 @@ const parsed = (text) => {
 // The default branch, by the host's API with the director's own sign-in (ruling R34).
 async function defaultBranchOf({ host, repo, run, gitlab, base, project }) {
   let branch;
-  if (host === 'local') branch = /^ref:\s*refs\/heads\/(\S+)$/.exec(readText(path.join(homeDir(project), 'HEAD'))?.trim() ?? '')?.[1];
+  if (host === 'local') branch = homeBranch(project);
   else if (host === 'gitlab') {
     const api = await gitlab({ run, baseUrl: base });
     branch = (await api.get(projectPath(repo)))?.body?.default_branch;

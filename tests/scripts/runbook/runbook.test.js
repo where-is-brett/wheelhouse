@@ -16,6 +16,7 @@ import { readProject, writeProject } from '../../../scripts/lib/projects.js';
 import { run } from '../../../scripts/lib/run.js';
 import { setStop, stopState } from '../../../scripts/lib/stop.js';
 import { writeKey } from '../../../scripts/host/keys.js';
+import { cutAccess, NO_ACCESS_TO_CUT } from '../../../scripts/host/cut-access.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
 import { eventPath, makeEvent } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, sign } from '../../../scripts/state/signing.js';
@@ -173,6 +174,12 @@ test('a click older than ten minutes no longer counts', async () => {
       assert.equal((await client.runbook.contain({ project: 'o__p' })).ok, true);
     });
   } finally { s.cleanup(); }
+});
+
+test('the runbook leaves out cutting the connection for a local project', async () => {
+  const got = await cutAccess({ record: { host: 'local', repo: 'local/shop', connection: { host: 'local', mode: 'none', project: 'local/shop' } }, fetch: () => { throw new Error('nothing to reach'); } });
+  assert.deepEqual(got, { ok: true, message: NO_ACCESS_TO_CUT });
+  assert.match(fs.readFileSync(new URL('../../../templates/runbook.md', import.meta.url), 'utf8'), /kept on this computer has no connection to cut/);
 });
 
 test('cut-access names the project\'s own installation of the app, on its account (ruling R83)', async () => {
