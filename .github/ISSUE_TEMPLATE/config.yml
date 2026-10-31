@@ -1,0 +1,6 @@
+# .github/ISSUE_TEMPLATE/config.yml
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security problem privately
+    url: https://github.com/where-is-brett/wheelhouse/security/advisories/new
+    about: A way round Wheelhouse's protections. Please don't open a public issue for it.

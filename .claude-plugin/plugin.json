@@ -2,6 +2,19 @@
   "name": "wheelhouse",
   "version": "0.2.0",
   "description": "Lets a director who is not a developer run AI agents that build their product.",
+  "author": {
+    "name": "where-is-brett",
+    "url": "https://github.com/where-is-brett"
+  },
+  "homepage": "https://github.com/where-is-brett/wheelhouse",
+  "repository": "https://github.com/where-is-brett/wheelhouse",
   "license": "Apache-2.0",
+  "keywords": [
+    "agents",
+    "product-owner",
+    "no-code",
+    "code-review",
+    "workflow"
+  ],
   "types": "./types/index.d.ts"
 }

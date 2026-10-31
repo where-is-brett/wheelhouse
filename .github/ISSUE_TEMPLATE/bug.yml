@@ -1,0 +1,43 @@
+# .github/ISSUE_TEMPLATE/bug.yml
+name: Something went wrong
+description: Tell us what Wheelhouse did that you didn't expect. You don't need to be a developer.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This page is public. Please don't paste passwords, keys or anything private about your product.
+
+        If you've found a way round Wheelhouse's protections, don't report it here: use the private security report link on the previous page.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: In your own words. Copy the words of any message you saw, if you can.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+  - type: input
+    id: version
+    attributes:
+      label: Which release of Wheelhouse?
+      description: For example v0.2.0. Leave it empty if you don't know.
+  - type: dropdown
+    id: computer
+    attributes:
+      label: Which computer?
+      options:
+        - Mac
+        - Windows
+        - Linux
+  - type: dropdown
+    id: app
+    attributes:
+      label: Which app?
+      options:
+        - Claude Desktop
+        - A terminal
+        - VS Code

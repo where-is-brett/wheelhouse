@@ -6,6 +6,7 @@
 # documents or the build plans passes the test jobs without running the tests
 # (.github/scripts/plan.js). Checks the mod (validator, source, bridge imports and
 # the mod's tests), and checks the lineage manifest against fresh copies of the upstream skills.
+# all-checks passes only when every other job has, and is the one check the rule on main requires.
 name: CI
 
 on:
@@ -110,3 +111,17 @@ jobs:
         with:
           node-version: 22
       - run: node scripts/lineage/manifest.js verify
+
+  # The test jobs' names change with the number of parts, so main's rule requires this job instead.
+  # always() runs it even when a job it needs failed or was skipped, so it fails rather than skips.
+  all-checks:
+    needs: [plan, test, validate, lineage]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Results: $RESULTS"
+          [ "$RESULTS" = "success success success success" ]
