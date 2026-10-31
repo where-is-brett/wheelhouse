@@ -10,6 +10,7 @@ import {
   KEEP_HERE, KEPT_LINE, PUT_ON_GITHUB, FIRST_CHECK_LINE, branchesOf, chooseBranch, chosenHost, localCard, localName, mirrorOf,
   othersLine, remotesOf, repoOfLocal,
 } from '../../../scripts/setup/local.js';
+import { redoCard } from '../../../scripts/setup/redo.js';
 import { FOLDER_REMOTE } from '../../../scripts/host/local/folder.js';
 import { homeDir } from '../../../scripts/host/local/home.js';
 import { readProject } from '../../../scripts/lib/projects.js';
@@ -203,6 +204,12 @@ test('another project of the name gets its own home', async () => {
     assert.equal(readProject('Shop-2').folder, second);
     assert.equal(readProject('Shop').folder, first);
   });
+});
+
+test('changing where a project is kept, once it is set up here, says so without naming a host', () => {
+  const { card } = redoCard({ key: '3.join', answers: { '3.join': said(KEEP_HERE) }, name: 'Shop', record: { host: 'local' }, described: null, count: 1 });
+  assert.match(card.what, /^Shop is already set up on this computer/);
+  assert.doesNotMatch(`${card.what} ${card.why}`, /\bhost\b|repository|connection/i);
 });
 
 test('the card says nothing goes online and never says host', async () => {

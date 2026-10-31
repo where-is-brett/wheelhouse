@@ -885,15 +885,16 @@ async function connectFolder({ folder, remoteUrl, gitPath, env, run, record }) {
 }
 
 // Sends a folder's own history to its new, empty repository: `branch`, which becomes the repository's default. An `origin` of
-// the folder's own stays as it is, so the record's address is the only way there; a folder with none gets it. Safe to repeat.
+// the folder's own stays as it is, so the record's address is the only way there; a folder with none gets it, once its history
+// is there: until then the folder still reads as a project kept here, and a fresh Go ahead takes this up again. Safe to repeat.
 async function publishFolder({ folder, remoteUrl, branch, gitPath, env, run, record }) {
   const git = setupGit({ run, gitPath, env: reaching(env, remoteUrl), cwd: folder, workTree: folder });
+  if ((await git(['push', '-q', '--no-verify', remoteUrl, `refs/heads/${branch}:refs/heads/${branch}`])).code !== 0) {
+    throw new Error('Your project could not be sent to its new repository; a fresh Go ahead tries again');
+  }
   if (originUrl(folder) === null) {
     record({ id: newId('chg'), kind: 'folder', target: path.join(folder, '.git'), before: { origin: null }, after: { origin: remoteUrl, branch } });
     if ((await git(['remote', 'add', 'origin', remoteUrl])).code !== 0) throw new Error('git could not name the repository in this folder');
-  }
-  if ((await git(['push', '-q', '--no-verify', remoteUrl, `refs/heads/${branch}:refs/heads/${branch}`])).code !== 0) {
-    throw new Error('Your project could not be sent to its new repository; a fresh Go ahead tries again');
   }
 }
 
