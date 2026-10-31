@@ -526,6 +526,17 @@ test('intervals given are laid over the plan\'s', () => withHome(async () => {
   assert.deepEqual(calls, ['testMerge', 'testMerge', 'testMerge']);
 }));
 
+test('a chat-question count never reaches the watcher: it wakes no session', () => withHome(async () => {
+  enrolHere();
+  record('incident', { id: 'one', what: 'x' }, 0);
+  const first = await observe({ project: P, client: fakeClient(), now: at(SEC) });
+  const prev = step({ seen: [], prev: null }, first).cursor.prev;
+  const line = record('chat-question', { at: new Date(0).toISOString() }, 2 * SEC);
+  const next = await observe({ project: P, client: fakeClient(), now: at(3 * SEC), prev });
+  assert.equal(next.stateIds.includes(line.id), false);
+  assert.equal((next.state ?? []).some((e) => e.kind === 'chat-question'), false);
+}));
+
 test('a seal never reaches the watcher: it is sent to no session', () => withHome(async () => {
   enrolHere();
   record('incident', { id: 'one', what: 'x' }, 0);

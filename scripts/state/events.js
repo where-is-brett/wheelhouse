@@ -18,7 +18,7 @@ export const PLAIN_KINDS = [
   'request', 'ruling', 'level', 'glossary', 'idea', 'rejection', 'card', 'card-answer',
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
-  'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey', 'column-ready', 'premium-rest',
+  'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey', 'column-ready', 'premium-rest', 'chat-question',
   'run', 'ask', 'cost', 'preview', 'lesson', 'incident-closed', 'reproduced',
 ];
 // `control-file` is the watcher's own finding (ruling P7-33): signed, so no session can write one. So is `usage-card`,
@@ -240,6 +240,8 @@ const PLAIN_SHAPES = {
   // Words typed into a front end without a First Mate (a later UI), queued for the First Mate's next
   // turn and shown as waiting (spec 5.2); `via` names the front end.
   request: { must: ['words', 'via'], may: [] },
+  // A First Mate turn that ended on a question with no card (scripts/hooks/chat-question.js): a count, never the words.
+  'chat-question': { must: ['at'], may: [] },
   // `from`: the ready-made change the work starts from (ruling P4): its commit, the ref that keeps
   // it (`refs/wheelhouse/from/<id>`) and, when it carries on a pull request, that request's number.
   work: { must: ['id', 'title', 'lane', 'visible', 'dependsOn'], may: ['doc', 'place', 'parent', 'from', 'level'] },
