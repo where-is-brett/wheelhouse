@@ -1534,7 +1534,7 @@ test('a new product\'s repository name never ends in a dash or a dot', () => {
 // ---- Their own GitHub App (Task 8b) ----
 
 const OWN = { clientId: 'Iv23li.ownapp0001', slug: 'wheelhouse-a-director', owner: USER };
-const MANIFEST_PERMISSIONS = { contents: 'write', pull_requests: 'write', issues: 'write', metadata: 'read' };
+const MANIFEST_PERMISSIONS = { contents: 'write', pull_requests: 'write', issues: 'write', statuses: 'write', metadata: 'read' };
 
 // The director's settings as the helper's routes give them, in memory.
 function memoryProfile(settings = {}) {

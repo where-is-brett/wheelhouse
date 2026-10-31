@@ -84,6 +84,9 @@ const httpsOnly = publicHttps;
 export const HISTORY_GITLAB_ONLY = 'The audit report reads the history of a GitLab host; for GitHub it is not available in this version';
 
 const MOST_REQUESTS = 100;
+// What GitHub keeps of a status's description, and the states it takes.
+const MOST_STATUS_WORDS = 140;
+const STATUS_STATES = ['pending', 'success', 'failure'];
 const MOST_COMMITS = 50;
 
 const QUEUE_LINE = 'This project\'s host queues merges; Wheelhouse merges only directly for now';
@@ -224,6 +227,14 @@ export function makeAdapter({ host, repo, run, env: given, base = DEFAULT_GITLAB
     closePr: async (number) => c.closePr(wholeNumber(number)),
     prState: async (number) => c.prState(wholeNumber(number)),
     ciState: async (sha) => c.ciState(commit(sha)),
+    // Reports a check at the commit under Wheelhouse's own context: { ok }, or { refused }, with 'permission' for a key
+    // that may not. A refusal is never thrown.
+    setStatus: async ({ sha, state, description } = {}) => {
+      if (!STATUS_STATES.includes(state)) throw new Error('The state must be pending, success or failure');
+      return c.setStatus({ sha: commit(sha), state, description: text(description, 'description').slice(0, MOST_STATUS_WORDS) });
+    },
+    // What reports on the commit, by name: [{ name, state, startedAt, app }].
+    checkContexts: async (sha) => c.checkContexts(commit(sha)),
     // The commit a branch points at, in full: the health read asks the default branch's CI with it.
     // Whether the commit has any checks or pipeline, or the branch holds CI configuration. Unlike
     // ciState it never turns a failed read into 'none': an error is thrown, so a failure to look

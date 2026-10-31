@@ -2,6 +2,7 @@
 // The `gh` command lines behind the adapter, and how GitHub's answers map to the
 // adapter's values. Values the caller supplies are passed as `--flag=value`, so
 // one that starts with "-" cannot be read as a flag; bodies go on standard input.
+import { STATUS_CONTEXT } from '../checks/where.js';
 
 // GitHub's `mergeable`: MERGEABLE is yes, CONFLICTING is no, and UNKNOWN (GitHub
 // is still working it out, or the pull request is no longer open) or anything
@@ -15,6 +16,26 @@ const STATE = { OPEN: 'open', MERGED: 'merged', CLOSED: 'closed' };
 const ROLLUP = { SUCCESS: 'success', PENDING: 'pending', EXPECTED: 'pending', FAILURE: 'failure', ERROR: 'failure' };
 
 const CI_QUERY = 'query($owner:String!,$name:String!,$sha:GitObjectID!){repository(owner:$owner,name:$name){object(oid:$sha){... on Commit{oid statusCheckRollup{state}}}}}';
+
+const CONTEXTS_QUERY = 'query($owner:String!,$name:String!,$sha:GitObjectID!){repository(owner:$owner,name:$name){object(oid:$sha){... on Commit{statusCheckRollup{contexts(first:100){nodes{__typename ... on CheckRun{name status conclusion startedAt completedAt checkSuite{app{slug}}} ... on StatusContext{context state createdAt creator{login}}}}}}}}}';
+// A check run's words, and a status's. A run that started and ended in the same moment, or that couldn't start, ran no job.
+const RUNNING = { QUEUED: 'queued', WAITING: 'queued', PENDING: 'queued', REQUESTED: 'queued', IN_PROGRESS: 'running' };
+const PASSED = ['SUCCESS', 'NEUTRAL', 'SKIPPED'];
+const STATUS_WORD = { SUCCESS: 'success', PENDING: 'pending', EXPECTED: 'pending', FAILURE: 'failure', ERROR: 'failure' };
+
+function contextOf(node) {
+  if (node?.__typename === 'StatusContext') {
+    const state = STATUS_WORD[node.state] ?? 'pending';
+    return { name: node.context, state, startedAt: state === 'success' ? node.createdAt ?? null : null, app: node.creator?.login ?? null };
+  }
+  const app = node?.checkSuite?.app?.slug ?? null;
+  if (node?.status !== 'COMPLETED') {
+    const state = RUNNING[node?.status] ?? 'queued';
+    return { name: node?.name, state, startedAt: state === 'running' ? node?.startedAt ?? null : null, app };
+  }
+  const ran = typeof node.startedAt === 'string' && node.startedAt !== node.completedAt && node.conclusion !== 'STARTUP_FAILURE';
+  return { name: node.name, state: PASSED.includes(node.conclusion) ? 'success' : 'failure', startedAt: ran ? node.startedAt : null, app };
+}
 
 // How many of a commit's deployments, newest first, are looked at for a successful one.
 const MOST_DEPLOYMENTS = 3;
@@ -73,6 +94,23 @@ export function githubCommands({ call, attempt, json, repo, fromAddress, refusal
 
     async ciState(sha) {
       return ciRead(sha);
+    },
+
+    // Everything that reports on the commit, by name: { name, state, startedAt, app }, with `startedAt` null unless a job
+    // really ran. Read apart from ciState, whose rollup can't tell Wheelhouse's own status from anything else.
+    async checkContexts(sha) {
+      const answer = await ask(['api', 'graphql', '-f', `query=${CONTEXTS_QUERY}`, '-f', `owner=${owner}`, '-f', `name=${name}`, '-f', `sha=${sha}`]);
+      if ((Array.isArray(answer?.errors) && answer.errors.length > 0) || answer?.data === null || typeof answer?.data !== 'object') throw new Error('GitHub could not read the commit\'s checks');
+      const nodes = answer?.data?.repository?.object?.statusCheckRollup?.contexts?.nodes;
+      return (Array.isArray(nodes) ? nodes : []).map(contextOf).filter((c) => typeof c.name === 'string' && c.name !== '');
+    },
+
+    // Reports a check on the commit (check 84). Each post adds an entry and the rollup takes the newest, so one repeated
+    // does no harm. A refusal is an answer: a connection set up before Wheelhouse asked for this permission reads 'permission'.
+    async setStatus({ sha, state, description }) {
+      const got = await attempt(['api', '-X', 'POST', `repos/${repo}/statuses/${sha}`, '-f', `state=${state}`, '-f', `context=${STATUS_CONTEXT}`, '-f', `description=${description}`]);
+      if (got.code === 0) return { ok: true };
+      return { refused: /\b403\b|not accessible/i.test(`${got.stderr}\n${got.stdout}`) ? 'permission' : 'GitHub did not take the report' };
     },
 
     // The commit's deployments, newest first: the first whose newest status, of any state, is
