@@ -28,6 +28,8 @@ And a briefing opens like this:
 
 **What it costs.** Wheelhouse is free and open source (Apache 2.0). The agents run on your own Claude plan, so their work comes out of your plan's usage, and Wheelhouse's Logbook shows this week's usage, including the share of your weekly allowance.
 
+**Who makes it.** Wheelhouse is an independent open-source project. It isn't made by, or affiliated with, Anthropic.
+
 **What it protects.** Agents never hold your GitHub or GitLab keys, your clicks are signed so an agent can't approve for you, and on a Mac the agents' commands run fenced off from the rest of your computer. What it doesn't protect you from is in [`SECURITY.md`](SECURITY.md).
 
 **What builds it.** On a Mac, for a product on GitHub, all the building runs on a build engine, [Archon](https://github.com/coleam00/Archon), which setup installs with its usage reporting off: quick changes, small pieces of work, bugs, features (in slices, each with its own pull request) and the fix when the main version breaks. Wheelhouse's checks and guards still wrap every step, and the engine never holds your GitHub keys. A product that builds with Copilot instead of Claude runs on the same engine too, except at Lean (below), which installs nothing. Products on GitLab, and work on Windows or Linux, are still built by Wheelhouse's own Crew for now. A project set up before `v0.2.0` is offered the switch once, on a card: you approve a pull request that adds the engine's files, and work already under way finishes where it started. How the engine fits, and its fallback, are in [`docs/engine/`](docs/engine/).
@@ -48,7 +50,7 @@ You need **Node.js** (a free program; [download the version marked LTS](https://
    claude plugin install wheelhouse@wheelhouse --scope project
    ```
 
-   Claude asks before it runs each one: allow it. The first adds Wheelhouse's own catalogue, at release `v0.2.0`; the second installs Wheelhouse from that catalogue, for this project only. Both name Wheelhouse's catalogue, so nothing else with a similar name can be installed by mistake. (A later release, from Wheelhouse's releases page, goes in place of `v0.2.0`.) If you prefer a terminal, the same two commands work there, run in the product's folder.
+   Claude asks before it runs each one: allow it. The first adds Wheelhouse's own catalogue, at release `v0.2.0`; the second installs Wheelhouse from that catalogue, for this project only. Both name Wheelhouse's catalogue, so nothing else with a similar name can be installed by mistake. (A later release, from Wheelhouse's [releases page](https://github.com/where-is-brett/wheelhouse/releases), goes in place of `v0.2.0`.) If you prefer a terminal, the same two commands work there, run in the product's folder.
 4. **Start a new session on the same folder.** Wheelhouse loads, and setup starts.
 5. **If the commands don't work,** use the plugin browser instead: click the **+** button beside the message box, then **Add plugins** (or **Plugins**, then **Browse plugins**). Add the catalogue `where-is-brett/wheelhouse`, choose **Wheelhouse** from it, choose **this project** when asked where, then start a new session on the folder.
 
@@ -85,4 +87,4 @@ Then the chat follows Wheelhouse's own playbook for Lean: the record, the Logboo
 
 ## For developers
 
-**Status:** `v0.2.0` is an early release for trying Wheelhouse out, with its tests passing. The design is in `docs/specs/2026-10-17-wheelhouse-design.md`, and where the work stands is in `HANDOVER.md`.
+**Status:** `v0.2.0` is an early release for trying Wheelhouse out, with its tests passing. The design is in `docs/specs/2026-10-17-wheelhouse-design.md`. How to run the tests, find your way around and cut a release is in [`CONTRIBUTING.md`](CONTRIBUTING.md).

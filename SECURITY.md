@@ -44,6 +44,8 @@ If a pop-up says **"security wants to use your confidential information stored i
 
 If you find a way round any of this, please tell us privately: on Wheelhouse's GitHub page, open the **Security** tab and choose **Report a vulnerability**. Please don't open a public issue for it. We aim to reply within a week, and we'll say when it's fixed.
 
+Only the latest release is supported: a security problem is put right in a new release, not in older ones.
+
 ## For developers
 
 The design is `docs/specs/2026-10-17-wheelhouse-design.md`; section 12 is safety and section 11 the host helper. The threat model and where an outside reviewer should start are in `docs/reviews/2026-10-24-outside-review-plan.md`.

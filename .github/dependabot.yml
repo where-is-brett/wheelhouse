@@ -1,0 +1,14 @@
+# .github/dependabot.yml
+# Proposes newer versions of the GitHub Actions that CI pins to a commit, once a month, in one pull
+# request. Wheelhouse has no npm dependencies. The pins for Archon, Bun and the upstream skills are
+# kept by scripts/engine/pins.js and the lineage checks, not here.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns:
+          - '*'
