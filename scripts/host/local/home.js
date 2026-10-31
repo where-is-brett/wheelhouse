@@ -65,13 +65,18 @@ export async function makeHome({ project, folder, branch, git = gitRoute() }) {
       await inHome.must(['rev-parse', '--verify', '-q', `refs/heads/${branch}^{commit}`], 'copy');
       await inHome.must(['symbolic-ref', 'HEAD', `refs/heads/${branch}`], 'copy');
     }
-    fs.writeFileSync(path.join(made, MARK), `${JSON.stringify({ computer: computerId() })}\n`, { mode: 0o600 });
+    markHome(made);
     fs.chmodSync(made, 0o700);
     fs.renameSync(made, home);
   } finally {
     fs.rmSync(part, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
   return { made: true };
+}
+
+// Marks the repository at `dir` as this computer's.
+export function markHome(dir) {
+  fs.writeFileSync(path.join(dir, MARK), `${JSON.stringify({ computer: computerId() })}\n`, { mode: 0o600 });
 }
 
 // Whether this computer holds the project's home: its mark names this computer.

@@ -298,6 +298,8 @@ export function makeComputer(host, clock, { name = 'Café Menu' } = {}) {
     const tool = path.basename(file).replace(/\.(exe|cmd)$/i, '');
     if (tool === 'git') return realRun(file, args, { ...options, env: { ...options.env, ...NO_GIT_CONFIG } });
     if (file === process.execPath) return realRun(file, args, options);
+    // A computer with no Time Machine, whose folder picker is closed.
+    if (tool === 'tmutil' || tool === 'osascript') return answer('', 1, `${tool} is not run in this test`);
     c.calls.push([tool, ...args]);
     if (tool === 'gh') return gh(args);
     if (tool === 'claude') return claude(args, options);

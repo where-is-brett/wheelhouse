@@ -36,6 +36,7 @@ import { unreachableRefusal, certificateRefusal, certificateLine, awayLine, outp
 import { childEnv } from './connection.js';
 import { localChanges } from './local/changes.js';
 import { FOLDER_REMOTE, bringFolderUp, folderWatch } from './local/folder.js';
+import { backUp, backupDue } from './local/backup.js';
 import { gitRoute, homeDir, homeGit, homeReadable, projectFolder } from './local/home.js';
 import { HAND_MADE_BRANCH, carriesFolderWork, cleanMerged, dropNextMain, finishMerge, keepSeenMain, mergeChange, revertOnHome, seenMain } from './local/merge.js';
 import { headReading, localSweep, needsApprovalOf } from './local/queue.js';
@@ -4748,7 +4749,7 @@ export async function startHelper({
   // What follows a merge on the home, whichever way it came. The merge stands by now, so none of this can undo it, and each
   // step is taken up again: the tick brings the folder up, and the next refresh the mirror. The branch goes from the home, its
   // commits staying under the change's own place there, so the mirror drops it too (check 83). The main line's check starts on
-  // the next tick, and part 8's backup goes here. `main-next` goes last, so a crash in here is finished by finishLocalMerge.
+  // the next tick, and the backup is written beside all this. `main-next` goes last, so a crash in here is finished by finishLocalMerge.
   async function afterLocalMerge(project, n, commit) {
     const changes = localChanges({ project, git: gitRoute({ run }), write: ({ event }) => checkWrite(project, event), now });
     const change = changes.changeOf(n);
@@ -4761,7 +4762,17 @@ export async function startHelper({
       const up = await bringFolderUp({ project, folder: recordOf(project).folder, branch: change.base, git }).catch(() => null);
       if (up?.line !== undefined) await engineWrite(project, 'note', { about: 'engine', words: up.line }).catch(() => {});
     }
+    backupSoon(project);
     dropNextMain(project);
+  }
+
+  // One backup at a time, off to the side: a slow or hanging drive holds up no merge and no tick. A try a merge finds under way
+  // is caught by the daily look, which sees the main version has moved on.
+  const backingUp = new Set();
+  function backupSoon(project) {
+    if (backingUp.has(project)) return;
+    backingUp.add(project);
+    oneAtATime(`backup:${project}`, () => backUp({ project, git: gitRoute({ run }), now })).catch(() => {}).finally(() => backingUp.delete(project));
   }
 
   // A merge a crash left part done: finishes it, so what the queue itself did never reads as moved outside the helper.
@@ -5161,6 +5172,7 @@ export async function startHelper({
           await oneAtATime(`merge:${project}`, () => withLocalLock({ dir: projectFolder(project) }, () => homeMoved(project), { now }));
           await watch.tick();
           if (!stopped()) await tidyLocal(project, engine, write, views);
+          if (backupDue({ project, main: await adapter.branchHead(await defaultBranchOf(project, adapter)), now })) backupSoon(project);
           trouble = null;
         } catch (error) {
           // No card: the spec's list of them is closed, and this one waits on no decision. The Logbook says it once, so a folder
