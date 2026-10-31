@@ -150,6 +150,22 @@ test('a hook and core.fsmonitor planted in the tree never run on the next prepar
   });
 });
 
+test('a head check puts a real folder back where a test left a link, and the link\'s target is untouched', unix, async () => {
+  await withHome(async () => {
+    const s = await source();
+    const first = await prepareFolder({ project: 'p', commit: s.first, main: false, source: s.url });
+    const target = tempFolder('wh-swap-');
+    fs.writeFileSync(path.join(target, 'keep.txt'), 'keep');
+    for (const folder of [first.tree, first.home, first.mainHome]) {
+      fs.rmSync(folder, { recursive: true });
+      fs.symlinkSync(target, folder);
+    }
+    const next = await prepareFolder({ project: 'p', commit: s.first, main: false, source: s.url });
+    for (const folder of [next.tree, next.home, next.mainHome]) assert.equal(fs.lstatSync(folder).isDirectory(), true);
+    assert.deepEqual(fs.readdirSync(target), ['keep.txt']);
+  });
+});
+
 test('a link left in the tree isn\'t followed out of it', unix, async () => {
   await withHome(async () => {
     const s = await source();

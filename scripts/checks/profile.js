@@ -1,5 +1,5 @@
 // scripts/checks/profile.js
-// The sandbox a check runs in (spec 4.4): macOS's `sandbox-exec`, the mechanism Claude Code's own sandbox uses on the Mac.
+// The sandbox a check runs in (spec 4.4): macOS's `sandbox-exec`, the mechanism agents' sandboxes use on the Mac.
 // A check runs the project's own code, which an agent wrote, so it is held even though no agent is present.
 //
 // The profile starts from deny-by-default. Check 82 showed why: an allow-by-default draft let `open`, a compiled program
@@ -47,6 +47,12 @@ const NETWORK_SERVICES = Object.freeze([
   'com.apple.trustd',
   'com.apple.trustd.agent',
 ]);
+// Where version managers keep a project's tools in the home folder, the one part of it a check reads. These hold programs,
+// not keys: `.cargo/bin` is named alone because `.cargo` holds a registry token.
+const TOOLS = Object.freeze([
+  '.asdf', '.bun', '.cargo/bin', '.deno', '.fnm', '.local/bin', '.local/share/mise', '.local/share/pnpm', '.mise', '.nvm',
+  '.pyenv', '.rbenv', '.rustup', '.sdkman', '.swiftly', '.volta', 'Library/pnpm',
+]);
 const DEVICES = '(literal "/dev/null") (literal "/dev/zero") (literal "/dev/random") (literal "/dev/urandom") (literal "/dev/tty") (literal "/dev/dtracehelper") (literal "/dev/ptmx") (regex #"^/dev/(fd|ttys)")';
 const NAME_SERVICE = '/private/var/run/mDNSResponder';
 
@@ -85,14 +91,21 @@ export function checkProfile({ paths, main, stage, network, denied, temp, userHo
     `(allow mach-lookup ${[...CHECK_SERVICES, ...(stage === 'test' ? TEST_SERVICES : []), ...(online ? NETWORK_SERVICES : [])].map((name) => `(global-name ${quoted(name)})`).join(' ')})`,
     '(allow file-read*)',
     `(deny file-read* ${subpaths(denied)})`,
+    // A check reads nothing of the home folder but its tools. What the tests could read they could leave for `prepare`, which
+    // has the network, so this holds in both stages. The deny list comes again, as the last matching rule wins.
+    `(deny file-read* (subpath ${quoted(userHome)}))`,
+    `(allow file-read* ${subpaths(TOOLS.map((tool) => `${userHome}/${tool}`))})`,
+    `(deny file-read* ${subpaths(denied)})`,
   ];
-  // `prepare` has the network, so it reads nothing of the home folder. Either way a program must be able to look at the
-  // folders on the way down to the check folder to start there, though nothing here lets it list them.
-  if (stage === 'prepare') lines.push(`(deny file-read* (subpath ${quoted(userHome)}))`);
+  // A program must be able to look at the folders on the way down to the check folder to start there, though nothing here
+  // lets it list them.
   lines.push(
     `(allow file-read-metadata ${foldersAbove(paths.root).map(literal).join(' ')})`,
     `(allow file-read* ${subpaths([paths.tree, paths.gitDir, ownHome])})`,
     `(allow file-write* ${subpaths([paths.tree, ownHome, ...temp])} ${DEVICES})`,
+    // The folders themselves stay: a test that swapped one for a link would have the helper's next git calls write and
+    // delete wherever it led, outside the sandbox.
+    `(deny file-write* ${literal(paths.tree)} ${literal(ownHome)})`,
     '(deny file-write* (regex #"^/private/tmp/com\\.apple\\.launchd\\."))',
     '(allow network-bind (local ip "localhost:*"))',
     '(allow network-inbound (local ip "localhost:*"))',

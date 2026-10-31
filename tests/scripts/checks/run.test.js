@@ -165,7 +165,7 @@ test('a tool refused by macOS for a sandbox inside a sandbox is could-not-run, n
   });
 });
 
-test('prepare runs before the tests and a failed prepare is failed', unix, async () => {
+test('prepare runs before the tests, and a failed prepare could not run, so it isn\'t red', unix, async () => {
   await withHome(async () => {
     const good = await check('echo tests >> MARKS', { extra: { prepare: 'echo prepare >> MARKS' } });
     assert.equal(good.result, 'passed');
@@ -173,7 +173,7 @@ test('prepare runs before the tests and a failed prepare is failed', unix, async
   });
   await withHome(async () => {
     const bad = await check('echo tests >> MARKS', { extra: { prepare: 'exit 4' } });
-    assert.equal(bad.result, 'failed');
+    assert.equal(bad.result, 'could-not-run');
     assert.equal(bad.runs, 0);
   });
 });

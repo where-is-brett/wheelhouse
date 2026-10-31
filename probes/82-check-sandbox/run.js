@@ -220,6 +220,7 @@ function ways(paths, opener, ctx) {
     { way: 'other-process-environment', run: (way, ctx) => `/bin/ps eww -p ${ctx.victim.pid} | grep -c WHEELHOUSE_CHECK_82_CANARY`, control: true, read: (got) => Number(got.stdout.trim()) > 0 },
     { way: 'signal-other-process', run: (way, ctx) => `kill -0 ${ctx.victim.pid}; echo $?`, control: true, read: (got) => got.stdout.trim() === '0' },
     { way: 'clipboard-read', run: '/usr/bin/pbpaste 2>/dev/null | wc -c', control: true, read: (got) => Number(got.stdout.trim()) > 0 },
+    { way: 'read-home-folder', run: `ls -a ${shq(REAL_HOME)} | wc -l`, control: true, read: (got) => Number(got.stdout.trim()) > 0 },
     { way: 'list-folder-above', run: `ls -a ${shq(paths.outer)} | wc -l`, control: true, read: (got) => Number(got.stdout.trim()) > 0 },
     { way: 'plant-in-user-temp', run: `echo x > ${shq(path.join(ctx.userTemp, `${MARK}-plant`))}`, control: true, file: () => path.join(ctx.userTemp, `${MARK}-plant`) },
     { way: 'preference-write', run: '/usr/bin/defaults write invalid.wheelhouse.check82 a b', control: true, file: () => path.join(REAL_HOME, 'Library', 'Preferences', 'invalid.wheelhouse.check82.plist') },

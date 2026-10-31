@@ -42,6 +42,13 @@ function clearFolder(folder) {
   fs.rmSync(folder, { recursive: true, force: true });
 }
 
+// A folder of the check, where a link or a file left in its place is taken away, never followed.
+function realFolder(folder) {
+  const seen = fs.lstatSync(folder, { throwIfNoEntry: false });
+  if (seen && !seen.isDirectory()) fs.rmSync(folder, { force: true });
+  fs.mkdirSync(folder, { recursive: true });
+}
+
 const must = async (git, args, what) => {
   const got = await git(args);
   if (got.code !== 0) throw new Error(`The check folder could not ${what}: ${String(got.stderr).trim()}`);
@@ -57,7 +64,7 @@ export async function prepareFolder({ project, commit, main, source, git = safeG
   const named = checkPaths(project);
   fs.mkdirSync(named.root, { recursive: true });
   if (main) clearFolder(named.tree);
-  for (const dir of [named.tree, named.home, named.mainHome]) fs.mkdirSync(dir, { recursive: true });
+  for (const dir of [named.tree, named.home, named.mainHome]) realFolder(dir);
   const paths = realPaths(named);
   if (!fs.existsSync(path.join(paths.gitDir, 'HEAD'))) await must(git({ cwd: paths.root, reach: 'local', look: 'never' }), ['init', '-q', '--bare', paths.gitDir], 'start');
   const mark = path.join(paths.tree, '.git');

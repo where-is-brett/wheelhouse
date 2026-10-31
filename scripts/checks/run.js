@@ -110,6 +110,7 @@ async function stage({ sandbox, profile, command, cwd, env, spawn, untilMs, grac
 function wordOf(attempt) {
   if (attempt.unstarted || attempt.stopped) return 'could-not-run';
   if (attempt.timedOut) return 'timed-out';
+  if (attempt.prepareFailed) return 'could-not-run';
   if (attempt.code === 0) return 'passed';
   return NESTED.test(attempt.output) ? 'could-not-run' : null;
 }
@@ -161,7 +162,7 @@ export async function runCheck({
     if (ended) return { stopped: true, output: '' };
     if (prepare) {
       const prepared = await inSandbox('prepare', prepare, untilMs);
-      if (prepared.code !== 0) return prepared;
+      if (prepared.code !== 0) return { ...prepared, prepareFailed: true };
       if (ended) return { ...prepared, stopped: true };
     }
     return inSandbox('test', command, untilMs);

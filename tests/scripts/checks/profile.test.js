@@ -113,12 +113,17 @@ test('sockets are reached only inside the check\'s own folders', () => {
   }
 });
 
-test('prepare denies reading the rest of the home folder but not the folders on the way down', () => {
-  const text = profile({ stage: 'prepare' });
-  assert.ok(rules(text, '(deny file-read*').join('\n').includes(`(subpath "${USER}")`));
-  const below = rules(text, '(allow file-read-metadata').join('\n');
-  for (const p of [ROOT, `${USER}/.wheelhouse/engine/checks`, `${USER}/.wheelhouse/engine`, `${USER}/.wheelhouse`, USER]) assert.ok(below.includes(`(literal "${p}")`), p);
-  assert.ok(text.indexOf(`(subpath "${USER}")`) < text.indexOf(`(subpath "${paths().tree}")`));
+test('each stage denies the home folder, then opens only the tools kept there and never a deny-list path', () => {
+  for (const stage of ['test', 'prepare']) {
+    const text = profile({ stage });
+    const lines = text.split('\n');
+    const home = lines.indexOf(`(deny file-read* (subpath "${USER}"))`);
+    const tools = lines.findIndex((l) => l.startsWith('(allow file-read*') && l.includes(`"${USER}/.nvm"`));
+    const again = lines.findLastIndex((l) => l.startsWith('(deny file-read*') && l.includes(`"${USER}/.ssh"`));
+    assert.ok(home > -1 && home < tools && tools < again, stage);
+    assert.doesNotMatch(text, /"[^"]*\/\.cargo"/);
+    for (const dir of paths().root.split('/').slice(1).map((_, i, all) => `/${all.slice(0, i + 1).join('/')}`)) assert.match(text, new RegExp(`\\(allow file-read-metadata .*\\(literal "${dir.replaceAll('.', '\\.')}"\\)`), dir);
+  }
 });
 
 test('the folders above a check folder under a denied folder can be looked at, not listed', () => {
@@ -179,6 +184,26 @@ test('a test can write in its tree and its home, and nowhere else', mac, () => {
   assert.notEqual(sandboxed(w, `echo x > '${w.outer}/a'`).status, 0);
   assert.notEqual(sandboxed(w, `echo x > '${w.p.mainHome}/a'`).status, 0);
   assert.notEqual(sandboxed(w, `echo x > '${os.homedir()}/wheelhouse-check-test'`).status, 0);
+});
+
+test('a test can\'t swap its tree or its home for a link, and can still work inside them', mac, () => {
+  const w = world();
+  for (const folder of [w.p.tree, w.p.home]) {
+    assert.notEqual(sandboxed(w, `cd / && rm -rf '${folder}' && ln -s '${w.outer}' '${folder}'`).status, 0);
+    assert.equal(fs.lstatSync(folder).isDirectory(), true, folder);
+    assert.equal(sandboxed(w, `mkdir '${folder}/d' && echo x > '${folder}/d/a' && rm -r '${folder}/d'`).status, 0);
+  }
+});
+
+test('a test can\'t read the home folder, but can read a tool kept there', mac, () => {
+  const w = world();
+  fs.writeFileSync(path.join(w.base, 'notes.txt'), 'private');
+  fs.mkdirSync(path.join(w.base, '.nvm'));
+  fs.writeFileSync(path.join(w.base, '.nvm', 'node'), 'a tool');
+  for (const stage of ['test', 'prepare']) {
+    assert.notEqual(sandboxed(w, `cat '${w.base}/notes.txt'`, { stage }).status, 0, stage);
+    assert.equal(sandboxed(w, `cat '${w.base}/.nvm/node'`, { stage }).status, 0, stage);
+  }
 });
 
 test('a test can\'t write tree.git', mac, () => {
