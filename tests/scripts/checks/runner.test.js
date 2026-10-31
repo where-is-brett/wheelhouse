@@ -60,6 +60,7 @@ function world({ word = () => 'passed', status = () => ({ ok: true }), ...given 
     answerOf: (id) => w.answers[id] ?? null,
     ended: (work) => w.ended.includes(work),
     stopped: () => w.stopped,
+    openHeads: async () => { if (w.openFails) throw new Error('unreachable'); return w.open ?? []; },
     now: () => new Date(w.time),
     run: async ({ commit, main, signal }) => {
       w.log.push('check');
@@ -81,6 +82,19 @@ test('a new head posts pending before the check starts', () => withHome(async ()
   await runner.took(HEAD, 'w-1');
   assert.deepEqual(w.posts.map((p) => [p.sha, p.state]), [[HEAD, 'pending']]);
   assert.deepEqual(w.ran, []);
+}));
+
+test('a head nothing told the helper of is found on the host, and checked', () => withHome(async () => {
+  const { w, runner } = world({ open: [{ head: HEAD, work: 'card-1' }] });
+  await settled(runner);
+  await settled(runner);
+  assert.deepEqual(w.ran.map((r) => r.commit), [MAIN, HEAD]);
+  assert.equal(w.posts.filter((p) => p.sha === HEAD && p.description === 'Checking on this computer').length, 2, 'once found, once started');
+  w.open = [{ head: NEXT, work: 'card-1' }];
+  await settled(runner);
+  assert.equal(w.ran.at(-1).commit, NEXT, 'the work\'s newest head takes its place');
+  w.openFails = true;
+  await settled(runner);
 }));
 
 test('the signed record is written before the status', () => withHome(async () => {

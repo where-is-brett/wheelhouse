@@ -29,15 +29,16 @@ const CHECKING = { state: 'pending', description: 'Checking on this computer' };
 const isRed = (word) => word === 'failed' || word === 'timed-out';
 
 // checkRunner({ project, repo, permissionLink, adapter, facts, source, results, write, onRed, card, answerOf, ended, stopped,
-//   now, run, turn }) -> { took(head, work), tick(), stop(), idle() }.
+//   openHeads, now, run, turn }) -> { took(head, work), tick(), stop(), idle() }.
 // - `facts()` what the helper reads from the default branch and the host: { setting, host, contexts, hasWorkflows, main,
 //   settings, digest }; `source()` the folder a check fetches from, brought up to date;
 // - `results()` the data of the signed `check` events, verified, oldest first; `write({ project, event })` signs and keeps one;
 // - `onRed(head, work, tail)` sends a change back; `card(data)` raises a question; `answerOf(id)` the label the director chose;
-// - `ended(work)` whether a work's change has merged or closed; `stopped()` whether All stop is on.
+// - `ended(work)` whether a work's change has merged or closed; `stopped()` whether All stop is on;
+// - `openHeads()` [{ head, work }], the open changes' heads as the host has them, for a head nothing told the helper of.
 export function checkRunner({
   project, repo, permissionLink, adapter, facts, source, results, write, onRed, card, answerOf = () => null, ended = () => false, stopped = () => false,
-  now = () => new Date(), run = runCheck, turn = withCheckTurn,
+  openHeads = async () => [], now = () => new Date(), run = runCheck, turn = withCheckTurn,
 }) {
   let active = null;
   let abort = null;
@@ -188,6 +189,25 @@ export function checkRunner({
     if (!kept.asked.broken && stuckHostChecks(kept.readings)) await askBroken();
   }
 
+  // Queues a head, once for each head of a work.
+  function queued(head, work) {
+    const stamp = now().toISOString();
+    change((q) => {
+      q.heads = [...q.heads.filter((h) => h.work !== work && h.commit !== head), { commit: head, work }];
+      q.readings = [...q.readings.filter((r) => r.head !== head), { head, firstSeen: stamp, readAt: stamp, contexts: [] }].slice(-KEPT_READINGS);
+    });
+  }
+
+  async function takeOpenHeads(digest) {
+    let open = [];
+    try { open = await openHeads(); } catch { return; }
+    for (const { head, work } of open) {
+      if (readQueue(project).heads.some((h) => h.commit === head)) continue;
+      queued(head, work);
+      await report(head, digest, true);
+    }
+  }
+
   async function tick() {
     if (stopped()) return;
     const f = await facts();
@@ -202,6 +222,7 @@ export function checkRunner({
     if (typeof f.settings?.testCommand !== 'string') return;
     answered();
     for (const commit of kept.unposted) await report(commit, f.digest);
+    await takeOpenHeads(f.digest);
     if (active !== null) return;
     const held = readQueue(project).tries;
     const due = dueChecks({ main: f.main, heads: readQueue(project).heads.map((h) => h.commit), results: results(), digest: f.digest })
@@ -219,11 +240,7 @@ export function checkRunner({
   return {
     // A head the helper took in: reported pending at once where the project's checks run here, and queued in its work's place.
     async took(head, work) {
-      const stamp = now().toISOString();
-      change((q) => {
-        q.heads = [...q.heads.filter((h) => h.work !== work && h.commit !== head), { commit: head, work }];
-        q.readings = [...q.readings.filter((r) => r.head !== head), { head, firstSeen: stamp, readAt: stamp, contexts: [] }].slice(-KEPT_READINGS);
-      });
+      queued(head, work);
       const f = await facts();
       if (!f || stopped() || typeof f.settings?.testCommand !== 'string') return;
       if (whereChecks({ ...f, hostChecksOff: readQueue(project).hostChecksOff }) === 'here') await report(head, f.digest, true);

@@ -5,6 +5,8 @@
 // offline, and numbers the cards as the board and the front desk do.
 import crypto from 'node:crypto';
 import { stateDir } from '../lib/paths.js';
+import { checksStanding } from '../checks/standing.js';
+import { CHECKING_WORDS, REPORT_WAITS_WORDS } from '../engine/words.js';
 import { loadBoardInputs } from '../board/inputs.js';
 import { boardModel, numberedWaiting, oneLine, seeOf, NO_SETTINGS, NO_SOURCES } from '../board/model.js';
 import { glanceLine } from '../board/render.js';
@@ -238,7 +240,10 @@ export async function paneModel({
       const slice = isRecord(f.slice) && Number.isInteger(f.slice.n) && Number.isInteger(f.slice.m) ? `, slice ${f.slice.n} of ${f.slice.m}` : '';
       return { text: plain(`Building ${oneLine(f.title) || oneLine(f.work) || 'untitled work'}${slice}`), see: seeOf(isRecord(views?.work) ? views.work[f.work] : undefined) };
     });
-    return lines.length <= PANE_LINES ? lines : [...lines.slice(0, PANE_LINES - 1), { text: `and ${lines.length - PANE_LINES + 1} more building`, see: null }];
+    const standing = clock === null ? { checking: false, waitingForPermission: false } : checksStanding(project, { now: clock });
+    const said = [...(standing.checking ? [{ text: CHECKING_WORDS, see: null }] : []), ...(standing.waitingForPermission ? [{ text: REPORT_WAITS_WORDS, see: null }] : [])];
+    const fits = PANE_LINES - said.length;
+    return [...(lines.length <= fits ? lines : [...lines.slice(0, fits - 1), { text: `and ${lines.length - fits + 1} more building`, see: null }]), ...said];
   }, []);
 
   const healthLines = list(model?.director?.health);

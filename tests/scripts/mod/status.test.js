@@ -1,4 +1,6 @@
 // tests/scripts/mod/status.test.js
+import { keepQueue, readQueue } from '../../../scripts/checks/standing.js';
+import { CHECKING_WORDS, REPORT_WAITS_WORDS } from '../../../scripts/engine/words.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -308,6 +310,16 @@ test('STOP set from the phone shows in the next tick\'s model', () => withHome(a
   assert.deepEqual((await paneModel({ project: P, cwd: repo, now: () => NOW })).stop, { on: true, since: null });
   liftStop();
   assert.equal((await paneModel({ project: P, cwd: repo, now: () => NOW })).stop.on, false);
+}));
+
+test('the pane says Checking on this computer while one runs, and when reports wait for the director', () => withHome(async (home) => {
+  const repo = register(home);
+  const reading = async () => (await paneModel({ project: P, cwd: repo, now: () => NOW })).building.map((b) => b.text);
+  assert.deepEqual(await reading(), []);
+  keepQueue(P, { ...readQueue(P), checkingUntil: new Date(NOW.getTime() + 60000).toISOString() });
+  assert.deepEqual(await reading(), [CHECKING_WORDS]);
+  keepQueue(P, { ...readQueue(P), checkingUntil: new Date(NOW.getTime() - 60000).toISOString(), waitingForPermission: true });
+  assert.deepEqual(await reading(), [REPORT_WAITS_WORDS]);
 }));
 
 test('no state, no helper and no usage still give a model naming what is missing', () => withHome(async (home) => {

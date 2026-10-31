@@ -22,7 +22,10 @@
 //                         { paths, config }, read by the helper from its own mirror, or null when they can't be read
 //   refresh(project)      brings the project's fetch mirror, the engine's only copy of it, up to date: { ok } or a refusal
 //   merge(project, { pr, head, incident, runId })   merges the pull request through the helper's own gate as the
-//                         incident's fix, giving { ok } or a refusal
+//                         incident's fix, giving { ok } or a refusal, with `waiting` while its check hasn't finished
+//   checkTook(project, { head, work })   hands a head the helper took in to the project's checks
+//   mainCheck(project)    { ok, here, green?, rerun? }: whether the project's checks run on this computer, and if so
+//                         whether the main line's latest counted check passed
 // A run is found by its id in the projects' order stores: the only runs these routes serve are ones the helper
 // started itself, with an order. Only the helper starts a run (the dispatcher, through `start`, never a route), and
 // every route asks for the run's ticket (ticket.js), which only that run's steps can read.
@@ -104,6 +107,7 @@ export function engineRoutes({
   projects, engineFor, ordersDir, write, held = () => false, now = () => new Date(),
   filesDir = (project) => path.join(ordersDir(project), '..'), digests = { installed: () => null, captured: () => null }, comment,
   projectAgents = async () => null, recheckCopies = async () => ({ ok: true }),
+  checkTook = null, mainCheck = null,
   host, provenance, previewsDir = (project) => path.join(filesDir(project), 'previews'),
   incidentOf = () => null, changesOf = async () => null, merge = async () => ({ ok: false, refused: 'the helper can\'t merge here' }),
   refresh = async () => ({ ok: true }),
@@ -293,6 +297,8 @@ export function engineRoutes({
       ...(typeof run.order.incident === 'string' ? { incident: run.order.incident } : {}),
     };
     keepVerdicts(run.project, verdicts);
+    // The next tick finds the head if this doesn't reach the checks.
+    try { await checkTook?.(run.project, { head: opened.head, work: run.order.work }); } catch { /* found on the next tick */ }
     return { ok: true, branch: pushed.branch, pr: opened.pr, head: opened.head };
   }
 
@@ -352,7 +358,7 @@ export function engineRoutes({
     const weakens = weakensChecks({ paths: changes.paths, config: changes.config, tests: parsed(outputs.tests) });
     if (weakens.length > 0) return { ok: false, refused: `the fix isn't added: ${weakens.join('; ')}`, weakens };
     const got = await merge(run.project, { pr: opened.pr, head: opened.head, incident: run.order.incident, runId });
-    if (!got?.ok) return { ok: false, refused: got?.refused ?? 'the helper\'s gate didn\'t add the fix' };
+    if (!got?.ok) return { ok: false, refused: got?.refused ?? 'the helper\'s gate didn\'t add the fix', ...(got?.waiting === true ? { waiting: true } : {}) };
     const after = readVerdicts(run.project);
     after.fixed[runId] = { pr: opened.pr, head: opened.head, at: now().toISOString() };
     keepVerdicts(run.project, after);
@@ -522,6 +528,7 @@ export function engineRoutes({
       '/engine/preview': ticketed(preview),
       '/engine/lesson': ticketed(lesson),
       '/engine/merge-fix': ticketed(mergeFix),
+      '/engine/main-check': ticketed(async ({ runId }) => (mainCheck ? mainCheck(runOf(runId).project) : { ok: true, here: false })),
       '/engine/reproduction': ticketed(reproduction),
       '/engine/reproduction/find': ticketed(reproductionFind),
       // The order the helper keeps for the run, and nothing for any other id.
