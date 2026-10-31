@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SKILL_PREFIX } from '../pack-check.js';
-import { SKILL_COPIES } from '../../lineage/copies.js';
+import { skillCopyNames } from '../../lineage/copies.js';
 import { startedAsScript } from '../../lib/started-as-script.js';
 import { runArg } from '../done-check.js';
 
@@ -43,7 +43,7 @@ function ownCopy(target) {
 
 // Writes the copies `names` (plain names) into `worktree`/.agents/skills/, each folder whole and kept out of git.
 // A folder there already is written afresh when it is a copy Wheelhouse wrote, and kept as it is otherwise. { written, kept }.
-export function writeWorktreeSkills({ worktree, names = [], copies = SKILL_COPIES, from = SKILLS }) {
+export function writeWorktreeSkills({ worktree, names = [], copies = skillCopyNames(), from = SKILLS }) {
   for (const name of names) if (!copies.includes(name)) throw new Error(`The skill ${name} matches no copy in the plugin`);
   const into = path.join(worktree, '.agents', 'skills');
   refuseLinked(worktree, into);
@@ -66,7 +66,7 @@ export function writeWorktreeSkills({ worktree, names = [], copies = SKILL_COPIE
 }
 
 // Writes the copies `skills` names (in the Claude form) into `worktree`, and gives their plain names.
-export function writeStepSkills({ worktree, skills = [], copies = SKILL_COPIES, from = SKILLS }) {
+export function writeStepSkills({ worktree, skills = [], copies = skillCopyNames(), from = SKILLS }) {
   const names = skills.map(plainSkillName);
   for (const name of names) if (!copies.includes(name)) throw new Error(`The skill ${name} matches no copy in the plugin`);
   writeWorktreeSkills({ worktree, names, copies, from });

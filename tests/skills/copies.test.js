@@ -6,8 +6,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { SKILL_COPIES, readCopies, changedCopies } from '../../scripts/lineage/copies.js';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { skillCopyNames, readCopies, changedCopies } from '../../scripts/lineage/copies.js';
+import { PACK_DIR, checkPack } from '../../scripts/engine/pack-check.js';
+import { PLUGIN_FILES, importClosure } from '../../scripts/eval/front-desk.js';
 import { COPY_SOURCES, UPSTREAMS } from '../../scripts/lineage/manifest.js';
 import { tempFolder } from '../helpers/homes.js';
 
@@ -17,9 +20,43 @@ const textOf = (name) => fs.readdirSync(path.join(ROOT, 'skills', name)).filter(
   .map((f) => fs.readFileSync(path.join(ROOT, 'skills', name, f), 'utf8')).join('\n');
 
 test('the copies are the folders with a SOURCE.md, and the build steps\' own skills are among them', () => {
-  assert.deepEqual([...SKILL_COPIES].sort(), copies.map((c) => c.name).sort());
-  for (const name of ['codebase-design', 'pr', 'review-standards', 'review-spec', 'frontend-design']) assert.ok(SKILL_COPIES.includes(name), name);
-  for (const own of ['foreman', 'front-desk', 'intake', 'setup']) assert.ok(!SKILL_COPIES.includes(own), own);
+  const names = skillCopyNames();
+  assert.deepEqual([...names].sort(), copies.map((c) => c.name).sort());
+  for (const name of ['codebase-design', 'pr', 'review-standards', 'review-spec', 'frontend-design']) assert.ok(names.includes(name), name);
+  for (const own of ['foreman', 'front-desk', 'intake', 'setup']) assert.ok(!names.includes(own), own);
+});
+
+// A plugin whose skills can't be read: a copy's SOURCE.md with no SKILL.md beside it, which fails on any computer and
+// for any user, as a folder the sandbox denies does (EPERM) on the Mac. `entries`, what they import and the tool sheets are copied in.
+function pluginWithUnreadableCopy(entries) {
+  const root = tempFolder('wh-copies-');
+  for (const file of ['package.json', ...importClosure(entries), ...PLUGIN_FILES.filter((f) => f.startsWith('adapters/') && f.endsWith('.md'))]) {
+    fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    fs.copyFileSync(path.join(ROOT, file), path.join(root, file));
+  }
+  fs.mkdirSync(path.join(root, 'skills', 'broken'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'skills', 'broken', 'SOURCE.md'), '- Upstream: kit\n');
+  return root;
+}
+
+test('the commands and hooks start when the skills can\'t be read: the copies are read when asked for, not on import', () => {
+  const entries = ['scripts/frontdesk/cli.js', 'scripts/feature/cli.js', 'scripts/hooks/stop-guard.js'];
+  const root = pluginWithUnreadableCopy(entries);
+  for (const entry of entries) {
+    const url = pathToFileURL(path.join(root, entry)).href;
+    execFileSync(process.execPath, ['--input-type=module', '-e', `await import(${JSON.stringify(url)});`], { stdio: 'pipe', input: '' });
+  }
+});
+
+test('a pack check and the copies\' names fail when the skills can\'t be read, never passing on an empty list', async () => {
+  const root = pluginWithUnreadableCopy(['scripts/engine/pack-check.js']);
+  const copiesFile = pathToFileURL(path.join(root, 'scripts', 'lineage', 'copies.js')).href;
+  const packFile = pathToFileURL(path.join(root, 'scripts', 'engine', 'pack-check.js')).href;
+  const { skillCopyNames: namesThere } = await import(copiesFile);
+  const { checkPack: checkThere } = await import(packFile);
+  assert.throws(() => namesThere(), /SKILL\.md/);
+  assert.throws(() => checkThere(PACK_DIR), /SKILL\.md/);
+  assert.deepEqual(checkPack(PACK_DIR, { skillCopies: skillCopyNames() }), []);
 });
 
 test('every copy carries its licence and a SOURCE.md naming a version', () => {

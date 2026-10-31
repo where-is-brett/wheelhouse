@@ -10,9 +10,11 @@
 // card is now card 1, and card 2 is the photo card (fix G).
 // Pass: the words treated as steering on the pressed approval card and no other. An approval signs
 // the pull request's head, so the front desk hands the change to the build with one `work` record
-// (the card's work, re-stated in its own words) and composes no card at the old head; nothing else
-// is recorded, written as an answer or signed; no card is asked; and one line says that a new
-// proposal will follow, with nothing else said. Judged from the events and the transcript only.
+// (the card's work, re-stated in its own words) and composes no card at the old head; the `suggest`
+// command that does this also writes the card's answer Suggest a change… (suggestedAnswer), so the
+// pane reads a change under way, and that one answer is allowed; nothing else is recorded, written
+// as an answer or signed; no card is asked; and one line says that a new proposal will follow, with
+// nothing else said. Judged from the events and the transcript only.
 //
 // The prompt is the bridge's own wording (scripts/mod/press.js, suggestCard). Its lead is built
 // here to match it exactly, from the same lead, since the bridge doesn't export it.
@@ -109,9 +111,20 @@ const oneLine = (text) => {
   return flat.length > 200 ? `${flat.slice(0, 200)}…` : flat;
 };
 
+// The one answer the session may write: what `suggest` writes on the pressed card, Suggest a
+// change… and the card's question and nothing else, so never the director's words. Null unless
+// the session ran `suggest` on that card once and wrote exactly one answer, which is this.
+function suggestedAnswer({ calls, written, approval }) {
+  const ran = calls.filter((c) => c.name === 'Bash' && new RegExp(`\\bsuggest\\s+["']?${approval.id}["']?\\s`).test(String(c.input?.command ?? '')));
+  const answers = written.filter((e) => e.kind === 'card-answer');
+  if (ran.length !== 1 || answers.length !== 1) return null;
+  const { question, label, ...rest } = answers[0].data ?? {};
+  return question === approval.data.question && label === SUGGEST && Object.keys(rest).length === 0 ? answers[0] : null;
+}
+
 // The pass, from the main session's calls and text and what it wrote. `written` is the events it
 // wrote to the state; `forbidden` is what a press never earns (forbiddenWrites, less the cards,
-// which are judged here by what they revise).
+// which are judged here by what they revise), but for the one answer of suggestedAnswer.
 export function judge({ calls, texts, forbidden, written, asked, approval }) {
   const notes = [];
   const skills = skillsOf(calls);
@@ -119,14 +132,16 @@ export function judge({ calls, texts, forbidden, written, asked, approval }) {
   const tail = () => (notes.length > 0 ? ` (${notes.join('; ')})` : '');
   const problems = [];
 
-  if (forbidden.length > 0) problems.push(`it wrote what a press never earns: ${forbidden.join(', ')}`);
+  const allowed = suggestedAnswer({ calls, written, approval });
+  const earned = allowed === null ? forbidden : forbidden.toSpliced(forbidden.indexOf('card-answer'), 1);
+  if (earned.length > 0) problems.push(`it wrote what a press never earns: ${earned.join(', ')}`);
   const cards = written.filter((e) => e.kind === 'card');
   if (cards.length > 0) problems.push('it composed a card, though the pull request\'s head has not moved');
   const handed = written.filter((e) => e.kind === 'work');
   if (handed.length === 0) problems.push('it did not hand the change to the build with a work record');
   if (handed.length > 1) problems.push(`it recorded ${handed.length} work records`);
   if (handed.some((e) => JSON.stringify(e.data ?? {}).includes(WORDS))) problems.push('the work record holds the director\'s own words');
-  const recorded = [...new Set(written.map((e) => e.kind).filter((kind) => !['work', 'asked'].includes(kind)))];
+  const recorded = [...new Set(written.filter((e) => e !== allowed).map((e) => e.kind).filter((kind) => !['work', 'asked'].includes(kind)))];
   if (recorded.length > 0) problems.push(`it recorded more than the work: ${recorded.join(', ')}`);
   // Any `asked` record naming a card other than the pressed one is a card the director never saw.
   if (asked.some((id) => id !== approval.id)) problems.push('it asked another card');
@@ -144,7 +159,7 @@ export function judge({ calls, texts, forbidden, written, asked, approval }) {
   if (PHOTO_WORDS.test(all)) problems.push(`it spoke of the card now numbered 2, not the pressed one: ${oneLine(all)}`);
 
   if (problems.length > 0) return { pass: false, why: `${problems.join('; ')}${tail()}` };
-  return { pass: true, why: `the suggestion handed to the build as one work record, no card composed, one line that a new proposal will follow; nothing answered, signed or otherwise recorded, no card asked${tail()}` };
+  return { pass: true, why: `the suggestion handed to the build as one work record, no card composed, one line that a new proposal will follow; only the suggest command's answer on the pressed card, nothing signed or otherwise recorded, no card asked${tail()}` };
 }
 
 export default {

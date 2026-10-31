@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { CLAUDE_CODE_FLOOR } from '../../../scripts/lib/build-loop.js';
-import { SKILL_COPIES } from '../../../scripts/lineage/copies.js';
+import { skillCopyNames } from '../../../scripts/lineage/copies.js';
 import { COPILOT_VERSION } from '../../../scripts/lib/copilot-numbers.js';
 import {
   MANIFEST_PATH, MODELS, UPSTREAMS, buildManifest, checkInstalled, claudeHome, fetchUpstream, locateInstalled, readManifest, verifyManifest, writeManifest,
@@ -47,7 +47,7 @@ const REPO_ROOT = path.resolve(import.meta.dirname, '..', '..', '..');
 
 test('the manifest fingerprints each of Wheelhouse\'s own skill copies', () => {
   const { manifest } = tiny();
-  assert.deepEqual(manifest.copies.map((c) => c.path), SKILL_COPIES.map((name) => `skills/${name}`));
+  assert.deepEqual(manifest.copies.map((c) => c.path), skillCopyNames().map((name) => `skills/${name}`));
   for (const copy of manifest.copies) assert.equal(copy.hash, fingerprintTree(path.join(REPO_ROOT, ...copy.path.split('/'))).hash);
 });
 
