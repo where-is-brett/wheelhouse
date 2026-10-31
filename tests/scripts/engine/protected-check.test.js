@@ -151,8 +151,63 @@ test('a dropped test target is a finding', async () => {
 });
 
 test('a changed test target in a Makefile is a finding, and another target isn\'t', async () => {
-  const make = (test, build = 'cc a.c') => `build:\n\t${build}\n\ntest: build\n\t${test}\n`;
+  const make = (test, build = 'cc a.c') => `build:\n\t${build}\n\ntest:\n\t${test}\n`;
   assert.equal((await edited(make('./run'), make('true'), 'Makefile')).code, 1);
   assert.equal((await edited(make('./run'), make('./run', 'cc b.c'), 'Makefile')).code, 0);
   assert.equal((await edited('test := 1\nall:\n\tcc\n', 'test := 2\nall:\n\tcc\n', 'Makefile')).code, 0, 'a variable named test is no target');
+});
+
+const SCRIPTS = (scripts) => `${JSON.stringify({ scripts }, null, 2)}\n`;
+
+test('a test script emptied through another script is a finding', async () => {
+  const before = SCRIPTS({ test: 'npm run unit', unit: 'node --test' });
+  for (const unit of ['exit 0', 'node --test --test-name-pattern=nothing']) {
+    assert.equal((await edited(before, SCRIPTS({ test: 'npm run unit', unit }), 'package.json')).code, 1);
+  }
+  assert.equal((await edited(SCRIPTS({ test: 'run-s lint unit', lint: 'x', unit: 'node --test' }), SCRIPTS({ test: 'run-s lint unit', lint: 'x', unit: 'true' }), 'package.json')).code, 1);
+  assert.equal((await edited(SCRIPTS({ test: 'yarn unit', preunit: 'a', unit: 'b' }), SCRIPTS({ test: 'yarn unit', preunit: 'exit 0', unit: 'b' }), 'package.json')).code, 1);
+});
+
+test('a script the tests don\'t reach is no finding', async () => {
+  assert.equal((await edited(SCRIPTS({ test: 'npm run unit', unit: 'node --test', build: 'a' }), SCRIPTS({ test: 'npm run unit', unit: 'node --test', build: 'b' }), 'package.json')).code, 0);
+});
+
+test('a test tool\'s settings in package.json are guarded', async () => {
+  const jest = (testMatch) => `${JSON.stringify({ scripts: { test: 'jest' }, jest: { testMatch } }, null, 2)}\n`;
+  assert.equal((await edited(jest(['**/*.test.js']), jest([]), 'package.json')).code, 1);
+});
+
+test('a Makefile test emptied through a prerequisite, a sub-make or a variable is a finding', async () => {
+  const prerequisite = (body) => `test: unit\n\nunit:\n\t${body}\n\nbuild:\n\tcc a.c\n`;
+  assert.equal((await edited(prerequisite('go test ./...'), prerequisite('true'), 'Makefile')).code, 1);
+  assert.equal((await edited(prerequisite('go test ./...'), prerequisite('go test ./...').replace('cc a.c', 'cc b.c'), 'Makefile')).code, 0, 'another target is no finding');
+  const sub = (body) => `test:\n\t$(MAKE) unit\n\nunit:\n\t${body}\n`;
+  assert.equal((await edited(sub('pytest'), sub('true'), 'Makefile')).code, 1);
+  const variable = (runner) => `RUN = ${runner}\n\ntest:\n\t$(RUN) ./...\n`;
+  assert.equal((await edited(variable('go test'), variable('echo'), 'Makefile')).code, 1);
+});
+
+test('pytest and coverage settings in a Python build file are guarded', async () => {
+  const py = (more) => `[project]\nname = "a"\n${more}`;
+  assert.equal((await edited(py('[tool.pytest.ini_options]\naddopts = "-q"\n'), py('[tool.pytest.ini_options]\naddopts = "-q --collect-only"\n'), 'pyproject.toml')).code, 1);
+  assert.equal((await edited(py(''), py('[tool.pytest.ini_options]\ntestpaths = ["nothing"]\n'), 'pyproject.toml')).code, 1, 'a table that wasn\'t there');
+  assert.equal((await edited(py(''), `${py('')}[tool.black]\nline-length = 100\n`, 'pyproject.toml')).code, 0, 'another tool is no finding');
+  assert.equal((await edited('[tool:pytest]\naddopts = -q\n', '[tool:pytest]\naddopts = --co\n', 'setup.cfg')).code, 1);
+});
+
+test('Cargo settings that switch tests off are guarded', async () => {
+  const lib = (more) => `[package]\nname = "a"\n\n[lib]\npath = "src/lib.rs"\n${more}`;
+  assert.equal((await edited(lib(''), lib('test = false\n'), 'Cargo.toml')).code, 1);
+  assert.equal((await edited(lib('\n[[test]]\nname = "all"\n'), lib(''), 'Cargo.toml')).code, 1);
+  assert.equal((await edited(lib('\n[dependencies]\na = "1"\n'), lib('\n[dependencies]\na = "2"\n'), 'Cargo.toml')).code, 0, 'a dependency is no finding');
+});
+
+test('a build tag on a Go test file is a finding', async () => {
+  const go = (top) => `${top}package a\n\nfunc TestA(t *testing.T) { assert(t) }\n`;
+  assert.equal((await edited(go(''), go('//go:build integration\n\n'), 'a_test.go')).code, 1);
+  assert.equal((await edited(go('//go:build linux\n\n'), `${go('//go:build linux\n\n')}// A note\n`, 'a_test.go')).code, 0);
+});
+
+test('a conftest changed or added is a finding', async () => {
+  assert.equal((await edited('a = 1\n', 'collect_ignore_glob = ["*"]\n', 'conftest.py')).code, 1);
 });

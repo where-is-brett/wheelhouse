@@ -23,10 +23,10 @@ export function suspectOf(text) {
   return Number.isInteger(n) && n >= 1 ? n : null;
 }
 
-// The incident a red main line's ask opens: its id comes from the ask's, so the same ask seen again is the same
-// incident. { id, what, kind, suspect, work }.
+// The incident a red main line's ask opens, or, where no queue asks (git alone, section 7.6), a red check of `commit`: its id
+// comes from the ask's or the commit's, so the same one seen again is the same incident. { id, what, kind, suspect, work }.
 export function redMainIncident(ask) {
-  const id = `${RED_MAIN}-${crypto.createHash('sha256').update(String(ask?.id)).digest('hex').slice(0, 10)}`;
+  const id = `${RED_MAIN}-${crypto.createHash('sha256').update(String(ask?.id ?? ask?.commit)).digest('hex').slice(0, 10)}`;
   const suspect = Number.isInteger(ask?.suspect) && ask.suspect >= 1 ? ask.suspect : null;
   return {
     id,
@@ -108,7 +108,7 @@ export function fixDecision({ incident, runs = [], green = null, stop = false, s
 // agents, the project's critical-area checks) and test or coverage settings weaken them too.
 // The files that hold a project's test command or its thresholds: a package manifest, a Python build file, a Makefile,
 // TypeScript's settings. A fix to a red main line has no call to change them.
-const TEST_COMMANDS = /(^|\/)(package\.json|pyproject\.toml|setup\.cfg|(GNU)?[Mm]akefile|tsconfig(\.[\w-]+)?\.json)$/;
+const TEST_COMMANDS = /(^|\/)(package\.json|pyproject\.toml|setup\.cfg|Cargo\.toml|(GNU)?[Mm]akefile|tsconfig(\.[\w-]+)?\.json)$/;
 
 export function weakensChecks({ paths = [], config, tests } = {}) {
   const reasons = [];
