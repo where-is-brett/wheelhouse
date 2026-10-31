@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { shellFor } from '../lib/local-git.js';
+import { ENGINE_ROOM_PORT } from '../protection/archon.js';
 import { sandboxDenyPaths } from '../protection/settings.js';
 import { prepareFolder, realFolder } from './folder.js';
 import { checkProfile } from './profile.js';
@@ -21,6 +22,10 @@ const TEMP = Object.freeze(['/private/tmp', '/private/var/tmp']);
 const GRACE_MS = 5000;
 const XCODE = '/Applications/Xcode.app/Contents/Developer';
 const CHOSEN_XCODE = '/var/db/xcode_select_link';
+// The shell's own exits for a command it couldn't find or start: no test ran, whatever it was.
+const NO_TOOL = [126, 127];
+const TOOL_LINE = 'A tool this project needs wasn\'t found. A check sees the usual places and the folders version managers use, so a tool kept elsewhere in the home folder isn\'t reached.';
+const PORT_LINE = `Port ${ENGINE_ROOM_PORT} is kept for Wheelhouse itself, so a check can't connect to it. Give the test server another port.`;
 // What macOS says when a tool tries to sandbox itself inside the check's sandbox: the check didn't run, so it isn't red.
 const NESTED = /sandbox_apply: Operation not permitted|^sandbox-exec: /m;
 // What `xcodebuild test` says when the sandbox refuses what it starts a test with (check 82).
@@ -29,9 +34,21 @@ const TESTS_REFUSED = /Failed to prevent system sleep|testmanagerd\.control|Sand
 // All a check keeps of the helper's environment: how to find its tools and how to read text. What it could read a test could
 // leave for `prepare`, which has the network, so a secret with a name nobody listed must not arrive at all. HOME, TMPDIR and
 // DEVELOPER_DIR are set by the check itself.
-const KEPT_VARIABLES = /^(?:PATH|LANG|LC_[A-Z]+|TZ|USER|LOGNAME|TERM|CARGO_HOME|GOROOT|JAVA_HOME|NVM_DIR|PYENV_ROOT|RBENV_ROOT|RUSTUP_HOME|SDKMAN_DIR|VOLTA_HOME)$/;
+// Proxy settings go too, since they can hold a password. `CARGO_HOME` stays out: it names `~/.cargo`, whose registry a check
+// can't read or write, so `cargo fetch` would fail; with it gone cargo uses the check's own home.
+const KEPT_VARIABLES = /^(?:PATH|LANG|LC_[A-Z]+|TZ|USER|LOGNAME|TERM|GOROOT|JAVA_HOME|ASDF_DIR|FNM_MULTISHELL_PATH|SWIFTLY_BIN_DIR|SWIFTLY_TOOLCHAINS_DIR)$/;
+// Where each version manager keeps its tools, as profile.js names them: with HOME the check's own, one left unnamed would
+// look in an empty folder and its shims would find nothing.
+const TOOL_HOMES = Object.freeze({
+  ASDF_DATA_DIR: '.asdf', BUN_INSTALL: '.bun', DENO_INSTALL: '.deno', FNM_DIR: 'Library/Application Support/fnm', MISE_DATA_DIR: '.local/share/mise', NVM_DIR: '.nvm', PNPM_HOME: 'Library/pnpm',
+  PYENV_ROOT: '.pyenv', RBENV_ROOT: '.rbenv', RUSTUP_HOME: '.rustup', SDKMAN_DIR: '.sdkman', SWIFTLY_HOME_DIR: '.swiftly', VOLTA_HOME: '.volta',
+});
 export function checkEnv(env = process.env) {
-  return Object.fromEntries(Object.entries(env).filter(([name]) => KEPT_VARIABLES.test(name)));
+  return Object.fromEntries(Object.entries(env).filter(([name]) => KEPT_VARIABLES.test(name) || Object.hasOwn(TOOL_HOMES, name)));
+}
+// The version managers on this computer that the environment doesn't name.
+export function toolHomes({ env = process.env, userHome = os.homedir(), exists = fs.existsSync } = {}) {
+  return Object.fromEntries(Object.entries(TOOL_HOMES).filter(([name, folder]) => env[name] === undefined && exists(path.join(userHome, folder))).map(([name, folder]) => [name, path.join(userHome, folder)]));
 }
 
 // The checks running in this process, by project, so All stop can end them.
@@ -133,7 +150,15 @@ function wordOf(attempt) {
   if (attempt.prepareFailed) return 'could-not-run';
   if (attempt.timedOut) return 'timed-out';
   if (attempt.code === 0) return 'passed';
-  return NESTED.test(attempt.output) ? 'could-not-run' : null;
+  return NESTED.test(attempt.output) || NO_TOOL.includes(attempt.code) ? 'could-not-run' : null;
+}
+
+// The output with what a person or a builder needs to know of why it ended so, where the output doesn't say. Last, so the
+// end kept of it holds the line.
+function explained(attempt) {
+  if (NO_TOOL.includes(attempt.code)) return `${attempt.output}\n${TOOL_LINE}`;
+  if (attempt.code !== 0 && new RegExp(`\\b${ENGINE_ROOM_PORT}\\b`).test(attempt.output)) return `${attempt.output}\n${PORT_LINE}`;
+  return attempt.output;
 }
 
 // The sandbox matches a file by its real path.
@@ -181,7 +206,7 @@ export async function runCheck({
     return answer('could-not-run', String(error?.message ?? error));
   }
   const xcode = developerDir();
-  const env = { ...checkEnv(), HOME: ownHome, CFFIXED_USER_HOME: ownHome, TMPDIR: tmp, ...(xcode ? { DEVELOPER_DIR: xcode } : {}) };
+  const env = { ...checkEnv(), ...toolHomes(), HOME: ownHome, CFFIXED_USER_HOME: ownHome, TMPDIR: tmp, ...(xcode ? { DEVELOPER_DIR: xcode } : {}) };
   const denied = deniedPaths();
   const textFor = (name) => profile({ paths, main, stage: name, network, denied, temp: TEMP, userHome: real(os.homedir()) });
 
@@ -201,14 +226,16 @@ export async function runCheck({
   try {
     const first = await attempt();
     const word = wordOf(first);
-    if (word !== null) return answer(word, first.output);
+    // Tests with no host stand in for the real ones, so only their pass says anything.
+    if (isHostless(testCommand)) return answer(word === 'passed' ? 'passed' : 'could-not-run', first.output);
+    if (word !== null) return answer(word, explained(first));
     const hosted = secondTryOf(testCommand);
     if (hosted !== null && TESTS_REFUSED.test(first.output)) {
       const second = await attempt(hosted);
       return answer(wordOf(second) === 'passed' ? 'passed' : 'could-not-run', second.output);
     }
     const again = await attempt();
-    return answer(wordOf(again) ?? 'failed', again.output);
+    return answer(wordOf(again) ?? 'failed', explained(again));
   } finally {
     over();
   }

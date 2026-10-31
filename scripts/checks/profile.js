@@ -54,7 +54,7 @@ const NETWORK_SERVICES = Object.freeze([
 // alone because `.cargo` holds a registry token. A key someone puts in a tool's own settings here is in reach of `prepare`.
 const TOOLS = Object.freeze([
   '.asdf', '.bun', '.cargo/bin', '.deno', '.fnm', '.local/share/mise', '.local/share/pnpm', '.mise', '.nvm',
-  '.pyenv', '.rbenv', '.rustup', '.sdkman', '.swiftly', '.volta', 'Library/pnpm',
+  '.pyenv', '.rbenv', '.rustup', '.sdkman', '.swiftly', '.volta', 'Library/Application Support/fnm', 'Library/Developer/Toolchains', 'Library/pnpm',
 ]);
 const DEVICES = '(literal "/dev/null") (literal "/dev/zero") (literal "/dev/random") (literal "/dev/urandom") (literal "/dev/tty") (literal "/dev/dtracehelper") (literal "/dev/ptmx") (regex #"^/dev/(fd|ttys)")';
 const NAME_SERVICE = '/private/var/run/mDNSResponder';

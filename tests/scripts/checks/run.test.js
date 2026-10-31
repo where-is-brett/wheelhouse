@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { checkEnv, developerDir, endCheck, runCheck, secondTryOf } from '../../../scripts/checks/run.js';
+import { checkEnv, developerDir, endCheck, hostlessTests, runCheck, secondTryOf, toolHomes } from '../../../scripts/checks/run.js';
 import { dueChecks, withCheckTurn } from '../../../scripts/checks/queue.js';
 import { commandDigest, writeCheck } from '../../../scripts/checks/record.js';
 import { checkPaths } from '../../../scripts/checks/folder.js';
@@ -341,6 +341,52 @@ test('a signal stops a check as endCheck does', unix, async () => {
   });
 });
 
+// --- tools, and what a red result can say ---
+
+test('a tool that isn\'t found is could-not-run, never red, with no second try, and says so', unix, async () => {
+  await withHome(async () => {
+    const marks = path.join(tempFolder('wh-marks-'), 'marks');
+    const got = await check(`echo ran >> '${marks}'; no-such-tool-here --version`);
+    assert.equal(got.result, 'could-not-run');
+    assert.equal(fs.readFileSync(marks, 'utf8'), 'ran\n');
+    assert.match(got.tail, /tool this project needs/);
+  });
+});
+
+test('a tool the sandbox refuses to start is could-not-run too', unix, async () => {
+  await withHome(async () => {
+    assert.equal((await check('exit 126')).result, 'could-not-run');
+  });
+});
+
+test('a test server on the engine room\'s port reads red, and says why', unix, async () => {
+  await withHome(async () => {
+    const got = await check('echo "connect EPERM 127.0.0.1:3090"; exit 1');
+    assert.equal(got.result, 'failed');
+    assert.match(got.tail, /3090 is kept for Wheelhouse/);
+  });
+});
+
+test('a red result with no port in it has no such line', unix, async () => {
+  await withHome(async () => {
+    assert.doesNotMatch((await check('echo "3 tests failed"; exit 1')).tail, /kept for Wheelhouse/);
+  });
+});
+
+test('where a version manager keeps its tools is kept, and what could break prepare or send a key elsewhere isn\'t', () => {
+  const kept = checkEnv({
+    SWIFTLY_HOME_DIR: '/a', SWIFTLY_BIN_DIR: '/a/bin', SWIFTLY_TOOLCHAINS_DIR: '/t', ASDF_DATA_DIR: '/b', ASDF_DIR: '/b2', MISE_DATA_DIR: '/c', PNPM_HOME: '/d', BUN_INSTALL: '/e', DENO_INSTALL: '/f', FNM_DIR: '/g', FNM_MULTISHELL_PATH: '/h',
+    RUSTUP_HOME: '/r', CARGO_HOME: '/x', HTTP_PROXY: 'http://u:p@proxy', https_proxy: 'http://u:p@proxy', ALL_PROXY: 'socks://proxy', NO_PROXY: 'x',
+  });
+  for (const name of ['SWIFTLY_HOME_DIR', 'SWIFTLY_BIN_DIR', 'SWIFTLY_TOOLCHAINS_DIR', 'ASDF_DATA_DIR', 'ASDF_DIR', 'MISE_DATA_DIR', 'PNPM_HOME', 'BUN_INSTALL', 'DENO_INSTALL', 'FNM_DIR', 'FNM_MULTISHELL_PATH', 'RUSTUP_HOME']) assert.ok(name in kept, name);
+  for (const name of ['CARGO_HOME', 'HTTP_PROXY', 'https_proxy', 'ALL_PROXY', 'NO_PROXY']) assert.ok(!(name in kept), name);
+});
+
+test('a version manager\'s home is named where the check\'s own HOME would hide it', () => {
+  const got = toolHomes({ env: { VOLTA_HOME: '/mine' }, userHome: '/Users/d', exists: (p) => ['/Users/d/.rustup', '/Users/d/.asdf', '/Users/d/.volta'].includes(p) });
+  assert.deepEqual(got, { RUSTUP_HOME: '/Users/d/.rustup', ASDF_DATA_DIR: '/Users/d/.asdf' });
+});
+
 // --- a job a test leaves behind, in a session of its own, which the end of the process group misses ---
 
 // A command that starts a job in its own session, which tries to write `target` for as long as it lives, and leaves.
@@ -432,6 +478,38 @@ test('hosted tests that fail on the second try are could-not-run, never red', un
     const got = await xcodeCheck(1);
     assert.equal(got.result, 'could-not-run');
     assert.equal(got.marks.match(/xcodebuild test/g).length, 1, 'no red second try on top');
+  });
+});
+
+const DIRECT = hostlessTests("xcodebuild build-for-testing -scheme App -derivedDataPath .build/checks CODE_SIGNING_ALLOWED=NO", '.build/checks');
+
+async function directCheck(xctestExit) {
+  const marks = path.join(tempFolder('wh-marks-'), 'marks');
+  const before = process.env.PATH;
+  process.env.PATH = `${fakeXcode(xctestExit, marks)}:${before}`;
+  try {
+    const s = await source();
+    const got = await runCheck({ project: 'p', commit: s.commit, main: false, settings: settings(DIRECT), source: s.url, platform: 'darwin', sandbox: standIn() });
+    return { ...got, marks: fs.readFileSync(marks, 'utf8') };
+  } finally {
+    process.env.PATH = before;
+  }
+}
+
+test('the finder\'s Xcode command goes straight to tests with no host, and its pass counts', unix, async () => {
+  await withHome(async () => {
+    const got = await directCheck(0);
+    assert.equal(got.result, 'passed');
+    assert.doesNotMatch(got.marks, /xcodebuild test/);
+    assert.match(got.marks, /xcodebuild build-for-testing\nxcrun xctest/);
+  });
+});
+
+test('anything but a pass from the finder\'s Xcode command is could-not-run, tried once', unix, async () => {
+  await withHome(async () => {
+    const got = await directCheck(1);
+    assert.equal(got.result, 'could-not-run');
+    assert.equal(got.marks.match(/xcodebuild build-for-testing/g).length, 1);
   });
 });
 
