@@ -4828,7 +4828,7 @@ export async function startHelper({
       const undo = await revertOnHome({ project, branch, commits, folder: recordOf(project).folder, run });
       await (refreshMirror ?? refreshFetchMirror)(project).catch(() => {});
       // Signed and naming the click, so one click undoes once.
-      await writeEvent({ project, event: sign(makeEvent({ kind: 'note', data: { lean: 'undo', click: click.id, undo, text: 'A change was taken back out of the main version, on your click. Nothing was deleted.' }, now })), now });
+      await checkWrite(project, sign(makeEvent({ kind: 'note', data: { lean: 'undo', click: click.id, undo, text: 'A change was taken back out of the main version, on your click. Nothing was deleted.' }, now })));
       return { undo };
     }, { now }));
   }

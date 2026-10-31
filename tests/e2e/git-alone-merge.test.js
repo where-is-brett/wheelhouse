@@ -221,10 +221,28 @@ test('Undo takes a merge back out on the director\'s click, and one click does i
   assert.equal(asked.needs, 'window');
   const card = cardOf((d) => String(d.question).includes(merge));
   const undone = await confirm(client, card);
+  assert.equal(typeof undone.undone?.undo, 'string', JSON.stringify(undone));
   assert.equal(await headIn(home, 'refs/heads/main'), undone.undone.undo);
   assert.equal(seenMain(P), undone.undone.undo);
   assert.equal((await client.local.undo({ project: P, merge })).needs, 'window', 'the click is spent');
   assert.equal(await headIn(home, 'refs/heads/main'), undone.undone.undo);
+}, { check: checks(), askWindow: atWindow('Undo') }));
+
+test('a write beside an Undo doesn\'t cost its click: the record takes one commit at a time', { timeout: 120000 }, () => gitAloneWorld(async (world) => {
+  const { helper, client } = world;
+  const { n } = await readyChange(world, 'card-13', 'export const price = () => 13;\n');
+  await ticksUntil(helper, () => changeOf(n).state === 'merged', 'the merge');
+  const merge = changeOf(n).mergeCommit;
+  await client.local.undo({ project: P, merge });
+  const card = cardOf((d) => String(d.question).includes(merge));
+  let writing = true;
+  const beside = (async () => {
+    while (writing) await client.state.write({ project: P, kind: 'note', data: { about: 'engine', words: 'Something else happened.' } });
+  })();
+  const undone = await confirm(client, card);
+  writing = false;
+  await beside;
+  assert.equal(typeof undone.undone?.undo, 'string', JSON.stringify(undone));
 }, { check: checks(), askWindow: atWindow('Undo') }));
 
 test('a change that takes the director\'s say raises its card once, and goes in on their Approve', { timeout: 120000 }, () => gitAloneWorld(async (world) => {
