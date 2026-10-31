@@ -751,5 +751,11 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       else state.sentBack[work] = (state.sentBack[work] ?? 0) + 1;
       keep();
     },
+    // A head of `work` passed: its reds are behind it, so a later slice's first red is a first red.
+    passed(work) {
+      if (state.reds[work] === undefined) return;
+      for (const kept of [state.reds, state.redActed, state.redAsked, state.redNoted]) delete kept[work];
+      keep();
+    },
   };
 }

@@ -4686,6 +4686,7 @@ export async function startHelper({
       results: () => signedChecks(project).map((e) => e.data),
       write: ({ event }) => checkWrite(project, event),
       onRed: (head, work, tail) => dispatcher.sentBack(work, 'red', tail),
+      onPassed: (work) => dispatcher.passed(work),
       card: (data) => write('question', data),
       answerOf: (id) => views().questions?.[id]?.answer?.label ?? null,
       // A fix's work is its incident's, and no piece of the queue: it has ended when the incident has.

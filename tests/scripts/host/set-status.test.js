@@ -27,6 +27,23 @@ test('a 403 reads permission', async () => {
   assert.deepEqual(await a.setStatus({ sha: SHA, state: 'success', description: 'Passed' }), { refused: 'permission' });
 });
 
+test('a 403 for going too fast isn\'t a missing permission', async () => {
+  for (const stderr of ['gh: API rate limit exceeded for installation (HTTP 403)', 'gh: You have exceeded a secondary rate limit (HTTP 403)']) {
+    const { adapter: a } = adapter([{ code: 1, stdout: '', stderr }]);
+    const got = await a.setStatus({ sha: SHA, state: 'success', description: 'Passed' });
+    assert.equal(typeof got.refused, 'string');
+    assert.notEqual(got.refused, 'permission');
+  }
+});
+
+test('a status that says failure came from something that ran', async () => {
+  const nodes = [{ __typename: 'StatusContext', context: 'jenkins', state: 'FAILURE', createdAt: '2026-10-31T01:00:00Z', creator: { login: 'ci' } }, { __typename: 'StatusContext', context: 'other', state: 'PENDING', createdAt: '2026-10-31T01:00:00Z', creator: null }];
+  const { adapter: a } = adapter([{ code: 0, stdout: JSON.stringify({ data: { repository: { object: { statusCheckRollup: { contexts: { nodes } } } } } }), stderr: '' }]);
+  const [failed, waiting] = await a.checkContexts(SHA);
+  assert.equal(failed.startedAt, '2026-10-31T01:00:00Z');
+  assert.equal(waiting.startedAt, null);
+});
+
 test('another failure reads as a refusal in plain words, not a throw', async () => {
   const { adapter: a } = adapter([{ code: 1, stdout: '', stderr: 'gh: Server Error (HTTP 502)' }]);
   const got = await a.setStatus({ sha: SHA, state: 'success', description: 'Passed' });

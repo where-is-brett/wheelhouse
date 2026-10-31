@@ -26,7 +26,8 @@ const STATUS_WORD = { SUCCESS: 'success', PENDING: 'pending', EXPECTED: 'pending
 function contextOf(node) {
   if (node?.__typename === 'StatusContext') {
     const state = STATUS_WORD[node.state] ?? 'pending';
-    return { name: node.context, state, startedAt: state === 'success' ? node.createdAt ?? null : null, app: node.creator?.login ?? null };
+    // A status that has an answer came from something that ran, whichever answer it is.
+    return { name: node.context, state, startedAt: state === 'pending' ? null : node.createdAt ?? null, app: node.creator?.login ?? null };
   }
   const app = node?.checkSuite?.app?.slug ?? null;
   if (node?.status !== 'COMPLETED') {
@@ -123,7 +124,9 @@ export function githubCommands({ call, attempt, json, repo, fromAddress, refusal
     async setStatus({ sha, state, description }) {
       const got = await attempt(['api', '--method', 'POST', `repos/${repo}/statuses/${sha}`, '-f', `state=${state}`, '-f', `context=${STATUS_CONTEXT}`, '-f', `description=${description}`]);
       if (got.code === 0) return { ok: true };
-      return { refused: /\b403\b|not accessible/i.test(`${got.stderr}\n${got.stdout}`) ? 'permission' : 'GitHub did not take the report' };
+      const said = `${got.stderr}\n${got.stdout}`;
+      if (/rate limit/i.test(said)) return { refused: 'GitHub is limiting how fast it takes reports' };
+      return { refused: /\b403\b|not accessible/i.test(said) ? 'permission' : 'GitHub did not take the report' };
     },
 
     // The commit's deployments, newest first: the first whose newest status, of any state, is

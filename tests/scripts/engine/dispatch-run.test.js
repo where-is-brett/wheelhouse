@@ -109,6 +109,17 @@ test('a second red raises a card', async () => {
   assert.doesNotMatch(JSON.stringify(cards[0].data), /commit status|pull request/);
 });
 
+test('a head that passes wipes the slate, so a later slice\'s first red goes back with no card', async () => {
+  const t = sentBackWorld();
+  t.d.sentBack('card-1', 'red', 'one');
+  await t.d.tick();
+  t.d.passed('card-1');
+  t.d.sentBack('card-1', 'red', 'a later piece');
+  await t.d.tick();
+  assert.equal(t.starts.length, 2);
+  assert.equal(t.written.filter((w) => w.kind === 'question').length, 0);
+});
+
 test('Try again on that card starts it with the newest tail', async () => {
   const t = sentBackWorld();
   t.d.sentBack('card-1', 'red', 'one');

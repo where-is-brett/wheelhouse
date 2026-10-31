@@ -16,6 +16,7 @@ import { LEAVE_THEM, RUN_CHECKS_HERE } from '../state/card-lines.js';
 export const CHECK_CARD_WORK = 'checks';
 export const CHECK_TRY_AGAIN = 'Try again';
 export const CHECK_LEAVE_IT = 'Leave it';
+export const CHECK_ACCEPTED = 'I\'ve accepted it';
 export const KEEP_REPORTING = 'Keep reporting';
 const NOT_RAN_LIMIT = 2;
 // How many looks in a row at rules nobody can read before it is the director's: about five minutes, past a passing fault.
@@ -33,16 +34,16 @@ const STATUS = {
 const CHECKING = { state: 'pending', description: 'Checking on this computer' };
 const isRed = (word) => word === 'failed' || word === 'timed-out';
 
-// checkRunner({ project, repo, permissionLink, adapter, facts, source, results, write, onRed, card, answerOf, ended, stopped,
-//   openHeads, now, run, turn }) -> { took(head, work), tick(), stop(), idle() }.
+// checkRunner({ project, repo, permissionLink, adapter, facts, source, results, write, onRed, onPassed = () => {}, card, answerOf, ended, stopped,
+//   openHeads, now, run, turn, sweep }) -> { took(head, work), tick(), stop(), idle() }.
 // - `facts()` what the helper reads from the default branch and the host: { setting, host, contexts, hasWorkflows, main,
 //   settings, digest }; `source()` the folder a check fetches from, brought up to date;
 // - `results()` the data of the signed `check` events, verified, oldest first; `write({ project, event })` signs and keeps one;
-// - `onRed(head, work, tail)` sends a change back; `card(data)` raises a question; `answerOf(id)` the label the director chose;
+// - `onRed(head, work, tail)` sends a change back; `onPassed(work)` says a work's head passed; `card(data)` raises a question; `answerOf(id)` the label the director chose;
 // - `ended(work)` whether a work's change has merged or closed; `stopped()` whether All stop is on;
 // - `openHeads()` [{ head, work }], the open changes' heads as the host has them, for a head nothing told the helper of.
 export function checkRunner({
-  project, repo, permissionLink, adapter, facts, source, results, write, onRed, card, answerOf = () => null, ended = () => false, stopped = () => false,
+  project, repo, permissionLink, adapter, facts, source, results, write, onRed, onPassed = () => {}, card, answerOf = () => null, ended = () => false, stopped = () => false,
   openHeads = async () => [], now = () => new Date(), run = runCheck, turn = withCheckTurn, sweep = sweepHeads,
 }) {
   let active = null;
@@ -54,25 +55,29 @@ export function checkRunner({
     return kept;
   };
   const latest = (commit, digest) => results().filter((r) => r.commit === commit && r.command === digest).at(-1) ?? null;
-  const askedId = (kept) => `q-${CHECK_CARD_WORK}-${(kept.cards += 1)}`;
 
+  // Raises a card once: it counts as asked when it has been written, so one that couldn't be is asked again on the next tick.
+  const asking = new Set();
   async function ask(name, data) {
-    const kept = readQueue(project);
-    if (kept.asked[name]) return;
-    const id = askedId(kept);
-    kept.asked[name] = id;
-    keepQueue(project, kept);
-    await card({ id, work: CHECK_CARD_WORK, level: 3, ...data });
+    if (readQueue(project).asked[name] || asking.has(name)) return;
+    asking.add(name);
+    try {
+      const id = `q-${CHECK_CARD_WORK}-${change((q) => { q.cards += 1; }).cards}`;
+      await card({ id, work: CHECK_CARD_WORK, level: 3, ...data });
+      change((q) => { q.asked[name] = id; });
+    } finally {
+      asking.delete(name);
+    }
   }
 
   const askPermission = () => ask('permission', {
     what: `Wheelhouse has this project's check results but isn't allowed to tell GitHub, so nothing can be added to the main line yet. Accept the one new permission here: ${permissionLink}`,
     why: 'Giving Wheelhouse a new permission on GitHub is yours to decide, at level 3.',
     options: [
-      { label: 'I\'ve accepted it', says: 'Wheelhouse tells GitHub the results it is holding, and the work carries on.' },
+      { label: CHECK_ACCEPTED, says: 'Wheelhouse tells GitHub the results it is holding, and the work carries on.' },
       { label: 'Leave it', says: 'Finished work waits. The checks still run, and nothing is added to the main line.' },
     ],
-    recommendation: 'I\'ve accepted it',
+    recommendation: CHECK_ACCEPTED,
   });
 
   const askNotRan = () => ask('notRan', {
@@ -133,8 +138,14 @@ export function checkRunner({
     const kept = change((q) => {
       q.unposted = q.unposted.filter((c) => c !== commit);
       if (!posted) q.unposted.push(commit);
-      if (posted) q.waitingForPermission = false;
-      else if (got?.refused === 'permission') q.waitingForPermission = true;
+      if (posted) {
+        q.waitingForPermission = false;
+        delete q.asked.permission;
+      } else if (got?.refused === 'permission') {
+        q.waitingForPermission = true;
+        // Accepted and still refused: the card comes once more.
+        if (q.asked.permission && answerOf(q.asked.permission) === CHECK_ACCEPTED) delete q.asked.permission;
+      }
     });
     if (kept.waitingForPermission) await askPermission();
     return posted;
@@ -179,6 +190,10 @@ export function checkRunner({
       await report(commit, digest);
       if (kept.streak >= NOT_RAN_LIMIT) await askNotRan();
     }
+    if (!main && answer.result === 'passed') {
+      const passed = readQueue(project).heads.find((h) => h.commit === commit);
+      if (passed) await onPassed(passed.work);
+    }
     if (main || !isRed(answer.result)) return;
     const head = readQueue(project).heads.find((h) => h.commit === commit);
     if (!head || head.redFor === digest) return;
@@ -198,7 +213,20 @@ export function checkRunner({
         q.streak = 0;
         delete q.asked.notRan;
       });
+    } else if (label === CHECK_LEAVE_IT) {
+      // What was left stays held, and a new version that can't run starts afresh.
+      change((q) => {
+        q.streak = 0;
+        delete q.asked.notRan;
+      });
     }
+  }
+
+  // A card that couldn't be written when it was due.
+  async function askedAgain() {
+    const { streak, waitingForPermission } = readQueue(project);
+    if (waitingForPermission) await askPermission().catch(() => {});
+    if (streak >= NOT_RAN_LIMIT) await askNotRan().catch(() => {});
   }
 
   // What the host's checks are doing on the newest heads seen, read while the project's checks are the host's.
@@ -255,6 +283,7 @@ export function checkRunner({
     }
     if (typeof f.settings?.testCommand !== 'string' || stopped()) return;
     answered();
+    await askedAgain();
     for (const commit of kept.unposted) await report(commit, f.digest);
     await takeOpenHeads(f.digest);
     if (active !== null) return;

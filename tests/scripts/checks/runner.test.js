@@ -58,6 +58,7 @@ function world({ word = () => 'passed', status = () => ({ ok: true }), ...given 
       w.events.push(event);
     },
     onRed: async (head, work, tail) => { w.log.push('red'); w.reds.push({ head, work, tail }); },
+    onPassed: (work) => given.onPassed?.(work),
     card: async (data) => { w.log.push('card'); w.cards.push(data); },
     answerOf: (id) => w.answers[id] ?? null,
     ended: (work) => w.ended.includes(work),
@@ -578,4 +579,88 @@ test('setup\'s record answers for a host that can\'t be read', () => withHome(as
   await runner.idle();
   assert.equal(w.cards.length, 0);
   assert.ok(w.ran.some((r) => r.commit === MAIN));
+}));
+
+// --- what is asked, and when ---
+
+const twice = async (w, runner) => {
+  await runner.tick();
+  await runner.idle();
+  await runner.tick();
+  await runner.idle();
+};
+
+test('every card the runner raises passes the real card checks', () => withHome(async () => {
+  const { w, runner } = await brokenCi();
+  await runner.tick();
+  const notRan = world({ word: () => 'could-not-run' });
+  await twice(notRan.w, notRan.runner);
+  const permission = world({ status: () => ({ refused: 'permission' }) });
+  await permission.runner.took(HEAD, 'w');
+  for (const card of [...w.cards, ...notRan.w.cards, ...permission.w.cards]) asAsked(card);
+  assert.equal(w.cards.length + notRan.w.cards.length + permission.w.cards.length, 3, 'one of each');
+  void runner;
+}));
+
+test('a card that couldn\'t be written is asked again, with nothing marked as asked', () => withHome(async () => {
+  const given = world({ word: () => 'could-not-run' });
+  const { w, runner } = given;
+  let refuse = true;
+  const real = w.cards.push.bind(w.cards);
+  w.cards.push = (card) => { if (refuse) throw new Error('the record is damaged'); return real(card); };
+  await twice(w, runner);
+  assert.equal(readQueue('p').asked.notRan, undefined);
+  refuse = false;
+  await runner.tick();
+  await runner.idle();
+  assert.equal(w.cards.length, 1);
+  assert.equal(typeof readQueue('p').asked.notRan, 'string');
+}));
+
+test('after Leave it, a new head that can\'t run raises a new card', () => withHome(async () => {
+  const { w, runner } = world({ word: () => 'could-not-run' });
+  await twice(w, runner);
+  assert.equal(w.cards.length, 1);
+  w.answers[w.cards[0].id] = LEAVE_IT;
+  await runner.tick();
+  await runner.idle();
+  assert.equal(w.cards.length, 1, 'no card for what was left');
+  w.facts = { ...w.facts, main: NEXT };
+  await twice(w, runner);
+  assert.equal(w.cards.length, 2);
+}));
+
+test('a permission taken away after it was given raises its card again', () => withHome(async () => {
+  let refuse = true;
+  const { w, runner } = world({ status: () => (refuse ? { refused: 'permission' } : { ok: true }) });
+  await runner.took(HEAD, 'w');
+  assert.equal(w.cards.length, 1);
+  refuse = false;
+  await runner.took(HEAD, 'w');
+  assert.equal(readQueue('p').asked.permission, undefined);
+  refuse = true;
+  await runner.took(HEAD, 'w');
+  assert.equal(w.cards.length, 2);
+}));
+
+test('I\'ve accepted it, and it still can\'t report: the card comes again', () => withHome(async () => {
+  const { w, runner } = world({ status: () => ({ refused: 'permission' }) });
+  await runner.took(HEAD, 'w');
+  w.answers[w.cards[0].id] = w.cards[0].recommendation;
+  await runner.took(HEAD, 'w');
+  assert.equal(w.cards.length, 2);
+  await runner.took(HEAD, 'w');
+  assert.equal(w.cards.length, 2);
+}));
+
+test('a head that passes tells the dispatcher', () => withHome(async () => {
+  const passed = [];
+  const { w, runner } = world({ onPassed: (work) => passed.push(work) });
+  await runner.took(HEAD, 'w-1');
+  await runner.tick();
+  await runner.idle();
+  await runner.tick();
+  await runner.idle();
+  assert.ok(w.ran.some((r) => r.commit === HEAD));
+  assert.deepEqual(passed, ['w-1']);
 }));
