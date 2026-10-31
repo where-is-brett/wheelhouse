@@ -38,18 +38,18 @@ const CHECKING = { state: 'pending', description: 'Checking on this computer' };
 const FIRST_WAITS = { state: 'pending', description: 'Waiting for the director' };
 const isRed = (word) => word === 'failed' || word === 'timed-out';
 
-// checkRunner({ project, repo, permissionLink, adapter, facts, source, results, write, onRed, onPassed = () => {}, onFix = async () => {}, keep = async () => {}, note = async () => {}, record = async () => {}, states = () => [], card, answerOf, ended, stopped,
+// checkRunner({ project, repo, permissionLink, adapter, facts, source, results, write, onRed, onPassed = () => {}, onFix = async () => {}, onRedMain = async () => {}, keep = async () => {}, note = async () => {}, record = async () => {}, states = () => [], card, answerOf, ended, stopped,
 //   openHeads, now, run, turn, sweep }) -> { took(head, work), tick(), stop(), idle() }.
 // - `facts()` what the helper reads from the default branch and the host: { setting, host, contexts, hasWorkflows, required, main,
 //   settings, digest, notCounting, finder (what the finder found on the default branch), keptOnly (the command is the record's) }; `source()` the folder a check fetches from, brought up to date;
 // - `results()` the data of the signed `check` events, verified, oldest first; `write({ project, event })` signs and keeps one;
 // - `onRed(head, work, tail)` sends a change back; `onPassed(work)` says a work's head passed; `onFix(commit)` starts mending a
-//   main line whose first check failed; `keep()` takes a command kept only in the record to the default branch; `note(words)`
+//   main line whose first check failed; `onRedMain(commit)` opens the incident for a red main line where no queue asks to; `keep()` takes a command kept only in the record to the default branch; `note(words)`
 //   writes to the Logbook; `record(kind, data)` signs a `checks-state` or `checks-found`; `states()` the verified `checks-state`s; `card(data)` raises a question; `answerOf(id)` the label the director chose;
 // - `ended(work)` whether a work's change has merged or closed; `stopped()` whether All stop is on;
 // - `openHeads()` [{ head, work }], the open changes' heads as the host has them, for a head nothing told the helper of.
 export function checkRunner({
-  project, repo, permissionLink, adapter, facts, source, results, write, onRed, onPassed = () => {}, onFix = async () => {}, keep = async () => {}, note = async () => {}, record = async () => {}, states = () => [], card, answerOf = () => null, ended = () => false, stopped = () => false,
+  project, repo, permissionLink, adapter, facts, source, results, write, onRed, onPassed = () => {}, onFix = async () => {}, onRedMain = async () => {}, keep = async () => {}, note = async () => {}, record = async () => {}, states = () => [], card, answerOf = () => null, ended = () => false, stopped = () => false,
   openHeads = async () => [], now = () => new Date(), run = runCheck, turn = withCheckTurn, sweep = sweepHeads,
 }) {
   let active = null;
@@ -323,6 +323,16 @@ export function checkRunner({
   const mainPassed = (f) => results().filter((r) => r.commit === f.main && r.command === f.digest && r.clean === true).at(-1)?.result === 'passed';
   const readNotCounting = (f) => f.notCounting === true;
 
+  // The main line's clean check came back red, after its second try. A first check has its own card, and the same commit
+  // opens one incident, however many ticks see it.
+  async function redMain(f) {
+    const { firstFor, redOpened } = readQueue(project);
+    const newest = results().filter((r) => r.commit === f.main && r.clean === true).at(-1);
+    if (firstFor || redOpened === f.main || f.notCounting === true || !isRed(newest?.result)) return;
+    await onRedMain(f.main);
+    change((q) => { q.redOpened = f.main; });
+  }
+
   async function tick() {
     if (stopped()) return;
     const f = await facts();
@@ -352,6 +362,7 @@ export function checkRunner({
     }
     answered();
     await askedAgain();
+    await redMain(f).catch(() => {});
     await firstAnswered(f);
     for (const commit of kept.unposted) await report(commit, f.digest);
     await takeOpenHeads(f.digest);

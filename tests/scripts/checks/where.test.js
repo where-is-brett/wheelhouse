@@ -92,3 +92,7 @@ test('our own status is never what is stuck', () => {
   const ours = [{ ...own, state: 'pending' }];
   assert.equal(stuckHostChecks([waited('a', 90, ours), waited('b', 90, ours)]), false);
 });
+
+test('a project in git alone checks here, whatever its setting says', () => {
+  assert.equal(whereChecks({ setting: 'host', host: 'local' }), 'here');
+});

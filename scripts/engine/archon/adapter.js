@@ -501,6 +501,13 @@ export function archonAdapter({
     // Hands a pull request to Archon's merge queue (check 76; ruling 9 of part 3b): writes its `work/<n>` document in
     // the project's state store, marked ready, over whatever revision is there. `item`: { project (its folder), repo,
     // pr, url, runId, at }. Not one of the interface's methods: only this engine has a merge queue.
+    // Takes a run's worktree and branch out of the project's folder. Archon refuses a squashed branch whatever fetch came
+    // first, and `--force` asks nothing about what it removes, so the helper looks before calling this (check 83).
+    async complete({ folder, branch } = {}) {
+      const result = await cli(['complete', '--force', branch], { cwd: folder, timeout: CALL_MS });
+      return result.code === 0 ? { ok: true } : refusedWith(refusal('clean up the run', result));
+    },
+
     async handOver({ project, repo, pr, url, runId, at = now() } = {}) {
       if (!project || !Number.isInteger(pr) || pr < 1) return refusedWith('A hand-over needs the project and the pull request');
       const name = `work/${pr}`;

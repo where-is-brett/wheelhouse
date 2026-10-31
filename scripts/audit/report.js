@@ -46,6 +46,7 @@ const SHA = /^[0-9a-f]{40}$|^[0-9a-f]{64}$/;
 const VERSION_FIELDS = ['wheelhouse', 'register', 'claudeCode', 'vscode', 'runtime', 'cli', 'models'];
 const CODED_LINE = new Set(['HOST_UNREACHABLE', 'CERTIFICATE_NOT_TRUSTED']);
 const MOST_SHOWN = 200;
+const NO_SECOND_RECORD = 'This project is kept on this computer, so there is no second record to compare with.';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const short = (sha) => String(sha).slice(0, 12);
@@ -306,7 +307,9 @@ export async function auditReport({ events, host, since, now, enrolled = null, d
       gap('protection-change', null, null, `Protection changed${who}${where}: ${String(e.what ?? 'a protection setting').slice(0, MOST_SHOWN)}`);
     }
     if (protection.damaged) incomplete.push('The protection reading kept for the last report could not be read, so changes since that report cannot be seen; the comparison starts afresh from this one');
-    if (protection.source === 'compared') {
+    if (protection.source === 'none') {
+      limits.push(NO_SECOND_RECORD);
+    } else if (protection.source === 'compared') {
       limits.push('This host has no audit events at this licence (they are Premium and Ultimate\'s), so protection changes are found by comparing the protection read now with the protection read for the last report. A change made and undone between two reports is not seen.');
     } else if (protection.compared === false) {
       limits.push('The protection could not also be read now for comparison, so only the audit events say what changed.');
@@ -484,21 +487,19 @@ export async function main(argv, {
     err.write('The audit report could not be made: the project has not been set up on this computer\n');
     return 1;
   }
-  if (record.host !== 'gitlab') {
-    err.write(record.host === 'local'
-      ? 'This project is kept on this computer, so there is no second record to compare with, and no report was made.\n'
-      : 'The audit report is for GitLab in this version. This project is on GitHub, so no report was made.\n');
+  if (record.host !== 'gitlab' && record.host !== 'local') {
+    err.write('The audit report is for GitLab in this version. This project is on GitHub, so no report was made.\n');
     return 1;
   }
   try {
-    const adapter = adapterFor(record, await envFor(record));
+    const adapter = record.host === 'local' ? adapterOf(record) : adapterFor(record, await envFor(record));
     const skipped = [];
     const events = eventsFor(given.project, skipped);
     const host = {
       mergedRequests: (args) => adapter.mergedRequests(args),
       pipelinesFor: (sha, options) => adapter.pipelinesFor(sha, options),
       prState: (number) => adapter.prState(number),
-      protectionEvents: keepingProtection({ project: given.project, adapter, now }),
+      protectionEvents: record.host === 'local' ? adapter.protectionEvents : keepingProtection({ project: given.project, adapter, now }),
     };
     const report = await auditReport({
       events, host, since, now: now(), enrolled: enrolledFor(), damagedRecords: skipped.length, protectionKept: protectionLogPlace(given.project),

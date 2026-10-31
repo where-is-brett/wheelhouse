@@ -20,9 +20,9 @@ export function rulesNameOurs({ required = [], recorded = null }) {
 // no longer count, and neither does what never ran. A job that really runs still takes the checks back to the host.
 // `keepReporting` is the director's press on the card for rules nobody can read.
 export function whereChecks({ setting = null, host, contexts = [], hasWorkflows = false, hostChecksOff = false, keepReporting = false, required = [], recorded = null }) {
-  if (rulesNameOurs({ required, recorded }) === true || keepReporting) return 'here';
+  // A project in git alone has nowhere else, whatever a setting says.
+  if (host === 'local' || rulesNameOurs({ required, recorded }) === true || keepReporting) return 'here';
   if (setting === 'here' || setting === 'host') return setting;
-  if (host === 'local') return 'here';
   if (hostChecksOff) return others(contexts).some((c) => !neverRan(c, Infinity)) ? 'host' : 'here';
   return others(contexts).length > 0 || hasWorkflows ? 'host' : 'here';
 }
