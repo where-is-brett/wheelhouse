@@ -127,3 +127,10 @@ test('the folder is brought up from the mirror under the host\'s own remote', as
     assert.notEqual((await git(folder, ['for-each-ref', `refs/remotes/${FOLDER_REMOTE}`])).length > 0, true);
   });
 });
+
+test('Bring my folder up to date says so when the folder has work of its own', async () => {
+  const bring = (answer) => safekeepingAct('bring-up', { status: offered('bring-up'), bringUp: async () => answer });
+  assert.equal((await bring({ moved: true })).ok, true);
+  assert.equal((await bring({ moved: false, state: 'same' })).ok, true);
+  assert.match((await bring({ moved: false, state: 'parted' })).refused, /work of its own/);
+});

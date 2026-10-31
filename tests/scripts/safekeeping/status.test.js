@@ -9,8 +9,8 @@ import { tempFolder } from '../../helpers/homes.js';
 import { homeDir, makeHome } from '../../../scripts/host/local/home.js';
 import { chooseBackupFolder, backUp } from '../../../scripts/host/local/backup.js';
 import { safekeeping } from '../../../scripts/safekeeping/status.js';
-import { readSafekeeping, readStatus, safekeepingTick } from '../../../scripts/safekeeping/readings.js';
-import { writeProject } from '../../../scripts/lib/projects.js';
+import { readSafekeeping, readStatus, safekeepingFile, safekeepingTick } from '../../../scripts/safekeeping/readings.js';
+import { readProject, writeProject } from '../../../scripts/lib/projects.js';
 
 const NOW = new Date(2026, 10, 12, 12, 0, 0);
 const ago = (days, hours = 0) => new Date(NOW.getTime() - (days * 24 + hours) * 60 * 60 * 1000).toISOString();
@@ -355,4 +355,39 @@ test('a watch never holds a merge or a run', () => {
   for (const file of uses) assert.doesNotMatch(fs.readFileSync(file, 'utf8'), /safekeeping/i, file);
   const helper = fs.readFileSync('scripts/host/helper.js', 'utf8');
   assert.equal(helper.match(/readStatus\(/g).length, 1, 'the helper reads the status only for the row\'s buttons');
+});
+
+const AT = new Date('2026-11-01T10:00:00.000Z');
+
+test('a look that fails replaces the last status, and an old status says it is old', async () => {
+  const project = 'looked';
+  const safe = safekeeping({ place: 'local', backup: { at: AT.toISOString(), behind: 0, oldest: null, failed: false, refused: null }, timeMachine: { on: false, last: null }, readAt: AT.toISOString() }, { now: AT });
+  assert.equal(safe.level, 'safe');
+  await withKeyedHome(async () => {
+    fs.mkdirSync(path.dirname(safekeepingFile(project)), { recursive: true });
+    fs.writeFileSync(safekeepingFile(project), `${JSON.stringify({ status: safe })}\n`);
+    assert.equal(readStatus(project, { now: () => new Date(AT.getTime() + 60 * 60 * 1000) }).level, 'safe');
+    const old = readStatus(project, { now: () => new Date(AT.getTime() + 3 * 60 * 60 * 1000) });
+    assert.equal(old.level, 'watch');
+    assert.match(old.line, /^Not checked since/);
+    const failed = await safekeepingTick({ project, record: { host: 'local', folder: '/nowhere' }, now: () => AT, machine: async () => ({ on: false, last: null }), git: () => { throw new Error('no'); } });
+    assert.equal(failed.level, 'watch');
+    assert.equal(readStatus(project, { now: () => AT }).line, 'Couldn\'t check this project');
+  });
+});
+
+test('a backup file gone from its folder doesn\'t count, and nor does a main version the home has lost', async () => {
+  await withKeyedHome(async () => {
+    const folder = await projectFolderWith('trunk');
+    await makeHome({ project: 'gone', folder });
+    writeProject('gone', { folder, remoteUrl: null, host: 'local', repo: 'local/gone', connection: { host: 'local', mode: 'none' } });
+    const drive = fs.realpathSync(tempFolder('wh-drive-'));
+    const how = { stat: (p) => ({ dev: String(p).startsWith(drive) ? 2 : 1, isDirectory: () => true }) };
+    assert.equal(chooseBackupFolder({ project: 'gone', folder: drive, ...how }).ok, true);
+    await backUp({ project: 'gone', now: () => AT, ...how });
+    const look = () => safekeepingTick({ project: 'gone', record: readProject('gone'), now: () => AT, machine: async () => ({ on: false, last: null }), ...how });
+    assert.equal((await look()).level, 'safe');
+    fs.rmSync(path.join(drive, 'gone.wheelhouse-backup'));
+    assert.equal((await look()).level, 'watch');
+  });
 });

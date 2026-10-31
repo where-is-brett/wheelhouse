@@ -7,10 +7,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { readConfig } from '../gate/guardrails.js';
-import { backupPlace, readBackup, timeMachine } from '../host/local/backup.js';
+import { backupFile, backupPlace, readBackup, timeMachine } from '../host/local/backup.js';
 import { gitRoute, homeGit } from '../host/local/home.js';
 import { stateDir } from '../lib/paths.js';
-import { safekeeping } from './status.js';
+import { notRead, safekeeping, staleStatus } from './status.js';
 
 const HOUR_MS = 60 * 60 * 1000;
 const NOTHING_HERE = Object.freeze({ commits: 0, uncommitted: 0, since: null, branches: [] });
@@ -30,12 +30,16 @@ async function readLocal({ project, record, git, now, machine, ...how }) {
   const kept = readBackup(project);
   const home = homeGit(project, git);
   const known = kept.main !== null && await home.ok(['cat-file', '-e', `${kept.main}^{commit}`]);
-  const since = known ? await mergesIn(home, ['HEAD', `^${kept.main}`]) : { behind: 0, oldest: null };
-  const place = kept.folder === null || !fs.existsSync(kept.folder) ? { ok: true } : backupPlace({ folder: kept.folder, project, root: record.folder, ...how });
+  // A main version the home no longer holds says nothing of what came since, so it can't read as up to date.
+  const lost = kept.main !== null && !known;
+  const since = known ? await mergesIn(home, ['HEAD', `^${kept.main}`]) : { behind: lost ? 1 : 0, oldest: lost ? kept.at : null };
+  const here = kept.folder !== null && fs.existsSync(kept.folder);
+  const place = !here ? { ok: true } : backupPlace({ folder: kept.folder, project, root: record.folder, ...how });
+  const gone = here && kept.at !== null && !fs.existsSync(backupFile(kept.folder, project));
   const machineSince = machine.on === true && typeof machine.last === 'string' ? await mergesIn(home, [`--since=${machine.last}`, 'HEAD']) : {};
   return {
     place: 'local',
-    backup: { at: kept.at, ...since, failed: kept.failedAt !== null, refused: place.ok ? kept.refused : place.why, pickRefused: kept.pickRefused },
+    backup: { at: kept.at, ...since, failed: kept.failedAt !== null, refused: gone ? 'The backup file has gone from its folder' : place.ok ? kept.refused : place.why, pickRefused: kept.pickRefused },
     timeMachine: { ...machine, ...machineSince },
     readAt: instantOf(now).toISOString(),
   };
@@ -130,8 +134,11 @@ function readKept(project) {
   }
 }
 
-// The status the last tick kept, or null.
-export const readStatus = (project) => readKept(project).status ?? null;
+// The status the last tick kept, or null. One no tick has renewed can't still say all is well.
+export const readStatus = (project, { now = () => new Date() } = {}) => {
+  const { status = null } = readKept(project);
+  return status === null ? null : staleStatus(status, { now: instantOf(now) });
+};
 // What the last tick read, for an action to go by.
 export const readReadings = (project) => readKept(project).readings ?? null;
 
@@ -168,8 +175,15 @@ export async function safekeepingTick({ project, record, git = gitRoute(), now =
       else next.triedSince ??= at.toISOString();
     }
   }
-  const readings = await readSafekeeping({ project, record, git, now: () => at, mirror, running, host: next, machine: next.machine, ...how });
-  const status = safekeeping(readings, { ...limitsOf(record.folder), now: at });
-  keep(project, { ...next, status, readings });
-  return status;
+  // A look that fails can't leave the last status standing as if it were still so.
+  try {
+    const readings = await readSafekeeping({ project, record, git, now: () => at, mirror, running, host: next, machine: next.machine, ...how });
+    const status = safekeeping(readings, { ...limitsOf(record.folder), now: at });
+    keep(project, { ...next, status, readings });
+    return status;
+  } catch {
+    const status = notRead({ place: record.host, now: at });
+    keep(project, { ...next, status, readings: null });
+    return status;
+  }
 }

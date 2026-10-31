@@ -71,7 +71,7 @@ export async function folderFree({ folder, branch, git = gitRoute() }) {
 // way makes the merge refuse, ignored or not.
 export async function bringFolderUp({ project, folder, branch, git = gitRoute(), from = null }) {
   const { state, home } = await reading({ project, folder, branch, git, from });
-  if (state !== 'home-ahead') return { moved: false };
+  if (state !== 'home-ahead') return { moved: false, state };
   if (!(await folderFree({ folder, branch, git }))) return { line: OWN_CHANGES_LINE };
   const here = inFolder(folder, git);
   return (await here.ok(['merge', '--ff-only', '--no-overwrite-ignore', '--quiet', home])) ? { moved: true } : { line: OWN_CHANGES_LINE };

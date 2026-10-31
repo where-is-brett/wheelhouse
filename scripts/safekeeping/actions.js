@@ -25,7 +25,8 @@ const ACTS = {
   },
   async 'bring-up'({ bringUp }) {
     const got = await bringUp();
-    return got?.line === undefined ? { ok: true, says: 'Your folder is up to date' } : refused(got.line);
+    if (typeof got?.line === 'string') return refused(got.line);
+    return got?.moved === true || got?.state === 'same' ? { ok: true, says: 'Your folder is up to date' } : refused('Your folder has work of its own, so it wasn\'t moved');
   },
   async 'back-up-now'({ backUpNow }) {
     const got = await backUpNow();

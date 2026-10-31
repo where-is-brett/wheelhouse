@@ -87,6 +87,24 @@ test('a home already here is never written over', async () => {
   });
 });
 
+test('the main line comes back by its name, with other branches at the same commit', async () => {
+  await withKeyedHome(async () => {
+    const folder = await projectFolderWith('trunk');
+    await git(folder, ['branch', 'main']);
+    await git(folder, ['branch', 'aaa']);
+    await makeHome({ project: PROJECT, folder });
+    writeProject(PROJECT, { folder, remoteUrl: null, host: 'local', repo: `local/${PROJECT}`, connection: { host: 'local', mode: 'none' } });
+    const drive = fs.realpathSync(tempFolder('wh-drive-'));
+    await writeBackup({ project: PROJECT, folder: drive, now, stat: (p) => ({ dev: String(p).startsWith(drive) ? 2 : 1, isDirectory: () => true }) });
+    assert.equal(await git(homeDir(PROJECT), ['for-each-ref', 'refs/wheelhouse']), '', 'the home keeps no mark');
+    const place = emptyPlace();
+    fs.mkdirSync(place);
+    await restoreProject({ file: backupFile(drive, PROJECT), folder: place, project: 'named' });
+    assert.equal(homeBranch('named'), 'trunk');
+    assert.equal(await git(place, ['symbolic-ref', '--short', 'HEAD']), 'trunk');
+  });
+});
+
 test('a typed path names a backup, as a file dragged in writes it', () => {
   assert.equal(backupNamed('/Volumes/Spare/shop.wheelhouse-backup'), '/Volumes/Spare/shop.wheelhouse-backup');
   assert.equal(backupNamed('  \'/Volumes/My Drive/shop.wheelhouse-backup\'  '), '/Volumes/My Drive/shop.wheelhouse-backup');

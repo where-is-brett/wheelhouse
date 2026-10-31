@@ -65,6 +65,7 @@ function fromBackup({ at, behind, oldest }, { days, now, actions, what = 'the ba
   };
 }
 
+const STALE_MS = 2 * 60 * 60 * 1000;
 const NO_DATE = { level: 'safe', line: 'Time Machine is on', detail: 'Time Machine keeps this computer, so its drive holds the project, though it isn\'t known how recently.' };
 
 function localStatus(readings, { days, now }) {
@@ -120,4 +121,16 @@ function hostedStatus(readings, { hereDays, now }) {
 export function safekeeping(readings, { days = 7, hereDays = 3, now = () => new Date() } = {}) {
   const at = typeof now === 'function' ? now() : now;
   return readings.place === 'local' ? localStatus(readings, { days, now: at }) : hostedStatus(readings, { hereDays, now: at });
+}
+
+// A look that couldn't read the project.
+export function notRead({ place, now }) {
+  return result({ place, readAt: now.toISOString() }, { level: 'watch', line: 'Couldn\'t check this project', detail: 'What would be lost with this computer isn\'t known until it can be read.', actions: [TRY_AGAIN] });
+}
+
+// A status no look has renewed in two hours, with the helper down or All stop on, says so instead of what it last found.
+export function staleStatus(status, { now }) {
+  const read = Date.parse(status.readAt);
+  if (Number.isNaN(read) || now.getTime() - read < STALE_MS) return status;
+  return result({ place: status.place, readAt: status.readAt }, { level: 'watch', line: `Not checked since ${sinceWords(status.readAt, now)}`, detail: 'What it last found may no longer hold.', actions: [TRY_AGAIN] });
 }

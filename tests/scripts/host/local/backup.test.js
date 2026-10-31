@@ -240,3 +240,15 @@ test('a folder is picked by the system\'s own window, and a closed window picks 
   assert.equal(await pickFolder({ platform: 'darwin', run: async () => ({ code: 1, stdout: '', stderr: 'User canceled' }) }), null);
   assert.equal(await pickFolder({ platform: 'linux', run: async () => { throw new Error('not asked'); } }), null);
 });
+
+test('a lock a killed try left behind doesn\'t stop the next backup', async () => {
+  await withKeyedHome(async () => {
+    const folder = await projectFolderWith('trunk');
+    await makeHome({ project: 'lock', folder });
+    writeProject('lock', { folder, remoteUrl: null, host: 'local', repo: 'local/lock', connection: { host: 'local', mode: 'none' } });
+    const drive = fs.realpathSync(tempFolder('wh-drive-'));
+    fs.writeFileSync(`${backupFile(drive, 'lock')}.part.lock`, '');
+    const got = await writeBackup({ project: 'lock', folder: drive, stat: (p) => ({ dev: String(p).startsWith(drive) ? 2 : 1, isDirectory: () => true }) });
+    assert.equal(typeof got.written, 'string', JSON.stringify(got));
+  });
+});

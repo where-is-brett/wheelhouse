@@ -4,8 +4,8 @@
 // that is empty then gets the main version. One that holds anything is left as it is.
 import fs from 'node:fs';
 import path from 'node:path';
-import { homeBranch, homeDir, homeReadable, gitRoute, markHome } from './home.js';
-import { BACKUP_END } from './backup.js';
+import { homeBranch, homeDir, homeReadable, gitRoute, isBranchName, markHome } from './home.js';
+import { BACKUP_END, MAIN_MARK } from './backup.js';
 import { FOLDER_REMOTE } from './folder.js';
 
 export const UNREADABLE_LINE = 'That backup could not be read, so nothing was brought back';
@@ -32,7 +32,11 @@ async function makeFromBackup({ file, project, git }) {
     await git(part, { reach: 'local', list: 'own', what: 'the backup', refuse }).must(['clone', '--bare', '--no-hardlinks', '--template=', '--quiet', file, made], 'copy');
     const inHome = git(made, { reach: 'local', list: 'own', what: 'this project\'s home', refuse });
     await inHome.must(['bundle', 'verify', '--quiet', file], 'verify');
-    await inHome.must(['rev-parse', '--verify', '-q', 'HEAD^{commit}'], 'main');
+    const heads = await inHome.must(['bundle', 'list-heads', file], 'main');
+    const branch = heads.split('\n').map((head) => head.split(' ')[1] ?? '').find((ref) => ref.startsWith(MAIN_MARK))?.slice(MAIN_MARK.length);
+    if (!isBranchName(branch)) refuse();
+    await inHome.must(['rev-parse', '--verify', '-q', `refs/heads/${branch}^{commit}`], 'main');
+    await inHome.must(['symbolic-ref', 'HEAD', `refs/heads/${branch}`], 'main');
     await inHome.must(['config', '--remove-section', 'remote.origin'], 'copy');
     markHome(made);
     fs.chmodSync(made, 0o700);

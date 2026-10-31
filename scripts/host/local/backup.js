@@ -11,10 +11,12 @@ import path from 'node:path';
 import { realOrNull } from '../../lib/local-git.js';
 import { readProject } from '../../lib/projects.js';
 import { run as realRun } from '../../lib/run.js';
-import { gitRoute, homeDir, homeGit, projectFolder } from './home.js';
+import { gitRoute, homeBranch, homeDir, homeGit, projectFolder } from './home.js';
 
 const RECORD = 'backup.json';
 export const BACKUP_END = '.wheelhouse-backup';
+// A bundle names its HEAD by commit alone, and a clone then guesses the branch, so this ref carries the main line's name.
+export const MAIN_MARK = 'refs/wheelhouse/main/';
 const EARLIER_END = '.earlier';
 const PART_END = '.part';
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -128,7 +130,15 @@ export async function writeBackup({ project, folder, git = gitRoute(), now = () 
     const home = homeGit(project, git);
     const listed = await home.must(['for-each-ref', '--format=%(refname)', 'refs/heads', 'refs/tags'], 'list');
     const refs = listed.split('\n').filter((ref) => ref !== '' && !OWN_LINE.test(ref));
-    await home.must(['bundle', 'create', '--quiet', part, 'HEAD', ...refs], 'create');
+    const mark = `${MAIN_MARK}${homeBranch(project)}`;
+    // Git writes through a lock beside the file, and one a killed try left behind would stop every later try.
+    fs.rmSync(`${part}.lock`, { force: true });
+    await home.must(['update-ref', mark, 'HEAD'], 'mark');
+    try {
+      await home.must(['bundle', 'create', '--quiet', part, 'HEAD', mark, ...refs], 'create');
+    } finally {
+      await home.call(['update-ref', '-d', mark]);
+    }
     const main = await readBack({ project, file: part, git });
     if (fs.existsSync(file)) fs.renameSync(file, earlierFile(folder, project));
     fs.renameSync(part, file);
