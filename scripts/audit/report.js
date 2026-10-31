@@ -485,7 +485,9 @@ export async function main(argv, {
     return 1;
   }
   if (record.host !== 'gitlab') {
-    err.write('The audit report is for GitLab in this version. This project is on GitHub, so no report was made.\n');
+    err.write(record.host === 'local'
+      ? 'This project is kept on this computer, so there is no second record to compare with, and no report was made.\n'
+      : 'The audit report is for GitLab in this version. This project is on GitHub, so no report was made.\n');
     return 1;
   }
   try {

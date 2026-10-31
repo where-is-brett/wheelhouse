@@ -22,8 +22,13 @@ export const homeDir = (project) => path.join(projectFolder(project), 'home.git'
 
 // How git reaches this computer's repositories, for the steps here to take as `git`: `git(folder, options)` is gitIn.
 export const gitRoute = ({ run = realRun } = {}) => (cwd, options = {}) => gitIn(cwd, { run, ...options });
-// The home is Wheelhouse's own repository, so the strict list reads it.
-export const homeGit = (project, git) => git(homeDir(project), { list: 'own', what: HOME_WHAT });
+// The home is Wheelhouse's own repository, so the strict list reads it. Git looks upwards from a folder that isn't a repository,
+// so a damaged home is refused here, never left to land in whatever repository holds it.
+export function homeGit(project, git) {
+  const home = homeDir(project);
+  if (!['HEAD', 'objects', 'refs'].every((name) => fs.existsSync(path.join(home, name)))) line('This project\'s home can\'t be read');
+  return git(home, { list: 'own', what: HOME_WHAT });
+}
 
 const line = (text) => { throw new Error(text); };
 

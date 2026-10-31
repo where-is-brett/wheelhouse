@@ -605,6 +605,16 @@ test('a GitHub project is told plainly that the report is for GitLab, and no too
   }, { host: 'github' });
 });
 
+test('a project kept on this computer is told so, and no tool is asked', async () => {
+  await inProject(async ({ options, err, made, folder }) => {
+    writeProject('shop', { folder, remoteUrl: null, host: 'local', repo: 'local/shop', connection: { mode: 'none' } });
+    assert.equal(await main(['--project', 'shop', '--since', '2026-10-01'], options), 1);
+    assert.match(err.text(), /kept on this computer/);
+    assert.doesNotMatch(err.text(), /GitHub/);
+    assert.equal(made.length, 0);
+  });
+});
+
 test('the command refuses wrong arguments, an unknown project and a bad date, each in a line', async () => {
   await inProject(async ({ options, out, err }) => {
     for (const argv of [[], ['--project', 'shop'], ['--since', '2026-10-01'], ['--project', 'shop', '--since', '2026-10-01', '--now', 'x'], ['--project', 'shop', '--since']]) {

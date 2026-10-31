@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { git, commitIn, projectFolderWith, withKeyedHome } from '../../../helpers/local-home.js';
 import { tempFolder } from '../../../helpers/homes.js';
-import { homeDir, homeReadable, makeHome, isBranchName } from '../../../../scripts/host/local/home.js';
+import { gitRoute, homeDir, homeGit, homeReadable, makeHome, isBranchName } from '../../../../scripts/host/local/home.js';
 import { wheelhouseHome } from '../../../../scripts/lib/paths.js';
 
 const PROJECT = 'shop';
@@ -80,6 +80,15 @@ test('a home copied to another computer reads as not held', async () => {
     fs.writeFileSync(path.join(wheelhouseHome(), 'computer.json'), `${JSON.stringify({ id: 'feedf00d' })}\n`);
     assert.equal(homeReadable(PROJECT), false);
     await assert.rejects(makeHome({ project: PROJECT, folder }), /another computer/);
+  });
+});
+
+test('a damaged home is refused, so git never lands in a repository around it', async () => {
+  await withKeyedHome(async () => {
+    await makeHome({ project: PROJECT, folder: await projectFolderWith() });
+    assert.equal(await homeGit(PROJECT, gitRoute()).must(['symbolic-ref', 'HEAD'], 'unread'), 'refs/heads/main');
+    fs.rmSync(path.join(homeDir(PROJECT), 'HEAD'));
+    assert.throws(() => homeGit(PROJECT, gitRoute()), /home can't be read/);
   });
 });
 
