@@ -20,6 +20,11 @@ export const isBranchName = (branch) => typeof branch === 'string' && BRANCH.tes
 export const projectFolder = (project) => path.join(stateDir(project), '..');
 export const homeDir = (project) => path.join(projectFolder(project), 'home.git');
 
+// The branch the home's HEAD names: the project's main line.
+export function homeBranch(project) {
+  return /^ref:\s*refs\/heads\/(\S+)$/.exec(fs.readFileSync(path.join(homeDir(project), 'HEAD'), 'utf8').trim())?.[1] ?? null;
+}
+
 // How git reaches this computer's repositories, for the steps here to take as `git`: `git(folder, options)` is gitIn.
 export const gitRoute = ({ run = realRun } = {}) => (cwd, options = {}) => gitIn(cwd, { run, ...options });
 // The home is Wheelhouse's own repository, so the strict list reads it. Git looks upwards from a folder that isn't a repository,
@@ -80,7 +85,7 @@ export function homeReadable(project) {
 
 // The weekly look at a home, in place of protection reads (spec 7.7): nobody but this computer's user can reach it, git finds
 // it whole, and its main version is where the helper left it. Gives { ok } or { ok: false, why }, in plain words.
-export async function lookAtHome({ project, seen = null, git = gitRoute() }) {
+export async function lookAtHome({ project, seen = null, git = gitRoute(), platform = process.platform }) {
   const home = homeDir(project);
   let mode;
   try {
@@ -88,7 +93,8 @@ export async function lookAtHome({ project, seen = null, git = gitRoute() }) {
   } catch {
     return { ok: false, why: 'it can\'t be found' };
   }
-  if ((mode & 0o077) !== 0) return { ok: false, why: 'other people on this computer can reach it' };
+  // Windows has no such bits: a user's own folder under their home is theirs.
+  if (platform !== 'win32' && (mode & 0o077) !== 0) return { ok: false, why: 'other people on this computer can reach it' };
   let inHome;
   try {
     inHome = homeGit(project, git);

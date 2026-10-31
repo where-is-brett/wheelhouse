@@ -44,6 +44,8 @@ import { QUICK_LINE } from '../../../scripts/lib/host-lines.js';
 import { QUICK_LINE as BOARD_QUICK_LINE } from '../../../scripts/board/health.js';
 import { FREE_PLAN_LINE } from '../../../scripts/host/protection.js';
 import { g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
+import { KEEP_HERE, PUT_ON_GITHUB, remotesOf } from '../../../scripts/setup/local.js';
+import { homeDir } from '../../../scripts/host/local/home.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
 
 const NOW = new Date('2026-10-20T03:00:00.000Z');
@@ -972,12 +974,12 @@ test('the connection question names the repository, so an answer for one remote 
     assert.ok(again.ask, 'asked again');
     assert.notEqual(again.ask.id, id);
     assert.match(again.ask.card.what, /a-director\/other on GitHub/);
-    // A folder with history of its own but no address is left as it is.
+    // A folder with history of its own but no address stays on this computer.
     const lone = productFolder('lone');
     await g(lone, 'init', '-q', '-b', 'main');
     await g(lone, 'add', 'notes.txt');
     await g(lone, 'commit', '-q', '-m', 'mine');
-    assert.throws(() => productOf(lone), /its own git history but no GitHub or GitLab address/);
+    assert.deepEqual(productOf(lone), { isNew: false, host: 'local', repo: null, name: 'lone', others: [] });
   });
 });
 
@@ -1136,6 +1138,58 @@ test('a group that has switched project keys off also falls back to the system\'
   });
 });
 
+// The question of where a folder with no host's address is kept.
+async function step3KeptAsk(step, ctx) {
+  const answers = { '3.real-users': said(REAL_USERS.no) };
+  return (await step.plan({ ...ctx, answers })).ask;
+}
+
+test('a folder with a history put on GitHub sends that history to a new private repository, and no home is made', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    const folder = productFolder('shop');
+    await g(folder, 'init', '-q', '-b', 'trunk');
+    await g(folder, 'add', 'notes.txt');
+    await g(folder, 'commit', '-q', '-m', 'Begin');
+    const tip = await g(folder, 'rev-parse', 'HEAD');
+    const planned = await answerAll(stepFor(w), ctxFor(folder), (id, card) => (id === 'kept' ? PUT_ON_GITHUB : choose()(id, card)));
+    assert.deepEqual(planned.asked.map((a) => a.id).slice(0, 2), ['real-users', 'kept']);
+    assert.match(planned.card.what, /with your project's history sent to it/);
+    await applyStep(stepFor(w), folder, planned.changes, { answers: planned.answers });
+    const repo = `${USER}/shop`;
+    assert.equal(await g(w.hostUrl({ repo }), 'rev-parse', 'refs/heads/trunk'), tip);
+    assert.equal(readProject(slugFor(repo)).host, 'github');
+    assert.equal(await g(folder, 'config', '--get', 'remote.origin.url'), w.hostUrl({ repo }));
+    assert.equal(fs.existsSync(homeDir('shop')), false);
+  });
+});
+
+test('a push that fails on the way to GitHub leaves the folder as it was, and a fresh Go ahead sends it', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    let failing = true;
+    const run = async (file, args, options) => {
+      if (failing && args.includes('push')) return { code: 1, stdout: '', stderr: 'refused' };
+      return w.run(file, args, options);
+    };
+    const folder = productFolder('shop');
+    await g(folder, 'init', '-q', '-b', 'main');
+    await g(folder, 'add', 'notes.txt');
+    await g(folder, 'commit', '-q', '-m', 'Begin');
+    const pick = (id, card) => (id === 'kept' ? PUT_ON_GITHUB : choose()(id, card));
+    const first = await answerAll(stepFor(w, { run }), ctxFor(folder), pick);
+    await assert.rejects(applyStep(stepFor(w, { run }), folder, first.changes, { answers: first.answers }), /a fresh Go ahead tries again/);
+    assert.deepEqual(remotesOf(folder), [], 'the folder has no address until its history is there');
+    failing = false;
+    const again = await answerAll(stepFor(w), ctxFor(folder), pick);
+    assert.ok(again.changes.some((c) => c.action === 'repository'), 'the same step, again');
+    await applyStep(stepFor(w), folder, again.changes, { answers: again.answers });
+    const repo = `${USER}/shop`;
+    assert.equal(await g(w.hostUrl({ repo }), 'rev-parse', 'refs/heads/main'), await g(folder, 'rev-parse', 'HEAD'));
+    assert.equal(await g(folder, 'config', '--get', 'remote.origin.url'), w.hostUrl({ repo }));
+  });
+});
+
 test('a company remote named in gitlabHosts, with its port, gives that address through setup\'s path', async () => {
   await withHome(async () => {
     const w = standIn({ signedIn: { github: true, gitlab: false } });
@@ -1155,12 +1209,13 @@ test('a company remote named in gitlabHosts, with its port, gives that address t
     for (const c of glab) assert.equal(c.env?.GITLAB_HOST, 'localhost:8929');
     assert.deepEqual(glab[0].args, ['auth', 'status', '--hostname', 'localhost:8929']);
   });
-  // Without the setting, the same remote is not a GitLab address setup knows.
+  // Without the setting, the same remote is not a GitLab address setup knows: the plan says what it found.
   await withHome(async () => {
     const w = standIn();
     const folder = productFolder('shop');
     await withOrigin(folder, `https://localhost:8929/${USER}/shop.git`);
-    await assert.rejects(answerAll(stepFor(w), ctxFor(folder), choose()), /localhost:8929.*not GitHub or GitLab/);
+    const kept = (await step3KeptAsk(stepFor(w), ctxFor(folder)));
+    assert.match(kept.line, /localhost:8929, which Wheelhouse leaves as it is/);
   });
 });
 
@@ -2127,7 +2182,7 @@ async function applyIn(step, folder, runId, changes, extra = {}) {
 
 const joinedOf = (folder) => findRun(folder).changes.filter((c) => c.kind === 'answer' && c.after && Object.hasOwn(c.after, 'joined')).map((c) => c.after);
 
-test('step 3 asks whether this computer is joining only in a folder holding nothing but step 1\'s install, recommending a new product', async () => {
+test('step 3 asks whether this computer is joining only in a folder holding nothing but step 1\'s install, recommending keeping it here', async () => {
   await withHome(async () => {
     const w = standIn();
     const step = stepFor(w);
@@ -2135,19 +2190,19 @@ test('step 3 asks whether this computer is joining only in a folder holding noth
     const first = (await step.plan(ctxFor(folder))).ask;
     assert.equal(first.id, 'join');
     assert.equal(first.typed, true, 'an owner/name may be typed');
-    assert.deepEqual(first.card.options.map((o) => o.label), [NEW_PRODUCT, 'Cafe-Menu, from my other computer']);
-    assert.equal(first.card.recommend, NEW_PRODUCT, 'an empty folder is most often a new product (design section 15.1)');
+    assert.deepEqual(first.card.options.map((o) => o.label), [KEEP_HERE, HOST_LABELS.github, HOST_LABELS.gitlab, 'Cafe-Menu, from my other computer']);
+    assert.equal(first.card.recommend, KEEP_HERE, 'an empty folder is most often a new product, and one kept here needs no account');
     assert.match(first.card.what, /owner\/name/);
     composeCard({ ...first.card, kind: 'question' });
-    // With profile.json on this computer, it is still asked, recommending a new product too.
+    // With profile.json on this computer, it is still asked, with the same recommendation.
     const profileJson = path.join(wheelhouseHome(), 'profile.json');
     fs.mkdirSync(wheelhouseHome(), { recursive: true });
     fs.writeFileSync(profileJson, '{}\n');
-    assert.equal((await step.plan(ctxFor(folder))).ask.card.recommend, NEW_PRODUCT);
+    assert.equal((await step.plan(ctxFor(folder))).ask.card.recommend, KEEP_HERE);
     fs.rmSync(profileJson);
-    // A new product: the usual questions follow, and a repository is made.
-    const fresh = await answerJoin(step, ctxFor(folder), (id) => (id === 'join' ? NEW_PRODUCT : choose()(id)));
-    assert.deepEqual(fresh.asked.map((a) => a.id.replace(/-[0-9a-f]{10}$/, '')), ['join', 'real-users', 'host', 'connection']);
+    // A new product on GitHub: the usual questions follow, and a repository is made.
+    const fresh = await answerJoin(step, ctxFor(folder), (id) => (id === 'join' ? HOST_LABELS.github : choose()(id)));
+    assert.deepEqual(fresh.asked.map((a) => a.id.replace(/-[0-9a-f]{10}$/, '')), ['join', 'real-users', 'connection']);
     assert.ok(fresh.changes.some((c) => c.action === 'repository'));
     assert.ok(!fresh.changes.some((c) => c.action === 'join'));
     // A folder with any other file in it, or with an origin, is an existing product: not asked.
@@ -2284,7 +2339,7 @@ test('none or several found are refused saying to type owner/name, the question 
     assert.notEqual(next.id, first.id);
     assert.match(next.card.what, /^"the cafe one" is not a repository's name\./);
     // A new product, chosen now: the run is not a joining one any more once its apply starts.
-    const fresh = await answerJoin(step, { ...ctx, answers }, (id) => (id.startsWith('join') ? NEW_PRODUCT : choose()(id)));
+    const fresh = await answerJoin(step, { ...ctx, answers }, (id) => (id.startsWith('join') ? HOST_LABELS.github : choose()(id)));
     assert.ok(fresh.changes.some((c) => c.action === 'repository'));
     fs.rmSync(w.hostUrl({ repo: `${USER}/Cafe-Menu` }), { recursive: true });
     delete w.repos[`${USER}/Cafe-Menu`];

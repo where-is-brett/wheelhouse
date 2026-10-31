@@ -55,6 +55,9 @@ import path from 'node:path';
 import { run as realRun } from '../lib/run.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { wheelhouseHome, projectsDir, archonHome, stateDir } from '../lib/paths.js';
+import { folderFree, takeHome } from '../host/local/folder.js';
+import { gitRoute, homeDir } from '../host/local/home.js';
+import { dropNextMain, identityOf } from '../host/local/merge.js';
 import { PLUGIN_SCOPE, pluginAtScope, pluginScopeRemoval } from './engine-parts.js';
 import { cancelRuns } from '../engine/stop.js';
 import { listEvents } from '../state/events.js';
@@ -116,6 +119,7 @@ import { answersFor, askedRecord } from './clicks.js';
 import {
   uninstallPlan, readProgress, writeProgress, describe, shown, hostTarget, samePath, within, keyOf, realOr,
   ASK_STEP, UNINSTALL_CHANGED, HOSTS, DELETE_LABEL, NEVER_PUSHED, PHASES, ARCHIVE, ARCHIVE_MANIFEST, ARCHIVE_BACK, PLAIN_FILE, archiveAt,
+  REMOVE_REMOTE,
 } from './uninstall.js';
 import { canonicalJson } from '../lib/canonical.js';
 
@@ -124,6 +128,7 @@ export const TICK_MS = 5 * 1000;
 // The branch uninstall's pull request comes from, and its title.
 export const UNINSTALL_BRANCH = 'wheelhouse/uninstall';
 export const UNINSTALL_TITLE = 'Remove Wheelhouse';
+const FOLDER_WAITS = 'your folder has changes of its own, or is on another line, so uninstall stopped with nothing of it touched: save those changes, go back to the main line, and ask for uninstall\'s plan again';
 const UNINSTALL_BODY = 'This takes out of the project\'s files what Wheelhouse\'s setup put in: its settings, its configuration, its section of CLAUDE.md and the pinned kits. Once it is merged, Wheelhouse\'s checks no longer guard this project. Branch protection stays on.';
 // Added to the body when it puts archived instructions back.
 const ARCHIVE_BODY = ` It also moves the other agent setup's instructions out of ${ARCHIVE}/, back where they were.`;
@@ -249,13 +254,17 @@ function archiveSays(view) {
 // The real host work, with the director's own sign-in: git in a scratch repository, the host's tool
 // through the adapter, and GitLab's API for a merge request's search.
 function hostWork({ platform, run, fetch }) {
-  const adapterFor = ({ host, repo, base }) => adapterOf({ host, repo, connection: { baseUrl: base } }, { run });
+  const adapterFor = ({ host, repo, base, folder }) => adapterOf({ host, repo, folder, connection: { baseUrl: base } }, { run });
   return {
     findGit: async () => (await toolsStatus({ platform, run, tools: ['git'] })).git,
     gitEnvFor: ({ host, gitPath, base }) => directorGitEnv({ host, gitPath, platform, base }),
     adapterFor,
     // The open pull request from `branch`, or null.
     async findOpenPr({ host, repo, branch, baseUrl }) {
+      if (host === 'local') {
+        const found = (await adapterFor({ host, repo }).openRequests()).find((r) => r.branch === branch);
+        return found ? { number: found.number, url: null } : null;
+      }
       if (host === 'github') {
         const got = await run(toolPath('gh', { platform }), ['pr', 'list', '--repo', repo, `--head=${branch}`, '--state', 'open', '--json', 'number,url'], { env: {} });
         if (got.code !== 0) throw new Halt(`GitHub could not list ${repo}'s pull requests with your sign-in`);
@@ -311,7 +320,10 @@ export async function applyUninstall({
   const mine = (r) => typeof r?.folder === 'string' && keyOf(realOr(r.folder)) === keyOf(folder);
   const openRuns = journal.runs.filter((r) => mine(r) && !runClosed(r));
   const record = plan.project === null ? null : readProject(plan.project);
-  const hostName = (h) => HOSTS[h] ?? h;
+  const hostName = (h) => HOSTS[h] ?? 'this computer';
+  // Where the project's repository is reached: the host, or for a project kept here its home, by its path.
+  const placeOf = (r) => (r.host === 'local' ? homeDir(plan.project) : r.remoteUrl);
+  const route = gitRoute({ run });
   // The answers to the level 4 cards, read now: what verifies them may be removed below. Each
   // counts only if it was given after its card was last asked (ruling R117): an older Delete it
   // belongs to an uninstall that never went ahead.
@@ -358,6 +370,7 @@ export async function applyUninstall({
     for (const ask of plan.asks) {
       const answer = answers[`${ASK_STEP}.${ask.id}`];
       const named = ask.put === 'delete-record' ? 'this project\'s private record on this computer'
+        : ask.put === 'delete-home' ? 'this project\'s private copy on this computer'
         : ask.put === 'delete-engine-history' ? 'Archon\'s run history on this computer' : ask.target.replace(/^(github|gitlab):/, '');
       if (answer?.label !== DELETE_LABEL) {
         mark(ask.ids, false, answer ? 'kept, as its own card said' : 'kept: its own card was not answered Delete it');
@@ -370,6 +383,14 @@ export async function applyUninstall({
         fs.rmSync(ask.target, { recursive: true, force: true });
         mark(ask.ids, true);
         say('This project\'s private record is deleted from this computer.');
+        continue;
+      }
+      if (ask.put === 'delete-home') {
+        // Only a project's home under projects/ is ever deleted here.
+        if (path.basename(ask.target) !== 'home.git' || !samePath(path.dirname(path.dirname(ask.target)), projectsDir())) halt(`${ask.target} is not a project's private copy, so it was not deleted`);
+        fs.rmSync(ask.target, { recursive: true, force: true });
+        mark(ask.ids, true);
+        say('This project\'s private copy is deleted from this computer.');
         continue;
       }
       if (ask.put === 'delete-engine-history') {
@@ -436,7 +457,7 @@ export async function applyUninstall({
   };
   // The branch's tip on the host, fetched into the scratch repository.
   const fetchBase = async (g, branch) => {
-    const fetched = await g.git(['fetch', '-q', '--no-tags', record.remoteUrl, `+refs/heads/${branch}:refs/fetched/base`]);
+    const fetched = await g.git(['fetch', '-q', '--no-tags', placeOf(record), `+refs/heads/${branch}:refs/fetched/base`]);
     if (fetched.code !== 0) halt(`${branch} on ${hostName(record.host)} could not be read with your sign-in`);
     return g.must(['rev-parse', '--verify', 'refs/fetched/base^{commit}'], `${branch} could not be read`);
   };
@@ -447,14 +468,34 @@ export async function applyUninstall({
     try {
       const call = setupGit({
         run, gitPath: git.path, cwd: folder,
-        env: reaching({ GIT_NO_REPLACE_OBJECTS: '1', ...o.gitEnvFor({ host: record.host, gitPath: git.path, base: record.connection?.baseUrl }) }, record.remoteUrl),
+        env: reaching({ GIT_NO_REPLACE_OBJECTS: '1', ...o.gitEnvFor({ host: record.host, gitPath: git.path, base: record.connection?.baseUrl }) }, placeOf(record)),
       });
-      await call(['fetch', '-q', '--no-tags', '--no-write-fetch-head', record.remoteUrl, `+refs/heads/${branch}:refs/remotes/origin/${branch}`]);
+      await call(['fetch', '-q', '--no-tags', '--no-write-fetch-head', placeOf(record), `+refs/heads/${branch}:refs/remotes/origin/${branch}`]);
     } catch { /* the next plan reads the folder's copy as it is */ }
     halt(`the archive of the other agent setup's instructions on ${branch} on ${hostName(record.host)} isn't as this folder last saw it, so ${UNINSTALL_CHANGED}`);
   };
+  // The folder takes all the home holds. A line that can't come stops uninstall before anything of the folder changes.
+  const takeAll = async (branch) => {
+    const env = await identityOf(folder, route);
+    const got = await takeHome({ project: plan.project, folder, branch, env, git: route });
+    if (got.line !== undefined) halt(FOLDER_WAITS);
+    return got;
+  };
+  // The last change of a project kept here: it stands at `sha` on uninstall's own branch in the home. It merges at once, and
+  // into the folder.
+  const lastChange = async (entry, sha) => {
+    const adapter = await o.adapterFor({ host: 'local', repo: record.repo, folder });
+    const open = await o.findOpenPr({ host: 'local', repo: record.repo, branch: UNINSTALL_BRANCH });
+    if (open !== null) await adapter.updatePr({ number: open.number, title: UNINSTALL_TITLE });
+    const { number } = open ?? await adapter.openPr({ head: UNINSTALL_BRANCH, base: entry.branch, title: UNINSTALL_TITLE, body: `${UNINSTALL_BODY}${entry.archive?.moves?.length > 0 ? ARCHIVE_BODY : ''}` });
+    const merged = await adapter.merge({ number, sha });
+    if (!merged.merged) halt(`setup's files could not be taken out of ${entry.branch} (${merged.reason}); ask for uninstall's plan again`);
+    dropNextMain(plan.project);
+    const { kept } = await takeAll(entry.branch);
+    say(kept === null ? `Setup's files and pins are out of ${entry.branch}, in your folder too.` : `Your folder and the main version changed the same files, so setup's files stay in your folder for now. The main version is kept on the line ${kept}.`);
+  };
   const checkArchive = async (entry) => {
-    const same = await gitFor(record.host, record.remoteUrl, async (g) => sameArchive(await archiveAt(g.git, await fetchBase(g, entry.branch)), entry), false, record.connection?.baseUrl);
+    const same = await gitFor(record.host, placeOf(record), async (g) => sameArchive(await archiveAt(g.git, await fetchBase(g, entry.branch)), entry), false, record.connection?.baseUrl);
     if (!same) await archiveChanged(entry.branch);
   };
   try {
@@ -462,7 +503,7 @@ export async function applyUninstall({
       // Read by ls-remote (ruling R118): no such branch on the host means the push never went up,
       // so uninstall goes on here; only a host that can't be reached stops it.
       if (record === null) halt('the project\'s record is gone, so whether setup\'s commit reached the host can\'t be checked');
-      const { remoteUrl } = record;
+      const remoteUrl = placeOf(record);
       const { branch, sha } = unpushed.after;
       const there = await gitFor(record.host, remoteUrl, async (g) => {
         let tip;
@@ -486,6 +527,7 @@ export async function applyUninstall({
     // The archive on the host, before anything is done: the plan's, or uninstall stops here.
     const prEntry = plan.changes.find((e) => e.put === 'pull-request');
     if (prEntry !== undefined && record !== null) await checkArchive(prEntry);
+    if (prEntry !== undefined && record?.host === 'local' && !(await folderFree({ folder, branch: prEntry.branch, git: route }))) halt(FOLDER_WAITS);
     for (const [i, entry] of plan.changes.entries()) {
       // Past the project's files, setup's files are put back here: the commit never pushed is kept.
       if (afterFiles(entry)) keepCommit();
@@ -532,10 +574,24 @@ export async function applyUninstall({
           say(`Locked: ${got.line}.`);
           break;
         }
+        case 'bring-up': {
+          if (record === null) break;
+          const { kept } = await takeAll(entry.branch);
+          say(kept === null ? `Your folder holds all of ${entry.branch}.` : `Your folder and the main version changed the same files, so the main version is kept on the line ${kept}.`);
+          break;
+        }
+        case REMOVE_REMOTE: {
+          const here = route(entry.target, { reach: 'local', what: 'the project\'s folder' });
+          const url = await here.call(['config', '--get', `remote.${entry.name}.url`]);
+          if (url.code === 0 && String(url.stdout).trim() === entry.url) await here.must(['remote', 'remove', entry.name], 'The folder\'s git settings could not be changed');
+          if (url.code === 0 && String(url.stdout).trim() !== entry.url) mark(entry.ids, false, 'it points somewhere else now, so it stays');
+          else mark(entry.ids, true);
+          break;
+        }
         case 'pull-request': {
           if (record === null) halt('the project\'s record is gone, so the pull request could not be made');
           const inPr = plan.changes.filter((c) => c.put === 'in-pull-request');
-          const made = await gitFor(record.host, record.remoteUrl, async (g) => {
+          const made = await gitFor(record.host, placeOf(record), async (g) => {
             const tip = await fetchBase(g, entry.branch);
             // Read again with the files: the branch may have moved since the check above.
             const found = await archiveAt(g.git, tip);
@@ -556,7 +612,7 @@ export async function applyUninstall({
             const tree = await g.must(['write-tree'], 'git could not make the pull request\'s files');
             const sha = await g.must([...AUTHOR, 'commit-tree', tree, '-p', tip, '-m', UNINSTALL_TITLE], 'git could not make uninstall\'s commit');
             // Wheelhouse's own branch: a retry's commit takes the place of an earlier attempt's.
-            await g.must(['push', '-q', '--no-verify', '--force', record.remoteUrl, `${sha}:refs/heads/${UNINSTALL_BRANCH}`], `uninstall's branch could not be pushed to ${hostName(record.host)} with your sign-in`);
+            await g.must(['push', '-q', '--no-verify', '--force', placeOf(record), `${sha}:refs/heads/${UNINSTALL_BRANCH}`], `uninstall's branch could not be pushed to ${hostName(record.host)} with your sign-in`);
             return { tip, left, sha };
           }, true, record.connection?.baseUrl);
           if (made.stale) await archiveChanged(entry.branch);
@@ -564,10 +620,13 @@ export async function applyUninstall({
           if (made.sha === null) {
             mark(entry.ids, true, `nothing of setup's is left on ${entry.branch}`);
             say(`Nothing of setup's is left in the project's files on ${entry.branch}, so no pull request is needed.`);
+          } else if (record.host === 'local') {
+            await lastChange(entry, made.sha);
+            mark(entry.ids, true, 'taken out by the last change');
           } else {
             const baseUrl = record.connection?.baseUrl ?? GITLAB_URL;
             const pr = (await o.findOpenPr({ host: record.host, repo: record.repo, branch: UNINSTALL_BRANCH, baseUrl }))
-              ?? await (await o.adapterFor({ host: record.host, repo: record.repo, base: record.connection?.baseUrl })).openPr({
+              ?? await (await o.adapterFor({ host: record.host, repo: record.repo, base: record.connection?.baseUrl, folder: record.folder })).openPr({
                 head: UNINSTALL_BRANCH, base: entry.branch, title: UNINSTALL_TITLE, body: `${UNINSTALL_BODY}${entry.archive?.moves?.length > 0 ? ARCHIVE_BODY : ''}`,
               });
             mark(entry.ids, true, `taken out by pull request ${pr.number}, for you to merge`);
@@ -582,7 +641,7 @@ export async function applyUninstall({
           break; // with its pull request
         case 'close-pull-request': {
           if (record === null) halt('the project\'s record is gone, so the trial pull request could not be closed');
-          const adapter = await o.adapterFor({ host: record.host, repo: record.repo, base: record.connection?.baseUrl });
+          const adapter = await o.adapterFor({ host: record.host, repo: record.repo, base: record.connection?.baseUrl, folder: record.folder });
           const number = entry.number ?? (await o.findOpenPr({ host: record.host, repo: record.repo, branch: entry.branch, baseUrl: record.connection?.baseUrl ?? GITLAB_URL }))?.number ?? null;
           if (number !== null && (await adapter.prState(number))?.state === 'open') await adapter.closePr(number);
           mark(entry.ids, true);
@@ -598,7 +657,7 @@ export async function applyUninstall({
             say(`The trial branch ${entry.branch} stays: its commit was never recorded.`);
             break;
           }
-          const got = await gitFor(record.host, record.remoteUrl, (g) => deleteHostBranch(g, record.remoteUrl, entry.branch, entry.sha), false, record.connection?.baseUrl);
+          const got = await gitFor(record.host, placeOf(record), (g) => deleteHostBranch(g, placeOf(record), entry.branch, entry.sha), false, record.connection?.baseUrl);
           mark(entry.ids, got.put, got.put ? undefined : got.why);
           say(got.put ? `The trial branch ${entry.branch} is deleted.` : `The trial branch ${entry.branch} stays: ${got.why}.`);
           break;

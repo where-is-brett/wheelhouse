@@ -82,10 +82,12 @@ export async function revokeGitlabKey({ name, projectId, base, repo, fetch }) {
 }
 
 const plainAnswer = (text, rest = {}) => ({ ok: true, message: text, ...rest });
+export const NO_ACCESS_TO_CUT = 'Nothing to cut: this project stays on this computer, so the agents have no outside access to it.';
 
 // The runbook's step 2 for a project's record: { ok, message, url? }, or { ok: false, refused, url }.
 export async function cutAccess({ record, fetch }) {
   const { connection, host, repo } = record;
+  if (host === 'local') return plainAnswer(NO_ACCESS_TO_CUT);
   const base = host === 'gitlab' ? checkBaseUrl(connection.baseUrl ?? GITLAB_URL) : null;
   if (connection.mode !== 'narrow') {
     if (host === 'github') {

@@ -54,7 +54,7 @@ export function dropNextMain(project) {
 }
 
 // The folder's git identity, or Wheelhouse's, as a commit's environment.
-async function identityOf(folder, git) {
+export async function identityOf(folder, git) {
   let name = '';
   let email = '';
   if (typeof folder === 'string' && fs.existsSync(folder)) {

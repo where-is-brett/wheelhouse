@@ -68,6 +68,12 @@
     "plural": "private trial copies",
     "example": "Like a rehearsal performance before opening night."
   },
+  "local change": {
+    "plain": "a piece of work on a project kept on this computer, set aside for checking before it joins the main version",
+    "phrase": "proposed change",
+    "plural": "proposed changes",
+    "example": "Like a draft on the side of the desk, read over before it goes in the book."
+  },
   "worktree": {
     "plain": "a separate working folder where one agent builds one piece of work without getting in the way of the others",
     "phrase": "separate working folder",

@@ -192,6 +192,6 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
   const agent = typeof leanAgent === 'string'
     ? { name: leanAgent, tier: 'lean', helper: known.helperUp === true, node: true, platform: process.platform }
     : undefined;
-  const model = boardModel({ project, views, profileUnconfirmed: profileViews?.unconfirmed, events, usage, health, settings, sources, hostUnreachable: known.away, agent, now: clock, since });
+  const model = boardModel({ project, views, profileUnconfirmed: profileViews?.unconfirmed, events, usage, health, settings, sources, hostUnreachable: known.away, agent, local: record.host === 'local', now: clock, since });
   return { project, model, usage, sources, settings };
 }
