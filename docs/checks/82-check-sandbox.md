@@ -141,6 +141,8 @@ What the three can do: none starts a program a test chooses. The new `audio-comp
 
 **Part 1's final results, at cadb856b.** `checkProfile` as built: all 29 ways of `ways` shut in the test stage, in `prepare` only `curl` gets out, and `runner` passed in 0.7 minutes on the real project.
 
+**`swift test --no-parallel`, 1 November 2026.** The finder's Swift command, through `runner` on the real project: all its tests passed in 0.8 minutes, and its folder was left as it was.
+
 ## What it means for the design
 
 For the main session as cards, not yet changed in the design:
