@@ -1,6 +1,6 @@
 {
   "name": "wheelhouse",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Lets a director who is not a developer run AI agents that build their product.",
   "author": {
     "name": "where-is-brett",

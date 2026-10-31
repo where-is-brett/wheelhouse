@@ -90,6 +90,8 @@ Each project has one answer, worked out and shown on the Logbook, never asked:
 
 The setting is `checks.where` in `.claude/wheelhouse.json`: left out, it is worked out as above; `here` or `host` fixes it.
 
+**While the rules name Wheelhouse's check.** The default branch's rules can name `wheelhouse/checks` as required, and then no merge can go through unless something reports it, whatever the project's CI does. So while they name it the runner keeps reporting, whatever else this section works out, and that beats the setting too. It goes by what the host says, or by what setup recorded when the host can't be read. If neither can tell, and the rules stay unread for five looks in a row, one card asks whether to keep reporting: merges never stop without a word.
+
 ### 4.2 The settings
 
 These live in `.claude/wheelhouse.json` on the **default branch**, a guardrail file, and the helper reads them from there, never from the branch being checked. A branch can't change what its own check runs.
@@ -112,9 +114,9 @@ The check runner is a new core module, `scripts/checks/`, run by the helper. No 
 
 1. **When.** A check starts when the helper takes in a new head (the lanes' push), and when the default branch's head has no result. The main line goes first, since it holds merges. One check runs at a time on the computer, since a build can take every core. *Designer's call.*
 2. **Pending.** A hosted project gets a `pending` status at once, so the gate reads "pending", which waits, not "none". The merge queue's `wait` then covers it.
-3. **The check folder.** `<engine>/checks/<project>/tree` holds its own git repository, fetched to exactly that commit by the helper through `safeGit`. It has no link into the project, the home or any mirror, so nothing in it reaches them. Between checks it is reset and cleaned, keeping only what the project's own `.gitignore` ignores, so builds reuse earlier work.
-4. **The main line is checked clean.** A main-line check first clears the folder entirely. An earlier head's tests can write to the kept build output, and that must never decide whether the main line is green. It also has its own `HOME` (section 4.4). *Designer's call.*
-5. **The environment** is a short list of what a check keeps, not of what it drops: the path, language, time zone, user and terminal, and where a version manager's tools are. What a test can read it can leave for `prepare`, so a key under a name nobody listed mustn't arrive at all. The check sets `HOME` to its own home, as well as `CFFIXED_USER_HOME`, `TMPDIR` and `DEVELOPER_DIR`.
+3. **The check folder.** Each work has its own folder under `<engine>/checks/<project>/heads/`, holding its own git repository, fetched to exactly that commit by the helper through `safeGit`. It has no link into the project, the home or any mirror, so nothing in it reaches them. Between that work's checks it is reset and cleaned, keeping only what the project's own `.gitignore` ignores, so its builds reuse earlier work. Its folder goes when the work has ended.
+4. **The main line is checked clean.** A main-line check runs in a new folder of its own, at a name no head's profile holds and no head's check could guess ahead of it, with its own `HOME` (section 4.4). An earlier head's tests can write to their kept build output, and that must never decide whether the main line is green. *Designer's call.*
+5. **The environment** is a short list of what a check keeps, not of what it drops: the path, language, time zone, user and terminal, and where a version manager's tools are (each manager's own variable, such as `SWIFTLY_HOME_DIR`, `ASDF_DATA_DIR`, `MISE_DATA_DIR`, `PNPM_HOME`, `BUN_INSTALL`, `DENO_INSTALL` or `FNM_DIR`, set to its usual folder when that folder exists and the variable isn't set). What a test can read it can leave for `prepare`, so a key under a name nobody listed mustn't arrive at all. Two things stay out on purpose: `CARGO_HOME`, which can hold a token, and the proxy variables, which can hold a password. A project behind a proxy gets a failed `prepare`, not a leaked password. The check sets `HOME` to its own home, as well as `CFFIXED_USER_HOME`, `TMPDIR` and `DEVELOPER_DIR`.
 6. **The run.** `prepare`, if any, then `testCommand`, both in the sandbox (section 4.4), within the time limit, with output kept to the last 64 KB. A failed `prepare` is could-not-run, as no test ran: a registry that's down is no reason to send work back.
 7. **One second try.** A red result runs once more at the same head before it counts, as Archon's queue reruns a failed job once. A timeout doesn't. *Designer's call.*
 8. **The record comes first.** The result is a new signed event kind, `check`: `{ commit, command (its digest), result (passed, failed, timed-out, could-not-run), minutes, tail }`, with `tail` the last 4 KB of output, run through the secret scan. Only then is it reported.
@@ -168,15 +170,15 @@ A script, not an agent, finds `testCommand` for setup and the survey with no que
 | The project holds | `testCommand` | `prepare` |
 |---|---|---|
 | `testCommand` already set | as set | as set |
-| `*.xcworkspace` or `*.xcodeproj` | `xcodebuild test -scheme <its shared scheme> -destination 'platform=macOS' -derivedDataPath .build/checks`, with the switches of section 4.4 and `CODE_SIGNING_ALLOWED=NO`, and the second try below | `xcodebuild -resolvePackageDependencies`, with the same switches |
-| `Package.swift` | `swift test --disable-sandbox` | `swift package resolve --disable-sandbox` |
+| `*.xcworkspace` or `*.xcodeproj` | `xcodebuild build-for-testing` for its shared scheme, then `xcrun xctest` on each test bundle, with the switches of section 4.4 and `CODE_SIGNING_ALLOWED=NO`, as below | `xcodebuild -resolvePackageDependencies`, with the same switches |
+| `Package.swift` | `swift test --disable-sandbox --no-parallel` (one at a time, section 4.4); the project can change it | `swift package resolve --disable-sandbox` |
 | `package.json` with a test script | `npm test` | `npm ci` |
 | `Cargo.toml` | `cargo test` | `cargo fetch` |
 | `go.mod` | `go test ./...` | `go mod download` |
 | `pyproject.toml` or `pytest.ini` | `python3 -m pytest` | none |
 | a `Makefile` with a `test` target | `make test` | none |
 
-**Xcode's tests.** The sandbox always refuses `xcodebuild test` itself, since it needs `testmanagerd` and hosted tests need LaunchServices, and both start programs outside the sandbox. So when the first run shows that refusal, the check takes one second try: `xcodebuild build-for-testing` with `TEST_HOST=` and `BUNDLE_LOADER=` set empty, then `xcrun xctest` on each test bundle, which stays inside the sandbox. On that try a pass counts, as tests with no host, and anything else is `could-not-run`, never red. Tests that can't build without their app, or that need one running, end at the card in section 4.8. This takes the place of the ordinary second try. *Designer's call.*
+**Xcode's tests.** The sandbox always refuses `xcodebuild test` itself, since it needs `testmanagerd` and hosted tests need LaunchServices, and both start programs outside the sandbox. So the finder writes the way that stays inside it: `xcodebuild build-for-testing` with `TEST_HOST=` and `BUNDLE_LOADER=` set empty, then `xcrun xctest` on each test bundle. A `testCommand` a project set to `xcodebuild test` still gets one second try that way, and its pass counts. Tests that need their app can't run this way, and that reads as could-not-run, with the card in section 4.8.
 
 **A generated Xcode project.** A project may hold an XcodeGen `project.yml` with its `.xcodeproj` ignored by git. It has no committed Xcode project, so it reads as its `Package.swift` row, which reaches every test in the package's own test targets. Tests that live only in `project.yml`'s targets would need `xcodegen generate` in `prepare`.
 
@@ -211,7 +213,8 @@ Then the check runs once on the default branch, and the first result decides wha
 
 - The Logbook's build tab: "Checks ran on this computer: passed, 3 minutes." Hosted projects say the same; the words don't change with the host.
 - The pane: while a check runs, "Checking on this computer".
-- A card only for `could-not-run` twice in a row, or the cards in sections 4.1 and 4.5.
+- A card only for `could-not-run` twice in a row, or the cards in sections 4.1 and 4.5. A missing tool reads as could-not-run, never red, and a test server on the engine room's port gets a hint in the check's tail.
+- A project with no command and none to find has no check, and says why: "Tests aren't counting yet: ask the First Mate to add tests or repair them" stands on the Logbook and in the briefing.
 - The briefing's cost line gains nothing: checks spend no tokens. The Logbook shows their minutes.
 
 ## 5. Git alone: the shape
@@ -473,7 +476,7 @@ Each part is one fresh session, with the named test files. Counted evaluation ru
 |---|---|
 | Xcode projects won't run under the profile | `xcodebuild test` can't, by design (section 4.5). The second try runs tests with no host. Tests that need their app get the card, and no check runs unsandboxed without the director's say |
 | A macOS update, or a project's own test, needs a service the profile doesn't name | The check gives `could-not-run` or a red result, never a way out. The service is looked at and added by hand |
-| A process a test leaves in a new session of its own outlives the check, and writes to `tree` during the next one, the helper's git steps there included | The process group's end misses it, and a main-line check shares `tree`. It holds no key and stays in the sandbox. A link it puts where the `.git` file goes is refused, but a folder swapped for a link in the middle of the helper's `checkout` is not ruled out. Open: a main-line tree no head's profile can write would shut it |
+| A process a test leaves in a new session of its own outlives the check | The process group's end misses it, and it keeps its profile. That profile names only its own work's folder, so it can't reach another work's check or any main-line check, each at its own path. It can still write to its own work's next check, and that head's result is the only thing it can change: the clean main-line check after the merge is the backstop. What every check shares stays open: `/private/tmp` and localhost ports |
 | A long build on a laptop | One check at a time, build output kept, a time limit. The check's minutes are on the Logbook |
 | A check on a sleeping computer | It pauses and carries on, as builds do. A hosted project's status stays `pending` meanwhile, which holds no other work |
 | The local queue drifts from Archon's gate | The monthly reading above, and the same permit in both |

@@ -6,7 +6,7 @@
 
 Wheelhouse is for a product owner who isn't a developer. You say what you want in plain words. Your First Mate asks you short questions about what is yours to decide, each with buttons to click. Behind it, the Crew builds the work and Lookouts check it, and nothing reaches the main version of your product until it has passed checks the agents can't skip. You make the product decisions; the agents do the building.
 
-`v0.2.0` is an early release for trying Wheelhouse out. It hasn't yet been used from start to finish on a real product.
+`v0.2.1` is an early release for trying Wheelhouse out. It hasn't yet been used from start to finish on a real product.
 
 ## How it works
 
@@ -32,7 +32,7 @@ And a briefing opens like this:
 
 **What it protects.** Agents never hold your GitHub or GitLab keys, your clicks are signed so an agent can't approve for you, and on a Mac the agents' commands run fenced off from the rest of your computer. What it doesn't protect you from is in [`SECURITY.md`](SECURITY.md).
 
-**What builds it.** On a Mac, for a product on GitHub, all the building runs on a build engine, [Archon](https://github.com/coleam00/Archon), which setup installs with its usage reporting off: quick changes, small pieces of work, bugs, features (in slices, each with its own pull request) and the fix when the main version breaks. Wheelhouse's checks and guards still wrap every step, and the engine never holds your GitHub keys. A product that builds with Copilot instead of Claude runs on the same engine too, except at Lean (below), which installs nothing. Products on GitLab, and work on Windows or Linux, are still built by Wheelhouse's own Crew for now. A project set up before `v0.2.0` is offered the switch once, on a card: you approve a pull request that adds the engine's files, and work already under way finishes where it started. How the engine fits, and its fallback, are in [`docs/engine/`](docs/engine/).
+**What builds it.** On a Mac, for a product on GitHub, all the building runs on a build engine, [Archon](https://github.com/coleam00/Archon), which setup installs with its usage reporting off: quick changes, small pieces of work, bugs, features (in slices, each with its own pull request) and the fix when the main version breaks. Wheelhouse's checks and guards still wrap every step, and the engine never holds your GitHub keys. A product that builds with Copilot instead of Claude runs on the same engine too, except at Lean (below), which installs nothing. Products on GitLab, and work on Windows or Linux, are still built by Wheelhouse's own Crew for now. A project set up before `v0.2.1` is offered the switch once, on a card: you approve a pull request that adds the engine's files, and work already under way finishes where it started. How the engine fits, and its fallback, are in [`docs/engine/`](docs/engine/).
 
 **How to take it out again.** Type `/wheelhouse:uninstall` in a conversation on your product. What it removes, and what it keeps, is in [`docs/data.md`](docs/data.md).
 
@@ -46,11 +46,11 @@ You need **Node.js** (a free program; [download the version marked LTS](https://
 
    ```text
    Please run these two commands in this folder, one after the other, and tell me when both have finished:
-   claude plugin marketplace add "where-is-brett/wheelhouse#v0.2.0" --scope project
+   claude plugin marketplace add "where-is-brett/wheelhouse#v0.2.1" --scope project
    claude plugin install wheelhouse@wheelhouse --scope project
    ```
 
-   Claude asks before it runs each one: allow it. The first adds Wheelhouse's own catalogue, at release `v0.2.0`; the second installs Wheelhouse from that catalogue, for this project only. Both name Wheelhouse's catalogue, so nothing else with a similar name can be installed by mistake. (A later release, from Wheelhouse's [releases page](https://github.com/where-is-brett/wheelhouse/releases), goes in place of `v0.2.0`.) If you prefer a terminal, the same two commands work there, run in the product's folder.
+   Claude asks before it runs each one: allow it. The first adds Wheelhouse's own catalogue, at release `v0.2.1`; the second installs Wheelhouse from that catalogue, for this project only. Both name Wheelhouse's catalogue, so nothing else with a similar name can be installed by mistake. (A later release, from Wheelhouse's [releases page](https://github.com/where-is-brett/wheelhouse/releases), goes in place of `v0.2.1`.) If you prefer a terminal, the same two commands work there, run in the product's folder.
 4. **Start a new session on the same folder.** Wheelhouse loads, and setup starts.
 5. **If the commands don't work,** use the plugin browser instead: click the **+** button beside the message box, then **Add plugins** (or **Plugins**, then **Browse plugins**). Add the catalogue `where-is-brett/wheelhouse`, choose **Wheelhouse** from it, choose **this project** when asked where, then start a new session on the folder.
 
@@ -64,12 +64,12 @@ What Wheelhouse protects you from, what it doesn't, and how to report a problem 
 
 Wheelhouse also runs in VS Code with GitHub Copilot, with nothing else installed. This is its lean tier ("Lean"): you need VS Code with Copilot, and git. You don't need Node.js, a code host, administrator rights or anything else, and Wheelhouse installs nothing. Everything stays on your computer, and Copilot builds in your own chat, one feature at a time.
 
-**Status:** `v0.2.0` is an early release for trying Wheelhouse out. Where this page says `v0.2.0`, use the latest release's name.
+**Status:** `v0.2.1` is an early release for trying Wheelhouse out. Where this page says `v0.2.1`, use the latest release's name.
 
 Open your product's folder in VS Code, open Copilot's chat in agent mode, and paste this line:
 
 ```text
-Set up Wheelhouse from https://github.com/where-is-brett/wheelhouse at release v0.2.0
+Set up Wheelhouse from https://github.com/where-is-brett/wheelhouse at release v0.2.1
 ```
 
 Copilot asks you before it runs each command, as it always does. What the line does, one step at a time:
@@ -87,4 +87,4 @@ Then the chat follows Wheelhouse's own playbook for Lean: the record, the Logboo
 
 ## For developers
 
-**Status:** `v0.2.0` is an early release for trying Wheelhouse out, with its tests passing. The design is in `docs/specs/2026-10-17-wheelhouse-design.md`. How to run the tests, find your way around and cut a release is in [`CONTRIBUTING.md`](CONTRIBUTING.md).
+**Status:** `v0.2.1` is an early release for trying Wheelhouse out, with its tests passing. The design is in `docs/specs/2026-10-17-wheelhouse-design.md`. How to run the tests, find your way around and cut a release is in [`CONTRIBUTING.md`](CONTRIBUTING.md).

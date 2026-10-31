@@ -43,6 +43,8 @@ On a Mac, from v0.2.0, for a product on GitHub, setup installs Wheelhouse's buil
 
 Its usage reporting is always off. Now and then it asks GitHub for its own release list; it has no switch for that, and the request carries nothing of yours. If you switch on **Engine room**, Archon's console downloads its files from Archon's GitHub release the first time, and it listens on your computer only.
 
+A GitHub project with no CI has its tests run on your computer, from v0.2.1. Each change's copy, its build output and its own test home sit in `~/.wheelhouse/engine/checks/<project>/`. A change's go when its work has ended, a main-line check's when it is done. Each result is a signed record in the project's private state, and a line of its output may be in that record, after a scan for secrets. GitHub gets only a pass or fail for the commit.
+
 So that the engine's steps keep Wheelhouse's guards, setup also adds the Wheelhouse plugin to Claude Code for your account, not just this project (an older Wheelhouse already there is brought up to date instead), and a sign-in start that starts Wheelhouse's helper when you sign in to the Mac. In the project, setup's commit adds Archon's project settings (`.archon/config.yaml`) and the merge queue's policy (`.archon/sdlc/policy/maintainers.json`). A project set up before v0.2.0 gets these two files by a pull request you approve.
 
 A product on GitLab, and a computer other than a Mac, gets none of this, and keeps Wheelhouse's own Crew for now.

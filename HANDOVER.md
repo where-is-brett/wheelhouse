@@ -400,4 +400,5 @@ The director is a product owner, not a developer. They want their product built 
      - The reading steps' guard is a list, not the operating system; the user's own hooks, agents and `CLAUDE.md` still load in a run (#142).
      - Each part's open MEDIUMs are in its pull request.
    - **Next:** finish check 81, tag v0.2.0, then the director's real use on the Mac (the director's ruling of 23 October 2026).
-23. **Backlog:** budget allocation (section 9.1), which the director asked for once usage could be read. The director put it in the backlog on 18 October 2026.
+23. **Checks on this computer, v0.2.1, 31 October to 1 November 2026** (`docs/specs/2026-10-31-local-checks-and-git-alone-design.md`; parts 0 to 3 of its plan). A GitHub project with no CI now builds and merges: its tests run in a sandbox on the Mac and the result is reported to GitHub. Setup finds the test command, a project already set up gets it by the helper's own pull request, and a project whose tests fail or don't exist can carry on with tests not counting until they first pass. Parts 4 to 7, projects in git alone, come next.
+24. **Backlog:** budget allocation (section 9.1), which the director asked for once usage could be read. The director put it in the backlog on 18 October 2026.
