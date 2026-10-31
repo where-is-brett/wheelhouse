@@ -7,7 +7,7 @@ import { spawn as nodeSpawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { shellFor, testEnv } from '../lib/local-git.js';
+import { shellFor } from '../lib/local-git.js';
 import { sandboxDenyPaths } from '../protection/settings.js';
 import { prepareFolder, realFolder } from './folder.js';
 import { checkProfile } from './profile.js';
@@ -25,6 +25,14 @@ const CHOSEN_XCODE = '/var/db/xcode_select_link';
 const NESTED = /sandbox_apply: Operation not permitted|^sandbox-exec: /m;
 // What `xcodebuild test` says when the sandbox refuses what it starts a test with (check 82).
 const TESTS_REFUSED = /Failed to prevent system sleep|testmanagerd\.control|Sandbox restriction|LaunchServices has returned error|Failed to establish communication with the test runner|test runner hung/;
+
+// All a check keeps of the helper's environment: how to find its tools and how to read text. What it could read a test could
+// leave for `prepare`, which has the network, so a secret with a name nobody listed must not arrive at all. HOME, TMPDIR and
+// DEVELOPER_DIR are set by the check itself.
+const KEPT_VARIABLES = /^(?:PATH|LANG|LC_[A-Z]+|TZ|USER|LOGNAME|TERM|CARGO_HOME|GOROOT|JAVA_HOME|NVM_DIR|PYENV_ROOT|RBENV_ROOT|RUSTUP_HOME|SDKMAN_DIR|VOLTA_HOME)$/;
+export function checkEnv(env = process.env) {
+  return Object.fromEntries(Object.entries(env).filter(([name]) => KEPT_VARIABLES.test(name)));
+}
 
 // The checks running in this process, by project, so All stop can end them.
 const running = new Map();
@@ -147,7 +155,7 @@ export async function runCheck({
     return answer('could-not-run', String(error?.message ?? error));
   }
   const xcode = developerDir();
-  const env = { ...testEnv(), HOME: ownHome, CFFIXED_USER_HOME: ownHome, TMPDIR: tmp, ...(xcode ? { DEVELOPER_DIR: xcode } : {}) };
+  const env = { ...checkEnv(), HOME: ownHome, CFFIXED_USER_HOME: ownHome, TMPDIR: tmp, ...(xcode ? { DEVELOPER_DIR: xcode } : {}) };
   const denied = deniedPaths();
   const textFor = (name) => profile({ paths, main, stage: name, network, denied, temp: TEMP, userHome: real(os.homedir()) });
 

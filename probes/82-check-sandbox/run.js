@@ -32,11 +32,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { run, withoutGitVars } from '../../scripts/lib/run.js';
-import { testEnv } from '../../scripts/lib/local-git.js';
 import { credentialPaths } from '../../scripts/lib/credentials.js';
 import { archonDenyRules, KEYCHAINS } from '../../scripts/protection/settings.js';
+import { ENGINE_ROOM_PORT } from '../../scripts/protection/archon.js';
 import { checkProfile } from '../../scripts/checks/profile.js';
-import { endCheck, runCheck } from '../../scripts/checks/run.js';
+import { checkEnv, endCheck, runCheck } from '../../scripts/checks/run.js';
 import { writeFixture } from './fixture.js';
 
 const REAL_HOME = os.homedir();
@@ -122,7 +122,7 @@ const childEnv = (paths, more = {}) => ({ ...more, HOME: paths.home, CFFIXED_USE
 async function jailed(profile, command, { paths, timeoutMs = 20000, env = {}, cwd = paths.tree } = {}) {
   const args = profile ? ['-p', profile, '/bin/sh', '-c', command] : null;
   const file = profile ? SANDBOX : '/bin/sh';
-  return run(file, args ?? ['-c', command], { cwd, baseEnv: testEnv(), env: childEnv(paths, env), timeoutMs, limit: 256 * 1024 });
+  return run(file, args ?? ['-c', command], { cwd, baseEnv: checkEnv(), env: childEnv(paths, env), timeoutMs, limit: 256 * 1024 });
 }
 
 async function waitFor(file, ms) {
@@ -183,10 +183,12 @@ async function audioLoader(paths) {
   return built.code === 0 && got.code === 0 ? program : null;
 }
 
-async function listener(file) {
+// A throwaway listener on a socket file, or on a port of this computer's by number.
+async function listener(where) {
   const seen = { connected: false };
-  const server = net.createServer((socket) => { seen.connected = true; socket.end('hello\n'); });
-  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(file, resolve); });
+  const server = net.createServer((socket) => { seen.connected = true; socket.on('error', () => {}); socket.end('hello\n'); });
+  await new Promise((resolve, reject) => { server.once('error', reject); if (typeof where === 'number') server.listen(where, '::', resolve); else server.listen(where, resolve); });
+  seen.port = typeof where === 'number' ? server.address().port : null;
   return { seen, close: () => new Promise((resolve) => { server.close(resolve); }) };
 }
 
@@ -217,6 +219,7 @@ function ways(paths, opener, ctx) {
     { way: 'login-item-events', run: (way) => `/usr/bin/osascript -e ${shq(`tell application "System Events" to make login item at end with properties {path:${JSON.stringify(payloadApp(paths, way))}, hidden:true}`)}`, proof: null, loginItem: (way) => `Way${way.replaceAll('-', '')}` },
     { way: 'login-item-file', run: (way) => `cp ${shq(agentPlist(paths, way, label(way)))} ${shq(path.join(REAL_HOME, 'Library', 'LaunchAgents', `${label(way)}.plist`))}`, file: (way) => path.join(REAL_HOME, 'Library', 'LaunchAgents', `${label(way)}.plist`) },
     { way: 'unix-socket-in-denied-folder', run: () => `/usr/bin/nc -U -w 3 ${shq(path.join(paths.outside, 's.sock'))} </dev/null`, control: true, socket: true },
+    { way: 'engine-room-port', tcp: ENGINE_ROOM_PORT, run: () => ['127.0.0.1', '::1'].map((host) => `/usr/bin/nc -z -w 2 ${host} ${ENGINE_ROOM_PORT}`).join('; '), control: true },
     { way: 'other-process-environment', run: (way, ctx) => `/bin/ps eww -p ${ctx.victim.pid} | grep -c WHEELHOUSE_CHECK_82_CANARY`, control: true, read: (got) => Number(got.stdout.trim()) > 0 },
     { way: 'signal-other-process', run: (way, ctx) => `kill -0 ${ctx.victim.pid}; echo $?`, control: true, read: (got) => got.stdout.trim() === '0' },
     { way: 'clipboard-read', run: '/usr/bin/pbpaste 2>/dev/null | wc -c', control: true, read: (got) => Number(got.stdout.trim()) > 0 },
@@ -247,11 +250,19 @@ async function tryWay(entry, profile, ctx) {
     fs.rmSync(path.join(paths.outside, 's.sock'), { force: true });
     server = await listener(path.join(paths.outside, 's.sock'));
   }
+  if (entry.tcp) {
+    // Never knock on a real engine: with the port taken, the way isn't tried.
+    try {
+      server = await listener(entry.tcp);
+    } catch {
+      return { way, open: false, code: null, timedOut: false, said: 'not tried: the port is in use here' };
+    }
+  }
   const command = typeof entry.run === 'function' ? entry.run(way, ctx) : entry.run;
   const got = await jailed(profile, command, { paths, timeoutMs: 25000 });
   let open;
   if (entry.read) open = entry.read(got);
-  else if (entry.socket) open = server.seen.connected;
+  else if (entry.socket || entry.tcp) open = server.seen.connected;
   else if (entry.file) open = fs.existsSync(entry.file(way));
   else if (entry.loginItem) {
     const list = await run('/usr/bin/osascript', ['-e', 'tell application "System Events" to get the name of every login item'], { timeoutMs: 15000 }).catch(() => ({ stdout: '' }));
@@ -283,6 +294,11 @@ async function phaseWays() {
       report.runs[variant] = { loads: loads.code === 0, loadError: loads.code === 0 ? '' : loads.stderr.trim().slice(0, 300), ways: [] };
       if (loads.code !== 0) continue;
       for (const entry of entries) report.runs[variant].ways.push(await tryWay(entry, profile, ctx));
+      const local = await listener(0);
+      await jailed(profile, `/usr/bin/nc -z -w 2 127.0.0.1 ${local.seen.port}`, { paths });
+      await sleep(200);
+      report.runs[variant].otherLocalPortReached = local.seen.connected;
+      await local.close();
     }
   } finally {
     victim.kill();
@@ -314,7 +330,7 @@ function maskerOf(names) {
   };
 }
 
-const git = (cwd, ...args) => run('/usr/bin/git', ['-c', 'core.hooksPath=/dev/null', ...args], { cwd, baseEnv: withoutGitVars(testEnv()), env: { DEVELOPER_DIR: XCODE } });
+const git = (cwd, ...args) => run('/usr/bin/git', ['-c', 'core.hooksPath=/dev/null', ...args], { cwd, baseEnv: withoutGitVars(checkEnv()), env: { DEVELOPER_DIR: XCODE } });
 
 // A copy of the folder's head commit in a check folder of its own: nothing links back, and nothing is written there.
 async function fetchCopy(folder, paths) {
@@ -423,7 +439,7 @@ async function stage(name, profile, argv, { paths, minutes, log, mask }) {
   const local = new Date(started - 1000 - new Date().getTimezoneOffset() * 60000);
   const since = local.toISOString().replace('T', ' ').slice(0, 19);
   const command = argv.map(shq).join(' ');
-  const child = spawn(SANDBOX, ['-p', profile, '/bin/sh', '-c', `exec ${command}`], { cwd: paths.tree, env: { ...testEnv(), ...childEnv(paths) }, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+  const child = spawn(SANDBOX, ['-p', profile, '/bin/sh', '-c', `exec ${command}`], { cwd: paths.tree, env: { ...checkEnv(), ...childEnv(paths) }, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
   const stopWatch = watchProcesses(child.pid, paths.root);
   const out = fs.createWriteStream(log, { flags: 'a' });
   out.write(`\n===== ${name}: ${command}\n`);

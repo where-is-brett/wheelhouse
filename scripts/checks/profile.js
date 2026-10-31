@@ -9,6 +9,8 @@
 //
 // The last matching rule wins, so the order of the lines below carries meaning.
 
+import { ENGINE_ROOM_PORT } from '../protection/archon.js';
+
 // The system services a build tool can't work without, each answering a question and starting nothing. Three are left out
 // on purpose. `com.apple.bsd.dirhelper` names the per-user temporary and cache folders: without it the tools fall back to
 // the check's own TMPDIR, and those folders can stay shut. What is written there is read by programs outside the sandbox
@@ -118,5 +120,8 @@ export function checkProfile({ paths, main, stage, network, denied, temp, userHo
     `(allow network-outbound (remote unix-socket (path-literal ${quoted(NAME_SERVICE)})))`,
     '(allow system-socket)',
   );
+  // The engine room stays shut to a check as it is to an agent, or a builder could reach it by writing a test. Last, to beat
+  // the rules above, and on any host, as the sandbox has no other way to name this computer's addresses.
+  lines.push(`(deny network-outbound (remote ip "*:${ENGINE_ROOM_PORT}"))`);
   return lines.join('\n');
 }

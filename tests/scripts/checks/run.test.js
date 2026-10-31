@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { developerDir, endCheck, runCheck, secondTryOf } from '../../../scripts/checks/run.js';
+import { checkEnv, developerDir, endCheck, runCheck, secondTryOf } from '../../../scripts/checks/run.js';
 import { dueChecks, withCheckTurn } from '../../../scripts/checks/queue.js';
 import { commandDigest, writeCheck } from '../../../scripts/checks/record.js';
 import { checkPaths } from '../../../scripts/checks/folder.js';
@@ -105,6 +105,25 @@ test('a file a test left where the temporary folder goes is put right, and the c
     assert.equal(got.result, 'passed');
     const again = await check('echo x > "$TMPDIR/a"');
     assert.equal(again.result, 'passed');
+  });
+});
+
+test('a check keeps a short list of what it was given, so an unnamed secret never reaches it', () => {
+  const kept = checkEnv({ PATH: '/bin', LANG: 'en_AU.UTF-8', LC_ALL: 'C', NVM_DIR: '/n', OAUTH_TOKEN: 'a', OPENAI_API_KEY: 'b', AWS_SECRET_ACCESS_KEY: 'c', NPM_TOKEN: 'd', DATABASE_URL: 'e', SSH_AUTH_SOCK: 'f', HOME: '/h' });
+  assert.deepEqual(kept, { PATH: '/bin', LANG: 'en_AU.UTF-8', LC_ALL: 'C', NVM_DIR: '/n' });
+});
+
+test('a variable holding a secret doesn\'t reach a check\'s command', unix, async () => {
+  await withHome(async () => {
+    process.env.OAUTH_TOKEN = 'the-token';
+    try {
+      const got = await check('env >> MARKS');
+      assert.equal(got.result, 'passed');
+      assert.doesNotMatch(got.marks, /OAUTH_TOKEN|the-token/);
+      assert.match(got.marks, /^PATH=/m);
+    } finally {
+      delete process.env.OAUTH_TOKEN;
+    }
   });
 });
 
@@ -292,32 +311,29 @@ test('secondTryOf has nothing for a command that isn\'t xcodebuild test', () => 
 });
 
 // A stand-in `xcodebuild` and `xcrun`: `test` is refused as the sandbox refuses it, and the rest answers as told.
-function fakeXcode(xctestExit) {
+function fakeXcode(xctestExit, marks) {
   const bin = tempFolder('wh-fake-xcode-');
   fs.writeFileSync(path.join(bin, 'xcodebuild'), `#!/bin/sh
-echo "xcodebuild $1" >> "$MARKS_FILE"
+echo "xcodebuild $1" >> '${marks}'
 case "$1" in
   test) echo 'xcodebuild: error: Failed to prevent system sleep during UI testing.' >&2; exit 70;;
 esac
 mkdir -p .build/checks/Build/Products/Debug/One.xctest
 `, { mode: 0o755 });
-  fs.writeFileSync(path.join(bin, 'xcrun'), `#!/bin/sh\necho "xcrun $*" >> "$MARKS_FILE"\nexit ${xctestExit}\n`, { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, 'xcrun'), `#!/bin/sh\necho "xcrun $*" >> '${marks}'\nexit ${xctestExit}\n`, { mode: 0o755 });
   return bin;
 }
 
 async function xcodeCheck(xctestExit) {
   const marks = path.join(tempFolder('wh-marks-'), 'marks');
-  const before = { PATH: process.env.PATH, MARKS_FILE: process.env.MARKS_FILE };
-  process.env.PATH = `${fakeXcode(xctestExit)}:${process.env.PATH}`;
-  process.env.MARKS_FILE = marks;
+  const before = process.env.PATH;
+  process.env.PATH = `${fakeXcode(xctestExit, marks)}:${before}`;
   try {
     const s = await source();
     const got = await runCheck({ project: 'p', commit: s.commit, main: false, settings: settings(XCODE), source: s.url, platform: 'darwin', sandbox: standIn() });
     return { ...got, marks: fs.readFileSync(marks, 'utf8') };
   } finally {
-    process.env.PATH = before.PATH;
-    if (before.MARKS_FILE === undefined) delete process.env.MARKS_FILE;
-    else process.env.MARKS_FILE = before.MARKS_FILE;
+    process.env.PATH = before;
   }
 }
 

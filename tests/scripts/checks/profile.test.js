@@ -3,10 +3,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { checkProfile, CHECK_SERVICES } from '../../../scripts/checks/profile.js';
+import { ENGINE_ROOM_PORT } from '../../../scripts/protection/archon.js';
 import { sandboxDenyPaths } from '../../../scripts/protection/settings.js';
 import { tempFolder } from '../../helpers/homes.js';
 
@@ -203,6 +205,31 @@ test('a test can\'t read the home folder, but can read a tool kept there', mac, 
   for (const stage of ['test', 'prepare']) {
     assert.notEqual(sandboxed(w, `cat '${w.base}/notes.txt'`, { stage }).status, 0, stage);
     assert.equal(sandboxed(w, `cat '${w.base}/.nvm/node'`, { stage }).status, 0, stage);
+  }
+});
+
+test('the engine room\'s port is refused last, whatever the stage or the network', () => {
+  for (const options of [{ stage: 'test' }, { stage: 'test', network: true }, { stage: 'prepare' }]) {
+    const lines = profile(options).split('\n').filter((l) => /network-outbound/.test(l));
+    assert.equal(lines.at(-1), `(deny network-outbound (remote ip "*:${ENGINE_ROOM_PORT}"))`);
+  }
+});
+
+test('a test reaches a local port, but not the engine room\'s', mac, async (t) => {
+  const open = (port) => new Promise((resolve) => {
+    const server = net.createServer((socket) => { socket.on('error', () => {}); socket.end(); });
+    server.once('error', () => resolve(null));
+    server.listen(port, '::', () => resolve(server));
+  });
+  const engine = await open(ENGINE_ROOM_PORT);
+  if (engine === null) { t.skip('the port is in use here'); return; }
+  const other = await open(0);
+  t.after(() => { engine.close(); other.close(); });
+  const w = world();
+  for (const options of [{ stage: 'test' }, { stage: 'test', network: true }, { stage: 'prepare' }]) {
+    const knock = (port, host) => sandboxed(w, `/usr/bin/nc -z -w 2 ${host} ${port}`, options).status;
+    assert.equal(knock(other.address().port, '127.0.0.1'), 0);
+    for (const host of ['127.0.0.1', 'localhost', '::1']) assert.notEqual(knock(ENGINE_ROOM_PORT, host), 0, host);
   }
 });
 
