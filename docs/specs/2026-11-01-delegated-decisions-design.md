@@ -2,7 +2,7 @@
 
 # Delegated decisions: design
 
-**Status:** draft for the director's approval, 1 November 2026. Nothing in it is built. Section 17 holds the six decisions left to the director, each with a recommendation.
+**Status:** approved by the director, 1 November 2026. Nothing in it is built. Section 17 records their answers to the six decisions.
 
 **What it adds.** The director hands Wheelhouse intent and limits instead of a plan. The First Mate settles the small decisions a signed rule covers, under guardrails that rest on what a script can see, so that well-defined work can run for long stretches, such as 8 hours, without the director. Where this design differs from `docs/specs/2026-10-17-wheelhouse-design.md` (the main design), `docs/specs/2026-10-29-wheelhouse-on-archon-design.md` (the Archon design) or the unattended goals draft (`docs/specs/2026-10-31-unattended-goals-design.md`, not yet on main; the goals draft below), this one wins once approved. Section 14 states every such difference. The goals draft isn't approved, so stages 1 and above depend on it; record-only mode doesn't.
 
@@ -591,7 +591,13 @@ Short trials on the Mac, each with an answer note in `docs/checks/`. Agents run 
 
 ## 17. Decisions for the director
 
-Six, each with a recommendation. Each becomes a card with its options when this goes to the director.
+Decided by the director on 1 November 2026, who took the recommendation on all six: 1(a), 2(a), 3(a), 4(a), 5(a) and 6(a). Wherever this design marks a choice **Open**, this answer settles it.
+
+They approved these with three details in view:
+
+- **Decision 1.** Approval cards are sealed too, with no reader, and on counted plans the seal holds script checks only.
+- **Decision 2.** A merge-queue question can still hold merges back if check U3 fails.
+- **Decision 4.** The landing rule covers routine work that already merges today with no director and no question, so landing work can reach users unseen, though no more than it does now.
 
 ### Decision 1: Start record-only, with some blind cards?
 
