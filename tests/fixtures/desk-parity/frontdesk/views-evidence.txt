@@ -1,0 +1,4 @@
+exit 0
+--- out
+0 cards sealed, 0 read, 0 sampled.
+--- err

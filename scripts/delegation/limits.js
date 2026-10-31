@@ -17,3 +17,5 @@ export const SMALL_FIX_LINES = 50;
 export const SEAL_TICK_MS = 120_000;
 export const FACT_TRIES = 3;
 export const SEAL_TRIES = 6;
+// How long a read card may wait for its answer and its reading before it is let go with no score.
+export const SCORE_WAIT_DAYS = 30;

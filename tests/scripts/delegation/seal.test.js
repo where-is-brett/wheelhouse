@@ -2,7 +2,8 @@
 // A seal: what the script checks said about a card, hashed, and what no rule can reach marked as such.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { sealOf } from '../../../scripts/delegation/seal.js';
+import { sealOf, scoreOf, scoreLine, firstLines } from '../../../scripts/delegation/seal.js';
+import { SUGGEST_LABEL } from '../../../scripts/engine/router.js';
 import { setupStamp } from '../../../scripts/delegation/stamp.js';
 import { CANDIDATES } from '../../../scripts/delegation/candidates.js';
 import { dataHash, makeEvent } from '../../../scripts/state/events.js';
@@ -75,3 +76,69 @@ test('a seal is a whole shadow line, and a line with anything else isn\'t', () =
   assert.throws(() => makeEvent({ kind: 'shadow', data: { ...seal, hash: 'x' } }), /shadow/);
   assert.throws(() => makeEvent({ kind: 'shadow', data: { ...seal, line: 'other' } }), /shadow/);
 }));
+
+const seal = sealOf({ card: card(), facts, stamp, at: AT });
+const reading = (pick) => ({ seal, reading: { line: 'reading', card: 'q-w-1', pick } });
+
+test('the reader\'s pick against the director\'s label is a match or a miss', () => {
+  assert.equal(scoreOf({ ...reading('Keep'), answer: { label: 'Keep' } }), 'match');
+  assert.equal(scoreOf({ ...reading('keep '), answer: { label: 'Keep' } }), 'match');
+  assert.equal(scoreOf({ ...reading('Keep'), answer: { label: 'Remove' } }), 'miss');
+});
+
+test('a typed answer, a suggestion or a steered card counts outside, whatever it says', () => {
+  assert.equal(scoreOf({ ...reading('Keep'), answer: { label: SUGGEST_LABEL, words: 'Keep' } }), 'outside');
+  assert.equal(scoreOf({ ...reading('Keep'), answer: { label: 'Keep' }, steered: true }), 'outside');
+  assert.equal(scoreOf({ ...reading('Keep'), answer: { label: 'Other', words: 'Keep it, but smaller' } }), 'outside');
+});
+
+test('with no reading and no set answer there is no score', () => {
+  assert.equal(scoreOf({ seal, reading: null, answer: { label: 'Keep' } }), null);
+  assert.equal(scoreOf({ seal, reading: null, answer: { label: SUGGEST_LABEL }, steered: true }), null);
+  assert.equal(scoreOf({ seal, reading: { line: 'reading', card: 'q-w-1', pick: null }, answer: { label: 'Keep' } }), null);
+});
+
+test('a rule\'s set answer is scored as a reading is', () => {
+  assert.equal(scoreOf({ seal: { ...seal, set: 'Keep' }, reading: null, answer: { label: 'Keep' } }), 'match');
+  assert.equal(scoreOf({ seal: { ...seal, set: 'Keep' }, reading: { pick: 'Remove' }, answer: { label: 'Keep' } }), 'match');
+});
+
+test('with no answer yet there is no score', () => {
+  assert.equal(scoreOf({ ...reading('Keep'), answer: null }), null);
+});
+
+test('Not now, Explain more, Show me and Why? answer nothing, so they score nothing and aren\'t outside', () => {
+  for (const label of ['Not now', 'Explain more', 'Show me', 'Why?']) {
+    assert.equal(scoreOf({ ...reading('Keep'), answer: { label } }), null);
+  }
+});
+
+test('a score is a whole shadow line, tied to its seal by the hash', () => withHome(() => {
+  const { computer, publicKey } = makeSigningKey();
+  enrol({ computer, publicKey, enrolledAt: '2026-11-01T00:00:00.000Z' });
+  const line = scoreLine({ seal, score: 'miss', at: AT });
+  assert.deepEqual(Object.keys(line).sort(), ['at', 'card', 'hash', 'line', 'score', 'seal', 'work']);
+  assert.equal(line.seal, seal.hash);
+  const { hash, ...rest } = line;
+  assert.equal(hash, dataHash(rest));
+  assert.equal(makeEvent({ kind: 'shadow', data: line }).kind, 'shadow');
+  assert.throws(() => makeEvent({ kind: 'shadow', data: { ...line, score: 'close' } }), /shadow/);
+  assert.throws(() => makeEvent({ kind: 'shadow', data: { ...line, label: 'Keep' } }), /shadow/);
+  assert.throws(() => makeEvent({ kind: 'shadow', data: { ...line, line: 'other' } }), /shadow/);
+}));
+
+test('the first of each line stands, oldest first, whatever order the lines came in', () => {
+  const at = (n) => `2026-11-01T02:00:0${n}.000Z`;
+  const line = (n, data) => ({ id: `e${n}`, at: at(n), kind: 'shadow', data });
+  const got = firstLines([
+    line(4, { line: 'score', card: 'a', score: 'miss' }),
+    line(2, { line: 'seal', card: 'a', head: 'second' }),
+    line(1, { line: 'seal', card: 'a', head: 'first' }),
+    line(3, { line: 'reading', card: 'a', pick: 'Keep' }),
+    line(5, { line: 'seal', card: 'b', head: 'other' }),
+  ]);
+  assert.equal(got.get('a').seal.head, 'first');
+  assert.equal(got.get('a').reading.pick, 'Keep');
+  assert.equal(got.get('a').score.score, 'miss');
+  assert.equal(got.get('b').reading, undefined);
+});

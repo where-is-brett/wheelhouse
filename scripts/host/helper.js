@@ -73,7 +73,7 @@ import { engineRoom } from '../engine/room.js';
 import { stopEngine, endRun, stopWords } from '../engine/stop.js';
 import { engineRoutes, engineDirOf } from '../engine/routes.js';
 import { engineRunner } from '../engine/runner.js';
-import { recordOnly, cardContext } from '../delegation/record-only.js';
+import { recordOnly, cardContext, historyOf } from '../delegation/record-only.js';
 import { cardFacts } from '../delegation/facts.js';
 import { setupStamp } from '../delegation/stamp.js';
 import { exclusionsHash } from '../delegation/candidates.js';
@@ -5033,6 +5033,10 @@ export async function startHelper({
         return cardContext({ views: views(), card, testCommand: config?.testsNotCounting ? null : config?.testCommand });
       },
       stampOf: () => setupStamp({ bindings: engineConfigOf(project, folder)?.routing, packDigest: packTreeDigest(path.join(engineDir(), 'pack')), exclusionsHash: exclusionsHash() }),
+      history: () => {
+        const events = listEvents(stateDir(project), { report: () => {} });
+        return historyOf({ events, enrolled: ownKeyOnly(), views: buildViews(events, ownKeyOnly(), { now }) });
+      },
     });
     const ownCard = (kind) => async (data) => {
       await write('question', data);

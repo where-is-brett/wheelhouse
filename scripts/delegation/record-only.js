@@ -1,22 +1,29 @@
 // scripts/delegation/record-only.js
 // The seals beside the card router (delegated decisions design, section 15, part 1). It changes no outcome: `onCard`
 // only queues, after the card is written, and `tick` reads the facts and signs a `shadow` line, away from `engineTick`,
-// with one tick at a time. A failure here costs a seal, never a card, and says nothing to the director. What waits is
-// kept in `file`, so a helper started again seals each card once.
+// with one tick at a time. A card a reader may read is then kept in `open` until it is scored against the director's
+// answer, in a line of its own. A failure here costs a seal or a score, never a card, and says nothing to the director.
+// What waits is kept in `file`, so a helper started again seals and scores each card once.
 import fs from 'node:fs';
 import path from 'node:path';
-import { sealOf } from './seal.js';
+import { sealOf, scoreOf, scoreLine, firstLines } from './seal.js';
 import { setupStamp } from './stamp.js';
-import { SEAL_TICK_MS, FACT_TRIES, SEAL_TRIES } from './limits.js';
+import { SEAL_TICK_MS, FACT_TRIES, SEAL_TRIES, SCORE_WAIT_DAYS } from './limits.js';
 import { UNREAD_FACTS } from './facts.js';
+import { cardOutcomes } from '../state/views.js';
+import { verify } from '../state/signing.js';
+import { answerLine } from '../state/card-lines.js';
+import { SUGGEST } from '../lib/calm-words.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
-const EMPTY = () => ({ waiting: [], sealed: {}, tries: {}, fails: {} });
+const EMPTY = () => ({ waiting: [], sealed: {}, tries: {}, fails: {}, open: {} });
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function readState(file) {
   try {
     const kept = JSON.parse(fs.readFileSync(file, 'utf8'));
-    return isPlain(kept) && Array.isArray(kept.waiting) && isPlain(kept.sealed) && isPlain(kept.tries) && isPlain(kept.fails) ? kept : EMPTY();
+    if (!isPlain(kept) || !Array.isArray(kept.waiting) || !isPlain(kept.sealed) || !isPlain(kept.tries) || !isPlain(kept.fails)) return EMPTY();
+    return { ...kept, open: isPlain(kept.open) ? kept.open : {} };
   } catch {
     return EMPTY();
   }
@@ -29,11 +36,23 @@ export function cardContext({ views, card, testCommand }) {
   return { doneCheck: testCommand ?? undefined, openDecision: open };
 }
 
-// recordOnly({ file, write, stopped, now, factsOf, contextOf, stampOf }) -> { onCard(card), tick(), settled() }.
+// What the signed record says of a card, for scoring. `lines(id)` its first seal, reading and score, from lines this
+// computer can verify; `answer(id)` its answer, and whether the director stepped out of the options on any of its cards.
+export function historyOf({ events, enrolled, views }) {
+  const lines = firstLines(events.filter((e) => e.kind === 'shadow' && typeof e.data?.card === 'string' && verify(e, enrolled)));
+  const steered = new Set(cardOutcomes(events, enrolled).filter((o) => o.steered !== null).map((o) => o.card.data?.line));
+  return {
+    lines: (id) => lines.get(id) ?? {},
+    answer: (id) => ({ answer: views?.questions?.[id]?.answer ?? null, steered: steered.has(answerLine(id)) }),
+  };
+}
+
+// recordOnly({ file, write, stopped, now, factsOf, contextOf, stampOf, history }) -> { onCard(card), tick(), settled() }.
 // - `write(kind, data)` a signed record in the project's history; `stopped()` whether nothing should be read now;
 // - `factsOf(card)` the change's facts (facts.js); `contextOf(card)` what the candidates read beside them;
-// - `stampOf()` the setup's stamp (stamp.js). `card` is { id, kind, work, runId?, level, branch?, folder? }.
-export function recordOnly({ file, write, stopped = () => false, now = () => new Date(), factsOf = async () => UNREAD_FACTS, contextOf = () => ({}), stampOf = () => setupStamp() } = {}) {
+// - `stampOf()` the setup's stamp (stamp.js); `history()` the signed record, as historyOf gives it, or null. `card` is
+//   { id, kind, work, runId?, level, branch?, folder? }.
+export function recordOnly({ file, write, stopped = () => false, now = () => new Date(), factsOf = async () => UNREAD_FACTS, contextOf = () => ({}), stampOf = () => setupStamp(), history = () => null } = {}) {
   const state = readState(file);
   function keep() {
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
@@ -95,6 +114,7 @@ export function recordOnly({ file, write, stopped = () => false, now = () => new
       try {
         await write('shadow', seal);
         state.sealed[card.id] = true;
+        if (seal.reader === true) state.open[card.id] = seal.at;
         forget(card.id);
       } catch {
         // Tried again on the next tick, and given up after SEAL_TRIES.
@@ -105,14 +125,55 @@ export function recordOnly({ file, write, stopped = () => false, now = () => new
     }
   }
 
+  const closeScore = (id) => {
+    delete state.open[id];
+    delete state.fails[id];
+  };
+
+  // One look over the cards waiting for a score. A reading may come after the answer, so a card with an answer and no
+  // reading stays open, and a reader that gave nothing closes it with no score.
+  async function score(mine) {
+    if (Object.keys(state.open).length === 0) return;
+    const record = quietly(history, null);
+    if (record === null) return;
+    for (const [id, sealedAt] of Object.entries(state.open)) {
+      if (mine !== flight || stopped()) return;
+      if (writing.has(id)) continue;
+      if ((state.fails[id] ?? 0) >= SEAL_TRIES || now().getTime() - Date.parse(sealedAt) > SCORE_WAIT_DAYS * DAY_MS) {
+        closeScore(id);
+        quietly(keep);
+        continue;
+      }
+      const { seal, reading, score: scored } = quietly(() => record.lines(id), {});
+      const { answer = null, steered = false } = quietly(() => record.answer(id), null) ?? {};
+      if (!seal || (!answer && !steered) || (!reading && !scored)) continue;
+      const result = scored ? null : scoreOf({ seal, reading, answer: answer ?? { label: SUGGEST }, steered });
+      if (result === null) {
+        closeScore(id);
+        quietly(keep);
+        continue;
+      }
+      writing.add(id);
+      try {
+        await write('shadow', scoreLine({ seal, score: result, at: now().toISOString() }));
+        closeScore(id);
+      } catch {
+        // Tried again on the next tick, and given up after SEAL_TRIES.
+        state.fails[id] = (state.fails[id] ?? 0) + 1;
+      }
+      writing.delete(id);
+      quietly(keep);
+    }
+  }
+
   function tick() {
     const at = now().getTime();
     if (flight !== null && at - startedAt < SEAL_TICK_MS) return Promise.resolve();
-    if (state.waiting.length === 0 || stopped()) return Promise.resolve();
+    if ((state.waiting.length === 0 && Object.keys(state.open).length === 0) || stopped()) return Promise.resolve();
     const mine = {};
     flight = mine;
     startedAt = at;
-    going = look(mine).catch(() => {}).finally(() => {
+    going = look(mine).then(() => score(mine)).catch(() => {}).finally(() => {
       if (flight === mine) flight = null;
     });
     return going;
