@@ -109,7 +109,9 @@ export function orderFor(entry, { settings = {}, raised = false, config = {}, an
 // - `queueFolder()` the folder the merge queue runs in, Wheelhouse's own and never the project's (check 81):
 //   { ok, folder } or { ok: false, refused }; the queue doesn't start without it. `queuePlace()` that folder's path,
 //   touching nothing, for asking the engine what is live there.
-export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), spentThisMonth = () => 0, mainGreen = async () => null, stoppedRuns = () => [], fixedRuns = () => [], prMerged = async () => null, prState = null, designOf = () => null, orderOf = () => null, repoOf = () => null, queueFolder = async () => ({ ok: false, refused: 'no folder for the merge queue' }), queuePlace = null, openedBy = () => null } = {}) {
+// - `localQueue()` one sweep of the local queue, for a project with no host, which has no merge queue to start. It runs on
+//   every tick while a change waits, since its own table says what is ready.
+export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), spentThisMonth = () => 0, mainGreen = async () => null, stoppedRuns = () => [], fixedRuns = () => [], prMerged = async () => null, prState = null, designOf = () => null, orderOf = () => null, repoOf = () => null, queueFolder = async () => ({ ok: false, refused: 'no folder for the merge queue' }), queuePlace = null, openedBy = () => null, localQueue = null } = {}) {
   let state = readState(file);
   const keep = () => {
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
@@ -711,7 +713,9 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
         recommendation: TRY_AGAIN,
       });
     }
-    if (decided.startMergeQueue && !stopped()) {
+    if (localQueue !== null) {
+      if (waiting.length > 0 && !stopped()) await localQueue();
+    } else if (decided.startMergeQueue && !stopped()) {
       startingQueue ??= startQueue(waiting).finally(() => { startingQueue = null; });
       await startingQueue;
     }
