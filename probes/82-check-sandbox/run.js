@@ -1,14 +1,21 @@
 // probes/82-check-sandbox/run.js
 // Check 82: a real Mac app's tests under the check sandbox (spec section 4.4). Three phases:
 //
-//   node probes/82-check-sandbox/run.js ways [--profile draft|tight] [--prompts]    every way out, from inside the sandbox
+//   node probes/82-check-sandbox/run.js ways [--profile deny|draft|tight] [--stage test|prepare] [--prompts]    every way out, from inside the sandbox
 //                                          (--prompts includes the Apple Events ways under draft: they raise a prompt)
 //   node probes/82-check-sandbox/run.js fixture [--profile draft|tight|open] [--once]    a made-up app: is a test still inside?
 //   node probes/82-check-sandbox/run.js swift [--profile ...]              a made-up Swift package: the table's next row
 //   node probes/82-check-sandbox/run.js project <folder> [--profile ...] [--scheme S] [--container rel] [--minutes 20]
+//   node probes/82-check-sandbox/run.js runner <folder>|--fixture [--test "command"] [--prepare "command"] [--minutes 20]
+//                                          the check runner itself, from fetch to word, on a copy of the folder's head
+//   node probes/82-check-sandbox/run.js hang <folder> [--test "command"] [--prepare "command"] [--after 120] [--minutes 15] [--issues <file>]
+//                                          runner, with the sandbox's refusals read live; once a test process has lived
+//                                          --after seconds it and all it started are sampled, and the check is ended.
+//                                          --issues also writes the test output and every refusal in time order to <file>,
+//                                          outside this repository and the project: that file holds the project's names
 //
-// `project` defaults to tight and should stay there: under draft or open, `xcodebuild test` has the system start the
-// project's app outside the sandbox (see docs/checks/82-check-sandbox.md).
+// `deny` is the check runner's own profile (scripts/checks/profile.js) and the default. Don't use draft or open on a
+// project: `xcodebuild test` has the system start the project's app outside the sandbox (see docs/checks/82-check-sandbox.md).
 //
 // `project` changes nothing in <folder>: it reads the folder's head commit by `git fetch` into a check folder of its
 // own under ~/Library/Caches, outside the temporary folders the profile lets a check write, as the real check folder
@@ -25,9 +32,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { run, withoutGitVars } from '../../scripts/lib/run.js';
-import { testEnv } from '../../scripts/lean/store.js';
 import { credentialPaths } from '../../scripts/lib/credentials.js';
 import { archonDenyRules, KEYCHAINS } from '../../scripts/protection/settings.js';
+import { ENGINE_ROOM_PORT } from '../../scripts/protection/archon.js';
+import { checkProfile } from '../../scripts/checks/profile.js';
+import { checkEnv, endCheck, runCheck } from '../../scripts/checks/run.js';
 import { writeFixture } from './fixture.js';
 
 const REAL_HOME = os.homedir();
@@ -47,9 +56,11 @@ function option(name, fallback) {
 }
 
 function makeRoot() {
-  const root = path.join(REAL_HOME, 'Library', 'Caches', `${MARK}-${crypto.randomBytes(3).toString('hex')}`);
-  const paths = { root, tree: path.join(root, 'tree'), gitDir: path.join(root, 'tree.git'), home: path.join(root, 'home'), outside: path.join(root, 'outside') };
-  for (const dir of [root, paths.tree, paths.home, paths.outside]) fs.mkdirSync(dir, { recursive: true });
+  // Laid out as the real check folder is, deep inside a folder on the deny list (~/.wheelhouse/engine/checks/<project>).
+  const outer = path.join(REAL_HOME, 'Library', 'Caches', `${MARK}-${crypto.randomBytes(3).toString('hex')}`);
+  const root = path.join(outer, 'engine', 'checks', 'project');
+  const paths = { outer, root, tree: path.join(root, 'tree'), gitDir: path.join(root, 'tree.git'), home: path.join(root, 'home'), mainHome: path.join(root, 'main-home'), outside: path.join(outer, 'outside') };
+  for (const dir of [paths.tree, paths.home, paths.mainHome, path.join(paths.home, 'tmp'), paths.outside]) fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(paths.outside, 'secret.txt'), crypto.randomBytes(16).toString('hex'));
   return paths;
 }
@@ -71,6 +82,7 @@ const subpaths = (list) => list.map((p) => `(subpath ${quoted(p)})`).join(' ');
 // shuts the ways out that an allow-by-default profile leaves open.
 export function profileFor({ paths, variant, stage = 'test', temp }) {
   if (variant === 'open') return '(version 1)\n(allow default)';
+  if (variant === 'deny') return checkProfile({ paths, main: false, stage, network: false, denied: [...denyList(paths), paths.outer], temp: ['/private/tmp', '/private/var/tmp'], userHome: REAL_HOME });
   const writes = [paths.tree, paths.home, ...temp];
   const lines = [
     '(version 1)',
@@ -104,13 +116,13 @@ export function profileFor({ paths, variant, stage = 'test', temp }) {
   return lines.join('\n');
 }
 
-const childEnv = (paths, more = {}) => ({ ...more, HOME: paths.home, CFFIXED_USER_HOME: paths.home, DEVELOPER_DIR: XCODE, TMPDIR: process.env.TMPDIR });
+const childEnv = (paths, more = {}) => ({ ...more, HOME: paths.home, CFFIXED_USER_HOME: paths.home, DEVELOPER_DIR: XCODE, TMPDIR: path.join(paths.home, 'tmp') });
 
 // One command under the profile, or with none when `profile` is null (the control).
 async function jailed(profile, command, { paths, timeoutMs = 20000, env = {}, cwd = paths.tree } = {}) {
   const args = profile ? ['-p', profile, '/bin/sh', '-c', command] : null;
   const file = profile ? SANDBOX : '/bin/sh';
-  return run(file, args ?? ['-c', command], { cwd, baseEnv: testEnv(), env: childEnv(paths, env), timeoutMs, limit: 256 * 1024 });
+  return run(file, args ?? ['-c', command], { cwd, baseEnv: checkEnv(), env: childEnv(paths, env), timeoutMs, limit: 256 * 1024 });
 }
 
 async function waitFor(file, ms) {
@@ -150,19 +162,37 @@ function agentPlist(paths, way, label) {
 async function compiledOpener(paths) {
   const source = path.join(paths.root, 'opener.swift');
   const program = path.join(paths.root, 'opener');
-  fs.writeFileSync(source, 'import AppKit\nlet done = NSWorkspace.shared.open(URL(fileURLWithPath: CommandLine.arguments[1]))\nRunLoop.current.run(until: Date().addingTimeInterval(3))\nexit(done ? 0 : 3)\n');
+  fs.writeFileSync(source, 'import AppKit\nimport CoreServices\nlet url = URL(fileURLWithPath: CommandLine.arguments[1])\nlet done = CommandLine.arguments.count > 2 ? LSOpenCFURLRef(url as CFURL, nil) == 0 : NSWorkspace.shared.open(url)\nRunLoop.current.run(until: Date().addingTimeInterval(3))\nexit(done ? 0 : 3)\n');
   const got = await run('/usr/bin/xcrun', ['swiftc', '-O', source, '-o', program], { env: { DEVELOPER_DIR: XCODE }, timeoutMs: 180000 });
   return got.code === 0 ? program : null;
 }
 
-async function listener(file) {
+// An audio component in the check's own home, whose loading runs the payload, and a program that looks for it and asks
+// for it out of process: the one thing the audio registrar could do for a test is have a host outside the sandbox load it.
+async function audioLoader(paths) {
+  const bundle = path.join(paths.home, 'Library', 'Audio', 'Plug-Ins', 'Components', 'Way.component', 'Contents');
+  fs.mkdirSync(path.join(bundle, 'MacOS'), { recursive: true });
+  fs.writeFileSync(path.join(bundle, 'Info.plist'), `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>CFBundleExecutable</key><string>Way</string><key>CFBundleIdentifier</key><string>invalid.wheelhouse.check82.audio</string><key>CFBundlePackageType</key><string>BNDL</string><key>AudioComponents</key><array><dict><key>type</key><string>aufx</string><key>subtype</key><string>Wy82</string><key>manufacturer</key><string>Whse</string><key>name</key><string>Whse: Way</string><key>version</key><integer>1</integer><key>factoryFunction</key><string>WayFactory</string></dict></array></dict></plist>\n`);
+  const library = path.join(paths.root, 'way.c');
+  fs.writeFileSync(library, `#include <stdlib.h>\n__attribute__((constructor)) static void go(void) { system("/bin/sh ${payload(paths, 'audio-component-host')}"); }\nvoid *WayFactory(const void *d) { return 0; }\n`);
+  const built = await run('/usr/bin/xcrun', ['clang', '-dynamiclib', library, '-o', path.join(bundle, 'MacOS', 'Way')], { env: { DEVELOPER_DIR: XCODE }, timeoutMs: 60000 });
+  const source = path.join(paths.root, 'audio.swift');
+  const program = path.join(paths.root, 'audio');
+  fs.writeFileSync(source, `import AudioToolbox\nimport Foundation\nfunc code(_ s: String) -> OSType { s.utf8.reduce(0) { ($0 << 8) | OSType($1) } }\nvar d = AudioComponentDescription(componentType: kAudioUnitType_Effect, componentSubType: code("Wy82"), componentManufacturer: code("Whse"), componentFlags: 0, componentFlagsMask: 0)\nvar c = AudioComponentFindNext(nil, &d)\nprint(c == nil ? "not listed" : "listed")\nif c == nil { d.componentSubType = code("dely"); d.componentManufacturer = code("appl"); c = AudioComponentFindNext(nil, &d) }\nif let c { AudioComponentInstantiate(c, .loadOutOfProcess) { _, status in print("asked:", status) } }\nRunLoop.current.run(until: Date().addingTimeInterval(4))\n`);
+  const got = await run('/usr/bin/xcrun', ['swiftc', '-O', source, '-o', program], { env: { DEVELOPER_DIR: XCODE }, timeoutMs: 180000 });
+  return built.code === 0 && got.code === 0 ? program : null;
+}
+
+// A throwaway listener on a socket file, or on a port of this computer's by number.
+async function listener(where) {
   const seen = { connected: false };
-  const server = net.createServer((socket) => { seen.connected = true; socket.end('hello\n'); });
-  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(file, resolve); });
+  const server = net.createServer((socket) => { seen.connected = true; socket.on('error', () => {}); socket.end('hello\n'); });
+  await new Promise((resolve, reject) => { server.once('error', reject); if (typeof where === 'number') server.listen(where, '::', resolve); else server.listen(where, resolve); });
+  seen.port = typeof where === 'number' ? server.address().port : null;
   return { seen, close: () => new Promise((resolve) => { server.close(resolve); }) };
 }
 
-function ways(paths, opener) {
+function ways(paths, opener, ctx) {
   const uid = process.getuid();
   const label = (way) => `invalid.wheelhouse.check82.${way}.${path.basename(paths.root).slice(-6)}`;
   const proved = (way) => path.join(paths.outside, `proof-${way}`);
@@ -179,15 +209,25 @@ function ways(paths, opener) {
     { way: 'launchctl-submit', run: (way) => `/bin/launchctl submit -l ${label(way)} -- /bin/sh ${shq(payload(paths, way))}`, control: true, proof: 'launchctl-submit', after: (way) => ['/bin/launchctl', ['remove', label(way)]] },
     { way: 'launchctl-bootstrap', run: (way) => `/bin/launchctl bootstrap gui/${uid} ${shq(agentPlist(paths, way, label(way)))}`, control: true, proof: 'launchctl-bootstrap', after: (way) => ['/bin/launchctl', ['bootout', `gui/${uid}/${label(way)}`]] },
     { way: 'open-app', run: (way) => `/usr/bin/open -g -n ${shq(payloadApp(paths, way))}`, control: true, proof: 'open-app' },
-    ...(opener ? [{ way: 'compiled-open-app', run: (way) => `${shq(opener)} ${shq(payloadApp(paths, way))}`, control: true, proof: 'compiled-open-app' }] : []),
+    ...(opener ? [
+      { way: 'compiled-open-app', run: (way) => `${shq(opener)} ${shq(payloadApp(paths, way))}`, control: true, proof: 'compiled-open-app' },
+      { way: 'compiled-ls-open-app', run: (way) => `${shq(opener)} ${shq(payloadApp(paths, way))} ls`, control: true, proof: 'compiled-ls-open-app' },
+    ] : []),
+    ...(ctx.audio ? [{ way: 'audio-component-host', run: shq(ctx.audio) }] : []),
     { way: 'osascript-finder-open', run: (way) => `/usr/bin/osascript -e ${shq(`tell application "Finder" to open POSIX file ${JSON.stringify(payloadApp(paths, way))}`)}`, proof: 'osascript-finder-open' },
     { way: 'osascript-terminal-script', run: (way) => `/usr/bin/osascript -e ${shq(`tell application "Terminal" to do script ${JSON.stringify(`/bin/sh ${payload(paths, way)}; exit`)}`)}`, proof: 'osascript-terminal-script' },
     { way: 'login-item-events', run: (way) => `/usr/bin/osascript -e ${shq(`tell application "System Events" to make login item at end with properties {path:${JSON.stringify(payloadApp(paths, way))}, hidden:true}`)}`, proof: null, loginItem: (way) => `Way${way.replaceAll('-', '')}` },
     { way: 'login-item-file', run: (way) => `cp ${shq(agentPlist(paths, way, label(way)))} ${shq(path.join(REAL_HOME, 'Library', 'LaunchAgents', `${label(way)}.plist`))}`, file: (way) => path.join(REAL_HOME, 'Library', 'LaunchAgents', `${label(way)}.plist`) },
     { way: 'unix-socket-in-denied-folder', run: () => `/usr/bin/nc -U -w 3 ${shq(path.join(paths.outside, 's.sock'))} </dev/null`, control: true, socket: true },
+    { way: 'engine-room-port', tcp: ENGINE_ROOM_PORT, run: () => ['127.0.0.1', '::1'].map((host) => `/usr/bin/nc -z -w 2 ${host} ${ENGINE_ROOM_PORT}`).join('; '), control: true },
     { way: 'other-process-environment', run: (way, ctx) => `/bin/ps eww -p ${ctx.victim.pid} | grep -c WHEELHOUSE_CHECK_82_CANARY`, control: true, read: (got) => Number(got.stdout.trim()) > 0 },
     { way: 'signal-other-process', run: (way, ctx) => `kill -0 ${ctx.victim.pid}; echo $?`, control: true, read: (got) => got.stdout.trim() === '0' },
-    { way: 'clipboard-read', run: '/usr/bin/pbpaste 2>/dev/null | wc -c', control: true, read: (got) => Number(got.stdout.trim()) >= 0 && got.code === 0 },
+    { way: 'clipboard-read', run: '/usr/bin/pbpaste 2>/dev/null | wc -c', control: true, read: (got) => Number(got.stdout.trim()) > 0 },
+    { way: 'read-home-folder', run: `ls -a ${shq(REAL_HOME)} | wc -l`, control: true, read: (got) => Number(got.stdout.trim()) > 0 },
+    { way: 'list-folder-above', run: `ls -a ${shq(paths.outer)} | wc -l`, control: true, read: (got) => Number(got.stdout.trim()) > 0 },
+    { way: 'plant-in-user-temp', run: `echo x > ${shq(path.join(ctx.userTemp, `${MARK}-plant`))}`, control: true, file: () => path.join(ctx.userTemp, `${MARK}-plant`) },
+    { way: 'preference-write', run: '/usr/bin/defaults write invalid.wheelhouse.check82 a b', control: true, file: () => path.join(REAL_HOME, 'Library', 'Preferences', 'invalid.wheelhouse.check82.plist') },
+    ...(process.env.SSH_AUTH_SOCK ? [{ way: 'ssh-agent-socket', run: `/usr/bin/nc -U -w 3 ${shq(process.env.SSH_AUTH_SOCK)} </dev/null; echo $?`, control: true, read: (got) => got.stdout.trim() === '0' }] : []),
   ];
   return list.map((entry) => ({ proved: proved(entry.proof ?? entry.way), ...entry }));
 }
@@ -210,11 +250,19 @@ async function tryWay(entry, profile, ctx) {
     fs.rmSync(path.join(paths.outside, 's.sock'), { force: true });
     server = await listener(path.join(paths.outside, 's.sock'));
   }
+  if (entry.tcp) {
+    // Never knock on a real engine: with the port taken, the way isn't tried.
+    try {
+      server = await listener(entry.tcp);
+    } catch {
+      return { way, open: false, code: null, timedOut: false, said: 'not tried: the port is in use here' };
+    }
+  }
   const command = typeof entry.run === 'function' ? entry.run(way, ctx) : entry.run;
   const got = await jailed(profile, command, { paths, timeoutMs: 25000 });
   let open;
   if (entry.read) open = entry.read(got);
-  else if (entry.socket) open = server.seen.connected;
+  else if (entry.socket || entry.tcp) open = server.seen.connected;
   else if (entry.file) open = fs.existsSync(entry.file(way));
   else if (entry.loginItem) {
     const list = await run('/usr/bin/osascript', ['-e', 'tell application "System Events" to get the name of every login item'], { timeoutMs: 15000 }).catch(() => ({ stdout: '' }));
@@ -231,21 +279,26 @@ async function phaseWays() {
   const temp = [await darwinFolder('DARWIN_USER_TEMP_DIR'), await darwinFolder('DARWIN_USER_CACHE_DIR'), '/private/tmp', '/private/var/tmp'];
   const opener = await compiledOpener(paths);
   const victim = spawn('/bin/sleep', ['600'], { env: { WHEELHOUSE_CHECK_82_CANARY: '1' }, stdio: 'ignore' });
-  const ctx = { paths, victim };
-  const variants = [option('profile', 'tight')];
+  const ctx = { paths, victim, userTemp: temp[0], audio: await audioLoader(paths) };
+  const variants = [option('profile', 'deny')];
   const prompts = process.argv.includes('--prompts');
-  const report = { compiledOpener: opener !== null, runs: {} };
+  const report = { compiledOpener: opener !== null, audioLoader: ctx.audio !== null, runs: {} };
   try {
     // Under a profile that lets Apple Events out, these reach macOS's consent prompt on the director's screen.
-    const entries = ways(paths, opener).filter((e) => prompts || variants[0] === 'tight' || !/^osascript|^login-item-events/.test(e.way));
+    const entries = ways(paths, opener, ctx).filter((e) => prompts || variants[0] !== 'draft' || !/^osascript|^login-item-events/.test(e.way));
     report.control = [];
     for (const entry of entries.filter((e) => e.control)) report.control.push(await tryWay(entry, null, ctx));
     for (const variant of variants) {
-      const profile = profileFor({ paths, variant, temp });
+      const profile = profileFor({ paths, variant, stage: option('stage', 'test'), temp });
       const loads = await jailed(profile, 'echo loaded', { paths });
       report.runs[variant] = { loads: loads.code === 0, loadError: loads.code === 0 ? '' : loads.stderr.trim().slice(0, 300), ways: [] };
       if (loads.code !== 0) continue;
       for (const entry of entries) report.runs[variant].ways.push(await tryWay(entry, profile, ctx));
+      const local = await listener(0);
+      await jailed(profile, `/usr/bin/nc -z -w 2 127.0.0.1 ${local.seen.port}`, { paths });
+      await sleep(200);
+      report.runs[variant].otherLocalPortReached = local.seen.connected;
+      await local.close();
     }
   } finally {
     victim.kill();
@@ -254,6 +307,18 @@ async function phaseWays() {
 }
 
 // ---- A real build ------------------------------------------------------------------------------------------------
+
+// The lines of a test run that name no test: its counts and its word. Test and suite names stay out of every report.
+const summaryOf = (lines) => lines.filter((line) => /^\W*Test run with \d+ tests?\b|Executed \d+ tests?,|\*\* .* \*\*|Build complete|Compiling|error: (?:fatal|terminated)/.test(line) && !/Test Suite|Test Case|\.swift/.test(line));
+
+// A path in a refusal, cut to the folders that say where it was, with no file's name.
+function placeOf(what, root) {
+  return what.replace(/\/\S.*$/, (full) => {
+    if (full.startsWith(`${root}/`)) return `<check>/${full.slice(root.length + 1).split('/')[0]}`;
+    if (full.startsWith(`${REAL_HOME}/`)) return `~/${full.slice(REAL_HOME.length + 1).split('/').slice(0, 3).join('/')}`;
+    return full.split('/').slice(0, 5).join('/');
+  });
+}
 
 // Takes the project's names out of a line.
 function maskerOf(names) {
@@ -265,7 +330,7 @@ function maskerOf(names) {
   };
 }
 
-const git = (cwd, ...args) => run('/usr/bin/git', ['-c', 'core.hooksPath=/dev/null', ...args], { cwd, baseEnv: withoutGitVars(testEnv()), env: { DEVELOPER_DIR: XCODE } });
+const git = (cwd, ...args) => run('/usr/bin/git', ['-c', 'core.hooksPath=/dev/null', ...args], { cwd, baseEnv: withoutGitVars(checkEnv()), env: { DEVELOPER_DIR: XCODE } });
 
 // A copy of the folder's head commit in a check folder of its own: nothing links back, and nothing is written there.
 async function fetchCopy(folder, paths) {
@@ -370,9 +435,11 @@ async function leftovers(root) {
 // Runs one stage under the profile, timed.
 async function stage(name, profile, argv, { paths, minutes, log, mask }) {
   const started = Date.now();
-  const since = new Date(started - 1000).toISOString().replace('T', ' ').slice(0, 19);
+  // `log show` reads local time. Given UTC, it searches every hour of the difference and takes over a minute to do it.
+  const local = new Date(started - 1000 - new Date().getTimezoneOffset() * 60000);
+  const since = local.toISOString().replace('T', ' ').slice(0, 19);
   const command = argv.map(shq).join(' ');
-  const child = spawn(SANDBOX, ['-p', profile, '/bin/sh', '-c', `exec ${command}`], { cwd: paths.tree, env: { ...testEnv(), ...childEnv(paths) }, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+  const child = spawn(SANDBOX, ['-p', profile, '/bin/sh', '-c', `exec ${command}`], { cwd: paths.tree, env: { ...checkEnv(), ...childEnv(paths) }, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
   const stopWatch = watchProcesses(child.pid, paths.root);
   const out = fs.createWriteStream(log, { flags: 'a' });
   out.write(`\n===== ${name}: ${command}\n`);
@@ -390,11 +457,12 @@ async function stage(name, profile, argv, { paths, minutes, log, mask }) {
   });
   clearTimeout(timer);
   out.end();
+  const seconds = Math.round((Date.now() - started) / 1000);
   const processes = await stopWatch();
   const left = await leftovers(paths.root);
-  const lines = tail.split('\n').filter((line) => /error:|\*\* .* \*\*|Executed \d+ test|Test Suite 'All|sandbox|Operation not permitted|not permitted|denied|Could not|Unable to|Failing tests/i.test(line)).slice(-40).map(mask);
+  const lines = summaryOf(tail.split('\n').map(mask)).slice(-40);
   const refused = (await denials(since)).map(([what, count]) => [mask(what), count]);
-  return { name, code, timedOut, left, seconds: Math.round((Date.now() - started) / 1000), processes, lines, refused };
+  return { name, code, timedOut, left, seconds, processes, lines, refused };
 }
 
 // A failed first test stage tries once more with the test host taken out, which is how tests that need no app can run
@@ -457,7 +525,7 @@ async function phaseProject() {
       report.testTargets = (text.match(/\.testTarget\(/g) ?? []).length;
       report.xcodegenOnThisComputer = (await run('/bin/sh', ['-c', 'command -v xcodegen'], { env: { PATH: `${process.env.PATH}:/opt/homebrew/bin` } })).code === 0;
       report.hasPackageResolved = fs.readdirSync(paths.tree, { recursive: true }).some((f) => String(f).endsWith('Package.resolved'));
-      Object.assign(report, await buildAndTest({ paths, commands: SWIFT, profileName: option('profile', 'tight'), minutes: Number(option('minutes', 20)), mask: maskerOf(names) }));
+      Object.assign(report, await buildAndTest({ paths, commands: SWIFT, profileName: option('profile', 'deny'), minutes: Number(option('minutes', 20)), mask: maskerOf(names) }));
       return;
     }
     const shared = sharedSchemes(paths.tree, container);
@@ -468,7 +536,7 @@ async function phaseProject() {
     report.containerKind = path.extname(container);
     report.sharedSchemes = shared.length;
     report.hasPackageResolved = fs.readdirSync(paths.tree, { recursive: true }).some((f) => String(f).endsWith('Package.resolved'));
-    Object.assign(report, await buildAndTest({ paths, commands: xcodeCommands(container, scheme), profileName: option('profile', 'tight'), minutes: Number(option('minutes', 20)), mask }));
+    Object.assign(report, await buildAndTest({ paths, commands: xcodeCommands(container, scheme), profileName: option('profile', 'deny'), minutes: Number(option('minutes', 20)), mask }));
   } finally {
     await finish(paths, report);
   }
@@ -482,7 +550,7 @@ async function phaseFixture() {
     await git(paths.root, 'init', '-q', `--separate-git-dir=${paths.gitDir}`, paths.tree);
     await git(paths.tree, 'add', '-A');
     await git(paths.tree, '-c', 'user.name=probe', '-c', 'user.email=probe@wheelhouse.invalid', 'commit', '-qm', 'The made-up app');
-    Object.assign(report, await buildAndTest({ paths, commands: xcodeCommands(container, scheme), profileName: option('profile', 'tight'), minutes: Number(option('minutes', 20)), mask: (text) => String(text).replaceAll(REAL_HOME, '~'), prepare: false }));
+    Object.assign(report, await buildAndTest({ paths, commands: xcodeCommands(container, scheme), profileName: option('profile', 'deny'), minutes: Number(option('minutes', 20)), mask: (text) => String(text).replaceAll(REAL_HOME, '~'), prepare: false }));
     report.fromInsideTheTests = {};
     for (const kind of ['App', 'Hosted', 'Bare']) {
       const inTree = path.join(paths.tree, `where-${kind}.json`);
@@ -509,7 +577,7 @@ async function phaseSwift() {
     fs.writeFileSync(path.join(paths.tree, 'Tests', 'Fix82Tests', 'AddTests.swift'), 'import XCTest\nimport Fix82\nfinal class AddTests: XCTestCase { func testAdd() { XCTAssertEqual(sum(1, 2), 3) } }\n');
     const log = path.join(paths.root, 'whole-log.txt');
     const mask = (text) => String(text).replaceAll(REAL_HOME, '~');
-    const variant = option('profile', 'tight');
+    const variant = option('profile', 'deny');
     const prepare = profileFor({ paths, variant, stage: 'prepare', temp });
     const test = profileFor({ paths, variant, stage: 'test', temp });
     report.prepare = await stage('prepare', prepare, ['/usr/bin/xcrun', 'swift', 'package', 'resolve', '--disable-sandbox'], { paths, minutes: 5, log, mask });
@@ -520,20 +588,227 @@ async function phaseSwift() {
   }
 }
 
+// runCheck itself, in a Wheelhouse home of its own under a throwaway folder, on a bare copy of the folder's head. The
+// helper's mirror stands for the same thing in real use. Swift's commands unless told otherwise; `--fixture` is the made-up
+// app, whose `xcodebuild test` the sandbox refuses, so it shows the second try.
+async function phaseRunner() {
+  const fixture = process.argv.includes('--fixture');
+  const folder = fixture ? null : path.resolve(process.argv[3] ?? '');
+  if (!fixture && (!process.argv[3] || !fs.existsSync(path.join(folder, '.git')))) throw new Error('Give the project folder, or --fixture');
+  const paths = makeRoot();
+  const report = {};
+  process.env.WHEELHOUSE_HOME = path.join(paths.outer, 'wheelhouse');
+  try {
+    const made = path.join(paths.outer, 'made');
+    let names = [];
+    if (fixture) {
+      fs.mkdirSync(made);
+      const { scheme, container } = writeFixture(made, { outside: paths.outside, keychains: expand(KEYCHAINS) });
+      process.argv.push('--test', `xcodebuild test -project ${container} -scheme ${scheme} -destination 'platform=macOS' -derivedDataPath .build/checks ${SWITCHES.join(' ')} CODE_SIGNING_ALLOWED=NO`);
+      await git(paths.root, 'init', '-q', made);
+      await git(made, 'add', '-A');
+      await git(made, '-c', 'user.name=probe', '-c', 'user.email=probe@wheelhouse.invalid', 'commit', '-qm', 'The made-up app');
+    } else {
+      const text = fs.existsSync(path.join(folder, 'Package.swift')) ? fs.readFileSync(path.join(folder, 'Package.swift'), 'utf8') : '';
+      const remote = await git(folder, 'remote', 'get-url', 'origin');
+      names = [path.basename(folder), path.basename(remote.stdout.trim()).replace(/\.git$/, ''), ...[...text.matchAll(/name:\s*"([^"]+)"/g)].map((m) => m[1])];
+    }
+    const from = fixture ? made : folder;
+    const source = path.join(paths.outer, 'source.git');
+    const cloned = await git(paths.outer, 'clone', '-q', '--bare', '--no-hardlinks', from, source);
+    if (cloned.code !== 0) throw new Error(`git clone: ${cloned.stderr.trim()}`);
+    await git(source, 'remote', 'remove', 'origin');
+    const commit = (await git(source, 'rev-parse', 'HEAD')).stdout.trim();
+    const settings = {
+      testCommand: option('test', 'swift test --disable-sandbox'),
+      prepare: option('prepare', fixture ? null : 'swift package resolve --disable-sandbox'),
+      minutes: Number(option('minutes', 20)),
+      network: false,
+    };
+    const mask = maskerOf(names);
+    const got = await runCheck({ project: 'project', commit, main: true, settings, source });
+    report.result = got.result;
+    report.minutes = got.minutes;
+    report.summary = summaryOf(mask(got.tail).split('\n'));
+    report.proofsBesideTheSecret = fs.readdirSync(paths.outside).filter((n) => n.startsWith('proof-'));
+  } finally {
+    await finish(paths, report);
+  }
+}
+
+// A `log stream` time, 2026-10-31 12:34:56.123456+1100, in milliseconds.
+const logTime = (stamp) => Date.parse(String(stamp).replace(' ', 'T').replace(/(\.\d{3})\d*/, '$1').replace(/([+-]\d{2})(\d{2})$/, '$1:$2'));
+
+// The kernel's lines about what the profile refused, read as they come. Only the check's own processes, or a program a
+// check uses, count: the system's daemons have sandboxes of their own and are refused things all day.
+function watchRefusals(belongs) {
+  const log = spawn('/usr/bin/log', ['stream', '--style', 'ndjson', '--predicate', 'process == "kernel" AND eventMessage CONTAINS "Sandbox:"'], { stdio: ['ignore', 'pipe', 'ignore'] });
+  const counts = new Map();
+  const events = [];
+  let held = '';
+  log.stdout.on('data', (chunk) => {
+    const lines = (held + chunk).split('\n');
+    held = lines.pop();
+    for (const line of lines) {
+      let entry;
+      try { entry = JSON.parse(line); } catch { continue; }
+      const m = /(?:(\d+) duplicate reports for )?Sandbox:\s+(.+?)\((\d+)\)\s+deny\(\d+\)\s+(\S+)\s*(.*)$/.exec(String(entry.eventMessage));
+      if (!m) continue;
+      const key = `${m[4]} ${m[5]}`.trim();
+      if (events.length < 20000) events.push({ at: logTime(entry.timestamp), process: m[2], pid: Number(m[3]), what: key });
+      if (!belongs(m[2], Number(m[3]))) continue;
+      counts.set(key, (counts.get(key) ?? 0) + Number(m[1] ?? 1));
+    }
+  });
+  return { counts, events, stop: () => log.kill() };
+}
+
+async function processTable() {
+  const got = await run('/bin/ps', ['-axo', 'pid=,ppid=,etime=,command=']);
+  return got.stdout.split('\n').map((line) => /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/.exec(line)).filter(Boolean).map((m) => {
+    const [mm, ss] = m[3].split(':').slice(-2).map(Number);
+    const parts = m[3].split(/[-:]/).map(Number);
+    return { pid: Number(m[1]), ppid: Number(m[2]), seconds: parts.length > 3 ? 86400 : (parts.length === 3 ? parts[0] * 3600 : 0) + mm * 60 + ss, command: m[4] };
+  });
+}
+
+// A sample's call graph with the project's own code hidden: a frame from something built in the check folder shows as
+// <project code>, so only what it was waiting in remains.
+function cleanSample(text, mask, checkFolder) {
+  const images = new Set();
+  for (const line of text.split('\n')) {
+    const image = line.includes(checkFolder) ? /-\s+0x[0-9a-f]+\s+\+?(.+?)\s+[(<]/.exec(line) : null;
+    if (image) images.add(image[1]);
+  }
+  const start = text.indexOf('Call graph:');
+  const end = text.indexOf('Binary Images:');
+  const body = text.slice(start === -1 ? 0 : start, end === -1 ? undefined : end);
+  const shown = body.split('\n').map((line) => {
+    const frame = /^(.*?[+!:|\s])(\d+\s+)(.+?)\s+\(in ([^)]+)\)/.exec(line);
+    if (frame && (images.has(frame[4]) || /\.swift:\d|<compiler-generated>/.test(line))) return `${frame[1]}${frame[2]}<project code>`;
+    return line.replace(/ \+ \d+ \[0x[0-9a-f]+\]| \[0x[0-9a-f]+\]/g, '').replace(/(DispatchQueue_\d+: )(?!com\.apple)\S+/, '$1<a queue>');
+  });
+  return mask(shown.filter(Boolean).join('\n')).split('\n').slice(0, 900);
+}
+
+// Where --issues may write: never where a commit could pick it up.
+function issuesFile(folder) {
+  const given = option('issues', null);
+  if (given === null) return null;
+  const file = path.resolve(expand(given));
+  for (const inside of [path.resolve(import.meta.dirname, '../..'), folder]) if (file.startsWith(`${inside}${path.sep}`)) throw new Error('--issues holds the project\'s names: give a file outside this repository and the project');
+  return file;
+}
+
+// Everything a test said and everything the sandbox refused, in time order, with the lines of tests that passed left out.
+// Short-lived children can slip between two looks at the process table, so the rest are counted by program. The build's
+// own refusals are left out: they are many, and a test's failure isn't in them.
+const BUILDERS = /^(?:swift-build|swift-package|swift-driver|swift-frontend|swiftc|xcrun|xcodebuild|clang|ld|libtool|codesign|git)$/;
+const PASSING = /^\W*(?:Test|Suite|Test Case|Test Suite)\b.*\b(?:started|passed)\b/;
+function writeIssues(file, { heard, events, seen, tools, from }) {
+  const said = heard.filter((row) => row.line.trim() && !PASSING.test(row.line)).map((row) => ({ seconds: (row.at - from) / 1000, said: row.line }));
+  const during = events.filter((row) => row.at >= from && !BUILDERS.test(row.process));
+  const ours = during.filter((row) => seen.has(row.pid) || tools.has(row.process));
+  const others = {};
+  for (const row of during) if (!ours.includes(row)) others[row.process] = (others[row.process] ?? 0) + 1;
+  const refused = ours.map((row) => ({ seconds: (row.at - from) / 1000, refused: row.what, by: row.process }));
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify({ timeline: [...said, ...refused].sort((a, b) => a.seconds - b.seconds), others }, null, 2)}\n`);
+  return { linesKept: said.length, refusals: refused.length };
+}
+
+// What a hung check is waiting on: the runner as `phaseRunner` runs it, on the real profile, with the refusals read live.
+async function phaseHang() {
+  const folder = path.resolve(process.argv[3] ?? '');
+  if (!process.argv[3] || !fs.existsSync(path.join(folder, '.git'))) throw new Error('Give the project folder');
+  const issues = issuesFile(folder);
+  const paths = makeRoot();
+  const report = {};
+  process.env.WHEELHOUSE_HOME = path.join(paths.outer, 'wheelhouse');
+  const roots = new Set();
+  const seen = new Set();
+  const TOOLS = new Set(['swift-test', 'swiftpm-testing-helper', 'xctest', 'swift-build', 'swift-package', 'sh']);
+  const refusals = watchRefusals((name, pid) => seen.has(pid) || TOOLS.has(name));
+  try {
+    const text = fs.existsSync(path.join(folder, 'Package.swift')) ? fs.readFileSync(path.join(folder, 'Package.swift'), 'utf8') : '';
+    const remote = await git(folder, 'remote', 'get-url', 'origin');
+    const mask = maskerOf([path.basename(folder), path.basename(remote.stdout.trim()).replace(/\.git$/, ''), ...[...text.matchAll(/name:\s*"([^"]+)"/g)].map((m) => m[1])]);
+    const source = path.join(paths.outer, 'source.git');
+    const cloned = await git(paths.outer, 'clone', '-q', '--bare', '--no-hardlinks', folder, source);
+    if (cloned.code !== 0) throw new Error(`git clone: ${cloned.stderr.trim()}`);
+    await git(source, 'remote', 'remove', 'origin');
+    const commit = (await git(source, 'rev-parse', 'HEAD')).stdout.trim();
+    const settings = { testCommand: option('test', 'swift test --disable-sandbox'), prepare: option('prepare', 'swift package resolve --disable-sandbox'), minutes: Number(option('minutes', 15)), network: false };
+    let finished = false;
+    const heard = [];
+    const from = Date.now();
+    const hear = (chunk) => { for (const line of chunk.toString('utf8').split('\n')) heard.push({ at: Date.now(), line }); };
+    const checked = runCheck({ project: 'project', commit, main: true, settings, source, spawn: (...args) => {
+      const child = spawn(...args);
+      roots.add(child.pid);
+      if (issues !== null) { child.stdout?.on('data', hear); child.stderr?.on('data', hear); }
+      return child;
+    } }).finally(() => { finished = true; });
+    const after = Number(option('after', 120));
+    const samples = [];
+    const below = (table) => {
+      const all = new Set(roots);
+      for (let grew = true; grew;) {
+        grew = false;
+        for (const row of table) if (all.has(row.ppid) && !all.has(row.pid)) { all.add(row.pid); grew = true; }
+      }
+      return table.filter((row) => all.has(row.pid));
+    };
+    while (!finished) {
+      await sleep(200);
+      const table = await processTable();
+      const ours = below(table);
+      for (const row of ours) seen.add(row.pid);
+      if (!ours.some((row) => /swift-test|xctest|swiftpm-testing-helper/.test(row.command) && row.seconds >= after)) continue;
+      report.processes = ours.map((row) => ({ name: mask(path.basename(row.command.split(' ')[0])), seconds: row.seconds, parent: row.ppid, pid: row.pid }));
+      for (const row of ours.filter((r) => !/^(?:\/usr\/bin\/sandbox-exec|\/bin\/sh)\b/.test(r.command))) {
+        const file = path.join(paths.outer, `sample-${row.pid}.txt`);
+        const got = await run('/usr/bin/sample', [String(row.pid), '5', '-mayDie', '-f', file], { timeoutMs: 60000 });
+        samples.push({ process: mask(path.basename(row.command.split(' ')[0])), sampled: got.code === 0, said: got.code === 0 ? '' : mask(got.stderr.trim().slice(-200)), stacks: fs.existsSync(file) ? cleanSample(fs.readFileSync(file, 'utf8'), mask, paths.root) : [] });
+      }
+      report.sampledAfterSeconds = after;
+      endCheck('project');
+      break;
+    }
+    const got = await checked;
+    await sleep(2500);
+    report.result = got.result;
+    report.minutes = got.minutes;
+    report.summary = summaryOf(mask(got.tail).split('\n'));
+    const places = new Map();
+    for (const [what, count] of refusals.counts) {
+      const place = mask(placeOf(what, paths.root));
+      places.set(place, (places.get(place) ?? 0) + count);
+    }
+    report.refused = [...places.entries()].sort((a, b) => b[1] - a[1]).slice(0, 80);
+    report.samples = samples;
+    report.proofsBesideTheSecret = fs.readdirSync(paths.outside).filter((n) => n.startsWith('proof-'));
+    if (issues !== null) report.issues = writeIssues(issues, { heard, events: refusals.events, seen, tools: TOOLS, from });
+  } finally {
+    refusals.stop();
+    await finish(paths, report);
+  }
+}
+
 // The report goes to the screen and the check folder; the folder goes to the Trash unless --keep. Never deleted outright.
 async function finish(paths, report) {
   const text = `${JSON.stringify(report, null, 2)}\n`;
   fs.writeFileSync(path.join(paths.root, 'report.json'), text);
   process.stdout.write(text);
   if (process.argv.includes('--keep')) {
-    process.stdout.write(`Kept: ${paths.root.replace(REAL_HOME, '~')}\n`);
+    process.stdout.write(`Kept: ${paths.outer.replace(REAL_HOME, '~')}\n`);
     return;
   }
-  const got = await run('/usr/bin/trash', [paths.root]);
-  process.stdout.write(got.code === 0 ? 'The check folder went to the Trash.\n' : `The check folder stays at ${paths.root.replace(REAL_HOME, '~')}: ${got.stderr.trim()}\n`);
+  const got = await run('/usr/bin/trash', [paths.outer]);
+  process.stdout.write(got.code === 0 ? 'The check folder went to the Trash.\n' : `The check folder stays at ${paths.outer.replace(REAL_HOME, '~')}: ${got.stderr.trim()}\n`);
 }
 
-const phases = { ways: phaseWays, fixture: phaseFixture, swift: phaseSwift, project: phaseProject };
+const phases = { ways: phaseWays, fixture: phaseFixture, swift: phaseSwift, project: phaseProject, runner: phaseRunner, hang: phaseHang };
 const phase = phases[process.argv[2]];
-if (!phase) throw new Error('Give ways, fixture, swift or project');
+if (!phase) throw new Error('Give ways, fixture, swift, project, runner or hang');
 await phase();

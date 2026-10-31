@@ -43,7 +43,7 @@ import { lookAtSettings, lookRefusalLine, LookRefusal } from '../lib/safe-git.js
 import { openProjectRecord, openSettings } from '../state/record.js';
 import { importEvents } from '../state/import.js';
 import { takeStartLock } from '../lib/start-lock.js';
-import { scanContent, scanText } from '../state/secret-scan.js';
+import { tailOf } from '../lib/output-tail.js';
 import { buildViews, latestFor, writeViews } from '../state/views.js';
 import { takeSurvey, shapedSurvey, recordSurvey } from '../survey/take.js';
 import { ReadyRefusal, archiveCommit, carryOn, carryOnPiece, dropRef, fetchInto, folderGit, freeWork, pieceWork, restoreCommit } from '../survey/ready.js';
@@ -3766,21 +3766,7 @@ export async function startHelper({
     return answer;
   }
 
-  // The end of a command's output, with any line that matched the secret scan hidden. The end is
-  // cut at a line first, so a long line is never scanned whole and a secret is never cut in half.
-  function shown(text) {
-    let t = String(text).trim();
-    if (t.length > 2 * MOST_OUTPUT) {
-      t = t.slice(-2 * MOST_OUTPUT);
-      const cut = t.indexOf('\n');
-      if (cut >= 0) t = t.slice(cut + 1);
-    }
-    const lines = t.split(/\r\n|\r|\n/);
-    for (const hit of scanText(t)) lines[hit.line - 1] = `[hidden: this line matched ${hit.pattern}]`;
-    t = lines.join('\n');
-    if (scanContent(t).length > 0) t = '[hidden: the output looked as if it held a secret]';
-    return t.length > MOST_OUTPUT ? t.slice(-MOST_OUTPUT) : t;
-  }
+  const shown = (text) => tailOf(text, MOST_OUTPUT);
 
   // Step 5: the project's own containment command, in a fresh checkout of the default branch.
   function doContain({ project }, ctx) {

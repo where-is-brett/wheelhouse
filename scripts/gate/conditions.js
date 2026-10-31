@@ -16,6 +16,16 @@ export function reviewCounts(entry, headSha, enrolled, kinds = null) {
     && (kinds === null || kinds.includes(record.data?.reviewKind));
 }
 
+// A check counts only if it verifies, names the head and the command now on the default branch, and passed; or, on a
+// project whose tests aren't counting yet, was not counted.
+export function checkCounts(entry, headSha, digest, enrolled, { notCounting = false } = {}) {
+  return entry?.kind === 'check'
+    && verify(entry, enrolled)
+    && entry.data?.commit === headSha
+    && entry.data?.command === digest
+    && (entry.data?.result === 'passed' || (notCounting && entry.data?.result === 'not-counted'));
+}
+
 // The refusal where only a review of the kinds the agent's clean session gives counts, and none does.
 export const NO_CLEAN_REVIEW = (short) => `no review of ${short} from a clean session: the helper's own Lookout hasn't passed it`;
 

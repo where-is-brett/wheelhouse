@@ -57,7 +57,7 @@ import { AGENT_CONTROL, controlWritePaths, homeControlPaths } from '../lib/agent
 import { credentialPaths } from '../lib/credentials.js';
 import { FRONT_DESK_INPUT, WORK_REPORTS_RULE } from '../lib/front-desk.js';
 import { WINDOWS_LINE } from '../lib/platform-lines.js';
-import { archonHome } from '../lib/paths.js';
+import { archonHome, wheelhouseHome } from '../lib/paths.js';
 import { ARCHON_PROGRAMS, PRIVATE_FILES, PRIVATE_FOLDERS, WORKSPACE_FOLDERS, workspaceOfRun } from './archon.js';
 import { MARKETPLACE, UPSTREAMS, WHEELHOUSE_REPO } from '../lineage/manifest.js';
 import { GIT_LOCAL, isConfiguredBuildCommand } from './windows-builds.js';
@@ -244,6 +244,17 @@ export function archonDenyRules(home = archonHome()) {
   ]);
   const top = [...PRIVATE_FILES, ...PRIVATE_FOLDERS].map((f) => `${sandbox}/${f}`);
   return { deny, denyRead: top, denyWrite: [...top] };
+}
+
+// The deny list as real paths, for the check's sandbox (local checks, spec 4.4): the private record, the keychain, the
+// credentials and Archon's private files. A check is no agent, so the agents' other lists don't apply.
+export function sandboxDenyPaths({ userHome = os.homedir(), platform = process.platform } = {}) {
+  const full = (p) => (p.startsWith('~/') ? path.join(userHome, p.slice(2)) : p);
+  return unique([
+    wheelhouseHome(), path.join(userHome, '.wheelhouse'), full(KEYCHAINS),
+    ...credentialPaths(platform).map((p) => path.join(userHome, p)),
+    ...archonDenyRules().denyRead.map(full),
+  ]);
 }
 
 // The permission rule that allows reading everything under a full path: `//` before it, and a Windows drive as

@@ -31,7 +31,9 @@ export const PLAIN_KINDS = [
 // helper's own reading that the premium model's evaluation failed for a Yes, which brings the director its card.
 // `provenance` is the helper's record of what built the pull requests of a branch (design section 22, R147): signed, so
 // the merge gate reads it from the state rather than from the pull request's body, which names nothing that built it.
-export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file', 'usage-card', 'premium-card', 'premium-check', 'premium-failed', 'provenance'];
+// `check` is the helper's result of a project's tests on this computer (local checks, spec 4.3): signed, so the permit
+// reads a run that happened, never a status anyone could post.
+export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file', 'usage-card', 'premium-card', 'premium-check', 'premium-failed', 'provenance', 'check'];
 // Plain kinds only the helper itself records, from what it read itself: no caller writes one
 // through /state/write. The survey (design section 15, ruling A1) is taken and recorded in the
 // helper, when setup finishes and when it is taken again. A column-ready record (design section 14.6) is the
@@ -45,7 +47,7 @@ export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 
 export const RED_MAIN_FIELDS = ['kind', 'suspect', 'work'];
 export const RED_MAIN_OWN = 'only the helper records a red main line\'s incident';
 
-export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced'];
+export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 
 const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main'];
@@ -693,6 +695,21 @@ function checkProvenance(data) {
   if (!data.provenance || typeof data.provenance !== 'object' || Array.isArray(data.provenance)) bad('needs what built it');
 }
 
+// The words a check ends in, and what it must carry: the whole commit, its command's digest (none where the project has
+// no command), the minutes it took, and the end of its output.
+export const CHECK_RESULTS = ['passed', 'failed', 'timed-out', 'could-not-run', 'not-counted'];
+const CHECK_KEYS = ['commit', 'command', 'result', 'minutes', 'tail'];
+function checkCheck(data) {
+  const bad = (why) => { throw new Error(`A check event ${why}`); };
+  if (!isPlain(data)) bad('needs data');
+  if (Object.keys(data).some((k) => !CHECK_KEYS.includes(k))) bad('has a field it should not');
+  if (typeof data.commit !== 'string' || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(data.commit)) bad('needs the whole commit');
+  if (data.command !== null && !(typeof data.command === 'string' && /^[0-9a-f]{64}$/.test(data.command))) bad('needs its command\'s digest');
+  if (!CHECK_RESULTS.includes(data.result)) bad('needs a result Wheelhouse knows');
+  if (typeof data.minutes !== 'number' || !Number.isFinite(data.minutes) || data.minutes < 0) bad('needs its minutes');
+  if (typeof data.tail !== 'string' || data.tail.length > 4096) bad('needs the end of its output, 4 KB at most');
+}
+
 // What a shown record must carry: the reply code, the question put to the director
 // and the labels of the options offered (two to six).
 function checkShown(data) {
@@ -712,6 +729,7 @@ export function makeEvent({ kind, data, now = () => new Date() }) {
   if (kind === 'review') checkReview(data);
   if (kind === 'shown') checkShown(data);
   if (kind === 'provenance') checkProvenance(data);
+  if (kind === 'check') checkCheck(data);
   if (Object.hasOwn(PLAIN_SHAPES, kind)) checkPlain(kind, data);
   const event = {
     v: 1,
@@ -756,6 +774,7 @@ export function checkRecord(event, { enrolled, held = [], computer = computerId(
   if (event.kind === 'premium-check') return 'only the helper checks the premium model';
   if (event.kind === 'premium-failed') return 'only the helper records the premium model\'s evaluation failing';
   if (event.kind === 'provenance') return 'only the helper records what built a pull request';
+  if (event.kind === 'check') return 'only the helper records a check';
   if (held.some((e) => canonicalJson(e) !== canonicalJson(event))) return 'another event in the state carries this record\'s id, so it was not recorded';
   return null;
 }
