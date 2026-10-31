@@ -116,6 +116,30 @@ test('what the session wrote to the director is its text and its summarised narr
   assert.deepEqual(textBlocks(stream).map((t) => t.text), ['Hello.', 'Fetched the card.']);
 });
 
+test('36 allows the one answer `suggest` writes on the pressed card, and no other answer', async () => {
+  const cards = await cardsOf(CARDS_36);
+  const approval = cards.find((c) => c.id === APPROVAL_CARD);
+  const photo = cards.find((c) => c.id === PHOTO_CARD);
+  const work = { kind: 'work', id: 'w-1', data: { id: 'orders-csv-export', title: 'The export covers this month\'s orders only', lane: 'small', visible: true, dependsOn: [], place: 3 } };
+  const line = ['say', 'Noted. A new proposal will follow.'];
+  const suggest = (id = APPROVAL_CARD) => ['Bash', { command: `node "/p/cli.js" suggest ${id} orders-csv-export "The export covers this month's orders only"` }];
+  const answer = (data = {}) => ({ kind: 'card-answer', id: 'a-1', data: { question: approval.data.question, label: SUGGEST, ...data } });
+  const judgedWith = (calls, answers) => judged36(events(...calls, line), { written: [work, ...answers], forbidden: answers.map(() => 'card-answer') });
+
+  const good = await judgedWith([suggest()], [answer()]);
+  assert.equal(good.pass, true, good.why);
+
+  const noted = /never earns: card-answer/;
+  assert.match((await judgedWith([suggest()], [answer(), { ...answer(), id: 'a-2' }])).why, noted);
+  assert.match((await judgedWith([['Bash', { command: 'node "/p/cli.js" record card-answer' }]], [answer()])).why, noted);
+  assert.match((await judgedWith([suggest(PHOTO_CARD)], [answer()])).why, noted);
+  assert.match((await judgedWith([suggest()], [answer({ question: photo.data.question })])).why, noted);
+  assert.match((await judgedWith([suggest()], [answer({ label: 'Approve' })])).why, noted);
+  assert.match((await judgedWith([suggest()], [answer({ words: WORDS })])).why, noted);
+  // An answer the state holds that no write of the session's explains is still refused.
+  assert.match((await judged36(events(suggest(), line), { written: [work], forbidden: ['card-answer'] })).why, noted);
+});
+
 test('36 passes one work record for the pressed approval and one line that a new proposal will follow, with no card composed and nothing answered, signed or otherwise recorded', async () => {
   const cards = await cardsOf(CARDS_36);
   const work = { kind: 'work', id: 'w-1', data: { id: 'orders-csv-export', title: 'The export covers this month\'s orders only', lane: 'small', visible: true, dependsOn: [], place: 3 } };
