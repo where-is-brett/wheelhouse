@@ -34,6 +34,7 @@ import { prepareQueueFolder } from '../engine/queue-folder.js';
 import { queueFolderOf, queueProjectOf } from '../engine/queue-place.js';
 import { unreachableRefusal, certificateRefusal, certificateLine, awayLine, outputKind, companyGitEnv, makeAwayLog, gitlabBaseOf, certificateSetting } from './company-ca.js';
 import { childEnv } from './connection.js';
+import { homeReadable } from './local/home.js';
 import { protectionStatus } from './protection.js';
 import { cutAccess, INSTALLATIONS_PAGE } from './cut-access.js';
 import { checkRecord, listEvents, makeEvent, writeEvent, eventPath, eventHash, dataHash, PLAIN_KINDS, PROTECTED_KINDS, HELPER_ONLY_KINDS, CONFIRMABLE_KINDS, RED_MAIN_FIELDS, RED_MAIN_OWN } from '../state/events.js';
@@ -1115,7 +1116,7 @@ export async function startHelper({
       reach: reachFor(readProject(project)?.remoteUrl),
       secrets: secretsOf(env),
       adapter: async () => {
-        adapter ??= Promise.resolve(adapterFor(project, { env, envFor: async () => env, now }));
+        adapter ??= Promise.resolve(adapterFor(project, { env, envFor: async () => env, now, write: ({ event }) => checkWrite(project, event) }));
         return adapter;
       },
     };
@@ -1218,8 +1219,10 @@ export async function startHelper({
   }
   const lookAtLock = (ctx, project) => lookOnce(ctx, path.join(stateDir(project), '..', 'lock'), '.git', "the project's lock repository");
 
-  // The lock clone is used by pushes and merges alike: one git call at a time.
+  // The lock clone is used by pushes and merges alike: one git call at a time. A project in git alone has no lock branch:
+  // no computer but this one can reach its home, so the home's mark stands for the lock (spec 7.3).
   function lockHeld(project, ctx) {
+    if (readProject(project)?.host === 'local') return homeReadable(project);
     return oneAtATime(`lock:${project}`, async () => {
       // A refusal of the lock clone's look ends the request here.
       await lookAtLock(ctx, project);
@@ -3780,7 +3783,7 @@ export async function startHelper({
       reach: reachFor(readProject(project)?.remoteUrl),
       signedOut: true,
       adapter: async () => {
-        own ??= Promise.resolve(adapterFor(project, { env: {}, envFor: async () => ({}), now }));
+        own ??= Promise.resolve(adapterFor(project, { env: {}, envFor: async () => ({}), now, write: ({ event }) => checkWrite(project, event) }));
         return own;
       },
     };
@@ -4531,7 +4534,7 @@ export async function startHelper({
       await freshViews(() => writeViews(project, { now }));
     });
   }
-  // Keeps a check's signed record: made by the runner in the helper, from what the helper saw the check do.
+  // Keeps a signed record the helper made: a check, from what the helper saw it do, or a local change.
   function checkWrite(project, event) {
     return oneAtATime(`state:${project}`, async () => {
       await ensureStateClone(project, engineCtx());

@@ -17,6 +17,23 @@ const record = (over = {}) => ({
   ...over,
 });
 
+test('a record with host local reads back', async () => {
+  await as(shortHome(), async () => {
+    const local = record({ host: 'local', repo: 'local/shop', remoteUrl: null, connection: { mode: 'none' } });
+    writeProject('shop', local);
+    assert.deepEqual(readProject('shop'), local);
+    assert.throws(() => writeProject('other', local), /local\/<project>/);
+    assert.throws(() => writeProject('shop', { ...local, remoteUrl: 'https://github.com/owner/name.git' }), /no remote address/);
+  });
+});
+
+test('a github record with a null address is still refused', async () => {
+  await as(shortHome(), async () => {
+    assert.throws(() => writeProject('shop', record({ remoteUrl: null })), /remote address/);
+    assert.throws(() => writeProject('shop', record({ host: 'bitbucket' })), /github, gitlab or local/);
+  });
+});
+
 test('a project record is written and read back, and none reads as null', async () => {
   const home = shortHome();
   try {

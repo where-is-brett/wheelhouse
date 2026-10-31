@@ -15,7 +15,6 @@
 //
 // Refusals are thrown as LeanRefusal, whose message is one plain line and whose `extra` fields go into the
 // helper's answer beside it.
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { run as realRun } from '../lib/run.js';
@@ -28,9 +27,12 @@ import { readEnrolled, sign, verify } from '../state/signing.js';
 import { readLeanRecord, leanToEvents, leanStopOpen } from '../state/lean-record.js';
 import { leanMergeDecision } from '../gate/conditions.js';
 import { readLean, updateLean, unregisterLean, leanState } from './project.js';
-import { shellFor, testEnv } from '../lib/local-git.js';
+import {
+  shellFor, testEnv, gitIn, headOf, moveHead, inTempTree as tempTreeOf, revertOn, lookAtHead, raiseCard, withLocalLock as lockIn, updateCopy as copyTo,
+  mainMovedCard, mainMovedLine, MAIN_MOVED_LINE, sameCard, realOrNull, LocalRefusal, LOCK_WAIT_MS,
+} from '../lib/local-git.js';
 
-export { testEnv };
+export { testEnv, mainMovedCard, mainMovedLine, MAIN_MOVED_LINE, sameCard, LOCK_WAIT_MS };
 
 // A refusal: its message is the one plain line the director's chat says; `extra` goes beside it in the answer.
 export class LeanRefusal extends Error {
@@ -48,12 +50,8 @@ export const NOT_IN_STORE = 'This project\'s git isn\'t in Wheelhouse\'s store y
 export const NO_COPY = 'No copy folder is set for this project yet';
 export const STOPPED = 'All stop is on';
 
-// The longest a project's tests may run before they count as failed, and how long a merge waits for another.
+// The longest a project's tests may run before they count as failed.
 export const LEAN_TEST_MS = 15 * 60 * 1000;
-export const LOCK_WAIT_MS = 120 * 1000;
-const LOCK_POLL_MS = 100;
-// A lock file that can't be read is taken as being written for this long, then as left behind.
-const LOCK_WRITING_MS = 10 * 1000;
 
 const FULL_COMMIT = /^[0-9a-f]{40}$/;
 const SLUG = /^[a-z0-9][a-z0-9-]{0,39}$/;
@@ -74,13 +72,31 @@ export function storeDir(project) {
   return path.join(projectFolder(project), 'git');
 }
 
+// Every git step of the store speaks for Lean: a look refused in Lean's words, naming the store.
+const ROUTE = { caller: 'lean', what: STORE_WHAT };
+// Lean's own line for each refusal of the shared steps.
+const LEAN_LINES = {
+  busy: OTHER_WINDOW,
+  moved: 'The main version moved while the helper was working, so nothing was added; try again',
+  unread: 'The main version could not be read in the store',
+  worktree: 'A worktree for the work could not be made in the store',
+  'undo-unread': 'A commit to undo could not be read',
+  'undo-wide': 'A commit to undo joins more than two lines of work, so it can\'t be undone here',
+  'undo-clash': 'The undo didn\'t apply cleanly, because later work touches the same files: ask the Crew to do it as a new feature. Nothing was changed',
+};
+async function inLeanWords(step) {
+  try {
+    return await step();
+  } catch (error) {
+    if (error instanceof LocalRefusal) refuse(LEAN_LINES[error.code] ?? error.message, error.extra);
+    throw error;
+  }
+}
+
 // The line a Lean approval card carries, naming the feature's branch and its head in full: the helper's window
 // signs an approval only for a card that holds exactly one (scripts/host/helper.js, windowEarned).
 export const leanApprovalLine = (branch, commit) => `Approve ${branch} at commit ${commit}`;
 export const LEAN_APPROVE = /Approve (feature\/[a-z0-9][a-z0-9-]{0,39}) at commit ([0-9a-f]{40})/g;
-// The line the card about a main version moved outside the helper carries (ruling P5-27 f).
-export const mainMovedLine = (from, to) => `The main version moved from ${from} to ${to} without an approval`;
-export const MAIN_MOVED_LINE = /The main version moved from ([0-9a-f]{40}) to ([0-9a-f]{40}) without an approval/g;
 // The line the card asking to undo a merge carries (ruling P5-50): undo is a runbook step, confirmed in the window.
 export const undoLine = (merge) => `Undo the merge ${merge} on the main version`;
 export const UNDO_LINE = /Undo the merge ([0-9a-f]{40}) on the main version/g;
@@ -89,18 +105,7 @@ export const UNDO_LINE = /Undo the merge ([0-9a-f]{40}) on the main version/g;
 
 // git in `cwd` through safeGit, looked at once: `call` gives run's answer, `must` the trimmed output or a refusal.
 function gitAt(cwd, { run, env = {}, reach = 'https', list = 'project', what = STORE_WHAT } = {}) {
-  const call = safeGit({ run, cwd, env, reach, list, look: 'once', caller: 'lean', what });
-  return {
-    call,
-    async must(args, why) {
-      const got = await call(args);
-      if (got.code !== 0) refuse(why);
-      return String(got.stdout ?? '').trim();
-    },
-    async ok(args) {
-      return (await call(args)).code === 0;
-    },
-  };
+  return gitIn(cwd, { run, env, reach, list, caller: 'lean', what, refuse });
 }
 
 // Who commits: the record's identity, or Wheelhouse's, at `now`.
@@ -123,7 +128,7 @@ function adopted(project) {
 
 // The store's main version now.
 async function storeMain(project, run) {
-  return gitAt(storeDir(project), { run }).must(['rev-parse', '--verify', '-q', `${MAIN}^{commit}`], 'The main version could not be read in the store');
+  return inLeanWords(() => headOf({ dir: storeDir(project), branch: 'main', run, ...ROUTE }));
 }
 
 // The commit a branch of the store names (`main` or `feature/<slug>`), or null: for the helper's window, which
@@ -144,91 +149,21 @@ async function mainCheckedOutNowhere(project, run) {
 
 // Moves `main` from `from` to `to`, only if it is still at `from`.
 async function moveMain(project, run, to, from) {
-  const moved = await gitAt(storeDir(project), { run }).ok(['update-ref', '-m', 'Wheelhouse', MAIN, to, from]);
-  if (!moved) refuse('The main version moved while the helper was working, so nothing was added; try again');
+  await inLeanWords(() => moveHead({ dir: storeDir(project), branch: 'main', to, from, run, ...ROUTE }));
   updateLean(project, { main: to });
 }
 
 // A fresh worktree of the store at `at`, detached, in a folder of its own under the project's folder, for `fn`;
 // removed afterwards whatever happens.
 export async function inTempTree(project, { run, at, env = {} }, fn) {
-  const store = gitAt(storeDir(project), { run });
-  const parent = fs.mkdtempSync(path.join(projectFolder(project), 'work-'));
-  const tree = path.join(parent, 'tree');
-  try {
-    await store.must(['worktree', 'add', '--detach', '--quiet', tree, at], 'A worktree for the work could not be made in the store');
-    return await fn(tree, gitAt(tree, { run, env }));
-  } finally {
-    await store.call(['worktree', 'remove', '--force', tree]).catch(() => {});
-    // Windows can hold a folder a moment after the programs in it have ended: removal tries again.
-    fs.rmSync(parent, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-    await store.call(['worktree', 'prune']).catch(() => {});
-  }
+  return inLeanWords(() => tempTreeOf({ dir: storeDir(project), at, run, ...ROUTE }, (tree) => fn(tree, gitAt(tree, { run, env }))));
 }
 
 // --- the lock: one change to the store at a time ---
 
-function lockGone(file) {
-  let held;
-  try {
-    held = JSON.parse(fs.readFileSync(file, 'utf8'));
-  } catch {
-    // Being written, or left half written: only age frees it.
-    try {
-      return Date.now() - fs.statSync(file).mtimeMs > LOCK_WRITING_MS;
-    } catch {
-      return false;
-    }
-  }
-  const pid = held?.pid;
-  if (!Number.isInteger(pid) || pid < 1) return true;
-  try {
-    process.kill(pid, 0);
-    return false;
-  } catch (error) {
-    return error.code === 'ESRCH';
-  }
-}
-
-// Runs `fn` holding the project's lock: a file in <wheelhouseHome>/projects/<p>/ made with an exclusive create,
-// holding { pid, startedAt }, and freed in `finally`. A lock whose process has gone is taken over (renamed to a
-// name of its own first, so a waiter never removes a lock made in its place). After `waitMs` it refuses with
-// OTHER_WINDOW.
-export async function withLocalLock(project, fn, { waitMs = LOCK_WAIT_MS, pollMs = LOCK_POLL_MS, now = () => new Date() } = {}) {
-  const file = path.join(projectFolder(project), 'lean.lock');
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const mine = `${JSON.stringify({ pid: process.pid, startedAt: now().toISOString(), token: crypto.randomBytes(8).toString('hex') })}\n`;
-  const until = Date.now() + waitMs;
-  for (;;) {
-    try {
-      fs.writeFileSync(file, mine, { flag: 'wx' });
-      break;
-    } catch (error) {
-      if (error.code !== 'EEXIST') throw error;
-    }
-    let seen;
-    try { seen = fs.readFileSync(file, 'utf8'); } catch { /* gone */ }
-    if (seen !== undefined && lockGone(file)) {
-      const taken = `${file}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.gone`;
-      try {
-        fs.renameSync(file, taken);
-        if (fs.readFileSync(taken, 'utf8') !== seen) {
-          try { fs.linkSync(taken, file); } catch { /* another lock stands */ }
-        }
-        fs.rmSync(taken, { force: true });
-      } catch { /* another waiter took it over */ }
-      continue;
-    }
-    if (Date.now() >= until) refuse(OTHER_WINDOW);
-    await new Promise((resolve) => setTimeout(resolve, pollMs));
-  }
-  try {
-    return await fn();
-  } finally {
-    try {
-      if (fs.readFileSync(file, 'utf8') === mine) fs.rmSync(file, { force: true });
-    } catch { /* already gone */ }
-  }
+// Runs `fn` holding the project's lock, a file in <wheelhouseHome>/projects/<p>/. After `waitMs` it refuses with OTHER_WINDOW.
+export async function withLocalLock(project, fn, options) {
+  return inLeanWords(() => lockIn({ dir: projectFolder(project), name: 'lean.lock' }, fn, options));
 }
 
 // --- the record ---
@@ -248,41 +183,6 @@ async function writeHere(project, kind, data, { run, now, signed = false }) {
 const recorderFor = (record, { run, now }) => record ?? ((project, kind, data, { signed = false } = {}) => writeHere(project, kind, data, { run, now, signed }));
 
 const eventsOf = (project) => listEvents(stateDir(project), { report: () => {} });
-
-// Whether a card's data is the helper's own composed card: its question, options, header, kind, level and
-// recommendation the same (ruling P5-50), so a card anyone wrote with the helper's line but other words, or another
-// recommendation for the board to show, is never taken for it.
-export function sameCard(data, composed) {
-  return data !== null && typeof data === 'object'
-    && data.question === composed.question && data.header === composed.header
-    && data.kind === composed.kind && data.level === composed.level && data.recommend === composed.recommend
-    && Array.isArray(data.options) && data.options.length === composed.options.length && data.options.every((o, i) => o === composed.options[i]);
-}
-
-// The helper's card, raised once: the id of the one the state holds, if it is that card word for word, else of one
-// written now.
-async function raiseCard(project, data, record) {
-  const held = eventsOf(project).find((e) => e.kind === 'card' && e.data?.line === data.line && sameCard(e.data, data));
-  return held ? held.id : record(project, 'card', data);
-}
-
-export function mainMovedCard(from, to) {
-  const line = mainMovedLine(from, to);
-  return {
-    question: [
-      'The main version changed without an approval: something moved it outside Wheelhouse\'s helper.',
-      'Undo it takes those changes back out with a new commit; nothing is deleted. Keep it keeps them, confirmed in Wheelhouse\'s own window.',
-      'Recommended: Undo it. Until you choose, nothing is added to the main version.',
-      line,
-    ].join('\n'),
-    header: 'Main moved',
-    options: ['Undo it', 'Keep it', 'Not now'],
-    kind: 'question',
-    level: 4,
-    recommend: 'Undo it',
-    line,
-  };
-}
 
 // The card asking to undo a merge: Undo adds a commit that reverses it, confirmed in the helper's window, and works
 // while STOP is on (a runbook step, spec section 6.4). `earlier` gives the card in its words before the
@@ -331,28 +231,16 @@ export function approvalCard(branch, commit, testCommand) {
 
 // Compares the main version the record holds with the store's. When they differ, nothing is added until the
 // director decides, and the card asking is raised once. Gives { recorded, current, moved, card? }.
-// The record is read again after the store, so a status asked while another window moves the main version (the
-// store first, then the record) never sees the new head against the old record.
 async function lookAtMain(project, lean, { run, record }) {
-  const current = await storeMain(project, run);
-  const recorded = readLean(project)?.main ?? lean.main;
-  if (current === recorded) return { recorded, current, moved: false };
-  const card = await raiseCard(project, mainMovedCard(recorded, current), record);
-  return { recorded, current, moved: true, card };
+  return inLeanWords(() => lookAtHead({
+    dir: storeDir(project), branch: 'main', expected: () => readLean(project)?.main ?? lean.main, run, record: (card) => raiseCard(project, card, record), ...ROUTE,
+  }));
 }
 
 // --- adopting a project ---
 
 // The settings refused at adoption beyond the project list: `core.hooksPath`, `include.*` and `includeIf.*`.
 const HOOKS_OR_INCLUDES = /^(?:core\.hookspath|include\..+|includeif\..+)$/i;
-
-const realOrNull = (p) => {
-  try {
-    return fs.realpathSync.native(p);
-  } catch {
-    return null;
-  }
-};
 
 // Where `folder` stands for adoption into `project`'s store: { real, dotGit, store, lean, adopted } once the folder
 // is the project's own (registered under it, or not yet registered at all), with `adopted` true when its git is in
@@ -632,18 +520,7 @@ export async function mergeOnMain({ project, merge, run = realRun }) {
 
 // Reverts `commits` (newest first) in a fresh worktree at `at`, and gives the new head.
 async function revertIn(project, lean, { run, now, at, commits }) {
-  return inTempTree(project, { run, at, env: identityEnv(lean, now) }, async (_tree, tree) => {
-    for (const commit of commits) {
-      const parents = (await tree.must(['rev-list', '--parents', '-n', '1', commit], 'A commit to undo could not be read')).split(' ').length - 1;
-      if (parents > 2) refuse('A commit to undo joins more than two lines of work, so it can\'t be undone here');
-      const reverted = await tree.call(['revert', '--no-edit', ...(parents === 2 ? ['-m', '1'] : []), commit]);
-      if (reverted.code !== 0) {
-        await tree.call(['revert', '--abort']);
-        refuse('The undo didn\'t apply cleanly, because later work touches the same files: ask the Crew to do it as a new feature. Nothing was changed');
-      }
-    }
-    return tree.must(['rev-parse', '--verify', 'HEAD^{commit}'], 'The undo could not be read');
-  });
+  return inLeanWords(() => revertOn({ dir: storeDir(project), at, commits, env: identityEnv(lean, now), run, ...ROUTE }));
 }
 
 export const UNDO_NEEDS_WINDOW = 'Undo is confirmed in Wheelhouse\'s own window, not by a click in the chat: show the director the card there';
@@ -720,33 +597,13 @@ export async function keepMain({ project, from, to, run = realRun, now = () => n
 const COPY_WHAT = 'the Lean project\'s copy folder';
 
 // Brings the copy folder up to the store's main version, as `main` (ruling P5-24; the private record never goes to
-// the copy, design section 24.3 item 7), never with force. The copy fetches it, in a git run in the copy through safeGit, naming the store
-// by its path (ruling P5-50): nothing is pushed into the copy, so its receive hooks never
-// run, the fence's hooks setting covers the one process that writes its refs, and the look reads the copy's own
-// settings first. No remote's name is read, so no push or fetch setting anywhere is followed. A copy that can't take
-// it is recorded and the work carries on. Gives { pushed, commit, refused? } (`pushed`: the copy holds them now).
+// the copy, design section 24.3 item 7), never with force. A copy that can't take it is recorded and the work carries on.
+// Gives { pushed, commit, refused? } (`pushed`: the copy holds them now).
 async function updateCopy(project, { run, now, record }) {
   const lean = readLean(project);
   if (lean?.copy === null || lean?.copy === undefined) return { pushed: false, refused: NO_COPY };
   if (!path.isAbsolute(lean.copy)) return { pushed: false, refused: 'The copy folder is not a full path' };
-  const commit = await storeMain(project, run);
-  let pushed = false;
-  if (fs.existsSync(lean.copy)) {
-    const copy = gitAt(lean.copy, { run, reach: 'local', what: COPY_WHAT });
-    // The copy folder must be a repository itself (a bare one, or one with its own .git): git looks upwards from a
-    // folder that isn't one, and the fetch would land in whatever repository holds it.
-    const own = async () => {
-      const got = await copy.call(['rev-parse', '--absolute-git-dir']);
-      const dir = got.code === 0 ? realOrNull(String(got.stdout ?? '').trim()) : null;
-      return dir !== null && [realOrNull(lean.copy), realOrNull(path.join(lean.copy, '.git'))].includes(dir);
-    };
-    const fetch = (from, ref) => copy.ok(['fetch', '--quiet', '--no-tags', '--no-write-fetch-head', '--no-recurse-submodules', from, `${ref}:${ref}`]);
-    try {
-      pushed = (await own()) && (await fetch(storeDir(project), MAIN));
-    } catch {
-      pushed = false;
-    }
-  }
+  const { pushed, commit } = await inLeanWords(() => copyTo({ dir: storeDir(project), branch: 'main', copy: lean.copy, copyWhat: COPY_WHAT, run, ...ROUTE }));
   await record(project, 'note', {
     lean: 'copy',
     choice: pushed ? 'pushed' : 'failed',

@@ -18,7 +18,7 @@ const LOCAL = ['localhost', '127.0.0.1', '[::1]'];
 // An ssh port is the ssh server's, not the web site's, so it is dropped.
 export function parseRemote(remoteUrl) {
   const text = String(remoteUrl ?? '').trim();
-  const scp = /^[^@/\s]+@([^:/\s]+):/.exec(text); // git@host:owner/name.git
+  const scp = /^(?:[^@/\s]+@)?([^:/\s]+):(?!\/\/)/.exec(text); // git@host:owner/name.git, or host:owner/name.git
   if (scp) return { hostname: scp[1].toLowerCase(), port: '', origin: `https://${scp[1].toLowerCase()}` };
   let url;
   try {

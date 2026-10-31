@@ -84,7 +84,7 @@ import { toolPath } from '../lib/host-tools.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
 import { QUICK_LINE } from '../lib/host-lines.js';
-import { detectHost } from '../host/adapter.js';
+import { detectHost, notHostedLine } from '../host/adapter.js';
 import { startDeviceSignIn, waitForSignIn, installUrl } from '../host/github-app.js';
 import { installationCovers } from '../host/connection.js';
 import { gitlabApi, makeProjectKey, isKeysSwitchedOff, checkBaseUrl, projectPath } from '../host/gitlab-key.js';
@@ -324,6 +324,7 @@ export function productOf(folder, { config } = {}) {
   const origin = originUrl(folder);
   if (origin !== null) {
     const host = detectHost(origin, { gitlabHosts: config?.gitlabHosts });
+    if (host === 'local') throw new Error(notHostedLine(origin));
     const repo = repoOf(origin);
     const base = host === 'gitlab' ? gitlabBase({ config, remoteUrl: origin }) : DEFAULT_GITLAB;
     return { isNew: false, host, repo, name: repo.split('/').at(-1), ...(base === DEFAULT_GITLAB ? {} : { base }) };

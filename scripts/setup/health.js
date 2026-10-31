@@ -52,7 +52,7 @@ import { projectForFolder, readProject } from '../lib/projects.js';
 import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
 import { healthVerdict, NEW_SESSION } from '../lib/calm-words.js';
 import { parseTrialLine } from '../lib/trial-lines.js';
-import { makeAdapter } from '../host/adapter.js';
+import { adapterOf } from '../host/adapter-for.js';
 import { protectionStatus } from '../host/protection.js';
 import { helperClient } from '../host/helper-client.js';
 import { checkInstalled, readManifest, claudeHome } from '../lineage/manifest.js';
@@ -372,7 +372,7 @@ export async function closeOpenTrial({
   if (trial === null) return null;
   const projectRecord = readProject(trial.project);
   if (projectRecord === null) return null;
-  const adapter = (adapterFor ?? (({ host, repo, base }) => makeAdapter({ host, repo, run, env: {}, base })))({ host: projectRecord.host, repo: projectRecord.repo, base: projectRecord.connection?.baseUrl });
+  const adapter = (adapterFor ?? (({ host, repo, base }) => adapterOf({ host, repo, connection: { baseUrl: base } }, { run })))({ host: projectRecord.host, repo: projectRecord.repo, base: projectRecord.connection?.baseUrl });
   const finder = findGit ?? (async ({ platform: p }) => (await toolsStatus({ platform: p, run, tools: ['git'] })).git);
   const gitFor = (use) => withTrialGit({ run, findGit: finder, gitEnvFor, host: projectRecord.host, platform, remoteUrl: projectRecord.remoteUrl, base: projectRecord.connection?.baseUrl }, (git) => use({ ...git, run }));
   return closeTrial({ project: trial.project, projectRecord, pr: trial.pr, sha: trial.sha, adapter, gitFor, record });
@@ -478,7 +478,7 @@ const applied = (run) => typeof run?.steps?.[HEALTH_STEP]?.doneAt === 'string';
 // `checkPins({ folder })` and `readProtection({ host, repo, realUsers, base })` the other checks. All for tests.
 export function healthStep({
   run = realRun,
-  adapterFor = ({ host, repo, base }) => makeAdapter({ host, repo, run, env: {}, base }),
+  adapterFor = ({ host, repo, base }) => adapterOf({ host, repo, connection: { baseUrl: base } }, { run }),
   client,
   findGit = async ({ platform }) => (await toolsStatus({ platform, run, tools: ['git'] })).git,
   gitEnvFor = directorGitEnv,

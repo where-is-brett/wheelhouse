@@ -48,9 +48,26 @@ test('detectHost knows github.com and gitlab.com, over https and ssh', () => {
 test('detectHost takes another GitLab address only when the project setting names it', () => {
   assert.equal(detectHost('https://git.example.org/team/product.git', { gitlabHosts: ['git.example.org'] }), 'gitlab');
   assert.equal(detectHost('git@git.example.org:team/product.git', { gitlabHosts: ['git.example.org'] }), 'gitlab');
-  assert.throws(() => detectHost('https://git.example.org/team/product.git'), /git\.example\.org/);
-  assert.throws(() => detectHost('https://git.example.org/team/product.git', { gitlabHosts: ['other.example.org'] }), /not GitHub or GitLab/);
-  assert.throws(() => detectHost('not an address'), /address/);
+  assert.equal(detectHost('https://git.example.org/team/product.git', { gitlabHosts: ['other.example.org'] }), 'local');
+});
+
+test('no remote detects local', () => {
+  assert.equal(detectHost(null), 'local');
+  assert.equal(detectHost(undefined), 'local');
+  assert.equal(detectHost([]), 'local');
+});
+
+test('only other remotes detect local and they are left as they are', () => {
+  assert.equal(detectHost('https://git.example.org/team/product.git'), 'local');
+  assert.equal(detectHost('ssh://me@server.example.org/srv/product.git'), 'local');
+  assert.equal(detectHost('/Volumes/shared/product.git'), 'local');
+  assert.equal(detectHost('../product.git'), 'local');
+  assert.equal(detectHost(['/Volumes/shared/product.git', 'https://git.example.org/team/product.git']), 'local');
+});
+
+test('a GitHub address still detects github', () => {
+  assert.equal(detectHost('github.com:a-director/product.git'), 'github');
+  assert.equal(detectHost(['/Volumes/shared/product.git', 'https://github.com/a-director/product.git']), 'github');
 });
 
 test('makeAdapter refuses an unknown host or a malformed repository', () => {

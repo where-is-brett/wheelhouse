@@ -547,11 +547,8 @@ export function originUrl(folder) {
 export function hostToolsFor(folder) {
   const url = originUrl(folder);
   if (url === null) return [...HOST_TOOLS];
-  try {
-    return [detectHost(url, readGitlabHosts(folder)) === 'github' ? 'gh' : 'glab'];
-  } catch {
-    return [...HOST_TOOLS];
-  }
+  const host = detectHost(url, readGitlabHosts(folder));
+  return host === 'local' ? [...HOST_TOOLS] : [host === 'github' ? 'gh' : 'glab'];
 }
 
 // The hosts of the projects on this computer, for whether it runs the build engine (scripts/engine/parts.js): each

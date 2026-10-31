@@ -92,13 +92,23 @@ const MOST_COMMITS = 50;
 const QUEUE_LINE = 'This project\'s host queues merges; Wheelhouse merges only directly for now';
 
 // 'github' for github.com; 'gitlab' for the public GitLab service, or for another address when
-// the project setting `gitlabHosts` names it (a host name, with its port when it has one).
-export function detectHost(remoteUrl, { gitlabHosts = [] } = {}) {
-  const parts = parseRemote(remoteUrl);
-  if (parts.hostname === 'github.com') return 'github';
-  if (isDefaultHost(parts) || listed(parts, gitlabHosts)) return 'gitlab';
-  throw new Error(`The repository is at ${hostWords(parts)}, which is not GitHub or GitLab. If it is a GitLab address, name it in the project settings`);
+// the project setting `gitlabHosts` names it (a host name, with its port when it has one); 'local'
+// for a folder with no remote, or whose remotes are neither, such as a server of the director's own
+// or a plain path: those are left as they are and the project is kept in git alone (spec 5.2). Takes
+// one address or a list, the remote that counts most first.
+export function detectHost(remotes, { gitlabHosts = [] } = {}) {
+  for (const remote of (Array.isArray(remotes) ? remotes : [remotes])) {
+    if (typeof remote !== 'string' || remote.trim() === '') continue;
+    let parts;
+    try { parts = parseRemote(remote); } catch { continue; }
+    if (parts.hostname === 'github.com') return 'github';
+    if (isDefaultHost(parts) || listed(parts, gitlabHosts)) return 'gitlab';
+  }
+  return 'local';
 }
+
+// What setup says of an address that is neither host, until it sets up a project in git alone.
+export const notHostedLine = (remoteUrl) => `The repository is at ${hostWords(parseRemote(remoteUrl))}, which is not GitHub or GitLab. If it is a GitLab address, name it in the project settings`;
 
 const REPO = /^[A-Za-z0-9_.][A-Za-z0-9_.-]*(\/[A-Za-z0-9_.][A-Za-z0-9_.-]*)+$/;
 const SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
@@ -132,6 +142,85 @@ function text(value, what, { optional = false, empty = false } = {}) {
   if (optional && value === undefined) return undefined;
   if (typeof value !== 'string' || (!empty && value.trim() === '')) throw new Error(`The ${what} must be text`);
   return value;
+}
+
+// The adapter's methods over a host's commands `c`, with each argument checked before anything runs. The local host's
+// adapter is built on it too, so every host has the same methods and takes the same arguments.
+export function adapterFrom(c) {
+  async function history(name, ...args) {
+    if (typeof c[name] !== 'function') throw new Error(HISTORY_GITLAB_ONLY);
+    return c[name](...args);
+  }
+
+  return {
+    defaultBranch: () => c.defaultBranch(),
+    openPr: async ({ head, base, title, body } = {}) => c.openPr({
+      head: text(head, 'head branch'), base: text(base, 'base branch'), title: text(title, 'title'), body: text(body, 'body', { empty: true }),
+    }),
+    updatePr: async ({ number, title, body } = {}) => c.updatePr({
+      number: wholeNumber(number), title: text(title, 'title', { optional: true }), body: text(body, 'body', { optional: true, empty: true }),
+    }),
+    // Closes a pull request without merging it: setup's step 10 closes its trial pull request.
+    closePr: async (number) => c.closePr(wholeNumber(number)),
+    prState: async (number) => c.prState(wholeNumber(number)),
+    ciState: async (sha) => c.ciState(commit(sha)),
+    // Reports a check at the commit under Wheelhouse's own context: { ok }, or { refused }, with 'permission' for a key
+    // that may not. A refusal is never thrown.
+    setStatus: async ({ sha, state, description } = {}) => {
+      if (!STATUS_STATES.includes(state)) throw new Error('The state must be pending, success or failure');
+      return c.setStatus({ sha: commit(sha), state, description: text(description, 'description').slice(0, MOST_STATUS_WORDS) });
+    },
+    // What reports on the commit, by name: [{ name, state, startedAt, app }].
+    checkContexts: async (sha) => c.checkContexts(commit(sha)),
+    // The checks the default branch's rules require, by name; null when they can't be read.
+    requiredChecks: async (branch) => c.requiredChecks(text(branch, 'branch')),
+    // The commit a branch points at, in full: the health read asks the default branch's CI with it.
+    // Whether the commit has any checks or pipeline, or the branch holds CI configuration. Unlike
+    // ciState it never turns a failed read into 'none': an error is thrown, so a failure to look
+    // is told from having looked and found nothing.
+    hasCi: async (sha, branch) => c.hasCi(commit(sha), text(branch, 'branch')),
+    branchHead: async (branch) => commit(await c.branchHead(text(branch, 'branch'))),
+    // The address of the commit's preview deployment, from the host's newest successful deployment
+    // of it, or null when there is none or its address is not https. A failed read is thrown.
+    previewUrl: async (sha) => c.previewUrl(commit(sha)),
+    merge: async ({ number, sha } = {}) => c.merge({ number: wholeNumber(number), sha: commit(sha) }),
+    // The history calls of the audit report. They only read. The host's own history is the second
+    // record the report checks the computer's against (scripts/audit/report.js).
+    mergedRequests: async ({ since } = {}) => history('mergedRequests', { since: when(since, 'time to read from') }),
+    // `number` names the request that merged the commit, whose own head pipeline is the one that counts.
+    pipelinesFor: async (sha, { number } = {}) => history('pipelinesFor', commit(sha), number === undefined ? undefined : wholeNumber(number)),
+    protectionEvents: async ({ since, last = null, now = new Date() } = {}) => history('protectionEvents', {
+      since: when(since, 'time to read from'),
+      last: earlier(last),
+      now: new Date(when(now, 'time now')),
+    }),
+    // The open pull or merge requests, sorted by number, at most 100. Each head must be a full
+    // commit ID, since the survey and the start of carried-on work name commits by it.
+    openRequests: async () => {
+      const requests = await c.openRequests();
+      return requests.map((r) => ({ ...r, head: requestHead(r.head) })).sort((x, y) => x.number - y.number).slice(0, MOST_REQUESTS);
+    },
+    // A request's changed files and its commit subjects (oldest first, at most 50 each).
+    requestDetails: async (number) => {
+      const details = await c.requestDetails(wholeNumber(number));
+      return { files: details.files.slice(0, MOST_REQUESTS * 50), commits: details.commits.slice(0, MOST_COMMITS) };
+    },
+    // Where the host keeps a request's head: a request from someone's own copy is fetched by it.
+    pullRef: (number) => c.pullRef(wholeNumber(number)),
+    // The merge queue's verdict comment, posted once and edited in place for a new head (`id`, the kept one's): { id }.
+    verdictComment: async ({ number, id, body } = {}) => c.verdictComment({
+      number: wholeNumber(number), id: id === undefined || id === null ? undefined : wholeNumber(id), body: text(body, 'body'),
+    }),
+    // The login of the account the connection posts as.
+    login: async () => c.login(),
+    issue: {
+      create: async ({ title, body, labels = [] } = {}) => c.issue.create({
+        title: text(title, 'title'), body: text(body, 'body', { empty: true }), labels: labels.map((l) => text(l, 'label')),
+      }),
+      update: async ({ number, body } = {}) => c.issue.update({ number: wholeNumber(number), body: text(body, 'body', { empty: true }) }),
+      list: async ({ label } = {}) => c.issue.list({ label: text(label, 'label') }),
+    },
+  };
 }
 
 // `base` is the GitLab address: for a company's own, glab is told its host (GITLAB_HOST, under any the
@@ -208,80 +297,5 @@ export function makeAdapter({ host, repo, run, env: given, base = DEFAULT_GITLAB
     throw new Error(`${file} ${args.slice(0, 2).join(' ')} failed${said ? `: ${said}` : ''}`);
   }
   const tools = { call, settle, attempt, json, repo, fromAddress, refusal: refusalOf, httpsOnly, hostFault, read };
-  const c = commands(tools);
-
-  async function history(name, ...args) {
-    if (typeof c[name] !== 'function') throw new Error(HISTORY_GITLAB_ONLY);
-    return c[name](...args);
-  }
-
-  return {
-    defaultBranch: () => c.defaultBranch(),
-    openPr: async ({ head, base, title, body } = {}) => c.openPr({
-      head: text(head, 'head branch'), base: text(base, 'base branch'), title: text(title, 'title'), body: text(body, 'body', { empty: true }),
-    }),
-    updatePr: async ({ number, title, body } = {}) => c.updatePr({
-      number: wholeNumber(number), title: text(title, 'title', { optional: true }), body: text(body, 'body', { optional: true, empty: true }),
-    }),
-    // Closes a pull request without merging it: setup's step 10 closes its trial pull request.
-    closePr: async (number) => c.closePr(wholeNumber(number)),
-    prState: async (number) => c.prState(wholeNumber(number)),
-    ciState: async (sha) => c.ciState(commit(sha)),
-    // Reports a check at the commit under Wheelhouse's own context: { ok }, or { refused }, with 'permission' for a key
-    // that may not. A refusal is never thrown.
-    setStatus: async ({ sha, state, description } = {}) => {
-      if (!STATUS_STATES.includes(state)) throw new Error('The state must be pending, success or failure');
-      return c.setStatus({ sha: commit(sha), state, description: text(description, 'description').slice(0, MOST_STATUS_WORDS) });
-    },
-    // What reports on the commit, by name: [{ name, state, startedAt, app }].
-    checkContexts: async (sha) => c.checkContexts(commit(sha)),
-    // The checks the default branch's rules require, by name; null when they can't be read.
-    requiredChecks: async (branch) => c.requiredChecks(text(branch, 'branch')),
-    // The commit a branch points at, in full: the health read asks the default branch's CI with it.
-    // Whether the commit has any checks or pipeline, or the branch holds CI configuration. Unlike
-    // ciState it never turns a failed read into 'none': an error is thrown, so a failure to look
-    // is told from having looked and found nothing.
-    hasCi: async (sha, branch) => c.hasCi(commit(sha), text(branch, 'branch')),
-    branchHead: async (branch) => commit(await c.branchHead(text(branch, 'branch'))),
-    // The address of the commit's preview deployment, from the host's newest successful deployment
-    // of it, or null when there is none or its address is not https. A failed read is thrown.
-    previewUrl: async (sha) => c.previewUrl(commit(sha)),
-    merge: async ({ number, sha } = {}) => c.merge({ number: wholeNumber(number), sha: commit(sha) }),
-    // The history calls of the audit report. They only read. The host's own history is the second
-    // record the report checks the computer's against (scripts/audit/report.js).
-    mergedRequests: async ({ since } = {}) => history('mergedRequests', { since: when(since, 'time to read from') }),
-    // `number` names the request that merged the commit, whose own head pipeline is the one that counts.
-    pipelinesFor: async (sha, { number } = {}) => history('pipelinesFor', commit(sha), number === undefined ? undefined : wholeNumber(number)),
-    protectionEvents: async ({ since, last = null, now = new Date() } = {}) => history('protectionEvents', {
-      since: when(since, 'time to read from'),
-      last: earlier(last),
-      now: new Date(when(now, 'time now')),
-    }),
-    // The open pull or merge requests, sorted by number, at most 100. Each head must be a full
-    // commit ID, since the survey and the start of carried-on work name commits by it.
-    openRequests: async () => {
-      const requests = await c.openRequests();
-      return requests.map((r) => ({ ...r, head: requestHead(r.head) })).sort((x, y) => x.number - y.number).slice(0, MOST_REQUESTS);
-    },
-    // A request's changed files and its commit subjects (oldest first, at most 50 each).
-    requestDetails: async (number) => {
-      const details = await c.requestDetails(wholeNumber(number));
-      return { files: details.files.slice(0, MOST_REQUESTS * 50), commits: details.commits.slice(0, MOST_COMMITS) };
-    },
-    // Where the host keeps a request's head: a request from someone's own copy is fetched by it.
-    pullRef: (number) => c.pullRef(wholeNumber(number)),
-    // The merge queue's verdict comment, posted once and edited in place for a new head (`id`, the kept one's): { id }.
-    verdictComment: async ({ number, id, body } = {}) => c.verdictComment({
-      number: wholeNumber(number), id: id === undefined || id === null ? undefined : wholeNumber(id), body: text(body, 'body'),
-    }),
-    // The login of the account the connection posts as.
-    login: async () => c.login(),
-    issue: {
-      create: async ({ title, body, labels = [] } = {}) => c.issue.create({
-        title: text(title, 'title'), body: text(body, 'body', { empty: true }), labels: labels.map((l) => text(l, 'label')),
-      }),
-      update: async ({ number, body } = {}) => c.issue.update({ number: wholeNumber(number), body: text(body, 'body', { empty: true }) }),
-      list: async ({ label } = {}) => c.issue.list({ label: text(label, 'label') }),
-    },
-  };
+  return adapterFrom(commands(tools));
 }

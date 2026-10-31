@@ -4,9 +4,9 @@
 //
 //   ProjectRecord = {
 //     folder: string,      the project's working folder (a full path)
-//     remoteUrl: string,   the repository's address, with no credentials in it
-//     host: 'github' | 'gitlab',
-//     repo: string,        owner/name (GitLab: group/subgroup/name)
+//     remoteUrl: string | null,   the repository's address, with no credentials in it; null in git alone
+//     host: 'github' | 'gitlab' | 'local',   'local' keeps the project in git alone, with no code host
+//     repo: string,        owner/name (GitLab: group/subgroup/name; git alone: local/<project>)
 //     connection: Connection,   see scripts/host/connection.js; holds no secret
 //   }
 //
@@ -60,12 +60,15 @@ function namesRepo(remoteUrl, repo) {
   return found.path === wanted || (found.local && found.path.endsWith(`/${wanted}`));
 }
 
-function checkRecord(record) {
+function checkRecord(record, project) {
   if (!record || typeof record !== 'object') throw new Error('The project record must be an object');
   if (typeof record.folder !== 'string' || !path.isAbsolute(record.folder)) throw new Error('The project\'s folder must be a full path');
-  if (record.host !== 'github' && record.host !== 'gitlab') throw new Error('The project\'s host must be github or gitlab');
+  if (record.host !== 'github' && record.host !== 'gitlab' && record.host !== 'local') throw new Error('The project\'s host must be github, gitlab or local');
   if (typeof record.repo !== 'string' || !REPO.test(record.repo)) throw new Error('The project\'s repository must be written owner/name');
-  if (typeof record.remoteUrl !== 'string' || !namesRepo(record.remoteUrl, record.repo)) {
+  if (record.host === 'local') {
+    if (record.repo !== `local/${project}`) throw new Error('A project in git alone must be written local/<project>');
+    if (record.remoteUrl !== null) throw new Error('A project in git alone has no remote address');
+  } else if (typeof record.remoteUrl !== 'string' || !namesRepo(record.remoteUrl, record.repo)) {
     throw new Error('The project\'s remote address does not name its repository');
   }
   if (!record.connection || typeof record.connection !== 'object' || Array.isArray(record.connection)) {
@@ -77,7 +80,7 @@ function checkRecord(record) {
 // The project's record, or null when there is none or it is unreadable.
 export function readProject(project) {
   try {
-    return checkRecord(JSON.parse(fs.readFileSync(path.join(projectFolder(project), 'project.json'), 'utf8')));
+    return checkRecord(JSON.parse(fs.readFileSync(path.join(projectFolder(project), 'project.json'), 'utf8')), project);
   } catch {
     return null;
   }
@@ -117,7 +120,7 @@ export function registeredProjects() {
 // Writes the record whole: a temporary file in the same folder, then a rename.
 export function writeProject(project, record) {
   const folder = projectFolder(project);
-  checkRecord(record);
+  checkRecord(record, project);
   const file = path.join(folder, 'project.json');
   const kept = {
     folder: record.folder, remoteUrl: record.remoteUrl, host: record.host, repo: record.repo, connection: record.connection,
