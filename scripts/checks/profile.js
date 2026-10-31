@@ -23,6 +23,11 @@ export const CHECK_SERVICES = Object.freeze([
   'com.apple.system.notification_center',
   'com.apple.system.opendirectoryd.libinfo',
 ]);
+// What tests alone also need: the read-only map of file types. Without it `UTType(filenameExtension:)` gives a made-up type
+// and a project's passing tests read as red (the real project of check 82). It hands out the map and starts nothing:
+// starting an app takes `launchservicesd` and the `lsopen` operation, and both stay refused. Its partner that writes the
+// map, `com.apple.lsd.modifydb`, stays out, as `prepare` needs neither.
+const TEST_SERVICES = Object.freeze(['com.apple.lsd.mapdb']);
 // What fetching over the internet also needs: names and certificates.
 const NETWORK_SERVICES = Object.freeze([
   'com.apple.dnssd.service',
@@ -65,7 +70,7 @@ export function checkProfile({ paths, main, stage, network, denied, temp, userHo
     '(allow ipc-posix-shm)',
     '(allow ipc-posix-sem)',
     `(allow file-ioctl ${DEVICES})`,
-    `(allow mach-lookup ${[...CHECK_SERVICES, ...(online ? NETWORK_SERVICES : [])].map((name) => `(global-name ${quoted(name)})`).join(' ')})`,
+    `(allow mach-lookup ${[...CHECK_SERVICES, ...(stage === 'test' ? TEST_SERVICES : []), ...(online ? NETWORK_SERVICES : [])].map((name) => `(global-name ${quoted(name)})`).join(' ')})`,
     '(allow file-read*)',
     `(deny file-read* ${subpaths(denied)})`,
   ];

@@ -51,6 +51,13 @@ test('the services that start programs, or name the per-user folders, are left o
   for (const name of ['com.apple.bsd.dirhelper', 'com.apple.testmanagerd.control', 'com.apple.coreservices.launchservicesd']) assert.ok(!CHECK_SERVICES.includes(name), name);
 });
 
+test('only the tests have the map of file types, and never the service that writes it', () => {
+  const service = /"com\.apple\.lsd\.mapdb"/;
+  assert.match(profile({ stage: 'test' }), service);
+  assert.doesNotMatch(profile({ stage: 'prepare' }), service);
+  for (const stage of ['test', 'prepare']) assert.doesNotMatch(profile({ stage }), /lsd\.modifydb/);
+});
+
 test('a head writes its own folders and never main-home', () => {
   const writes = rules(profile(), '(allow file-write*').join('\n');
   assert.ok(writes.includes(`(subpath "${paths().tree}")`));

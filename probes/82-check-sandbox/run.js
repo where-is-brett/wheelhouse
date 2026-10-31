@@ -160,7 +160,7 @@ function agentPlist(paths, way, label) {
 async function compiledOpener(paths) {
   const source = path.join(paths.root, 'opener.swift');
   const program = path.join(paths.root, 'opener');
-  fs.writeFileSync(source, 'import AppKit\nlet done = NSWorkspace.shared.open(URL(fileURLWithPath: CommandLine.arguments[1]))\nRunLoop.current.run(until: Date().addingTimeInterval(3))\nexit(done ? 0 : 3)\n');
+  fs.writeFileSync(source, 'import AppKit\nimport CoreServices\nlet url = URL(fileURLWithPath: CommandLine.arguments[1])\nlet done = CommandLine.arguments.count > 2 ? LSOpenCFURLRef(url as CFURL, nil) == 0 : NSWorkspace.shared.open(url)\nRunLoop.current.run(until: Date().addingTimeInterval(3))\nexit(done ? 0 : 3)\n');
   const got = await run('/usr/bin/xcrun', ['swiftc', '-O', source, '-o', program], { env: { DEVELOPER_DIR: XCODE }, timeoutMs: 180000 });
   return got.code === 0 ? program : null;
 }
@@ -189,7 +189,10 @@ function ways(paths, opener, ctx) {
     { way: 'launchctl-submit', run: (way) => `/bin/launchctl submit -l ${label(way)} -- /bin/sh ${shq(payload(paths, way))}`, control: true, proof: 'launchctl-submit', after: (way) => ['/bin/launchctl', ['remove', label(way)]] },
     { way: 'launchctl-bootstrap', run: (way) => `/bin/launchctl bootstrap gui/${uid} ${shq(agentPlist(paths, way, label(way)))}`, control: true, proof: 'launchctl-bootstrap', after: (way) => ['/bin/launchctl', ['bootout', `gui/${uid}/${label(way)}`]] },
     { way: 'open-app', run: (way) => `/usr/bin/open -g -n ${shq(payloadApp(paths, way))}`, control: true, proof: 'open-app' },
-    ...(opener ? [{ way: 'compiled-open-app', run: (way) => `${shq(opener)} ${shq(payloadApp(paths, way))}`, control: true, proof: 'compiled-open-app' }] : []),
+    ...(opener ? [
+      { way: 'compiled-open-app', run: (way) => `${shq(opener)} ${shq(payloadApp(paths, way))}`, control: true, proof: 'compiled-open-app' },
+      { way: 'compiled-ls-open-app', run: (way) => `${shq(opener)} ${shq(payloadApp(paths, way))} ls`, control: true, proof: 'compiled-ls-open-app' },
+    ] : []),
     { way: 'osascript-finder-open', run: (way) => `/usr/bin/osascript -e ${shq(`tell application "Finder" to open POSIX file ${JSON.stringify(payloadApp(paths, way))}`)}`, proof: 'osascript-finder-open' },
     { way: 'osascript-terminal-script', run: (way) => `/usr/bin/osascript -e ${shq(`tell application "Terminal" to do script ${JSON.stringify(`/bin/sh ${payload(paths, way)}; exit`)}`)}`, proof: 'osascript-terminal-script' },
     { way: 'login-item-events', run: (way) => `/usr/bin/osascript -e ${shq(`tell application "System Events" to make login item at end with properties {path:${JSON.stringify(payloadApp(paths, way))}, hidden:true}`)}`, proof: null, loginItem: (way) => `Way${way.replaceAll('-', '')}` },
@@ -268,6 +271,18 @@ async function phaseWays() {
 }
 
 // ---- A real build ------------------------------------------------------------------------------------------------
+
+// The lines of a test run that name no test: its counts and its word. Test and suite names stay out of every report.
+const summaryOf = (lines) => lines.filter((line) => /^\W*Test run with \d+ tests?\b|Executed \d+ tests?,|\*\* .* \*\*|Build complete|Compiling|error: (?:fatal|terminated)/.test(line) && !/Test Suite|Test Case|\.swift/.test(line));
+
+// A path in a refusal, cut to the folders that say where it was, with no file's name.
+function placeOf(what, root) {
+  return what.replace(/\/\S.*$/, (full) => {
+    if (full.startsWith(`${root}/`)) return `<check>/${full.slice(root.length + 1).split('/')[0]}`;
+    if (full.startsWith(`${REAL_HOME}/`)) return `~/${full.slice(REAL_HOME.length + 1).split('/').slice(0, 3).join('/')}`;
+    return full.split('/').slice(0, 5).join('/');
+  });
+}
 
 // Takes the project's names out of a line.
 function maskerOf(names) {
@@ -409,7 +424,7 @@ async function stage(name, profile, argv, { paths, minutes, log, mask }) {
   const seconds = Math.round((Date.now() - started) / 1000);
   const processes = await stopWatch();
   const left = await leftovers(paths.root);
-  const lines = tail.split('\n').filter((line) => /error:|\*\* .* \*\*|Executed \d+ test|Test Suite 'All|sandbox|Operation not permitted|not permitted|denied|Could not|Unable to|Failing tests/i.test(line)).slice(-40).map(mask);
+  const lines = summaryOf(tail.split('\n').map(mask)).slice(-40);
   const refused = (await denials(since)).map(([what, count]) => [mask(what), count]);
   return { name, code, timedOut, left, seconds, processes, lines, refused };
 }
@@ -578,7 +593,7 @@ async function phaseRunner() {
     const got = await runCheck({ project: 'project', commit, main: true, settings, source });
     report.result = got.result;
     report.minutes = got.minutes;
-    report.tail = mask(got.tail).split('\n').slice(-12);
+    report.summary = summaryOf(mask(got.tail).split('\n'));
     report.proofsBesideTheSecret = fs.readdirSync(paths.outside).filter((n) => n.startsWith('proof-'));
   } finally {
     await finish(paths, report);
@@ -688,8 +703,13 @@ async function phaseHang() {
     await sleep(2500);
     report.result = got.result;
     report.minutes = got.minutes;
-    report.tail = mask(got.tail).split('\n').slice(-12);
-    report.refused = [...refusals.counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 80).map(([what, count]) => [mask(what.replaceAll(paths.root, '<check>')), count]);
+    report.summary = summaryOf(mask(got.tail).split('\n'));
+    const places = new Map();
+    for (const [what, count] of refusals.counts) {
+      const place = mask(placeOf(what, paths.root));
+      places.set(place, (places.get(place) ?? 0) + count);
+    }
+    report.refused = [...places.entries()].sort((a, b) => b[1] - a[1]).slice(0, 80);
     report.samples = samples;
     report.proofsBesideTheSecret = fs.readdirSync(paths.outside).filter((n) => n.startsWith('proof-'));
   } finally {
