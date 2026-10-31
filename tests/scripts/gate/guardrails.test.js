@@ -261,3 +261,17 @@ test('readConfig: testCommand is one line of text when given, and any other shap
     assert.throws(() => readConfig(JSON.stringify({ ...base, testCommand: given })), { message: "The project's Wheelhouse configuration can't be read" }, JSON.stringify(given));
   }
 });
+
+test('readConfig: checks and safekeeping take their own keys, and any other shape can\'t be read', () => {
+  const base = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [] };
+  const message = "The project's Wheelhouse configuration can't be read";
+  const checks = { where: 'here', prepare: 'npm ci', minutes: 20, network: false };
+  assert.deepEqual(readConfig(JSON.stringify({ ...base, checks })).checks, checks);
+  assert.deepEqual(readConfig(JSON.stringify({ ...base, safekeeping: { days: 7, hereDays: 3 } })).safekeeping, { days: 7, hereDays: 3 });
+  for (const given of [[], 'here', { where: 'there' }, { prepare: '' }, { prepare: 'a\nb' }, { minutes: 0 }, { minutes: 1.5 }, { minutes: '20' }, { network: 'yes' }, { other: 1 }]) {
+    assert.throws(() => readConfig(JSON.stringify({ ...base, checks: given })), { message }, JSON.stringify(given));
+  }
+  for (const given of [[], { days: 0 }, { hereDays: '3' }, { other: 1 }]) {
+    assert.throws(() => readConfig(JSON.stringify({ ...base, safekeeping: given })), { message }, JSON.stringify(given));
+  }
+});

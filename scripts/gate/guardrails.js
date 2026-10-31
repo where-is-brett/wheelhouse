@@ -155,6 +155,18 @@ const previewOk = (p) => isObject(p) && Object.keys(p).every((k) => PREVIEW_KEYS
 // a piece of work names none.
 const testCommandOk = (t) => typeof t === 'string' && t.trim() !== '' && !/[\r\n]/.test(t) && t.length <= 500;
 
+// How a project's checks run on this computer (local checks, spec 4.2), and how long safekeeping waits (spec 8.2).
+const positiveWhole = (n) => Number.isInteger(n) && n >= 1;
+const CHECKS_KEYS = ['where', 'prepare', 'minutes', 'network'];
+const checksOk = (c) => isObject(c) && Object.keys(c).every((k) => CHECKS_KEYS.includes(k))
+  && (c.where === undefined || ['here', 'host'].includes(c.where))
+  && (c.prepare === undefined || testCommandOk(c.prepare))
+  && (c.minutes === undefined || positiveWhole(c.minutes))
+  && (c.network === undefined || typeof c.network === 'boolean');
+const SAFEKEEPING_KEYS = ['days', 'hereDays'];
+const safekeepingOk = (s) => isObject(s) && Object.keys(s).every((k) => SAFEKEEPING_KEYS.includes(k))
+  && (s.days === undefined || positiveWhole(s.days)) && (s.hereDays === undefined || positiveWhole(s.hereDays));
+
 function shapeOk(c) {
   if (!isObject(c) || c.v !== 1) return false;
   if (!Array.isArray(c.criticalAreas) || !c.criticalAreas.every((a) => (
@@ -171,6 +183,8 @@ function shapeOk(c) {
   if (c.signsApps !== undefined && typeof c.signsApps !== 'boolean') return false;
   if (c.preview !== undefined && !previewOk(c.preview)) return false;
   if (c.testCommand !== undefined && !testCommandOk(c.testCommand)) return false;
+  if (c.checks !== undefined && !checksOk(c.checks)) return false;
+  if (c.safekeeping !== undefined && !safekeepingOk(c.safekeeping)) return false;
   return buildLoopOk(c);
 }
 

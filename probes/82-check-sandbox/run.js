@@ -25,7 +25,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { run, withoutGitVars } from '../../scripts/lib/run.js';
-import { testEnv } from '../../scripts/lean/store.js';
+import { testEnv } from '../../scripts/lib/local-git.js';
 import { credentialPaths } from '../../scripts/lib/credentials.js';
 import { archonDenyRules, KEYCHAINS } from '../../scripts/protection/settings.js';
 import { writeFixture } from './fixture.js';
