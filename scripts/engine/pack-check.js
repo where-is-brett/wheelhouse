@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startedAsScript } from '../lib/started-as-script.js';
-import { SKILL_COPIES } from '../lineage/copies.js';
+import { skillCopyNames } from '../lineage/copies.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const PACK_DIR = path.join(ROOT, 'engine', 'archon', 'pack');
@@ -104,7 +104,7 @@ function waitsAfter(nodes, include) {
 // The problems with the pack in `dir`, as plain lines; none means it may be built. `skillCopies` are the plain names
 // of the skill copies the plugin carries. A workflow another one includes is a task block: it takes no work input
 // (it runs inside the lane's run), and its steps' blocked exits are waited on by the lane after the block.
-export function checkPack(dir = PACK_DIR, { skillCopies = SKILL_COPIES } = {}) {
+export function checkPack(dir = PACK_DIR, { skillCopies = skillCopyNames() } = {}) {
   const found = [];
   const prompts = path.join(dir, 'prompts');
   const names = fs.readdirSync(dir).filter((name) => name.endsWith('.yaml')).sort();

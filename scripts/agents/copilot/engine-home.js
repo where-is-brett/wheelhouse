@@ -16,13 +16,10 @@ import { fileURLToPath } from 'node:url';
 import { copilotHome, file as hookFile, registration, writeRegistration } from '../../../adapters/copilot/hooks.js';
 import { COPILOT_STATE, signInOf } from '../../../adapters/copilot/sessions.js';
 import { copilotCliPaths } from '../../engine/archon/copilot-cli.js';
-import { SKILL_COPIES } from '../../lineage/copies.js';
+import { skillCopyNames } from '../../lineage/copies.js';
 import { engineDir } from '../../lib/paths.js';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
-
-// The skills the home holds: every copy the plugin carries, by its plain name.
-export const ENGINE_HOME_SKILLS = SKILL_COPIES;
 
 // Throws when any folder from the engine folder down to `dir` is a link or a file, so nothing written or removed
 // under `dir` can land outside the engine folder. Folders not made yet are not looked at.
@@ -53,7 +50,7 @@ function copySkill(from, to, name) {
 // Writes the clean home and returns its path. The sign-in is read first, so a computer with none refuses before the
 // home is touched; config.json is written last, so a home is never signed in without its guards. `root` is the
 // plugin's folder the registration and the skills come from; `node` and `platform` are the registration's.
-export function writeEngineHome({ engine = engineDir(), signedInFrom = copilotHome(), node = process.execPath, root = PLUGIN_ROOT, platform = process.platform, skills = ENGINE_HOME_SKILLS } = {}) {
+export function writeEngineHome({ engine = engineDir(), signedInFrom = copilotHome(), node = process.execPath, root = PLUGIN_ROOT, platform = process.platform, skills = skillCopyNames() } = {}) {
   const home = copilotCliPaths(engine).home;
   const signIn = signInOf(signedInFrom);
   refuseLinkedPath(engine, home);

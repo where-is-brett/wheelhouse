@@ -52,8 +52,9 @@ export function readCopies(root = repoRoot()) {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-// The copies' names, for the pack check: a step may name only these (as wheelhouse:<name>).
-export const SKILL_COPIES = Object.freeze(readCopies().map((copy) => copy.name));
+// The copies' names, for the pack check: a step may name only these (as wheelhouse:<name>). Read when asked for, never
+// on import: most of the plugin imports this file, and a skills folder that can't be read mustn't stop what never uses it.
+export const skillCopyNames = () => readCopies().map((copy) => copy.name);
 
 // Each copy source file that differs in a candidate upstream: [{ copy, upstream, path }]. `candidates` maps an
 // upstream's name to { dir }, a copy of its new release; a source with no candidate is not looked at.

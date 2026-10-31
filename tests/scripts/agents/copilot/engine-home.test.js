@@ -3,10 +3,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { writeEngineHome, engineHomeProblem, ENGINE_HOME_SKILLS } from '../../../../scripts/agents/copilot/engine-home.js';
+import { writeEngineHome, engineHomeProblem } from '../../../../scripts/agents/copilot/engine-home.js';
 import { copilotCliPaths } from '../../../../scripts/engine/archon/copilot-cli.js';
 import { registration, file as hookFile } from '../../../../adapters/copilot/hooks.js';
-import { SKILL_COPIES } from '../../../../scripts/lineage/copies.js';
+import { skillCopyNames } from '../../../../scripts/lineage/copies.js';
 import { registerLean, updateLean } from '../../../../scripts/lean/project.js';
 import { run } from '../../../../scripts/lib/run.js';
 import { WORKTREE_PATH } from '../../../../scripts/engine/parts.js';
@@ -30,9 +30,9 @@ test('the clean home holds the guards as the CLI\'s own hooks, the plain-named s
   // The guards: Wheelhouse's registration, exactly as setup writes it for a person's own home.
   assert.deepEqual(JSON.parse(fs.readFileSync(hookFile({ home }), 'utf8')), registration({ node: process.execPath, root: ROOT, platform: 'darwin' }));
   // The skills: every copy the plugin carries, by its plain name, whole.
-  assert.deepEqual(ENGINE_HOME_SKILLS, SKILL_COPIES);
-  assert.deepEqual(fs.readdirSync(path.join(home, 'skills')).sort(), [...SKILL_COPIES].sort());
-  for (const name of SKILL_COPIES) {
+  const copies = skillCopyNames();
+  assert.deepEqual(fs.readdirSync(path.join(home, 'skills')).sort(), [...copies].sort());
+  for (const name of copies) {
     assert.equal(fs.readFileSync(path.join(home, 'skills', name, 'SKILL.md'), 'utf8'), fs.readFileSync(path.join(ROOT, 'skills', name, 'SKILL.md'), 'utf8'));
   }
   // The sign-in keys and nothing else of the person's settings.
