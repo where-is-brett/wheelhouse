@@ -74,7 +74,8 @@ export async function gitAloneWorld(fn, { check } = {}) {
   const frozen = tempFolder('wh-frozen-');
   const engine = fakeEngine({ recordings, artefacts: tempFolder('wh-artefacts-'), source: frozen });
   const tools = [];
-  const guarded = guardedRun(run, { log: tools });
+  const hostGuard = guardedRun(run, { log: tools });
+  const adapterFor = (project, { env, write }) => adapterOf(readProject(project), { run: hostGuard, env, write });
   try {
     await as(home, async () => {
       writeProject(LOCAL_P, { folder, remoteUrl: null, host: 'local', repo: `local/${LOCAL_P}`, connection: { mode: 'none' } });
@@ -85,7 +86,7 @@ export async function gitAloneWorld(fn, { check } = {}) {
       buildPack({ out: path.join(engineDir(), 'pack') });
       buildPack({ out: path.join(frozen, 'project') });
       const helper = await startHelper({
-        run: guarded, address: testAddress(home), adapterFor: (project, { env, write }) => adapterOf(readProject(project), { run: guarded, env, write }), envFor: async () => ({}), spawn: stubSpawn(),
+        run: hostGuard, address: testAddress(home), adapterFor, envFor: async () => ({}), spawn: stubSpawn(),
         engineFor: (project) => (project === LOCAL_P ? engine : null), ...(check ? { check } : {}),
       });
       const client = helperClient({ address: helper.address });
