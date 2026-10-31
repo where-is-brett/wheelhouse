@@ -9,6 +9,7 @@
 //
 // The last matching rule wins, so the order of the lines below carries meaning.
 
+import path from 'node:path';
 import { ENGINE_ROOM_PORT } from '../protection/archon.js';
 
 // The system services a build tool can't work without, each answering a question and starting nothing. Three are left out
@@ -102,7 +103,7 @@ export function checkProfile({ paths, main, stage, network, denied, temp, userHo
   // A program must be able to look at the folders on the way down to the check folder to start there, though nothing here
   // lets it list them.
   lines.push(
-    `(allow file-read-metadata ${foldersAbove(paths.root).map(literal).join(' ')})`,
+    `(allow file-read-metadata ${foldersAbove(path.dirname(paths.tree)).map(literal).join(' ')})`,
     `(allow file-read* ${subpaths([paths.tree, paths.gitDir, ownHome])})`,
     `(allow file-write* ${subpaths([paths.tree, ownHome, ...temp])} ${DEVICES})`,
     // The folders themselves stay: a test that swapped one for a link would have the helper's next git calls write and

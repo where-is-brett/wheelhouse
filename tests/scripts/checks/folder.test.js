@@ -1,16 +1,19 @@
 // tests/scripts/checks/folder.test.js
 // The check folder: a copy of exactly one commit, with no link back, that nothing a test leaves can steer.
 import { test } from 'node:test';
+import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { checkPaths, prepareFolder } from '../../../scripts/checks/folder.js';
+import { safeGit } from '../../../scripts/lib/safe-git.js';
+import { checkPaths, prepareFolder, sweepHeads, tidyProfile } from '../../../scripts/checks/folder.js';
 import { makeBareRemote, g } from '../../helpers/git-fixture.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { run } from '../../../scripts/lib/run.js';
 import { engineDir } from '../../../scripts/lib/paths.js';
 
 const unix = { skip: process.platform === 'win32' };
+const mac = { skip: process.platform !== 'darwin' };
 
 async function withHome(fn) {
   const home = path.join(tempFolder('wh-folder-'), 'home');
@@ -110,9 +113,94 @@ test('a main-line check starts from an empty tree', unix, async () => {
     const p = await prepareFolder({ project: 'p', commit: s.first, main: false, source: s.url });
     fs.mkdirSync(path.join(p.tree, 'out'));
     fs.writeFileSync(path.join(p.tree, 'out', 'kept'), 'built by a head');
-    await prepareFolder({ project: 'p', commit: s.second, main: true, source: s.url });
-    assert.equal(fs.existsSync(path.join(p.tree, 'out')), false);
-    assert.equal(read(p, 'a.txt'), 'two\n');
+    const m = await prepareFolder({ project: 'p', commit: s.second, main: true, source: s.url });
+    assert.equal(fs.existsSync(path.join(m.tree, 'out')), false);
+    assert.equal(read(m, 'a.txt'), 'two\n');
+  });
+});
+
+test('a main-line check gets a new folder each time, in no head\'s, and the last one goes', unix, async () => {
+  await withHome(async () => {
+    const s = await source();
+    const head = await prepareFolder({ project: 'p', commit: s.first, main: false, source: s.url });
+    const one = await prepareFolder({ project: 'p', commit: s.first, main: true, source: s.url });
+    const two = await prepareFolder({ project: 'p', commit: s.second, main: true, source: s.url });
+    assert.notEqual(one.tree, two.tree);
+    assert.notEqual(path.dirname(one.tree), path.dirname(head.tree));
+    assert.ok(!one.tree.startsWith(`${path.dirname(head.tree)}/`));
+    assert.equal(fs.existsSync(one.tree), false);
+    assert.equal(fs.existsSync(head.tree), true);
+  });
+});
+
+test('each work has its own tree and home, so one work\'s build output never reaches another', unix, async () => {
+  await withHome(async () => {
+    const s = await source();
+    const a = await prepareFolder({ project: 'p', commit: s.first, main: false, work: 'work-a', source: s.url });
+    fs.mkdirSync(path.join(a.tree, 'out'));
+    fs.writeFileSync(path.join(a.tree, 'out', 'kept'), 'built by another work');
+    const b = await prepareFolder({ project: 'p', commit: s.first, main: false, work: 'work-b', source: s.url });
+    assert.notEqual(a.tree, b.tree);
+    assert.notEqual(a.home, b.home);
+    assert.notEqual(a.gitDir, b.gitDir);
+    assert.equal(fs.existsSync(path.join(b.tree, 'out')), false);
+    const again = await prepareFolder({ project: 'p', commit: s.second, main: false, work: 'work-a', source: s.url });
+    assert.equal(fs.readFileSync(path.join(again.tree, 'out', 'kept'), 'utf8'), 'built by another work');
+  });
+});
+
+test('a work that has ended loses its folders, and one still open keeps them', unix, async () => {
+  await withHome(async () => {
+    const s = await source();
+    const ended = await prepareFolder({ project: 'p', commit: s.first, main: false, work: 'ended', source: s.url });
+    const open = await prepareFolder({ project: 'p', commit: s.first, main: false, work: 'open', source: s.url });
+    await sweepHeads('p', ['open']);
+    assert.equal(fs.existsSync(path.dirname(ended.tree)), false);
+    assert.equal(fs.existsSync(open.tree), true);
+  });
+});
+
+test('a read-only folder a head left doesn\'t stop its folders being taken away', unix, async () => {
+  await withHome(async () => {
+    const s = await source();
+    const p = await prepareFolder({ project: 'p', commit: s.first, main: false, work: 'w', source: s.url });
+    const shut = path.join(p.tree, 'out', 'shut');
+    fs.mkdirSync(shut, { recursive: true });
+    fs.chmodSync(shut, 0o500);
+    await sweepHeads('p', []);
+    assert.equal(fs.existsSync(p.tree), false);
+  });
+});
+
+test('nothing the helper does in a head\'s tree can write outside it, or to the git directory\'s settings', mac, async () => {
+  await withHome(async () => {
+    const s = await source();
+    const p = await prepareFolder({ project: 'p', commit: s.first, main: false, source: s.url });
+    const outside = path.join(p.root, 'outside.txt');
+    const run = (command) => spawnSync('/usr/bin/sandbox-exec', ['-p', tidyProfile(p), '/bin/sh', '-c', command], { cwd: p.tree, encoding: 'utf8' });
+    assert.equal(run(`echo x > '${p.tree}/a'`).status, 0);
+    assert.notEqual(run(`echo x > '${outside}'`).status, 0);
+    assert.notEqual(run(`echo x >> '${p.gitDir}/config'`).status, 0);
+    assert.notEqual(run(`echo x > '${p.gitDir}/hooks/post-checkout'`).status, 0);
+    assert.notEqual(run(`curl -s -m 2 https://example.com`).status, 0);
+    assert.equal(fs.existsSync(outside), false);
+  });
+});
+
+test('a folder swapped for a link mid-step leads nowhere: the tree is checked out through the narrow sandbox', mac, async () => {
+  await withHome(async () => {
+    const s = await source();
+    const p = await prepareFolder({ project: 'p', commit: s.first, main: false, source: s.url });
+    const target = tempFolder('wh-swap-');
+    const seen = [];
+    const watched = (file, args, more) => {
+      seen.push(`${file} ${args.includes('checkout') ? 'checkout' : ''}`);
+      return run(file, args, more);
+    };
+    fs.symlinkSync(target, path.join(p.tree, 'out'));
+    await prepareFolder({ project: 'p', commit: s.second, main: false, source: s.url, run: watched });
+    assert.ok(seen.includes('/usr/bin/sandbox-exec checkout'));
+    assert.deepEqual(fs.readdirSync(target), []);
   });
 });
 
@@ -166,20 +254,18 @@ test('a head check puts a real folder back where a test left a link, and the lin
   });
 });
 
-test('a link a leftover job puts where the .git file goes is never written through', unix, async (t) => {
+test('a link a leftover job puts where the .git file goes is never written through', unix, async () => {
   await withHome(async () => {
     const s = await source();
     const first = await prepareFolder({ project: 'p', commit: s.first, main: false, source: s.url });
     const target = path.join(tempFolder('wh-race-'), 'keep.txt');
     fs.writeFileSync(target, 'keep');
     const mark = path.join(first.tree, '.git');
-    const remove = fs.rmSync;
-    t.mock.method(fs, 'rmSync', (file, options) => {
-      remove(file, options);
-      if (file === mark) fs.symlinkSync(target, mark);
-    });
-    await assert.rejects(prepareFolder({ project: 'p', commit: s.first, main: false, source: s.url }));
+    fs.rmSync(mark);
+    fs.symlinkSync(target, mark);
+    const next = await prepareFolder({ project: 'p', commit: s.first, main: false, source: s.url });
     assert.equal(fs.readFileSync(target, 'utf8'), 'keep');
+    assert.equal(fs.lstatSync(path.join(next.tree, '.git')).isFile(), true);
   });
 });
 
@@ -191,7 +277,7 @@ test('a link left in the tree isn\'t followed out of it', unix, async () => {
     fs.mkdirSync(outside);
     fs.writeFileSync(path.join(outside, 'keep'), 'keep');
     fs.symlinkSync(outside, path.join(p.tree, 'out'));
-    await prepareFolder({ project: 'p', commit: s.second, main: true, source: s.url });
+    await prepareFolder({ project: 'p', commit: s.second, main: false, source: s.url });
     assert.equal(fs.readFileSync(path.join(outside, 'keep'), 'utf8'), 'keep');
   });
 });

@@ -146,10 +146,10 @@ function deniedPaths() {
   return [...new Set(sandboxDenyPaths().flatMap((p) => [p, real(p)]))];
 }
 
-// Runs the check at `commit` and gives `{ commit, command, result, minutes, tail, clean? }`, with `command` the digest of the
+// Runs the check at `commit`, a head of `work` or the main line, and gives `{ commit, command, result, minutes, tail, clean? }`, with `command` the digest of the
 // test command, `tail` the end of the output, up to 64 KB, and `clean` on a main-line check, which starts from an empty tree. `settings` come from the default branch (settings.js).
 export async function runCheck({
-  project, commit, main, settings, source, signal, git, spawn = nodeSpawn, now = () => new Date(), platform = process.platform,
+  project, commit, main, work = null, settings, source, signal, git, spawn = nodeSpawn, now = () => new Date(), platform = process.platform,
   sandbox = SANDBOX, profile = checkProfile, limitMs = (settings.minutes ?? DEFAULT_MINUTES) * 60000, graceMs = GRACE_MS,
 }) {
   const startedAt = now().getTime();
@@ -172,7 +172,7 @@ export async function runCheck({
   let ownHome;
   let tmp;
   try {
-    paths = await prepareFolder({ project, commit, main, source, ...(git ? { git } : {}) });
+    paths = await prepareFolder({ project, commit, main, work, source, ...(git ? { git } : {}) });
     ownHome = main ? paths.mainHome : paths.home;
     tmp = path.join(ownHome, 'tmp');
     realFolder(tmp);

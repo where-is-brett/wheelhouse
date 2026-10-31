@@ -5,6 +5,7 @@
 // runs apart from the tick, which never waits for one. A check that couldn't run twice stops running until a new head, a
 // changed command or the director's Try again, so it can't keep running or keep raising cards. On a project whose checks
 // run on the host nothing is run or reported: the runner only watches for host checks that have stopped reporting.
+import { sweepHeads } from './folder.js';
 import { dueChecks, withCheckTurn } from './queue.js';
 import { writeCheck } from './record.js';
 import { runCheck } from './run.js';
@@ -39,7 +40,7 @@ const isRed = (word) => word === 'failed' || word === 'timed-out';
 // - `openHeads()` [{ head, work }], the open changes' heads as the host has them, for a head nothing told the helper of.
 export function checkRunner({
   project, repo, permissionLink, adapter, facts, source, results, write, onRed, card, answerOf = () => null, ended = () => false, stopped = () => false,
-  openHeads = async () => [], now = () => new Date(), run = runCheck, turn = withCheckTurn,
+  openHeads = async () => [], now = () => new Date(), run = runCheck, turn = withCheckTurn, sweep = sweepHeads,
 }) {
   let active = null;
   let abort = null;
@@ -128,7 +129,7 @@ export function checkRunner({
     });
   }
 
-  async function checkOne({ commit, main }, { settings, digest }) {
+  async function checkOne({ commit, main, work }, { settings, digest }) {
     const controller = new AbortController();
     abort = controller;
     await report(commit, digest, true);
@@ -137,7 +138,7 @@ export function checkRunner({
       const from = await source();
       change((q) => { q.checkingUntil = new Date(now().getTime() + settings.minutes * 60000).toISOString(); });
       try {
-        return await run({ project, commit, main, settings, source: from, signal: controller.signal });
+        return await run({ project, commit, main, work, settings, source: from, signal: controller.signal });
       } finally {
         change((q) => { q.checkingUntil = null; });
       }
@@ -229,10 +230,13 @@ export function checkRunner({
     for (const commit of kept.unposted) await report(commit, f.digest);
     await takeOpenHeads(f.digest);
     if (active !== null) return;
-    const held = readQueue(project).tries;
-    const due = dueChecks({ main: f.main, heads: readQueue(project).heads.map((h) => h.commit), results: results(), digest: f.digest })
-      .filter(({ commit }) => (held[`${commit}:${f.digest}`] ?? 0) < NOT_RAN_LIMIT);
-    if (due.length === 0 || stopped()) return;
+    const { tries: held, heads } = readQueue(project);
+    const workOf = (commit) => heads.find((h) => h.commit === commit)?.work ?? null;
+    const due = dueChecks({ main: f.main, heads: heads.map((h) => h.commit), results: results(), digest: f.digest })
+      .filter(({ commit }) => (held[`${commit}:${f.digest}`] ?? 0) < NOT_RAN_LIMIT).map((c) => ({ ...c, work: workOf(c.commit) }));
+    // Ended work's folders go while no check runs.
+    await sweep(project, heads.map((h) => h.work)).catch(() => {});
+    if (due.length === 0 || stopped() || active !== null) return;
     // A check whose record can't be kept counts as one that couldn't run, or it would run again on every tick.
     active = checkOne(due[0], f).catch(async () => {
       if (settleTries({ result: 'could-not-run' }, due[0].commit, f.digest, false).streak >= NOT_RAN_LIMIT) await askNotRan();
