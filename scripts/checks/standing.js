@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { engineDir } from '../lib/paths.js';
 
-const EMPTY = () => ({ heads: [], unposted: [], tries: {}, streak: 0, asked: {}, cards: 0, readings: [], hostChecksOff: false, checkingUntil: null, waitingForPermission: false });
+const EMPTY = () => ({ heads: [], unposted: [], tries: {}, streak: 0, asked: {}, cards: 0, readings: [], taken: [], hostChecksOff: false, checkingUntil: null, waitingForPermission: false });
 
 export const queueFile = (project) => path.join(engineDir(), 'checks', project, 'queue.json');
 

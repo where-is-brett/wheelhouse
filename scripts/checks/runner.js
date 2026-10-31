@@ -17,6 +17,7 @@ export const CHECK_TRY_AGAIN = 'Try again';
 export const CHECK_LEAVE_IT = 'Leave it';
 const NOT_RAN_LIMIT = 2;
 const KEPT_READINGS = 3;
+const KEPT_TAKEN = 200;
 
 const STATUS = {
   passed: { state: 'success', description: 'The tests passed on this computer' },
@@ -84,7 +85,7 @@ export function checkRunner({
     what: 'GitHub\'s checks for this project aren\'t running: on the last two versions they waited or stopped with no job started, so nothing can be added to the main line.',
     why: 'Wheelhouse isn\'t allowed to change a project\'s settings on GitHub, so turning those checks off takes your click, at level 3.',
     options: [
-      { label: RUN_CHECKS_HERE, says: `Open https://github.com/${repo}/settings/actions, choose Disable actions and press Save. You can turn them back on there at any time. Wheelhouse sees them stop, and runs the checks on this computer.` },
+      { label: RUN_CHECKS_HERE, says: `Open https://github.com/${repo}/settings/actions, choose Disable actions and press Save. You can turn them back on there at any time. If https://github.com/${repo}/settings/rules asks for those checks by name, take them off the list there too. Wheelhouse sees them stop, and runs the checks on this computer.` },
       { label: LEAVE_THEM, says: 'Wheelhouse keeps waiting for GitHub\'s checks, and finished work waits with them.' },
     ],
     recommendation: RUN_CHECKS_HERE,
@@ -132,7 +133,7 @@ export function checkRunner({
     abort = controller;
     await report(commit, digest, true);
     const answer = await turn(async () => {
-      if (controller.signal.aborted) return null;
+      if (controller.signal.aborted || stopped()) return null;
       const from = await source();
       change((q) => { q.checkingUntil = new Date(now().getTime() + settings.minutes * 60000).toISOString(); });
       try {
@@ -144,12 +145,13 @@ export function checkRunner({
     if (answer === null) return;
     const event = await writeCheck(project, answer, { write });
     const kept = settleTries(answer, commit, digest, controller.signal.aborted);
+    // Under All stop the report waits; the dispatcher holds what is sent back until it lifts.
     if (stopped()) {
       change((q) => { if (!q.unposted.includes(commit)) q.unposted.push(commit); });
-      return;
+    } else {
+      await report(commit, digest);
+      if (kept.streak >= NOT_RAN_LIMIT) await askNotRan();
     }
-    await report(commit, digest);
-    if (kept.streak >= NOT_RAN_LIMIT) await askNotRan();
     if (main || !isRed(answer.result)) return;
     const head = readQueue(project).heads.find((h) => h.commit === commit);
     if (!head || head.redFor === digest) return;
@@ -189,11 +191,13 @@ export function checkRunner({
     if (!kept.asked.broken && stuckHostChecks(kept.readings)) await askBroken();
   }
 
-  // Queues a head, once for each head of a work.
+  // Queues a head in its work's place. A head taken again keeps what is known of it.
   function queued(head, work) {
     const stamp = now().toISOString();
     change((q) => {
-      q.heads = [...q.heads.filter((h) => h.work !== work && h.commit !== head), { commit: head, work }];
+      const same = q.heads.find((h) => h.commit === head && h.work === work);
+      q.heads = [...q.heads.filter((h) => h.work !== work && h.commit !== head), same ?? { commit: head, work }];
+      q.taken = [...q.taken.filter((c) => c !== head), head].slice(-KEPT_TAKEN);
       q.readings = [...q.readings.filter((r) => r.head !== head), { head, firstSeen: stamp, readAt: stamp, contexts: [] }].slice(-KEPT_READINGS);
     });
   }
@@ -201,10 +205,11 @@ export function checkRunner({
   async function takeOpenHeads(digest) {
     let open = [];
     try { open = await openHeads(); } catch { return; }
+    // Each head once, so a work's older change left open can't take the place of its newer one again.
     for (const { head, work } of open) {
-      if (readQueue(project).heads.some((h) => h.commit === head)) continue;
+      if (readQueue(project).taken.includes(head) || ended(work)) continue;
       queued(head, work);
-      await report(head, digest, true);
+      await report(head, digest);
     }
   }
 
@@ -219,7 +224,7 @@ export function checkRunner({
       await watchHost(f);
       return;
     }
-    if (typeof f.settings?.testCommand !== 'string') return;
+    if (typeof f.settings?.testCommand !== 'string' || stopped()) return;
     answered();
     for (const commit of kept.unposted) await report(commit, f.digest);
     await takeOpenHeads(f.digest);
@@ -227,7 +232,7 @@ export function checkRunner({
     const held = readQueue(project).tries;
     const due = dueChecks({ main: f.main, heads: readQueue(project).heads.map((h) => h.commit), results: results(), digest: f.digest })
       .filter(({ commit }) => (held[`${commit}:${f.digest}`] ?? 0) < NOT_RAN_LIMIT);
-    if (due.length === 0) return;
+    if (due.length === 0 || stopped()) return;
     // A check whose record can't be kept counts as one that couldn't run, or it would run again on every tick.
     active = checkOne(due[0], f).catch(async () => {
       if (settleTries({ result: 'could-not-run' }, due[0].commit, f.digest, false).streak >= NOT_RAN_LIMIT) await askNotRan();
@@ -243,7 +248,12 @@ export function checkRunner({
       queued(head, work);
       const f = await facts();
       if (!f || stopped() || typeof f.settings?.testCommand !== 'string') return;
-      if (whereChecks({ ...f, hostChecksOff: readQueue(project).hostChecksOff }) === 'here') await report(head, f.digest, true);
+      if (whereChecks({ ...f, hostChecksOff: readQueue(project).hostChecksOff }) !== 'here') return;
+      // Reported from the record, so a head taken again doesn't lose its result. One that came back red with nothing
+      // changed goes back again, which the second time is the director's card.
+      await report(head, f.digest);
+      const record = latest(head, f.digest);
+      if (isRed(record?.result)) await onRed(head, work, record.tail);
     },
     tick,
     // All stop: ends the check under way. Its result is could-not-run, and it runs again after All stop lifts.

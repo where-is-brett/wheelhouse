@@ -126,8 +126,8 @@ async function stage({ sandbox, profile, command, cwd, env, spawn, untilMs, grac
 // The check's word for an attempt, or null when it was a red result.
 function wordOf(attempt) {
   if (attempt.unstarted || attempt.stopped) return 'could-not-run';
-  if (attempt.timedOut) return 'timed-out';
   if (attempt.prepareFailed) return 'could-not-run';
+  if (attempt.timedOut) return 'timed-out';
   if (attempt.code === 0) return 'passed';
   return NESTED.test(attempt.output) ? 'could-not-run' : null;
 }

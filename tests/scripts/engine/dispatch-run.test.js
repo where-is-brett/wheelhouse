@@ -53,7 +53,7 @@ const ranOnce = () => ({
   runs: { 'card-1': [{ at: '2026-10-29T09:00:00.000Z', data: { work: 'card-1', runId: 'run-0', lane: 'quick', state: 'started', branch: 'wh/card-1' } }, { at: '2026-10-29T09:05:00.000Z', data: { work: 'card-1', runId: 'run-0', lane: 'quick', state: 'ended', branch: 'wh/card-1', outcome: 'completed', pr: 3 } }] },
 });
 
-function sentBackWorld() {
+function sentBackWorld({ refuse = () => false } = {}) {
   const dir = tempFolder('wh-dr-');
   const starts = [];
   const written = [];
@@ -61,7 +61,7 @@ function sentBackWorld() {
   const d = dispatchRun({
     engine: fakeEngine(), project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'), readViews: () => seen,
     config: () => ({ routing: {}, testCommand: 'node --test' }), settings: () => ({ engineLanes: ['quick'] }),
-    start: async (args) => { starts.push(args); return { ok: true, runId: `run-${starts.length}` }; },
+    start: async (args) => { starts.push(args); return refuse() ? { ok: false, refused: 'the mirror could not be read' } : { ok: true, runId: `run-${starts.length}` }; },
     write: async (kind, data) => { written.push({ kind, data }); },
     now: () => new Date('2026-10-29T10:00:00.000Z'),
   });
@@ -78,6 +78,20 @@ test('a red head goes back with its tail in the order, reason red', async () => 
   assert.equal(t.starts[0].branch, 'wh/card-1');
   await t.d.tick();
   assert.equal(t.starts.length, 1, 'started once for each red');
+});
+
+test('a red whose start is refused is tried again, with one line in the Logbook', async () => {
+  let refusing = true;
+  const t = sentBackWorld({ refuse: () => refusing });
+  t.d.sentBack('card-1', 'red', 'a test failed');
+  await t.d.tick();
+  await t.d.tick();
+  assert.equal(t.starts.length, 2);
+  assert.equal(t.written.filter((w) => w.kind === 'note').length, 1);
+  refusing = false;
+  await t.d.tick();
+  await t.d.tick();
+  assert.equal(t.starts.length, 3);
 });
 
 test('a second red raises a card', async () => {

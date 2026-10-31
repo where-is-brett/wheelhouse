@@ -23,7 +23,7 @@ import { since, endedBy } from '../foreman/queue.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const isText = (x) => typeof x === 'string' && x.trim() !== '';
-const EMPTY = () => ({ mergeRun: null, mergeRuns: [], lastStart: null, seenReady: [], queueDue: false, sentBack: {}, acted: {}, clashAsked: {}, reds: {}, redActed: {}, redAsked: {}, requestsAsked: null, noTestsSaid: false, fixes: {}, features: {}, shipped: {}, closedPrs: [] });
+const EMPTY = () => ({ mergeRun: null, mergeRuns: [], lastStart: null, seenReady: [], queueDue: false, sentBack: {}, acted: {}, clashAsked: {}, reds: {}, redActed: {}, redAsked: {}, redNoted: {}, requestsAsked: null, noTestsSaid: false, fixes: {}, features: {}, shipped: {}, closedPrs: [] });
 // The dispatcher's own questions take numbers from here, apart from the card router's.
 const OWN_QUESTIONS = ENGINE_QUESTIONS + 90000;
 export { MERGE_WORK };
@@ -133,6 +133,14 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
 
   // The end of a red check's output, as data for the run that goes back: kept by the helper, never by the run.
   const withTail = (order, checkTail) => (isText(checkTail) ? { ...order, checkTail } : order);
+  // One Logbook line for a red that couldn't go back, however many ticks it takes.
+  async function redRefused(work, got) {
+    const times = state.reds[work]?.times;
+    if (state.redNoted[work] === times) return;
+    state.redNoted[work] = times;
+    keep();
+    await write('note', { about: 'engine', words: `${work} failed its tests and couldn't go back to be mended yet: ${got?.refused ?? 'no answer'}. It is tried again shortly.` });
+  }
 
   async function startPiece({ work, lane, branch = null, carryOn = false, raised = false, answers = [], checkTail = null }) {
     const views = readViews() ?? {};
@@ -628,6 +636,11 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       if (stopped()) break;
       const { again, reason, ...args } = piece;
       const got = await startPiece({ ...args, ...(reason === 'red' ? { checkTail: state.reds[piece.work]?.tail } : {}) });
+      // A red has no second way back, as a clash has at the merge gate: one that didn't start is tried again next tick.
+      if (reason === 'red' && got?.ok !== true) {
+        await redRefused(piece.work, got);
+        continue;
+      }
       if (again) {
         state.acted[piece.work] = state.sentBack[piece.work];
         if (reason === 'red') state.redActed[piece.work] = state.reds[piece.work].times;
@@ -671,9 +684,11 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
         const label = views.questions?.[id]?.answer?.label;
         if (label === TRY_AGAIN && state.redActed[work] !== times && !stopped()) {
           const last = (views.runs?.[work] ?? []).at(-1)?.data;
-          await startPiece({ work, lane: views.work?.[work]?.work?.data?.lane, branch: last?.branch ?? null, carryOn: true, checkTail: tail });
-          state.redActed[work] = times;
-          keep();
+          const got = await startPiece({ work, lane: views.work?.[work]?.work?.data?.lane, branch: last?.branch ?? null, carryOn: true, checkTail: tail });
+          if (got?.ok === true) {
+            state.redActed[work] = times;
+            keep();
+          } else await redRefused(work, got);
         }
         continue;
       }

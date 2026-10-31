@@ -47,7 +47,7 @@ function world({ word = () => 'passed', status = () => ({ ok: true }), ...given 
       setStatus: async (post) => { w.log.push(`status ${post.state}`); w.posts.push(post); return status(post); },
       checkContexts: async (sha) => w.contextsOf?.(sha) ?? [],
     }, { get: (host, name) => { w.calls.push(name); return host[name]; } }),
-    facts: async () => w.facts,
+    facts: async () => (w.factsThen ? w.factsThen() : w.facts),
     source: async () => '/mirror',
     results: () => w.events.map((e) => e.data),
     write: async ({ event }) => {
@@ -69,7 +69,7 @@ function world({ word = () => 'passed', status = () => ({ ok: true }), ...given 
       const result = signal?.aborted ? 'could-not-run' : word(commit);
       return { commit, command: DIGEST, result, minutes: 1, tail: `${result} output`, ...(main ? { clean: true } : {}) };
     },
-    turn: async (fn) => fn(),
+    turn: async (fn) => { if (w.stopBeforeTurn) w.stopped = true; return fn(); },
   });
   return { w, runner };
 }
@@ -95,6 +95,79 @@ test('a head nothing told the helper of is found on the host, and checked', () =
   assert.equal(w.ran.at(-1).commit, NEXT, 'the work\'s newest head takes its place');
   w.openFails = true;
   await settled(runner);
+}));
+
+test('a head taken again keeps its result', () => withHome(async () => {
+  const { w, runner } = world();
+  await runner.took(HEAD, 'card-1');
+  await settled(runner);
+  await settled(runner);
+  assert.equal(w.posts.filter((p) => p.sha === HEAD).at(-1).state, 'success');
+  await runner.took(HEAD, 'card-1');
+  await settled(runner);
+  assert.equal(w.posts.filter((p) => p.sha === HEAD).at(-1).state, 'success');
+  assert.equal(w.ran.filter((r) => r.commit === HEAD).length, 1);
+}));
+
+test('a red head reopened with nothing changed goes back again, and stays red', () => withHome(async () => {
+  const { w, runner } = world({ word: (commit) => (commit === HEAD ? 'failed' : 'passed') });
+  await runner.took(HEAD, 'card-1');
+  await settled(runner);
+  await settled(runner);
+  assert.equal(w.reds.length, 1);
+  await runner.took(HEAD, 'card-1');
+  await settled(runner);
+  assert.equal(w.reds.length, 2);
+  assert.equal(w.posts.filter((p) => p.sha === HEAD).at(-1).state, 'failure');
+  assert.equal(w.ran.filter((r) => r.commit === HEAD).length, 1);
+}));
+
+test('two open changes of one work don\'t take turns: the newest stays, reported once', () => withHome(async () => {
+  const { w, runner } = world({ open: [{ head: NEXT, work: 'card-1' }, { head: HEAD, work: 'card-1' }] });
+  await settled(runner);
+  await settled(runner);
+  await settled(runner);
+  await settled(runner);
+  assert.deepEqual(w.ran.map((r) => r.commit), [MAIN, HEAD]);
+  assert.equal(w.posts.filter((p) => p.sha === HEAD).at(-1).state, 'success');
+  assert.equal(w.posts.filter((p) => p.sha === NEXT).length, 1);
+}));
+
+test('an ended work\'s open change isn\'t taken', () => withHome(async () => {
+  const { w, runner } = world({ open: [{ head: HEAD, work: 'card-1' }], ended: ['card-1'] });
+  await settled(runner);
+  assert.deepEqual(w.posts.filter((p) => p.sha === HEAD), []);
+}));
+
+test('All stop while the tick reads the host starts no check', () => withHome(async () => {
+  const { w, runner } = world();
+  const read = w.facts;
+  w.factsThen = () => { w.stopped = true; return read; };
+  await settled(runner);
+  assert.deepEqual(w.ran, []);
+  assert.deepEqual(w.posts, []);
+}));
+
+test('All stop on the way to its turn starts no check', () => withHome(async () => {
+  const { w, runner } = world();
+  w.stopBeforeTurn = true;
+  await settled(runner);
+  assert.deepEqual(w.ran, []);
+}));
+
+test('a red that lands during All stop still goes back, and its report waits', () => withHome(async () => {
+  const { w, runner } = world({ word: () => 'failed' });
+  w.facts = { ...w.facts, main: null };
+  await runner.took(HEAD, 'card-1');
+  w.hold = async () => { w.stopped = true; };
+  await settled(runner);
+  assert.equal(w.reds.length, 1);
+  assert.equal(w.posts.filter((p) => p.state === 'failure').length, 0);
+  w.stopped = false;
+  w.hold = null;
+  await settled(runner);
+  assert.equal(w.posts.filter((p) => p.state === 'failure').length, 1);
+  assert.equal(w.reds.length, 1);
 }));
 
 test('the signed record is written before the status', () => withHome(async () => {

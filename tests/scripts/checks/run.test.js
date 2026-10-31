@@ -249,6 +249,14 @@ test('prepare runs before the tests, and a failed prepare could not run, so it i
   });
 });
 
+test('a prepare that runs out of time could not run, so it isn\'t red', unix, async () => {
+  await withHome(async () => {
+    const got = await check('echo tests >> MARKS', { extra: { prepare: 'sleep 30' }, limitMs: 300 });
+    assert.equal(got.result, 'could-not-run');
+    assert.equal(got.runs, 0);
+  });
+});
+
 test('the check runs in its own home, with a temporary folder of its own and no key in reach', unix, async () => {
   await withHome(async () => {
     const before = process.env.GH_TOKEN;

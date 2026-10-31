@@ -3297,6 +3297,9 @@ export async function startHelper({
       if (permit.checksHere === true && !checkCounts(permit.check, headSha, permit.digest, enrolled, { notCounting: permit.notCounting })) {
         stateReasons.push(`there is no passing check on this computer of ${headSha.slice(0, 7)}`);
         checkWaiting = !['failed', 'timed-out'].includes(permit.check?.data?.result);
+      } else if (permit.checksHere === true && ci?.state !== 'success') {
+        // The record stands and its report hasn't reached the host yet.
+        checkWaiting = true;
       }
     }
     // STOP and bypass are read last, just before the decision, so one set during the
