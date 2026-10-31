@@ -53,6 +53,14 @@ test('a check needs a whole commit, a known result and a short tail', async () =
   });
 });
 
+test('a main-line check says it ran clean, and nothing else does', async () => {
+  await withHome(async () => {
+    assert.equal((await written({ clean: true })).data.clean, true);
+    assert.equal(Object.hasOwn((await written()).data, 'clean'), false);
+    assert.throws(() => makeEvent({ kind: 'check', data: { ...result(), clean: false } }), /A check event/);
+  });
+});
+
 test('a passed check of this head and command counts', async () => {
   await withHome(async () => {
     assert.equal(checkCounts(await written(), HEAD, DIGEST, readEnrolled()), true);

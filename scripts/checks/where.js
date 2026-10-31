@@ -7,10 +7,13 @@ const STUCK_MS = 30 * 60 * 1000;
 const others = (contexts) => (Array.isArray(contexts) ? contexts : []).filter((c) => c?.name !== STATUS_CONTEXT);
 
 // 'here' or 'host'. `setting` is `checks.where` from the default branch, and wins; `contexts` what reports on the default
-// branch's head, never a change's head, since a change could add a workflow of its own.
-export function whereChecks({ setting = null, host, contexts = [], hasWorkflows = false }) {
+// branch's head, never a change's head, since a change could add a workflow of its own. `hostChecksOff` is the director's
+// press on the card for checks that aren't running: the workflows stay in the project with the host's switch off, so they
+// no longer count, and neither does what never ran. A job that really runs still takes the checks back to the host.
+export function whereChecks({ setting = null, host, contexts = [], hasWorkflows = false, hostChecksOff = false }) {
   if (setting === 'here' || setting === 'host') return setting;
   if (host === 'local') return 'here';
+  if (hostChecksOff) return others(contexts).some((c) => !neverRan(c, Infinity)) ? 'host' : 'here';
   return others(contexts).length > 0 || hasWorkflows ? 'host' : 'here';
 }
 

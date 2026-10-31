@@ -9,6 +9,7 @@ import { checkEnv, developerDir, endCheck, runCheck, secondTryOf } from '../../.
 import { dueChecks, withCheckTurn } from '../../../scripts/checks/queue.js';
 import { commandDigest, writeCheck } from '../../../scripts/checks/record.js';
 import { checkPaths } from '../../../scripts/checks/folder.js';
+import { safeGit } from '../../../scripts/lib/safe-git.js';
 import { makeSigningKey, enrol, verify, readEnrolled } from '../../../scripts/state/signing.js';
 import { makeBareRemote, g } from '../../helpers/git-fixture.js';
 import { tempFolder } from '../../helpers/homes.js';
@@ -140,6 +141,48 @@ test('the time limit is kept even when something still holds the output open', u
     const got = await check('(setsid sleep 20 2>/dev/null || perl -e "use POSIX; POSIX::setsid(); sleep 20") & sleep 20', { limitMs: 400, graceMs: 300 });
     assert.equal(got.result, 'timed-out');
     assert.ok(Date.now() - started < 10000, 'it stopped waiting');
+  });
+});
+
+const LEFT_BEHIND = '(setsid sleep 20 2>/dev/null || perl -e "use POSIX; POSIX::setsid(); sleep 20") &';
+
+test('a job left holding the output doesn\'t turn a finished test into timed-out', unix, async () => {
+  await withHome(async () => {
+    const started = Date.now();
+    const got = await check(`${LEFT_BEHIND} exit 0`, { limitMs: 15000, graceMs: 300 });
+    assert.equal(got.result, 'passed', got.tail);
+    assert.ok(Date.now() - started < 10000, 'it stopped waiting');
+  });
+});
+
+test('a red test with a job left holding the output stays red', unix, async () => {
+  await withHome(async () => {
+    const got = await check(`echo ran >> MARKS; ${LEFT_BEHIND} exit 3`, { limitMs: 15000, graceMs: 300 });
+    assert.equal(got.result, 'failed', got.tail);
+    assert.equal(got.runs, 2);
+  });
+});
+
+test('endCheck reaches a check while its folder is being prepared', unix, async () => {
+  await withHome(async () => {
+    let reached;
+    const preparing = new Promise((resolve) => { reached = resolve; });
+    let carry;
+    const held = new Promise((resolve) => { carry = resolve; });
+    const git = (options) => {
+      const inner = safeGit(options);
+      return async (args, more) => {
+        if (args[0] === 'fetch') { reached(); await held; }
+        return inner(args, more);
+      };
+    };
+    const running = check('echo ran >> MARKS', { git });
+    await preparing;
+    assert.equal(endCheck('p'), true);
+    carry();
+    const got = await running;
+    assert.equal(got.result, 'could-not-run');
+    assert.equal(got.runs, 0, 'the command never ran');
   });
 });
 
@@ -377,7 +420,7 @@ test('dueChecks puts the main line first', () => {
 });
 
 test('dueChecks leaves out a commit with a result for this digest', () => {
-  assert.deepEqual(dueChecks({ main: 'm', heads: ['a', 'b'], results: [result('m', 'passed'), result('a', 'failed')], digest: 'd' }), [{ commit: 'b', main: false }]);
+  assert.deepEqual(dueChecks({ main: 'm', heads: ['a', 'b'], results: [{ ...result('m', 'passed'), clean: true }, result('a', 'failed')], digest: 'd' }), [{ commit: 'b', main: false }]);
 });
 
 test('a changed command makes a commit due again', () => {
@@ -396,6 +439,13 @@ test('a not-counted result stands only while tests aren\'t counting', () => {
 
 test('a head that is the main line is checked once, as the main line', () => {
   assert.deepEqual(dueChecks({ main: 'm', heads: ['m', 'a', 'a'], results: [], digest: 'd' }), [{ commit: 'm', main: true }, { commit: 'a', main: false }]);
+});
+
+test('a head\'s pass doesn\'t stand for the main line, and a main-line pass does', () => {
+  const pass = { commit: 'a', command: 'd', result: 'passed' };
+  assert.deepEqual(dueChecks({ main: 'a', heads: [], results: [pass], digest: 'd' }), [{ commit: 'a', main: true }]);
+  assert.deepEqual(dueChecks({ main: 'a', heads: [], results: [{ ...pass, clean: true }], digest: 'd' }), []);
+  assert.deepEqual(dueChecks({ main: null, heads: ['a'], results: [pass], digest: 'd' }), []);
 });
 
 test('two projects\' checks never overlap', async () => {

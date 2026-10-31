@@ -11,11 +11,13 @@ const TURN_WAIT_MS = 24 * 60 * 60 * 1000;
 const stands = (r, digest, notCounting) => r.command === digest && r.result !== 'could-not-run' && (notCounting || r.result !== 'not-counted');
 
 // The commits to check, `main` (the main line's head, or null) first, since it holds merges. `results` are the data of the
-// `check` events held.
+// `check` events held. Only a clean run stands for the main line: a head's pass came from kept build output, and a
+// fast-forward can put that same commit on the main line.
 export function dueChecks({ main, heads, results, digest, notCounting = false }) {
-  const settled = new Set(results.filter((r) => stands(r, digest, notCounting)).map((r) => r.commit));
+  const standing = results.filter((r) => stands(r, digest, notCounting));
+  const settled = new Set(standing.map((r) => r.commit));
   const due = [];
-  if (main && !settled.has(main)) due.push({ commit: main, main: true });
+  if (main && !standing.some((r) => r.commit === main && r.clean === true)) due.push({ commit: main, main: true });
   for (const commit of new Set(heads)) if (commit !== main && !settled.has(commit)) due.push({ commit, main: false });
   return due;
 }

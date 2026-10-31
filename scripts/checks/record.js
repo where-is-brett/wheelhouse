@@ -14,8 +14,8 @@ export function commandDigest(command) {
 
 // Signs and writes the result. The tail is cut and scanned here, so the event's own secret scan never refuses it.
 export async function writeCheck(project, result, { write = writeEvent } = {}) {
-  const { commit, command, result: word, minutes, tail } = result;
-  const event = makeEvent({ kind: 'check', data: { commit, command, result: word, minutes, tail: tailOf(tail, TAIL) } });
+  const { commit, command, result: word, minutes, tail, clean } = result;
+  const event = makeEvent({ kind: 'check', data: { commit, command, result: word, minutes, tail: tailOf(tail, TAIL), ...(clean === true ? { clean } : {}) } });
   await write({ project, event });
   return event;
 }
