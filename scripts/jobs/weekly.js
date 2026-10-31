@@ -4,6 +4,9 @@
 // record and the settings are local repositories with no remote (design section 24), so there is
 // no backup or sync to make.
 //
+// A project in git alone has no host to read protection from, so the week also looks at its home (spec 7.7): what is wrong goes on
+// the project's Logbook.
+//
 // Under jobsDir():
 //   weekly.json   { lastRun, result }  written once the week's sources check has run.
 //                 lastRun     when this week's check ran: the week counts from it
@@ -23,6 +26,10 @@ import { runSourcesCheck } from '../sources/check.js';
 import { effectiveSettings } from '../settings/effective.js';
 import { readProfileViews } from '../profile/store.js';
 import { readSmallText } from '../hooks/kit.js';
+import { lookAtHome } from '../host/local/home.js';
+import { seenMain } from '../host/local/merge.js';
+import { makeEvent, writeEvent } from '../state/events.js';
+import { openProjectRecord } from '../state/record.js';
 
 // Longer than the job takes; a lock older than this belongs to a run that died.
 const LOCK_STALE_MS = 30 * 60 * 1000;
@@ -158,10 +165,25 @@ function sourcesCounts(report) {
   };
 }
 
+// Looks at each local project's home, and writes what is wrong to its Logbook. A project that can't be read holds up no other.
+export async function lookAtHomes(projects, { look = lookAtHome, note = homeNote } = {}) {
+  const found = [];
+  for (const { project } of projects.filter((p) => p.record?.host === 'local')) {
+    const got = await look({ project, seen: seenMain(project) }).catch(() => ({ ok: false, why: 'it couldn\'t be read' }));
+    found.push({ project, ...got });
+    if (got.ok !== true) await note(project, `This project's home needs looking at: ${got.why}. Your folder holds a full copy of the history.`).catch(() => {});
+  }
+  return found;
+}
+async function homeNote(project, words) {
+  await openProjectRecord(project, {});
+  await writeEvent({ project, event: makeEvent({ kind: 'note', data: { about: 'engine', words } }) });
+}
+
 // Runs the sources check once a week. Resolves with `{ sources: SourcesReport | null }` (null for a
 // check that threw), or, when another run holds the lock or the week isn't due, `{ skipped: true,
 // why }` and nothing runs. `root` and `sourcesCheck` are for tests.
-export async function runWeekly({ now, fetch = globalThis.fetch, root, sourcesCheck = runSourcesCheck } = {}) {
+export async function runWeekly({ now, fetch = globalThis.fetch, root, sourcesCheck = runSourcesCheck, homes = lookAtHomes } = {}) {
   const at = isoOf(now);
   let release;
   try {
@@ -184,6 +206,7 @@ export async function runWeekly({ now, fetch = globalThis.fetch, root, sourcesCh
     } catch (error) {
       result = { ok: false, why: whyOf(error) };
     }
+    await homes(projects).catch(() => {});
     writeWhole(recordFile(), `${JSON.stringify({ lastRun: at, result: { sources: result } }, null, 2)}\n`);
     return { sources };
   } finally {

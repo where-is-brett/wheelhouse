@@ -147,3 +147,12 @@ test('changes to the files that hold the test command or its thresholds weaken t
     assert.match(got[0], new RegExp(file.replace(/[.]/g, '\\.')));
   }
 });
+
+test('the same commit opens one incident, with the merged change as its suspect', () => {
+  const commit = 'a'.repeat(40);
+  const incident = redMainIncident({ commit, suspect: 7 });
+  assert.equal(redMainIncident({ commit, suspect: 7 }).id, incident.id);
+  assert.notEqual(redMainIncident({ commit: 'b'.repeat(40) }).id, incident.id);
+  assert.equal(incident.suspect, 7);
+  assert.equal(incident.kind, RED_MAIN);
+});

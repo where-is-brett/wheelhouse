@@ -171,13 +171,15 @@ test('hasCi is always true, setStatus and verdictComment do nothing, previewUrl 
   });
 });
 
-test('merge refuses until the local queue is here', async () => {
+test('merge adds an open change to the main version, and a head that moved is refused', async () => {
   await withKeyedHome(async () => {
     const { head, adapter } = await world();
     await adapter.openPr(opening);
-    const { merged, reason } = await adapter.merge({ number: 1, sha: head });
-    assert.equal(merged, false);
-    assert.match(reason, /local queue/);
+    assert.equal((await adapter.merge({ number: 1, sha: 'b'.repeat(40) })).merged, false);
+    const { merged, commit } = await adapter.merge({ number: 1, sha: head });
+    assert.equal(merged, true);
+    assert.equal(await adapter.branchHead('main'), commit);
+    assert.equal((await adapter.prState(1)).state, 'merged');
   });
 });
 

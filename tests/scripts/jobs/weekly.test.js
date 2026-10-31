@@ -10,7 +10,10 @@ import { WEEK_MS } from '../../../scripts/lib/core-numbers.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { DEFAULT_SOURCES } from '../../../scripts/sources/list.js';
 import { runSourcesCheck } from '../../../scripts/sources/check.js';
-import { weeklyDue, runWeekly } from '../../../scripts/jobs/weekly.js';
+import { weeklyDue, runWeekly, lookAtHomes } from '../../../scripts/jobs/weekly.js';
+import { homeDir, lookAtHome, makeHome } from '../../../scripts/host/local/home.js';
+import { registeredProjects } from '../../../scripts/lib/projects.js';
+import { projectFolderWith, withKeyedHome } from '../../helpers/local-home.js';
 import { weeklyDue as backgroundWeeklyDue } from '../../../scripts/lib/background.js';
 
 const NOW = '2026-10-19T09:00:00.000Z';
@@ -255,4 +258,30 @@ test('a named pipe where the configuration should be does not hang the jobs', { 
   const made = spawnSync('mkfifo', [fifo]);
   if (made.status !== 0) return; // no mkfifo here
   assert.deepEqual(await routedAfter(), []);
+}));
+
+test('the weekly job finds a damaged home', () => withKeyedHome(async () => {
+  const folder = await projectFolderWith();
+  await makeHome({ project: 'shop', folder });
+  writeProject('shop', { folder, remoteUrl: null, host: 'local', repo: 'local/shop', connection: { mode: 'none' } });
+  const notes = [];
+  const note = async (project, words) => { notes.push({ project, words }); };
+  assert.deepEqual(await lookAtHomes(registeredProjects(), { note }), [{ project: 'shop', ok: true }]);
+  assert.deepEqual(notes, []);
+  const objects = path.join(homeDir('shop'), 'objects');
+  const fan = fs.readdirSync(objects).find((name) => name.length === 2);
+  const file = path.join(objects, fan, fs.readdirSync(path.join(objects, fan))[0]);
+  fs.chmodSync(file, 0o600);
+  fs.writeFileSync(file, 'not an object');
+  const [found] = await lookAtHomes(registeredProjects(), { note });
+  assert.equal(found.ok, false);
+  assert.match(notes[0].words, /history is damaged/);
+}));
+
+test('a home others can reach, or a main version moved, is found', () => withKeyedHome(async () => {
+  const folder = await projectFolderWith();
+  await makeHome({ project: 'shop', folder });
+  assert.match((await lookAtHome({ project: 'shop', seen: 'a'.repeat(40) })).why, /moved outside/);
+  fs.chmodSync(homeDir('shop'), 0o755);
+  assert.match((await lookAtHome({ project: 'shop' })).why, /other people/);
 }));

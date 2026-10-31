@@ -77,3 +77,26 @@ export function homeReadable(project) {
     return false;
   }
 }
+
+// The weekly look at a home, in place of protection reads (spec 7.7): nobody but this computer's user can reach it, git finds
+// it whole, and its main version is where the helper left it. Gives { ok } or { ok: false, why }, in plain words.
+export async function lookAtHome({ project, seen = null, git = gitRoute() }) {
+  const home = homeDir(project);
+  let mode;
+  try {
+    mode = fs.statSync(home).mode;
+  } catch {
+    return { ok: false, why: 'it can\'t be found' };
+  }
+  if ((mode & 0o077) !== 0) return { ok: false, why: 'other people on this computer can reach it' };
+  let inHome;
+  try {
+    inHome = homeGit(project, git);
+  } catch (error) {
+    return { ok: false, why: error.message };
+  }
+  if (!(await inHome.ok(['fsck', '--no-progress', '--no-dangling']))) return { ok: false, why: 'its history is damaged' };
+  const main = await inHome.call(['rev-parse', '--verify', '-q', 'HEAD^{commit}']);
+  if (main.code !== 0) return { ok: false, why: 'its main version can\'t be read' };
+  return seen === null || String(main.stdout).trim() === seen ? { ok: true } : { ok: false, why: 'its main version moved outside the helper' };
+}

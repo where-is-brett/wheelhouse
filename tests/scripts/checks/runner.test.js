@@ -61,6 +61,7 @@ function world({ word = () => 'passed', status = () => ({ ok: true }), ...given 
     onRed: async (head, work, tail) => { w.log.push('red'); w.reds.push({ head, work, tail }); },
     onPassed: (work) => given.onPassed?.(work),
     onFix: async (commit) => given.onFix?.(commit),
+    onRedMain: async (commit) => given.onRedMain?.(commit),
     keep: async () => given.keep?.(),
     note: async (words) => { w.notes.push(words); },
     record: async (kind, data) => {
@@ -867,4 +868,32 @@ test('a found command the record can\'t keep raises a card', () => withHome(asyn
   commandless(w, { finder: { testCommand: 'x'.repeat(600), prepare: null, why: 'x' } });
   await ticked(runner);
   assert.equal(w.cards.length, 1);
+}));
+
+test('a red main line opens its incident once, with no queue to ask', () => withHome(async () => {
+  const opened = [];
+  const { runner, w } = world({ word: () => 'failed', onRedMain: (commit) => opened.push(commit) });
+  w.statesBefore = [{ state: 'counting', why: 'passed' }];
+  await runner.tick();
+  await runner.idle();
+  await runner.tick();
+  await runner.tick();
+  assert.deepEqual(opened, [MAIN]);
+}));
+
+test('a first red has its card, not the incident', () => withHome(async () => {
+  const opened = [];
+  const { runner } = world({ word: () => 'failed', onRedMain: (commit) => opened.push(commit) });
+  await runner.tick();
+  await runner.idle();
+  await runner.tick();
+  assert.deepEqual(opened, []);
+}));
+
+test('a head\'s red on the main line\'s commit opens nothing: only a clean run stands for it', () => withHome(async () => {
+  const opened = [];
+  const { runner, w } = world({ onRedMain: (commit) => opened.push(commit) });
+  w.events.push({ data: { commit: MAIN, command: DIGEST, result: 'failed', minutes: 0, tail: '' } });
+  await runner.tick();
+  assert.deepEqual(opened, []);
 }));
