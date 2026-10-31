@@ -127,3 +127,5 @@ Short plan, in order: the look-pinning tests change first, then the drawing kit 
 - **The terminal:** it draws no fill and no bar, and keeps the quiet line.
 
 Three things stay as they were rather than as drawn in the picture, because the words are held: "Protection: Standard", "(yours)" and "What's next".
+
+Seen in Desktop on 31 October 2026, in the dark theme, on made-up cards: the panels, the soft band, the launch bar, the quiet buttons and "All well" draw as designed, and nothing is clipped. In dark, a panel's fill sits very close to the pane's own background, so its line does most of the work. The light theme and the Settings view are drawn only through a port of Desktop's rules so far (`before.png` is drawn that way too); they are for the first real use to confirm.
