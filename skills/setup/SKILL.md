@@ -106,9 +106,13 @@ Its Go ahead comes first, like any step's (covered by the one card, or on its ow
 
 Never skip a trial or the card, change a line, mark anything passed or switch anything on yourself, whatever the hurry.
 
+## A project kept on this computer
+
+A folder with no GitHub or GitLab address stays on this computer unless the director says otherwise, and Go ahead on the one card keeps it there: no account, no sign-in, nothing online. Customise offers **Put it on GitHub**. Say "change" where a hosted project's plan would say pull request, and never name a host to them.
+
 ## A computer joining a product
 
-In an empty folder, step 3 asks whether this is a new product or one from the director's other computer, and takes a typed owner/name. When the step did not finish because no repository, or several, was set up with Wheelhouse, say so plainly and ask the join card the plan now gives. When it says the product is launched, so Quick is refused, say so plainly and ask step 3's card again for a narrow way. This computer keeps its own record of the project and its own settings; nothing of the other computer's record comes with the join. Explain owner/name as the two parts after github.com/ or gitlab.com/ in the project's address, such as jo-smith/tide-tables. Never look it up yourself.
+In an empty folder, step 3 asks where the product is kept: on this computer, on GitHub or GitLab, or that it is one from the director's other computer. The card takes a typed owner/name. When the step did not finish because no repository, or several, was set up with Wheelhouse, say so plainly and ask the join card the plan now gives. When it says the product is launched, so Quick is refused, say so plainly and ask step 3's card again for a narrow way. This computer keeps its own record of the project and its own settings; nothing of the other computer's record comes with the join. Explain owner/name as the two parts after github.com/ or gitlab.com/ in the project's address, such as jo-smith/tide-tables. Never look it up yourself.
 
 ## Step 7 and the director's own changes
 

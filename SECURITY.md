@@ -23,7 +23,7 @@ These protections are switched on quietly, for every project. Setup doesn't ask 
 - the sandbox on the Mac, with your sign-in files and the keychain shut to builds;
 - your GitHub and GitLab sign-in kept out of the agents' commands;
 - the guards, the helper's rules and the signed clicks;
-- the protection of your main product on GitHub or GitLab, so nothing reaches it except through Wheelhouse's checks.
+- the protection of your main product on GitHub or GitLab, so nothing reaches it except through Wheelhouse's checks. A project kept on this computer has none of that from a host: only Wheelhouse's helper changes its private copy, and the weekly look says if anything else did.
 - on the Mac, the build engine, Archon, with its usage reporting off and no key of its own: it reaches GitHub only through Wheelhouse's helper.
 
 Setup asks one extra question only if your project looks like an iPhone or Mac app: whether its builds sign the app. Signing needs the keychain, so a Yes opens it for that project's builds.
@@ -74,6 +74,7 @@ The protections are defaults, not setup questions (the Captain's ruling of 24 Oc
 
 ### What doesn't, or not yet
 
+- **A project kept on this computer.** Its main version lives in `~/.wheelhouse/projects/<project>/home.git`, and no server refuses a write. An agent's commands can't reach it under the sandbox, on the Mac. A program running as you, outside the sandbox, can; the helper notices a main version it didn't move, stops merging and asks you. On Windows there is no sandbox, so that home is guarded by convention alone.
 - **Windows.** Claude Code has no sandbox there (check 10). Any command can read the helper's keys file, and so sign records, and read your sign-ins, including `gh`'s token in Windows Credential Manager. Guarded runs build commands at low integrity; whether a low process can read a generic credential is check 52's open `credential-manager-low` line.
 - **Quick connection.** The helper uses your own `gh` or `glab` sign-in, with full account scope, so a fault in the helper's rules, or a sign-in read some other way, reaches every repository. On the Mac the sandbox denies `~/.config/gh` and the keychain files; on Windows nothing does. Locked refuses quick. Moving an existing project to narrow after setup has no guided route yet.
 - **What remains of the keychain gap.** Check 73 showed that denying reads of a keychain file's folder stops a sandboxed `security find-generic-password -w`, because the file is read in the calling process. Left open:

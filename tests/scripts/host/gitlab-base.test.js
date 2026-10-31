@@ -11,7 +11,7 @@ import { DEFAULT_GITLAB, gitlabBase, commitEmail, readGitlabHosts } from '../../
 import { tokenUrl } from '../../../scripts/host/token-url.js';
 import { gitlabKeyPage, cutAccess, revokeGitlabKey } from '../../../scripts/host/cut-access.js';
 import { gitlabApi, makeProjectKey, isKeysSwitchedOff } from '../../../scripts/host/gitlab-key.js';
-import { detectHost, notHostedLine } from '../../../scripts/host/adapter.js';
+import { detectHost } from '../../../scripts/host/adapter.js';
 import { signIn, signInStatus, signUpUrl, SIGN_UP, httpsRemote } from '../../../scripts/setup/host.js';
 import { commitAuthor } from '../../../scripts/setup/project-files.js';
 import { hostToolsFor } from '../../../scripts/setup/tools.js';
@@ -153,7 +153,6 @@ test('a remote with a port keeps the port and a gitlabHosts entry may carry one'
   assert.equal(gitlabBase({ config: { gitlabHosts: ['localhost'] }, remoteUrl: remote }), 'https://localhost:8929');
   // Another port on the same host is another service.
   assert.equal(detectHost('https://localhost:9000/a/b.git', config), 'local');
-  assert.match(notHostedLine('https://localhost:9000/a/b.git'), /localhost:9000.*not GitHub or GitLab/);
   assert.equal(gitlabBase({ config, remoteUrl: 'https://localhost:9000/a/b.git' }), DEFAULT_GITLAB);
   // Plain http is kept only on this computer.
   assert.equal(gitlabBase({ config, remoteUrl: 'http://localhost:8929/a/b.git' }), 'http://localhost:8929');
@@ -218,5 +217,5 @@ test('the project\'s gitlabHosts is read from its committed configuration, and s
   fs.writeFileSync(path.join(folder, '.git', 'config'), '[remote "origin"]\n\turl = https://localhost:8929/team/product.git\n');
   assert.deepEqual(hostToolsFor(folder), ['glab']);
   write('{}');
-  assert.deepEqual(hostToolsFor(folder), ['gh', 'glab']);
+  assert.deepEqual(hostToolsFor(folder), [], 'a remote that is neither host leaves the project on this computer');
 });

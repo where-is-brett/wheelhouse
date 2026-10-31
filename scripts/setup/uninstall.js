@@ -104,7 +104,11 @@
 //                                            every 'in-pull-request' entry by its change's `before`;
 //                                            its ids hold theirs too, so they are marked with it;
 //                                            `archive`, what it puts back from the archive (ArchiveView)
+//                                            For a project kept here (`local`), a last local change,
+//                                            merged at once and into the folder
 //       'in-pull-request' { change }         a project file or pin, taken out by that pull request
+//       'bring-up' { branch }                a project kept here: the folder takes all the home holds
+//       'remove-remote' { target, name, url }   the folder's remote, while it still has setup's address
 //       'close-pull-request' { repo, number?, branch? }, 'delete-branch' { repo, branch, sha }
 //       'reverse' { change }                 reverseChange, here (a pin with no pull request: its
 //                                            key in the project's settings, as a json-key change)
@@ -130,6 +134,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { homeBranch, homeDir } from '../host/local/home.js';
 import { run as realRun } from '../lib/run.js';
 import {
   wheelhouseHome, jobFolder, jobsDir, keysDir, profileDir, oldProfileDir, projectsDir, stateDir, oldStateDir, computerId, engineDir, archonHome,
@@ -172,7 +177,7 @@ export const PLUGIN_LINE = 'Last, remove the Wheelhouse plugin from this project
 // Said on the card, as step 6's card says (ruling R64).
 const TRANSCRIPTS = `Transcripts removed by the ${RETENTION_DAYS}-day retention can't come back.`;
 // The level 4 cards' order: the product's repository, the build engine's run history, the project's private record.
-const ASK_ORDER = ['product', 'engine', 'record'];
+const ASK_ORDER = ['product', 'engine', 'home', 'record'];
 // The repository Wheelhouse v0.1.x kept the director's profile in, on their own account.
 const OLD_PROFILE_REPO = 'wheelhouse-profile';
 // Why what Wheelhouse v0.1.x made stays (design section 24.5): nothing of it goes without a card.
@@ -187,6 +192,7 @@ const RECORD_NAMES = ['record', 'state', 'imported.json'];
 export const trustDir = () => path.join(wheelhouseHome(), 'trust');
 export const seenFile = () => path.join(jobsDir(), 'enrolments.json');
 export const HOSTS = { github: 'GitHub', gitlab: 'GitLab' };
+export const REMOVE_REMOTE = 'remove-remote';
 const KEEP_LABEL = 'Keep it';
 // Why a commit setup made in the folder, never pushed, is kept: apply looks for it on the host first.
 export const NEVER_PUSHED = 'it stays in this folder\'s history';
@@ -306,7 +312,7 @@ function deleteCard({ what, why, deletes, keeps, because }) {
 // shortest names no group of what is removed either, only that the whole list is in `cli.js
 // uninstall status`. Each shorter one points there, and the playbook runs it and shows its lines
 // before asking such a card; the hash covers the whole list whichever is shown.
-function cardWhats({ name, changes, keep, asks, pullRequest, archive }) {
+function cardWhats({ name, changes, keep, asks, pullRequest, archive, local }) {
   const count = (test) => changes.filter(test).length;
   // The trusted-keys list and the signing key, removed last of all, are keys on the card.
   const keyFile = (c) => c.put === 'remove' && (samePath(c.target, signingKeyFile()) || samePath(c.target, enrolledFile()));
@@ -319,13 +325,14 @@ function cardWhats({ name, changes, keep, asks, pullRequest, archive }) {
   const groups = [
     'stop its jobs',
     changes.some((c) => c.phase === 'locked') ? 'leave Locked (your password)' : null,
-    files > 0 ? (pullRequest ? `take out ${plural(files, 'file')} and pins by a pull request you merge` : `put back ${plural(files, 'file')}`) : null,
+    local ? 'bring this folder up to the main version' : null,
+    files > 0 ? (pullRequest ? (local ? `take out ${plural(files, 'file')} and pins by a last change, merged here` : `take out ${plural(files, 'file')} and pins by a pull request you merge`) : `put back ${plural(files, 'file')}`) : null,
     trial > 0 ? 'clear its trial' : null,
     computer > 0 ? `put back ${plural(computer, 'change')} on this computer` : null,
     keys > 0 ? `delete or untick ${plural(keys, 'key')}` : null,
     removed > 0 ? `remove ${removed} of Wheelhouse's folders` : null,
   ].filter(Boolean);
-  const said = archiveSaid(archive);
+  const said = archiveSaid(archive, local);
   const head = `Remove Wheelhouse from ${name}: ${groups.join(', ')}.`;
   const changed = keep.filter((k) => k.why === 'changed since setup').map((k) => k.brief ?? k.what);
   // The project's .wheelhouse/ folder and its exclude line are named (ruling R131), not counted.
@@ -334,7 +341,7 @@ function cardWhats({ name, changes, keep, asks, pullRequest, archive }) {
   const note = named ? ` ${FOLDER_NOTE}` : '';
   const shortNote = named ? ` ${FOLDER_NOTE_SHORT}` : '';
   const othersLine = others > 0 ? ` ${plural(others, 'other thing')} ${others === 1 ? 'stays as it is' : 'stay as they are'}.` : '';
-  const asksLine = asks.length > 0 ? ' Repositories and records stay unless their own cards say otherwise.' : '';
+  const asksLine = asks.length > 0 ? ` ${local ? 'Copies' : 'Repositories'} and records stay unless their own cards say otherwise.` : '';
   const transcripts = ` ${TRANSCRIPTS}`;
   const left = (list) => {
     const more = changed.length - list.length;
@@ -584,8 +591,8 @@ export async function archiveAt(git, ref) {
 // The archive as the folder's copy of `branch` last showed it (its ArchiveView), or null when there
 // is none, the folder holds no copy, or git can't read it; read with setup's fenced git, changing
 // nothing. The apply reads the host's and compares.
-async function archiveSeen({ real, branch, run, findGit }) {
-  const ref = `refs/remotes/origin/${branch}`;
+async function archiveSeen({ real, branch, run, findGit, local }) {
+  const ref = local ? `refs/heads/${branch}` : `refs/remotes/origin/${branch}`;
   if (refOf(real, ref) === null) return null;
   try {
     const found = await findGit();
@@ -603,13 +610,13 @@ function someOf(list) {
 }
 
 // What the card says of the archive, in full and in short.
-function archiveSaid(archive) {
+function archiveSaid(archive, local) {
   if (archive === null || archive === undefined) return { full: '', short: '' };
   if (archive.refused !== undefined) {
     const line = ` ${ARCHIVE}/ stays as it is: ${archive.refused}.`;
     return { full: line, short: line };
   }
-  const back = archive.moves.length > 0 ? ` By the pull request too: ${ARCHIVE_BACK}.` : '';
+  const back = archive.moves.length > 0 ? ` By the ${local ? 'last change' : 'pull request'} too: ${ARCHIVE_BACK}.` : '';
   const one = archive.taken.length === 1;
   const taken = archive.taken.length > 0 ? ` Left in ${ARCHIVE}/, as ${one ? 'its place is' : 'their places are'} taken: ${someOf(archive.taken)}.` : '';
   const counted = archive.taken.length > 0 ? ` ${archive.taken.length} left in ${ARCHIVE}/: ${STATUS_FORM}.` : '';
@@ -643,6 +650,7 @@ export async function uninstallPlan({
   // A Lean project is removed through its own install, never here (ruling P5-47).
   if (own?.lean === true) throw new Error(LEAN_FOLDER);
   const slug = own?.project ?? null;
+  const local = own?.record.host === 'local';
   const journal = readJournal();
   const mine = (r) => typeof r?.folder === 'string' && keyOf(realOr(r.folder)) === keyOf(real);
   // The last project on this computer: no other registered, a Lean project among them (whose
@@ -678,7 +686,8 @@ export async function uninstallPlan({
   // This computer's id is read only once there is a list to compare it with: reading it with none
   // kept yet would make one, and the plan changes nothing.
   const trusted = readEnrolled();
-  const shared = joining || (trusted.length > 0 && trusted.some((e) => typeof e?.computer === 'string' && e.computer !== computerId()));
+  // A project kept here is on no other computer, whatever computers this one trusts.
+  const shared = !local && (joining || (trusted.length > 0 && trusted.some((e) => typeof e?.computer === 'string' && e.computer !== computerId())));
 
   const items = []; // { phase, seq, entry }
   const keep = [];
@@ -686,6 +695,8 @@ export async function uninstallPlan({
   const done = [];
   // The journal's changes for the project's private record, which its own card deals with.
   const recordIds = [];
+  // And for the home of a project kept on this computer, which its own card deals with too.
+  const homeIds = [];
   const removals = new Map(); // path -> { phase, ids, seq }
   const add = (phase, at, entry) => items.push({ phase, seq: at, entry: { phase, ...entry } });
   const kept = (what, why, list, short) => keep.push({ what, why, ...(short && short !== what ? { brief: short } : {}), ...(list ? { ids: list } : {}) });
@@ -717,7 +728,7 @@ export async function uninstallPlan({
       const pushed = typeof pushRun.steps?.[7]?.doneAt === 'string' || afterPush || c.onHost !== undefined
         || refOf(real, `refs/remotes/origin/${branch}`) === c.after.sha;
       // The archive on the branch: put back by the pull request, or left for the other computers.
-      if (pushed) archive = await archiveSeen({ real, branch, run, findGit });
+      if (pushed) archive = await archiveSeen({ real, branch, run, findGit, local });
       if (pushed && shared) {
         committed = true;
         kept(`setup's commit on ${branch}`, `it stays in the project's history: ${OTHERS_USE}`, idsOf(commitGroup));
@@ -799,6 +810,7 @@ export async function uninstallPlan({
         const one = asOne(group);
         if (path.basename(c.target) === '.git') kept(shown(c.target, userHome), 'the folder\'s git history is kept', list);
         else if (slug !== null && samePath(c.target, stateDir(slug))) recordIds.push(...list);
+        else if (local && samePath(c.target, homeDir(slug))) homeIds.push(...list);
         else if (slug !== null && samePath(c.target, oldStateDir(slug))) kept(shown(c.target, userHome), OLD_STAYS, list);
         else if (slug !== null && within(projectFolder(slug), c.target)) remove(projectFolder(slug), 'last', list, at);
         else if (samePath(c.target, oldProfileDir())) kept(shown(c.target, userHome), OLD_STAYS, list);
@@ -885,6 +897,10 @@ export async function uninstallPlan({
         }
         break;
       }
+      // The folder's one remote, after the last change, which needs it.
+      case 'git-config':
+        add('files', at, { put: REMOVE_REMOTE, target: c.target, name: c.key[1], url: c.after, ids: list });
+        break;
       case 'env': {
         const one = asOne(group);
         if (one.before === one.after) {
@@ -926,7 +942,7 @@ export async function uninstallPlan({
     const c = asOne(commitGroup);
     const takes = items.filter((i) => i.entry.put === 'in-pull-request').flatMap((i) => i.entry.ids);
     add('files', seqOf(commitGroup), {
-      put: 'pull-request', kind: 'host', target: c.target, branch: c.after.branch, base: c.before?.sha ?? null, ids: [...idsOf(commitGroup), ...takes],
+      put: 'pull-request', ...(local ? { local: true } : {}), kind: 'host', target: c.target, branch: c.after.branch, base: c.before?.sha ?? null, ids: [...idsOf(commitGroup), ...takes],
       ...(archive !== null ? { archive } : {}),
     });
   }
@@ -974,7 +990,7 @@ export async function uninstallPlan({
   } else {
     // The project's own fetch mirror and merge queue folder in the engine folder (the helper makes them before a run
     // starts), which nothing else reads once the project is gone; the engine and the other projects' stay.
-    const own = slug === null ? [] : [path.join(engineDir(), 'mirrors', `${slug}.git`), path.join(engineDir(), 'queues', slug)];
+    const own = slug === null ? [] : [path.join(engineDir(), 'mirrors', `${slug}.git`), path.join(engineDir(), 'queues', slug), path.join(engineDir(), 'checks', slug)];
     for (const p of own) if (exists(p)) remove(p, 'last');
     kept('Wheelhouse\'s helper, telemetry, tools, your settings and this computer\'s signing key', `another project on this computer, or one being set up, still uses them${deferred > 0 ? ` (${deferred} change${deferred === 1 ? '' : 's'} of this computer's)` : ''}`);
   }
@@ -982,9 +998,25 @@ export async function uninstallPlan({
   const projectKey = slug === null ? null : resolved(projectFolder(slug));
   for (const [key, r] of removals) {
     add(r.phase, key === projectKey ? Number.MAX_SAFE_INTEGER : r.seq, {
-      put: 'remove', target: r.target, ...(key === projectKey ? { except: RECORD_NAMES } : {}), ...(r.ids.length > 0 ? { ids: r.ids } : {}),
+      put: 'remove', target: r.target, ...(key === projectKey ? { except: local ? [...RECORD_NAMES, 'home.git'] : RECORD_NAMES } : {}), ...(r.ids.length > 0 ? { ids: r.ids } : {}),
     });
   }
+
+  // A project kept here: the folder first takes all the home holds, so it needs the home for nothing afterwards, and the
+  // home has its own card, as the record has.
+  if (local && exists(homeDir(slug))) {
+    add('files', Number.MAX_SAFE_INTEGER, { put: 'bring-up', branch: homeBranch(slug) });
+    asks.push({
+      id: askId(`home:${slug}`), about: 'home', phase: 'kept', put: 'delete-home', target: homeDir(slug), ids: homeIds,
+      card: deleteCard({
+        what: `Delete this project's private copy on this computer, ${shown(homeDir(slug), userHome)}?`,
+        why: 'Your folder holds the whole history once Wheelhouse has gone, so the copy is a spare. Once deleted it can\'t be brought back, so it is your call.',
+        keeps: 'The private copy stays on this computer, unused, for this project set up again.',
+        deletes: 'Wheelhouse deletes the private copy from this computer. Your folder and its history stay.',
+        because: 'a deleted copy can\'t be brought back',
+      }),
+    });
+  } else if (homeIds.length > 0) settled(homeIds, 'already gone');
 
   // The project's private record on this computer: kept unless its own card says delete, as a
   // deleted transcript can't come back (design section 24.3, item 5). v0.1.x's state clone beside it
@@ -1060,11 +1092,13 @@ export async function uninstallPlan({
     // Said only when the checks really go: never on a shared project (ruling R124).
     checks: shared
       ? 'Your other computers keep the checks for this project; they stop on this computer only, and protection stays as it is.'
-      : pullRequest
-        ? 'Once the pull request is merged, the checks no longer guard this project; protection stays on.'
-        : 'The checks no longer guard this project; protection stays as it is.',
+      : local
+        ? 'The checks no longer guard this project.'
+        : pullRequest
+          ? 'Once the pull request is merged, the checks no longer guard this project; protection stays on.'
+          : 'The checks no longer guard this project; protection stays as it is.',
   };
-  const card = { ...base, what: fitWhat(cardWhats({ name, changes, keep, asks, pullRequest, archive: pullRequest ? archive : null }), base, name) };
+  const card = { ...base, what: fitWhat(cardWhats({ name, changes, keep, asks, pullRequest, archive: pullRequest ? archive : null, local }), base, name) };
   return { project: slug, last, shared, changes, keep, asks, done, card, hash };
 }
 
@@ -1179,7 +1213,9 @@ function entryLine(e, userHome) {
   switch (e.put) {
     case 'stop': return `stop the ${e.what === 'receiver' ? 'usage receiver' : e.what === 'helper' ? 'host helper, after its answer' : e.what === 'foreman' ? 'Bosun' : e.what}`;
     case 'leave-locked': return 'leave Locked (your password)';
-    case 'pull-request': return `a pull request taking setup's files and pins out of ${e.branch}, for you to merge`;
+    case 'bring-up': return `bring this folder up to ${e.branch}, with every line of the project's private copy`;
+    case REMOVE_REMOTE: return `take Wheelhouse's ${e.name} setting out of this folder's git`;
+    case 'pull-request': return e.local ? `a last change taking setup's files and pins out of ${e.branch}, merged into this folder` : `a pull request taking setup's files and pins out of ${e.branch}, for you to merge`;
     case 'in-pull-request': return `  in it: ${describe(e.change, userHome)}`;
     case 'close-pull-request': return `close the trial pull request${e.number ? ` ${e.number}` : ''}`;
     case 'delete-branch': return `delete the trial branch ${e.branch}`;

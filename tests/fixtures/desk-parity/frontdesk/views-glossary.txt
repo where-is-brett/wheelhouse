@@ -10,6 +10,7 @@ slice: one finished piece of a bigger feature, sent up as its own pull request a
 lane: how much process a piece of work goes through (quick, small, feature or bug); the bigger the lane, the more planning and checking
 feature flag: a switch that keeps finished work hidden from users until you decide to turn it on
 preview: a private copy of the product with the change in it, so you can look before it goes live
+local change: a piece of work on a project kept on this computer, set aside for checking before it joins the main version
 worktree: a separate working folder where one agent builds one piece of work without getting in the way of the others
 All stop: the big red button: every agent stops until you lift it
 Standard: the normal protection level, and the default: it guards against agents' mistakes and against being misled by what they read, and asks nothing extra of you

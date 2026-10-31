@@ -48,6 +48,14 @@ const model = (over = {}) => boardModel({
   now: () => NOW, ...over,
 });
 
+test('a line that would say pull request says change', () => {
+  const said = model({ local: true, health: [{ level: 'watch', text: 'The trial pull request stayed open on the host' }] });
+  const health = JSON.stringify(said);
+  assert.match(health, /The trial change stayed open on this computer/);
+  assert.doesNotMatch(health, /pull request/i);
+  assert.match(JSON.stringify(model({ health: [{ level: 'watch', text: 'The trial pull request' }] })), /The trial pull request/);
+});
+
 test('unconfirmed rulings, levels and settings come first', () => {
   const views = emptyViews();
   views.unconfirmed = [

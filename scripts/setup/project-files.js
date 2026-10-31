@@ -132,6 +132,10 @@ import { projectPath } from '../host/gitlab-key.js';
 import { DEFAULT_GITLAB, commitEmailOf } from '../host/gitlab-base.js';
 import { MARKETPLACE, WHEELHOUSE_REPO, readManifest, checkInstalled, locateInstalled, claudeHome as defaultClaudeHome } from '../lineage/manifest.js';
 import { keepQueue, readQueue } from '../checks/standing.js';
+import { gitRoute, homeBranch, homeDir } from '../host/local/home.js';
+import { FOLDER_REMOTE } from '../host/local/folder.js';
+import { identityOf, keepSeenMain } from '../host/local/merge.js';
+import { startedBySetup } from './local.js';
 import { switchOnAsDirector, directorGitEnv, directorGitlabApi, madeBySetup, STOPPED, launchedIn, REAL_USERS } from './host.js';
 import { isolated, refuseUnlistedSettings, reaching } from './git.js';
 import { toolsStatus, PLUGIN_ROOT } from './tools.js';
@@ -242,7 +246,7 @@ async function githubLogin({ run }) {
 }
 // Wheelhouse's own branches, which are never the product's default (ruling R34).
 const WHEELHOUSE_BRANCHES = [STATE_BRANCH, 'wheelhouse-lock', PROFILE_BRANCH];
-const NAME = { github: 'GitHub', gitlab: 'GitLab' };
+const NAME = { github: 'GitHub', gitlab: 'GitLab', local: 'this computer' };
 const PIN_NAMES = { superpowers: 'Superpowers', 'mattpocock-skills': 'Matt Pocock\'s skills' };
 const INSTALL_WAIT_MS = 10 * 60 * 1000;
 const GIT_WAIT_MS = 5 * 60 * 1000;
@@ -504,9 +508,10 @@ const parsed = (text) => {
 };
 
 // The default branch, by the host's API with the director's own sign-in (ruling R34).
-async function defaultBranchOf({ host, repo, run, gitlab, base }) {
+async function defaultBranchOf({ host, repo, run, gitlab, base, project }) {
   let branch;
-  if (host === 'gitlab') {
+  if (host === 'local') branch = homeBranch(project);
+  else if (host === 'gitlab') {
     const api = await gitlab({ run, baseUrl: base });
     branch = (await api.get(projectPath(repo)))?.body?.default_branch;
   } else {
@@ -539,6 +544,12 @@ export async function commitAuthor({ host, run = realRun, base = DEFAULT_GITLAB 
     }
   }
   throw new Error(`Setup could not read who is signed in to ${NAME[host]}, so the setup commit has no author: sign in again (step 3), then a fresh Go ahead`);
+}
+
+// The author of a commit setup makes on a project kept on this computer: the folder's own identity, or Wheelhouse's.
+async function localAuthor({ folder, run }) {
+  const env = await identityOf(folder, gitRoute({ run }));
+  return { name: env.GIT_AUTHOR_NAME, email: env.GIT_AUTHOR_EMAIL };
 }
 
 // git in the project's folder, with the director's own sign-in, git's global and system config
@@ -967,6 +978,7 @@ async function switchFolder(ctx, c, { git, project, author }) {
 }
 
 export function projectFilesCard({ changes, host, branch, release, joining = false, differ = [], negated = [], frontDesk = null, midSized = null }) {
+  const local = host === 'local';
   const files = changes.filter((c) => (c.kind === 'json-key' || c.kind === 'file') && c.line === undefined && c.engine !== true && c.what !== 'mirror');
   // The lines that keep .env files out of git: in the project's .gitignore, or, on a joining
   // computer, in this computer's own list.
@@ -990,7 +1002,7 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   if (secrets === 'shared') parts.push(`.env files, which hold secrets, kept out of git by .gitignore${envLines.some((c) => c.restate) ? ' (.env.example stays shared)' : ''}`);
   else if (secrets === 'here') parts.push(negated.length > 0 ? `some .env files, which hold secrets, kept out of git on this computer, but ${NEGATED_PART}` : '.env files, which hold secrets, kept out of git on this computer');
   if (negated.length > 0 && secrets !== 'here') parts.push(NEGATED_PART);
-  if (changes.some((c) => c.engine === true)) parts.push('the build engine\'s merge policy and settings into .archon/, naming the GitHub account Wheelhouse signs reviews as');
+  if (changes.some((c) => c.engine === true)) parts.push(host === 'local' ? 'the build engine\'s settings into .archon/' : 'the build engine\'s merge policy and settings into .archon/, naming the GitHub account Wheelhouse signs reviews as');
   if (changes.some((c) => c.what === 'mirror')) parts.push('the build engine reads this project from Wheelhouse\'s own copy, so it never holds a key');
   const pins = changes.filter((c) => c.kind === 'process').map((c) => pinName(c.target));
   if (pins.length > 0) parts.push(`${listed(pins)} installed for this project at tested versions`);
@@ -1003,21 +1015,21 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   const ownPart = ownFiles.length > 0 ? `, with your product's own ${ownFiles.length === 1 ? 'file' : 'files'}, ${listed(ownNamed)}` : '';
   const ignored = up?.action === 'commit' && Array.isArray(up.files) && up.files.includes(GITIGNORE);
   const archon = up?.action === 'commit' && Array.isArray(up.files) && up.files.some((f) => ENGINE_FILES.includes(f));
-  if (up?.action === 'commit') parts.push(`the three shared files${ignored ? ' and .gitignore' : ''}${archon ? ' and .archon/' : ''} go up to ${branch} on ${NAME[host]} in one commit, "${COMMIT_MESSAGE}"${yours}${ownPart}`);
+  if (up?.action === 'commit') parts.push(`the three shared files${ignored ? ' and .gitignore' : ''}${archon ? ' and .archon/' : ''} ${local ? `go onto ${branch}` : `go up to ${branch} on ${NAME[host]}`} in one commit, "${COMMIT_MESSAGE}"${yours}${ownPart}`);
   if (up?.ownLeft === true) parts.push('your product\'s own files stay as they are, too many for setup\'s commit: commit them when you are ready');
-  if (up?.action === 'push') parts.push(`setup's commit, "${COMMIT_MESSAGE}", goes up to ${branch} on ${NAME[host]}`);
+  if (up?.action === 'push') parts.push(`setup's commit, "${COMMIT_MESSAGE}", ${local ? `goes onto ${branch}` : `goes up to ${branch} on ${NAME[host]}`}`);
   const where = host === 'gitlab' ? ' ("pipelines must succeed" once there is a pipeline)' : ', where your plan allows';
   if (joining) parts.push('the project\'s own files stay as your other computer committed them: nothing is committed and protection stays as it is');
-  else parts.push(`${up ? 'then ' : ''}${branch}'s protection goes on${where}`);
+  else if (!local) parts.push(`${up ? 'then ' : ''}${branch}'s protection goes on${where}`);
   if (differ.length > 0) parts.push(`${listed(differ)} ${differ.length === 1 ? 'differs' : 'differ'} from what is committed, and setup leaves ${differ.length === 1 ? 'it as it is' : 'them as they are'}`);
   const pinned = release?.ref ? `Wheelhouse stays at ${release.ref} and never updates itself.` : 'Wheelhouse never updates itself.';
   const card = (what) => ({
     kind: 'setup',
     level: 3,
     what,
-    why: 'Agents start from these files; protection sends later changes through Wheelhouse\'s checks.',
+    why: local ? 'Agents start from these files; later changes go through Wheelhouse\'s checks.' : 'Agents start from these files; protection sends later changes through Wheelhouse\'s checks.',
     options: [
-      { label: SETUP_LABEL, says: 'Setup makes these changes and says what protection reads back.' },
+      { label: SETUP_LABEL, says: local ? 'Setup makes these changes.' : 'Setup makes these changes and says what protection reads back.' },
       { label: 'Not now', says: 'Setup waits here; nothing changes.' },
     ],
     recommend: SETUP_LABEL,
@@ -1026,7 +1038,7 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   });
   const full = card(joining
     ? `Setup step 7, ${SETUP_TITLES[7]}, for this computer: ${parts.join('; ')}. ${pinned}`
-    : `Setup step 7, ${SETUP_TITLES[7]}: ${parts.join('; ')}. All with your ${NAME[host]} sign-in. ${pinned}`);
+    : `Setup step 7, ${SETUP_TITLES[7]}: ${parts.join('; ')}.${local ? '' : ` All with your ${NAME[host]} sign-in.`} ${pinned}`);
   const fits = (c) => composeCard({ ...c, target: { step: 7, hash: '0'.repeat(64) } }).question.question.length <= CARD.chars;
   try {
     if (fits(full)) return full;
@@ -1041,10 +1053,10 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   }
   const short = [
     ...(shared.length > 0 ? ['the project\'s own files'] : []), ...(files.length > shared.length || excluded || ours ? ['this computer\'s settings'] : []),
-    ...(secrets ? ['.env files kept out of git'] : []), ...(pins.length > 0 ? ['the pinned kits'] : []), ...(up ? [`the setup commit up to ${cut(branch)} on ${NAME[host]}${yours === '' ? '' : ', with your changes'}${ownPart === '' ? '' : ', with your product\'s own files'}`] : []),
-    `${up ? 'then ' : ''}protection on ${up ? 'it' : cut(branch)}`,
+    ...(secrets ? ['.env files kept out of git'] : []), ...(pins.length > 0 ? ['the pinned kits'] : []), ...(up ? [`the setup commit ${local ? `onto ${cut(branch)}` : `up to ${cut(branch)} on ${NAME[host]}`}${yours === '' ? '' : ', with your changes'}${ownPart === '' ? '' : ', with your product\'s own files'}`] : []),
+    ...(local ? [] : [`${up ? 'then ' : ''}protection on ${up ? 'it' : cut(branch)}`]),
   ];
-  return card(`Setup step 7, ${SETUP_TITLES[7]}: ${short.join(', ')}, all with your sign-in. Wheelhouse never updates itself.`);
+  return card(`Setup step 7, ${SETUP_TITLES[7]}: ${short.join(', ')}${local ? '' : ', all with your sign-in'}. Wheelhouse never updates itself.`);
 }
 
 // ---- Step 7 ----
@@ -1179,14 +1191,17 @@ export function projectFilesStep({
       if (!ctx.answers?.['4.live-data']) return { wait: PROJECT_WAIT_MS, why: 'step 4 has not been told whether the product holds live data yet; the configuration says so' };
       const { record } = found;
       const { host, repo } = record;
+      const local = host === 'local';
       const folder = ctx.folder;
       const at = (rel) => path.join(folder, ...rel.split('/'));
+      // Where setup's commit goes: the host, or for a project kept on this computer its home, by its path.
+      const remoteUrl = local ? homeDir(found.project) : record.remoteUrl;
 
-      const branch = await defaultBranchOf({ host, repo, run, gitlab, base: record.connection?.baseUrl });
+      const branch = await defaultBranchOf({ host, repo, run, gitlab, base: record.connection?.baseUrl, project: found.project });
       if (WHEELHOUSE_BRANCHES.includes(branch)) {
         throw new Error(`${NAME[host]}'s default branch for ${repo} is ${branch}, which is Wheelhouse's own branch, so setup can't put the project's files there: make the product's own branch the default in the repository's settings on ${NAME[host]}, then ask again`);
       }
-      const git = await gitFor({ host, platform, folder, remoteUrl: record.remoteUrl, base: record.connection?.baseUrl });
+      const git = await gitFor({ host, platform, folder, remoteUrl, base: record.connection?.baseUrl });
       const current = await git.out(['symbolic-ref', '--short', '-q', 'HEAD']);
       if (current !== branch) {
         // Setup never suggests changing the host's default branch. A folder on a line named as a
@@ -1197,22 +1212,31 @@ export function projectFilesStep({
         // switches by hand; put aside, the install's lines in the project's settings would go with
         // the changes not yet committed.
         const mainLine = current === 'main' || current === 'master';
-        const switching = current && !mainLine ? await switchChange(git, { from: current, branch, remoteUrl: record.remoteUrl, repo }) : null;
+        const switching = current && (local || !mainLine) ? await switchChange(git, { from: current, branch, remoteUrl, repo }) : null;
         if (switching !== null) return { changes: [switching], card: switchCard(switching), director: 'One click' };
         const installLines = (await git.out(['status', '--porcelain', '--', SETTINGS])) ? `: the Wheelhouse install's own lines in ${SETTINGS} are among them` : '';
+        if (local) throw new Error(`Wheelhouse's main version is ${branch}, but this folder is on ${current ?? 'no branch'}. Switch this folder to ${branch}, then ask again; keep the changes not yet committed as they are${installLines}`);
         const what = mainLine
           ? `Ask whoever looks after the repository on ${NAME[host]} which line is the product's own, then ask again`
           : `${current ? `${current} is left as it is. ` : ''}Switch this folder to ${branch}, then ask again; keep the changes not yet committed as they are${installLines}`;
         throw new Error(`${NAME[host]}'s default branch for ${repo} is ${branch}, but this folder is on ${current ?? 'no branch'}: Wheelhouse puts its files on the default branch and merges into it from then on. ${what}`);
       }
-      const tip = await remoteTip(git, record.remoteUrl, branch);
+      let tip = await remoteTip(git, remoteUrl, branch);
       if (tip === null) throw new Error(`${branch} is not on ${NAME[host]} yet, so setup's commit has nothing to go on: run step 3 again, then ask again`);
       const head = await git.out(['rev-parse', '-q', '--verify', 'HEAD^{commit}']);
       let unpushed = false;
+      let catchUp = null;
       if (head !== tip) {
         unpushed = await setupCommitOn(git, head, tip, { strict: true, own: journalledCommits(`${repo} ${branch}`) });
         if (!unpushed) {
-          if (head !== null && await git.ok(['merge-base', '--is-ancestor', tip, head])) {
+          const ahead = head !== null && await git.ok(['merge-base', '--is-ancestor', tip, head]);
+          // A folder kept here that went on since step 3 copied it: its commits are the project's own, and nothing has been built on them yet.
+          if (local && ahead) {
+            catchUp = { kind: 'host', target: `${repo} ${branch} home`, action: 'catch-up', branch, from: tip, to: head };
+            tip = head;
+          } else if (local) {
+            throw new Error(`Wheelhouse's copy of your project holds commits on ${branch} that this folder hasn't got, so setup has stopped here: report it to Wheelhouse`);
+          } else if (ahead) {
             throw new Error(`This folder has commits of your own on ${branch} that are not on ${NAME[host]} yet, and setup's commit would take them up too: push them, or move them to a branch of their own, then ask again`);
           }
           throw new Error(`${NAME[host]} has commits on ${branch} that this folder hasn't got yet: bring them in (git pull), then ask again`);
@@ -1235,7 +1259,7 @@ export function projectFilesStep({
       // yet committed, and setup's commit would take it up: the director is asked first (R95).
       let commit = false;
       const yours = [];
-      const isNew = madeBySetup(`${host}:${repo}`);
+      const isNew = local ? startedBySetup(folder) : madeBySetup(`${host}:${repo}`);
       for (const rel of SETUP_FILES) {
         const work = readText(at(rel));
         const before = await headText(git, rel);
@@ -1287,9 +1311,9 @@ export function projectFilesStep({
       // A project on the new engine (a Mac's setup starts it there, on GitHub): the merge queue's policy and Archon's
       // project settings go up in this same commit when the project has neither yet (scripts/setup/engine-parts.js).
       const engineFiles = [];
-      if (host === 'github' && engineOf(found.project) === 'archon') {
-        const texts = engineFileTexts(await loginOf({ host, run }));
-        for (const rel of ENGINE_FILES) {
+      if ((host === 'github' || local) && engineOf(found.project) === 'archon') {
+        const texts = local ? engineFileTexts(null, { remote: FOLDER_REMOTE, baseBranch: branch }) : engineFileTexts(await loginOf({ host, run }));
+        for (const rel of Object.keys(texts)) {
           if (readText(at(rel)) !== null || (await headText(git, rel)) !== null) continue;
           engineFiles.push({ kind: 'file', target: at(rel), after: texts[rel], engine: true });
         }
@@ -1312,11 +1336,12 @@ export function projectFilesStep({
         changes.splice(firstPin === -1 ? changes.length : firstPin, 0, ...ignoreChanges(at(GITIGNORE), missing, ignoreWork));
       }
       const target = `${repo} ${branch}`;
+      if (catchUp !== null) changes.push(catchUp);
       // The commit goes on the tip the plan read, and the push sends that exact commit (I1). The
       // director's own changes it takes up, as they chose, are named by their text's hash (R95).
       if (commit) changes.push({ kind: 'host', target, action: 'commit', branch, base: tip, message: COMMIT_MESSAGE, files: commitFiles, ...(yours.length > 0 ? { yours } : {}), ...(own.length > 0 ? { own } : {}), ...(left ? { ownLeft: true } : {}) });
       else if (unpushed) changes.push({ kind: 'host', target, action: 'push', branch, base: tip, commit: head, files: ((await git.out(['diff-tree', '--no-commit-id', '--name-only', '-r', head])) ?? '').split('\n').filter(Boolean) });
-      changes.push({ kind: 'host', target: `${repo} protection`, action: 'protect', branch });
+      if (!local) changes.push({ kind: 'host', target: `${repo} protection`, action: 'protect', branch });
       return { changes, card: projectFilesCard({ changes, host, branch, release, frontDesk: pin === null ? NO_PIN : frontDeskOf(changes, pin), midSized: held !== null ? null : mid === null ? NO_PIN : mid }), director: 'One click' };
     },
 
@@ -1328,15 +1353,18 @@ export function projectFilesStep({
       if (found === null) throw new Error('the project is not registered on this computer; run step 3 first');
       const { project, record } = found;
       const { host, repo } = record;
+      const local = host === 'local';
       const folder = ctx.folder;
       const at = (rel) => path.join(folder, ...rel.split('/'));
+      const remoteUrl = local ? homeDir(project) : record.remoteUrl;
+      const authorOf = () => (local ? localAuthor({ folder, run }) : commitAuthor({ host, run, base: record.connection?.baseUrl }));
 
       // 0. A folder on a line of work: the switch alone, then the step is planned again on main.
       const switching = changes.find((c) => c.kind === 'host' && c.action === 'switch');
       if (switching) {
         halt();
-        const git = await gitFor({ host, platform, folder, remoteUrl: record.remoteUrl, base: record.connection?.baseUrl });
-        const author = switching.keep ? await commitAuthor({ host, run, base: record.connection?.baseUrl }) : null;
+        const git = await gitFor({ host, platform, folder, remoteUrl, base: record.connection?.baseUrl });
+        const author = switching.keep ? await authorOf() : null;
         return switchFolder(ctx, switching, { git, project, author });
       }
 
@@ -1389,7 +1417,7 @@ export function projectFilesStep({
           // (ruling R103): rewritten by the installs into a layout of their own but holding the
           // same, it gets the committed text back, recorded first; holding something else, it is
           // left as it is and named.
-          const git = await gitFor({ host, platform, folder, remoteUrl: record.remoteUrl, base: record.connection?.baseUrl });
+          const git = await gitFor({ host, platform, folder, remoteUrl, base: record.connection?.baseUrl });
           const committed = await headText(git, SETTINGS);
           const text = readText(settingsFile);
           if (committed !== null && text !== committed) {
@@ -1418,9 +1446,14 @@ export function projectFilesStep({
       // the step with nothing committed or pushed.
       const up = changes.find((c) => c.kind === 'host' && (c.action === 'commit' || c.action === 'push'));
       if (up) {
-        const git = await gitFor({ host, platform, folder, remoteUrl: record.remoteUrl, base: record.connection?.baseUrl });
+        const git = await gitFor({ host, platform, folder, remoteUrl, base: record.connection?.baseUrl });
         const moved = (what) => new Error(`${what} changed while the pinned kits were installed, so nothing went up: ask for the plan again`);
-        const tipNow = await remoteTip(git, record.remoteUrl, up.branch);
+        const catchUp = changes.find((c) => c.action === 'catch-up');
+        if (catchUp !== undefined) {
+          ctx.record({ id: newId('chg'), kind: 'host', target: catchUp.target, before: { branch: catchUp.branch, sha: catchUp.from }, after: { action: 'catch-up', branch: catchUp.branch, sha: catchUp.to }, project });
+          if (!(await git.ok(['push', '-q', '--no-verify', remoteUrl, `${catchUp.to}:refs/heads/${catchUp.branch}`]))) throw new Error('This folder\'s newest commits could not be copied, so nothing went up; a fresh Go ahead tries again');
+        }
+        const tipNow = await remoteTip(git, remoteUrl, up.branch);
         let sha = up.commit ?? null;
         if (up.action === 'commit') {
           if ((await git.out(['symbolic-ref', '--short', '-q', 'HEAD'])) !== up.branch) throw moved('This folder\'s branch');
@@ -1437,7 +1470,7 @@ export function projectFilesStep({
           }
           const paths = [...up.files, ...own.map((o) => o.file)];
           if (tipNow !== up.base) throw moved(`${up.branch} on ${NAME[host]}`);
-          const author = await commitAuthor({ host, run, base: record.connection?.baseUrl });
+          const author = await authorOf();
           // A file new to git is added with intent only, so the commit takes it and nothing is staged;
           // a commit that fails takes those entries out again.
           const added = [];
@@ -1472,13 +1505,15 @@ export function projectFilesStep({
             id: newId('chg'), kind: 'host', target: up.target, before: { branch: up.branch, sha: tipNow },
             after: { action: 'push', branch: up.branch, sha, message: COMMIT_MESSAGE, files: heldBy }, project,
           });
-          const pushed = await git.ok(['push', '-q', '--no-verify', record.remoteUrl, `${sha}:refs/heads/${up.branch}`]);
+          const pushed = await git.ok(['push', '-q', '--no-verify', remoteUrl, `${sha}:refs/heads/${up.branch}`]);
           if (!pushed) throw new Error(`the setup commit could not be pushed to ${up.branch} on ${NAME[host]}; it is kept in this folder, and a fresh Go ahead pushes it`);
           // The folder's copy of the branch on the host, told what the host now holds, when its
           // origin is the repository pushed to: fetched by the address setup recorded, never by the
           // one origin names (ruling R111).
           const origin = await git.out(['remote', 'get-url', 'origin']);
-          if (origin !== null && sameRemote(origin, record.remoteUrl)) await git.ok(['fetch', '-q', record.remoteUrl, `+refs/heads/${up.branch}:refs/remotes/origin/${up.branch}`]);
+          if (!local && origin !== null && sameRemote(origin, record.remoteUrl)) await git.ok(['fetch', '-q', record.remoteUrl, `+refs/heads/${up.branch}:refs/remotes/origin/${up.branch}`]);
+          // The helper reads a move it didn't make as the main version moved outside it.
+          if (local) keepSeenMain(project, sha);
           say(`Setup's commit is on ${up.branch} on ${NAME[host]}`);
         }
       }

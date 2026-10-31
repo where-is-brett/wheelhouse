@@ -164,7 +164,9 @@ export const archonConfigText = ({ remote = null, baseBranch = null } = {}) => [
   '',
 ].join('\n');
 
-// The text each engine file holds, for the login the helper posts as.
-export function engineFileTexts(login) {
+// The text each engine file holds, for the login the helper posts as. A project with no host has no merge policy, since
+// Archon's queue isn't used, and its settings name the folder's remote and main version: `local`, { remote, baseBranch }.
+export function engineFileTexts(login, local = null) {
+  if (local !== null) return { [ARCHON_CONFIG_FILE]: archonConfigText(local) };
   return { [POLICY_FILE]: maintainersText([login]), [ARCHON_CONFIG_FILE]: archonConfigText() };
 }
