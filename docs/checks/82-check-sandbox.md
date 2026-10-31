@@ -143,6 +143,8 @@ What the three can do: none starts a program a test chooses. The new `audio-comp
 
 **`swift test --no-parallel`, 1 November 2026.** The finder's Swift command, through `runner` on the real project: all its tests passed in 0.8 minutes, and its folder was left as it was.
 
+**The direct Xcode path has tests only, 1 November 2026.** The finder's row for an Xcode project, `xcodebuild build-for-testing` then `xcrun xctest`, has run in the code's tests and not on a real Xcode project: the real project here is a Swift package.
+
 ## What it means for the design
 
 For the main session as cards, not yet changed in the design:
