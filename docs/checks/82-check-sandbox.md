@@ -10,7 +10,7 @@ Spec sections 3 and 4.4, and the plan's part 0. Does a real Mac app's test run w
 
 ## Tested on
 
-31 October 2026, on macOS 27.0.1 (arm64) with Node.js 22.22.1 and Xcode 27.2. The real project is a Mac app in the director's care: a `Package.swift` with one test target and an XcodeGen `project.yml`, whose `.xcodeproj` is generated and ignored by git. The main session ran the probe on it. It isn't named here, and the probe's report has its names taken out. The ways out and the made-up app ran on the same Mac.
+31 October 2026, on macOS 27.0.1 (arm64) with Node.js 22.22.1 and Xcode 27.2. The real project is a Mac app: a `Package.swift` with one test target and an XcodeGen `project.yml`, whose `.xcodeproj` is generated and ignored by git. The main session ran the probe on it. It isn't named here, and the probe's report has its names taken out. The ways out and the made-up app ran on the same Mac.
 
 ## Method
 
@@ -67,7 +67,7 @@ They name services and operations, not programs, so a compiled program gets no f
 | Signal another process | Allowed | **Allowed** | Shut |
 | Read the clipboard | Read | **Read, 43 characters** | Shut, 0 characters |
 
-The Terminal line counts as open under draft. Only macOS's prompt stood in the way, and the director pressed Don't Allow, on the main session's word. On a computer where that permission was once granted, the event would have run a command outside the sandbox. The -10004 lines may rest on the same kind of consent, so they aren't counted as the profile's doing. Under tight, no Apple Event left the process and no prompt appeared. The probe no longer sends these under draft unless given `--prompts`. The probe's own table marks the clipboard as open under tight, as its test reads only the exit code; 0 characters came back.
+The Terminal line counts as open under draft. Only macOS's prompt stood in the way, and the main session told the director to press Don't Allow. On a computer where that permission was once granted, the event would have run a command outside the sandbox. The -10004 lines may rest on the same kind of consent, so they aren't counted as the profile's doing. Under tight, no Apple Event left the process and no prompt appeared. The probe no longer sends these under draft unless given `--prompts`. The probe's own table marks the clipboard as open under tight, as its test reads only the exit code; 0 characters came back.
 
 **`xcodebuild test` on the made-up app.**
 
@@ -124,6 +124,6 @@ For the main session as cards, not yet changed in the design:
 
 ## Needs the director
 
-Nothing to do. The director pressed Don't Allow on one macOS prompt during this check. Whether a project with hosted tests gets a way to run is for the main session, and it reaches the director only as the card already designed.
+Nothing to do. One macOS prompt reached the director during this check, with word to press Don't Allow. Whether a project with hosted tests gets a way to run is for the main session, and it reaches the director only as the card already designed.
 
 Nothing was changed in the real project. No login item, launch agent or job was left behind: `launchctl list`, `~/Library/LaunchAgents` and the login items were read after the runs. Each check folder went to the Trash, and so did the crash reports the made-up app left.
