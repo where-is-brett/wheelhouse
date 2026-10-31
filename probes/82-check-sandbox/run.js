@@ -8,6 +8,9 @@
 //   node probes/82-check-sandbox/run.js project <folder> [--profile ...] [--scheme S] [--container rel] [--minutes 20]
 //   node probes/82-check-sandbox/run.js runner <folder>|--fixture [--test "command"] [--prepare "command"] [--minutes 20]
 //                                          the check runner itself, from fetch to word, on a copy of the folder's head
+//   node probes/82-check-sandbox/run.js hang <folder> [--test "command"] [--prepare "command"] [--after 120] [--minutes 15]
+//                                          runner, with the sandbox's refusals read live; once a test process has lived
+//                                          --after seconds it and all it started are sampled, and the check is ended
 //
 // `deny` is the check runner's own profile (scripts/checks/profile.js) and the default. Don't use draft or open on a
 // project: `xcodebuild test` has the system start the project's app outside the sandbox (see docs/checks/82-check-sandbox.md).
@@ -31,7 +34,7 @@ import { testEnv } from '../../scripts/lib/local-git.js';
 import { credentialPaths } from '../../scripts/lib/credentials.js';
 import { archonDenyRules, KEYCHAINS } from '../../scripts/protection/settings.js';
 import { checkProfile } from '../../scripts/checks/profile.js';
-import { runCheck } from '../../scripts/checks/run.js';
+import { endCheck, runCheck } from '../../scripts/checks/run.js';
 import { writeFixture } from './fixture.js';
 
 const REAL_HOME = os.homedir();
@@ -582,6 +585,118 @@ async function phaseRunner() {
   }
 }
 
+// The kernel's lines about what the profile refused, read as they come. Only the check's own processes, or a program a
+// check uses, count: the system's daemons have sandboxes of their own and are refused things all day.
+function watchRefusals(belongs) {
+  const log = spawn('/usr/bin/log', ['stream', '--style', 'ndjson', '--predicate', 'process == "kernel" AND eventMessage CONTAINS "Sandbox:"'], { stdio: ['ignore', 'pipe', 'ignore'] });
+  const counts = new Map();
+  let held = '';
+  log.stdout.on('data', (chunk) => {
+    const lines = (held + chunk).split('\n');
+    held = lines.pop();
+    for (const line of lines) {
+      let message;
+      try { message = JSON.parse(line).eventMessage; } catch { continue; }
+      const m = /(?:(\d+) duplicate reports for )?Sandbox:\s+(.+?)\((\d+)\)\s+deny\(\d+\)\s+(\S+)\s*(.*)$/.exec(String(message));
+      if (!m || !belongs(m[2], Number(m[3]))) continue;
+      const key = `${m[4]} ${m[5]}`.trim();
+      counts.set(key, (counts.get(key) ?? 0) + Number(m[1] ?? 1));
+    }
+  });
+  return { counts, stop: () => log.kill() };
+}
+
+async function processTable() {
+  const got = await run('/bin/ps', ['-axo', 'pid=,ppid=,etime=,command=']);
+  return got.stdout.split('\n').map((line) => /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/.exec(line)).filter(Boolean).map((m) => {
+    const [mm, ss] = m[3].split(':').slice(-2).map(Number);
+    const parts = m[3].split(/[-:]/).map(Number);
+    return { pid: Number(m[1]), ppid: Number(m[2]), seconds: parts.length > 3 ? 86400 : (parts.length === 3 ? parts[0] * 3600 : 0) + mm * 60 + ss, command: m[4] };
+  });
+}
+
+// A sample's call graph with the project's own code hidden: a frame from something built in the check folder shows as
+// <project code>, so only what it was waiting in remains.
+function cleanSample(text, mask, checkFolder) {
+  const images = new Set();
+  for (const m of text.matchAll(/^\s*0x[0-9a-f]+ -\s+0x[0-9a-f]+\s+\+?(.+?)\s+(?:\(.*?\)\s+)?<[0-9A-F-]+>\s+(\/.*)$/gm)) {
+    if (m[2].includes(checkFolder)) images.add(m[1]);
+  }
+  const start = text.indexOf('Call graph:');
+  const end = text.indexOf('Binary Images:');
+  const body = text.slice(start === -1 ? 0 : start, end === -1 ? undefined : end);
+  const shown = body.split('\n').map((line) => {
+    const frame = /^(.*?[+!:|\s])(\d+\s+)(.+?)\s+\(in ([^)]+)\)/.exec(line);
+    if (frame && images.has(frame[4])) return `${frame[1]}${frame[2]}<project code>`;
+    return line.replace(/ \+ \d+ \[0x[0-9a-f]+\]| \[0x[0-9a-f]+\]/g, '').replace(/(DispatchQueue_\d+: )(?!com\.apple)\S+/, '$1<a queue>');
+  });
+  return mask(shown.filter(Boolean).join('\n')).split('\n').slice(0, 220);
+}
+
+// What a hung check is waiting on: the runner as `phaseRunner` runs it, on the real profile, with the refusals read live.
+async function phaseHang() {
+  const folder = path.resolve(process.argv[3] ?? '');
+  if (!process.argv[3] || !fs.existsSync(path.join(folder, '.git'))) throw new Error('Give the project folder');
+  const paths = makeRoot();
+  const report = {};
+  process.env.WHEELHOUSE_HOME = path.join(paths.outer, 'wheelhouse');
+  const roots = new Set();
+  const seen = new Set();
+  const TOOLS = new Set(['swift-test', 'swiftpm-testing-helper', 'xctest', 'swift-build', 'swift-package', 'sh']);
+  const refusals = watchRefusals((name, pid) => seen.has(pid) || TOOLS.has(name));
+  try {
+    const text = fs.existsSync(path.join(folder, 'Package.swift')) ? fs.readFileSync(path.join(folder, 'Package.swift'), 'utf8') : '';
+    const remote = await git(folder, 'remote', 'get-url', 'origin');
+    const mask = maskerOf([path.basename(folder), path.basename(remote.stdout.trim()).replace(/\.git$/, ''), ...[...text.matchAll(/name:\s*"([^"]+)"/g)].map((m) => m[1])]);
+    const source = path.join(paths.outer, 'source.git');
+    const cloned = await git(paths.outer, 'clone', '-q', '--bare', '--no-hardlinks', folder, source);
+    if (cloned.code !== 0) throw new Error(`git clone: ${cloned.stderr.trim()}`);
+    await git(source, 'remote', 'remove', 'origin');
+    const commit = (await git(source, 'rev-parse', 'HEAD')).stdout.trim();
+    const settings = { testCommand: option('test', 'swift test --disable-sandbox'), prepare: option('prepare', 'swift package resolve --disable-sandbox'), minutes: Number(option('minutes', 15)), network: false };
+    let finished = false;
+    const checked = runCheck({ project: 'project', commit, main: true, settings, source, spawn: (...args) => { const child = spawn(...args); roots.add(child.pid); return child; } })
+      .finally(() => { finished = true; });
+    const after = Number(option('after', 120));
+    const samples = [];
+    const below = (table) => {
+      const all = new Set(roots);
+      for (let grew = true; grew;) {
+        grew = false;
+        for (const row of table) if (all.has(row.ppid) && !all.has(row.pid)) { all.add(row.pid); grew = true; }
+      }
+      return table.filter((row) => all.has(row.pid));
+    };
+    while (!finished) {
+      await sleep(2000);
+      const table = await processTable();
+      const ours = below(table);
+      for (const row of ours) seen.add(row.pid);
+      if (!ours.some((row) => /xctest|swiftpm-testing-helper/.test(row.command) && row.seconds >= after)) continue;
+      report.processes = ours.map((row) => ({ name: mask(path.basename(row.command.split(' ')[0])), seconds: row.seconds, parent: row.ppid, pid: row.pid }));
+      for (const row of ours.filter((r) => !/^(?:\/usr\/bin\/sandbox-exec|\/bin\/sh)\b/.test(r.command))) {
+        const file = path.join(paths.outer, `sample-${row.pid}.txt`);
+        const got = await run('/usr/bin/sample', [String(row.pid), '5', '-mayDie', '-f', file], { timeoutMs: 60000 });
+        samples.push({ process: mask(path.basename(row.command.split(' ')[0])), sampled: got.code === 0, said: got.code === 0 ? '' : mask(got.stderr.trim().slice(-200)), stacks: fs.existsSync(file) ? cleanSample(fs.readFileSync(file, 'utf8'), mask, paths.root) : [] });
+      }
+      report.sampledAfterSeconds = after;
+      endCheck('project');
+      break;
+    }
+    const got = await checked;
+    await sleep(2500);
+    report.result = got.result;
+    report.minutes = got.minutes;
+    report.tail = mask(got.tail).split('\n').slice(-12);
+    report.refused = [...refusals.counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 80).map(([what, count]) => [mask(what.replaceAll(paths.root, '<check>')), count]);
+    report.samples = samples;
+    report.proofsBesideTheSecret = fs.readdirSync(paths.outside).filter((n) => n.startsWith('proof-'));
+  } finally {
+    refusals.stop();
+    await finish(paths, report);
+  }
+}
+
 // The report goes to the screen and the check folder; the folder goes to the Trash unless --keep. Never deleted outright.
 async function finish(paths, report) {
   const text = `${JSON.stringify(report, null, 2)}\n`;
@@ -595,7 +710,7 @@ async function finish(paths, report) {
   process.stdout.write(got.code === 0 ? 'The check folder went to the Trash.\n' : `The check folder stays at ${paths.outer.replace(REAL_HOME, '~')}: ${got.stderr.trim()}\n`);
 }
 
-const phases = { ways: phaseWays, fixture: phaseFixture, swift: phaseSwift, project: phaseProject, runner: phaseRunner };
+const phases = { ways: phaseWays, fixture: phaseFixture, swift: phaseSwift, project: phaseProject, runner: phaseRunner, hang: phaseHang };
 const phase = phases[process.argv[2]];
-if (!phase) throw new Error('Give ways, fixture, swift, project or runner');
+if (!phase) throw new Error('Give ways, fixture, swift, project, runner or hang');
 await phase();
