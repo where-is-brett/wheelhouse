@@ -167,6 +167,8 @@ function buttonsOf(card, preview) {
   const askToSuggest = offered(SUGGEST) ? [suggest] : [];
 
   if (kind === 'answer') return { buttons: [...answers('record'), ...askToSuggest, why, ...notNow], note: null };
+  // A blind card's click signs nothing: it goes to the front desk, which asks the answer card next.
+  if (kind === 'blind') return { buttons: [...answers('turn'), ...askToSuggest, why], note: null };
 
   const deciding = offers.find((label) => SIGNED_LABELS.includes(label));
   return {

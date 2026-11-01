@@ -57,7 +57,7 @@ import { cardsLineFor } from '../agents/card-words.js';
 import { existingCard } from '../cards/visit.js';
 import { controlFilesDue, gateAsksDue, holdsDue, premiumFailuresDue } from '../cards/build-loop.js';
 import { questionProblem } from '../cards/compose.js';
-import { answerLine } from '../state/card-lines.js';
+import { answerLine, blindLine } from '../state/card-lines.js';
 import { helperClient } from '../host/helper-client.js';
 import { stopState } from '../lib/stop.js';
 import { CARD } from '../lib/front-desk.js';
@@ -150,7 +150,7 @@ export function cardsDue(views, at) {
   const waiting = Array.isArray(views.waiting) ? views.waiting.filter(isRecord) : [];
   const fresh = new Set(waiting.filter((card) => (card.asked === null || card.asked === undefined) && !heldBackLine(card.data?.line, views)).map((card) => card.id));
   const questions = Object.entries(isRecord(views.questions) ? views.questions : {})
-    .filter(([id, entry]) => isRecord(entry) && !entry.answer && entry.joins === undefined && existingCard({ waiting }, answerLine(id)) === null && !heldBackLine(answerLine(id), views)
+    .filter(([id, entry]) => isRecord(entry) && !entry.answer && entry.joins === undefined && existingCard({ waiting }, answerLine(id)) === null && existingCard({ waiting }, blindLine(id)) === null && !heldBackLine(answerLine(id), views)
       && questionProblem(entry.question?.data) === null).length;
   const gate = gateAsksDue(views, at);
   for (const due of gate) if (due.again !== undefined) fresh.add(due.again);

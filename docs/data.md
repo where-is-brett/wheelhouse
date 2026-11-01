@@ -36,6 +36,8 @@ When the First Mate ends a turn on a question with no card, Claude Code's Stop h
 
 A question card's seal may gain a second line: a small read-only run's own reading of the question, made after the card is written. That run sees the question, the bare options, the project's signed brief if it has one, and the change with its comments taken out, in a folder of its own on this computer, and reads nothing else. What it was shown is kept only until it has read it. Its reading stays in the private record with the seal, and its tokens are kept under a line of their own, against no piece. It changes nothing about a card, and no card waits for it.
 
+About one question card in five, at most one a day, shows its options first with no recommendation. What you pick there is kept beside your answer on the card that follows, and neither changes what the other says. You can turn these off with the Blind cards setting.
+
 When two pieces ask the same question in the same words and options, the second is kept as a question that names the first, with no card of its own, so one answer can go to both. Each tick, Wheelhouse may also add a line naming the card that everything else is waiting behind, and how many pieces each card holds up. Both stay in the same record, and neither holds anything from your work beyond the question's own words.
 
 A rule you sign, so that Wheelhouse may one day settle a kind of question without you, is kept in the same private record, with the click that signed it. A rule can't sit in the project's repository, because an agent can edit that. For now a signed rule decides nothing: it only names the seals of the cards it would have covered. Each rule comes up for review after six months.

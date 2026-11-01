@@ -222,7 +222,7 @@ export function reviewDue({ events, now, days }) {
 // A topic is proposed for level 2 (from 3) once DELEGATE_AFTER of its level 3 cards were approved
 // unchanged (ruling F46): a card decided without a signature (a product question, or a question
 // from the build carrying a topic), by the option the card recommended (its `recommend`; a card
-// without one doesn't count), with no reversal of the topic after it. A card a signed click
+// without one doesn't count, nor does one that followed a blind card), with no reversal of the topic after it. A card a signed click
 // decides (DECIDING) never counts, since a level changes nothing for it, and a topic any such card
 // carries is never proposed for level 2. A topic reversed since the last review is proposed from 2
 // to 3 instead, and not for level 2. Never proposed (ruling F39): a topic with any card at level 4
@@ -251,7 +251,7 @@ export function delegationProposals(events, { now, since, enrolled, outcomes: gi
   const unchanged = ({ card, decided }) => {
     const topic = topicOf(card.data);
     const { recommend } = card.data;
-    if (topic === null || card.data.level !== 3 || !UNSIGNED.includes(card.data.kind) || typeof recommend !== 'string' || recommend === '') return false;
+    if (card.data.blind === true || topic === null || card.data.level !== 3 || !UNSIGNED.includes(card.data.kind) || typeof recommend !== 'string' || recommend === '') return false;
     if (decided === null || decided.label !== recommend || !inPeriod(decided.at)) return false;
     return !reversals.some((r) => r.data.topic === topic && later(r, decided.at));
   };

@@ -261,7 +261,8 @@ const PLAIN_SHAPES = {
   feature: { must: ['work', 'step'], may: ['worktree', 'branch', 'session', 'plan', 'files', 'brief', 'slice', 'pausedFor'] },
   // `checks`: what answering it does to the checks, one line, for a level 4 question's card.
   // `joins`: the open question whose card answers this one too (scripts/state/joiners.js).
-  question: { must: ['id', 'work', 'what', 'why', 'options', 'recommendation', 'level'], may: ['commands', 'checks', 'engine', 'joins'] },
+  // `blind`: drawn for a blind card, whose first pick comes before the recommendation (scripts/delegation/blind.js).
+  question: { must: ['id', 'work', 'what', 'why', 'options', 'recommendation', 'level'], may: ['commands', 'checks', 'engine', 'joins', 'blind'] },
   report: { must: ['work', 'outcome', 'summary', 'rulings'], may: ['pr', 'provenance'] },
   // A red-main incident (design on Archon, section 7.7) names its kind, the pull request the merge queue suspects
   // (or null) and the fix's work; the helper opens and closes it, and the director never needs to.
@@ -270,7 +271,7 @@ const PLAIN_SHAPES = {
   // `event`: the id of the record a card without a set line was made from (a lineage hold), so it is made once.
   // `parts`: the card's parts as the composer gives them; `revises`: the id of the card a revised proposal replaces;
   // `joiners`: the questions its answer also answers, each piece named on the card.
-  card: { must: ['question', 'header', 'options', 'kind', 'level'], may: ['descriptions', 'line', 'code', 'recommend', 'importance', 'topic', 'concepts', 'event', 'parts', 'revises', 'joiners'] },
+  card: { must: ['question', 'header', 'options', 'kind', 'level'], may: ['descriptions', 'line', 'code', 'recommend', 'importance', 'topic', 'concepts', 'event', 'parts', 'revises', 'joiners', 'blind'] },
   // A click on a card's option: the card by its id or its question, and the label chosen. A click in an agent's
   // chat (ruling P5-17) also names the card's `hash`, the `commit` it approves when it approves one, and its
   // `proof`; a Lean record's line moved up (lean-record.js) names its tier, proof, who and whether it was a click.
@@ -537,6 +538,7 @@ function checkPlain(kind, data) {
     if (data.joins !== undefined && (typeof data.joins !== 'string' || !questionIdOf(data.joins) || data.joins === data.id || data.level !== 3 || data.commands !== undefined)) {
       bad('joins a card only at level 3, by another question\'s id');
     }
+    if (data.blind !== undefined && (data.blind !== true || data.level !== 3)) bad('is blind only at level 3');
     // A question from the build engine names the run and the ask its answer goes back to, and each option's id there.
     if (data.engine !== undefined) {
       const e = data.engine;
@@ -586,6 +588,7 @@ function checkPlain(kind, data) {
     if (data.importance !== undefined && !Number.isFinite(data.importance)) bad('has an importance that is not a number');
     optionalText('topic');
     optionalText('recommend');
+    if (data.blind !== undefined && data.blind !== true) bad('has a blind that is not true');
     optionalText('event');
     optionalText('revises');
     if (data.joiners !== undefined && !(Array.isArray(data.joiners) && data.joiners.every(isText))) bad('has joiners that are not a list of question ids');
