@@ -22,7 +22,7 @@ function worktree() {
 
 function helperWith(protectedFiles) {
   const asked = [];
-  return { asked, client: { engine: { order: async (args) => { asked.push(args); return { ok: true, order: { protectedFiles } }; } } } };
+  return { asked, client: { engine: { protectedFiles: async (args) => { asked.push(args); return { ok: true, protectedFiles }; } } } };
 }
 
 test('control-check, deletion and skips are read from each tool', () => {
@@ -71,7 +71,7 @@ test('the hook does nothing outside an engine run', async () => {
 
 test('a run whose order the helper can\'t give is refused only when a test would change', async () => {
   const cwd = worktree();
-  const client = { engine: { order: async () => ({ ok: false, refused: 'the host helper could not be reached: is it running?' }) } };
+  const client = { engine: { protectedFiles: async () => ({ ok: false, refused: 'the host helper could not be reached: is it running?' }) } };
   assert.ok(denied(await decide({ tool_name: 'Bash', cwd, tool_input: { command: 'rm tests/price.test.js' } }, { env: engineEnv('run-1'), client })));
   assert.equal(await decide({ tool_name: 'Bash', cwd, tool_input: { command: 'npm test' } }, { env: engineEnv('run-1'), client }), undefined);
 });
