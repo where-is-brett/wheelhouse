@@ -8,13 +8,14 @@ import { scanContent } from './secret-scan.js';
 import { briefProblem, briefWords } from '../delegation/brief.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { git } from './git.js';
-import { keepControlLine, approvalLine, setLineOf, CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, TAKEOVER_LABEL, takeOverLine, APP_ID, pairLine, unpairLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
+import { keepControlLine, approvalLine, startGoalLine, setLineOf, CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, TAKEOVER_LABEL, takeOverLine, APP_ID, pairLine, unpairLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
 import { carriesFigures, CARRIES_BASELINE } from '../lib/measures-clicks.js';
 import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH } from '../lib/build-loop.js';
 import { CARD, CARD_KINDS, PUT_OFF } from '../lib/front-desk.js';
 import { SETUP_QUESTION_ID } from '../lib/setup-clicks.js';
 import { SEND_BACK } from '../lib/calm-words.js';
 import { isModelName } from '../gate/guardrails.js';
+import { GOAL_ENDINGS } from '../engine/goal-limits.js';
 
 export const PLAIN_KINDS = [
   'request', 'ruling', 'level', 'glossary', 'idea', 'rejection', 'card', 'card-answer',
@@ -22,6 +23,9 @@ export const PLAIN_KINDS = [
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
   'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey', 'column-ready', 'premium-rest', 'chat-question', 'chat-steer',
   'run', 'ask', 'cost', 'preview', 'lesson', 'incident-closed', 'reproduced', 'rule', 'brief', 'slept',
+  // A goal's sheet and its end (unattended goals design, sections 4 and 8). A `goal` alone does nothing: it counts only
+  // when a signed `start-goal` action names its id and the hash of its sheet (scripts/engine/goal.js).
+  'goal', 'goal-end',
 ];
 // `control-file` is the watcher's own finding (ruling P7-33): signed, so no session can write one. So is `usage-card`,
 // the front desk's session start's offer (design section 14.6): a click on its card's switch is the director's
@@ -57,16 +61,19 @@ export const RED_MAIN_OWN = 'only the helper records a red main line\'s incident
 
 // `rule` is a rule proposed from an answered card (delegated decisions design, section 11.1): the helper composes it from
 // what it read itself, and it means nothing until the director's signed click confirms that very record.
-export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'shadow', 'match', 'rule', 'slept'];
+// `goal-end` is the helper's own record of how a goal ended and what it spent: it ends the goal, so no caller writes one.
+export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'shadow', 'match', 'rule', 'slept', 'goal-end'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 
-const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main', 'safekeeping', 'send-back'];
+const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main', 'safekeeping', 'send-back', 'start-goal'];
 // The fields each action carries beyond the card's question and the label clicked.
 const ACTION_OWN = {
   'lift-stop': [],
   runbook: ['step', 'sha'],
   'ci-push': ['branch', 'sha'],
   'approve-work': ['work', 'lane', 'hash', 'shownFirst'],
+  // The director's click on a goal's sheet (unattended goals design, section 5): the goal's id and the hash of its sheet.
+  'start-goal': ['goal', 'hash'],
   answer: ['questionId', 'questionHash'],
   amend: ['work', 'hash'],
   'lift-incident': ['incident'],
@@ -161,6 +168,11 @@ function checkAction(data) {
     if (!LANES.includes(data.lane)) bad('needs the work\'s lane');
     if (typeof data.hash !== 'string' || !HASH.test(data.hash)) bad('needs the hash of the document approved');
     if (typeof data.shownFirst !== 'boolean') bad('needs to say whether the director is to see it before it merges');
+  } else if (data.action === 'start-goal') {
+    if (!isSlug(data.goal)) bad('needs the goal, named by a short slug');
+    if (typeof data.hash !== 'string' || !/^[0-9a-f]{64}$/.test(data.hash)) bad('needs the full hash of the sheet its card showed');
+    if (data.label !== 'Start') bad('needs the Start label');
+    if (setLineOf(data.question) !== startGoalLine(data.goal, data.hash)) bad('carries the Start line for its goal and hash as its question\'s one set line');
   } else if (data.action === 'answer') {
     if (typeof data.questionId !== 'string' || !questionIdOf(data.questionId)) bad('needs the question it answers');
     if (typeof data.questionHash !== 'string' || !HASH.test(data.questionHash)) bad('needs the hash of the question it answers');
@@ -268,7 +280,7 @@ const PLAIN_SHAPES = {
   'chat-steer': { must: ['card'], may: [] },
   // `from`: the ready-made change the work starts from (ruling P4): its commit, the ref that keeps
   // it (`refs/wheelhouse/from/<id>`) and, when it carries on a pull request, that request's number.
-  work: { must: ['id', 'title', 'lane', 'visible', 'dependsOn'], may: ['doc', 'place', 'parent', 'from', 'level'] },
+  work: { must: ['id', 'title', 'lane', 'visible', 'dependsOn'], may: ['doc', 'place', 'parent', 'from', 'level', 'goalId'] },
   feature: { must: ['work', 'step'], may: ['worktree', 'branch', 'session', 'plan', 'files', 'brief', 'slice', 'pausedFor'] },
   // `checks`: what answering it does to the checks, one line, for a level 4 question's card.
   // `joins`: the open question whose card answers this one too (scripts/state/joiners.js).
@@ -361,6 +373,10 @@ const PLAIN_SHAPES = {
   run: { must: ['work', 'lane', 'engine', 'runId', 'state'], may: ['branch', 'pr', 'outcome', 'resume', 'failure', 'step'] },
   // A span the computer slept, as the helper measured it (unattended goals design, section 9.1): it doesn't count as running.
   slept: { must: ['from', 'to'], may: [] },
+  // A goal's sheet (scripts/engine/goal.js), recorded by anyone and signed by a `start-goal` action that names its hash; and
+  // how it ended, the helper's: the ending (one of GOAL_ENDINGS), when, what it spent, and the First Mate's words if any.
+  goal: { must: ['id', 'sheet'], may: [] },
+  'goal-end': { must: ['goal', 'ending', 'at', 'spent'], may: ['words'] },
   // An ask a run raised: `id` is stable, so the same ask seen again is not written twice. `kind` says what sort of
   // ask it is, `level` which of the decision levels it comes at.
   ask: { must: ['id', 'runId', 'work', 'kind', 'level', 'options'], may: ['topic', 'recommend', 'preview', 'setLine', 'resetAt'] },
@@ -480,6 +496,8 @@ function checkPlain(kind, data) {
     }
     if (data.place !== undefined && !Number.isFinite(data.place)) bad('has a place that is not a number');
     if (data.parent !== undefined) slug('parent');
+    // The goal the work belongs to (`goal` is already the work's words in an order).
+    if (data.goalId !== undefined) slug('goalId');
     if (data.from !== undefined) {
       const f = data.from;
       if (!(isPlain(f) && Object.keys(f).every((k) => ['sha', 'ref', 'request'].includes(k))
@@ -505,6 +523,16 @@ function checkPlain(kind, data) {
   } else if (kind === 'slept') {
     for (const k of ['from', 'to']) if (typeof data[k] !== 'string' || Number.isNaN(Date.parse(data[k]))) bad(`needs ${k} to be a time`);
     if (Date.parse(data.from) >= Date.parse(data.to)) bad('needs to end after it starts');
+  } else if (kind === 'goal') {
+    slug('id');
+    if (!isPlain(data.sheet)) bad('needs its sheet to be a record');
+  } else if (kind === 'goal-end') {
+    slug('goal');
+    if (!GOAL_ENDINGS.includes(data.ending)) bad(`needs its ending to be one of ${GOAL_ENDINGS.join(', ')}`);
+    if (typeof data.at !== 'string' || Number.isNaN(Date.parse(data.at))) bad('needs at to be a time');
+    const spentKeys = ['tokens', 'points', 'requests', 'unknown', 'shareAtStart', 'queueRuns'];
+    if (!isPlain(data.spent) || !spentKeys.every((k) => data.spent[k] !== undefined)) bad(`needs spent to hold ${spentKeys.join(', ')}`);
+    optionalText('words');
   } else if (kind === 'run') {
     slug('work');
     if (!RUN_LANES.includes(data.lane)) bad('needs its lane to be quick, small, feature, bug, slice or fix-main');

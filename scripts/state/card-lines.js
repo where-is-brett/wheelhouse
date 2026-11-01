@@ -240,6 +240,13 @@ export function keepControlLine(work, hash) {
 }
 export const KEEP_CONTROL_LINE = new RegExp(`^Keep the files that steer agents in (${ID})'s folder as they are, ([0-9a-f]{12})$`);
 
+// The line on a goal's sheet card (unattended goals design, section 5): its Start signs the goal's sheet, the hash the
+// twelve characters name, as the click that lets the goal run.
+export function startGoalLine(goal, hash) {
+  return `Start goal ${goal}, ${sha12(hash)}`;
+}
+export const START_GOAL_LINE = new RegExp(`^Start goal (${ID}), ([0-9a-f]{12})$`);
+
 // The line on a usage card (design section 14.6): the Thoroughness level its switch option sets and
 // the time the card was offered, which its usage-card record keeps, so the click on that option
 // stands for that offer's switch and no other. It is the director's confirmation of the change itself.
@@ -278,7 +285,7 @@ const literal = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // approval, confirmation, lift-STOP, CI-push and runbook lines, the build loop's five:
 // approve work, answer a question, change approved work, end an incident and merge its fix,
 // setup's line for a step, its line for the rules found, the baseline card's line, the trust
-// card's line, the take-over card's line, uninstall's line, the line keeping a feature's files that steer agents, a usage card's line and the
+// card's line, the take-over card's line, uninstall's line, the line keeping a feature's files that steer agents, a goal's start line, a usage card's line and the
 // premium model card's line.
 export const SET_LINES = [
   /^Approve pull request #[1-9][0-9]* at commit [0-9a-f]{12}$/m,
@@ -301,6 +308,7 @@ export const SET_LINES = [
   new RegExp(UNPAIR_LINE.source, 'm'),
   new RegExp(UNINSTALL_LINE.source, 'm'),
   new RegExp(KEEP_CONTROL_LINE.source, 'm'),
+  new RegExp(START_GOAL_LINE.source, 'm'),
   new RegExp(USAGE_LINE.source, 'm'),
   new RegExp(PREMIUM_LINE.source, 'm'),
 ];

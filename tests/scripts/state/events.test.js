@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { CODE_ALPHABET, takeOverLine, TAKEOVER_LABEL, approvalLine } from '../../../scripts/state/card-lines.js';
+import { CODE_ALPHABET, takeOverLine, TAKEOVER_LABEL, approvalLine, startGoalLine } from '../../../scripts/state/card-lines.js';
 import { PUT_OFF } from '../../../scripts/lib/front-desk.js';
 import { readingOf } from '../../../scripts/delegation/seal.js';
 import { makeEvent, eventPath, writeEvent, listEvents, checkRecord, PLAIN_KINDS, PROTECTED_KINDS, HELPER_ONLY_KINDS } from '../../../scripts/state/events.js';
@@ -307,13 +307,13 @@ test('each new plain kind is accepted with its shape and refused without it', as
     // The refusal names the stray field and the fields the kind takes, so a session can put it right at once.
     assert.throws(
       () => makeEvent({ kind: 'work', data: { ...SHAPES.work, what: 'A change' } }),
-      /A work event has a field it should not: what\. It takes id, title, lane, visible and dependsOn, and may take doc, place, parent, from and level/,
+      /A work event has a field it should not: what\. It takes id, title, lane, visible and dependsOn, and may take doc, place, parent, from, level and goalId/,
     );
     // A record missing fields names every one of them, and what the kind takes, in one refusal (the
     // rehearsal on a project under way: three refusals, one field each).
     assert.throws(
       () => makeEvent({ kind: 'work', data: { id: 'carry-on-3', lane: 'small', visible: true } }),
-      /A work event needs its title and dependsOn\. It takes id, title, lane, visible and dependsOn, and may take doc, place, parent, from and level/,
+      /A work event needs its title and dependsOn\. It takes id, title, lane, visible and dependsOn, and may take doc, place, parent, from, level and goalId/,
     );
     const w = SHAPES.work;
     for (const bad of [
@@ -573,6 +573,7 @@ const ACTION_SHAPES = {
   amend: { action: 'amend', work: 'export-csv', hash: H, question: 'the card as shown', label: 'Change it' },
   'lift-incident': { action: 'lift-incident', incident: 'bad-total', question: 'the card as shown', label: 'End it' },
   'incident-fix': { action: 'incident-fix', incident: 'bad-total', pr: 31, question: 'the card as shown', label: 'Merge the fix' },
+  'start-goal': { action: 'start-goal', goal: 'export-orders', hash: H, question: `What this is.\n${startGoalLine('export-orders', H)}`, label: 'Start' },
 };
 
 test('each new action needs its own fields and refuses others', async () => {
@@ -581,7 +582,7 @@ test('each new action needs its own fields and refuses others', async () => {
     enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
     const own = {
       'approve-work': ['work', 'lane', 'hash', 'shownFirst'], answer: ['questionId', 'questionHash'], amend: ['work', 'hash'],
-      'lift-incident': ['incident'], 'incident-fix': ['incident', 'pr'],
+      'lift-incident': ['incident'], 'incident-fix': ['incident', 'pr'], 'start-goal': ['goal', 'hash'],
     };
     for (const [name, data] of Object.entries(ACTION_SHAPES)) {
       const event = makeEvent({ kind: 'action', data });
@@ -602,7 +603,7 @@ test('each new action needs its own fields and refuses others', async () => {
     }
     // The older actions refuse the new fields.
     for (const old of [{ action: 'lift-stop' }, { action: 'runbook', step: 1 }, { action: 'ci-push', branch: 'b', sha: 'a'.repeat(40) }]) {
-      for (const k of ['work', 'lane', 'hash', 'shownFirst', 'questionId', 'incident', 'pr']) {
+      for (const k of ['work', 'lane', 'hash', 'shownFirst', 'questionId', 'incident', 'pr', 'goal']) {
         assert.throws(() => makeEvent({ kind: 'action', data: { ...old, ...CLICK, [k]: 'x' } }), /action event/, `${old.action} with ${k}`);
       }
     }
@@ -612,6 +613,10 @@ test('each new action needs its own fields and refuses others', async () => {
       { ...a.answer, questionId: 'nope' }, { ...a.answer, questionHash: 'zz' }, { ...a.answer, label: 'Explain more' }, { ...a.answer, label: 'Not now' },
       { ...a.answer, label: 'Why?' }, { ...a.answer, label: 'Suggest a change…' }, { ...a.answer, label: 'Show me' },
       { ...a.amend, hash: H.slice(0, 11) }, { ...a['lift-incident'], incident: '' }, { ...a['incident-fix'], pr: 0 }, { ...a['incident-fix'], pr: '3' },
+      { ...a['start-goal'], goal: 'Bad Id' }, { ...a['start-goal'], hash: H.slice(0, 12) }, { ...a['start-goal'], label: 'Go ahead' },
+      { ...a['start-goal'], question: 'the card as shown' }, { ...a['start-goal'], question: startGoalLine('other-goal', H) },
+      { ...a['start-goal'], question: startGoalLine('export-orders', 'f'.repeat(64)) },
+      { ...a['start-goal'], question: `${startGoalLine('export-orders', H)}\n${startGoalLine('other-goal', H)}` },
     ]) assert.throws(() => makeEvent({ kind: 'action', data: bad }), /action event/, JSON.stringify(bad));
   });
 });
@@ -795,7 +800,7 @@ test('a survey record carries every part of the survey, each in its own shape', 
     assert.equal(PLAIN_KINDS.includes('survey'), true);
     assert.equal(PROTECTED_KINDS.includes('survey'), false);
     // Only the helper itself records a survey or a column's readiness: no caller writes one.
-    assert.deepEqual(HELPER_ONLY_KINDS, ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'shadow', 'match', 'rule', 'slept']);
+    assert.deepEqual(HELPER_ONLY_KINDS, ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'shadow', 'match', 'rule', 'slept', 'goal-end']);
     assert.deepEqual(makeEvent({ kind: 'survey', data: SURVEY }).data, SURVEY);
     // Taken again (ruling P3), it says so.
     assert.deepEqual(makeEvent({ kind: 'survey', data: { ...SURVEY, again: true } }).data.again, true);
@@ -1011,4 +1016,37 @@ test('a slept record holds two times in order, and only the helper writes one', 
   assert.throws(() => makeEvent({ kind: 'slept', data: { from: to, to: from } }), /after/);
   assert.throws(() => makeEvent({ kind: 'slept', data: { from: 'soon', to } }), /time/);
   assert.throws(() => makeEvent({ kind: 'slept', data: { from, to, why: 'lid' } }));
+});
+
+test('a goal holds its id and a sheet, and a goal-end only the helper writes', () => {
+  assert.equal(PLAIN_KINDS.includes('goal'), true);
+  assert.equal(HELPER_ONLY_KINDS.includes('goal'), false, 'a goal alone does nothing, so anyone may record one');
+  assert.equal(PLAIN_KINDS.includes('goal-end'), true);
+  assert.equal(HELPER_ONLY_KINDS.includes('goal-end'), true);
+  makeEvent({ kind: 'goal', data: { id: 'export-orders', sheet: { title: 'x', anything: [1] } } });
+  assert.throws(() => makeEvent({ kind: 'goal', data: { id: 'Bad Id', sheet: {} } }), /short slug/);
+  assert.throws(() => makeEvent({ kind: 'goal', data: { id: 'export-orders', sheet: 'x' } }), /sheet/);
+  assert.throws(() => makeEvent({ kind: 'goal', data: { id: 'export-orders' } }), /sheet/);
+  assert.throws(() => makeEvent({ kind: 'goal', data: { id: 'export-orders', sheet: {}, extra: 1 } }), /field it should not/);
+});
+
+test('a goal-end names its ending, when and what was spent', () => {
+  const spent = { tokens: 10, points: null, requests: null, unknown: 0, shareAtStart: null, queueRuns: 0 };
+  const good = { goal: 'export-orders', ending: 'done', at: '2026-11-01T10:00:00.000Z', spent };
+  makeEvent({ kind: 'goal-end', data: good });
+  makeEvent({ kind: 'goal-end', data: { ...good, words: 'All of it built.' } });
+  for (const ending of ['done', 'waiting-for-you', 'check-failed', 'time', 'spend', 'stuck', 'end-goal', 'all-stop']) makeEvent({ kind: 'goal-end', data: { ...good, ending } });
+  for (const bad of [
+    { ...good, ending: 'finished' }, { ...good, goal: 'Bad Id' }, { ...good, at: 'soon' }, { ...good, spent: 5 },
+    { ...good, spent: { ...spent, queueRuns: undefined } }, { ...good, spent: [] }, { ...good, words: '' }, { ...good, extra: 1 },
+  ]) assert.throws(() => makeEvent({ kind: 'goal-end', data: bad }), /goal-end event/, JSON.stringify(bad));
+  const { spent: _gone, ...without } = good;
+  assert.throws(() => makeEvent({ kind: 'goal-end', data: without }), /spent/);
+});
+
+test('a work record may name its goal by a short slug', () => {
+  const work = { id: 'export-page', title: 'The page', lane: 'small', visible: false, dependsOn: [] };
+  makeEvent({ kind: 'work', data: { ...work, goalId: 'export-orders' } });
+  assert.throws(() => makeEvent({ kind: 'work', data: { ...work, goalId: 'Not A Slug' } }), /goalId/);
+  assert.throws(() => makeEvent({ kind: 'work', data: { ...work, goalId: 3 } }), /goalId/);
 });

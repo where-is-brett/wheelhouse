@@ -9,17 +9,18 @@ import { fileURLToPath } from 'node:url';
 import { buildViews, writeViews, latestFor, readyColumns } from '../../../scripts/state/views.js';
 import { listEvents, makeEvent, confirmationFor, eventHash, dataHash, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, sign } from '../../../scripts/state/signing.js';
-import { approvalLine, ciPushLine, confirmLine } from '../../../scripts/state/card-lines.js';
+import { approvalLine, ciPushLine, confirmLine, startGoalLine } from '../../../scripts/state/card-lines.js';
 import { computerId, profileDir, stateDir } from '../../../scripts/lib/paths.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { readingOf } from '../../../scripts/delegation/seal.js';
 import { composeRule } from '../../../scripts/delegation/composer.js';
 import { SUGGEST, WHY } from '../../../scripts/lib/calm-words.js';
+import { sheetHash } from '../../../scripts/engine/goal.js';
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
 const T = (n) => `2026-10-18T02:00:${String(n).padStart(2, '0')}.000Z`;
 const at = (n) => () => new Date(T(n));
-const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'provenance', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'controlFiles', 'survey', 'columnsReady', 'usageCards', 'premium', 'premiumFailures', 'runs', 'asks', 'costs', 'previews', 'lessons', 'engineNotes', 'cardsWaiting', 'evidence', 'rules', 'brief', 'sendBacks', 'slept'];
+const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'provenance', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'controlFiles', 'survey', 'columnsReady', 'usageCards', 'premium', 'premiumFailures', 'runs', 'asks', 'costs', 'previews', 'lessons', 'engineNotes', 'cardsWaiting', 'evidence', 'rules', 'brief', 'sendBacks', 'slept', 'goals'];
 const now = () => new Date('2026-10-18T09:00:00.000Z');
 
 async function withHome(fn) {
@@ -1702,4 +1703,51 @@ test('the sleeps on the record are in the views, in order', () => {
     { from: '2026-11-01T09:00:00.000Z', to: '2026-11-01T10:00:00.000Z' },
   ]);
   assert.deepEqual(buildViews([]).slept, []);
+});
+
+// --- goals ---
+
+const goalSheet = () => ({
+  title: 'Customers can export their orders',
+  done: [{ command: 'node check.js', expect: 0 }],
+  checksSay: ['The checking script passes.'],
+  pieces: [{ work: 'export-page', hash: H1 }],
+  areas: { may: ['src/**'], wontTouch: ['billing/**'] },
+  checkFiles: [],
+  spend: { tokens: 1000000 },
+  until: '2026-10-18T10:00:00.000Z',
+});
+const startClick = (n, id, hash) => click(n, { action: 'start-goal', goal: id, hash, question: `What this is.\n${startGoalLine(id, hash)}`, label: 'Start' });
+
+test('a goal is in the views only when a signed click names its id and its sheet\'s hash', async () => {
+  await withHome(() => {
+    const sheet = goalSheet();
+    const record = ev('goal', 1, { id: 'export-orders', sheet });
+    assert.deepEqual(build([record]).goals, {}, 'a goal alone does nothing');
+    const hash = sheetHash(sheet);
+    // an unsigned click, a forged one, another hash and another id
+    const forged = { ...startClick(4, 'export-orders', hash), data: { ...startClick(4, 'export-orders', hash).data, goal: 'other' } };
+    assert.deepEqual(build([record, unsigned(startClick(2, 'export-orders', hash)), forged, startClick(3, 'export-orders', H2)]).goals, {});
+    const signed = startClick(5, 'export-orders', hash);
+    const goals = build([record, signed]).goals;
+    assert.deepEqual(Object.keys(goals), ['export-orders']);
+    assert.equal(goals['export-orders'].hash, hash);
+    assert.equal(goals['export-orders'].startedAt, signed.at);
+    assert.equal(goals['export-orders'].ended, null);
+    assert.deepEqual(goals['export-orders'].sheet, sheet);
+    // a goal-end from the helper ends it; a narrowing note after the click narrows it
+    const narrow = ev('note', 6, { about: 'narrow-goal', goal: 'export-orders', change: { spend: { tokens: 500 } } });
+    const end = ev('goal-end', 7, { goal: 'export-orders', ending: 'time', at: T(7), spent: { tokens: 1, points: null, requests: null, unknown: 0, shareAtStart: null, queueRuns: 0 } });
+    const after = build([record, signed, narrow, end]).goals['export-orders'];
+    assert.equal(after.sheet.spend.tokens, 500);
+    assert.equal(after.ended.ending, 'time');
+  });
+});
+
+test('the goals view reaches the views folder on disk', async () => {
+  await withHome(async () => {
+    const out = path.join(tempFolder('wh-goals-'), 'views');
+    await writeViews('o__p', { now, dir: tempFolder('wh-goals-state-'), out });
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(out, 'goals.json'), 'utf8')), {});
+  });
 });
