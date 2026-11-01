@@ -365,102 +365,6 @@ test('a feature run that failed with no pull request brings its card', async () 
   assert.equal(w.cards().length, 1, 'one card');
 });
 
-// When nothing runs, a card the director can act on (delegated decisions plan, invariant 6).
-const slicesOf = (title) => ({ text: `# ${title}\n\n\`\`\`wheelhouse-slices\n${JSON.stringify({ goal: title, flag: { name: title }, demo: 'end', slices: [{ title: 'One', goal: 'One', done: [{ test: 'one' }] }, { title: 'Two', goal: 'Two', done: [{ test: 'two' }] }] })}\n\`\`\`\n` });
-const blockedAsk = { kind: 'blocked', options: [{ id: 'rework', label: 'Send it back' }, { id: 'stop', label: 'Stop' }], context: { question: 'Which?', branch: 'wh/a' } };
-const liveOf = (w, list) => list.filter((r) => ['running', 'paused'].includes(w.engine.inspect(r).status));
-const openCards = (w) => Object.values(w.questions).filter((q) => !q.answer);
-
-for (const [name, last] of [['fails with its pull request still open', { outcome: 'failed', pr: 7 }], ['completes with no pull request', { outcome: 'completed' }]]) {
-  test(`a slice that ${name} brings a card, and Stop here frees its place`, async () => {
-    const run = quiet();
-    run[1] = { ...run[1], ...last };
-    const w = wayBack({ recordings: { f: run, b: quiet() }, pace: 1, designOf: slicesOf });
-    w.put('f', { lane: 'feature', place: 0 });
-    w.put('b', { place: 1 });
-    await w.tick(6);
-    assert.equal(openCards(w).length, 1);
-    const card = w.cardOf('f');
-    assert.deepEqual(card.options.map((o) => o.label), ['Build it again', 'Stop here']);
-    if (last.pr) assert.doesNotMatch(card.options[0].says, /new pull request/);
-    w.answer('f', 'Stop here');
-    await w.tick(3);
-    assert.equal(w.reports.f.data.outcome, 'closed');
-    assert.equal(w.runsOf('b').length, 1);
-  });
-}
-
-test('a slice whose pull request is ready waits on the merge queue, with no card', async () => {
-  const run = quiet();
-  run[1] = { ...run[1], pr: 7 };
-  const w = wayBack({ recordings: { f: run }, pace: 1, designOf: slicesOf });
-  w.put('f', { lane: 'feature', place: 0 });
-  w.ready = { 7: { work: 'f', head: 'a'.repeat(40) } };
-  await w.tick(6);
-  assert.equal(openCards(w).length, 0);
-});
-
-test('a feature whose design can no longer be read doesn\'t hold its place unseen', async () => {
-  let design = slicesOf('f');
-  const run = quiet();
-  run[1] = { ...run[1], pr: 7 };
-  const w = wayBack({ recordings: { f: run, b: quiet() }, pace: 1, designOf: () => design });
-  w.put('f', { lane: 'feature', place: 0 });
-  w.put('b', { place: 1 });
-  await w.tick(2);
-  design = { problem: 'has been withdrawn' };
-  await w.tick(6);
-  assert.deepEqual(w.cardOf('f').options.map((o) => o.label), ['Try again', 'Stop here']);
-});
-
-for (const [name, stopIt] of [
-  ['All stop cancelled', async (w) => {
-    w.stop = true;
-    await w.engine.stopAll('All stop');
-    w.stoppedIds = w.runsOf('f');
-    await w.tick(2);
-    w.stop = false;
-  }],
-  ['the director stopped at its cap', async (w) => {
-    w.clock.now = new Date(w.clock.now.getTime() + 5 * 60000);
-    await w.tick(2);
-    w.answer('f', 'Stop');
-    await w.tick(3);
-  }],
-]) {
-  test(`work held on the files of a feature ${name} brings a card about that feature`, async () => {
-    const w = wayBack({ recordings: { f: [forever(), quiet()], z: quiet() }, designOf: slicesOf, pace: 2, settings: { capMinutes: { slice: 1 } } });
-    w.put('f', { lane: 'feature', files: ['one.js'], place: 0 });
-    await w.tick(2);
-    await stopIt(w);
-    w.put('z', { files: ['one.js'], place: 1 });
-    await w.tick(4);
-    assert.equal(w.starts.filter((s) => s.order.work === 'z').length, 0);
-    const card = w.cardOf('f');
-    assert.match(card.what, /waiting for its files/);
-    await w.tick(2);
-    w.restart();
-    await w.tick(3);
-    assert.equal(w.cards().filter((c) => c.work === 'f' && /nothing left to carry it on/.test(c.what)).length, 1, 'one card, across a restart');
-    w.answer('f', 'Stop here');
-    await w.tick(3);
-    assert.equal(w.reports.f.data.outcome, 'closed');
-    assert.equal(w.runsOf('z').length, 1, 'Stop here frees the files, as it says');
-  });
-}
-
-test('work depending on a stopped piece brings a card about that piece, in words that fit', async () => {
-  const w = wayBack({ recordings: { a: [asking('qa', blockedAsk), quiet()], d: quiet() }, pace: 1 });
-  w.put('a', { place: 0 });
-  w.put('d', { place: 1 });
-  w.work.d.work.data.dependsOn = ['a'];
-  await w.tick(2);
-  w.answer('a', 'Stop');
-  await w.tick(4);
-  const card = w.cardOf('a');
-  assert.match(card.what, /other work depends on it/);
-  w.answer('a', 'Try again');
-
 const queueAsk = (id) => [
   { runId: 'x', at: '2026-10-29T02:00:00.000Z', type: 'run-started' },
   { runId: 'x', at: '2026-10-29T02:00:00.000Z', type: 'ask', id, kind: 'question', level: 3, recommend: null, card: true, mergeQuestion: { pr: 7 }, reason: 'The merge queue won\'t judge pull request #7 by itself.', options: [{ id: 'go', label: 'Merge' }, { id: 'leave', label: 'Leave it' }] },
@@ -527,6 +431,141 @@ test('Send it back waits for a place at pace, and a restart between the two lose
   await w.tick();
   assert.equal(w.dispatcher.comingBack('a'), true);
   w.endRun('other');
+  await w.tick(2);
+  assert.equal(w.runsOf('a').length, 2);
+});
+
+test('rework that comes back to the queue at the same head raises a fresh card', async () => {
+  const { w, head } = await parkedPr();
+  click(w, head);
+  await w.tick(2);
+  w.ready[7] = { work: 'a', head, runId: w.runsOf('a').at(-1) };
+  w.written.length = 0;
+  w.clock.now = new Date(w.clock.now.getTime() + 60000);
+  const { runId } = w.engine.start({ recording: 'again' });
+  await w.runner.onAsk(w.engine.watch('0').events.find((e) => e.runId === runId && e.type === 'ask'));
+  await w.tick();
+  assert.equal(w.written.filter((x) => x.kind === 'card').length, 1);
+  assert.deepEqual(w.runner.parkedHeads(), { 7: head });
+  assert.equal(w.runsOf('a').length, 2, 'the old click answers nothing here');
+});
+
+test('rework that ends without marking ready, its files holding other work, brings a card', async () => {
+  const { w, head } = await parkedPr();
+  click(w, head);
+  await w.tick(2);
+  assert.equal(w.stateOf('a'), 'ended', 'its rework ended and marked nothing ready');
+  w.runs.a.push({ at: w.clock.now.toISOString(), data: { ...w.runs.a.at(-1).data, pr: 7 } });
+  w.put('b', { files: ['src/a.js'] });
+  await w.tick(2);
+  assert.equal(w.runsOf('b').length, 0, 'its files are still held');
+  assert.equal(w.cardOf('a')?.options.map((o) => o.label).join(), [TRY_AGAIN, STOP_HERE].join());
+});
+
+// When nothing runs, a card the director can act on (delegated decisions plan, invariant 6).
+const slicesOf = (title) => ({ text: `# ${title}\n\n\`\`\`wheelhouse-slices\n${JSON.stringify({ goal: title, flag: { name: title }, demo: 'end', slices: [{ title: 'One', goal: 'One', done: [{ test: 'one' }] }, { title: 'Two', goal: 'Two', done: [{ test: 'two' }] }] })}\n\`\`\`\n` });
+const blockedAsk = { kind: 'blocked', options: [{ id: 'rework', label: 'Send it back' }, { id: 'stop', label: 'Stop' }], context: { question: 'Which?', branch: 'wh/a' } };
+const liveOf = (w, list) => list.filter((r) => ['running', 'paused'].includes(w.engine.inspect(r).status));
+const openCards = (w) => Object.values(w.questions).filter((q) => !q.answer);
+
+for (const [name, last] of [['fails with its pull request still open', { outcome: 'failed', pr: 7 }], ['completes with no pull request', { outcome: 'completed' }]]) {
+  test(`a slice that ${name} brings a card, and Stop here frees its place`, async () => {
+    const run = quiet();
+    run[1] = { ...run[1], ...last };
+    const w = wayBack({ recordings: { f: run, b: quiet() }, pace: 1, designOf: slicesOf });
+    w.put('f', { lane: 'feature', place: 0 });
+    w.put('b', { place: 1 });
+    await w.tick(6);
+    assert.equal(openCards(w).length, 1);
+    const card = w.cardOf('f');
+    assert.deepEqual(card.options.map((o) => o.label), ['Build it again', 'Stop here']);
+    if (last.pr) assert.doesNotMatch(card.options[0].says, /new pull request/);
+    w.answer('f', 'Stop here');
+    await w.tick(3);
+    assert.equal(w.reports.f.data.outcome, 'closed');
+    assert.equal(w.runsOf('b').length, 1);
+  });
+}
+
+test('a slice that finished with its pull request open waits for the merge, with no card', async () => {
+  const run = quiet();
+  run[1] = { ...run[1], pr: 7 };
+  const w = wayBack({ recordings: { f: run }, pace: 1, designOf: slicesOf });
+  w.put('f', { lane: 'feature', place: 0 });
+  await w.tick(6);
+  assert.equal(openCards(w).length, 0);
+});
+
+test('a slice whose pull request is ready waits on the merge queue, with no card', async () => {
+  const run = quiet();
+  run[1] = { ...run[1], pr: 7 };
+  const w = wayBack({ recordings: { f: run }, pace: 1, designOf: slicesOf });
+  w.put('f', { lane: 'feature', place: 0 });
+  w.ready = { 7: { work: 'f', head: 'a'.repeat(40) } };
+  await w.tick(6);
+  assert.equal(openCards(w).length, 0);
+});
+
+test('a feature whose design can no longer be read doesn\'t hold its place unseen', async () => {
+  let design = slicesOf('f');
+  const run = quiet();
+  run[1] = { ...run[1], outcome: 'failed', pr: 7 };
+  const w = wayBack({ recordings: { f: run, b: quiet() }, pace: 1, designOf: () => design });
+  w.put('f', { lane: 'feature', place: 0 });
+  w.put('b', { place: 1 });
+  await w.tick(2);
+  design = { problem: 'has been withdrawn' };
+  await w.tick(6);
+  assert.deepEqual(w.cardOf('f').options.map((o) => o.label), ['Try again', 'Stop here']);
+});
+
+for (const [name, stopIt] of [
+  ['All stop cancelled', async (w) => {
+    w.stop = true;
+    await w.engine.stopAll('All stop');
+    w.stoppedIds = w.runsOf('f');
+    await w.tick(2);
+    w.stop = false;
+  }],
+  ['the director stopped at its cap', async (w) => {
+    w.clock.now = new Date(w.clock.now.getTime() + 5 * 60000);
+    await w.tick(2);
+    w.answer('f', 'Stop');
+    await w.tick(3);
+  }],
+]) {
+  test(`work held on the files of a feature ${name} brings a card about that feature`, async () => {
+    const w = wayBack({ recordings: { f: [forever(), quiet()], z: quiet() }, designOf: slicesOf, pace: 2, settings: { capMinutes: { slice: 1 } } });
+    w.put('f', { lane: 'feature', files: ['one.js'], place: 0 });
+    await w.tick(2);
+    await stopIt(w);
+    w.put('z', { files: ['one.js'], place: 1 });
+    await w.tick(4);
+    assert.equal(w.starts.filter((s) => s.order.work === 'z').length, 0);
+    const card = w.cardOf('f');
+    assert.match(card.what, /waiting for its files/);
+    await w.tick(2);
+    w.restart();
+    await w.tick(3);
+    assert.equal(w.cards().filter((c) => c.work === 'f' && /nothing left to carry it on/.test(c.what)).length, 1, 'one card, across a restart');
+    w.answer('f', 'Stop here');
+    await w.tick(3);
+    assert.equal(w.reports.f.data.outcome, 'closed');
+    assert.equal(w.runsOf('z').length, 1, 'Stop here frees the files, as it says');
+  });
+}
+
+test('work depending on a stopped piece brings a card about that piece, in words that fit', async () => {
+  const w = wayBack({ recordings: { a: [asking('qa', blockedAsk), quiet()], d: quiet() }, pace: 1 });
+  w.put('a', { place: 0 });
+  w.put('d', { place: 1 });
+  w.work.d.work.data.dependsOn = ['a'];
+  await w.tick(2);
+  w.answer('a', 'Stop');
+  await w.tick(4);
+  const card = w.cardOf('a');
+  assert.match(card.what, /other work depends on it/);
+  w.answer('a', 'Try again');
   await w.tick(2);
   assert.equal(w.runsOf('a').length, 2);
 });
@@ -765,30 +804,4 @@ test('a cap card still owed brings no second card about the same stopped piece',
   await w.tick(3);
   assert.equal(openCards(w).length, 1);
   assert.match(w.cardOf('f').what, /cap/);
-
-test('rework that comes back to the queue at the same head raises a fresh card', async () => {
-  const { w, head } = await parkedPr();
-  click(w, head);
-  await w.tick(2);
-  w.ready[7] = { work: 'a', head, runId: w.runsOf('a').at(-1) };
-  w.written.length = 0;
-  w.clock.now = new Date(w.clock.now.getTime() + 60000);
-  const { runId } = w.engine.start({ recording: 'again' });
-  await w.runner.onAsk(w.engine.watch('0').events.find((e) => e.runId === runId && e.type === 'ask'));
-  await w.tick();
-  assert.equal(w.written.filter((x) => x.kind === 'card').length, 1);
-  assert.deepEqual(w.runner.parkedHeads(), { 7: head });
-  assert.equal(w.runsOf('a').length, 2, 'the old click answers nothing here');
-});
-
-test('rework that ends without marking ready, its files holding other work, brings a card', async () => {
-  const { w, head } = await parkedPr();
-  click(w, head);
-  await w.tick(2);
-  assert.equal(w.stateOf('a'), 'ended', 'its rework ended and marked nothing ready');
-  w.runs.a.push({ at: w.clock.now.toISOString(), data: { ...w.runs.a.at(-1).data, pr: 7 } });
-  w.put('b', { files: ['src/a.js'] });
-  await w.tick(2);
-  assert.equal(w.runsOf('b').length, 0, 'its files are still held');
-  assert.equal(w.cardOf('a')?.options.map((o) => o.label).join(), [TRY_AGAIN, STOP_HERE].join());
 });

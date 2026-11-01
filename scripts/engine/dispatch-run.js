@@ -450,7 +450,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
 
   // A feature whose current step's latest run ended and nothing moves it on: its pull request was closed unmerged, the
   // run was cancelled (a rejected demo or switch-on, or a cancel in the engine itself) with no card of its own and not by
-  // All stop, or it ended with no pull request the merge queue can take. One card for that run; Build it again carries
+  // All stop, it failed with no pull request the merge queue has, or it finished with no pull request at all. One card for that run; Build it again carries
   // the step on from its branch, Stop here ends the feature.
   async function heldUp({ views, work, entry, kept, design, progress }) {
     const step = currentStep({ design, progress });
@@ -479,7 +479,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     let why = null;
     if (Number.isInteger(run.pr) && kept.closed?.[run.pr]) why = 'closed';
     else if (run.outcome === 'cancelled' && !(stoppedRuns() ?? []).includes(run.runId) && !namedByCard(views, run.runId)) why = 'cancelled';
-    else if (['failed', 'completed'].includes(run.outcome) && !(readyOf() ?? {})[run.pr] && !namedByCard(views, run.runId) && !waitingNow(views).has(work) && !onTheWay(work) && state.sentBack[work] === state.acted[work] && state.reds[work]?.times === state.redActed[work]) {
+    else if ((run.outcome === 'failed' ? !(readyOf() ?? {})[run.pr] : run.outcome === 'completed' && !Number.isInteger(run.pr)) && !namedByCard(views, run.runId) && !waitingNow(views).has(work) && !onTheWay(work) && state.sentBack[work] === state.acted[work] && state.reds[work]?.times === state.redActed[work]) {
       if (Number.isInteger(run.pr) && await stateOf(run.pr) !== 'open') return;
       // Looked at again on the next tick: the runner may yet have an answer that starts it again.
       if (kept.endSeen !== run.runId) {
@@ -487,7 +487,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
         keep();
         return;
       }
-      why = run.outcome === 'failed' ? 'failed' : Number.isInteger(run.pr) ? 'not-ready' : 'no-pr';
+      why = run.outcome === 'failed' ? 'failed' : 'no-pr';
     }
     if (!why) return;
     kept.stallCards = (kept.stallCards ?? 0) + 1;
@@ -501,8 +501,6 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
         ? `The run building ${what} of ${title} failed before it was added, so the feature waits.`
       : why === 'no-pr'
         ? `The run building ${what} of ${title} finished with no pull request, so nothing of it can be added and the feature waits.`
-      : why === 'not-ready'
-        ? `The run building ${what} of ${title} finished, but pull request #${run.pr} never reached the merge queue, so the feature waits.`
       : step.finish
         ? `${title}'s switch-on wasn't approved, so the feature stays off and waits.`
         : demo
@@ -1046,7 +1044,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   const reservedFiles = () => Object.fromEntries(Object.entries(state.reserved).map(([work, kept]) => [work, kept.files]));
   const cardOwed = (work) => Object.values(state.owed).some((o) => o.data.work === work) || routerOwed().has(work);
   // Whether nothing moves a piece on by itself: every run ended, no card and none owed, no way back, nothing sent back, and
-  // no pull request with the merge queue. The director's Leave it counts too: nothing was done to it, as the card said.
+  // no pull request with the merge queue or waiting to be merged. The director's Leave it counts too: nothing was done to it, as the card said.
   const leftByDirector = (views, work) => [state.clashAsked[work], state.redAsked[work]].some((id) => views.questions?.[id]?.answer?.label === LEAVE_IT);
   function restsQuiet(views, work, ready) {
     if (onTheWay(work) || waitingNow(views).has(work) || cardOwed(work)) return false;
@@ -1054,7 +1052,13 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     if (!left && state.sentBack[work] !== state.acted[work] && state.sentBack[work] !== undefined) return false;
     if (!left && state.reds[work] !== undefined && state.reds[work].times !== state.redActed[work]) return false;
     const runs = [...new Map(runsOfWork(views, work).map((r) => [r.data.runId, r.data])).values()];
-    return runs.length > 0 && runs.every((r) => r.state === 'ended') && (left || !ready.some(([, r]) => r.work === work)) && (left || !runs.some((r) => Object.hasOwn(parkedPrs() ?? {}, r.pr)));
+    if (runs.length === 0 || runs.some((r) => r.state !== 'ended')) return false;
+    if (left) return true;
+    const last = runs.at(-1);
+    // A finished run's open pull request is for merging, unless the director sent it back or it has gone.
+    const gone = state.closedPrs.includes(last.pr) || state.features[work]?.closed?.[last.pr] === true || Object.hasOwn(state.features[work]?.merged ?? {}, last.pr) || (views.sendBacks ?? []).some((b) => b.pr === last.pr);
+    const toMerge = last.outcome === 'completed' && Number.isInteger(last.pr) && !gone;
+    return !toMerge && !ready.some(([, r]) => r.work === work) && !runs.some((r) => Object.hasOwn(parkedPrs() ?? {}, r.pr));
   }
   // What is going or about to, for what stands behind a hold. A feature holds its place between slices, but one that rests
   // quiet has nothing going.
