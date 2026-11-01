@@ -12,7 +12,7 @@ export default {
   title: 'The daily card budget holds back the fourth card\'s push until the next day',
   engine: {
     startAt: '2026-10-29T03:00:00.000Z',
-    recordings: Object.fromEntries(WORK.map((w) => [w, asking(w)])),
+    recordings: Object.fromEntries(WORK.map((w, n) => [w, asking(w, { what: `How much of page ${n + 1} should change?` })])),
     async play(world, { at }) {
       WORK.forEach((id, place) => world.put('work', { id, title: `Piece ${place + 1}`, lane: 'quick', visible: false, dependsOn: [], place }));
       const questions = () => world.records('question');
