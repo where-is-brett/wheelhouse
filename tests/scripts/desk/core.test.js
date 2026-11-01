@@ -15,10 +15,10 @@ const allow = { check: async () => ({ ok: true, records: [] }) };
 
 test('the vocabulary is spec 5.2\'s, in its order', () => {
   assert.equal(DESK_VERSION, 'desk/1');
-  assert.deepEqual(VIEWS, ['glance', 'briefing', 'logbook', 'waiting', 'card', 'work', 'settings', 'usage', 'preview', 'why', 'survey']);
-  assert.deepEqual(COMMANDS, ['answer', 'suggest', 'not-now', 'request', 'set', 'all-stop', 'lift-all-stop', 'pair', 'safekeeping', 'pull-cards']);
-  assert.deepEqual(WATCH_EVENTS, ['card-added', 'card-closed', 'glance-changed', 'work-changed', 'all-stop', 'notice']);
-  assert.deepEqual(NO_EVIDENCE, ['request', 'not-now', 'all-stop', 'pull-cards']);
+  assert.deepEqual(VIEWS, ['glance', 'briefing', 'logbook', 'waiting', 'card', 'work', 'settings', 'usage', 'preview', 'why', 'survey', 'goal']);
+  assert.deepEqual(COMMANDS, ['answer', 'suggest', 'not-now', 'request', 'set', 'all-stop', 'lift-all-stop', 'pair', 'safekeeping', 'pull-cards', 'start-goal', 'end-goal', 'narrow-goal']);
+  assert.deepEqual(WATCH_EVENTS, ['card-added', 'card-closed', 'glance-changed', 'work-changed', 'all-stop', 'notice', 'goal-changed']);
+  assert.deepEqual(NO_EVIDENCE, ['request', 'not-now', 'all-stop', 'pull-cards', 'end-goal', 'narrow-goal']);
   assert.ok(Object.isFrozen(VIEWS) && Object.isFrozen(COMMANDS) && Object.isFrozen(WATCH_EVENTS));
 });
 
@@ -80,4 +80,16 @@ test('a source that throws gives a refusal, never a throw', async () => {
   assert.equal(typeof answer.refused, 'string');
   const watched = await core.watch(null);
   assert.equal(watched.ok, false);
+});
+
+test('start-goal with no evidence is refused, and end-goal with none passes to its act', async () => {
+  const recorder = spyRecorder();
+  const seen = [];
+  const actors = { 'start-goal': async () => { seen.push('start-goal'); return { ok: true }; }, 'end-goal': async () => { seen.push('end-goal'); return { ok: true }; } };
+  const core = deskCore({ source: {}, recorder, actors });
+  const refused = await core.act('start-goal', { goal: 'orders-export', hash: 'a'.repeat(64) });
+  assert.equal(refused.ok, false);
+  assert.match(refused.refused, /evidence/);
+  assert.equal((await core.act('end-goal', {})).ok, true);
+  assert.deepEqual(seen, ['end-goal']);
 });

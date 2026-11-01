@@ -12,7 +12,7 @@ import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
   liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, takeOverLine, pairLine, uninstallLine, keepControlLine, usageLine, premiumLine, replyCode, replyCodeLine, setLineOf,
-  blindLine,
+  blindLine, startGoalLine,
 } from '../../../scripts/state/card-lines.js';
 import { stateDir, stopFile } from '../../../scripts/lib/paths.js';
 import { CARD, CARD_KINDS, PUT_OFF } from '../../../scripts/lib/front-desk.js';
@@ -95,6 +95,10 @@ const INPUTS = {
     options: [{ label: 'Allow it within my plan', says: 'It is used within your plan.' }, { label: 'Allow it, paid credits too', says: 'It may be paid from your usage credits.' }, { label: 'Not now', says: 'Nothing changes.' }],
     target: { at: USAGE_AT },
   },
+  'start-goal': {
+    ...common, recommend: 'Start', kind: 'start-goal', what: 'The goal tidy-up has 2 pieces of work and a check that proves each is done.',
+    options: [says('Start')], target: { goal: 'tidy-up', hash: FULL },
+  },
 };
 const LINES = {
   approval: approvalLine(7, FULL),
@@ -119,6 +123,7 @@ const LINES = {
   'keep-control-files': keepControlLine('export-csv', DOC),
   usage: usageLine('lean', USAGE_AT),
   premium: premiumLine(USAGE_AT),
+  'start-goal': startGoalLine('tidy-up', FULL),
 };
 const input = (kind, over = {}) => ({ ...INPUTS[kind], ...over });
 const refused = (over, pattern, kind = 'approval') => assert.throws(() => composeCard(input(kind, over)), pattern);
@@ -150,7 +155,7 @@ test("each kind's card carries its plain lines in Calm's order, then its set lin
       assert.equal(setLineOf(question.question), LINES[kind]);
       assert.equal(card.line, LINES[kind]);
       assert.equal(card.code, null);
-      assert.deepEqual(NO_REPLY_CODE, ['setup', 'confirm-all', 'trust', 'take-over', 'uninstall', 'keep-control-files', 'usage', 'premium', 'pair', 'blind']);
+      assert.deepEqual(NO_REPLY_CODE, ['setup', 'confirm-all', 'trust', 'take-over', 'uninstall', 'keep-control-files', 'usage', 'premium', 'pair', 'blind', 'start-goal']);
     } else {
       assert.deepEqual(after, [LINES[kind], replyCodeLine(replyCode(LINES[kind]))]);
       assert.equal(setLineOf(question.question), LINES[kind]);
@@ -218,6 +223,7 @@ test('the default ask for each kind is one line ending in a question mark, or th
     premium: 'Allow the premium model at Thorough?',
     'take-over': 'Move the First Mate to this computer?',
     pair: 'Pair this app?',
+    'start-goal': 'Start this goal?',
   };
   for (const kind of CARD_KINDS) {
     const { card } = composeCard(input(kind));

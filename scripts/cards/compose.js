@@ -10,7 +10,7 @@
 // a trust card is composed by the session start, which hands it to the front desk as it is, and
 // uninstall's card by the helper, for setup's playbook to ask as it is.
 import {
-  approvalLine, confirmLine, confirmWords, LIFT_STOP, LIFT_LABEL, runbookLine, ciPushLine, approveWorkLine, answerLine, blindLine, amendLine,
+  approvalLine, confirmLine, confirmWords, LIFT_STOP, LIFT_LABEL, runbookLine, ciPushLine, approveWorkLine, answerLine, blindLine, amendLine, startGoalLine,
   liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, takeOverLine, TAKEOVER_LABEL, LEAVE_LABEL, pairLine, PAIR_LABEL, APP_ID, uninstallLine, keepControlLine, usageLine, premiumLine, isLineName, dayOf, replyCode, replyCodeLine, setLineOf, SET_LINES,
   RUNBOOK_TITLES, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, CORRECT_SOME_LABEL, BASELINE_LABEL, BASELINE_HEADER, TRUST_LABEL, UNINSTALL_LABEL, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
@@ -48,6 +48,7 @@ export const HEADERS = Object.freeze({
   'keep-control-files': 'Agent files',
   usage: 'Thoroughness',
   premium: 'Premium',
+  'start-goal': 'Start goal',
 });
 
 // The label whose click decides a kind, as the prompt record accepts it. An answer card's
@@ -70,6 +71,7 @@ export const DECIDING = Object.freeze({
   pair: PAIR_LABEL,
   uninstall: UNINSTALL_LABEL,
   'keep-control-files': 'Confirm',
+  'start-goal': 'Start',
 });
 
 // The kinds whose set line has no reply code (ruling R36): a setup step goes ahead only on the
@@ -83,7 +85,8 @@ export const DECIDING = Object.freeze({
 // once, so only the click on the card the session start offered counts.
 // So is the premium model's card (design section 14.6): only the click on the card the helper offered counts.
 // So is a blind card: its click signs nothing, so a code would make a shown record that is never spent.
-export const NO_REPLY_CODE = Object.freeze(['setup', 'confirm-all', 'trust', 'take-over', 'uninstall', 'keep-control-files', 'usage', 'premium', 'pair', 'blind']);
+// So is a start-goal card: a goal starts only on the click on the card itself.
+export const NO_REPLY_CODE = Object.freeze(['setup', 'confirm-all', 'trust', 'take-over', 'uninstall', 'keep-control-files', 'usage', 'premium', 'pair', 'blind', 'start-goal']);
 
 // The buttons a kind's card offers after its deciding label, in the order they are shown, where it
 // isn't the usual Suggest a change…, Show me and Not now (design section 23.4). All stop is lifted or it
@@ -141,6 +144,7 @@ const ASKS = Object.freeze({
   'keep-control-files': () => 'Keep these files as they are?',
   'take-over': () => 'Move the First Mate to this computer?',
   pair: () => 'Pair this app?',
+  'start-goal': () => 'Start this goal?',
 });
 
 // Whether a confirm card's event is a proposal Wheelhouse made, not something the director asked
@@ -217,6 +221,10 @@ function lineFor(kind, target) {
   if (kind === 'approve-work') {
     if (!slug(t.work) || !LANES.split('|').includes(t.lane) || !HEX.test(t.hash)) bad('needs a work id, a lane and a document hash');
     return approveWorkLine(t.work, t.lane, t.hash, { shownFirst: t.shownFirst === true });
+  }
+  if (kind === 'start-goal') {
+    if (!slug(t.goal) || !HEX.test(t.hash)) bad('needs a goal id and a sheet hash');
+    return startGoalLine(t.goal, t.hash);
   }
   if (kind === 'answer') {
     if (typeof t.questionId !== 'string' || !new RegExp(`^${QUESTION_ID}$`).test(t.questionId)) bad('needs the question id, such as q-export-csv-1');
@@ -317,6 +325,7 @@ export function whatProblem(kind, what, target, { abbreviated = false } = {}) {
   if (kind === 'confirm-all') need = [new RegExp(`(?<![0-9])${target.count} rules?\\b`, 'i').test(what), `how many rules it lists, ${target.count}`];
   if (kind === 'trust') need = [nameId(target.computer), `the computer ${target.computer}`];
   if (kind === 'take-over') need = [nameId(target.holder), `the computer ${target.holder}`];
+  if (kind === 'start-goal') need = [nameId(target.goal), `the goal ${target.goal}`];
   if (kind === 'pair') need = [nameId(target.client), `the app ${target.client}`];
   if (kind === 'uninstall') need = [nameId(target.project), `the project ${target.project}`];
   if (need !== null && !need[0]) return `must name ${need[1]}, as its set line does`;

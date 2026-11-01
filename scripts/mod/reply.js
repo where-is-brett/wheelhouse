@@ -72,6 +72,7 @@ export function recordedAs(made, question) {
   if (data.action === 'runbook') return `Runbook step ${data.step}: ${RUNBOOK_TITLES[data.step]}`;
   if (data.action === 'ci-push') return `Push the CI change on ${data.branch}`;
   if (data.action === 'approve-work') return `Approve ${data.work}`;
+  if (data.action === 'start-goal') return `Start goal ${data.goal}`;
   if (data.action === 'answer') return `Answer: ${data.label}`;
   if (data.action === 'amend') return `Change ${data.work}`;
   if (data.action === 'lift-incident') return `End incident ${data.incident}`;

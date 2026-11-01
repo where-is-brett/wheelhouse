@@ -57,6 +57,7 @@ const INPUTS = {
     ...common, kind: 'uninstall', recommend: 'Remove it', level: 4, checks: 'The checks no longer guard this project.',
     what: 'Remove Wheelhouse from wh cafe menu: stop its jobs, put back 3 changes on this computer.', options: [says('Remove it')], target: { project: 'wh cafe menu', hash: DOC },
   },
+  'start-goal': { ...common, kind: 'start-goal', recommend: 'Start', what: 'The goal tidy-up has 2 pieces of work and a check that proves each is done.', options: [says('Start')], target: { goal: 'tidy-up', hash: DOC } },
   question: { ...common, kind: 'question', recommend: 'Comma', what: 'The export needs to know which separator to use.', options: OWN },
 };
 const cardOf = (kind) => composeCard(INPUTS[kind]).question;
@@ -259,6 +260,7 @@ test('the plain lines must name, between them, what each kind\'s set line names'
     'ci-push': ['ci-fix branch', 'main branch'],
     confirm: ['money is shown in dollars', 'money is shown in euros'],
     setup: ['step 6,', 'step 16,'],
+    'start-goal': ['The goal tidy-up', 'The goal clean-up'],
   };
   for (const [kind, [right, wrong]] of Object.entries(cases)) {
     const card = textOf(kind);
@@ -436,4 +438,11 @@ test('a blind card needs no recommended option, and may not carry one or two', (
   // The same card with no blind line is an ordinary card with nothing recommended.
   const plain = { ...question, question: question.question.split('\n').slice(0, -1).join('\n') };
   assert.deepEqual(cardProblems(plain), ['names no recommended option']);
+});
+
+test('a goal\'s card carries no reply code, and one that carries a code is refused', () => {
+  const card = textOf('start-goal');
+  assert.deepEqual(cardProblems(card), []);
+  assert.ok(!card.includes('Reply code:'));
+  assert.match(cardProblems(`${card}\nReply code: ABCD`).join(' '), /start-goal card has none/);
 });

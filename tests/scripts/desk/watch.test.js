@@ -81,3 +81,46 @@ test('the core\'s watch reads the source and gives card-added for a new card, th
   assert.deepEqual(second.events.map((e) => [e.type, e.card]), [['card-added', 'c2']]);
   assert.deepEqual((await core.watch(second.cursor)).events, []);
 });
+
+const running = (over = {}) => ({ id: 'orders-export', hash: 'h1', sheet: { title: 'Orders', until: '2026-10-30T00:00:00.000Z' }, state: 'running', ...over });
+
+test('a goal starting, being narrowed, ending and ending for good give goal-changed', () => {
+  const { cursor } = changes(null, state());
+  const started = changes(cursor, state({ goal: running() }));
+  assert.deepEqual(started.events, [{ type: 'goal-changed', goal: 'orders-export' }]);
+  const narrowed = changes(started.cursor, state({ goal: running({ sheet: { title: 'Orders', until: '2026-10-29T20:00:00.000Z' } }) }));
+  assert.deepEqual(narrowed.events, [{ type: 'goal-changed', goal: 'orders-export' }]);
+  const asked = changes(narrowed.cursor, state({ goal: running({ sheet: { title: 'Orders', until: '2026-10-29T20:00:00.000Z' }, endAsked: { now: true } }) }));
+  assert.deepEqual(asked.events, [{ type: 'goal-changed', goal: 'orders-export' }]);
+  const ended = changes(asked.cursor, state());
+  assert.deepEqual(ended.events, [{ type: 'goal-changed', goal: null }]);
+  assert.deepEqual(changes(ended.cursor, state()).events, []);
+  assert.deepEqual(changes(started.cursor, state({ goal: running() })).events, []);
+});
+
+test('a cursor made before goals existed stays readable, and reads as no goal', () => {
+  const older = Buffer.from(JSON.stringify({ v: 'desk/1', glance: 'x', cards: {}, work: {}, stop: null, notices: [] })).toString('base64url');
+  assert.notEqual(decodeCursor(older), null);
+  assert.equal(decodeCursor(older).goal, null);
+  assert.deepEqual(changes(older, state({ glance: 'x', waiting: [], work: {} })).events.map((e) => e.type).filter((t) => t === 'goal-changed'), []);
+  assert.deepEqual(changes(older, state({ goal: running() })).events.filter((e) => e.type === 'goal-changed'), [{ type: 'goal-changed', goal: 'orders-export' }]);
+});
+
+test('the core\'s watch passes the goal in force from the source', async () => {
+  const { deskCore } = await import('../../../scripts/desk/core.js');
+  let goals = {};
+  const source = {
+    project: 'p',
+    async views() { return { ok: true, views: { waiting: [], work: {}, goals } }; },
+    async board() { return { none: 'no board here' }; },
+    async stop() { return { on: false }; },
+  };
+  const core = deskCore({ source, recorder: {} });
+  const first = await core.watch(null);
+  assert.equal(first.events.some((e) => e.type === 'goal-changed'), false);
+  goals = { 'orders-export': { sheet: { title: 'Orders', until: '2026-10-30T00:00:00.000Z' }, hash: 'h', startedAt: '2026-10-29T10:00:00.000Z', ended: null, endAsked: null } };
+  const second = await core.watch(first.cursor);
+  assert.deepEqual(second.events, [{ type: 'goal-changed', goal: 'orders-export' }]);
+  goals = { 'orders-export': { ...goals['orders-export'], ended: { ending: 'done', at: '2026-10-29T11:00:00.000Z', spent: {} } } };
+  assert.deepEqual((await core.watch(second.cursor)).events, [{ type: 'goal-changed', goal: null }]);
+});

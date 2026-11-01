@@ -4,17 +4,18 @@
 
 export const DESK_VERSION = 'desk/1';
 
-export const VIEWS = Object.freeze(['glance', 'briefing', 'logbook', 'waiting', 'card', 'work', 'settings', 'usage', 'preview', 'why', 'survey']);
+export const VIEWS = Object.freeze(['glance', 'briefing', 'logbook', 'waiting', 'card', 'work', 'settings', 'usage', 'preview', 'why', 'survey', 'goal']);
 
-export const COMMANDS = Object.freeze(['answer', 'suggest', 'not-now', 'request', 'set', 'all-stop', 'lift-all-stop', 'pair', 'safekeeping', 'pull-cards']);
+export const COMMANDS = Object.freeze(['answer', 'suggest', 'not-now', 'request', 'set', 'all-stop', 'lift-all-stop', 'pair', 'safekeeping', 'pull-cards', 'start-goal', 'end-goal', 'narrow-goal']);
 
-export const WATCH_EVENTS = Object.freeze(['card-added', 'card-closed', 'glance-changed', 'work-changed', 'all-stop', 'notice']);
+export const WATCH_EVENTS = Object.freeze(['card-added', 'card-closed', 'glance-changed', 'work-changed', 'all-stop', 'notice', 'goal-changed']);
 
 // The acts that decide nothing, so need no evidence that the director made them: a request is
 // queued for the First Mate, putting a card off decides nothing, and stopping must always be easy.
 // `pair` only asks: it raises a card, and the director's click on it is the decision (Task 10).
-// Pulling the cards past the day's budget only brings them up.
-export const NO_EVIDENCE = Object.freeze(['request', 'not-now', 'all-stop', 'pull-cards']);
+// Pulling the cards past the day's budget only brings them up. Ending a goal and narrowing one are as easy:
+// stopping and narrowing must always be easy, and neither lets anything more happen.
+export const NO_EVIDENCE = Object.freeze(['request', 'not-now', 'all-stop', 'pull-cards', 'end-goal', 'narrow-goal']);
 
 export function needsEvidence(command) {
   return !NO_EVIDENCE.includes(command) && command !== 'pair';

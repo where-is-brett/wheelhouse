@@ -7,7 +7,8 @@ import path from 'node:path';
 import { decide, sendPending, SIGNED_LABELS, storedText } from '../../../scripts/hooks/prompt-record.js';
 import { makeEvent, eventPath, dataHash, confirmationFor, eventHash, listEvents } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
-import { approvalLine, confirmLine, LIFT_STOP, LIFT_STOP_EARLIER, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine, approveWorkLine, answerLine, chatCopy, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, setupLine, setLineOf, uninstallLine, trustLine, takeOverLine } from '../../../scripts/state/card-lines.js';
+import { approvalLine, confirmLine, LIFT_STOP, LIFT_STOP_EARLIER, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine, approveWorkLine, answerLine, chatCopy, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, setupLine, setLineOf, uninstallLine, trustLine, takeOverLine, startGoalLine } from '../../../scripts/state/card-lines.js';
+import { sheetHash } from '../../../scripts/engine/goal.js';
 import { profileDir, stateDir, stopFile, computerId } from '../../../scripts/lib/paths.js';
 import { settingKey, UNATTENDED_CARD } from '../../../scripts/protection/windows-builds.js';
 import { startRun, markStep, addChanges, newId } from '../../../scripts/setup/journal.js';
@@ -1914,5 +1915,61 @@ test('Send it back signs nothing on a moved head, a closed pull request, or a ca
     const c = fake();
     await decide(SENT('A card with no line.'), deps(c));
     assert.deepEqual(kinds(c).filter((k) => k === 'action'), []);
+  });
+});
+
+// --- a goal's Start ---
+
+const goalSheet = (title = 'Customers can export their orders') => ({
+  title, done: [{ command: 'node check.js', expect: 0 }], checksSay: ['The checking script passes.'],
+  pieces: [{ work: 'export-csv', hash: DOC }], areas: { may: ['src/**'], wontTouch: ['billing/**'] }, spend: { tokens: 1000000 }, until: '2026-10-18T13:00:00.000Z',
+});
+const goalEvent = (sheet, id = 'orders-export') => makeEvent({ kind: 'goal', data: { id, sheet }, now: () => NOW });
+const START_BUTTONS = ['Start', 'Not now', 'Approve'].map((label) => ({ label }));
+const startInput = (answers) => {
+  const asked = input(answers);
+  asked.tool_input.questions = asked.tool_input.questions.map((q) => ({ ...q, options: START_BUTTONS }));
+  return asked;
+};
+const startQuestion = (sheet, goal = 'orders-export') => `Start this goal?\n${startGoalLine(goal, sheetHash(sheet))}`;
+
+test('the click on Start earns the signed action with the sheet\'s whole hash', async () => {
+  await withHome(async () => {
+    const sheet = goalSheet();
+    keepEvent(goalEvent(sheet));
+    const c = fake();
+    const question = startQuestion(sheet);
+    await decide(startInput({ [question]: 'Start' }), deps(c));
+    assert.deepEqual(recorded(c), [{ action: 'start-goal', goal: 'orders-export', hash: sheetHash(sheet), question, label: 'Start' }]);
+    assert.ok(c.calls.record.every((r) => r.event.kind === 'action' && r.event.sig));
+    assert.equal(sheetHash(sheet).length, 64);
+  });
+});
+
+test('a sheet the state doesn\'t hold earns nothing, and a second sheet under the id is told apart by its hash', async () => {
+  await withHome(async () => {
+    const held = goalSheet();
+    keepEvent(goalEvent(held));
+    const c = fake();
+    // A sheet that was never recorded, a sheet recorded under another goal, and a line with the wrong characters.
+    const never = goalSheet('A goal nobody recorded');
+    await decide(startInput({ [startQuestion(never)]: 'Start', [startQuestion(held, 'another-goal')]: 'Start', [`Start this goal?\n${startGoalLine('orders-export', 'f'.repeat(64))}`]: 'Start' }), deps(c));
+    assert.deepEqual(recorded(c), []);
+    // A second sheet under the same id has its own hash; the click names only the one its twelve characters match.
+    keepEvent(goalEvent({ ...held, title: 'A second sheet' }));
+    await decide(startInput({ [startQuestion(held)]: 'Start' }), deps(c));
+    assert.deepEqual(recorded(c).map((r) => r.hash), [sheetHash(held)]);
+  });
+});
+
+test('a label other than Start earns nothing from a goal\'s card', async () => {
+  await withHome(async () => {
+    const sheet = goalSheet();
+    keepEvent(goalEvent(sheet));
+    const c = fake();
+    const question = startQuestion(sheet);
+    for (const label of ['Approve', 'Not now', 'Explain more']) await decide(startInput({ [question]: label }), deps(c));
+    assert.deepEqual(recorded(c), []);
+    assert.equal(SIGNED_LABELS.includes('Start'), true);
   });
 });

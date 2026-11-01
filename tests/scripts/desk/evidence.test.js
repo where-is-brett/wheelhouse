@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { checkEvidence, CLIENT_WINDOW_MS } from '../../../scripts/desk/evidence.js';
 import { makeEvent } from '../../../scripts/state/events.js';
+import { startGoalLine } from '../../../scripts/state/card-lines.js';
 import { makeSigningKey, enrol, readEnrolled, sign } from '../../../scripts/state/signing.js';
 import { canonicalJson } from '../../../scripts/lib/canonical.js';
 import { as, shortHome } from '../../helpers/homes.js';
@@ -102,4 +103,33 @@ test('a client signature over other words is refused', () => withKey(async ({ en
 test('an evidence form the desk doesn\'t know is refused', () => withKey(async ({ enrolled }) => {
   assert.equal(checkEvidence('answer', answer, { form: 'trust-me' }, context(enrolled)).ok, false);
   assert.equal(checkEvidence('answer', answer, { form: 'signed', records: [] }, context(enrolled)).ok, false);
+}));
+
+const GOAL_HASH = 'c'.repeat(64);
+const startGoal = (goal = 'orders-export', hash = GOAL_HASH) => makeEvent({
+  kind: 'action', data: { action: 'start-goal', goal, hash, label: 'Start', question: `Start this goal?\n${startGoalLine(goal, hash)}` }, now,
+});
+
+test('start-goal takes a signed Start for that goal and hash, and no other record', () => withKey(async ({ enrolled }) => {
+  const args = { goal: 'orders-export', hash: GOAL_HASH };
+  const ok = checkEvidence('start-goal', args, { form: 'signed', records: [startGoal()] }, context(enrolled));
+  assert.equal(ok.ok, true, ok.refused);
+  for (const record of [startGoal('other-goal'), startGoal('orders-export', 'd'.repeat(64)), approve()]) {
+    const got = checkEvidence('start-goal', args, { form: 'signed', records: [record] }, context(enrolled));
+    assert.equal(got.ok, false);
+    assert.match(got.refused, /isn't what start-goal needs/);
+  }
+}));
+
+test('start-goal is not started by the confirm window or a click in the chat, and a paired app\'s signature yields no record', () => withKey(async ({ enrolled }) => {
+  const args = { goal: 'orders-export', hash: GOAL_HASH };
+  assert.equal(checkEvidence('start-goal', args, { form: 'window' }, context(enrolled)).ok, false);
+  assert.equal(checkEvidence('start-goal', args, { form: 'chat-click', proof: 'chat-click' }, context(enrolled)).ok, false);
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+  const at = NOW;
+  const sig = crypto.sign(null, Buffer.from(canonicalJson({ command: 'start-goal', args, at })), privateKey).toString('base64');
+  const clients = [{ id: 'phone-app', publicKey: publicKey.export({ format: 'der', type: 'spki' }).toString('base64') }];
+  const got = checkEvidence('start-goal', args, { form: 'client', client: 'phone-app', at, sig }, context(enrolled, { clients }));
+  assert.equal(got.ok, true, got.refused);
+  assert.deepEqual(got.records, []);
 }));

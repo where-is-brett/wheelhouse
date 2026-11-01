@@ -170,3 +170,32 @@ test('the briefing says the line once', () => withRuns(async ({ source }) => {
   const next = await readView('briefing', { reserve: 0, since: '2026-10-29T07:00:00.000Z' }, source, { now });
   assert.doesNotMatch(next.data.text, /New quick changes are built by the new engine\./);
 }));
+
+const goalSheet = { title: 'Customers can export their orders', until: '2026-10-30T08:00:00.000Z' };
+const goalSource = (goals) => ({ project: 'p', async views() { return { ok: true, views: { goals } }; } });
+const entry = (over = {}) => ({ sheet: goalSheet, hash: 'h'.repeat(64), startedAt: '2026-10-29T10:00:00.000Z', ended: null, endAsked: null, ...over });
+
+test('goal shows the signed goal in force, a named one, or says none is running', async () => {
+  const none = await readView('goal', {}, goalSource({}), { now });
+  assert.deepEqual(none, { ok: true, view: 'goal', data: { goal: null }, lines: ['No goal is running.'] });
+
+  const running = await readView('goal', {}, goalSource({ 'orders-export': entry() }), { now });
+  assert.equal(running.data.goal.id, 'orders-export');
+  assert.equal(running.data.goal.state, 'running');
+  assert.equal(running.data.goal.until, goalSheet.until);
+  assert.equal(running.lines.length, 2);
+  assert.match(running.lines[0], /Customers can export their orders/);
+  assert.match(running.lines[1], /2026-10-30T08:00:00.000Z/);
+
+  // An ended goal is none in force, but can be asked for by its id.
+  const goals = { 'orders-export': entry({ ended: { ending: 'done', at: '2026-10-29T12:00:00.000Z', spent: {} } }) };
+  assert.equal((await readView('goal', {}, goalSource(goals), { now })).data.goal, null);
+  const named = await readView('goal', { goal: 'orders-export' }, goalSource(goals), { now });
+  assert.equal(named.data.goal.state, 'ended');
+  assert.equal((await readView('goal', { goal: 'no-such-goal' }, goalSource(goals), { now })).data.goal, null);
+});
+
+test('goal refuses when the project has no record', async () => {
+  const got = await readView('goal', {}, { project: 'p', async views() { return { ok: false, refused: 'This project has no record to show yet' }; } }, { now });
+  assert.equal(got.ok, false);
+});
