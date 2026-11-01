@@ -3,7 +3,7 @@
 // takes only work items marked ready by the build queue, which Wheelhouse is. Written at mark-ready, one per pull
 // request; a lane run again hands the item back with one more round (part 3c's).
 
-// A version 1 work item for pull request `pr` of `repo`, ready for the queue, delivered by run `runId` at `at`.
+// A version 1 work item for pull request `pr` of `repo` ({ host, path }), ready for the queue, delivered by run `runId` at `at`.
 export function readyWorkItem({ repo, pr, url, at, runId }) {
   return {
     version: 1,

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { normaliseAsk, ARCHON_ASKS, askOccurrence } from '../../../../scripts/engine/archon/asks.js';
+import { normaliseAsk, ARCHON_ASKS, askOccurrence, parkChoice } from '../../../../scripts/engine/archon/asks.js';
 import { checkEvent } from '../../../../scripts/engine/contract.js';
 
 const items = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', '..', '..', 'fixtures', 'archon', 'attention-items.json'), 'utf8'));
@@ -120,4 +120,14 @@ test('a merge question with no heading is still a card, and names no number it c
   const merge = normaliseAsk({ kind: 'attention', runId: 'r4', occurrence: 'o4', message: 'Schema change in PR 99', options: [{ id: 'a', label: 'A' }], labels: { merge: 'pr' } });
   assert.equal(merge.mergeQuestion.pr, null);
   assert.match(merge.reason, /this pull request/);
+});
+
+test('parkChoice gives the park id only where the question offers it', () => {
+  const options = [{ id: 'merge', label: 'Merge' }, { id: 'park', label: 'Leave it' }];
+  assert.equal(parkChoice({ options, mergeQuestion: { pr: 7, park: 'park' } }), 'park');
+  assert.equal(parkChoice({ options, mergeQuestion: { pr: 7, park: 'gone' } }), null);
+  assert.equal(parkChoice({ options, mergeQuestion: { pr: 7, park: null } }), null);
+  assert.equal(parkChoice({ options, mergeQuestion: { pr: 7 } }), null);
+  assert.equal(parkChoice({ options }), null);
+  assert.equal(parkChoice(null), null);
 });

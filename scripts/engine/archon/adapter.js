@@ -492,7 +492,8 @@ export function archonAdapter({
       try { asked = JSON.parse(readOutputs(result.code === 0 && result.json?.ok !== false ? result.json : null).record ?? 'null')?.asked ?? null; } catch { return null; }
       if (asked?.by !== 'pr' || !Number.isInteger(asked.pr?.number) || typeof asked.head !== 'string') return null;
       const choices = Array.isArray(asked.attention?.choices) ? asked.attention.choices : [];
-      return { pr: asked.pr.number, head: asked.head, merge: choices.find((c) => c?.effect === 'merge')?.id ?? null };
+      const chosen = (effect) => choices.find((c) => c?.effect === effect)?.id ?? null;
+      return { pr: asked.pr.number, head: asked.head, merge: chosen('merge'), park: chosen('park') };
     },
 
     // Each task's last review in a slice's run, { [task]: output }, from Archon's own record, or null when it has no
@@ -541,7 +542,10 @@ export function archonAdapter({
       const name = `work/${pr}`;
       const current = await cli(['state', 'get', name], { json: true, cwd: project, timeout: CALL_MS });
       const revision = Number.isInteger(current.json?.revision) ? current.json.revision : 0;
-      const value = readyWorkItem({ repo, pr, url, at, runId });
+      // The queue passes over an item whose repository isn't { host, path }, and says nothing (check 90).
+      let host = null;
+      try { host = new URL(url).hostname; } catch { return refusedWith('A hand-over needs the pull request\'s address'); }
+      const value = readyWorkItem({ repo: { host, path: repo }, pr, url, at, runId });
       const put = await cli(['state', 'put', name, '--if-revision', String(revision)], { json: true, cwd: project, input: JSON.stringify(value), timeout: CALL_MS });
       if (put.code === 0 && put.json?.ok !== false) return { ok: true };
       return refusedWith(refusal('take the pull request into its merge queue', put));
