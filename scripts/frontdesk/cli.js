@@ -50,6 +50,7 @@
 // card's answer, a shown or asked record, or a signed kind, and an answer card's options come only
 // from the question the build recorded. Every card handed out is recorded as asked, and
 // its words are put in the glossary's plain words. Errors are one line on standard error.
+import { BRIEF_LINES, addFact, briefProblem, briefText, wholeBrief } from '../delegation/brief.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -90,9 +91,9 @@ export class CliError extends Error {}
 // (work, amendment, incident, and the no-blame note when an incident ends).
 export const RECORD_KINDS = Object.freeze([
   'ruling', 'idea', 'rejection', 'glossary', 'decision', 'risk', 'blocker', 'reversal', 'setting',
-  'work', 'amendment', 'incident', 'note',
+  'work', 'amendment', 'incident', 'note', 'brief',
 ]);
-export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey', 'evidence']);
+export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey', 'evidence', 'brief']);
 const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'record', 'similar', 'views', 'explain', 'review', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check'];
 // How long `confirm` waits for the helper: one window at a time on the computer, so it may wait for another's.
 const CONFIRM_WAIT_MS = 3 * WINDOW_MS;
@@ -658,6 +659,33 @@ function confirmCard(event, words) {
   }, words);
 }
 
+// The confirm card for a standing brief, which shows all of it as it would stand.
+function briefCard(event, words) {
+  return composePlain({
+    kind: 'confirm',
+    level: 3,
+    what: `This project's standing brief, ${event.data.words}, as it would stand: ${briefText(event.data)}`,
+    why: 'Agents read the brief as your intent, so it counts only once you confirm it.',
+    options: [{ label: 'Confirm', says: 'This becomes the project\'s brief, in place of any before it.' }],
+    recommend: 'Confirm',
+    because: 'it is the brief as you and the First Mate settled it',
+    meanwhile: 'Nothing changes until you confirm.',
+    target: { event },
+  }, words);
+}
+
+// The brief to sign, from `record brief`: its lines, or one `fact` to add to the brief in force, with its date.
+function briefToSign(input, inForce) {
+  const { fact, ...lines } = input;
+  const unknown = Object.keys(lines).filter((k) => !BRIEF_LINES.includes(k));
+  if (unknown.length > 0) throw new CliError(`A brief has no ${unknown[0]}: it takes ${BRIEF_LINES.join(', ')}, or one fact on its own`);
+  if (fact !== undefined && Object.keys(lines).length > 0) throw new CliError('Give a brief\'s lines, or one fact to add to it, not both');
+  const brief = fact === undefined ? wholeBrief(lines) : addFact(inForce?.brief ?? wholeBrief(), fact);
+  const problem = briefProblem(brief);
+  if (problem !== null) throw new CliError(`The brief ${problem}`);
+  return brief;
+}
+
 // The confirm card for a setting, which names the setting by its id and its words (ruling F30). A
 // learnt setting carries `because`, learning's one-line reason, which the card gives.
 export function settingCard(event, words) {
@@ -835,20 +863,21 @@ export async function record({ client, cwd, kind, input, now, ready, makeId = ()
     const data = await withHash(client, cwd, kind, rest);
     return { ...answered(await write(client, cwd, kind, data)), hash: data.hash, say };
   }
-  if (kind !== 'ruling') return answered(await write(client, cwd, kind, input));
+  if (kind !== 'ruling' && kind !== 'brief') return answered(await write(client, cwd, kind, input));
 
   const { words } = input;
-  if (typeof words !== 'string' || words.trim() === '' || BREAK.test(words)) throw new CliError('A ruling needs its words, on one line, as the director gave them');
+  if (kind === 'ruling' && (typeof words !== 'string' || words.trim() === '' || BREAK.test(words))) throw new CliError('A ruling needs its words, on one line, as the director gave them');
   const { views, names } = await viewsOf(client, cwd);
   const id = makeId();
-  const { question, card: data } = confirmCard({ kind: 'ruling', id, data: input }, await wordsOf(client, cwd, views, now, names));
-  const got = await write(client, cwd, 'ruling', input, id);
-  if (got.id !== id) throw new CliError(`The ruling was recorded as ${got.id}, not under the id its confirm card names`);
+  const held = kind === 'brief' ? briefToSign(input, views.brief) : input;
+  const { question, card: data } = (kind === 'brief' ? briefCard : confirmCard)({ kind, id, data: held }, await wordsOf(client, cwd, views, now, names));
+  const got = await write(client, cwd, kind, held, id);
+  if (got.id !== id) throw new CliError(`The ${kind} was recorded as ${got.id}, not under the id its confirm card names`);
   let made;
   try {
     made = await write(client, cwd, 'card', data);
   } catch (error) {
-    throw new CliError(`The ruling was recorded as ${id}, but its confirm card wasn't: ${error.message}`);
+    throw new CliError(`The ${kind} was recorded as ${id}, but its confirm card wasn't: ${error.message}`);
   }
   return { ...answered(got), card: { question, id: made.id }, ...withProblems(await markAsked(client, cwd, [made.id], false)) };
 }
@@ -960,6 +989,7 @@ export async function view({ client, cwd, name, now }) {
     const { sealed = 0, read = 0, sampled = 0 } = isPlain(views.evidence) ? views.evidence : {};
     return [`${sealed} ${sealed === 1 ? 'card' : 'cards'} sealed, ${read} read, ${sampled} sampled.`];
   }
+  if (name === 'brief') return views.brief ? [briefText(views.brief.brief)] : ['This project has no signed brief.'];
   if (name === 'rulebook') {
     const rules = (Array.isArray(views.rulebook) ? views.rulebook : []).filter((r) => r?.status !== 'superseded');
     // A Lean ruling confirmed by a click in the chat (ruling P5-52) says what that proof is.

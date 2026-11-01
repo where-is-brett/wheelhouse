@@ -4119,6 +4119,7 @@ export async function startHelper({
   const engineRun = engineRoutes({
     refresh: (project) => (refreshMirror ?? refreshFetchMirror)(project),
     readerViewOf: (project, card) => engineHosts.find((h) => h.project === project)?.seals.viewFor(card) ?? null,
+    briefOf: (project) => buildViews(listEvents(stateDir(project), { report: () => {} }), ownKeyOnly(), { now }).brief,
     projects: () => registeredProjects().map(({ project, record }) => ({ project, folder: record.folder })),
     engineFor: (project) => {
       try { return engineFor(project); } catch { return null; }
@@ -5107,7 +5108,7 @@ export async function startHelper({
       engine, readViews: views,
       viewOf: async (card, facts) => {
         const asked = views().questions?.[card.id]?.question?.data;
-        return readerView({ question: asked?.what, options: asked?.options, diff: await cardDiff({ card, git: gitRoute({ run }), facts }), seed: card.id });
+        return readerView({ question: asked?.what, options: asked?.options, brief: views().brief, diff: await cardDiff({ card, git: gitRoute({ run }), facts }), seed: card.id });
       },
       gate: () => ({ running: engineRunsGoing(project).length, pace: paceOf({ pace: { value: settings().pace } }).building, counted: counts(project, folder), incident: Boolean(openRedMain(views())) }),
       startReader: async ({ card }) => {

@@ -27,6 +27,7 @@
 //   mainCheck(project)    { ok, here, green?, rerun? }: whether the project's checks run on this computer, and if so
 //                         whether the main line's latest counted check passed
 //   readerViewOf(project, card)   the view of the card a reader is reading, or null
+//   briefOf(project)      the project's standing brief in force, as views.brief, or null
 // A run is found by its id in the projects' order stores: the only runs these routes serve are ones the helper
 // started itself, with an order. Only the helper starts a run (the dispatcher, through `start`, never a route), and
 // every route asks for the run's ticket (ticket.js), which only that run's steps can read.
@@ -40,6 +41,7 @@ import { FIX_LANE, weakensChecks } from './fix-main.js';
 import { readReproduction, sameReproduction } from './reproduction.js';
 import { reviewHolds } from './review-round.js';
 import { READER_LANE, READER_WORK } from '../delegation/reader.js';
+import { briefLines } from '../delegation/brief.js';
 
 const NO_ORDER = 'there is no work order for that run';
 const NO_TICKET = 'the call didn\'t carry the run\'s own ticket';
@@ -112,7 +114,7 @@ export function engineRoutes({
   checkTook = null, mainCheck = null,
   host, provenance, previewsDir = (project) => path.join(filesDir(project), 'previews'),
   incidentOf = () => null, changesOf = async () => null, merge = async () => ({ ok: false, refused: 'the helper can\'t merge here' }),
-  refresh = async () => ({ ok: true }), readerViewOf = () => null,
+  refresh = async () => ({ ok: true }), readerViewOf = () => null, briefOf = () => null,
 } = {}) {
   const storeOf = (project) => orderStore(ordersDir(project));
 
@@ -573,6 +575,8 @@ export function engineRoutes({
         const view = run?.order.lane === READER_LANE ? readerViewOf(run.project, run.order.card) : null;
         return view ? { ok: true, view } : { ok: false, refused: 'there is no view for that run' };
       }),
+      // The project's standing brief, to read and never to write: only the director's signed click changes it.
+      '/engine/brief': ticketed(async ({ runId } = {}) => ({ ok: true, brief: briefLines(briefOf(runOf(runId).project)?.brief) })),
       // The order the helper keeps for the run, and nothing for any other id.
       '/engine/order': ticketed(async ({ runId } = {}) => {
         const run = runOf(runId);

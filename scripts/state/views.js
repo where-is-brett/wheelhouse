@@ -5,6 +5,7 @@ import path from 'node:path';
 import { wheelhouseHome, profileDir, stateDir } from '../lib/paths.js';
 import { listEvents, eventHash, dataHash, CONFIRMABLE_KINDS, PIN_NAMES, READY_COLUMNS } from './events.js';
 import { ruleStands, stageOf } from '../delegation/rules.js';
+import { briefStands } from '../delegation/brief.js';
 import { answerLine, approvalLine, chatCopy, ciPushLine, confirmLine } from './card-lines.js';
 import { joinQuestions } from './joiners.js';
 import { isLeanProject } from '../lean/project.js';
@@ -208,7 +209,7 @@ function uniqueSorted(events) {
   return { sorted: events.filter((e) => counts.get(e.id) === 1).sort(byOrder), repeated };
 }
 
-// A confirmation counts only for a ruling, level, setting or rule whose id it names and whose content
+// A confirmation counts only for a ruling, level, setting, rule or brief whose id it names and whose content
 // hash it names, so it confirms that exact event alone. { confirmed: ids, confirmations: [{ target, event }] }.
 function confirmationsOf(sorted, enrolled) {
   const byId = new Map(sorted.map((e) => [e.id, e]));
@@ -265,7 +266,7 @@ function leanRulingClicks(sorted, rulings) {
 // The verified approvals and actions that carry the question they were clicked on.
 const answeredByOf = (sorted, enrolled) => sorted.filter((e) => (e.kind === 'approval' || e.kind === 'action') && typeof e.data?.question === 'string' && verify(e, enrolled));
 
-// The time each ruling, level, setting or rule came into force by a verified confirmation of its own
+// The time each ruling, level, setting, rule or brief came into force by a verified confirmation of its own
 // hash: id -> the time of the first such confirmation.
 export function confirmationTimes(events, enrolled) {
   const { confirmations } = confirmationsOf(uniqueSorted(events).sorted, enrolled);
@@ -532,6 +533,13 @@ function rulesInForce(confirmations, now) {
   return Object.fromEntries([...latest.values()].map(({ target, event }) => [target.data.id, { rule: target.data, stage: stageOf(target.data, { now }), signedAt: event.at }]));
 }
 
+// The standing brief in force: { brief, signedAt }, or null. As for a rule, only a signed confirmation of the record itself
+// counts, and of the versions signed the newest record stands, so an old draft signed late takes nothing back.
+function briefInForce(confirmations) {
+  const newest = confirmations.filter(({ target }) => target.kind === 'brief' && briefStands(target.data)).sort((a, b) => byOrder(a.target, b.target)).at(-1);
+  return newest ? { brief: newest.target.data, signedAt: newest.event.at } : null;
+}
+
 export function buildViews(events, enrolled, { damaged = [], now = () => new Date(), profile = [], lean = false } = {}) {
   const { sorted, repeated } = uniqueSorted(events);
   const { confirmed, confirmations } = confirmationsOf(sorted, enrolled);
@@ -736,6 +744,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   return {
     evidence: evidenceOf(sorted, enrolled),
     rules: rulesInForce(confirmations, now),
+    brief: briefInForce(confirmations),
     rulebook,
     levels,
     settings,
