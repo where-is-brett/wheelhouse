@@ -2,10 +2,11 @@
 // The dispatcher's runner, in the helper: reads the record's views, asks `dispatch` what to start, and starts it
 // through the helper's own start (no route starts a run). Each piece gets its work order, with the project's caps and
 // the work's decision level; the merge queue is started from here too, one run at a time, and a queue run Archon's own
-// ruling step started counts as that run: the helper folds its start into it. Work held because it would
-// use the plan's counted requests brings one card, once, in the engine's own words. A red main line's incident comes
-// first each tick (section 7.7, fix-main.js): one fix run for it, the incident closed once the main line reads green,
-// and one card when a fix didn't make it green. A feature runs its slices one after another (feature.js): each next one
+// ruling step started counts as that run: the helper folds its start into it. A queue that stays unable to start brings
+// one card. Work held because it would use the plan's counted requests brings one card for each hold. New work whose
+// start is refused keeps its turn, is tried once more after a while, and then brings one card. A red main line's incident
+// comes first each tick (section 7.7, fix-main.js): one fix run for it, the incident closed once the main line reads green,
+// and one card when a fix didn't make it green or can't start. A feature runs its slices one after another (feature.js): each next one
 // starts once the slice before has merged, and the feature's own run once every slice has. A feature held up with
 // nothing to move it on (a pull request closed unmerged, a run rejected or cancelled with no card of its own) brings one
 // card; Stop here ends it with a `closed` report, which frees its place. Other work whose run's pull request merged
@@ -18,8 +19,8 @@
 // start is marked before it is called, so one that timed out or a crash during it is settled before anything starts again.
 import fs from 'node:fs';
 import path from 'node:path';
-import { dispatch, MERGE_WORK } from './dispatcher.js';
-import { reservedUnreadWords, noCardBehindWords, restartRefusedWords, restartCardWords, restartUnsureWords, restartStrandedWords, prLeftOpenWords, wakeLateWords, STOPPED_RESTART_WORDS, ORPHAN_LEFT_WORDS, RESTART_UNSURE_AGAIN, START_ANYWAY, cutOffStoppedWords, cutOffWords, waitsOnItselfWords, startAnywayWords } from './words.js';
+import { dispatch, MERGE_WORK, MERGE_QUEUE_EVERY_MS } from './dispatcher.js';
+import { reservedUnreadWords, noCardBehindWords, restartRefusedWords, restartCardWords, restartUnsureWords, restartStrandedWords, prLeftOpenWords, wakeLateWords, STOPPED_RESTART_WORDS, ORPHAN_LEFT_WORDS, RESTART_UNSURE_AGAIN, START_ANYWAY, cutOffStoppedWords, cutOffWords, waitsOnItselfWords, startAnywayWords, startRefusedWords, startCardWords, unmarkedPrWords, START_STOP_SAYS, NO_FIX_TESTS, NO_FIX_ORDER, noFixWords, queueStuckWords, QUEUE_STUCK_WHY, QUEUE_PASSED_WORDS, requestsUsedWords, REQUESTS_UNCONFIRMED_WORDS, requestsStoppedWords } from './words.js';
 import { workOrder } from './order.js';
 import { limitsFor } from './caps.js';
 import { ENGINE_QUESTIONS } from './router.js';
@@ -32,7 +33,7 @@ import { since, endedBy } from '../foreman/queue.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const isText = (x) => typeof x === 'string' && x.trim() !== '';
-const EMPTY = () => ({ mergeRun: null, mergeRuns: [], lastStart: null, seenReady: [], queueDue: false, sentBack: {}, acted: {}, clashAsked: {}, reds: {}, redActed: {}, redAsked: {}, redNoted: {}, requestsAsked: null, noTestsSaid: false, fixes: {}, features: {}, shipped: {}, closedPrs: [], reserved: {}, released: {}, stranded: {}, topCard: null, noCardSaid: {}, quietSeen: {}, owed: {}, cutOffAsked: {}, cutOffFor: {}, waived: {}, returning: [], admitted: [], carryOver: {}, restartCards: 0 });
+const EMPTY = () => ({ mergeRun: null, mergeRuns: [], lastStart: null, seenReady: [], queueDue: false, sentBack: {}, acted: {}, clashAsked: {}, reds: {}, redActed: {}, redAsked: {}, redNoted: {}, requestsAsked: null, requestsFor: null, queueFault: null, unmarkedSeen: {}, noTestsSaid: false, fixes: {}, features: {}, shipped: {}, closedPrs: [], reserved: {}, released: {}, stranded: {}, topCard: null, noCardSaid: {}, quietSeen: {}, owed: {}, cutOffAsked: {}, cutOffFor: {}, waived: {}, returning: [], admitted: [], carryOver: {}, restartCards: 0 });
 // The dispatcher's own questions take numbers from here, apart from the card router's.
 const OWN_QUESTIONS = ENGINE_QUESTIONS + 90000;
 export { MERGE_WORK };
@@ -63,6 +64,12 @@ const REWORKING = Object.freeze(['answer', 'rework']);
 const SEEN = Object.freeze(['running', 'ended', 'unknown']);
 // How long an answered run may sit paused before the Logbook says so: only the engine's waker carries it on (check 85).
 export const WAKE_LATE_MS = 5 * 60 * 1000;
+// How long new work waits between a refused start and its one more try: a fault that passes costs no card, and one that
+// stays costs no start every tick.
+export const REFUSED_RETRY_MS = 5 * 60 * 1000;
+// How long a merge queue that can't start gets to clear by itself: one of its own beats, the longest a ready pull request
+// waits for it when all is well, so the director hears of nothing that costs more than an ordinary wait.
+export const QUEUE_FAULT_MS = MERGE_QUEUE_EVERY_MS;
 // The summary of the report for quick, small and bug work whose pull request merged.
 export const MERGED_WORDS = 'Added to the main line.';
 // On every merge while a project's tests aren't counting (ruling 2): it rests on review and the work's own done checks.
@@ -72,6 +79,8 @@ export const CLOSED_WORDS = 'Its pull request was closed without being added.';
 const FIX_QUESTIONS = OWN_QUESTIONS + 5000;
 // The second-red cards' numbers, after the clash cards'.
 const RED_QUESTIONS = OWN_QUESTIONS + 3000;
+// The cards for a red main line no fix can start for, after the fix cards'.
+const NO_FIX_QUESTIONS = FIX_QUESTIONS + 1000;
 export const STARTED_FIX_WORDS = 'The main line is red, so Wheelhouse started fixing it; other work waits until it is green.';
 export const GREEN_WORDS = 'The main line is green again, so held work goes on.';
 const WHY_FIX = {
@@ -257,7 +266,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       keep();
       await write('note', { about: 'engine', words: `${entry.work.data.title ?? work} waits: its approved design ${problem}, so it needs approving again.` });
     }
-    return { refused: `the feature's design ${problem}` };
+    return { refused: `the feature's design ${problem}`, said: true };
   }
   // The feature's progress from its runs (what merged from all of them, what has run from those since it was queued),
   // the orders the helper kept and the merges seen.
@@ -277,7 +286,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   async function startFeature({ views, entry, work, lane, branch, carryOn, raised, answers, checkTail }) {
     if (!['feature', 'slice'].includes(lane)) return { ok: false, refused: 'the work\'s lane changed' };
     const found = await designFor(work, entry);
-    if (found.refused) return { ok: false, refused: found.refused };
+    if (found.refused) return { ok: false, refused: found.refused, said: found.said };
     const { design, kept } = found;
     // Past the feature's cap, nothing more starts without the director's say, however the start came.
     const s = settings() ?? {};
@@ -629,8 +638,16 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       delete state.fixes[incident.id];
       keep();
     } else if (decided.act === 'start') {
+      const toldNoFix = kept.noFix ? views.questions?.[kept.noFix]?.answer?.label : null;
+      if (toldNoFix === LEAVE_RED) return;
       let order;
-      try { order = fixOrder(incident, { config: config() ?? {}, settings: settings() ?? {}, revert: decided.revert === true }); } catch { return; }
+      try {
+        order = fixOrder(incident, { config: config() ?? {}, settings: settings() ?? {}, revert: decided.revert === true });
+      } catch {
+        if (!kept.noFix || toldNoFix === FIX_FORWARD) await noFixCard(incident, kept);
+        return;
+      }
+      delete kept.noFix;
       const answered = isPlain(kept.next) ? kept.next : null;
       kept.next = null;
       if (decided.after) kept.carried.push(decided.after);
@@ -673,6 +690,23 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       });
     }
   }
+  // No order for a fix, which needs the project's tests for its done check: all work is held, and nothing else can speak under
+  // an incident. One card; an order that can be made later starts the fix by itself, and that card's late answer means nothing.
+  async function noFixCard(incident, kept) {
+    kept.noFixCards = (kept.noFixCards ?? 0) + 1;
+    kept.noFix = `q-${incident.work}-${NO_FIX_QUESTIONS + kept.noFixCards}`;
+    keep();
+    await askDirector('fix', {
+      id: kept.noFix, work: incident.work, level: 3,
+      what: noFixWords(isText(config()?.testCommand) ? NO_FIX_ORDER : NO_FIX_TESTS),
+      why: 'A red main line holds up all work, and what to do when no fix can start is yours to decide, at level 3.',
+      options: [
+        { label: FIX_FORWARD, says: 'It tries again to start a fix. If it still can\'t, you get a new card.' },
+        { label: LEAVE_RED, says: 'Nothing more is tried; all other work keeps waiting until the main line is green.' },
+      ],
+      recommendation: FIX_FORWARD,
+    }).catch(() => {});
+  }
   // The director's answer to a fix card: the next attempt, once.
   function answerFixCard(views, incident, kept) {
     for (const id of Object.keys(kept.asked)) {
@@ -695,30 +729,91 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   // engine that can't say what is live starts nothing this tick.
   let startingQueue = null;
   async function startQueue(waiting) {
-    if (await mergeQueueRunning()) return;
+    if (await mergeQueueRunning()) {
+      await queuePassed();
+      return;
+    }
     // Asked before `queueFolder()`, which resets the folder a live run would be working in.
     const place = queuePlace?.() ?? null;
     if (place !== null && typeof engine.queueRuns === 'function') {
       let live = null;
       try { live = await engine.queueRuns({ folder: place }); } catch { live = null; }
-      if (!Array.isArray(live)) return;
+      if (!Array.isArray(live)) {
+        queueCantStart('the build engine can\'t say what is running');
+        return;
+      }
       if (live.length > 0) {
         ownQueueRun(live[0]);
         keep();
+        await queuePassed();
         return;
       }
     }
     let where = null;
     try { where = await queueFolder(); } catch { where = null; }
-    if (where?.ok !== true) return;
-    const got = await engine.start({ lane: 'merge', project: where.folder, repo: repoOf() });
+    if (where?.ok !== true) {
+      queueCantStart(where?.refused ?? 'it has no folder to run in');
+      return;
+    }
+    let got = null;
+    try { got = await engine.start({ lane: 'merge', project: where.folder, repo: repoOf() }); } catch { got = { ok: false, refused: 'the build engine gave no clear answer' }; }
     if (got?.ok) {
       ownQueueRun(got.runId);
       state.lastStart = now().toISOString();
       state.seenReady = waiting.map(([pr]) => pr);
       state.queueDue = false;
       keep();
+      await queuePassed();
+    } else queueCantStart(got?.refused ?? 'the build engine didn\'t start it');
+  }
+
+  // A queue that couldn't start, kept from the first try that failed. It is tried on every tick, so a gap of the fault's whole
+  // time is a computer that slept, which says nothing of how long the fault has lasted.
+  function queueCantStart(why) {
+    const at = now().toISOString();
+    const fault = state.queueFault;
+    const lasted = fault && now().getTime() - Date.parse(fault.last) < QUEUE_FAULT_MS;
+    state.queueFault = { asked: null, works: [], ...fault, why, since: lasted ? fault.since : at, last: at };
+    keep();
+  }
+  async function queuePassed() {
+    const fault = state.queueFault;
+    if (!fault) return;
+    state.queueFault = null;
+    keep();
+    const views = readViews() ?? {};
+    if (fault.asked && !isPlain(views.questions?.[fault.asked]?.answer)) await write('note', { about: 'engine', words: QUEUE_PASSED_WORDS }).catch(() => {});
+  }
+  // The card for a queue that stays unable to start: every piece with a ready pull request waits on it, and it is tried on
+  // each tick whatever the answer, so it asks only whether the director wants to hear again.
+  async function queueFaultTick(views, waiting, queueStatus) {
+    const fault = state.queueFault;
+    if (waiting.length === 0 || queueHolds(queueStatus)) {
+      await queuePassed();
+      return;
     }
+    fault.works = [...new Set(waiting.map(([, r]) => r.work))];
+    keep();
+    const label = views.questions?.[fault.asked]?.answer?.label;
+    if (label === TRY_AGAIN) {
+      Object.assign(fault, { asked: null, since: now().toISOString() });
+      keep();
+      return;
+    }
+    if (fault.asked || stopped() || incidentOpen(views) || now().getTime() - Date.parse(fault.since) < QUEUE_FAULT_MS) return;
+    state.restartCards += 1;
+    fault.asked = `q-${fault.works[0]}-${RESTART_QUESTIONS + state.restartCards}`;
+    keep();
+    await askDirector('trouble', {
+      id: fault.asked, work: fault.works[0], level: 3,
+      what: queueStuckWords(fault.why),
+      why: QUEUE_STUCK_WHY,
+      options: [
+        { label: TRY_AGAIN, says: 'It carries on trying, and you get a new card if it still can\'t start in a while.' },
+        { label: LEAVE_IT, says: 'It carries on trying, and finished work keeps waiting. You aren\'t asked about this again.' },
+      ],
+      recommendation: TRY_AGAIN,
+    });
   }
 
   // Whether a queue run is live, whoever started it. An engine that can't say counts as one.
@@ -743,6 +838,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     const pieces = new Set([...waitingNow(views), ...between, ...reworkingNow()]);
     // A cut-off piece has not begun, so it has no files to keep.
     for (const work of Object.keys(state.cutOffAsked)) pieces.delete(work);
+    for (const entry of state.returning) if (unbegun(views, entry)) pieces.delete(entry.work);
     for (const [work, kept] of Object.entries(state.reserved)) {
       if (endedBy(reports, work, views.work?.[work]?.work)) {
         delete state.reserved[work];
@@ -787,6 +883,9 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   const wakes = (entry) => WAKES.includes(entry.via) && entry.startsRun !== true;
   const titleOf = (views, work) => views.work?.[work]?.work?.data?.title ?? work;
   const incidentOpen = (views) => (views.incidents?.open?.length ?? 0) > 0;
+  const retriesLater = (entry) => Date.parse(entry.retryAt) > now().getTime();
+  // New work refused at its first start, with nothing of it on record: nothing of it has been done.
+  const unbegun = (views, entry) => entry.firstStart === true && !isText(entry.branch) && (views.runs?.[entry.work] ?? []).length === 0;
   function leave(entry) {
     state.returning = state.returning.filter((e) => e !== entry);
     state.admitted = state.admitted.filter((e) => e !== entry);
@@ -823,7 +922,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       why: 'Whether work goes on when it can\'t be started again is yours to decide, at level 3.',
       options: [
         { label: TRY_AGAIN, says: entry.unsure === true ? RESTART_UNSURE_AGAIN : 'It asks for a place and is started again.' },
-        { label: STOP_HERE, says: `Nothing more starts; what it has done so far is kept on its branch, and its files are free for other work.${Number.isInteger(entry.prLeft) ? ` ${prLeftOpenWords(entry.prLeft)}` : ''}` },
+        { label: STOP_HERE, says: entry.fresh === true ? START_STOP_SAYS : `Nothing more starts; what it has done so far is kept on its branch, and its files are free for other work.${Number.isInteger(entry.prLeft) ? ` ${prLeftOpenWords(entry.prLeft)}` : ''}` },
       ],
       recommendation: TRY_AGAIN,
     }).catch(() => {});
@@ -840,17 +939,20 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       keep();
       return;
     }
+    const fresh = unbegun(views, entry);
+    const title = titleOf(views, entry.work);
     entry.refusals = (entry.refusals ?? 0) + 1;
     if (entry.refusals >= 2) {
-      await askAboutRestart(entry, restartCardWords(titleOf(views, entry.work), why));
+      await askAboutRestart(entry, fresh ? startCardWords(title, why) : restartCardWords(title, why), fresh ? { fresh } : {});
       return;
     }
     delete entry.starting;
     state.admitted = state.admitted.filter((e) => e !== entry);
     if (!state.returning.includes(entry)) state.returning.push(entry);
+    if (entry.firstStart === true) entry.retryAt = new Date(now().getTime() + REFUSED_RETRY_MS).toISOString();
     keep();
     if (entry.reason === 'red') await redRefused(entry.work, got);
-    else await write('note', { about: 'engine', work: entry.work, words: restartRefusedWords(titleOf(views, entry.work), why) });
+    else if (got?.said !== true) await write('note', { about: 'engine', work: entry.work, words: fresh ? startRefusedWords(title, why) : restartRefusedWords(title, why) });
   }
 
   // What a start carries: its entry's own, and whatever All stop kept for Carry on, which any start takes up (`afterStart`).
@@ -970,6 +1072,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       const label = entry.asked ? views.questions?.[entry.asked]?.answer?.label : null;
       if (label === TRY_AGAIN) {
         delete entry.asked;
+        delete entry.retryAt;
         entry.refusals = 0;
         // A start that couldn't be told: what began is settled first, so nothing starts beside it.
         if (entry.unsure === true) {
@@ -986,10 +1089,11 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
         const title = titleOf(views, entry.work);
         const unstarted = !feature && isPlain(current) && !runsOfWork(views, entry.work).some((r) => since(r, current));
         const orphan = unstarted || entry.unsure === true ? await endOrphan(entry) : false;
-        const words = `${STOPPED_RESTART_WORDS(title)}${orphan ? ` ${ORPHAN_LEFT_WORDS}` : ''}`;
+        const stoppedWords = entry.fresh === true ? cutOffStoppedWords(title) : STOPPED_RESTART_WORDS(title);
+        const words = `${stoppedWords}${orphan ? ` ${ORPHAN_LEFT_WORDS}` : ''}`;
         if (feature) await endFeature(entry.work, state.features[entry.work] ??= {}, words);
         else {
-          await write('report', { work: entry.work, outcome: 'closed', summary: STOPPED_RESTART_WORDS(title), rulings: [] });
+          await write('report', { work: entry.work, outcome: 'closed', summary: stoppedWords, rulings: [] });
           release(entry.work, views);
         }
         leave(entry);
@@ -1046,6 +1150,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   // Whether nothing moves a piece on by itself: every run ended, no card and none owed, no way back, nothing sent back, and
   // no pull request with the merge queue or waiting to be merged. The director's Leave it counts too: nothing was done to it, as the card said.
   const leftByDirector = (views, work) => [state.clashAsked[work], state.redAsked[work]].some((id) => views.questions?.[id]?.answer?.label === LEAVE_IT);
+  const prGone = (views, work, pr) => state.closedPrs.includes(pr) || state.features[work]?.closed?.[pr] === true || Object.hasOwn(state.features[work]?.merged ?? {}, pr) || (views.sendBacks ?? []).some((b) => b.pr === pr);
   function restsQuiet(views, work, ready) {
     if (onTheWay(work) || waitingNow(views).has(work) || cardOwed(work)) return false;
     const left = leftByDirector(views, work);
@@ -1056,19 +1161,20 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     if (left) return true;
     const last = runs.at(-1);
     // A finished run's open pull request is for merging, unless the director sent it back or it has gone.
-    const gone = state.closedPrs.includes(last.pr) || state.features[work]?.closed?.[last.pr] === true || Object.hasOwn(state.features[work]?.merged ?? {}, last.pr) || (views.sendBacks ?? []).some((b) => b.pr === last.pr);
-    const toMerge = last.outcome === 'completed' && Number.isInteger(last.pr) && !gone;
+    const toMerge = last.outcome === 'completed' && Number.isInteger(last.pr) && !prGone(views, work, last.pr);
     return !toMerge && !ready.some(([, r]) => r.work === work) && !runs.some((r) => Object.hasOwn(parkedPrs() ?? {}, r.pr));
   }
   // What is going or about to, for what stands behind a hold. A feature holds its place between slices, but one that rests
   // quiet has nothing going.
   function goingNow(views, decided, { queueStatus, ready, started }) {
+    // A ready pull request is going only if a queue can take it.
+    const stuck = new Set(state.queueFault ? ready.map(([, r]) => r.work) : []);
     const moving = (work) => !waitingNow(views).has(work);
     const queueGoing = queueStatus === 'running' || (queueStatus === 'paused' && cardsNow(views).length === 0);
     return [
-      ...decided.live.filter((work) => !restsQuiet(views, work, ready)), ...started.filter((s) => s.ok === true || s.uncertain === true).map((s) => s.work),
-      ...[...state.admitted, ...state.returning].filter((e) => !e.asked && moving(e.work)).map((e) => e.work),
-      ...ready.map(([, r]) => r.work).filter((work) => moving(work) && !leftByDirector(views, work)), ...(queueGoing ? [MERGE_WORK] : []),
+      ...decided.live.filter((work) => !restsQuiet(views, work, ready) && !stuck.has(work)), ...started.filter((s) => s.ok === true || s.uncertain === true).map((s) => s.work),
+      ...[...state.admitted, ...state.returning].filter((e) => !e.asked && !retriesLater(e) && moving(e.work)).map((e) => e.work),
+      ...ready.map(([, r]) => r.work).filter((work) => moving(work) && !stuck.has(work) && !leftByDirector(views, work)), ...(queueGoing ? [MERGE_WORK] : []),
     ];
   }
 
@@ -1188,6 +1294,31 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       state.noCardSaid[work] = key;
       keep();
     }
+    await unmarkedTick(views, decided, going);
+  }
+
+  // A finished run's pull request, open and never marked ready, of a piece keeping a place that other work waits for. It may
+  // yet be marked, so the Logbook says so only after a while, once for that pull request.
+  async function unmarkedTick(views, decided, { ready }) {
+    const waitedOn = decided.hold.some((h) => h.why === 'pace');
+    for (const work of Object.keys(state.unmarkedSeen)) if (!decided.live.includes(work)) delete state.unmarkedSeen[work];
+    for (const work of decided.live) {
+      const last = [...new Map(runsOfWork(views, work).map((r) => [r.data.runId, r.data])).values()].at(-1);
+      const open = waitedOn && last?.state === 'ended' && last.outcome === 'completed' && Number.isInteger(last.pr) && !prGone(views, work, last.pr) && !ready.some(([, r]) => r.work === work) && !Object.hasOwn(parkedPrs() ?? {}, last.pr) && !waitingNow(views).has(work);
+      const seen = state.unmarkedSeen[work];
+      if (!open) {
+        if (seen) delete state.unmarkedSeen[work];
+        continue;
+      }
+      if (seen?.pr !== last.pr) {
+        state.unmarkedSeen[work] = { pr: last.pr, at: now().toISOString(), said: false };
+        keep();
+      } else if (!seen.said && now().getTime() - Date.parse(seen.at) >= WAKE_LATE_MS) {
+        seen.said = true;
+        keep();
+        await write('note', { about: 'engine', work, words: unmarkedPrWords(titleOf(views, work), last.pr) });
+      }
+    }
   }
 
   // Ends a piece's reservation and remembers the run it was for, so an open card of that run can't take it back.
@@ -1209,6 +1340,54 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     }
     if (changed) keep();
     return Object.fromEntries(Object.entries(kept).map(([pr, k]) => [pr, k.ready]));
+  }
+
+  // Work held for the plan's counted requests: one card for each hold, in the engine's own words where the cap is none. A
+  // hold ends when nothing is held and its card has been answered, or when what holds it changes: a new cap, or the count
+  // confirmed. All stop and an incident hide a hold, and end none. An unconfirmed count holds whatever the cap, so that card
+  // offers no number: it can only keep the work or end it.
+  async function requestsTick(views, held, s) {
+    const label = views.questions?.[state.requestsAsked]?.answer?.label;
+    const answered = typeof label === 'string';
+    const forget = () => {
+      Object.assign(state, { requestsAsked: null, requestsFor: null });
+      keep();
+    };
+    if (held.length === 0) {
+      if (answered && !stopped() && !incidentOpen(views)) forget();
+      return;
+    }
+    const unconfirmed = held.some((h) => h.why === 'requests-unconfirmed');
+    const cap = Number.isFinite(s.capRequests) ? s.capRequests : 0;
+    const key = unconfirmed ? 'unconfirmed' : `cap:${cap}`;
+    if (state.requestsAsked && (state.requestsFor ?? key) === key) {
+      if (unconfirmed && label === STOP_HERE) {
+        for (const { work } of held) {
+          const words = requestsStoppedWords(titleOf(views, work));
+          await write('report', { work, outcome: 'closed', summary: words, rulings: [] });
+          await write('note', { about: 'engine', work, words });
+        }
+        forget();
+      }
+      return;
+    }
+    if (state.requestsAsked && !answered) return;
+    state.restartCards += 1;
+    const id = `q-${held[0].work}-${RESTART_QUESTIONS + state.restartCards}`;
+    Object.assign(state, { requestsAsked: id, requestsFor: key });
+    keep();
+    await askDirector('requests', {
+      id, work: held[0].work, level: 3,
+      what: unconfirmed ? engine.words?.requestsUnconfirmed ?? REQUESTS_UNCONFIRMED_WORDS : cap > 0 ? requestsUsedWords(cap) : engine.words?.requestsHeld ?? REQUESTS_WORDS,
+      why: unconfirmed ? 'Whether that work waits or ends is yours to decide; nothing of the plan\'s requests is used either way.' : 'Spending your plan\'s requests is yours to allow; nothing is spent without your yes.',
+      options: [
+        { label: KEEP_OFF, says: 'That work keeps waiting, and nothing of the plan\'s requests is used.' },
+        unconfirmed
+          ? { label: STOP_HERE, says: 'The work held now ends here, and nothing of it starts.' }
+          : { label: ALLOW_SOME, says: 'The settings show how many requests a month the build may use; you choose the number there.' },
+      ],
+      recommendation: KEEP_OFF,
+    });
   }
 
   async function tick() {
@@ -1243,7 +1422,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       requests, sentBack: [
         ...Object.entries(state.sentBack).filter(([work, times]) => state.acted[work] !== times).map(([work, times]) => ({ work, times })),
         ...Object.entries(state.reds).filter(([work, red]) => state.redActed[work] !== red.times).map(([work, red]) => ({ work, times: red.times, reason: 'red' })),
-      ], waiting: [...waitingNow(views)], reserved: reservedFiles(), returning: state.returning, admitted: state.admitted, stoppedFeatures: stoppedFeaturesOf(views, reports), waived: Object.keys(state.waived).filter((work) => state.waived[work] === views.work?.[work]?.work?.at), now: now(),
+      ], waiting: [...waitingNow(views)], reserved: reservedFiles(), returning: state.returning.map((e) => (retriesLater(e) ? { ...e, asked: e.asked ?? e.key } : e)), admitted: state.admitted, stoppedFeatures: stoppedFeaturesOf(views, reports), waived: Object.keys(state.waived).filter((work) => state.waived[work] === views.work?.[work]?.work?.at), now: now(),
     });
     // What it admitted holds its place from here. A piece has one start at a time; each answer of it goes along.
     for (const { work } of decided.admit) {
@@ -1304,7 +1483,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       const args = carry ? { branch: carry.branch ?? null, carryOn: isText(carry.branch), answers: carry.answers ?? [] } : {};
       const startAt = now().toISOString();
       // Marked before it is called: a crash during it, or no reply in time, is settled as any start is. One with an answer has done with the mark.
-      const entry = { work, lane, via: 'try-again', key: `start:${startAt}`, at: startAt, queued: views.work?.[work]?.work?.at ?? null, ...args, starting: true, startAt };
+      const entry = { work, lane, via: 'try-again', key: `start:${startAt}`, at: startAt, queued: views.work?.[work]?.work?.at ?? null, ...args, starting: true, startAt, firstStart: true };
       state.admitted.push(entry);
       keep();
       const got = await startPiece({ work, lane, ...args });
@@ -1312,7 +1491,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       if (got?.uncertain === true) {
         entry.uncertain = true;
         keep();
-      } else leave(entry);
+      } else if (got?.ok === true || got?.capped === true || got?.gone === true || stopped()) leave(entry);
+      else await refusedStart(entry, got);
       started.push({ work, lane, ...got });
     }
     // A second clash on the same work: one card, level 3. Try again brings it up to date once more.
@@ -1375,23 +1555,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       startingQueue ??= startQueue(waiting).finally(() => { startingQueue = null; });
       await startingQueue;
     }
-    // Work held for the plan's counted requests: one card, once, in the engine's own words.
-    const held = decided.hold.find((h) => h.why === 'requests' || h.why === 'requests-unconfirmed');
-    if (held && !state.requestsAsked) {
-      const id = `q-${held.work}-${OWN_QUESTIONS}`;
-      state.requestsAsked = id;
-      keep();
-      await askDirector('requests', {
-        id, work: held.work, level: 3,
-        what: engine.words?.requestsHeld ?? REQUESTS_WORDS,
-        why: 'Spending your plan\'s requests is yours to allow; nothing is spent without your yes.',
-        options: [
-          { label: KEEP_OFF, says: 'That work keeps waiting, and nothing of the plan\'s requests is used.' },
-          { label: ALLOW_SOME, says: 'The settings show how many requests a month the build may use; you choose the number there.' },
-        ],
-        recommendation: KEEP_OFF,
-      });
-    }
+    if (state.queueFault) await queueFaultTick(views, waiting, queueStatus).catch(() => {});
+    await requestsTick(views, decided.hold.filter((h) => h.why === 'requests' || h.why === 'requests-unconfirmed'), s).catch(() => {});
     const going = { queueStatus, ready: waiting, started };
     await strandedTick(readViews() ?? {}, decided, going).catch(() => {});
     await cutOffTick(readViews() ?? {}, decided, going).catch(() => {});
