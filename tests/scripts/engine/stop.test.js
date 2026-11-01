@@ -212,3 +212,14 @@ test('one run\'s process tree is ended by pid, as All stop ends every run\'s, an
   assert.ok((await pc.list()).some((p) => p.pid === 200), 'the other run goes on');
   assert.equal(engine.calls.filter((c) => c.call === 'stopAll').length, 0, 'no other run is cancelled');
 });
+
+test('endRun with a folder and no id takes what was left in the folder, and no owner on record', async () => {
+  const engine = fakeEngine({ recordings });
+  engine.start({ recording: 'quick-approved', running: true, ownerPid: 700 });
+  const pc = computer([...base, [700, 1, 700, 'fake-engine owner of another run'], [701, 1, 701, 'a step left behind']], { cwds: { 701: '/work/a/src' } });
+  const got = await endRun({ engine, run: { folder: '/work/a' }, ...pc, self: SELF, grace: 0 });
+  assert.equal(got.ended.length, 1);
+  assert.match(got.ended[0], /a step left behind/);
+  assert.equal(got.survivors.length, 0);
+  assert.ok((await pc.list()).some((p) => p.pid === 700), 'an owner it wasn\'t asked about stays');
+});

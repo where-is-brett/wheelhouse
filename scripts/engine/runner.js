@@ -17,13 +17,17 @@
 // cap spends nothing, so it is held instead, which keeps Give it more's way of carrying it on: none of its answers goes
 // back until Give it more lifts the hold, and Stop cancels it. A run that ended gets one `cost` record, once it is settled
 // (recovery.js, `unsettled`): one that resumes reads as running again, and is costed at its true end.
+//
+// A run whose process died is cancelled, keeping its worktree, what it left going is ended, and it starts again on its
+// branch, once (section 9.5, `onLost`). A loss the engine can't confirm, or a second, comes to a card that goes to the
+// helper and never to the engine.
 import fs from 'node:fs';
 import path from 'node:path';
 import { composeCard } from '../cards/compose.js';
 import { blindDue } from '../delegation/blind.js';
 import { routeAsk, cardBudget, bundleApprovals, answerFor, dayOf, ignoresBudget, ENGINE_QUESTIONS } from './router.js';
 import { runCost, runningMinutes } from './spend.js';
-import { RESUME_SETTLE_MINUTES, resumeRun, resumesOf, unsettled } from './recovery.js';
+import { LOST_CARRY_ONS, LOST_TRIES, OWNER_LOST, RESUME_SETTLE_MINUTES, ownerLostAsk, resumeRun, resumesOf, unsettled } from './recovery.js';
 import { prNumber } from './host.js';
 import { capReached, carriedSpend } from './caps.js';
 import { RED_MAIN, FIX_LANE, redMainIncident, openRedMain } from './fix-main.js';
@@ -35,12 +39,12 @@ import { READER_WORK } from '../delegation/reader.js';
 import { alike, normaliseWords } from '../delegation/words.js';
 import { closeMatch, decisionKey, earlierAnswer, reuse, spokenSince } from '../delegation/asked.js';
 import { REPEAT_READ_MS } from '../delegation/limits.js';
-import { mergeQuestionWords, parkedWords, PARKED_WHY, PARKED_BECAUSE, PARKED_MEANWHILE, PARKED_APPROVE_SAYS, PARKED_SEND_BACK_SAYS, PARKED_CHANGED, SENT_BACK_ANSWER, sentBackWords, sentBackGoneWords, sentBackApprovedWords, sentBackMovedWords, sentBackNoPieceWords, limitLateWords, limitLateOverWords, LIMIT_LATE_WHY, LIMIT_LATE_MORE_SAYS } from './words.js';
+import { mergeQuestionWords, parkedWords, PARKED_WHY, PARKED_BECAUSE, PARKED_MEANWHILE, PARKED_APPROVE_SAYS, PARKED_SEND_BACK_SAYS, PARKED_CHANGED, SENT_BACK_ANSWER, sentBackWords, sentBackGoneWords, sentBackApprovedWords, sentBackMovedWords, sentBackNoPieceWords, limitLateWords, limitLateOverWords, LIMIT_LATE_WHY, LIMIT_LATE_MORE_SAYS, lostCarriedWords, lostCardWords, lostStoppedWords, lostAllStopWords, LOST_CARRY_SAYS, LOST_STOP_SAYS } from './words.js';
 import { SEND_BACK } from '../lib/calm-words.js';
 import { parkChoice } from './archon/asks.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
-const EMPTY = () => ({ routed: {}, waiting: [], held: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, tries: {}, later: [], next: {}, noted: null, capped: {}, capsOwed: {}, costed: {}, reviewsKept: {}, carried: {}, reworks: {}, answers: {}, sending: {}, parked: {}, reused: {}, repeats: {}, unsure: {}, sentBack: {}, resumedAt: {}, limitSeen: {} });
+const EMPTY = () => ({ routed: {}, waiting: [], held: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, tries: {}, later: [], next: {}, noted: null, capped: {}, capsOwed: {}, costed: {}, reviewsKept: {}, carried: {}, reworks: {}, answers: {}, sending: {}, parked: {}, reused: {}, repeats: {}, unsure: {}, sentBack: {}, resumedAt: {}, limitSeen: {}, lost: {}, losses: {}, lostFixes: {} });
 // The failed tries after which the director is told an answer hasn't reached the build yet.
 const UNREACHABLE_SAID = 3;
 // The cap card's options: Give it more carries the work on with the cap raised once; Stop leaves it stopped.
@@ -109,6 +113,8 @@ const inSentence = (title) => (/^[A-Z][a-z]/.test(title) ? title.charAt(0).toLow
 // - `takeBack({ pr, work })` says whether a pull request the director sent back can go to its piece: { ok }, { ok: false, gone }
 //   or { ok: false }, asked again on the next tick; `notReady(pr)` takes it off what the queue is due for; `localChange(pr)`
 //   the change marked ready on a project in git alone, { head, work, ... }, or null.
+// - `endLeft(folder)` ends what a lost run left working in its folder, { ended, survivors }; `lostCleared(work, key)` lets
+//   a carry-on's entry take its place, once its run has truly gone; `stoppedRuns()` the runs All stop cancelled.
 //
 // One unclear pull request holds nothing back (delegated decisions design, section 8): where the queue offers `park`
 // it is taken, which only leaves that pull request, and the director's approval card is raised for its head. `parked`
@@ -118,7 +124,7 @@ const inSentence = (title) => (/^[A-Z][a-z]/.test(title) ? title.charAt(0).toLow
 // The card's other answer is Send it back (`sendBacks`): the park ends, and the piece is reworked on its own branch as a
 // blocked exit's Send it back is. `sentBack` keeps which signed clicks have been acted on, so each counts once. On a project in
 // git alone nothing parks: the local queue raises the same card, and the change marked ready stands in for the park.
-export function engineRunner({ engine, file, readViews, write, stopped = () => false, now = () => new Date(), settings = () => ({}), noteSleep = async () => true, workOf = () => null, titleOf = (work) => work, endRun = async () => ({ ended: [], survivors: [] }), openedOf = () => null, prOf = () => null, prTitleOf = async () => null, keepReviews = async () => true, onCard = () => {}, onReaderAsk = () => {}, blindRoll = () => 1, release = () => {}, handBack = async () => ({ ok: false, refused: 'nothing hands work to the merge queue here' }), admittedTo = () => true, delivered = () => {}, drop = () => {}, takeBack = async () => ({ ok: false }), notReady = () => {}, localChange = () => null, startAdmitted = async () => ({ ok: false, refused: 'nothing starts runs here' }), carryOver = () => {}, comingBack = () => false, retrying = () => true, retriesAdmitted = () => [], headOf = async () => null, commitsSince = async () => null, exclusionsOf = async () => null } = {}) {
+export function engineRunner({ engine, file, readViews, write, stopped = () => false, now = () => new Date(), settings = () => ({}), noteSleep = async () => true, workOf = () => null, titleOf = (work) => work, endRun = async () => ({ ended: [], survivors: [] }), openedOf = () => null, prOf = () => null, prTitleOf = async () => null, keepReviews = async () => true, onCard = () => {}, onReaderAsk = () => {}, blindRoll = () => 1, release = () => {}, handBack = async () => ({ ok: false, refused: 'nothing hands work to the merge queue here' }), admittedTo = () => true, delivered = () => {}, drop = () => {}, takeBack = async () => ({ ok: false }), notReady = () => {}, localChange = () => null, startAdmitted = async () => ({ ok: false, refused: 'nothing starts runs here' }), carryOver = () => {}, comingBack = () => false, retrying = () => true, retriesAdmitted = () => [], headOf = async () => null, commitsSince = async () => null, exclusionsOf = async () => null, endLeft = async () => ({ ended: [], survivors: [] }), lostCleared = () => {}, stoppedRuns = () => [] } = {}) {
   let state = readState(file);
   const keep = () => saveState(file, state);
   const note = (words, extra = {}) => write('note', { about: 'engine', words, ...extra });
@@ -337,6 +343,16 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     // A merge-queue run the helper didn't start, not yet seen by the dispatcher, still waits on an answer.
     const work = found?.work ?? ask.work ?? (isPlain(ask.mergeQuestion) ? MERGE_WORK : null);
     if (typeof work !== 'string') return;
+    if (ask.ownerLost === true) {
+      if (stopped()) {
+        // All stop's own cancel takes the run, and a look after the lift sees that it did.
+        if (!state.later.some((a) => a.id === ask.id)) state.later.push(ask);
+        keep();
+        return;
+      }
+      await onLost(ask, work, found?.lane);
+      return;
+    }
     state.routed[ask.id] = true;
     let views = {};
     try { views = readViews() ?? {}; } catch { views = {}; }
@@ -735,6 +751,10 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
         await note(`Your answer about ${titled(kept.work)} wasn't used: the work was queued again since, and that run doesn't carry on.`, { work: kept.work });
         continue;
       }
+      if (kept.ask?.ownerLost === true) {
+        if (!stopped()) await lostAnswer(key, kept, answer, stops);
+        continue;
+      }
       if (kept.cap) {
         if (stopped()) continue;
         const more = label === MORE;
@@ -1081,6 +1101,164 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     }
   }
 
+  // A run that lost its process (section 9.5). `state.lost[runId]` is marked first and taken forward by `lostTick` until the
+  // run has gone and what follows is in hand, so a crash anywhere strands nothing: { work, lane, ask, key, then, entered,
+  // cancelling, folder, cleared, tries, looked }, `then` being what follows: 'carry', 'card', or 'none' for the merge queue,
+  // whose next sweep is its try. The piece's losses are counted once, for each queueing.
+  const hasEntry = ({ work, lane }) => lane !== FIX_LANE && work !== MERGE_WORK;
+  async function onLost(ask, work, lane) {
+    state.routed[ask.id] = true;
+    const queued = viewsNow().work?.[work]?.work?.at ?? null;
+    const count = (state.losses[work]?.queued === queued ? state.losses[work].count : 0) + 1;
+    state.losses[work] = { queued, count };
+    state.lost[ask.runId] = { work, lane, ask, key: `carry-on:${ask.runId}`, then: work === MERGE_WORK ? 'none' : count <= LOST_CARRY_ONS ? 'carry' : 'card' };
+    keep();
+    await lostStep(ask.runId);
+  }
+
+  // One step at a time for a run: an ask and a tick can meet here.
+  const losing = new Set();
+  async function lostStep(runId) {
+    if (losing.has(runId)) return;
+    losing.add(runId);
+    try {
+      await lostStepNow(runId, state.lost[runId]);
+    } finally {
+      losing.delete(runId);
+    }
+  }
+  // The entry goes in first, so nothing reads the run's end as a stop: it waits, with its place not asked for, until the
+  // engine has confirmed the run ended, since a fresh run beside a live one is turned away with no refusal to read (check 92).
+  // Only then is what the run left ended, and only by its folder, as a step outlives its owner. An ending the stream hasn't
+  // brought by the next look is written here.
+  async function lostStepNow(runId, kept) {
+    if (kept === undefined || stopped()) return;
+    const { work, lane, key } = kept;
+    // All stop's own cancels wait for a Carry on.
+    if ((stoppedRuns() ?? []).includes(runId)) {
+      delete state.lost[runId];
+      keep();
+      drop(work, key);
+      if (kept.answered === true) await note(lostAllStopWords(titleOf(work)), { work });
+      return;
+    }
+    const records = runRecords(work, runId);
+    const branch = records.at(-1)?.data.branch ?? records.find((r) => r.data.branch)?.data.branch ?? null;
+    if (kept.then === 'carry' && hasEntry(kept) && !kept.entered) {
+      if (branch === null) {
+        await lostCard(runId, 'branch');
+        return;
+      }
+      const { raised = false, runs = [] } = state.carried[runId] ?? {};
+      enter({ work, lane, via: 'carry-on', key, branch, carryOn: true, raised, answers: state.answers[work] ?? [], carried: { raised, runs: [...runs, runId] }, cancelling: true });
+      kept.entered = true;
+      keep();
+    }
+    let record = await inspect(runId);
+    if (typeof record?.folder === 'string') kept.folder = record.folder;
+    const unheard = record === null || record.unread === true || record.status === 'unknown';
+    if (!unheard && record.status === 'ended' && kept.cancelling !== true) {
+      // It ended by another way, which says what comes next: nothing here is left to do.
+      delete state.lost[runId];
+      keep();
+      drop(work, key);
+      return;
+    }
+    if (unheard || record.status !== 'ended') {
+      kept.cancelling = true;
+      keep();
+      const got = unheard ? null : await safely(() => engine.act(runId, { cancel: { reason: 'its process stopped before it finished' } }));
+      record = await inspect(runId);
+      if (record?.status !== 'ended' || record.unread === true) {
+        kept.tries = (kept.tries ?? 0) + 1;
+        keep();
+        if ((got !== null && got.ok !== true && got.unreachable !== true) || kept.tries >= LOST_TRIES) await lostCard(runId, 'refused');
+        return;
+      }
+    }
+    if (kept.cleared !== true) {
+      const got = typeof kept.folder === 'string' ? await safely(() => endLeft(kept.folder)) : { survivors: [] };
+      const left = got === null ? ['the processes of its folder'] : got.survivors ?? [];
+      if (left.length > 0) {
+        await lostCard(runId, 'left', left);
+        return;
+      }
+      kept.cleared = true;
+      keep();
+    }
+    if (records.length > 0 && records.at(-1).data.state !== 'ended') {
+      if (kept.looked !== true) {
+        kept.looked = true;
+        keep();
+        return;
+      }
+      await endAsEngineSays(runId, records, record);
+    }
+    if (kept.then === 'card') {
+      await lostCard(runId, 'again');
+      return;
+    }
+    if (lane === FIX_LANE) state.lostFixes[runId] = true;
+    if (hasEntry(kept)) lostCleared(work, key);
+    delete state.lost[runId];
+    keep();
+    if (kept.then === 'carry') await note(lostCarriedWords(titleOf(work)), { work });
+  }
+
+  // The piece parks: its way back is given up, and the card speaks for it from here. The card's words are the helper's, and
+  // nothing of it goes to the engine, whose ask has no answer.
+  async function lostCard(runId, why, left = []) {
+    const { work, ask, key } = state.lost[runId];
+    drop(work, key);
+    delete state.lost[runId];
+    const says = { 'carry-on': LOST_CARRY_SAYS, stop: LOST_STOP_SAYS };
+    const named = { ...ask, reason: lostCardWords(titleOf(work), why, left), options: ask.options.map((o) => ({ ...o, says: says[o.id] })) };
+    await raise(routeAsk(named), named, work);
+  }
+
+  // The director's answer to that card. Carry on does what the first loss did. Stop ends what is left, and lets the piece go.
+  async function lostAnswer(key, kept, answer, stops) {
+    const { runId, work, ask } = kept;
+    if (!answer) {
+      state.delivered[key] = 'nothing';
+      keep();
+      return;
+    }
+    const lane = laneOf(kept, viewsNow());
+    if (!stops) {
+      if (typeof answer.words === 'string') state.answers[work] = [...(state.answers[work] ?? []), { question: questionOf(ask), answer: answer.words }];
+      state.lost[runId] = { work, lane, ask, key: `carry-on:${runId}`, then: work === MERGE_WORK ? 'none' : 'carry', cancelling: true, answered: true };
+      state.delivered[key] = 'answered';
+      keep();
+      await lostStep(runId);
+      return;
+    }
+    state.delivered[key] = GOING;
+    keep();
+    letGo(work);
+    const record = await inspect(runId);
+    if (record?.status !== 'ended') await cancelPaused(runId, 'the director stopped it after it lost its process');
+    if (typeof record?.folder === 'string') await safely(() => endLeft(record.folder));
+    if (work !== MERGE_WORK) await endInRecord({ ...kept, lane });
+    state.delivered[key] = 'answered';
+    keep();
+    await note(lostStoppedWords(titleOf(work)), { work });
+  }
+
+  // Each lost run taken forward, and an ask the host wrote just before a crash, which never reached `onAsk`.
+  async function lostTick() {
+    if (stopped()) return;
+    const { asks } = viewsNow();
+    for (const [work, list] of Object.entries(isPlain(asks) ? asks : {})) {
+      if (work === READER_WORK || !Array.isArray(list)) continue;
+      for (const { data } of list) {
+        if (data?.id !== `${data?.runId}:${OWNER_LOST}` || state.routed[data.id] || state.later.some((a) => a.id === data.id)) continue;
+        if (runRecords(work, data.runId).at(-1)?.data.state === 'paused') await onAsk(ownerLostAsk(data.runId, now().toISOString()));
+      }
+    }
+    for (const runId of Object.keys(state.lost)) await lostStep(runId);
+  }
+
   // A cap card on a run that the director hasn't answered yet. One Give it more is carrying out still waits.
   function capCardWaits(runId) {
     const question = state.capped[runId]?.question;
@@ -1278,6 +1456,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       await parks();
       await owedCaps();
       await limits().catch(() => {});
+      await lostTick().catch(() => {});
       await retries();
       await caps();
       await show();
@@ -1303,6 +1482,8 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     waitingWork: () => waitingOn(),
     // The pieces whose run an answer is ending, to start again on its branch.
     reworkWork: () => Object.values(state.reworks).map((r) => r.work),
+    // What the runner is doing about lost runs: the pieces, the runs not yet settled, and the fixes free to carry on.
+    lostNow: () => ({ pieces: Object.values(state.lost).map((kept) => kept.work), clearing: Object.keys(state.lost), carried: Object.keys(state.lostFixes) }),
     // The written cards behind them, [{ id, work, rank }]. Views that can't be read name none.
     openCards() {
       let views;

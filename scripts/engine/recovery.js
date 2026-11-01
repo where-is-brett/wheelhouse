@@ -117,6 +117,20 @@ export function unsettled({ records, capped, retrying = true }) {
   return capped === true || (retrying !== false && retryPlan({ failure: latest.failure, tries: resumesOf(records) }).retry === true);
 }
 
+// How many times a piece that lost its process carries on by itself (section 9.5), and how many tries an engine that
+// gives no reply gets at the cancel before the piece comes to a card.
+export const LOST_CARRY_ONS = 1;
+export const LOST_TRIES = 3;
+export const OWNER_LOST = 'owner-lost';
+
+// The ask for a run whose process died: the helper's own, since the engine has no ask to answer, so `ownerLost` keeps its
+// answer from ever going back. Its card comes only where the run can't carry on by itself.
+export const ownerLostAsk = (runId, at) => ({
+  type: 'ask', runId, at, id: `${runId}:${OWNER_LOST}`, kind: 'trouble', level: 3, work: null, ownerLost: true,
+  recommend: 'stop', labels: {}, options: [{ id: 'carry-on', label: 'Carry on' }, { id: 'stop', label: 'Stop' }], context: {}, card: true,
+  reason: "The process running this work stopped before it finished, and the engine can't carry the work on by itself. Stopping the work is the safe choice.",
+});
+
 // How many earlier runs a `tried` list names, and the longest word in it.
 export const MOST_TRIED = 5;
 export const MOST_TRIED_CHECKS = 10;

@@ -78,10 +78,11 @@ function latestRuns(records) {
 // What the dispatcher does about a red main line this tick. `incident` the open red-main incident (or null); `runs`
 // the fix work's run records; `green` whether the main line's checks read green (true, false, or null when unknown);
 // `stopped` the runs All stop cancelled; `merged` the runs whose fix the helper added; `kept` the dispatcher's own
-// { carried: [runId], carded: [runId], next: { revert } | null }; `retry` the latest run's try, { due, waiting }, or null for none.
+// { carried: [runId], carded: [runId], next: { revert } | null }; `retry` the latest run's try, { due, waiting }, or null for none;
+// `lost` the runs that lost their process and may carry on, `clearing` those the runner hasn't finished with (section 9.5).
 //   -> { act: 'none' } | { act: 'close' } | { act: 'wait', why } | { act: 'start', revert } | { act: 'resume', run } |
 //      { act: 'start', carryOn: true, branch, after } | { act: 'card', run, why }
-export function fixDecision({ incident, runs = [], green = null, stop = false, stopped = [], merged = [], kept = {}, retry = null } = {}) {
+export function fixDecision({ incident, runs = [], green = null, stop = false, stopped = [], merged = [], kept = {}, retry = null, lost = [], clearing = [] } = {}) {
   if (!isPlain(incident)) return { act: 'none' };
   if (green === true) return { act: 'close' };
   if (stop) return { act: 'wait', why: 'stop' };
@@ -92,7 +93,8 @@ export function fixDecision({ incident, runs = [], green = null, stop = false, s
   if (latest.state !== 'ended') return { act: 'wait', why: 'running' };
   if (isPlain(kept.next)) return { act: 'start', revert: kept.next.revert === true };
   if (carded.has(latest.runId)) return { act: 'wait', why: 'card' };
-  if (latest.outcome === 'cancelled' && stopped.includes(latest.runId) && !carried.has(latest.runId) && latest.branch) {
+  if (latest.outcome === 'cancelled' && clearing.includes(latest.runId)) return { act: 'wait', why: 'lost' };
+  if (latest.outcome === 'cancelled' && (stopped.includes(latest.runId) || lost.includes(latest.runId)) && !carried.has(latest.runId) && latest.branch) {
     return { act: 'start', carryOn: true, branch: latest.branch, after: latest.runId };
   }
   if (merged.includes(latest.runId)) return green === false ? { act: 'card', run: latest.runId, why: 'still-red' } : { act: 'wait', why: 'merged' };

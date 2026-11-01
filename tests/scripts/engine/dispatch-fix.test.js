@@ -323,3 +323,25 @@ test('a limit holds no fix: an incident\'s fix starts with a run parked at a lim
   await t.d.tick();
   assert.equal(fixStarts(t).length, 1);
 });
+
+test('a lost fix is carried on under its incident, once, and waits until the runner has done with it', async () => {
+  const t = setUp();
+  let lost = { clearing: ['run-1'], carried: [] };
+  t.d.onLost(() => lost);
+  await t.d.tick();
+  t.ran('run-1', 'started', { branch: 'wh/fix' });
+  t.ran('run-1', 'ended', { outcome: 'cancelled', branch: 'wh/fix' });
+  await t.d.tick();
+  assert.equal(fixStarts(t).length, 1, 'not while the runner has it');
+  assert.equal(t.written.filter((w) => w.kind === 'question').length, 0, 'and no card for its cancel');
+  lost = { clearing: [], carried: ['run-1'] };
+  await t.d.tick();
+  assert.equal(fixStarts(t).length, 2);
+  assert.equal(fixStarts(t)[1].carryOn, true);
+  assert.equal(fixStarts(t)[1].branch, 'wh/fix');
+  t.ran('run-2', 'started', { branch: 'wh/fix' });
+  t.ran('run-2', 'ended', { outcome: 'cancelled', branch: 'wh/fix' });
+  await t.d.tick();
+  assert.equal(fixStarts(t).length, 2, 'once');
+  assert.equal(t.written.filter((w) => w.kind === 'question').length, 1, 'then the fix\'s own card');
+});

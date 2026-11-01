@@ -542,3 +542,16 @@ test('heldUp\'s cancelled branch passes over a run on its way back', async () =>
   await w.tick(4);
   assert.equal(w.cards().length, 0);
 });
+
+test('a lost slice raises no held-up card, and carries on on its branch', async () => {
+  const w = wayBack({ recordings: { f: [forever(), forever()] }, designOf: () => ({ text: DESIGN }) });
+  w.put('f', { lane: 'feature' });
+  await w.tick(2);
+  const [first] = w.runsOf('f');
+  w.engine.loseOwner(first);
+  await w.tick(6);
+  assert.deepEqual(w.cards(), []);
+  assert.equal(w.runsOf('f').length, 2);
+  assert.equal(w.starts.at(-1).carryOn, true);
+  assert.equal(w.starts.at(-1).order.lane, w.starts[0].order.lane, 'the same step');
+});

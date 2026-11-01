@@ -74,7 +74,7 @@ async function snapshotOf({ engine, runs = [], processes = [], list, cwds, self 
   const folders = [];
   for (const run of runs) {
     try {
-      const pid = (await engine.inspect(run.id))?.ownerPid;
+      const pid = typeof run.id === 'string' ? (await engine.inspect(run.id))?.ownerPid : null;
       if (Number.isInteger(pid) && pid > 1) owners.push(pid);
     } catch { /* a run that can't be read is cancelled all the same */ }
     if (typeof run.folder === 'string' && run.folder !== '') folders.push(run.folder);
@@ -193,7 +193,8 @@ export async function stopEngine({
 
 // endRun({ engine, run: { id, folder? }, kill, list, cwds, grace, sleep, self }) -> { ended, survivors, leftAlone }
 // One run's process tree ended by pid, as All stop ends every run's, for a run the engine wouldn't stop at its cap.
-// No other run is touched, and nothing is cancelled.
+// No other run is touched, and nothing is cancelled. A `run` with a folder and no id takes only what was left working in
+// that folder, for a run whose owner is gone: the process id on its record may since be another run's.
 export async function endRun({
   engine, run, kill = killByPid, list = listProcesses, cwds = listCwds, grace = KILL_GRACE_MS, sleep = delay, self = process.pid,
 } = {}) {

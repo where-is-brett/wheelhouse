@@ -52,7 +52,7 @@ export function wayBack({ dispatchExtra = {}, recordings = {}, pace = 3, setting
   });
   const record = (data) => { (world.runs[data.work] ??= []).push({ at: at(), data: { engine: 'fake', ...data } }); };
   const realStart = async ({ order, branch, carryOn }) => {
-    const got = engine.start({ work: order.work, lane: order.lane, ...(branch ? { branch } : {}), recording: order.work, carryOn });
+    const got = engine.start({ work: order.work, lane: order.lane, ...(branch ? { branch } : {}), recording: order.work, carryOn, folder: `/work/${order.work}` });
     if (!got.ok) return got;
     (world.orders ??= {})[got.runId] = order;
     const runBranch = got.branch ?? branch ?? `wh/${order.work}`;
@@ -101,6 +101,9 @@ export function wayBack({ dispatchExtra = {}, recordings = {}, pace = 3, setting
       takeBack: (args) => dispatcher.takeBack(args),
       notReady: (pr) => dispatcher.notReady(pr),
       localChange: (pr) => dispatcher.localChange(pr),
+      lostCleared: (work, key) => dispatcher.lostCleared(work, key),
+      stoppedRuns: () => world.stoppedIds ?? [],
+      endLeft: async (folder) => { (world.endedFolders ??= []).push(folder); return { ended: [], survivors: world.survivors ?? [] }; },
       ...reads,
     });
     runner.onEnter((args) => dispatcher.enter(args));
@@ -110,6 +113,7 @@ export function wayBack({ dispatchExtra = {}, recordings = {}, pace = 3, setting
     dispatcher.onReworks(() => runner.reworkWork());
     dispatcher.onCards(() => runner.openCards());
     dispatcher.onParked(() => runner.parkedHeads());
+    dispatcher.onLost(() => runner.lostNow());
     return { dispatcher, runner };
   };
   let joined = build();
