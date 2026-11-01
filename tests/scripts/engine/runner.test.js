@@ -21,9 +21,10 @@ const asking = (id, over = {}) => [
   ev({ type: 'run-ended', outcome: 'completed' }),
 ];
 
-function setUp({ recordings = { one: asking('q1') }, settings = {}, at = '2026-10-29T13:00:00.000Z', stop = false, slow = false, endRun, onCard, workOf = () => ({ work: 'sale-banner', lane: 'quick' }), onReaderAsk } = {}) {
+function setUp({ recordings = { one: asking('q1') }, settings = {}, at = '2026-10-29T13:00:00.000Z', stop = false, slow = false, endRun, onCard, workOf = () => ({ work: 'sale-banner', lane: 'quick' }), onReaderAsk, openedOf, mergeAsked, release } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-runner-'));
   const engine = fakeEngine({ recordings });
+  if (mergeAsked) engine.mergeAsked = mergeAsked;
   const writes = [];
   const views = { levels: {}, questions: {}, approvals: {} };
   const world = { now: new Date(at), stop };
@@ -40,6 +41,8 @@ function setUp({ recordings = { one: asking('q1') }, settings = {}, at = '2026-1
     ...(endRun ? { endRun } : {}),
     ...(onCard ? { onCard } : {}),
     ...(onReaderAsk ? { onReaderAsk } : {}),
+    ...(openedOf ? { openedOf } : {}),
+    ...(release ? { release } : {}),
   });
   // Starts a run of `name` and hands the runner its open ask, as the host does.
   const ask = async (name = 'one') => {
@@ -955,5 +958,153 @@ test('no cap reads a reader\'s run, and the runner writes no cost for it', async
     await t.runner.tick();
     assert.deepEqual(t.writes.filter((w) => ['cost', 'question', 'card'].includes(w.kind)), []);
     assert.equal(t.engine.calls.filter((c) => c.action?.cancel).length, 0);
+  } finally { t.cleanup(); }
+});
+
+test('waitingWork names a piece with an open card, until the director answers', async () => {
+  const t = setUp();
+  try {
+    assert.deepEqual([...t.runner.waitingWork()], []);
+    await t.ask();
+    assert.deepEqual([...t.runner.waitingWork()], ['sale-banner']);
+    t.sign('Keep it small');
+    assert.deepEqual([...t.runner.waitingWork()], []);
+  } finally { t.cleanup(); }
+});
+
+test('waitingWork names the piece a merge card stands for, by the pull request the queue says it asked about', async () => {
+  const t = setUp({
+    recordings: { one: asking('q1', { mergeQuestion: { pr: null }, reason: 'Merge it?' }) },
+    workOf: () => ({ work: 'merge-queue', lane: 'merge' }),
+    mergeAsked: async () => ({ pr: 12, head: HEAD, merge: 'merge' }),
+    openedOf: (pr) => (pr === 12 ? { lane: 'quick', work: 'sale-banner' } : null),
+  });
+  try {
+    await t.ask();
+    assert.deepEqual([...t.runner.waitingWork()], ['sale-banner']);
+  } finally { t.cleanup(); }
+});
+
+test('waitingWork names no one when the views can\'t be read', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-runner-'));
+  try {
+    const file = path.join(dir, 'router.json');
+    fs.writeFileSync(file, JSON.stringify({ questions: { q1: { runId: 'r1', work: 'a' } } }));
+    const runner = engineRunner({ engine: fakeEngine({}), file, readViews: () => { throw new Error('unreadable'); }, write: async () => {} });
+    assert.deepEqual([...runner.waitingWork()], []);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the director\'s Stop ends a reservation, at a blocked exit and at a cap', async () => {
+  const released = [];
+  const t = setUp({ recordings: { one: blockedAsk('q1') }, release: (work) => released.push(work) });
+  try {
+    await t.ask();
+    t.sign('Stop this work');
+    await t.runner.tick();
+    assert.deepEqual(released, ['sale-banner']);
+  } finally { t.cleanup(); }
+
+  const held = [];
+  const capped = pausedAtCap({ release: (work) => held.push(work) });
+  try {
+    await capped.t.runner.tick();
+    answerCap(capped.t, 'Stop');
+    await capped.t.runner.tick();
+    assert.deepEqual(held, ['sale-banner']);
+  } finally { capped.t.cleanup(); }
+});
+
+test('Stop ends a reservation even when the build had already moved on, and an unreachable engine waits', async () => {
+  const released = [];
+  const t = setUp({ recordings: { one: blockedAsk('q1') }, release: (work) => released.push(work) });
+  try {
+    await t.ask();
+    t.sign('Stop this work');
+    const act = t.engine.act;
+    t.engine.act = () => { throw new Error('no answer'); };
+    await t.runner.tick();
+    assert.deepEqual(released, [], 'not delivered yet');
+    t.engine.act = () => ({ ok: false, refused: 'it moved on' });
+    await t.runner.tick();
+    assert.deepEqual(released, ['sale-banner']);
+    t.engine.act = act;
+  } finally { t.cleanup(); }
+});
+
+test('Stop on an ask of any kind ends a reservation', async () => {
+  const released = [];
+  const t = setUp({ recordings: { one: asking('q1', { kind: 'trouble', recommend: 'stop', options: [{ id: 'stop', label: 'Stop this work' }] }) }, release: (work) => released.push(work) });
+  try {
+    await t.ask();
+    t.sign('Stop this work');
+    await t.runner.tick();
+    assert.deepEqual(released, ['sale-banner']);
+  } finally { t.cleanup(); }
+});
+
+test('Stop under All stop ends a reservation only when All stop cancelled the run', async () => {
+  const released = [];
+  const t = setUp({ recordings: { one: blockedAsk('q1') }, release: (work) => released.push(work) });
+  try {
+    await t.ask();
+    t.world.stop = true;
+    t.sign('Stop this work');
+    await t.runner.tick();
+    assert.deepEqual(released, [], 'the run still stands, and the question comes back');
+  } finally { t.cleanup(); }
+
+  const gone = [];
+  const u = setUp({ recordings: { one: blockedAsk('q1') }, release: (work) => gone.push(work) });
+  try {
+    const { runId } = await u.ask();
+    u.engine.act(runId, { cancel: { reason: 'All stop' } });
+    u.world.stop = true;
+    u.sign('Stop this work');
+    await u.runner.tick();
+    assert.deepEqual(gone, ['sale-banner']);
+  } finally { u.cleanup(); }
+});
+
+test('Give it more and Send it back keep the reservation', async () => {
+  const released = [];
+  const t = setUp({ recordings: { one: blockedAsk('q1') }, release: (work) => released.push(work) });
+  try {
+    await t.ask();
+    t.sign('Send it back for a fresh run');
+    await t.runner.tick();
+    assert.deepEqual(released, []);
+  } finally { t.cleanup(); }
+
+  const held = [];
+  const capped = pausedAtCap({ release: (work) => held.push(work) });
+  try {
+    await capped.t.runner.tick();
+    answerCap(capped.t, 'Give it more');
+    await capped.t.runner.tick();
+    assert.deepEqual(held, []);
+  } finally { capped.t.cleanup(); }
+});
+
+test('a bug that moves lane releases the old id\'s reservation', async () => {
+  const MOVE = [{ id: 'small', label: 'Make it a small change' }, { id: 'stop', label: 'Stop this work' }];
+  const released = [];
+  const t = setUp({ recordings: { one: asking('q1', { kind: 'blocked', topic: 'bigger-than-a-bug', recommend: 'small', options: MOVE, context: { question: 'Bigger?' } }) }, release: (work) => released.push(work) });
+  try {
+    const { runId } = await t.ask();
+    t.sign('Make it a small change');
+    withRun(t, runId, [['2026-10-29T12:50:00.000Z', 'started', { lane: 'bug' }]]);
+    await t.runner.tick();
+    assert.deepEqual(released, ['sale-banner']);
+  } finally { t.cleanup(); }
+});
+
+test('trouble releasing costs nothing else', async () => {
+  const t = setUp({ recordings: { one: blockedAsk('q1') }, release: () => { throw new Error('no disk'); } });
+  try {
+    await t.ask();
+    t.sign('Stop this work');
+    await t.runner.tick();
+    assert.deepEqual(acts(t.engine).map((c) => c.action.answer?.choice), ['stop']);
   } finally { t.cleanup(); }
 });

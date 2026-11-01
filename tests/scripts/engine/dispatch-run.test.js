@@ -3,6 +3,7 @@
 // model bindings and test command; work for a project whose tests Wheelhouse can't run waits, said once.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import path from 'node:path';
 import { dispatchRun, orderFor, TRY_AGAIN } from '../../../scripts/engine/dispatch-run.js';
 import { fakeEngine } from '../../../scripts/engine/fake.js';
@@ -368,4 +369,166 @@ test('each card the dispatcher writes is told to the seals, after it is written,
   const card = written.find((w) => w.kind === 'question');
   assert.ok(card, 'the requests card is written');
   assert.deepEqual(told, [{ id: card.data.id, kind: 'requests', work: 'card-1', level: 3, written: true }]);
+});
+
+test('waitingWork joins the card router\'s pieces and the dispatcher\'s own cards', async () => {
+  const dir = tempFolder('wh-dr-');
+  const file = path.join(dir, 'dispatch.json');
+  fs.writeFileSync(file, JSON.stringify({ clashAsked: { 'card-2': 'q-card-2-1' }, features: { f: { asked: 'q-f-1' } } }));
+  const seen = { questions: { 'q-card-2-1': { question: {} }, 'q-f-1': { question: {}, answer: { label: 'Stop here' } } } };
+  const d = dispatchRun({ engine: fakeEngine(), project: 'p', folder: dir, file, readViews: () => seen, config: () => ({ testCommand: 'node --test' }) });
+  assert.deepEqual([...d.waitingWork()], ['card-2']);
+  d.onWaiting(() => new Set(['card-1']));
+  assert.deepEqual([...d.waitingWork()].sort(), ['card-1', 'card-2']);
+  d.onWaiting(() => { throw new Error('the router can\'t say'); });
+  assert.deepEqual([...d.waitingWork()], ['card-2']);
+});
+
+// A project with `pieces` queued, for what a piece keeps while it waits. `world.waiting` is what the runner says.
+function parking({ pieces = { a: ['expected.js'] }, reads = () => ['built.js'] } = {}) {
+  const dir = tempFolder('wh-dr-');
+  const file = path.join(dir, 'dispatch.json');
+  const at = '2026-10-29T08:00:00.000Z';
+  const world = {
+    now: new Date('2026-10-29T10:00:00.000Z'), reads: [], written: [], waiting: new Set(), reports: {}, runs: Object.fromEntries(Object.keys(pieces).map((id) => [id, [{ at: '2026-10-29T09:00:00.000Z', data: { work: id, runId: `run-${id}`, lane: 'quick', state: 'paused', branch: `wh/${id}` } }]])),
+  };
+  const work = Object.fromEntries(Object.entries(pieces).map(([id, files]) => [id, { work: { id: `w-${id}`, at, data: { id, title: `Piece ${id}`, lane: 'quick', visible: false, dependsOn: [] } }, approved: false, since: at, files }]));
+  const make = () => {
+    const d = dispatchRun({
+      engine: fakeEngine(), project: 'p', folder: dir, file, readViews: () => ({ work, runs: world.runs, questions: {}, reports: world.reports }), config: () => ({ testCommand: 'node --test' }),
+      start: async () => ({ ok: true, runId: 'new' }), write: async (kind, data) => { world.written.push({ kind, data }); }, now: () => world.now,
+      branchPaths: async (args) => { world.reads.push(args); return reads(world.reads.length); },
+    });
+    d.onWaiting(() => world.waiting);
+    return d;
+  };
+  return { d: make(), make, world, file };
+}
+const notesOf = (t) => t.world.written.filter((w) => w.kind === 'note').map((w) => w.data.words);
+
+test('a piece parks with its expected files and every path its branch changed', async () => {
+  const t = parking();
+  t.world.waiting = new Set(['a']);
+  await t.d.tick();
+  assert.deepEqual(t.world.reads, [{ runId: 'run-a', branch: 'wh/a' }]);
+  assert.deepEqual(t.d.reserved(), { a: ['expected.js', 'built.js'] });
+});
+
+test('a parking is read once, and a later parking adds to what is reserved', async () => {
+  const t = parking({ reads: (n) => [`built-${n}.js`] });
+  t.world.waiting = new Set(['a']);
+  await t.d.tick();
+  await t.d.tick();
+  assert.equal(t.world.reads.length, 1);
+  t.world.waiting = new Set();
+  await t.d.tick();
+  assert.deepEqual(t.d.reserved(), { a: ['expected.js', 'built-1.js'] }, 'what parked stays reserved through the gap');
+  t.world.waiting = new Set(['a']);
+  await t.d.tick();
+  assert.deepEqual(t.d.reserved(), { a: ['expected.js', 'built-1.js', 'built-2.js'] });
+});
+
+test('an unreadable branch keeps the expected files and is read again', async () => {
+  const t = parking({ reads: (n) => (n < 3 ? null : ['built.js']) });
+  t.world.waiting = new Set(['a']);
+  await t.d.tick();
+  assert.deepEqual(t.d.reserved(), { a: ['expected.js'] });
+  await t.d.tick();
+  assert.equal(t.world.reads.length, 2, 'read again on the next tick');
+  assert.deepEqual(notesOf(t).filter((w) => /couldn't be read/.test(w)).length, 1, 'one Logbook line');
+  assert.match(notesOf(t)[0], /Piece a/);
+  await t.d.tick();
+  assert.deepEqual(t.d.reserved(), { a: ['expected.js', 'built.js'] });
+  await t.d.tick();
+  assert.equal(t.world.reads.length, 3, 'read, so not read again');
+});
+
+test('a read that throws counts as unreadable, and costs the tick nothing', async () => {
+  const t = parking({ reads: () => { throw new Error('no folder'); } });
+  t.world.waiting = new Set(['a']);
+  await t.d.tick();
+  assert.deepEqual(t.d.reserved(), { a: ['expected.js'] });
+});
+
+test('a reservation ends with the piece\'s merge or end, and never by time', async () => {
+  for (const outcome of ['merged', 'closed']) {
+    const t = parking();
+    t.world.waiting = new Set(['a']);
+    await t.d.tick();
+    t.world.waiting = new Set();
+    t.world.now = new Date('2027-10-29T10:00:00.000Z');
+    await t.d.tick();
+    assert.deepEqual(t.d.reserved(), { a: ['expected.js', 'built.js'] }, 'a year on, it stands');
+    t.world.reports = { a: { at: '2027-10-29T09:00:00.000Z', data: { work: 'a', outcome } } };
+    await t.d.tick();
+    assert.deepEqual(t.d.reserved(), {}, outcome);
+  }
+});
+
+test('a blocked report ends no reservation', async () => {
+  const t = parking();
+  t.world.waiting = new Set(['a']);
+  await t.d.tick();
+  t.world.reports = { a: { at: '2026-10-29T09:30:00.000Z', data: { work: 'a', outcome: 'blocked' } } };
+  await t.d.tick();
+  assert.deepEqual(Object.keys(t.d.reserved()), ['a']);
+});
+
+test('release ends a reservation at once, and one that lands during a read isn\'t put back', async () => {
+  const t = parking();
+  t.world.waiting = new Set(['a']);
+  await t.d.tick();
+  t.d.release('a');
+  assert.deepEqual(t.d.reserved(), {});
+  t.d.release('never-reserved');
+
+  const during = parking({ reads: () => { during.d.release('a'); return ['built.js']; } });
+  during.world.waiting = new Set(['a']);
+  await during.d.tick();
+  assert.deepEqual(during.d.reserved(), {});
+});
+
+test('reservations are kept across a restart', async () => {
+  const t = parking();
+  t.world.waiting = new Set(['a']);
+  await t.d.tick();
+  const again = t.make();
+  assert.deepEqual(again.reserved(), { a: ['expected.js', 'built.js'] });
+  await again.tick();
+  assert.equal(t.world.reads.length, 1, 'that parking was read already');
+});
+
+test('a dispatch.json with no reservations reads as none', async () => {
+  const t = parking();
+  fs.writeFileSync(t.file, JSON.stringify({ features: {}, clashAsked: {} }));
+  assert.deepEqual(t.make().reserved(), {});
+});
+
+test('nothing is reserved for work that has gone or ended', async () => {
+  const t = parking();
+  t.world.waiting = new Set(['gone']);
+  await t.d.tick();
+  t.world.reports = { a: { at: '2026-10-29T09:30:00.000Z', data: { work: 'a', outcome: 'merged' } } };
+  t.world.waiting = new Set(['a']);
+  await t.d.tick();
+  assert.deepEqual(t.d.reserved(), {});
+  assert.deepEqual(t.world.reads, []);
+});
+
+test('a piece with no run yet reserves its expected files, with nothing to read', async () => {
+  const t = parking();
+  t.world.runs = {};
+  t.world.waiting = new Set(['a']);
+  await t.d.tick();
+  assert.deepEqual(t.d.reserved(), { a: ['expected.js'] });
+  assert.deepEqual(t.world.reads, []);
+  assert.deepEqual(notesOf(t), []);
+});
+
+test('the tick still gives dispatch no waiting and no reservations', async () => {
+  const t = parking({ pieces: { a: ['one.js'], b: [], c: [] } });
+  t.world.waiting = new Set(['a', 'b', 'c']);
+  const { start, hold } = await t.d.tick();
+  assert.deepEqual([start, hold], [[], []], 'three paused runs keep their places until the wiring');
+  assert.deepEqual(t.d.reserved().a, ['one.js', 'built.js']);
 });

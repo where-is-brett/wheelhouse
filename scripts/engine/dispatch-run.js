@@ -9,21 +9,25 @@
 // starts once the slice before has merged, and the feature's own run once every slice has. A feature held up with
 // nothing to move it on (a pull request closed unmerged, a run rejected or cancelled with no card of its own) brings one
 // card; Stop here ends it with a `closed` report, which frees its place. Other work whose run's pull request merged
-// gets its `merged` report. What it keeps (the merge queue's run and when it last started, the pull requests already
-// seen ready, the clashes, the fixes) is in `file`.
+// gets its `merged` report. A piece waiting on the director keeps its files reserved: what it was expected to touch and
+// what its branch has changed, read each time it parks, until its work merges or ends or the runner says it has. What
+// it keeps (the merge queue's run and when it last started, the pull requests already seen ready, the clashes, the
+// fixes, the reservations) is in `file`.
 import fs from 'node:fs';
 import path from 'node:path';
 import { dispatch, MERGE_WORK } from './dispatcher.js';
+import { reservedUnreadWords } from './words.js';
 import { workOrder } from './order.js';
 import { limitsFor } from './caps.js';
 import { ENGINE_QUESTIONS } from './router.js';
 import { openRedMain, fixDecision, fixOrder } from './fix-main.js';
 import { readSlices, featureProgress, featureNext, currentStep, sliceOrder, finishOrder, featureCap, demoSlice } from './feature.js';
+import { ownWaiting } from './waiting.js';
 import { since, endedBy } from '../foreman/queue.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const isText = (x) => typeof x === 'string' && x.trim() !== '';
-const EMPTY = () => ({ mergeRun: null, mergeRuns: [], lastStart: null, seenReady: [], queueDue: false, sentBack: {}, acted: {}, clashAsked: {}, reds: {}, redActed: {}, redAsked: {}, redNoted: {}, requestsAsked: null, noTestsSaid: false, fixes: {}, features: {}, shipped: {}, closedPrs: [] });
+const EMPTY = () => ({ mergeRun: null, mergeRuns: [], lastStart: null, seenReady: [], queueDue: false, sentBack: {}, acted: {}, clashAsked: {}, reds: {}, redActed: {}, redAsked: {}, redNoted: {}, requestsAsked: null, noTestsSaid: false, fixes: {}, features: {}, shipped: {}, closedPrs: [], reserved: {} });
 // The dispatcher's own questions take numbers from here, apart from the card router's.
 const OWN_QUESTIONS = ENGINE_QUESTIONS + 90000;
 export { MERGE_WORK };
@@ -112,9 +116,17 @@ export function orderFor(entry, { settings = {}, raised = false, config = {}, an
 // - `localQueue()` one sweep of the local queue, for a project with no host, which has no merge queue to start. It runs on
 //   every tick while a change waits, since its own table says what is ready. `isLocal()` says whether the project still has
 //   no host, and `moving()` whether a move to a host is under way, which holds new work as All stop does.
-export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped: allStop = () => false, moving = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), spentThisMonth = () => 0, mainGreen = async () => null, stoppedRuns = () => [], fixedRuns = () => [], prMerged = async () => null, prState = null, designOf = () => null, orderOf = () => null, repoOf = () => null, queueFolder = async () => ({ ok: false, refused: 'no folder for the merge queue' }), queuePlace = null, openedBy = () => null, localQueue = null, isLocal = () => true, onCard = () => {} } = {}) {
+// - `branchPaths({ runId, branch })` every path a run's branch has changed so far, or null when it can't be read.
+export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped: allStop = () => false, moving = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), spentThisMonth = () => 0, mainGreen = async () => null, stoppedRuns = () => [], fixedRuns = () => [], prMerged = async () => null, prState = null, designOf = () => null, orderOf = () => null, repoOf = () => null, queueFolder = async () => ({ ok: false, refused: 'no folder for the merge queue' }), queuePlace = null, openedBy = () => null, localQueue = null, isLocal = () => true, onCard = () => {}, branchPaths = async () => [] } = {}) {
   const stopped = () => allStop() || moving();
   let state = readState(file);
+  // The pieces with a card of the card router's open, from the runner, which is built after this.
+  let routerPieces = () => new Set();
+  const waitingNow = (views) => {
+    const pieces = new Set(ownWaiting({ state, views }));
+    try { for (const work of routerPieces()) pieces.add(work); } catch { /* it reads as none, so each keeps its place */ }
+    return pieces;
+  };
   // A question of the dispatcher's own, and then a word to the seals, whose trouble is never the card's.
   async function askDirector(kind, data) {
     await write('question', data);
@@ -602,11 +614,50 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     }
   }
 
+  // What each piece keeps while it waits. A parking is read once, and a read that fails is tried again on each tick; only
+  // the piece's end or `release` takes anything away, so nothing here lets go by itself.
+  async function reserveTick(views) {
+    const reports = isPlain(views.reports) ? views.reports : {};
+    const pieces = waitingNow(views);
+    for (const [work, kept] of Object.entries(state.reserved)) {
+      if (endedBy(reports, work, views.work?.[work]?.work)) {
+        delete state.reserved[work];
+        keep();
+      } else if (!pieces.has(work) && kept.read) {
+        kept.read = false;
+        keep();
+      }
+    }
+    for (const work of pieces) {
+      const entry = views.work?.[work];
+      if (!isPlain(entry?.work?.data) || endedBy(reports, work, entry.work)) continue;
+      const kept = (state.reserved[work] ??= { files: [], read: false });
+      if (kept.read) continue;
+      kept.files = [...new Set([...kept.files, ...(entry.files ?? [])])];
+      const runs = views.runs?.[work] ?? [];
+      const runId = runs.at(-1)?.data?.runId;
+      let paths = [];
+      if (typeof runId === 'string') {
+        const branch = runs.filter((r) => r?.data?.runId === runId).map((r) => r.data.branch).filter(isText).at(-1) ?? null;
+        try { paths = await branchPaths({ runId, branch }); } catch { paths = null; }
+      }
+      // Released while it was read: its files are free.
+      if (state.reserved[work] !== kept) continue;
+      if (Array.isArray(paths)) Object.assign(kept, { files: [...new Set([...kept.files, ...paths])], read: true, said: false });
+      const say = !Array.isArray(paths) && kept.said !== true;
+      if (say) kept.said = true;
+      keep();
+      if (say) await write('note', { about: 'engine', work, words: reservedUnreadWords(entry.work.data.title ?? work) });
+    }
+  }
+
   async function tick() {
     await fixTick();
     await featureTick();
     await mergedTick();
     const views = readViews() ?? {};
+    // Reservations hold nothing back yet, so trouble with one costs a tick nothing.
+    await reserveTick(views).catch(() => {});
     const s = settings() ?? {};
     const ready = readyOf() ?? {};
     const reports = isPlain(views.reports) ? views.reports : {};
@@ -765,6 +816,18 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     sentBack(work, reason = 'clash', tail = null) {
       if (reason === 'red') state.reds[work] = { times: (state.reds[work]?.times ?? 0) + 1, tail };
       else state.sentBack[work] = (state.sentBack[work] ?? 0) + 1;
+      keep();
+    },
+    // Who tells this of the card router's cards: the runner, through its `waitingWork`.
+    onWaiting(fn) { if (typeof fn === 'function') routerPieces = fn; },
+    // Every piece that waits on the director, by a card of the router's or one of these.
+    waitingWork: () => waitingNow(readViews() ?? {}),
+    // The files held for each piece, { [work]: paths }.
+    reserved: () => Object.fromEntries(Object.entries(state.reserved).map(([work, kept]) => [work, kept.files])),
+    // Ends a piece's reservation, for an end that writes no report.
+    release(work) {
+      if (state.reserved[work] === undefined) return;
+      delete state.reserved[work];
       keep();
     },
     // A head of `work` passed: its reds are behind it, so a later slice's first red is a first red.
