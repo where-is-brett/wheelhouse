@@ -5,6 +5,7 @@ import path from 'node:path';
 import { computerId, stateDir } from '../lib/paths.js';
 import { sign, verify } from './signing.js';
 import { scanContent } from './secret-scan.js';
+import { briefProblem, briefWords } from '../delegation/brief.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { git } from './git.js';
 import { keepControlLine, setLineOf, CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, TAKEOVER_LABEL, takeOverLine, APP_ID, pairLine, unpairLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
@@ -19,7 +20,7 @@ export const PLAIN_KINDS = [
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
   'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey', 'column-ready', 'premium-rest', 'chat-question', 'chat-steer',
-  'run', 'ask', 'cost', 'preview', 'lesson', 'incident-closed', 'reproduced', 'rule',
+  'run', 'ask', 'cost', 'preview', 'lesson', 'incident-closed', 'reproduced', 'rule', 'brief',
 ];
 // `control-file` is the watcher's own finding (ruling P7-33): signed, so no session can write one. So is `usage-card`,
 // the front desk's session start's offer (design section 14.6): a click on its card's switch is the director's
@@ -252,6 +253,8 @@ const PLAIN_SHAPES = {
   'chat-question': { must: ['at'], may: [] },
   // A rule (scripts/delegation/rules.js): typed words or a literal match, never both, composed at stage 0.
   rule: { must: ['id', 'words', 'literal', 'conditions', 'exclusions', 'answer', 'project', 'paths', 'lanes', 'stage', 'review', 'hash'], may: [] },
+  // A project's standing brief (scripts/delegation/brief.js): no brief until the director's signed click confirms it.
+  brief: { must: ['for', 'now', 'noGos', 'examples', 'facts', 'words'], may: [] },
   // A pick in the chat of Suggest a change… on a build's question: the card's id, for its score, and never the words.
   'chat-steer': { must: ['card'], may: [] },
   // `from`: the ready-made change the work starts from (ruling P4): its commit, the ref that keeps
@@ -260,9 +263,10 @@ const PLAIN_SHAPES = {
   feature: { must: ['work', 'step'], may: ['worktree', 'branch', 'session', 'plan', 'files', 'brief', 'slice', 'pausedFor'] },
   // `checks`: what answering it does to the checks, one line, for a level 4 question's card.
   // `joins`: the open question whose card answers this one too (scripts/state/joiners.js).
+  // `blind`: drawn for a blind card, whose first pick comes before the recommendation (scripts/delegation/blind.js).
   // `key`: the decision it asks (scripts/delegation/asked.js); `head`: its branch's head when it was asked; `saidBefore`:
   // the director's answer the last time, which the card says first.
-  question: { must: ['id', 'work', 'what', 'why', 'options', 'recommendation', 'level'], may: ['commands', 'checks', 'engine', 'joins', 'key', 'head', 'saidBefore'] },
+  question: { must: ['id', 'work', 'what', 'why', 'options', 'recommendation', 'level'], may: ['commands', 'checks', 'engine', 'joins', 'key', 'head', 'saidBefore', 'blind'] },
   report: { must: ['work', 'outcome', 'summary', 'rulings'], may: ['pr', 'provenance'] },
   // A red-main incident (design on Archon, section 7.7) names its kind, the pull request the merge queue suspects
   // (or null) and the fix's work; the helper opens and closes it, and the director never needs to.
@@ -271,7 +275,7 @@ const PLAIN_SHAPES = {
   // `event`: the id of the record a card without a set line was made from (a lineage hold), so it is made once.
   // `parts`: the card's parts as the composer gives them; `revises`: the id of the card a revised proposal replaces;
   // `joiners`: the questions its answer also answers, each piece named on the card; `saidBefore`: the answer it says was given before.
-  card: { must: ['question', 'header', 'options', 'kind', 'level'], may: ['descriptions', 'line', 'code', 'recommend', 'importance', 'topic', 'concepts', 'event', 'parts', 'revises', 'joiners', 'saidBefore'] },
+  card: { must: ['question', 'header', 'options', 'kind', 'level'], may: ['descriptions', 'line', 'code', 'recommend', 'importance', 'topic', 'concepts', 'event', 'parts', 'revises', 'joiners', 'saidBefore', 'blind'] },
   // A click on a card's option: the card by its id or its question, and the label chosen. A click in an agent's
   // chat (ruling P5-17) also names the card's `hash`, the `commit` it approves when it approves one, and its
   // `proof`; a Lean record's line moved up (lean-record.js) names its tier, proof, who and whether it was a click.
@@ -430,6 +434,12 @@ function checkPlain(kind, data) {
   const optionalText = (k) => { if (data[k] !== undefined && !isText(data[k])) bad(`has a ${k} that is not text`); };
   const slug = (k) => { if (!isSlug(data[k])) bad(`needs ${k} to be a short slug (lower-case letters, digits and hyphens, at most 40)`); };
   const pr = () => { if (data.pr !== undefined && (!Number.isInteger(data.pr) || data.pr < 1)) bad('has a pull request number that is not one'); };
+  if (kind === 'brief') {
+    const problem = briefProblem(data);
+    if (problem !== null) bad(problem);
+    if (data.words !== briefWords(data)) bad('needs its words to be the version mark of its lines');
+    return;
+  }
   if (kind === 'rule') {
     const texts = (x) => Array.isArray(x) && x.every(isText);
     const { literal } = data;
@@ -535,6 +545,7 @@ function checkPlain(kind, data) {
     if (data.key !== undefined && !(typeof data.key === 'string' && /^[0-9a-f]{64}$/.test(data.key))) bad('has a key that is not a decision\'s');
     if (data.head !== undefined && !(typeof data.head === 'string' && /^[0-9a-f]{40,64}$/.test(data.head))) bad('has a head that is not a commit');
     if (data.saidBefore !== undefined && (!isText(data.saidBefore) || data.level !== 3)) bad('says what was said before only at level 3, in words');
+    if (data.blind !== undefined && (data.blind !== true || data.level !== 3)) bad('is blind only at level 3');
     // A question from the build engine names the run and the ask its answer goes back to, and each option's id there.
     if (data.engine !== undefined) {
       const e = data.engine;
@@ -584,6 +595,7 @@ function checkPlain(kind, data) {
     if (data.importance !== undefined && !Number.isFinite(data.importance)) bad('has an importance that is not a number');
     optionalText('topic');
     optionalText('recommend');
+    if (data.blind !== undefined && data.blind !== true) bad('has a blind that is not true');
     optionalText('event');
     optionalText('revises');
     if (data.joiners !== undefined && !(Array.isArray(data.joiners) && data.joiners.every(isText))) bad('has joiners that are not a list of question ids');
@@ -860,7 +872,7 @@ export function makeEvent({ kind, data, now = () => new Date() }) {
 }
 
 // The kinds a confirmation can make take effect (design section 9).
-export const CONFIRMABLE_KINDS = ['ruling', 'level', 'setting', 'rule'];
+export const CONFIRMABLE_KINDS = ['ruling', 'level', 'setting', 'rule', 'brief'];
 
 // The sha256 of an event's canonical JSON without its signature: what a
 // confirmation names, so it confirms that exact event and no other.
@@ -901,7 +913,7 @@ export function checkRecord(event, { enrolled, held = [], computer = computerId(
 
 // The kind and data of a confirmation of `event`, for makeEvent to sign.
 export function confirmationFor(event) {
-  if (!CONFIRMABLE_KINDS.includes(event?.kind)) throw new Error('Only a ruling, a level, a setting or a rule can be confirmed');
+  if (!CONFIRMABLE_KINDS.includes(event?.kind)) throw new Error('Only a ruling, a level, a setting, a rule or a brief can be confirmed');
   return { kind: 'confirmation', data: { confirms: event.id, confirmsHash: eventHash(event) } };
 }
 

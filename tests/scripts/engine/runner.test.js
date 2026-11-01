@@ -25,7 +25,7 @@ const asking = (id, over = {}) => [
   ev({ type: 'run-ended', outcome: 'completed' }),
 ];
 
-function setUp({ recordings = { one: asking('q1') }, settings = {}, at = '2026-10-29T13:00:00.000Z', stop = false, slow = false, refuse, endRun, onCard, workOf = () => ({ work: 'sale-banner', lane: 'quick' }), onReaderAsk, openedOf, mergeAsked, release, gate = {} } = {}) {
+function setUp({ recordings = { one: asking('q1') }, settings = {}, at = '2026-10-29T13:00:00.000Z', stop = false, slow = false, refuse, endRun, onCard, workOf = () => ({ work: 'sale-banner', lane: 'quick' }), onReaderAsk, openedOf, mergeAsked, release, gate = {}, blindRoll } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-runner-'));
   const engine = fakeEngine({ recordings });
   if (mergeAsked) engine.mergeAsked = mergeAsked;
@@ -47,6 +47,7 @@ function setUp({ recordings = { one: asking('q1') }, settings = {}, at = '2026-1
     ...(onReaderAsk ? { onReaderAsk } : {}),
     ...(openedOf ? { openedOf } : {}),
     ...(release ? { release } : {}),
+    ...(blindRoll ? { blindRoll } : {}),
     ...gate,
   });
   // Starts a run of `name` and hands the runner its open ask, as the host does.
@@ -2374,4 +2375,24 @@ test('a close match on an answered card records the line alone, and a failed wri
   const unknown = matchRunner({ views: closeViews(), questions: {} });
   await unknown.runner.onMatch({ card: 'q-w-2', sameAs: 'q-w-1' });
   assert.deepEqual(unknown.writes, [], 'a card the router never kept stands');
+
+test('a question drawn blind says so, at most one a day; a joiner and a turned-off setting draw none', async () => {
+  const drawn = (t) => t.writes.filter((w) => w.kind === 'question').map((w) => w.data.blind);
+  const never = setUp();
+  try {
+    await never.ask();
+    assert.deepEqual(drawn(never), [undefined], 'by default nothing is drawn');
+  } finally { never.cleanup(); }
+  const t = setUp({ blindRoll: () => 0, recordings: { one: asking('q1'), two: asking('q2') } });
+  try {
+    await t.ask('one');
+    await t.ask('two');
+    assert.equal(drawn(t)[0], true);
+    assert.equal(drawn(t).filter(Boolean).length, 1, 'one a day');
+  } finally { t.cleanup(); }
+  const off = setUp({ blindRoll: () => 0, settings: { blindCards: false } });
+  try {
+    await off.ask();
+    assert.deepEqual(drawn(off), [undefined]);
+  } finally { off.cleanup(); }
 });

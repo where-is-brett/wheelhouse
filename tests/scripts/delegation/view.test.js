@@ -8,6 +8,7 @@ import path from 'node:path';
 import { readerView, screenWords, cleanDiff, pieceCards } from '../../../scripts/delegation/view.js';
 import { main as viewCopy, VIEW_FILE } from '../../../scripts/delegation/view-copy.js';
 import { CARDS_SEEN_MOST, QUESTION_MOST, VIEW_MOST_BYTES } from '../../../scripts/delegation/limits.js';
+import { wholeBrief } from '../../../scripts/delegation/brief.js';
 
 const change = (file, lines, { from = file, quoted = false, context = [] } = {}) => [
   quoted ? `diff --git "a/${from}" "b/${file}"` : `diff --git a/${from} b/${file}`,
@@ -24,7 +25,7 @@ const sample = {
   options: [{ label: 'Export', says: 'It keeps the word the rest of the page uses.' }, { label: 'Download', says: 'It says what happens.' }, { label: 'Save', says: 'It is the shortest.' }],
   rule: null,
   quote: null,
-  brief: 'Shop owners get their order files themselves.',
+  brief: null,
   sheet: null,
   diff: change('a.js', ['const label = "Export"; // chosen for the owner']),
   seed: 'q-w-1',
@@ -36,6 +37,17 @@ test('the view holds bare labels in a shuffled order, the same each time', () =>
   assert.deepEqual([...v.labels].sort(), ['Download', 'Export', 'Save']);
   assert.ok(!JSON.stringify(v).includes('recommend'));
   assert.ok(!JSON.stringify(v).includes(sample.options[0].says));
+});
+
+test('the reader sees the signed brief, each fact with its date, and not the card\'s words', () => {
+  const lines = { for: 'Shop owners get their order files themselves.', now: '', noGos: '', examples: [], facts: [{ words: 'It runs in Sydney.', date: '2026-10-30' }] };
+  const v = readerView({ ...sample, brief: { brief: wholeBrief(lines), signedAt: '2026-11-01T02:00:00.000Z' } });
+  assert.deepEqual(v.brief, lines);
+});
+
+test('with no brief the view is as it was', () => {
+  assert.equal(readerView(sample).brief, null);
+  assert.equal(readerView({ ...sample, brief: undefined }).brief, null);
 });
 
 test('another question shuffles its labels another way', () => {

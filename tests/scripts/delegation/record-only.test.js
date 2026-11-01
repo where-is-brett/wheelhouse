@@ -12,7 +12,7 @@ import { SEAL_TICK_MS, FACT_TRIES, SEAL_TRIES, SCORE_WAIT_DAYS, READER_MS, READE
 import { buildViews } from '../../../scripts/state/views.js';
 import { makeEvent, dataHash } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
-import { answerLine } from '../../../scripts/state/card-lines.js';
+import { answerLine, blindLine } from '../../../scripts/state/card-lines.js';
 import { SUGGEST_LABEL } from '../../../scripts/engine/router.js';
 import { READER_WORK } from '../../../scripts/delegation/reader.js';
 import { fakeEngine } from '../../../scripts/engine/fake.js';
@@ -828,6 +828,8 @@ test('a close match can\'t answer, at any setting', async () => {
     assert.equal(closeMatch({ card: cardC, sameAs: cardL, views: pair({ level }, {}, { label: 'Keep', at: 't' }) }), null);
   }
   assert.equal(closeMatch({ card: cardC, sameAs: cardL, views: pair({}, { commands: ['npm ci'] }) }), null, 'a build command signs for itself');
+  assert.equal(closeMatch({ card: cardC, sameAs: cardL, views: pair({}, { blind: true }) }), null, 'a blind card is asked for itself');
+  assert.equal(closeMatch({ card: cardC, sameAs: cardL, views: pair({ blind: true }) }), null);
   const answered = pair();
   answered.questions[cardC].answer = { label: 'Keep', at: 't' };
   assert.equal(closeMatch({ card: cardC, sameAs: cardL, views: answered }), null, 'a card answered first has nothing to join');
@@ -855,3 +857,19 @@ test('the seals hand a reader\'s match on, try it again after a failure, and nev
   await t.later(SEAL_TICK_MS);
   assert.equal(matches.length, 1);
 });
+
+test('words typed on a blind card count as stepping out, and a blind pick is what the record reads', async () => {
+  await withHome(async () => {
+    const id = 'q-w-1';
+    const asked = makeEvent({ kind: 'question', data: { id, work: 'w', what: 'Which?', why: 'It matters.', options: [{ label: 'Keep', says: 'k' }, { label: 'Remove', says: 'r' }], recommendation: 'Keep', level: 3, blind: true }, now: () => new Date('2026-11-01T01:00:00.000Z') });
+    const card = makeEvent({ kind: 'card', data: { question: 'Which?', header: 'First pick', kind: 'blind', level: 3, line: blindLine(id), options: ['Remove', 'Keep'] }, now: () => new Date('2026-11-01T01:00:01.000Z') });
+    const said = (label) => makeEvent({ kind: 'card-answer', data: { card: card.id, label }, now: () => new Date('2026-11-01T01:00:02.000Z') });
+    const record = (label) => {
+      const events = [asked, card, said(label)];
+      return historyOf({ events, enrolled: readEnrolled(), views: buildViews(events, readEnrolled()) });
+    };
+    assert.deepEqual(record('Remove').answer(id), { answer: null, steered: false, blindPick: 'Remove' });
+    assert.deepEqual(record('Ask the supplier').answer(id), { answer: null, steered: true, blindPick: null });
+  });
+});
+

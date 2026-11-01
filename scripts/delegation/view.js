@@ -8,6 +8,7 @@ import crypto from 'node:crypto';
 import { QUESTION_MOST, LABEL_MOST, VIEW_MOST_BYTES, CARDS_SEEN_MOST } from './limits.js';
 import { cleanDiff } from './clean-diff.js';
 import { normaliseWords } from './words.js';
+import { briefLines } from './brief.js';
 
 export { cleanDiff };
 
@@ -43,7 +44,8 @@ export function pieceCards({ views, work, card }) {
 }
 
 // readerView({ question, options, rule, quote, brief, sheet, diff, cards, seed }) -> { refused } | the view. `diff` is
-// `git diff` from the fixed base, or null when the change can't be read; `cards` as pieceCards gives them.
+// `git diff` from the fixed base, or null when the change can't be read. `brief` is views.brief: the reader sees its lines,
+// or none. `cards` as pieceCards gives them.
 export function readerView({ question, options, rule = null, quote = null, brief = null, sheet = null, diff = null, cards = [], seed }) {
   const labels = (Array.isArray(options) ? options : []).map((o) => o?.label);
   if (typeof question !== 'string' || question.trim() === '') return { refused: 'there is no question to read' };
@@ -53,5 +55,5 @@ export function readerView({ question, options, rule = null, quote = null, brief
   if (said.length > 0) return { refused: said[0] };
   const cleaned = cleanDiff(diff);
   if (Buffer.byteLength(cleaned.diff) > VIEW_MOST_BYTES) return { refused: 'the change is too long to read whole' };
-  return { question, labels: seededOrder(labels, seed), rule, quote, brief, sheet, cards, ...cleaned };
+  return { question, labels: seededOrder(labels, seed), rule, quote, brief: briefLines(brief?.brief), sheet, cards, ...cleaned };
 }

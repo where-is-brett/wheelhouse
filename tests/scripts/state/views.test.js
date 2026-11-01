@@ -19,7 +19,7 @@ import { SUGGEST, WHY } from '../../../scripts/lib/calm-words.js';
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
 const T = (n) => `2026-10-18T02:00:${String(n).padStart(2, '0')}.000Z`;
 const at = (n) => () => new Date(T(n));
-const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'provenance', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'controlFiles', 'survey', 'columnsReady', 'usageCards', 'premium', 'premiumFailures', 'runs', 'asks', 'costs', 'previews', 'lessons', 'engineNotes', 'cardsWaiting', 'evidence', 'rules'];
+const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'provenance', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'controlFiles', 'survey', 'columnsReady', 'usageCards', 'premium', 'premiumFailures', 'runs', 'asks', 'costs', 'previews', 'lessons', 'engineNotes', 'cardsWaiting', 'evidence', 'rules', 'brief'];
 const now = () => new Date('2026-10-18T09:00:00.000Z');
 
 async function withHome(fn) {
@@ -304,7 +304,7 @@ test('a confirmation counts only with the confirmed event\'s hash, and only for 
 
     // A signed confirmation pointing at an event of another kind confirms nothing.
     const card = ev('card', 3, cardData('Pick a colour?'));
-    assert.throws(() => confirmationFor(card), /ruling, a level, a setting or a rule/);
+    assert.throws(() => confirmationFor(card), /ruling, a level, a setting, a rule or a brief/);
     const forCard = makeEvent({ kind: 'confirmation', data: { confirms: card.id, confirmsHash: eventHash(card) }, now: at(4) });
     const v = build([card, forCard]);
     assert.deepEqual(v.levels, {});

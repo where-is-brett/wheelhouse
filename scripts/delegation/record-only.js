@@ -17,7 +17,7 @@ import { UNREAD_FACTS } from './facts.js';
 import { READER_LANE, READER_WORK, mayRead, readerResult } from './reader.js';
 import { runCost } from '../engine/spend.js';
 import { verify } from '../state/signing.js';
-import { answerLine } from '../state/card-lines.js';
+import { answerLine, blindLine } from '../state/card-lines.js';
 import { SUGGEST } from '../lib/calm-words.js';
 import { PUT_OFF } from '../lib/front-desk.js';
 
@@ -69,7 +69,10 @@ export function historyOf({ events, enrolled, views }) {
   const steered = steppedOut(events);
   return {
     lines: (id) => lines.get(id) ?? {},
-    answer: (id) => ({ answer: views?.questions?.[id]?.answer ?? null, steered: steered.has(answerLine(id)) }),
+    answer: (id) => {
+      const entry = views?.questions?.[id];
+      return { answer: entry?.answer ?? null, steered: steered.has(answerLine(id)) || steered.has(blindLine(id)), blindPick: entry?.firstPick?.typed === false ? entry.firstPick.label : null };
+    },
   };
 }
 
@@ -186,9 +189,9 @@ export function recordOnly({
         continue;
       }
       const { seal, reading, score: scored } = quietly(() => record.lines(id), {});
-      const { answer = null, steered = false } = quietly(() => record.answer(id), null) ?? {};
+      const { answer = null, steered = false, blindPick = null } = quietly(() => record.answer(id), null) ?? {};
       if (!seal || (!answer && !steered) || (!reading && !scored)) continue;
-      const result = scored ? null : scoreOf({ seal, reading, answer: answer ?? { label: SUGGEST }, steered });
+      const result = scored ? null : scoreOf({ seal, reading, answer: answer ?? { label: SUGGEST }, steered, blindPick });
       if (result === null) {
         closeScore(id);
         quietly(keep);

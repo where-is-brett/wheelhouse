@@ -5,7 +5,8 @@ import path from 'node:path';
 import { wheelhouseHome, profileDir, stateDir } from '../lib/paths.js';
 import { listEvents, eventHash, dataHash, CONFIRMABLE_KINDS, PIN_NAMES, READY_COLUMNS } from './events.js';
 import { ruleStands, stageOf } from '../delegation/rules.js';
-import { answerLine, approvalLine, chatCopy, ciPushLine, confirmLine } from './card-lines.js';
+import { briefStands } from '../delegation/brief.js';
+import { answerLine, approvalLine, BLIND_LINE, chatCopy, ciPushLine, confirmLine } from './card-lines.js';
 import { joinQuestions } from './joiners.js';
 import { isLeanProject } from '../lean/project.js';
 import { verify, readEnrolled } from './signing.js';
@@ -155,10 +156,12 @@ export function gateTargetOf(card) {
 function revisedBy(sorted) {
   const cards = sorted.filter((e) => e.kind === 'card');
   const sameGate = (card, later) => !['approval', 'ci-push'].includes(card.data?.kind) || (gateTargetOf(card) !== null && gateTargetOf(card) === gateTargetOf(later));
-  return (card) => cards.some((later) => byOrder(card, later) < 0 && later.data?.kind === card.data?.kind && (
+  // A question's answer card takes the place of its blind card: one that went out without waiting for the pick.
+  const closesBlind = (card, later) => card.data?.kind === 'blind' && later.data?.kind === 'answer' && later.data.line === answerLine(BLIND_LINE.exec(String(card.data.line))?.[1]);
+  return (card) => cards.some((later) => byOrder(card, later) < 0 && (closesBlind(card, later) || (later.data?.kind === card.data?.kind && (
     (later.data.revises === card.id && sameGate(card, later))
     || (typeof later.data.revises === 'string' && ['approval', 'ci-push'].includes(card.data?.kind)
-      && typeof card.data?.line === 'string' && later.data.line === card.data.line && sameGate(card, later))));
+      && typeof card.data?.line === 'string' && later.data.line === card.data.line && sameGate(card, later))))));
 }
 
 // The ids of the lineage holds a later lineage-lift names: a lift closes only the holds it names, so
@@ -208,7 +211,7 @@ function uniqueSorted(events) {
   return { sorted: events.filter((e) => counts.get(e.id) === 1).sort(byOrder), repeated };
 }
 
-// A confirmation counts only for a ruling, level, setting or rule whose id it names and whose content
+// A confirmation counts only for a ruling, level, setting, rule or brief whose id it names and whose content
 // hash it names, so it confirms that exact event alone. { confirmed: ids, confirmations: [{ target, event }] }.
 function confirmationsOf(sorted, enrolled) {
   const byId = new Map(sorted.map((e) => [e.id, e]));
@@ -265,7 +268,7 @@ function leanRulingClicks(sorted, rulings) {
 // The verified approvals and actions that carry the question they were clicked on.
 const answeredByOf = (sorted, enrolled) => sorted.filter((e) => (e.kind === 'approval' || e.kind === 'action') && typeof e.data?.question === 'string' && verify(e, enrolled));
 
-// The time each ruling, level, setting or rule came into force by a verified confirmation of its own
+// The time each ruling, level, setting, rule or brief came into force by a verified confirmation of its own
 // hash: id -> the time of the first such confirmation.
 export function confirmationTimes(events, enrolled) {
   const { confirmations } = confirmationsOf(uniqueSorted(events).sorted, enrolled);
@@ -295,7 +298,8 @@ function outcomesOf(sorted, { confirmations, answeredBy, lean = false }) {
   const answersTo = (card) => answers.filter((a) => (typeof a.data?.card === 'string'
     ? a.data.card === card.id && (a.data.hash === undefined || (typeof questionOf(card) === 'string' && namesText(a.data.hash, questionOf(card))))
     : (a.data?.card === undefined || a.data?.card === null) && typeof a.data?.question === 'string' && a.data.question === questionOf(card)));
-  const decides = (card, label) => !PUT_OFF.includes(label) && (!Array.isArray(card.data?.options) || card.data.options.includes(label));
+  // Words typed on a blind card decide it too: they stand in for its pick, and its answer card follows.
+  const decides = (card, label) => !PUT_OFF.includes(label) && (card.data?.kind === 'blind' || !Array.isArray(card.data?.options) || card.data.options.includes(label));
   const signedFor = (card) => {
     const question = questionOf(card);
     const carried = answeredBy.find((e) => byOrder(card, e) < 0 && e.data.question === question);
@@ -535,6 +539,13 @@ function rulesInForce(confirmations, now) {
   return Object.fromEntries([...latest.values()].map(({ target, event }) => [target.data.id, { rule: target.data, stage: stageOf(target.data, { now }), signedAt: event.at }]));
 }
 
+// The standing brief in force: { brief, signedAt }, or null. As for a rule, only a signed confirmation of the record itself
+// counts, and of the versions signed the newest record stands, so an old draft signed late takes nothing back.
+function briefInForce(confirmations) {
+  const newest = confirmations.filter(({ target }) => target.kind === 'brief' && briefStands(target.data)).sort((a, b) => byOrder(a.target, b.target)).at(-1);
+  return newest ? { brief: newest.target.data, signedAt: newest.event.at } : null;
+}
+
 export function buildViews(events, enrolled, { damaged = [], now = () => new Date(), profile = [], lean = false } = {}) {
   const { sorted, repeated } = uniqueSorted(events);
   const { confirmed, confirmations } = confirmationsOf(sorted, enrolled);
@@ -635,6 +646,12 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   const handedOut = sorted.filter((e) => e.kind === 'asked' && Array.isArray(e.data?.cards));
   const outcomes = outcomesOf(sorted, { confirmations: closing, answeredBy, lean });
   stampSteers(loop.questions, outcomes, sorted);
+  // What the director took on a question's blind card, before any recommendation. It answers nothing, and a click on
+  // a card its answer card has replaced is no such thing: they may have seen the recommendation by then.
+  for (const { card, decided } of outcomes) {
+    const entry = card.data?.kind === 'blind' && decided !== null && !revised(card) ? loop.questions[BLIND_LINE.exec(String(card.data.line))?.[1]] : undefined;
+    if (entry !== undefined) entry.firstPick ??= { label: decided.label, at: decided.at, typed: !card.data.options.includes(decided.label) };
+  }
   const waiting = [];
   // A question that stands behind another's card, or took its answer, is that card's now: a card of its own says nothing more.
   const behindCards = new Set(Object.entries(loop.questions).filter(([, q]) => q.joins !== undefined || q.answer?.joined !== undefined).map(([id]) => answerLine(id)));
@@ -741,6 +758,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   return {
     evidence: evidenceOf(sorted, enrolled),
     rules: rulesInForce(confirmations, now),
+    brief: briefInForce(confirmations),
     rulebook,
     levels,
     settings,

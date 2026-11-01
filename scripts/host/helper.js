@@ -78,6 +78,7 @@ import { engineRoom } from '../engine/room.js';
 import { stopEngine, endRun, stopWords } from '../engine/stop.js';
 import { engineRoutes, engineDirOf } from '../engine/routes.js';
 import { engineRunner } from '../engine/runner.js';
+import { rollOf } from '../delegation/blind.js';
 import { recordOnly, cardContext, historyOf } from '../delegation/record-only.js';
 import { branchHead, cardDiff, cardFacts, commitsAfter, pathsSoFar } from '../delegation/facts.js';
 import { repeatExclusions } from '../delegation/asked.js';
@@ -4119,6 +4120,7 @@ export async function startHelper({
   const engineRun = engineRoutes({
     refresh: (project) => (refreshMirror ?? refreshFetchMirror)(project),
     readerViewOf: (project, card) => engineHosts.find((h) => h.project === project)?.seals.viewFor(card) ?? null,
+    briefOf: (project) => buildViews(listEvents(stateDir(project), { report: () => {} }), ownKeyOnly(), { now }).brief,
     projects: () => registeredProjects().map(({ project, record }) => ({ project, folder: record.folder })),
     engineFor: (project) => {
       try { return engineFor(project); } catch { return null; }
@@ -5108,7 +5110,7 @@ export async function startHelper({
       onMatch: (match) => runner.onMatch(match),
       viewOf: async (card, facts) => {
         const asked = views().questions?.[card.id]?.question?.data;
-        return readerView({ question: asked?.what, options: asked?.options, diff: await cardDiff({ card, git: gitRoute({ run }), facts }), cards: pieceCards({ views: views(), work: card.work, card: card.id }), seed: card.id });
+        return readerView({ question: asked?.what, options: asked?.options, brief: views().brief, diff: await cardDiff({ card, git: gitRoute({ run }), facts }), cards: pieceCards({ views: views(), work: card.work, card: card.id }), seed: card.id });
       },
       gate: () => ({ running: engineRunsGoing(project).length, pace: paceOf({ pace: { value: settings().pace } }).building, counted: counts(project, folder), incident: Boolean(openRedMain(views())) }),
       startReader: async ({ card }) => {
@@ -5171,7 +5173,7 @@ export async function startHelper({
       },
     });
     const runner = engineRunner({
-      engine, file: path.join(files, 'router.json'), readViews: views, write, stopped, now, settings, onCard: seals.onCard, onReaderAsk: seals.onReaderAsk,
+      engine, file: path.join(files, 'router.json'), readViews: views, write, stopped, now, settings, onCard: seals.onCard, onReaderAsk: seals.onReaderAsk, blindRoll: rollOf,
       workOf: (runId) => engineRunOf(project, runId) ?? dispatcher.workOf(runId) ?? seals.readerOf(runId),
       titleOf: (work) => (work === MERGE_WORK ? 'the changes waiting to be added' : views().work?.[work]?.work?.data?.title ?? work),
       endRun: async (runId) => endRun({ engine, run: { id: runId, folder: (await engine.inspect(runId))?.folder ?? null }, ...engineStopWith }),

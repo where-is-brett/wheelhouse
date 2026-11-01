@@ -75,6 +75,7 @@ const LEVEL_WORDS = {
   phase: { 'before-launch': 'Before launch', launched: 'Launched' },
   engine: { wheelhouse: 'Wheelhouse', archon: 'Archon' },
   bundleApprovals: { false: 'Off', true: 'On' },
+  blindCards: { false: 'Off', true: 'On' },
   engineRoom: { false: 'Off', true: 'On' },
 };
 const PANE = {

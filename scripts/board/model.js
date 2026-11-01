@@ -6,7 +6,7 @@
 // reaches the board through oneLine, as one capped line with no Markdown of its own.
 import { LINE_CHARS, WEEK_MS } from '../lib/core-numbers.js';
 import { latestFor } from '../state/views.js';
-import { answerLine, approvalLine } from '../state/card-lines.js';
+import { answerLine, approvalLine, blindLine, BLIND_LINE } from '../state/card-lines.js';
 import { SAFETY_LINES } from '../agents/safety-lines.js';
 import { HOST_UNREACHABLE } from '../host/company-ca.js';
 import { localWords } from '../lib/host-lines.js';
@@ -168,7 +168,7 @@ function namesQuestion(card, id) {
 export function heldBackLine(line, views) {
   const ids = views?.cardsWaiting?.ids;
   if (typeof line !== 'string' || !Array.isArray(ids)) return false;
-  return ids.some((id) => lineOfCard(id) === line);
+  return ids.some((id) => lineOfCard(id) === asked(line));
 }
 
 // The set line of a card the router names.
@@ -177,17 +177,23 @@ function lineOfCard(id) {
   return sha === undefined ? answerLine(id) : approvalLine(pr, sha);
 }
 
+// A blind card stands for its question, as the router names it, so what holds one back or raises it holds both.
+function asked(line) {
+  const id = BLIND_LINE.exec(line)?.[1];
+  return id === undefined ? line : answerLine(id);
+}
+
 // Whether the card with set line `line` is the top card: nothing can run, and this card stands behind that.
 export function topCardLine(line, views) {
   const id = views?.cardsWaiting?.top?.id;
-  return typeof line === 'string' && typeof id === 'string' && lineOfCard(id) === line;
+  return typeof line === 'string' && typeof id === 'string' && lineOfCard(id) === asked(line);
 }
 
 // How many pieces the card with set line `line` holds up, 0 for none.
 function holdingOf(line, views) {
   const holding = views?.cardsWaiting?.holding;
   if (typeof line !== 'string' || !isRecord(holding)) return 0;
-  return Object.entries(holding).find(([id]) => lineOfCard(id) === line)?.[1] ?? 0;
+  return Object.entries(holding).find(([id]) => lineOfCard(id) === asked(line))?.[1] ?? 0;
 }
 
 // The cards waiting are the waiting view's, so one rule, in views.js, says what waits. (Whether a
@@ -205,7 +211,8 @@ export function numberedWaiting(views, events) {
   const items = cards.map((card) => ({ what: oneLine(card.data?.title ?? card.data?.question) || 'A question', since: timeOf(card.at), id: card.id, card: card.id, ...held(card.data?.line) }));
   for (const [id, entry] of Object.entries(questions)) {
     // A joiner is answered by its lead's card, so it has no number of its own.
-    if (!isRecord(entry) || entry.answer || entry.joins !== undefined || named.some((card) => namesQuestion(card, id))) continue;
+    // A blind card stands for its question only while it waits: once picked, the answer card is still to come.
+    if (!isRecord(entry) || entry.answer || entry.joins !== undefined || named.some((card) => namesQuestion(card, id)) || cards.some((card) => card.data?.line === blindLine(id))) continue;
     items.push({ what: questionWords(entry.question?.data) || 'A question from the build', since: timeOf(entry.question?.at), id: `q:${id}`, question: id, ...held(answerLine(id)) });
   }
   return items.sort((a, b) => (a.since ?? '').localeCompare(b.since ?? '')).map((item, i) => ({ n: i + 1, ...item }));

@@ -51,15 +51,16 @@
 // card's answer, a shown or asked record, or a signed kind, and an answer card's options come only
 // from the question the build recorded. Every card handed out is recorded as asked, and
 // its words are put in the glossary's plain words. Errors are one line on standard error.
+import { BRIEF_LINES, addFact, briefProblem, briefText, wholeBrief } from '../delegation/brief.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { helperClient } from '../host/helper-client.js';
 import { WINDOW_MS } from '../confirm/window.js';
 import { dataHash } from '../state/events.js';
-import { composeCard, answerInput } from '../cards/compose.js';
+import { composeCard, answerInput, blindInput } from '../cards/compose.js';
 import { joinersOf } from '../state/joiners.js';
-import { cardsForVisit, existingCard, cardNumbered, asQuestion } from '../cards/visit.js';
+import { cardsForVisit, existingCard, cardNumbered, asQuestion, importanceOf, IMPORTANCE } from '../cards/visit.js';
 import { controlFileInput, controlFilesDue, controlFilesNamed, gateAsksDue, gateInput, holdInput, holdsDue, premiumFailuresDue, stillWaits, withPutBack } from '../cards/build-loop.js';
 import { SWITCH_NAME, SWITCH_WORK } from '../engine/switch.js';
 import { failedInput } from '../routing/premium.js';
@@ -69,7 +70,7 @@ import { checkSetting, definitionOf, KNOWN, SETTINGS, WINDOWS_BUILD_COMMANDS, OW
 import { CARD } from '../lib/front-desk.js';
 import { effectiveSettings, levelWords, settingsText, settingWords } from '../settings/effective.js';
 import { similar as similarTo } from '../intake/similar.js';
-import { answerLine, chatCopy, ID, keepControlLine } from '../state/card-lines.js';
+import { answerLine, blindLine, chatCopy, ID, keepControlLine } from '../state/card-lines.js';
 import { countsAtOnce, gateTargetOf } from '../state/views.js';
 import { briefHash } from '../feature/files.js';
 import { endedBy, since, NO_PLAN, STARTS_UNAPPROVED } from '../foreman/queue.js';
@@ -91,9 +92,9 @@ export class CliError extends Error {}
 // (work, amendment, incident, and the no-blame note when an incident ends).
 export const RECORD_KINDS = Object.freeze([
   'ruling', 'idea', 'rejection', 'glossary', 'decision', 'risk', 'blocker', 'reversal', 'setting',
-  'work', 'amendment', 'incident', 'note',
+  'work', 'amendment', 'incident', 'note', 'brief',
 ]);
-export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey', 'evidence']);
+export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey', 'evidence', 'brief']);
 const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'record', 'similar', 'views', 'explain', 'review', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check'];
 // How long `confirm` waits for the helper: one window at a time on the computer, so it may wait for another's.
 const CONFIRM_WAIT_MS = 3 * WINDOW_MS;
@@ -232,7 +233,7 @@ async function wordsOf(client, cwd, views, now, names = []) {
 function plainInput(input, words) {
   const says = input.options.map((o) => (typeof o.says === 'string' ? o.says : null));
   const texts = [
-    ...(input.ask === undefined ? [] : [input.ask]), input.what, input.why, ...says.filter((t) => t !== null), input.because,
+    ...(input.ask === undefined ? [] : [input.ask]), input.what, input.why, ...says.filter((t) => t !== null), ...(input.because === undefined ? [] : [input.because]),
     ...(input.changed === undefined ? [] : [input.changed]), input.meanwhile, ...(input.checks === undefined ? [] : [input.checks]),
   ].map((t) => t.trim());
   if (texts.some((t) => t.includes('\u0000'))) return null;
@@ -251,11 +252,12 @@ function plainInput(input, words) {
   const what = next();
   const why = next();
   const options = input.options.map((o) => (typeof o.says === 'string' ? { ...o, says: next() } : o));
-  const because = next();
+  const because = input.because === undefined ? undefined : next();
   const changed = input.changed === undefined ? undefined : next();
   const meanwhile = next();
   return {
-    ...input, what, why, options, because, meanwhile,
+    ...input, what, why, options, meanwhile,
+    ...(because === undefined ? {} : { because }),
     ...(ask === undefined ? {} : { ask }),
     ...(changed === undefined ? {} : { changed }),
     ...(input.checks === undefined ? {} : { checks: next() }),
@@ -293,7 +295,8 @@ const sameList = (a, b) => a.length === b.length && a.every((x) => b.includes(x)
 // carry the title; the build's ask commands check a question against the card naming the id.
 // A card lists each piece its answer goes to, by title or, where those won't fit, by id. A card already out is re-issued
 // through `revises` once the pieces behind it change; the question it answers, and so its signature, stays as it was.
-function answerCard(id, data, views, words, { joiners = [], revises, saidBefore, changed = REISSUED } = {}) {
+// One that follows a blind card says what was picked, or where that won't fit, only that it followed one.
+function answerCard(id, data, views, words, { joiners = [], revises, saidBefore, picked, blind, changed = REISSUED } = {}) {
   if (!isPlain(data) || data.id !== id) throw new Error('its record can\'t be read');
   const title = (work) => flat(views.work?.[work]?.work?.data?.title);
   const reissue = revises === undefined ? {} : { revises, changed };
@@ -302,16 +305,32 @@ function answerCard(id, data, views, words, { joiners = [], revises, saidBefore,
     for (const titled of [true, false]) {
       const named = joiners.map((j) => ({ id: j.id, name: (titled && title(j.work)) || j.work, words: views.questions?.[j.id]?.question?.data?.what }));
       try {
-        return composePlain({ ...answerInput(data, name, { joiners: named, saidBefore }), ...reissue }, words);
+        return composePlain({ ...answerInput(data, name, { joiners: named, saidBefore, picked, blind }), ...reissue }, words);
       } catch (error) {
         refusal ??= error;
       }
     }
   }
   // Too long to list its pieces: the question is still asked, and they are asked after it, with what was said.
-  if (revises === undefined && (joiners.length > 0 || saidBefore !== undefined)) return answerCard(id, data, views, words);
+  if (revises === undefined && (joiners.length > 0 || saidBefore !== undefined || picked !== undefined)) return answerCard(id, data, views, words, { blind });
   throw refusal;
 }
+
+// The blind card for a question, or null when it can't be one: the ordinary card is then asked in its place.
+function blindCard(id, data, views, words) {
+  const title = flat(views.work?.[data.work]?.work?.data?.title);
+  for (const name of [...new Set([title || data.work, data.work])]) {
+    try {
+      return composePlain(blindInput(data, name), words);
+    } catch {
+      // The next name, or the ordinary card.
+    }
+  }
+  return null;
+}
+
+// Whether a question's blind card, held for now, gives way to its answer card: it has come to hold up all work.
+const blindGivesWay = (id, data, views) => importanceOf({ data: { kind: 'answer', line: answerLine(id), level: data.level } }, views) > IMPORTANCE.LEVEL_3;
 
 // The card for a click the merge gate waits for, naming the work by its title, or by its id when
 // it has none or the card won't carry the title (the first part may name no other pull request or
@@ -438,7 +457,7 @@ async function buildLoopCards({ client, cwd, views, words, now, problems }) {
 
 // This visit's cards: { questions, left }, and `problems` when something couldn't be done. An open
 // question from the build that no waiting card asks gets its answer card first, and the build
-// loop's records theirs (buildLoopCards). The cards handed out are recorded as asked, so a card
+// loop's records theirs (buildLoopCards). A question drawn blind gets its blind card ahead of that. The cards handed out are recorded as asked, so a card
 // dismissed with no answer isn't offered on every turn. A write the helper refuses is a problem,
 // not a failure: the cards waiting are still given. Under STOP the visit's one card is Lift STOP:
 // the helper writes nothing, so no card is made, and the cards waiting stay on the board, counted
@@ -461,9 +480,25 @@ export async function cards({ client, cwd, now }) {
     const line = entry.saidBefore?.label;
     const sayNow = out !== null && typeof line === 'string' && held?.saidBefore !== line;
     if (out !== null && sameJoiners && !sayNow) continue;
+    const data = entry.question?.data;
+    const pick = entry.firstPick;
+    if (data?.blind === true && out === null && pick === undefined && !blindGivesWay(id, data, views)) {
+      if (existingCard(views, blindLine(id)) !== null) continue;
+      const blind = blindCard(id, data, views, words);
+      if (blind !== null) {
+        try {
+          await write(client, cwd, 'card', blind.card);
+          made += 1;
+        } catch (error) {
+          problems.push(`The card for question ${id} wasn't recorded: ${error.message}`);
+        }
+        continue;
+      }
+    }
+    const followed = pick === undefined ? {} : { blind: true, ...(pick.typed ? {} : { picked: pick.label }) };
     let card;
     try {
-      ({ card } = answerCard(id, entry.question?.data, views, words, { joiners, saidBefore: line, ...(out === null ? {} : { revises: out, ...(sameJoiners ? { changed: SAID_ADDED } : {}) }) }));
+      ({ card } = answerCard(id, data, views, words, { joiners, saidBefore: line, ...followed, ...(out === null ? {} : { revises: out, ...(sameJoiners ? { changed: SAID_ADDED } : {}) }) }));
     } catch (error) {
       if (!(out !== null && sameJoiners)) problems.push(`Question ${id} couldn't be made a card: ${error.message}`);
       continue;
@@ -520,7 +555,7 @@ function topicOf(given) {
 // An outdated card may be revised only after a suggested change on it that came before the gate's record for the head.
 export async function card({ client, cwd, input, now }) {
   if (!isPlain(input)) throw new CliError('Give the card as a JSON object on standard input');
-  if (input.kind === 'answer') throw new CliError('An answer card comes from `cards`, made from the question as the build recorded it');
+  if (input.kind === 'answer' || input.kind === 'blind') throw new CliError('An answer card comes from `cards`, made from the question as the build recorded it');
   if (input.kind === 'usage') throw new CliError('A usage card comes from the session start, made from the allowance as it reads it');
   if (input.kind === 'premium') throw new CliError('The premium model\'s card comes from `premium-card`, made by the helper');
   if (input.event !== undefined) throw new CliError('A card for a record of the build\'s comes from `cards`, made once from the record');
@@ -662,6 +697,33 @@ function confirmCard(event, words) {
     meanwhile: 'The rule is written down, but nothing follows it until you confirm.',
     target: { event },
   }, words);
+}
+
+// The confirm card for a standing brief, which shows all of it as it would stand.
+function briefCard(event, words) {
+  return composePlain({
+    kind: 'confirm',
+    level: 3,
+    what: `This project's standing brief, ${event.data.words}, as it would stand: ${briefText(event.data)}`,
+    why: 'Agents read the brief as your intent, so it counts only once you confirm it.',
+    options: [{ label: 'Confirm', says: 'This becomes the project\'s brief, in place of any before it.' }],
+    recommend: 'Confirm',
+    because: 'it is the brief as you and the First Mate settled it',
+    meanwhile: 'Nothing changes until you confirm.',
+    target: { event },
+  }, words);
+}
+
+// The brief to sign, from `record brief`: its lines, or one `fact` to add to the brief in force, with its date.
+function briefToSign(input, inForce) {
+  const { fact, ...lines } = input;
+  const unknown = Object.keys(lines).filter((k) => !BRIEF_LINES.includes(k));
+  if (unknown.length > 0) throw new CliError(`A brief has no ${unknown[0]}: it takes ${BRIEF_LINES.join(', ')}, or one fact on its own`);
+  if (fact !== undefined && Object.keys(lines).length > 0) throw new CliError('Give a brief\'s lines, or one fact to add to it, not both');
+  const brief = fact === undefined ? wholeBrief(lines) : addFact(inForce?.brief ?? wholeBrief(), fact);
+  const problem = briefProblem(brief);
+  if (problem !== null) throw new CliError(`The brief ${problem}`);
+  return brief;
 }
 
 // The confirm card for a setting, which names the setting by its id and its words (ruling F30). A
@@ -841,20 +903,21 @@ export async function record({ client, cwd, kind, input, now, ready, makeId = ()
     const data = await withHash(client, cwd, kind, rest);
     return { ...answered(await write(client, cwd, kind, data)), hash: data.hash, say };
   }
-  if (kind !== 'ruling') return answered(await write(client, cwd, kind, input));
+  if (kind !== 'ruling' && kind !== 'brief') return answered(await write(client, cwd, kind, input));
 
   const { words } = input;
-  if (typeof words !== 'string' || words.trim() === '' || BREAK.test(words)) throw new CliError('A ruling needs its words, on one line, as the director gave them');
+  if (kind === 'ruling' && (typeof words !== 'string' || words.trim() === '' || BREAK.test(words))) throw new CliError('A ruling needs its words, on one line, as the director gave them');
   const { views, names } = await viewsOf(client, cwd);
   const id = makeId();
-  const { question, card: data } = confirmCard({ kind: 'ruling', id, data: input }, await wordsOf(client, cwd, views, now, names));
-  const got = await write(client, cwd, 'ruling', input, id);
-  if (got.id !== id) throw new CliError(`The ruling was recorded as ${got.id}, not under the id its confirm card names`);
+  const held = kind === 'brief' ? briefToSign(input, views.brief) : input;
+  const { question, card: data } = (kind === 'brief' ? briefCard : confirmCard)({ kind, id, data: held }, await wordsOf(client, cwd, views, now, names));
+  const got = await write(client, cwd, kind, held, id);
+  if (got.id !== id) throw new CliError(`The ${kind} was recorded as ${got.id}, not under the id its confirm card names`);
   let made;
   try {
     made = await write(client, cwd, 'card', data);
   } catch (error) {
-    throw new CliError(`The ruling was recorded as ${id}, but its confirm card wasn't: ${error.message}`);
+    throw new CliError(`The ${kind} was recorded as ${id}, but its confirm card wasn't: ${error.message}`);
   }
   return { ...answered(got), card: { question, id: made.id }, ...withProblems(await markAsked(client, cwd, [made.id], false)) };
 }
@@ -966,6 +1029,7 @@ export async function view({ client, cwd, name, now }) {
     const { sealed = 0, read = 0, sampled = 0 } = isPlain(views.evidence) ? views.evidence : {};
     return [`${sealed} ${sealed === 1 ? 'card' : 'cards'} sealed, ${read} read, ${sampled} sampled.`];
   }
+  if (name === 'brief') return views.brief ? [briefText(views.brief.brief)] : ['This project has no signed brief.'];
   if (name === 'rulebook') {
     const rules = (Array.isArray(views.rulebook) ? views.rulebook : []).filter((r) => r?.status !== 'superseded');
     // A Lean ruling confirmed by a click in the chat (ruling P5-52) says what that proof is.

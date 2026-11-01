@@ -54,8 +54,8 @@ export function reuse({ ask, earlier, commitsSince, spokenSince: spoken, changed
 
 // What the reader's `sameAs` may do to a card: { join: <the open card's id> } behind a card with the same options,
 // { line: <the answer> } for an answer that still stands, or null, and the card stands as it is. Both cards are the
-// piece's, in the build's own words, at level 3. A card with others behind it stays theirs, and one already answered
-// or joined has nothing to gain.
+// piece's, in the build's own words, at level 3. A card with others behind it stays theirs, a blind card is asked for
+// itself, and one already answered or joined has nothing to gain.
 export function closeMatch({ card, sameAs, views }) {
   const questions = isPlain(views?.questions) ? views.questions : {};
   const asked = questions[card];
@@ -68,6 +68,6 @@ export function closeMatch({ card, sameAs, views }) {
     const stands = typeof other.answer.label === 'string' && other.answer.changed !== true && !spokenSince({ views, work: data.work, earlier });
     return stands ? { line: other.answer.label } : null;
   }
-  const open = other.joins === undefined && joinersOf(questions, card).length === 0 && sameChoice(data, match);
+  const open = other.joins === undefined && data.blind !== true && match.blind !== true && joinersOf(questions, card).length === 0 && sameChoice(data, match);
   return open ? { join: sameAs } : null;
 }
