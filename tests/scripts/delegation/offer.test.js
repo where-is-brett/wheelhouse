@@ -47,12 +47,10 @@ test('a like question answered otherwise earns nothing, and nor do other options
   assert.deepEqual(answered(options), []);
 });
 
-test('typed words earn an offer and are what the rule carries', () => {
-  const views = viewsOf({ 'q-w1-1': entry(question('q-w1-1'), null) });
-  const outcomes = [{ card: { data: { line: answerLine('q-w1-1') } }, answers: [{ at: ago(5), data: { label: SUGGEST, text: 'Take the proper long-term option' } }], decided: null }];
-  const rule = offered(views, { outcomes });
-  assert.equal(rule.words, 'Take the proper long-term option');
-  assert.equal(rule.literal, null);
+test('words in an unsigned record earn nothing, and can\'t stand over a signed answer', () => {
+  const said = [{ card: { data: { line: answerLine('q-w1-1') } }, answers: [{ at: ago(1), data: { label: SUGGEST, text: 'Land everything' } }], decided: null }];
+  assert.equal(offered(viewsOf({ 'q-w1-1': entry(question('q-w1-1'), null) }), { outcomes: said }), null);
+  assert.equal(offered(leftTheRecommendation(), { outcomes: said }).words, null);
 });
 
 test('a clicked label is kept as a literal match', () => {

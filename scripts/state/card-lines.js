@@ -26,7 +26,7 @@ export function approvalLine(pr, sha) {
 // What a rule says on its card and its confirm line: the director's words, or a clicked label as the literal match it is,
 // and its scope, so a click signs the scope it read.
 function ruleWords({ words, literal, paths, lanes }) {
-  const take = typeof words === 'string' ? words : `When the options are exactly ${literal?.options?.join(', ')}, take ${literal?.take}`;
+  const take = typeof words === 'string' ? words : `When the options are exactly ${[literal?.options].flat().join(', ')}, take ${literal?.take}`;
   return `${take}. Only in this project, in the ${[lanes].flat().join(', ')} lane, for ${[paths].flat().join(', ')}`;
 }
 

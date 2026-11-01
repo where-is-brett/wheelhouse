@@ -669,7 +669,6 @@ function confirmCard(event, words, { wider = false } = {}) {
 const OFFER_WHY = Object.freeze({
   like: 'You answered a like question the same way before.',
   left: 'You chose differently from what was recommended.',
-  typed: 'You gave your own answer in place of the options.',
 });
 
 // The confirm card offering a rule, which shows the rule as it would read, with its scope. The event comes from the

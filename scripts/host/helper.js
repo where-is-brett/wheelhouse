@@ -63,7 +63,7 @@ import { directorGitEnv, directorGitlabApi, hostStep, launchedIn, switchOnAsDire
 import { commitAuthor } from '../setup/project-files.js';
 import { readEnrolled, verify, sign, ownKey } from '../state/signing.js';
 import { delegationReview } from '../frontdesk/learning.js';
-import { answersToOffer, offerDue, sittingSince } from '../delegation/offer.js';
+import { answersToOffer, offerDue, sittingSince, sittingSpent } from '../delegation/offer.js';
 import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/lock.js';
 import { namesOf, readProject, isInsideFolder, projectForFolder, registeredProjects } from '../lib/projects.js';
 import { findCommand, hasTestScript } from '../checks/find-command.js';
@@ -4483,7 +4483,7 @@ export async function startHelper({
         ...(review === true ? { review: delegationReview(events, { now, enrolled: readEnrolled(), views }) } : {}),
       };
     }),
-    // A rule offered after an answer that earns it (delegated decisions design, section 11.1). The helper composes it from
+    // A rule offered after the latest answer that earns it (delegated decisions design, section 11.1). The helper composes it from
     // its own record and the piece's own change, so nothing a caller sends shapes it, and proposes it as a `rule` record
     // that decides nothing. A Lean project has no route here: only a signed confirmation puts a rule in force, so its
     // Confirm could sign nothing.
@@ -4493,9 +4493,12 @@ export async function startHelper({
       const outcomes = cardOutcomes(events, readEnrolled());
       const sitting = sittingSince({ views, outcomes, now });
       const piece = engineHosts.find((h) => h.project === project)?.factsOfPiece;
-      for (const answer of typeof piece === 'function' ? answersToOffer({ views, outcomes, sitting }) : []) {
-        const rule = offerDue({ events, answer, sitting, now, views, outcomes, facts: await piece(answer.work, views), project });
-        if (rule === null) continue;
+      const [answer] = typeof piece === 'function' && !sittingSpent({ events, sitting }) ? answersToOffer({ views, outcomes, sitting }) : [];
+      if (answer !== undefined) {
+        const facts = await piece(answer.work, views);
+        if (stopped()) return STOP_REFUSAL;
+        const rule = offerDue({ events, answer, sitting, now, views, outcomes, facts, project });
+        if (rule === null) return { ok: true, offer: null };
         const event = makeEvent({ kind: 'rule', data: rule, now });
         await writeEvent({ project, event, now });
         await freshViews(() => writeViews(project, { now }));
