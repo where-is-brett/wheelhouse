@@ -458,7 +458,7 @@ test('handOver writes the pull request\'s ready work item over the revision ther
   assert.equal(cli.calls[1].options.cwd, '/p');
   const item = JSON.parse(cli.calls[1].options.input);
   assert.equal(item.facts.build.status, 'ready');
-  assert.deepEqual(item.subject, { repo: 'acme/web', number: 14 });
+  assert.deepEqual(item.subject, { repo: { host: 'github.com', path: 'acme/web' }, number: 14 }, 'the queue passes over a repository given by name alone (check 90)');
   assert.equal((await adapter(cli).handOver({ project: '/p' })).ok, false);
 });
 

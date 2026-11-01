@@ -207,7 +207,7 @@ async function main() {
       await checkouts();
       a = await unclearPr();
       report.prs = { a: a.number };
-      // As the helper's `ready` route calls the adapter: the repository by name.
+      // The repository by name, as `handOver` wrote it when this leg first ran; the queue passes over such an item.
       await statePut(`work/${a.number}`, handedOverItem({ repo: OWNER_REPO, pr: a.number, url: a.url, at: now(), runId: 'check-90-as-handed' }));
       let first = await queue('fresh-as-handed');
       report.legs.asHanded = { status: first.out.status, cost: first.out.cost, asked: first.out.ask !== null, work: (await stateOf(`work/${a.number}`))?.value?.facts?.merge ?? null };

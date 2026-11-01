@@ -521,7 +521,10 @@ export function archonAdapter({
       const name = `work/${pr}`;
       const current = await cli(['state', 'get', name], { json: true, cwd: project, timeout: CALL_MS });
       const revision = Number.isInteger(current.json?.revision) ? current.json.revision : 0;
-      const value = readyWorkItem({ repo, pr, url, at, runId });
+      // The queue passes over an item whose repository isn't { host, path }, and says nothing (check 90).
+      let host = null;
+      try { host = new URL(url).hostname; } catch { return refusedWith('A hand-over needs the pull request\'s address'); }
+      const value = readyWorkItem({ repo: { host, path: repo }, pr, url, at, runId });
       const put = await cli(['state', 'put', name, '--if-revision', String(revision)], { json: true, cwd: project, input: JSON.stringify(value), timeout: CALL_MS });
       if (put.code === 0 && put.json?.ok !== false) return { ok: true };
       return refusedWith(refusal('take the pull request into its merge queue', put));
