@@ -1,11 +1,36 @@
 // scripts/engine/spend.js
 // The spend meter (Archon design, section 10.1): a run's cost from the engine's record of its steps, and the minutes
 // it has spent running, from the project's own `run` records. Only running time counts: a run paused at an ask is
-// waiting for someone, not spending.
+// waiting for someone, not spending, and one on a computer asleep is doing nothing.
+
+// The spans of `slept` as [from, to] in milliseconds, in order and with none overlapping. One that makes no sense is
+// passed over.
+function sleepSpans(slept) {
+  const spans = (Array.isArray(slept) ? slept : [])
+    .map((s) => [Date.parse(s?.from), Date.parse(s?.to)])
+    .filter(([from, to]) => from < to)
+    .sort((a, b) => a[0] - b[0]);
+  const out = [];
+  for (const [from, to] of spans) {
+    const last = out.at(-1);
+    if (last && from <= last[1]) last[1] = Math.max(last[1], to);
+    else out.push([from, to]);
+  }
+  return out;
+}
+
+// The milliseconds from `from` to `to`, less what `spans` cover.
+function awake(from, to, spans) {
+  let time = Math.max(0, to - from);
+  for (const [start, end] of spans) time -= Math.max(0, Math.min(to, end) - Math.max(from, start));
+  return time;
+}
 
 // The minutes `records` (a run's `run` records, each { at, data: { state } }, in time order) spent running up to
-// `now`: from each start, or carrying on after an ask, to the next pause or end.
-export function runningMinutes(records, now = new Date()) {
+// `now`: from each start, or carrying on after an ask, to the next pause or end, less the spans of `slept`
+// ([{ from, to }], when the computer was asleep).
+export function runningMinutes(records, now = new Date(), slept = []) {
+  const spans = sleepSpans(slept);
   let total = 0;
   let from = null;
   for (const e of records ?? []) {
@@ -14,12 +39,12 @@ export function runningMinutes(records, now = new Date()) {
     const state = e.data?.state;
     if (state === 'started') from ??= at;
     else if (from !== null) {
-      total += at - from;
+      total += awake(from, at, spans);
       from = null;
     }
     if (state === 'ended') break;
   }
-  if (from !== null) total += Math.max(0, now.getTime() - from);
+  if (from !== null) total += awake(from, now.getTime(), spans);
   return Math.round(total / 600) / 100;
 }
 

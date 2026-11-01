@@ -2955,6 +2955,7 @@ test('uninstall removes the login start', async () => {
     await installLoginStart({ entry, run: async () => ({ code: 1, stdout: '', stderr: 'not run' }), now: NOW });
     const got = await plan(world);
     assert.deepEqual(of(got, 'computer').filter((c) => c.put === 'remove-login-start'), [{ phase: 'computer', put: 'remove-login-start', kind: 'launch-agent', target: entry.path }]);
+    assert.equal(got.changes[0].put, 'remove-login-start', 'ahead of the stops, or its minute\'s start undoes them');
     assert.equal(loginStartRecord().path, entry.path);
   });
 });

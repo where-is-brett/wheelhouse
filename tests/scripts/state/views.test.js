@@ -19,7 +19,7 @@ import { SUGGEST, WHY } from '../../../scripts/lib/calm-words.js';
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
 const T = (n) => `2026-10-18T02:00:${String(n).padStart(2, '0')}.000Z`;
 const at = (n) => () => new Date(T(n));
-const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'provenance', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'controlFiles', 'survey', 'columnsReady', 'usageCards', 'premium', 'premiumFailures', 'runs', 'asks', 'costs', 'previews', 'lessons', 'engineNotes', 'cardsWaiting', 'evidence', 'rules', 'brief', 'sendBacks'];
+const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'provenance', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'controlFiles', 'survey', 'columnsReady', 'usageCards', 'premium', 'premiumFailures', 'runs', 'asks', 'costs', 'previews', 'lessons', 'engineNotes', 'cardsWaiting', 'evidence', 'rules', 'brief', 'sendBacks', 'slept'];
 const now = () => new Date('2026-10-18T09:00:00.000Z');
 
 async function withHome(fn) {
@@ -1689,4 +1689,17 @@ test('a plain answer closes only the approval card it came after: the same card 
     const v = build([first, answer, sent, again]);
     assert.deepEqual(v.waiting.map((w) => w.id), [again.id]);
   });
+});
+
+test('the sleeps on the record are in the views, in order', () => {
+  const at = (iso) => ({ now: () => new Date(iso) });
+  const events = [
+    makeEvent({ kind: 'slept', data: { from: '2026-11-01T09:00:00.000Z', to: '2026-11-01T10:00:00.000Z' }, ...at('2026-11-01T10:00:00.000Z') }),
+    makeEvent({ kind: 'slept', data: { from: '2026-11-01T01:00:00.000Z', to: '2026-11-01T07:00:00.000Z' }, ...at('2026-11-01T07:00:00.000Z') }),
+  ];
+  assert.deepEqual(buildViews(events).slept, [
+    { from: '2026-11-01T01:00:00.000Z', to: '2026-11-01T07:00:00.000Z' },
+    { from: '2026-11-01T09:00:00.000Z', to: '2026-11-01T10:00:00.000Z' },
+  ]);
+  assert.deepEqual(buildViews([]).slept, []);
 });

@@ -21,7 +21,7 @@ export const PLAIN_KINDS = [
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
   'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey', 'column-ready', 'premium-rest', 'chat-question', 'chat-steer',
-  'run', 'ask', 'cost', 'preview', 'lesson', 'incident-closed', 'reproduced', 'rule', 'brief',
+  'run', 'ask', 'cost', 'preview', 'lesson', 'incident-closed', 'reproduced', 'rule', 'brief', 'slept',
 ];
 // `control-file` is the watcher's own finding (ruling P7-33): signed, so no session can write one. So is `usage-card`,
 // the front desk's session start's offer (design section 14.6): a click on its card's switch is the director's
@@ -57,7 +57,7 @@ export const RED_MAIN_OWN = 'only the helper records a red main line\'s incident
 
 // `rule` is a rule proposed from an answered card (delegated decisions design, section 11.1): the helper composes it from
 // what it read itself, and it means nothing until the director's signed click confirms that very record.
-export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'shadow', 'match', 'rule'];
+export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'shadow', 'match', 'rule', 'slept'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 
 const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main', 'safekeeping', 'send-back'];
@@ -359,6 +359,8 @@ const PLAIN_SHAPES = {
   // The engine's records (design on Archon, sections 4.2 and 10). A run of a work on an engine: its state
   // (`started`, `paused` or `ended`), and when it ended, its branch, pull request and outcome.
   run: { must: ['work', 'lane', 'engine', 'runId', 'state'], may: ['branch', 'pr', 'outcome'] },
+  // A span the computer slept, as the helper measured it (unattended goals design, section 9.1): it doesn't count as running.
+  slept: { must: ['from', 'to'], may: [] },
   // An ask a run raised: `id` is stable, so the same ask seen again is not written twice. `kind` says what sort of
   // ask it is, `level` which of the decision levels it comes at.
   ask: { must: ['id', 'runId', 'work', 'kind', 'level', 'options'], may: ['topic', 'recommend', 'preview', 'setLine'] },
@@ -500,6 +502,9 @@ function checkPlain(kind, data) {
       const s = data.slice;
       if (!(isPlain(s) && Object.keys(s).length === 2 && Number.isInteger(s.n) && Number.isInteger(s.m) && s.n >= 1 && s.n <= s.m)) bad('has a slice that is not n of m');
     }
+  } else if (kind === 'slept') {
+    for (const k of ['from', 'to']) if (typeof data[k] !== 'string' || Number.isNaN(Date.parse(data[k]))) bad(`needs ${k} to be a time`);
+    if (Date.parse(data.from) >= Date.parse(data.to)) bad('needs to end after it starts');
   } else if (kind === 'run') {
     slug('work');
     if (!RUN_LANES.includes(data.lane)) bad('needs its lane to be quick, small, feature, bug, slice or fix-main');

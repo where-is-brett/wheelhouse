@@ -1,13 +1,19 @@
 // scripts/lib/login-start.js
 // The sign-in start (design section 8.5): what starts Wheelhouse's helper when the person signs in to this
 // computer, for them only and with no admin. On macOS a launch agent in their own LaunchAgents folder, run at
-// load; on Windows a per-user start-up entry under HKCU's Run key, added with `reg add`. The install of the helper
+// load and every minute after, so a helper that dies is back within one (unattended goals design, section 9.4; the
+// start command leaves a running helper alone); on Windows a per-user start-up entry under HKCU's Run key, added with
+// `reg add`. The install of the helper
 // writes it (never on a work computer, where the company's endpoint security may treat one as suspicious), and
 // uninstall removes it: only the entry it made, and only while it still holds what was written.
 //
 // What was written is recorded in Wheelhouse's home (login-start.json, { kind, path, content, at }), so uninstall
 // knows there is one without looking through the person's own start-up items. The record is written before the
 // entry, so an install cut short leaves a record uninstall can act on.
+//
+// launchd reads an entry only when it loads it, and holds a loaded entry whether or not its file is there. So the
+// install loads the agent, a computer with another form of it has it written again and loaded again once
+// (renewedEntry, reloadLoginStart), and removing the agent unloads it.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -19,6 +25,7 @@ export const RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'
 export const RUN_NAME = 'Wheelhouse helper';
 const PLIST = `${LAUNCH_AGENT_LABEL}.plist`;
 const KINDS = Object.freeze({ 'launch-agent': 'darwin', 'run-entry': 'win32' });
+const START_EVERY_SECONDS = 60;
 
 export const loginRecordFile = () => path.join(wheelhouseHome(), 'login-start.json');
 
@@ -47,6 +54,8 @@ function plist(args) {
     '  </array>',
     '  <key>RunAtLoad</key>',
     '  <true/>',
+    '  <key>StartInterval</key>',
+    `  <integer>${START_EVERY_SECONDS}</integer>`,
     // The start command leaves the helper running and exits; launchd would otherwise end what it started.
     '  <key>AbandonProcessGroup</key>',
     '  <true/>',
@@ -113,9 +122,38 @@ export function loginStartRecord() {
     const record = JSON.parse(fs.readFileSync(loginRecordFile(), 'utf8'));
     if (!ours(record)) return null;
     const made = Array.isArray(record.made) ? record.made.filter((d) => typeof d === 'string') : [];
-    return { kind: record.kind, path: record.path, content: record.content, at: record.at, ...(made.length ? { made } : {}) };
+    // `next`, while a reload hasn't finished: the text the file may already hold.
+    return { kind: record.kind, path: record.path, content: record.content, at: record.at, ...(made.length ? { made } : {}), ...(typeof record.next === 'string' ? { next: record.next } : {}) };
   } catch {
     return null;
+  }
+}
+
+// The entry to write and load in place of the one recorded here, or null when that one is what this version, in this
+// folder, would write, there is none, or it wasn't made for this system. After an update that moves the agent to the
+// version running. `node`, `root` and `script` are as for loginEntry.
+export function renewedEntry({ platform = process.platform, node = process.execPath, root, script } = {}) {
+  const record = loginStartRecord();
+  if (record?.kind !== 'launch-agent' || KINDS[record.kind] !== platform) return null;
+  const entry = { ...loginEntry({ platform, node, root, script, home: os.homedir() }), path: record.path };
+  return entry.content === record.content ? null : entry;
+}
+
+// `launchctl bootout`: launchd lets go of the agent. A running helper isn't its job, since the start command left it
+// running and exited (AbandonProcessGroup), so it carries on. An agent not loaded answers with a failure, which is fine.
+async function unload(run, uid) {
+  try {
+    await run('launchctl', ['bootout', `gui/${uid}/${LAUNCH_AGENT_LABEL}`]);
+  } catch { /* nothing more can be done here: the entry goes all the same */ }
+}
+
+// launchd reads the file at `file` now: { code, stderr }. Loading it runs the start command at once.
+async function load(run, file, uid) {
+  await unload(run, uid);
+  try {
+    return await run('launchctl', ['bootstrap', `gui/${uid}`, file]);
+  } catch (error) {
+    return { code: 1, stderr: error.message };
   }
 }
 
@@ -130,20 +168,45 @@ function writeWhole(file, text) {
   }
 }
 
-// Writes the entry loginEntry gave, for this person only: the launch agent's file, or `reg add` under HKCU. It
-// takes effect at the next sign-in; the install starts the helper now itself. Throws in plain words.
-export async function installLoginStart({ entry, run = realRun, now = () => new Date() } = {}) {
+// Writes the entry loginEntry gave, for this person only: the launch agent's file, loaded at once, so a helper that
+// dies is back within a minute from today; or `reg add` under HKCU, which takes effect at the next sign-in. An agent
+// launchd won't load now loads at the next sign-in, so that stops nothing. Throws in plain words.
+export async function installLoginStart({ entry, run = realRun, now = () => new Date(), uid = process.getuid?.() } = {}) {
   if (!ours({ ...entry, at: '' })) throw new Error('That is not Wheelhouse\'s sign-in start');
   // The LaunchAgents folder, and the Library folder above it, where the write makes them: removing the agent removes them.
   const made = entry.kind === 'launch-agent' ? [path.dirname(entry.path), path.dirname(path.dirname(entry.path))].filter((dir) => !fs.existsSync(dir)) : [];
   writeWhole(loginRecordFile(), `${JSON.stringify({ kind: entry.kind, path: entry.path, content: entry.content, at: now().toISOString(), ...(made.length ? { made } : {}) }, null, 2)}\n`);
   if (entry.kind === 'launch-agent') {
     writeWhole(entry.path, entry.content);
+    await load(run, entry.path, uid);
     return { written: entry.path };
   }
   const got = await run('reg', ['add', RUN_KEY, '/v', RUN_NAME, '/t', 'REG_SZ', '/d', entry.content, '/f']);
   if (got.code !== 0) throw new Error(`The start-up entry could not be added (${String(got.stderr ?? '').trim() || 'reg gave no reason'})`);
   return { written: entry.path };
+}
+
+// Writes `entry` over the launch agent recorded here and has launchd load it: { reloaded: true }, or { reloaded: false,
+// why }. An entry changed since it was made, or taken away, is left. The record names the new text before the file
+// holds it, as the install's does, and takes it as the entry's only once it is loaded: a reload cut short or refused
+// is tried again at the next start of the helper, and uninstall knows either form.
+export async function reloadLoginStart({ run = realRun, entry, now = () => new Date(), uid = process.getuid?.() } = {}) {
+  const record = loginStartRecord();
+  if (record?.kind !== 'launch-agent' || record.path !== entry?.path) return { reloaded: false, why: 'none was made' };
+  let held;
+  try {
+    held = fs.readFileSync(record.path, 'utf8');
+  } catch (error) {
+    return { reloaded: false, why: error.code === 'ENOENT' ? 'it was taken away, so it was left' : `it could not be read (${error.code ?? 'no reason given'})` };
+  }
+  if (held !== record.content && held !== record.next) return { reloaded: false, why: 'it was changed since Wheelhouse made it, so it was left' };
+  const { next: _, ...rest } = record;
+  writeWhole(loginRecordFile(), `${JSON.stringify({ ...rest, next: entry.content }, null, 2)}\n`);
+  writeWhole(entry.path, entry.content);
+  const got = await load(run, entry.path, uid);
+  if (got.code !== 0) return { reloaded: false, why: `launchd would not load it (${String(got.stderr ?? '').trim() || 'no reason given'}); it loads at the next sign-in` };
+  writeWhole(loginRecordFile(), `${JSON.stringify({ ...rest, content: entry.content, at: now().toISOString() }, null, 2)}\n`);
+  return { reloaded: true };
 }
 
 // The Run value's data as `reg query` prints it, or null when the value isn't there.
@@ -159,7 +222,7 @@ async function runValue(run) {
 
 // Removes the sign-in start Wheelhouse made, and nothing else: { removed: true }, or { removed: false, why }.
 // An entry changed since it was made is left, with its record, so a later uninstall says so again.
-export async function removeLoginStart({ run = realRun, platform = process.platform } = {}) {
+export async function removeLoginStart({ run = realRun, platform = process.platform, uid = process.getuid?.() } = {}) {
   const record = loginStartRecord();
   if (record === null) return { removed: false, why: 'none was made' };
   if (KINDS[record.kind] !== platform) return { removed: false, why: 'it was made for another system' };
@@ -170,10 +233,12 @@ export async function removeLoginStart({ run = realRun, platform = process.platf
       held = fs.readFileSync(record.path, 'utf8');
     } catch (error) {
       if (error.code !== 'ENOENT') return { removed: false, why: `it could not be read (${error.code ?? 'no reason given'})` };
+      await unload(run, uid);
       forget();
       return { removed: false, why: 'it was gone already' };
     }
-    if (held !== record.content) return { removed: false, why: 'it was changed since Wheelhouse made it, so it was left' };
+    if (held !== record.content && held !== record.next) return { removed: false, why: 'it was changed since Wheelhouse made it, so it was left' };
+    await unload(run, uid);
     fs.rmSync(record.path, { force: true });
     // Only the two folders above the agent, and only while empty.
     const above = [path.dirname(record.path), path.dirname(path.dirname(record.path))];
