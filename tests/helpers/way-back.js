@@ -18,6 +18,8 @@ export const asking = (id, { kind = 'question', options = [{ id: 'a', label: 'Ke
   ev({ type: 'ask-resolved', id }),
   ev({ type: 'run-ended', outcome: 'completed', pr }),
 ];
+// A run parked at a usage limit until the reset, which `lift` stands for, and then finished.
+export const atLimit = (id, over = {}) => asking(id, { kind: 'usage-limit', level: 1, ...over });
 // A run that stops at two asks in turn.
 export const askingTwice = (one, two) => [...asking(one).slice(0, 3), ...asking(two).slice(1)];
 // A run that fails with a kind of failure. Played after one another in a list, each leg is what a resume reaches next.
@@ -37,7 +39,7 @@ export function wayBack({ dispatchExtra = {}, recordings = {}, pace = 3, setting
   const engine = fakeEngine({ recordings });
   const clock = { now: new Date('2026-10-29T10:00:00.000Z') };
   const world = {
-    engine, clock, work: {}, runs: {}, reports: {}, questions: {}, approvals: {}, incidents: { open: [] }, costs: {},
+    engine, clock, work: {}, runs: {}, asks: {}, reports: {}, questions: {}, approvals: {}, incidents: { open: [] }, costs: {},
     stop: false, written: [], shown: {}, starts: [], refuse: null, startAs: null, ready: {}, seenPr: {},
   };
   const at = () => clock.now.toISOString();
@@ -46,7 +48,7 @@ export function wayBack({ dispatchExtra = {}, recordings = {}, pace = 3, setting
   const ended = (data) => (world.runs[data.work] ?? []).filter((r) => r.data.runId === data.engine?.runId).at(-1)?.data.state === 'ended';
   const shownBy = (lead) => Object.values(world.questions).filter((c) => c.question.data.joins === lead && (world.shown[lead] ?? []).includes(c.question.data.work)).map((c) => c.question.data.id);
   const views = () => (joinQuestions(world.questions, { ended, shown: shownBy }), {
-    work: world.work, runs: world.runs, reports: world.reports, questions: world.questions, approvals: world.approvals, incidents: world.incidents, costs: world.costs, levels: {}, cardsWaiting: cardsWaitingOf(notes()), sendBacks: world.sendBacks ?? [],
+    work: world.work, runs: world.runs, asks: world.asks, reports: world.reports, questions: world.questions, approvals: world.approvals, incidents: world.incidents, costs: world.costs, levels: {}, cardsWaiting: cardsWaitingOf(notes()), sendBacks: world.sendBacks ?? [],
   });
   const record = (data) => { (world.runs[data.work] ??= []).push({ at: at(), data: { engine: 'fake', ...data } }); };
   const realStart = async ({ order, branch, carryOn }) => {
@@ -120,6 +122,7 @@ export function wayBack({ dispatchExtra = {}, recordings = {}, pace = 3, setting
       const run = latest(event.runId);
       if (!run) continue;
       if (event.type === 'ask') {
+        (world.asks[run.work] ??= []).push({ at: at(), data: { id: event.id, runId: event.runId, work: run.work, kind: event.kind, level: event.level, options: event.options } });
         record({ ...run, state: 'paused' });
         await joined.runner.onAsk(event);
       } else if (event.type === 'ask-resolved') record({ ...run, state: 'started' });
@@ -156,6 +159,8 @@ export function wayBack({ dispatchExtra = {}, recordings = {}, pace = 3, setting
       const last = (world.runs[work] ?? []).at(-1)?.data;
       record({ ...last, state: 'ended', outcome: 'cancelled' });
     },
+    // The reset: the wake process takes a run on from its usage limit.
+    lift: (work, id) => engine.act(world.runsOf(work).at(-1), { answer: { ask: id, choice: 'a' } }),
     answers: () => engine.calls.filter((c) => c.call === 'act' && c.action.answer),
     runsOf: (work) => [...new Set((world.runs[work] ?? []).map((r) => r.data.runId))],
     stateOf: (work) => (world.runs[work] ?? []).at(-1)?.data?.state ?? null,

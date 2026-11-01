@@ -22,13 +22,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { dispatch, MERGE_WORK, MERGE_QUEUE_EVERY_MS } from './dispatcher.js';
-import { reservedUnreadWords, noCardBehindWords, restartRefusedWords, restartCardWords, restartUnsureWords, restartStrandedWords, failedCardWords, prLeftOpenWords, wakeLateWords, STOPPED_RESTART_WORDS, ORPHAN_LEFT_WORDS, RESTART_UNSURE_AGAIN, START_ANYWAY, cutOffStoppedWords, cutOffWords, waitsOnItselfWords, startAnywayWords, startRefusedWords, startCardWords, unmarkedPrWords, START_STOP_SAYS, NO_FIX_TESTS, NO_FIX_ORDER, noFixWords, queueStuckWords, QUEUE_STUCK_WHY, QUEUE_PASSED_WORDS, requestsUsedWords, REQUESTS_UNCONFIRMED_WORDS, requestsStoppedWords } from './words.js';
+import { reservedUnreadWords, LIMIT_HOLD_WORDS, noCardBehindWords, restartRefusedWords, restartCardWords, restartUnsureWords, restartStrandedWords, failedCardWords, prLeftOpenWords, wakeLateWords, STOPPED_RESTART_WORDS, ORPHAN_LEFT_WORDS, RESTART_UNSURE_AGAIN, START_ANYWAY, cutOffStoppedWords, cutOffWords, waitsOnItselfWords, startAnywayWords, startRefusedWords, startCardWords, unmarkedPrWords, START_STOP_SAYS, NO_FIX_TESTS, NO_FIX_ORDER, noFixWords, queueStuckWords, QUEUE_STUCK_WHY, QUEUE_PASSED_WORDS, requestsUsedWords, REQUESTS_UNCONFIRMED_WORDS, requestsStoppedWords } from './words.js';
 import { workOrder } from './order.js';
 import { limitsFor } from './caps.js';
 import { ENGINE_QUESTIONS } from './router.js';
 import { openRedMain, fixDecision, fixOrder } from './fix-main.js';
 import { readSlices, featureProgress, featureNext, currentStep, sliceOrder, finishOrder, featureCap, demoSlice } from './feature.js';
-import { ownWaiting, ownCards } from './waiting.js';
+import { ownWaiting, ownCards, limitedRuns, limitedWork } from './waiting.js';
 import { topCard, holdsUpCount, noCardBehind, deadEnds, waitsOnItself } from './stuck.js';
 import { STOP_LABEL, MORE } from './runner.js';
 import { retryDue, resumeRun, triedList } from './recovery.js';
@@ -36,7 +36,7 @@ import { since, endedBy } from '../foreman/queue.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const isText = (x) => typeof x === 'string' && x.trim() !== '';
-const EMPTY = () => ({ mergeRun: null, mergeRuns: [], lastStart: null, seenReady: [], queueDue: false, sentBack: {}, acted: {}, clashAsked: {}, reds: {}, redActed: {}, redAsked: {}, redNoted: {}, requestsAsked: null, requestsFor: null, queueFault: null, unmarkedSeen: {}, noTestsSaid: false, fixes: {}, features: {}, shipped: {}, closedPrs: [], reserved: {}, released: {}, stranded: {}, topCard: null, noCardSaid: {}, quietSeen: {}, owed: {}, cutOffAsked: {}, cutOffFor: {}, waived: {}, returning: [], admitted: [], carryOver: {}, restartCards: 0 });
+const EMPTY = () => ({ mergeRun: null, mergeRuns: [], lastStart: null, seenReady: [], queueDue: false, sentBack: {}, acted: {}, clashAsked: {}, reds: {}, redActed: {}, redAsked: {}, redNoted: {}, requestsAsked: null, requestsFor: null, queueFault: null, unmarkedSeen: {}, noTestsSaid: false, fixes: {}, features: {}, shipped: {}, closedPrs: [], reserved: {}, released: {}, stranded: {}, topCard: null, noCardSaid: {}, quietSeen: {}, owed: {}, cutOffAsked: {}, cutOffFor: {}, waived: {}, returning: [], admitted: [], carryOver: {}, restartCards: 0, limitSaid: false });
 // The dispatcher's own questions take numbers from here, apart from the card router's.
 const OWN_QUESTIONS = ENGINE_QUESTIONS + 90000;
 export { MERGE_WORK };
@@ -586,10 +586,10 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   }
 
   // Each failed run due a try asks for a place, in the list every way back uses, so no retry passes pace. Nothing asks under
-  // All stop or an incident, and the wait runs on; the runner looks at the run before it resumes it. A pull request with the
+  // All stop, an incident or a limit, and the wait runs on; the runner looks at the run before it resumes it. A pull request with the
   // merge queue is left to it: all that can be left of such a run comes after `ready`.
   function retryTick(views) {
-    if (stopped() || incidentOpen(views)) return;
+    if (stopped() || incidentOpen(views) || atLimit(views)) return;
     const ready = readyOf() ?? {};
     for (const work of Object.keys(isPlain(views.work) ? views.work : {})) {
       const got = retryFor(views, work);
@@ -963,6 +963,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   const wakes = (entry) => WAKES.includes(entry.via) && entry.startsRun !== true;
   const titleOf = (views, work) => views.work?.[work]?.work?.data?.title ?? work;
   const incidentOpen = (views) => (views.incidents?.open?.length ?? 0) > 0;
+  const atLimit = (views) => limitedRuns(views).length > 0;
   const retriesLater = (entry) => Date.parse(entry.retryAt) > now().getTime();
   // New work refused at its first start, with nothing of it on record: nothing of it has been done.
   const unbegun = (views, entry) => entry.firstStart === true && !isText(entry.branch) && (views.runs?.[entry.work] ?? []).length === 0;
@@ -1260,7 +1261,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       ...decided.live.filter((work) => !restsQuiet(views, work, ready) && !stuck.has(work)), ...started.filter((s) => s.ok === true || s.uncertain === true).map((s) => s.work),
       ...[...state.admitted, ...state.returning].filter((e) => !e.asked && !retriesLater(e) && moving(e.work)).map((e) => e.work),
       ...ready.map(([, r]) => r.work).filter((work) => moving(work) && !stuck.has(work) && !leftByDirector(views, work)), ...(queueGoing ? [MERGE_WORK] : []),
-      ...retryingWork(views),
+      ...retryingWork(views), ...limitedWork(views),
     ];
   }
 
@@ -1442,7 +1443,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
 
   // Work held for the plan's counted requests: one card for each hold, in the engine's own words where the cap is none. A
   // hold ends when nothing is held and its card has been answered, or when what holds it changes, answered or not, since the
-  // card's words no longer stand: a new cap, or the count confirmed. All stop and an incident hide a hold, and end none. An unconfirmed count holds whatever the cap, so that card
+  // card's words no longer stand: a new cap, or the count confirmed. All stop, an incident and a limit hide a hold, and end none. An unconfirmed count holds whatever the cap, so that card
   // offers no number: it can only keep the work or end it.
   async function requestsTick(views, held, s) {
     const label = views.questions?.[state.requestsAsked]?.answer?.label;
@@ -1452,7 +1453,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       keep();
     };
     if (held.length === 0) {
-      if (answered && !stopped() && !incidentOpen(views)) forget();
+      if (answered && !stopped() && !incidentOpen(views) && !atLimit(views)) forget();
       return;
     }
     const unconfirmed = held.some((h) => h.why === 'requests-unconfirmed');
@@ -1488,6 +1489,14 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     });
   }
 
+  // A limit that holds other work is said once, until it has lifted.
+  async function limitTick(limited) {
+    if (limited === state.limitSaid) return;
+    if (limited) await write('note', { about: 'engine', words: LIMIT_HOLD_WORDS });
+    state.limitSaid = limited;
+    keep();
+  }
+
   async function tick() {
     await owedTick();
     await fixTick();
@@ -1513,10 +1522,12 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       ? { counts: () => engine.countsRequests(config()?.routing ?? {}) === true, used: await spentThisMonth(), cap: Number.isFinite(s.capRequests) ? s.capRequests : 0, confirmed: engine.requestsConfirmed === true }
       : null;
     const queueStatus = await mergeQueueStatus();
+    const limited = atLimit(views);
+    await limitTick(limited).catch(() => {});
     const decided = dispatch({
       work: views.work ?? {}, runs: views.runs ?? {}, reports, features: views.features ?? {}, settings: s, stop: stopped(),
       incident: Array.isArray(views.incidents?.open) && views.incidents.open.length > 0,
-      capsReached: false,
+      capsReached: false, limited,
       mergeQueue: { running: queueHolds(queueStatus), lastStart: state.lastStart, waiting: waiting.length, newReady: newReady || state.queueDue === true },
       requests, sentBack: [
         ...Object.entries(state.sentBack).filter(([work, times]) => state.acted[work] !== times).map(([work, times]) => ({ work, times })),
@@ -1566,8 +1577,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       state.admitted.push({ work, lane, via: 'requeue', key: `requeue:${reason ?? 'clash'}:${times}`, at: now().toISOString(), queued: views.work?.[work]?.work?.at ?? null, branch, carryOn: true, ...(reason ? { reason } : {}) });
       keep();
     }
-    // Returning work goes first. Under an incident what is admitted keeps its place and waits for the close.
-    if (canTest(config()) && !incidentOpen(views)) {
+    // Returning work goes first. Under an incident or a limit what is admitted keeps its place and waits for it to end.
+    if (canTest(config()) && !incidentOpen(views) && !limited) {
       for (const entry of [...state.admitted]) {
         if (stopped()) break;
         if (wakes(entry) || entry.starting || entry.asked || typeof entry.runId === 'string') continue;

@@ -163,3 +163,10 @@ test('dependencies that lead back to a piece wait on it', () => {
   assert.equal(waitsOnItself({ hold, work: 'x' }), true);
   assert.equal(waitsOnItself({ hold, work: 'v' }), false);
 });
+
+test('a hold for a limit clears by itself: no top card rises and nothing reads as having no card behind it', () => {
+  const hold = [{ work: 'x', why: 'limit' }, { work: 'y', why: 'clash', by: ['x'] }];
+  assert.equal(topCard({ hold, running: [], cards: [card('q-a-1', 'a', 4)] }), null);
+  assert.deepEqual(noCardBehind({ hold, running: [], cards: [] }), []);
+  assert.deepEqual([...deadEnds({ hold, running: [], cards: [] })], []);
+});

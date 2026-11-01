@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { wayBack, quiet, forever, failing, legFails, legFinishes, legGoes } from '../helpers/way-back.js';
+import { wayBack, quiet, forever, failing, legFails, legFinishes, legGoes, atLimit } from '../helpers/way-back.js';
 import { readRecording } from '../../scripts/engine/fake.js';
 import { TRY_AGAIN, STOP_HERE, LEAVE_IT } from '../../scripts/engine/dispatch-run.js';
 import { failedCardWords } from '../../scripts/engine/words.js';
@@ -460,4 +460,39 @@ test('a slice cancelled at its cap keeps its Give it more card as the one that s
   w.refuse = () => 'no room';
   await w.tick(1);
   assert.equal(w.cards().length, 1);
+});
+
+test('a retry due during a limit waits, passes the hold by no path, and goes once it lifts', async () => {
+  const w = wayBack({ recordings: { a: [...failing('limit'), ...legFinishes()], b: atLimit('lim-b') } });
+  w.put('a', { place: 0 });
+  w.put('b', { place: 1 });
+  await w.tick(2);
+  assert.equal(w.stateOf('b'), 'paused');
+  await w.pass(10 * MINUTE);
+  assert.equal(resumes(w).length, 0);
+  assert.ok(!w.dispatcher.admittedTo('a'), 'no place taken while the limit stands');
+  assert.equal(openCards(w).length, 0, 'it has a try to come, and needs no card');
+  w.lift('b', 'lim-b');
+  await w.tick(3);
+  assert.equal(resumes(w).length, 1, 'one try, not one for each time that fell due');
+});
+
+test('a retry admitted before a limit is not carried out until it lifts', async () => {
+  const w = wayBack({ recordings: { a: [...failing('connection'), ...legFinishes()], b: forever() } });
+  w.put('a', { place: 0 });
+  w.put('b', { place: 1 });
+  await w.tick(2);
+  await w.pass(5 * MINUTE);
+  assert.ok(w.dispatcher.admittedTo('a'));
+  assert.equal(resumes(w).length, 0);
+  // The limit comes between the admit and the runner's look, as the host records it.
+  const run = w.runs.b.at(-1).data;
+  w.asks.b = [{ at: '2026-10-29T10:06:00.000Z', data: { id: 'lim-b', runId: run.runId, work: 'b', kind: 'usage-limit', level: 1, options: [] } }];
+  w.runs.b.push({ at: '2026-10-29T10:06:00.000Z', data: { ...run, state: 'paused' } });
+  await w.pass(3 * MINUTE);
+  assert.equal(resumes(w).length, 0);
+  assert.ok(w.dispatcher.admittedTo('a'), 'it keeps its place');
+  w.runs.b.push({ at: '2026-10-29T10:10:00.000Z', data: { ...run, state: 'started' } });
+  await w.tick(2);
+  assert.equal(resumes(w).length, 1);
 });

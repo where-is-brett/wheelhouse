@@ -28,7 +28,7 @@ import { prNumber } from './host.js';
 import { capReached, carriedSpend } from './caps.js';
 import { RED_MAIN, FIX_LANE, redMainIncident, openRedMain } from './fix-main.js';
 import { MERGE_WORK } from './dispatcher.js';
-import { routerWaiting, routerCards, overtaken, approvalAnswers } from './waiting.js';
+import { routerWaiting, routerCards, overtaken, approvalAnswers, limitedRuns } from './waiting.js';
 import { endedBy } from '../foreman/queue.js';
 import { gateTargetOf } from '../state/views.js';
 import { READER_WORK } from '../delegation/reader.js';
@@ -691,7 +691,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   // neither has a work record to start again from.
   const startsAgain = (kept, runLane) => kept.ask?.kind === 'blocked' && runLane !== FIX_LANE && runLane !== 'merge' && kept.work !== MERGE_WORK;
   // Whether a piece may be sent its answer now.
-  const hasPlace = (work, key, views) => (views.incidents?.open?.length ?? 0) === 0 && admittedTo(work, key);
+  const hasPlace = (work, key, views) => (views.incidents?.open?.length ?? 0) === 0 && limitedRuns(views).length === 0 && admittedTo(work, key);
   // Whether a question was answered as part of a bundle, as a joiner or as the lead of one.
   const bundled = (key, kept) => typeof kept.joins === 'string' || Object.values(state.questions).some((k) => k.joins === key);
   // Tells the dispatcher of each answer already settled, so a crash just after one leaves no entry behind.
@@ -1005,12 +1005,13 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   // A retry with a place takes up its own resume, so the look at a resumed run leaves it to that.
   const retryInHand = (runId) => retriesAdmitted().some((entry) => entry.runId === runId && !entry.delivered);
 
-  // Each retry the dispatcher has given a place: a look at the run, then its resume. Nothing moves under All stop or an
-  // incident, and what the engine no longer reads as failed isn't resumed: its record is put right, and the entry drops.
+  // Each retry the dispatcher has given a place: a look at the run, then its resume. Nothing moves under All stop, an
+  // incident or a limit, and what the engine no longer reads as failed isn't resumed: its record is put right, and the entry drops.
   // An engine that can't be read or gave no reply is looked at again on the next tick, and a refusal is on the record, for
   // the dispatcher's card: a run the engine no longer has comes to that card too.
   async function retries() {
-    if (stopped() || (viewsNow().incidents?.open?.length ?? 0) > 0) return;
+    const views = viewsNow();
+    if (stopped() || (views.incidents?.open?.length ?? 0) > 0 || limitedRuns(views).length > 0) return;
     for (const { work, key, runId, delivered: told } of retriesAdmitted()) {
       if (told) continue;
       const record = await inspect(runId);

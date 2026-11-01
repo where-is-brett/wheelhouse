@@ -315,3 +315,11 @@ test('a fix\'s resume looks at the run first: one going is left alone, one that 
   assert.equal(put.outcome, 'cancelled');
   assert.equal(put.failure, undefined);
 });
+
+test('a limit holds no fix: an incident\'s fix starts with a run parked at a limit', async () => {
+  const t = setUp();
+  t.world.views.runs['card-1'] = [{ at: '2026-10-30T09:30:00.000Z', data: { work: 'card-1', lane: 'quick', engine: 'fake', runId: 'run-parked', state: 'paused' } }];
+  t.world.views.asks = { 'card-1': [{ at: '2026-10-30T09:30:00.000Z', data: { id: 'lim', runId: 'run-parked', work: 'card-1', kind: 'usage-limit', level: 1, options: [] } }] };
+  await t.d.tick();
+  assert.equal(fixStarts(t).length, 1);
+});

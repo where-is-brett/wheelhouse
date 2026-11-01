@@ -2,6 +2,8 @@
 // Which pieces wait on the director (delegated decisions design, section 8.1), from what the runner and the dispatcher's
 // runner know and never from a run's `paused` record, which a usage limit writes too. The two sets stay apart, so neither
 // module reads the other's file. A feature between slices has no card open, so it waits on a merge, not on the director.
+// A run parked at a usage limit waits on no one, and holds back what would meet the same limit (unattended goals design,
+// section 9.3): that is read from the record, so a helper started again keeps it.
 import { MERGE_WORK } from './dispatcher.js';
 import { since } from '../foreman/queue.js';
 
@@ -13,6 +15,25 @@ function runEnded(views, work, runId) {
   const list = views?.runs?.[work];
   return (Array.isArray(list) ? list : []).filter((r) => r?.data?.runId === runId).at(-1)?.data?.state === 'ended';
 }
+
+// Each run whose latest `run` record is `paused` and whose latest `ask` is a usage limit, [{ runId, work }]. The reset's
+// `started` or the run's ending says it is over, so nothing needs to hear of the ask being resolved.
+function atLimit(views) {
+  const found = [];
+  for (const [work, list] of entriesOf(views?.runs)) {
+    if (!Array.isArray(list)) continue;
+    const latest = new Map();
+    for (const r of list) if (isPlain(r?.data)) latest.set(r.data.runId, r.data.state);
+    const asks = Array.isArray(views?.asks?.[work]) ? views.asks[work] : [];
+    for (const [runId, state] of latest) {
+      if (state === 'paused' && asks.filter((a) => a?.data?.runId === runId).at(-1)?.data?.kind === 'usage-limit') found.push({ runId, work });
+    }
+  }
+  return found;
+}
+// limitedRuns(views) -> [runId], and limitedWork(views) -> [work], the same runs' pieces.
+export const limitedRuns = (views) => atLimit(views).map((r) => r.runId);
+export const limitedWork = (views) => [...new Set(atLimit(views).map((r) => r.work))];
 
 // Whether the work has been queued again since this run began: an open card of that run no longer speaks for the work.
 export function overtaken(kept, views) {

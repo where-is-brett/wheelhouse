@@ -39,6 +39,9 @@ export function noCardBehindWords(title, why, by) {
   return `${title} ${said}, and no card stands behind that. It moves on once that work is added${why === 'dependency' ? '' : ' or ended'}.`;
 }
 
+// The Logbook's line when a usage limit holds other work: it clears by itself, so nothing is asked of the director.
+export const LIMIT_HOLD_WORDS = 'A run is waiting for a usage limit to reset, so nothing new starts and work coming back waits until it does. Any mending of the main line and the merge queue carry on.';
+
 // The line for the cards past the day's budget, and the button that shows them.
 export const heldBackWords = (n) => `${n} more waiting.`;
 export const SHOW_THEM = 'Show them';

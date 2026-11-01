@@ -2,7 +2,8 @@
 // What stands behind work that can't start (delegated decisions design, section 8.5). Each hold of `parked`, `clash` or
 // `dependency` names what holds it, and following those back gives the pieces every held piece waits on. When no run
 // is going and nothing can start, the highest card behind them rises past the budget and Away. It is worked out afresh
-// on every tick, from the holds alone, so a card's own moment of writing plays no part.
+// on every tick, from the holds alone, so a card's own moment of writing plays no part. A hold for a usage limit clears
+// by itself at the reset, so it counts as moving and no card rises over it.
 
 // The holds that name what holds them. Any other reason is its own: an All stop, a usage cap, an approval not given.
 const FOLLOWED = new Set(['parked', 'clash', 'dependency']);
@@ -31,7 +32,7 @@ export function holdsUpCount({ hold } = {}) {
 // important. Of those behind a hold, the highest rises, then the one holding up most, then the oldest. With nothing
 // held every piece simply waits on its own card, so the highest of them all rises.
 export function topCard({ hold = [], running = [], cards = [] } = {}) {
-  if (running.length > 0) return null;
+  if (running.length > 0 || (Array.isArray(hold) && hold.some((h) => h?.why === 'limit'))) return null;
   const counts = holdsUpCount({ hold });
   const behind = cards.filter((c) => (counts[c.work] ?? 0) > 0);
   const best = [...(followed(hold).length > 0 && behind.length > 0 ? behind : cards)]

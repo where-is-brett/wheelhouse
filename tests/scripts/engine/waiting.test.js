@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { routerWaiting, ownWaiting } from '../../../scripts/engine/waiting.js';
+import { routerWaiting, ownWaiting, limitedRuns } from '../../../scripts/engine/waiting.js';
 import { MERGE_WORK } from '../../../scripts/engine/dispatcher.js';
 import { tempFolder } from '../../helpers/homes.js';
 import path from 'node:path';
@@ -155,4 +155,27 @@ test('a cap card kept but never written asks nothing; written, it does', () => {
   const state = { questions: { 'q-a-1': { cap: true, work: 'a', runId: 'r' } } };
   assert.deepEqual([...routerWaiting({ state, views: { questions: {}, runs: {} } })], []);
   assert.deepEqual([...routerWaiting({ state, views: { questions: { 'q-a-1': { question: { data: {} } } }, runs: {} } })], ['a']);
+});
+
+const ask = (work, runId, kind) => ({ at: '2026-11-01T02:00:00.000Z', data: { id: `${runId}:${kind}`, runId, work, kind, level: 1, options: [] } });
+
+test('a run whose latest record is paused and whose latest ask is a usage limit is limited', () => {
+  const views = { runs: { a: [run('a', 'r1', 'started'), run('a', 'r1', 'paused')], b: [run('b', 'r2', 'started')] }, asks: { a: [ask('a', 'r1', 'usage-limit')] } };
+  assert.deepEqual(limitedRuns(views), ['r1']);
+});
+
+test('a run paused on the director is not limited, and neither is one that has since gone on or ended', () => {
+  const later = { runs: { a: [run('a', 'r1', 'paused')] }, asks: { a: [ask('a', 'r1', 'usage-limit'), ask('a', 'r1', 'question')] } };
+  assert.deepEqual(limitedRuns(later), [], 'its latest ask is a question');
+  for (const state of ['started', 'ended']) {
+    const views = { runs: { a: [run('a', 'r1', 'paused'), run('a', 'r1', state)] }, asks: { a: [ask('a', 'r1', 'usage-limit')] } };
+    assert.deepEqual(limitedRuns(views), [], state);
+  }
+});
+
+test('an earlier run of a piece at a limit says nothing of its later run, nor of what the record can\'t show', () => {
+  const views = { runs: { a: [run('a', 'r1', 'ended'), run('a', 'r2', 'paused')] }, asks: { a: [ask('a', 'r1', 'usage-limit'), ask('a', 'r2', 'question')] } };
+  assert.deepEqual(limitedRuns(views), []);
+  assert.deepEqual(limitedRuns({}), []);
+  assert.deepEqual(limitedRuns({ runs: { a: 'x', b: [null, { data: null }] }, asks: 'x' }), []);
 });
