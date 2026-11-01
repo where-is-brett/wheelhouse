@@ -19,6 +19,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { composeCard } from '../cards/compose.js';
+import { blindDue } from '../delegation/blind.js';
 import { routeAsk, cardBudget, bundleApprovals, answerFor, dayOf, ignoresBudget, ENGINE_QUESTIONS } from './router.js';
 import { runCost, runningMinutes } from './spend.js';
 import { capReached, carriedSpend } from './caps.js';
@@ -84,6 +85,7 @@ const inSentence = (title) => (/^[A-Z][a-z]/.test(title) ? title.charAt(0).toLow
 // - `openedOf(pr)` the helper's own record of what opened a pull request ({ lane, work, ... }), or null; `prTitleOf(pr)`
 //   its title from the host, or null; `keepReviews(runId)` keeps what an ended run's task reviews last said, in the
 //   helper's own record, true once done;
+// - `blindRoll(id)` a number in [0, 1) for a question, which draws its blind card (scripts/delegation/blind.js); by default none is;
 // - `release(work)` ends a piece's reservation (dispatch-run.js), for an end that writes no report: the director's Stop
 //   and a bug that moves lane;
 // - `admittedTo(work)` whether the dispatcher has given a piece its place; `delivered(work, key)` and `drop(work, key)` tell
@@ -97,7 +99,7 @@ const inSentence = (title) => (/^[A-Z][a-z]/.test(title) ? title.charAt(0).toLow
 // keeps { [pr]: { head, at, runId, choice, work, ask, taken, handed } }: `taken` once the engine has it, so a restart
 // between the two still raises the card, and `handed` once an approval has gone back to the queue. Only an approval
 // signed since `at` counts for it: an older one, for a pull request shown first, never saw what the queue is unsure of.
-export function engineRunner({ engine, file, readViews, write, stopped = () => false, now = () => new Date(), settings = () => ({}), workOf = () => null, titleOf = (work) => work, endRun = async () => ({ ended: [], survivors: [] }), openedOf = () => null, prTitleOf = async () => null, keepReviews = async () => true, onCard = () => {}, onReaderAsk = () => {}, release = () => {}, handBack = async () => ({ ok: false, refused: 'nothing hands work to the merge queue here' }), admittedTo = () => true, delivered = () => {}, drop = () => {}, startAdmitted = async () => ({ ok: false, refused: 'nothing starts runs here' }), carryOver = () => {} } = {}) {
+export function engineRunner({ engine, file, readViews, write, stopped = () => false, now = () => new Date(), settings = () => ({}), workOf = () => null, titleOf = (work) => work, endRun = async () => ({ ended: [], survivors: [] }), openedOf = () => null, prTitleOf = async () => null, keepReviews = async () => true, onCard = () => {}, onReaderAsk = () => {}, blindRoll = () => 1, release = () => {}, handBack = async () => ({ ok: false, refused: 'nothing hands work to the merge queue here' }), admittedTo = () => true, delivered = () => {}, drop = () => {}, startAdmitted = async () => ({ ok: false, refused: 'nothing starts runs here' }), carryOver = () => {} } = {}) {
   let state = readState(file);
   const keep = () => saveState(file, state);
   const note = (words, extra = {}) => write('note', { about: 'engine', words, ...extra });
@@ -445,7 +447,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     }
   }
 
-  async function writeCard({ id, card, work, runId, ask, joins }) {
+  async function writeCard({ id, card, work, runId, ask, joins, exempt }) {
     if (card.approval) {
       const a = card.approval;
       const compose = (what) => composeCard({
@@ -471,12 +473,17 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       return;
     }
     const q = card.question;
+    // A joiner raises no card, so it has nothing to show blind.
+    const day = dayOf(now());
+    const blind = typeof joins !== 'string' && blindDue({ ask, card: { level: q.level, exempt }, day, lastDay: state.blindDay, roll: blindRoll(id), off: settings()?.blindCards === false });
     await write('question', {
       id, work, what: q.what, why: q.why, options: q.options, recommendation: q.recommendation ?? q.options[0]?.label, level: q.level,
       ...(q.level === 4 ? { checks: 'It changes no checks: the build still checks its work before it is added.' } : {}),
       engine: { runId, ask: ask.id, options: q.engine.options },
       ...(typeof joins === 'string' ? { joins } : {}),
+      ...(blind ? { blind: true } : {}),
     });
+    if (blind) state.blindDay = day;
     state.questions[id] = { runId, ask, work, ...(typeof joins === 'string' ? { joins, options: q.engine.options } : {}) };
     // A joiner raises no card, so it has none to seal.
     if (typeof joins !== 'string') sealCard({ id, kind: cardKind(ask), work, runId, level: q.level, ...placeOf(ask) });

@@ -67,8 +67,10 @@ const isText = (x) => typeof x === 'string' && x.trim() !== '';
 // the options, which counts as a miss whatever their words say. Null where there is nothing to score: no reading and no
 // set answer (a rule's, from part 5), or no answer yet. A label that puts a card off answers nothing, and Suggest a
 // change… alone is outside. `reading` scores on its pick alone: its frame and `afterAnswer` stay on its own line.
-export function scoreOf({ seal, reading, answer, steered = false }) {
+// `blindPick` is what the director took on the card's blind form, before any recommendation: that is the one scored.
+export function scoreOf({ seal, reading, answer: given, steered = false, blindPick = null }) {
   const would = seal?.set ?? reading?.pick;
+  const answer = isText(blindPick) ? { ...given, label: blindPick } : given;
   if (!isText(would) || !isText(answer?.label)) return null;
   if (steered || answer.label === SUGGEST || isText(answer.words)) return 'outside';
   if (PUT_OFF.includes(answer.label)) return null;

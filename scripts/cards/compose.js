@@ -10,7 +10,7 @@
 // a trust card is composed by the session start, which hands it to the front desk as it is, and
 // uninstall's card by the helper, for setup's playbook to ask as it is.
 import {
-  approvalLine, confirmLine, LIFT_STOP, LIFT_LABEL, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
+  approvalLine, confirmLine, LIFT_STOP, LIFT_LABEL, runbookLine, ciPushLine, approveWorkLine, answerLine, blindLine, amendLine,
   liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, takeOverLine, TAKEOVER_LABEL, LEAVE_LABEL, pairLine, PAIR_LABEL, APP_ID, uninstallLine, keepControlLine, usageLine, premiumLine, isLineName, dayOf, replyCode, replyCodeLine, setLineOf, SET_LINES,
   RUNBOOK_TITLES, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, CORRECT_SOME_LABEL, BASELINE_LABEL, BASELINE_HEADER, TRUST_LABEL, UNINSTALL_LABEL, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
@@ -21,6 +21,7 @@ import { CONFIRMABLE_KINDS } from '../state/events.js';
 import { glossaryOf, termsIn } from '../frontdesk/glossary.js';
 import { BUILD_QUESTION_OPTIONS } from '../protection/windows-builds.js';
 import { baselineWording } from '../lib/measures-clicks.js';
+import { shuffled } from '../delegation/blind.js';
 
 // The kind in plain words, at most CARD.header characters; the director reads these.
 export const HEADERS = Object.freeze({
@@ -42,6 +43,7 @@ export const HEADERS = Object.freeze({
   pair: 'Pair an app',
   uninstall: 'Uninstall',
   question: 'Question',
+  blind: 'First pick',
   'keep-control-files': 'Agent files',
   usage: 'Thoroughness',
   premium: 'Premium',
@@ -79,7 +81,8 @@ export const DECIDING = Object.freeze({
 // So is a usage card (design section 14.6): its switch is the setting change and the director's confirmation of it at
 // once, so only the click on the card the session start offered counts.
 // So is the premium model's card (design section 14.6): only the click on the card the helper offered counts.
-export const NO_REPLY_CODE = Object.freeze(['setup', 'confirm-all', 'trust', 'take-over', 'uninstall', 'keep-control-files', 'usage', 'premium', 'pair']);
+// So is a blind card: its click signs nothing, so a code would make a shown record that is never spent.
+export const NO_REPLY_CODE = Object.freeze(['setup', 'confirm-all', 'trust', 'take-over', 'uninstall', 'keep-control-files', 'usage', 'premium', 'pair', 'blind']);
 
 // The buttons a kind's card offers after its deciding label, in the order they are shown, where it
 // isn't the usual Suggest a change…, Show me and Not now (design section 23.4). All stop is lifted or it
@@ -213,6 +216,10 @@ function lineFor(kind, target) {
     if (typeof t.questionId !== 'string' || !new RegExp(`^${QUESTION_ID}$`).test(t.questionId)) bad('needs the question id, such as q-export-csv-1');
     return answerLine(t.questionId);
   }
+  if (kind === 'blind') {
+    if (typeof t.questionId !== 'string' || !new RegExp(`^${QUESTION_ID}$`).test(t.questionId)) bad('needs the question id, such as q-export-csv-1');
+    return blindLine(t.questionId);
+  }
   if (kind === 'amend') {
     if (!slug(t.work) || !HEX.test(t.hash)) bad('needs a work id and a document hash');
     return amendLine(t.work, t.hash);
@@ -336,7 +343,7 @@ function offered(kind, given, { build = false, target, suggest = true } = {}) {
     if (seen.has(label)) fail(kind, 'options', `names ${label} twice`);
     seen.add(label);
     // A put-off button may leave out what it says: the card then uses the usual words.
-    const optional = (PUT_OFF.includes(label) || label === KEEP_AS_IS) && kind !== 'answer' && kind !== 'question' && kind !== 'usage' && kind !== 'premium';
+    const optional = (PUT_OFF.includes(label) || label === KEEP_AS_IS) && kind !== 'answer' && kind !== 'blind' && kind !== 'question' && kind !== 'usage' && kind !== 'premium';
     return { label, says: optional && o.says === undefined ? undefined : words(kind, 'options', o.says) };
   });
   // A usage card offers its own two options, the switch first (design section 14.6).
@@ -345,7 +352,7 @@ function offered(kind, given, { build = false, target, suggest = true } = {}) {
   if (kind === 'premium' && (list.length < 2 || list.length > 3 || list.at(-1).label !== NOT_NOW || list.slice(0, -1).some((o) => PUT_OFF.includes(o.label)))) {
     fail(kind, 'options', `must be its Allow options, then ${NOT_NOW}`);
   }
-  if (kind === 'answer' || kind === 'question' || kind === 'usage' || kind === 'premium') {
+  if (kind === 'answer' || kind === 'blind' || kind === 'question' || kind === 'usage' || kind === 'premium') {
     if (list.length > CARD.options) fail(kind, 'options', `must be at most ${CARD.options}: a question's own options are never dropped`);
     const own = (kind === 'answer' && build && buildOptions(list)) || kind === 'premium';
     for (const o of list) if (PUT_OFF.includes(o.label) && !own) fail(kind, 'options', `must not use ${o.label}, a button that puts a card off`);
@@ -368,7 +375,7 @@ function offered(kind, given, { build = false, target, suggest = true } = {}) {
 // Whether a card's question has only its own options to offer, with a change left to the typed
 // answer: an answer or a product question that offers no Suggest a change… and was not composed
 // without it (`suggest: false`), which leaves nothing to type.
-const typesChange = (parts) => (parts.kind === 'answer' || parts.kind === 'question') && parts.suggest !== false
+const typesChange = (parts) => (parts.kind === 'answer' || parts.kind === 'blind' || parts.kind === 'question') && parts.suggest !== false
   && !parts.options.some((o) => o.label === SUGGEST);
 
 // The chat's text from a card's parts, in the order of design section 23.4: the question; what it
@@ -400,7 +407,8 @@ export function textOf(parts) {
 // `optional` (optional) is the whole minutes an optional card takes. `revises` (optional) is the id
 // of the card a revised proposal replaces, and then `changed` says in one line what changed.
 // `suggest` (optional) is false for a question or an answer that offers no Suggest a change….
-
+// A blind card has no `recommend` or `because`: nothing on it recommends, and a card whose own words do can't be blind.
+// `blind` (optional) is true on the answer card that follows one, for the delegation review to leave out.
 // `glossary` (optional) is the glossary whose terms found in the card's words become the card's
 // concepts when `concepts` isn't given; it defaults to the starter's. `event` (optional) is the id of the record
 // the card is made from, which the card keeps so it is made once: a card with no set line (a
@@ -416,7 +424,9 @@ export function composeCard(input) {
   if (kind === 'premium' && level !== 4) fail(kind, 'level', 'must be 4: its Yes changes the routing table');
   const what = words(kind, 'what', input.what);
   const why = words(kind, 'why', input.why);
-  const because = words(kind, 'because', input.because);
+  const blind = kind === 'blind';
+  if (input.blind !== undefined && input.blind !== true) fail(kind, 'blind', 'must be true or left off');
+  const because = blind ? undefined : words(kind, 'because', input.because);
   const meanwhile = words(kind, 'meanwhile', input.meanwhile);
   const ask = input.ask === undefined ? undefined : words(kind, 'ask', input.ask);
   const size = input.size === undefined ? undefined : words(kind, 'size', input.size);
@@ -426,7 +436,7 @@ export function composeCard(input) {
   if (input.revises !== undefined && !(typeof input.revises === 'string' && /^\S+$/.test(input.revises))) fail(kind, 'revises', 'must be the id of the card it replaces');
   if (input.revises === undefined && input.changed !== undefined) fail(kind, 'changed', 'belongs to a revised card only');
   const changed = input.revises === undefined ? undefined : words(kind, 'changed', input.changed);
-  const recommend = words(kind, 'recommend', input.recommend);
+  const recommend = blind ? undefined : words(kind, 'recommend', input.recommend);
   let checks;
   if (level === 4) checks = words(kind, 'checks', input.checks);
   else if (input.checks !== undefined) fail(kind, 'checks', 'belongs to a level 4 card only');
@@ -442,7 +452,8 @@ export function composeCard(input) {
   sameThing(kind, what, input.target);
   const build = Array.isArray(input.commands) && input.commands.length > 0;
   const buttons = offered(kind, input.options, { build, target: input.target, suggest: input.suggest !== false });
-  if (!buttons.some((b) => b.label === recommend)) fail(kind, 'recommend', `must be one of the card's options: ${buttons.map((b) => b.label).join(', ')}`);
+  if (blind && [what, why, ...buttons.filter((b) => b.label !== SUGGEST).map((b) => b.says)].some((t) => /recommend/i.test(t))) fail(kind, 'text', 'must not recommend: a blind card holds that back');
+  if (!blind && !buttons.some((b) => b.label === recommend)) fail(kind, 'recommend', `must be one of the card's options: ${buttons.map((b) => b.label).join(', ')}`);
 
   const code = line === null || NO_REPLY_CODE.includes(kind) ? null : replyCode(line);
   const target = isPlain(input.target) ? input.target : {};
@@ -453,7 +464,7 @@ export function composeCard(input) {
     ask: asked,
     what,
     small: [size, why].filter(Boolean).join(' · '),
-    recommendation: `${recommend}, because ${clause(because)}.`,
+    ...(blind ? {} : { recommendation: `${recommend}, because ${clause(because)}.` }),
     options: buttons.map((b) => ({ label: b.label, says: b.says, recommended: b.label === recommend })),
     why,
     meanwhile,
@@ -470,7 +481,7 @@ export function composeCard(input) {
   const named = whatProblem(kind, plain.join(' '), input.target);
   if (named !== null) fail(kind, 'text', named);
   // What the director reads as explanation: the card's words, its options' meanings and its recommendation.
-  const explained = [...plain, ...buttons.map((b) => b.says), parts.recommendation];
+  const explained = [...plain, ...buttons.map((b) => b.says), ...(blind ? [] : [parts.recommendation])];
   const text = textOf(parts);
   if (text.length > CARD.chars) fail(kind, 'text', `would pass ${CARD.chars} characters (it is ${text.length})`);
   if (setLineOf(text) !== line) fail(kind, 'target', 'does not give a set line the prompt record reads');
@@ -500,7 +511,8 @@ export function composeCard(input) {
     ...(input.revises === undefined ? {} : { revises: input.revises }),
     ...(input.joiners === undefined ? {} : { joiners: input.joiners }),
     // The option recommended, so the delegation review can tell a choice made as recommended.
-    recommend,
+    ...(blind ? { blind: true } : { recommend }),
+    ...(input.blind === true ? { blind: true } : {}),
     ...(input.importance === undefined ? {} : { importance: input.importance }),
     ...(topic === undefined ? {} : { topic }),
     concepts: [...(input.concepts ?? termsIn(explained.join('\n'), input.glossary ?? glossaryOf({})))],
@@ -526,7 +538,8 @@ const listed = (names) => (names.length < 2 ? names.join('') : `${names.slice(0,
 // answering does to the checks, in the question's own words, or that the build didn't say (ruling F18).
 // `joiners` ([{ id, name }]) are the alike questions the answer goes to as well: the card lists each piece, so the words
 // a click signs say what it covers. `saidBefore` is the director's answer to the card this question joined too late for.
-export function answerInput(data, work, { joiners = [], saidBefore = null } = {}) {
+// `picked` is the option taken on the question's blind card, and `blind` marks a card that followed one.
+export function answerInput(data, work, { joiners = [], saidBefore = null, picked = null, blind = false } = {}) {
   if (!isPlain(data) || !Array.isArray(data.options)) throw new Error('its record can\'t be read');
   const foreman = questionIdOf(data.id)?.foreman === true;
   const said = data.level === 3 && typeof saidBefore === 'string' ? saidBefore : null;
@@ -534,7 +547,7 @@ export function answerInput(data, work, { joiners = [], saidBefore = null } = {}
   return {
     kind: 'answer',
     level: data.level,
-    what: `${said === null ? '' : `You said this before: ${said}. `}${flat(data.what)}${bundle}`,
+    what: `${picked === null ? '' : `You picked ${picked} first. `}${said === null ? '' : `You said this before: ${said}. `}${flat(data.what)}${bundle}`,
     why: flat(data.why),
     options: data.options.map((o) => ({ label: o?.label, says: foreman ? foremanSays(o) : flat(o?.says) || o?.label })),
     recommend: said ?? data.recommendation,
@@ -545,6 +558,19 @@ export function answerInput(data, work, { joiners = [], saidBefore = null } = {}
     // A build-command question's commands, so its own Not now is offered (see offered).
     ...(Array.isArray(data.commands) && data.commands.length > 0 ? { commands: data.commands } : {}),
     ...(joiners.length === 0 ? {} : { joiners: joiners.map((j) => j.id) }),
+    ...(blind ? { blind: true } : {}),
+  };
+}
+
+// The input for a blind card: the question as the answer card would ask it, in full, its options in the order its id
+// gives, and no recommendation. `work` names the work, by its title or its id.
+export function blindInput(data, work) {
+  const { level, what, why, options } = answerInput(data, work);
+  return {
+    kind: 'blind', level, what, why,
+    options: shuffled(options, data.id),
+    meanwhile: `Meanwhile ${work} waits, and the rest carries on. Your pick settles nothing yet: my view comes next, then you choose.`,
+    target: { questionId: data.id },
   };
 }
 

@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { cardButtons, isSetupCard, isTrustCard, isUninstallCard, CANT_ANSWER, SETUP_ANSWER, TRUST_ANSWER, UNINSTALL_ANSWER } from '../../../scripts/mod/buttons.js';
-import { composeCard, DECIDING, textOf } from '../../../scripts/cards/compose.js';
+import { composeCard, blindInput, DECIDING, textOf } from '../../../scripts/cards/compose.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
 import { TO_KNOW_MORE } from '../../../scripts/lib/calm-words.js';
 import { makeEvent } from '../../../scripts/state/events.js';
@@ -364,4 +364,13 @@ test('setup\'s card of the rules found gets no button on the pane either, by its
     assert.deepEqual(cardButtons({ ...rules, kind }), NO_BUTTONS, String(kind));
   }
   assert.equal(isSetupCard({ ...dataOf('approval'), kind: 'confirm-all' }), true);
+});
+
+test('a blind card has each option turn, none filled, and Suggest a change… and Why?', () => {
+  const asked = { id: 'q-w-1', work: 'w', what: 'Which one?', why: 'It matters.', level: 3, recommendation: 'Tab', options: [{ label: 'Comma', says: 'Commas.' }, { label: 'Tab', says: 'Tabs.' }] };
+  const { card } = composeCard(blindInput(asked, 'w'));
+  const { buttons, note } = cardButtons(card);
+  assert.equal(note, null);
+  assert.deepEqual(buttons.slice(-2), [SUGGEST_BUTTON, WHY_BUTTON]);
+  assert.deepEqual(buttons.slice(0, -2), card.options.slice(0, 2).map((label) => ({ label, does: 'turn', shape: 'outlined' })));
 });

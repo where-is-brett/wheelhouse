@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { decide, cardProblems } from '../../../scripts/hooks/card-check.js';
 import { hookMain } from '../../../scripts/hooks/kit.js';
-import { composeCard } from '../../../scripts/cards/compose.js';
+import { composeCard, blindInput } from '../../../scripts/cards/compose.js';
 import { baselineCard } from '../../../scripts/measures/baseline.js';
 import { BASELINE_PHRASES } from '../../../scripts/lib/measures-clicks.js';
 import { TO_KNOW_MORE, TO_CHANGE_IT } from '../../../scripts/lib/calm-words.js';
@@ -424,4 +424,16 @@ test('uninstall\'s card needs no reply code, refuses one, and must name the proj
   assert.match(cardProblems(`${card}\n${replyCodeLine(replyCode(line))}`).join(' '), /reply code line, and an uninstall card has none/);
   assert.match(cardProblems(card.replace('from wh cafe menu:', 'from another folder:')).join(' '), /must name the project wh cafe menu/);
   assert.match(cardProblems(card.replace('stop its jobs', 'stop its jobs at abcdef123456')).join(' '), /names commit abcdef123456/);
+});
+
+test('a blind card needs no recommended option, and may not carry one or two', () => {
+  const asked = { id: 'q-w-1', work: 'w', what: 'Which one?', why: 'It matters.', level: 3, recommendation: 'Tab', options: [{ label: 'Comma', says: 'Commas.' }, { label: 'Tab', says: 'Tabs.' }] };
+  const { question } = composeCard(blindInput(asked, 'w'));
+  assert.deepEqual(cardProblems(question), []);
+  const mark = (n) => ({ ...question, options: question.options.map((o, i) => (i < n ? { ...o, description: `Recommended: ${o.description}` } : o)) });
+  assert.deepEqual(cardProblems(mark(1)), ['names a recommended option, which a blind card holds back']);
+  assert.deepEqual(cardProblems(mark(2)), ['names two recommended options']);
+  // The same card with no blind line is an ordinary card with nothing recommended.
+  const plain = { ...question, question: question.question.split('\n').slice(0, -1).join('\n') };
+  assert.deepEqual(cardProblems(plain), ['names no recommended option']);
 });

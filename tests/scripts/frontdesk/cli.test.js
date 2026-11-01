@@ -2104,3 +2104,134 @@ test('a card too long to list its pieces still comes, and they are asked after i
     assert.equal(helper.held.filter((e) => e.kind === 'card').at(-1).data.joiners, undefined);
   });
 });
+
+// A question drawn blind, through `cards` to the answer card that follows.
+const BLIND_QUESTION = {
+  id: 'q-export-csv-2', work: 'export-csv', what: 'The export needs to know which separator to use.', why: 'It changes the file people download.',
+  options: [{ label: 'Comma', says: 'Commas between values; opens in any spreadsheet.' }, { label: 'Tab', says: 'Tabs between values.' }, { label: 'Semicolon', says: 'Semicolons between values.' }],
+  recommendation: 'Tab', level: 3, blind: true,
+};
+// Another open piece, so the question's work doesn't hold up all there is.
+const WORKS = [EXPORT, makeEvent({ kind: 'work', data: { id: 'login', title: 'Sign in', lane: 'feature', visible: true, dependsOn: [] }, now: () => T(2) })];
+const pickOn = (card, label, n = 150) => makeEvent({ kind: 'card-answer', data: { question: card.question, label }, now: () => T(n) });
+const blindWrites = (helper) => cardWrites(helper).filter((c) => c.kind === 'blind');
+
+test('a blind card shows the thing being decided, in full, and holds back only the recommendation', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper({ events: [...WORKS, questionEvent(BLIND_QUESTION)] });
+    const { json } = await run(helper, ['cards']);
+    const [asked] = json.questions;
+    assert.equal(asked.header, 'First pick');
+    assert.equal(asked.question.split('\n')[0], BLIND_QUESTION.what);
+    assert.ok(asked.question.includes(BLIND_QUESTION.why));
+    for (const { label, says: words } of BLIND_QUESTION.options) {
+      assert.equal(asked.options.find((o) => o.label === label)?.description, words);
+    }
+    assert.equal(asked.options.at(-1).label, 'Suggest a change…');
+    assert.ok(!JSON.stringify(asked).includes('Recommended'), 'nothing marks an option');
+    const [card] = blindWrites(helper);
+    assert.equal(card.recommend, undefined);
+    assert.equal(card.parts.recommendation, undefined);
+    assert.ok(card.parts.options.every((o) => o.recommended === false));
+    assert.deepEqual(cardProblems(asked), []);
+    assert.equal(cardWrites(helper).length, 1, 'the answer card waits for the pick');
+    await run(helper, ['cards']);
+    assert.equal(cardWrites(helper).length, 1, 'made once');
+  });
+});
+
+test('the blind click answers nothing: the question stays open and its answer card follows', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper({ events: [...WORKS, questionEvent(BLIND_QUESTION)] });
+    await run(helper, ['cards']);
+    const [blind] = blindWrites(helper);
+    helper.held.push(pickOn(blind, 'Comma'));
+    const entry = helper.views().questions[BLIND_QUESTION.id];
+    assert.equal(entry.answer, null);
+    assert.equal(entry.firstPick.label, 'Comma');
+    const { json } = await run(helper, ['cards']);
+    const [asked] = json.questions;
+    assert.equal(asked.question.split('\n')[0], `You picked Comma first. ${BLIND_QUESTION.what}`);
+    assert.match(asked.options[1].description, /^Recommended: /);
+    const card = cardWrites(helper).at(-1);
+    assert.equal(card.kind, 'answer');
+    assert.equal(card.blind, true);
+    assert.equal(card.line, answerLine(BLIND_QUESTION.id));
+    assert.equal(helper.views().questions[BLIND_QUESTION.id].answer, null);
+  });
+});
+
+test('a typed answer on the blind card closes it, and the answer card follows naming no pick', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper({ events: [...WORKS, questionEvent(BLIND_QUESTION)] });
+    await run(helper, ['cards']);
+    helper.held.push(pickOn(blindWrites(helper)[0], 'Neither, ask the supplier'));
+    assert.ok(!helper.views().waiting.some((c) => c.data.kind === 'blind'));
+    assert.equal(helper.views().questions[BLIND_QUESTION.id].firstPick.typed, true);
+    await run(helper, ['cards']);
+    const card = cardWrites(helper).at(-1);
+    assert.equal(card.kind, 'answer');
+    assert.equal(card.blind, true);
+    assert.ok(!card.question.includes('You picked'));
+  });
+});
+
+test('Suggest a change… and Why? leave a blind card waiting', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper({ events: [...WORKS, questionEvent(BLIND_QUESTION)] });
+    await run(helper, ['cards']);
+    const [blind] = blindWrites(helper);
+    helper.held.push(pickOn(blind, 'Suggest a change…'), pickOn(blind, 'Why?', 151));
+    assert.ok(helper.views().waiting.some((c) => c.data.kind === 'blind'));
+    assert.equal(helper.views().questions[BLIND_QUESTION.id].firstPick, undefined);
+  });
+});
+
+test('a card that comes to hold up all work drops its blind form', async () => {
+  await inHome(async () => {
+    const top = makeEvent({ kind: 'note', data: { about: 'top-card', id: BLIND_QUESTION.id, holdsUp: 2 }, now: () => T(200) });
+    // Before any blind card is out, the ordinary card goes straight out.
+    const fresh = fakeHelper({ events: [...WORKS, questionEvent(BLIND_QUESTION), top] });
+    await run(fresh, ['cards']);
+    assert.deepEqual(cardWrites(fresh).map((c) => c.kind), ['answer']);
+    assert.equal(cardWrites(fresh)[0].blind, undefined, 'a card that showed its recommendation counts as any other');
+
+    // With one out, the answer card takes its place.
+    const helper = fakeHelper({ events: [...WORKS, questionEvent(BLIND_QUESTION)] });
+    await run(helper, ['cards']);
+    helper.held.push(top);
+    const { json } = await run(helper, ['cards']);
+    assert.deepEqual(cardWrites(helper).map((c) => c.kind), ['blind', 'answer']);
+    assert.deepEqual(helper.views().waiting.map((c) => c.data.kind), ['answer']);
+    assert.match(json.questions[0].options[1].description, /^Recommended: /);
+  });
+});
+
+test('the day\'s budget holds a blind card back as it would the question, and the board numbers it once', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper({ events: [...WORKS, questionEvent(BLIND_QUESTION), heldNote([BLIND_QUESTION.id])] });
+    const { json } = await run(helper, ['cards']);
+    assert.deepEqual(json.questions, []);
+    assert.equal(json.heldBack, 1);
+    assert.equal(blindWrites(helper).length, 1);
+    const board = await run(helper, ['views', 'waiting']);
+    assert.equal(board.code, 0, board.err);
+  });
+});
+
+test('a blind card that can\'t be made leaves the ordinary card, never no card', async () => {
+  await inHome(async () => {
+    const says = { ...BLIND_QUESTION, what: 'I recommend tabs here, so which separator should it be?' };
+    const helper = fakeHelper({ events: [...WORKS, questionEvent(says)] });
+    await run(helper, ['cards']);
+    assert.deepEqual(cardWrites(helper).map((c) => c.kind), ['answer']);
+  });
+});
+
+test('card refuses a blind card: only `cards` makes one', async () => {
+  await inHome(async () => {
+    const got = await run(fakeHelper(), ['card'], JSON.stringify({ kind: 'blind', level: 3 }));
+    assert.notEqual(got.code, 0);
+    assert.match(got.err, /comes from `cards`/);
+  });
+});

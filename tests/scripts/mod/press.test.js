@@ -8,7 +8,7 @@ import { replyRecord, repliedDir, claim } from '../../../scripts/mod/reply.js';
 import { hashOf } from '../../../scripts/mod/status.js';
 import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { pendingDir } from '../../../scripts/hooks/pending.js';
-import { answerInput, composeCard } from '../../../scripts/cards/compose.js';
+import { answerInput, blindInput, composeCard } from '../../../scripts/cards/compose.js';
 import { makeEvent, eventPath, listEvents, dataHash } from '../../../scripts/state/events.js';
 import { buildViews } from '../../../scripts/state/views.js';
 import { makeSigningKey, enrol, verify, readEnrolled } from '../../../scripts/state/signing.js';
@@ -719,4 +719,15 @@ test('press refuses Why? and Suggest a change…', () => withKey(async () => {
     assert.equal(untouched(client), 0);
   }
   assert.deepEqual(pendingFiles(), []);
+}));
+
+test('a press on a blind card signs nothing, closes it, keeps the pick and tells the front desk to ask the answer card', () => withKey(async () => {
+  keepEvent(makeEvent({ kind: 'question', data: { ...QUESTION, blind: true, level: 3 }, now: () => NOW }));
+  const card = putCard(composeCard(blindInput({ ...QUESTION, level: 3 }, 'Export')).card);
+  const client = fake();
+  const got = await press(card, client, 'Tab');
+  assert.equal(got.made, true);
+  assert.match(got.submit[0], /picked "Tab" first on card 1 .*Run `cards`/);
+  assert.deepEqual(signed(client), []);
+  assert.deepEqual(client.calls.write.map((w) => [w.kind, w.data.label]), [['card-answer', 'Tab']]);
 }));

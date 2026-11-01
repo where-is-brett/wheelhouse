@@ -5,7 +5,7 @@ import path from 'node:path';
 import { wheelhouseHome, profileDir, stateDir } from '../lib/paths.js';
 import { listEvents, eventHash, dataHash, CONFIRMABLE_KINDS, PIN_NAMES, READY_COLUMNS } from './events.js';
 import { ruleStands, stageOf } from '../delegation/rules.js';
-import { answerLine, approvalLine, chatCopy, ciPushLine, confirmLine } from './card-lines.js';
+import { answerLine, approvalLine, BLIND_LINE, chatCopy, ciPushLine, confirmLine } from './card-lines.js';
 import { joinQuestions } from './joiners.js';
 import { isLeanProject } from '../lean/project.js';
 import { verify, readEnrolled } from './signing.js';
@@ -155,10 +155,12 @@ export function gateTargetOf(card) {
 function revisedBy(sorted) {
   const cards = sorted.filter((e) => e.kind === 'card');
   const sameGate = (card, later) => !['approval', 'ci-push'].includes(card.data?.kind) || (gateTargetOf(card) !== null && gateTargetOf(card) === gateTargetOf(later));
-  return (card) => cards.some((later) => byOrder(card, later) < 0 && later.data?.kind === card.data?.kind && (
+  // A question's answer card takes the place of its blind card: one that went out without waiting for the pick.
+  const closesBlind = (card, later) => card.data?.kind === 'blind' && later.data?.kind === 'answer' && later.data.line === answerLine(BLIND_LINE.exec(String(card.data.line))?.[1]);
+  return (card) => cards.some((later) => byOrder(card, later) < 0 && (closesBlind(card, later) || (later.data?.kind === card.data?.kind && (
     (later.data.revises === card.id && sameGate(card, later))
     || (typeof later.data.revises === 'string' && ['approval', 'ci-push'].includes(card.data?.kind)
-      && typeof card.data?.line === 'string' && later.data.line === card.data.line && sameGate(card, later))));
+      && typeof card.data?.line === 'string' && later.data.line === card.data.line && sameGate(card, later))))));
 }
 
 // The ids of the lineage holds a later lineage-lift names: a lift closes only the holds it names, so
@@ -295,7 +297,8 @@ function outcomesOf(sorted, { confirmations, answeredBy, lean = false }) {
   const answersTo = (card) => answers.filter((a) => (typeof a.data?.card === 'string'
     ? a.data.card === card.id && (a.data.hash === undefined || (typeof questionOf(card) === 'string' && namesText(a.data.hash, questionOf(card))))
     : (a.data?.card === undefined || a.data?.card === null) && typeof a.data?.question === 'string' && a.data.question === questionOf(card)));
-  const decides = (card, label) => !PUT_OFF.includes(label) && (!Array.isArray(card.data?.options) || card.data.options.includes(label));
+  // Words typed on a blind card decide it too: they stand in for its pick, and its answer card follows.
+  const decides = (card, label) => !PUT_OFF.includes(label) && (card.data?.kind === 'blind' || !Array.isArray(card.data?.options) || card.data.options.includes(label));
   const signedFor = (card) => {
     const question = questionOf(card);
     const carried = answeredBy.find((e) => byOrder(card, e) < 0 && e.data.question === question);
@@ -617,6 +620,11 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   const revised = revisedBy(sorted);
   const handedOut = sorted.filter((e) => e.kind === 'asked' && Array.isArray(e.data?.cards));
   const outcomes = outcomesOf(sorted, { confirmations: closing, answeredBy, lean });
+  // What the director took on a question's blind card, before any recommendation. It answers nothing.
+  for (const { card, decided } of outcomes) {
+    const entry = card.data?.kind === 'blind' && decided !== null ? loop.questions[BLIND_LINE.exec(String(card.data.line))?.[1]] : undefined;
+    if (entry !== undefined) entry.firstPick ??= { label: decided.label, at: decided.at, typed: !card.data.options.includes(decided.label) };
+  }
   const waiting = [];
   // A card made from a lineage hold that has been lifted is closed, as an answered card is, and so
   // is one made from a control-file record that no longer stands.

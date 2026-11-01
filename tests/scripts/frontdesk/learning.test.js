@@ -507,3 +507,15 @@ test('Why? counts as Explain more for a concept known and for plain explanations
     assert.deepEqual(proposed.map(({ key, value }) => ({ key, value })), [{ key: 'explanations', value: 'plain' }]);
   });
 });
+
+test('the delegation review leaves blind cards out of its count', async () => {
+  await inHome(async () => {
+    const now = when(day(20));
+    const events = five(10);
+    const followed = chosen(CHOICE(15), 15);
+    followed[0] = { ...followed[0], data: { ...followed[0].data, blind: true } };
+    // Five unchanged and one blind count five; three unchanged and one blind fall short.
+    assert.equal(delegationProposals([...events, ...followed], { now })[0].because.includes('5 times'), true);
+    assert.deepEqual(delegationProposals([...events.slice(2), ...followed], { now }), []);
+  });
+});
