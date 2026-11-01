@@ -71,13 +71,14 @@ export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeat
   });
   let building = live.length;
   let features = live.filter(([, e]) => e.work.data.lane === FEATURE).length;
-  // What a new piece mustn't clash with: what is live, what waits, and each reservation whose work hasn't ended.
+  // What a new piece mustn't clash with: what is live, what waits, each reservation whose work hasn't ended, and each
+  // stopped feature, which a Carry on takes up on the files it has.
   const waits = entries.filter((entry) => {
     const [id, e] = entry;
     return parked.has(id) && !onTheWay.has(id) && !live.includes(entry) && !endedBy(reports, id, e.work) && runsOf(runs, id, e.work).length > 0;
   });
   const running = [...live, ...waits].map(([id, e]) => ({ work: id, files: filesOf(id, e) }));
-  for (const id of new Set([...Object.keys(held), ...onTheWay])) {
+  for (const id of new Set([...Object.keys(held), ...onTheWay, ...stoppedFeatures])) {
     const e = isPlain(work) ? work[id] : undefined;
     if (!running.some((r) => r.work === id) && !endedBy(reports, id, e?.work)) running.push({ work: id, files: filesOf(id, e) });
   }

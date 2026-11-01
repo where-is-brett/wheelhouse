@@ -283,6 +283,21 @@ test('a feature the director stopped at its cap gives its place up', async () =>
   assert.ok(w.starts.some((s) => s.order.work === 'h'));
 });
 
+test('a stopped feature gives its place up and keeps its files', async () => {
+  const w = wayBack({ recordings: { f: forever(), h: quiet(), i: quiet() }, pace: 1, designOf: slices, settings: { capMinutes: { slice: 1 }, capTokens: {} } });
+  w.put('f', { lane: 'feature', files: ['one.js'], place: 0 });
+  await w.tick(2);
+  w.clock.now = new Date(w.clock.now.getTime() + 10 * 60000);
+  await w.tick(2);
+  w.answer('f', 'Stop');
+  await w.tick(2);
+  w.put('h', { files: ['one.js'], place: 1 });
+  w.put('i', { files: ['two.js'], place: 2 });
+  await w.tick(3);
+  assert.ok(!w.starts.some((s) => s.order.work === 'h'), 'a Carry on would collide with it');
+  assert.ok(w.starts.some((s) => s.order.work === 'i'));
+});
+
 test('a feature All stop cancelled gives its place up after the lift', async () => {
   const w = wayBack({ recordings: { f: forever(), h: quiet() }, pace: 1, designOf: slices });
   w.put('f', { lane: 'feature', place: 0 });
