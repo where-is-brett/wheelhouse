@@ -3,6 +3,7 @@
 // words, and the lines the work view, the Logbook's build tab and the briefing show for runs and their cost. No line
 // holds a run id, a step id or the engine's own words; the director never sees them.
 import { runningMinutes } from './spend.js';
+import { tokenWords as tokenCount } from '../board/model.js';
 
 // The merge queue's question, for a card: its pull request by number and title, as far as they are known.
 // The pane's lines about a project's checks (spec 4.3 and 4.8).
@@ -72,6 +73,68 @@ export const goalWindingWords = (title, why) => `${title} is winding down becaus
 export const goalEndedWords = (title, ending) => `${title} ${GOAL_ENDED[ending] ?? GOAL_ENDED.time}.`;
 export const goalRunLeftWords = (title, survivors) => `${title} has ended, but part of a run it stopped couldn't be stopped and may still be spending: ${survivors.join(', ')}.`;
 export const goalPieceChangedWords = (title) => `${title} changed since the goal's sheet was signed, so the goal won't build it. A new sheet can list it.`;
+// What a goal's report on return says (unattended goals design, section 10), in a fixed form. Each line reads the record and
+// nothing else, so none of them says more than the record does: "Nothing was lost" is the design's example, and no script can know it.
+const andNames = (names) => (names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`);
+const FAILED_AFTER = { connection: 'a dropped connection', provider: 'the AI service failed', host: 'the build stopped on this computer', limit: 'a usage limit', 'resume-refused': 'the build engine refused', other: 'a failed step' };
+export const goalHeadlineWords = (title, { ending, switchOn }) => (ending === 'done' ? `${title} is ${switchOn ? 'ready for your switch-on' : 'done'}.` : goalEndedWords(title, ending));
+export function goalInsideWords({ time, spend }) {
+  const clock = time ? 'inside its time' : 'past its time';
+  return spend === 'inside' ? `${clock} and spend` : `${clock}, ${spend === 'over' ? 'over its spend' : 'with its spend unknown'}`;
+}
+export const goalLineWords = (ending, clock, within) => (ending === 'done' ? `Done at ${clock}, ${goalInsideWords(within)}.` : `Ended at ${clock}, ${goalInsideWords(within)}.`);
+export const leftUndoneWords = (names) => `Left undone: ${andNames(names)}.`;
+export const checksFailedWords = (names) => `Failed: ${andNames(names)}.`;
+export const checksUnrunWords = (names) => `Couldn't run: ${andNames(names)}.`;
+export const checkedAgainWords = (ok) => `The goal's checks ran again once the work waiting for you had merged, and ${ok ? 'they all passed' : 'they didn\'t all pass'}.`;
+export const addedTailWords = (flag, checks) => {
+  if (typeof flag === 'string') return `All behind \`${flag}\`${checks ? ', all checks passing' : ''}.`;
+  return checks ? 'All checks passing.' : '';
+};
+export const WALKED_WORDS = 'A page check was walked when its piece was built, and not again at the end.';
+export const moreWaitingWords = (names) => `And ${names.length} more: ${andNames(names)}. ${SHOW_THEM}`;
+const durationWords = (minutes) => {
+  const hours = Math.floor(minutes / 60);
+  const left = Math.floor(minutes % 60);
+  const part = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
+  return [hours > 0 ? part(hours, 'hour') : '', left > 0 || hours === 0 ? part(left, 'minute') : ''].filter(Boolean).join(' ');
+};
+export const sleptWords = (minutes, clock) => `The computer slept for ${durationWords(minutes)} at ${clock}.`;
+export const sleptOftenWords = (times, minutes) => `The computer slept ${times} times, for ${durationWords(minutes)} in all.`;
+export const limitHeldWords = (minutes) => `A usage limit held work for ${durationWords(minutes)}.`;
+export const retriedWords = (n, kind) => `${n === 1 ? 'One run was' : `${n} runs were`} tried again after ${FAILED_AFTER[kind] ?? FAILED_AFTER.other}.`;
+export const lostCarriedOnWords = (names) => `${names.length === 1 ? 'One run lost its process and was' : `${names.length} runs lost their process and were`} carried on: ${andNames(names)}.`;
+export const goalRedsWords = (n) => `The main line went red ${n === 1 ? 'once' : n === 2 ? 'twice' : `${n} times`}.`;
+export const goalStoppedAtEndWords = (title) => `${title} was stopped at the end, and what it did is kept on its branch.`;
+export const goalPieceFailedWords = (title, kind) => `${title} failed: ${FAILED_BECAUSE[kind] ?? FAILED_BECAUSE.other}.`;
+export const goalPieceLeftWords = (title) => `${title} changed after you signed, so the goal left it.`;
+export const allowedOnceWords = (title) => `You allowed ${title} outside its areas, once.`;
+export function goalSpentWords({ tokens, allowed, points, requests, unknown, readAt, afterEnd }) {
+  const of = (limit, say = (x) => x) => (limit === undefined ? '' : `, of the ${say(limit)} you allowed`);
+  const out = [];
+  if (unknown) out.push(tokens === 0 ? 'Unknown: no reading was made.' : `Unknown: part of it wasn't reported, so ${tokenCount(tokens)} were counted against the ${tokenCount(allowed.tokens)} you allowed.`);
+  if (points !== null) out.push(`${points} points of this week's allowance${of(allowed.points)}${readAt === null ? '' : `, read at ${readAt}`}.`);
+  if (requests !== null) out.push(`${requests} requests${of(allowed.requests)}.`);
+  if (!unknown && points === null) out.push(`${tokenCount(tokens)}${of(allowed.tokens, tokenCount)}.${requests === null ? ' The week\'s allowance couldn\'t be read, so these are tokens alone.' : ''}`);
+  if (afterEnd !== null) out.push(afterEnd.unknown ? 'The merge queue spent more after the goal ended, and how much is unknown.' : `The merge queue spent ${tokenCount(afterEnd.tokens)} more after the goal ended.`);
+  return out.join(' ');
+}
+export const goalReportLinkWords = (title, n) => `The report on ${title} stays on the Logbook, with ${n} ${n === 1 ? 'thing' : 'things'} still to settle. Ask for it to read it again.`;
+const FRACTIONS = [[1 / 10, 'a tenth'], [1 / 4, 'a quarter'], [1 / 3, 'a third'], [1 / 2, 'half'], [2 / 3, 'two thirds'], [3 / 4, 'three quarters']];
+// The share in a word, the next one up, so a spend never reads as less than it is.
+export function shareWords(ratio) {
+  if (ratio <= 0) return 'none';
+  if (ratio >= 1) return 'all';
+  return FRACTIONS.find(([share]) => ratio <= share + 1e-9)?.[1] ?? 'nearly all';
+}
+const hoursLeftWords = (ms) => {
+  const hours = Math.floor(ms / 3600000);
+  if (hours >= 1) return `${hours} ${hours === 1 ? 'hour' : 'hours'} left`;
+  const minutes = Math.floor(ms / 60000);
+  return minutes >= 1 ? `${minutes} ${minutes === 1 ? 'minute' : 'minutes'} left` : 'time up';
+};
+const GOAL_PANE_STATE = { winding: 'winding down', waiting: 'waiting for you' };
+export const goalPaneWords = ({ added, of, state, msLeft, spend }) => `Goal: ${added} of ${of} added, ${GOAL_PANE_STATE[state] ?? hoursLeftWords(msLeft)}, ${spend}.`;
 export const goalCheckedAgainWords = (title, ok) => `The goal's checks ran again once the work waiting for you had merged: ${title} ${ok ? 'passes them all' : 'doesn\'t pass them all'}.`;
 
 // The card for a run still parked well past the reset, which holds nothing more.

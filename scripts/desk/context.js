@@ -115,10 +115,12 @@ const wordsIn = (text) => text.split(/\s+/).filter(Boolean).length;
 // lines and `review` the delegation review's { due, days } (reviewOf). `survey`, `surveyAt`, `host`,
 // `leaveOut`, `carrying` and `earlier` are the briefing model's: what the survey found is mentioned once, and `surveyShown`
 // is the id of the survey whose lines the text showed whole (none when it was cut), or whose every
-// line the caller said itself. Throws when it can't be built.
+// line the caller said itself. `opening` is what goes ahead of it whole, a goal's report, which its
+// length doesn't cut. Throws when it can't be built.
 export function briefingIn({
-  project, model, usage, sources, settings, since, weeklySince, review, at, briefingModel = realBriefingModel, room, survey, surveyAt, host, leaveOut, carrying, earlier, holdLocked,
+  project, model, usage, sources, settings, since, weeklySince, review, at, briefingModel = realBriefingModel, room: wholeRoom, survey, surveyAt, host, leaveOut, carrying, earlier, holdLocked, opening = '',
 }) {
+  const room = opening === '' ? wholeRoom : wholeRoom - opening.length - 2;
   const safekeepingSaid = attempt(() => readSafekeepingSaid(project), null);
   const briefing = briefingModel({ model, usage, sources, since, weeklySince, now: at, review, survey, surveyAt, host, leaveOut, carrying, earlier, holdLocked, safekeepingSaid });
   const length = settings?.briefing?.value;
@@ -152,7 +154,7 @@ export function briefingIn({
   // The safekeeping sentence counts as said only when the text showed it, so a cut one comes again.
   const said = briefing?.safekeeping ?? null;
   const safekeeping = said !== null && parts.shownWatch > said.at && !fitted.cut ? said.level : null;
-  return { text: fitted.text, raise: fitted.cut ? [] : raise, weeklyShown: weeklyShown && !fitted.cut, surveyShown, safekeeping };
+  return { text: opening === '' ? fitted.text : `${opening}\n\n${fitted.text}`, raise: fitted.cut ? [] : raise, weeklyShown: weeklyShown && !fitted.cut, surveyShown, safekeeping };
 }
 
 
@@ -167,7 +169,7 @@ export function reviewOf(project, settings, at) {
 // The text the board-context hook adds for `want` ('briefing', 'board', 'settings' or 'sources'),
 // heading and all, from the board's `inputs` (loadBoardInputs'), and the unusual items it showed.
 // Throws when it can't be built.
-export function contextText(want, inputs, { project, at, tab, since, weeklySince, briefingModel = realBriefingModel, reserve = 0, survey, surveyAt, leaveOut, earlier }) {
+export function contextText(want, inputs, { project, at, tab, since, weeklySince, briefingModel = realBriefingModel, reserve = 0, survey, surveyAt, leaveOut, earlier, opening }) {
   if (!isRecord(inputs) || inputs.none !== undefined || !isRecord(inputs.model)) throw new Error('No board inputs');
   const { model, usage, sources, settings } = inputs;
   const room = CONTEXT_CHARS - HEADINGS[want].length - 2 - reserve;
@@ -176,7 +178,7 @@ export function contextText(want, inputs, { project, at, tab, since, weeklySince
     const host = attempt(() => readProject(project)?.host ?? null, null);
     // At Trusting the work in flight is being carried on, and its line says so (ruling A9).
     const carrying = settings?.autonomy?.value === 'trusting';
-    const given = briefingIn({ project, model, usage, sources, settings, since, weeklySince, review, at, briefingModel, room, survey, surveyAt, host, leaveOut, carrying, earlier });
+    const given = briefingIn({ project, model, usage, sources, settings, since, weeklySince, review, at, briefingModel, room, survey, surveyAt, host, leaveOut, carrying, earlier, opening });
     return { text: `${HEADINGS.briefing}\n\n${given.text}`, raise: given.raise, weeklyShown: given.weeklyShown, surveyShown: given.surveyShown, safekeeping: given.safekeeping };
   }
   let body;

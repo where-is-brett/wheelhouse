@@ -94,6 +94,12 @@ test('slice 2 starts only after slice 1\'s pull request reads merged, with a lin
   assert.equal(world.starts.length, 2);
   assert.deepEqual(world.starts[1].order.slice, { n: 2, of: 2, title: 'Filter them' });
   assert.ok(notes(world).some((w) => /Slice 1 of 2 of Order history is added, behind its switch/.test(w)));
+  const said = world.written.find((x) => x.kind === 'note' && x.data.slice !== undefined).data;
+  assert.equal(typeof said.work, 'string');
+  assert.equal(said.slice.n, 1);
+  assert.equal(said.slice.of, 2);
+  assert.equal(typeof said.slice.title, 'string');
+  assert.equal(typeof said.slice.flag, 'string');
   await d.tick();
   assert.equal(world.starts.length, 2, 'slice 2 starts once');
 });

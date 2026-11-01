@@ -10,6 +10,7 @@
 //   GOAL_CHECK_UNKNOWN_MINUTES: how long the engine may fail to say what became of one.
 //   SPEND_UNREAD_MINUTES: how long a spend reached only by runs that can't be read holds starts before it ends the goal.
 //   GOAL_CHECK_TRIES: how many times the last check is asked for, when it gives no result, before the goal takes that as its answer.
+//   REPORT_CARDS_SHOWN: how many waiting cards a goal's report shows, a sitting not being a day; the rest are listed by name.
 export const MAX_PIECES = 12;
 export const MAX_HOURS = 24;
 export const WIND_DOWN_MINUTES = 60;
@@ -22,6 +23,7 @@ export const GOAL_CHECK_HOURS = 4;
 export const GOAL_CHECK_UNKNOWN_MINUTES = 10;
 export const SPEND_UNREAD_MINUTES = 10;
 export const GOAL_CHECK_TRIES = 2;
+export const REPORT_CARDS_SHOWN = 4;
 
 // A goal's check run: the work it goes under, on no piece, and its lane, as a reader's are.
 export const GOAL_WORK = 'goal-check-run';

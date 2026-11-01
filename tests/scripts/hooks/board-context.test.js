@@ -235,6 +235,16 @@ const briefed = (briefing, settings = {}) => briefingIn({
 });
 const EMPTY = { first: [], waiting: [], changed: [], progress: [], watch: [], usage: null, raise: [], weekly: 0 };
 
+test('a goal\'s report opens the briefing whole, past its words, and takes its room', async () => {
+  await withProject(async () => {
+    const opening = Array.from({ length: 400 }, (_, i) => `word${i}`).join(' ');
+    const { text } = briefingIn({ project: P, model: {}, usage: null, sources: null, settings: {}, at: new Date(NOW), briefingModel: () => ({ ...EMPTY, progress: ['Item is ready'] }), room: CONTEXT_CHARS, opening });
+    assert.ok(text.startsWith(`${opening}\n\n`), 'whole, and first');
+    assert.match(text, /Item is ready/);
+    assert.ok(text.length <= CONTEXT_CHARS);
+  });
+});
+
 test('the briefing in plain words keeps to its words, its Terms line counted', async () => {
   await withProject(async () => {
     // Labels that plain words make longer, each used once, so no Terms line follows: the lines

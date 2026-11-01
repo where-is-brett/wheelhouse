@@ -509,6 +509,8 @@ function buildLoopViews(sorted, enrolled) {
     goals: goalsView(sorted, actions('start-goal'), goalChecks),
     // Each goal's signed check results, oldest first (scripts/engine/goal-check.js): a card and a start read its baseline from these.
     goalChecks,
+    // What a goal's report reads from notes (scripts/engine/goal-report.js): the merge queue's spend after its end, a slice added, a run lost.
+    goalNotes: sorted.filter((e) => e.kind === 'note' && (e.data?.about === 'goal-queue-after' || e.data?.slice !== undefined || e.data?.lost === true)).map(mark),
     // The card router's Logbook lines, the latest last, and how many of its cards wait for another day.
     engineNotes: sorted.filter((e) => e.kind === 'note' && e.data?.about === 'engine' && typeof e.data.words === 'string').slice(-ENGINE_NOTES).map(mark),
     cardsWaiting: cardsWaitingOf(sorted),

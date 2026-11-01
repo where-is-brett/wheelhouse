@@ -1,0 +1,10 @@
+**Customers can export their orders has ended: it stopped getting anywhere.** Ended at 4:40 PM, inside its time and spend. Left undone: File format and Large orders.
+
+**Added (1):** Export button.
+
+**Waits for you (1):**
+- Which file format do customers get?
+
+**What went wrong:** The computer slept for 40 minutes at 1:10 PM. A usage limit held work for 1 hour 29 minutes. One run was tried again after a dropped connection. The main line went red twice. Large orders was stopped at the end, and what it did is kept on its branch.
+
+**Spent:** 28.3 points of this week's allowance, of the 33 you allowed, read at 4:38 PM. The merge queue spent 12K tokens more after the goal ended.

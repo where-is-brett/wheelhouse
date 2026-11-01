@@ -363,12 +363,14 @@ test('goal-end holds the spend the report reads', async () => {
   const { w } = withChecks({ recordings: { a: forever() }, dispatchExtra: { allowance: () => ({ share: 40, shareAt: '2026-10-29T09:01:00.000Z', resetsAt: '2026-11-03T00:00:00.000Z' }) } });
   w.put('a');
   goalOver(w, ['a']);
+  w.clock.now = new Date('2026-10-29T09:05:00.000Z');
   await w.tick(2);
   w.goals.g.endAsked = { at: w.clock.now.toISOString(), now: true };
   await w.tick();
   const { spent } = ends(w)[0];
-  assert.deepEqual(Object.keys(spent).sort(), ['points', 'queueRuns', 'requests', 'shareAtStart', 'tokens', 'unknown']);
+  assert.deepEqual(Object.keys(spent).sort(), ['points', 'queueRuns', 'readAt', 'requests', 'shareAtStart', 'tokens', 'unknown']);
   assert.equal(spent.shareAtStart.share, 40);
+  assert.equal(spent.readAt, '2026-10-29T09:01:00.000Z', 'when the points were read, for the report');
   assert.deepEqual(spent.queueRuns, []);
 });
 
@@ -395,6 +397,18 @@ test('a second red main line winds the goal down as stuck, and a fix goes on', a
   red('red-2');
   await w.tick();
   assert.equal(keptOf(w).goalRun.windingFor, 'stuck');
+});
+
+test('goal-end says how often the main line went red, which only the helper knew', async () => {
+  const { w } = withChecks({ recordings: { a: forever(), 'red-1': forever() } });
+  w.put('a');
+  goalOver(w, ['a']);
+  await w.tick(2);
+  w.incidents.open = [{ id: 'red-1', what: 'red', at: w.clock.now.toISOString(), fixes: [], kind: 'red-main', work: 'red-1' }];
+  await w.tick();
+  w.goals.g.endAsked = { at: w.clock.now.toISOString(), now: true };
+  await w.tick();
+  assert.equal(ends(w)[0].words, 'The main line went red once.');
 });
 
 test('a piece whose record changed leaves the goal, and is said once', async () => {

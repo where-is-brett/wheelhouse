@@ -1223,7 +1223,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     const going = kept.then === 'carry' && (lane === FIX_LANE || lostCleared(work, key) === true);
     delete state.lost[runId];
     keep();
-    if (going) await note(lostCarriedWords(titleOf(work)), { work });
+    if (going) await note(lostCarriedWords(titleOf(work)), { work, lost: true });
   }
 
   // The piece parks: its way back is given up, and the card speaks for it from here. The card's words are the helper's, and
