@@ -28,6 +28,8 @@ export const SCORE_WAIT_DAYS = 30;
 // The reader's view: the longest question and label read whole, and the longest cleaned change.
 export const QUESTION_MOST = 600;
 export const LABEL_MOST = 120;
+// The most of a piece's other cards the reader sees, the latest ones.
+export const CARDS_SEEN_MOST = 20;
 export const VIEW_MOST_BYTES = 64 * 1024;
 // A reader run: how long it may go and what it may spend before it is cancelled, how long the engine may not know it,
 // how long its reply may be, and how many cards may wait for one.

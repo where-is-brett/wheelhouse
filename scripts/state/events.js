@@ -38,7 +38,9 @@ export const PLAIN_KINDS = [
 // `change` is a local change as it stands (spec 7.1), the helper's too: it names the head the local queue merges.
 // `shadow` is a line of a card's seal (delegated decisions design, section 12), the helper's too: signed, so what it says
 // can't be rewritten once the answer is known, and read by nothing but scripts/delegation/.
-export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file', 'usage-card', 'premium-card', 'premium-check', 'premium-failed', 'provenance', 'check', 'checks-state', 'checks-found', 'change', 'shadow'];
+// `match` is what came of the reader saying a card asks what another did (delegated decisions design, section 7.4), the
+// helper's too: it stands a question behind another's card, which no build's own record can, so only one signed here counts.
+export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file', 'usage-card', 'premium-card', 'premium-check', 'premium-failed', 'provenance', 'check', 'checks-state', 'checks-found', 'change', 'shadow', 'match'];
 // Plain kinds only the helper itself records, from what it read itself: no caller writes one
 // through /state/write. The survey (design section 15, ruling A1) is taken and recorded in the
 // helper, when setup finishes and when it is taken again. A column-ready record (design section 14.6) is the
@@ -54,7 +56,7 @@ export const RED_MAIN_OWN = 'only the helper records a red main line\'s incident
 
 // `rule` is a rule proposed from an answered card (delegated decisions design, section 11.1): the helper composes it from
 // what it read itself, and it means nothing until the director's signed click confirms that very record.
-export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'shadow', 'rule'];
+export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'shadow', 'match', 'rule'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 
 const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main', 'safekeeping'];
@@ -272,8 +274,8 @@ const PLAIN_SHAPES = {
   amendment: { must: ['work', 'change', 'hash'], may: [] },
   // `event`: the id of the record a card without a set line was made from (a lineage hold), so it is made once.
   // `parts`: the card's parts as the composer gives them; `revises`: the id of the card a revised proposal replaces;
-  // `joiners`: the questions its answer also answers, each piece named on the card.
-  card: { must: ['question', 'header', 'options', 'kind', 'level'], may: ['descriptions', 'line', 'code', 'recommend', 'importance', 'topic', 'concepts', 'event', 'parts', 'revises', 'joiners', 'blind'] },
+  // `joiners`: the questions its answer also answers, each piece named on the card; `saidBefore`: the answer it says was given before.
+  card: { must: ['question', 'header', 'options', 'kind', 'level'], may: ['descriptions', 'line', 'code', 'recommend', 'importance', 'topic', 'concepts', 'event', 'parts', 'revises', 'joiners', 'saidBefore', 'blind'] },
   // A click on a card's option: the card by its id or its question, and the label chosen. A click in an agent's
   // chat (ruling P5-17) also names the card's `hash`, the `commit` it approves when it approves one, and its
   // `proof`; a Lean record's line moved up (lean-record.js) names its tier, proof, who and whether it was a click.
@@ -597,6 +599,7 @@ function checkPlain(kind, data) {
     optionalText('event');
     optionalText('revises');
     if (data.joiners !== undefined && !(Array.isArray(data.joiners) && data.joiners.every(isText))) bad('has joiners that are not a list of question ids');
+    optionalText('saidBefore');
     // The card's parts, as the composer gives them (scripts/cards/compose.js): the pane draws them and the chat's text is built from them.
     if (data.parts !== undefined && !(isPlain(data.parts) && ['ask', 'what', 'why', 'meanwhile'].every((k) => isText(data.parts[k])) && Array.isArray(data.parts.options))) {
       bad('has parts that are not a question, what, why, meanwhile and options');
@@ -812,6 +815,13 @@ function checkShadow(data) {
   if (!isPlain(data.candidates) || !isPlain(data.exclusions) || !isPlain(data.stamp)) bad('needs what the checks said');
 }
 
+// A close match: a question joining an open card, or the answer an answered card gives it as a line.
+function checkMatch(data) {
+  const join = isPlain(data) && Object.keys(data).length === 3 && typeof data.joins === 'string' && data.joins !== '';
+  const line = isPlain(data) && Object.keys(data).length === 4 && typeof data.saidBefore === 'string' && data.saidBefore !== '' && typeof data.from === 'string' && data.from !== '';
+  if (!(join || line) || typeof data.card !== 'string' || data.card === '' || typeof data.work !== 'string' || data.work === '') throw new Error('A match event needs its card, its work, and the card it joins or the answer it says');
+}
+
 // Whether a project's tests count, and why (spec 4.5).
 function checkChecksState(data) {
   const fits = data?.state === 'counting' ? data.why === 'passed' : data?.state === 'not-counting' && ['nothing-found', 'director'].includes(data.why);
@@ -848,6 +858,7 @@ export function makeEvent({ kind, data, now = () => new Date() }) {
   if (kind === 'checks-found') checkChecksFound(data);
   if (kind === 'change') checkChange(data);
   if (kind === 'shadow') checkShadow(data);
+  if (kind === 'match') checkMatch(data);
   if (Object.hasOwn(PLAIN_SHAPES, kind)) checkPlain(kind, data);
   const event = {
     v: 1,
@@ -895,6 +906,7 @@ export function checkRecord(event, { enrolled, held = [], computer = computerId(
   if (event.kind === 'check' || event.kind === 'checks-state' || event.kind === 'checks-found') return 'only the helper records a check';
   if (event.kind === 'change') return 'only the helper records a local change';
   if (event.kind === 'shadow') return 'only the helper records a seal';
+  if (event.kind === 'match') return 'only the helper records a close match';
   if (held.some((e) => canonicalJson(e) !== canonicalJson(event))) return 'another event in the state carries this record\'s id, so it was not recorded';
   return null;
 }

@@ -83,7 +83,7 @@ import { rollOf } from '../delegation/blind.js';
 import { recordOnly, cardContext, historyOf } from '../delegation/record-only.js';
 import { branchHead, cardDiff, cardFacts, commitsAfter, pathsSoFar } from '../delegation/facts.js';
 import { repeatExclusions } from '../delegation/asked.js';
-import { readerView } from '../delegation/view.js';
+import { pieceCards, readerView } from '../delegation/view.js';
 import { prepareReaderFolder } from '../delegation/reader.js';
 import { setupStamp } from '../delegation/stamp.js';
 import { ruleSet } from '../delegation/rules.js';
@@ -5131,9 +5131,10 @@ export async function startHelper({
         return historyOf({ events, enrolled: ownKeyOnly(), views: buildViews(events, ownKeyOnly(), { now }) });
       },
       engine, readViews: views,
+      onMatch: (match) => runner.onMatch(match),
       viewOf: async (card, facts) => {
         const asked = views().questions?.[card.id]?.question?.data;
-        return readerView({ question: asked?.what, options: asked?.options, brief: views().brief, diff: await cardDiff({ card, git: gitRoute({ run }), facts }), seed: card.id });
+        return readerView({ question: asked?.what, options: asked?.options, brief: views().brief, diff: await cardDiff({ card, git: gitRoute({ run }), facts }), cards: pieceCards({ views: views(), work: card.work, card: card.id }), seed: card.id });
       },
       gate: () => ({ running: engineRunsGoing(project).length, pace: paceOf({ pace: { value: settings().pace } }).building, counted: counts(project, folder), incident: Boolean(openRedMain(views())) }),
       startReader: async ({ card }) => {

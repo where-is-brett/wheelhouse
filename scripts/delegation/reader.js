@@ -44,8 +44,9 @@ export function prepareReaderFolder({ project, engine = engineDir() } = {}) {
 }
 
 // The reader's reply, from the engine's own record of its read step, or null for anything missing, oversized,
-// unparseable or out of shape. `labels` are the view's: a pick or a tag has to be one of them.
-export function readerResult(outputs, labels) {
+// unparseable or out of shape. `labels` are the view's: a pick or a tag has to be one of them. `cards` are the view's too:
+// `sameAs` is the id of one, or null for none.
+export function readerResult(outputs, labels, cards = []) {
   const text = outputs?.[READ_STEP];
   if (typeof text !== 'string' || text === '' || Buffer.byteLength(text) > READING_MOST_BYTES) return null;
   let said;
@@ -54,6 +55,8 @@ export function readerResult(outputs, labels) {
   if (!labels.includes(said.pick) || !Array.isArray(said.tags)) return null;
   const fair = (t) => isPlain(t) && labels.includes(t.label) && Array.isArray(t.leans) && t.leans.every((l) => LEANS.includes(l));
   if (!said.tags.every(fair)) return null;
+  const sameAs = said.sameAs ?? null;
+  if (sameAs !== null && !cards.some((c) => c?.id === sameAs)) return null;
   const { frame, why, kind, fits, pick, tags } = said;
-  return { frame, why, kind, fits, pick, tags: tags.map(({ label, leans }) => ({ label, leans })) };
+  return { frame, why, kind, fits, pick, tags: tags.map(({ label, leans }) => ({ label, leans })), sameAs };
 }

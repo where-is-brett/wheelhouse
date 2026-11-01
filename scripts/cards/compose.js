@@ -153,6 +153,8 @@ const BREAK = /[\r\n\v\f\u0085\u2028\u2029]/;
 const SET_FRAGMENTS = SET_LINES.map((p) => new RegExp(p.source.replace(/^\^/, '').replace(/\$$/, '')));
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+// What a card carrying the director's own words asks of them.
+const SAID_ASKS = 'One click sets it.';
 const flat = (x) => (typeof x === 'string' ? x.replace(/\s+/g, ' ').trim() : x);
 const isCount = (x) => Number.isInteger(x) && x >= 1;
 // Whether a card's options are a build-command question's own: the design's labels, in order
@@ -408,8 +410,11 @@ export function textOf(parts) {
 // `optional` (optional) is the whole minutes an optional card takes. `revises` (optional) is the id
 // of the card a revised proposal replaces, and then `changed` says in one line what changed.
 // `suggest` (optional) is false for a question or an answer that offers no Suggest a change….
+// `said` (optional) is what the director has already said they want, in their own words: the card carries it and asks for
+// one click. Typed words steer, so the click is still what decides.
 // A blind card has no `recommend` or `because`: nothing on it recommends, and a card whose own words do can't be blind.
 // `blind` (optional) is true on the answer card that follows one, for the delegation review to leave out.
+
 // `glossary` (optional) is the glossary whose terms found in the card's words become the card's
 // concepts when `concepts` isn't given; it defaults to the starter's. `event` (optional) is the id of the record
 // the card is made from, which the card keeps so it is made once: a card with no set line (a
@@ -423,7 +428,8 @@ export function composeCard(input) {
   if (kind === 'uninstall' && level !== 4) fail(kind, 'level', 'must be 4: it removes the checks that guard the project');
   // The premium model's Yes writes its pin into the routing, a guardrail change (design section 14.6), so its card is level 4.
   if (kind === 'premium' && level !== 4) fail(kind, 'level', 'must be 4: its Yes changes the routing table');
-  const what = words(kind, 'what', input.what);
+  const said = input.said === undefined ? undefined : flat(words(kind, 'said', input.said));
+  const what = said === undefined ? words(kind, 'what', input.what) : `You said: ${said.replace(/[.\s]+$/, '')}. ${SAID_ASKS} ${words(kind, 'what', input.what)}`;
   const why = words(kind, 'why', input.why);
   const blind = kind === 'blind';
   if (input.blind !== undefined && input.blind !== true) fail(kind, 'blind', 'must be true or left off');
@@ -511,6 +517,7 @@ export function composeCard(input) {
     parts,
     ...(input.revises === undefined ? {} : { revises: input.revises }),
     ...(input.joiners === undefined ? {} : { joiners: input.joiners }),
+    ...(input.saidBefore === undefined ? {} : { saidBefore: input.saidBefore }),
     // The option recommended, so the delegation review can tell a choice made as recommended.
     ...(blind ? { blind: true } : { recommend }),
     ...(input.blind === true ? { blind: true } : {}),
@@ -537,8 +544,8 @@ const listed = (names) => (names.length < 2 ? names.join('') : `${names.slice(0,
 // holds it: its words, its own options with what each says, and its own recommendation (ruling
 // F10). `work` names the work, by its title or its id. A level 4 question's card says what
 // answering does to the checks, in the question's own words, or that the build didn't say (ruling F18).
-// `joiners` ([{ id, name }]) are the alike questions the answer goes to as well: the card lists each piece, so the words
-// a click signs say what it covers. `saidBefore` is the director's answer to the card this question joined too late for.
+// `joiners` ([{ id, name, words }]) are the questions the answer goes to as well: the card lists each piece, and each
+// wording of its own (`words`, for a close match), so the words a click signs say what it covers. `saidBefore` is the director's answer to the card this question joined too late for.
 // `picked` is the option taken on the question's blind card, and `blind` marks a card that followed one.
 export function answerInput(data, work, { joiners = [], saidBefore = null, picked = null, blind = false } = {}) {
   if (!isPlain(data) || !Array.isArray(data.options)) throw new Error('its record can\'t be read');
@@ -548,10 +555,13 @@ export function answerInput(data, work, { joiners = [], saidBefore = null, picke
   const offered = said === null ? undefined : data.options.find((o) => normaliseWords(o?.label) === normaliseWords(said))?.label;
   const pieces = [...new Set([work, ...joiners.map((j) => j.name)])];
   const bundle = joiners.length === 0 ? '' : pieces.length === 1 ? ` It was asked more than once on ${work}: your answer goes to each.` : ` It came from ${listed(pieces)}: your answer goes to each.`;
+  const asked = normaliseWords(data.what);
+  const wordings = [...new Set(joiners.map((j) => flat(j.words)).filter((w) => typeof w === 'string' && w !== '' && normaliseWords(w) !== asked))];
+  const others = wordings.length === 0 ? '' : ` It was also asked as: ${wordings.join(' / ')}`;
   return {
     kind: 'answer',
     level: data.level,
-    what: `${picked === null ? '' : `You picked ${picked} first. `}${said === null ? '' : `You said this before: ${said}. `}${flat(data.what)}${bundle}`,
+    what: `${picked === null ? '' : `You picked ${picked} first. `}${said === null ? '' : `You said this before: ${said}. `}${flat(data.what)}${bundle}${others}`,
     why: flat(data.why),
     options: data.options.map((o) => ({ label: o?.label, says: foreman ? foremanSays(o) : flat(o?.says) || o?.label })),
     recommend: offered ?? data.recommendation,
@@ -562,6 +572,7 @@ export function answerInput(data, work, { joiners = [], saidBefore = null, picke
     // A build-command question's commands, so its own Not now is offered (see offered).
     ...(Array.isArray(data.commands) && data.commands.length > 0 ? { commands: data.commands } : {}),
     ...(joiners.length === 0 ? {} : { joiners: joiners.map((j) => j.id) }),
+    ...(said === null ? {} : { saidBefore: said }),
     ...(blind ? { blind: true } : {}),
   };
 }

@@ -29,7 +29,7 @@ import { routerWaiting, routerCards } from './waiting.js';
 import { since } from '../foreman/queue.js';
 import { READER_WORK } from '../delegation/reader.js';
 import { alike, normaliseWords } from '../delegation/words.js';
-import { decisionKey, earlierAnswer, reuse, spokenSince } from '../delegation/asked.js';
+import { closeMatch, decisionKey, earlierAnswer, reuse, spokenSince } from '../delegation/asked.js';
 import { REPEAT_READ_MS } from '../delegation/limits.js';
 import { mergeQuestionWords, parkedWords, PARKED_WHY, PARKED_BECAUSE, PARKED_MEANWHILE, PARKED_APPROVE_SAYS } from './words.js';
 import { parkChoice } from './archon/asks.js';
@@ -76,7 +76,7 @@ function saveState(file, state) {
 // A title inside a sentence: its first letter small, unless it is a name.
 const inSentence = (title) => (/^[A-Z][a-z]/.test(title) ? title.charAt(0).toLowerCase() + title.slice(1) : title);
 
-// engineRunner({ engine, file, readViews, write, stopped, now, settings, workOf, titleOf, endRun }) -> { onAsk, tick, file }.
+// engineRunner({ engine, file, readViews, write, stopped, now, settings, workOf, titleOf, endRun }) -> { onAsk, onMatch, tick, file }.
 // - `readViews()` the project's views (questions, approvals, levels), as the helper builds them;
 // - `write(kind, data)` a record in the project's history; `stopped()` whether All stop is on;
 // - `settings()` { cardsPerDay, bundleApprovals }; `workOf(runId)` { work, lane } from the project's run records;
@@ -398,6 +398,21 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     });
     return got && { ...got, earlier };
   }
+  // A close match from the reader (asked.js, closeMatch). It is signed, since a build's own record can't join a card in other
+  // words, and it answers nothing: the lead's card is issued again with both wordings, and a card held back has no more to wait for.
+  async function onMatch({ card, sameAs }) {
+    const kept = state.questions[card];
+    if (!kept || state.delivered[card]) return;
+    const views = viewsNow();
+    const got = closeMatch({ card, sameAs, views });
+    if (got === null) return;
+    await write('match', { card, work: kept.work, ...(got.join ? { joins: got.join } : { saidBefore: got.line, from: sameAs }) });
+    if (got.join) {
+      state.questions[card] = { ...kept, joins: got.join, options: views.questions[card].question.data.engine?.options ?? {} };
+      state.held = state.held.filter((h) => h.id !== card);
+      keep();
+    }
+  }
   const optionNamed = (question, label) => question.options.find((o) => normaliseWords(o.label) === normaliseWords(label))?.label;
 
   // Marks the director's earlier answer as going to the build. A blocked ask's run ends on it as on any answer, so the
@@ -579,9 +594,9 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     const q = card.question;
     const key = keyOf(ask, work);
     const head = key === null ? null : await lookAt(() => headOf(placeOf(ask)));
-    // A joiner raises no card, so it has nothing to show blind.
+    // A joiner raises no card, so it has nothing to show blind, and a card saying what was said before asks for one click.
     const day = dayOf(now());
-    const blind = typeof joins !== 'string' && blindDue({ ask, card: { level: q.level, exempt }, day, lastDay: state.blindDay, roll: blindRoll(id), off: settings()?.blindCards === false });
+    const blind = typeof joins !== 'string' && typeof q.saidBefore !== 'string' && blindDue({ ask, card: { level: q.level, exempt }, day, lastDay: state.blindDay, roll: blindRoll(id), off: settings()?.blindCards === false });
     await write('question', {
       id, work, what: q.what, why: q.why, options: q.options, recommendation: q.recommendation ?? q.options[0]?.label, level: q.level,
       ...(q.level === 4 ? { checks: 'It changes no checks: the build still checks its work before it is added.' } : {}),
@@ -989,6 +1004,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   return {
     file,
     onAsk,
+    onMatch,
     capped,
     async tick() {
       await deliver();

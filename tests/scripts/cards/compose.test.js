@@ -882,6 +882,16 @@ test('a question asked twice on one piece names the piece once', () => {
   assert.deepEqual(input.joiners, ['q-b-2']);
 });
 
+test('a card carrying the director\'s chat words asks for one click', () => {
+  const { question, card } = composeCard(input('question', { said: 'Keep   the banner, it stays.' }));
+  assert.match(question.question, /You said: Keep the banner, it stays\./);
+  assert.match(question.question, /one click/i);
+  assert.equal(card.level, input('question').level, 'the words change nothing the card signs');
+  assert.deepEqual(card.options, composeCard(input('question')).card.options);
+  assert.throws(() => composeCard(input('question', { said: 'one\ntwo' })), /said/);
+  assert.throws(() => composeCard(input('question', { said: '' })), /said/);
+});
+
 test('a blind card keeps the question and every option\'s words, in the order its id gives, with no recommendation', () => {
   const asked = {
     id: 'q-export-csv-3', work: 'export-csv', what: 'Which separator should the export use?', why: 'It changes the file people download.', level: 3, recommendation: 'Tab',
