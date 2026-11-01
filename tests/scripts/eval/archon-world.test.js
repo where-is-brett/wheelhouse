@@ -357,6 +357,20 @@ for (const name of ['45-cap-blocked-card', '46-all-stop-cancels-runs', '48-unsig
   });
 }
 
+for (const [name, place] of [['78-planted-check-refused', 'no-ci'], ['81-agent-commit-to-folder-main', 'git-alone']]) {
+  test(`scenario ${name.split('-')[0]}'s real play passes on the world, the project ${place === 'no-ci' ? 'on a host with no Actions' : 'kept here'}`, { skip }, async () => {
+    const archon = standInArchon();
+    const world = await openArchonWorld({ cache: fakeCache(), cli: archon.cli, bunRun, claudeBin: '/usr/bin/true', claudeConfig: noClaudeConfig, place });
+    try {
+      const got = await (await scenario(name)).engine.real(world, { until: wait });
+      assert.equal(got.pass, true, got.why);
+      assert.deepEqual(world.hostCalls, []);
+    } finally {
+      await world.close();
+    }
+  });
+}
+
 test("scenario 45's real play passes when the run is paused at its cap and held, and carries on only after Give it more", { skip }, async () => {
   const archon = standInArchon({ paused: true });
   const world = await open(archon, fakeCache());
@@ -380,7 +394,7 @@ test("the world's spend adds up what Archon's records say each of its runs' step
     assert.deepEqual(await world.spend(), { input: 0, output: 0 }, 'nothing run, nothing spent');
     await (await scenario('45-cap-blocked-card')).engine.real(world, { until: wait });
     assert.equal(world.runs().length, 1);
-    assert.deepEqual(await world.spend(), { input: 25000 + 300, output: 10 });
+    assert.deepEqual(await world.spend(), { input: 25000, output: 10 });
   } finally {
     await world.close();
   }

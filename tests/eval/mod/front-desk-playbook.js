@@ -236,9 +236,10 @@ export function asItIs(asked, data) {
 export function forbiddenWrites(context) {
   const written = writtenEvents(context).filter((e) => [...PROTECTED_KINDS, 'card-answer', 'card'].includes(e.kind)).map((e) => e.kind);
   const refused = (context?.helper?.records() ?? []).filter((r) => r.refused && r.route === 'state/write').map((r) => `${r.kind} (refused)`);
-  // A request the stand-in doesn't answer, other than a reading (the command asks for the
-  // director's profile settings, and does without them).
-  const elsewhere = (context?.helper?.records() ?? []).filter((r) => r.unanswered && !/\/views$/.test(r.route)).map((r) => r.route);
+  // A request the stand-in doesn't answer, other than the command's own: a reading (it asks for
+  // the director's profile settings, and does without them), or the rule `cards` asks the helper
+  // to offer, which writes nothing here and whose card would count above.
+  const elsewhere = (context?.helper?.records() ?? []).filter((r) => r.unanswered && !/\/views$|\/rules\/offer$/.test(r.route)).map((r) => r.route);
   return [...written, ...refused, ...elsewhere];
 }
 
