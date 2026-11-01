@@ -179,9 +179,9 @@ test('a card the router writes gets its signed seal, and the card doesn\'t wait 
         assert.equal(seal.data.card, ofKind('question')[0].data.id);
         assert.ok(seal.sig, 'the line is signed');
         assert.equal(ofKind('shadow').filter((e) => e.data.line === 'seal').length, 1);
-        // A reader that couldn't start leaves a line saying so, and the card has no score to wait for.
+        // A reader that couldn't start leaves a line saying so. The card stays open until its answer, and then closes with no score.
         assert.equal(ofKind('shadow').filter((e) => e.data.line === 'reading' && e.data.reader === 'none').length, 1);
-        assert.deepEqual(JSON.parse(fs.readFileSync(kept, 'utf8')).open, {});
+        assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(kept, 'utf8')).open), [seal.data.card]);
         await helper.engine.seal();
         assert.equal(ofKind('shadow').length, 2);
         assert.equal(JSON.parse(fs.readFileSync(kept, 'utf8')).waiting.length, 0);
