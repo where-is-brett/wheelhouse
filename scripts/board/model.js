@@ -188,7 +188,8 @@ export function numberedWaiting(views, events) {
   const held = (line) => (heldBackLine(line, views) ? { heldBack: true } : {});
   const items = cards.map((card) => ({ what: oneLine(card.data?.title ?? card.data?.question) || 'A question', since: timeOf(card.at), id: card.id, card: card.id, ...held(card.data?.line) }));
   for (const [id, entry] of Object.entries(questions)) {
-    if (!isRecord(entry) || entry.answer || named.some((card) => namesQuestion(card, id))) continue;
+    // A joiner is answered by its lead's card, so it has no number of its own.
+    if (!isRecord(entry) || entry.answer || entry.joins !== undefined || named.some((card) => namesQuestion(card, id))) continue;
     items.push({ what: questionWords(entry.question?.data) || 'A question from the build', since: timeOf(entry.question?.at), id: `q:${id}`, question: id, ...held(answerLine(id)) });
   }
   return items.sort((a, b) => (a.since ?? '').localeCompare(b.since ?? '')).map((item, i) => ({ n: i + 1, ...item }));

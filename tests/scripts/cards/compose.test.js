@@ -834,3 +834,29 @@ test('the premium model\'s card offers its Allow options, then Not now and Sugge
   refused({ level: 3, checks: undefined }, /premium/, 'premium');
   refused({ target: { at: '26 October 2026' } }, /needs the time the card was offered/, 'premium');
 });
+
+const ASKED = { id: 'q-lead-500001', work: 'lead', what: 'Which page?', why: 'It is yours.', options: [{ label: 'The first', says: 'It opens there.' }, { label: 'The last', says: 'It opens there.' }], recommendation: 'The first', level: 3 };
+
+test('the card lists every piece it answers', () => {
+  const input = answerInput(ASKED, 'The lead', { joiners: [{ id: 'q-b-500001', name: 'The banner' }, { id: 'q-c-500001', name: 'The cart' }] });
+  const { card } = composeCard(input);
+  assert.match(card.question, /The lead, The banner and The cart/);
+  assert.deepEqual(card.joiners, ['q-b-500001', 'q-c-500001']);
+  assert.equal(composeCard(answerInput(ASKED, 'The lead')).card.joiners, undefined);
+});
+
+test('a card with other joiners reads differently, so a click says which it saw', () => {
+  const one = composeCard(answerInput(ASKED, 'The lead', { joiners: [{ id: 'q-b-500001', name: 'The banner' }] })).card;
+  const two = composeCard(answerInput(ASKED, 'The lead', { joiners: [{ id: 'q-b-500001', name: 'The banner' }, { id: 'q-c-500001', name: 'The cart' }] })).card;
+  assert.notEqual(one.question, two.question);
+});
+
+test('a joiner newer than the card answered stays open, saying You said this before', () => {
+  const { card } = composeCard(answerInput(ASKED, 'The banner', { saidBefore: 'The last' }));
+  assert.match(card.question, /You said this before: The last\./);
+  assert.equal(card.recommend, 'The last');
+});
+
+test('a joiner\'s answer needs its own click for a level 4 card: the words never say it was said', () => {
+  assert.equal(answerInput({ ...ASKED, level: 4 }, 'x', { saidBefore: 'The last' }).recommend, 'The first');
+});

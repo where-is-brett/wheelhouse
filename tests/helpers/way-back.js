@@ -6,6 +6,7 @@ import path from 'node:path';
 import { dispatchRun } from '../../scripts/engine/dispatch-run.js';
 import { engineRunner } from '../../scripts/engine/runner.js';
 import { fakeEngine } from '../../scripts/engine/fake.js';
+import { joinQuestions } from '../../scripts/state/joiners.js';
 import { tempFolder } from './homes.js';
 
 const ev = (over) => ({ runId: 'x', at: '2026-10-29T02:00:00.000Z', ...over });
@@ -52,6 +53,7 @@ export function wayBack({ recordings = {}, pace = 3, settings = {}, testCommand 
     return refused ? { ok: false, refused } : realStart(args);
   };
   const write = async (kind, data) => {
+    if (world.refuseWrite?.(kind, data)) throw new Error('the record was refused');
     world.written.push({ kind, data });
     if (kind === 'question') world.questions[data.id] = { question: { data } };
     else if (kind === 'report') world.reports[data.work] = { at: at(), data };
@@ -120,10 +122,18 @@ export function wayBack({ recordings = {}, pace = 3, settings = {}, testCommand 
     },
     pump,
     cardOf: (work) => Object.values(world.questions).filter((q) => q.question.data.work === work && !q.answer).map((q) => q.question.data).at(-1) ?? null,
-    answer(work, label) {
+    // A click. `shown` names the pieces whose joiners its card listed, as the views read them from the card clicked.
+    answer(work, label, { shown = [] } = {}) {
       const q = Object.values(world.questions).filter((c) => c.question.data.work === work && !c.answer).at(-1);
       q.answer = { label, at: at() };
+      const ended = (data) => latest(data.engine?.runId)?.state === 'ended';
+      joinQuestions(world.questions, { ended, shown: (lead) => Object.values(world.questions).filter((c) => c.question.data.joins === lead && shown.includes(c.question.data.work)).map((c) => c.question.data.id) });
       return q.question.data;
+    },
+    // A run the engine ended, as the host records it.
+    endRun(work) {
+      const last = (world.runs[work] ?? []).at(-1)?.data;
+      record({ ...last, state: 'ended', outcome: 'cancelled' });
     },
     answers: () => engine.calls.filter((c) => c.call === 'act' && c.action.answer),
     runsOf: (work) => [...new Set((world.runs[work] ?? []).map((r) => r.data.runId))],

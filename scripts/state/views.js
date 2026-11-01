@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { wheelhouseHome, profileDir, stateDir } from '../lib/paths.js';
 import { listEvents, eventHash, dataHash, CONFIRMABLE_KINDS, PIN_NAMES, READY_COLUMNS } from './events.js';
-import { approvalLine, chatCopy, ciPushLine, confirmLine } from './card-lines.js';
+import { answerLine, approvalLine, chatCopy, ciPushLine, confirmLine } from './card-lines.js';
+import { joinQuestions } from './joiners.js';
 import { isLeanProject } from '../lean/project.js';
 import { verify, readEnrolled } from './signing.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
@@ -414,6 +415,16 @@ function buildLoopViews(sorted, enrolled) {
       q.answer = { label: a.data.label, at: a.at, computer: signedOn(a), ...(typeof a.data.proof === 'string' ? { proof: a.data.proof } : {}) };
     }
   }
+
+  // What each click covers: the joiners listed on the card it was a click on, told by the words it signed.
+  const cardsOf = sorted.filter((e) => e.kind === 'card' && Array.isArray(e.data?.joiners));
+  const clickOn = new Map();
+  for (const a of actions('answer')) if (questions[a.data.questionId]?.answer?.at === a.at) clickOn.set(a.data.questionId, a.data.question);
+  const runsSeen = (runId, work) => sorted.filter((e) => e.kind === 'run' && e.data?.work === work && e.data?.runId === runId).at(-1)?.data;
+  joinQuestions(questions, {
+    shown: (lead) => cardsOf.filter((c) => c.data.line === answerLine(lead) && c.data.question === clickOn.get(lead)).at(-1)?.data.joiners ?? [],
+    ended: (data) => runsSeen(data.engine?.runId, data.work)?.state === 'ended',
+  });
 
   // An incident is open from its declaration until a verified lift after it; a red-main incident also ends with the
   // helper's own close.

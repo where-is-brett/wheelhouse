@@ -9,6 +9,7 @@ import path from 'node:path';
 import { fakeEngine } from '../../../scripts/engine/fake.js';
 import { engineRunner } from '../../../scripts/engine/runner.js';
 import { READER_WORK } from '../../../scripts/delegation/reader.js';
+import { alike } from '../../../scripts/delegation/words.js';
 import { makeEvent } from '../../../scripts/state/events.js';
 import { FIX_LANE } from '../../../scripts/engine/fix-main.js';
 import { wayBack, asking as asks, forever } from '../../helpers/way-back.js';
@@ -1780,4 +1781,104 @@ test('a Stop at a held cap that a crash cut short is finished on the next tick',
   w.restart();
   await w.runner.tick();
   assert.equal(w.stateOf('a'), 'ended');
+});
+
+const ALIKE = { what: 'Which page should it open on?', options: [{ label: 'The first' }, { label: 'The last' }], level: 3 };
+
+test('only the same words and options at level 3 bundle', () => {
+  assert.equal(alike(ALIKE, { ...ALIKE, what: '  which PAGE should it​ open on ', options: [{ label: 'the last.' }, { label: 'THE FIRST' }] }), true);
+  assert.equal(alike({ ...ALIKE, what: 'どのページを開きますか？' }, { ...ALIKE, what: 'どのページを開きますか' }), true, 'in a non-Latin script');
+  assert.equal(alike({ ...ALIKE, what: 'どのページを開きますか' }, { ...ALIKE, what: 'どのページを閉じますか' }), false);
+  assert.equal(alike(ALIKE, { ...ALIKE, options: [{ label: 'The first' }, { label: 'The middle' }] }), false, 'different labels');
+  assert.equal(alike(ALIKE, { ...ALIKE, level: 4 }), false, 'a level 4');
+  assert.equal(alike({ ...ALIKE, level: 2 }, { ...ALIKE, level: 2 }), false, 'nothing but level 3');
+  assert.equal(alike(ALIKE, { ...ALIKE, what: 'Which page should it close on?', topic: 'pages' }), false, 'a matching topic with different words');
+  assert.equal(alike(ALIKE, { ...ALIKE, commands: ['npm i'] }), false, 'a build command is signed for itself');
+  assert.equal(alike(ALIKE, { approval: { pr: 1 } }), false, 'an approval');
+  assert.equal(alike({ ...ALIKE, what: '...' }, { ...ALIKE, what: '...' }), false, 'nothing left of the words');
+});
+
+const OTHER_IDS = [{ id: 'x', label: 'keep it small' }, { id: 'y', label: 'Do the whole page' }];
+const twoAlike = () => wayBack({ recordings: { a: asks('qa', { reason: 'Which page?' }), b: asks('qb', { reason: 'which page', options: OTHER_IDS, recommend: 'y' }) } });
+
+test('an alike question joins the open card, in any lane, and raises no card of its own', async () => {
+  const w = wayBack({ recordings: { a: asks('qa', { reason: 'Which page?' }), b: asks('qb', { reason: 'which page' }) } });
+  w.put('a', { place: 0 });
+  w.put('b', { lane: 'bug', place: 1 });
+  await w.tick(2);
+  const [lead, joiner] = w.cards();
+  assert.equal(lead.joins, undefined);
+  assert.equal(joiner.joins, lead.id);
+  assert.equal(w.written.filter((x) => x.kind === 'note' && x.data.about === 'cards-waiting' && x.data.ids.includes(joiner.id)).length, 0);
+});
+
+test('two questions of one piece stay two cards', async () => {
+  const w = wayBack({ recordings: { a: [...asks('q1', { reason: 'Which page?' }).slice(0, 3), ...asks('q2', { reason: 'Which page?' }).slice(1)] } });
+  w.put('a');
+  await w.tick();
+  w.answer('a', 'Keep it small');
+  await w.tick(4);
+  assert.deepEqual(w.cards().map((q) => q.joins), [undefined, undefined]);
+});
+
+test('a question at level 4, a merge question and trouble never join', async () => {
+  const w = wayBack({ recordings: { a: asks('qa', { reason: 'Which page?' }), b: asks('qb', { reason: 'Which page?', level: 4 }), c: asks('qc', { reason: 'Which page?', kind: 'trouble' }) } });
+  w.put('a', { place: 0 });
+  w.put('b', { place: 1 });
+  w.put('c', { place: 2 });
+  await w.tick(2);
+  assert.deepEqual(w.cards().map((q) => q.joins), [undefined, undefined, undefined]);
+});
+
+test('the answer goes to each piece, once, by each one\'s own option ids', async () => {
+  const w = twoAlike();
+  w.put('a', { place: 0 });
+  w.put('b', { place: 1 });
+  await w.tick(2);
+  w.answer('a', 'Do the whole page', { shown: ['b'] });
+  await w.tick(4);
+  const sent = w.answers().map((c) => c.action.answer);
+  assert.deepEqual(sent.map((x) => x.ask).sort(), ['qa', 'qb']);
+  assert.equal(sent.find((x) => x.ask === 'qa').choice, 'b');
+  assert.equal(sent.find((x) => x.ask === 'qb').choice, 'y');
+});
+
+test('a joined piece waits until the lead is answered, and only for what its card showed', async () => {
+  const w = twoAlike();
+  w.put('a', { place: 0 });
+  w.put('b', { place: 1 });
+  await w.tick(2);
+  assert.deepEqual([...w.runner.waitingWork()].sort(), ['a', 'b']);
+  w.answer('a', 'Do the whole page');
+  await w.tick(4);
+  assert.deepEqual(w.answers().map((c) => c.action.answer.ask), ['qa'], 'the card never showed b, so b is still asked');
+  assert.deepEqual([...w.runner.waitingWork()], ['b']);
+});
+
+test('a piece that ended leaves the bundle, and the rest are answered', async () => {
+  const w = wayBack({ recordings: { a: asks('qa', { reason: 'Which page?' }), b: asks('qb', { reason: 'Which page?' }), c: asks('qc', { reason: 'Which page?' }) } });
+  w.put('a', { place: 0 });
+  w.put('b', { place: 1 });
+  w.put('c', { place: 2 });
+  await w.tick(2);
+  w.endRun('a');
+  w.endRun('c');
+  w.answer('a', 'Keep it small', { shown: ['b', 'c'] });
+  await w.tick(4);
+  assert.deepEqual(w.answers().map((c) => c.action.answer.ask), ['qb']);
+  assert.equal(w.notes().filter((n) => /wasn't needed/.test(n)).length, 0, 'an ended piece is said of nowhere');
+});
+
+test('a lead the record refused keeps its joiner back, and a lead dropped frees it', async () => {
+  const w = wayBack({ recordings: { a: asks('qa', { reason: 'Which page?' }), b: asks('qb', { reason: 'Which page?' }) } });
+  let refusing = true;
+  w.refuseWrite = (kind) => refusing && kind === 'question';
+  w.put('a', { place: 0 });
+  w.put('b', { place: 1 });
+  await w.tick(2);
+  assert.equal(w.cards().length, 0);
+  refusing = false;
+  await w.tick();
+  assert.equal(w.cards().length, 2);
+  assert.equal(w.cards()[1].joins, w.cards()[0].id);
 });

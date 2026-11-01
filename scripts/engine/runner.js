@@ -27,6 +27,7 @@ import { MERGE_WORK } from './dispatcher.js';
 import { routerWaiting } from './waiting.js';
 import { since } from '../foreman/queue.js';
 import { READER_WORK } from '../delegation/reader.js';
+import { alike } from '../delegation/words.js';
 import { mergeQuestionWords, parkedWords, PARKED_WHY, PARKED_BECAUSE, PARKED_MEANWHILE, PARKED_APPROVE_SAYS } from './words.js';
 import { parkChoice } from './archon/asks.js';
 
@@ -361,6 +362,25 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     const [pr, sha] = id.split(':');
     return Boolean(sha) && Boolean(views.approvals?.[pr]?.[sha]);
   }
+  // Whether a card may stand for others or join one: a question a rule could settle, never the merge queue's or trouble,
+  // and never one that ignores the budget, which is asked for itself.
+  const bundles = (item) => isPlain(item.card?.question) && cardKind(item.ask) === 'question' && item.work !== MERGE_WORK && !ignoresBudget(item);
+  // Alike questions across pieces are one card (delegated decisions plan, choice 12). A question alike an open card's,
+  // written or still to come, is marked to join it, and a mark whose lead has gone is taken off.
+  function bundleAlike(views) {
+    for (const item of state.waiting) {
+      if (typeof item.joins === 'string' && !state.waiting.some((w) => w.id === item.joins) && !state.questions[item.joins]) delete item.joins;
+    }
+    const open = Object.entries(state.questions).filter(([id, kept]) => !kept.cap && !kept.joins && isPlain(kept.ask) && !state.delivered[id] && isPlain(views.questions?.[id]) && !isPlain(views.questions[id].answer))
+      .map(([id, kept]) => ({ id, work: kept.work, words: views.questions[id].question?.data, kept }))
+      .filter((lead) => cardKind(lead.kept.ask) === 'question' && lead.kept.work !== MERGE_WORK);
+    for (const item of state.waiting) {
+      if (typeof item.joins === 'string' || !bundles(item)) continue;
+      const lead = open.find((l) => l.work !== item.work && alike(l.words, item.card.question));
+      if (lead) item.joins = lead.id;
+      else open.push({ id: item.id, work: item.work, words: item.card.question });
+    }
+  }
   async function showNow() {
     const today = dayOf(now());
     if (state.shown.day !== today) state.shown = { day: today, count: 0 };
@@ -370,7 +390,9 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     // A pull lifts a card and spends no budget; an answered card has nothing left to hold.
     const pulled = new Set(Array.isArray(views.cardsWaiting?.pulled) ? views.cardsWaiting.pulled : []);
     state.held = state.held.filter((h) => !pulled.has(h.id) && !answered(h.id, views));
-    const items = [...state.held, ...state.waiting];
+    state.waiting.forEach(nameCard);
+    bundleAlike(views);
+    const items = [...state.held, ...state.waiting.filter((w) => typeof w.joins !== 'string')];
     // Bundled approvals are shown together and count as one card; each is still its own signed approval.
     // A bundle is exempt when any card in it is, so what holds up all work is never held back with it.
     const groupOf = (importance, members) => ({ importance, exempt: members.some(ignoresBudget), items: members });
@@ -379,7 +401,6 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       : items.map((w) => groupOf(w.importance, [w]));
     const { show: shown } = cardBudget({ cards: groups, cardsPerDay, shownToday: state.shown.count });
     const over = groups.filter((g) => !shown.includes(g)).flatMap((g) => g.items);
-    state.waiting.forEach(nameCard);
     keep();
     // Named as held before it is written, so no tick reads a held card as pushed.
     const ids = over.map((item) => item.id);
@@ -417,9 +438,14 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       state.held.push(item);
       keep();
     }
+    // A joiner follows its lead, whose card has to be on the record first. It raises no card and spends no budget.
+    for (const item of state.waiting.filter((w) => typeof w.joins === 'string' && !state.waiting.some((l) => l.id === w.joins))) {
+      await written(item);
+      keep();
+    }
   }
 
-  async function writeCard({ id, card, work, runId, ask }) {
+  async function writeCard({ id, card, work, runId, ask, joins }) {
     if (card.approval) {
       const a = card.approval;
       const compose = (what) => composeCard({
@@ -449,9 +475,11 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       id, work, what: q.what, why: q.why, options: q.options, recommendation: q.recommendation ?? q.options[0]?.label, level: q.level,
       ...(q.level === 4 ? { checks: 'It changes no checks: the build still checks its work before it is added.' } : {}),
       engine: { runId, ask: ask.id, options: q.engine.options },
+      ...(typeof joins === 'string' ? { joins } : {}),
     });
-    state.questions[id] = { runId, ask, work };
-    sealCard({ id, kind: cardKind(ask), work, runId, level: q.level, ...placeOf(ask) });
+    state.questions[id] = { runId, ask, work, ...(typeof joins === 'string' ? { joins } : {}) };
+    // A joiner raises no card, so it has none to seal.
+    if (typeof joins !== 'string') sealCard({ id, kind: cardKind(ask), work, runId, level: q.level, ...placeOf(ask) });
   }
 
   function waitingOn() {
@@ -470,6 +498,8 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     const first = (views.runs?.[kept.work] ?? []).find((r) => r?.data?.runId === kept.runId);
     return Boolean(queued && first) && !since(first, queued);
   }
+  // Whether a question was answered as part of a bundle, as a joiner or as the lead of one.
+  const bundled = (key, kept) => typeof kept.joins === 'string' || Object.values(state.questions).some((k) => k.joins === key);
   // Tells the dispatcher of each answer already settled, so a crash just after one leaves no entry behind.
   function settled() {
     for (const [key, how] of Object.entries(state.delivered)) {
@@ -558,6 +588,13 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       }
       // Held at its cap: sent once Give it more lifts the hold.
       if (held(kept.runId)) continue;
+      // A piece that ended left the bundle: the answer goes to the rest, and of this one nothing is said.
+      if (bundled(key, kept) && (views.runs?.[kept.work] ?? []).filter((r) => r?.data?.runId === kept.runId).at(-1)?.data?.state === 'ended') {
+        state.delivered[key] = 'ended';
+        keep();
+        drop(kept.work, key);
+        continue;
+      }
       if (!answer) {
         state.delivered[key] = 'nothing';
         keep();

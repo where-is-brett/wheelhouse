@@ -253,15 +253,17 @@ const PLAIN_SHAPES = {
   work: { must: ['id', 'title', 'lane', 'visible', 'dependsOn'], may: ['doc', 'place', 'parent', 'from', 'level'] },
   feature: { must: ['work', 'step'], may: ['worktree', 'branch', 'session', 'plan', 'files', 'brief', 'slice', 'pausedFor'] },
   // `checks`: what answering it does to the checks, one line, for a level 4 question's card.
-  question: { must: ['id', 'work', 'what', 'why', 'options', 'recommendation', 'level'], may: ['commands', 'checks', 'engine'] },
+  // `joins`: the open question whose card answers this one too (scripts/state/joiners.js).
+  question: { must: ['id', 'work', 'what', 'why', 'options', 'recommendation', 'level'], may: ['commands', 'checks', 'engine', 'joins'] },
   report: { must: ['work', 'outcome', 'summary', 'rulings'], may: ['pr', 'provenance'] },
   // A red-main incident (design on Archon, section 7.7) names its kind, the pull request the merge queue suspects
   // (or null) and the fix's work; the helper opens and closes it, and the director never needs to.
   incident: { must: ['id', 'what'], may: ['kind', 'suspect', 'work'] },
   amendment: { must: ['work', 'change', 'hash'], may: [] },
   // `event`: the id of the record a card without a set line was made from (a lineage hold), so it is made once.
-  // `parts`: the card's parts as the composer gives them; `revises`: the id of the card a revised proposal replaces.
-  card: { must: ['question', 'header', 'options', 'kind', 'level'], may: ['descriptions', 'line', 'code', 'recommend', 'importance', 'topic', 'concepts', 'event', 'parts', 'revises'] },
+  // `parts`: the card's parts as the composer gives them; `revises`: the id of the card a revised proposal replaces;
+  // `joiners`: the questions its answer also answers, each piece named on the card.
+  card: { must: ['question', 'header', 'options', 'kind', 'level'], may: ['descriptions', 'line', 'code', 'recommend', 'importance', 'topic', 'concepts', 'event', 'parts', 'revises', 'joiners'] },
   // A click on a card's option: the card by its id or its question, and the label chosen. A click in an agent's
   // chat (ruling P5-17) also names the card's `hash`, the `commit` it approves when it approves one, and its
   // `proof`; a Lean record's line moved up (lean-record.js) names its tier, proof, who and whether it was a click.
@@ -504,6 +506,9 @@ function checkPlain(kind, data) {
       bad('has commands that are not a list of commands');
     }
     if (data.checks !== undefined && (!isText(data.checks) || /[\r\n\v\f\u0085\u2028\u2029]/.test(data.checks))) bad('has checks that are not one line of text');
+    if (data.joins !== undefined && (typeof data.joins !== 'string' || !questionIdOf(data.joins) || data.joins === data.id || data.level !== 3 || data.commands !== undefined)) {
+      bad('joins a card only at level 3, by another question\'s id');
+    }
     // A question from the build engine names the run and the ask its answer goes back to, and each option's id there.
     if (data.engine !== undefined) {
       const e = data.engine;
@@ -555,6 +560,7 @@ function checkPlain(kind, data) {
     optionalText('recommend');
     optionalText('event');
     optionalText('revises');
+    if (data.joiners !== undefined && !(Array.isArray(data.joiners) && data.joiners.every(isText))) bad('has joiners that are not a list of question ids');
     // The card's parts, as the composer gives them (scripts/cards/compose.js): the pane draws them and the chat's text is built from them.
     if (data.parts !== undefined && !(isPlain(data.parts) && ['ask', 'what', 'why', 'meanwhile'].every((k) => isText(data.parts[k])) && Array.isArray(data.parts.options))) {
       bad('has parts that are not a question, what, why, meanwhile and options');
