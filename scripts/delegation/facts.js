@@ -82,11 +82,11 @@ async function configAt(read, base) {
   return { ...config, plugin: manifest !== '' };
 }
 
-// Whether the folder holds work its commits don't show, read without taking git's lock from the run.
-async function uncommitted(call) {
-  const got = await call(['status', '--porcelain', '-z', '--no-renames'], { env: { GIT_OPTIONAL_LOCKS: '0' } });
+// The paths of the folder's work its commits don't show, read without taking git's lock from the run.
+async function uncommitted(call, ...more) {
+  const got = await call(['status', '--porcelain', '-z', '--no-renames', ...more], { env: { GIT_OPTIONAL_LOCKS: '0' } });
   if (got?.code !== 0) throw new Error('git could not read that');
-  return String(got.stdout ?? '').split('\0').filter(Boolean).some((row) => row.slice(3) !== OVERLAY_FILE);
+  return String(got.stdout ?? '').split('\0').filter(Boolean).map((row) => row.slice(3)).filter((file) => file !== OVERLAY_FILE);
 }
 
 // The facts of a card's change: its branch, read in its folder, against `baseCommit`, the default branch's head as the
@@ -101,9 +101,31 @@ export async function cardFacts({ card, git, baseCommit }) {
     const base = await commitOf(read, baseCommit);
     const facts = await changeFacts({ git: call, base, head, config: await configAt(read, base) });
     if (facts.readable !== true) return facts;
-    return facts.paths.length === 0 || await uncommitted(call) ? { readable: false, head } : { ...facts, base };
+    return facts.paths.length === 0 || (await uncommitted(call)).length > 0 ? { readable: false, head } : { ...facts, base };
   } catch {
     return UNREAD_FACTS;
+  }
+}
+
+// Every path a parked piece's branch has changed so far: committed against the main line, plus what isn't committed, or
+// null when it can't be read. `baseCommit` is the main line's head; a folder that hasn't that commit yet uses its own copy
+// of the main line, since only where the branch left it matters here. It decides no gate: it only keeps files back.
+export async function pathsSoFar({ folder, branch, git, baseCommit, mainBranch }) {
+  if (!isBranchName(branch) || typeof folder !== 'string' || folder === '') return null;
+  try {
+    const { call } = git(folder);
+    const read = runner(call);
+    const head = await commitOf(read, `refs/heads/${branch}`);
+    let base = null;
+    for (const ref of [baseCommit, `refs/remotes/origin/${mainBranch}`, `refs/heads/${mainBranch}`]) {
+      base = typeof ref === 'string' ? await commitOf(read, ref).catch(() => null) : null;
+      if (base) break;
+    }
+    if (!base) return null;
+    const committed = (await read(['diff', ...NO_EXTRAS, '--name-only', '-z', '--end-of-options', `${base}...${head}`, '--'])).split('\0').filter(Boolean);
+    return [...new Set([...committed, ...await uncommitted(call, '--untracked-files=all')])];
+  } catch {
+    return null;
   }
 }
 

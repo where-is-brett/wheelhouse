@@ -79,7 +79,7 @@ import { stopEngine, endRun, stopWords } from '../engine/stop.js';
 import { engineRoutes, engineDirOf } from '../engine/routes.js';
 import { engineRunner } from '../engine/runner.js';
 import { recordOnly, cardContext, historyOf } from '../delegation/record-only.js';
-import { cardDiff, cardFacts } from '../delegation/facts.js';
+import { cardDiff, cardFacts, pathsSoFar } from '../delegation/facts.js';
 import { readerView } from '../delegation/view.js';
 import { prepareReaderFolder } from '../delegation/reader.js';
 import { setupStamp } from '../delegation/stamp.js';
@@ -5141,6 +5141,12 @@ export async function startHelper({
       openedBy: (runId) => engineRun.openedBy(project, runId),
       queueFolder: () => (queueFolder ?? ownQueueFolder)(project),
       queuePlace: () => queueFolderOf(project),
+      branchPaths: async ({ runId, branch }) => {
+        const seen = await engine.inspect(runId);
+        const adapter = await adapterNow();
+        const mainBranch = await defaultBranchOf(project, adapter);
+        return pathsSoFar({ folder: seen?.folder, branch: branch ?? seen?.branch, git: gitRoute({ run }), baseCommit: await adapter.branchHead(mainBranch), mainBranch });
+      },
       moving: () => holdsWork(project),
       isLocal: () => readProject(project)?.host === 'local',
       localQueue: async () => {
@@ -5162,8 +5168,10 @@ export async function startHelper({
       openedOf: (pr) => engineRun.openedOf(project, pr),
       keepReviews: (runId) => engineRun.keepTaskReviews(project, runId),
       prTitleOf: async (pr) => (await (await contextFor(project)).adapter().then((adapter) => adapter.prState(pr))).title ?? null,
+      release: (work) => dispatcher.release(work),
     });
     runner.onStart((args) => dispatcher.startAgain(args));
+    dispatcher.onWaiting(() => runner.waitingWork());
     runner.onMergeRuled(() => dispatcher.queueDue());
     const adapterNow = async () => (await contextFor(project)).adapter();
     const checks = checkRunner({

@@ -73,8 +73,10 @@ const inSentence = (title) => (/^[A-Z][a-z]/.test(title) ? title.charAt(0).toLow
 //   engine wouldn't stop at its cap ({ ended, survivors });
 // - `openedOf(pr)` the helper's own record of what opened a pull request ({ lane, work, ... }), or null; `prTitleOf(pr)`
 //   its title from the host, or null; `keepReviews(runId)` keeps what an ended run's task reviews last said, in the
-//   helper's own record, true once done.
-export function engineRunner({ engine, file, readViews, write, stopped = () => false, now = () => new Date(), settings = () => ({}), workOf = () => null, titleOf = (work) => work, endRun = async () => ({ ended: [], survivors: [] }), openedOf = () => null, prTitleOf = async () => null, keepReviews = async () => true, onCard = () => {}, onReaderAsk = () => {} } = {}) {
+//   helper's own record, true once done;
+// - `release(work)` ends a piece's reservation (dispatch-run.js), for an end that writes no report: the director's Stop
+//   and a bug that moves lane.
+export function engineRunner({ engine, file, readViews, write, stopped = () => false, now = () => new Date(), settings = () => ({}), workOf = () => null, titleOf = (work) => work, endRun = async () => ({ ended: [], survivors: [] }), openedOf = () => null, prTitleOf = async () => null, keepReviews = async () => true, onCard = () => {}, onReaderAsk = () => {}, release = () => {} } = {}) {
   let state = readState(file);
   const keep = () => saveState(file, state);
   const note = (words, extra = {}) => write('note', { about: 'engine', words, ...extra });
@@ -82,6 +84,9 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   // A card has been written: the seals' trouble is never the card's.
   const sealCard = (card) => {
     try { onCard(card); } catch { /* it costs a seal, never a card */ }
+  };
+  const letGo = (work) => {
+    try { release(work); } catch { /* the files stay held, which only holds new work back */ }
   };
   const placeOf = (ask) => ({ branch: ask?.context?.branch ?? null, folder: ask?.context?.folder ?? null });
 
@@ -326,10 +331,12 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       }
       state.delivered[key] = got.ok ? 'answered' : 'refused';
       delete state.tries[key];
+      if (kept.ask?.kind === 'blocked' && answer.choice === STOP) letGo(kept.work);
       if (got.ok && typeof kept.ask?.mergeChoice === 'string' && answer.choice === kept.ask.mergeChoice) mergeRuled();
       const runLane = (views.runs?.[kept.work] ?? []).filter((r) => r?.data?.runId === kept.runId).at(-1)?.data?.lane ?? workOf(kept.runId)?.lane;
       const move = got.ok && runLane === 'bug' && kept.ask?.kind === 'blocked' && kept.ask?.topic === BIGGER && Object.hasOwn(MOVES, answer.choice) ? MOVES[answer.choice] : undefined;
       if (move) {
+        letGo(kept.work);
         keep();
         await note(`${titleOf(kept.work)} is bigger than a bug, so it stops in the bug lane; the First Mate records it as ${move} and asks you to approve it.`, { work: kept.work });
         continue;
@@ -377,6 +384,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
 
   async function capAnswer(kept, label) {
     if (label !== MORE) {
+      letGo(kept.work);
       if (held(kept.runId)) {
         // The cancel keeps its worktree; abandoning it would remove the uncommitted work. An engine built without the
         // patch for paused runs refuses, and the run stays paused there, spending nothing. Either way the record ends
