@@ -19,10 +19,12 @@ export default {
       const waiting = () => world.records('note').filter((n) => n.data.about === 'cards-waiting').at(-1)?.data.count ?? 0;
       await world.tick();
       if (!await until(async () => { await world.tick(); return questions().length >= 3; })) return { pass: false, why: `${questions().length} cards were shown for the first three asks, not three` };
-      // The first is answered, its run ends, and the fourth piece starts and asks.
+      // Three parked runs hold no place, so the fourth piece starts and asks while the answered first run is still going.
       world.answer(questions()[0].data, 'Do the whole page');
       if (!await until(async () => { await world.tick(); return world.starts().length === 4 && waiting() === 1; })) return { pass: false, why: `after the fourth ask, ${world.starts().length} runs had started and ${waiting()} cards waited` };
       if (questions().length !== 3) return { pass: false, why: `${questions().length} cards were shown in one day, over the budget of three` };
+      const firstEnded = () => world.records('run').filter((r) => r.data.work === WORK[0]).at(-1)?.data.state === 'ended';
+      if (!await until(async () => { await world.tick(); return firstEnded(); })) return { pass: false, why: 'the answered run didn\'t end' };
       at('2026-10-30T09:00:00.000Z');
       await world.tick();
       if (!await until(async () => { await world.tick(); return questions().length === 4; })) return { pass: false, why: 'the fourth card wasn\'t shown the next day' };

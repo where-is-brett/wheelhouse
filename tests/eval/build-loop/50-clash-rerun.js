@@ -40,6 +40,7 @@ export default {
         if (!card || card.data.level !== 3) return { pass: false, why: 'the second clash brought no level-3 card' };
         if (starts.length !== 1) return { pass: false, why: 'the second clash was run again without the director' };
         views.questions[card.data.id] = { question: { data: card.data }, answer: { label: TRY_AGAIN } };
+        await d.tick(); // Try again joins the returning work on this tick and starts on the next.
         await d.tick();
         if (starts.length !== 2 || starts[1].carryOn !== true) return { pass: false, why: 'Try again didn\'t start it once more' };
         return { pass: true, why: 'run again on its branch after one clash; a card after the second; Try again started it' };
