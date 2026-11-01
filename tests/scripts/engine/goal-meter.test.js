@@ -29,7 +29,7 @@ test('tokens add the goal\'s cost records, each live run and each queue run', as
   };
   const seen = { r2: { status: 'running', steps: [{ tokens: 20, source: 'reported', dollars: 1 }] }, q1: { status: 'ended', steps: [{ tokens: 3, source: 'reported', dollars: 1 }] } };
   const got = await meter({ views, queueRuns: ['q1'], inspect: async (id) => seen[id] });
-  assert.deepEqual(got, { tokens: 123, points: null, requests: null, unknown: false, reached: null, left: 20000000 - 123 });
+  assert.deepEqual(got, { tokens: 123, points: null, requests: null, unknown: false, reached: null, left: 20000000 - 123, settled: true, unread: false });
 });
 
 test('a figure added from outside joins the tokens', async () => {
@@ -178,4 +178,36 @@ test('the share at Start is a reading fresh at Start, or nothing', () => {
   assert.equal(shareAtStart(reading(40, '2026-11-01T10:00:00.000Z'), goal), null, 'one read long after would leave out what was spent before it');
   assert.equal(shareAtStart({ share: null, shareAt: null, resetsAt: null }, goal), null);
   assert.equal(shareAtStart(null, goal), null);
+});
+
+// Whether `reached` may end a goal, as well as hold a start: one failed read lifts the tokens for a tick.
+const liveViews = { runs: { a: [run('r', 'quick', 'started')] }, costs: {} };
+const counted = { status: 'running', steps: [{ tokens: 50, source: 'reported', dollars: 1 }] };
+
+test('a run that can\'t be read lifts the tokens, and says `reached` rests on that', async () => {
+  const got = await meter({ goal: goalOf({ tokens: 100 }), views: liveViews, inspect: async () => { throw new Error('no answer'); } });
+  assert.deepEqual([got.reached, got.settled, got.unread], ['tokens', false, true]);
+});
+
+test('a spend met on figures alone is settled, whatever else couldn\'t be read', async () => {
+  const views = { runs: { a: [run('r', 'quick', 'started')], b: [run('s', 'quick', 'started')] }, costs: {} };
+  const got = await meter({ goal: goalOf({ tokens: 50 }), views, inspect: async (id) => (id === 'r' ? counted : { unread: true, status: 'unknown', steps: [] }) });
+  assert.deepEqual([got.reached, got.settled, got.unread], ['tokens', true, true]);
+});
+
+test('a live run of unknown spend read clearly counts its cap, unsettled, and isn\'t a failed read', async () => {
+  const unknown = { status: 'running', steps: [{ tokens: null, dollars: null, source: 'unknown' }] };
+  const got = await meter({ goal: goalOf({ tokens: 100 }), views: liveViews, inspect: async () => unknown });
+  assert.deepEqual([got.reached, got.settled, got.unread], ['tokens', false, false]);
+});
+
+test('an ended run of unknown spend is settled at its whole cap', async () => {
+  const views = { runs: { a: [run('r', 'quick', 'started'), run('r', 'quick', 'ended')] }, costs: { a: [cost('r', null, { source: 'unknown' })] } };
+  const got = await meter({ goal: goalOf({ tokens: 100 }), views });
+  assert.deepEqual([got.reached, got.settled], ['tokens', true]);
+});
+
+test('points and requests met are settled', async () => {
+  const got = await meter({ goal: goalOf({ tokens: 20000000, requests: 2 }), requests: 2 });
+  assert.deepEqual([got.reached, got.settled], ['requests', true]);
 });

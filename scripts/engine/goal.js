@@ -18,7 +18,8 @@ import { namesGuardrail } from '../gate/guardrails.js';
 import { SLUG } from '../lib/build-loop.js';
 import { checkKey, checkProblem } from './order.js';
 import { endedBy } from '../foreman/queue.js';
-import { MAX_PIECES, MAX_HOURS } from './goal-limits.js';
+import { awakeMinutes } from './spend.js';
+import { MAX_PIECES, MAX_HOURS, WIND_DOWN_MINUTES, STUCK_MINUTES, FAILED_IN_A_ROW, REDS_TO_STOP, SPEND_UNREAD_MINUTES } from './goal-limits.js';
 
 const isObject = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const isText = (x) => typeof x === 'string' && x.trim() !== '';
@@ -242,24 +243,86 @@ function endedGoals(views) {
   return Object.entries(goals).filter(([, goal]) => goal.ended !== null).sort(([, a], [, b]) => Date.parse(a.ended.at) - Date.parse(b.ended.at));
 }
 
-// What a goal says of starts at `now` (a Date), for `dispatch` and `gateStart`, or null when none says anything.
-//   In force: { id, pieces, only: true, startsStopped, until, state }. `pieces` are those still covered, in the sheet's order;
-//   `startsStopped` says `until` has passed, so its pieces hold too.
-//   After its end, until a new sheet: { id, pieces, only: false, startsStopped: true }, `pieces` being what is unfinished.
-export function goalRule(views, now) {
-  const live = goalInForce(views);
-  if (live !== null) {
-    const pieces = live.sheet.pieces.map((p) => p.work).filter((work) => pieceCovered(live, work, views));
-    return { id: live.id, pieces, only: true, startsStopped: now.getTime() >= Date.parse(live.until), until: live.until, state: live.state };
-  }
+// The latest goal to end: { id, ...its entry }, or null.
+export function lastEnded(views) {
   const last = endedGoals(views).at(-1);
-  if (last === undefined) return null;
-  const [id, goal] = last;
-  const unfinished = goal.sheet.pieces.map((p) => p.work).filter((work) => {
+  return last === undefined ? null : { id: last[0], ...last[1] };
+}
+
+// What `goal` (an entry with its sheet) leaves unfinished: its pieces neither merged nor ended, by the sheet and not by what is
+// still covered, so a piece whose work record changed since the signature is named here.
+export function unfinishedOf(goal, views) {
+  return goal.sheet.pieces.map((p) => p.work).filter((work) => {
     const report = views?.reports?.[work];
     return report?.data?.outcome !== 'merged' && !endedBy(views?.reports, work, views?.work?.[work]?.work);
   });
-  return unfinished.length === 0 ? null : { id, pieces: unfinished, only: false, startsStopped: true };
+}
+
+// What a goal says of starts at `now` (a Date), for `dispatch` and `gateStart`, or null when none says anything.
+//   In force: { id, pieces, only: true, startsStopped, until, state }. `pieces` are those still covered, in the sheet's order;
+//   `startsStopped` says `until` has passed or `winding` is set, so its pieces hold too. `winding` is the helper's kept word
+//   that the goal is winding down (`goalStep`).
+//   After its end, until a new sheet: { id, pieces, only: false, startsStopped: true }, `pieces` being what is unfinished.
+export function goalRule(views, now, { winding = false } = {}) {
+  const live = goalInForce(views);
+  if (live !== null) {
+    const pieces = live.sheet.pieces.map((p) => p.work).filter((work) => pieceCovered(live, work, views));
+    return { id: live.id, pieces, only: true, startsStopped: winding || now.getTime() >= Date.parse(live.until), until: live.until, state: winding ? 'winding' : live.state };
+  }
+  const last = lastEnded(views);
+  if (last === null) return null;
+  const unfinished = unfinishedOf(last, views);
+  return unfinished.length === 0 ? null : { id: last.id, pieces: unfinished, only: false, startsStopped: true };
+}
+
+// What a goal in force does next (unattended goals design, section 8), pure: { state, ending?, cancel? }. `state` is `running`,
+// `waiting` (all that is left waits on the director, spending nothing), `winding` or `ended`. `ending` is how it ends, or will
+// once it has wound down; `cancel` the runs to cancel now, each keeping its worktree.
+//   facts: { pieces: { [work]: 'queued' | 'going' | 'waiting' | 'passed' | 'failed' | 'merged' | 'ended' }, failedInARow, reds, meter,
+//            unreadSince, lastStepAt, parkedRuns, liveRuns, fixRuns, windingSince, windingFor, slept, endAsked, allStop, lastCheck }.
+// `passed` is a feature whose own run passed, with only its switch-on to come. `failed` has its card on the way. `parkedRuns` are
+// at a usage limit, `liveRuns` the goal's runs at work, `fixRuns` a red main line's: the fix lane isn't held by time, so only a
+// spend or the director's stop ends one. `lastCheck` is null, `passed` or `failed`.
+export function goalStep({ goal, facts, now }) {
+  const { liveRuns = [], parkedRuns = [], fixRuns = [], slept = [], meter = null, endAsked = null, lastCheck = null } = facts;
+  const pieces = Object.values(facts.pieces ?? {});
+  const has = (...states) => pieces.some((state) => states.includes(state));
+  const end = (ending, cancel = []) => ({ state: 'ended', ending, ...(cancel.length > 0 ? { cancel } : {}) });
+  const everyRun = [...liveRuns, ...parkedRuns, ...fixRuns];
+
+  if (facts.allStop === true) return end('all-stop');
+  if (endAsked?.now === true) return end('end-goal', everyRun);
+  const allMerged = pieces.length > 0 && pieces.every((state) => state === 'merged');
+  if (allMerged && lastCheck === 'passed') return end('done');
+  if (allMerged && lastCheck === 'failed') return end('check-failed');
+  if (has('passed') && pieces.every((state) => state === 'merged' || state === 'passed')) return end('done');
+  const checking = allMerged && lastCheck === null;
+
+  const unreadTooLong = meter?.unread === true && typeof facts.unreadSince === 'string' && awakeMinutes(facts.unreadSince, now, slept) >= SPEND_UNREAD_MINUTES;
+  if (typeof meter?.reached === 'string' && (meter.settled === true || unreadTooLong) && !checking) return end('spend', everyRun);
+
+  const stuck = () => {
+    const stop = goal.sheet.stopEarly ?? {};
+    if (facts.failedInARow >= (stop.failedInARow ?? FAILED_IN_A_ROW) || facts.reds >= (stop.reds ?? REDS_TO_STOP)) return true;
+    return liveRuns.length > 0 && awakeMinutes(facts.lastStepAt, now, slept) >= STUCK_MINUTES;
+  };
+  const moving = liveRuns.length > 0 || parkedRuns.length > 0 || has('going', 'queued', 'failed') || checking;
+  const allWaiting = !moving && has('waiting', 'passed');
+  const pastUntil = now.getTime() >= Date.parse(goal.sheet.until);
+  if (typeof facts.windingSince !== 'string') {
+    if (pastUntil && allWaiting) return end('waiting-for-you');
+    if (!moving && !allWaiting) return end('stuck');
+    const why = endAsked !== null ? 'end-goal' : stuck() ? 'stuck' : pastUntil ? 'time' : null;
+    if (why === null) return { state: allWaiting ? 'waiting' : 'running' };
+    return windDown({ why, since: now.toISOString() });
+  }
+  return windDown({ why: facts.windingFor, since: facts.windingSince });
+
+  function windDown({ why, since }) {
+    if (awakeMinutes(since, now, slept) >= WIND_DOWN_MINUTES) return end(why, [...liveRuns, ...parkedRuns]);
+    if (liveRuns.length === 0 && !checking) return end(why, parkedRuns);
+    return { state: 'winding', ending: why, cancel: parkedRuns };
+  }
 }
 
 // The one gate every start passes (unattended goals design, section 6): null, or { goalHeld: true, goal, why }, `why` being

@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { dataHash } from '../../../scripts/state/events.js';
-import { sheetHash, checkSheet, narrowed, goalInForce, pieceCovered, goalsView as viewOf, startProblem, goalRule, gateStart, orderGoal } from '../../../scripts/engine/goal.js';
+import { sheetHash, checkSheet, narrowed, goalInForce, pieceCovered, goalsView as viewOf, startProblem, goalRule, gateStart, orderGoal, goalStep, unfinishedOf } from '../../../scripts/engine/goal.js';
 import { MAX_PIECES, MAX_HOURS, GOAL_ENDINGS } from '../../../scripts/engine/goal-limits.js';
 
 const NOW = new Date('2026-11-01T10:00:00.000Z');
@@ -461,4 +461,158 @@ test('a piece whose cap doesn\'t fit is held', () => {
   assert.deepEqual(at(99, 100), { goalHeld: true, goal: 'g', why: 'spend' });
   assert.equal(at(100, 100), null, 'a cap that just fits starts');
   assert.equal(at(99, 100, 'fix-main'), null, 'a fix isn\'t a piece: spend holds it only once reached');
+});
+
+// What a goal does next (unattended goals design, section 8), one test for each row of its table.
+const stepGoal = (over = {}) => ({ sheet: { until: '2026-11-01T18:00:00.000Z', pieces: [], ...over } });
+const minutesAfter = (m) => new Date(NOW.getTime() + m * 60000).toISOString();
+const facts = (over = {}) => ({
+  pieces: { a: 'going', b: 'queued' }, failedInARow: 0, reds: 0, meter: null, lastStepAt: NOW.toISOString(), parkedRuns: [], liveRuns: ['r1'], fixRuns: [],
+  windingSince: null, windingFor: null, slept: [], endAsked: null, allStop: false, lastCheck: null, ...over,
+});
+const step = (over = {}, { goal = stepGoal(), now = NOW } = {}) => goalStep({ goal, facts: facts(over), now });
+
+test('a goal with work going runs on', () => {
+  assert.deepEqual(step(), { state: 'running' });
+});
+
+test('Done: every piece merged and the last check passing', () => {
+  assert.deepEqual(step({ pieces: { a: 'merged', b: 'merged' }, liveRuns: [], lastCheck: 'passed' }), { state: 'ended', ending: 'done' });
+});
+
+test('every piece merged with the last check still to come runs on', () => {
+  assert.deepEqual(step({ pieces: { a: 'merged', b: 'merged' }, liveRuns: [] }), { state: 'running' });
+});
+
+test('Done: a feature\'s own run passed and only its switch-on waits', () => {
+  assert.deepEqual(step({ pieces: { a: 'merged', b: 'passed' }, liveRuns: [] }), { state: 'ended', ending: 'done' });
+});
+
+test('Check failed: every piece merged and the last check failing', () => {
+  assert.deepEqual(step({ pieces: { a: 'merged', b: 'merged' }, liveRuns: [], lastCheck: 'failed' }), { state: 'ended', ending: 'check-failed' });
+});
+
+test('nothing can run and all waits on the director: the goal waits until until', () => {
+  const pieces = { a: 'merged', b: 'waiting' };
+  assert.deepEqual(step({ pieces, liveRuns: [] }), { state: 'waiting' });
+  assert.deepEqual(step({ pieces, liveRuns: [] }, { now: new Date('2026-11-01T18:00:00.000Z') }), { state: 'ended', ending: 'waiting-for-you' });
+});
+
+test('a piece that merged while another fails isn\'t waiting on the director', () => {
+  assert.deepEqual(step({ pieces: { a: 'merged', b: 'failed' }, liveRuns: [] }), { state: 'running' });
+});
+
+test('Time: until passing winds down, and a run under way may finish', () => {
+  const now = new Date('2026-11-01T18:00:00.000Z');
+  assert.deepEqual(step({ lastStepAt: now.toISOString() }, { now }), { state: 'winding', ending: 'time', cancel: [] });
+  const since = { windingSince: now.toISOString(), windingFor: 'time' };
+  assert.deepEqual(step(since, { now: new Date('2026-11-01T18:59:00.000Z') }), { state: 'winding', ending: 'time', cancel: [] });
+  assert.deepEqual(step(since, { now: new Date('2026-11-01T19:00:00.000Z') }), { state: 'ended', ending: 'time', cancel: ['r1'] });
+  assert.deepEqual(step({ ...since, liveRuns: [] }, { now: new Date('2026-11-01T18:10:00.000Z') }), { state: 'ended', ending: 'time' });
+});
+
+test('a run parked at a limit is cancelled once the goal winds down', () => {
+  const now = new Date('2026-11-01T18:00:00.000Z');
+  assert.deepEqual(step({ parkedRuns: ['p1'], lastStepAt: now.toISOString() }, { now }), { state: 'winding', ending: 'time', cancel: ['p1'] });
+  assert.deepEqual(step({ parkedRuns: ['p1'], liveRuns: [], windingSince: now.toISOString(), windingFor: 'time' }, { now }), { state: 'ended', ending: 'time', cancel: ['p1'] });
+});
+
+test('a sleep past until gives the run its wind-down', () => {
+  const now = new Date('2026-11-01T22:00:00.000Z');
+  assert.equal(step({}, { now }).state, 'winding', 'it winds down from the wake');
+  const since = { windingSince: '2026-11-01T18:30:00.000Z', windingFor: 'time', slept: [{ from: '2026-11-01T18:40:00.000Z', to: '2026-11-01T21:50:00.000Z' }] };
+  assert.equal(step(since, { now: new Date('2026-11-01T22:00:00.000Z') }).state, 'winding', '20 minutes awake of 3 hours 30');
+  assert.equal(step(since, { now: new Date('2026-11-01T22:40:00.000Z') }).state, 'ended');
+});
+
+test('Spend: the meter reaching the goal\'s spend cancels running runs at once', () => {
+  const meter = { reached: 'tokens', settled: true, unread: false };
+  assert.deepEqual(step({ meter, parkedRuns: ['p1'], fixRuns: ['f1'] }), { state: 'ended', ending: 'spend', cancel: ['r1', 'p1', 'f1'] });
+});
+
+test('spend that rests on a run that couldn\'t be read holds until the reads have failed a while', () => {
+  const meter = { reached: 'tokens', settled: false, unread: true };
+  assert.deepEqual(step({ meter, unreadSince: minutesAfter(-9) }), { state: 'running' });
+  assert.equal(step({ meter, unreadSince: minutesAfter(-10) }).ending, 'spend');
+});
+
+test('a sleep doesn\'t count against a read that failed', () => {
+  const meter = { reached: 'tokens', settled: false, unread: true };
+  const slept = [{ from: minutesAfter(-40), to: minutesAfter(-2) }];
+  assert.deepEqual(step({ meter, unreadSince: minutesAfter(-41), slept }), { state: 'running' });
+});
+
+test('spend standing in for a live run the engine read holds starts and ends nothing', () => {
+  assert.deepEqual(step({ meter: { reached: 'tokens', settled: false, unread: false }, unreadSince: minutesAfter(-500) }), { state: 'running' });
+});
+
+test('a last check still to come isn\'t lost to a spend reached with nothing running', () => {
+  const pieces = { a: 'merged', b: 'merged' };
+  assert.deepEqual(step({ pieces, liveRuns: [], meter: { reached: 'tokens', settled: true, unread: false } }), { state: 'running' });
+});
+
+test('Stuck: two pieces failing in a row winds down, and the sheet can say how many', () => {
+  assert.deepEqual(step({ failedInARow: 2 }), { state: 'winding', ending: 'stuck', cancel: [] });
+  const goal = stepGoal({ stopEarly: { failedInARow: 3 } });
+  assert.deepEqual(step({ failedInARow: 2 }, { goal }), { state: 'running' });
+  assert.equal(step({ failedInARow: 3 }, { goal }).ending, 'stuck');
+});
+
+test('Stuck: a second red main line winds down', () => {
+  assert.deepEqual(step({ reds: 1 }), { state: 'running' });
+  assert.equal(step({ reds: 2 }).ending, 'stuck');
+});
+
+test('Stuck: no step finishing for an hour while a run works winds down', () => {
+  assert.deepEqual(step({ lastStepAt: minutesAfter(-59) }), { state: 'running' });
+  assert.equal(step({ lastStepAt: minutesAfter(-60) }).ending, 'stuck');
+});
+
+test('stuck counts no time asleep', () => {
+  assert.deepEqual(step({ lastStepAt: minutesAfter(-90), slept: [{ from: minutesAfter(-80), to: minutesAfter(-10) }] }), { state: 'running' });
+});
+
+test('nothing left that can run, with nothing waiting on the director, winds down as stuck', () => {
+  assert.deepEqual(step({ pieces: { a: 'merged', b: 'ended' }, liveRuns: [] }), { state: 'ended', ending: 'stuck' });
+});
+
+test('End goal winds down, and End goal now stops at once', () => {
+  assert.deepEqual(step({ endAsked: { at: NOW.toISOString(), now: false } }), { state: 'winding', ending: 'end-goal', cancel: [] });
+  assert.deepEqual(step({ endAsked: { at: NOW.toISOString(), now: true }, parkedRuns: ['p1'], fixRuns: ['f1'] }), { state: 'ended', ending: 'end-goal', cancel: ['r1', 'p1', 'f1'] });
+});
+
+test('All stop ends the goal at once, and cancels nothing itself', () => {
+  assert.deepEqual(step({ allStop: true }), { state: 'ended', ending: 'all-stop' });
+});
+
+test('a wind-down keeps the ending that began it', () => {
+  const now = new Date('2026-11-01T18:30:00.000Z');
+  assert.deepEqual(step({ windingSince: minutesAfter(-1), windingFor: 'stuck' }, { now: new Date(NOW.getTime() + 60000) }).ending, 'stuck');
+  assert.deepEqual(step({ windingSince: now.toISOString(), windingFor: 'end-goal', endAsked: { at: now.toISOString(), now: false } }, { now }).ending, 'end-goal');
+});
+
+test('a spend reached in a wind-down ends it, and End goal now does too', () => {
+  const since = { windingSince: NOW.toISOString(), windingFor: 'stuck' };
+  assert.equal(step({ ...since, meter: { reached: 'points', settled: true, unread: false } }).ending, 'spend');
+  assert.deepEqual(step({ ...since, endAsked: { at: NOW.toISOString(), now: true } }), { state: 'ended', ending: 'end-goal', cancel: ['r1'] });
+});
+
+test('a last check that passes in a wind-down is still Done', () => {
+  const since = { windingSince: NOW.toISOString(), windingFor: 'time', pieces: { a: 'merged' }, liveRuns: [] };
+  assert.equal(step({ ...since, lastCheck: 'passed' }).ending, 'done');
+  assert.equal(step({ ...since, lastCheck: 'failed' }).ending, 'check-failed');
+  assert.deepEqual(step(since), { state: 'winding', ending: 'time', cancel: [] }, 'the check is given the wind-down to finish');
+  assert.equal(step(since, { now: new Date(NOW.getTime() + 60 * 60000) }).ending, 'time');
+});
+
+test('what a goal left unfinished reads the sheet, so a piece whose record changed is named', () => {
+  const views = { work: { a: { work: { data: { id: 'a', title: 'changed since' } } } }, reports: { b: { data: { outcome: 'merged' } } } };
+  const goal = { sheet: { pieces: [{ work: 'a', hash: 'old' }, { work: 'b', hash: 'x' }] } };
+  assert.deepEqual(unfinishedOf(goal, views), ['a']);
+});
+
+test('a goal winding down stops starts in `goalRule`, and one that waits doesn\'t', () => {
+  const goals = { g: { sheet: { until: '2026-11-01T18:00:00.000Z', pieces: [] }, hash: 'h', startedAt: NOW.toISOString(), ended: null, endAsked: null } };
+  assert.equal(goalRule({ goals }, NOW).startsStopped, false);
+  assert.deepEqual([goalRule({ goals }, NOW, { winding: true }).startsStopped, goalRule({ goals }, NOW, { winding: true }).state], [true, 'winding']);
 });
