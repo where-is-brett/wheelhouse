@@ -551,7 +551,8 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
         const again = state.delivered[key] === GOING;
         state.delivered[key] = GOING;
         keep();
-        await capAnswer(kept, label, key, again);
+        // A Give it more with no place after all stays to be carried out on a later tick.
+        if ((await capAnswer(kept, label, key, again)) === false) continue;
         state.delivered[key] = 'answered';
         keep();
         continue;
@@ -743,10 +744,11 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       }
     }
     // Refused, it stays on the way back: the dispatcher says so, and the place goes back until it is tried again.
-    await startAdmitted({
+    const got = await startAdmitted({
       work: kept.work, key, lane: kept.lane, branch: kept.branch ?? null, carryOn: true, raised: true,
       carried: { raised: true, runs: [...(state.carried[kept.runId]?.runs ?? []), kept.runId] },
     });
+    return got?.noPlace !== true;
   }
 
   // Cancelled, tried once more if the engine didn't take it; a run still going after that has its processes ended, as

@@ -5176,7 +5176,7 @@ export async function startHelper({
       keepReviews: (runId) => engineRun.keepTaskReviews(project, runId),
       prTitleOf: async (pr) => (await (await contextFor(project)).adapter().then((adapter) => adapter.prState(pr))).title ?? null,
       release: (work) => dispatcher.release(work),
-      admittedTo: (work) => dispatcher.admittedTo(work),
+      admittedTo: (work, key) => dispatcher.admittedTo(work, key),
       delivered: (work, key) => dispatcher.delivered(work, key),
       drop: (work, key) => dispatcher.drop(work, key),
       startAdmitted: (args) => dispatcher.startAdmitted(args),
