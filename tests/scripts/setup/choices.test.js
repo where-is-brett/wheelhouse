@@ -176,3 +176,14 @@ test('a project on another agent gets that agent\'s engine line in place of the 
   const none = oneCard({ folder: '/x/tide-tables', list: newProductChoices(), product, platform: 'darwin', toRun: [3, 6, 7, 10], count: 0, agentLine });
   assert.doesNotMatch(none.card.question, /build engine/);
 });
+
+test('the backup question waits for where the project is kept, and comes once a local project says so', () => {
+  const since = '2026-10-01T00:00:00.000Z';
+  const open = (id, chosen = null) => ({ id, chosen });
+  const said = { label: 'x', at: '2026-10-02T00:00:00.000Z' };
+  const ids = (list) => customiseBatch(list, since).map((c) => c.id);
+  assert.deepEqual(ids([open('join'), open('real-users'), open('backup'), open('product-before-launch')]), ['join', 'real-users', 'product-before-launch']);
+  assert.deepEqual(ids([open('kept'), open('backup')]), ['kept']);
+  assert.deepEqual(ids([open('join', said), open('real-users', said), open('backup'), open('product-before-launch', said)]), ['backup']);
+  assert.deepEqual(ids([open('real-users'), open('connection')]), ['real-users', 'connection'], 'a hosted project\'s list is as it was');
+});

@@ -113,6 +113,8 @@ export async function openChoices({ steps, run, answers, planOf }) {
   return list;
 }
 
+const KEPT_ID = /^(?:join|kept|host)(?:-|$)/;
+const BACKUP_ID = /^backup(?:-|$)/;
 const NOT_JOINING = [NEW_PRODUCT, KEEP_HERE, HOST_LABELS.github, HOST_LABELS.gitlab];
 // Whether the answers taken say this computer joins a product from another (the join question
 // answered with anything but a new product).
@@ -293,9 +295,12 @@ export function answersWithConsent(runId, { read = answersFor } = {}) {
 }
 
 // The choices Customise asks now: those open and not answered since Customise was clicked, the first
-// PER_CARD of them; empty once every one has been.
+// PER_CARD of them; empty once every one has been. The dry run takes the recommended Keep it here until the director says where
+// the project is kept, and the backup question is only a local project's, so it waits for that answer.
 export function customiseBatch(list, since) {
-  return list.filter((c) => !(c.chosen && newer(c.chosen.at, since))).slice(0, PER_CARD);
+  const open = list.filter((c) => !(c.chosen && newer(c.chosen.at, since)));
+  const unsaid = open.some((c) => KEPT_ID.test(c.id));
+  return open.filter((c) => !(unsaid && BACKUP_ID.test(c.id))).slice(0, PER_CARD);
 }
 
 // Whether an id is one of step 0's redo cards.
