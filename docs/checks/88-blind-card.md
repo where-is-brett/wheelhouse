@@ -30,6 +30,10 @@ Design note 88 (delegated decisions, D4). About one question card in five goes t
 | Phone | Pass, order not stated | The director said the card shows correctly and the tap on Navy worked: `card-answer` "Navy", 05:09:49 UTC, and the test session reported the answer as Navy. The order was not stated beyond "shows correctly" |
 | Pane press hook | Ran too long | At 05:07:26 UTC, ten seconds after the pane press of "Prices", the test session was told "wheelhouse: ui.press hook skipped: ran past its 10s budget". Nothing was lost that shows: the answer was recorded at 05:07:16 and the session got the pane message. What the skipped hook would have done after that was not seen. Whether an ordinary card's press is as slow was not tried; the scratch helper and stand-in host may be the cause |
 
-## What follows
+## What it means for the design
 
 Part 1d can show blind cards on the pane, in chat and on the phone. The change it needs is the card check's: accept zero recommended options when the card is marked blind, and keep refusing two or more. The press hook's ten seconds is for the main session to weigh; no mod change was made here.
+
+## Needs the director
+
+Nothing more. The director's clicks are in the evidence. The scratch project is in the system's temporary folder.
