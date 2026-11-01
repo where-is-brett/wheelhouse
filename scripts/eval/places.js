@@ -13,7 +13,8 @@ import { localChanges } from '../host/local/changes.js';
 import { keepSeenMain } from '../host/local/merge.js';
 import { STATUS_CONTEXT } from '../checks/where.js';
 import { readConfig } from '../gate/guardrails.js';
-import { run as realRun, withoutGitVars } from '../lib/run.js';
+import { run as realRun } from '../lib/run.js';
+import { safeGit } from '../lib/safe-git.js';
 import { engineDir, stateDir } from '../lib/paths.js';
 import { readProject } from '../lib/projects.js';
 
@@ -51,13 +52,17 @@ export function writeFiles(folder, files) {
   }
 }
 
+// Git on one of the world's own repositories. It made them, here, so their settings need no look.
+const worldGit = (cwd, { run = realRun, env = {} } = {}) => safeGit({ run, cwd, env, reach: 'local', look: 'never' });
+
 // The host with no Actions, over the bare repository at `bare`: pull requests from the branches it holds, and the commit
 // statuses Wheelhouse posts, which are all that ever reports on a commit. `run` runs git.
 export function noActionsHost(bare, { run = realRun } = {}) {
   const prs = new Map();
   const statuses = [];
+  const git = (args) => worldGit(bare, { run })(args, { input: '' });
   const headOf = async (branch) => {
-    const found = await run('git', ['rev-parse', '--verify', '-q', `refs/heads/${branch}`], { cwd: bare, input: '' });
+    const found = await git(['rev-parse', '--verify', '-q', `refs/heads/${branch}`]);
     return found.code === 0 ? found.stdout.trim() : null;
   };
   const stateOf = (sha) => statuses.filter((s) => s.sha === sha).at(-1)?.state ?? 'pending';
@@ -68,7 +73,7 @@ export function noActionsHost(bare, { run = realRun } = {}) {
     async openPr({ head, base, title, body }) {
       const number = prs.size + 1;
       prs.set(number, { head, base, title, body });
-      await run('git', ['update-ref', `refs/pull/${number}/head`, await headOf(head)], { cwd: bare, input: '' });
+      await git(['update-ref', `refs/pull/${number}/head`, await headOf(head)]);
       return { number };
     },
     updatePr: async ({ number }) => ({ number }),
@@ -94,9 +99,9 @@ export const placeAdapter = ({ world, run }) => (project, { env, write }) => (re
 
 const WHO = ['-c', 'user.name=Evaluation', '-c', 'user.email=eval@example.invalid'];
 
-// Git on the world's own repositories, with the computer's settings shut out.
+// Git on the world's own repositories, which must go through.
 export async function must(args, cwd, { input = '', env = {} } = {}) {
-  const got = await realRun('git', args, { cwd, input, baseEnv: withoutGitVars(process.env), env: { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null', ...env } });
+  const got = await worldGit(cwd, { env })(args, { input });
   if (got.code !== 0) throw new Error(`git ${args[0]} failed in the evaluation's project: ${String(got.stderr).trim()}`);
   return String(got.stdout).trim();
 }
