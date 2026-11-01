@@ -3,6 +3,7 @@
 // model bindings and test command; work for a project whose tests Wheelhouse can't run waits, said once.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import path from 'node:path';
 import { dispatchRun, orderFor, TRY_AGAIN } from '../../../scripts/engine/dispatch-run.js';
 import { fakeEngine } from '../../../scripts/engine/fake.js';
@@ -368,4 +369,17 @@ test('each card the dispatcher writes is told to the seals, after it is written,
   const card = written.find((w) => w.kind === 'question');
   assert.ok(card, 'the requests card is written');
   assert.deepEqual(told, [{ id: card.data.id, kind: 'requests', work: 'card-1', level: 3, written: true }]);
+});
+
+test('waitingWork joins the card router\'s pieces and the dispatcher\'s own cards', async () => {
+  const dir = tempFolder('wh-dr-');
+  const file = path.join(dir, 'dispatch.json');
+  fs.writeFileSync(file, JSON.stringify({ clashAsked: { 'card-2': 'q-card-2-1' }, features: { f: { asked: 'q-f-1' } } }));
+  const seen = { questions: { 'q-card-2-1': { question: {} }, 'q-f-1': { question: {}, answer: { label: 'Stop here' } } } };
+  const d = dispatchRun({ engine: fakeEngine(), project: 'p', folder: dir, file, readViews: () => seen, config: () => ({ testCommand: 'node --test' }) });
+  assert.deepEqual([...d.waitingWork()], ['card-2']);
+  d.onWaiting(() => new Set(['card-1']));
+  assert.deepEqual([...d.waitingWork()].sort(), ['card-1', 'card-2']);
+  d.onWaiting(() => { throw new Error('the router can\'t say'); });
+  assert.deepEqual([...d.waitingWork()], ['card-2']);
 });

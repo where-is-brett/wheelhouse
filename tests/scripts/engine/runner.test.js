@@ -21,9 +21,10 @@ const asking = (id, over = {}) => [
   ev({ type: 'run-ended', outcome: 'completed' }),
 ];
 
-function setUp({ recordings = { one: asking('q1') }, settings = {}, at = '2026-10-29T13:00:00.000Z', stop = false, slow = false, endRun, onCard, workOf = () => ({ work: 'sale-banner', lane: 'quick' }), onReaderAsk } = {}) {
+function setUp({ recordings = { one: asking('q1') }, settings = {}, at = '2026-10-29T13:00:00.000Z', stop = false, slow = false, endRun, onCard, workOf = () => ({ work: 'sale-banner', lane: 'quick' }), onReaderAsk, openedOf, mergeAsked } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-runner-'));
   const engine = fakeEngine({ recordings });
+  if (mergeAsked) engine.mergeAsked = mergeAsked;
   const writes = [];
   const views = { levels: {}, questions: {}, approvals: {} };
   const world = { now: new Date(at), stop };
@@ -40,6 +41,7 @@ function setUp({ recordings = { one: asking('q1') }, settings = {}, at = '2026-1
     ...(endRun ? { endRun } : {}),
     ...(onCard ? { onCard } : {}),
     ...(onReaderAsk ? { onReaderAsk } : {}),
+    ...(openedOf ? { openedOf } : {}),
   });
   // Starts a run of `name` and hands the runner its open ask, as the host does.
   const ask = async (name = 'one') => {
@@ -956,4 +958,38 @@ test('no cap reads a reader\'s run, and the runner writes no cost for it', async
     assert.deepEqual(t.writes.filter((w) => ['cost', 'question', 'card'].includes(w.kind)), []);
     assert.equal(t.engine.calls.filter((c) => c.action?.cancel).length, 0);
   } finally { t.cleanup(); }
+});
+
+test('waitingWork names a piece with an open card, until the director answers', async () => {
+  const t = setUp();
+  try {
+    assert.deepEqual([...t.runner.waitingWork()], []);
+    await t.ask();
+    assert.deepEqual([...t.runner.waitingWork()], ['sale-banner']);
+    t.sign('Keep it small');
+    assert.deepEqual([...t.runner.waitingWork()], []);
+  } finally { t.cleanup(); }
+});
+
+test('waitingWork names the piece a merge card stands for, by the pull request the queue says it asked about', async () => {
+  const t = setUp({
+    recordings: { one: asking('q1', { mergeQuestion: { pr: null }, reason: 'Merge it?' }) },
+    workOf: () => ({ work: 'merge-queue', lane: 'merge' }),
+    mergeAsked: async () => ({ pr: 12, head: HEAD, merge: 'merge' }),
+    openedOf: (pr) => (pr === 12 ? { lane: 'quick', work: 'sale-banner' } : null),
+  });
+  try {
+    await t.ask();
+    assert.deepEqual([...t.runner.waitingWork()], ['sale-banner']);
+  } finally { t.cleanup(); }
+});
+
+test('waitingWork names no one when the views can\'t be read', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-runner-'));
+  try {
+    const file = path.join(dir, 'router.json');
+    fs.writeFileSync(file, JSON.stringify({ questions: { q1: { runId: 'r1', work: 'a' } } }));
+    const runner = engineRunner({ engine: fakeEngine({}), file, readViews: () => { throw new Error('unreadable'); }, write: async () => {} });
+    assert.deepEqual([...runner.waitingWork()], []);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

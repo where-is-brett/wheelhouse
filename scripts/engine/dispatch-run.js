@@ -19,6 +19,7 @@ import { limitsFor } from './caps.js';
 import { ENGINE_QUESTIONS } from './router.js';
 import { openRedMain, fixDecision, fixOrder } from './fix-main.js';
 import { readSlices, featureProgress, featureNext, currentStep, sliceOrder, finishOrder, featureCap, demoSlice } from './feature.js';
+import { ownWaiting } from './waiting.js';
 import { since, endedBy } from '../foreman/queue.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
@@ -115,6 +116,13 @@ export function orderFor(entry, { settings = {}, raised = false, config = {}, an
 export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped: allStop = () => false, moving = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), spentThisMonth = () => 0, mainGreen = async () => null, stoppedRuns = () => [], fixedRuns = () => [], prMerged = async () => null, prState = null, designOf = () => null, orderOf = () => null, repoOf = () => null, queueFolder = async () => ({ ok: false, refused: 'no folder for the merge queue' }), queuePlace = null, openedBy = () => null, localQueue = null, isLocal = () => true, onCard = () => {} } = {}) {
   const stopped = () => allStop() || moving();
   let state = readState(file);
+  // The pieces with a card of the card router's open, from the runner, which is built after this.
+  let routerPieces = () => new Set();
+  const waitingNow = (views) => {
+    const pieces = new Set(ownWaiting({ state, views }));
+    try { for (const work of routerPieces()) pieces.add(work); } catch { /* it reads as none, so each keeps its place */ }
+    return pieces;
+  };
   // A question of the dispatcher's own, and then a word to the seals, whose trouble is never the card's.
   async function askDirector(kind, data) {
     await write('question', data);
@@ -767,6 +775,10 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       else state.sentBack[work] = (state.sentBack[work] ?? 0) + 1;
       keep();
     },
+    // Who tells this of the card router's cards: the runner, through its `waitingWork`.
+    onWaiting(fn) { if (typeof fn === 'function') routerPieces = fn; },
+    // Every piece that waits on the director, by a card of the router's or one of these.
+    waitingWork: () => waitingNow(readViews() ?? {}),
     // A head of `work` passed: its reds are behind it, so a later slice's first red is a first red.
     passed(work) {
       if (state.reds[work] === undefined) return;

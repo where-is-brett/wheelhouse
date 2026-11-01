@@ -21,6 +21,7 @@ import { runCost, runningMinutes } from './spend.js';
 import { capReached, carriedSpend } from './caps.js';
 import { RED_MAIN, FIX_LANE, redMainIncident, openRedMain } from './fix-main.js';
 import { MERGE_WORK } from './dispatcher.js';
+import { routerWaiting } from './waiting.js';
 import { READER_WORK } from '../delegation/reader.js';
 import { mergeQuestionWords } from './words.js';
 
@@ -112,7 +113,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     const asked = await Promise.resolve().then(() => engine.mergeAsked?.(ask.runId)).catch(() => null);
     const pr = asked?.pr ?? ask.mergeQuestion.pr;
     const title = Number.isInteger(pr) ? await Promise.resolve().then(() => prTitleOf(pr)).catch(() => null) : null;
-    return { asked, ask: { ...ask, reason: mergeQuestionWords(pr, title), mergeChoice: asked?.merge ?? null } };
+    return { asked, ask: { ...ask, mergeQuestion: { ...ask.mergeQuestion, pr }, reason: mergeQuestionWords(pr, title), mergeChoice: asked?.merge ?? null } };
   }
 
   // Whether the director has already decided this: the pull request is a feature's own, by the helper's record, and a
@@ -570,5 +571,11 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     // What a run carries: { raised, runs } (the runs before it whose spend counts against its caps).
     carried: (runId) => state.carried[runId] ?? null,
     questionOf: (runId) => state.capped[runId]?.question ?? null,
+    // The pieces with a card of the router's open. Views that can't be read name none, so each keeps its place.
+    waitingWork() {
+      let views;
+      try { views = readViews() ?? {}; } catch { return new Set(); }
+      return routerWaiting({ state, views, prWork: (pr) => openedOf(pr)?.work ?? null });
+    },
   };
 }
