@@ -215,8 +215,8 @@ async function build(want, { desk, at, command, reserve, briefingModel, ...rest 
     got = await desk.read('settings', { context: true, part: want, reserve });
   }
   if (got?.ok !== true || !isRecord(got.data) || typeof got.data.text !== 'string') throw new Error(got?.refused ?? 'No context');
-  const { text, raise, weeklyShown, surveyShown } = got.data;
-  return { text, raise: Array.isArray(raise) ? raise : [], weeklyShown: weeklyShown === true, surveyShown: typeof surveyShown === 'string' ? surveyShown : null };
+  const { text, raise, weeklyShown, surveyShown, safekeeping } = got.data;
+  return { text, raise: Array.isArray(raise) ? raise : [], weeklyShown: weeklyShown === true, surveyShown: typeof surveyShown === 'string' ? surveyShown : null, safekeeping: typeof safekeeping === 'string' ? safekeeping : null };
 }
 
 // The latest survey as the desk's survey view gives it ({ id, at, data }), or null. One that missed
@@ -312,7 +312,7 @@ export async function decide(input, deps = {}) {
     if (!command || command.name === 'briefing') attempt(() => markSeenHere(project, { promptAt: at }));
     if (built && want === 'briefing') {
       // The weekly lines count as given only when the text showed them, and so does the survey.
-      attempt(() => markSeenHere(project, { briefedAt: at, ...(built.weeklyShown ? { weeklyAt: at } : {}), ...(built.surveyShown ? { surveyAt: built.surveyShown } : {}), ...(again && built.surveyShown ? { surveyAgainAt: at } : {}) }));
+      attempt(() => markSeenHere(project, { briefedAt: at, ...(built.weeklyShown ? { weeklyAt: at } : {}), ...(built.surveyShown ? { surveyAt: built.surveyShown } : {}), ...(again && built.surveyShown ? { surveyAgainAt: at } : {}), ...(built.safekeeping ? { safekeepingLevel: built.safekeeping, safekeepingAt: at } : {}) }));
       if (built.raise.length > 0 && Number.isFinite(at.getTime())) attempt(() => markRaised(built.raise, { now: at }));
     }
     const text = [cards, built?.text].filter((part) => typeof part === 'string').join('\n\n');

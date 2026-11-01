@@ -36,6 +36,10 @@ import { unreachableRefusal, certificateRefusal, certificateLine, awayLine, outp
 import { childEnv } from './connection.js';
 import { localChanges } from './local/changes.js';
 import { FOLDER_REMOTE, bringFolderUp, folderWatch } from './local/folder.js';
+import { backUp, backupDue, chooseBackupFolder, noteBackupFolderRefused, pickFolder } from './local/backup.js';
+import { SAVE_PROMPT, chooseFolder, safekeepingAct } from '../safekeeping/actions.js';
+import { LEADS } from '../lib/mod-numbers.js';
+import { readReadings, readStatus, safekeepingTick } from '../safekeeping/readings.js';
 import { gitRoute, homeDir, homeGit, homeReadable, projectFolder } from './local/home.js';
 import { HAND_MADE_BRANCH, carriesFolderWork, cleanMerged, dropNextMain, finishMerge, keepSeenMain, mergeChange, revertOnHome, seenMain } from './local/merge.js';
 import { headReading, localSweep, needsApprovalOf } from './local/queue.js';
@@ -1422,7 +1426,7 @@ export async function startHelper({
     return listed.stdout.split('\n').some((l) => roots.has(l.trim())) ? PUSH_REFUSALS.ownHistory : null;
   }
 
-  async function pushToHost({ project, branch, source, root, own = false, refspec, defaultBranch, ciGuard = false, allowStop = false, asDirector: asOwn = false }, ctx) {
+  async function pushToHost({ project, branch, keepAs = branch, source, root, own = false, refspec, defaultBranch, ciGuard = false, allowStop = false, asDirector: asOwn = false }, ctx) {
     return (async () => {
       const mirror = await mirrorFor(project, ctx);
       // Copy the branch's objects in from the folder, with no key, and nothing
@@ -1470,7 +1474,7 @@ export async function startHelper({
       const asDirector = pusher !== keyed;
 
       if (stopped() && !allowStop) return STOP_REFUSAL;
-      const pushed = await pusher('git', ['push', '--no-verify', '--porcelain', REMOTE, `${checked.sha}:refs/heads/${branch}`], { cwd: mirror });
+      const pushed = await pusher('git', ['push', '--no-verify', '--porcelain', REMOTE, `${checked.sha}:refs/heads/${keepAs}`], { cwd: mirror });
       if (pushed.code === 0) {
         awayLog.clear(project);
         return { ok: true, sha: checked.sha };
@@ -1485,7 +1489,7 @@ export async function startHelper({
       // A certificate this computer does not trust is the certificate card's line, not git's own text.
       const untrusted = certificateRefusal(recordOf(project), pushed.stderr);
       if (untrusted !== null) return { ok: false, refused: untrusted };
-      const refused = pushed.stdout.split('\n').find((line) => line.startsWith('!') && line.includes(`refs/heads/${branch}`));
+      const refused = pushed.stdout.split('\n').find((line) => line.startsWith('!') && line.includes(`refs/heads/${keepAs}`));
       // Another computer's push can land between ours: the host then declines to move the branch
       // ("failed to update ref", "incorrect old value provided"), which is the same as the branch having moved on.
       if (refused && /\((?:non-fast-forward|fetch first|failed to update ref|incorrect old value provided)\)/.test(refused)) return { ok: false, rejected: 'non-fast-forward' };
@@ -1541,6 +1545,27 @@ export async function startHelper({
     const answer = await pushFrom({ project, branch, source: dir, root: recordOf(project).folder, refspec, defaultBranch, ciGuard: true }, ctx);
     if (answer.rejected === 'non-fast-forward') return { ...answer, refused: PUSH_REFUSALS.movedOn };
     return answer.ok ? { ok: true } : answer;
+  }
+
+  // Keep a copy online (spec 8.2): a branch of the project's folder sent to `place` on the host, under the rules any push of a
+  // code branch keeps: never the default branch, All stop, the lock, and a CI file only with the director's click.
+  async function doKeepCopy({ project, branch, place }, ctx) {
+    if (stopped()) return STOP_REFUSAL;
+    const defaultBranch = await defaultBranchOf(project, await ctx.adapter());
+    const spelled = checkRefspec(place, defaultBranch);
+    if (!spelled.allowed) return { ok: false, refused: spelled.refused };
+    if (bypassActive({ now })) return { ok: false, refused: BYPASS_PUSH };
+    if (!(await lockHeld(project, ctx))) return { ok: false, refused: LOCK_REASON };
+    const { folder } = recordOf(project);
+    const outside = checkedGitDir(folder, { root: folder });
+    if (outside.refused) return { ok: false, refused: outside.refused };
+    try {
+      if (isPartialClone(folder)) return { ok: false, refused: PUSH_REFUSALS.partialClone };
+    } catch {
+      return { ok: false, refused: PUSH_REFUSALS.unchecked };
+    }
+    const answer = await pushFrom({ project, branch, keepAs: place, source: folder, root: folder, refspec: place, defaultBranch, ciGuard: true }, ctx);
+    return answer.ok ? { ok: true } : { ...answer, ...(answer.rejected === 'non-fast-forward' ? { refused: PUSH_REFUSALS.movedOn } : {}) };
   }
 
   // A feature session's pull (`cli.js pull`, final review I1): the host's copy of the worktree's own
@@ -4046,6 +4071,7 @@ export async function startHelper({
       chatClick: tried((click) => doChatClick({ project, ...click }, ctx)),
       confirm: tried((asked) => doConfirm({ project, ...asked }, ctx)),
       askPair: tried(async (client) => ({ ok: true, ...askToPair(client, { now }) })),
+      safekeeping: tried(({ action }) => doSafekeeping({ project, action }, ctx)),
     };
     return deskCore({ source, recorder, now, clients: pairedClients });
   }
@@ -4748,7 +4774,7 @@ export async function startHelper({
   // What follows a merge on the home, whichever way it came. The merge stands by now, so none of this can undo it, and each
   // step is taken up again: the tick brings the folder up, and the next refresh the mirror. The branch goes from the home, its
   // commits staying under the change's own place there, so the mirror drops it too (check 83). The main line's check starts on
-  // the next tick, and part 8's backup goes here. `main-next` goes last, so a crash in here is finished by finishLocalMerge.
+  // the next tick, and the backup is written beside all this. `main-next` goes last, so a crash in here is finished by finishLocalMerge.
   async function afterLocalMerge(project, n, commit) {
     const changes = localChanges({ project, git: gitRoute({ run }), write: ({ event }) => checkWrite(project, event), now });
     const change = changes.changeOf(n);
@@ -4761,7 +4787,17 @@ export async function startHelper({
       const up = await bringFolderUp({ project, folder: recordOf(project).folder, branch: change.base, git }).catch(() => null);
       if (up?.line !== undefined) await engineWrite(project, 'note', { about: 'engine', words: up.line }).catch(() => {});
     }
+    backupSoon(project);
     dropNextMain(project);
+  }
+
+  // One backup at a time, off to the side: a slow or hanging drive holds up no merge and no tick. A try a merge finds under way
+  // is caught by the daily look, which sees the main version has moved on.
+  const backingUp = new Set();
+  function backupSoon(project) {
+    if (backingUp.has(project)) return;
+    backingUp.add(project);
+    oneAtATime(`backup:${project}`, () => backUp({ project, git: gitRoute({ run }), now })).catch(() => {}).finally(() => backingUp.delete(project));
   }
 
   // A merge a crash left part done: finishes it, so what the queue itself did never reads as moved outside the helper.
@@ -5161,6 +5197,7 @@ export async function startHelper({
           await oneAtATime(`merge:${project}`, () => withLocalLock({ dir: projectFolder(project) }, () => homeMoved(project), { now }));
           await watch.tick();
           if (!stopped()) await tidyLocal(project, engine, write, views);
+          if (backupDue({ project, main: await adapter.branchHead(await defaultBranchOf(project, adapter)), now })) backupSoon(project);
           trouble = null;
         } catch (error) {
           // No card: the spec's list of them is closed, and this one waits on no decision. The Logbook says it once, so a folder
@@ -5173,6 +5210,65 @@ export async function startHelper({
     })();
     return { runner, dispatcher, checks, inStep, seals };
   }
+  // --- safekeeping (spec 8.2): what would be lost with this computer, for every project, engine or none ---
+
+  const lanesOn = (project) => {
+    const latest = new Map();
+    for (const e of listEvents(stateDir(project), { report: () => {} })) {
+      if (e.kind === 'run' && typeof e.data?.runId === 'string') latest.set(e.data.runId, { ...latest.get(e.data.runId), ...e.data });
+    }
+    return [...latest.values()].filter((r) => r.state !== 'ended').map((r) => r.branch);
+  };
+  const lookAtSafekeeping = (project, { force = false } = {}) => oneAtATime(`safekeeping:${project}`, () => {
+    const lanes = lanesOn(project);
+    return safekeepingTick({
+      project, record: readProject(project), git: gitRoute({ run }), now, mirror: fetchMirrorOf(project), force,
+      running: (branch) => lanes.includes(branch),
+      refresh: () => (refreshMirror ?? refreshFetchMirror)(project),
+    });
+  });
+  let lookingAround = null;
+  function safekeepingRound() {
+    lookingAround ??= (async () => {
+      for (const { project } of registeredProjects()) {
+        if (closing || stopped()) break;
+        await lookAtSafekeeping(project).catch(() => {});
+      }
+    })().finally(() => { lookingAround = null; });
+    return lookingAround;
+  }
+
+  // A press on the Safekeeping row, its signed record held by now. Each act goes by what the last look read, and is looked at again after.
+  // Refused under All stop, whose signed acts the desk lets through. Picking a folder waits on the director, so it runs off to
+  // the side of the state queue, and what comes of it shows on the row.
+  async function doSafekeeping({ project, action }, ctx) {
+    if (stopped()) return STOP_REFUSAL;
+    const record = recordOf(project);
+    const git = gitRoute({ run });
+    const branchNow = async () => defaultBranchOf(project, await ctx.adapter());
+    const got = await safekeepingAct(action, {
+      status: readStatus(project),
+      readings: readReadings(project),
+      defaultBranch: record.host === 'local' ? null : await branchNow(),
+      keepCopy: (copy) => doKeepCopy({ project, ...copy }, ctx),
+      bringUp: async () => bringFolderUp({ project, folder: record.folder, branch: await branchNow(), git, from: { dir: fetchMirrorOf(project), remote: 'origin' } }),
+      backUpNow: () => oneAtATime(`backup:${project}`, () => backUp({ project, git, now })),
+      chooseSoon: () => {
+        chooseFolder({
+          pick: () => pickFolder({ run }),
+          choose: (folder) => chooseBackupFolder({ project, folder }),
+          noteRefused: (why) => noteBackupFolderRefused(project, why),
+          backUpNow: () => oneAtATime(`backup:${project}`, () => backUp({ project, git, now })),
+          look: () => lookAtSafekeeping(project),
+        }).catch(() => {});
+      },
+      look: (how) => lookAtSafekeeping(project, how),
+      prompt: `${LEADS.pane} ${SAVE_PROMPT}`,
+    });
+    await lookAtSafekeeping(project).catch(() => {});
+    return got.refused === undefined ? got : { ok: false, refused: got.refused };
+  }
+
   // One look for every project on the engine, one at a time.
   let ticking = null;
   function engineTick() {
@@ -5200,6 +5296,8 @@ export async function startHelper({
       closing = true;
       if (stopWatch) clearInterval(stopWatch);
       if (dispatchWatch) clearInterval(dispatchWatch);
+      if (safekeepingWatch) clearInterval(safekeepingWatch);
+      await lookingAround?.catch(() => {});
       await ticking?.catch(() => {});
       await engineStopping?.catch(() => {});
       await Promise.race([
@@ -5355,7 +5453,9 @@ export async function startHelper({
     releaseStart();
   }
   startEngineHosts();
+  const safekeepingWatch = setInterval(() => { safekeepingRound().catch(() => {}); }, dispatchMs);
+  safekeepingWatch.unref?.();
 
   // `engine.start` is the helper's own way to start a run (the dispatcher's): no route starts one.
-  return { address, close, engine: { start: (args) => engineRun.start(args), tick: () => engineTick(), seal: () => sealTick() } };
+  return { address, close, engine: { start: (args) => engineRun.start(args), tick: () => engineTick(), seal: () => sealTick() }, safekeeping: { tick: () => safekeepingRound() } };
 }

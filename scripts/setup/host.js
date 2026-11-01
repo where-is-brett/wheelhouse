@@ -102,8 +102,10 @@ import { joinedRepo, runClosed, JOIN_STEP } from '../lib/setup-run.js';
 import { readProfileViews, PROFILE_BRANCH } from '../profile/store.js';
 import { toolsStatus, originUrl, applyCompanyCa } from './tools.js';
 import {
-  KEEP_HERE, PUT_ON_GITHUB, applyLocal, branchAsk, branchesOf, chooseBranch, headBranch, keptAsk, localCard, localName, localSteps, remotesOf,
+  KEEP_HERE, PUT_ON_GITHUB, applyLocal, backupAnswered, backupChoice, branchAsk, branchesOf, chooseBranch, headBranch, keptAsk, localCard, localName, localSteps, remotesOf,
 } from './local.js';
+import { pickFolder, timeMachine } from '../host/local/backup.js';
+import { backupNamed, projectOfBackup } from '../host/local/restore.js';
 import { caFile, probeCertificate, companyGitEnv } from '../host/company-ca.js';
 import {
   appName, appSlug, checkOwnApp, ensureOwnApp, ownAppCode, ownAppFrom, readOwnApp, recordOwnApp, helperProfile, sameLogin, shadowedOwnApp,
@@ -460,6 +462,7 @@ function joinAsk(id, name, { missed }) {
   const other = fromOtherComputer(name);
   let found = '';
   if (missed?.missed === 'not-a-name') found = `"${missed.name}" is not a repository's name. `;
+  else if (missed?.missed === 'no-backup') found = `"${missed.name}" can't be found. `;
   else if (Array.isArray(missed?.missed)) found = `More than one ${missed.name} is set up with Wheelhouse: ${missed.missed.slice(0, 5).join(', ')}. `;
   else if (missed) found = `Setup found no ${missed.name} set up with Wheelhouse on your account or organisations. `;
   return {
@@ -467,7 +470,7 @@ function joinAsk(id, name, { missed }) {
     typed: true,
     card: {
       level: 2,
-      what: `${found}Where should ${name} be kept? If it is one you set up with Wheelhouse on your other computer under another name, or to say which one, type its owner/name.`,
+      what: `${found}Where should ${name} be kept? If it is one you set up with Wheelhouse on your other computer under another name, or to say which one, type its owner/name. To bring it back from a backup, type where the backup file is.`,
       why: 'On this computer it needs no account. A product set up on another computer is checked out into this folder with its plans and settings, never made again.',
       options: [
         { label: KEEP_HERE, says: 'A new product. Nothing goes online, and it can move later in one click.' },
@@ -527,6 +530,9 @@ export function joinedFolder(folder, run = null) {
 // R51), so no answer is used again for a name that wasn't found.
 function joinChoice(ctx) {
   const run = typeof ctx.runId === 'string' ? readJournal().runs.find((r) => r?.id === ctx.runId) ?? null : null;
+  // A project brought back from a backup goes on being so, once its folder has filled.
+  const restore = backupAnswered(ctx.answers);
+  if (restore !== null) return { restore };
   // A folder checked out to a joined repository is joined to it for good (ruling R102).
   const fixed = joinedFolder(ctx.folder, run);
   if (fixed !== null) return { join: fixed, known: fixed };
@@ -545,6 +551,10 @@ function joinChoice(ctx) {
     if (got.label === KEEP_HERE) return { host: 'local' };
     if (got.label === HOST_LABELS.github) return { host: 'github' };
     if (got.label === HOST_LABELS.gitlab) return { host: 'gitlab' };
+    if (backupNamed(got.text) !== null) {
+      tried.push({ name: got.text.trim().slice(0, 100), missed: 'no-backup' });
+      continue;
+    }
     if (typeof got.text === 'string') {
       const wanted = repoNamed(got.text);
       if (wanted === null) {
@@ -1512,6 +1522,7 @@ export function hostStep({
   // Whether GitLab's certificate is trusted from here, and how the company's is given to the tools
   // (company-ca.js, tools.js): stand-ins in tests.
   certificateProbe = probeCertificate, trustCertificate = applyCompanyCa,
+  pick = pickFolder,
 } = {}) {
   // The settings routes through the helper, for the person's own app's record: `profileRoutes`
   // stands in for them in tests; otherwise made when apply needs them.
@@ -1530,7 +1541,9 @@ export function hostStep({
       // holding only step 1's install.
       const join = joinChoice(ctx);
       if (join?.ask) return { ask: join.ask };
-      let product = join === null || join.host !== undefined ? productOf(ctx.folder, { config: readGitlabHosts(ctx.folder) })
+      const restoring = join?.restore ?? null;
+      let product = restoring !== null ? { isNew: false, host: 'local', repo: null, name: projectOfBackup(restoring), others: [], restoring: true }
+        : join === null || join.host !== undefined ? productOf(ctx.folder, { config: readGitlabHosts(ctx.folder) })
         : { isNew: false, joining: true, host: null, repo: join.join.includes('/') ? join.join : join.known, name: join.join.split('/').at(-1) };
       // Real users and Locked are the first computer's questions; a joining computer reads whether
       // the product is launched from what it checks out, and its step 8 asks Locked.
@@ -1553,7 +1566,7 @@ export function hostStep({
         const { label } = answer('host');
         host = label === KEEP_HERE ? 'local' : label === HOST_LABELS.gitlab ? 'gitlab' : 'github';
       }
-      if (product.host === 'local') {
+      if (product.host === 'local' && !product.restoring) {
         if (answer('kept') === null) return { ask: keptAsk(product.name, product.others) };
         if (answer('kept').label === PUT_ON_GITHUB) host = 'github';
       }
@@ -1566,10 +1579,14 @@ export function hostStep({
         branch = answer(id).label;
       }
       if (host === 'local') {
+        const machine = answer('backup') === null && (await timeMachine({ run, platform })).on;
+        const backup = backupChoice({ answer, name: product.name, root: ctx.folder, machine });
+        if (backup.ask) return { ask: backup.ask };
         if (ctx.choicesOnly === true) return { wait: 0, why: 'every choice of step 3 is made' };
         const project = localName(ctx.folder, product.name);
-        const noGit = !fs.existsSync(path.join(ctx.folder, '.git'));
-        const changes = localSteps({ folder: ctx.folder, project, branch, noGit, noCommit: noGit || !hasHistory(ctx.folder), locked });
+        const noGit = restoring === null && !fs.existsSync(path.join(ctx.folder, '.git'));
+        const noCommit = restoring === null && (noGit || !hasHistory(ctx.folder));
+        const changes = localSteps({ folder: ctx.folder, project, branch, noGit, noCommit, locked, restore: restoring, backup: backup.folder });
         return { changes, card: localCard({ changes, branch, others: product.others ?? [] }), director: 'One click' };
       }
       // A folder with its own history, sent to a new private repository on the director's account.
@@ -1746,7 +1763,7 @@ export function hostStep({
       if (host === 'local') {
         const found = await findGit({ platform, run });
         if (!found?.ok || typeof found.path !== 'string') throw new Error('git is not on this computer yet; step 2 installs it');
-        return applyLocal({ ctx, changes, run, gitPath: found.path, say, halt });
+        return applyLocal({ ctx, changes, run, gitPath: found.path, say, halt, pick, isEmpty: onlyInstall });
       }
       // The company's certificate comes before anything reaches the host. The address is the connection's
       // own, checked before anything is run; the certificate and glab's setting are made, and the git

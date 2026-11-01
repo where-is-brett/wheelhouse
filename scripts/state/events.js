@@ -54,7 +54,7 @@ export const RED_MAIN_OWN = 'only the helper records a red main line\'s incident
 export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'shadow'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 
-const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main'];
+const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main', 'safekeeping'];
 // The fields each action carries beyond the card's question and the label clicked.
 const ACTION_OWN = {
   'lift-stop': [],
@@ -108,6 +108,8 @@ const ACTION_OWN = {
   // The director's Undo it, in the helper's window, on the card about a main version moved outside the helper: the
   // main version the record held and the one the store holds, each in full.
   'undo-main': ['from', 'to'],
+  // A button on the Safekeeping row (spec 8.2): which one, by its word. The pane's press alone makes it.
+  safekeeping: ['press'],
 };
 // Every action may also name its `proof` (ruling P5-23): `window` when the helper signed it from a click in its own
 // window. Claude Code's prompt record names none. An approval and a confirmation, which have no shape of their own
@@ -154,6 +156,8 @@ function checkAction(data) {
     if (typeof data.questionId !== 'string' || !questionIdOf(data.questionId)) bad('needs the question it answers');
     if (typeof data.questionHash !== 'string' || !HASH.test(data.questionHash)) bad('needs the hash of the question it answers');
     if (NOT_AN_ANSWER.includes(data.label)) bad('has a label that is not an answer');
+  } else if (data.action === 'safekeeping') {
+    if (!isSlug(data.press)) bad('needs the button pressed, named by a short slug');
   } else if (data.action === 'amend') {
     if (!isSlug(data.work)) bad('needs the work, named by a short slug');
     if (typeof data.hash !== 'string' || !HASH.test(data.hash)) bad('needs the hash of the change');

@@ -224,7 +224,7 @@ test('no input passes the word limit, however long its usage line or one entry',
 test('with no state, usage or sources it still says nothing needs you', () => {
   const model = boardModel({ now: () => NOW });
   const briefing = briefingModel({ model, usage: null, sources: null, since: null, now: NOW, wasRaised: () => false });
-  assert.deepEqual(briefing, { ...empty, foundId: null, verdict: 'Nothing needs you. Nothing is broken.', since: '', onTrack: false, plus: { waiting: 0, changed: 0 } });
+  assert.deepEqual(briefing, { ...empty, foundId: null, verdict: 'Nothing needs you. Nothing is broken.', since: '', onTrack: false, plus: { waiting: 0, changed: 0 }, safekeeping: null });
   const text = briefingText(briefing, { words: BRIEFING_WORDS.short });
   assert.equal(text.split('\n\n')[0], 'Nothing needs you. Nothing is broken.');
   for (const odd of [undefined, null, 'x', { waiting: 'x', usage: 7 }]) assert.equal(briefingText(odd).split('\n\n')[0], 'Nothing needs you. Nothing is broken.');

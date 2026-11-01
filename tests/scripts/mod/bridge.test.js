@@ -1168,3 +1168,25 @@ test('the settings pane is given the ready columns and the project\'s premium vi
   await handle({ cmd: 'settings', cwd: folder }, deps(extra()));
   assert.deepEqual(seen[0], ['rows', ['lean']]);
 }));
+
+test('a Safekeeping press comes from the pane alone, signed for the action it names', () => withHome(async () => {
+  enrolKey();
+  const acts = [];
+  const client = fakeClient();
+  client.desk = {
+    read: async () => ({ ok: false, refused: 'the host helper could not be reached' }),
+    watch: async () => ({ ok: false, refused: 'the host helper could not be reached' }),
+    act: async (body) => { acts.push(body); return { v: 'desk/1', ok: true, says: 'Backed up', changed: ['safekeeping'] }; },
+  };
+  for (const origin of ['composer', 'bash', 'chat', undefined]) {
+    assert.equal((await handle({ cmd: 'safekeeping', origin, cwd: '/work', action: 'back-up-now' }, deps({ client }))).ok, false);
+  }
+  assert.deepEqual(acts, []);
+  assert.equal((await handle({ cmd: 'safekeeping', origin: 'pane', cwd: '/work' }, deps({ client }))).ok, false);
+  const got = await handle({ cmd: 'safekeeping', origin: 'pane', cwd: '/work', action: 'back-up-now' }, deps({ client }));
+  assert.equal(got.ok, true);
+  assert.equal(got.says, 'Backed up');
+  assert.equal(acts.length, 1);
+  assert.equal(acts[0].command, 'safekeeping');
+  assert.deepEqual(acts[0].evidence.records[0].event.data, { action: 'safekeeping', press: 'back-up-now', question: 'Safekeeping', label: 'back-up-now' });
+}));

@@ -476,7 +476,7 @@ export function boardModel({ project, views, profileUnconfirmed, events, usage, 
       ...(oneLine(m.data.forUsers) ? {} : { behind: true }),
     })), []),
     ideas,
-    health: [...(lines ?? []).map((l) => ({ level: l.level, text: l.text })), ...part(missing, 'checks line', () => checkLines(all), []), ...part(missing, 'agent line', () => (agent === undefined ? [] : agentHealth(agent)), []), ...part(missing, 'update line', () => updateLines(all, agent, nowMs), []), ...part(missing, 'premium line', () => premiumRestLines(all, nowMs), []), ...part(missing, 'health', () => extraHealth(loop?.incidents, report, hostUnreachable), [])],
+    health: [...(lines ?? []).map((l) => ({ level: l.level, text: l.text, ...(l.safekeeping === true ? { safekeeping: true, detail: l.detail } : {}) })), ...part(missing, 'checks line', () => checkLines(all), []), ...part(missing, 'agent line', () => (agent === undefined ? [] : agentHealth(agent)), []), ...part(missing, 'update line', () => updateLines(all, agent, nowMs), []), ...part(missing, 'premium line', () => premiumRestLines(all, nowMs), []), ...part(missing, 'health', () => extraHealth(loop?.incidents, report, hostUnreachable), [])],
     budget: {
       week: week ? {
         from: timeOf(week.from), to: timeOf(week.to), tokens: numberOrNull(week.tokens), usd: numberOrNull(week.usd),

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { withHome } from '../../helpers/homes.js';
-import { readSeen, readSurveyAt, markSeen, readVisits, seenFile, BOARD_ASKS } from '../../../scripts/briefing/seen.js';
+import { readSeen, readSurveyAt, markSeen, readVisits, seenFile, BOARD_ASKS, readSafekeepingSaid } from '../../../scripts/briefing/seen.js';
 
 const NOW = new Date('2026-10-19T12:00:00.000Z');
 const none = { promptAt: null, briefedAt: null, weeklyAt: null };
@@ -98,4 +98,14 @@ test('the survey the director was last told of is kept beside the times, by its 
   fs.writeFileSync(seenFile('demo'), JSON.stringify({ surveyAt: { id: 1 } }));
   assert.equal(readSurveyAt('demo'), null);
   assert.equal(readSurveyAt('../demo'), null);
+}));
+
+test('the safekeeping level a briefing said is kept beside the times', () => withHome(() => {
+  assert.deepEqual(readSafekeepingSaid('p'), { level: null, at: null });
+  markSeen('p', { safekeepingLevel: 'watch', safekeepingAt: NOW });
+  assert.deepEqual(readSafekeepingSaid('p'), { level: 'watch', at: NOW.toISOString() });
+  markSeen('p', { briefedAt: NOW });
+  assert.equal(readSafekeepingSaid('p').level, 'watch', 'another mark leaves it');
+  markSeen('p', { safekeepingLevel: 'nonsense' });
+  assert.equal(readSafekeepingSaid('p').level, 'watch');
 }));

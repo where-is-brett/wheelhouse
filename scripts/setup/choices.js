@@ -36,6 +36,7 @@ import { askedRecord, answersFor } from './clicks.js';
 import { HOST_LABELS, LEVELS, NEW_PRODUCT, REAL_USERS, STRICTER, WAYS } from './host.js';
 import { LIVE_DATA, PRODUCT, SIGNS_APPS, productName } from './questions.js';
 import { FIRST_CHECK_LINE, KEEP_HERE, KEPT_LINE, STARTED_LINE } from './local.js';
+import { backupNamed } from '../host/local/restore.js';
 
 // The one card's step: none of setup's ten.
 export const ONE_CARD_STEP = 0;
@@ -60,6 +61,7 @@ export function aboutOf(key) {
   if (id === 'locked') return 'Locked';
   if (id === 'host') return 'where the project is kept';
   if (id === 'kept') return 'where the project is kept';
+  if (id === 'backup' || id.startsWith('backup-')) return 'a backup';
   if (id.startsWith('branch-')) return 'the main version\'s line';
   if (id.startsWith('connection')) return 'how agents reach the project';
   if (id.startsWith('product-')) return 'the description';
@@ -111,14 +113,17 @@ export async function openChoices({ steps, run, answers, planOf }) {
   return list;
 }
 
+const KEPT_ID = /^(?:join|kept|host)(?:-|$)/;
+const BACKUP_ID = /^backup(?:-|$)/;
 const NOT_JOINING = [NEW_PRODUCT, KEEP_HERE, HOST_LABELS.github, HOST_LABELS.gitlab];
 // Whether the answers taken say this computer joins a product from another (the join question
 // answered with anything but a new product).
-const joining = (taken) => Object.entries(taken).some(([key, a]) => /^3\.join(?:-|$)/.test(key) && !NOT_JOINING.includes(a.label));
+const joining = (taken) => Object.entries(taken).some(([key, a]) => /^3\.join(?:-|$)/.test(key) && !NOT_JOINING.includes(a.label) && backupNamed(a.text) === null);
 
 // The plain line a choice adds to the one card, or null when it adds none. `name` is the product's,
 // `platform` the computer's.
 function lineOf({ id, label, text, line }, { name, platform, choices }) {
+  if (id === 'backup' || id.startsWith('backup-')) return line;
   const host = choices.some((c) => (c.id === 'host' || c.id === 'join' || c.id.startsWith('join-')) && c.label === HOST_LABELS.gitlab) ? 'GitLab' : 'GitHub';
   if (id === 'kept') return label === KEEP_HERE ? line : `Put on GitHub: a private repository on your account, with your project's history sent to it.`;
   if (id.startsWith('branch-')) return `Finished work goes on ${label}, the main version.`;
@@ -126,6 +131,7 @@ function lineOf({ id, label, text, line }, { name, platform, choices }) {
   if (label === HOST_LABELS.github || label === HOST_LABELS.gitlab) {
     if (id === 'join' || id.startsWith('join-')) return `A new product, in a private repository on your ${host} account.`;
   }
+  if ((id === 'join' || id.startsWith('join-')) && backupNamed(text) !== null) return `${name}, brought back from your backup into this folder.`;
   if (id === 'join' || id.startsWith('join-')) return label === NEW_PRODUCT ? null : `${name}, from your other computer, brought into this folder.`;
   if (id === 'real-users') {
     const live = choices.find((c) => c.id === 'live-data')?.label;
@@ -289,9 +295,12 @@ export function answersWithConsent(runId, { read = answersFor } = {}) {
 }
 
 // The choices Customise asks now: those open and not answered since Customise was clicked, the first
-// PER_CARD of them; empty once every one has been.
+// PER_CARD of them; empty once every one has been. The dry run takes the recommended Keep it here until the director says where
+// the project is kept, and the backup question is only a local project's, so it waits for that answer.
 export function customiseBatch(list, since) {
-  return list.filter((c) => !(c.chosen && newer(c.chosen.at, since))).slice(0, PER_CARD);
+  const open = list.filter((c) => !(c.chosen && newer(c.chosen.at, since)));
+  const unsaid = open.some((c) => KEPT_ID.test(c.id));
+  return open.filter((c) => !(unsaid && BACKUP_ID.test(c.id))).slice(0, PER_CARD);
 }
 
 // Whether an id is one of step 0's redo cards.

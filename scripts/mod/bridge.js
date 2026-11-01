@@ -267,6 +267,20 @@ async function press(req, d) {
   return answer;
 }
 
+// A button on the Safekeeping row, from the pane alone: signed on this side as the press it is, so an agent can't make one, and
+// done by the helper through the desk. It isn't kept for later: a press the helper didn't take did nothing.
+async function safekeeping(req, d) {
+  if (req.origin !== PANE) return no(SAYS.notPane);
+  const project = placeOf(req.cwd, d);
+  if (!project) return no(SAYS.notProject);
+  if (typeof req.action !== 'string' || req.action === '') return no(SAYS.unreadable);
+  const kept = keepEarned(project, { made: { kind: 'action', data: { action: 'safekeeping', press: req.action, question: 'Safekeeping', label: req.action } } }, { now: d.now });
+  const got = await deskOf(project, req.cwd, d).act('safekeeping', { action: req.action }, { form: 'signed', records: signedRecords(kept) });
+  fs.rmSync(kept.file, { force: true });
+  const says = got?.says ?? got?.refused;
+  return { ok: got?.ok === true, ...(typeof says === 'string' ? { says: inWords(project, says) } : {}), ...(strings(got?.submit) ? { submit: got.submit } : {}) };
+}
+
 // Why? on a card in the pane, from the pane alone: the card's answer is noted quietly (press.js),
 // so the answer is ok with nothing to say and no prompt, whether or not the card was still there.
 async function why(req, d) {
@@ -583,7 +597,7 @@ async function unsent(req, d) {
   return { ok: true };
 }
 
-const COMMANDS = { usage, reply, press, why, suggest, settings, setting, go, stop, digest, tick, unsent };
+const COMMANDS = { usage, reply, press, safekeeping, why, suggest, settings, setting, go, stop, digest, tick, unsent };
 
 // handle(request, deps) -> { ok, says? }. Never throws.
 export async function handle(request, deps = {}) {

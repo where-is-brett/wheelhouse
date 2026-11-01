@@ -34,6 +34,10 @@ Each card the build engine raises also gets a seal in that record: a signed line
 
 When the First Mate ends a turn on a question with no card, Claude Code's Stop hook adds one line to the same record with the time and none of the words, so those questions can be counted. A pick of Suggest a change… in the chat on a build's question keeps only the card's id, for its score.
 
+If you choose a backup folder for a project kept on this computer, Wheelhouse writes one file there, `<project>.wheelhouse-backup`, with the project's code and its history, and keeps one earlier copy beside it. The file holds none of the records above and none of Wheelhouse's own branches. Where it goes from there is up to the folder you chose: a cloud service sends it off your computer under its own terms.
+
+Beside each project, `backup.json` says where its backups go and how the last one went, and `safekeeping.json` holds what the Safekeeping line last found: names of branches and how many changes are only here, never your code. **Keep a copy online** sends a branch to your host under `keep/<branch>`, and only when you press it.
+
 Your history doesn't follow you to another computer, as Claude's chats don't: a second computer starts its own record. Wheelhouse keeps no backup of it anywhere else, so if a computer is lost, its private record is lost with it unless a backup of the computer (Time Machine, or File History on Windows) has it.
 
 On your computer, Wheelhouse also keeps in `~/.wheelhouse` setup's journal of every change it made, the keys agents work with, the tools it fetched and the usage counts. Keys never appear in the chat.
