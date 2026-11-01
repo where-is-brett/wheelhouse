@@ -8,7 +8,7 @@
 - after the switch-on approval and an answer to the queue's question, the merge queue merged #7;
 - the feature's report says "merged".
 
-Seven defects stopped the run on the way. Six are fixed in their own pull requests (#138, #139, #140, #147, #148, #149), and all six are merged. The seventh, half of the merge queue's first defect, is mended by #182: the work item's repository shape was mended in commit `cf25acc8`, made after #140 merged, so that commit never reached `main`, and v0.2.0 carries the defect. Claude spend was about $6.30 of the $8 ceiling, and no Copilot was used.
+Seven defects stopped the run on the way. Six pull requests went after them (#138, #139, #140, #147, #148, #149), and all six are merged, but one defect was only half mended. #140 gave the merge queue its inputs. The work item's repository shape was mended in commit `cf25acc8`, made after #140 merged, so that commit never reached `main`, v0.2.0 carries the fault, and #182 mends it. Claude spend was about $6.30 of the $8 ceiling, and no Copilot was used.
 
 Three things the director meets were asked twice or unclearly:
 - The merge queue asked a level 3 question about #7 after its switch-on was already approved.
