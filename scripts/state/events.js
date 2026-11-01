@@ -422,6 +422,7 @@ function checkPlain(kind, data) {
   const pr = () => { if (data.pr !== undefined && (!Number.isInteger(data.pr) || data.pr < 1)) bad('has a pull request number that is not one'); };
   if (kind === 'work') {
     slug('id');
+    if (data.id === READER_WORK) bad('names the work kept for the reader');
     text('title');
     if (!LANES.includes(data.lane)) bad('needs its lane to be quick, small, feature or bug');
     if (typeof data.visible !== 'boolean') bad('needs visible to be true or false');
@@ -736,6 +737,9 @@ function checkChange(data) {
   if (typeof data.head !== 'string' || !FULL_COMMIT.test(data.head)) bad('needs the whole commit');
   if (data.state === 'merged' ? !(typeof data.mergeCommit === 'string' && FULL_COMMIT.test(data.mergeCommit)) : data.mergeCommit !== null) bad('names a merge only once merged');
 }
+
+// The work a reader's tokens go under. No piece of work may have this name, so none is taken for the reader.
+export const READER_WORK = 'delegation-reader';
 
 // A seal as scripts/delegation/seal.js makes it. Part of a card's sealed record, so nothing is added to one later.
 const SEAL_KEYS = ['line', 'card', 'work', 'head', 'signed', 'reader', 'candidates', 'exclusions', 'stamp', 'at', 'hash'];

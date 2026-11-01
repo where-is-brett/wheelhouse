@@ -7,10 +7,11 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { engineDir } from '../lib/paths.js';
+import { READER_WORK } from '../state/events.js';
 import { READING_MOST_BYTES } from './limits.js';
 
 // The work and the lane a reader's runs and tokens go under: on no piece.
-export const READER_WORK = 'reader';
+export { READER_WORK };
 export const READER_LANE = 'reader';
 const READ_STEP = 'read';
 

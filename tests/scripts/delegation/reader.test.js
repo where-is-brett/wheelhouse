@@ -1,6 +1,7 @@
 // tests/scripts/delegation/reader.test.js
 // The reader: when one may start, what counts as its reply, the fixed shape of its workflow, and a start of its own.
 import { test } from 'node:test';
+import { makeEvent } from '../../../scripts/state/events.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -119,4 +120,8 @@ test('the reader\'s step reads its own folder and nothing else', () => {
   assert.deepEqual(Object.keys(read.output_format.properties).slice(0, 2), ['frame', 'why']);
   const prompt = fs.readFileSync(path.join(PACK_DIR, read.prompt_file), 'utf8');
   assert.ok(!/builder|recommend|approve|merge/i.test(prompt));
+});
+
+test('no piece of work can have the reader\'s work name', () => {
+  assert.throws(() => makeEvent({ kind: 'work', data: { id: READER_WORK, title: 'Reader', lane: 'small', visible: true, dependsOn: [] } }), /kept for the reader/);
 });
