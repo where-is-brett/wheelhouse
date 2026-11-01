@@ -1,0 +1,4 @@
+exit 0
+--- out
+This project has no signed brief.
+--- err
