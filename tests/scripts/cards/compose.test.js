@@ -890,6 +890,7 @@ test('a card carrying the director\'s chat words asks for one click', () => {
   assert.deepEqual(card.options, composeCard(input('question')).card.options);
   assert.throws(() => composeCard(input('question', { said: 'one\ntwo' })), /said/);
   assert.throws(() => composeCard(input('question', { said: '' })), /said/);
+});
 
 test('a blind card keeps the question and every option\'s words, in the order its id gives, with no recommendation', () => {
   const asked = {

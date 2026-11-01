@@ -872,4 +872,3 @@ test('words typed on a blind card count as stepping out, and a blind pick is wha
     assert.deepEqual(record('Ask the supplier').answer(id), { answer: null, steered: true, blindPick: null });
   });
 });
-

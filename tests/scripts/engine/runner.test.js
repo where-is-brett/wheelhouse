@@ -2375,6 +2375,7 @@ test('a close match on an answered card records the line alone, and a failed wri
   const unknown = matchRunner({ views: closeViews(), questions: {} });
   await unknown.runner.onMatch({ card: 'q-w-2', sameAs: 'q-w-1' });
   assert.deepEqual(unknown.writes, [], 'a card the router never kept stands');
+});
 
 test('a question drawn blind says so, at most one a day; a joiner and a turned-off setting draw none', async () => {
   const drawn = (t) => t.writes.filter((w) => w.kind === 'question').map((w) => w.data.blind);
