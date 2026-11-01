@@ -25,9 +25,14 @@ function outcomeOf(json) {
 export const REQUEST_RATES = Object.freeze({ copilot: true });
 const ONE_EACH = () => 1;
 
+// The tokens a step or a run spent: fresh input and output. A provider's input figure already holds what was read from
+// and written to its cache, which would otherwise fill a cap with the same context read again; a kind not reported
+// takes nothing off.
+const freshTokens = (input, output, cacheRead, cacheWrite) => (input === null || output === null ? null : Math.max(0, input - (cacheRead ?? 0) - (cacheWrite ?? 0)) + output);
+
 // One node's spend. A node that called no provider (a shell step) spent nothing, which is a known zero. Tokens are
 // known only when both the input and the output figure are: a missing one is unknown, not zero. The four kinds of
-// token are kept apart (check 79). A step on a provider that counts requests counts its prompt at its model's rate,
+// token are kept apart (check 79), and `kinds.input` stays as the provider reported it. A step on a provider that counts requests counts its prompt at its model's rate,
 // an estimate: the provider reports no cost. A step with no provider on record may have counted, so its count is null.
 function spendOf(spend, provider, model, rates) {
   const counts = Object.hasOwn(REQUEST_RATES, provider);
@@ -35,7 +40,7 @@ function spendOf(spend, provider, model, rates) {
   const counted = reported(spend?.tokens) && isObject(spend.tokens.value) ? spend.tokens.value : {};
   const input = figure(counted.input);
   const output = figure(counted.output);
-  const tokens = input === null || output === null ? null : input + output;
+  const tokens = freshTokens(input, output, figure(counted.cacheRead), figure(counted.cacheWrite));
   const kinds = reported(spend?.tokens) ? { input, output, cacheRead: figure(counted.cacheRead), cacheWrite: figure(counted.cacheWrite) } : null;
   const requests = provider === null ? null : counts ? rates(model) : 0;
   if (reported(spend?.costUsd) && figure(spend.costUsd.value) !== null) return { tokens, dollars: spend.costUsd.value, source: 'reported', kinds, requests };
@@ -61,14 +66,14 @@ function stepsOf(nodes, rates) {
   });
 }
 
-// The run's own totals: what Archon summed, with null where it says the count is incomplete.
+// The run's own totals: what Archon summed, counted as a step's tokens are, with null where it says the count is incomplete.
 function totalsOf(metadata) {
   const unknownTokens = metadata.total_tokens_unknown === true || metadata.total_tokens_unknown === null;
   const tokensIn = figure(metadata.total_tokens_in);
   const tokensOut = figure(metadata.total_tokens_out);
   return {
     dollars: figure(metadata.total_cost_usd),
-    tokens: unknownTokens || tokensIn === null || tokensOut === null ? null : tokensIn + tokensOut,
+    tokens: unknownTokens ? null : freshTokens(tokensIn, tokensOut, figure(metadata.total_cache_read_tokens), figure(metadata.total_cache_write_tokens)),
   };
 }
 

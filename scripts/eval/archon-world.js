@@ -191,7 +191,8 @@ export async function openArchonWorld({
     // The ids of the runs Archon started, oldest first.
     runs: () => calls.filter((c) => c.call === 'start' && c.got?.ok === true).map((c) => c.got.runId),
     // The tokens the world's runs spent, the health trial's among them, as Archon's records give each step's:
-    // { input, output }, with cache reads and writes in the input, as a session's tokens are counted. A step whose
+    // { input, output }, with cache reads and writes in the input, where the provider's figure already holds them, as a
+    // session's tokens are counted. A step whose
     // kinds of token aren't known counts its whole figure as input.
     async spend() {
       const total = { input: 0, output: 0 };
@@ -199,7 +200,7 @@ export async function openArchonWorld({
         let cost;
         try { cost = runCost(await engine.inspect(runId)); } catch { continue; }
         if (cost.kinds) {
-          total.input += (cost.kinds.input ?? 0) + (cost.kinds.cacheRead ?? 0) + (cost.kinds.cacheWrite ?? 0);
+          total.input += cost.kinds.input ?? 0;
           total.output += cost.kinds.output ?? 0;
         } else total.input += cost.tokens;
       }

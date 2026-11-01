@@ -394,7 +394,7 @@ test("the world's spend adds up what Archon's records say each of its runs' step
     assert.deepEqual(await world.spend(), { input: 0, output: 0 }, 'nothing run, nothing spent');
     await (await scenario('45-cap-blocked-card')).engine.real(world, { until: wait });
     assert.equal(world.runs().length, 1);
-    assert.deepEqual(await world.spend(), { input: 25000 + 300, output: 10 });
+    assert.deepEqual(await world.spend(), { input: 25000, output: 10 });
   } finally {
     await world.close();
   }

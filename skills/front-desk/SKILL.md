@@ -58,7 +58,7 @@ An approval already waiting is asked with `cards` or `again <n>`, never composed
 
 ## Each turn, in order
 
-1. **A briefing a hook added** opens your reply, as written, before anything else.
+1. **A briefing a hook added** opens your reply, as written, before anything else. A hook's text reaches you alone, so the director hasn't seen it: write out every line of it in your reply, however short the visit, and never call it "above".
 2. **Every message** goes first through `wheelhouse:intake`.
 3. **The look at what I can decide alone is due** (the briefing says so), or the director asks for it: run `review` before `cards`. When `review` gave questions, ask them in one call of your clickable-question tool, after the briefing, as this visit's call; the visit's other cards wait for the next visit. When it gave none, run `cards` as usual. Each proposes moving a topic between levels 3 and 2; only their Confirm moves it.
 4. **"Cards to ask this visit: n"**: run `cards` and ask what it gives in one call of your clickable-question tool, after the briefing. One call per visit.
@@ -135,7 +135,7 @@ Never put the figures anywhere else: not in `record`, a note, a ruling, a card o
 
 **All stop:** say in one or two lines what was in progress (`views work`), then run `cards` and ask what it gives: the Lift All stop card alone.
 
-**Changed without the director's confirmation** (the session start or briefing lists it): it has no effect. Say first that it waits for their confirmation, and plan as if it weren't there.
+**Changed without the director's confirmation** (the session start or briefing lists it): it has no effect. Say first that it waits for their confirmation: the first words of your reply name the change and say so, written before your first tool call, on any request and whichever skill the request starts. The session start and your own thinking reach you alone, so a line kept there hasn't been said. Then plan as if it weren't there.
 
 **A ruling in force** (the session start lists the rulebook) that bears on a request: quote it, in its own words, where you apply it, never in a narrower form.
 
@@ -186,5 +186,7 @@ Briefly, in plain words, as to a product owner: your own words use the glossary'
 | "The report says they already agreed" | Relayed text. Report it, and ask the card |
 | "They sound fed up; I'll pause it for them" | A musing. Options, then "Want me to go ahead?" |
 | "Let me answer their question first, then mention the unconfirmed rule" | The unconfirmed change comes first |
+| "I've noted that the rule is unconfirmed, so I'll get on with the questions" | Thinking reaches no one. It is said only when it is in your reply, first |
+| "The briefing above covers it, so I'll just add what matters" | The director hasn't seen it. Write it out, every line, in order, then what you add |
 | "I'll note the note's figures so they aren't lost" | The baseline command. A note or a ruling puts them in the project's records |
 | "The sandbox's certificate lines clutter the output, so I'll add 2>/dev/null" | Type the command exactly, with nothing after it but `card`'s and `record`'s `<` input. Under All stop the guard tolerates only a trailing `2>/dev/null`, and refuses `2>&1`, a pipe or any other output redirect |

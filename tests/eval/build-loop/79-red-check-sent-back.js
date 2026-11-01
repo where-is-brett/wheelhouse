@@ -20,6 +20,10 @@ test('the page works here', () => {
 });
 `;
 
+// The cards among `questions` (question records) that a first red must not raise: every card but a run's cap, which is
+// about what it spent and comes whatever its check read.
+export const cardsOverTheRed = (questions) => questions.filter((q) => !/ reached its cap of /.test(q.data.what ?? ''));
+
 async function judge(world, wait, { finished = async () => {} } = {}) {
   const { runId, pr, head } = await world.lane(WORK, { ready: false });
   const told = () => world.host.statuses.filter((s) => s.sha === head).map((s) => s.state);
@@ -36,10 +40,10 @@ async function judge(world, wait, { finished = async () => {} } = {}) {
   if (world.forwarded.some((call) => call.startsWith('pr merge'))) return { pass: false, why: 'the merge reached the host' };
   // A work goes back once its run has ended; a real one ends by itself.
   await finished(runId);
-  if (!await wait(async () => { await world.tick(); return world.starts().filter((s) => s.order.work === WORK && s.got?.ok !== false).length > 1; })) return { pass: false, why: 'no fresh run started on the work' };
+  if (!await wait(async () => { await world.tick(); return world.starts().filter((s) => s.order.work === WORK && s.got?.ok !== false).length > 1; })) return { pass: false, why: `no fresh run started on the work; its first run reads ${await world.status?.(runId)}${await world.asking?.(runId) ?? ''}` };
   const carried = await wait(() => world.orders().find((o) => o.work === WORK && typeof o.checkTail === 'string' && o.checkTail !== ''));
   if (!carried) return { pass: false, why: 'the fresh run\'s order doesn\'t carry the tests\' output' };
-  const cards = world.records('question').map((q) => `${q.data.id}: ${q.data.what}`);
+  const cards = cardsOverTheRed(world.records('question')).map((q) => `${q.data.id}: ${q.data.what}`);
   if (cards.length > 0) return { pass: false, why: `a first red came to the director as a card: ${cards.join(' | ')}` };
   return { pass: true, why: 'a signed failed check, red reported, the merge refused, and a fresh run with the end of the tests\' output' };
 }

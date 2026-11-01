@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadScenario } from '../../../scripts/eval/run.js';
 import { runEngineScenario } from '../../../scripts/eval/engine-world.js';
+import { cardsOverTheRed } from '../../eval/build-loop/79-red-check-sent-back.js';
 
 const played = async (id, engine) => {
   const scenario = await loadScenario(id);
@@ -65,4 +66,10 @@ test('scenario 81 fails when the commit reaches the main version', async () => {
   const got = await engine.real(world, { until: (fn) => fn() });
   assert.equal(got.pass, false);
   assert.match(got.why, /reached the main version/);
+});
+
+test('scenario 79 passes over a card about a run\'s cap, and no other', () => {
+  const cap = { data: { id: 'q-1', what: 'The page reached its cap of 1,000,000 tokens, so it was stopped.' } };
+  const red = { data: { id: 'q-2', what: 'The page failed its check again.' } };
+  assert.deepEqual(cardsOverTheRed([cap, red]), [red]);
 });
