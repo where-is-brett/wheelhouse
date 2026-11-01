@@ -161,8 +161,9 @@ test('the sheet\'s checks are added to a feature\'s own run, each check once', (
   const design = { goal: 'g', flag: { name: 'f', file: DEFAULT_FLAG_FILE }, demo: 'end', slices: [{ title: 't', goal: 'g', done: [shared], notInScope: [], protectedFiles: [] }] };
   const entry = { work: { key: 'orders', data: { id: 'orders', lane: 'feature', visible: true } } };
   const config = { testCommand: 'npm test', routing: {} };
-  assert.deepEqual(finishOrder({ entry, design, progress: { slices: {} }, config }).done, [shared]);
-  assert.deepEqual(finishOrder({ entry, design, progress: { slices: {} }, config, goalDone: [{ test: 'the export works' }, sheetOnly] }).done, [shared, sheetOnly]);
+  const progress = { slices: { 1: { pr: 3, head: 'a'.repeat(40) } } };
+  assert.deepEqual(finishOrder({ entry, design, progress, config }).done, [shared]);
+  assert.deepEqual(finishOrder({ entry, design, progress, config, goalDone: [{ test: 'the export works' }, sheetOnly] }).done, [shared, sheetOnly]);
 });
 
 test('only a piece the sheet lists takes its goal\'s checks', () => {

@@ -168,7 +168,7 @@ function hostWith({ status = 'completed', outputs, trusted = () => true, views =
     folderAt: folderAt ?? (async (head) => ({ ok: true, folder: '/engine/goal-checks/x', head: head ?? HEAD })),
     startRun: startRun ?? (async (args) => { started.push(args); return { ok: true, runId: `goal-run-${started.length}` }; }),
   });
-  return { host, written, started, cancelled, s, hash: sheetHash(s), dir };
+  return { host, engine, written, started, cancelled, s, hash: sheetHash(s), dir };
 }
 
 test('the baseline runs the sheet\'s checks at the main line\'s head, and signs from the engine\'s record', async () => {
@@ -208,7 +208,7 @@ test('a run\'s own word counts for nothing', async () => {
     ['an ok that isn\'t a yes or no', say({ [GOAL_STEP]: JSON.stringify({ results: [{ check: TEST, ok: 'yes' }, { check: SUITE, ok: true }] }) })],
   ]) {
     await w.host.start({ goal: 'orders', when: 'before' });
-    await w.host.tick();
+    for (let i = 0; i < 3; i += 1) await w.host.tick();
     assert.equal(w.written.length, 1, what);
     assert.equal(w.written[0].data.ok, false, what);
     assert.deepEqual(w.written[0].data.results, [], what);
@@ -330,6 +330,32 @@ test('a second ask while a check runs gets the same run', async () => {
   assert.equal(w.started.length, 1);
   assert.deepEqual(w.host.workOf('goal-run-1'), { work: GOAL_WORK, lane: null, branch: null });
   assert.equal(w.host.workOf('other'), null);
+});
+
+test('a check under way is left to finish: its folder is the project\'s one, and a new run clears it', async () => {
+  const s = sheet();
+  const other = sheet({ title: 'Another goal' });
+  const events = [{ kind: 'goal', data: { id: 'orders', sheet: s } }, { kind: 'goal', data: { id: 'other', sheet: other } }];
+  const folders = [];
+  const w = hostWith({ status: 'running', events, folderAt: async (head) => { folders.push(head); return { ok: true, folder: '/f', head: HEAD }; } });
+  await w.host.start({ goal: 'orders', when: 'before' });
+  const second = await w.host.start({ goal: 'other', when: 'before' });
+  assert.equal(second.ok, false);
+  assert.equal(second.busy, true);
+  assert.equal(folders.length, 1, 'the folder wasn\'t cleared under the run');
+  assert.deepEqual(w.written, [], 'nothing went on the record');
+});
+
+test('an output that couldn\'t be read is looked for again, so a finished run keeps its result', async () => {
+  let reads = 0;
+  const w = hostWith({});
+  const fine = { [GOAL_STEP]: JSON.stringify({ results: [{ check: TEST, ok: true }, { check: SUITE, ok: true }] }) };
+  await w.host.start({ goal: 'orders', when: 'before' });
+  w.engine.outputs = async () => { reads += 1; return reads === 1 ? {} : fine; };
+  await w.host.tick();
+  assert.deepEqual(w.written, []);
+  await w.host.tick();
+  assert.equal(w.written[0].data.ok, true);
 });
 
 test('an unsigned goal starts nothing by itself', async () => {

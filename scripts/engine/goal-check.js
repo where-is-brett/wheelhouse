@@ -27,6 +27,8 @@ const GOING = ['running', 'pending'];
 const STOPPED = ['failed', 'cancelled'];
 const HOUR_MS = 60 * 60 * 1000;
 const MINUTE_MS = 60 * 1000;
+// How many looks a finished run's output may go unread: a failed read gives no output, and costs no result.
+const OUTPUT_LOOKS = 3;
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 
@@ -120,6 +122,9 @@ export function goalCheckHost({ file, write, engine, now = () => new Date(), sto
     const { sheet, hash, views } = found;
     const under = Object.entries(state.runs).find(([, r]) => r.goal === goal && r.hash === hash && r.when === when);
     if (under) return { ok: true, runId: under[0], head: under[1].head };
+    // The project has one folder for its checks, and a new run clears it, so a run under way is left to finish: the caller
+    // asks again, and nothing goes on the record.
+    if (Object.keys(state.runs).length > 0) return { ok: false, busy: true, refused: 'Another run of a goal\'s checks is under way, so ask again when it has ended' };
 
     const run = { goal, hash, when, head };
     const { testCommand = null, prepare = null } = config() ?? {};
@@ -195,6 +200,11 @@ export function goalCheckHost({ file, write, engine, now = () => new Date(), sto
       return;
     }
     const outputs = await Promise.resolve().then(() => engine.outputs(runId)).catch(() => null);
+    if (outputs?.[GOAL_STEP] === undefined && (entry.unread ?? 0) + 1 < OUTPUT_LOOKS) {
+      entry.unread = (entry.unread ?? 0) + 1;
+      keep();
+      return;
+    }
     const isOurs = await Promise.resolve().then(() => trusted(record)).catch(() => false);
     const results = isOurs === true && outputs ? resultsOf(outputs[GOAL_STEP], entry) : null;
     if (results === null) await finish(runId, entry, [], 'The check run gave no result that could be signed');

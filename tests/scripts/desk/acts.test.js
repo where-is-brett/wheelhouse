@@ -231,6 +231,24 @@ test('start-goal with a changed work record, a wrong hash or a past until record
   }
 }));
 
+test('start-goal with no baseline, or one where every check passes, records nothing', () => withKey(async () => {
+  const sheet = sheetOf();
+  const hash = sheetHash(sheet);
+  for (const [goalChecks, pattern] of [
+    [{}, /haven't been run/],
+    [{ 'orders-export': [{ hash, when: 'before', results: sheet.done.map((check) => ({ check, ok: true })) }] }, /already passes/],
+  ]) {
+    const source = goalMemory({ events: [goalEvent(sheet)] });
+    const views = await source.views();
+    source.views = async () => ({ ...views, views: { ...views.views, goalChecks } });
+    const recorder = spy();
+    const got = await startGoal(source, recorder, startArgs(sheet), startOf(sheet));
+    assert.equal(got.ok, false);
+    assert.match(got.refused, pattern);
+    assert.deepEqual(recorder.calls, []);
+  }
+}));
+
 test('start-goal under All stop is refused and records nothing', () => withKey(async () => {
   const sheet = sheetOf();
   const recorder = spy();
