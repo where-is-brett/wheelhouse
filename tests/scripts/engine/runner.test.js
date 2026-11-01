@@ -2941,3 +2941,63 @@ test('a resumed run counts against its cap again', async () => {
     assert.ok(acts(t.engine).some((c) => c.action.cancel));
   } finally { t.cleanup(); }
 });
+
+test('a resume the engine gave no reply to starts nothing beside it, and is looked at again', async () => {
+  const started = [];
+  const t = setUp({ recordings: { two: [...legs('failed'), ev({ type: 'step-finished', step: 'more', role: 'implement', spend: { source: 'reported', tokens: 1, dollars: 0 } })] }, gate: { startAdmitted: async (args) => { started.push(args); return { ok: true }; } } });
+  try {
+    const { runId, card } = await failedAtCap(t);
+    recordRuns(t);
+    giveMore(t, card);
+    const act = t.engine.act.bind(t.engine);
+    // It takes the resume, and the reply is lost.
+    t.engine.act = (id, action) => { act(id, action); return { ok: false, unreachable: true, refused: 'silence' }; };
+    await t.runner.tick();
+    assert.deepEqual(started, []);
+    assert.equal(t.views.runs['sale-banner'].at(-1).data.state, 'started');
+    await t.runner.tick();
+    assert.deepEqual(started, [], 'the run is going, so nothing starts');
+    assert.equal(t.runner.questionOf(runId), null, 'and its cap is looked at again');
+    assert.equal(t.writes.filter((w) => w.kind === 'run').length, 1, 'one resume, one record');
+  } finally { t.cleanup(); }
+});
+
+test('after a crash, a resumed run that cannot be read starts nothing', async () => {
+  const started = [];
+  const t = setUp({ recordings: { two: legs('failed') }, gate: { startAdmitted: async (args) => { started.push(args); return { ok: true }; } } });
+  try {
+    const { card } = await failedAtCap(t);
+    recordRuns(t);
+    giveMore(t, card);
+    t.engine.act = () => ({ ok: false, unreachable: true });
+    await t.runner.tick();
+    t.engine.inspect = () => ({ status: 'unknown', unread: true, steps: [] });
+    await t.runner.tick();
+    assert.deepEqual(started, []);
+  } finally { t.cleanup(); }
+});
+
+test('a held run that failed since resumes through its record', async () => {
+  const t = setUp({ recordings: { two: legs('failed', 'completed') } });
+  try {
+    const { runId } = t.engine.start({ recording: 'two' });
+    withRun(t, runId, [['2026-10-29T12:50:00.000Z', 'started'], ['2026-10-29T12:55:00.000Z', 'paused']]);
+    await t.runner.capped({ runId, work: 'sale-banner', lane: 'quick', branch: 'wh/x', reached: { cap: 'tokens', used: 2, limit: 1 }, paused: true });
+    const card = t.runner.questionOf(runId);
+    t.views.runs['sale-banner'].push({ at: '2026-10-29T12:58:00.000Z', data: { ...t.views.runs['sale-banner'][0].data, state: 'ended', outcome: 'failed' } });
+    recordRuns(t);
+    giveMore(t, card);
+    await t.runner.tick();
+    assert.equal(t.writes.find((w) => w.kind === 'run').data.resume, 1);
+  } finally { t.cleanup(); }
+});
+
+test("a resumed run's ending that the look writes carries its pull request", async () => {
+  const t = setUp({ recordings: { two: legs('failed') }, gate: { prOf: () => 42 } });
+  try {
+    const { runId } = t.engine.start({ recording: 'two' });
+    withRun(t, runId, [['2026-10-29T12:00:00.000Z', 'started'], ['2026-10-29T12:10:00.000Z', 'ended', { outcome: 'failed' }], ['2026-10-29T12:30:00.000Z', 'started', { resume: 1 }]]);
+    await t.runner.tick();
+    assert.equal(t.writes.find((w) => w.kind === 'run').data.pr, 42);
+  } finally { t.cleanup(); }
+});

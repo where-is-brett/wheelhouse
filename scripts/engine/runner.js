@@ -24,6 +24,7 @@ import { blindDue } from '../delegation/blind.js';
 import { routeAsk, cardBudget, bundleApprovals, answerFor, dayOf, ignoresBudget, ENGINE_QUESTIONS } from './router.js';
 import { runCost, runningMinutes } from './spend.js';
 import { RESUME_SETTLE_MINUTES, resumeRun, resumesOf, unsettled } from './recovery.js';
+import { prNumber } from './host.js';
 import { capReached, carriedSpend } from './caps.js';
 import { RED_MAIN, FIX_LANE, redMainIncident, openRedMain } from './fix-main.js';
 import { MERGE_WORK } from './dispatcher.js';
@@ -88,7 +89,8 @@ const inSentence = (title) => (/^[A-Z][a-z]/.test(title) ? title.charAt(0).toLow
 //   tells them of an ask on a reader's run, which never becomes a card;
 // - `titleOf(work)` the work's title; `endRun(runId)` ends a run's process tree by pid, as All stop does, for a run the
 //   engine wouldn't stop at its cap ({ ended, survivors });
-// - `openedOf(pr)` the helper's own record of what opened a pull request ({ lane, work, ... }), or null; `prTitleOf(pr)`
+// - `openedOf(pr)` the helper's own record of what opened a pull request ({ lane, work, ... }), or null; `prOf(runId)` the
+//   pull request a run opened, by the same record, or null; `prTitleOf(pr)`
 //   its title from the host, or null; `keepReviews(runId)` keeps what an ended run's task reviews last said, in the
 //   helper's own record, true once done;
 // - `blindRoll(id)` a number in [0, 1) for a question, which draws its blind card (scripts/delegation/blind.js); by default none is;
@@ -114,7 +116,7 @@ const inSentence = (title) => (/^[A-Z][a-z]/.test(title) ? title.charAt(0).toLow
 // The card's other answer is Send it back (`sendBacks`): the park ends, and the piece is reworked on its own branch as a
 // blocked exit's Send it back is. `sentBack` keeps which signed clicks have been acted on, so each counts once. On a project in
 // git alone nothing parks: the local queue raises the same card, and the change marked ready stands in for the park.
-export function engineRunner({ engine, file, readViews, write, stopped = () => false, now = () => new Date(), settings = () => ({}), noteSleep = async () => true, workOf = () => null, titleOf = (work) => work, endRun = async () => ({ ended: [], survivors: [] }), openedOf = () => null, prTitleOf = async () => null, keepReviews = async () => true, onCard = () => {}, onReaderAsk = () => {}, blindRoll = () => 1, release = () => {}, handBack = async () => ({ ok: false, refused: 'nothing hands work to the merge queue here' }), admittedTo = () => true, delivered = () => {}, drop = () => {}, takeBack = async () => ({ ok: false }), notReady = () => {}, localChange = () => null, startAdmitted = async () => ({ ok: false, refused: 'nothing starts runs here' }), carryOver = () => {}, comingBack = () => false, headOf = async () => null, commitsSince = async () => null, exclusionsOf = async () => null } = {}) {
+export function engineRunner({ engine, file, readViews, write, stopped = () => false, now = () => new Date(), settings = () => ({}), noteSleep = async () => true, workOf = () => null, titleOf = (work) => work, endRun = async () => ({ ended: [], survivors: [] }), openedOf = () => null, prOf = () => null, prTitleOf = async () => null, keepReviews = async () => true, onCard = () => {}, onReaderAsk = () => {}, blindRoll = () => 1, release = () => {}, handBack = async () => ({ ok: false, refused: 'nothing hands work to the merge queue here' }), admittedTo = () => true, delivered = () => {}, drop = () => {}, takeBack = async () => ({ ok: false }), notReady = () => {}, localChange = () => null, startAdmitted = async () => ({ ok: false, refused: 'nothing starts runs here' }), carryOver = () => {}, comingBack = () => false, headOf = async () => null, commitsSince = async () => null, exclusionsOf = async () => null } = {}) {
   let state = readState(file);
   const keep = () => saveState(file, state);
   const note = (words, extra = {}) => write('note', { about: 'engine', words, ...extra });
@@ -950,7 +952,11 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       const open = state.later.some((a) => a.runId === kept.runId) || state.waiting.some(asking)
         || Object.entries(state.questions).some(([key, k]) => asking(k) && !state.delivered[key])
         || Object.entries(state.approvals).some(([key, k]) => asking(k) && !state.delivered[key]);
-      if (!open) await safely(() => engine.act(kept.runId, { resume: {} }));
+      if (!open) {
+        // A held run an answer carried on can have failed since, and that one has an ending to come back from.
+        if ((await inspect(kept.runId))?.outcome === 'failed') await resumeFailed(kept);
+        else await safely(() => engine.act(kept.runId, { resume: {} }));
+      }
       delivered(kept.work, key);
       return;
     }
@@ -962,6 +968,8 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       delivered(kept.work, key);
       return;
     }
+    // After a crash, a run that can't be read may be going: nothing more starts on a guess.
+    if (again && (record === null || record.unread === true)) return false;
     if (record?.outcome === 'failed' || record?.status === 'paused') {
       // A paused run never ended, so it has no ending to come back from.
       const got = record.status === 'paused' ? await safely(() => engine.act(kept.runId, { resume: {} })) : await resumeFailed(kept);
@@ -972,6 +980,8 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
         delivered(kept.work, key);
         return;
       }
+      // The engine may have taken it, so no second run starts beside it: a later tick looks again.
+      if (got?.unreachable === true) return false;
     }
     // Refused, it stays on the way back: the dispatcher says so, and the place goes back until it is tried again.
     const got = await startAdmitted({
@@ -985,7 +995,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   function resumeFailed({ work, runId }) {
     delete state.reviewsKept[runId];
     keep();
-    return safely(() => resumeRun({ engine, runId, write, records: runRecords(work, runId) }));
+    return safely(() => resumeRun({ engine, runId, write, records: runRecords(work, runId), now }));
   }
   const runRecords = (work, runId) => (viewsNow().runs?.[work] ?? []).filter((r) => r?.data?.runId === runId);
 
@@ -996,7 +1006,8 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   }
 
   // A crash between a resume's record and its act, or a resume the engine gave no reply to, leaves the record saying
-  // `started` of a run that isn't going. Gives whether the run was ended here. The host writes no second ending for it.
+  // `started` of a run that isn't going. Gives whether the run was ended here. The host writes no second ending for it, so
+  // this one carries all the host's would: the latest record is the one read for a pull request.
   async function reconcile(runId, records, at) {
     const latest = records.at(-1);
     if (at.getTime() - Date.parse(latest.at) < RESUME_SETTLE_MINUTES * 60 * 1000) return false;
@@ -1004,8 +1015,9 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     if (record?.status !== 'ended') return false;
     const { work, lane, engine: name, branch, resume } = latest.data;
     const outcome = typeof record.outcome === 'string' ? record.outcome : 'failed';
+    const pr = prNumber(record.pr) ?? prNumber(await safely(() => prOf(runId))) ?? records.findLast((r) => Number.isInteger(r.data?.pr))?.data.pr;
     await write('run', {
-      work, lane, engine: name, runId, state: 'ended', resume, outcome, ...(typeof branch === 'string' ? { branch } : {}),
+      work, lane, engine: name, runId, state: 'ended', resume, outcome, ...(typeof branch === 'string' ? { branch } : {}), ...(pr === undefined ? {} : { pr }),
       ...(outcome === 'failed' ? { failure: typeof record.failure === 'string' ? record.failure : 'other' } : {}),
     });
     return true;

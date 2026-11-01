@@ -5223,6 +5223,7 @@ export async function startHelper({
       titleOf: (work) => (work === MERGE_WORK ? 'the changes waiting to be added' : views().work?.[work]?.work?.data?.title ?? work),
       endRun: async (runId) => endRun({ engine, run: { id: runId, folder: (await engine.inspect(runId))?.folder ?? null }, ...engineStopWith }),
       openedOf: (pr) => engineRun.openedOf(project, pr),
+      prOf: (runId) => engineRun.openedBy(project, runId),
       keepReviews: (runId) => engineRun.keepTaskReviews(project, runId),
       prTitleOf: async (pr) => (await (await contextFor(project)).adapter().then((adapter) => adapter.prState(pr))).title ?? null,
       release: (work) => dispatcher.release(work),

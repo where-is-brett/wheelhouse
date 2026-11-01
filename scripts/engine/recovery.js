@@ -90,9 +90,10 @@ export function unsettled({ records, capped }) {
 // The one way a failed run resumes. `records` are the run's `run` records. It writes `{ state: 'started', resume: n }`, then
 // acts, so the record is never behind the engine; a crash between the two is put right by the runner's look at the run.
 // A refusal writes the ending itself, since a refused resume brings no `terminal` line. An engine that gave no reply may
-// have taken it, so that writes nothing, and the same look decides. Called again after a crash it takes up the same
-// number, and leaves alone a run that is already going: one failure, one resume.
-export async function resumeRun({ engine, runId, write, records }) {
+// have taken it, so that writes nothing, and the same look decides: `unreachable` means don't start anything else yet.
+// Called again after a crash it takes up the same number, and leaves alone a run that is already going, or that it
+// resumed too lately to tell: one failure, one resume.
+export async function resumeRun({ engine, runId, write, records, now = () => new Date() }) {
   const latest = records?.at(-1);
   if (!latest) return { ok: false, refused: 'the record has no such run' };
   const { work, lane, engine: name, branch } = latest.data;
@@ -102,6 +103,7 @@ export async function resumeRun({ engine, runId, write, records }) {
   if (carriedOver) {
     const status = await Promise.resolve().then(() => engine.inspect(runId)).then((seen) => seen?.status, () => null);
     if (status === 'running' || status === 'paused') return { ok: true };
+    if (now().getTime() - Date.parse(latest.at) < RESUME_SETTLE_MINUTES * 60 * 1000) return { ok: false, unreachable: true, refused: 'it may have resumed already' };
   } else await write('run', { ...place, state: 'started', resume });
   let got;
   try {
@@ -111,6 +113,8 @@ export async function resumeRun({ engine, runId, write, records }) {
   }
   if (got.ok === true) return { ok: true };
   if (got.unreachable === true) return { ok: false, unreachable: true, refused: got.refused ?? 'the engine gave no reply' };
-  await write('run', { ...place, state: 'ended', resume, outcome: 'failed', failure: RESUME_REFUSED });
+  // The latest record is the one read for a pull request, so this one keeps the run's.
+  const pr = records.findLast((r) => Number.isInteger(r.data?.pr))?.data.pr;
+  await write('run', { ...place, state: 'ended', resume, outcome: 'failed', failure: RESUME_REFUSED, ...(pr === undefined ? {} : { pr }) });
   return { ok: false, refused: got.refused };
 }

@@ -39,7 +39,7 @@ function saveCursorFile(file, { cursor, written }) {
 
 const isText = (value) => typeof value === 'string' && value !== '';
 // A pull request's number, from a number or the end of its address.
-function prNumber(pr) {
+export function prNumber(pr) {
   if (Number.isInteger(pr) && pr > 0) return pr;
   const found = /(\d+)\/?$/.exec(typeof pr === 'string' ? pr : '');
   return found ? Number(found[1]) : undefined;

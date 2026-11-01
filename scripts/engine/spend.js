@@ -65,7 +65,7 @@ export const TOKEN_KINDS = Object.freeze(['input', 'output', 'cacheRead', 'cache
 // spend. They are null only when they can't be known: a step of unknown spend that counted none, or a run the engine
 // no longer has. Minutes add up the steps' own running time. A step's row holds its last attempt only, so for a run that
 // resumed the steps read less than the run spent: where the engine gives `totals` ({ tokens, dollars }), which add every
-// leg, the larger figure stands (check 93). `kinds`, `byRole` and `minutes` stay the steps'.
+// leg, the larger figure stands (check 93). `kinds`, `byRole`, `minutes` and requests stay the steps'.
 export function runCost(inspect) {
   const steps = Array.isArray(inspect?.steps) ? inspect.steps : [];
   let tokens = 0;

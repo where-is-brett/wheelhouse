@@ -142,11 +142,27 @@ test('a resume the engine gave no reply to writes no ending: it may have landed,
 test('a resume cut short by a crash takes up its own number, and acts on nothing that is already going', async () => {
   const cut = [...failed, ...records(['started', { resume: 1 }])];
   const waiting = resuming(() => ({ ok: true }));
-  await resumeRun({ engine: waiting.engine, runId: 'r1', write: waiting.write, records: cut });
+  const later = () => new Date('2026-11-01T02:00:00.000Z');
+  await resumeRun({ engine: waiting.engine, runId: 'r1', write: waiting.write, records: cut, now: later });
   assert.deepEqual(waiting.log, [{ act: 'r1', action: { resume: {} } }], 'one started for one resume');
   const going = resuming(() => assert.fail('a run that is going is not resumed'), 'running');
-  assert.deepEqual(await resumeRun({ engine: going.engine, runId: 'r1', write: going.write, records: cut }), { ok: true });
+  assert.deepEqual(await resumeRun({ engine: going.engine, runId: 'r1', write: going.write, records: cut, now: later }), { ok: true });
   assert.deepEqual(going.log, []);
+});
+
+test('a resume cut short a moment ago is left alone, since the engine may not have moved yet', async () => {
+  const t = resuming(() => assert.fail('a second resume could be refused over a live run'));
+  const cut = [...failed, ...records(['started', { resume: 1 }])];
+  const got = await resumeRun({ engine: t.engine, runId: 'r1', write: t.write, records: cut, now: () => new Date('2026-11-01T01:01:00.000Z') });
+  assert.equal(got.ok, false);
+  assert.equal(got.unreachable, true);
+  assert.deepEqual(t.log, []);
+});
+
+test("a refused resume's ending keeps the run's pull request", async () => {
+  const t = resuming(() => ({ ok: false, refused: 'no' }));
+  await resumeRun({ engine: t.engine, runId: 'r1', write: t.write, records: records(['started'], ['ended', { outcome: 'failed', pr: 7 }]) });
+  assert.equal(t.log.at(-1).data.pr, 7);
 });
 
 test('the next resume after one refused takes the next number', async () => {

@@ -755,3 +755,18 @@ test('a run that has not failed has no failure on its record', async () => {
   const record = { code: 0, stdout: '', stderr: '', json: { status: 'completed', metadata: {}, nodes: [] } };
   assert.equal((await adapter(fakeCli({ 'workflow get': record })).inspect(RUN)).failure, null);
 });
+
+test('a failure takes the kind of the step that failed first, not the first listed', async () => {
+  const answer = failedRecord({ failureKind: 'exec_failed' });
+  answer.json.nodes.push({ nodeId: 'beside', execution: { lifecycle: { status: 'failed', failureKind: 'transient' } } });
+  answer.json.terminal_record = { first_failed_node: 'beside' };
+  assert.equal((await adapter(fakeCli({ 'workflow get': answer })).inspect(RUN)).failure, 'connection');
+});
+
+test('a resume with no answer from the engine may have landed; one it refused has not', async () => {
+  const silent = await adapter(fakeCli({ 'workflow resume': { code: 1, json: null, stdout: '', stderr: '', timedOut: true } })).act(RUN, { resume: {} });
+  assert.equal(silent.unreachable, true);
+  const refused = await adapter(fakeCli({ 'workflow resume': { code: 1, json: { ok: false, error: 'no' }, stdout: '', stderr: '' } })).act(RUN, { resume: {} });
+  assert.equal(refused.unreachable, undefined);
+  assert.equal(refused.ok, false);
+});
