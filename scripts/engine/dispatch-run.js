@@ -328,9 +328,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     if ([...state.returning, ...state.admitted].some((e) => e.work === work && e.heldBy === undefined)) return 'going';
     if (Object.values(ready).some((r) => r?.work === work)) return 'going';
     if (lastHold.some((h) => h.work === work && ['parked', 'clash', 'dependency'].includes(h.why))) return 'waiting';
-    if (run?.outcome === 'failed') return 'failed';
-    if (run !== null && stoppedRuns().includes(run.runId)) return 'ended';
-    return 'queued';
+    if (run !== null && (stoppedRuns().includes(run.runId) || stoppedByDirector(views, work, run.runId))) return 'ended';
+    return run?.outcome === 'failed' ? 'failed' : 'queued';
   }
   // How many of the goal's pieces, latest first, failed past their retries with nothing merged since.
   function failedInARow(views, goal, ready) {
@@ -342,8 +341,9 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
         continue;
       }
       const run = latestRun(views, work);
-      if (run?.outcome !== 'failed' || run.state !== 'ended' || retryFor(views, work) !== null || onTheWay(work) && !state.returning.some((e) => e.work === work && e.asked)) continue;
-      if (Object.values(ready).some((r) => r?.work === work)) continue;
+      if (run?.outcome !== 'failed' || run.state !== 'ended' || retryFor(views, work) !== null) continue;
+      // Something still moves it on: an answer on its way back, or a pull request with the merge queue.
+      if ((onTheWay(work) && !state.returning.some((e) => e.work === work && e.asked)) || Object.values(ready).some((r) => r?.work === work)) continue;
       outcomes.push({ at: Date.parse(run.records.at(-1).at), failed: true });
     }
     const sorted = outcomes.sort((a, b) => a.at - b.at);
@@ -492,6 +492,11 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     const goal = lastEnded(views);
     const kept = state.goalRun;
     if (goal === null || kept?.goal !== goal.id) return;
+    // A crash after the record went on leaves it to say so here.
+    if (kept.state !== 'ended') {
+      Object.assign(kept, { state: 'ended', closing: null });
+      keep();
+    }
     await queueAfterTick(goal, kept);
     if (goal.ended.ending !== 'waiting-for-you' || kept.after?.done === true || unfinishedOf(goal, views).length > 0) return;
     kept.after ??= { check: null };

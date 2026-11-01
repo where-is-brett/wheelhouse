@@ -406,3 +406,35 @@ test('a piece whose record changed leaves the goal, and is said once', async () 
   assert.equal(ends(w)[0]?.ending, 'stuck');
   assert.equal(w.notes().filter((n) => /changed since the goal's sheet/.test(n)).length, 1);
 });
+
+test('a crash just after the goal-end leaves nothing held', async () => {
+  const { w } = withChecks({ recordings: { a: asking('q1'), b: forever() }, pace: 2 });
+  w.put('a');
+  w.put('b');
+  goalOver(w, ['a', 'b']);
+  await w.tick(3);
+  w.goals.g.endAsked = { at: w.clock.now.toISOString(), now: true };
+  await w.tick();
+  const file = path.join(w.dir, 'dispatch.json');
+  const kept = keptOf(w);
+  fs.writeFileSync(file, JSON.stringify({ ...kept, goalRun: { ...kept.goalRun, state: 'winding', closing: { ending: 'end-goal', cancel: [] } } }));
+  w.restart();
+  w.answer('a', 'Keep it small');
+  await w.tick(4);
+  assert.equal(w.answers().length, 1);
+  assert.equal(ends(w).length, 1);
+  assert.equal(keptOf(w).goalRun.state, 'ended');
+});
+
+test('a piece the director stopped at its cap isn\'t waited for', async () => {
+  const { w } = withChecks({ recordings: { a: forever() }, settings: { capMinutes: { quick: 1 } } });
+  w.put('a');
+  goalOver(w, ['a']);
+  await w.tick(2);
+  await w.pass(3 * MINUTE);
+  w.answer('a', 'Stop');
+  await w.tick(3);
+  w.endRun('a');
+  await w.tick(3);
+  assert.equal(ends(w)[0]?.ending, 'stuck');
+});
