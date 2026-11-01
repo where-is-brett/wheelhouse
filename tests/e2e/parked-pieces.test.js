@@ -363,3 +363,100 @@ test('a feature run that failed with no pull request brings its card', async () 
   assert.ok(w.starts.some((s) => s.order.work === 'h'), 'the card gives its place up');
   assert.equal(w.cards().length, 1, 'one card');
 });
+
+const queueAsk = (id) => [
+  { runId: 'x', at: '2026-10-29T02:00:00.000Z', type: 'run-started' },
+  { runId: 'x', at: '2026-10-29T02:00:00.000Z', type: 'ask', id, kind: 'question', level: 3, recommend: null, card: true, mergeQuestion: { pr: 7 }, reason: 'The merge queue won\'t judge pull request #7 by itself.', options: [{ id: 'go', label: 'Merge' }, { id: 'leave', label: 'Leave it' }] },
+];
+// Work whose pull request 7 the merge queue left alone, with the director's card open.
+async function parkedPr({ head = 'c'.repeat(40) } = {}) {
+  const w = wayBack({ recordings: { a: quiet(), other: forever(), queue: queueAsk('q7'), again: queueAsk('q8') }, pace: 1, opened: { 7: { work: 'a', lane: 'quick' } }, branchPaths: async () => ['src/a.js'] });
+  w.put('a', { files: ['src/a.js'] });
+  await w.tick(2);
+  w.ready[7] = { work: 'a', head, runId: w.runsOf('a')[0] };
+  w.engine.mergeAsked = async () => ({ pr: 7, head, merge: 'go', park: 'leave' });
+  const { runId } = w.engine.start({ recording: 'queue' });
+  await w.runner.onAsk(w.engine.watch('0').events.find((e) => e.runId === runId && e.type === 'ask'));
+  await w.tick();
+  return { w, head };
+}
+const click = (w, head) => { (w.sendBacks ??= []).push({ id: `sb-${w.sendBacks?.length ?? 0}`, at: w.clock.now.toISOString(), pr: 7, sha: head }); };
+
+test('Send it back: the piece leaves the parked set, keeps its files, and comes back as rework on its branch', async () => {
+  const { w, head } = await parkedPr();
+  assert.deepEqual([...w.dispatcher.waitingWork()], ['a'], 'the card holds it');
+  assert.deepEqual(w.dispatcher.reserved().a, ['src/a.js']);
+  click(w, head);
+  await w.tick();
+  assert.deepEqual(w.runner.parkedHeads(), {});
+  assert.deepEqual([...w.dispatcher.waitingWork()], []);
+  assert.equal(w.ready[7], undefined, 'nothing is left for the queue to look at');
+  const back = w.starts.at(-1);
+  assert.equal(back.order.work, 'a');
+  assert.equal(back.carryOn, true);
+  assert.equal(back.branch, 'wh/a');
+  assert.match(JSON.stringify(back.order.answers), /Send it back/);
+  assert.equal(w.runsOf('a').length, 2, 'one run more');
+  assert.ok(w.dispatcher.reserved().a !== undefined, 'its files stay held through the rework');
+});
+
+test('Send it back under All stop, through a restart, starts once after the lift', async () => {
+  const { w, head } = await parkedPr();
+  w.stop = true;
+  click(w, head);
+  await w.tick();
+  assert.equal(w.runsOf('a').length, 1);
+  assert.deepEqual(w.runner.parkedHeads(), { 7: head });
+  w.restart();
+  await w.tick();
+  w.stop = false;
+  w.restart();
+  await w.tick(2);
+  assert.equal(w.runsOf('a').length, 2);
+  await w.tick(2);
+  assert.equal(w.runsOf('a').length, 2, 'once');
+});
+
+test('Send it back waits for a place at pace, and a restart between the two loses nothing', async () => {
+  const { w, head } = await parkedPr();
+  w.put('other', { files: ['src/other.js'] });
+  await w.tick();
+  assert.equal(w.stateOf('other'), 'started', 'a place freed by the park is taken');
+  click(w, head);
+  await w.tick();
+  assert.equal(w.runsOf('a').length, 1, 'no place yet');
+  assert.equal(w.dispatcher.comingBack('a'), true);
+  w.restart();
+  await w.tick();
+  assert.equal(w.dispatcher.comingBack('a'), true);
+  w.endRun('other');
+  await w.tick(2);
+  assert.equal(w.runsOf('a').length, 2);
+});
+
+test('rework that comes back to the queue at the same head raises a fresh card', async () => {
+  const { w, head } = await parkedPr();
+  click(w, head);
+  await w.tick(2);
+  w.ready[7] = { work: 'a', head, runId: w.runsOf('a').at(-1) };
+  w.written.length = 0;
+  w.clock.now = new Date(w.clock.now.getTime() + 60000);
+  const { runId } = w.engine.start({ recording: 'again' });
+  await w.runner.onAsk(w.engine.watch('0').events.find((e) => e.runId === runId && e.type === 'ask'));
+  await w.tick();
+  assert.equal(w.written.filter((x) => x.kind === 'card').length, 1);
+  assert.deepEqual(w.runner.parkedHeads(), { 7: head });
+  assert.equal(w.runsOf('a').length, 2, 'the old click answers nothing here');
+});
+
+test('rework that ends without marking ready, its files holding other work, brings a card', async () => {
+  const { w, head } = await parkedPr();
+  click(w, head);
+  await w.tick(2);
+  assert.equal(w.stateOf('a'), 'ended', 'its rework ended and marked nothing ready');
+  w.runs.a.push({ at: w.clock.now.toISOString(), data: { ...w.runs.a.at(-1).data, pr: 7 } });
+  w.put('b', { files: ['src/a.js'] });
+  await w.tick(2);
+  assert.equal(w.runsOf('b').length, 0, 'its files are still held');
+  assert.equal(w.cardOf('a')?.options.map((o) => o.label).join(), [TRY_AGAIN, STOP_HERE].join());
+});

@@ -16,7 +16,7 @@ import {
 } from '../state/card-lines.js';
 import { CARD, CARD_KINDS, KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
 import { questionIdOf } from '../lib/build-loop.js';
-import { SUGGEST, SHOW_ME, NOT_NOW, TO_KNOW_MORE, TO_CHANGE_IT, WHAT_CHANGED, SUGGEST_SAYS } from '../lib/calm-words.js';
+import { SUGGEST, SHOW_ME, NOT_NOW, TO_KNOW_MORE, TO_CHANGE_IT, WHAT_CHANGED, SUGGEST_SAYS, SEND_BACK } from '../lib/calm-words.js';
 import { CONFIRMABLE_KINDS } from '../state/events.js';
 import { glossaryOf, termsIn } from '../frontdesk/glossary.js';
 import { normaliseWords } from '../delegation/words.js';
@@ -104,6 +104,9 @@ const OFFERED_AFTER = Object.freeze({
   'keep-control-files': Object.freeze([SHOW_ME, NOT_NOW]),
 });
 const USUAL_AFTER = Object.freeze([SUGGEST, SHOW_ME, NOT_NOW]);
+// A parked pull request's card (delegated decisions design, section 8.1) says no as well as yes. A card shows four options at
+// most, and this one simply waits while nothing is clicked, so Send it back takes Not now's place.
+const PARKED_AFTER = Object.freeze([SEND_BACK, SUGGEST, SHOW_ME]);
 
 // What an answer card says happens while the director decides.
 export const MEANWHILE = 'Meanwhile that work waits, and the rest carries on.';
@@ -336,8 +339,8 @@ function sameThing(kind, what, target) {
 // The buttons a card offers, each { label, says }, in the order they are shown (design section
 // 23.4). `build` says the card answers a build-command question (one that names its `commands`). A
 // confirm card for a proposal (its `target`) offers Keep as is in place of Show me. A question's
-// own options come first, then Suggest a change… unless it has four of its own.
-function offered(kind, given, { build = false, target, suggest = true } = {}) {
+// own options come first, then Suggest a change… unless it has four of its own. `parked` is a parked pull request's card.
+function offered(kind, given, { build = false, target, suggest = true, parked = false } = {}) {
   if (!Array.isArray(given) || given.length === 0) fail(kind, 'options');
   const seen = new Set();
   const list = given.map((o) => {
@@ -366,10 +369,10 @@ function offered(kind, given, { build = false, target, suggest = true } = {}) {
   }
   const deciding = DECIDING[kind];
   const proposal = kind === 'confirm' && isProposal(target?.event);
-  const after = OFFERED_AFTER[kind] ?? USUAL_AFTER.map((label) => (proposal && label === SHOW_ME ? KEEP_AS_IS : label));
+  const after = parked ? PARKED_AFTER : OFFERED_AFTER[kind] ?? USUAL_AFTER.map((label) => (proposal && label === SHOW_ME ? KEEP_AS_IS : label));
   const allowed = [deciding, ...after];
   for (const o of list) if (!allowed.includes(o.label)) fail(kind, 'options', `can't describe ${o.label}; the card offers ${allowed.join(', ')}`);
-  for (const must of kind === 'confirm-all' ? [deciding, CORRECT_SOME_LABEL] : [deciding]) {
+  for (const must of kind === 'confirm-all' ? [deciding, CORRECT_SOME_LABEL] : parked ? [deciding, SEND_BACK] : [deciding]) {
     if (!list.some((o) => o.label === must)) fail(kind, 'options', `must describe ${must}`);
   }
   return allowed.map((label) => ({ label, says: list.find((o) => o.label === label)?.says ?? PUT_OFF_SAYS[label] }));
@@ -414,6 +417,7 @@ export function textOf(parts) {
 // one click. Typed words steer, so the click is still what decides.
 // A blind card has no `recommend` or `because`: nothing on it recommends, and a card whose own words do can't be blind.
 // `blind` (optional) is true on the answer card that follows one, for the delegation review to leave out.
+// `parked` (optional) is true on the approval card of a pull request the merge queue left to the director, which offers Send it back.
 
 // `glossary` (optional) is the glossary whose terms found in the card's words become the card's
 // concepts when `concepts` isn't given; it defaults to the starter's. `event` (optional) is the id of the record
@@ -433,6 +437,7 @@ export function composeCard(input) {
   const why = words(kind, 'why', input.why);
   const blind = kind === 'blind';
   if (input.blind !== undefined && input.blind !== true) fail(kind, 'blind', 'must be true or left off');
+  if (input.parked !== undefined && (input.parked !== true || kind !== 'approval')) fail(kind, 'parked', 'belongs to an approval card only, as true');
   const because = blind ? undefined : words(kind, 'because', input.because);
   const meanwhile = words(kind, 'meanwhile', input.meanwhile);
   const ask = input.ask === undefined ? undefined : words(kind, 'ask', input.ask);
@@ -458,7 +463,7 @@ export function composeCard(input) {
   const line = kind === 'question' ? null : lineFor(kind, input.target);
   sameThing(kind, what, input.target);
   const build = Array.isArray(input.commands) && input.commands.length > 0;
-  const buttons = offered(kind, input.options, { build, target: input.target, suggest: input.suggest !== false });
+  const buttons = offered(kind, input.options, { build, target: input.target, suggest: input.suggest !== false, parked: input.parked === true });
   if (blind && [what, why, ...buttons.filter((b) => b.label !== SUGGEST).map((b) => b.says)].some((t) => /recommend/i.test(t))) fail(kind, 'text', 'must not recommend: a blind card holds that back');
   if (!blind && !buttons.some((b) => b.label === recommend)) fail(kind, 'recommend', `must be one of the card's options: ${buttons.map((b) => b.label).join(', ')}`);
 

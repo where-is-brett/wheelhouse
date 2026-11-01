@@ -611,3 +611,26 @@ test('no reply lets a setup step go ahead: only the director\'s click on the car
     }
   });
 });
+
+test('a reply can send a parked pull request back, as a signed click', async () => {
+  await withHome(async () => {
+    const line = approvalLine(12, FULL);
+    const question = cardOf(line);
+    await show(question, { options: ['Approve', 'Send it back', 'Suggest a change…', 'Show me'] });
+    const c = fake();
+    const out = await replyRecord({ project: P, text: `${replyCode(line)} send it back`, client: c, now: () => LATER });
+    assert.deepEqual(out, { made: true, says: 'Recorded: Send pull request #12 back' });
+    assert.deepEqual(signed(c), [{ kind: 'action', data: { action: 'send-back', pr: 12, sha: FULL, question, label: 'Send it back' } }]);
+  });
+});
+
+test('a reply can\'t send back a card that doesn\'t offer it', async () => {
+  await withHome(async () => {
+    const line = approvalLine(12, FULL);
+    await show(cardOf(line));
+    const c = fake();
+    const out = await replyRecord({ project: P, text: `${replyCode(line)} send it back`, client: c, now: () => LATER });
+    assert.equal(out.made, false);
+    assert.equal(c.calls.record.length, 0);
+  });
+});

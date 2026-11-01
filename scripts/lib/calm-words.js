@@ -12,6 +12,8 @@ export const HIDE_WHY = 'Hide why';
 export const SHOW_ME = 'Show me';
 // The button that leaves a card waiting.
 export const NOT_NOW = 'Not now';
+// A parked pull request's card (delegated decisions design, section 8.1): its work goes back to be reworked, signed as Approve is.
+export const SEND_BACK = 'Send it back';
 // The line that tells the director more is there for the asking.
 export const TO_KNOW_MORE = 'To know more, just ask.';
 // The line that stands in for it on a question that has four options of its own, where there is no
@@ -150,7 +152,7 @@ export function foldedParts(keys) {
 }
 
 // What each deciding button is said to have done, in the past.
-const DECIDED = { Approve: 'Approved', Confirm: 'Confirmed', 'Lift All stop': 'All stop lifted', 'Lift STOP': 'All stop lifted', 'Do it': 'Done', 'Push it': 'Pushed', 'Change it': 'Changed', 'End it': 'Ended', 'Merge the fix': 'Merged' };
+const DECIDED = { Approve: 'Approved', [SEND_BACK]: 'Sent back', Confirm: 'Confirmed', 'Lift All stop': 'All stop lifted', 'Lift STOP': 'All stop lifted', 'Do it': 'Done', 'Push it': 'Pushed', 'Change it': 'Changed', 'End it': 'Ended', 'Merge the fix': 'Merged' };
 const decidedWord = (label) => DECIDED[label];
 // A meanwhile that says when something happens ("It goes live within the hour"), as opposed to
 // one that says only what waits.
