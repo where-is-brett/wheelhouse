@@ -70,6 +70,7 @@ const GOAL_ENDED = {
 };
 export const goalWindingWords = (title, why) => `${title} is winding down because ${GOAL_WINDING[why] ?? GOAL_WINDING.time}: nothing new starts, and work under way gets up to an hour to finish.`;
 export const goalEndedWords = (title, ending) => `${title} ${GOAL_ENDED[ending] ?? GOAL_ENDED.time}.`;
+export const goalRunLeftWords = (title, survivors) => `${title} has ended, but part of a run it stopped couldn't be stopped and may still be spending: ${survivors.join(', ')}.`;
 export const goalPieceChangedWords = (title) => `${title} changed since the goal's sheet was signed, so the goal won't build it. A new sheet can list it.`;
 export const goalCheckedAgainWords = (title, ok) => `The goal's checks ran again once the work waiting for you had merged: ${title} ${ok ? 'passes them all' : 'doesn\'t pass them all'}.`;
 

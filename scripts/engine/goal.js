@@ -281,8 +281,8 @@ export function goalRule(views, now, { winding = false } = {}) {
 //   facts: { pieces: { [work]: 'queued' | 'going' | 'waiting' | 'passed' | 'failed' | 'merged' | 'ended' }, failedInARow, reds, meter,
 //            unreadSince, lastStepAt, parkedRuns, liveRuns, fixRuns, windingSince, windingFor, slept, endAsked, allStop, lastCheck }.
 // `passed` is a feature whose own run passed, with only its switch-on to come. `failed` has its card on the way. `parkedRuns` are
-// at a usage limit, `liveRuns` the goal's runs at work, `fixRuns` a red main line's: the fix lane isn't held by time, so only a
-// spend or the director's stop ends one. `lastCheck` is null, `passed` or `failed`.
+// at a usage limit, a fix's among them, `liveRuns` the goal's runs at work, `fixRuns` a red main line's at work: the fix lane isn't
+// held by time, so only a spend or the director's stop ends one. `lastCheck` is null, `passed` or `failed`.
 export function goalStep({ goal, facts, now }) {
   const { liveRuns = [], parkedRuns = [], fixRuns = [], slept = [], meter = null, endAsked = null, lastCheck = null } = facts;
   const pieces = Object.values(facts.pieces ?? {});

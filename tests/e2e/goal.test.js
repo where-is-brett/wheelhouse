@@ -35,7 +35,11 @@ function checksFor() {
   return {
     asks,
     attach: (w) => { world.w = w; },
-    goalCheck: async (ask) => { asks.push(ask); return { ok: true, runId: 'check-run', head: HEAD }; },
+    refusing: false,
+    async goalCheck(ask) {
+      asks.push(ask);
+      return this.refusing ? { ok: false, refused: 'All stop is on, so no check runs' } : { ok: true, runId: 'check-run', head: HEAD };
+    },
     say(goal, ok, over = {}) {
       const { w } = world;
       ((w.goalChecks ??= {})[goal] ??= []).push({ goal, hash: 'signed', when: 'last', head: HEAD, results: [{ check: { command: 'npm test', expect: 0 }, ok }], ok, at: w.clock.now.toISOString(), ...over });
@@ -44,7 +48,7 @@ function checksFor() {
 }
 function withChecks(over = {}) {
   const checks = checksFor();
-  const w = wayBack({ ...over, dispatchExtra: { goalCheck: checks.goalCheck, ...over.dispatchExtra } });
+  const w = wayBack({ ...over, dispatchExtra: { goalCheck: (ask) => checks.goalCheck(ask), ...over.dispatchExtra } });
   checks.attach(w);
   return { w, checks };
 }
@@ -458,4 +462,89 @@ test('a sleep that falls inside the look at a run cancels nothing', async () => 
   };
   await w.dispatcher.tick();
   assert.deepEqual(cancels(w), [], 'the span isn\'t on the record yet, so this look reads the time it began');
+});
+
+test('a last check refused with nothing on the record is asked for again', async () => {
+  const { w, checks } = withChecks({ recordings: { a: quiet() } });
+  w.put('a');
+  goalOver(w, ['a']);
+  await w.tick(2);
+  merged(w, 'a');
+  checks.refusing = true;
+  await w.tick(2);
+  checks.refusing = false;
+  await w.tick(2);
+  assert.equal(checks.refusing, false);
+  assert.ok(checks.asks.length >= 3, 'asked again once it can run');
+  checks.say('g', true);
+  await w.tick();
+  assert.equal(ends(w)[0].ending, 'done');
+});
+
+test('work still waiting when time ran out has the goal\'s checks run again once it merges', async () => {
+  const { w, checks } = withChecks({ recordings: { a: forever(), b: asking('q1') }, pace: 2 });
+  w.put('a');
+  w.put('b');
+  goalOver(w, ['a', 'b'], { until: '2026-10-29T10:02:00.000Z' });
+  await w.tick(3);
+  await w.pass(3 * MINUTE);
+  w.endRun('a');
+  merged(w, 'a');
+  await w.tick(2);
+  assert.equal(ends(w)[0].ending, 'time');
+  merged(w, 'b', 8);
+  await w.tick(2);
+  assert.deepEqual(checks.asks, [{ goal: 'g', when: 'last' }]);
+});
+
+test('merged work beside a closed piece still has its last check, after the end', async () => {
+  const { w, checks } = withChecks({ recordings: { a: quiet() } });
+  w.put('a');
+  w.put('b');
+  goalOver(w, ['a', 'b']);
+  w.reports.b = { at: w.clock.now.toISOString(), data: { work: 'b', outcome: 'closed', summary: 'Stopped.', rulings: [] } };
+  await w.tick(2);
+  merged(w, 'a');
+  await w.tick(2);
+  assert.equal(ends(w)[0].ending, 'stuck');
+  await w.tick();
+  assert.deepEqual(checks.asks, [{ goal: 'g', when: 'last' }]);
+  assert.equal(w.notes().filter((n) => /changed since/.test(n)).length, 0, 'a piece stopped hasn\'t changed');
+});
+
+test('a run left going past its cancel is said', async () => {
+  const { w } = withChecks({ recordings: { a: forever() }, dispatchExtra: { endRun: async () => ({ ended: [], survivors: ['a process'] }) } });
+  w.put('a');
+  goalOver(w, ['a']);
+  await w.tick(2);
+  w.engine.act = ((act) => (id, action) => (action.cancel ? { ok: false, refused: 'no' } : act(id, action)))(w.engine.act.bind(w.engine));
+  w.goals.g.endAsked = { at: w.clock.now.toISOString(), now: true };
+  await w.tick(4);
+  assert.equal(ends(w)[0].ending, 'end-goal');
+  assert.equal(w.notes().filter((n) => /couldn't be stopped/.test(n)).length, 1);
+});
+
+test('a parked run cancelled in a wind-down isn\'t called a changed piece', async () => {
+  const { w } = withChecks({ recordings: { a: atLimit('lim', { resetAt: '2026-10-30T09:00:00.000Z' }), b: forever() }, pace: 2, settings: LONG });
+  w.put('a');
+  w.put('b');
+  goalOver(w, ['a', 'b'], { until: '2026-10-29T10:02:00.000Z' });
+  await w.tick(2);
+  await w.pass(5 * MINUTE);
+  assert.equal(cancels(w).length, 1);
+  assert.equal(w.notes().filter((n) => /changed since/.test(n)).length, 0);
+});
+
+test('a helper started again still knows what stands behind a card', async () => {
+  const { w } = withChecks({ recordings: { a: asking('q1') } });
+  w.put('a');
+  w.put('b');
+  w.work.b.work.data.dependsOn = ['a'];
+  goalOver(w, ['a', 'b'], { until: '2026-10-29T10:01:00.000Z' });
+  await w.tick(3);
+  assert.equal(keptOf(w).goalRun.state, 'waiting');
+  w.restart();
+  w.clock.now = new Date('2026-10-29T10:02:00.000Z');
+  await w.tick();
+  assert.equal(ends(w)[0].ending, 'waiting-for-you');
 });

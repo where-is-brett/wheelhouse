@@ -30,7 +30,7 @@ import { dispatch, MERGE_WORK, MERGE_QUEUE_EVERY_MS } from './dispatcher.js';
 import { goalRule, goalInForce, gateStart, goalDoneOf, orderGoal, areasOf, fixAreas, goalStep, lastEnded, lastCheckHolds, pieceCovered, unfinishedOf } from './goal.js';
 import { goalMeter, goalRuns, shareAtStart } from './goal-meter.js';
 import { GOAL_CHECK_TRIES } from './goal-limits.js';
-import { goalHeldWords, goalWindingWords, goalEndedWords, goalPieceChangedWords, goalCheckedAgainWords, reservedUnreadWords, LIMIT_HOLD_WORDS, noCardBehindWords, restartRefusedWords, restartCardWords, restartUnsureWords, restartStrandedWords, failedCardWords, prLeftOpenWords, areasInScopeWords, areaCardWords, AREA_CARD_WHY, ALLOW_ONCE_SAYS, areaStoppedWords, wakeLateWords, STOPPED_RESTART_WORDS, ORPHAN_LEFT_WORDS, RESTART_UNSURE_AGAIN, START_ANYWAY, cutOffStoppedWords, cutOffWords, waitsOnItselfWords, startAnywayWords, startRefusedWords, startCardWords, unmarkedPrWords, START_STOP_SAYS, NO_FIX_TESTS, NO_FIX_ORDER, noFixWords, queueStuckWords, QUEUE_STUCK_WHY, QUEUE_PASSED_WORDS, requestsUsedWords, REQUESTS_UNCONFIRMED_WORDS, requestsStoppedWords } from './words.js';
+import { goalHeldWords, goalWindingWords, goalEndedWords, goalRunLeftWords, goalPieceChangedWords, goalCheckedAgainWords, reservedUnreadWords, LIMIT_HOLD_WORDS, noCardBehindWords, restartRefusedWords, restartCardWords, restartUnsureWords, restartStrandedWords, failedCardWords, prLeftOpenWords, areasInScopeWords, areaCardWords, AREA_CARD_WHY, ALLOW_ONCE_SAYS, areaStoppedWords, wakeLateWords, STOPPED_RESTART_WORDS, ORPHAN_LEFT_WORDS, RESTART_UNSURE_AGAIN, START_ANYWAY, cutOffStoppedWords, cutOffWords, waitsOnItselfWords, startAnywayWords, startRefusedWords, startCardWords, unmarkedPrWords, START_STOP_SAYS, NO_FIX_TESTS, NO_FIX_ORDER, noFixWords, queueStuckWords, QUEUE_STUCK_WHY, QUEUE_PASSED_WORDS, requestsUsedWords, REQUESTS_UNCONFIRMED_WORDS, requestsStoppedWords } from './words.js';
 import { workOrder, ORDER_LANES } from './order.js';
 import { limitsFor } from './caps.js';
 import { ENGINE_QUESTIONS } from './router.js';
@@ -306,9 +306,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   }
 
   // --- How a goal ends (unattended goals design, section 8) ---
-  // The holds of the last look, as what a piece behind a card waits on. Nothing of a goal rests on it across a restart.
-  let lastHold = [];
-  const newGoalRun = (id) => ({ goal: id, state: 'running', windingSince: null, windingFor: null, lastStepAt: now().toISOString(), steps: {}, reds: [], unreadSince: null, check: null, closing: null, tries: {}, said: [], after: null });
+  const newGoalRun = (id) => ({ goal: id, state: 'running', windingSince: null, windingFor: null, lastStepAt: now().toISOString(), steps: {}, reds: [], unreadSince: null, check: null, closing: null, tries: {}, said: [], after: null, behind: [] });
 
   // A feature's own run at its switch-on: its review and done checks, the sheet's among them, are behind it.
   function atSwitchOn(views, work, run) {
@@ -316,7 +314,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     return (views.asks?.[work] ?? []).filter((a) => a?.data?.runId === run.runId).at(-1)?.data?.kind === 'approval';
   }
   // What one piece of the goal is doing now, as `goalStep` reads it. `onlyFeatures` says a switch-on can stand for the last check.
-  function pieceState(views, goal, work, { ready, onlyFeatures }) {
+  function pieceState(views, goal, work, { ready, onlyFeatures, behind }) {
     const reports = isPlain(views.reports) ? views.reports : {};
     if (reports[work]?.data?.outcome === 'merged') return 'merged';
     const current = views.work?.[work]?.work;
@@ -327,7 +325,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     if ((run !== null && run.state !== 'ended') || retryFor(views, work) !== null) return 'going';
     if ([...state.returning, ...state.admitted].some((e) => e.work === work && e.heldBy === undefined)) return 'going';
     if (Object.values(ready).some((r) => r?.work === work)) return 'going';
-    if (lastHold.some((h) => h.work === work && ['parked', 'clash', 'dependency'].includes(h.why))) return 'waiting';
+    if (behind.includes(work)) return 'waiting';
     if (run !== null && (stoppedRuns().includes(run.runId) || stoppedByDirector(views, work, run.runId))) return 'ended';
     return run?.outcome === 'failed' ? 'failed' : 'queued';
   }
@@ -375,9 +373,13 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     }
     const seen = kept.check === null ? [] : (views.goalChecks?.[goal.id] ?? []).filter((c) => c.when === 'last' && c.hash === goal.hash && Date.parse(c.at) >= Date.parse(kept.check.at));
     const record = seen.at(-1);
-    if (record?.said !== undefined && kept.check.tries < GOAL_CHECK_TRIES) return (await askLastCheck(goal.id, kept), null);
+    if (record?.said !== undefined && kept.check.tries < GOAL_CHECK_TRIES) {
+      kept.check = { ...kept.check, at: now().toISOString(), tries: kept.check.tries + 1 };
+      await askLastCheck(goal.id, kept);
+      return null;
+    }
     if (record !== undefined) return lastCheckHolds(views.goalChecks, { id: goal.id, hash: goal.hash, head: record.head }) ? 'passed' : 'failed';
-    if (kept.check === null) await askLastCheck(goal.id, kept);
+    if (kept.check === null || kept.check.refused === true) await askLastCheck(goal.id, kept);
     return null;
   }
   async function askLastCheck(id, kept) {
@@ -386,7 +388,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     try { got = await goalCheck({ goal: id, when: 'last' }); } catch { got = { ok: false, busy: true }; }
     // Busy, the run under way is another's: asked again on the next look, with nothing on the record.
     if (got?.busy === true) return;
-    kept.check = { at, tries: (kept.check?.tries ?? 0) + 1 };
+    // A refusal may leave nothing on the record (All stop, say), so it is asked again until there is a result.
+    kept.check = { at: kept.check?.at ?? at, tries: (kept.check?.tries ?? 0) + (got?.ok === true ? 1 : 0), refused: got?.ok !== true };
     keep();
   }
 
@@ -399,7 +402,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     kept.tries[runId] = (kept.tries[runId] ?? 0) + 1;
     keep();
     if (kept.tries[runId] > 2) {
-      await endRun(runId);
+      const { survivors = [] } = (await endRun(runId)) ?? {};
+      if (survivors.length > 0) await write('note', { about: 'engine', words: goalRunLeftWords((readViews() ?? {}).goals?.[kept.goal]?.sheet?.title ?? kept.goal, survivors) });
       return true;
     }
     let got = null;
@@ -410,7 +414,6 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   function markCancelled(views, goal, runIds) {
     const fixes = new Set(goalRuns(goal, views).filter((r) => r.lane === FIX_LANE).map((r) => r.runId));
     state.goalCancelled = [...new Set([...state.goalCancelled, ...runIds.filter((id) => !fixes.has(id))])].slice(-200);
-    keep();
   }
   // Each run cancelled, and then, last of all, the goal's one record of its end, with what it spent from a last read of the meter.
   async function closeTick(views, goal, kept) {
@@ -443,9 +446,9 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     const ready = readyOf() ?? {};
     const lines = goal.sheet.pieces;
     const onlyFeatures = lines.every(({ work }) => views.work?.[work]?.work?.data?.lane === 'feature');
-    const pieces = Object.fromEntries(lines.map(({ work }) => [work, pieceState(views, goal, work, { ready, onlyFeatures })]));
+    const pieces = Object.fromEntries(lines.map(({ work }) => [work, pieceState(views, goal, work, { ready, onlyFeatures, behind: kept.behind })]));
     for (const { work } of lines) {
-      if (pieces[work] !== 'ended' || views.reports?.[work] !== undefined || kept.said.includes(work)) continue;
+      if (pieceCovered(goal, work, views) || kept.said.includes(work) || views.reports?.[work] !== undefined) continue;
       kept.said.push(work);
       keep();
       await write('note', { about: 'engine', work, words: goalPieceChangedWords(titleOf(views, work)) });
@@ -471,15 +474,15 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     if (step.state === 'ended') {
       kept.state = 'winding';
       kept.closing = { ending: step.ending, cancel: step.cancel ?? [] };
-      keep();
       markCancelled(views, goal, kept.closing.cancel);
+      keep();
       await closeTick(views, goal, kept);
     } else if (step.state === 'winding') {
       const first = kept.windingSince === null;
-      Object.assign(kept, { state: 'winding', windingSince: kept.windingSince ?? now().toISOString(), windingFor: step.ending });
+      Object.assign(kept, { state: 'winding', windingSince: kept.windingSince ?? at.toISOString(), windingFor: step.ending });
+      markCancelled(views, goal, step.cancel);
       keep();
       if (first) await write('note', { about: 'engine', words: goalWindingWords(goal.sheet.title, step.ending) });
-      markCancelled(views, goal, step.cancel);
       for (const runId of step.cancel) await stopForGoal(runId, kept);
     } else if (kept.state !== step.state) {
       kept.state = step.state;
@@ -487,8 +490,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     }
   }
 
-  // After a goal's end: its checks run again once the work that waited on the director has merged, and each merge-queue run
-  // that took its work on after the end is named, for the report, once it has ended.
+  // After a goal's end: its checks run on the main line once nothing of it is left unfinished, if it didn't end on them, and each
+  // merge-queue run that took its work on after the end is named, for the report, once it has ended.
   async function afterGoalTick(views) {
     const goal = lastEnded(views);
     const kept = state.goalRun;
@@ -497,9 +500,11 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     if (kept.state !== 'ended') {
       Object.assign(kept, { state: 'ended', closing: null });
       keep();
+      await write('note', { about: 'engine', words: goalEndedWords(goal.sheet.title, goal.ended.ending) });
     }
     await queueAfterTick(goal, kept);
-    if (goal.ended.ending !== 'waiting-for-you' || kept.after?.done === true || unfinishedOf(goal, views).length > 0) return;
+    if (['done', 'check-failed'].includes(goal.ended.ending) || kept.after?.done === true || unfinishedOf(goal, views).length > 0) return;
+    if (!goal.sheet.pieces.some(({ work }) => views.reports?.[work]?.data?.outcome === 'merged')) return;
     kept.after ??= { check: null };
     const passed = await lastCheckTick(views, goal, kept.after, true);
     if (passed === null) return;
@@ -768,7 +773,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     const step = currentStep({ design, progress });
     const runs = step.finish ? progress.finish?.runs ?? [] : progress.slices?.[step.slice]?.runs ?? [];
     const run = runs.at(-1);
-    if (run?.state !== 'ended' || typeof run.runId !== 'string') return;
+    if (run?.state !== 'ended' || typeof run.runId !== 'string' || state.goalCancelled.includes(run.runId)) return;
     kept.stalls ??= {};
     const title = entry.work.data.title ?? work;
     const held = kept.stalls[run.runId];
@@ -2124,7 +2129,11 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     }
     if (state.queueFault) await queueFaultTick(views, waiting, queueStatus).catch(() => {});
     await requestsTick(views, decided.hold.filter((h) => h.why === 'requests' || h.why === 'requests-unconfirmed'), s).catch(() => {});
-    lastHold = decided.hold;
+    // What stands behind a card, for the goal's next look: a piece held so isn't one that can run. Kept, so a restart knows it.
+    if (state.goalRun !== null && state.goalRun.state !== 'ended') {
+      state.goalRun.behind = decided.hold.filter((h) => ['parked', 'clash', 'dependency'].includes(h.why)).map((h) => h.work);
+      keep();
+    }
     const going = { queueStatus, ready: waiting, started };
     await strandedTick(readViews() ?? {}, decided, going).catch(() => {});
     await cutOffTick(readViews() ?? {}, decided, going).catch(() => {});
