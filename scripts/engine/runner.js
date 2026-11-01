@@ -25,17 +25,18 @@ import { runCost, runningMinutes } from './spend.js';
 import { capReached, carriedSpend } from './caps.js';
 import { RED_MAIN, FIX_LANE, redMainIncident, openRedMain } from './fix-main.js';
 import { MERGE_WORK } from './dispatcher.js';
-import { routerWaiting, routerCards } from './waiting.js';
-import { since } from '../foreman/queue.js';
+import { routerWaiting, routerCards, overtaken, approvalAnswers } from './waiting.js';
+import { endedBy } from '../foreman/queue.js';
+import { gateTargetOf } from '../state/views.js';
 import { READER_WORK } from '../delegation/reader.js';
 import { alike, normaliseWords } from '../delegation/words.js';
 import { closeMatch, decisionKey, earlierAnswer, reuse, spokenSince } from '../delegation/asked.js';
 import { REPEAT_READ_MS } from '../delegation/limits.js';
-import { mergeQuestionWords, parkedWords, PARKED_WHY, PARKED_BECAUSE, PARKED_MEANWHILE, PARKED_APPROVE_SAYS } from './words.js';
+import { mergeQuestionWords, parkedWords, PARKED_WHY, PARKED_BECAUSE, PARKED_MEANWHILE, PARKED_APPROVE_SAYS, PARKED_CHANGED } from './words.js';
 import { parkChoice } from './archon/asks.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
-const EMPTY = () => ({ routed: {}, waiting: [], held: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, tries: {}, later: [], next: {}, noted: null, capped: {}, costed: {}, reviewsKept: {}, carried: {}, reworks: {}, answers: {}, sending: {}, parked: {}, reused: {}, repeats: {} });
+const EMPTY = () => ({ routed: {}, waiting: [], held: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, tries: {}, later: [], next: {}, noted: null, capped: {}, costed: {}, reviewsKept: {}, carried: {}, reworks: {}, answers: {}, sending: {}, parked: {}, reused: {}, repeats: {}, unsure: {} });
 // The failed tries after which the director is told an answer hasn't reached the build yet.
 const UNREACHABLE_SAID = 3;
 // The cap card's options: Give it more carries the work on with the cap raised once; Stop leaves it stopped.
@@ -157,7 +158,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     const approval = views.approvals?.[asked.pr]?.[asked.head];
     return isPlain(approval) && (openedOf(asked.pr)?.lane === 'feature' || (state.parked[asked.pr]?.taken === true && approvedSince(state.parked[asked.pr], approval)));
   }
-  const approvedSince = (kept, approval) => isPlain(approval) && typeof approval.at === 'string' && approval.at >= kept.at;
+  const approvedSince = (kept, approval) => isPlain(approval) && approvalAnswers(approval, kept);
 
   // The card for a parked pull request no longer stands for what waits.
   function retireCard(pr) {
@@ -372,7 +373,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   const reading = new Set();
   async function askedBefore(ask, work, question) {
     const key = keyOf(ask, work);
-    const settled = (id) => state.delivered[id] === 'answered';
+    const settled = (id) => state.delivered[id] === 'answered' && state.unsure[id] !== true;
     const first = key === null ? null : earlierAnswer({ views: viewsNow(), work, key, settled });
     if (first === null) return null;
     const place = placeOf(ask);
@@ -481,7 +482,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   function answered(id, views) {
     if (state.delivered[id] || typeof views.questions?.[id]?.answer?.label === 'string') return true;
     const [pr, sha] = id.split(':');
-    return Boolean(sha) && Boolean(views.approvals?.[pr]?.[sha]);
+    return Boolean(sha) && approvalAnswers(views.approvals?.[pr]?.[sha], state.parked[pr]?.head === sha ? state.parked[pr] : null);
   }
   // Whether a card may stand for others or join one: a question in the build's own words, never the fixed words of an ask
   // that gave none, the merge queue's or trouble, and never one that ignores the budget, which is asked for itself.
@@ -569,8 +570,11 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   async function writeCard({ id, card, work, runId, ask, joins, exempt }) {
     if (card.approval) {
       const a = card.approval;
+      // A park at a new head: this card takes the place of the old head's, which nothing would close.
+      const before = a.parked ? (viewsNow().waiting ?? []).filter((w) => w.data?.kind === 'approval' && gateTargetOf(w) === `pull request #${a.pr}` && !w.data.line?.includes(a.sha.slice(0, 12))).at(-1) : undefined;
       const compose = (what) => composeCard({
         kind: 'approval', level: a.level === 4 ? 4 : 3, recommend: 'Approve',
+        ...(before ? { revises: before.id, changed: PARKED_CHANGED } : {}),
         what,
         why: a.why, because: a.parked ? PARKED_BECAUSE : 'its checks passed and it is visible work, which you see first',
         meanwhile: a.parked ? PARKED_MEANWHILE : 'Nothing is added until you approve it.',
@@ -626,12 +630,6 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   const startsAgain = (kept, runLane) => kept.ask?.kind === 'blocked' && runLane !== FIX_LANE && runLane !== 'merge' && kept.work !== MERGE_WORK;
   // Whether a piece may be sent its answer now.
   const hasPlace = (work, key, views) => (views.incidents?.open?.length ?? 0) === 0 && admittedTo(work, key);
-  // Whether the work has been queued again since this run began: the answer was for a run that no longer speaks for it.
-  function overtaken(kept, views) {
-    const queued = views.work?.[kept.work]?.work;
-    const first = (views.runs?.[kept.work] ?? []).find((r) => r?.data?.runId === kept.runId);
-    return Boolean(queued && first) && !since(first, queued);
-  }
   // Whether a question was answered as part of a bundle, as a joiner or as the lead of one.
   const bundled = (key, kept) => typeof kept.joins === 'string' || Object.values(state.questions).some((k) => k.joins === key);
   // Tells the dispatcher of each answer already settled, so a crash just after one leaves no entry behind.
@@ -742,6 +740,19 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       if (!stops && runLane !== FIX_LANE && runLane !== 'merge' && kept.work !== MERGE_WORK) {
         // The piece comes back once, with both answers, when a second card of it is still open.
         if (waitingOn().has(kept.work)) continue;
+        // Its work ended with this run still paused: nothing is left to carry on, and only the end of the run gives its place back.
+        if (endedBy(views.reports, kept.work, views.work?.[kept.work]?.work)) {
+          // Ended first: a crash or a refused write comes back here, and neither step minds being done twice.
+          await cancelPaused(kept.runId, 'its work has ended');
+          await endInRecord(kept);
+          state.delivered[key] = 'ended';
+          delete state.tries[key];
+          delete state.sending[key];
+          keep();
+          drop(kept.work, key);
+          await note(`Your answer about ${titled(kept.work)} wasn't sent: that work has ended, so nothing carries on from it.`, { work: kept.work });
+          continue;
+        }
         enter({ work: kept.work, lane: runLane, via: 'answer', key, runId: kept.runId });
         if (!hasPlace(kept.work, key, views)) continue;
       }
@@ -751,7 +762,11 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       state.sending[key] = true;
       keep();
       let got = await answerEngine(kept.runId, answer);
-      if (!got.ok && got.unreachable !== true && sentBefore) got = { ok: true };
+      if (!got.ok && got.unreachable !== true && sentBefore) {
+        // Unheard before, it may never have got there: what follows still follows, but it decides nothing later.
+        if (state.tries[key] > 0) state.unsure[key] = true;
+        got = { ok: true };
+      }
       if (!got.ok && got.unreachable === true) {
         // Not delivered: sent again on the next tick, and said once.
         state.tries[key] = (state.tries[key] ?? 0) + 1;
@@ -765,7 +780,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       keep();
       if (got.ok) delivered(kept.work, key);
       else drop(kept.work, key);
-      if (answer.choice === STOP) letGo(kept.work);
+      if (got.ok && answer.choice === STOP) letGo(kept.work);
       if (got.ok && typeof kept.ask?.mergeChoice === 'string' && answer.choice === kept.ask.mergeChoice) mergeRuled();
       const move = got.ok && runLane === 'bug' && kept.ask?.kind === 'blocked' && kept.ask?.topic === BIGGER && Object.hasOwn(MOVES, answer.choice) ? MOVES[answer.choice] : undefined;
       if (move) {
@@ -782,6 +797,21 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       keep();
       if (!got.ok) await note(`Your answer about ${titled(kept.work)} wasn't needed: the build had already moved on.`, { work: kept.work });
     }
+  }
+
+  // A paused run's cancel keeps its worktree; abandoning it would remove the uncommitted work. An engine built without the
+  // patch for paused runs refuses, and the run stays paused there, spending nothing. Either way `endInRecord` ends it,
+  // which gives back its build slot.
+  const cancelPaused = async (runId, reason) => (await safely(() => engine.act(runId, { cancel: { reason } })))?.ok === true;
+  async function endInRecord(kept) {
+    const records = (viewsNow().runs?.[kept.work] ?? []).filter((r) => r?.data?.runId === kept.runId);
+    const latest = records.at(-1)?.data ?? {};
+    const branch = latest.branch ?? records.find((r) => r.data.branch)?.data.branch ?? kept.branch ?? null;
+    if (latest.state === 'ended') return;
+    await write('run', {
+      work: kept.work, lane: latest.lane ?? kept.lane, engine: latest.engine ?? engine.name ?? 'engine',
+      runId: kept.runId, state: 'ended', outcome: 'stopped', ...(branch ? { branch } : {}),
+    });
   }
 
   // The cap card for a run stopped at its cap (or one the engine itself stopped on its budget).
@@ -819,25 +849,14 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     if (label !== MORE) {
       letGo(kept.work);
       if (held(kept.runId)) {
-        // The cancel keeps its worktree; abandoning it would remove the uncommitted work. An engine built without the
-        // patch for paused runs refuses, and the run stays paused there, spending nothing. Either way the record ends
-        // it, which gives back its build slot.
-        const cancelled = (await safely(() => engine.act(kept.runId, { cancel: { reason: 'the director stopped it at its cap' } })))?.ok === true;
+        const cancelled = await cancelPaused(kept.runId, 'the director stopped it at its cap');
         state.capped[kept.runId].held = false;
         state.capped[kept.runId].stopped = true;
         // Its asks not yet shown never become cards.
         state.later = state.later.filter((ask) => ask.runId !== kept.runId);
         state.waiting = state.waiting.filter((w) => w.runId !== kept.runId);
         keep();
-        const records = (viewsNow().runs?.[kept.work] ?? []).filter((r) => r?.data?.runId === kept.runId);
-        const latest = records.at(-1)?.data ?? {};
-        const branch = latest.branch ?? records.find((r) => r.data.branch)?.data.branch ?? kept.branch ?? null;
-        if (latest.state !== 'ended') {
-          await write('run', {
-            work: kept.work, lane: latest.lane ?? kept.lane, engine: latest.engine ?? engine.name ?? 'engine',
-            runId: kept.runId, state: 'ended', outcome: 'stopped', ...(branch ? { branch } : {}),
-          });
-        }
+        await endInRecord(kept);
         await note(`${titleOf(kept.work)} stays stopped, as you chose. ${cancelled ? 'It' : 'It stays paused in the build engine, spending nothing, and'} no longer holds a build slot; what it has done so far is kept on its branch.`, { work: kept.work });
         return;
       }
@@ -1032,6 +1051,8 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     parkedHeads: () => Object.fromEntries(Object.entries(state.parked).filter(([, kept]) => kept.taken && !kept.handed).map(([pr, kept]) => [pr, kept.head])),
     // The pieces with a card of the router's open. Views that can't be read name none, so each keeps its place.
     waitingWork: () => waitingOn(),
+    // The pieces whose run an answer is ending, to start again on its branch.
+    reworkWork: () => Object.values(state.reworks).map((r) => r.work),
     // The written cards behind them, [{ id, work, rank }]. Views that can't be read name none.
     openCards() {
       let views;

@@ -57,6 +57,8 @@ export const FEATURE_STOPPED = 'Stopped before it was switched on; the slices al
 const RESTART_QUESTIONS = STALL_QUESTIONS + 500;
 // What wakes a paused run, which the runner carries out once admitted. Every other `via` starts a new run from here.
 const WAKES = Object.freeze(['answer', 'resume', 'more']);
+// The ways back that carry on a piece's own branch after an answer.
+const REWORKING = Object.freeze(['answer', 'rework']);
 // What an entry's run may read as for it to give its entry up. `unknown` is a run the engine no longer has, with nothing to wait for.
 const SEEN = Object.freeze(['running', 'ended', 'unknown']);
 // How long an answered run may sit paused before the Logbook says so: only the engine's waker carries it on (check 85).
@@ -144,6 +146,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     try { for (const work of routerPieces()) pieces.add(work); } catch { /* it reads as none, so each keeps its place */ }
     return pieces;
   };
+  // The pieces whose run an answer is ending, to start again on the same branch: the runner's.
+  let reworkingNow = () => [];
   let routerCardsNow = () => [];
   const cardsNow = (views) => {
     let theirs = [];
@@ -712,7 +716,9 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   // the piece's end or `release` takes anything away, so nothing here lets go by itself.
   async function reserveTick(views) {
     const reports = isPlain(views.reports) ? views.reports : {};
-    const pieces = waitingNow(views);
+    // A piece going back on an answer may have no card left to park it, and its next run isn't under way, so nothing else speaks for its files.
+    const between = [...state.returning, ...state.admitted].filter((e) => REWORKING.includes(e.via)).map((e) => e.work);
+    const pieces = new Set([...waitingNow(views), ...between, ...reworkingNow()]);
     for (const [work, kept] of Object.entries(state.reserved)) {
       if (endedBy(reports, work, views.work?.[work]?.work)) {
         delete state.reserved[work];
@@ -820,13 +826,22 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     else await write('note', { about: 'engine', work: entry.work, words: restartRefusedWords(titleOf(views, entry.work), why) });
   }
 
+  // What a start carries: its entry's own, and whatever All stop kept for Carry on, which any start takes up (`afterStart`).
+  function carried({ work, branch = null, carryOn = false, answers = [] }) {
+    const carry = state.carryOver[work];
+    if (!carry) return { branch, carryOn, answers };
+    const said = new Set(answers.map((a) => JSON.stringify(a)));
+    const from = branch ?? carry.branch ?? null;
+    return { branch: from, carryOn: carryOn || isText(from), answers: [...(carry.answers ?? []).filter((a) => !said.has(JSON.stringify(a))), ...answers] };
+  }
+
   async function startEntry(entry) {
     Object.assign(entry, { starting: true, startAt: now().toISOString() });
     keep();
-    const { work, lane, branch = null, carryOn = false, raised = false, answers = [], reason } = entry;
+    const { work, lane, raised = false, reason } = entry;
     let got;
     try {
-      got = await startPiece({ work, lane, branch, carryOn, raised, answers, ...(reason === 'red' ? { checkTail: state.reds[work]?.tail } : {}) });
+      got = await startPiece({ work, lane, ...carried(entry), raised, ...(reason === 'red' ? { checkTail: state.reds[work]?.tail } : {}) });
     } catch (error) {
       got = { ok: false, refused: error instanceof Error ? error.message : 'unknown', uncertain: true };
     }
@@ -887,7 +902,15 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       }
     }
     delete entry.starting;
-    delete entry.uncertain;
+    // Nothing began. One that keeps giving no clear answer comes to a card, as a refusal does, and doesn't go round each tick.
+    if (entry.uncertain === true) {
+      delete entry.uncertain;
+      entry.refusals = (entry.refusals ?? 0) + 1;
+      if (entry.refusals >= 2) {
+        await askAboutRestart(entry, restartCardWords(titleOf(views, entry.work), 'the build engine gave no clear answer'));
+        return;
+      }
+    }
     keep();
   }
 
@@ -948,7 +971,11 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       if (typeof entry.runId !== 'string') continue;
       const records = (views.runs?.[entry.work] ?? []).filter((r) => r?.data?.runId === entry.runId);
       let status = null;
-      try { status = (await engine.inspect(entry.runId))?.status ?? null; } catch { status = null; }
+      try {
+        const seen = await engine.inspect(entry.runId);
+        // An engine that gave no answer says nothing of the run.
+        status = seen?.unread === true ? null : seen?.status ?? null;
+      } catch { status = null; }
       if (SEEN.includes(status) || records.at(-1)?.data?.state === 'ended' || pieces.has(entry.work)) {
         leave(entry);
       } else if (wakes(entry) && status !== 'running' && !entry.lateSaid && now().getTime() - Date.parse(entry.deliveredAt) >= WAKE_LATE_MS) {
@@ -1106,7 +1133,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     // The project's configuration and test command: without one Wheelhouse can run, nothing starts (a run would have
     // no done check), and the Logbook says so once.
     let pieces = [...decided.requeue, ...decided.start];
-    if (pieces.length > 0 && !canTest(config())) {
+    const toStart = state.admitted.some((e) => !wakes(e) && !e.starting && !e.asked && typeof e.runId !== 'string');
+    if ((pieces.length > 0 || toStart) && !canTest(config())) {
       decided.hold.push(...pieces.map((p) => ({ work: p.work, why: 'no-tests' })));
       decided.start = [];
       decided.requeue = [];
@@ -1116,7 +1144,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
         keep();
         await write('note', { about: 'engine', words: NO_TESTS_WORDS });
       }
-    } else if (state.noTestsSaid && pieces.length > 0) {
+    } else if (state.noTestsSaid && (pieces.length > 0 || toStart)) {
       state.noTestsSaid = false;
       keep();
     }
@@ -1144,16 +1172,16 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       const carry = state.carryOver[work];
       const args = carry ? { branch: carry.branch ?? null, carryOn: isText(carry.branch), answers: carry.answers ?? [] } : {};
       const startAt = now().toISOString();
+      // Marked before it is called: a crash during it, or no reply in time, is settled as any start is. One with an answer has done with the mark.
+      const entry = { work, lane, via: 'try-again', key: `start:${startAt}`, at: startAt, queued: views.work?.[work]?.work?.at ?? null, ...args, starting: true, startAt };
+      state.admitted.push(entry);
+      keep();
       const got = await startPiece({ work, lane, ...args });
-      if (carry && got?.ok === true) {
-        delete state.carryOver[work];
-        keep();
-      }
-      // No reply in time: settled as any start is, before anything starts it again.
+      if (carry && got?.ok === true) delete state.carryOver[work];
       if (got?.uncertain === true) {
-        state.admitted.push({ work, lane, via: 'try-again', key: `start:${startAt}`, at: startAt, queued: views.work?.[work]?.work?.at ?? null, ...args, starting: true, startAt, uncertain: true });
+        entry.uncertain = true;
         keep();
-      }
+      } else leave(entry);
       started.push({ work, lane, ...got });
     }
     // A second clash on the same work: one card, level 3. Try again brings it up to date once more.
@@ -1294,6 +1322,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     },
     // Who tells this of the card router's cards: the runner, through its `waitingWork`.
     onWaiting(fn) { if (typeof fn === 'function') routerPieces = fn; },
+    // And of the pieces going back to work on an answer: the runner's `reworkWork`.
+    onReworks(fn) { if (typeof fn === 'function') reworkingNow = fn; },
     // And of the cards themselves: the runner's `openCards`.
     onCards(fn) { if (typeof fn === 'function') routerCardsNow = fn; },
     // Who tells this of the pull requests the queue has left alone, { [pr]: head }: the runner.
@@ -1309,8 +1339,10 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       const reports = isPlain(views.reports) ? views.reports : {};
       if (endedBy(reports, kept.work, views.work?.[kept.work]?.work) || ['merged', 'closed'].includes(await stateOf(pr))) return { ok: false, gone: true };
       if (typeof engine.handOver !== 'function') return { ok: false, refused: 'the engine has no merge queue to hand it to' };
+      const where = repoOf();
+      if (!isText(where?.host)) return { ok: false, refused: 'the project\'s host can\'t be named' };
       const repo = repoName();
-      const got = await engine.handOver({ project: folder, repo, pr, url: `https://github.com/${repo}/pull/${pr}`, runId: kept.runId, at: now().toISOString() });
+      const got = await engine.handOver({ project: folder, repo, pr, url: `https://${where.host}/${repo}/pull/${pr}`, runId: kept.runId, at: now().toISOString() });
       return got?.ok === true ? { ok: true } : { ok: false, refused: got?.refused ?? 'the engine didn\'t take it' };
     },
     // Every piece that waits on the director, by a card of the router's or one of these.

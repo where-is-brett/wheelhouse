@@ -135,3 +135,18 @@ test('nothing kept and nothing to read reads as no one waiting', () => {
   assert.deepEqual(sorted(routerWaiting({})), []);
   assert.deepEqual(sorted(ownWaiting({})), []);
 });
+
+test('a parked pull request waits until it is approved since the park', () => {
+  const state = { ...EMPTY(), approvals: { '5:abc': { runId: 'r', ask: { mergeQuestion: { pr: 5 } }, work: MERGE_WORK, parked: true } }, parked: { 5: { head: 'abc', at: '2026-11-01T02:00:00.000Z' } } };
+  const waits = (at) => sorted(routerWaiting({ state, views: { questions: {}, runs: {}, approvals: { 5: { abc: { at } } } }, prWork: () => 'a' }));
+  assert.deepEqual(waits('2026-11-01T01:00:00.000Z'), ['a'], 'an approval from before the park');
+  assert.deepEqual(waits('2026-11-01T03:00:00.000Z'), []);
+});
+
+test('a cap card from before the work was queued again doesn\'t wait', () => {
+  const state = { ...EMPTY(), questions: { q1: { cap: true, runId: 'r1', work: 'a' } } };
+  const views = { questions: open('q1'), runs: { a: [run('a', 'r1', 'ended')] }, work: { a: { work: { at: '2026-11-01T03:00:00.000Z' } } } };
+  assert.deepEqual(sorted(routerWaiting({ state, views })), []);
+  views.work.a.work.at = '2026-11-01T01:00:00.000Z';
+  assert.deepEqual(sorted(routerWaiting({ state, views })), ['a']);
+});
