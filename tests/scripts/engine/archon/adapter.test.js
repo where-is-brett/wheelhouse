@@ -379,10 +379,10 @@ test('health passes with the pinned version, Bun, Claude, the patch and telemetr
   assert.deepEqual(result, { ok: true, findings: [] });
 });
 
-test('health fails closed on an engine built before the patch for paused runs', async () => {
+test('health fails closed on an engine built before the latest patch for cancelling runs', async () => {
   const stale = await adapter(healthyCli(), { pins, run: bunRun(), engine: builtEngine({ cancelOperation: 'if (run.status !== "running")' }) }).health();
   assert.equal(stale.ok, false);
-  assert.match(stale.findings.join(' '), /built before Wheelhouse's patch for paused runs/);
+  assert.match(stale.findings.join(' '), /built before Wheelhouse's latest patch for cancelling runs/);
 });
 
 test("health fails closed on an engine that isn't the patched source build", async () => {
@@ -691,4 +691,82 @@ test('a run\'s record that couldn\'t be read says so, apart from a run the engin
   assert.equal(silent.unread, true);
   const missing = await adapter(fakeCli({ 'workflow get': { code: 1, json: { ok: false, error: 'not found' }, stdout: '', stderr: '' } })).inspect('r');
   assert.equal(missing.unread, undefined);
+});
+
+// The stream's `terminal` line for a run, as check 93 kept them.
+const terminal = (over) => ({ type: 'terminal', cursor: 'sql:161', project: 'p', runId: RUN, workflow: 'wh-quick', parentRunId: null, status: 'failed', outcome: null, cause: null, ...over });
+
+test("a terminal line gives the kind its failure shows, with its cursor", async () => {
+  const kinds = [
+    [{ cause: { node: 'think', errorClass: 'transient' } }, 'connection'],
+    [{ cause: { node: 'think', errorClass: 'timeout' } }, 'connection'],
+    [{ cause: { node: 'think', errorClass: 'overloaded' } }, 'provider'],
+    [{ cause: { node: 'think', errorClass: 'rate_limited' } }, 'provider'],
+    [{ cause: { node: 'think', errorClass: 'exec_failed' } }, 'other'],
+    [{ cause: { node: 'think', errorClass: 'fatal' } }, 'other'],
+    [{ cause: null }, 'other'],
+  ];
+  for (const [line, kind] of kinds) {
+    const streamer = fakeStreamer([JSON.stringify(terminal(line))]);
+    const events = [];
+    for await (const event of adapter(fakeCli({}), { streamer }).follow(null)) events.push(event);
+    assert.equal(checkEvent(events[0]), null);
+    assert.equal(events[0].failure, kind, JSON.stringify(line));
+    assert.equal(events[0].cursor, 'sql:161');
+  }
+});
+
+test('a run that ended well has no failure', async () => {
+  const streamer = fakeStreamer([JSON.stringify(terminal({ status: 'completed' })), JSON.stringify(terminal({ status: 'cancelled' }))]);
+  const events = [];
+  for await (const event of adapter(fakeCli({}), { streamer }).follow(null)) events.push(event);
+  assert.deepEqual(events.map((e) => e.failure), [null, null]);
+});
+
+// The record of a failed run as `archon workflow get` gives it.
+const failedRecord = (lifecycle, metadata = { stop_reason: { reason: 'node_error' } }) => ({ code: 0, stdout: '', stderr: '', json: {
+  status: 'failed', outcome: null, metadata,
+  nodes: [
+    { nodeId: 'step-one', execution: { lifecycle: { status: 'completed' } } },
+    { nodeId: 'think', execution: { lifecycle: { status: 'failed', ...lifecycle } } },
+    { nodeId: 'step-three', execution: { lifecycle: { status: 'skipped', reason: 'trigger_rule' } } },
+  ],
+} });
+
+test('inspect reads the kind of a failure from the failed step and the run\'s stop', async () => {
+  const kinds = [
+    [failedRecord({ failureKind: 'transient', providerFailure: { class: 'transient', evidence: 'API Error' } }), 'connection'],
+    [failedRecord({ failureKind: 'fatal', providerFailure: { class: 'quota_exhausted', evidence: "You've hit your session limit" } }), 'limit'],
+    [failedRecord({ failureKind: 'fatal', providerFailure: { class: 'auth', evidence: 'sign in' } }), 'other'],
+    [failedRecord({ failureKind: 'exec_failed' }), 'other'],
+  ];
+  for (const [answer, kind] of kinds) {
+    assert.equal((await adapter(fakeCli({ 'workflow get': answer })).inspect(RUN)).failure, kind);
+  }
+});
+
+test('a run that failed with no failed step takes its kind from why it stopped', async () => {
+  const plainFail = (reason) => ({ code: 0, stdout: '', stderr: '', json: { status: 'failed', metadata: { stop_reason: { reason } }, nodes: [] } });
+  assert.equal((await adapter(fakeCli({ 'workflow get': plainFail('process_terminated') })).inspect(RUN)).failure, 'host');
+  assert.equal((await adapter(fakeCli({ 'workflow get': plainFail('something_new') })).inspect(RUN)).failure, 'other');
+});
+
+test('a run that has not failed has no failure on its record', async () => {
+  const record = { code: 0, stdout: '', stderr: '', json: { status: 'completed', metadata: {}, nodes: [] } };
+  assert.equal((await adapter(fakeCli({ 'workflow get': record })).inspect(RUN)).failure, null);
+});
+
+test('a failure takes the kind of the step that failed first, not the first listed', async () => {
+  const answer = failedRecord({ failureKind: 'exec_failed' });
+  answer.json.nodes.push({ nodeId: 'beside', execution: { lifecycle: { status: 'failed', failureKind: 'transient' } } });
+  answer.json.terminal_record = { first_failed_node: 'beside' };
+  assert.equal((await adapter(fakeCli({ 'workflow get': answer })).inspect(RUN)).failure, 'connection');
+});
+
+test('a resume with no answer from the engine may have landed; one it refused has not', async () => {
+  const silent = await adapter(fakeCli({ 'workflow resume': { code: 1, json: null, stdout: '', stderr: '', timedOut: true } })).act(RUN, { resume: {} });
+  assert.equal(silent.unreachable, true);
+  const refused = await adapter(fakeCli({ 'workflow resume': { code: 1, json: { ok: false, error: 'no' }, stdout: '', stderr: '' } })).act(RUN, { resume: {} });
+  assert.equal(refused.unreachable, undefined);
+  assert.equal(refused.ok, false);
 });

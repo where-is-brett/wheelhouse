@@ -211,3 +211,9 @@ test('no test starts the real helper without a guarded run, or runs the trials w
   }
   assert.deepEqual(missing, []);
 });
+
+test('a test process finds a launchctl that refuses', { skip: process.platform === 'win32' ? 'no launchctl here' : false }, () => {
+  const got = spawnSync('launchctl', ['print', 'gui/1/dev.wheelhouse.helper'], { encoding: 'utf8' });
+  assert.equal(got.status, 1);
+  assert.match(got.stderr, /launchctl is not run in a test/);
+});

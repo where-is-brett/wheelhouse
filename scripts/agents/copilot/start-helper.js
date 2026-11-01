@@ -59,6 +59,7 @@ import { askHealth, startDetached } from '../../lib/background.js';
 import { receiverPort } from '../../telemetry/main.js';
 import { projectConfig } from '../../watcher/main.js';
 import { startWatcher } from '../../foreman/start.js';
+import { readProgress } from '../../setup/uninstall.js';
 import { agentOfProject, sessionsOfProject } from '../project-agent.js';
 import { isPendingPart } from '../contract.js';
 
@@ -172,7 +173,7 @@ export async function planInstall(answers, deps = {}) {
       ? (workComputer
         ? 'No start-up entry, as this is a work computer: the helper runs once you allow its start command, and work that needs it waits while it isn\'t running'
         : 'No start-up entry on this system: the helper runs once you allow its start command')
-      : `Wheelhouse's helper starts when you sign in to this computer, for you only: ${entry.kind === 'launch-agent' ? entry.path : 'a start-up entry named Wheelhouse helper in your account\'s settings'}`,
+      : `Wheelhouse's helper starts when you sign in to this computer${entry.kind === 'launch-agent' ? ', and again within a minute if it stops' : ''}, for you only: ${entry.kind === 'launch-agent' ? entry.path : 'a start-up entry named Wheelhouse helper in your account\'s settings'}`,
     ...(needsKey ? ['A signing key for this computer, so what you confirm in Wheelhouse\'s own window is signed'] : []),
     `This folder, ${folder}, is registered as the Lean project ${project}`,
     `Its git moves into Wheelhouse's own folder, ${store}, and this folder becomes a worktree of it, so only the helper moves the main version`,
@@ -283,7 +284,9 @@ export async function startAll({
   // while they aren't switched on, ruling P8-1; a configuration they can't run under), is left alone, so no waker
   // is made for it.
   const watchers = [];
-  for (const { project } of registeredProjects()) {
+  for (const { project, record } of registeredProjects()) {
+    // The launch agent runs this every minute: an uninstall under way has stopped this watcher and means it to stay so.
+    if (readProgress(record?.folder)?.state === 'running') continue;
     const read = await answerOf(projectConfig(project, api));
     if (!read || read.config === null) continue;
     let sessions;

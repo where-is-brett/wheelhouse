@@ -53,6 +53,8 @@ import { lookAtSettings, lookRefusalLine, LookRefusal } from '../lib/safe-git.js
 import { openProjectRecord, openSettings } from '../state/record.js';
 import { importEvents } from '../state/import.js';
 import { takeStartLock } from '../lib/start-lock.js';
+import { reloadLoginStart, renewedEntry } from '../lib/login-start.js';
+import { HELPER_START_SCRIPT } from '../agents/index.js';
 import { tailOf } from '../lib/output-tail.js';
 import { buildViews, cardOutcomes, latestFor, writeViews } from '../state/views.js';
 import { takeSurvey, shapedSurvey, recordSurvey } from '../survey/take.js';
@@ -79,6 +81,7 @@ import { engineRoom } from '../engine/room.js';
 import { stopEngine, endRun, stopWords } from '../engine/stop.js';
 import { engineRoutes, engineDirOf } from '../engine/routes.js';
 import { engineRunner } from '../engine/runner.js';
+import { resumesOf, runLive, sleepWatch } from '../engine/recovery.js';
 import { rollOf } from '../delegation/blind.js';
 import { recordOnly, cardContext, historyOf } from '../delegation/record-only.js';
 import { branchHead, cardDiff, cardFacts, commitsAfter, pathsSoFar } from '../delegation/facts.js';
@@ -1055,6 +1058,7 @@ export async function startHelper({
   // How often the card router and the dispatcher look again for each project on the engine (scripts/engine/runner.js,
   // dispatch-run.js): answers to send, caps to keep, cost records to write, and work to start.
   dispatchMs = 60 * 1000,
+  platform = process.platform,
   // Runs one check (scripts/checks/run.js); a test on a computer with no sandbox stands in for it.
   check = runCheck,
   // How the engine's fetch mirror of a project is brought up to date before a run starts: the helper's own, from the
@@ -4688,12 +4692,16 @@ export async function startHelper({
       .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0))[0];
     return first ? { work: first.data.work, lane: first.data.lane, branch: first.data.branch ?? null } : null;
   }
+  // The project's `run` records, in time order.
+  const engineRunRecords = (project) => listEvents(stateDir(project), { report: () => {} })
+    .filter((e) => e.kind === 'run' && typeof e.data?.runId === 'string')
+    .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
   // The runs the project's record has started and not seen end, for All stop to name to the engine: Archon's list
   // doesn't show a run started under about a second ago.
   function engineRunsGoing(project) {
-    const runs = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'run' && typeof e.data?.runId === 'string');
-    const ended = new Set(runs.filter((e) => e.data.state === 'ended').map((e) => e.data.runId));
-    return [...new Set(runs.map((e) => e.data.runId))].filter((id) => !ended.has(id));
+    const byRun = new Map();
+    for (const e of engineRunRecords(project)) (byRun.get(e.data.runId) ?? byRun.set(e.data.runId, []).get(e.data.runId)).push(e);
+    return [...byRun].filter(([, records]) => runLive(records)).map(([id]) => id);
   }
   // The runs at work now, by each run's latest record: one paused waits on a person, as a run does at its finished change, and
   // holds up no move.
@@ -4771,6 +4779,11 @@ export async function startHelper({
           write: (kind, data) => engineWrite(project, kind, data),
           cursorFile: path.join(stateDir(project), '..', 'engine', 'cursor.json'),
           workOf: (runId) => engineRunOf(project, runId) ?? dispatcher.workOf(runId) ?? seals.readerOf(runId),
+          resumes: (runId) => resumesOf(engineRunRecords(project).filter((e) => e.data.runId === runId)),
+          over: (runId) => {
+            const records = engineRunRecords(project).filter((e) => e.data.runId === runId);
+            return records.length > 0 && !runLive(records);
+          },
           // Archon's end of a run names no pull request; the helper opened it, and its record says which (check 81).
           prOf: (runId) => engineRun.openedBy(project, runId),
         });
@@ -4789,8 +4802,9 @@ export async function startHelper({
         room = engineRoom({ spawn, command: () => roomEngine.roomCommand(), wanted: roomWanted, held: stopped });
         try { room.tend(); } catch { /* tried again with the dispatcher */ }
       }
+      sleeping.beat();
       dispatchWatch = setInterval(() => {
-        engineTick().catch(() => {});
+        sleeping.beat().then(engineTick).catch(() => {});
         sealTick();
         try { room?.tend(); } catch { /* tried again next time */ }
       }, dispatchMs);
@@ -5204,11 +5218,12 @@ export async function startHelper({
       },
     });
     const runner = engineRunner({
-      engine, file: path.join(files, 'router.json'), readViews: views, write, stopped, now, settings, onCard: seals.onCard, onReaderAsk: seals.onReaderAsk, blindRoll: rollOf,
+      engine, file: path.join(files, 'router.json'), readViews: views, write, stopped, now, settings, noteSleep: () => sleeping.beat(), onCard: seals.onCard, onReaderAsk: seals.onReaderAsk, blindRoll: rollOf,
       workOf: (runId) => engineRunOf(project, runId) ?? dispatcher.workOf(runId) ?? seals.readerOf(runId),
       titleOf: (work) => (work === MERGE_WORK ? 'the changes waiting to be added' : views().work?.[work]?.work?.data?.title ?? work),
       endRun: async (runId) => endRun({ engine, run: { id: runId, folder: (await engine.inspect(runId))?.folder ?? null }, ...engineStopWith }),
       openedOf: (pr) => engineRun.openedOf(project, pr),
+      prOf: (runId) => engineRun.openedBy(project, runId),
       keepReviews: (runId) => engineRun.keepTaskReviews(project, runId),
       prTitleOf: async (pr) => (await (await contextFor(project)).adapter().then((adapter) => adapter.prState(pr))).title ?? null,
       release: (work) => dispatcher.release(work),
@@ -5502,6 +5517,25 @@ export async function startHelper({
     return ticking;
   }
 
+  // A late beat of the tick means the computer slept. The span goes on every project's record ahead of the tick, and
+  // the runner beats again just before it reads a run's minutes, since a sleep can fall inside a tick already going:
+  // `caps` must see the span or cancel the very run it keeps.
+  const sleeping = sleepWatch({ now, write: (gap) => Promise.all(engineHosts.map(({ project }) => engineWrite(project, 'slept', gap))) });
+
+  // An agent written by another version takes effect only once launchd loads it again: once, when the helper starts.
+  async function renewLoginStart() {
+    let got;
+    try {
+      const entry = renewedEntry({ platform, root: OWN_ROOT, script: HELPER_START_SCRIPT });
+      if (entry === null) return;
+      got = await reloadLoginStart({ run, entry });
+    } catch (error) {
+      got = { reloaded: false, why: error.message };
+    }
+    const words = got.reloaded ? 'Wheelhouse\'s helper now comes back within a minute if it stops.' : `What starts Wheelhouse's helper couldn't be brought up to date: ${got.why}.`;
+    await Promise.allSettled(engineHosts.map(({ project }) => engineWrite(project, 'note', { about: 'engine', words })));
+  }
+
   // The seals' look for every project, never awaited by a tick of the engine: a hang there stops no delivery.
   const sealTick = () => Promise.all(engineHosts.map(({ seals }) => seals.tick()));
 
@@ -5516,7 +5550,9 @@ export async function startHelper({
       if (dispatchWatch) clearInterval(dispatchWatch);
       if (safekeepingWatch) clearInterval(safekeepingWatch);
       await lookingAround?.catch(() => {});
+      await sleeping.beat();
       await ticking?.catch(() => {});
+      await renewing;
       await engineStopping?.catch(() => {});
       await Promise.race([
         Promise.allSettled([...engineHosts.map(({ checks }) => checks.stop()), ...engineHosts.map(({ seals }) => seals.settled())]),
@@ -5671,6 +5707,7 @@ export async function startHelper({
     releaseStart();
   }
   startEngineHosts();
+  const renewing = renewLoginStart();
   const safekeepingWatch = setInterval(() => { safekeepingRound().catch(() => {}); moveRound().catch(() => {}); }, dispatchMs);
   safekeepingWatch.unref?.();
 

@@ -315,3 +315,142 @@ test("a run's end that names no pull request takes the one the helper's record s
     assert.equal(ended.r2.pr, undefined);
   } finally { f.cleanup(); }
 });
+
+// An engine that gives `events` once, each `run-1`'s, with the cursor after it, and answers inspect with `record`.
+function played(events, record = () => ({ status: 'ended' })) {
+  const engine = fakeEngine({ recordings: {} });
+  engine.follow = async function* follow(cursor, { onCursor = () => {} } = {}) {
+    for (const [index, event] of events.entries()) {
+      if (Number(cursor ?? 0) > index) continue;
+      yield { runId: 'run-1', at: now().toISOString(), ...event };
+      onCursor(String(index + 1));
+    }
+  };
+  engine.inspect = async () => { const got = record(); if (got instanceof Error) throw got; return got; };
+  return engine;
+}
+const ofRun = () => ({ work: 'card-12', lane: 'quick', branch: 'wh/card-12' });
+// Runs a host until `done(kept)`, then stops it; when there is nothing to wait for, until the stream has gone round.
+async function hosted(engine, { write, file, done, ...rest }) {
+  const { spawn } = stubSpawn();
+  const host = startEngineHost({ engine, spawn, write, cursorFile: file, workOf: ofRun, ...quick, ...rest });
+  if (done) await until(done, { what: 'the record' });
+  else await new Promise((resolve) => setTimeout(resolve, 30));
+  await host.stop();
+}
+const endings = (kept) => kept.filter((w) => w.kind === 'run' && w.data.state === 'ended').map((w) => w.data);
+
+test("a resumed run's second ending is written", async () => {
+  const f = folder();
+  try {
+    const { kept, write } = writes();
+    const failed = { type: 'run-ended', outcome: 'failed', failure: 'connection' };
+    let resumes = 0;
+    const engine = played([failed], () => ({ status: 'ended', outcome: 'failed', failure: 'connection' }));
+    await hosted(engine, { write, file: f.file, done: () => endings(kept).length === 1, resumes: () => resumes });
+    assert.equal(endings(kept)[0].resume, undefined);
+
+    resumes = 1;
+    const again = played([failed, { type: 'run-ended', outcome: 'completed' }], () => ({ status: 'ended', outcome: 'completed' }));
+    await hosted(again, { write, file: f.file, done: () => endings(kept).length === 2, resumes: () => resumes });
+    assert.equal(endings(kept)[1].resume, 1);
+    assert.equal(endings(kept)[1].outcome, 'completed');
+    assert.equal(endings(kept)[1].failure, undefined);
+  } finally { f.cleanup(); }
+});
+
+test('an ask-resolved after the ending writes no started', async () => {
+  const f = folder();
+  try {
+    const { kept, write } = writes();
+    const engine = played([{ type: 'run-ended', outcome: 'completed' }, { type: 'ask-resolved', id: 'late' }]);
+    await hosted(engine, { write, file: f.file });
+    assert.deepEqual(kept.map((w) => w.data.state), ['ended']);
+  } finally { f.cleanup(); }
+});
+
+test('an ask-resolved after an ending the record has from elsewhere writes no started', async () => {
+  const f = folder();
+  try {
+    const { kept, write } = writes();
+    await hosted(played([{ type: 'ask-resolved', id: 'late' }]), { write, file: f.file, over: () => true });
+    assert.deepEqual(kept, []);
+  } finally { f.cleanup(); }
+});
+
+test("a resumed leg's ask and its answer are written", async () => {
+  const f = folder();
+  try {
+    const { kept, write } = writes();
+    const engine = played([{ type: 'ask', id: 'second', kind: 'question', level: 3, options: [] }, { type: 'ask-resolved', id: 'second' }], () => ({ status: 'running' }));
+    await hosted(engine, { write, file: f.file, resumes: () => 1, over: () => false });
+    assert.deepEqual(kept.filter((w) => w.kind === 'run').map((w) => w.data.state), ['paused', 'started']);
+  } finally { f.cleanup(); }
+});
+
+test('the kind of a failure is read from the engine, over the line', async () => {
+  const f = folder();
+  try {
+    const { kept, write } = writes();
+    const engine = played([{ type: 'run-ended', outcome: 'failed', failure: 'other' }], () => ({ status: 'ended', outcome: 'failed', failure: 'limit' }));
+    await hosted(engine, { write, file: f.file, done: () => endings(kept).length === 1 });
+    assert.equal(endings(kept)[0].failure, 'limit');
+  } finally { f.cleanup(); }
+});
+
+test("a failure whose record can't be read keeps the line's kind, or other", async () => {
+  for (const [given, kind] of [['connection', 'connection'], [undefined, 'other']]) {
+    const f = folder();
+    try {
+      const { kept, write } = writes();
+      const engine = played([{ type: 'run-ended', outcome: 'failed', failure: given }], () => new Error('unread'));
+      await hosted(engine, { write, file: f.file, done: () => endings(kept).length === 1 });
+      assert.equal(endings(kept)[0].failure, kind);
+    } finally { f.cleanup(); }
+  }
+});
+
+test('a terminal line replayed after the run moved on writes no ending', async () => {
+  for (const status of ['running', 'paused']) {
+    const f = folder();
+    try {
+      const { kept, write } = writes();
+      await hosted(played([{ type: 'run-ended', outcome: 'failed', cursor: 'sql:161' }], () => ({ status })), { write, file: f.file, resumes: () => 1 });
+      assert.deepEqual(endings(kept), [], status);
+    } finally { f.cleanup(); }
+  }
+});
+
+test('a terminal line replayed once the run has finished says what the record says', async () => {
+  const f = folder();
+  try {
+    const { kept, write } = writes();
+    const engine = played([{ type: 'run-ended', outcome: 'failed', cursor: 'sql:161' }, { type: 'run-ended', outcome: 'completed', cursor: 'sql:220' }], () => ({ status: 'ended', outcome: 'completed' }));
+    await hosted(engine, { write, file: f.file, resumes: () => 1, done: () => endings(kept).length === 1 });
+    assert.equal(endings(kept)[0].outcome, 'completed');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(endings(kept).length, 1);
+  } finally { f.cleanup(); }
+});
+
+test('a host handles each terminal line once, whatever it reads later', async () => {
+  const f = folder();
+  try {
+    const { kept, write } = writes();
+    const line = { type: 'run-ended', outcome: 'failed', failure: 'connection', cursor: 'sql:161' };
+    await hosted(played([line], () => ({ status: 'ended', outcome: 'failed', failure: 'connection' })), { write, file: f.file, done: () => endings(kept).length === 1 });
+    // The cursor goes back, the run has resumed, and the engine still reads the leg as failed.
+    fs.writeFileSync(f.file, JSON.stringify({ ...readCursorFile(f.file), cursor: null }));
+    await hosted(played([line], () => ({ status: 'ended', outcome: 'failed', failure: 'connection' })), { write, file: f.file, resumes: () => 1 });
+    assert.equal(endings(kept).length, 1);
+  } finally { f.cleanup(); }
+});
+
+test('a resumed leg the record has already ended is not ended twice', async () => {
+  const f = folder();
+  try {
+    const { kept, write } = writes();
+    await hosted(played([{ type: 'run-ended', outcome: 'failed' }], () => ({ status: 'ended', outcome: 'failed' })), { write, file: f.file, resumes: () => 1, over: () => true });
+    assert.deepEqual(endings(kept), []);
+  } finally { f.cleanup(); }
+});

@@ -9,7 +9,10 @@
 //   watch(cursor) -> { events: EngineEvent[], cursor }       (follow(cursor) is the same as an async iterator)
 //   act(runId, { answer: { ask, choice, words? } } | { cancel: { reason } } | { resume: {} }) -> { ok } | { ok: false, refused }
 //     (`unreachable: true` beside a refusal when the engine gave no reply at all, so the caller may try again)
-//   inspect(runId) -> { status, steps: [{ id, role, provider, model, tokens, dollars, minutes, source }], branch, pr, digest }
+//     (`resume` carries on a run that failed or is paused: a failed step starts again from its beginning, and finished steps are skipped)
+//   inspect(runId) -> { status, outcome, failure, steps: [{ id, role, provider, model, tokens, dollars, minutes, source }], totals, branch, pr, digest }
+//     (`failure`: the kind of a failed run's failure, null otherwise; `totals`: { tokens, dollars }, which add a resumed run's
+//     legs where its steps don't, null where unknown)
 //   stopAll(reason, { beforeCancel(runs: [{ id, folder }]), known: string[] }?) -> { cancelled: string[], survivors: string[], paused: string[] }
 //     every run going or paused is cancelled; `paused` lists a paused run the engine wouldn't cancel
 //     (`known`: the runs the caller started and hasn't seen end, for an engine whose list may not show one yet)
@@ -17,7 +20,9 @@
 // Beside the interface, for the helper's continuation host (host.js): `name`, the engine's name for the record, and
 // wakeCommand() -> { command, args, env }, the process that carries answered runs on; and, for All stop (stop.js),
 // ownsProcess(command) -> boolean, whether a process as `ps` lists it is the engine's own. `inspect` may add `folder`,
-// the run's working folder. Optional, for a start that may have happened:
+// the run's working folder. A `run-ended` event may carry `failure`, the kind as far as the event can tell, and `cursor`, the
+// stream's place: an event can replay after the run has moved on, so inspect is the state and the event only a report.
+// Optional, for a start that may have happened:
 //   liveRunOf({ work, since }) -> { runId } | null | undefined
 //     the live run of `work` begun since `since`, null for none, undefined when the engine can't say; missing reads as undefined
 
@@ -60,6 +65,7 @@ export function checkEvent(event) {
     if (!isText(event.id)) return 'An ask-resolved event needs the id of the ask';
   } else if (event.type === 'run-ended') {
     if (!isText(event.outcome)) return 'A run-ended event needs the outcome';
+    if (event.failure !== undefined && event.failure !== null && !isText(event.failure)) return 'A run-ended event\'s failure must be text or null';
   }
   return null;
 }

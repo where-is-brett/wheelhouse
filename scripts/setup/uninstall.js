@@ -960,7 +960,6 @@ export async function uninstallPlan({
   // The sign-in start the helper's own install made (design section 8.5), on the last project, if there is one.
   // Recorded nowhere in the journal: its record is in Wheelhouse's home (scripts/lib/login-start.js).
   const loginStart = last ? loginStartRecord() : null;
-  if (loginStart !== null) add('computer', -1, { put: 'remove-login-start', kind: loginStart.kind, target: loginStart.path });
 
   // The project's own folder under projects/, and on the last project Wheelhouse's own folders and
   // files, recorded or not; the trusted-keys list and the signing key go last of all (rulings R123,
@@ -1065,6 +1064,8 @@ export async function uninstallPlan({
   const ordered = PHASES.filter((p) => p !== 'stop').flatMap((phase) => items.filter((i) => i.phase === phase)
     .sort((a, b) => b.seq - a.seq).map((i) => i.entry));
   const changes = [
+    // Ahead of the stops: it runs the start command every minute, which would start again what they stop.
+    ...(loginStart !== null ? [{ phase: 'computer', put: 'remove-login-start', kind: loginStart.kind, target: loginStart.path }] : []),
     ...stops,
     ...ordered,
     { phase: 'last', put: 'remove-plugin', line: PLUGIN_LINE },

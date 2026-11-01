@@ -62,7 +62,23 @@ const named = (by) => (by.length < 2 ? by.join('') : `${by.slice(0, -1).join(', 
 export const cutOffWords = (title, by) => `${title} depends on ${named(by)}, which won't be added as things stand, so it can't start by itself. It waits until you say.`;
 export const waitsOnItselfWords = (title, by) => `${title} and ${named(by)} wait on each other, so none of them can start by itself. It waits until you say.`;
 export const startAnywayWords = (by) => `It takes its turn without ${named(by)}. What it was to build on isn't there, so it may fail or need redoing. This holds for this queueing only: queued again, it waits as before.`;
+export const unmarkedPrWords = (title, pr) => `${title} finished with pull request #${pr} open, but nothing has marked it ready to add, so it keeps its place and other work waits. It moves on once that pull request is added or closed.`;
 export const prLeftOpenWords = (pr) => `Pull request #${pr} stays open, and nothing of it is added.`;
+// Work that has never run, whose start was refused: said once, tried once more, then a card.
+export const startRefusedWords = (title, why) => `${title} couldn't start: ${why}. It keeps its turn, and it is tried once more shortly.`;
+export const startCardWords = (title, why) => `${title} couldn't start, and a second try a few minutes later didn't help: ${why}. Nothing of it starts until you say.`;
+export const START_STOP_SAYS = 'It ends here and nothing of it starts. Any work that depends on it comes to you next.';
+// A red main line with no fix to start, and the merge queue that can't start.
+export const NO_FIX_TESTS = 'Wheelhouse doesn\'t know how to run this project\'s tests, so it couldn\'t tell when a fix is done. Setup can add the command, and the fix then starts by itself';
+export const NO_FIX_ORDER = 'Wheelhouse couldn\'t write the work order for a fix';
+export const noFixWords = (why) => `The main line's checks are red, and no fix has started: ${why}. Nothing else is added until the main line is green again.`;
+export const queueStuckWords = (why) => `The merge queue can't start: ${why}. Finished work waits and nothing of it is added; Wheelhouse keeps trying meanwhile.`;
+export const QUEUE_STUCK_WHY = 'Trouble that doesn\'t pass by itself often needs a person: a connection to sign in to again, or a repository that moved. Whether to be asked again is yours to decide, at level 3.';
+export const QUEUE_PASSED_WORDS = 'The merge queue\'s trouble has passed, so the card about it needs no answer.';
+// Work held for the plan's counted requests, past the words for a cap of none.
+export const requestsUsedWords = (cap) => `Some work would use your AI plan's counted requests, and this month's cap of ${cap} is used up, so that work waits until next month or until you allow more.`;
+export const REQUESTS_UNCONFIRMED_WORDS = 'Some work would use your AI plan\'s counted requests, and Wheelhouse can\'t yet check its count of them against the plan\'s own figure, so that work can\'t run for now, whatever the cap.';
+export const requestsStoppedWords = (title) => `${title} stops here, as you chose; none of it had started and no requests were used.`;
 export const STOPPED_RESTART_WORDS = (title) => `${title} stays stopped, as you chose; what it has done so far is kept on its branch.`;
 // Said after that line, of a run the engine may have started all the same and Wheelhouse couldn't end.
 export const ORPHAN_LEFT_WORDS = "A run of it may still be going in the build engine; Wheelhouse couldn't end it.";
@@ -213,7 +229,7 @@ const costOf = (views, work, runId) => (records(views, 'costs')[work] ?? []).fil
 export function runningLines(views, { now = new Date() } = {}) {
   return runsOf(views).filter((r) => r.latest.data.state !== 'ended').map((r) => runLine({
     title: titleOf(views, r.work), state: r.latest.data.state, step: r.latest.data.step ?? null,
-    minutes: runningMinutes(r.records, now),
+    minutes: runningMinutes(r.records, now, views?.slept),
   }, costOf(views, r.work, r.runId)));
 }
 
@@ -226,7 +242,7 @@ export function buildLines(views, { now = new Date() } = {}) {
   for (const r of runs) {
     const cost = costOf(views, r.work, r.runId);
     const state = r.latest.data;
-    lines.push(runLine({ title: titleOf(views, r.work), state: state.state, outcome: state.outcome, step: state.step ?? null, minutes: state.state === 'ended' ? null : runningMinutes(r.records, now) }, cost));
+    lines.push(runLine({ title: titleOf(views, r.work), state: state.state, outcome: state.outcome, step: state.step ?? null, minutes: state.state === 'ended' ? null : runningMinutes(r.records, now, views?.slept) }, cost));
     const steps = isPlain(cost?.byRole) ? [...new Set(Object.keys(cost.byRole).map(stepWords))] : [];
     if (steps.length > 0) lines.push(`  Steps: ${steps.join('; ')}.`);
   }

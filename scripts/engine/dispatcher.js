@@ -40,7 +40,7 @@ export const MERGE_WORK = 'merge-queue';
 // `sentBack` is [{ work, times, reason? }], the pull requests sent back: for a clash by the merge gate, and with reason
 // `red` by the check runner; `waiting` the pieces that wait on the director; `reserved` { [work]: paths } the files held
 // for a piece until its work ends. A hold's `by` names what holds it, where that can be named: the clash's pieces, the
-// dependencies not merged, or what fills the parked limit. `returning` is [{ work, lane, via, at, asked? }], with a card out when `asked`, the pieces asking for
+// dependencies not merged, or what fills the parked limit. `returning` is [{ work, lane, via, at, asked? }], with a card out when `asked` and `filesFree` when it has begun nothing, the pieces asking for
 // a place back, and `admitted` the same shape, named and not yet seen running; neither counts as running by itself. A
 // `requeue` is named only when it has a place, and otherwise is asked about again on the next tick. `stoppedFeatures` are
 // the features whose run the director or All stop ended, which stay stopped until a Carry on and hold no place meanwhile. `waived` are the pieces the director
@@ -79,7 +79,9 @@ export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeat
     return parked.has(id) && !onTheWay.has(id) && !live.includes(entry) && !endedBy(reports, id, e.work) && runsOf(runs, id, e.work).length > 0;
   });
   const running = [...live, ...waits].map(([id, e]) => ({ work: id, files: filesOf(id, e) }));
-  for (const id of new Set([...Object.keys(held), ...onTheWay, ...stoppedFeatures])) {
+  // New work refused at its start and now on a card (`filesFree`) has begun nothing, so it keeps no files from other work.
+  const filesFree = new Set(back.filter((r) => r.filesFree === true).map((r) => r.work));
+  for (const id of new Set([...Object.keys(held), ...[...onTheWay].filter((work) => !filesFree.has(work)), ...stoppedFeatures])) {
     const e = isPlain(work) ? work[id] : undefined;
     if (!running.some((r) => r.work === id) && !endedBy(reports, id, e?.work)) running.push({ work: id, files: filesOf(id, e) });
   }

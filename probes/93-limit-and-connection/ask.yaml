@@ -1,0 +1,26 @@
+# probes/93-limit-and-connection/ask.yaml
+# Check 93: no model step. An ask, a step that fails once, then a later ask, so the run pauses after a resume.
+# Installed as `u4-ask`.
+name: u4-ask
+description: An ask, a step that fails on its first go, a second ask
+nodes:
+  - id: ask-one
+    wait:
+      attention: Check 93, first ask
+      form: select
+      options:
+        - { id: a, label: A }
+  - id: fail-once
+    depends_on: [ask-one]
+    bash: |
+      if [ -e failed-once.txt ]; then echo second go; else touch failed-once.txt; echo first go; exit 1; fi
+  - id: ask-two
+    depends_on: [fail-once]
+    wait:
+      attention: Check 93, second ask
+      form: select
+      options:
+        - { id: a, label: A }
+  - id: done
+    depends_on: [ask-two]
+    bash: echo done

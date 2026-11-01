@@ -20,6 +20,7 @@ import { setStop } from '../../../scripts/lib/stop.js';
 import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress } from '../../helpers/homes.js';
 import { until } from '../../helpers/until.js';
+import { loginEntry, installLoginStart } from '../../../scripts/lib/login-start.js';
 
 // The fake engine reads no fetch mirror.
 const noMirror = async () => ({ ok: true });
@@ -214,6 +215,60 @@ test('a project whose tests Wheelhouse can\'t run starts no work, and the Logboo
       } finally {
         await helper.close();
       }
+    });
+  } finally { p.cleanup(); }
+});
+
+test('a wake writes slept before the tick reads it', async () => {
+  const p = await setUp();
+  const engine = fakeEngine({ recordings: { long: [{ type: 'run-started', runId: 'x', at: '2026-11-01T00:59:00.000Z' }] }, artefacts: p.artefacts });
+  let at = new Date('2026-11-01T01:00:00.000Z');
+  try {
+    await as(p.home, async () => {
+      const { runId } = engine.start({ recording: 'long', running: true });
+      put('run', { work: 'card-12', lane: 'quick', engine: 'fake', runId, state: 'started' }, '2026-11-01T00:59:00.000Z');
+      const helper = await helperFor(p, engine, { now: () => at, dispatchMs: 5 });
+      try {
+        await helper.engine.tick();
+        at = new Date('2026-11-01T07:00:00.000Z');
+        await until(() => records('slept').length > 0, { what: 'the sleep on the record' });
+        await helper.engine.tick();
+        const slept = records('slept');
+        assert.equal(slept.length, 1, 'one gap, one record');
+        assert.equal(slept[0].data.from, '2026-11-01T01:00:00.000Z');
+        assert.equal(slept[0].data.to, '2026-11-01T07:00:00.000Z');
+        assert.deepEqual(engine.calls.filter((c) => c.call === 'act'), [], 'six hours asleep stop nothing');
+      } finally {
+        await helper.close();
+      }
+    });
+  } finally { p.cleanup(); }
+});
+
+test('an agent written before this part is loaded again once when the helper starts, and the Logbook says so', { skip: process.platform === 'win32' ? 'a Mac\'s launch agent is written into a real folder here' : false }, async () => {
+  const p = await setUp();
+  const engine = fakeEngine({ recordings: {}, artefacts: p.artefacts });
+  const calls = [];
+  const run = (file, args, options) => {
+    if (file !== 'launchctl') return hostGuard(file, args, options);
+    calls.push(args[0]);
+    return Promise.resolve({ code: 0, stdout: '', stderr: '' });
+  };
+  try {
+    await as(p.home, async () => {
+      const user = shortHome();
+      const entry = loginEntry({ platform: 'darwin', node: '/opt/node', root: '/opt/wheelhouse', script: 'scripts/agents/copilot/start-helper.js', home: user });
+      const older = { ...entry, content: entry.content.replace('  <key>StartInterval</key>\n  <integer>60</integer>\n', '') };
+      await installLoginStart({ entry: older, run });
+      calls.length = 0;
+      for (let i = 0; i < 2; i += 1) {
+        const helper = await helperFor(p, engine, { run, platform: 'darwin' });
+        await helper.close();
+      }
+      assert.deepEqual(calls, ['bootout', 'bootstrap'], 'once, not at each start');
+      assert.equal(records('note').filter((n) => /within a minute/.test(n.data.words ?? '')).length, 1);
+      assert.match(fs.readFileSync(entry.path, 'utf8'), /<key>StartInterval<\/key>/);
+      fs.rmSync(user, { recursive: true, force: true });
     });
   } finally { p.cleanup(); }
 });

@@ -90,3 +90,80 @@ test('a run carried on counts the spend of the runs before it', () => {
   assert.deepEqual(carriedSpend(costs, ['r1']), { tokens: 700000, minutes: 15 });
   assert.deepEqual(capReached({ lane: 'quick', minutes: 6, tokens: 400000, carried: { tokens: 700000, minutes: 15 } }, { capMinutes: { quick: 20 }, capTokens: { quick: 1000000 } }), { cap: 'minutes', used: 21, limit: 20 });
 });
+
+test('a sleep inside a run leaves its minutes out', () => {
+  const records = [{ at: '2026-11-01T01:00:00Z', data: { state: 'started' } }];
+  const slept = [{ from: '2026-11-01T01:10:00Z', to: '2026-11-01T07:10:00Z' }];
+  assert.equal(runningMinutes(records, new Date('2026-11-01T07:20:00Z'), slept), 20);
+});
+
+test('a sleep over a pause counts for nothing twice', () => {
+  const records = [
+    { at: '2026-11-01T01:00:00Z', data: { state: 'started' } },
+    { at: '2026-11-01T01:05:00Z', data: { state: 'paused' } },
+    { at: '2026-11-01T01:30:00Z', data: { state: 'started' } },
+  ];
+  const slept = [{ from: '2026-11-01T01:10:00Z', to: '2026-11-01T01:20:00Z' }];
+  assert.equal(runningMinutes(records, new Date('2026-11-01T01:40:00Z'), slept), 15);
+});
+
+test('a sleep cut by a run\'s start or end takes only the part inside it, and an ended run is not stretched', () => {
+  const records = [
+    { at: '2026-11-01T02:00:00Z', data: { state: 'started' } },
+    { at: '2026-11-01T02:30:00Z', data: { state: 'ended' } },
+  ];
+  const slept = [{ from: '2026-11-01T01:50:00Z', to: '2026-11-01T02:10:00Z' }, { from: '2026-11-01T02:25:00Z', to: '2026-11-01T03:00:00Z' }];
+  assert.equal(runningMinutes(records, new Date('2026-11-01T09:00:00Z'), slept), 15);
+});
+
+test('spans that overlap or repeat, or that make no sense, take nothing twice', () => {
+  const records = [{ at: '2026-11-01T01:00:00Z', data: { state: 'started' } }];
+  const slept = [
+    { from: '2026-11-01T01:20:00Z', to: '2026-11-01T01:40:00Z' },
+    { from: '2026-11-01T01:10:00Z', to: '2026-11-01T01:30:00Z' },
+    { from: '2026-11-01T01:10:00Z', to: '2026-11-01T01:30:00Z' },
+    { from: 'soon', to: 'later' },
+    { from: '2026-11-01T01:50:00Z', to: '2026-11-01T01:45:00Z' },
+    null,
+  ];
+  assert.equal(runningMinutes(records, new Date('2026-11-01T02:00:00Z'), slept), 30);
+});
+
+test('minutes count after a resume', () => {
+  const at = (minute) => `2026-11-01T01:${String(minute).padStart(2, '0')}:00.000Z`;
+  const records = [
+    { at: at(0), data: { state: 'started' } },
+    { at: at(10), data: { state: 'ended', outcome: 'failed' } },
+    { at: at(20), data: { state: 'started', resume: 1 } },
+    { at: at(25), data: { state: 'ended', resume: 1, outcome: 'completed' } },
+  ];
+  assert.equal(runningMinutes(records, new Date(at(50))), 15);
+  assert.equal(runningMinutes(records.slice(0, 3), new Date(at(30))), 20, 'a leg under way counts to now');
+});
+
+test('a plain started after an ended adds nothing, since an ask-resolved can arrive late', () => {
+  const at = (minute) => `2026-11-01T01:${String(minute).padStart(2, '0')}:00.000Z`;
+  const records = [
+    { at: at(0), data: { state: 'started' } },
+    { at: at(10), data: { state: 'ended', outcome: 'completed' } },
+    { at: at(12), data: { state: 'started' } },
+  ];
+  assert.equal(runningMinutes(records, new Date(at(50))), 10);
+});
+
+test('a resumed run costs what its totals say, since its steps hold only their last attempt', () => {
+  const cost = runCost({ status: 'ended', steps: [step({ tokens: 12175, dollars: 0.00056715 })], totals: { tokens: 18830, dollars: 0.00104485 } });
+  assert.equal(cost.tokens, 18830);
+  assert.equal(cost.dollars, 0.001045);
+  assert.equal(cost.floorDollars, 0.001045);
+});
+
+test('totals that are missing or short take nothing from the steps, and a step of unknown spend stays unknown', () => {
+  const steps = [step({ tokens: 100, dollars: 0.5 })];
+  assert.equal(runCost({ steps, totals: { tokens: null, dollars: null } }).tokens, 100);
+  assert.equal(runCost({ steps, totals: { tokens: 40, dollars: 0.1 } }).dollars, 0.5);
+  assert.equal(runCost({ steps }).tokens, 100);
+  const unknown = runCost({ steps: [step({ tokens: null, dollars: null, source: 'unknown' })], totals: { tokens: null, dollars: 0.2 } });
+  assert.equal(unknown.dollars, null);
+  assert.equal(unknown.floorDollars, 0.2);
+});

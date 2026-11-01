@@ -5,7 +5,9 @@
 // reports the process that owns the run. Like Archon, it keeps each finished step's output (a recorded step-finished
 // event's `output`), hands work to a merge queue (kept in `calls`) and has an artefacts folder for each run, under
 // `artefacts`; a step whose output depends on the test's world (the pull request a run opened) is given by `setOutput`.
-// `source` is the folder it says each run's pack was frozen into.
+// `source` is the folder it says each run's pack was frozen into. A recording may play on past a failed `run-ended`:
+// a resume then takes the run on from there, as a leg of the same run. Its steps all count in `inspect`, as a real engine's
+// `totals` do.
 import fs from 'node:fs';
 import path from 'node:path';
 import { checkEvent } from './contract.js';
@@ -45,12 +47,15 @@ export function fakeEngine({ recordings = {}, now = () => new Date().toISOString
   // Moves a run's recorded events onto the stream, up to and including the next ask. A run started with
   // `order.running` stops short of its first ask instead, and stays running there (a step under way).
   function play(run) {
-    while (run.pending.length > 0 && !run.open) {
+    while (run.pending.length > 0 && !run.open && !run.ended) {
       if (run.holding && run.pending[0].type === 'ask') return;
       const event = { ...run.pending.shift(), runId: run.id };
       stream.push(event);
       if (event.type === 'ask') run.open = event;
-      if (event.type === 'run-ended') { run.pending.length = 0; run.ended = event; }
+      if (event.type === 'run-ended') {
+        if (event.outcome !== 'failed') run.pending.length = 0;
+        run.ended = event;
+      }
     }
   }
 
@@ -117,7 +122,13 @@ export function fakeEngine({ recordings = {}, now = () => new Date().toISOString
         end(run, 'cancelled', { reason: action.cancel.reason ?? null });
         return { ok: true };
       }
-      if (action.resume) return run.ended ? { ok: false, refused: 'The run has already ended' } : { ok: true };
+      if (action.resume) {
+        if (!run.ended) return { ok: true };
+        if (run.ended.outcome !== 'failed' || run.pending.length === 0) return { ok: false, refused: 'The run has already ended' };
+        run.ended = null;
+        play(run);
+        return { ok: true };
+      }
       const answer = action.answer;
       if (!answer) return { ok: false, refused: 'Nothing to do: give an answer, a cancel or a resume' };
       if (answered.has(`${runId}:${answer.ask}`)) return { ok: false, refused: 'That ask has already been answered' };
@@ -148,6 +159,8 @@ export function fakeEngine({ recordings = {}, now = () => new Date().toISOString
       const status = run.ended ? 'ended' : run.open ? 'paused' : 'running';
       return {
         status,
+        outcome: run.ended?.outcome ?? null,
+        failure: run.ended?.failure ?? null,
         ownerPid: run.ownerPid,
         folder: run.folder,
         steps,

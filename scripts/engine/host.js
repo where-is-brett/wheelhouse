@@ -39,7 +39,7 @@ function saveCursorFile(file, { cursor, written }) {
 
 const isText = (value) => typeof value === 'string' && value !== '';
 // A pull request's number, from a number or the end of its address.
-function prNumber(pr) {
+export function prNumber(pr) {
   if (Number.isInteger(pr) && pr > 0) return pr;
   const found = /(\d+)\/?$/.exec(typeof pr === 'string' ? pr : '');
   return found ? Number(found[1]) : undefined;
@@ -52,13 +52,15 @@ const present = (data) => Object.fromEntries(Object.entries(data).filter(([, val
 // - `workOf(runId)` -> { work, lane, branch? } | null: the work a run is for, from the project's own `run` records,
 //   which the run's start wrote. A run this host doesn't know (another project's, on the same engine) is written
 //   nothing, whatever an event's labels say; a label only cross-checks, and one naming other work is said, not written.
+// - `resumes(runId)` how many times the record has the run resumed, so a resumed run's ending is written under that number;
+//   `over(runId)` whether the record has the run's current leg ended, by any hand. A late answer writes nothing over one.
 // - `onAsk(event)` is told each new ask once it is written: the card router's hook (part 3c).
 // - `wake: false` keeps only the stream, for a second project on the same engine; `held()` true (All stop) ends the
 //   wake process and starts none until it is false again.
 // - `now()` gives a Date; `restartMs`, `stuckMs` and `backstopMs` are for tests.
 export function startEngineHost({
   engine, spawn, write, cursorFile, now = () => new Date(), backstopMs = BACKSTOP_MS, stuckMs = STUCK_MS, restartMs = RESTART_MS,
-  wake = true, held = () => false, workOf = () => null, prOf = () => null, onAsk = () => {}, onTrouble = () => {},
+  wake = true, held = () => false, workOf = () => null, resumes = () => 0, over = () => false, prOf = () => null, onAsk = () => {}, onTrouble = () => {},
 } = {}) {
   if (!engine || typeof engine.follow !== 'function') throw new Error('The continuation host needs an engine that can be followed');
   const saved = readCursorFile(cursorFile);
@@ -130,15 +132,53 @@ export function startEngineHost({
     }
   }
 
+  // The record's word on a run, read safely: neither can hold up the stream.
+  const resumesNow = (runId) => {
+    try {
+      const n = resumes(runId);
+      return Number.isInteger(n) && n > 0 ? n : 0;
+    } catch { return 0; }
+  };
+  const overNow = (runId) => {
+    try { return over(runId) === true; } catch { return false; }
+  };
+  const endKey = (runId, resume) => `run:${runId}:ended:${resume > 0 ? resume : ''}`;
+
   async function runState(event, state, extra = {}) {
     const run = known(event);
-    if (!run || !isText(run.lane)) return;
+    if (!run || !isText(run.lane)) return undefined;
+    // A leg that has ended stays ended: only a resume, which the runner writes, brings a run back.
+    if (state !== 'ended' && (written.has(endKey(event.runId, resumesNow(event.runId))) || overNow(event.runId))) return undefined;
     const key = `run:${event.runId}:${state}:${extra.key ?? ''}`;
     delete extra.key;
-    await once(key, 'run', present({
+    return once(key, 'run', present({
       work: run.work, lane: run.lane, engine: engine.name ?? 'engine', runId: event.runId, state,
       branch: extra.branch ?? run.branch, pr: prNumber(extra.pr) ?? (state === 'ended' ? prNumber(prOf(event.runId)) : undefined), outcome: extra.outcome,
+      resume: extra.resume, failure: extra.failure,
     }));
+  }
+
+  // A `run-ended` is a report, not the state (check 93): the stream can replay an old one once the run has resumed, or even
+  // finished. So each line is handled once, by its cursor, a run the engine reads as going wrote no ending here, and what is
+  // written is what the engine reads now. An engine that can't be read leaves the event's word, since an ending mustn't be lost.
+  async function ended(event) {
+    const line = isText(event.cursor) ? `ended:${event.cursor}` : null;
+    if (line && written.has(line)) return;
+    let record = null;
+    try { record = (await engine.inspect?.(event.runId)) ?? null; } catch { record = null; }
+    const unread = record === null || record.unread === true;
+    if (!unread && (record.status === 'running' || record.status === 'paused')) {
+      if (line) { written.add(line); keep(); }
+      return;
+    }
+    const resume = resumesNow(event.runId);
+    const outcome = (!unread && isText(record.outcome) ? record.outcome : null) ?? (isText(event.outcome) ? event.outcome : undefined);
+    const failure = outcome === 'failed' ? [unread ? null : record.failure, event.failure, 'other'].find(isText) : undefined;
+    // A resumed leg the runner has already ended, on its look at the run.
+    const done = resume > 0 && overNow(event.runId) ? 'before' : await runState(event, 'ended', {
+      key: resume > 0 ? resume : undefined, resume: resume > 0 ? resume : undefined, branch: event.branch ?? undefined, pr: event.pr, outcome, failure,
+    });
+    if (line && done !== false) { written.add(line); keep(); }
   }
 
   async function handle(event) {
@@ -166,7 +206,7 @@ export function startEngineHost({
       resolved.add(event.id);
       await runState(event, 'started', { key: event.id });
     } else if (event.type === 'run-ended') {
-      await runState(event, 'ended', { branch: event.branch ?? undefined, pr: event.pr, outcome: isText(event.outcome) ? event.outcome : undefined });
+      await ended(event);
     }
   }
 

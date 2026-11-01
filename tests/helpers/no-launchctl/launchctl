@@ -1,0 +1,6 @@
+#!/bin/sh
+# tests/helpers/no-launchctl/launchctl
+# First on the PATH of every test process (tests/helpers/test-home.js): launchd is the computer's own, and its job
+# names aren't kept apart by a scratch home. A test that means launchctl to answer hands the code a `run` of its own.
+echo 'launchctl is not run in a test' >&2
+exit 1
