@@ -134,3 +134,10 @@ test('Bring my folder up to date says so when the folder has work of its own', a
   assert.equal((await bring({ moved: false, state: 'same' })).ok, true);
   assert.match((await bring({ moved: false, state: 'parted' })).refused, /work of its own/);
 });
+
+test('Put it on GitHub only raises the card that asks', async () => {
+  const asked = [];
+  const got = await safekeepingAct('put-on-github', { status: { actions: [{ action: 'put-on-github' }] }, askMove: async (host) => { asked.push(host); } });
+  assert.equal(got.ok, true);
+  assert.deepEqual(asked, ['github']);
+});

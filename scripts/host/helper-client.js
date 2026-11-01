@@ -88,6 +88,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     },
     engineSwitch: post('/engine-switch'), // { project | cwd } -> { ok, step: 'off' | 'on' | 'opened' | 'approve' | 'waiting' | 'closed', pr?, head?, why? }: the switch to the new engine's next step (part 3f)
     local: {
+      move: post('/local/move'), // { project | cwd, host } -> { ok, asked }: raises the card that asks; nothing moves before the director's answer
       undo: post('/local/undo'), // { project, merge } or { project, moved: true } -> { undo }, or { ok: false, needs: 'window' } with the card that asks; on the signed click in the helper's window
     },
     merge: post('/merge'), //        { project, number, stop, bypass, reviewRequired?, approvalRequired?, touchesGuardrails? } -> a refusal's needs?: { approval: { pr, commit } } names the director's approval it lacks, and releaseApproval? says why a release pull request needs it (not one of the reasons)

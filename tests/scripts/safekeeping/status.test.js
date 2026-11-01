@@ -58,7 +58,7 @@ test('local, no backup, or one on the same disk', () => {
     const got = status(local(backup));
     assert.equal(got.line, 'Only on this computer, no backup');
     assert.equal(got.level, 'watch');
-    assert.deepEqual(labels(got), ['Choose a backup folder']);
+    assert.deepEqual(labels(got), ['Choose a backup folder', 'Put it on GitHub']);
   }
   assert.match(status(local({ refused: 'That folder is on the same disk as the project' })).detail, /same disk/);
 });

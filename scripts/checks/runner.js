@@ -54,6 +54,8 @@ export function checkRunner({
 }) {
   let active = null;
   let abort = null;
+  // A function where the project can move to a host while the helper runs.
+  const repoNow = () => (typeof repo === 'function' ? repo() : repo);
   const change = (fn) => {
     const kept = readQueue(project);
     fn(kept);
@@ -100,7 +102,7 @@ export function checkRunner({
     what: 'GitHub\'s checks for this project aren\'t running: on the last two versions they waited or stopped with no job started, so nothing can be added to the main line.',
     why: 'Wheelhouse isn\'t allowed to change a project\'s settings on GitHub, so turning those checks off takes your click, at level 3.',
     options: [
-      { label: RUN_CHECKS_HERE, says: `Open https://github.com/${repo}/settings/actions, choose Disable actions and press Save. You can turn them back on there at any time. If https://github.com/${repo}/settings/rules asks for those checks by name, take them off the list there too. Wheelhouse sees them stop, and runs the checks on this computer.` },
+      { label: RUN_CHECKS_HERE, says: `Open https://github.com/${repoNow()}/settings/actions, choose Disable actions and press Save. You can turn them back on there at any time. If https://github.com/${repoNow()}/settings/rules asks for those checks by name, take them off the list there too. Wheelhouse sees them stop, and runs the checks on this computer.` },
       { label: LEAVE_THEM, says: 'Wheelhouse keeps waiting for GitHub\'s checks, and finished work waits with them.' },
     ],
     recommendation: RUN_CHECKS_HERE,
@@ -385,6 +387,10 @@ export function checkRunner({
   }
 
   return {
+    // A commit to report again on the next tick, from its record: one a project in git alone checked, once it has a host to tell.
+    reportAgain(commit) {
+      change((q) => { if (!q.unposted.includes(commit)) q.unposted.push(commit); });
+    },
     // A head the helper took in: reported pending at once where the project's checks run here, and queued in its work's place.
     async took(head, work) {
       queued(head, work);

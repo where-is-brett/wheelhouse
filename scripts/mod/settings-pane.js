@@ -322,7 +322,7 @@ function groupRow(row) {
 // is the level this computer runs build commands at. Every row is plain data. Never throws.
 // `premium` is the project's premium view: its row shows as premiumRowShown says, with "(not in use at <level>)" after
 // its value while it is allowed below Thorough.
-export function settingsGroups({ effective, changes, now = () => new Date(), timeZone, locked, stop, windows, ready, premium } = {}) {
+export function settingsGroups({ effective, changes, now = () => new Date(), timeZone, locked, stop, windows, ready, premium, local = false } = {}) {
   const byKey = new Map(settingsRows({ effective, changes, now, timeZone, locked, ready }).map((row) => [row.key, groupRow(row)]));
   const level = heldOf(effective, 'efficiency').value ?? 'balanced';
   const premiumShown = premiumRowShown(premium, level);
@@ -334,6 +334,7 @@ export function settingsGroups({ effective, changes, now = () => new Date(), tim
   const halted = isRecord(stop) && stop.on === true;
   const sinceMs = halted && typeof stop.at === 'string' ? Date.parse(stop.at) : NaN;
   const builders = !halted ? 'Working' : Number.isFinite(sinceMs) ? `Halted since ${hhmmOf(sinceMs, timeZone)}` : 'Halted';
+  const kept = { key: 'whereKept', label: 'Where it is kept', value: 'On this computer', kind: 'change' };
   const build = { key: 'windowsBuildCommands', label: 'Build commands on Windows', value: WINDOWS_LEVELS[windows] ?? WINDOWS_LEVELS.ask, kind: 'change' };
   return [
     { id: 'stop', title: 'All stop', note: `All stop ${lower(STOP_HALTS)} ${ONLY_YOU_LIFT}`, rows: [{ key: 'builders', label: 'Crew', value: builders, kind: 'value' }] },
@@ -341,7 +342,7 @@ export function settingsGroups({ effective, changes, now = () => new Date(), tim
       id: 'project',
       title: 'This project',
       note: heldOf(effective, 'efficiency').value === 'lightest' ? `${PROJECT_NOTE} ${LIGHTEST_NOTE}` : PROJECT_NOTE,
-      rows: [...pick('autonomy', 'showFirst', 'milestones', 'pace', 'efficiency', ...(premiumShown ? ['premium'] : []), 'phase', 'cardsPerDay'), build, ...pick('budget', 'protection')],
+      rows: [...pick('autonomy', 'showFirst', 'milestones', 'pace', 'efficiency', ...(premiumShown ? ['premium'] : []), 'phase', 'cardsPerDay'), build, ...pick('budget', 'protection'), ...(local ? [kept] : [])],
     },
     {
       id: 'you',

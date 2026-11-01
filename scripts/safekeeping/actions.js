@@ -2,7 +2,7 @@
 // What the director can do from the Safekeeping row (spec 8.2): the buttons the status offers, each through the desk's `act`
 // with the press as its evidence. None can reach the main version: a copy online goes to keep/<branch> and merges nothing, and a
 // folder is brought up by fast-forward alone. An action the status no longer offers does nothing, so a press on a row drawn
-// before things changed is refused. **Put it on GitHub** joins them with the move to a host.
+// before things changed is refused. **Put it on GitHub** only raises the move's card, which says the code goes online.
 const HOSTS = { github: 'GitHub', gitlab: 'GitLab' };
 export const KEEP_PLACE = 'keep';
 const STALE_LINE = 'That isn\'t offered now: look at the row again';
@@ -39,6 +39,10 @@ const ACTS = {
     chooseSoon();
     return { ok: true, says: 'A window is opening for you to choose the folder' };
   },
+  async 'put-on-github'({ askMove }) {
+    await askMove('github');
+    return { ok: true, says: 'A card asks whether to move it' };
+  },
   async 'try-again'({ look }) {
     await look({ force: true });
     return { ok: true };
@@ -60,7 +64,7 @@ export async function chooseFolder({ pick, choose, noteRefused, backUpNow, look 
 }
 
 // safekeepingAct(action, ctx) -> { ok, says?, submit? } | { refused }. `ctx` holds the `status` and `readings` the last look kept,
-// and the helper's ways of doing each: keepCopy, bringUp, backUpNow, chooseSoon and look.
+// and the helper's ways of doing each: keepCopy, bringUp, backUpNow, chooseSoon, askMove and look.
 export async function safekeepingAct(action, ctx) {
   const offered = Array.isArray(ctx?.status?.actions) && ctx.status.actions.some((a) => a.action === action);
   if (!offered || !Object.hasOwn(ACTS, action)) return refused(STALE_LINE);

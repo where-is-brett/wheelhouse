@@ -91,7 +91,7 @@ export const RECORD_KINDS = Object.freeze([
   'work', 'amendment', 'incident', 'note',
 ]);
 export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey', 'evidence']);
-const COMMANDS = ['cards', 'card', 'again', 'why', 'suggest', 'record', 'similar', 'views', 'explain', 'review', 'preview', 'undo', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check'];
+const COMMANDS = ['cards', 'card', 'again', 'why', 'suggest', 'record', 'similar', 'views', 'explain', 'review', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check'];
 // How long `confirm` waits for the helper: one window at a time on the computer, so it may wait for another's.
 const CONFIRM_WAIT_MS = 3 * WINDOW_MS;
 export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
@@ -1157,6 +1157,9 @@ export async function main(argv, {
     } else if (command === 'undo') {
       if (rest.length !== 1 || !/^[0-9a-f]{40,64}$/.test(rest[0])) throw new CliError('Give the merge in full: undo <merge>');
       json(await helper.local.undo({ cwd: here, merge: rest[0] }));
+    } else if (command === 'move') {
+      if (rest.length !== 1 || !['github', 'gitlab'].includes(rest[0])) throw new CliError('Say where: move github, or move gitlab');
+      json(await helper.local.move({ cwd: here, host: rest[0] }));
     } else if (command === 'carry-on') {
       const usage = 'Give the request\'s number or the piece of work\'s name: carry-on <n>, or carry-on --line <name>';
       if (rest.length === 2 && rest[0] === '--line' && rest[1] !== '') {

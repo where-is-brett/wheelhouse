@@ -106,7 +106,7 @@ function readOpened(text) {
 }
 
 export function engineRoutes({
-  projects, engineFor, ordersDir, write, held = () => false, now = () => new Date(),
+  projects, engineFor, ordersDir, write, held = () => false, moving = () => false, now = () => new Date(),
   filesDir = (project) => path.join(ordersDir(project), '..'), digests = { installed: () => null, captured: () => null }, comment,
   projectAgents = async () => null, recheckCopies = async () => ({ ok: true }),
   checkTook = null, mainCheck = null,
@@ -148,6 +148,7 @@ export function engineRoutes({
   // continuation host knows the run is the project's. The helper's own: no route reaches it.
   async function start({ project, order, branch, carryOn } = {}) {
     if (held()) return { ok: false, refused: 'All stop is on, so no run starts' };
+    if (moving(project)) return { ok: false, refused: 'This project is moving to a host, so no run starts until it has' };
     const found = projects().find((p) => p.project === project);
     if (!found) return { ok: false, refused: 'that project isn\'t registered on this computer' };
     const engine = engineFor(project);
@@ -536,6 +537,13 @@ export function engineRoutes({
     },
     // The helper's own record of what opened a pull request: { runId, head, work, lane, ... }, or null.
     openedOf: (project, pr) => readVerdicts(project).opened?.[pr] ?? null,
+    // A project's local changes have become pull requests: what is known of each goes to its new number, and what is known of
+    // a change that has ended goes, as its number now means another pull request.
+    carryNumbers: (project, numbers) => {
+      const verdicts = readVerdicts(project);
+      const carried = (held) => Object.fromEntries(Object.entries(held ?? {}).flatMap(([n, o]) => (numbers[n] === undefined ? [] : [[numbers[n], o]])));
+      keepVerdicts(project, { ...verdicts, opened: carried(verdicts.opened), ready: carried(verdicts.ready) });
+    },
     // Every pull request the helper marked ready for the project: { [pr]: { head, runId, showFirst, work } }.
     readyAll: (project) => readVerdicts(project).ready ?? {},
     // The fix-main runs whose fix the helper added.
