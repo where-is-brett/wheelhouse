@@ -151,6 +151,12 @@ function presenceAt(presence, quiet, ms, timeZone) {
   return inQuietHours(quiet, ms, timeZone) ? 'dnd' : value;
 }
 
+// How many First Mate sessions have ticked for `project` lately: those the phone can reach, and that can stop a goal from it.
+export function sessionsTicking(project, { now = () => new Date() } = {}) {
+  const t = instantOf(now);
+  return readKept(project).sessions.filter((s) => t - Date.parse(s.at) <= STALE_TICKS * TICK_MS).length;
+}
+
 // What courier.json keeps, or nothing sent when it isn't there or can't be read.
 function readKept(project) {
   try {

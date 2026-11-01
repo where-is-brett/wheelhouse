@@ -552,3 +552,14 @@ test('after the end other work starts and the goal\'s own pieces hold', () => {
   assert.deepEqual(got.start.map((s) => s.work), ['other']);
   assert.deepEqual(got.hold, [{ work: 'left', why: 'goal-ended' }]);
 });
+
+test('a piece recorded for a goal waits for that goal\'s Start, in every lane, and goes once the goal lists it', () => {
+  const [id, entry] = piece('a');
+  const held = { [id]: { ...entry, work: { ...entry.work, data: { ...entry.work.data, goalId: 'orders' } } } };
+  const before = dispatch(base({ work: held, goal: null }));
+  assert.deepEqual(before.start.map((s) => s.work ?? s), []);
+  assert.deepEqual(before.hold, [{ work: 'a', why: 'goal-unsigned' }]);
+  const started = dispatch(base({ work: held, goal: goalOf('a') }));
+  assert.equal(started.hold.length, 0);
+  assert.equal(started.start.length, 1);
+});

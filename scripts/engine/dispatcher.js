@@ -185,6 +185,8 @@ export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeat
     const needsApproval = !STARTS_UNAPPROVED.includes(lane) || visible === true || e.work.data.from !== undefined;
     let why = stopping;
     if (!why && goal?.only === true && !ofGoal(id)) why = 'goal';
+    // A piece recorded for a goal waits for that goal's Start, whatever its lane: the sheet's click is what approves it.
+    if (!why && e.work.data.goalId !== undefined && !ofGoal(id)) why = 'goal-unsigned';
     if (!why && goal?.startsStopped === true && ofGoal(id)) why = 'goal-ended';
     if (!why && ofGoal(id) && goal?.spendHolds?.includes(lane)) why = 'spend';
     if (!why && needsApproval && e.approved !== true && !ofGoal(id)) why = 'unapproved';

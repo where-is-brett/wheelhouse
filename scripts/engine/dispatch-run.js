@@ -165,7 +165,7 @@ export function orderFor(entry, { settings = {}, raised = false, config = {}, an
 //   tree by pid, for a run that won't cancel when its goal ends, as at a cap.
 // - `engine.liveRunOf({ work, since })`, where the engine has it, says of a start that may have happened: { runId },
 //   null for none, undefined when it can't say. Without it the answer is undefined, so a card comes and not a second start.
-export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped: allStop = () => false, moving = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), spentThisMonth = () => 0, mainGreen = async () => null, stoppedRuns: stoppedByAll = () => [], fixedRuns = () => [], prMerged = async () => null, prState = null, designOf = () => null, orderOf = () => null, repoOf = () => null, repoName = () => null, queueFolder = async () => ({ ok: false, refused: 'no folder for the merge queue' }), queuePlace = null, openedBy = () => null, localQueue = null, isLocal = () => true, onCard = () => {}, branchPaths = async () => [], notReady = () => {}, areasHeld = () => ({}), settleAreas = () => {}, allowance = () => null, goalCheck = async () => ({ ok: false, refused: 'nothing runs a goal\'s checks here' }), endRun = async () => ({ ended: [], survivors: [] }) } = {}) {
+export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped: allStop = () => false, moving = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), spentThisMonth = () => 0, mainGreen = async () => null, stoppedRuns: stoppedByAll = () => [], fixedRuns = () => [], prMerged = async () => null, prState = null, designOf = () => null, orderOf = () => null, repoOf = () => null, repoName = () => null, queueFolder = async () => ({ ok: false, refused: 'no folder for the merge queue' }), queuePlace = null, openedBy = () => null, localQueue = null, isLocal = () => true, onCard = () => {}, branchPaths = async () => [], notReady = () => {}, areasHeld = () => ({}), settleAreas = () => {}, allowance = () => null, goalStarted = async () => {}, goalCheck = async () => ({ ok: false, refused: 'nothing runs a goal\'s checks here' }), endRun = async () => ({ ended: [], survivors: [] }) } = {}) {
   const stopped = () => allStop() || moving();
   let state = readState(file);
   // The runs All stop cancelled and those a goal's end did: each waits for a Carry on, with no card.
@@ -441,6 +441,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     if (state.goalRun?.goal !== goal.id) {
       state.goalRun = newGoalRun(goal.id);
       keep();
+      // Once, for a convenience: a start that can't set it goes on all the same.
+      try { await goalStarted(goal); } catch { /* the goal runs whether or not Away was set */ }
     }
     const kept = state.goalRun;
     if (kept.closing !== null) return closeTick(views, goal, kept);

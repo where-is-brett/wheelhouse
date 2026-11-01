@@ -105,6 +105,8 @@ const OFFERED_AFTER = Object.freeze({
   pair: Object.freeze([NOT_NOW]),
   uninstall: Object.freeze([NOT_NOW]),
   'keep-control-files': Object.freeze([SHOW_ME, NOT_NOW]),
+  // A goal's sheet has no preview to show: a change to it makes a new sheet, with its own check.
+  'start-goal': Object.freeze([SUGGEST, NOT_NOW]),
 });
 const USUAL_AFTER = Object.freeze([SUGGEST, SHOW_ME, NOT_NOW]);
 // A parked pull request's card (delegated decisions design, section 8.1) says no as well as yes. A card shows four options at
@@ -174,7 +176,7 @@ const bare = (text) => text.replace(/[.!?]+$/, '');
 const clause = (text) => bare(text).replace(/^([A-Z])(?=[a-z])/, (c) => c.toLowerCase());
 
 // Whether an error from composeCard is its length refusal (and not another fault in the card).
-export const isTooLong = (error) => /^A \w+ card text would pass \d+ characters/.test(String(error?.message));
+export const isTooLong = (error) => /^A [\w-]+ card text would pass \d+ characters/.test(String(error?.message));
 
 function fail(kind, part, why) {
   throw new Error(`A ${kind} card ${why === undefined ? `needs its ${part}` : `${part} ${why}`}`);
@@ -442,7 +444,9 @@ export function composeCard(input) {
   // The premium model's Yes writes its pin into the routing, a guardrail change (design section 14.6), so its card is level 4.
   if (kind === 'premium' && level !== 4) fail(kind, 'level', 'must be 4: its Yes changes the routing table');
   const said = input.said === undefined ? undefined : flat(words(kind, 'said', input.said));
-  const what = said === undefined ? words(kind, 'what', input.what) : `You said: ${said.replace(/[.\s]+$/, '')}. ${SAID_ASKS} ${words(kind, 'what', input.what)}`;
+  // A goal's sheet is one bound to a line, each read on its own.
+  const whatWords = () => (kind === 'start-goal' && typeof input.what === 'string' ? input.what.split('\n').map((line) => words(kind, 'what', line)).join('\n') : words(kind, 'what', input.what));
+  const what = said === undefined ? whatWords() : `You said: ${said.replace(/[.\s]+$/, '')}. ${SAID_ASKS} ${words(kind, 'what', input.what)}`;
   const why = words(kind, 'why', input.why);
   const blind = kind === 'blind';
   if (input.blind !== undefined && input.blind !== true) fail(kind, 'blind', 'must be true or left off');

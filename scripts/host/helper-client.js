@@ -95,6 +95,9 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     review: post('/review/run'), //   { project, number } -> { ok, started } or { ok, running }: the helper's own reviewer, in a clean session, of the open pull request's head; refused under STOP, where the agent's clean session isn't switched on, and for a head with a signed review or three failed runs (one review per commit); the signed review, or a note saying why there is none, follows in the background
     // The build engine's runs (scripts/engine/routes.js). A step names its run, never its project.
     goalBaseline: post('/goal-baseline'), // { project | cwd, goal } -> { ok, runId, head }: starts the run of a goal's checks on the main line; its `goal-check` record says how it went
+    goalDraft: post('/goal-draft'), // { project | cwd, pieces } -> { ok, pieces: [{ work, hash }], left?, spend?, says? }: the pieces a goal's sheet lists, or what the last goal left, and the spend to propose
+    goalRecheck: post('/goal-recheck'), // { project, goal, hash } -> { ok, refused: [line] }: a goal's checks before leaving, again, as the director clicks Start
+    goalCard: post('/goal-card'), //   { project | cwd, goal } -> { ok, offered, question?, id?, warns?, waiting?, refused?, results? }: the sheet's card, composed and offered by the helper, once its checks before leaving pass
     engine: {
       areas: post('/engine/areas'), // { runId } -> { ok, areas }: the areas of the goal the run's order belongs to, or null, for the tool guard
       protectedFiles: post('/engine/protected-files'), // { runId } -> { ok, protectedFiles }: the test files the run's order lists, for the protected-tests guard; refused for a run it didn't start

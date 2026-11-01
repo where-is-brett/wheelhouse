@@ -2,7 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { needsYou, courierWake, courierUnsent, courierContext, courierFile, PRESENCE_LETS, SENT_KEPT, SESSIONS_KEPT, LOCK_WAIT_MS, WAKE_CONTEXT_MS } from '../../../scripts/mod/courier.js';
+import path from 'node:path';
+import { needsYou, sessionsTicking, courierWake, courierUnsent, courierContext, courierFile, PRESENCE_LETS, SENT_KEPT, SESSIONS_KEPT, LOCK_WAIT_MS, WAKE_CONTEXT_MS } from '../../../scripts/mod/courier.js';
 import { hashOf } from '../../../scripts/mod/status.js';
 import { COURIER_GAP_MS, LEADS, REMIND_MS, STALE_TICKS, TICK_MS } from '../../../scripts/lib/mod-numbers.js';
 import { withHome } from '../../helpers/homes.js';
@@ -637,4 +638,12 @@ test('a goal that finished wakes while here, and no goal in force wakes anything
   const woke = await wake(needsYou({ after: goalEnd(false) }));
   assert.equal(woke.submit, `${LEADS.wake} A goal finished.`);
   assert.match(woke.context, /a goal finished/);
+}));
+
+test('sessionsTicking counts the sessions heard from lately, and none with no record', () => opened(async () => {
+  assert.equal(sessionsTicking(P, { now: () => at(T0) }), 0);
+  const file = courierFile(P);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ sent: [], lastWakeAt: null, sessions: [{ id: 'now', at: at(T0).toISOString() }, { id: 'long-gone', at: at(T0 - 24 * 60 * MIN).toISOString() }], wakes: [], cursor: null }));
+  assert.equal(sessionsTicking(P, { now: () => at(T0) }), 1);
 }));

@@ -111,7 +111,8 @@ test('a card that decides something gets its deciding answer filled, Suggest a c
         ...(['lift-stop', 'keep-control-files'].includes(kind) ? [] : [SUGGEST_BUTTON]),
         NOT_NOW_BUTTON,
         WHY_BUTTON,
-        SHOW_ME_BUTTON,
+        // A goal's card says all it has: what to look at comes before it.
+        ...(kind === 'start-goal' ? [] : [SHOW_ME_BUTTON]),
       ],
       note: null,
     }, kind);

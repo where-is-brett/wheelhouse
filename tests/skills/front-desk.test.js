@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { main, RECORD_KINDS, VIEW_NAMES } from '../../scripts/frontdesk/cli.js';
 import { frontDeskCommand, localSettings } from '../../scripts/protection/settings.js';
 import { FRONT_DESK_INPUT, WORK_REPORTS, WORK_REPORTS_RULE } from '../../scripts/lib/front-desk.js';
+import { checkSheet } from '../../scripts/engine/goal.js';
 import { FRONT_DESK_LINE } from '../../scripts/hooks/session-start.js';
 import { FOREMAN_PROMPT_LEAD } from '../../scripts/foreman/start.js';
 import { CARD_KINDS } from '../../scripts/lib/front-desk.js';
@@ -49,7 +50,7 @@ function frontOf(text, file) {
 
 // The commands a text names as cli.js's, by their first word: `node "<root>/…/cli.js" <word>` and `cli.js <word>`.
 // The baseline's command is left out: it is scripts/measures/cli.js's, pinned on its own below.
-const commandWords = (text) => [...text.replaceAll(ROOT_VARIABLE, '/plugin').replace(MEASURES_LINE, '').matchAll(/(?:cli\.js"?|<the Wheelhouse command>) ([a-z]+)/g)].map((m) => m[1]);
+const commandWords = (text) => [...text.replaceAll(ROOT_VARIABLE, '/plugin').replace(MEASURES_LINE, '').matchAll(/(?:cli\.js"?|<the Wheelhouse command>) ([a-z-]+)/g)].map((m) => m[1]);
 
 // The subcommands cli.js lists in its own refusal.
 async function subcommands() {
@@ -253,6 +254,28 @@ test('the playbook decides a level 2 question itself, and puts the review before
   assert.match(review, /When `review` gave questions/);
   assert.match(review, /gave none, run `cards` as usual/);
   assert.match(playbook, /One call per visit/);
+});
+
+test('the intake\'s goal route comes ahead of Change, proposes every bound, and its example sheet passes', async () => {
+  const rows = intake.split('\n').filter((line) => /^\| \d+ \|/.test(line)).map((line) => line.split('|').at(-2).trim());
+  assert.deepEqual(rows.slice(-2), ['Goal', 'Change']);
+  const route = intake.split('\n9. **Goal.**')[1]?.split('\n10. **Change.**')[0] ?? '';
+  assert.match(route, /never hand the director a form/);
+  assert.match(route, /doesn't suit work judged by taste or by people/);
+  assert.match(route, /offer a piece that does suit/);
+  assert.match(route, /never everything and never empty/);
+  assert.match(route, /there is no such thing for a whole goal/);
+  const [, input] = /```\n\s*(\{"id": "orders-export"[^\n]*\})\n/.exec(route) ?? [];
+  assert.ok(input, 'the example sheet');
+  const { sheet } = JSON.parse(input);
+  sheet.pieces[0].hash = 'a'.repeat(64);
+  assert.equal(checkSheet(sheet, { now: new Date('2026-11-02T00:00:00.000Z') }), null);
+});
+
+test('the playbook sends a change to a sheet, and a Carry on after a goal, back through a new sheet', () => {
+  assert.match(playbook, /A `start-goal` card is the one exception: its words change the sheet/);
+  assert.match(playbook, /nothing restarts it: it needs a new sheet\. `goal-draft` with no work names what it left/);
+  assert.match(playbook, /with a new goal id, since an id that has started can't be used again/);
 });
 
 test('the intake writes a changed approved document in place and marks it as changed since the approval, never as approved (F75, F80)', () => {

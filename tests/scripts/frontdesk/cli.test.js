@@ -10,7 +10,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { main, readInput, RECORD_KINDS, MEANWHILE, CHECKS_UNSAID } from '../../../scripts/frontdesk/cli.js';
+import { main, readInput, goalCard, RECORD_KINDS, MEANWHILE, CHECKS_UNSAID, STILL_CHECKING } from '../../../scripts/frontdesk/cli.js';
 import { cardsDue } from '../../../scripts/hooks/board-context.js';
 import { numberedWaiting } from '../../../scripts/board/model.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
@@ -1979,7 +1979,7 @@ test('an unknown command, or a helper that can\'t be reached, is one line on sta
     const helper = fakeHelper();
     const unknown = await run(helper, ['show', '7']);
     assert.equal(unknown.code, 1);
-    assert.match(unknown.err, /^Commands: cards, pull-cards, card, again, why, suggest, record, similar, views, explain, review, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, end-goal, narrow-goal, goal-baseline\n$/);
+    assert.match(unknown.err, /^Commands: cards, pull-cards, card, again, why, suggest, record, similar, views, explain, review, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, end-goal, narrow-goal, goal-baseline, goal-draft, goal-card\n$/);
     const away = { client: { desk: { read: async () => ({ ok: false, refused: 'the host helper could not be reached: is it running?' }) } } };
     const out = await run(away, ['cards']);
     assert.equal(out.code, 1);
@@ -2039,7 +2039,7 @@ test('through the real helper, the command places the project from its folder an
 test('run as a script, an unknown command is refused with the list of commands', async () => {
   const done = spawnSync(process.execPath, [SCRIPT, 'nonsense'], { encoding: 'utf8' });
   assert.equal(done.status, 1);
-  assert.equal(done.stderr, 'Commands: cards, pull-cards, card, again, why, suggest, record, similar, views, explain, review, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, end-goal, narrow-goal, goal-baseline\n');
+  assert.equal(done.stderr, 'Commands: cards, pull-cards, card, again, why, suggest, record, similar, views, explain, review, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, end-goal, narrow-goal, goal-baseline, goal-draft, goal-card\n');
   assert.equal(done.stdout, '');
 });
 
@@ -2474,6 +2474,53 @@ test('goal-baseline asks the helper for one run of the goal\'s checks, and says 
     const refused = await run(helper, ['goal-baseline', 'orders-export']);
     assert.equal(refused.code, 1);
     assert.match(refused.err, /no sheet/);
+  });
+});
+
+test('goal-draft prints the pieces, their hashes and the spend; with no work it gives what a stopped goal left', async () => {
+  await inHome(async () => {
+    const asked = [];
+    const helper = fakeHelper();
+    const draft = { ok: true, pieces: [{ work: 'export-csv', hash: 'a'.repeat(64) }], left: null, spend: { tokens: 1000 }, says: 'Up to a third of what is left this week.' };
+    helper.client.goalDraft = async (body) => { asked.push(body.pieces); return draft; };
+    const out = await run(helper, ['goal-draft', 'export-csv', 'export-page']);
+    assert.equal(out.code, 0, out.err);
+    assert.deepEqual(asked, [['export-csv', 'export-page']]);
+    assert.deepEqual(out.json, { pieces: draft.pieces, left: null, spend: draft.spend, says: draft.says });
+    await run(helper, ['goal-draft']);
+    assert.deepEqual(asked.at(-1), []);
+    helper.client.goalDraft = async () => ({ ok: false, refused: 'There is no work export-csv' });
+    const refused = await run(helper, ['goal-draft', 'export-csv']);
+    assert.equal(refused.code, 1);
+    assert.match(refused.err, /no work/);
+  });
+});
+
+test('goal-card gives the card as the helper made it, what stops it, or says the checks are still running', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const question = { question: 'Start this goal: Export?', header: 'Goal', options: [{ label: 'Start' }, { label: 'Not now' }] };
+    const answers = [{ ok: true, offered: false, waiting: true }, { ok: true, offered: true, question, id: 'card-1', warns: ['A warning'], results: [] }];
+    helper.client.goalCard = async () => answers.shift();
+    const waits = [];
+    const got = await goalCard({ client: helper.client, cwd: CWD, goal: 'orders-export', wait: async (ms) => { waits.push(ms); } });
+    assert.deepEqual(got, { question, id: 'card-1', warns: ['A warning'], results: [] });
+    assert.equal(waits.length, 1);
+    helper.client.goalCard = async () => ({ ok: true, offered: false, refused: ['Your project\'s tests are failing'], results: [] });
+    assert.deepEqual(await goalCard({ client: helper.client, cwd: CWD, goal: 'orders-export' }), { refused: ['Your project\'s tests are failing'], results: [] });
+    helper.client.goalCard = async () => ({ ok: true, offered: false, waiting: true });
+    assert.deepEqual(await goalCard({ client: helper.client, cwd: CWD, goal: 'orders-export', wait: async () => {}, waitMs: 0 }), { waiting: true, say: STILL_CHECKING });
+    assert.equal((await run(helper, ['goal-card'])).code, 1);
+  });
+});
+
+test('a goal\'s card can\'t be written by hand: it comes from the sheet', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const out = await run(helper, ['card'], JSON.stringify({ kind: 'start-goal', recommend: 'Start', what: 'Run it', why: 'Yours to say', options: [{ label: 'Start', says: 'Go' }], meanwhile: 'Nothing', target: { goal: 'orders-export', hash: 'a'.repeat(64) } }));
+    assert.equal(out.code, 1);
+    assert.match(out.err, /goal-card/);
+    assert.deepEqual(helper.writes(), []);
   });
 });
 
