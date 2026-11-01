@@ -1,6 +1,6 @@
 // scripts/engine/goal-meter.js
 // The spend meter of an unattended goal (unattended goals design, section 5): what it has spent by its two limits, tokens
-// and either allowance points or a Copilot project's counted requests. Pure but for `inspect`, the engine's record of a run;
+// and either allowance points or a project's counted requests. Pure but for `inspect`, the engine's record of a run;
 // `dispatch-run.js` reads it each tick and the gate at `startPiece` holds on the answer.
 //
 // A run counts if it started since Start, or is a live run of a listed piece or the fix lane; so a piece narrowed off the sheet
