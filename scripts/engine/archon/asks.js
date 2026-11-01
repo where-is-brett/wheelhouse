@@ -102,7 +102,7 @@ function packLabels(item) {
 const levelOf = (value) => (/^[1-4]$/.test(String(value)) ? Number(value) : null);
 
 // One attention item as an `ask` EngineEvent: { type, runId, at, id, kind, level, work, topic, recommend, preview,
-// setLine, labels, options, context, card, answer?, line?, reason? }.
+// setLine, labels, options, context, card, answer?, line?, reason?, resetAt? }.
 export function normaliseAsk(item, { now = () => new Date().toISOString() } = {}) {
   const base = {
     type: 'ask',
@@ -145,6 +145,7 @@ export function normaliseAsk(item, { now = () => new Date().toISOString() } = {}
     const words = row.say(item);
     const ask = { ...base, kind: row.kind, level: row.level, work: null, recommend: row.recommend, labels: {}, card: row.card };
     if (row.answer) ask.answer = row.answer;
+    if (item.resetAt) ask.resetAt = item.resetAt;
     if (row.holdsAll) ask.holdsAll = true;
     if (row.merge) ask.mergeQuestion = { pr: askedPr(item.message) };
     if (row.opens) {

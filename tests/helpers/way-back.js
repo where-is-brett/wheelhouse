@@ -122,7 +122,7 @@ export function wayBack({ dispatchExtra = {}, recordings = {}, pace = 3, setting
       const run = latest(event.runId);
       if (!run) continue;
       if (event.type === 'ask') {
-        (world.asks[run.work] ??= []).push({ at: at(), data: { id: event.id, runId: event.runId, work: run.work, kind: event.kind, level: event.level, options: event.options } });
+        (world.asks[run.work] ??= []).push({ at: at(), data: { id: event.id, runId: event.runId, work: run.work, kind: event.kind, level: event.level, options: event.options, ...(event.resetAt ? { resetAt: event.resetAt } : {}) } });
         record({ ...run, state: 'paused' });
         await joined.runner.onAsk(event);
       } else if (event.type === 'ask-resolved') record({ ...run, state: 'started' });

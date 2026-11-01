@@ -5,6 +5,9 @@
 // The helper's tick fires each minute, so a gap longer than this means the computer slept.
 export const SLEEP_GAP_MINUTES = 3;
 
+// How long past its reset a run parked at a limit may stay parked before the waker counts as having failed.
+export const LIMIT_LATE_MINUTES = 30;
+
 // The span the computer slept between two beats of the helper's tick (milliseconds since the epoch), as times, or null
 // when it didn't. A helper that was dead has no beat to measure from, so it leaves no span, which is right: its runs
 // went on. A clock put back is no sleep.

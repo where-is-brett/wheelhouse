@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { wayBack, quiet, forever, failing, legFails, legFinishes, legGoes, atLimit } from '../helpers/way-back.js';
 import { readRecording } from '../../scripts/engine/fake.js';
 import { TRY_AGAIN, STOP_HERE, LEAVE_IT } from '../../scripts/engine/dispatch-run.js';
-import { failedCardWords } from '../../scripts/engine/words.js';
+import { failedCardWords, limitLateWords } from '../../scripts/engine/words.js';
 
 const MINUTE = 60 * 1000;
 const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'engine', 'failed-connection.jsonl');
@@ -20,6 +20,11 @@ const resumes = (w) => w.engine.calls.filter((c) => c.call === 'act' && c.action
 const records = (w, work) => (w.runs[work] ?? []).map((r) => r.data);
 const costs = (w) => w.written.filter((x) => x.kind === 'cost');
 const fails = (legs = 0, failure = 'connection') => [...failing(failure), ...Array.from({ length: legs }, () => legFails(failure)).flat()];
+
+const engineSays = (w, runId, record) => {
+  const inspect = w.engine.inspect.bind(w.engine);
+  w.engine.inspect = async (id) => (id === runId ? record : inspect(id));
+};
 
 test('the fixture: a dropped connection, then the leg that finishes', () => {
   const events = readRecording(fs.readFileSync(FIXTURE, 'utf8'));
@@ -489,10 +494,78 @@ test('a retry admitted before a limit is not carried out until it lifts', async 
   const run = w.runs.b.at(-1).data;
   w.asks.b = [{ at: '2026-10-29T10:06:00.000Z', data: { id: 'lim-b', runId: run.runId, work: 'b', kind: 'usage-limit', level: 1, options: [] } }];
   w.runs.b.push({ at: '2026-10-29T10:06:00.000Z', data: { ...run, state: 'paused' } });
+  engineSays(w, run.runId, { status: 'paused' });
   await w.pass(3 * MINUTE);
   assert.equal(resumes(w).length, 0);
   assert.ok(w.dispatcher.admittedTo('a'), 'it keeps its place');
   w.runs.b.push({ at: '2026-10-29T10:10:00.000Z', data: { ...run, state: 'started' } });
   await w.tick(2);
   assert.equal(resumes(w).length, 1);
+});
+
+test('a limit whose ending never reached the record is ended from the engine, on a second look', async () => {
+  const w = wayBack({ recordings: { a: atLimit('lim-a'), b: quiet() } });
+  w.put('a', { place: 0 });
+  await w.tick(2);
+  w.put('b', { place: 1 });
+  engineSays(w, w.runsOf('a')[0], { status: 'ended', outcome: 'failed', failure: 'other' });
+  await w.tick();
+  assert.equal(w.stateOf('a'), 'paused', 'one look may be ahead of the stream');
+  await w.tick(4);
+  assert.equal(w.stateOf('a'), 'ended');
+  assert.equal(w.runsOf('b').length, 1, 'the hold has lifted');
+  assert.equal(w.cardOf('a').what, failedCardWords('a', 'other'));
+  assert.equal(costs(w).filter((c) => c.data.work === 'a').length, 1);
+});
+
+test('that ending keeps a resumed run\'s number', async () => {
+  const w = wayBack({ recordings: { a: [...failing('connection'), ...legGoes()] } });
+  w.put('a');
+  await w.tick(2);
+  await w.pass(7 * MINUTE);
+  assert.equal(resumes(w).length, 1);
+  const run = w.runs.a.at(-1).data;
+  w.asks.a = [{ at: '2026-10-29T10:09:00.000Z', data: { id: 'lim-a', runId: run.runId, work: 'a', kind: 'usage-limit', level: 1, options: [] } }];
+  const { resume, ...plain } = run;
+  w.runs.a.push({ at: '2026-10-29T10:09:00.000Z', data: { ...plain, state: 'paused' } });
+  engineSays(w, run.runId, { status: 'ended', outcome: 'completed' });
+  await w.tick(3);
+  assert.deepEqual([w.stateOf('a'), records(w, 'a').at(-1).resume], ['ended', resume]);
+});
+
+test('a run going again with its started lost stands as started, so its caps read it and the hold lifts', async () => {
+  const w = wayBack({ recordings: { a: atLimit('lim-a'), b: quiet() } });
+  w.put('a', { place: 0 });
+  await w.tick(2);
+  w.put('b', { place: 1 });
+  engineSays(w, w.runsOf('a')[0], { status: 'running' });
+  await w.tick(4);
+  assert.equal(w.stateOf('a'), 'started');
+  assert.equal(w.runsOf('b').length, 1);
+});
+
+test('a limit the engine can\'t be read for, or still reads as paused, stands', async () => {
+  for (const record of [{ status: 'unknown', unread: true }, { status: 'paused' }, null]) {
+    const w = wayBack({ recordings: { a: atLimit('lim-a'), b: quiet() } });
+    w.put('a', { place: 0 });
+    await w.tick(2);
+    w.put('b', { place: 1 });
+    engineSays(w, w.runsOf('a')[0], record);
+    await w.tick(4);
+    assert.equal(w.stateOf('a'), 'paused');
+    assert.deepEqual(w.runsOf('b'), []);
+  }
+});
+
+test('a limit past its reset by half an hour lets other work on, and the Logbook says so once', async () => {
+  const w = wayBack({ recordings: { a: atLimit('lim-a', { resetAt: '2026-10-29T10:20:00.000Z' }), b: quiet() } });
+  w.put('a', { place: 0 });
+  await w.tick(2);
+  w.put('b', { place: 1 });
+  await w.pass(45 * MINUTE);
+  assert.deepEqual(w.runsOf('b'), []);
+  await w.pass(10 * MINUTE);
+  assert.equal(w.runsOf('b').length, 1);
+  assert.equal(w.stateOf('a'), 'paused');
+  assert.equal(w.notes().filter((words) => words === limitLateWords('a')).length, 1);
 });

@@ -363,7 +363,7 @@ const PLAIN_SHAPES = {
   slept: { must: ['from', 'to'], may: [] },
   // An ask a run raised: `id` is stable, so the same ask seen again is not written twice. `kind` says what sort of
   // ask it is, `level` which of the decision levels it comes at.
-  ask: { must: ['id', 'runId', 'work', 'kind', 'level', 'options'], may: ['topic', 'recommend', 'preview', 'setLine'] },
+  ask: { must: ['id', 'runId', 'work', 'kind', 'level', 'options'], may: ['topic', 'recommend', 'preview', 'setLine', 'resetAt'] },
   // What a run cost. `dollars` and `premiumRequests` are null when not known; unknown is never written as 0.
   cost: { must: ['runId', 'work', 'tokens', 'dollars', 'premiumRequests', 'minutes', 'source', 'byRole'], may: ['floorDollars', 'kinds'] },
   // A preview of a work's head: the folder it was made in and its pages.
@@ -518,7 +518,7 @@ function checkPlain(kind, data) {
     for (const k of ['id', 'runId']) text(k);
     if (!ASK_KINDS.includes(data.kind)) bad('needs its kind to be question, approval, blocked, usage-limit or trouble');
     if (![1, 2, 3, 4].includes(data.level)) bad('needs its level to be 1, 2, 3 or 4');
-    for (const k of ['topic', 'recommend', 'setLine']) optionalText(k);
+    for (const k of ['topic', 'recommend', 'setLine', 'resetAt']) optionalText(k);
     if (!Array.isArray(data.options) || !data.options.every((o) => isPlain(o) && isText(o.label) && (o.says === undefined || typeof o.says === 'string'))) bad('needs options, each with a label');
     if (data.preview !== undefined && !(isPlain(data.preview) || isText(data.preview))) bad('has a preview that is not text or a record');
   } else if (kind === 'cost') {

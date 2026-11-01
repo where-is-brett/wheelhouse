@@ -208,6 +208,7 @@ export function startEngineHost({
         recommend: isText(event.recommend) ? event.recommend : undefined,
         preview: isText(event.preview) || (event.preview && typeof event.preview === 'object') ? event.preview : undefined,
         setLine: isText(event.setLine) ? event.setLine : undefined,
+        resetAt: isText(event.resetAt) ? event.resetAt : undefined,
       }));
       if (done) await runState(event, 'paused', { key: event.id });
       if (done === 'now') {

@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { routerWaiting, ownWaiting, limitedRuns } from '../../../scripts/engine/waiting.js';
+import { routerWaiting, ownWaiting, limitedRuns, limitedWork } from '../../../scripts/engine/waiting.js';
 import { MERGE_WORK } from '../../../scripts/engine/dispatcher.js';
 import { tempFolder } from '../../helpers/homes.js';
 import path from 'node:path';
@@ -178,4 +178,13 @@ test('an earlier run of a piece at a limit says nothing of its later run, nor of
   assert.deepEqual(limitedRuns(views), []);
   assert.deepEqual(limitedRuns({}), []);
   assert.deepEqual(limitedRuns({ runs: { a: 'x', b: [null, { data: null }] }, asks: 'x' }), []);
+});
+
+test('a limit well past its reset no longer holds: the waker has failed, and other work needn\'t wait on it', () => {
+  const limit = { ...ask('a', 'r1', 'usage-limit'), data: { ...ask('a', 'r1', 'usage-limit').data, resetAt: '2026-11-01T05:00:00.000Z' } };
+  const views = { runs: { a: [run('a', 'r1', 'paused')] }, asks: { a: [limit] } };
+  assert.deepEqual(limitedRuns(views, new Date('2026-11-01T05:29:00.000Z')), ['r1']);
+  assert.deepEqual(limitedRuns(views, new Date('2026-11-01T05:31:00.000Z')), []);
+  assert.deepEqual(limitedWork(views, new Date('2026-11-01T05:29:00.000Z')), ['a']);
+  assert.deepEqual(limitedRuns(views), ['r1'], 'with no time given, every run parked at a limit');
 });

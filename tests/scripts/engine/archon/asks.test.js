@@ -90,6 +90,7 @@ test('an unknown ask kind is level 3 recommending stop', () => {
 test('a usage limit is a line, not a card', () => {
   const ask = normaliseAsk(items.usageLimit, { now });
   assert.equal(ask.kind, 'usage-limit');
+  assert.equal(ask.resetAt, items.usageLimit.resetAt);
   assert.equal(ask.card, false);
   assert.deepEqual(ask.options, []);
   assert.match(ask.line, /carries on by itself/);

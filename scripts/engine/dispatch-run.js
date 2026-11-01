@@ -963,7 +963,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   const wakes = (entry) => WAKES.includes(entry.via) && entry.startsRun !== true;
   const titleOf = (views, work) => views.work?.[work]?.work?.data?.title ?? work;
   const incidentOpen = (views) => (views.incidents?.open?.length ?? 0) > 0;
-  const atLimit = (views) => limitedRuns(views).length > 0;
+  const atLimit = (views) => limitedRuns(views, now()).length > 0;
   const retriesLater = (entry) => Date.parse(entry.retryAt) > now().getTime();
   // New work refused at its first start, with nothing of it on record: nothing of it has been done.
   const unbegun = (views, entry) => entry.firstStart === true && !isText(entry.branch) && (views.runs?.[entry.work] ?? []).length === 0;
@@ -1261,7 +1261,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       ...decided.live.filter((work) => !restsQuiet(views, work, ready) && !stuck.has(work)), ...started.filter((s) => s.ok === true || s.uncertain === true).map((s) => s.work),
       ...[...state.admitted, ...state.returning].filter((e) => !e.asked && !retriesLater(e) && moving(e.work)).map((e) => e.work),
       ...ready.map(([, r]) => r.work).filter((work) => moving(work) && !stuck.has(work) && !leftByDirector(views, work)), ...(queueGoing ? [MERGE_WORK] : []),
-      ...retryingWork(views), ...limitedWork(views),
+      ...retryingWork(views), ...limitedWork(views, now()),
     ];
   }
 

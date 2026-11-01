@@ -1200,6 +1200,8 @@ test('what was admitted before a limit starts nothing until it lifts', async () 
   const run = w.runs.b.at(-1).data;
   w.asks.b = [{ at: '2026-10-29T10:01:00.000Z', data: { id: 'lim-b', runId: run.runId, work: 'b', kind: 'usage-limit', level: 1, options: [] } }];
   w.runs.b.push({ at: '2026-10-29T10:01:00.000Z', data: { ...run, state: 'paused' } });
+  const inspect = w.engine.inspect.bind(w.engine);
+  w.engine.inspect = async (id) => (id === run.runId ? { status: 'paused' } : inspect(id));
   w.dispatcher.enter({ work: 'a', lane: 'quick', via: 'try-again', key: 'k', branch: 'wh/a', carryOn: true });
   fs.writeFileSync(path.join(w.dir, 'dispatch.json'), JSON.stringify((() => { const kept = JSON.parse(fs.readFileSync(path.join(w.dir, 'dispatch.json'), 'utf8')); kept.admitted = kept.returning; kept.returning = []; return kept; })()));
   w.restart();

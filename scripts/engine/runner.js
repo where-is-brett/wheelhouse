@@ -28,19 +28,19 @@ import { prNumber } from './host.js';
 import { capReached, carriedSpend } from './caps.js';
 import { RED_MAIN, FIX_LANE, redMainIncident, openRedMain } from './fix-main.js';
 import { MERGE_WORK } from './dispatcher.js';
-import { routerWaiting, routerCards, overtaken, approvalAnswers, limitedRuns } from './waiting.js';
+import { routerWaiting, routerCards, overtaken, approvalAnswers, limitedRuns, parkedAtLimit, limitLate } from './waiting.js';
 import { endedBy } from '../foreman/queue.js';
 import { gateTargetOf } from '../state/views.js';
 import { READER_WORK } from '../delegation/reader.js';
 import { alike, normaliseWords } from '../delegation/words.js';
 import { closeMatch, decisionKey, earlierAnswer, reuse, spokenSince } from '../delegation/asked.js';
 import { REPEAT_READ_MS } from '../delegation/limits.js';
-import { mergeQuestionWords, parkedWords, PARKED_WHY, PARKED_BECAUSE, PARKED_MEANWHILE, PARKED_APPROVE_SAYS, PARKED_SEND_BACK_SAYS, PARKED_CHANGED, SENT_BACK_ANSWER, sentBackWords, sentBackGoneWords, sentBackApprovedWords, sentBackMovedWords, sentBackNoPieceWords } from './words.js';
+import { mergeQuestionWords, parkedWords, PARKED_WHY, PARKED_BECAUSE, PARKED_MEANWHILE, PARKED_APPROVE_SAYS, PARKED_SEND_BACK_SAYS, PARKED_CHANGED, SENT_BACK_ANSWER, sentBackWords, sentBackGoneWords, sentBackApprovedWords, sentBackMovedWords, sentBackNoPieceWords, limitLateWords } from './words.js';
 import { SEND_BACK } from '../lib/calm-words.js';
 import { parkChoice } from './archon/asks.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
-const EMPTY = () => ({ routed: {}, waiting: [], held: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, tries: {}, later: [], next: {}, noted: null, capped: {}, capsOwed: {}, costed: {}, reviewsKept: {}, carried: {}, reworks: {}, answers: {}, sending: {}, parked: {}, reused: {}, repeats: {}, unsure: {}, sentBack: {}, resumedAt: {} });
+const EMPTY = () => ({ routed: {}, waiting: [], held: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, tries: {}, later: [], next: {}, noted: null, capped: {}, capsOwed: {}, costed: {}, reviewsKept: {}, carried: {}, reworks: {}, answers: {}, sending: {}, parked: {}, reused: {}, repeats: {}, unsure: {}, sentBack: {}, resumedAt: {}, limitSeen: {}, limitLateSaid: {} });
 // The failed tries after which the director is told an answer hasn't reached the build yet.
 const UNREACHABLE_SAID = 3;
 // The cap card's options: Give it more carries the work on with the cap raised once; Stop leaves it stopped.
@@ -691,7 +691,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   // neither has a work record to start again from.
   const startsAgain = (kept, runLane) => kept.ask?.kind === 'blocked' && runLane !== FIX_LANE && runLane !== 'merge' && kept.work !== MERGE_WORK;
   // Whether a piece may be sent its answer now.
-  const hasPlace = (work, key, views) => (views.incidents?.open?.length ?? 0) === 0 && limitedRuns(views).length === 0 && admittedTo(work, key);
+  const hasPlace = (work, key, views) => (views.incidents?.open?.length ?? 0) === 0 && limitedRuns(views, now()).length === 0 && admittedTo(work, key);
   // Whether a question was answered as part of a bundle, as a joiner or as the lead of one.
   const bundled = (key, kept) => typeof kept.joins === 'string' || Object.values(state.questions).some((k) => k.joins === key);
   // Tells the dispatcher of each answer already settled, so a crash just after one leaves no entry behind.
@@ -1011,7 +1011,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   // the dispatcher's card: a run the engine no longer has comes to that card too.
   async function retries() {
     const views = viewsNow();
-    if (stopped() || (views.incidents?.open?.length ?? 0) > 0 || limitedRuns(views).length > 0) return;
+    if (stopped() || (views.incidents?.open?.length ?? 0) > 0 || limitedRuns(views, now()).length > 0) return;
     for (const { work, key, runId, delivered: told } of retriesAdmitted()) {
       if (told) continue;
       const record = await inspect(runId);
@@ -1033,6 +1033,37 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       const got = await resumeFailed({ work, runId });
       if (got?.ok === true) delivered(work, key);
       else if (got !== null && got.unreachable !== true) drop(work, key);
+    }
+  }
+
+  // A run parked at a limit holds all other work, and its record is all that says so: an ending or a `started` the host
+  // couldn't write is never written again. So each is looked at each tick, and what the engine reads as moved on, on two
+  // looks running so the stream has its turn first, is put on the record. One well past its reset is said once.
+  async function limits() {
+    const parked = parkedAtLimit(viewsNow());
+    for (const runId of Object.keys(state.limitSeen)) if (!parked.some((r) => r.runId === runId)) delete state.limitSeen[runId];
+    for (const { runId, work, resetAt } of parked) {
+      if (resetAt !== null && limitLate(resetAt, now()) && !state.limitLateSaid[runId]) {
+        state.limitLateSaid[runId] = true;
+        keep();
+        await note(limitLateWords(titleOf(work)), { work });
+      }
+      const record = await inspect(runId);
+      if (!record || record.unread === true) continue;
+      const moved = ['running', 'ended', 'unknown'].includes(record.status) ? record.status : null;
+      if ((state.limitSeen[runId] ?? null) !== moved) {
+        if (moved) state.limitSeen[runId] = moved;
+        else delete state.limitSeen[runId];
+        keep();
+        continue;
+      }
+      if (!moved) continue;
+      const records = runRecords(work, runId);
+      if (moved !== 'running') await endAsEngineSays(runId, records, record);
+      else {
+        const { lane, engine: name, branch } = records.at(-1).data;
+        await write('run', { work, lane, engine: name, runId, state: 'started', ...(typeof branch === 'string' ? { branch } : {}) });
+      }
     }
   }
 
@@ -1064,11 +1095,12 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     return true;
   }
   async function endAsEngineSays(runId, records, record) {
-    const { work, lane, engine: name, branch, resume } = records.at(-1).data;
+    const { work, lane, engine: name, branch } = records.at(-1).data;
+    const resume = resumesOf(records);
     const outcome = typeof record.outcome === 'string' ? record.outcome : 'failed';
     const pr = prNumber(record.pr) ?? prNumber(await safely(() => prOf(runId))) ?? records.findLast((r) => Number.isInteger(r.data?.pr))?.data.pr;
     await write('run', {
-      work, lane, engine: name, runId, state: 'ended', ...(Number.isInteger(resume) ? { resume } : {}), outcome, ...(typeof branch === 'string' ? { branch } : {}), ...(pr === undefined ? {} : { pr }),
+      work, lane, engine: name, runId, state: 'ended', ...(resume > 0 ? { resume } : {}), outcome, ...(typeof branch === 'string' ? { branch } : {}), ...(pr === undefined ? {} : { pr }),
       ...(outcome === 'failed' ? { failure: typeof record.failure === 'string' ? record.failure : 'other', ...(typeof record.failedStep === 'string' ? { step: record.failedStep } : {}) } : {}),
     });
   }
@@ -1231,6 +1263,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       await again();
       await parks();
       await owedCaps();
+      await limits().catch(() => {});
       await retries();
       await caps();
       await show();
