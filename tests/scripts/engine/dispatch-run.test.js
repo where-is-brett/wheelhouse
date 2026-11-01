@@ -1305,9 +1305,10 @@ test('work outside the goal waits, and a piece of the goal starts with no approv
 });
 
 test('a start held at a bound raises no card', async () => {
-  const w = wayBack({ recordings: { a: quiet() } });
+  const w = wayBack({ recordings: { a: quiet(), b: forever() } });
   w.put('a');
-  goalOver(w, ['a'], { until: '2026-10-29T10:05:00.000Z' });
+  w.put('b');
+  goalOver(w, ['a', 'b'], { until: '2026-10-29T10:05:00.000Z' });
   await w.tick(2);
   w.dispatcher.enter(entryFor('a', 'rework'));
   w.clock.now = new Date('2026-10-29T10:06:00.000Z');
@@ -1321,9 +1322,10 @@ test('a start held at a bound raises no card', async () => {
 
 test('a rework, a next slice and a Try again all pass the gate', async () => {
   for (const via of ['rework', 'slice', 'try-again']) {
-    const w = wayBack({ recordings: { a: quiet() } });
+    const w = wayBack({ recordings: { a: quiet(), b: forever() } });
     w.put('a');
-    goalOver(w, ['a']);
+    w.put('b');
+    goalOver(w, ['a', 'b']);
     await w.tick(2);
     w.goals.g.sheet.until = '2026-10-29T10:00:00.000Z';
     const before = w.starts.length;
@@ -1502,7 +1504,7 @@ test('a rework the meter holds keeps its place, and a sheet with room lets it go
   w.put('a');
   goalOver(w, ['a'], { spend: { tokens: 5000000 } });
   await w.tick(2);
-  w.goals.g.sheet.spend = { tokens: 1000 };
+  w.goals.g.sheet.spend = { tokens: 2000 };
   spent(w, 'gone', 1000);
   const before = w.starts.length;
   w.dispatcher.enter(entryFor('a', 'rework'));
@@ -1515,7 +1517,7 @@ test('a rework the meter holds keeps its place, and a sheet with room lets it go
   assert.equal(w.starts.length, before + 1);
 });
 
-test('a limit met mid-run holds what comes next, and the run goes on', async () => {
+test('a limit met mid-run ends the goal, cancels the run and holds what comes next', async () => {
   const w = wayBack({ recordings: { a: running('a', 1000000), b: forever() }, pace: 1 });
   w.put('a');
   w.put('b');
@@ -1523,8 +1525,8 @@ test('a limit met mid-run holds what comes next, and the run goes on', async () 
   await w.tick(4);
   assert.deepEqual(w.starts.map((s) => s.order.work), ['a']);
   assert.equal(keptOf(w).goalSpend.meter.reached, 'tokens', 'read from the live run');
-  assert.equal(w.engine.calls.filter((c) => c.call === 'act').length, 0, 'ending it is the wind-down\'s');
-  w.endRun('a');
+  assert.equal(w.engine.calls.filter((c) => c.call === 'act' && c.action.cancel).length, 1);
+  assert.equal(w.written.find((x) => x.kind === 'goal-end').data.ending, 'spend');
   await w.tick(3);
   assert.deepEqual(w.starts.map((s) => s.order.work), ['a'], 'its place freed, the next piece still holds');
 });

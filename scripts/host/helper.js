@@ -33,6 +33,7 @@ import { DEFAULT_GITLAB, parseRemote } from './gitlab-base.js';
 import { prepareQueueFolder } from '../engine/queue-folder.js';
 import { prepareGoalFolder } from '../engine/goal-folder.js';
 import { goalCheckHost } from '../engine/goal-check.js';
+import { stayAwake } from '../engine/stay-awake.js';
 import { queueFolderOf, queueProjectOf } from '../engine/queue-place.js';
 import { unreachableRefusal, certificateRefusal, certificateLine, awayLine, outputKind, companyGitEnv, makeAwayLog, gitlabBaseOf, certificateSetting } from './company-ca.js';
 import { childEnv } from './connection.js';
@@ -1058,6 +1059,8 @@ export async function startHelper({
   // `sleep`, each the real one unless a test gives its own. And how often STOP is looked at, so a STOP set without the
   // helper (the STOP word's hook, the runbook's own) cancels the engine's runs too.
   engineStopWith = {}, stopPollMs = 2000,
+  // What holds the Mac awake for a goal's life (scripts/engine/stay-awake.js).
+  awake = stayAwake(),
   // How often the card router and the dispatcher look again for each project on the engine (scripts/engine/runner.js,
   // dispatch-run.js): answers to send, caps to keep, cost records to write, and work to start.
   dispatchMs = 60 * 1000,
@@ -5231,6 +5234,8 @@ export async function startHelper({
       },
       mainGreen: () => mainGreen(project),
       stoppedRuns: () => stoppedRunsOf(project),
+      goalCheck: (args) => goalChecks.start(args),
+      endRun: async (runId) => endRun({ engine, run: { id: runId, folder: (await engine.inspect(runId))?.folder ?? null }, ...engineStopWith }),
       fixedRuns: () => engineRun.fixedRuns(project),
       prState: async (pr) => {
         try {
@@ -5571,6 +5576,10 @@ export async function startHelper({
         await checks.tick().catch(() => {});
         await goalChecks.tick().catch(() => {});
       }
+      // A goal in force on any project holds the Mac awake, and each look says so again, so a helper started again takes it up.
+      if (!closing) {
+        try { awake.set(engineHosts.some(({ dispatcher }) => dispatcher.goalInForce())); } catch { /* looked at again on the next tick */ }
+      }
     })().finally(() => { ticking = null; });
     return ticking;
   }
@@ -5616,6 +5625,7 @@ export async function startHelper({
       await lookingAround?.catch(() => {});
       await sleeping.beat();
       await ticking?.catch(() => {});
+      awake.set(false);
       await renewing;
       await engineStopping?.catch(() => {});
       await Promise.race([

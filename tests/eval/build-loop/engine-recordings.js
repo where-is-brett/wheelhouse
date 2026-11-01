@@ -1,5 +1,5 @@
 // tests/eval/build-loop/engine-recordings.js
-// Recordings for the engine scenarios (42 to 55, 60 to 62, 63 to 69, 70 to 75, 90 to 94, 120 to 134, 170 to 171 and 184 to 185), in the fake engine's
+// Recordings for the engine scenarios (42 to 55, 60 to 62, 63 to 69, 70 to 75, 90 to 94, 120 to 134, 170 to 171, 174 to 181, 184 to 185 and 187 to 188), in the fake engine's
 // events: each a run of the quick lane, of the small lane from 51, of fix-main, of the bug lane from 63, or of a
 // feature's slices and its own run from 70, that stops where the scenario needs it. Not a scenario file: it has no number.
 import fs from 'node:fs';
@@ -44,6 +44,17 @@ export function spending(work, tokens) {
     step(2, 'implement', { tokens, dollars: 3, source: 'reported' }),
     { type: 'ask', at: at(3), id: `${work}:ask:1`, kind: 'question', level: 3, recommend: 'b', card: true, options: [{ id: 'a', label: 'Keep it small' }, { id: 'b', label: 'Do the whole page' }], context: { question: 'How much of the page should change?' } },
     { type: 'ask-resolved', at: at(4), id: `${work}:ask:1` },
+    ended(6),
+  ];
+}
+
+// A run parked at the provider's usage limit until `resetAt`, which nothing in the world lifts, then finished if it ever resumed.
+export function parkedAtLimit(work, { resetAt }) {
+  return [
+    started(work),
+    step(2, 'implement', { tokens: 40000, dollars: 0.1, source: 'reported' }),
+    { type: 'ask', at: at(3), id: `${work}:limit:1`, kind: 'usage-limit', level: 1, resetAt, card: false, options: [{ id: 'wait', label: 'Wait for the reset' }] },
+    { type: 'ask-resolved', at: at(4), id: `${work}:limit:1` },
     ended(6),
   ];
 }

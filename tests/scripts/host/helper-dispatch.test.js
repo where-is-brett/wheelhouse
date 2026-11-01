@@ -12,7 +12,9 @@ import { startHelper } from '../../../scripts/host/helper.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
-import { listEvents, makeEvent, eventPath } from '../../../scripts/state/events.js';
+import { listEvents, makeEvent, eventPath, dataHash } from '../../../scripts/state/events.js';
+import { sheetHash } from '../../../scripts/engine/goal.js';
+import { startGoalLine } from '../../../scripts/state/card-lines.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
 import { fakeEngine, loadRecordings } from '../../../scripts/engine/fake.js';
@@ -215,6 +217,40 @@ test('a project whose tests Wheelhouse can\'t run starts no work, and the Logboo
       } finally {
         await helper.close();
       }
+    });
+  } finally { p.cleanup(); }
+});
+
+test('stayAwake is on for exactly a goal\'s life', async () => {
+  const p = await setUp();
+  const engine = fakeEngine({ artefacts: p.artefacts });
+  const wanted = [];
+  const at = '2026-11-01T01:00:00.000Z';
+  const data = { id: 'card-12', title: 'The sale banner', lane: 'quick', visible: false, dependsOn: [] };
+  const sheet = {
+    title: 'The sale goes live', done: [{ command: 'node --test', expect: 0 }], checksSay: ['The tests pass'], pieces: [{ work: data.id, hash: dataHash(data) }],
+    areas: { may: ['src/**'], wontTouch: ['tests/**'] }, spend: { tokens: 1000000 }, until: '2026-11-01T09:00:00.000Z',
+  };
+  const hash = sheetHash(sheet);
+  try {
+    await as(p.home, async () => {
+      const helper = await helperFor(p, engine, { now: () => new Date('2026-11-01T02:00:00.000Z'), awake: { set: (want) => wanted.push(want) } });
+      try {
+        await helper.engine.tick();
+        assert.deepEqual(wanted, [false], 'no goal, no hold');
+        put('work', data, at);
+        put('goal', { id: 'sale', sheet }, at);
+        put('goal-check', { goal: 'sale', hash, when: 'before', head: 'a'.repeat(40), results: [{ check: sheet.done[0], ok: false }], ok: false }, at);
+        put('action', { action: 'start-goal', goal: 'sale', hash, label: 'Start', question: `Start this goal?\n${startGoalLine('sale', hash)}` }, '2026-11-01T01:30:00.000Z');
+        await helper.engine.tick();
+        assert.equal(wanted.at(-1), true, 'held once the goal is in force');
+        put('goal-end', { goal: 'sale', ending: 'end-goal', at: '2026-11-01T01:40:00.000Z', spent: { tokens: 0, points: null, requests: null, unknown: false, shareAtStart: null, queueRuns: [] } }, '2026-11-01T01:40:00.000Z');
+        await helper.engine.tick();
+        assert.equal(wanted.at(-1), false, 'let go as it ends');
+      } finally {
+        await helper.close();
+      }
+      assert.equal(wanted.at(-1), false, 'the helper leaves no hold behind it');
     });
   } finally { p.cleanup(); }
 });

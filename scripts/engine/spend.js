@@ -26,6 +26,9 @@ function awake(from, to, spans) {
   return time;
 }
 
+// The minutes from `from` (a time) to `now`, less the spans of `slept`: how long a wait has really lasted.
+export const awakeMinutes = (from, now, slept = []) => awake(Date.parse(from), now.getTime(), sleepSpans(slept)) / 60000;
+
 // The minutes `records` (a run's `run` records, each { at, data: { state } }, in time order) spent running up to
 // `now`: from each start, or carrying on after an ask, to the next pause or end, less the spans of `slept`
 // ([{ from, to }], when the computer was asleep). A resumed run's legs add up. After an `ended`, only a `started` with

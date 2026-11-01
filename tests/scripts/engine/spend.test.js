@@ -1,7 +1,7 @@
 // tests/scripts/engine/spend.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { countedRequests, runCost, runningMinutes } from '../../../scripts/engine/spend.js';
+import { awakeMinutes, countedRequests, runCost, runningMinutes } from '../../../scripts/engine/spend.js';
 import { capReached, limitsFor, carriedSpend } from '../../../scripts/engine/caps.js';
 
 const step = (over) => ({ id: 'implement', role: 'implement', provider: 'claude', model: 'mid', tokens: 100000, dollars: 0.3, minutes: 4, source: 'reported', ...over });
@@ -166,4 +166,11 @@ test('totals that are missing or short take nothing from the steps, and a step o
   const unknown = runCost({ steps: [step({ tokens: null, dollars: null, source: 'unknown' })], totals: { tokens: null, dollars: 0.2 } });
   assert.equal(unknown.dollars, null);
   assert.equal(unknown.floorDollars, 0.2);
+});
+
+test('the minutes awake between two times leave out each sleep once', () => {
+  const at = (minute) => `2026-11-01T01:${String(minute).padStart(2, '0')}:00.000Z`;
+  const slept = [{ from: at(10), to: at(20) }, { from: at(15), to: at(25) }];
+  assert.equal(awakeMinutes(at(0), new Date(at(30)), slept), 15);
+  assert.equal(awakeMinutes(at(30), new Date(at(40)), slept), 10);
 });

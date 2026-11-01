@@ -8,6 +8,8 @@
 //   READING_FRESH_MINUTES: how old an allowance reading may be and still be used.
 //   GOAL_CHECK_HOURS: the longest a goal's check run may take, and its workflow's `timeout` is the same.
 //   GOAL_CHECK_UNKNOWN_MINUTES: how long the engine may fail to say what became of one.
+//   SPEND_UNREAD_MINUTES: how long a spend reached only by runs that can't be read holds starts before it ends the goal.
+//   GOAL_CHECK_TRIES: how many times the last check is asked for, when it gives no result, before the goal takes that as its answer.
 export const MAX_PIECES = 12;
 export const MAX_HOURS = 24;
 export const WIND_DOWN_MINUTES = 60;
@@ -18,6 +20,8 @@ export const SHARE_OF_WHAT_IS_LEFT = 1 / 3;
 export const READING_FRESH_MINUTES = 30;
 export const GOAL_CHECK_HOURS = 4;
 export const GOAL_CHECK_UNKNOWN_MINUTES = 10;
+export const SPEND_UNREAD_MINUTES = 10;
+export const GOAL_CHECK_TRIES = 2;
 
 // A goal's check run: the work it goes under, on no piece, and its lane, as a reader's are.
 export const GOAL_WORK = 'goal-check-run';

@@ -52,6 +52,28 @@ const GOAL_HELD = {
 };
 export const goalHeldWords = (title, why) => `${title} ${GOAL_HELD[why] ?? GOAL_HELD.goal}.`;
 
+// The Logbook's lines for how a goal goes: what started it winding down, how it ended, and a piece that left it.
+const GOAL_WINDING = {
+  time: 'its time is up',
+  stuck: 'it has stopped getting anywhere',
+  'end-goal': 'you ended it',
+};
+const GOAL_ENDED = {
+  done: 'is done',
+  'waiting-for-you': 'has ended with work waiting for you',
+  'check-failed': 'has ended, and its last check failed, so it isn\'t done',
+  time: 'has ended: its time is up',
+  spend: 'has ended: it reached its spend, so what was running was stopped and kept on its branch',
+  stuck: 'has ended: it stopped getting anywhere',
+  'end-goal': 'has ended, as you asked',
+  'all-stop': 'has ended with All stop. Lifting All stop doesn\'t start it again: Carry on offers a new sheet for what\'s left',
+};
+export const goalWindingWords = (title, why) => `${title} is winding down because ${GOAL_WINDING[why] ?? GOAL_WINDING.time}: nothing new starts, and work under way gets up to an hour to finish.`;
+export const goalEndedWords = (title, ending) => `${title} ${GOAL_ENDED[ending] ?? GOAL_ENDED.time}.`;
+export const goalRunLeftWords = (title, survivors) => `${title} has ended, but part of a run it stopped couldn't be stopped and may still be spending: ${survivors.join(', ')}.`;
+export const goalPieceChangedWords = (title) => `${title} changed since the goal's sheet was signed, so the goal won't build it. A new sheet can list it.`;
+export const goalCheckedAgainWords = (title, ok) => `The goal's checks ran again once the work waiting for you had merged: ${title} ${ok ? 'passes them all' : 'doesn\'t pass them all'}.`;
+
 // The card for a run still parked well past the reset, which holds nothing more.
 export const limitLateWords = (title) => `${title} should have carried on once its usage limit reset, and hasn't, so other work no longer waits for it. It spends nothing while it waits. What it has done so far is kept.`;
 export const limitLateOverWords = (title) => `${title} moved on by itself after all, so your card about it no longer decides anything.`;
