@@ -558,7 +558,12 @@ const recordOutput = (asked) => ({ 'workflow get': { code: 0, json: { ok: true, 
 
 test('mergeAsked reads the pull request, head and merge choice from the record step, not the question\'s words', async () => {
   const asked = { by: 'pr', pr: { number: 7 }, head: 'a'.repeat(40), attention: { choices: [{ id: 'keep', effect: 'return' }, { id: 'go-ahead', effect: 'merge' }] } };
-  assert.deepEqual(await adapter(fakeCli(recordOutput(asked))).mergeAsked(RUN), { pr: 7, head: 'a'.repeat(40), merge: 'go-ahead' });
+  assert.deepEqual(await adapter(fakeCli(recordOutput(asked))).mergeAsked(RUN), { pr: 7, head: 'a'.repeat(40), merge: 'go-ahead', park: null });
+});
+
+test('mergeAsked reads the park id by its effect, wherever it comes among the choices', async () => {
+  const asked = { by: 'pr', pr: { number: 7 }, head: 'a'.repeat(40), attention: { choices: [{ id: 'send-back', effect: 'return' }, { id: 'leave-alone', effect: 'park' }, { id: 'merge', effect: 'merge' }, { id: 'other', effect: 'return' }] } };
+  assert.deepEqual(await adapter(fakeCli(recordOutput(asked))).mergeAsked(RUN), { pr: 7, head: 'a'.repeat(40), merge: 'merge', park: 'leave-alone' });
 });
 
 test('mergeAsked gives null for anything but a pull request\'s question', async () => {

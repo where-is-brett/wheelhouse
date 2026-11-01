@@ -471,7 +471,8 @@ export function archonAdapter({
       try { asked = JSON.parse(readOutputs(result.code === 0 && result.json?.ok !== false ? result.json : null).record ?? 'null')?.asked ?? null; } catch { return null; }
       if (asked?.by !== 'pr' || !Number.isInteger(asked.pr?.number) || typeof asked.head !== 'string') return null;
       const choices = Array.isArray(asked.attention?.choices) ? asked.attention.choices : [];
-      return { pr: asked.pr.number, head: asked.head, merge: choices.find((c) => c?.effect === 'merge')?.id ?? null };
+      const chosen = (effect) => choices.find((c) => c?.effect === effect)?.id ?? null;
+      return { pr: asked.pr.number, head: asked.head, merge: chosen('merge'), park: chosen('park') };
     },
 
     // Each task's last review in a slice's run, { [task]: output }, from Archon's own record, or null when it has no

@@ -21,6 +21,13 @@ const askedPr = (message) => {
   return found ? Number(found[1]) : null;
 };
 
+// The choice that leaves the merge queue's pull request alone, where its question offers one, or null. An attention item
+// names only ids and labels, so the id comes from what the run's record says it asked (`mergeAsked`, check 90).
+export function parkChoice(ask) {
+  const id = ask?.mergeQuestion?.park;
+  return typeof id === 'string' && id !== '' && (ask.options ?? []).some((o) => o?.id === id) ? id : null;
+}
+
 // Archon's own asks, in the order they are tried (spec 8.3). Each row: `test(item)`, then the ask's kind and level,
 // what it recommends, `answer` when the card router answers it itself, `card` (false: a Logbook line only), `holdsAll`
 // when every piece of work waits on it, `merge` for the merge queue's question about a pull request, `opens` when answering it opens an incident of that kind (with the pull

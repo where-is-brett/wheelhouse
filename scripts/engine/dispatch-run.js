@@ -107,7 +107,8 @@ export function orderFor(entry, { settings = {}, raised = false, config = {}, an
 // - `prMerged(pr)` whether the host says a pull request merged (null when it can't say); `designOf(work)` the work's
 //   approved design, { text } or { problem } (or null when it names none); `orderOf(runId)` the order a run was given;
 // - `prState(pr)` what the host says of a pull request, 'merged', 'open' or 'closed' (null when it can't say); without
-//   it, `prMerged` gives merged or open; `repoOf()` the repository the merge queue merges in, { host, path }, or null.
+//   it, `prMerged` gives merged or open; `repoOf()` the repository the merge queue merges in, { host, path }, or null;
+//   `repoName()` that repository as a hand-over names it.
 // - `openedBy(runId)` the pull request the helper's record says a run opened, or null: an engine that doesn't say so
 //   at a run's end (Archon) is read through it, for records already written without one (check 81);
 // - `queueFolder()` the folder the merge queue runs in, Wheelhouse's own and never the project's (check 81):
@@ -117,11 +118,12 @@ export function orderFor(entry, { settings = {}, raised = false, config = {}, an
 //   every tick while a change waits, since its own table says what is ready. `isLocal()` says whether the project still has
 //   no host, and `moving()` whether a move to a host is under way, which holds new work as All stop does.
 // - `branchPaths({ runId, branch })` every path a run's branch has changed so far, or null when it can't be read.
-export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped: allStop = () => false, moving = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), spentThisMonth = () => 0, mainGreen = async () => null, stoppedRuns = () => [], fixedRuns = () => [], prMerged = async () => null, prState = null, designOf = () => null, orderOf = () => null, repoOf = () => null, queueFolder = async () => ({ ok: false, refused: 'no folder for the merge queue' }), queuePlace = null, openedBy = () => null, localQueue = null, isLocal = () => true, onCard = () => {}, branchPaths = async () => [] } = {}) {
+export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped: allStop = () => false, moving = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), spentThisMonth = () => 0, mainGreen = async () => null, stoppedRuns = () => [], fixedRuns = () => [], prMerged = async () => null, prState = null, designOf = () => null, orderOf = () => null, repoOf = () => null, repoName = () => null, queueFolder = async () => ({ ok: false, refused: 'no folder for the merge queue' }), queuePlace = null, openedBy = () => null, localQueue = null, isLocal = () => true, onCard = () => {}, branchPaths = async () => [] } = {}) {
   const stopped = () => allStop() || moving();
   let state = readState(file);
   // The pieces with a card of the card router's open, from the runner, which is built after this.
   let routerPieces = () => new Set();
+  let parkedPrs = () => ({});
   const waitingNow = (views) => {
     const pieces = new Set(ownWaiting({ state, views }));
     try { for (const work of routerPieces()) pieces.add(work); } catch { /* it reads as none, so each keeps its place */ }
@@ -614,6 +616,19 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     }
   }
 
+  // Whether a queue run is live, whoever started it. An engine that can't say counts as one.
+  async function queueLive() {
+    if (await mergeQueueRunning()) return true;
+    const place = queuePlace?.() ?? null;
+    if (place === null || typeof engine.queueRuns !== 'function') return false;
+    try {
+      const live = await engine.queueRuns({ folder: place });
+      return !Array.isArray(live) || live.length > 0;
+    } catch {
+      return true;
+    }
+  }
+
   // What each piece keeps while it waits. A parking is read once, and a read that fails is tried again on each tick; only
   // the piece's end or `release` takes anything away, so nothing here lets go by itself.
   async function reserveTick(views) {
@@ -664,7 +679,9 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     // A pull request whose work has ended, or one seen closed, no longer waits for the merge queue.
     const closedPrs = new Set([...state.closedPrs, ...Object.values(state.features).flatMap((f) => Object.keys(f?.closed ?? {}).map(Number))]);
     const ended = (work) => reports[work]?.data?.outcome === 'merged' || endedBy(reports, work, views.work?.[work]?.work);
-    const waiting = Object.entries(ready).filter(([pr, r]) => !ended(r.work) && !closedPrs.has(Number(pr)));
+    // One the queue has left alone isn't due at the head it left; a new head is its own again.
+    const left = parkedPrs() ?? {};
+    const waiting = Object.entries(ready).filter(([pr, r]) => !ended(r.work) && !closedPrs.has(Number(pr)) && left[pr] !== r.head);
     const newReady = waiting.some(([pr]) => !state.seenReady.includes(pr));
     const requests = typeof engine.countsRequests === 'function'
       ? { counts: () => engine.countsRequests(config()?.routing ?? {}) === true, used: await spentThisMonth(), cap: Number.isFinite(s.capRequests) ? s.capRequests : 0, confirmed: engine.requestsConfirmed === true }
@@ -820,6 +837,20 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     },
     // Who tells this of the card router's cards: the runner, through its `waitingWork`.
     onWaiting(fn) { if (typeof fn === 'function') routerPieces = fn; },
+    // Who tells this of the pull requests the queue has left alone, { [pr]: head }: the runner.
+    onParked(fn) { if (typeof fn === 'function') parkedPrs = fn; },
+    // A parked pull request the director approved goes to the queue again. A hand-over writes a fresh work item, which
+    // keeps no `park` at that head, so the queue asks again and the approval answers it. Never beside a live run, whose
+    // claim on the item this would write over.
+    async handBack({ pr, head }) {
+      if (await queueLive()) return { ok: false, waiting: true };
+      const kept = (readyOf() ?? {})[pr];
+      if (kept?.head !== head) return { ok: false, refused: 'it has moved on from the commit you approved' };
+      if (typeof engine.handOver !== 'function') return { ok: false, refused: 'the engine has no merge queue to hand it to' };
+      const repo = repoName();
+      const got = await engine.handOver({ project: folder, repo, pr, url: `https://github.com/${repo}/pull/${pr}`, runId: kept.runId, at: now().toISOString() });
+      return got?.ok === true ? { ok: true } : { ok: false, refused: got?.refused ?? 'the engine didn\'t take it' };
+    },
     // Every piece that waits on the director, by a card of the router's or one of these.
     waitingWork: () => waitingNow(readViews() ?? {}),
     // The files held for each piece, { [work]: paths }.
