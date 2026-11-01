@@ -33,6 +33,8 @@ export default {
       };
       world.put('goal', { id: GOAL, sheet });
       const hash = sheetHash(sheet);
+      // Its baseline, a check that fails today, as the helper signs it: a goal doesn't start without one.
+      world.put('goal-check', { goal: GOAL, hash, when: 'before', head: 'a'.repeat(40), results: [{ check: sheet.done[0], ok: false }], ok: false });
       world.put('action', { action: 'start-goal', goal: GOAL, hash, question: `What this is.\n${startGoalLine(GOAL, hash)}`, label: 'Start' });
       const going = await until(async () => { await world.tick(); return world.records('run').some((r) => r.data.work === FIRST && r.data.state === 'started'); });
       if (!going) return { pass: false, why: 'the first piece never started' };
