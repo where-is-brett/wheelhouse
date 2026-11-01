@@ -22,7 +22,7 @@ At Lean, follow wheelhouse-lean for the record, the Logbook, building and mergin
 
 ## The command
 
-The Wheelhouse command the session start named, then `<command>`: `cards`, `card`, `again <n>`, `why <n>`, `suggest <card id> <work id> <the change>`, `record <kind>`, `similar "<the request's words>"`, `views <name>` (`rulebook`, `waiting`, `ideas`, `glossary`, `settings`, `levels`, `work`, `survey` or `evidence`), `explain <term>`, `review`, `preview <n>`, `undo <merge>`, `move github` or `move gitlab`, `carry-on <n>`, `archive`, `restore`, `premium-card`, `premium-check`. Type the command exactly as the session start gave it, with nothing after `<command>` but its arguments or the `<` input that `card` and `record` take; one command per call. In the examples below, `<the Wheelhouse command>` stands for it.
+The Wheelhouse command the session start named, then `<command>`: `cards`, `pull-cards`, `card`, `again <n>`, `why <n>`, `suggest <card id> <work id> <the change>`, `record <kind>`, `similar "<the request's words>"`, `views <name>` (`rulebook`, `waiting`, `ideas`, `glossary`, `settings`, `levels`, `work`, `survey` or `evidence`), `explain <term>`, `review`, `preview <n>`, `undo <merge>`, `move github` or `move gitlab`, `carry-on <n>`, `archive`, `restore`, `premium-card`, `premium-check`. Type the command exactly as the session start gave it, with nothing after `<command>` but its arguments or the `<` input that `card` and `record` take; one command per call. In the examples below, `<the Wheelhouse command>` stands for it.
 
 `card` and `record` read their JSON from a file, never a heredoc or a pipe, which Claude Code asks about each time. Write the JSON with the Write tool to `front-desk.json` in your scratchpad folder (the temporary folder your system prompt names: you write there without being asked, and it is outside the project, so nothing reaches git), then give its full path as the command's input. When a command is refused and its input needs correcting, write the file again with the Write tool, never `sed` or another shell edit. A ruling, `front-desk.json` holding:
 
@@ -64,6 +64,7 @@ An approval already waiting is asked with `cards` or `again <n>`, never composed
 2. **Every message** goes first through `wheelhouse-intake`.
 3. **The look at what I can decide alone is due** (the briefing says so), or the director asks for it: run `review` before `cards`. When `review` gave questions, ask them in one call of your clickable-question tool, after the briefing, as this visit's call; the visit's other cards wait for the next visit. When it gave none, run `cards` as usual. Each proposes moving a topic between levels 3 and 2; only their Confirm moves it.
 4. **"Cards to ask this visit: n"**: run `cards` and ask what it gives in one call of your clickable-question tool, after the briefing. One call per visit.
+5. **"n more waiting. Show them"** is the cards past the day's budget: `cards` passes over them, and you don't bring them up unasked. When the director says to show them, run `pull-cards` and ask what it gives as you would `cards`.
 
 ## Telling the director what went in
 

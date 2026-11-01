@@ -71,7 +71,7 @@ export function courierFile(project) {
 // that names it across ticks and sessions: STOP turned on (`stop:<since>`, only when its time can
 // be read), an open incident, a health line at its stop level (`health:<hash of its text>`) that
 // isn't STOP's or an incident's own, each waiting card the front desk hasn't asked (`card:<id>`,
-// with its number and whether it blocks) and each finished feature. What has been woken for is
+// with its number and whether it blocks), passing over one the day's budget holds back, and each finished feature. What has been woken for is
 // courier.json's to say, so an item held back wakes on a later tick; the model as last kept isn't
 // needed.
 export function needsYou({ after } = {}) {
@@ -91,7 +91,7 @@ export function needsYou({ after } = {}) {
   // A card the front desk has asked has reached the director already (a question from the build
   // is never asked until its card is made).
   for (const card of list(after.cards)) {
-    if (typeof card.id === 'string' && Number.isInteger(card.n) && card.asked !== true) items.push({ id: `card:${card.id}`, kind: 'card', n: card.n, blocking: card.blocking === true });
+    if (typeof card.id === 'string' && Number.isInteger(card.n) && card.asked !== true && card.heldBack !== true) items.push({ id: `card:${card.id}`, kind: 'card', n: card.n, blocking: card.blocking === true });
   }
   for (const work of Array.isArray(after.finished) ? after.finished : []) {
     if (typeof work === 'string' && work !== '') items.push({ id: `finished:${work}`, kind: 'finished' });

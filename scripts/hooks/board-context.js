@@ -49,6 +49,7 @@
 import { answer, runAndExit, projectOf, beingSetUp } from './kit.js';
 import { featureSlug, SETUP_FIRST } from './session-start.js';
 import { briefingModel as realBriefingModel } from '../briefing/model.js';
+import { heldBackLine } from '../board/model.js';
 import { readSeen, readSurveyAt, markSeen, readVisits } from '../briefing/seen.js';
 import { markRaised as realMarkRaised } from '../usage/figures.js';
 import { sessionRole, recordRole } from '../lib/role.js';
@@ -147,9 +148,9 @@ async function cardsToAsk(desk, at) {
 // The count cardsToAsk gives, from the views given (with STOP off).
 export function cardsDue(views, at) {
   const waiting = Array.isArray(views.waiting) ? views.waiting.filter(isRecord) : [];
-  const fresh = new Set(waiting.filter((card) => card.asked === null || card.asked === undefined).map((card) => card.id));
+  const fresh = new Set(waiting.filter((card) => (card.asked === null || card.asked === undefined) && !heldBackLine(card.data?.line, views)).map((card) => card.id));
   const questions = Object.entries(isRecord(views.questions) ? views.questions : {})
-    .filter(([id, entry]) => isRecord(entry) && !entry.answer && existingCard({ waiting }, answerLine(id)) === null
+    .filter(([id, entry]) => isRecord(entry) && !entry.answer && existingCard({ waiting }, answerLine(id)) === null && !heldBackLine(answerLine(id), views)
       && questionProblem(entry.question?.data) === null).length;
   const gate = gateAsksDue(views, at);
   for (const due of gate) if (due.again !== undefined) fresh.add(due.again);

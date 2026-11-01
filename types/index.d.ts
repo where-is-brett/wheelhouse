@@ -42,6 +42,8 @@ export type WheelhousePaneCard = {
   note?: string | null;
   blocking?: boolean;
   asked?: boolean;
+  // Past the day's budget: on the list, pushed to nobody until a new day or a pull.
+  heldBack?: boolean;
   // The card's parts, or null for a card with none, which is drawn as its text.
   parts?: WheelhouseCardParts | null;
   // When the director last suggested a change on it, as HH:MM in the computer's own time, or null.
@@ -85,6 +87,8 @@ export type WheelhousePaneModel = {
   updated?: string | null;
   stop?: { on?: boolean; since?: string | null };
   cards?: WheelhousePaneCard[];
+  // The line for the cards past the day's budget, and the button that shows them; null with none.
+  held?: { line: string; button: WheelhouseCardButton } | null;
   // Each piece of work as { text, see }; a model an older bridge wrote holds lines of words instead.
   building?: (WheelhouseBuilding | string)[];
   health?: WheelhouseHealthLine[];
