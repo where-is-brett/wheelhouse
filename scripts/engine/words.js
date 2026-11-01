@@ -18,6 +18,14 @@ export function mergeQuestionWords(pr, title) {
 // The Logbook's line for a piece waiting on the director whose branch can't be read yet.
 export const reservedUnreadWords = (title) => `What ${title} has changed so far couldn't be read, so only the files it was expected to touch are kept back for it. It is read again shortly.`;
 
+// The way back: a start refused, the card when it stays refused or can't be told, a Stop on that card, and an answered
+// run the engine hasn't carried on.
+export const restartRefusedWords = (title, why) => `${title} couldn't go back to work: ${why}. It keeps its turn, and it is tried again shortly.`;
+export const restartCardWords = (title, why) => `${title} couldn't go back to work, twice: ${why}. Nothing more of it starts until you say.`;
+export const restartUnsureWords = (title) => `Wheelhouse can't tell whether ${title} started again, so it hasn't started it a second time. Nothing more of it starts until you say.`;
+export const STOPPED_RESTART_WORDS = (title) => `${title} stays stopped, as you chose; what it has done so far is kept on its branch.`;
+export const wakeLateWords = (title) => `Your answer about ${title} went back, but the build engine hasn't carried it on yet; it keeps its place meanwhile.`;
+
 // Each step of the pack (engine/archon/pack/) and of the merge queue, in words a sentence takes.
 export const STEP_WORDS = Object.freeze({
   order: 'reading the work order',

@@ -28,7 +28,7 @@ function setup(refresh, { stepAgent, projectAgents, recheckCopies } = {}) {
     ...(projectAgents ? { projectAgents } : {}),
     ...(recheckCopies ? { recheckCopies: async (...args) => { calls.push('recheck'); return recheckCopies(...args); } } : {}),
   });
-  return { routes, calls };
+  return { routes, calls, engine };
 }
 const order = workOrder({ work: { id: 'card-1', lane: 'small', goal: 'Add a subtract function', done: [{ command: 'node --test', expect: 0 }] }, config: { testCommand: 'node --test' } });
 
@@ -81,4 +81,12 @@ test('a run on the kits is not re-checked here', async () => {
   const { routes, calls } = setup(fresh, { stepAgent: () => null, projectAgents: copilot, recheckCopies: async () => assert.fail('not here') });
   assert.equal((await routes.start({ project: 'p', order })).ok, true);
   assert.deepEqual(calls, ['refresh p', 'start']);
+});
+
+test('a start with no reply in time says so, and a plain refusal doesn\'t', async () => {
+  const { routes, engine } = setup(async () => ({ ok: true }));
+  engine.start = async () => ({ ok: false, refused: 'no reply', uncertain: true });
+  assert.deepEqual(await routes.start({ project: 'p', order }), { ok: false, refused: 'no reply', uncertain: true });
+  engine.start = async () => ({ ok: false, refused: 'no' });
+  assert.deepEqual(await routes.start({ project: 'p', order }), { ok: false, refused: 'no' });
 });

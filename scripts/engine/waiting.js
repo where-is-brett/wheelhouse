@@ -45,5 +45,6 @@ export function ownWaiting({ state, views } = {}) {
   for (const asked of [state?.clashAsked, state?.redAsked]) {
     for (const [work, id] of entriesOf(asked)) if (open(id)) waiting.add(work);
   }
+  for (const entry of Array.isArray(state?.returning) ? state.returning : []) if (open(entry?.asked)) waiting.add(entry.work);
   return waiting;
 }

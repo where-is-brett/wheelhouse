@@ -5,7 +5,10 @@
 // line) or a pull request's approval (signed as any approval is), so the signing that exists signs it. Each tick, the
 // director's signed answers go back to the engine, once each; one the engine refuses closes with one plain line.
 // Under All stop nothing goes back: an answer signed then never reaches the build, and its question is asked again
-// after the lift. What it did is kept in `file`, so a helper started again routes nothing twice.
+// after the lift. What it did is kept in `file`, so a helper started again routes nothing twice. The click counts at
+// once, and delivery waits for a place (delegated decisions design, section 8.3): an answered piece enters the
+// dispatcher's list, and its answer goes once it is admitted, with no incident open. An answer that stops the work, the
+// fix lane and the merge queue don't wait.
 //
 // Each tick also keeps the caps (section 10.2): a running run past its minutes (running time only) or its tokens is
 // cancelled, its worktree kept, and a cap card asks Give it more or Stop. Give it more resumes a run that stopped on
@@ -36,6 +39,10 @@ export const STOP_LABEL = 'Stop';
 // the director's answer (other than Send it back, which says nothing more) in its order.
 const STOP = 'stop';
 const REWORK = 'rework';
+// The labels that stop work: an answer with one of these needs no place.
+export const STOPS_WORK = Object.freeze(new Set([STOP_LABEL, 'Stop here', STOP]));
+// Give it more under way: marked before it acts, so a crash part way is finished and never done twice.
+const GOING = 'going';
 // The bug lane's proposal when a bug proves bigger than a bug (scripts/engine/bug-size.js): the work stops in the bug
 // lane, and the First Mate records it again in the lane the director picked (intake, route 2).
 const BIGGER = 'bigger-than-a-bug';
@@ -75,8 +82,11 @@ const inSentence = (title) => (/^[A-Z][a-z]/.test(title) ? title.charAt(0).toLow
 //   its title from the host, or null; `keepReviews(runId)` keeps what an ended run's task reviews last said, in the
 //   helper's own record, true once done;
 // - `release(work)` ends a piece's reservation (dispatch-run.js), for an end that writes no report: the director's Stop
-//   and a bug that moves lane.
-export function engineRunner({ engine, file, readViews, write, stopped = () => false, now = () => new Date(), settings = () => ({}), workOf = () => null, titleOf = (work) => work, endRun = async () => ({ ended: [], survivors: [] }), openedOf = () => null, prTitleOf = async () => null, keepReviews = async () => true, onCard = () => {}, onReaderAsk = () => {}, release = () => {} } = {}) {
+//   and a bug that moves lane;
+// - `admittedTo(work)` whether the dispatcher has given a piece its place; `delivered(work, key)` and `drop(work, key)` tell
+//   it an answer went back or was refused or not used; `startAdmitted(args)` starts a run on the place already held;
+//   `carryOver(work, { branch, answers })` keeps what Carry on needs of an answer All stop kept from being used.
+export function engineRunner({ engine, file, readViews, write, stopped = () => false, now = () => new Date(), settings = () => ({}), workOf = () => null, titleOf = (work) => work, endRun = async () => ({ ended: [], survivors: [] }), openedOf = () => null, prTitleOf = async () => null, keepReviews = async () => true, onCard = () => {}, onReaderAsk = () => {}, release = () => {}, admittedTo = () => true, delivered = () => {}, drop = () => {}, startAdmitted = async () => ({ ok: false, refused: 'nothing starts runs here' }), carryOver = () => {} } = {}) {
   let state = readState(file);
   const keep = () => saveState(file, state);
   const note = (words, extra = {}) => write('note', { about: 'engine', words, ...extra });
@@ -90,7 +100,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   };
   const placeOf = (ask) => ({ branch: ask?.context?.branch ?? null, folder: ask?.context?.folder ?? null });
 
-  let startRun = async () => ({ ok: false, refused: 'nothing starts runs here' });
+  let enter = () => {};
   const viewsNow = () => {
     try { return readViews() ?? {}; } catch { return {}; }
   };
@@ -270,13 +280,34 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     sealCard({ id, kind: cardKind(ask), work, runId, level: q.level, ...placeOf(ask) });
   }
 
+  function waitingOn() {
+    let views;
+    try { views = readViews() ?? {}; } catch { return new Set(); }
+    return routerWaiting({ state, views, prWork: (pr) => openedOf(pr)?.work ?? null });
+  }
+
+  // The lane of the run an answer goes to.
+  const laneOf = (kept, views) => (views.runs?.[kept.work] ?? []).filter((r) => r?.data?.runId === kept.runId).at(-1)?.data?.lane ?? workOf(kept.runId)?.lane;
+  // Whether a piece may be sent its answer now.
+  const hasPlace = (work, views) => (views.incidents?.open?.length ?? 0) === 0 && admittedTo(work);
+  // Tells the dispatcher of each answer already settled, so a crash just after one leaves no entry behind.
+  function settled() {
+    for (const [key, how] of Object.entries(state.delivered)) {
+      const work = (state.questions[key] ?? state.approvals[key])?.work;
+      if (typeof work !== 'string' || how === GOING) continue;
+      if (how === 'answered') delivered(work, key);
+      else drop(work, key);
+    }
+  }
+
   // Sends the director's signed answers to the engine, once each.
   async function deliver() {
     let views = {};
     try { views = readViews() ?? {}; } catch { views = {}; }
+    settled();
     const answered = [];
     for (const [id, kept] of Object.entries(state.questions)) {
-      if (state.delivered[id]) continue;
+      if (state.delivered[id] && state.delivered[id] !== GOING) continue;
       const answer = views.questions?.[id]?.answer;
       if (!isPlain(answer) || typeof answer.label !== 'string') continue;
       const engineRef = views.questions[id].question?.data?.engine ?? { ask: kept.ask?.id, options: {} };
@@ -289,17 +320,36 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       answered.push({ key, kept, answer: kept.approve ? { ask: kept.ask.id, choice: kept.approve } : null });
     }
     for (const { key, kept, answer } of answered) {
+      const label = views.questions?.[key]?.answer?.label;
+      const stops = answer?.choice === STOP || STOPS_WORK.has(label);
       if (kept.cap) {
         if (stopped()) continue;
+        const more = label === MORE;
+        if (more) {
+          enter({ work: kept.work, lane: kept.lane, via: 'more', key, runId: kept.runId });
+          if (!hasPlace(kept.work, views)) continue;
+        }
+        const again = state.delivered[key] === GOING;
+        state.delivered[key] = more ? GOING : 'answered';
+        keep();
+        await capAnswer(kept, label, key, again);
         state.delivered[key] = 'answered';
         keep();
-        await capAnswer(kept, views.questions?.[key]?.answer?.label);
         continue;
       }
       if (stopped()) {
         state.delivered[key] = 'stop';
-        const over = (await inspect(kept.runId))?.status === 'ended';
-        if (over && answer?.choice === STOP) letGo(kept.work);
+        const record = await inspect(kept.runId);
+        const over = record?.status === 'ended';
+        if (over && stops) letGo(kept.work);
+        else if (over && answer) {
+          // Its run is gone, so nothing goes back; Carry on starts it on its branch with this answer in its order.
+          const said = typeof answer.words === 'string' ? answer.words : label;
+          const question = questionOf(kept.ask);
+          const answers = [...(state.answers[kept.work] ?? []), ...(question && typeof said === 'string' ? [{ question, answer: said }] : [])];
+          carryOver(kept.work, { branch: record.branch ?? placeOf(kept.ask).branch, answers });
+        }
+        drop(kept.work, key);
         // The ask is still open in the engine unless All stop cancelled its run: it comes back as a new card once All stop is lifted.
         if (!over && kept.ask?.type === 'ask') state.later.push(kept.ask);
         keep();
@@ -312,6 +362,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       if (state.capped[kept.runId]?.stopped === true) {
         state.delivered[key] = 'stopped';
         keep();
+        drop(kept.work, key);
         await note(`Your answer about ${titled(kept.work)} wasn't sent: you stopped it at its cap, so it doesn't carry on.`, { work: kept.work });
         continue;
       }
@@ -321,6 +372,13 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
         state.delivered[key] = 'nothing';
         keep();
         continue;
+      }
+      const runLane = laneOf(kept, views);
+      if (!stops && runLane !== FIX_LANE && runLane !== 'merge' && kept.work !== MERGE_WORK) {
+        // The piece comes back once, with both answers, when a second card of it is still open.
+        if (waitingOn().has(kept.work)) continue;
+        enter({ work: kept.work, lane: runLane, via: 'answer', key, runId: kept.runId });
+        if (!hasPlace(kept.work, views)) continue;
       }
       const got = await answerEngine(kept.runId, answer);
       if (!got.ok && got.unreachable === true) {
@@ -332,9 +390,11 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       }
       state.delivered[key] = got.ok ? 'answered' : 'refused';
       delete state.tries[key];
+      keep();
+      if (got.ok) delivered(kept.work, key);
+      else drop(kept.work, key);
       if (answer.choice === STOP) letGo(kept.work);
       if (got.ok && typeof kept.ask?.mergeChoice === 'string' && answer.choice === kept.ask.mergeChoice) mergeRuled();
-      const runLane = (views.runs?.[kept.work] ?? []).filter((r) => r?.data?.runId === kept.runId).at(-1)?.data?.lane ?? workOf(kept.runId)?.lane;
       const move = got.ok && runLane === 'bug' && kept.ask?.kind === 'blocked' && kept.ask?.topic === BIGGER && Object.hasOwn(MOVES, answer.choice) ? MOVES[answer.choice] : undefined;
       if (move) {
         letGo(kept.work);
@@ -343,7 +403,6 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
         continue;
       }
       if (got.ok && kept.ask?.kind === 'blocked' && answer.choice !== STOP) {
-        const label = views.questions?.[key]?.answer?.label;
         const said = typeof answer.words === 'string' ? answer.words : label;
         const question = questionOf(kept.ask);
         state.reworks[kept.runId] = { work: kept.work, answer: answer.choice !== REWORK && question && typeof said === 'string' ? { question, answer: said } : null };
@@ -383,7 +442,8 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     sealCard({ id, kind: 'cap', work, runId, level: 3, branch: branch ?? null, folder: null });
   }
 
-  async function capAnswer(kept, label) {
+  // `again` is a Give it more that a crash cut short: a run already carrying on needs nothing more.
+  async function capAnswer(kept, label, key, again = false) {
     if (label !== MORE) {
       letGo(kept.work);
       if (held(kept.runId)) {
@@ -423,25 +483,32 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
         || Object.entries(state.questions).some(([key, k]) => asking(k) && !state.delivered[key])
         || Object.entries(state.approvals).some(([key, k]) => asking(k) && !state.delivered[key]);
       if (!open) await safely(() => engine.act(kept.runId, { resume: {} }));
+      delivered(kept.work, key);
       return;
     }
     const record = await inspect(kept.runId);
+    if (again && record?.status === 'running') {
+      delete state.capped[kept.runId];
+      state.carried[kept.runId] = { raised: true, runs: state.carried[kept.runId]?.runs ?? [] };
+      keep();
+      delivered(kept.work, key);
+      return;
+    }
     if (record?.outcome === 'failed' || record?.status === 'paused') {
       const got = await safely(() => engine.act(kept.runId, { resume: {} }));
       if (got?.ok) {
         delete state.capped[kept.runId];
         state.carried[kept.runId] = { raised: true, runs: state.carried[kept.runId]?.runs ?? [] };
         keep();
+        delivered(kept.work, key);
         return;
       }
     }
-    const got = await startRun({ work: kept.work, lane: kept.lane, branch: kept.branch ?? null, carryOn: true, raised: true });
-    if (got?.ok && typeof got.runId === 'string') {
-      state.carried[got.runId] = { raised: true, runs: [...(state.carried[kept.runId]?.runs ?? []), kept.runId] };
-      keep();
-    } else {
-      await note(`${titleOf(kept.work)} couldn't be carried on: ${got?.refused ?? 'the build engine didn\'t start it'}.`, { work: kept.work });
-    }
+    // Refused, it stays on the way back: the dispatcher says so, and the place goes back until it is tried again.
+    await startAdmitted({
+      work: kept.work, key, lane: kept.lane, branch: kept.branch ?? null, carryOn: true, raised: true,
+      carried: { raised: true, runs: [...(state.carried[kept.runId]?.runs ?? []), kept.runId] },
+    });
   }
 
   // Cancelled, tried once more if the engine didn't take it; a run still going after that has its processes ended, as
@@ -535,18 +602,14 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       const records = (viewsNow().runs?.[work] ?? []).filter((r) => r?.data?.runId === runId);
       const latest = records.at(-1)?.data;
       if (latest?.state !== 'ended') continue;
-      delete state.reworks[runId];
-      if (answer) state.answers[work] = [...(state.answers[work] ?? []), answer];
-      keep();
       const lane = latest.lane ?? workOf(runId)?.lane;
       const branch = latest.branch ?? records.find((r) => r.data.branch)?.data.branch ?? null;
-      const got = await startRun({ work, lane, branch, carryOn: true, raised: false, answers: state.answers[work] ?? [] });
-      if (got?.ok && typeof got.runId === 'string') {
-        state.carried[got.runId] = { raised: false, runs: [...(state.carried[runId]?.runs ?? []), runId] };
-        keep();
-      } else {
-        await note(`${titleOf(work)} couldn't be sent back for a fresh run: ${got?.refused ?? 'the build engine didn\'t start it'}.`, { work });
-      }
+      const answers = [...(state.answers[work] ?? []), ...(answer ? [answer] : [])];
+      // Entered before it is cleared: an entry is idempotent, so a crash between the two loses nothing.
+      enter({ work, lane, via: 'rework', key: `rework:${runId}`, branch, carryOn: true, raised: false, answers, carried: { raised: false, runs: [...(state.carried[runId]?.runs ?? []), runId] } });
+      delete state.reworks[runId];
+      state.answers[work] = answers;
+      keep();
     }
   }
 
@@ -573,18 +636,20 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       await caps();
       await show();
     },
-    // How the runner starts a run again (the dispatcher's own start): ({ work, lane, branch, carryOn, raised }) -> { ok, runId }.
-    onStart(fn) { if (typeof fn === 'function') startRun = fn; },
+    // How the runner asks for a place back: the dispatcher's `enter`.
+    onEnter(fn) { if (typeof fn === 'function') enter = fn; },
+    // A run on the way back has started, carrying these figures.
+    started(runId, carried) {
+      if (!isPlain(carried)) return;
+      state.carried[runId] = carried;
+      keep();
+    },
     // Told when an answer to the merge queue's question merges: the queue is then due at once.
     onMergeRuled(fn) { if (typeof fn === 'function') mergeRuled = fn; },
     // What a run carries: { raised, runs } (the runs before it whose spend counts against its caps).
     carried: (runId) => state.carried[runId] ?? null,
     questionOf: (runId) => state.capped[runId]?.question ?? null,
     // The pieces with a card of the router's open. Views that can't be read name none, so each keeps its place.
-    waitingWork() {
-      let views;
-      try { views = readViews() ?? {}; } catch { return new Set(); }
-      return routerWaiting({ state, views, prWork: (pr) => openedOf(pr)?.work ?? null });
-    },
+    waitingWork: () => waitingOn(),
   };
 }

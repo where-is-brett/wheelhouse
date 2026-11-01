@@ -4,7 +4,8 @@
 // never reads an engine's own words, only these.
 //
 //   health() -> { ok, findings: string[] }
-//   start(order) -> { ok: true, runId } | { ok: false, refused }
+//   start(order) -> { ok: true, runId } | { ok: false, refused, uncertain? }
+//     (`uncertain: true` beside a refusal when the engine gave no reply in time, so a run may have begun)
 //   watch(cursor) -> { events: EngineEvent[], cursor }       (follow(cursor) is the same as an async iterator)
 //   act(runId, { answer: { ask, choice, words? } } | { cancel: { reason } } | { resume: {} }) -> { ok } | { ok: false, refused }
 //     (`unreachable: true` beside a refusal when the engine gave no reply at all, so the caller may try again)
@@ -15,7 +16,10 @@
 //
 // Beside the interface, for the helper's continuation host (host.js): `name`, the engine's name for the record, and
 // wakeCommand() -> { command, args, env }, the process that carries answered runs on; and, for All stop (stop.js),
-// ownsProcess(command) -> boolean, whether a process as `ps` lists it is the engine's own.
+// ownsProcess(command) -> boolean, whether a process as `ps` lists it is the engine's own. `inspect` may add `folder`,
+// the run's working folder. Optional, for a start that may have happened:
+//   liveRunOf({ work, since }) -> { runId } | null | undefined
+//     the live run of `work` begun since `since`, null for none, undefined when the engine can't say; missing reads as undefined
 
 export const METHODS = Object.freeze(['health', 'start', 'watch', 'act', 'inspect', 'stopAll']);
 export const ENGINE_EVENTS = Object.freeze(['run-started', 'step-finished', 'ask', 'ask-resolved', 'run-ended']);

@@ -5,9 +5,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { dispatchRun, orderFor, TRY_AGAIN } from '../../../scripts/engine/dispatch-run.js';
+import { dispatchRun, orderFor, TRY_AGAIN, STOP_HERE } from '../../../scripts/engine/dispatch-run.js';
 import { fakeEngine } from '../../../scripts/engine/fake.js';
 import { tempFolder } from '../../helpers/homes.js';
+import { wayBack, asking, askingTwice, forever, quiet } from '../../helpers/way-back.js';
 
 const views = () => ({
   work: { 'card-1': { work: { id: 'w-1', at: '2026-10-29T08:00:00.000Z', data: { id: 'card-1', title: 'The sale banner', lane: 'quick', visible: false, dependsOn: [] } }, approved: false, since: '2026-10-29T08:00:00.000Z' } },
@@ -113,7 +114,7 @@ test('a red head goes back with its tail in the order, reason red', async () => 
   assert.equal(t.starts.length, 1, 'started once for each red');
 });
 
-test('a red whose start is refused is tried again, with one line in the Logbook', async () => {
+test('a red whose start is refused is tried again with one line in the Logbook, and a second refusal brings a card', async () => {
   let refusing = true;
   const t = sentBackWorld({ refuse: () => refusing });
   t.d.sentBack('card-1', 'red', 'a test failed');
@@ -121,10 +122,15 @@ test('a red whose start is refused is tried again, with one line in the Logbook'
   await t.d.tick();
   assert.equal(t.starts.length, 2);
   assert.equal(t.written.filter((w) => w.kind === 'note').length, 1);
-  refusing = false;
+  const card = t.written.find((w) => w.kind === 'question').data;
+  assert.deepEqual(card.options.map((o) => o.label), [TRY_AGAIN, STOP_HERE]);
   await t.d.tick();
+  assert.equal(t.starts.length, 2, 'nothing starts until the director says');
+  refusing = false;
+  t.see({ ...ranOnce(), questions: { [card.id]: { answer: { label: TRY_AGAIN } } } });
   await t.d.tick();
   assert.equal(t.starts.length, 3);
+  assert.equal(t.starts[2].order.checkTail, 'a test failed');
 });
 
 test('a second red raises a card', async () => {
@@ -178,10 +184,12 @@ test('a clash still re-queues as before, with no tail', async () => {
 test('work started again carries the director\'s answers in its order, and no others', async () => {
   const t = setUp({ routing: {}, testCommand: 'node --test' });
   const answers = [{ question: 'Task 2, Show refunds: Should a part refund show as its own line?', answer: 'Its own line' }];
-  assert.equal((await t.d.startAgain({ work: 'card-1', lane: 'quick', branch: 'wh/card-1', carryOn: true, answers })).ok, true);
+  t.d.enter({ work: 'card-1', lane: 'quick', via: 'rework', key: 'first', branch: 'wh/card-1', carryOn: true, answers });
+  await t.d.tick();
   assert.deepEqual(t.starts[0].order.answers, answers);
   assert.equal(t.starts[0].carryOn, true);
-  await t.d.startAgain({ work: 'card-1', lane: 'quick', branch: 'wh/card-1', carryOn: true });
+  t.d.enter({ work: 'card-1', lane: 'quick', via: 'rework', key: 'second', branch: 'wh/card-1', carryOn: true });
+  await t.d.tick();
   assert.deepEqual(t.starts[1].order.answers, []);
 });
 
@@ -531,4 +539,235 @@ test('the tick still gives dispatch no waiting and no reservations', async () =>
   const { start, hold } = await t.d.tick();
   assert.deepEqual([start, hold], [[], []], 'three paused runs keep their places until the wiring');
   assert.deepEqual(t.d.reserved().a, ['one.js', 'built.js']);
+});
+
+// Delegated decisions design, section 8.3: every way back passes one check, at most once.
+// A piece whose run has ended, asking to go back; `live` is the engine's word on a start that may have happened.
+async function uncertainStart({ live }) {
+  const w = wayBack({ recordings: { a: quiet(), forever: forever() }, pace: 1 });
+  w.put('a');
+  await w.tick(2);
+  if (live) w.engine.liveRunOf = live;
+  w.dispatcher.enter({ work: 'a', lane: 'quick', via: 'rework', key: 'k', branch: 'wh/a', carryOn: true });
+  return w;
+}
+const parked = async (over = {}) => {
+  const w = wayBack({ recordings: { a: asking('qa'), busy: asking('qbusy') }, pace: 1, ...over });
+  w.put('a', { place: 0 });
+  w.put('busy', { place: 1 });
+  await w.tick(3);
+  return w;
+};
+const entered = (w) => JSON.parse(fs.readFileSync(path.join(w.dir, 'dispatch.json'), 'utf8'));
+
+test('the click is recorded and the card closes at once, and delivery waits for a place', async () => {
+  const w = await parked({ recordings: { a: asking('qa'), busy: forever() } });
+  w.answer('a', 'Do the whole page');
+  await w.tick(3);
+  assert.equal(w.cardOf('a'), null, 'the card has closed');
+  assert.equal(w.answers().length, 0, 'the answer waits for a place');
+  assert.equal(entered(w).returning.length, 1);
+  w.engine.act(w.runsOf('busy')[0], { cancel: { reason: 'done' } });
+  await w.tick(2);
+  assert.deepEqual(w.answers().map((c) => c.action.answer.ask), ['qa']);
+});
+
+test('a path\'s entry stays until its run is seen to start', async () => {
+  const w = await uncertainStart({});
+  w.refuse = () => 'no';
+  await w.tick();
+  assert.equal(entered(w).returning.length, 1, 'refused: still on returning');
+});
+
+test('each path asks for a place: pace full means no start, and a free place one start', async () => {
+  for (const via of ['rework', 'slice', 'carry', 'requeue', 'try-again', 'build-again']) {
+    const w = wayBack({ recordings: { a: quiet(), busy: forever() }, pace: 1 });
+    w.put('busy', { place: 0 });
+    w.put('a', { place: 1 });
+    await w.tick();
+    w.work.a.approved = true;
+    (w.runs.a ??= []).push({ at: '2026-10-29T09:00:00.000Z', data: { work: 'a', runId: 'old', lane: 'quick', state: 'ended', outcome: 'completed', branch: 'wh/a' } });
+    w.dispatcher.enter({ work: 'a', lane: 'quick', via, key: 'k', branch: 'wh/a', carryOn: true });
+    await w.tick(2);
+    assert.equal(w.starts.filter((s) => s.order.work === 'a').length, 0, `${via}: pace full`);
+    w.engine.act(w.runsOf('busy')[0], { cancel: { reason: 'done' } });
+    await w.tick(3);
+    assert.equal(w.starts.filter((s) => s.order.work === 'a').length, 1, `${via}: a place free`);
+  }
+});
+
+test('a second clash\'s Try again asks for a place and starts once', async () => {
+  const t = sentBackWorld();
+  t.d.sentBack('card-1');
+  await t.d.tick();
+  t.d.sentBack('card-1');
+  await t.d.tick();
+  const id = t.written.find((w) => w.kind === 'question').data.id;
+  t.see({ ...ranOnce(), questions: { [id]: { answer: { label: TRY_AGAIN } } } });
+  await t.d.tick();
+  await t.d.tick();
+  assert.equal(t.starts.length, 2);
+  assert.equal(t.starts[1].carryOn, true);
+});
+
+
+test('an entry marked starting is never started twice', async () => {
+  // The start times out, the run having begun with a run record; a restart on the same files finds it.
+  let begun = null;
+  const w = await uncertainStart({ live: async () => ({ runId: begun }) });
+  const before = w.starts.length;
+  w.startAs = async (args, real) => { begun = (await real(args)).runId; return { ok: false, refused: 'no reply in time', uncertain: true }; };
+  await w.tick();
+  assert.equal(w.starts.length, before + 1);
+  assert.equal(w.dispatcher.admittedTo('a'), true, 'it keeps its place while it is settled');
+  w.restart();
+  await w.tick(3);
+  assert.equal(w.starts.length, before + 1, 'no second start');
+  assert.equal(w.notes().filter((n) => /couldn't go back/.test(n)).length, 0, 'an uncertain start is no refusal');
+});
+
+test('a crash while starting is settled the same way', async () => {
+  const w = await uncertainStart({ live: async () => null });
+  w.startAs = async () => new Promise(() => {});
+  w.tick();
+  await new Promise((resolve) => { setTimeout(resolve, 20); });
+  assert.equal(entered(w).admitted.some((e) => e.starting), true, 'marked before the start is called');
+  const before = w.starts.length;
+  w.startAs = null;
+  w.restart();
+  await w.tick();
+  assert.equal(w.starts.length, before + 1, 'no run: started once more');
+  await w.tick(3);
+  assert.equal(w.starts.length, before + 1);
+});
+
+test('an orphan with no run record is cancelled, confirmed ended, then started once', async () => {
+  const w = await uncertainStart({ live: async () => (w.orphan ? { runId: w.orphan } : null) });
+  const before = w.starts.length;
+  w.startAs = async () => { w.orphan = w.engine.start({ recording: 'forever', work: 'a' }).runId; return { ok: false, refused: 'no reply in time', uncertain: true }; };
+  await w.tick();
+  w.startAs = null;
+  await w.tick();
+  assert.ok(w.engine.calls.some((c) => c.call === 'act' && c.runId === w.orphan && c.action.cancel), 'cancelled');
+  assert.equal(w.engine.inspect(w.orphan).status, 'ended');
+  assert.equal(w.starts.length, before + 2, 'started again, once');
+  await w.tick(3);
+  assert.equal(w.starts.length, before + 2);
+});
+
+test('a certain refusal goes straight back, with no liveRunOf and no card', async () => {
+  let asked = 0;
+  const w = await uncertainStart({ live: async () => { asked += 1; return null; } });
+  w.refuse = () => 'no';
+  await w.tick();
+  assert.equal(asked, 0);
+  assert.equal(w.cards().filter((c) => c.options[0].label === TRY_AGAIN).length, 0);
+  assert.equal(w.dispatcher.admittedTo('a'), false);
+});
+
+test('when liveRunOf can\'t say, or the cancel can\'t be confirmed, a card comes, not a second start', async () => {
+  for (const kind of ['can\'t say', 'no method', 'no cancel']) {
+    const w = await uncertainStart({ live: async () => (kind === 'no cancel' ? { runId: 'gone' } : undefined) });
+    if (kind === 'no method') delete w.engine.liveRunOf;
+    const before = w.starts.length;
+    w.startAs = async () => ({ ok: false, refused: 'no reply in time', uncertain: true });
+    await w.tick();
+    w.startAs = null;
+    await w.tick(3);
+    assert.equal(w.starts.length, before + 1, kind);
+    assert.deepEqual(w.cardOf('a').options.map((o) => o.label), [TRY_AGAIN, STOP_HERE], kind);
+    assert.equal(w.dispatcher.admittedTo('a'), false, 'the place goes back');
+  }
+});
+
+test('a refused start gives the place back, says so once, and raises Try again and Stop on the second', async () => {
+  const w = await uncertainStart({});
+  w.refuse = () => 'the mirror could not be read';
+  await w.tick();
+  assert.equal(w.dispatcher.admittedTo('a'), false);
+  assert.equal(w.notes().filter((n) => /the mirror could not be read/.test(n)).length, 1);
+  await w.tick();
+  assert.equal(w.notes().filter((n) => /the mirror could not be read/.test(n)).length, 1);
+  assert.deepEqual(w.cardOf('a').options.map((o) => o.label), [TRY_AGAIN, STOP_HERE]);
+  w.answer('a', STOP_HERE);
+  await w.tick();
+  assert.deepEqual(entered(w).returning, []);
+});
+
+test('a run that pauses on a new ask before it is seen running gives its place up', async () => {
+  const w = wayBack({ recordings: { a: askingTwice('one', 'two') }, pace: 1 });
+  w.put('a');
+  await w.tick();
+  w.answer('a', 'Do the whole page');
+  await w.tick(2);
+  assert.equal(w.answers().length, 1);
+  assert.ok(w.cardOf('a'), 'the second ask has its card');
+  await w.tick();
+  assert.equal(w.dispatcher.admittedTo('a'), false, 'it waits on the director again');
+});
+
+test('an answered run the engine hasn\'t carried on keeps its place, and the Logbook says so once', async () => {
+  const w = wayBack({ recordings: { a: asking('qa') }, pace: 1 });
+  w.put('a');
+  await w.tick();
+  w.answer('a', 'Do the whole page');
+  // No waker: the answer is taken, and the run sits paused (check 85).
+  w.engine.act = (runId, action) => { w.engine.calls.push({ call: 'act', runId, action }); return { ok: true }; };
+  await w.tick(2);
+  assert.equal(w.answers().length, 1);
+  w.clock.now = new Date(w.clock.now.getTime() + 10 * 60 * 1000);
+  await w.tick(3);
+  assert.equal(w.notes().filter((n) => /hasn't carried it on yet/.test(n)).length, 1);
+  assert.equal(w.dispatcher.admittedTo('a'), true, 'it keeps its place');
+  assert.equal(w.answers().length, 1, 'and nothing is sent twice');
+});
+
+test('under an incident answers wait, and go once it closes, even one already admitted', async () => {
+  const w = await parked();
+  w.engine.act(w.runsOf('busy')[0], { cancel: { reason: 'done' } });
+  w.answer('a', 'Do the whole page');
+  await w.pump();
+  await w.runner.tick();
+  await w.dispatcher.tick();
+  assert.equal(w.dispatcher.admittedTo('a'), true);
+  w.incidents.open = [{ id: 'i-1', kind: 'other' }];
+  await w.tick(3);
+  assert.equal(w.answers().length, 0);
+  w.incidents.open = [];
+  await w.tick();
+  assert.equal(w.answers().length, 1);
+});
+
+test('under All stop nothing admitted starts, and it starts once the stop lifts', async () => {
+  const w = await uncertainStart({});
+  await w.pump();
+  w.stop = true;
+  await w.tick(2);
+  const before = w.starts.length;
+  w.stop = false;
+  await w.tick();
+  assert.equal(w.starts.length, before + 1);
+});
+
+test('queued again by Carry on, an entry leaves and the new start carries on from its branch', async () => {
+  const w = await uncertainStart({});
+  w.stop = true;
+  await w.tick();
+  w.work.a.work.at = '2026-10-29T12:00:00.000Z';
+  w.stop = false;
+  await w.tick();
+  const last = w.starts.at(-1);
+  assert.equal(last.order.work, 'a');
+  assert.equal(last.branch, 'wh/a');
+  assert.deepEqual(entered(w).returning, []);
+});
+
+test('a Stop beside another open card keeps the files let go of', async () => {
+  const w = wayBack({ recordings: { a: asking('qa') }, branchPaths: async () => ['x.js'] });
+  w.put('a', { files: ['a.js'] });
+  await w.tick(2);
+  assert.deepEqual(w.dispatcher.reserved(), { a: ['a.js', 'x.js'] });
+  w.dispatcher.release('a');
+  await w.tick();
+  assert.deepEqual(w.dispatcher.reserved(), {}, 'its other card doesn\'t take the files back');
 });

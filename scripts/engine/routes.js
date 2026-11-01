@@ -163,7 +163,7 @@ export function engineRoutes({
     const stands = await recheckHold(project, found.folder, engine, order.bindings);
     if (stands) return { ok: false, refused: stands };
     const started = await engine.start({ work: order.work, lane: order.lane, branch, carryOn: carryOn === true, project: found.folder, bindings: order.bindings });
-    if (!started?.ok) return { ok: false, refused: started?.refused ?? 'the engine didn\'t start the run' };
+    if (!started?.ok) return { ok: false, refused: started?.refused ?? 'the engine didn\'t start the run', ...(started?.uncertain === true ? { uncertain: true } : {}) };
     storeOf(project).save(started.runId, order);
     const artefacts = engine.artefactsOf(started.runId, host?.repo?.(project));
     const ticket = newTicket();
