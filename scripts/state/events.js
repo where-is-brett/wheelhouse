@@ -19,7 +19,7 @@ export const PLAIN_KINDS = [
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
   'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey', 'column-ready', 'premium-rest', 'chat-question', 'chat-steer',
-  'run', 'ask', 'cost', 'preview', 'lesson', 'incident-closed', 'reproduced',
+  'run', 'ask', 'cost', 'preview', 'lesson', 'incident-closed', 'reproduced', 'rule',
 ];
 // `control-file` is the watcher's own finding (ruling P7-33): signed, so no session can write one. So is `usage-card`,
 // the front desk's session start's offer (design section 14.6): a click on its card's switch is the director's
@@ -51,7 +51,9 @@ export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 
 export const RED_MAIN_FIELDS = ['kind', 'suspect', 'work'];
 export const RED_MAIN_OWN = 'only the helper records a red main line\'s incident';
 
-export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'shadow'];
+// `rule` is a rule proposed from an answered card (delegated decisions design, section 11.1): the helper composes it from
+// what it read itself, and it means nothing until the director's signed click confirms that very record.
+export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'shadow', 'rule'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 
 const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main', 'safekeeping'];
@@ -246,6 +248,8 @@ const PLAIN_SHAPES = {
   request: { must: ['words', 'via'], may: [] },
   // A First Mate turn that ended on a question with no card (scripts/hooks/chat-question.js): a count, never the words.
   'chat-question': { must: ['at'], may: [] },
+  // A rule (scripts/delegation/rules.js): typed words or a literal match, never both, composed at stage 0.
+  rule: { must: ['id', 'words', 'literal', 'conditions', 'exclusions', 'answer', 'project', 'paths', 'lanes', 'stage', 'review', 'hash'], may: [] },
   // A pick in the chat of Suggest a change… on a build's question: the card's id, for its score, and never the words.
   'chat-steer': { must: ['card'], may: [] },
   // `from`: the ready-made change the work starts from (ruling P4): its commit, the ref that keeps
@@ -420,6 +424,21 @@ function checkPlain(kind, data) {
   const optionalText = (k) => { if (data[k] !== undefined && !isText(data[k])) bad(`has a ${k} that is not text`); };
   const slug = (k) => { if (!isSlug(data[k])) bad(`needs ${k} to be a short slug (lower-case letters, digits and hyphens, at most 40)`); };
   const pr = () => { if (data.pr !== undefined && (!Number.isInteger(data.pr) || data.pr < 1)) bad('has a pull request number that is not one'); };
+  if (kind === 'rule') {
+    const texts = (x) => Array.isArray(x) && x.every(isText);
+    const { literal } = data;
+    if (!/^rule-[0-9a-f]{12}$/.test(data.id)) bad('needs an id made from its hash');
+    if (!((isText(data.words) && literal === null) || (data.words === null && isPlain(literal)))) bad('holds typed words or a literal match, and not both');
+    if (literal !== null && !(texts(literal.options) && literal.options.includes(literal.take))) bad('has a literal match that doesn\'t take one of its options');
+    if (!texts(data.conditions) || !texts(data.exclusions) || !texts(data.paths)) bad('needs its conditions, exclusions and paths as lists of text');
+    if (!Array.isArray(data.lanes) || !data.lanes.every((l) => LANES.includes(l))) bad('needs its lanes to be lanes the build loop knows');
+    if (!isPlain(data.answer)) bad('needs its answer');
+    text('project');
+    if (data.stage !== 0) bad('starts at stage 0');
+    if (!ISO_TIME.test(data.review)) bad('needs its review date');
+    if (!/^[0-9a-f]{64}$/.test(data.hash)) bad('needs its hash');
+    return;
+  }
   if (kind === 'work') {
     slug('id');
     if (data.id === READER_WORK) bad('names the work kept for the reader');
@@ -819,7 +838,7 @@ export function makeEvent({ kind, data, now = () => new Date() }) {
 }
 
 // The kinds a confirmation can make take effect (design section 9).
-export const CONFIRMABLE_KINDS = ['ruling', 'level', 'setting'];
+export const CONFIRMABLE_KINDS = ['ruling', 'level', 'setting', 'rule'];
 
 // The sha256 of an event's canonical JSON without its signature: what a
 // confirmation names, so it confirms that exact event and no other.
@@ -859,7 +878,7 @@ export function checkRecord(event, { enrolled, held = [], computer = computerId(
 
 // The kind and data of a confirmation of `event`, for makeEvent to sign.
 export function confirmationFor(event) {
-  if (!CONFIRMABLE_KINDS.includes(event?.kind)) throw new Error('Only a ruling, a level or a setting can be confirmed');
+  if (!CONFIRMABLE_KINDS.includes(event?.kind)) throw new Error('Only a ruling, a level, a setting or a rule can be confirmed');
   return { kind: 'confirmation', data: { confirms: event.id, confirmsHash: eventHash(event) } };
 }
 

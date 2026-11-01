@@ -58,6 +58,17 @@ test('a signed event whose key is not trusted here is skipped, and a trusted one
   assert.deepEqual(listEvents(to, { report: () => {} }).map((e) => e.id), [approval.id]);
 }));
 
+test('a rule in an old clone is not imported: only the helper writes one', () => withHome(async () => {
+  makeSigningKey();
+  const from = await oldClone('shop');
+  const rule = { id: `rule-${'a'.repeat(12)}`, words: 'Keep it small', literal: null, conditions: [], exclusions: [], answer: {}, project: 'p', paths: [], lanes: [], stage: 0, review: new Date(0).toISOString(), hash: 'a'.repeat(64) };
+  await writeEvent({ event: makeEvent({ kind: 'rule', data: rule, now: () => T0 }), dir: from, now: () => T0 });
+  const to = await openProjectRecord('shop');
+  const got = await importEvents({ from, to, enrolled: [ownKey()] });
+  assert.equal(got.imported, 0);
+  assert.deepEqual(listEvents(to, { report: () => {} }), []);
+}));
+
 test('importing twice adds nothing, and the old folder is left as it was', () => withHome(async () => {
   makeSigningKey();
   const from = await oldClone('shop');

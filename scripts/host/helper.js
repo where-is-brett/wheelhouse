@@ -83,6 +83,7 @@ import { cardDiff, cardFacts, pathsSoFar } from '../delegation/facts.js';
 import { readerView } from '../delegation/view.js';
 import { prepareReaderFolder } from '../delegation/reader.js';
 import { setupStamp } from '../delegation/stamp.js';
+import { ruleSet } from '../delegation/rules.js';
 import { exclusionsHash } from '../delegation/candidates.js';
 import { dispatchRun, MERGE_WORK } from '../engine/dispatch-run.js';
 import { FIX_LANE, openRedMain, redMainIncident } from '../engine/fix-main.js';
@@ -2467,7 +2468,7 @@ export async function startHelper({
     const plain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
     if (event.kind !== 'confirmation') refuse('only a confirmation carries the event it confirms');
     if (!plain(target) || Object.keys(target).some((k) => !TARGET_KEYS.includes(k)) || target.v !== 1 || !plain(target.data)) refuse('the confirmed event is not a whole plain event');
-    if (!CONFIRMABLE_KINDS.includes(target.kind) || target.kind === 'level') refuse('only a ruling or a setting comes with its confirmation');
+    if (!['ruling', 'setting'].includes(target.kind)) refuse('only a ruling or a setting comes with its confirmation');
     if (typeof target.id !== 'string' || !RANDOM_UUID.test(target.id) || typeof target.at !== 'string' || !ISO_TIME.test(target.at)) refuse('the confirmed event needs a random id and its time');
     if (target.computer !== computerId()) refuse('only an event made on this computer comes with its confirmation');
     if (event.data?.confirms !== target.id || event.data?.confirmsHash !== eventHash(target)) refuse('the confirmation does not name the event it carries');
@@ -5094,6 +5095,7 @@ export async function startHelper({
         return cardContext({ views: views(), card, testCommand: config?.testsNotCounting ? null : config?.testCommand });
       },
       stampOf: () => setupStamp({ bindings: engineConfigOf(project, folder)?.routing, packDigest: packTreeDigest(path.join(engineDir(), 'pack')), exclusionsHash: exclusionsHash() }),
+      rulesOf: () => ruleSet(project, views().rules),
       history: () => {
         const events = listEvents(stateDir(project), { report: () => {} });
         return historyOf({ events, enrolled: ownKeyOnly(), views: buildViews(events, ownKeyOnly(), { now }) });

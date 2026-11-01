@@ -539,6 +539,17 @@ test('a chat-question count and a chat-steer never reach the watcher: they wake 
   }
 }));
 
+test('a rule never reaches the watcher: it is sent to no session', () => withHome(async () => {
+  enrolHere();
+  record('incident', { id: 'one', what: 'x' }, 0);
+  const first = await observe({ project: P, client: fakeClient(), now: at(SEC) });
+  const prev = step({ seen: [], prev: null }, first).cursor.prev;
+  const rule = { id: `rule-${'a'.repeat(12)}`, words: 'Keep it small', literal: null, conditions: [], exclusions: [], answer: {}, project: 'p', paths: [], lanes: [], stage: 0, review: new Date(0).toISOString(), hash: 'a'.repeat(64) };
+  const line = record('rule', rule, 2 * SEC);
+  const next = await observe({ project: P, client: fakeClient(), now: at(3 * SEC), prev });
+  assert.equal(next.stateIds.includes(line.id), false);
+}));
+
 test('a seal never reaches the watcher: it is sent to no session', () => withHome(async () => {
   enrolHere();
   record('incident', { id: 'one', what: 'x' }, 0);
