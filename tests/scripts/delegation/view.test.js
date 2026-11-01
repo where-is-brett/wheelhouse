@@ -5,9 +5,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { readerView, screenWords, cleanDiff } from '../../../scripts/delegation/view.js';
+import { readerView, screenWords, cleanDiff, pieceCards } from '../../../scripts/delegation/view.js';
 import { main as viewCopy, VIEW_FILE } from '../../../scripts/delegation/view-copy.js';
-import { QUESTION_MOST, VIEW_MOST_BYTES } from '../../../scripts/delegation/limits.js';
+import { CARDS_SEEN_MOST, QUESTION_MOST, VIEW_MOST_BYTES } from '../../../scripts/delegation/limits.js';
 
 const change = (file, lines, { from = file, quoted = false, context = [] } = {}) => [
   quoted ? `diff --git "a/${from}" "b/${file}"` : `diff --git a/${from} b/${file}`,
@@ -144,4 +144,28 @@ test('a view that is refused fails the step and writes nothing', async () => {
   const code = await viewCopy(['--run', 'abc123'], { client, cwd: dir, out: () => {} });
   assert.equal(code, 1);
   assert.equal(fs.existsSync(path.join(dir, VIEW_FILE)), false);
+});
+
+test('the reader sees the piece\'s open and answered cards, with no answer and nothing a step shouldn\'t say', () => {
+  const asked = (work, what, over = {}) => ({ question: { data: { work, what, options: [{ label: 'Keep', says: 'Best by far' }, { label: 'Remove', says: 'No' }], recommendation: 'Keep', level: 3, key: 'k', ...over } }, answer: null });
+  const views = { questions: {
+    'q-w-1': asked('w', 'This one?'),
+    'q-w-2': { ...asked('w', 'Which banner?'), answer: { label: 'Remove', at: 't' } },
+    'q-w-3': asked('w', 'Open?'),
+    'q-w-4': asked('w', 'As the director agreed, which?'),
+    'q-w-5': asked('w', 'At level 4?', { level: 4 }),
+    'q-w-6': { ...asked('w', 'Joined?'), joins: 'q-w-3' },
+    'q-w-7': asked('w', 'Fixed words?', { key: undefined }),
+    'q-x-1': asked('x', 'Another piece?'),
+  } };
+  const cards = pieceCards({ views, work: 'w', card: 'q-w-1' });
+  assert.deepEqual(cards.map((c) => [c.id, c.status]), [['q-w-2', 'answered'], ['q-w-3', 'open']]);
+  assert.deepEqual([...cards[0].labels].sort(), ['Keep', 'Remove']);
+  assert.equal(JSON.stringify(cards).includes('Best by far'), false);
+  assert.deepEqual(Object.keys(cards[0]).sort(), ['id', 'labels', 'question', 'status']);
+  const view = readerView({ question: 'This one?', options: [{ label: 'Keep' }, { label: 'Remove' }], cards, seed: 'q-w-1' });
+  assert.deepEqual(view.cards, cards);
+  const many = { questions: Object.fromEntries(Array.from({ length: CARDS_SEEN_MOST + 5 }, (_, i) => [`q-w-${i + 10}`, asked('w', `Number ${i}?`)])) };
+  assert.equal(pieceCards({ views: many, work: 'w', card: 'q-w-1' }).length, CARDS_SEEN_MOST);
+  assert.equal(pieceCards({ views: many, work: 'w', card: 'q-w-1' }).at(-1).question, `Number ${CARDS_SEEN_MOST + 4}?`);
 });

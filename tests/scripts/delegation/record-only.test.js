@@ -6,6 +6,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { recordOnly, cardContext, historyOf } from '../../../scripts/delegation/record-only.js';
+import { closeMatch } from '../../../scripts/delegation/asked.js';
+import { answerInput } from '../../../scripts/cards/compose.js';
 import { SEAL_TICK_MS, FACT_TRIES, SEAL_TRIES, SCORE_WAIT_DAYS, READER_MS, READER_TOKENS, READER_UNKNOWN_MS, READERS_WAITING_MOST } from '../../../scripts/delegation/limits.js';
 import { buildViews } from '../../../scripts/state/views.js';
 import { makeEvent, dataHash } from '../../../scripts/state/events.js';
@@ -522,7 +524,7 @@ const finished = (output = JSON.stringify(READING)) => [
   { type: 'run-ended', at: 't', outcome: 'completed', branch: null, pr: null },
 ];
 
-function reading({ events = finished(), gate = () => ({ running: 0, pace: 3 }), startReader, viewOf = async () => VIEW, readViews = () => ({}), trusted, fake, stop = false } = {}) {
+function reading({ events = finished(), gate = () => ({ running: 0, pace: 3 }), startReader, viewOf = async () => VIEW, readViews = () => ({}), trusted, fake, stop = false, onMatch } = {}) {
   const engine = fake ?? fakeEngine({ recordings: { reader: events } });
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-read-'));
   const writes = [];
@@ -530,7 +532,7 @@ function reading({ events = finished(), gate = () => ({ running: 0, pace: 3 }), 
   const seals = recordOnly({
     file: path.join(dir, 'shadow.json'), write: async (kind, data) => { writes.push({ kind, data }); }, stopped: () => world.stop, now: () => world.now,
     factsOf: async () => FACTS, stampOf: () => ({ models: {}, pack: null, rule: null, exclusions: null }),
-    engine, viewOf, gate, readViews, trusted,
+    engine, viewOf, gate, readViews, trusted, onMatch,
     startReader: startReader ?? (async (card) => engine.start({ work: READER_WORK, lane: 'reader', card })),
   });
   const lines = () => writes.filter((w) => w.kind === 'shadow' && w.data.line === 'reading').map((w) => w.data);
@@ -764,4 +766,92 @@ test('a reading line that fails to write is tried again, and then given up', asy
   await seals.tick();
   await seals.tick();
   assert.equal(writes.filter((w) => w.data.line === 'reading').length, 1);
+});
+
+// A close match (delegated decisions design, section 7.4): the reader's reading helps the director, and answers nothing.
+const OPTIONS = [{ label: 'Keep', says: 'It stays' }, { label: 'Remove', says: 'It goes' }];
+const asked = (id, what, over = {}) => ({ question: { data: { id, work: 'w', what, why: 'It matters', options: OPTIONS, recommendation: 'Keep', level: 3, key: `key-${id}`, ...over } }, answer: null });
+const cardC = 'q-w-2';
+const cardL = 'q-w-1';
+const pair = (lead = {}, card = {}, answer = null) => ({ questions: { [cardL]: { ...asked(cardL, 'Keep the banner?', lead), answer }, [cardC]: asked(cardC, 'Should the banner stay?', card) } });
+
+test('a close match joins an open card only with the same options, and both wordings show', async () => {
+  assert.deepEqual(closeMatch({ card: cardC, sameAs: cardL, views: pair() }), { join: cardL });
+  const views = pair({ options: [{ label: 'Keep', says: 'x' }, { label: 'Hide', says: 'y' }] });
+  assert.equal(closeMatch({ card: cardC, sameAs: cardL, views }), null);
+  const { what } = answerInput(pair().questions[cardL].question.data, 'The banner', { joiners: [{ id: cardC, name: 'The banner', words: 'Should the banner stay?' }] });
+  assert.match(what, /Keep the banner\?/);
+  assert.match(what, /Should the banner stay\?/);
+  const repeated = answerInput(pair().questions[cardL].question.data, 'The banner', { joiners: [{ id: cardC, name: 'The banner', words: 'keep the  banner' }] });
+  assert.doesNotMatch(repeated.what, /also asked/);
+});
+
+test('a close match on an answered card adds the line and answers nothing', async () => {
+  const answer = { label: 'Remove', at: '2026-11-01T01:00:00.000Z' };
+  assert.deepEqual(closeMatch({ card: cardC, sameAs: cardL, views: pair({}, {}, answer) }), { line: 'Remove' });
+  assert.equal(closeMatch({ card: cardC, sameAs: cardL, views: pair({}, {}, { ...answer, changed: true }) }), null, 'an answer changed since says nothing');
+  const spoken = pair({}, {}, answer);
+  spoken.work = { w: { work: { at: '2026-11-01T02:00:00.000Z' } } };
+  assert.equal(closeMatch({ card: cardC, sameAs: cardL, views: spoken }), null, 'nor one the director has moved on from');
+  const other = pair({ options: [{ label: 'Remove', says: 'x' }, { label: 'Hide', says: 'y' }] }, {}, answer);
+  assert.deepEqual(closeMatch({ card: cardC, sameAs: cardL, views: other }), { line: 'Remove' }, 'the line needs no same options');
+});
+
+test('with no reader, or no match, the card stands', async () => {
+  const views = pair();
+  assert.equal(closeMatch({ card: cardC, sameAs: null, views }), null);
+  assert.equal(closeMatch({ card: cardC, sameAs: 'q-w-9', views }), null);
+  assert.equal(closeMatch({ card: cardC, sameAs: cardC, views }), null);
+  assert.equal(closeMatch({ card: cardC, sameAs: cardL, views: pair({ work: 'other' }) }), null, 'another piece');
+  assert.equal(closeMatch({ card: cardC, sameAs: cardL, views: {} }), null);
+  assert.equal(closeMatch({ card: cardC, sameAs: cardL, views: pair({}, { key: undefined }) }), null, 'a fixed-word ask has no match');
+  const lead = pair();
+  lead.questions['q-w-3'] = { ...asked('q-w-3', 'Should the banner stay?'), joins: cardC };
+  assert.equal(closeMatch({ card: cardC, sameAs: cardL, views: lead }), null, 'a card others stand behind stays theirs');
+
+  const matches = [];
+  const none = reading({ startReader: async () => ({ ok: false, refused: 'no' }), viewOf: async () => VIEW });
+  none.seals.onCard(question);
+  await none.seals.tick();
+  await none.later(1);
+  const read = reading({ onMatch: async (m) => { matches.push(m); } });
+  read.seals.onCard(question);
+  await read.seals.tick();
+  await read.later(1);
+  assert.deepEqual(matches, [], 'a reading with no match asks nothing');
+});
+
+test('a close match can\'t answer, at any setting', async () => {
+  for (const level of [4]) {
+    assert.equal(closeMatch({ card: cardC, sameAs: cardL, views: pair({ level }) }), null);
+    assert.equal(closeMatch({ card: cardC, sameAs: cardL, views: pair({}, { level }) }), null);
+    assert.equal(closeMatch({ card: cardC, sameAs: cardL, views: pair({ level }, {}, { label: 'Keep', at: 't' }) }), null);
+  }
+  assert.equal(closeMatch({ card: cardC, sameAs: cardL, views: pair({}, { commands: ['npm ci'] }) }), null, 'a build command signs for itself');
+  const answered = pair();
+  answered.questions[cardC].answer = { label: 'Keep', at: 't' };
+  assert.equal(closeMatch({ card: cardC, sameAs: cardL, views: answered }), null, 'a card answered first has nothing to join');
+  for (const views of [pair(), pair({}, {}, { label: 'Remove', at: 't' })]) assert.equal(Object.hasOwn(closeMatch({ card: cardC, sameAs: cardL, views }), 'answer'), false);
+});
+
+test('the seals hand a reader\'s match on, try it again after a failure, and never hold up the reading', async () => {
+  const matches = [];
+  let fails = 1;
+  const t = reading({
+    events: finished(JSON.stringify({ ...READING, sameAs: cardL })),
+    viewOf: async () => ({ ...VIEW, cards: [{ id: cardL, question: 'Keep the banner?', labels: ['Keep', 'Remove'], status: 'open' }] }),
+    onMatch: async (m) => {
+      if (fails-- > 0) throw new Error('not yet');
+      matches.push(m);
+    },
+  });
+  t.seals.onCard(question);
+  await t.seals.tick();
+  await t.later(1);
+  assert.equal(t.lines()[0].reader, 'read');
+  assert.equal(Object.hasOwn(t.lines()[0], 'sameAs'), false, 'the seal\'s line stays as it was');
+  await t.later(SEAL_TICK_MS);
+  assert.deepEqual(matches, [{ card: question.id, sameAs: cardL }]);
+  await t.later(SEAL_TICK_MS);
+  assert.equal(matches.length, 1);
 });

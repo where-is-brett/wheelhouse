@@ -2337,3 +2337,41 @@ test('Stop is never taken from before, whatever the case of its label', async ()
     assert.equal(acts(t.engine).filter((c) => c.action.answer.ask === 'q2').length, 0);
   } finally { t.cleanup(); }
 });
+
+// A close match: the card is on the record, so all that changes is who stands behind whom.
+function matchRunner({ views, questions = {}, held = [], write = async () => {} }) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-match-'));
+  const file = path.join(dir, 'router.json');
+  fs.writeFileSync(file, JSON.stringify({ questions, held }));
+  const writes = [];
+  const runner = engineRunner({ file, readViews: () => views, write: async (kind, data) => { writes.push({ kind, data }); await write(kind, data); } });
+  return { runner, writes, state: () => JSON.parse(fs.readFileSync(file, 'utf8')) };
+}
+const closeViews = (answer = null) => {
+  const q = (id, what) => ({ question: { data: { id, work: 'w', what, why: 'y', options: [{ label: 'A' }, { label: 'B' }], recommendation: 'A', level: 3, key: `k${id}`, engine: { runId: 'r', ask: id, options: { A: 'a', B: 'b' } } } }, answer: null });
+  return { questions: { 'q-w-1': { ...q('q-w-1', 'One way?'), answer }, 'q-w-2': q('q-w-2', 'Another way?') } };
+};
+const OPEN = { 'q-w-1': { work: 'w', runId: 'r', ask: { id: 'q-w-1' } }, 'q-w-2': { work: 'w', runId: 'r2', ask: { id: 'q-w-2' } } };
+
+test('a close match records its join, lets a held card go, and sends the engine nothing', async () => {
+  const t = matchRunner({ views: closeViews(), questions: OPEN, held: [{ id: 'q-w-2' }] });
+  await t.runner.onMatch({ card: 'q-w-2', sameAs: 'q-w-1' });
+  assert.deepEqual(t.writes, [{ kind: 'match', data: { card: 'q-w-2', work: 'w', joins: 'q-w-1' } }]);
+  assert.equal(t.state().questions['q-w-2'].joins, 'q-w-1');
+  assert.deepEqual(t.state().questions['q-w-2'].options, { A: 'a', B: 'b' });
+  assert.deepEqual(t.state().held, []);
+  assert.equal(t.state().delivered?.['q-w-2'], undefined);
+});
+
+test('a close match on an answered card records the line alone, and a failed write is the seals\' to try again', async () => {
+  const answered = matchRunner({ views: closeViews({ label: 'B', at: 't' }), questions: OPEN });
+  await answered.runner.onMatch({ card: 'q-w-2', sameAs: 'q-w-1' });
+  assert.deepEqual(answered.writes, [{ kind: 'match', data: { card: 'q-w-2', work: 'w', saidBefore: 'B', from: 'q-w-1' } }]);
+  assert.equal(answered.state().questions['q-w-2'].joins, undefined);
+  const refused = matchRunner({ views: closeViews(), questions: OPEN, write: async () => { throw new Error('no'); } });
+  await assert.rejects(refused.runner.onMatch({ card: 'q-w-2', sameAs: 'q-w-1' }));
+  assert.equal(refused.state().questions['q-w-2'].joins, undefined);
+  const unknown = matchRunner({ views: closeViews(), questions: {} });
+  await unknown.runner.onMatch({ card: 'q-w-2', sameAs: 'q-w-1' });
+  assert.deepEqual(unknown.writes, [], 'a card the router never kept stands');
+});

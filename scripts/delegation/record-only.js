@@ -4,7 +4,8 @@
 // with one tick at a time. A question card's view is built when it is sealed, and frozen; one reader at a time reads the
 // cards that wait, with its tokens under its own line. A reader that can't run, or ends with no reading, leaves a
 // `reader: 'none'` line and the card as it was. A card a reader may read is kept in `open` until it is scored against the
-// director's answer, in a line of its own. A failure here costs a seal, a reading or a score, never a card, and says
+// director's answer, in a line of its own. A reading that names a card as the same decision is handed on, and what comes
+// of it can only help the director (asked.js, closeMatch). A failure here costs a seal, a reading or a score, never a card, and says
 // nothing to the director. What waits is kept in `file`, so a helper started again seals and scores each card once.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -22,8 +23,8 @@ import { PUT_OFF } from '../lib/front-desk.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 // `reading`: the cards a reader is yet to read, each with its frozen view; `reader`: the one under way; `lines`: reading
-// lines yet to be written; `open`: the cards waiting for a score.
-const EMPTY = () => ({ waiting: [], sealed: {}, tries: {}, fails: {}, open: {}, reading: [], reader: null, lines: [] });
+// lines yet to be written; `open`: the cards waiting for a score; `matches`: close matches yet to be handed on.
+const EMPTY = () => ({ waiting: [], sealed: {}, tries: {}, fails: {}, open: {}, reading: [], reader: null, lines: [], matches: [] });
 // The statuses of a run that hasn't ended.
 const GOING = ['running', 'pending', 'paused'];
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -75,7 +76,7 @@ export function historyOf({ events, enrolled, views }) {
 // A view's hash, which the reading line keeps in its place: the view itself stays out of the record.
 const viewHash = (view) => crypto.createHash('sha256').update(JSON.stringify(view)).digest('hex');
 
-// recordOnly({ file, write, stopped, now, factsOf, contextOf, stampOf, rulesOf, history, engine, readViews, viewOf, startReader, gate, trusted })
+// recordOnly({ file, write, stopped, now, factsOf, contextOf, stampOf, rulesOf, history, engine, readViews, viewOf, startReader, gate, trusted, onMatch })
 //   -> { onCard(card), tick(), settled(), viewFor(card id), readerOf(run id), onReaderAsk(ask), reading() }.
 // - `write(kind, data)` a signed record in the project's history; `stopped()` whether nothing should be read now;
 // - `factsOf(card)` the change's facts (facts.js); `contextOf(card)` what the candidates read beside them;
@@ -83,10 +84,11 @@ const viewHash = (view) => crypto.createHash('sha256').update(JSON.stringify(vie
 //   { id, kind, work, runId?, level, branch?, folder? };
 // - `viewOf(card, facts)` the card's view (view.js), and with no `viewOf` no reader runs; `startReader(card)` starts one,
 //   { ok, runId } or a refusal; `gate()` { running, pace, counted, incident }; `trusted(record)` whether a run's pack is the
-//   installed one; `readViews()` the project's views; `engine` { inspect, outputs, act }.
+//   installed one; `readViews()` the project's views; `engine` { inspect, outputs, act }; `onMatch({ card, sameAs })` is told
+//   of a close match, and one that throws is tried again.
 export function recordOnly({
   file, write, stopped = () => false, now = () => new Date(), factsOf = async () => UNREAD_FACTS, contextOf = () => ({}), stampOf = () => setupStamp(), rulesOf = () => [], history = () => null,
-  engine = null, readViews = () => ({}), viewOf = null, startReader = async () => ({ ok: false, refused: 'nothing starts a reader here' }), gate = () => ({ running: 0, pace: 0 }), trusted = () => true,
+  engine = null, readViews = () => ({}), viewOf = null, startReader = async () => ({ ok: false, refused: 'nothing starts a reader here' }), gate = () => ({ running: 0, pace: 0 }), trusted = () => true, onMatch = async () => {},
 } = {}) {
   const state = readState(file);
   function keep() {
@@ -227,6 +229,20 @@ export function recordOnly({
     }
   }
 
+  async function handOn() {
+    for (const entry of [...state.matches]) {
+      const { tries, ...match } = entry;
+      try {
+        await onMatch(match);
+        state.matches = state.matches.filter((m) => m !== entry);
+      } catch {
+        entry.tries = tries + 1;
+        if (entry.tries >= SEAL_TRIES) state.matches = state.matches.filter((m) => m !== entry);
+      }
+      quietly(keep);
+    }
+  }
+
   // The tokens a reader spent, under its own line: against no piece and no cap.
   async function spend(runId, record, minutes) {
     const cost = runCost(record);
@@ -244,6 +260,7 @@ export function recordOnly({
     const { card, work, run, view } = state.reader;
     const answered = quietly(() => isPlain(readViews()?.questions?.[card]?.answer), false);
     noReading({ card, work }, fields.reading ? null : fields.why, { run, reading: fields.reading ?? null, view: viewHash(view), afterAnswer: answered === true });
+    if (fields.reading?.sameAs) state.matches.push({ card, sameAs: fields.reading.sameAs, tries: 0 });
     state.reader = null;
     quietly(keep);
   }
@@ -279,7 +296,7 @@ export function recordOnly({
       return;
     }
     const outputs = await Promise.resolve().then(() => engine.outputs(run)).catch(() => null);
-    const reading = outputs && quietly(() => trusted(record), false) === true ? readerResult(outputs, view.labels) : null;
+    const reading = outputs && quietly(() => trusted(record), false) === true ? readerResult(outputs, view.labels, view.cards) : null;
     endReader(reading ? { reading } : { why: 'no-reading' });
   }
 
@@ -312,12 +329,13 @@ export function recordOnly({
     if (mine === flight && !state.reader && !stopped()) await startNext(mine);
     quietly(keep);
     if (mine === flight) await say();
+    if (mine === flight && !stopped()) await handOn();
   }
 
   function tick() {
     const at = now().getTime();
     if (flight !== null && at - startedAt < SEAL_TICK_MS) return Promise.resolve();
-    if (stopped() || (state.waiting.length === 0 && Object.keys(state.open).length === 0 && state.reading.length === 0 && !state.reader && state.lines.length === 0)) return Promise.resolve();
+    if (stopped() || (state.waiting.length === 0 && Object.keys(state.open).length === 0 && state.reading.length === 0 && !state.reader && state.lines.length === 0 && state.matches.length === 0)) return Promise.resolve();
     const mine = {};
     flight = mine;
     startedAt = at;

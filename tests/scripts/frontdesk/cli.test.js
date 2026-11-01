@@ -2049,6 +2049,42 @@ test('the project\'s own name, as the helper gives it, is never put in plain wor
 const LEVEL_3 = { ...QUESTION, level: 3 };
 const joinerOf = (lead) => questionEvent({ ...LEVEL_3, id: 'q-login-500001', work: 'login', joins: lead.data.id }, 6);
 
+test('a close match re-issues the lead\'s card with both wordings, and an answered match adds its line', async () => {
+  await inHome(async () => {
+    const lead = questionEvent(LEVEL_3);
+    const [work] = lead.data.id.match(/(?<=^q-).*(?=-\d+$)/);
+    const close = questionEvent({ ...LEVEL_3, id: `q-${work}-500009`, what: 'Should the file go out as a spreadsheet?' }, 6);
+    const helper = fakeHelper({ events: [EXPORT, lead, close] });
+    await run(helper, ['cards']);
+    assert.equal(helper.held.filter((e) => e.kind === 'card').length, 2);
+    helper.held.push(makeEvent({ kind: 'match', data: { card: close.data.id, work, joins: lead.data.id }, now: () => T(7) }));
+    await run(helper, ['cards']);
+    const issued = helper.held.filter((e) => e.kind === 'card').at(-1);
+    assert.deepEqual(issued.data.joiners, [close.data.id]);
+    assert.match(issued.data.question, /Should the file go out as a spreadsheet\?/);
+    assert.equal(issued.data.revises !== undefined, true);
+    assert.equal(numberedWaiting(helper.views(), []).length, 1, 'the two cards are one');
+  });
+  await inHome(async () => {
+    const lead = questionEvent(LEVEL_3);
+    const [work] = lead.data.id.match(/(?<=^q-).*(?=-\d+$)/);
+    const label = LEVEL_3.options[0].label;
+    const signed = makeEvent({ kind: 'action', data: { action: 'answer', question: 'shown', questionId: lead.data.id, questionHash: dataHash(lead.data), label }, now: () => T(6) });
+    const close = questionEvent({ ...LEVEL_3, id: `q-${work}-500009`, what: 'Should the file go out as a spreadsheet?' }, 7);
+    const helper = fakeHelper({ events: [EXPORT, lead, signed, close] });
+    await run(helper, ['cards']);
+    helper.held.push(makeEvent({ kind: 'match', data: { card: close.data.id, work, saidBefore: label, from: lead.data.id }, now: () => T(8) }));
+    await run(helper, ['cards']);
+    const issued = helper.held.filter((e) => e.kind === 'card').at(-1);
+    assert.equal(issued.data.saidBefore, label);
+    assert.match(issued.data.question, /You said this before/);
+    assert.equal(typeof issued.data.revises, 'string');
+    const count = helper.held.filter((e) => e.kind === 'card').length;
+    await run(helper, ['cards']);
+    assert.equal(helper.held.filter((e) => e.kind === 'card').length, count, 'once');
+  });
+});
+
 test('a joiner has no number and no wake of its own', async () => {
   await inHome(async () => {
     const lead = questionEvent(LEVEL_3);

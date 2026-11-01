@@ -17,6 +17,15 @@ import { tempFolder } from '../../helpers/homes.js';
 const reading = { frame: 'sound', why: 'The options fit.', kind: 'can-see', fits: 'no-rule', pick: 'Export', tags: [{ label: 'Export', leans: ['keep'] }, { label: 'Save', leans: [] }] };
 const LABELS = ['Export', 'Save'];
 
+test('a reading may name one of the view\'s cards as the same decision, and no other', () => {
+  const cards = [{ id: 'q-w-1' }];
+  const said = (sameAs) => ({ read: JSON.stringify({ ...reading, sameAs }) });
+  assert.equal(readerResult(said('q-w-1'), LABELS, cards).sameAs, 'q-w-1');
+  assert.equal(readerResult(said(null), LABELS, cards).sameAs, null);
+  assert.equal(readerResult(said('q-w-9'), LABELS, cards), null);
+  assert.equal(readerResult(said(3), LABELS, cards), null);
+});
+
 test('one reader at a time, and only under pace + 2 runs', () => {
   assert.equal(mayRead({ running: 4, pace: 3, live: 0, counted: false }), true);
   assert.equal(mayRead({ running: 5, pace: 3, live: 0, counted: false }), false);
@@ -28,7 +37,7 @@ test('on a plan\'s counted requests no reader runs at stage 0', () => {
 });
 
 test('a reading is the read step\'s output in its fixed shape', () => {
-  assert.deepEqual(readerResult({ read: JSON.stringify(reading) }, LABELS), reading);
+  assert.deepEqual(readerResult({ read: JSON.stringify(reading) }, LABELS), { ...reading, sameAs: null });
 });
 
 test('anything missing, oversized, unparseable or out of shape is no reading', () => {

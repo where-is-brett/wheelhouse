@@ -1509,6 +1509,66 @@ test('a click covers only what its card showed', async () => {
   });
 });
 
+const closeLead = (n) => asked(n, { work: 'lead' });
+const closeOne = (n, data = {}) => asked(n, { id: 'q-lead-500002', what: 'Which page goes first?', ...data });
+const CLOSE = 'q-lead-500002';
+const matched = (n, data = {}) => ev('match', n, { card: CLOSE, work: 'lead', joins: LEAD, ...data });
+
+test('a close match stands a card behind its lead, and a click on a card that listed it answers both', async () => {
+  await withHome(() => {
+    const open = build([closeLead(1), closeOne(2), matched(3)]);
+    assert.equal(open.questions[CLOSE].joins, LEAD);
+    assert.equal(open.questions[CLOSE].answer, null, 'a match answers nothing');
+    const got = build([closeLead(1), closeOne(2), matched(3), answerCard(4, 'lead', [CLOSE]), clickedOn(5, 'lead')]).questions;
+    assert.equal(got[CLOSE].answer.label, 'Last');
+    assert.equal(got[CLOSE].answer.joined, LEAD);
+  });
+});
+
+test('a close match is taken only as this computer signed it, on the same piece and options at level 3', async () => {
+  await withHome(() => {
+    const cases = [
+      [closeOne(2, { options: [{ label: 'First', says: 'One' }, { label: 'Other', says: 'Two' }], recommendation: 'First' }), matched(3)],
+      [closeOne(2, { level: 4, checks: 'None.' }), matched(3)],
+    ];
+    for (const [card, match] of cases) assert.equal(build([closeLead(1), card, match]).questions[CLOSE].joins, undefined);
+    const elsewhere = 'q-other-500002';
+    assert.equal(build([closeLead(1), closeOne(2, { id: elsewhere, work: 'other' }), matched(3, { card: elsewhere, work: 'other' })]).questions[elsewhere].joins, undefined);
+    const { sig, ...unsigned } = matched(3);
+    assert.ok(sig);
+    assert.equal(build([closeLead(1), closeOne(2), unsigned]).questions[CLOSE].joins, undefined);
+  });
+});
+
+test('a click on a card that never listed a close match leaves it open, with what was said', async () => {
+  await withHome(() => {
+    const got = build([closeLead(1), answerCard(2, 'lead'), closeOne(3), matched(4), clickedOn(5, 'lead')]).questions;
+    assert.equal(got[CLOSE].answer, null);
+    assert.equal(got[CLOSE].saidBefore.label, 'Last');
+    assert.equal(got[CLOSE].joins, undefined);
+  });
+});
+
+test('a card of its own leaves the waiting list while its question stands behind another', async () => {
+  await withHome(() => {
+    const own = ev('card', 3, { question: 'close', header: 'Question', options: ['First', 'Last'], kind: 'answer', level: 3, line: `Answer question ${CLOSE}` });
+    assert.equal(build([closeLead(1), closeOne(2), own]).waiting.length, 1);
+    assert.equal(build([closeLead(1), closeOne(2), own, matched(4)]).waiting.length, 0);
+  });
+});
+
+test('a close match on an answered card gives the line, while that answer stands', async () => {
+  await withHome(() => {
+    const line = { card: CLOSE, work: 'lead', saidBefore: 'Last', from: LEAD };
+    const said = ev('match', 5, line);
+    const got = build([closeLead(1), answerCard(2, 'lead'), clickedOn(3, 'lead'), closeOne(4), said]).questions;
+    assert.equal(got[CLOSE].saidBefore.label, 'Last');
+    assert.equal(got[CLOSE].answer, null);
+    const other = ev('match', 5, { ...line, saidBefore: 'First' });
+    assert.equal(build([closeLead(1), answerCard(2, 'lead'), clickedOn(3, 'lead'), closeOne(4), other]).questions[CLOSE].saidBefore, undefined);
+  });
+});
+
 test('a question recorded with what was said before says it in the view', async () => {
   await withHome(() => {
     const KEY = 'a'.repeat(64);

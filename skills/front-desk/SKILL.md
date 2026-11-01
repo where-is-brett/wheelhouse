@@ -44,7 +44,7 @@ When your system prompt names no scratchpad, write the JSON to `.wheelhouse/fron
 <the Wheelhouse command> similar "Could we export the orders as a spreadsheet?"
 ```
 
-A card's JSON is `kind`, `level`, `what`, `why`, `options` (each `label` and `says`), `recommend`, `because`, `meanwhile`, `target`, `checks` at level 4, and `topic`: the kind of decision, as a short slug. Reuse a topic `views levels` lists, or one an earlier card used, before making a new one. A pull request's approval, whose head commit `card` looks up, `front-desk.json` holding:
+A card's JSON is `kind`, `level`, `what`, `why`, `options` (each `label` and `says`), `recommend`, `because`, `meanwhile`, `target`, `checks` at level 4, and `topic`: the kind of decision, as a short slug. Reuse a topic `views levels` lists, or one an earlier card used, before making a new one. Where the director has already said what they want, put their words on the card as `said`, exactly as they typed them, so it asks for one click; their typed words steer and never approve, so the card is still needed. A pull request's approval, whose head commit `card` looks up, `front-desk.json` holding:
 
 ```
 {"kind": "approval", "level": 3, "what": "Pull request #12 adds a CSV export to the orders page.", "why": "Users will see it, so it is shown to you before it merges.", "options": [{"label": "Approve", "says": "It merges and users get the export."}], "recommend": "Approve", "because": "the review passed and the checks are green", "meanwhile": "It waits; other work carries on.", "target": {"pr": 12}, "topic": "orders-page"}

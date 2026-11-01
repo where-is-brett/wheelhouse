@@ -2,10 +2,12 @@
 // One decision, one card (delegated decisions design, section 7.4). A decision's key is its piece and its normalised
 // words, by script, and a step's topic label plays no part. An ask repeating an answered key takes the director's own
 // earlier answer only where every condition holds; anything less is a card, and what can't be read counts as less. An
-// answer the director has since moved on from says nothing at all.
+// answer the director has since moved on from says nothing at all. A close match is the reader's word, so it can only
+// help the director: it joins a card or adds a line, and never answers.
 import crypto from 'node:crypto';
 import { exclusionsHit } from './candidates.js';
-import { normaliseWords, sameOptions } from './words.js';
+import { normaliseWords, sameChoice, sameOptions } from './words.js';
+import { joinersOf } from '../state/joiners.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 // The asks an earlier answer can stand for. An approval signs for itself, by its pull request and head.
@@ -48,4 +50,24 @@ export function reuse({ ask, earlier, commitsSince, spokenSince: spoken, changed
   if (!isPlain(earlier) || !REUSED_KINDS.includes(ask?.kind) || ask.level === 4 || spoken === true || changed === true) return null;
   const holds = earlier.level !== 4 && sameOptions(ask.options, earlier.options) && commitsSince === 0 && Array.isArray(exclusions) && exclusions.length === 0 && asksAgain !== true;
   return holds ? { answer: earlier.answer } : { card: 'said-before' };
+}
+
+// What the reader's `sameAs` may do to a card: { join: <the open card's id> } behind a card with the same options,
+// { line: <the answer> } for an answer that still stands, or null, and the card stands as it is. Both cards are the
+// piece's, in the build's own words, at level 3. A card with others behind it stays theirs, and one already answered
+// or joined has nothing to gain.
+export function closeMatch({ card, sameAs, views }) {
+  const questions = isPlain(views?.questions) ? views.questions : {};
+  const asked = questions[card];
+  const other = questions[sameAs];
+  const [data, match] = [asked?.question?.data, other?.question?.data];
+  if (card === sameAs || !isPlain(data) || !isPlain(match) || data.work !== match.work || data.level !== 3 || match.level !== 3) return null;
+  if (typeof data.key !== 'string' || typeof match.key !== 'string' || isPlain(asked.answer) || asked.joins !== undefined || asked.saidBefore !== undefined) return null;
+  if (isPlain(other.answer)) {
+    const earlier = { id: sameAs, at: other.answer.at };
+    const stands = typeof other.answer.label === 'string' && other.answer.changed !== true && !spokenSince({ views, work: data.work, earlier });
+    return stands ? { line: other.answer.label } : null;
+  }
+  const open = other.joins === undefined && joinersOf(questions, card).length === 0 && sameChoice(data, match);
+  return open ? { join: sameAs } : null;
 }

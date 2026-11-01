@@ -443,7 +443,10 @@ function buildLoopViews(sorted, enrolled) {
   };
   const first = new Map();
   for (const e of sorted) if (e.kind === 'question' && !first.has(e.data?.id)) first.set(e.data?.id, e.data);
+  const matches = new Map();
+  for (const e of sorted) if (e.kind === 'match' && verify(e, enrolled) && !matches.has(e.data?.card)) matches.set(e.data?.card, e.data);
   joinQuestions(questions, {
+    matched: (id) => matches.get(id) ?? null,
     shown(lead) {
       const click = clickOn.get(lead);
       if (click === undefined) return [];
@@ -633,6 +636,8 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   const outcomes = outcomesOf(sorted, { confirmations: closing, answeredBy, lean });
   stampSteers(loop.questions, outcomes, sorted);
   const waiting = [];
+  // A question that stands behind another's card, or took its answer, is that card's now: a card of its own says nothing more.
+  const behindCards = new Set(Object.entries(loop.questions).filter(([, q]) => q.joins !== undefined || q.answer?.joined !== undefined).map(([id]) => answerLine(id)));
   // A card made from a lineage hold that has been lifted is closed, as an answered card is, and so
   // is one made from a control-file record that no longer stands.
   const liftedHolds = liftedHoldIds(sorted);
@@ -642,7 +647,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   // waiting card has it.
   const outdatedCards = [];
   for (const { card, answers: mine, decided, steered } of outcomes) {
-    if (decided !== null || revised(card) || liftedHolds.has(card.data?.event) || controlFiles.closed.has(card.data?.event)) continue;
+    if (decided !== null || revised(card) || liftedHolds.has(card.data?.event) || controlFiles.closed.has(card.data?.event) || behindCards.has(card.data?.line)) continue;
     const gone = outdated(card);
     if (gone === 'head') outdatedCards.push({ id: card.id, at: card.at, data: card.data, steered });
     if (gone !== false) continue;

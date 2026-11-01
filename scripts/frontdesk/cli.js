@@ -9,7 +9,8 @@
 //   card            composes one card from the composer's input and records it ({ question, id });
 //                   with `revises`, the id of a card of its kind waiting now or closed by a later
 //                   head, and `changed`, one line saying what changed, it is a revised card that
-//                   replaces the one it names
+//                   replaces the one it names; with `said`, the director's own words on the matter, it
+//                   carries them and asks for one click
 //   again <n>       the card the board numbers n, with its id, to ask again
 //   why <n>         notes that the director asked why about the card the board numbers n, and
 //                   prints the one sentence to say before the card; it never gives the card again:
@@ -282,8 +283,9 @@ function composePlain(input, words) {
 
 // --- cards ---
 
-// What a card re-issued for the pieces behind it says changed.
+// What a card re-issued for the pieces behind it says changed, or for an answer it now says was given before.
 const REISSUED = 'The pieces this answer goes to.';
+const SAID_ADDED = 'That you answered this before.';
 const sameList = (a, b) => a.length === b.length && a.every((x) => b.includes(x));
 
 // The answer card for a question the build recorded, from the stored event (compose.js,
@@ -291,14 +293,14 @@ const sameList = (a, b) => a.length === b.length && a.every((x) => b.includes(x)
 // carry the title; the build's ask commands check a question against the card naming the id.
 // A card lists each piece its answer goes to, by title or, where those won't fit, by id. A card already out is re-issued
 // through `revises` once the pieces behind it change; the question it answers, and so its signature, stays as it was.
-function answerCard(id, data, views, words, { joiners = [], revises, saidBefore } = {}) {
+function answerCard(id, data, views, words, { joiners = [], revises, saidBefore, changed = REISSUED } = {}) {
   if (!isPlain(data) || data.id !== id) throw new Error('its record can\'t be read');
   const title = (work) => flat(views.work?.[work]?.work?.data?.title);
-  const reissue = revises === undefined ? {} : { revises, changed: REISSUED };
+  const reissue = revises === undefined ? {} : { revises, changed };
   let refusal = null;
   for (const name of [...new Set([title(data.work) || data.work, data.work])]) {
     for (const titled of [true, false]) {
-      const named = joiners.map((j) => ({ id: j.id, name: (titled && title(j.work)) || j.work }));
+      const named = joiners.map((j) => ({ id: j.id, name: (titled && title(j.work)) || j.work, words: views.questions?.[j.id]?.question?.data?.what }));
       try {
         return composePlain({ ...answerInput(data, name, { joiners: named, saidBefore }), ...reissue }, words);
       } catch (error) {
@@ -453,13 +455,17 @@ export async function cards({ client, cwd, now }) {
     if (!isPlain(entry) || entry.answer || entry.joins !== undefined) continue;
     const joiners = joinersOf(views.questions, id);
     const out = existingCard(views, answerLine(id));
-    const listing = views.waiting?.find((c) => c.id === out)?.data?.joiners ?? [];
-    if (out !== null && sameList(listing, joiners.map((j) => j.id))) continue;
+    const held = views.waiting?.find((c) => c.id === out)?.data;
+    const sameJoiners = sameList(held?.joiners ?? [], joiners.map((j) => j.id));
+    // A card out before the answer was matched to it gains the line, where it can carry it.
+    const line = entry.saidBefore?.label;
+    const sayNow = out !== null && typeof line === 'string' && held?.saidBefore !== line;
+    if (out !== null && sameJoiners && !sayNow) continue;
     let card;
     try {
-      ({ card } = answerCard(id, entry.question?.data, views, words, { joiners, saidBefore: entry.saidBefore?.label, ...(out === null ? {} : { revises: out }) }));
+      ({ card } = answerCard(id, entry.question?.data, views, words, { joiners, saidBefore: line, ...(out === null ? {} : { revises: out, ...(sameJoiners ? { changed: SAID_ADDED } : {}) }) }));
     } catch (error) {
-      problems.push(`Question ${id} couldn't be made a card: ${error.message}`);
+      if (!(out !== null && sameJoiners)) problems.push(`Question ${id} couldn't be made a card: ${error.message}`);
       continue;
     }
     try {

@@ -877,3 +877,13 @@ test('a question asked twice on one piece names the piece once', () => {
   assert.match(input.what, /It was asked more than once on The banner: your answer goes to each\./);
   assert.deepEqual(input.joiners, ['q-b-2']);
 });
+
+test('a card carrying the director\'s chat words asks for one click', () => {
+  const { question, card } = composeCard(input('question', { said: 'Keep   the banner, it stays.' }));
+  assert.match(question.question, /You said: Keep the banner, it stays\./);
+  assert.match(question.question, /one click/i);
+  assert.equal(card.level, input('question').level, 'the words change nothing the card signs');
+  assert.deepEqual(card.options, composeCard(input('question')).card.options);
+  assert.throws(() => composeCard(input('question', { said: 'one\ntwo' })), /said/);
+  assert.throws(() => composeCard(input('question', { said: '' })), /said/);
+});
