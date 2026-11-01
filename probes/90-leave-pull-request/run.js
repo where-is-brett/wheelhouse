@@ -5,10 +5,13 @@
 //   1. Pull request A (unclear) and B (clear) in one sweep: B merges, A is asked about. Record the choices offered.
 //   2. Answer `park`. Then pull request C (clear) in a fresh sweep: does it merge while A is left alone?
 //   3. A is made ready again. Does the queue ask again, and does `merge` on that ask merge it?
+// With --fresh-hand-over, the way back part 2e took, on a scratch root of its own (limit $0.75, stopping before a sweep at
+// $0.60): an unclear pull request handed over as the adapter's `handOver` writes it, then parked, then handed over afresh
+// at the same head. Does the queue ask again, and does `merge` merge it?
 // The reads are the ones the engine adapter makes (`mergeAsked`): the queue's `record` step output, and the run's
 // attention item from `archon workflow attention --all`.
 //
-//   node probes/90-leave-pull-request/run.js [--stamp <stamp>]
+//   node probes/90-leave-pull-request/run.js [--stamp <stamp>] [--fresh-hand-over]
 //
 // Its own scratch root and Archon home, so it can run beside other checks on the scratch engine. Nothing outside the
 // scratch folder is written, except branches, pull requests, comments and statuses on the trial repository.
@@ -23,9 +26,12 @@ import { handle, callList } from '../76-archon-merge/broker.js';
 import { launcherScript, readyWorkItem, readiedAgain, verdictBody } from '../76-archon-merge/run.js';
 import { run, withoutGitVars } from '../../scripts/lib/run.js';
 import { readOutputs } from '../../scripts/engine/archon/record.js';
+import { readyWorkItem as handedOverItem } from '../../scripts/engine/archon/work-item.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.join(os.tmpdir(), 'wheelhouse-archon-checks-90');
+const fresh = process.argv.includes('--fresh-hand-over');
+const ROOT = path.join(os.tmpdir(), fresh ? 'wheelhouse-archon-checks-90-fresh' : 'wheelhouse-archon-checks-90');
+const FRESH_STOP = 0.6;
 const GH = '/opt/homebrew/bin/gh';
 const OWNER_REPO = 'where-is-brett/wheelhouse-merge-trial';
 const REPO = { host: 'github.com', path: OWNER_REPO };
@@ -120,7 +126,7 @@ async function main() {
       occurrence: item?.occurrence ?? null,
       // What the adapter's `mergeAsked` returns for this record.
       mergeAsked: asked?.by === 'pr' && Number.isInteger(asked.pr?.number) && typeof asked.head === 'string'
-        ? { pr: asked.pr.number, head: asked.head, merge: choices.find((c) => c.effect === 'merge')?.id ?? null }
+        ? { pr: asked.pr.number, head: asked.head, merge: choices.find((c) => c.effect === 'merge')?.id ?? null, park: choices.find((c) => c.effect === 'park')?.id ?? null }
         : null,
     };
   };
@@ -174,22 +180,80 @@ async function main() {
     return { number, head, url };
   };
 
+  const checkouts = async () => {
+    await git(['clone', '-q', '--bare', GITHUB_URL, dirs.mirror], { cwd: WORK, credential: true });
+    await git(['--git-dir', dirs.mirror, 'remote', 'add', 'github', GITHUB_URL], { cwd: WORK });
+    await git(['clone', '-q', '-b', 'main', dirs.mirror, dirs.proj], { cwd: WORK });
+    await git(['remote', 'set-url', 'origin', GITHUB_URL]);
+    await git(['config', `url.${dirs.mirror}.insteadOf`, GITHUB_URL]);
+    await shed();
+    await git(['clone', '-q', '-b', 'main', dirs.mirror, dirs.maker], { cwd: WORK });
+  };
+  const unclearPr = () => branchPr(`check-90/${stamp}-a`, {
+    [`db/migrations/${stamp}_users_credentials.sql`]: `-- db/migrations/${stamp}_users_credentials.sql\nALTER TABLE users DROP COLUMN password_hash;\nALTER TABLE users ADD COLUMN credential_blob BYTEA NOT NULL DEFAULT '';\nDROP TABLE sessions;\n`,
+    [`src/auth/login-${stamp}.js`]: `// src/auth/login-${stamp}.js\nexport function login(user, secret) {\n  // Sign-in now accepts any secret for an admin user while the credential table is rebuilt.\n  return user.role === 'admin' ? { ok: true } : { ok: secret === user.credential };\n}\n`,
+  }, 'Change sign-in and drop the sessions table');
+  const lastDecision = async (pr) => (await stateOf(`work/${pr}`))?.value?.facts?.merge?.decisions?.at(-1) ?? null;
+  const overLimit = (at) => {
+    if (spend < FRESH_STOP) return false;
+    report.stoppedForSpend = at;
+    say('stopped for spend at', at, spend.toFixed(2));
+    return true;
+  };
+
   try {
     let a = null;
+    if (fresh) {
+      await checkouts();
+      a = await unclearPr();
+      report.prs = { a: a.number };
+      // As the helper's `ready` route calls the adapter: the repository by name.
+      await statePut(`work/${a.number}`, handedOverItem({ repo: OWNER_REPO, pr: a.number, url: a.url, at: now(), runId: 'check-90-as-handed' }));
+      let first = await queue('fresh-as-handed');
+      report.legs.asHanded = { status: first.out.status, cost: first.out.cost, asked: first.out.ask !== null, work: (await stateOf(`work/${a.number}`))?.value?.facts?.merge ?? null };
+      if (!first.out.ask) {
+        if (overLimit('before the sweep with the repository in full')) return;
+        await statePut(`work/${a.number}`, handedOverItem({ repo: REPO, pr: a.number, url: a.url, at: now(), runId: 'check-90-in-full' }));
+        first = await queue('fresh-in-full');
+        if (!first.out.ask) { report.legs.noAsk = await lastDecision(a.number); return; }
+      }
+      const parked = await answerAsk({ runId: first.out.id, occurrence: first.out.ask.occurrence }, first.out.ask.mergeAsked?.park);
+      const finished = await settle(first.out.id, { limitMs: 5 * 60 * 1000 });
+      report.legs.parked = { answer: parked, runStatus: finished?.status, work: (await stateOf(`work/${a.number}`))?.value?.facts?.merge ?? null };
+      if (overLimit('before the sweep after the fresh hand-over')) return;
+      await sleep(2000);
+      await statePut(`work/${a.number}`, handedOverItem({ repo: REPO, pr: a.number, url: a.url, at: now(), runId: 'check-90-handed-back' }));
+      const again = await queue('fresh-same-head');
+      report.legs.freshSameHead = { status: again.out.status, ask: again.out.ask, a: (await prState(a.number)).state, last: await lastDecision(a.number) };
+      if (!again.out.ask) return;
+      const choice = again.out.ask.mergeAsked?.merge;
+      report.legs.mergeAnswer = await answerAsk({ runId: again.out.id, occurrence: again.out.ask.occurrence }, choice);
+      await settle(again.out.id, { limitMs: 5 * 60 * 1000 });
+      // Archon's ruling starts its own sweep; the helper's queueDue stands in where it doesn't. Wait for it.
+      const until = Date.now() + 10 * 60 * 1000;
+      let follow = null;
+      while (Date.now() < until && !follow) {
+        const listed = (await archon(['workflow', 'status', '--all'])).json?.runs ?? [];
+        follow = listed.find((r) => r.workflow_name === 'archon-merge-queue' && !seen.has(r.id)) ?? null;
+        if (!follow) await sleep(5000);
+      }
+      if (follow) {
+        seen.add(follow.id);
+        const record = await settle(follow.id);
+        spend += costOf(record);
+        report.legs.followRun = { status: record?.status, cost: costOf(record) };
+      } else if (!overLimit('before a sweep of the helper\'s own')) {
+        await queue('fresh-follow');
+      }
+      const view = await prState(a.number);
+      report.legs.afterMerge = { a: view.state, mergedBy: view.mergedBy?.login ?? null, last: await lastDecision(a.number), merges: callList(box.log).filter((c) => c.kind === 'merge').map((c) => ({ argv: c.argv.join(' ').slice(0, 120), refused: !!c.refused })) };
+      return;
+    }
     if (resumePr === null) {
-      await git(['clone', '-q', '--bare', GITHUB_URL, dirs.mirror], { cwd: WORK, credential: true });
-      await git(['--git-dir', dirs.mirror, 'remote', 'add', 'github', GITHUB_URL], { cwd: WORK });
-      await git(['clone', '-q', '-b', 'main', dirs.mirror, dirs.proj], { cwd: WORK });
-      await git(['remote', 'set-url', 'origin', GITHUB_URL]);
-      await git(['config', `url.${dirs.mirror}.insteadOf`, GITHUB_URL]);
-      await shed();
-      await git(['clone', '-q', '-b', 'main', dirs.mirror, dirs.maker], { cwd: WORK });
+      await checkouts();
 
       // Leg 1: an unclear pull request beside a clear one.
-      a = await branchPr(`check-90/${stamp}-a`, {
-        [`db/migrations/${stamp}_users_credentials.sql`]: `-- db/migrations/${stamp}_users_credentials.sql\nALTER TABLE users DROP COLUMN password_hash;\nALTER TABLE users ADD COLUMN credential_blob BYTEA NOT NULL DEFAULT '';\nDROP TABLE sessions;\n`,
-        [`src/auth/login-${stamp}.js`]: `// src/auth/login-${stamp}.js\nexport function login(user, secret) {\n  // Sign-in now accepts any secret for an admin user while the credential table is rebuilt.\n  return user.role === 'admin' ? { ok: true } : { ok: secret === user.credential };\n}\n`,
-      }, 'Change sign-in and drop the sessions table');
+      a = await unclearPr();
       const b = await branchPr(`check-90/${stamp}-b`, { [`docs/check-90-${stamp}-b.md`]: `<!-- docs/check-90-${stamp}-b.md -->\nA line for check 90.\n` }, 'A line for check 90');
       report.prs = { a: a.number, b: b.number };
       const one = await queue('queue-1');
