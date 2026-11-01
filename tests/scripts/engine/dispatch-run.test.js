@@ -1108,3 +1108,18 @@ test('a cap card left open across a Carry on doesn\'t hold the new run\'s answer
   await w.tick(4);
   assert.deepEqual(w.answers().map((c) => c.action.answer.ask), ['qa2']);
 });
+
+test('an answer the engine never heard, on work that has since ended, gives the run\'s place up', async () => {
+  const w = wayBack({ recordings: { a: asking('qa').slice(0, 2) }, pace: 2 });
+  w.put('a');
+  await w.tick(2);
+  const act = w.engine.act.bind(w.engine);
+  w.engine.act = (runId, action) => { if (action.answer) throw new Error('no answer from the engine'); return act(runId, action); };
+  w.answer('a', 'Do the whole page');
+  await w.tick(3);
+  assert.equal(w.stateOf('a'), 'paused');
+  w.clock.now = new Date(w.clock.now.getTime() + 1000);
+  w.reports.a = { at: w.clock.now.toISOString(), data: { work: 'a', outcome: 'closed' } };
+  await w.tick(2);
+  assert.equal(w.stateOf('a'), 'ended');
+});

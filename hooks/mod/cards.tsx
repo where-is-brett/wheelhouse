@@ -100,7 +100,7 @@ export async function carry($: EngineInterface, request: Record<string, unknown>
   if (answer?.says !== undefined) $.ui.toast(answer.says)
   else if (answer === null || !answer.ok) $.ui.toast(FAILED)
   void after().catch(() => undefined)
-  void submitAll($, answer?.submit ?? [])
+  void submitAll($, answer?.submit ?? []).catch(() => undefined)
 }
 
 // A press on one of the Safekeeping row's buttons: the bridge signs it, and the helper does it.
@@ -133,7 +133,7 @@ async function pressWhy($: EngineInterface, card: Card, turn: boolean) {
   if (turn) {
     if (!(await claim($, { on: id, label: WHY }))) return
     void ask($, quiet)
-    void submitAll($, [`${PANE_LEAD} the director pressed ${WHY} on card ${typeof card.n === 'number' ? card.n : id} (${id}).`])
+    void submitAll($, [`${PANE_LEAD} the director pressed ${WHY} on card ${typeof card.n === 'number' ? card.n : id} (${id}).`]).catch(() => undefined)
     await release($)
     return
   }

@@ -741,12 +741,15 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
         // The piece comes back once, with both answers, when a second card of it is still open.
         if (waitingOn().has(kept.work)) continue;
         // Its work ended with this run still paused: nothing is left to carry on, and only the end of the run gives its place back.
-        if (state.sending[key] !== true && endedBy(views.reports, kept.work, views.work?.[kept.work]?.work)) {
-          state.delivered[key] = 'ended';
-          keep();
-          drop(kept.work, key);
+        if (endedBy(views.reports, kept.work, views.work?.[kept.work]?.work)) {
+          // Ended first: a crash or a refused write comes back here, and neither step minds being done twice.
           await cancelPaused(kept.runId, 'its work has ended');
           await endInRecord(kept);
+          state.delivered[key] = 'ended';
+          delete state.tries[key];
+          delete state.sending[key];
+          keep();
+          drop(kept.work, key);
           await note(`Your answer about ${titled(kept.work)} wasn't sent: that work has ended, so nothing carries on from it.`, { work: kept.work });
           continue;
         }
