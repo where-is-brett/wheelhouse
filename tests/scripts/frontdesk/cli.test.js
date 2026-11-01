@@ -15,7 +15,8 @@ import { cardsDue } from '../../../scripts/hooks/board-context.js';
 import { numberedWaiting } from '../../../scripts/board/model.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { buildViews } from '../../../scripts/state/views.js';
-import { wholeBrief } from '../../../scripts/delegation/brief.js';
+import { briefText, wholeBrief } from '../../../scripts/delegation/brief.js';
+import { BRIEF_WORDS_MOST } from '../../../scripts/delegation/limits.js';
 import { makeEvent, dataHash, listEvents, confirmationFor, PROTECTED_KINDS } from '../../../scripts/state/events.js';
 import { delegationReview } from '../../../scripts/frontdesk/learning.js';
 import { deskCore } from '../../../scripts/desk/core.js';
@@ -815,6 +816,18 @@ test('record brief gives back its confirm card, showing all of it, and a fact jo
     assert.deepEqual(next.data.facts, [{ words: 'One till', date: '2026-11-01' }]);
     assert.equal(next.data.now, 'Stop the calls to support');
     assert.equal(helper.held.filter((e) => e.kind === 'card').length, 2);
+  });
+});
+
+test('the fullest brief still fits its confirm card', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const room = BRIEF_WORDS_MOST - briefText(wholeBrief({})).length;
+    const out = await run(helper, ['record', 'brief'], JSON.stringify({ now: 'a few plain words '.repeat(Math.ceil(room / 18)).slice(0, room).trim() }));
+    assert.equal(out.code, 0, out.err);
+    const refused = await run(helper, ['record', 'brief'], JSON.stringify({ now: 'a few plain words '.repeat(60) }));
+    assert.equal(refused.code, 1);
+    assert.match(refused.err, /800 characters/);
   });
 });
 

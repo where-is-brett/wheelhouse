@@ -116,7 +116,7 @@ test('a brief written to the helper is a draft, and only the director\'s signed 
       const carried = await client.state.record({ project: P, event: makeEvent({ ...confirmationFor(event) }), target: event });
       assert.match(carried.refused, /only a ruling or a setting comes with its confirmation/);
       assert.equal(c.views().brief, null);
-      const question = `This project's standing brief, as it would stand: ${data.words}\n${confirmLine(event)}`;
+      const question = `This project's standing brief, ${data.words}\n${confirmLine(event)}`;
       const click = makeEvent({ ...(await earned({ project: P, question, label: 'Confirm', card: { question } })).made });
       assert.equal((await client.state.record({ project: P, event: click })).ok, true);
       assert.deepEqual(c.views().brief, { brief: data, signedAt: click.at });

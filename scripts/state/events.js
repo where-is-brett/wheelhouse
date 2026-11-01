@@ -432,7 +432,7 @@ function checkPlain(kind, data) {
   if (kind === 'brief') {
     const problem = briefProblem(data);
     if (problem !== null) bad(problem);
-    if (data.words !== briefWords(data)) bad('needs its words to be its lines, as its confirm card shows them');
+    if (data.words !== briefWords(data)) bad('needs its words to be the version mark of its lines');
     return;
   }
   if (kind === 'rule') {

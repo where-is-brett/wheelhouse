@@ -50,7 +50,7 @@
 // card's answer, a shown or asked record, or a signed kind, and an answer card's options come only
 // from the question the build recorded. Every card handed out is recorded as asked, and
 // its words are put in the glossary's plain words. Errors are one line on standard error.
-import { BRIEF_LINES, addFact, briefProblem, wholeBrief } from '../delegation/brief.js';
+import { BRIEF_LINES, addFact, briefProblem, briefText, wholeBrief } from '../delegation/brief.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -664,7 +664,7 @@ function briefCard(event, words) {
   return composePlain({
     kind: 'confirm',
     level: 3,
-    what: `This project's standing brief, as it would stand: ${event.data.words}`,
+    what: `This project's standing brief, ${event.data.words}, as it would stand: ${briefText(event.data)}`,
     why: 'Agents read the brief as your intent, so it counts only once you confirm it.',
     options: [{ label: 'Confirm', says: 'This becomes the project\'s brief, in place of any before it.' }],
     recommend: 'Confirm',
@@ -989,7 +989,7 @@ export async function view({ client, cwd, name, now }) {
     const { sealed = 0, read = 0, sampled = 0 } = isPlain(views.evidence) ? views.evidence : {};
     return [`${sealed} ${sealed === 1 ? 'card' : 'cards'} sealed, ${read} read, ${sampled} sampled.`];
   }
-  if (name === 'brief') return views.brief ? [views.brief.brief.words] : ['This project has no signed brief.'];
+  if (name === 'brief') return views.brief ? [briefText(views.brief.brief)] : ['This project has no signed brief.'];
   if (name === 'rulebook') {
     const rules = (Array.isArray(views.rulebook) ? views.rulebook : []).filter((r) => r?.status !== 'superseded');
     // A Lean ruling confirmed by a click in the chat (ruling P5-52) says what that proof is.

@@ -5,8 +5,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { addFact, briefLines, briefProblem, briefStands, briefWords, wholeBrief } from '../../../scripts/delegation/brief.js';
-import { BRIEF_EXAMPLES_MOST, BRIEF_FACTS_MOST, BRIEF_LINE_MOST } from '../../../scripts/delegation/limits.js';
+import { addFact, briefLines, briefProblem, briefStands, briefText, briefWords, wholeBrief } from '../../../scripts/delegation/brief.js';
+import { BRIEF_EXAMPLES_MOST, BRIEF_WORDS_MOST } from '../../../scripts/delegation/limits.js';
 import { engineRoutes } from '../../../scripts/engine/routes.js';
 import { orderStore } from '../../../scripts/engine/order.js';
 import { TICKET_FILE } from '../../../scripts/engine/ticket.js';
@@ -44,20 +44,26 @@ test('a secret is refused', () => {
 
 test('each line stays short, on one line, and of the shape the design gives', () => {
   assert.ok(briefProblem(null));
-  assert.ok(briefProblem({ ...LINES, for: 'x'.repeat(BRIEF_LINE_MOST + 1) }));
+  assert.ok(briefProblem({ ...LINES, for: 'x'.repeat(BRIEF_WORDS_MOST) }));
   assert.ok(briefProblem({ ...LINES, for: 'two\nlines' }));
   assert.ok(briefProblem({ ...LINES, now: undefined }));
   assert.ok(briefProblem({ ...LINES, examples: Array(BRIEF_EXAMPLES_MOST + 1).fill('Like this.') }));
   assert.ok(briefProblem({ ...LINES, examples: [''] }));
-  assert.ok(briefProblem({ ...LINES, facts: Array(BRIEF_FACTS_MOST + 1).fill(LINES.facts[0]) }));
+  assert.ok(briefProblem({ ...LINES, facts: Array(BRIEF_WORDS_MOST).fill(LINES.facts[0]) }));
   assert.ok(briefProblem({ ...LINES, facts: [{ ...LINES.facts[0], source: 'me' }] }));
 });
 
-test('its words show every line and each fact\'s date, a blank line as blank', () => {
-  const words = briefWords(LINES);
+test('its text shows every line and each fact\'s date, a blank line as blank', () => {
+  const words = briefText(LINES);
   for (const part of [LINES.for, LINES.now, LINES.noGos, LINES.examples[0], LINES.facts[0].words, '30 October 2026']) assert.ok(words.includes(part), part);
-  assert.equal(wholeBrief({}).words, 'For: left blank. Now: left blank. No-gos: left blank. Examples: left blank. Facts: left blank.');
+  assert.equal(briefText(wholeBrief({})), 'For: left blank. Now: left blank. No-gos: left blank. Examples: left blank. Facts: left blank.');
   assert.ok(!/\n/.test(words));
+});
+
+test('a changed word changes its version mark', () => {
+  assert.match(wholeBrief(LINES).words, /^version [0-9a-f]{12}$/);
+  assert.equal(briefWords(LINES), wholeBrief(LINES).words);
+  assert.notEqual(briefWords({ ...LINES, now: 'Something else.' }), briefWords(LINES));
 });
 
 test('the brief is a confirmable kind no one signs but the director', () => {
@@ -65,7 +71,7 @@ test('the brief is a confirmable kind no one signs but the director', () => {
   assert.ok(CONFIRMABLE_KINDS.includes('brief'));
   assert.ok(!PROTECTED_KINDS.includes('brief'));
   assert.ok(!HELPER_ONLY_KINDS.includes('brief'));
-  assert.throws(() => drafted({ ...wholeBrief(LINES), words: 'Something gentler than what the record says.' }), /words/);
+  assert.throws(() => drafted({ ...wholeBrief(LINES), words: 'version 000000000000' }), /words/);
   assert.throws(() => drafted({ ...wholeBrief(LINES), facts: [{ words: 'No date.' }] }), /date/);
 });
 
@@ -95,8 +101,8 @@ test('a record whose words aren\'t its lines stands for nothing, signed or not',
   signing();
   const good = wholeBrief(LINES);
   assert.equal(briefStands(good), true);
-  assert.equal(briefStands({ ...good, words: 'Other words.' }), false);
-  const forged = { ...drafted(good), data: { ...good, words: 'Other words.' } };
+  assert.equal(briefStands({ ...good, words: 'version 000000000000' }), false);
+  const forged = { ...drafted(good), data: { ...good, words: 'version 000000000000' } };
   assert.equal(built([forged, signed(forged)]).brief, null);
 }));
 
@@ -113,7 +119,7 @@ test('a fact given on a card may join the brief, with its date, by a confirm car
   const { brief } = built([first, signed(first)]).brief;
   const next = addFact(brief, { words: 'The shop has one till.', date: '2026-11-01' });
   assert.deepEqual(next.facts.at(-1), { words: 'The shop has one till.', date: '2026-11-01' });
-  assert.ok(next.words.includes('The shop has one till. (1 November 2026)'));
+  assert.ok(briefText(next).includes('The shop has one till. (1 November 2026)'));
   assert.equal(brief.facts.length, 1, 'the brief in force stays as it was');
   const draft = drafted(next, 3);
   assert.equal(built([first, signed(first), draft]).brief.brief.facts.length, 1, 'nothing changes until the Confirm');
