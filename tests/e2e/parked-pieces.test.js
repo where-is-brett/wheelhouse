@@ -314,6 +314,43 @@ test('a feature All stop cancelled gives its place up after the lift', async () 
   assert.equal(w.cards().length, 0, 'the First Mate\'s Carry on takes it up, as ever');
 });
 
+const failed = [{ type: 'run-started', runId: 'x', at: '2026-10-29T02:00:00.000Z' }, { type: 'run-ended', runId: 'x', at: '2026-10-29T02:00:00.000Z', outcome: 'failed' }];
+
+test('Stop here on a stall card ends the feature though a newer run has started', async () => {
+  const w = wayBack({ recordings: { f: [failed, forever()], h: quiet() }, pace: 1, designOf: slices });
+  w.put('f', { lane: 'feature', files: ['one.js'], place: 0 });
+  await w.tick(5);
+  assert.equal(w.cards().length, 1);
+  w.dispatcher.sentBack('f');
+  await w.tick(3);
+  assert.equal(w.stateOf('f'), 'started', 'sent back while its card stayed out');
+  w.answer('f', 'Stop here');
+  await w.tick(4);
+  assert.equal(w.stateOf('f'), 'ended', 'The feature ends here');
+  assert.equal(w.reports.f.data.outcome, 'closed');
+  const starts = w.starts.length;
+  await w.tick(3);
+  assert.equal(w.starts.length, starts, 'nothing more of it starts');
+  w.put('h', { files: ['one.js'], place: 1 });
+  await w.tick(3);
+  assert.ok(w.starts.some((s) => s.order.work === 'h'), 'its place and files are free');
+  assert.equal(w.cards().length, 1, 'no card beyond the one answered');
+});
+
+test('a feature sent back after its Stop here starts no run', async () => {
+  const w = wayBack({ recordings: { f: [failed, quiet()] }, pace: 1, designOf: slices });
+  w.put('f', { lane: 'feature', place: 0 });
+  await w.tick(5);
+  w.answer('f', 'Stop here');
+  await w.tick(3);
+  assert.equal(w.reports.f.data.outcome, 'closed');
+  const starts = w.starts.length;
+  w.dispatcher.sentBack('f');
+  await w.tick(4);
+  assert.equal(w.starts.length, starts, 'The feature ends here');
+  assert.equal(w.cards().length, 1, 'no card beyond the one answered');
+});
+
 test('a feature run that failed with no pull request brings its card', async () => {
   const fail = [{ type: 'run-started', runId: 'x', at: '2026-10-29T02:00:00.000Z' }, { type: 'run-ended', runId: 'x', at: '2026-10-29T02:00:00.000Z', outcome: 'failed' }];
   const w = wayBack({ recordings: { f: fail, h: quiet() }, pace: 1, designOf: slices });
