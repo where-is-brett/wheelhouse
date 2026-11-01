@@ -1,5 +1,5 @@
 // scripts/state/joiners.js
-// Questions alike across pieces are one card (delegated decisions plan, choice 12). A joiner is a `question` record of
+// Alike questions are one card, across pieces or within one (delegated decisions plan, choice 12). A joiner is a `question` record of
 // its own, with `joins: <lead id>` and its own engine options, so nothing already signed changes. It takes its lead's
 // answer only if the card clicked listed it: a click covers what its card showed, and a joiner newer than that card
 // stays open, with what the director said. `joins` is read here against the lead's own words, so a question naming a
@@ -14,9 +14,18 @@ const dataOf = (entry) => entry?.question?.data;
 // it was first written, since one recorded again is no longer what its piece asked. A joiner keeps `joins` while it stands behind a card,
 // and `gone` once its piece has left the bundle; one with an answer of its lead's says `joined`, and one left open
 // gives `saidBefore`, with `joins` gone, since it is a question of its own again.
+function answerBehind(questions, id, data) {
+  const found = Object.entries(questions).find(([other, q]) => other !== id && dataOf(q)?.work === data.work && dataOf(q).key === data.key && typeof data.key === 'string'
+    && q.answer?.label === data.saidBefore && q.answer.changed !== true);
+  return found ? found[1].answer : null;
+}
+
 export function joinQuestions(questions, { shown = () => [], ended = () => false, kept = () => true } = {}) {
   for (const [id, entry] of Object.entries(questions)) {
     const data = dataOf(entry);
+    // The piece asked this again. A record only claims what the director said, so an answer on the record has to stand behind it.
+    const behind = typeof data?.saidBefore === 'string' ? answerBehind(questions, id, data) : null;
+    if (behind !== null) entry.saidBefore = { label: data.saidBefore, at: behind.at };
     const lead = questions[data?.joins];
     if (!isPlain(lead) || data.joins === id || dataOf(lead).joins !== undefined || !alike(data, dataOf(lead)) || !kept(id, data)) continue;
     entry.joins = data.joins;

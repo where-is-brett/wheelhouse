@@ -262,7 +262,9 @@ const PLAIN_SHAPES = {
   // `checks`: what answering it does to the checks, one line, for a level 4 question's card.
   // `joins`: the open question whose card answers this one too (scripts/state/joiners.js).
   // `blind`: drawn for a blind card, whose first pick comes before the recommendation (scripts/delegation/blind.js).
-  question: { must: ['id', 'work', 'what', 'why', 'options', 'recommendation', 'level'], may: ['commands', 'checks', 'engine', 'joins', 'blind'] },
+  // `key`: the decision it asks (scripts/delegation/asked.js); `head`: its branch's head when it was asked; `saidBefore`:
+  // the director's answer the last time, which the card says first.
+  question: { must: ['id', 'work', 'what', 'why', 'options', 'recommendation', 'level'], may: ['commands', 'checks', 'engine', 'joins', 'key', 'head', 'saidBefore', 'blind'] },
   report: { must: ['work', 'outcome', 'summary', 'rulings'], may: ['pr', 'provenance'] },
   // A red-main incident (design on Archon, section 7.7) names its kind, the pull request the merge queue suspects
   // (or null) and the fix's work; the helper opens and closes it, and the director never needs to.
@@ -538,6 +540,9 @@ function checkPlain(kind, data) {
     if (data.joins !== undefined && (typeof data.joins !== 'string' || !questionIdOf(data.joins) || data.joins === data.id || data.level !== 3 || data.commands !== undefined)) {
       bad('joins a card only at level 3, by another question\'s id');
     }
+    if (data.key !== undefined && !(typeof data.key === 'string' && /^[0-9a-f]{64}$/.test(data.key))) bad('has a key that is not a decision\'s');
+    if (data.head !== undefined && !(typeof data.head === 'string' && /^[0-9a-f]{40,64}$/.test(data.head))) bad('has a head that is not a commit');
+    if (data.saidBefore !== undefined && (!isText(data.saidBefore) || data.level !== 3)) bad('says what was said before only at level 3, in words');
     if (data.blind !== undefined && (data.blind !== true || data.level !== 3)) bad('is blind only at level 3');
     // A question from the build engine names the run and the ask its answer goes back to, and each option's id there.
     if (data.engine !== undefined) {

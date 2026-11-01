@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { safeGit } from '../../../scripts/lib/safe-git.js';
 import { readConfig } from '../../../scripts/gate/guardrails.js';
-import { changeFacts, cardFacts, pathsSoFar, UNREAD_FACTS } from '../../../scripts/delegation/facts.js';
+import { changeFacts, cardFacts, pathsSoFar, branchHead, commitsAfter, UNREAD_FACTS } from '../../../scripts/delegation/facts.js';
 
 const EMPTY = readConfig(null);
 
@@ -163,7 +163,7 @@ test('a plugin\'s parts are guardrails where the default branch is a plugin', as
 test('nothing committed yet isn\'t a clean change: it can\'t be read, and the head is kept', async () => {
   const r = repo();
   const head = r.git('rev-parse', 'HEAD');
-  assert.deepEqual(await onCard(r), { readable: false, head });
+  assert.deepEqual(await onCard(r), { readable: false, head, nothing: true });
 });
 
 test('uncommitted work can\'t be read, tracked or new', async () => {
@@ -233,4 +233,40 @@ test('what can\'t be read gives null', async () => {
   assert.equal(await soFar(r, { baseCommit: 'a'.repeat(40), mainBranch: 'none' }), null);
   const gone = path.join(r.dir, 'gone');
   assert.equal(await soFar(r, { folder: gone, git: routed(gone) }), null);
+});
+
+test('a piece with nothing done says so, apart from one that can\'t be read', async () => {
+  const r = repo();
+  const none = await onCard(r);
+  assert.equal(none.readable, false);
+  assert.equal(none.nothing, true);
+  fs.writeFileSync(path.join(r.dir, 'loose.md'), 'not committed\n');
+  const dirty = await onCard(r);
+  assert.equal(dirty.readable, false);
+  assert.equal(dirty.nothing, undefined);
+});
+
+test('the commits on a piece since a head are counted, and what can\'t be read is null', async () => {
+  const r = repo();
+  const head = r.put('src/a.js', 'one\n');
+  const place = cardIn(r);
+  const read = (over = {}) => commitsAfter({ card: place, git: routed(r.dir), head, ...over });
+  assert.equal(await branchHead({ card: place, git: routed(r.dir) }), head);
+  assert.equal(await read(), 0);
+  r.put('src/b.js', 'two\n');
+  r.put('src/c.js', 'three\n');
+  assert.equal(await read(), 2);
+  assert.equal(await read({ head: 'f'.repeat(40) }), null, 'a head the piece never had');
+  assert.equal(await read({ head: undefined }), null);
+  assert.equal(await read({ card: { branch: 'gone', folder: r.dir } }), null);
+  assert.equal(await read({ card: { branch: null, folder: null } }), null);
+  assert.equal(await branchHead({ card: { branch: 'gone', folder: r.dir }, git: routed(r.dir) }), null);
+});
+
+test('a branch moved back past the head reads as unknown, never as no commits', async () => {
+  const r = repo();
+  const before = r.git('rev-parse', 'HEAD');
+  const head = r.put('src/a.js', 'one\n');
+  r.git('reset', '-q', '--hard', before);
+  assert.equal(await commitsAfter({ card: cardIn(r), git: routed(r.dir), head }), null);
 });

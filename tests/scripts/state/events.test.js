@@ -967,6 +967,16 @@ test('a reading line carries its fields, and a line with no reading has no pick'
   }
 });
 
+test('a question carries its decision key, the head it was asked at, and what was said before', () => {
+  const data = { id: 'q-b-500001', work: 'b', what: 'Which?', why: 'It matters.', options: [{ label: 'One', says: 'x' }], recommendation: 'One', level: 3 };
+  const got = makeEvent({ kind: 'question', data: { ...data, key: 'a'.repeat(64), head: 'b'.repeat(40), saidBefore: 'One' } }).data;
+  assert.deepEqual([got.key, got.head, got.saidBefore], ['a'.repeat(64), 'b'.repeat(40), 'One']);
+  assert.throws(() => makeEvent({ kind: 'question', data: { ...data, key: 'short' } }), /key/);
+  assert.throws(() => makeEvent({ kind: 'question', data: { ...data, head: 'main' } }), /head/);
+  assert.throws(() => makeEvent({ kind: 'question', data: { ...data, saidBefore: '' } }), /said before/);
+  assert.throws(() => makeEvent({ kind: 'question', data: { ...data, level: 4, checks: 'None.', saidBefore: 'One' } }), /said before/);
+});
+
 test('a question joins a card only at level 3, by another question\'s id', () => {
   const data = { id: 'q-b-500001', work: 'b', what: 'Which?', why: 'It matters.', options: [{ label: 'One', says: 'x' }], recommendation: 'One', level: 3 };
   assert.equal(makeEvent({ kind: 'question', data: { ...data, joins: 'q-a-500001' } }).data.joins, 'q-a-500001');

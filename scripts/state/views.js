@@ -319,6 +319,19 @@ function outcomesOf(sorted, { confirmations, answeredBy, lean = false }) {
   });
 }
 
+// Marks each question with when the director last steered it, on its card or in the chat, which writes only `chat-steer`.
+function stampSteers(questions, outcomes, sorted) {
+  const lines = new Map(Object.keys(questions ?? {}).map((id) => [answerLine(id), id]));
+  const steers = sorted.filter((e) => e.kind === 'chat-steer');
+  for (const { card, steered } of outcomes) {
+    const id = lines.get(card.data?.line);
+    if (id === undefined) continue;
+    const told = steers.filter((e) => e.data?.card === card.id).at(-1)?.at;
+    const latest = [questions[id].steered, steered, told].filter((at) => typeof at === 'string').sort().at(-1);
+    if (latest !== undefined) questions[id].steered = latest;
+  }
+}
+
 // cardOutcomes(events, enrolled) -> how each card among the events was decided, as outcomesOf
 // says, judged as the waiting view judges it.
 export function cardOutcomes(events, enrolled) {
@@ -417,7 +430,8 @@ function buildLoopViews(sorted, enrolled) {
     const q = questions[a.data.questionId];
     if (!q || typeof a.data.label !== 'string' || a.data.questionHash !== dataHash(q.question.data)) continue;
     if (Array.isArray(q.question.data.options) && q.question.data.options.some((o) => o?.label === a.data.label)) {
-      q.answer = { label: a.data.label, at: a.at, computer: signedOn(a), ...(typeof a.data.proof === 'string' ? { proof: a.data.proof } : {}) };
+      const changed = isPlainObject(q.answer) && (q.answer.changed === true || q.answer.label !== a.data.label);
+      q.answer = { label: a.data.label, at: a.at, computer: signedOn(a), ...(typeof a.data.proof === 'string' ? { proof: a.data.proof } : {}), ...(changed ? { changed: true } : {}) };
     }
   }
 
@@ -628,6 +642,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   const revised = revisedBy(sorted);
   const handedOut = sorted.filter((e) => e.kind === 'asked' && Array.isArray(e.data?.cards));
   const outcomes = outcomesOf(sorted, { confirmations: closing, answeredBy, lean });
+  stampSteers(loop.questions, outcomes, sorted);
   // What the director took on a question's blind card, before any recommendation. It answers nothing, and a click on
   // a card its answer card has replaced is no such thing: they may have seen the recommendation by then.
   for (const { card, decided } of outcomes) {

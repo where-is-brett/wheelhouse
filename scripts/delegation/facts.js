@@ -101,9 +101,36 @@ export async function cardFacts({ card, git, baseCommit }) {
     const base = await commitOf(read, baseCommit);
     const facts = await changeFacts({ git: call, base, head, config: await configAt(read, base) });
     if (facts.readable !== true) return facts;
-    return facts.paths.length === 0 || (await uncommitted(call)).length > 0 ? { readable: false, head } : { ...facts, base };
+    const loose = (await uncommitted(call)).length > 0;
+    if (facts.paths.length === 0 && !loose) return { readable: false, head, nothing: true };
+    return loose ? { readable: false, head } : { ...facts, base };
   } catch {
     return UNREAD_FACTS;
+  }
+}
+
+// The head of a card's branch, or null when it can't be read.
+export async function branchHead({ card, git }) {
+  if (!isBranchName(card?.branch) || typeof card?.folder !== 'string' || card.folder === '') return null;
+  try {
+    return await commitOf(runner(git(card.folder).call), `refs/heads/${card.branch}`);
+  } catch {
+    return null;
+  }
+}
+
+// The commits on a card's branch after `head`, or null when that can't be read. A branch moved back past `head` has no
+// commits after it and is still not as it was, so it is null too.
+export async function commitsAfter({ card, git, head }) {
+  if (!/^[0-9a-f]{40,64}$/.test(head ?? '')) return null;
+  const now = await branchHead({ card, git });
+  if (now === null) return null;
+  if (now === head) return 0;
+  try {
+    const count = Number((await runner(git(card.folder).call)(['rev-list', '--count', `${head}..${now}`])).trim());
+    return Number.isInteger(count) && count > 0 ? count : null;
+  } catch {
+    return null;
   }
 }
 

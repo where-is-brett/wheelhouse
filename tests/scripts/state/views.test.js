@@ -1509,6 +1509,44 @@ test('a click covers only what its card showed', async () => {
   });
 });
 
+test('a question recorded with what was said before says it in the view', async () => {
+  await withHome(() => {
+    const KEY = 'a'.repeat(64);
+    const SECOND = 'q-lead-500002';
+    const first = asked(1, { key: KEY });
+    const answer = (n, label) => click(n, { action: 'answer', question: 'one', questionId: LEAD, questionHash: dataHash(first.data), label });
+    const repeat = (n, data = {}) => asked(n, { id: SECOND, key: KEY, saidBefore: 'First', ...data });
+    assert.equal(build([first, answer(2, 'First'), repeat(3)]).questions[SECOND].saidBefore.label, 'First');
+    assert.equal(build([asked(1)]).questions[LEAD].saidBefore, undefined);
+    assert.equal(build([first, repeat(3)]).questions[SECOND].saidBefore, undefined, 'no answer stands behind it');
+    assert.equal(build([first, answer(2, 'Last'), repeat(3)]).questions[SECOND].saidBefore, undefined, 'not what the director said');
+    assert.equal(build([first, answer(2, 'First'), repeat(3, { key: 'b'.repeat(64) })]).questions[SECOND].saidBefore, undefined, 'another decision');
+    assert.equal(build([first, answer(2, 'Last'), answer(3, 'First'), repeat(4)]).questions[SECOND].saidBefore, undefined, 'an answer changed since');
+  });
+});
+
+test('an answer the director changed says so', async () => {
+  await withHome(() => {
+    const again = (n, label) => click(n, { action: 'answer', question: 'one', questionId: LEAD, questionHash: dataHash(asked(1).data), label });
+    assert.equal(build([asked(1), again(2, 'First')]).questions[LEAD].answer.changed, undefined);
+    assert.equal(build([asked(1), again(2, 'First'), again(3, 'First')]).questions[LEAD].answer.changed, undefined);
+    const got = build([asked(1), again(2, 'First'), again(3, 'Last')]).questions[LEAD].answer;
+    assert.equal(got.label, 'Last');
+    assert.equal(got.changed, true);
+  });
+});
+
+test('a steer on a question\'s card shows on the question, by a click or in the chat', async () => {
+  await withHome(() => {
+    const card = answerCard(2, 'one');
+    assert.equal(build([asked(1), card]).questions[LEAD].steered, undefined);
+    const chat = ev('chat-steer', 3, { card: card.id });
+    assert.equal(build([asked(1), card, chat]).questions[LEAD].steered, chat.at);
+    const clicked = ev('card-answer', 3, { card: card.id, label: 'Suggest a change…' });
+    assert.equal(build([asked(1), card, clicked]).questions[LEAD].steered, clicked.at);
+  });
+});
+
 test('a joiner open behind an open lead says whom it joins', async () => {
   await withHome(() => {
     assert.equal(build([asked(1), joiner(2)]).questions[JOIN].joins, LEAD);
