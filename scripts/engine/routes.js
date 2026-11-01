@@ -212,6 +212,28 @@ export function engineRoutes({
     return { ok: true, runId: started.runId };
   }
 
+  // Starts a goal's check run in its own folder, as a reader starts: a stand-in order, which places the run and holds its
+  // checks, a ticket and no `run` record, since no piece pays for it and it has no model step to bind.
+  async function startGoalCheck({ project, order, folder } = {}) {
+    if (held()) return { ok: false, refused: 'All stop is on, so no run starts' };
+    const engine = engineFor(project);
+    if (typeof engine?.artefactsOf !== 'function') return { ok: false, refused: 'that project\'s engine gives a run no artefacts folder, so its steps can\'t be given their ticket' };
+    const started = await engine.start({ work: order.work, lane: order.lane, goal: order.goal, project: folder, bindings: {} });
+    if (!started?.ok) return { ok: false, refused: started?.refused ?? 'the engine didn\'t start the goal\'s checks' };
+    const ticket = newTicket();
+    try {
+      storeOf(project).save(started.runId, order);
+      const artefacts = engine.artefactsOf(started.runId, host?.repo?.(project), { folder });
+      if (!artefacts) throw new Error('no artefacts folder');
+      fs.writeFileSync(ticketFile(project, started.runId), `${ticketHash(ticket)}\n`, { flag: 'wx', mode: 0o600 });
+      writeTicket(artefacts, ticket);
+    } catch {
+      await Promise.resolve().then(() => engine.act(started.runId, { cancel: { reason: 'the run\'s ticket couldn\'t be written' } })).catch(() => {});
+      return { ok: false, refused: 'the run\'s ticket couldn\'t be written, so it was stopped' };
+    }
+    return { ok: true, runId: started.runId };
+  }
+
   // The verdicts kept for a project: { runs: { [runId]: { head, signed: { [step]: verdict } } }, comments: { [pr]: id },
   // ready: { [pr]: { head, runId, showFirst, work } }, lessons: { [runId]: at },
   // opened: { [pr]: { runId, head, showFirst, work, level, lane, incident? } }, previews: { [runId]: head },
@@ -532,6 +554,7 @@ export function engineRoutes({
   return {
     runOf,
     startReader,
+    startGoalCheck,
     readyOf,
     openedOf,
     // The pull request a run opened, by the helper's own record of it, or null (an engine may not say so itself).

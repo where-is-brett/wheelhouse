@@ -1979,7 +1979,7 @@ test('an unknown command, or a helper that can\'t be reached, is one line on sta
     const helper = fakeHelper();
     const unknown = await run(helper, ['show', '7']);
     assert.equal(unknown.code, 1);
-    assert.match(unknown.err, /^Commands: cards, pull-cards, card, again, why, suggest, record, similar, views, explain, review, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, end-goal, narrow-goal\n$/);
+    assert.match(unknown.err, /^Commands: cards, pull-cards, card, again, why, suggest, record, similar, views, explain, review, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, end-goal, narrow-goal, goal-baseline\n$/);
     const away = { client: { desk: { read: async () => ({ ok: false, refused: 'the host helper could not be reached: is it running?' }) } } };
     const out = await run(away, ['cards']);
     assert.equal(out.code, 1);
@@ -2039,7 +2039,7 @@ test('through the real helper, the command places the project from its folder an
 test('run as a script, an unknown command is refused with the list of commands', async () => {
   const done = spawnSync(process.execPath, [SCRIPT, 'nonsense'], { encoding: 'utf8' });
   assert.equal(done.status, 1);
-  assert.equal(done.stderr, 'Commands: cards, pull-cards, card, again, why, suggest, record, similar, views, explain, review, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, end-goal, narrow-goal\n');
+  assert.equal(done.stderr, 'Commands: cards, pull-cards, card, again, why, suggest, record, similar, views, explain, review, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, end-goal, narrow-goal, goal-baseline\n');
   assert.equal(done.stdout, '');
 });
 
@@ -2412,7 +2412,8 @@ const runningGoal = () => {
   const start = makeEvent({
     kind: 'action', data: { action: 'start-goal', goal: 'orders-export', hash, label: 'Start', question: `Start this goal?\n${startGoalLine('orders-export', hash)}` }, now: () => NOW,
   });
-  return [makeEvent({ kind: 'work', data: GOAL_PIECE, now: () => T(0) }), goal, start];
+  const baseline = makeEvent({ kind: 'goal-check', data: { goal: 'orders-export', hash, when: 'before', head: 'a'.repeat(40), results: [{ check: GOAL_SHEET.done[0], ok: false }], ok: false }, now: () => T(1) });
+  return [makeEvent({ kind: 'work', data: GOAL_PIECE, now: () => T(0) }), goal, baseline, start];
 };
 
 test('record goal writes a sheet that could start, and refuses one that could not, before the helper is asked', async () => {
@@ -2456,6 +2457,23 @@ test('end-goal --now notes the end for the running goal, through the desk', asyn
     assert.equal(helper.held.at(-1).data.now, false);
     const wrong = await run(helper, ['end-goal', '--soon']);
     assert.equal(wrong.code, 1);
+  });
+});
+
+test('goal-baseline asks the helper for one run of the goal\'s checks, and says when it is refused', async () => {
+  await inHome(async () => {
+    const asked = [];
+    const helper = fakeHelper();
+    helper.client.goalBaseline = async (body) => { asked.push(body.goal); return { ok: true, runId: 'run-1', head: 'a'.repeat(40) }; };
+    const out = await run(helper, ['goal-baseline', 'orders-export']);
+    assert.equal(out.code, 0, out.err);
+    assert.deepEqual(asked, ['orders-export']);
+    assert.deepEqual(out.json, { started: true, head: 'a'.repeat(40) });
+    assert.equal((await run(helper, ['goal-baseline'])).code, 1);
+    helper.client.goalBaseline = async () => ({ ok: false, refused: 'There is no sheet for the goal orders-export' });
+    const refused = await run(helper, ['goal-baseline', 'orders-export']);
+    assert.equal(refused.code, 1);
+    assert.match(refused.err, /no sheet/);
   });
 });
 

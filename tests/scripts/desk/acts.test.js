@@ -171,7 +171,12 @@ const runningEntry = (sheet) => ({ sheet, hash: sheetHash(sheet), startedAt: '20
 function goalMemory({ events = [], goals = {}, work = { 'export-page': { work: { data: PIECE } } }, stopped = false } = {}) {
   return {
     project: 'p',
-    async views() { return { ok: true, views: { waiting: [], goals, work }, names: [], cards: [] }; },
+    async views() {
+      // Each sheet's baseline, with its one check failing on the main line.
+      const goalChecks = {};
+      for (const e of events.filter((x) => x.kind === 'goal')) (goalChecks[e.data.id] ??= []).push({ hash: sheetHash(e.data.sheet), when: 'before', results: e.data.sheet.done.map((check) => ({ check, ok: false })) });
+      return { ok: true, views: { waiting: [], goals, work, goalChecks }, names: [], cards: [] };
+    },
     events: () => events,
     enrolled: () => readEnrolled(),
     async stop() { return { on: stopped }; },

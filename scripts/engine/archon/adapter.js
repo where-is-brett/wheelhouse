@@ -44,9 +44,11 @@ export const LANE_WORKFLOWS = Object.freeze({
   'fix-main': 'wheelhouse-fix-main',
   merge: 'archon-merge-queue',
   reader: 'wheelhouse-reader',
+  'goal-check': 'wheelhouse-goal-check',
 });
 const MERGE_QUEUE = LANE_WORKFLOWS.merge;
 const READER = LANE_WORKFLOWS.reader;
+const GOAL_CHECK = LANE_WORKFLOWS['goal-check'];
 
 // The forms of the pack this engine's runs may start, beside the pack's own (pack-build.js): a Copilot project's twins.
 export const ENGINE_PACK_FORMS = PACK_FORMS;
@@ -109,7 +111,8 @@ const onCopilot = (model) => new RegExp(`^${COPILOT}(?:[:/]|$)`, 'i').test(Strin
 export function workflowFor(workflow, bindings) {
   const models = [...Object.values(bindings?.tiers ?? {}), ...Object.values(bindings?.aliases ?? {})];
   const copilot = models.filter(onCopilot);
-  if (workflow === MERGE_QUEUE || copilot.length === 0) return { workflow };
+  // A goal's check run has no model step, so it has no twin.
+  if (workflow === MERGE_QUEUE || workflow === GOAL_CHECK || copilot.length === 0) return { workflow };
   if (copilot.length !== models.length) return { refused: 'A run\'s models must all be on one provider, and these are on more than one' };
   if (!TIERS.every((tier) => onCopilot(bindings.tiers?.[tier]))) return { refused: 'A run on Copilot binds every tier (small, medium and large), so none falls back to another provider' };
   return { workflow: `${workflow}${COPILOT_SUFFIX}` };
@@ -380,6 +383,7 @@ export function archonAdapter({
       if (!packDir || !configFile) return refusedWith("The engine's pack or its settings file isn't known, so nothing can start");
       if (workflow !== MERGE_QUEUE && !order.work) return refusedWith('A run needs the id of its work');
       if (workflow === READER && !(order.card && order.project)) return refusedWith('A reader needs its card and its folder');
+      if (workflow === GOAL_CHECK && !(order.goal && order.project)) return refusedWith('A goal\'s check run needs its goal and its folder');
       // Archon's merge queue reads the repository it merges in from its inputs, and fails its first step without them.
       if (workflow === MERGE_QUEUE && !(typeof order.repo?.host === 'string' && order.repo.host && typeof order.repo?.path === 'string' && order.repo.path)) {
         return refusedWith('The merge queue needs the repository it merges in');
@@ -405,11 +409,13 @@ export function archonAdapter({
         if (!owner || !name) return refusedWith('The merge queue needs the repository it merges in');
         args.push('--project', `mirrors/${projectSlug(owner, name)}`);
       }
-      // A reader runs in place in a folder of its own, which Archon holds as a folder project: no git and no worktree.
+      // A reader runs in place in a folder of its own, which Archon holds as a folder project: no git and no worktree. So
+      // does a goal's check run, on the checkout made for it (goal-folder.js).
       if (workflow === READER) args.push('--folder', '--input', `card=${order.card}`);
+      else if (workflow === GOAL_CHECK) args.push('--folder', '--input', `goal=${order.goal}`);
       else if (order.branch) args.push('--branch', order.branch);
       if (workflow === MERGE_QUEUE) args.push('--input', `repo_host=${order.repo.host}`, '--input', `repo_path=${order.repo.path}`);
-      else if (workflow !== READER) args.push('--input', `work=${order.work}`);
+      else if (workflow !== READER && workflow !== GOAL_CHECK) args.push('--input', `work=${order.work}`);
       for (const binding of models) args.push('--model', binding);
       // Not started in the project (--cwd names it), so Bun reads nothing of the project's own.
       const result = await cli(args, { json: true, timeout: START_MS });
@@ -433,7 +439,7 @@ export function archonAdapter({
       if (typeof work !== 'string' || !Number.isFinite(from)) return undefined;
       const listed = await cli(['workflow', 'status', '--all'], { json: true, timeout: CALL_MS });
       if (!Array.isArray(listed.json?.runs)) return undefined;
-      const fresh = listed.json.runs.filter((r) => ![MERGE_QUEUE, READER].includes(r.workflow_name) && LIVE.includes(r.status) && Date.parse(r.started_at) >= from - START_CLOCK_MS);
+      const fresh = listed.json.runs.filter((r) => ![MERGE_QUEUE, READER, GOAL_CHECK].includes(r.workflow_name) && LIVE.includes(r.status) && Date.parse(r.started_at) >= from - START_CLOCK_MS);
       if (fresh.some((r) => typeof r.metadata?.inputs?.work !== 'string' && r.status === 'pending')) return undefined;
       const ours = fresh.filter((r) => r.metadata?.inputs?.work === work);
       if (ours.length > 1) return undefined;

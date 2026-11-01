@@ -188,8 +188,8 @@ function startGoalOf(project, question, { now, stopState }) {
   if (sheets.size !== 1) return null;
   const [[hash, sheet]] = [...sheets];
   // The same rule the desk's act and the goals view ask (scripts/engine/goal.js), asked before the click is signed.
-  const views = localViews(project, ['goals', 'work']) ?? {};
-  const refused = startProblem({ id: m[1], hash, sheet, goals: views.goals ?? {}, work: views.work ?? {}, stopped: stopState().on === true, now: now() });
+  const views = localViews(project, ['goals', 'work', 'goalChecks']) ?? {};
+  const refused = startProblem({ id: m[1], hash, sheet, goals: views.goals ?? {}, work: views.work ?? {}, goalChecks: views.goalChecks ?? {}, stopped: stopState().on === true, now: now() });
   return refused === null ? { action: 'start-goal', goal: m[1], hash } : { refused };
 }
 

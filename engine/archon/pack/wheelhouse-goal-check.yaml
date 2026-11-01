@@ -1,0 +1,18 @@
+# engine/archon/pack/wheelhouse-goal-check.yaml
+{
+  "name": "wheelhouse-goal-check",
+  "description": "Wheelhouse's goal check: one step with no model that runs a goal's checks on the main line, in a folder of its own. Started by Wheelhouse with the goal's id; not for work.",
+  "inputs": {
+    "goal": {
+      "required": true,
+      "description": "The goal's id. The checks come from Wheelhouse's helper, never through Archon."
+    }
+  },
+  "nodes": [
+    {
+      "id": "checks",
+      "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/goal-check.js\" --run \"$WORKFLOW_ID\" --artefacts \"$ARTIFACTS_DIR\"",
+      "timeout": 14400000
+    }
+  ]
+}

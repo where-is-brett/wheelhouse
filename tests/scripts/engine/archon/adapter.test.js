@@ -676,6 +676,20 @@ test('a start with no reply in time is uncertain, and any other refusal isn\'t',
   assert.equal(refused.uncertain, undefined);
 });
 
+test('a goal\'s check run starts in place in its own folder, named by its goal', async () => {
+  const cli = fakeCli({ 'workflow run': json('run-detach.json') });
+  const engine = adapter(cli);
+  assert.equal((await engine.start({ work: 'goal-check-run', lane: 'goal-check', goal: 'orders', project: '/engine/goal-checks/ab12', bindings: {} })).ok, true);
+  const { args } = cli.calls[0];
+  assert.deepEqual(args.slice(0, 3), ['workflow', 'run', 'wheelhouse-goal-check']);
+  assert.equal(args[args.indexOf('--cwd') + 1], '/engine/goal-checks/ab12');
+  assert.ok(args.includes('--folder'));
+  assert.equal(args[args.indexOf('--input') + 1], 'goal=orders');
+  assert.equal(args.some((a) => a.startsWith('work=')), false);
+  assert.equal((await engine.start({ work: 'goal-check-run', lane: 'goal-check', project: '/f' })).ok, false);
+  assert.equal((await engine.start({ work: 'goal-check-run', lane: 'goal-check', goal: 'orders' })).ok, false);
+});
+
 test('liveRunOf tells a run by the work it was given, never by a branch it may not have yet', async () => {
   const since = '2026-11-01T02:00:00.000Z';
   const row = (id, work, over = {}) => ({ id, workflow_name: 'wheelhouse-quick', status: 'pending', started_at: '2026-11-01T02:00:01.000Z', working_path: null, metadata: work ? { inputs: { work } } : {}, ...over });

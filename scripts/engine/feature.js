@@ -6,7 +6,7 @@
 // feature's own run then reviews the whole feature, switches it on and waits for the director. Every run is recorded
 // under the feature's work, so its spend rolls up there, and Carry on starts the slice that hadn't merged, never one
 // that had. Not a model: the dispatcher's runner calls these.
-import { workOrder, checkProblem, DEFAULT_FLAG_FILE, MOST_SLICES } from './order.js';
+import { workOrder, checkProblem, checkKey, DEFAULT_FLAG_FILE, MOST_SLICES } from './order.js';
 import { limitsFor } from './caps.js';
 import { SLUG } from '../lib/build-loop.js';
 
@@ -160,17 +160,16 @@ export function sliceOrder({ entry, design, n, ...rest }) {
 }
 
 // finishOrder({ entry, design, progress, config, settings, raised, answers, tried }): the feature's own order, for its
-// whole-feature review and switch-on: every slice's done checks once, the merged slices, and always shown first.
-export function finishOrder({ entry, design, progress, ...rest }) {
+// whole-feature review and switch-on: every slice's done checks once, then `goalDone`, the checks of the sheet that lists
+// the feature, the merged slices, and always shown first.
+export function finishOrder({ entry, design, progress, goalDone = [], ...rest }) {
   const done = [];
   const seen = new Set();
-  for (const slice of design.slices) {
-    for (const check of slice.done) {
-      const key = JSON.stringify(check, Object.keys(check).sort());
-      if (!seen.has(key)) {
-        seen.add(key);
-        done.push(check);
-      }
+  for (const check of [...design.slices.flatMap((slice) => slice.done), ...goalDone]) {
+    const key = checkKey(check);
+    if (!seen.has(key)) {
+      seen.add(key);
+      done.push(check);
     }
   }
   const slices = design.slices.map((slice, i) => {

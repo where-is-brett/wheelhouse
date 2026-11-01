@@ -21,6 +21,9 @@
 //                   its title; prints the one line to say
 //   end-goal [--now]
 //                   asks for the running goal to end: it stops starting work, and with --now stops what is running too
+//   goal-baseline <goal>
+//                   runs the goal's checks on the main line with no model, for its card: the result comes later, as
+//                   a `goal-check` record
 //   narrow-goal     narrows the running goal: the change as JSON on standard input, with only `until`, `spend`,
 //                   `areas` or `pieces`, each made smaller; a change that widens anything is refused
 //   record <kind>   records something the front desk decided: one of RECORD_KINDS, the data as JSON;
@@ -103,7 +106,7 @@ export const RECORD_KINDS = Object.freeze([
   'work', 'amendment', 'incident', 'note', 'brief', 'goal',
 ]);
 export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey', 'evidence', 'brief']);
-const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'record', 'similar', 'views', 'explain', 'review', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'end-goal', 'narrow-goal'];
+const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'record', 'similar', 'views', 'explain', 'review', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'end-goal', 'narrow-goal', 'goal-baseline'];
 // How long `confirm` waits for the helper: one window at a time on the computer, so it may wait for another's.
 const CONFIRM_WAIT_MS = 3 * WINDOW_MS;
 export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
@@ -549,6 +552,13 @@ export async function endGoal({ client, cwd, now: immediately }) {
   const got = await deskOf(client, cwd).act('end-goal', { now: immediately === true });
   if (got?.ok !== true) throw new CliError(said(got, 'The goal wasn\'t ended'));
   return { asked: true, now: immediately === true };
+}
+
+// Runs the goal's checks on the main line for its card. The result comes later, as a `goal-check` record.
+export async function goalBaseline({ client, cwd, goal }) {
+  const got = await client.goalBaseline({ cwd, goal });
+  if (got?.ok !== true) throw new CliError(said(got, 'The goal\'s checks weren\'t started'));
+  return { started: got.runId !== null, head: got.head };
 }
 
 export async function narrowGoal({ client, cwd, change }) {
@@ -1309,6 +1319,11 @@ export async function main(argv, {
     if (command === 'end-goal') {
       if (rest.length > 1 || (rest.length === 1 && rest[0] !== '--now')) throw new CliError('end-goal takes only --now: end-goal [--now]');
       json(await endGoal({ client: helper, cwd: here, now: rest[0] === '--now' }));
+      return 0;
+    }
+    if (command === 'goal-baseline') {
+      only(rest, 1, 'goal-baseline takes the goal: goal-baseline <goal>');
+      json(await goalBaseline({ client: helper, cwd: here, goal: rest[0] }));
       return 0;
     }
     if (command === 'narrow-goal') {

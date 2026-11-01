@@ -1922,17 +1922,20 @@ test('Send it back signs nothing on a moved head, a closed pull request, or a ca
 
 const CSV_WORK = { id: 'export-csv', title: 'Export', lane: 'feature', visible: true, dependsOn: [] };
 // The views the helper leaves on disk that a Start is asked against: the work as it stands and the goals so far.
-const putViews = (home, { work = { 'export-csv': { work: { data: CSV_WORK } } }, goals = {} } = {}) => {
+const putViews = (home, { work = { 'export-csv': { work: { data: CSV_WORK } } }, goals = {}, goalChecks = {} } = {}) => {
   const dir = path.join(home, 'projects', P, 'views');
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'work.json'), JSON.stringify(work));
   fs.writeFileSync(path.join(dir, 'goals.json'), JSON.stringify(goals));
+  fs.writeFileSync(path.join(dir, 'goalChecks.json'), JSON.stringify(goalChecks));
 };
 const goalSheet = (title = 'Customers can export their orders') => ({
   title, done: [{ command: 'node check.js', expect: 0 }], checksSay: ['The checking script passes.'],
   pieces: [{ work: 'export-csv', hash: dataHash(CSV_WORK) }], areas: { may: ['src/**'], wontTouch: ['billing/**'] }, spend: { tokens: 1000000 }, until: '2026-10-18T13:00:00.000Z',
 });
 const goalEvent = (sheet, id = 'orders-export') => makeEvent({ kind: 'goal', data: { id, sheet }, now: () => NOW });
+// The sheet's baseline as the views hold it, its one check failing on the main line.
+const baseline = (sheet, id = 'orders-export', ok = false) => ({ [id]: [{ hash: sheetHash(sheet), when: 'before', results: sheet.done.map((check) => ({ check, ok })) }] });
 const START_BUTTONS = ['Start', 'Not now', 'Approve'].map((label) => ({ label }));
 const startInput = (answers) => {
   const asked = input(answers);
@@ -1943,8 +1946,8 @@ const startQuestion = (sheet, goal = 'orders-export') => `Start this goal?\n${st
 
 test('the click on Start earns the signed action with the sheet\'s whole hash', async () => {
   await withHome(async (home) => {
-    putViews(home);
     const sheet = goalSheet();
+    putViews(home, { goalChecks: baseline(sheet) });
     keepEvent(goalEvent(sheet));
     const c = fake();
     const question = startQuestion(sheet);
@@ -1957,8 +1960,8 @@ test('the click on Start earns the signed action with the sheet\'s whole hash', 
 
 test('a sheet the state doesn\'t hold earns nothing, and a second sheet under the id is told apart by its hash', async () => {
   await withHome(async (home) => {
-    putViews(home);
     const held = goalSheet();
+    putViews(home, { goalChecks: baseline(held) });
     keepEvent(goalEvent(held));
     const c = fake();
     // A sheet that was never recorded, a sheet recorded under another goal, and a line with the wrong characters.
@@ -1969,6 +1972,19 @@ test('a sheet the state doesn\'t hold earns nothing, and a second sheet under th
     keepEvent(goalEvent({ ...held, title: 'A second sheet' }));
     await decide(startInput({ [startQuestion(held)]: 'Start' }), deps(c));
     assert.deepEqual(recorded(c).map((r) => r.hash), [sheetHash(held)]);
+  });
+});
+
+test('a click on Start with no baseline, or one where every check passes, signs nothing', async () => {
+  await withHome(async (home) => {
+    const sheet = goalSheet();
+    keepEvent(goalEvent(sheet));
+    for (const goalChecks of [{}, baseline(sheet, 'orders-export', true)]) {
+      putViews(home, { goalChecks });
+      const c = fake();
+      await decide(startInput({ [startQuestion(sheet)]: 'Start' }), deps(c));
+      assert.deepEqual(recorded(c), []);
+    }
   });
 });
 

@@ -28,6 +28,7 @@ import { workOrder } from './order.js';
 import { limitsFor } from './caps.js';
 import { ENGINE_QUESTIONS } from './router.js';
 import { openRedMain, fixDecision, fixOrder } from './fix-main.js';
+import { goalDoneOf } from './goal.js';
 import { readSlices, featureProgress, featureNext, currentStep, sliceOrder, finishOrder, featureCap, demoSlice } from './feature.js';
 import { ownWaiting, ownCards, limitedRuns, limitedWork } from './waiting.js';
 import { topCard, holdsUpCount, noCardBehind, deadEnds, waitsOnItself } from './stuck.js';
@@ -329,7 +330,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     }
     let order;
     const args = { entry: { ...entry, work: { ...entry.work, key: work } }, design, config: config() ?? {}, settings: settings() ?? {}, raised, answers, tried: carryOn ? triedBefore(views, work) : [] };
-    try { order = step.finish ? finishOrder({ ...args, progress }) : sliceOrder({ ...args, n: step.slice }); } catch (error) { return { ok: false, refused: error.message }; }
+    try { order = step.finish ? finishOrder({ ...args, progress, goalDone: goalDoneOf(views, work) }) : sliceOrder({ ...args, n: step.slice }); } catch (error) { return { ok: false, refused: error.message }; }
     const got = await start({ project, order: withTail(order, checkTail), ...(branch ? { branch } : {}), carryOn });
     if (got?.ok && typeof got.runId === 'string') {
       kept.started.push(got.runId);

@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readSlices, demoSlice, progressOf, featureProgress, featureNext, currentStep, sliceOrder, finishOrder, featureCap, SLICES_FENCE } from '../../../scripts/engine/feature.js';
 import { DEFAULT_FLAG_FILE, LANE_CAPS } from '../../../scripts/engine/order.js';
+import { goalDoneOf } from '../../../scripts/engine/goal.js';
 
 const block = (value) => `# Order history\n\nThe design in words.\n\n\`\`\`${SLICES_FENCE}\n${JSON.stringify(value, null, 2)}\n\`\`\`\n`;
 const SLICES = {
@@ -152,4 +153,23 @@ test('a feature queued again keeps the slices that merged before, by their title
   assert.deepEqual(got.slices[2].runs, [], 'no run of slice 2 since it was queued again');
   assert.equal(got.slices[2].branch, 'wh/orders-2');
   assert.deepEqual(featureNext({ design, progress: got, live: false }), { act: 'start', slice: 2 });
+});
+
+test('the sheet\'s checks are added to a feature\'s own run, each check once', () => {
+  const shared = { test: 'the export works' };
+  const sheetOnly = { command: 'node check.js', expect: 0 };
+  const design = { goal: 'g', flag: { name: 'f', file: DEFAULT_FLAG_FILE }, demo: 'end', slices: [{ title: 't', goal: 'g', done: [shared], notInScope: [], protectedFiles: [] }] };
+  const entry = { work: { key: 'orders', data: { id: 'orders', lane: 'feature', visible: true } } };
+  const config = { testCommand: 'npm test', routing: {} };
+  assert.deepEqual(finishOrder({ entry, design, progress: { slices: {} }, config }).done, [shared]);
+  assert.deepEqual(finishOrder({ entry, design, progress: { slices: {} }, config, goalDone: [{ test: 'the export works' }, sheetOnly] }).done, [shared, sheetOnly]);
+});
+
+test('only a piece the sheet lists takes its goal\'s checks', () => {
+  const done = [{ test: 'the export works' }];
+  const views = (goalId, pieces) => ({ work: { orders: { work: { data: { id: 'orders', goalId } } } }, goals: { export: { sheet: { done, pieces } } } });
+  assert.deepEqual(goalDoneOf(views('export', [{ work: 'orders' }]), 'orders'), done);
+  assert.deepEqual(goalDoneOf(views('export', [{ work: 'other' }]), 'orders'), [], 'a label alone covers nothing');
+  assert.deepEqual(goalDoneOf(views(undefined, [{ work: 'orders' }]), 'orders'), []);
+  assert.deepEqual(goalDoneOf({}, 'orders'), []);
 });
