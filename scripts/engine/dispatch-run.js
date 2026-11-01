@@ -32,7 +32,7 @@ import { readSlices, featureProgress, featureNext, currentStep, sliceOrder, fini
 import { ownWaiting, ownCards, limitedRuns, limitedWork } from './waiting.js';
 import { topCard, holdsUpCount, noCardBehind, deadEnds, waitsOnItself } from './stuck.js';
 import { STOP_LABEL, MORE } from './runner.js';
-import { retryDue, resumeRun, triedList } from './recovery.js';
+import { OWNER_LOST, retryDue, resumeRun, triedList } from './recovery.js';
 import { since, endedBy } from '../foreman/queue.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
@@ -501,6 +501,12 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     if (stopped() || cardOwed(work)) return;
     const what = step.finish ? 'its switch-on run' : `slice ${step.slice} of ${design.slices.length}`;
     let why = null;
+    // Its Carry on may be about to take this up: looked at again on the next tick.
+    if (run.outcome === 'cancelled' && lostAnswered(views, run.runId) && kept.endSeen !== run.runId) {
+      kept.endSeen = run.runId;
+      keep();
+      return;
+    }
     if (Number.isInteger(run.pr) && kept.closed?.[run.pr]) why = 'closed';
     else if (run.outcome === 'cancelled' && !(stoppedRuns() ?? []).includes(run.runId) && !namedByCard(views, run.runId, run.outcome)) why = 'cancelled';
     else if ((run.outcome === 'failed' ? !(readyOf() ?? {})[run.pr] && !retryFor(views, work) : run.outcome === 'completed' && !Number.isInteger(run.pr)) && !namedByCard(views, run.runId, run.outcome) && !waitingNow(views).has(work) && !onTheWay(work) && state.sentBack[work] === state.acted[work] && state.reds[work]?.times === state.redActed[work]) {
@@ -550,9 +556,13 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     return Object.values(isPlain(views.questions) ? views.questions : {}).some((q) => {
       const engineRef = q?.question?.data?.engine;
       // A piece that left its bundle has no card to speak for it.
-      return engineRef?.runId === runId && q.gone !== true && ((engineRef.ask === `cap:${runId}` && !(outcome === 'failed' && q.answer?.label === MORE)) || !isPlain(q.answer));
+      return engineRef?.runId === runId && q.gone !== true && ((engineRef.ask === `cap:${runId}` && !(outcome === 'failed' && q.answer?.label === MORE)) || !isPlain(q.answer) || lostStop(q, runId));
     });
   }
+  // The director's Stop on the card for a run that lost its process, and that card's other answer, which the runner hasn't
+  // taken up on this tick yet.
+  const lostStop = (q, runId) => q?.question?.data?.engine?.ask === `${runId}:${OWNER_LOST}` && q.answer?.label === STOP_LABEL;
+  const lostAnswered = (views, runId) => Object.values(isPlain(views.questions) ? views.questions : {}).some((q) => q?.question?.data?.engine?.ask === `${runId}:${OWNER_LOST}` && isPlain(q.answer));
   // A run the director stopped, by Stop at its cap or by letting its piece go.
   function stoppedByDirector(views, work, runId) {
     if (Object.hasOwn(state.released, work) && state.released[work] === runId) return true;
@@ -610,7 +620,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     const stops = new Set(stoppedRuns() ?? []);
     for (const q of Object.values(isPlain(views.questions) ? views.questions : {})) {
       const engineRef = q?.question?.data?.engine;
-      if (engineRef?.ask === `cap:${engineRef?.runId}` && q.answer?.label === STOP_LABEL) stops.add(engineRef.runId);
+      if ((engineRef?.ask === `cap:${engineRef?.runId}` && q.answer?.label === STOP_LABEL) || lostStop(q, engineRef?.runId)) stops.add(engineRef.runId);
     }
     return Object.entries(isPlain(views.work) ? views.work : {}).filter(([work, entry]) => {
       if (entry?.work?.data?.lane !== 'feature' || endedBy(reports, work, entry.work) || onTheWay(work)) return false;
@@ -1161,6 +1171,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   // running gives its entry up. So does one paused again on a newer ask, which waits on the director again.
   async function returnTick(views) {
     pruneReturning(views);
+    // Lifting All stop starts no run: a carry-on not yet under way gives up, and its piece comes to its card after the lift.
+    if (stopped()) for (const entry of [...state.returning, ...state.admitted]) if (entry.via === 'carry-on' && !entry.starting && !entry.asked) leave(entry);
     for (const entry of [...state.returning]) {
       if (entry.asked && isPlain(views.questions) && !views.questions[entry.asked]) await restartCard(entry);
       const label = entry.asked ? views.questions?.[entry.asked]?.answer?.label : null;
@@ -1720,12 +1732,13 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     retryingWork,
     // The retries with a place, for the runner to carry out: [{ work, key, runId, delivered }].
     retriesAdmitted: () => state.admitted.filter((e) => e.via === 'retry').map(({ work, key, runId, delivered: told }) => ({ work, key, runId, delivered: told === true })),
-    // The runner's word that a lost run has gone, so its carry-on may ask for a place.
+    // The runner's word that a lost run has gone, so its carry-on may ask for a place. Whether it is still on the list.
     lostCleared(work, key) {
       const entry = state.returning.find((e) => e.work === work && e.key === key);
-      if (!entry) return;
+      if (!entry) return false;
       delete entry.cancelling;
       keep();
+      return true;
     },
     // Whether a piece waits for a place. One admitted holds its place.
     comingBack: (work) => state.returning.some((e) => e.work === work),

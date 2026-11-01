@@ -7,11 +7,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { wayBack, quiet, forever, failing, legFails, legFinishes, legGoes, atLimit } from '../helpers/way-back.js';
+import { wayBack, quiet, forever, failing, legFails, legFinishes, legGoes, atLimit, asking as asks } from '../helpers/way-back.js';
 import { readRecording } from '../../scripts/engine/fake.js';
 import { TRY_AGAIN, STOP_HERE, LEAVE_IT, MERGE_WORK } from '../../scripts/engine/dispatch-run.js';
 import { STOP_LABEL } from '../../scripts/engine/runner.js';
-import { failedCardWords, limitLateWords, limitLateOverWords, lostCarriedWords, lostCardWords, lostStoppedWords } from '../../scripts/engine/words.js';
+import { failedCardWords, limitLateWords, limitLateOverWords, lostCarriedWords, lostCardWords, lostStoppedWords, lostStopLeftWords, lostNotNeededWords } from '../../scripts/engine/words.js';
 
 const MINUTE = 60 * 1000;
 const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'engine', 'failed-connection.jsonl');
@@ -956,5 +956,174 @@ test('a lost merge-queue run is cancelled, and the next sweep is its try', async
   await w.runner.onAsk(w.engine.watch('0').events.find((e) => e.type === 'ask'));
   await w.tick(3);
   assert.equal(w.engine.inspect(runId).status, 'ended');
+  assert.equal(openCards(w).length, 0);
+});
+
+test('a run stopped at its cap and then lost is ended, and its cap card alone decides', async () => {
+  const w = wayBack({ recordings: { a: [forever(), forever()] } });
+  w.put('a');
+  await w.tick(2);
+  const [first] = w.runsOf('a');
+  await w.runner.capped({ runId: first, work: 'a', lane: 'quick', branch: 'wh/a', reached: { cap: 'minutes', limit: 45 } });
+  await lose(w, 'a', 4);
+  assert.equal(w.engine.inspect(first).status, 'ended');
+  assert.equal(w.dispatcher.comingBack('a'), false);
+  w.answer('a', STOP_LABEL);
+  await w.tick(5);
+  assert.equal(w.runsOf('a').length, 1);
+});
+
+test('an answer\'s rework and a loss start one run', async () => {
+  const blocked = [{ id: 'carry', label: 'Send it back' }, { id: 'stop', label: 'Stop' }];
+  const w = wayBack({ recordings: { a: [[...asks('b-1', { kind: 'blocked', options: blocked }).slice(0, 3), ...forever().slice(1), ...legGoes()], forever(), forever()] } });
+  w.put('a');
+  await w.tick(2);
+  w.answer('a', 'Send it back');
+  await w.tick(3);
+  const [first] = w.runsOf('a');
+  assert.equal(w.engine.inspect(first).status, 'running');
+  await lose(w, 'a', 8);
+  assert.equal(w.runsOf('a').length, 2);
+  assert.equal(w.starts.at(-1).carryOn, true);
+});
+
+test('a run of an earlier queueing that is lost is ended, and starts nothing beside the new one', async () => {
+  const w = wayBack({ recordings: { a: [forever(), forever(), forever()] } });
+  w.put('a');
+  await w.tick(2);
+  const [first] = w.runsOf('a');
+  w.clock.now = new Date(w.clock.now.getTime() + 60000);
+  w.work.a.work.at = w.clock.now.toISOString();
+  await w.tick(3);
+  const now = w.runsOf('a').length;
+  w.engine.loseOwner(first);
+  await w.tick(5);
+  assert.equal(w.runsOf('a').length, now);
+  assert.equal(w.engine.inspect(first).status, 'ended');
+  assert.equal(openCards(w).length, 0);
+});
+
+test('a carry-on still waiting for a place doesn\'t start by itself after All stop\'s lift', async () => {
+  const w = wayBack({ recordings: { a: [forever(), forever()], l: atLimit('l-1', { resetAt: '2026-10-29T12:00:00.000Z' }) } });
+  w.put('a');
+  w.put('l');
+  await w.tick(2);
+  await lose(w, 'a', 4);
+  assert.ok(w.dispatcher.comingBack('a'));
+  w.stop = true;
+  await w.tick(2);
+  w.lift('l', 'l-1');
+  w.stop = false;
+  await w.tick(6);
+  assert.equal(w.runsOf('a').length, 1);
+  assert.deepEqual(labels(w.cardOf('a')), [TRY_AGAIN, STOP_HERE], 'its card speaks for it');
+});
+
+test('a Carry on clicked under All stop isn\'t used after the lift', async () => {
+  const w = wayBack({ recordings: { a: [forever(), forever(), forever()] } });
+  w.put('a');
+  await w.tick(2);
+  await lose(w, 'a', 4);
+  await lose(w, 'a', 6);
+  w.stop = true;
+  w.answer('a', 'Carry on');
+  await w.tick(2);
+  w.stop = false;
+  await w.tick(6);
+  assert.equal(w.runsOf('a').length, 2);
+  assert.ok(w.cardOf('a'), 'and a card asks again');
+});
+
+test('a young carry-on that All stop cancelled isn\'t read as turned away', async () => {
+  const w = wayBack({ recordings: { a: [forever(), forever(), forever()] } });
+  w.put('a');
+  await w.tick(2);
+  await lose(w, 'a', 4);
+  w.stop = true;
+  await w.engine.stopAll('All stop');
+  await w.tick(2);
+  w.stop = false;
+  await w.tick(4);
+  assert.equal(w.runsOf('a').length, 2);
+});
+
+test('Stop on a refused card ends the run the hard way, and says so if it can\'t', async () => {
+  let ended = 0;
+  const w = wayBack({ recordings: { a: forever() }, reads: { endRun: async () => { ended += 1; return { ended: [], survivors: [] }; } } });
+  w.put('a');
+  await w.tick(2);
+  const [first] = w.runsOf('a');
+  const act = w.engine.act.bind(w.engine);
+  w.engine.act = (runId, action) => (action.cancel ? { ok: false, refused: 'its owner is alive' } : act(runId, action));
+  await lose(w, 'a', 5);
+  w.answer('a', STOP_LABEL);
+  await w.tick(3);
+  assert.equal(ended, 1);
+  assert.equal(w.engine.inspect(first).status, 'running');
+  assert.ok(w.notes().includes(lostStopLeftWords('a')));
+});
+
+test('a run that finished by itself isn\'t carried on, by a stale line or a late Carry on', async () => {
+  const w = wayBack({ recordings: { a: forever() } });
+  w.put('a');
+  await w.tick(2);
+  const [first] = w.runsOf('a');
+  const inspect = w.engine.inspect.bind(w.engine);
+  const act = w.engine.act.bind(w.engine);
+  w.engine.act = (runId, action) => (action.cancel ? { ok: false, refused: 'its owner is alive' } : act(runId, action));
+  await lose(w, 'a', 5);
+  w.engine.inspect = (id) => (id === first ? { ...inspect(id), status: 'ended', outcome: 'completed', pr: 7 } : inspect(id));
+  w.answer('a', 'Carry on');
+  await w.tick(4);
+  assert.equal(w.runsOf('a').length, 1);
+  assert.ok(w.notes().includes(lostNotNeededWords('a')));
+});
+
+test('one unread look doesn\'t turn a run that completed into a carry-on', async () => {
+  const w = wayBack({ recordings: { a: forever() } });
+  w.put('a');
+  await w.tick(2);
+  const [first] = w.runsOf('a');
+  const inspect = w.engine.inspect.bind(w.engine);
+  let looks = 0;
+  w.engine.inspect = (id) => {
+    if (id !== first) return inspect(id);
+    looks += 1;
+    return looks === 1 ? { status: 'unknown', unread: true, steps: [] } : { ...inspect(id), status: 'ended', outcome: 'completed' };
+  };
+  await lose(w, 'a', 5);
+  assert.equal(w.runsOf('a').length, 1);
+  assert.equal(cancels(w).length, 0);
+});
+
+test('a run with no branch on record is ended first, and starts afresh', async () => {
+  const w = wayBack({ recordings: { a: [forever(), forever()] } });
+  w.put('a');
+  await w.tick(2);
+  const [first] = w.runsOf('a');
+  for (const r of w.runs.a) delete r.data.branch;
+  const inspect = w.engine.inspect.bind(w.engine);
+  w.engine.inspect = (id) => ({ ...inspect(id), branch: null });
+  await lose(w, 'a', 5);
+  assert.equal(w.engine.inspect(first).status, 'ended');
+  assert.equal(w.runsOf('a').length, 2);
+  assert.equal(w.starts.at(-1).carryOn, false);
+});
+
+test('a lost fix: carried on once, then one card, whose Carry on starts it', async () => {
+  const fix = 'fix-main-red-main-0123456789';
+  const w = wayBack({ recordings: { [fix]: [forever(), forever(), forever()] } });
+  w.incidents.open = [{ id: 'red-main-0123456789', what: 'The main line\'s checks are red.', kind: 'red-main', suspect: 12, work: fix, at: '2026-10-29T09:00:00.000Z', fixes: [] }];
+  w.green = false;
+  await w.tick(2);
+  await lose(w, fix, 6);
+  assert.equal(w.runsOf(fix).length, 2);
+  assert.equal(w.starts.at(-1).carryOn, true);
+  await lose(w, fix, 6);
+  assert.equal(w.runsOf(fix).length, 2);
+  assert.equal(openCards(w).length, 1, 'the lost card alone');
+  w.answer(fix, 'Carry on');
+  await w.tick(6);
+  assert.equal(w.runsOf(fix).length, 3);
   assert.equal(openCards(w).length, 0);
 });

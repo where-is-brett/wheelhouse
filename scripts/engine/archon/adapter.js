@@ -476,7 +476,9 @@ export function archonAdapter({
       if (action.answer) return answer(runId, action.answer);
       if (action.cancel) {
         const result = await cli(['workflow', 'cancel', runId], { json: true, timeout: CALL_MS });
-        return result.json?.ok === true ? { ok: true } : refusedWith(refusal('cancel the run', result));
+        if (result.json?.ok === true) return { ok: true };
+        // No answer at all says nothing of the cancel: it may have been taken.
+        return { ...refusedWith(refusal('cancel the run', result)), ...(result.json ? {} : { unreachable: true }) };
       }
       if (action.resume) {
         const result = await cli(['workflow', 'resume', runId, '--detach'], { json: true, timeout: CALL_MS });

@@ -345,3 +345,18 @@ test('a lost fix is carried on under its incident, once, and waits until the run
   assert.equal(fixStarts(t).length, 2, 'once');
   assert.equal(t.written.filter((w) => w.kind === 'question').length, 1, 'then the fix\'s own card');
 });
+
+test('a fix on the lost card has no card of its own beside it, and Carry on starts it', async () => {
+  const t = setUp();
+  let lost = { clearing: ['run-1'], carried: [] };
+  t.d.onLost(() => lost);
+  await t.d.tick();
+  t.ran('run-1', 'started', { branch: 'wh/fix' });
+  t.ran('run-1', 'ended', { outcome: 'cancelled', branch: 'wh/fix' });
+  await t.d.tick();
+  await t.d.tick();
+  assert.equal(t.written.filter((w) => w.kind === 'question').length, 0);
+  lost = { clearing: [], carried: ['run-1'] };
+  await t.d.tick();
+  assert.equal(fixStarts(t).length, 2);
+});

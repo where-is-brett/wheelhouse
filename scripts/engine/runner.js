@@ -39,7 +39,7 @@ import { READER_WORK } from '../delegation/reader.js';
 import { alike, normaliseWords } from '../delegation/words.js';
 import { closeMatch, decisionKey, earlierAnswer, reuse, spokenSince } from '../delegation/asked.js';
 import { REPEAT_READ_MS } from '../delegation/limits.js';
-import { mergeQuestionWords, parkedWords, PARKED_WHY, PARKED_BECAUSE, PARKED_MEANWHILE, PARKED_APPROVE_SAYS, PARKED_SEND_BACK_SAYS, PARKED_CHANGED, SENT_BACK_ANSWER, sentBackWords, sentBackGoneWords, sentBackApprovedWords, sentBackMovedWords, sentBackNoPieceWords, limitLateWords, limitLateOverWords, LIMIT_LATE_WHY, LIMIT_LATE_MORE_SAYS, lostCarriedWords, lostCardWords, lostStoppedWords, lostAllStopWords, LOST_CARRY_SAYS, LOST_STOP_SAYS } from './words.js';
+import { mergeQuestionWords, parkedWords, PARKED_WHY, PARKED_BECAUSE, PARKED_MEANWHILE, PARKED_APPROVE_SAYS, PARKED_SEND_BACK_SAYS, PARKED_CHANGED, SENT_BACK_ANSWER, sentBackWords, sentBackGoneWords, sentBackApprovedWords, sentBackMovedWords, sentBackNoPieceWords, limitLateWords, limitLateOverWords, LIMIT_LATE_WHY, LIMIT_LATE_MORE_SAYS, lostCarriedWords, lostCardWords, lostStoppedWords, lostStopLeftWords, lostNotNeededWords, lostAllStopWords, LOST_CARRY_SAYS, LOST_STOP_SAYS } from './words.js';
 import { SEND_BACK } from '../lib/calm-words.js';
 import { parkChoice } from './archon/asks.js';
 
@@ -751,10 +751,6 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
         await note(`Your answer about ${titled(kept.work)} wasn't used: the work was queued again since, and that run doesn't carry on.`, { work: kept.work });
         continue;
       }
-      if (kept.ask?.ownerLost === true) {
-        if (!stopped()) await lostAnswer(key, kept, answer, stops);
-        continue;
-      }
       if (kept.cap) {
         if (stopped()) continue;
         const more = label === MORE;
@@ -792,6 +788,10 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
         await note(over
           ? `All stop was on when you answered about ${titled(kept.work)}, and it had cancelled that work, so the answer isn't used. What the work did is kept on its branch.`
           : `All stop was on when you answered about ${titled(kept.work)}, so the build didn't get that answer; the question comes back once All stop is lifted.`, { work: kept.work });
+        continue;
+      }
+      if (kept.ask?.ownerLost === true) {
+        await lostAnswer(key, kept, answer, stops);
         continue;
       }
       // Stopped at its cap by the director: the record has ended it, so no answer goes back to carry it on.
@@ -1103,17 +1103,24 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
 
   // A run that lost its process (section 9.5). `state.lost[runId]` is marked first and taken forward by `lostTick` until the
   // run has gone and what follows is in hand, so a crash anywhere strands nothing: { work, lane, ask, key, then, entered,
-  // cancelling, folder, cleared, tries, looked }, `then` being what follows: 'carry', 'card', or 'none' for the merge queue,
-  // whose next sweep is its try. The piece's losses are counted once, for each queueing.
+  // cancelling, folder, cleared, tries, looked }, `then` being what follows: 'carry', 'card', or 'none' where something else
+  // already speaks for what comes next: the merge queue's next sweep, a cap card, an answer's rework, or the work queued again
+  // since. The piece's losses are counted once, for each queueing, and only where it could carry on.
   const hasEntry = ({ work, lane }) => lane !== FIX_LANE && work !== MERGE_WORK;
   async function onLost(ask, work, lane) {
     state.routed[ask.id] = true;
-    const queued = viewsNow().work?.[work]?.work?.at ?? null;
-    const count = (state.losses[work]?.queued === queued ? state.losses[work].count : 0) + 1;
-    state.losses[work] = { queued, count };
-    state.lost[ask.runId] = { work, lane, ask, key: `carry-on:${ask.runId}`, then: work === MERGE_WORK ? 'none' : count <= LOST_CARRY_ONS ? 'carry' : 'card' };
+    const runId = ask.runId;
+    const views = viewsNow();
+    let then = 'none';
+    if (work !== MERGE_WORK && !isPlain(state.capped[runId]) && !state.reworks[runId] && !overtaken({ work, runId }, views)) {
+      const queued = views.work?.[work]?.work?.at ?? null;
+      const count = (state.losses[work]?.queued === queued ? state.losses[work].count : 0) + 1;
+      state.losses[work] = { queued, count };
+      then = count <= LOST_CARRY_ONS ? 'carry' : 'card';
+    }
+    state.lost[runId] = { work, lane, ask, key: `carry-on:${runId}`, then };
     keep();
-    await lostStep(ask.runId);
+    await lostStep(runId);
   }
 
   // One step at a time for a run: an ask and a tick can meet here.
@@ -1127,52 +1134,62 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       losing.delete(runId);
     }
   }
+  // Nothing more to do here: its way back goes first, so a crash can't leave an entry no one will clear.
+  async function lostOver(runId, { work, key }, words = null) {
+    drop(work, key);
+    delete state.lost[runId];
+    keep();
+    if (words !== null) await note(words(titleOf(work)), { work });
+  }
   // The entry goes in first, so nothing reads the run's end as a stop: it waits, with its place not asked for, until the
   // engine has confirmed the run ended, since a fresh run beside a live one is turned away with no refusal to read (check 92).
-  // Only then is what the run left ended, and only by its folder, as a step outlives its owner. An ending the stream hasn't
-  // brought by the next look is written here.
+  // Only an ending as `cancelled` after a cancel of ours clears the way: one the run came to by itself says what comes next.
+  // Then what the run left is ended, by its folder alone, as a step outlives its owner. An ending the stream hasn't brought by
+  // the next look is written here.
   async function lostStepNow(runId, kept) {
     if (kept === undefined || stopped()) return;
     const { work, lane, key } = kept;
     // All stop's own cancels wait for a Carry on.
     if ((stoppedRuns() ?? []).includes(runId)) {
-      delete state.lost[runId];
-      keep();
-      drop(work, key);
-      if (kept.answered === true) await note(lostAllStopWords(titleOf(work)), { work });
+      await lostOver(runId, kept, kept.answered === true ? lostAllStopWords : null);
       return;
     }
     const records = runRecords(work, runId);
-    const branch = records.at(-1)?.data.branch ?? records.find((r) => r.data.branch)?.data.branch ?? null;
-    if (kept.then === 'carry' && hasEntry(kept) && !kept.entered) {
-      if (branch === null) {
-        await lostCard(runId, 'branch');
-        return;
-      }
+    // Views that can't be read say nothing of it, and only the merge queue has no `run` records.
+    if (records.length === 0 && work !== MERGE_WORK) return;
+    let record = await inspect(runId);
+    const heard = (seen) => seen !== null && seen.unread !== true && seen.status !== 'unknown';
+    const endedAlone = (seen) => seen.status === 'ended' && (kept.cancelling !== true || seen.outcome !== 'cancelled');
+    if (typeof record?.folder === 'string') kept.folder = record.folder;
+    const branch = records.findLast((r) => r.data.branch)?.data.branch ?? record?.branch ?? null;
+    if (kept.then === 'carry' && hasEntry(kept) && !kept.entered && (heard(record) || branch !== null)) {
       const { raised = false, runs = [] } = state.carried[runId] ?? {};
-      enter({ work, lane, via: 'carry-on', key, branch, carryOn: true, raised, answers: state.answers[work] ?? [], carried: { raised, runs: [...runs, runId] }, cancelling: true });
+      // With no branch on record there is nothing to carry on from, so it starts afresh.
+      enter({ work, lane, via: 'carry-on', key, branch, carryOn: branch !== null, raised, answers: state.answers[work] ?? [], carried: { raised, runs: [...runs, runId] }, cancelling: true });
       kept.entered = true;
       keep();
     }
-    let record = await inspect(runId);
-    if (typeof record?.folder === 'string') kept.folder = record.folder;
-    const unheard = record === null || record.unread === true || record.status === 'unknown';
-    if (!unheard && record.status === 'ended' && kept.cancelling !== true) {
-      // It ended by another way, which says what comes next: nothing here is left to do.
-      delete state.lost[runId];
-      keep();
-      drop(work, key);
+    if (heard(record) && endedAlone(record)) {
+      await lostOver(runId, kept, kept.answered === true ? lostNotNeededWords : null);
       return;
     }
-    if (unheard || record.status !== 'ended') {
-      kept.cancelling = true;
-      keep();
-      const got = unheard ? null : await safely(() => engine.act(runId, { cancel: { reason: 'its process stopped before it finished' } }));
+    if (!heard(record) || record.status !== 'ended') {
+      let got = null;
+      if (heard(record)) {
+        kept.cancelling = true;
+        keep();
+        got = await safely(() => engine.act(runId, { cancel: { reason: 'its process stopped before it finished' } }));
+      }
       record = await inspect(runId);
-      if (record?.status !== 'ended' || record.unread === true) {
+      if (typeof record?.folder === 'string') kept.folder = record.folder;
+      if (!heard(record) || record.status !== 'ended') {
         kept.tries = (kept.tries ?? 0) + 1;
         keep();
         if ((got !== null && got.ok !== true && got.unreachable !== true) || kept.tries >= LOST_TRIES) await lostCard(runId, 'refused');
+        return;
+      }
+      if (endedAlone(record)) {
+        await lostOver(runId, kept, kept.answered === true ? lostNotNeededWords : null);
         return;
       }
     }
@@ -1198,25 +1215,27 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       await lostCard(runId, 'again');
       return;
     }
-    if (lane === FIX_LANE) state.lostFixes[runId] = true;
-    if (hasEntry(kept)) lostCleared(work, key);
+    if (kept.then === 'carry' && lane === FIX_LANE) state.lostFixes[runId] = true;
+    // All stop can have taken a carry-on's entry off the list, and then nothing starts by itself.
+    const going = kept.then === 'carry' && (lane === FIX_LANE || lostCleared(work, key) === true);
     delete state.lost[runId];
     keep();
-    if (kept.then === 'carry') await note(lostCarriedWords(titleOf(work)), { work });
+    if (going) await note(lostCarriedWords(titleOf(work)), { work });
   }
 
   // The piece parks: its way back is given up, and the card speaks for it from here. The card's words are the helper's, and
   // nothing of it goes to the engine, whose ask has no answer.
   async function lostCard(runId, why, left = []) {
-    const { work, ask, key } = state.lost[runId];
+    const { work, ask, key, folder } = state.lost[runId];
     drop(work, key);
     delete state.lost[runId];
     const says = { 'carry-on': LOST_CARRY_SAYS, stop: LOST_STOP_SAYS };
-    const named = { ...ask, reason: lostCardWords(titleOf(work), why, left), options: ask.options.map((o) => ({ ...o, says: says[o.id] })) };
+    const named = { ...ask, ...(folder ? { folder } : {}), reason: lostCardWords(titleOf(work), why, left), options: ask.options.map((o) => ({ ...o, says: says[o.id] })) };
     await raise(routeAsk(named), named, work);
   }
 
-  // The director's answer to that card. Carry on does what the first loss did. Stop ends what is left, and lets the piece go.
+  // The director's answer to that card. Carry on does what the first loss did. Stop ends what is left, as a run the engine
+  // wouldn't stop at its cap is ended, and lets the piece go.
   async function lostAnswer(key, kept, answer, stops) {
     const { runId, work, ask } = kept;
     if (!answer) {
@@ -1227,7 +1246,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     const lane = laneOf(kept, viewsNow());
     if (!stops) {
       if (typeof answer.words === 'string') state.answers[work] = [...(state.answers[work] ?? []), { question: questionOf(ask), answer: answer.words }];
-      state.lost[runId] = { work, lane, ask, key: `carry-on:${runId}`, then: work === MERGE_WORK ? 'none' : 'carry', cancelling: true, answered: true };
+      state.lost[runId] = { work, lane, ask, key: `carry-on:${runId}`, then: work === MERGE_WORK ? 'none' : 'carry', cancelling: true, answered: true, ...(ask.folder ? { folder: ask.folder } : {}) };
       state.delivered[key] = 'answered';
       keep();
       await lostStep(runId);
@@ -1236,13 +1255,21 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     state.delivered[key] = GOING;
     keep();
     letGo(work);
-    const record = await inspect(runId);
-    if (record?.status !== 'ended') await cancelPaused(runId, 'the director stopped it after it lost its process');
-    if (typeof record?.folder === 'string') await safely(() => endLeft(record.folder));
+    const reason = 'the director stopped it after it lost its process';
+    let record = await inspect(runId);
+    const folder = record?.folder ?? ask.folder;
+    if (record?.status !== 'ended') {
+      if (!await cancelPaused(runId, reason)) {
+        await safely(() => endRun(runId));
+        await cancelPaused(runId, reason);
+      }
+      record = await inspect(runId);
+    }
+    if (typeof folder === 'string') await safely(() => endLeft(folder));
     if (work !== MERGE_WORK) await endInRecord({ ...kept, lane });
     state.delivered[key] = 'answered';
     keep();
-    await note(lostStoppedWords(titleOf(work)), { work });
+    await note((record?.status === 'ended' ? lostStoppedWords : lostStopLeftWords)(titleOf(work)), { work });
   }
 
   // Each lost run taken forward, and an ask the host wrote just before a crash, which never reached `onAsk`.
@@ -1413,6 +1440,8 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   async function reworks() {
     if (stopped()) return;
     for (const [runId, { work, answer }] of Object.entries(state.reworks)) {
+      // A lost run has what it left to end first.
+      if (state.lost[runId]) continue;
       const records = (viewsNow().runs?.[work] ?? []).filter((r) => r?.data?.runId === runId);
       const latest = records.at(-1)?.data;
       if (latest?.state !== 'ended') continue;
@@ -1482,8 +1511,11 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     waitingWork: () => waitingOn(),
     // The pieces whose run an answer is ending, to start again on its branch.
     reworkWork: () => Object.values(state.reworks).map((r) => r.work),
-    // What the runner is doing about lost runs: the pieces, the runs not yet settled, and the fixes free to carry on.
-    lostNow: () => ({ pieces: Object.values(state.lost).map((kept) => kept.work), clearing: Object.keys(state.lost), carried: Object.keys(state.lostFixes) }),
+    // What the runner is doing about lost runs: the pieces, the runs not yet settled or on a card, and the fixes free to carry on.
+    lostNow() {
+      const open = [...state.waiting, ...Object.entries(state.questions).filter(([id]) => !state.delivered[id]).map(([, kept]) => kept)].filter((kept) => kept.ask?.ownerLost === true).map((kept) => kept.runId);
+      return { pieces: Object.values(state.lost).map((kept) => kept.work), clearing: [...Object.keys(state.lost), ...open], carried: Object.keys(state.lostFixes) };
+    },
     // The written cards behind them, [{ id, work, rank }]. Views that can't be read name none.
     openCards() {
       let views;
