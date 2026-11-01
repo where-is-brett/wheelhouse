@@ -330,7 +330,7 @@ export function archonAdapter({
       if (read(p.launcher) !== launcherText(engine) || !read(p.provider)?.includes(PATCH_MARK)) {
         findings.push("Archon isn't Wheelhouse's patched build from source, so its steps would run without the sandbox; no run starts until the engine is built again");
       } else if (!read(p.cancelOperation)?.includes(CANCEL_PATCH_MARK)) {
-        findings.push("Archon was built before Wheelhouse's patch for paused runs, so All stop and the caps couldn't reach a run waiting at an ask; no run starts until the engine is built again");
+        findings.push("Archon was built before Wheelhouse's latest patch for cancelling runs, so All stop and the caps might not reach a run waiting at an ask or one that lost its process; no run starts until the engine is built again");
       }
       const version = await cli(['version'], { timeout: CALL_MS });
       const got = /Archon CLI (v\S+)/.exec(version.stdout ?? '')?.[1];

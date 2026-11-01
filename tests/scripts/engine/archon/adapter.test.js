@@ -379,10 +379,10 @@ test('health passes with the pinned version, Bun, Claude, the patch and telemetr
   assert.deepEqual(result, { ok: true, findings: [] });
 });
 
-test('health fails closed on an engine built before the patch for paused runs', async () => {
+test('health fails closed on an engine built before the latest patch for cancelling runs', async () => {
   const stale = await adapter(healthyCli(), { pins, run: bunRun(), engine: builtEngine({ cancelOperation: 'if (run.status !== "running")' }) }).health();
   assert.equal(stale.ok, false);
-  assert.match(stale.findings.join(' '), /built before Wheelhouse's patch for paused runs/);
+  assert.match(stale.findings.join(' '), /built before Wheelhouse's latest patch for cancelling runs/);
 });
 
 test("health fails closed on an engine that isn't the patched source build", async () => {
