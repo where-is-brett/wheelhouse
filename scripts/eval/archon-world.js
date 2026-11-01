@@ -69,14 +69,10 @@ const LANE_MS = 20 * 60 * 1000;
 // files it needs and `files`; in git alone there is no remote at all, and Archon is told of the folder's.
 async function makeProject({ root, folder, git, place = null, files = {}, beforeCommit = async () => {} }) {
   const mirror = path.join(root, 'mirrors', `${projectSlug(...REPO.split('/'))}.git`);
-  // In a place a run pushes, and the helper refuses a folder whose own settings redirect git, so its remote is the
-  // repository's path, which gives Archon the same name.
-  const remote = place ? mirror : path.join(root, ...REPO.split('/'));
+  const remote = path.join(root, ...REPO.split('/'));
   fs.mkdirSync(mirror, { recursive: true });
-  if (!place) {
-    fs.mkdirSync(path.dirname(remote), { recursive: true });
-    fs.symlinkSync(mirror, remote, 'dir');
-  }
+  fs.mkdirSync(path.dirname(remote), { recursive: true });
+  fs.symlinkSync(mirror, remote, 'dir');
   const must = async (args, cwd) => {
     const got = await git(args, cwd);
     if (got.code !== 0) throw new Error(`git ${args[0]} failed in the evaluation's project: ${String(got.stderr).trim()}`);
@@ -94,7 +90,9 @@ async function makeProject({ root, folder, git, place = null, files = {}, before
   if (!place) await must(['config', `url.${mirror}.insteadOf`, remote], folder);
   await beforeCommit();
   const commit = ['-c', 'user.name=Evaluation', '-c', 'user.email=eval@example.invalid', 'commit', '-q', '-m', 'Start'];
-  for (const args of [['add', '-A'], commit, ...(local ? [] : [['remote', 'add', 'origin', remote], ['push', '-q', 'origin', 'main']])]) await must(args, folder);
+  // In a place a run pushes, and the helper refuses a folder whose own settings redirect git, so the folder's remote is the
+  // repository's own path, which gives Archon the same name; the record keeps the address that names it o/p.
+  for (const args of [['add', '-A'], commit, ...(local ? [] : [['remote', 'add', 'origin', place ? mirror : remote], ['push', '-q', 'origin', 'main']])]) await must(args, folder);
   return { remote, mirror };
 }
 
