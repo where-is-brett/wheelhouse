@@ -44,7 +44,10 @@ function setUp({ design = { text: DESIGN } } = {}) {
       world.orders[runId] = args.order;
       return { ok: true, runId };
     },
-    write: async (kind, data) => { world.written.push({ kind, data }); },
+    write: async (kind, data) => {
+      world.written.push({ kind, data });
+      if (kind === 'question') world.questions[data.id] = { question: { data } };
+    },
     readyOf: () => world.ready,
     prState: async (pr) => {
       world.asked.push(pr);

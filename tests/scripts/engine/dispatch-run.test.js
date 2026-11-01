@@ -864,7 +864,7 @@ test('a piece stopped with nothing to move it on, holding files, brings one card
   await w.tick(3);
   assert.equal(w.stateOf('a'), 'ended');
   w.put('b', { place: 1, files: ['x.js'] });
-  await w.tick();
+  await w.tick(2);
   assert.equal(w.runsOf('b').length, 0, 'its files are still held');
   const card = w.cardOf('a');
   assert.deepEqual(card.options.map((o) => o.label), [TRY_AGAIN, STOP_HERE]);

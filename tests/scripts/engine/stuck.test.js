@@ -2,7 +2,7 @@
 // What stands behind a project where nothing can run (delegated decisions design, section 8.5).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { topCard, holdsUpCount, noCardBehind } from '../../../scripts/engine/stuck.js';
+import { topCard, holdsUpCount, noCardBehind, deadEnds, waitsOnItself } from '../../../scripts/engine/stuck.js';
 import { needsYou, PRESENCE_LETS } from '../../../scripts/mod/courier.js';
 import { importanceOf, IMPORTANCE, cardsForVisit } from '../../../scripts/cards/visit.js';
 import { wayBack, asking, forever } from '../../helpers/way-back.js';
@@ -143,4 +143,23 @@ test('a start refused keeps no top card down', async () => {
   w.put('f', { place: 1 });
   await w.tick(2);
   assert.equal(tops(w).at(-1).id, id);
+});
+
+test('the dead ends of a hold are the pieces at its far end, with the reason nearest each', () => {
+  const hold = [{ work: 'x', why: 'dependency', by: ['y'] }, { work: 'y', why: 'clash', by: ['a', 'b'] }, { work: 'z', why: 'clash', by: ['r'] }];
+  assert.deepEqual([...deadEnds({ hold, running: ['r'], cards: [] })], [['a', 'clash'], ['b', 'clash']]);
+  assert.deepEqual([...deadEnds({ hold, running: ['r'], cards: [card('q-a-1', 'a')] })], [], 'a card moves the hold on');
+  assert.deepEqual([...deadEnds({ hold, running: ['r', 'a'], cards: [] })], [], 'and so does a run');
+});
+
+test('a cycle of holds has no dead end, and no reason of its own leads anywhere', () => {
+  const hold = [{ work: 'x', why: 'dependency', by: ['y'] }, { work: 'y', why: 'dependency', by: ['x'] }];
+  assert.deepEqual([...deadEnds({ hold })], []);
+  assert.deepEqual([...deadEnds({ hold: [{ work: 'x', why: 'clash', by: ['y'] }, { work: 'y', why: 'unapproved' }] })], []);
+});
+
+test('dependencies that lead back to a piece wait on it', () => {
+  const hold = [{ work: 'x', why: 'dependency', by: ['y'] }, { work: 'y', why: 'dependency', by: ['z'] }, { work: 'z', why: 'dependency', by: ['x'] }, { work: 'v', why: 'dependency', by: ['x'] }];
+  assert.equal(waitsOnItself({ hold, work: 'x' }), true);
+  assert.equal(waitsOnItself({ hold, work: 'v' }), false);
 });

@@ -38,6 +38,8 @@ function routerOpen({ state, views, prWork }) {
     if (kept.cap !== true && kept.work !== MERGE_WORK && runEnded(views, kept.work, kept.runId)) return;
     // A cap card outlives its run, but not the work's next queueing, whose run it would hold back.
     if (kept.cap === true && overtaken(kept, views)) return;
+    // A cap card kept but never written asks nothing: the piece isn't waiting on the director for that.
+    if (kept.cap === true && typeof id === 'string' && isPlain(views?.questions) && !isPlain(views.questions[id])) return;
     found.push({ id: (id === undefined ? undefined : views?.questions?.[id]?.joins) ?? id, work, kept });
   };
   for (const kept of Array.isArray(state?.waiting) ? state.waiting : []) add(undefined, kept);
@@ -72,7 +74,7 @@ function ownOpen({ state, views }) {
   for (const [work, kept] of entriesOf(state?.features)) {
     for (const id of [kept?.asked, ...entriesOf(kept?.stalls).filter(([, held]) => held?.done !== true).map(([, held]) => held?.id)]) if (open(id)) found.push({ id, work });
   }
-  for (const asked of [state?.clashAsked, state?.redAsked]) {
+  for (const asked of [state?.clashAsked, state?.redAsked, state?.cutOffAsked]) {
     for (const [work, id] of entriesOf(asked)) if (open(id)) found.push({ id, work });
   }
   for (const entry of Array.isArray(state?.returning) ? state.returning : []) if (open(entry?.asked)) found.push({ id: entry.asked, work: entry.work });
