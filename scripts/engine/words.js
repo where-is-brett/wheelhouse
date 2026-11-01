@@ -23,6 +23,7 @@ export const reservedUnreadWords = (title) => `What ${title} has changed so far 
 export const restartRefusedWords = (title, why) => `${title} couldn't go back to work: ${why}. It keeps its turn, and it is tried again shortly.`;
 export const restartCardWords = (title, why) => `${title} couldn't go back to work, twice: ${why}. Nothing more of it starts until you say.`;
 export const restartUnsureWords = (title) => `Wheelhouse can't tell whether ${title} started again, so it hasn't started it a second time. Nothing more of it starts until you say.`;
+export const restartStrandedWords = (title) => `${title} has stopped with nothing left to carry it on, and other work is waiting for its files. Nothing more of it starts until you say.`;
 export const STOPPED_RESTART_WORDS = (title) => `${title} stays stopped, as you chose; what it has done so far is kept on its branch.`;
 export const wakeLateWords = (title) => `Your answer about ${title} went back, but the build engine hasn't carried it on yet; it keeps its place meanwhile.`;
 

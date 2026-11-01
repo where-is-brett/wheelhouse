@@ -25,11 +25,12 @@ import { capReached, carriedSpend } from './caps.js';
 import { RED_MAIN, FIX_LANE, redMainIncident, openRedMain } from './fix-main.js';
 import { MERGE_WORK } from './dispatcher.js';
 import { routerWaiting } from './waiting.js';
+import { since } from '../foreman/queue.js';
 import { READER_WORK } from '../delegation/reader.js';
 import { mergeQuestionWords } from './words.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
-const EMPTY = () => ({ routed: {}, waiting: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, tries: {}, later: [], next: {}, noted: null, capped: {}, costed: {}, reviewsKept: {}, carried: {}, reworks: {}, answers: {} });
+const EMPTY = () => ({ routed: {}, waiting: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, tries: {}, later: [], next: {}, noted: null, capped: {}, costed: {}, reviewsKept: {}, carried: {}, reworks: {}, answers: {}, sending: {} });
 // The failed tries after which the director is told an answer hasn't reached the build yet.
 const UNREACHABLE_SAID = 3;
 // The cap card's options: Give it more carries the work on with the cap raised once; Stop leaves it stopped.
@@ -289,7 +290,13 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   // The lane of the run an answer goes to.
   const laneOf = (kept, views) => (views.runs?.[kept.work] ?? []).filter((r) => r?.data?.runId === kept.runId).at(-1)?.data?.lane ?? workOf(kept.runId)?.lane;
   // Whether a piece may be sent its answer now.
-  const hasPlace = (work, views) => (views.incidents?.open?.length ?? 0) === 0 && admittedTo(work);
+  const hasPlace = (work, key, views) => (views.incidents?.open?.length ?? 0) === 0 && admittedTo(work, key);
+  // Whether the work has been queued again since this run began: the answer was for a run that no longer speaks for it.
+  function overtaken(kept, views) {
+    const queued = views.work?.[kept.work]?.work;
+    const first = (views.runs?.[kept.work] ?? []).find((r) => r?.data?.runId === kept.runId);
+    return Boolean(queued && first) && !since(first, queued);
+  }
   // Tells the dispatcher of each answer already settled, so a crash just after one leaves no entry behind.
   function settled() {
     for (const [key, how] of Object.entries(state.delivered)) {
@@ -322,15 +329,22 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     for (const { key, kept, answer } of answered) {
       const label = views.questions?.[key]?.answer?.label;
       const stops = answer?.choice === STOP || STOPS_WORK.has(label);
+      if (!stopped() && overtaken(kept, views)) {
+        state.delivered[key] = 'overtaken';
+        keep();
+        drop(kept.work, key);
+        await note(`Your answer about ${titled(kept.work)} wasn't used: the work was queued again since, and that run doesn't carry on.`, { work: kept.work });
+        continue;
+      }
       if (kept.cap) {
         if (stopped()) continue;
         const more = label === MORE;
         if (more) {
           enter({ work: kept.work, lane: kept.lane, via: 'more', key, runId: kept.runId });
-          if (!hasPlace(kept.work, views)) continue;
+          if (!hasPlace(kept.work, key, views)) continue;
         }
         const again = state.delivered[key] === GOING;
-        state.delivered[key] = more ? GOING : 'answered';
+        state.delivered[key] = GOING;
         keep();
         await capAnswer(kept, label, key, again);
         state.delivered[key] = 'answered';
@@ -338,9 +352,11 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
         continue;
       }
       if (stopped()) {
-        state.delivered[key] = 'stop';
+        // Unheard, it is looked at again on the next tick: nothing is told or kept on a guess.
         const record = await inspect(kept.runId);
-        const over = record?.status === 'ended';
+        if (!record) continue;
+        state.delivered[key] = 'stop';
+        const over = record.status === 'ended';
         if (over && stops) letGo(kept.work);
         else if (over && answer) {
           // Its run is gone, so nothing goes back; Carry on starts it on its branch with this answer in its order.
@@ -378,9 +394,15 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
         // The piece comes back once, with both answers, when a second card of it is still open.
         if (waitingOn().has(kept.work)) continue;
         enter({ work: kept.work, lane: runLane, via: 'answer', key, runId: kept.runId });
-        if (!hasPlace(kept.work, views)) continue;
+        if (!hasPlace(kept.work, key, views)) continue;
       }
-      const got = await answerEngine(kept.runId, answer);
+      // Marked before it is sent. An answer the engine refuses after that was taken the first time: the reply was lost,
+      // or a crash came first, and what follows from it must still follow.
+      const sentBefore = state.sending[key] === true;
+      state.sending[key] = true;
+      keep();
+      let got = await answerEngine(kept.runId, answer);
+      if (!got.ok && got.unreachable !== true && sentBefore) got = { ok: true };
       if (!got.ok && got.unreachable === true) {
         // Not delivered: sent again on the next tick, and said once.
         state.tries[key] = (state.tries[key] ?? 0) + 1;
@@ -390,6 +412,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       }
       state.delivered[key] = got.ok ? 'answered' : 'refused';
       delete state.tries[key];
+      delete state.sending[key];
       keep();
       if (got.ok) delivered(kept.work, key);
       else drop(kept.work, key);
@@ -402,7 +425,8 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
         await note(`${titleOf(kept.work)} is bigger than a bug, so it stops in the bug lane; the First Mate records it as ${move} and asks you to approve it.`, { work: kept.work });
         continue;
       }
-      if (got.ok && kept.ask?.kind === 'blocked' && answer.choice !== STOP) {
+      // The fix lane and the merge queue keep their own rules, and neither has a work record to start again from.
+      if (got.ok && kept.ask?.kind === 'blocked' && answer.choice !== STOP && runLane !== FIX_LANE && runLane !== 'merge' && kept.work !== MERGE_WORK) {
         const said = typeof answer.words === 'string' ? answer.words : label;
         const question = questionOf(kept.ask);
         state.reworks[kept.runId] = { work: kept.work, answer: answer.choice !== REWORK && question && typeof said === 'string' ? { question, answer: said } : null };
@@ -620,6 +644,9 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     if (later.length === 0) return;
     state.later = state.later.filter((ask) => held(ask.runId));
     for (const ask of later) delete state.routed[ask.id];
+    // An approval keeps its key, so its answer under All stop mustn't stand against the same ask asked again.
+    const askedAgain = new Set(later.map((ask) => ask.id));
+    for (const [key, kept] of Object.entries(state.approvals)) if (askedAgain.has(kept.ask?.id) && state.delivered[key] === 'stop') delete state.delivered[key];
     keep();
     // A run All stop cancelled has nothing left to ask.
     for (const ask of later) if ((await inspect(ask.runId))?.status !== 'ended') await onAsk(ask);

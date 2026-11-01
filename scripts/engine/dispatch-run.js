@@ -19,7 +19,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { dispatch, MERGE_WORK } from './dispatcher.js';
-import { reservedUnreadWords, restartRefusedWords, restartCardWords, restartUnsureWords, wakeLateWords, STOPPED_RESTART_WORDS } from './words.js';
+import { reservedUnreadWords, restartRefusedWords, restartCardWords, restartUnsureWords, restartStrandedWords, wakeLateWords, STOPPED_RESTART_WORDS } from './words.js';
 import { workOrder } from './order.js';
 import { limitsFor } from './caps.js';
 import { ENGINE_QUESTIONS } from './router.js';
@@ -30,7 +30,7 @@ import { since, endedBy } from '../foreman/queue.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const isText = (x) => typeof x === 'string' && x.trim() !== '';
-const EMPTY = () => ({ mergeRun: null, mergeRuns: [], lastStart: null, seenReady: [], queueDue: false, sentBack: {}, acted: {}, clashAsked: {}, reds: {}, redActed: {}, redAsked: {}, redNoted: {}, requestsAsked: null, noTestsSaid: false, fixes: {}, features: {}, shipped: {}, closedPrs: [], reserved: {}, released: {}, returning: [], admitted: [], carryOver: {}, restartCards: 0 });
+const EMPTY = () => ({ mergeRun: null, mergeRuns: [], lastStart: null, seenReady: [], queueDue: false, sentBack: {}, acted: {}, clashAsked: {}, reds: {}, redActed: {}, redAsked: {}, redNoted: {}, requestsAsked: null, noTestsSaid: false, fixes: {}, features: {}, shipped: {}, closedPrs: [], reserved: {}, released: {}, stranded: {}, returning: [], admitted: [], carryOver: {}, restartCards: 0 });
 // The dispatcher's own questions take numbers from here, apart from the card router's.
 const OWN_QUESTIONS = ENGINE_QUESTIONS + 90000;
 export { MERGE_WORK };
@@ -702,17 +702,21 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     const id = `q-${entry.work}-${RESTART_QUESTIONS + state.restartCards}`;
     delete entry.starting;
     delete entry.uncertain;
-    entry.asked = id;
+    Object.assign(entry, { asked: id, askedWhat: what });
     keep();
+    await restartCard(entry);
+  }
+  // Kept before it is written, so a write that fails is tried again on the next tick and the piece isn't left unasked.
+  async function restartCard(entry) {
     await askDirector('restart', {
-      id, work: entry.work, level: 3, what,
+      id: entry.asked, work: entry.work, level: 3, what: entry.askedWhat,
       why: 'Whether work goes on when it can\'t be started again is yours to decide, at level 3.',
       options: [
         { label: TRY_AGAIN, says: 'It asks for a place and is started again.' },
-        { label: STOP_HERE, says: 'Nothing more starts; what it has done so far is kept on its branch.' },
+        { label: STOP_HERE, says: 'Nothing more starts; what it has done so far is kept on its branch, and its files are free for other work.' },
       ],
       recommendation: TRY_AGAIN,
-    });
+    }).catch(() => {});
   }
 
   // A refusal from before the engine was called: the place goes back and the entry stays, said once, and a card the second time.
@@ -754,6 +758,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   }
   async function afterStart(entry, got) {
     if (got?.ok === true) {
+      delete state.carryOver[entry.work];
       if (typeof got.runId !== 'string') {
         leave(entry);
         return;
@@ -774,6 +779,12 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   // record counts as started; a run with no record never got its order or ticket, so it is cancelled and confirmed ended.
   async function settleStart(entry, views) {
     if (stopped()) return;
+    // On record since the start was marked: it began, though it may have ended since and no longer be live.
+    const begun = (views.runs?.[entry.work] ?? []).find((r) => typeof r?.data?.runId === 'string' && typeof r.at === 'string' && r.at >= entry.startAt);
+    if (begun) {
+      await afterStart(entry, { ok: true, runId: begun.data.runId });
+      return;
+    }
     let found;
     if (typeof engine.liveRunOf === 'function') {
       try { found = await engine.liveRunOf({ work: entry.work, since: entry.startAt }); } catch { found = undefined; }
@@ -808,18 +819,19 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   async function returnTick(views) {
     pruneReturning(views);
     for (const entry of [...state.returning]) {
+      if (entry.asked && isPlain(views.questions) && !views.questions[entry.asked]) await restartCard(entry);
       const label = entry.asked ? views.questions?.[entry.asked]?.answer?.label : null;
       if (label === TRY_AGAIN) {
         delete entry.asked;
         entry.refusals = 0;
         keep();
       } else if (label === STOP_HERE) {
+        // The feature's report first: one that fails keeps the entry, so the director's Stop is acted on next tick.
+        const feature = views.work?.[entry.work]?.work?.data?.lane === 'feature';
+        if (feature) await endFeature(entry.work, state.features[entry.work] ??= {}, STOPPED_RESTART_WORDS(titleOf(views, entry.work)));
+        else release(entry.work, views);
         leave(entry);
-        if (views.work?.[entry.work]?.work?.data?.lane === 'feature') await endFeature(entry.work, state.features[entry.work] ??= {}, STOPPED_RESTART_WORDS(titleOf(views, entry.work)));
-        else {
-          release(entry.work, views);
-          await write('note', { about: 'engine', work: entry.work, words: STOPPED_RESTART_WORDS(titleOf(views, entry.work)) });
-        }
+        if (!feature) await write('note', { about: 'engine', work: entry.work, words: STOPPED_RESTART_WORDS(titleOf(views, entry.work)) });
       }
     }
     for (const entry of [...state.admitted]) if (entry.starting) await settleStart(entry, views);
@@ -841,7 +853,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       try { status = (await engine.inspect(entry.runId))?.status ?? null; } catch { status = null; }
       if (SEEN.includes(status) || records.at(-1)?.data?.state === 'ended' || pieces.has(entry.work)) {
         leave(entry);
-      } else if (wakes(entry) && status === 'paused' && !entry.lateSaid && now().getTime() - Date.parse(entry.deliveredAt) >= WAKE_LATE_MS) {
+      } else if (wakes(entry) && status !== 'running' && !entry.lateSaid && now().getTime() - Date.parse(entry.deliveredAt) >= WAKE_LATE_MS) {
         entry.lateSaid = true;
         keep();
         await write('note', { about: 'engine', work: entry.work, words: wakeLateWords(titleOf(views, entry.work)) });
@@ -864,6 +876,28 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   }
 
   const reservedFiles = () => Object.fromEntries(Object.entries(state.reserved).map(([work, kept]) => [work, kept.files]));
+  // A piece whose files hold other work up, with nothing to move it on: every run ended, no card, no way back and no pull
+  // request still open. Nothing lets its files go by itself, so the director is asked once for that run.
+  async function strandedTick(views, decided) {
+    const waitingOn = waitingNow(views);
+    for (const work of new Set(decided.hold.filter((h) => h.why === 'clash').flatMap((h) => h.by ?? []))) {
+      if (state.reserved[work] === undefined || onTheWay(work) || waitingOn.has(work)) continue;
+      if (state.sentBack[work] !== state.acted[work] && state.sentBack[work] !== undefined) continue;
+      if (state.reds[work] !== undefined && state.reds[work].times !== state.redActed[work]) continue;
+      const runs = new Map(runsOfWork(views, work).map((r) => [r.data.runId, { ...r.data }]));
+      const last = [...runs.values()].at(-1);
+      if (!last || [...runs.values()].some((r) => r.state !== 'ended')) continue;
+      const prs = [...runs.values()].map((r) => r.pr).filter((pr) => Number.isInteger(pr) && !state.closedPrs.includes(pr));
+      if (prs.length > 0) continue;
+      const key = `stranded:${last.runId}`;
+      if (state.stranded[work] === key) continue;
+      state.stranded[work] = key;
+      const entry = { work, lane: views.work?.[work]?.work?.data?.lane ?? last.lane, via: 'try-again', key, at: now().toISOString(), queued: views.work?.[work]?.work?.at ?? null, ...(isText(last.branch) ? { branch: last.branch, carryOn: true } : {}) };
+      state.returning.push(entry);
+      await askAboutRestart(entry, restartStrandedWords(titleOf(views, work)));
+    }
+  }
+
   // Ends a piece's reservation and remembers the run it was for, so an open card of that run can't take it back.
   function release(work, views = readViews() ?? {}) {
     state.released[work] = views.runs?.[work]?.at(-1)?.data?.runId ?? null;
@@ -899,7 +933,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       requests, sentBack: [
         ...Object.entries(state.sentBack).filter(([work, times]) => state.acted[work] !== times).map(([work, times]) => ({ work, times })),
         ...Object.entries(state.reds).filter(([work, red]) => state.redActed[work] !== red.times).map(([work, red]) => ({ work, times: red.times, reason: 'red' })),
-      ], waiting: [...waitingNow(views)], reserved: reservedFiles(), returning: state.returning.filter((e) => !e.asked), admitted: state.admitted, now: now(),
+      ], waiting: [...waitingNow(views)], reserved: reservedFiles(), returning: state.returning, admitted: state.admitted, now: now(),
     });
     // What it admitted holds its place from here. A piece has one start at a time; each answer of it goes along.
     for (const { work } of decided.admit) {
@@ -909,6 +943,12 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
         state.returning = state.returning.filter((e) => e !== entry);
         state.admitted.push(entry);
       }
+      keep();
+    }
+    // An answer of a piece that already has its place goes along with it.
+    for (const entry of state.returning.filter((e) => wakes(e) && !e.asked && state.admitted.some((a) => a.work === e.work))) {
+      state.returning = state.returning.filter((e) => e !== entry);
+      state.admitted.push(entry);
       keep();
     }
     const started = [];
@@ -929,6 +969,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       state.noTestsSaid = false;
       keep();
     }
+    await strandedTick(views, decided).catch(() => {});
     // A requeue has its place, so it goes straight onto `admitted`; what was sent back and acting on it are kept as one.
     for (const { work, lane, branch, reason } of decided.requeue) {
       const times = reason === 'red' ? state.reds[work].times : state.sentBack[work];
@@ -950,9 +991,16 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       if (stopped()) break;
       // Carry on after All stop has the answer and the branch, kept until a start takes them.
       const carry = state.carryOver[work];
-      const got = await startPiece({ work, lane, ...(carry ? { branch: carry.branch ?? null, carryOn: isText(carry.branch), answers: carry.answers ?? [] } : {}) });
+      const args = carry ? { branch: carry.branch ?? null, carryOn: isText(carry.branch), answers: carry.answers ?? [] } : {};
+      const startAt = now().toISOString();
+      const got = await startPiece({ work, lane, ...args });
       if (carry && got?.ok === true) {
         delete state.carryOver[work];
+        keep();
+      }
+      // No reply in time: settled as any start is, before anything starts it again.
+      if (got?.uncertain === true) {
+        state.admitted.push({ work, lane, via: 'try-again', key: `start:${startAt}`, at: startAt, queued: views.work?.[work]?.work?.at ?? null, ...args, starting: true, startAt, uncertain: true });
         keep();
       }
       started.push({ work, lane, ...got });
@@ -1052,7 +1100,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     // Asks for a place back: idempotent by `work` and `key`, and kept until its run is seen to start.
     enter,
     // Whether a piece has been given its place and may be sent its answer.
-    admittedTo: (work) => state.admitted.some((e) => e.work === work),
+    admittedTo: (work, key) => state.admitted.some((e) => e.work === work && (key === undefined || e.key === key)),
     // The runner's mark that an answer went back: its entry then waits for the run to be seen running.
     delivered(work, key) {
       const entry = state.admitted.find((e) => e.work === work && e.key === key);
@@ -1068,14 +1116,19 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     startAdmitted({ work, key, ...args }) {
       const entry = state.admitted.find((e) => e.work === work && e.key === key);
       if (!entry) return { ok: false, refused: 'it has no place yet' };
+      // In hand already, after a crash part way: `returnTick` settles it, and nothing starts a second run.
+      if (entry.startsRun === true) return { ok: false, refused: 'it is starting already' };
+      delete entry.runId;
       Object.assign(entry, args, { startsRun: true });
       return startEntry(entry);
     },
     // `fn(runId, carried)`, for the runner's spend carried over.
     onStarted(fn) { if (typeof fn === 'function') carriedBy = fn; },
     // What All stop left for Carry on: the branch and the answers so far, until a start takes them.
-    carryOver(work, kept) {
-      state.carryOver[work] = kept;
+    carryOver(work, { branch = null, answers = [] }) {
+      const before = state.carryOver[work]?.answers ?? [];
+      const said = new Set(before.map((a) => JSON.stringify(a)));
+      state.carryOver[work] = { branch: branch ?? state.carryOver[work]?.branch ?? null, answers: [...before, ...answers.filter((a) => !said.has(JSON.stringify(a)))] };
       keep();
     },
     // A pull request sent back, by the merge gate for a clash or by the check runner for a red head, with the end of the

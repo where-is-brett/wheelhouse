@@ -83,6 +83,15 @@ test('a run on the kits is not re-checked here', async () => {
   assert.deepEqual(calls, ['refresh p', 'start']);
 });
 
+test('a run whose ticket failed and that couldn\'t be stopped is uncertain', async () => {
+  for (const [cancel, uncertain] of [[{ ok: false, refused: 'no reply' }, true], [{ ok: true }, undefined]]) {
+    const { routes, engine } = setup(async () => ({ ok: true }));
+    engine.artefactsOf = () => null;
+    engine.act = async () => cancel;
+    assert.equal((await routes.start({ project: 'p', order })).uncertain, uncertain);
+  }
+});
+
 test('a start with no reply in time says so, and a plain refusal doesn\'t', async () => {
   const { routes, engine } = setup(async () => ({ ok: true }));
   engine.start = async () => ({ ok: false, refused: 'no reply', uncertain: true });

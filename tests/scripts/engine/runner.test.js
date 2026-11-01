@@ -1166,9 +1166,10 @@ test('the fix lane and the merge queue never wait for admit', async () => {
   }
 });
 
-test('Give it more resumes, and falls back to a start on the same place', async () => {
+test('Give it more asks for a place, and a run that can\'t resume starts on that place', async () => {
   const entered = [];
-  const startAdmitted = async () => ({ ok: true, runId: 'again-1' });
+  const fallback = [];
+  const startAdmitted = async (args) => { fallback.push(args); return { ok: true, runId: 'again-1' }; };
   const gate = { admittedTo: () => entered.length > 0, startAdmitted };
   const t = setUp({ recordings: { big: spending(1200000) }, settings: { capMinutes: { quick: 20 }, capTokens: { quick: 1000000 } }, gate });
   t.runner.onEnter((args) => entered.push(args));
@@ -1180,6 +1181,7 @@ test('Give it more resumes, and falls back to a start on the same place', async 
     t.views.questions[q.id] = { question: { data: q }, answer: { label: 'Give it more' } };
     await t.runner.tick();
     assert.deepEqual(entered.map((e) => [e.via, e.key, e.runId]), [['more', q.id, runId]]);
+    assert.deepEqual(fallback.map((f) => [f.key, f.carryOn, f.raised]), [[q.id, true, true]]);
   } finally { t.cleanup(); }
 });
 
@@ -1218,7 +1220,7 @@ test('a piece with two open cards returns once both are answered', async () => {
   await w.runner.tick();
   await w.dispatcher.tick();
   await w.runner.tick();
-  assert.ok(w.answers().length >= 1, 'both go back together');
+  assert.deepEqual(w.answers().map((c) => c.action.answer.ask).sort(), ['qa', 'qb'], 'both go back, on the one place');
 });
 
 test('time on returning isn\'t running time, and meets no cap', async () => {
@@ -1242,4 +1244,115 @@ test('under All stop the answer isn\'t used, the piece leaves returning, and Car
   assert.equal(w.answers().length, 0);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(w.dir, 'dispatch.json'), 'utf8')).returning, []);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(w.dir, 'dispatch.json'), 'utf8')).carryOver.a, { branch: 'wh/a', answers: [{ question: 'Which?', answer: 'Do the whole page' }] });
+});
+
+const wayBackAct = (w) => (runId, action) => { w.engine.calls.push({ call: 'act', runId, action }); return { ok: true }; };
+// A piece on a run stopped at its cap, whose Give it more can't resume it.
+const atCap = async () => {
+  const w = wayBack({ recordings: { a: forever() }, pace: 1 });
+  w.put('a');
+  await w.tick();
+  const runId = w.runsOf('a')[0];
+  w.engine.act(runId, { cancel: { reason: 'its cap' } });
+  await w.pump();
+  await w.runner.capped({ runId, work: 'a', lane: 'quick', branch: 'wh/a', reached: { cap: 'tokens', limit: 10 } });
+  const q = w.cards().at(-1);
+  w.questions[q.id].answer = { label: 'Give it more' };
+  return { w, q, runId };
+};
+const ran = (w) => w.engine.calls.filter((c) => c.call === 'start').length;
+
+test('Give it more refused once isn\'t lost: it stays on the way back and starts once', async () => {
+  const { w } = await atCap();
+  let refusals = 0;
+  w.refuse = () => { refusals += 1; return refusals === 1 ? 'the mirror could not be read' : null; };
+  await w.tick(4);
+  assert.equal(refusals, 2);
+  assert.equal(ran(w), 2, 'tried again, and started');
+  assert.equal(w.runsOf('a').filter((id) => w.engine.inspect(id).status === 'running').length, 1);
+  assert.deepEqual(w.runner.carried(w.runsOf('a').at(-1)).runs, [w.runsOf('a')[0]], 'with its spend carried');
+});
+
+test('a crash during Give it more\'s start doesn\'t start a second run', async () => {
+  const { w } = await atCap();
+  await w.runner.tick();
+  await w.dispatcher.tick();
+  // The engine starts the run, and the helper stops before it hears.
+  w.startAs = async (args, real) => { await real(args); return new Promise(() => {}); };
+  w.runner.tick();
+  await new Promise((resolve) => { setTimeout(resolve, 20); });
+  w.startAs = null;
+  assert.equal(ran(w), 2);
+  w.restart();
+  await w.tick(3);
+  assert.equal(ran(w), 2);
+});
+
+test('a cap card answered after the work was queued again starts nothing beside the new run', async () => {
+  const { w } = await atCap();
+  w.work.a.work.at = '2026-10-29T12:00:00.000Z';
+  w.clock.now = new Date('2026-10-29T12:00:01.000Z');
+  await w.tick(3);
+  assert.equal(ran(w), 2, 'only the new queueing\'s run');
+  assert.ok(w.notes().some((n) => /wasn't used: the work was queued again/.test(n)));
+});
+
+test('an answer the engine took with no reply still brings the fresh run', async () => {
+  const blocked = asks('qa', { kind: 'blocked', options: [{ id: 'rework', label: 'Send it back' }, { id: 'stop', label: 'Stop' }], context: { question: 'Which?' } });
+  const w = wayBack({ recordings: { a: [blocked, forever()] } });
+  w.put('a');
+  await w.tick();
+  w.answer('a', 'Send it back');
+  const act = w.engine.act.bind(w.engine);
+  w.engine.act = (runId, action) => {
+    act(runId, action);
+    w.engine.act = act;
+    return { ok: false, unreachable: true };
+  };
+  await w.tick(5);
+  assert.equal(w.runsOf('a').length, 2, 'the second try was refused, since the first was taken, and the rework follows');
+});
+
+test('an approval signed under All stop on a run that survives goes back after the lift', async () => {
+  const w = wayBack({ recordings: { a: asks('qa', { kind: 'approval', recommend: 'approve', options: [{ id: 'approve', label: 'Approve' }], setLine: { pr: 9, head: HEAD } }) } });
+  w.put('a');
+  await w.tick();
+  w.stop = true;
+  w.approvals[9] = { [HEAD]: { data: { pr: 9, commit: HEAD } } };
+  await w.tick();
+  assert.equal(w.answers().length, 0);
+  w.stop = false;
+  await w.tick(3);
+  assert.equal(w.answers().length, 1);
+});
+
+test('under All stop with the engine unheard, the answer is looked at again', async () => {
+  const w = await waitingAnswer({ recordings: { a: asks('qa', { context: { question: 'Which?', branch: 'wh/a' } }), busy: forever() } });
+  w.answer('a', 'Do the whole page');
+  w.stop = true;
+  await w.engine.stopAll('All stop');
+  const inspect = w.engine.inspect;
+  w.engine.inspect = () => null;
+  await w.tick();
+  assert.equal(w.notes().filter((n) => /All stop was on/.test(n)).length, 0);
+  w.engine.inspect = inspect;
+  await w.tick();
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(w.dir, 'dispatch.json'), 'utf8')).carryOver.a.answers, [{ question: 'Which?', answer: 'Do the whole page' }]);
+});
+
+test('a Stop at a held cap that a crash cut short is finished on the next tick', async () => {
+  const w = wayBack({ recordings: { a: asks('qa') } });
+  w.put('a');
+  await w.tick();
+  const runId = w.runsOf('a')[0];
+  await w.runner.capped({ runId, work: 'a', lane: 'quick', branch: 'wh/a', reached: { cap: 'tokens', limit: 10 }, paused: true });
+  w.questions[w.cards().at(-1).id].answer = { label: 'Stop' };
+  w.engine.act = () => new Promise(() => {});
+  w.runner.tick();
+  await new Promise((resolve) => { setTimeout(resolve, 20); });
+  delete w.engine.act;
+  w.engine.act = wayBackAct(w);
+  w.restart();
+  await w.runner.tick();
+  assert.equal(w.stateOf('a'), 'ended');
 });

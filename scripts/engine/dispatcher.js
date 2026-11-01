@@ -40,7 +40,7 @@ export const MERGE_WORK = 'merge-queue';
 // `sentBack` is [{ work, times, reason? }], the pull requests sent back: for a clash by the merge gate, and with reason
 // `red` by the check runner; `waiting` the pieces that wait on the director; `reserved` { [work]: paths } the files held
 // for a piece until its work ends. A hold's `by` names what holds it, where that can be named: the clash's pieces, the
-// dependencies not merged, or what fills the parked limit. `returning` is [{ work, lane, via, at }], the pieces asking for
+// dependencies not merged, or what fills the parked limit. `returning` is [{ work, lane, via, at, asked? }], with a card out when `asked`, the pieces asking for
 // a place back, and `admitted` the same shape, named and not yet seen running; neither counts as running by itself. A
 // `requeue` is named only when it has a place, and otherwise is asked about again on the next tick.
 export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeatures = {}, settings = {}, stop = false, incident = false, capsReached = false, mergeQueue = {}, requests = null, sentBack = [], waiting = [], reserved = {}, returning = [], admitted = [], now = new Date() } = {}) {
@@ -130,7 +130,7 @@ export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeat
     if (counted.has(r.work)) continue;
     const feature = isFeature(r.work, r.lane);
     // A card opened since it asked: it comes back once that is answered.
-    if (stopping || parked.has(r.work) || !hasRoom(feature)) {
+    if (stopping || r.asked || parked.has(r.work) || !hasRoom(feature)) {
       unadmitted.push(r);
       continue;
     }
@@ -152,7 +152,7 @@ export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeat
   const unplacedBack = new Set();
   for (const r of unadmitted) {
     if (counted.has(r.work)) continue;
-    if (r.via === 'slice') take(r.work, isFeature(r.work, r.lane));
+    if (r.via === 'slice' && !parked.has(r.work)) take(r.work, isFeature(r.work, r.lane));
     else unplacedBack.add(r.work);
   }
   const start = [];

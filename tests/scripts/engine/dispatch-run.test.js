@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { dispatchRun, orderFor, TRY_AGAIN, STOP_HERE } from '../../../scripts/engine/dispatch-run.js';
+import { dispatchRun, orderFor, TRY_AGAIN, STOP_HERE, BUILD_AGAIN } from '../../../scripts/engine/dispatch-run.js';
 import { fakeEngine } from '../../../scripts/engine/fake.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { wayBack, asking, askingTwice, forever, quiet } from '../../helpers/way-back.js';
@@ -533,12 +533,16 @@ test('a piece with no run yet reserves its expected files, with nothing to read'
   assert.deepEqual(notesOf(t), []);
 });
 
-test('the tick still gives dispatch no waiting and no reservations', async () => {
+test('the tick gives dispatch what waits and what is reserved, so a waiting piece frees its place', async () => {
   const t = parking({ pieces: { a: ['one.js'], b: [], c: [] } });
   t.world.waiting = new Set(['a', 'b', 'c']);
-  const { start, hold } = await t.d.tick();
-  assert.deepEqual([start, hold], [[], []], 'three paused runs keep their places until the wiring');
+  await t.d.tick();
   assert.deepEqual(t.d.reserved().a, ['one.js', 'built.js']);
+  const w = wayBack({ recordings: { a: asking('qa'), b: quiet() }, pace: 1 });
+  w.put('a', { place: 0 });
+  w.put('b', { place: 1, files: ['free.js'] });
+  await w.tick(2);
+  assert.equal(w.runsOf('b').length, 1, 'b starts once a parks');
 });
 
 // Delegated decisions design, section 8.3: every way back passes one check, at most once.
@@ -579,20 +583,63 @@ test('a path\'s entry stays until its run is seen to start', async () => {
   assert.equal(entered(w).returning.length, 1, 'refused: still on returning');
 });
 
-test('each path asks for a place: pace full means no start, and a free place one start', async () => {
-  for (const via of ['rework', 'slice', 'carry', 'requeue', 'try-again', 'build-again']) {
-    const w = wayBack({ recordings: { a: quiet(), busy: forever() }, pace: 1 });
-    w.put('busy', { place: 0 });
-    w.put('a', { place: 1 });
-    await w.tick();
-    w.work.a.approved = true;
-    (w.runs.a ??= []).push({ at: '2026-10-29T09:00:00.000Z', data: { work: 'a', runId: 'old', lane: 'quick', state: 'ended', outcome: 'completed', branch: 'wh/a' } });
-    w.dispatcher.enter({ work: 'a', lane: 'quick', via, key: 'k', branch: 'wh/a', carryOn: true });
+test('each path asks: pace full means no start, and a free place one start', async () => {
+  const SLICES = { text: `# F\n\n\`\`\`wheelhouse-slices\n${JSON.stringify({ goal: 'F', flag: { name: 'f' }, demo: 'end', slices: [{ title: 'One', goal: 'One', done: [{ test: 'one' }] }, { title: 'Two', goal: 'Two', done: [{ test: 'two' }] }] })}\n\`\`\`\n` };
+  const blocked = asking('qa', { kind: 'blocked', options: [{ id: 'rework', label: 'Send it back' }, { id: 'stop', label: 'Stop' }], context: { question: 'Which?' } });
+  // A piece running in the one place, by the record alone.
+  const fill = (w) => {
+    w.put('filler', { place: 9 });
+    w.runs.filler = [{ at: w.clock.now.toISOString(), data: { work: 'filler', runId: 'run-filler', lane: 'quick', state: 'started' } }];
+  };
+  const free = (w) => w.runs.filler.push({ at: w.clock.now.toISOString(), data: { work: 'filler', runId: 'run-filler', lane: 'quick', state: 'ended', outcome: 'completed' } });
+  const paths = {
+    rework: { recordings: { a: [blocked, quiet()] }, go: async (w) => {
+      await w.tick();
+      w.answer('a', 'Send it back');
+      while (w.answers().length === 0) await w.tick();
+      fill(w);
+    } },
+    requeue: { recordings: { a: quiet() }, go: async (w) => {
+      await w.tick(2);
+      fill(w);
+      w.dispatcher.sentBack('a');
+    } },
+    'Try again': { recordings: { a: quiet() }, go: async (w) => {
+      await w.tick(2);
+      w.dispatcher.sentBack('a');
+      await w.tick(2);
+      w.dispatcher.sentBack('a');
+      await w.tick();
+      fill(w);
+      w.answer('a', TRY_AGAIN);
+    } },
+    'Give it more': { recordings: { a: forever() }, go: async (w) => {
+      await w.tick();
+      const runId = w.runsOf('a')[0];
+      w.engine.act(runId, { cancel: { reason: 'its cap' } });
+      await w.pump();
+      await w.runner.capped({ runId, work: 'a', lane: 'quick', branch: 'wh/a', reached: { cap: 'tokens', limit: 10 } });
+      fill(w);
+      w.answer('a', 'Give it more');
+    } },
+    'Build it again': { lane: 'feature', recordings: { a: forever() }, go: async (w) => {
+      await w.tick();
+      w.engine.act(w.runsOf('a')[0], { cancel: { reason: 'stopped' } });
+      await w.tick(2);
+      fill(w);
+      w.answer('a', BUILD_AGAIN);
+    } },
+  };
+  for (const [name, { recordings, go, lane = 'quick' }] of Object.entries(paths)) {
+    const w = wayBack({ recordings, pace: 1, designOf: () => SLICES });
+    w.put('a', { lane });
+    await go(w);
+    const before = w.starts.length;
     await w.tick(2);
-    assert.equal(w.starts.filter((s) => s.order.work === 'a').length, 0, `${via}: pace full`);
-    w.engine.act(w.runsOf('busy')[0], { cancel: { reason: 'done' } });
+    assert.equal(w.starts.length, before, `${name}: pace full`);
+    free(w);
     await w.tick(3);
-    assert.equal(w.starts.filter((s) => s.order.work === 'a').length, 1, `${via}: a place free`);
+    assert.equal(w.starts.length, before + 1, `${name}: a place free`);
   }
 });
 
@@ -770,4 +817,80 @@ test('a Stop beside another open card keeps the files let go of', async () => {
   w.dispatcher.release('a');
   await w.tick();
   assert.deepEqual(w.dispatcher.reserved(), {}, 'its other card doesn\'t take the files back');
+});
+
+test('a run on record since the start was marked counts as started, though it has since ended', async () => {
+  const w = await uncertainStart({ live: async () => null });
+  const before = w.starts.length;
+  // A crash after the start, and the run ending while the helper was down.
+  w.startAs = async (args, real) => {
+    const { runId } = await real(args);
+    w.engine.act(runId, { cancel: { reason: 'it ended' } });
+    return { ok: false, refused: 'no reply in time', uncertain: true };
+  };
+  await w.tick();
+  w.startAs = null;
+  w.restart();
+  await w.tick(3);
+  assert.equal(w.starts.length, before + 1, 'the work isn\'t done over');
+});
+
+test('a card that couldn\'t be written is written on the next tick', async () => {
+  const w = await uncertainStart({});
+  w.refuse = () => 'no';
+  await w.tick();
+  const put = w.questions;
+  w.questions = {};
+  await w.tick();
+  const id = entered(w).returning[0].asked;
+  assert.ok(id, 'the entry is waiting on its card');
+  w.questions = put;
+  delete w.questions[id];
+  await w.tick();
+  assert.equal(w.cardOf('a')?.id, id, 'the same card comes');
+  assert.deepEqual(w.dispatcher.waitingWork(), new Set(['a']));
+});
+
+test('a kept card that was never written isn\'t waited on', async () => {
+  const w = await uncertainStart({});
+  assert.deepEqual(w.dispatcher.waitingWork(), new Set());
+});
+
+test('a piece stopped with nothing to move it on, holding files, brings one card', async () => {
+  const w = wayBack({ recordings: { a: asking('qa'), b: quiet() }, branchPaths: async () => ['x.js'], pace: 3 });
+  w.put('a', { place: 0 });
+  await w.tick(2);
+  w.answer('a', 'Do the whole page');
+  await w.tick(3);
+  assert.equal(w.stateOf('a'), 'ended');
+  w.put('b', { place: 1, files: ['x.js'] });
+  await w.tick();
+  assert.equal(w.runsOf('b').length, 0, 'its files are still held');
+  const card = w.cardOf('a');
+  assert.deepEqual(card.options.map((o) => o.label), [TRY_AGAIN, STOP_HERE]);
+  await w.tick(2);
+  assert.equal(w.cards().filter((c) => c.work === 'a' && c.id === card.id).length, 1, 'one card');
+  w.answer('a', STOP_HERE);
+  await w.tick(2);
+  assert.deepEqual(w.dispatcher.reserved(), {});
+  assert.equal(w.runsOf('b').length, 1, 'the files go, so the work behind them starts');
+});
+
+test('a Carry on with no reply in time is settled, and keeps what it carries', async () => {
+  const w = wayBack({ recordings: { a: quiet() }, pace: 1 });
+  w.put('a');
+  w.startAs = async () => ({ ok: false, refused: 'no reply in time', uncertain: true });
+  w.engine.liveRunOf = async () => undefined;
+  await w.tick();
+  w.startAs = null;
+  await w.tick(2);
+  assert.equal(w.starts.length, 1, 'no second start on a guess');
+  assert.deepEqual(w.cardOf('a').options.map((o) => o.label), [TRY_AGAIN, STOP_HERE]);
+});
+
+test('two answers kept for Carry on both stand', async () => {
+  const w = wayBack({});
+  w.dispatcher.carryOver('a', { branch: 'wh/a', answers: [{ question: 'One?', answer: 'Yes' }] });
+  w.dispatcher.carryOver('a', { branch: 'wh/a', answers: [{ question: 'One?', answer: 'Yes' }, { question: 'Two?', answer: 'No' }] });
+  assert.deepEqual(entered(w).carryOver.a.answers.map((a) => a.question), ['One?', 'Two?']);
 });

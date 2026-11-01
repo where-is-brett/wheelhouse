@@ -122,13 +122,26 @@ test('a restart between admit and running keeps the place and delivers once', as
 test('the running count never passes pace, at any pace, with answers coming back together', async () => {
   for (const pace of [1, 2, 3]) {
     const ids = ['a', 'b', 'c', 'd', 'e', 'f'];
-    const w = wayBack({ recordings: Object.fromEntries(ids.map((id) => [id, asking(`q${id}`)])), pace });
+    // Each goes on running once answered, until the test ends it.
+    const w = wayBack({ recordings: Object.fromEntries(ids.map((id) => [id, asking(`q${id}`).slice(0, 3)])), pace });
     ids.forEach((id, n) => w.put(id, { place: n }));
     await w.tick(6);
-    for (const id of w.starts.map((s) => s.order.work)) w.answer(id, 'Do the whole page');
-    for (let n = 0; n < 12; n += 1) {
+    const parked = w.starts.map((s) => s.order.work);
+    assert.equal(parked.length, Math.min(6, 2 * pace), 'new work stops at twice pace');
+    for (const id of parked) w.answer(id, 'Do the whole page');
+    let most = 0;
+    for (let n = 0; n < 14; n += 1) {
       await w.tick();
-      assert.ok(w.running() <= pace, `pace ${pace}: ${w.running()} running`);
+      const going = new Set([...ids.filter((id) => w.stateOf(id) === 'started'), ...ids.filter((id) => w.dispatcher.admittedTo(id))]);
+      most = Math.max(most, going.size);
+      assert.ok(going.size <= pace, `pace ${pace}: ${going.size} going`);
+      // One ends every few ticks, so the rest come back through the places it leaves.
+      if (n % 3 === 2) {
+        const done = ids.find((id) => w.stateOf(id) === 'started');
+        if (done) w.engine.act(w.runsOf(done).at(-1), { cancel: { reason: 'done' } });
+      }
     }
+    assert.equal(most, pace, 'the places were used');
+    assert.equal(new Set(w.answers().map((c) => c.action.answer.ask)).size, w.answers().length, 'each answer once');
   }
 });
