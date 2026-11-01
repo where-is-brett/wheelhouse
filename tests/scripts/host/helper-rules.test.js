@@ -103,6 +103,41 @@ test('a rule the helper proposed is confirmed by a signed click and reads back a
   }
 });
 
+test('a rule from a clicked label signs on a line that names its literal and its scope', async () => {
+  const c = await computer();
+  try {
+    await c.withHelper(async (client) => {
+      const literal = composeRule({
+        answer: { label: 'Replace' }, card: { kind: 'question', level: 3, options: [{ label: 'Keep' }, { label: 'Replace' }] },
+        facts: rule.paths && { readable: true, paths: rule.paths, depsChanged: false, schemaChanged: false, guardrail: false, secrets: false, critical: false },
+        lane: 'small', project: P, now: () => new Date('2026-11-01T02:00:00.000Z'),
+      });
+      const event = makeEvent({ kind: 'rule', data: literal });
+      await writeEvent({ project: P, event });
+      const line = confirmLine(event);
+      assert.match(line, /When the options are exactly Keep, Replace, take Replace\. Only in this project, in the small lane, for src\/a\.js"$/);
+      const question = `Same answer for this kind of thing from now on?\n${line}`;
+      const click = makeEvent({ ...(await earned({ project: P, question, label: 'Confirm', card: { question } })).made });
+      assert.equal((await client.state.record({ project: P, event: click })).ok, true);
+      assert.deepEqual(c.views().rules[literal.id].rule, literal);
+    });
+  } finally {
+    await c.cleanup();
+  }
+});
+
+test('with no engine to read a piece from, the helper offers nothing and writes nothing', async () => {
+  const c = await computer();
+  try {
+    await c.withHelper(async (client) => {
+      assert.deepEqual(await client.rules.offer({ project: P }), { ok: true, offer: null });
+      assert.deepEqual(c.events().filter((e) => e.kind === 'rule'), []);
+    });
+  } finally {
+    await c.cleanup();
+  }
+});
+
 test('a brief written to the helper is a draft, and only the director\'s signed click on its confirm line puts it in force', async () => {
   const c = await computer();
   try {

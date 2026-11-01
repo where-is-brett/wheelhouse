@@ -59,6 +59,7 @@ import { helperClient } from '../host/helper-client.js';
 import { WINDOW_MS } from '../confirm/window.js';
 import { dataHash } from '../state/events.js';
 import { composeCard, answerInput, blindInput } from '../cards/compose.js';
+import { confirmWords } from '../state/card-lines.js';
 import { joinersOf } from '../state/joiners.js';
 import { cardsForVisit, existingCard, cardNumbered, asQuestion, importanceOf, IMPORTANCE } from '../cards/visit.js';
 import { controlFileInput, controlFilesDue, controlFilesNamed, gateAsksDue, gateInput, holdInput, holdsDue, premiumFailuresDue, stillWaits, withPutBack } from '../cards/build-loop.js';
@@ -67,7 +68,7 @@ import { failedInput } from '../routing/premium.js';
 import { heldByNotNow, numberedWaiting } from '../board/model.js';
 import { glossaryOf, knownConcepts, plainWords, termPattern } from './glossary.js';
 import { checkSetting, definitionOf, KNOWN, SETTINGS, WINDOWS_BUILD_COMMANDS, OWN_GITHUB_APP_KEY } from '../settings/catalogue.js';
-import { CARD } from '../lib/front-desk.js';
+import { CARD, OFFER_ASK } from '../lib/front-desk.js';
 import { effectiveSettings, levelWords, settingsText, settingWords } from '../settings/effective.js';
 import { similar as similarTo } from '../intake/similar.js';
 import { answerLine, blindLine, chatCopy, ID, keepControlLine } from '../state/card-lines.js';
@@ -238,7 +239,7 @@ function plainInput(input, words) {
   ].map((t) => t.trim());
   if (texts.some((t) => t.includes('\u0000'))) return null;
   const target = isPlain(input.target) ? input.target : {};
-  const named = [target.work, target.incident, target.branch, target.event?.data?.words].filter((t) => typeof t === 'string' && t !== '');
+  const named = [target.work, target.incident, target.branch, confirmWords(target.event)].filter((t) => typeof t === 'string' && t !== '');
   const { text } = plainWords(texts.join(JOIN), words.glossary, { ...words, protect: [...words.protect, ...named] });
   const cut = text.indexOf(TERMS);
   const parts = (cut < 0 ? text : text.slice(0, cut)).split(JOIN);
@@ -515,6 +516,7 @@ export async function cards({ client, cwd, now }) {
     const built = await buildLoopCards({ client, cwd, views, words, now: at, problems });
     made += built.made;
     again = built.again;
+    made += await offerRule({ client, cwd, words, problems });
   }
   // A card put back that no longer waits (it was decided) is put back from its card event.
   const decided = [...again].some((id) => !(Array.isArray(views.waiting) ? views.waiting : []).some((c) => c?.id === id));
@@ -684,12 +686,16 @@ export async function suggest({ client, cwd, card: cardId, work: workId, change 
 
 // --- record ---
 
-// The confirm card for a ruling, which names the ruling by its id and its words.
-function confirmCard(event, words) {
+// What a ruling drafted from words typed on a rule's offer holds it to, shown on its card.
+const WIDER_LIMITS = 'It stops short of the usual exclusions, such as secrets and guardrails, and level 4 always comes to you.';
+
+// The confirm card for a ruling, which names the ruling by its id and its words. A `wider` ruling is one the director
+// typed on a rule's offer, so the card shows what still holds it.
+function confirmCard(event, words, { wider = false } = {}) {
   return composePlain({
     kind: 'confirm',
     level: 3,
-    what: `A rule you gave, in your words: "${event.data.words}"`,
+    what: `A rule you gave, in your words: "${event.data.words}"${wider ? `. ${WIDER_LIMITS}` : ''}`,
     why: 'A rule is followed only once you confirm it, so it comes to you.',
     options: [{ label: 'Confirm', says: 'The rule goes into the rulebook and is followed from now on.' }],
     recommend: 'Confirm',
@@ -697,6 +703,49 @@ function confirmCard(event, words) {
     meanwhile: 'The rule is written down, but nothing follows it until you confirm.',
     target: { event },
   }, words);
+}
+
+// Why an answer earned its offer, as the card says it.
+const OFFER_WHY = Object.freeze({
+  like: 'You answered a like question the same way before.',
+  left: 'You chose differently from what was recommended.',
+});
+
+// The confirm card offering a rule, which shows the rule as it would read, with its scope. The event comes from the
+// helper, so the card's line names the rule as it was recorded.
+function offerCard(event, why, words) {
+  return composePlain({
+    kind: 'confirm',
+    level: 3,
+    ask: OFFER_ASK,
+    what: `As a rule it would read: ${confirmWords(event)}.`,
+    why: `${OFFER_WHY[why]} Only you make a rule, so it comes to you.`,
+    options: [{ label: 'Confirm', says: 'The rule is signed. It decides nothing yet: it only records what it would have done, and the usual exclusions stay with you.' }],
+    recommend: 'Confirm',
+    because: 'it keeps the answer you gave, this narrowly',
+    meanwhile: 'Nothing changes until you confirm, and questions like this keep coming to you.',
+    target: { event },
+  }, words);
+}
+
+// The rule a visit offers, its card recorded, or 0. An offer is never worth a problem for the visit: the helper may have
+// none to give, or no route for it, and only a rule recorded with no card is said.
+async function offerRule({ client, cwd, words, problems }) {
+  let offer = null;
+  try {
+    const got = await client.rules.offer({ cwd });
+    offer = got?.ok === true && isPlain(got.offer) ? got.offer : null;
+  } catch {
+    return 0;
+  }
+  if (offer === null) return 0;
+  try {
+    await write(client, cwd, 'card', offerCard(offer.event, offer.why, words).card);
+    return 1;
+  } catch (error) {
+    problems.push(`The rule offered wasn't made a card: ${error.message}`);
+    return 0;
+  }
 }
 
 // The confirm card for a standing brief, which shows all of it as it would stand.
@@ -909,8 +958,9 @@ export async function record({ client, cwd, kind, input, now, ready, makeId = ()
   if (kind === 'ruling' && (typeof words !== 'string' || words.trim() === '' || BREAK.test(words))) throw new CliError('A ruling needs its words, on one line, as the director gave them');
   const { views, names } = await viewsOf(client, cwd);
   const id = makeId();
-  const held = kind === 'brief' ? briefToSign(input, views.brief) : input;
-  const { question, card: data } = (kind === 'brief' ? briefCard : confirmCard)({ kind, id, data: held }, await wordsOf(client, cwd, views, now, names));
+  const { wider, ...ruling } = input;
+  const held = kind === 'brief' ? briefToSign(input, views.brief) : ruling;
+  const { question, card: data } = (kind === 'brief' ? briefCard : confirmCard)({ kind, id, data: held }, await wordsOf(client, cwd, views, now, names), { wider: wider === true });
   const got = await write(client, cwd, kind, held, id);
   if (got.id !== id) throw new CliError(`The ${kind} was recorded as ${got.id}, not under the id its confirm card names`);
   let made;

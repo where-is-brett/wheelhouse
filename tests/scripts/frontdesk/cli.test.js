@@ -18,6 +18,7 @@ import { buildViews } from '../../../scripts/state/views.js';
 import { briefText, wholeBrief } from '../../../scripts/delegation/brief.js';
 import { BRIEF_WORDS_MOST } from '../../../scripts/delegation/limits.js';
 import { makeEvent, dataHash, listEvents, confirmationFor, PROTECTED_KINDS } from '../../../scripts/state/events.js';
+import { composeRule } from '../../../scripts/delegation/composer.js';
 import { delegationReview } from '../../../scripts/frontdesk/learning.js';
 import { deskCore } from '../../../scripts/desk/core.js';
 import { levelWords } from '../../../scripts/settings/effective.js';
@@ -71,7 +72,7 @@ async function inHome(fn) {
 // a function read on each request) every write is refused and the views say STOP is on, as the
 // helper does under STOP. A pull request is open at `head`, unless `pr` answers for it. A write is
 // made at `writeAt(n)`, the nth write's time. The desk's reads are the real desk's, over what is held.
-function fakeHelper({ events = [], stop = false, head = FULL, pr, profile = {}, writeAt = T, names } = {}) {
+function fakeHelper({ events = [], stop = false, head = FULL, pr, profile = {}, writeAt = T, names, offer } = {}) {
   const held = [...events];
   const stopped = () => (typeof stop === 'function' ? stop() : stop);
   const calls = [];
@@ -116,6 +117,15 @@ function fakeHelper({ events = [], stop = false, head = FULL, pr, profile = {}, 
         if (stopped()) return STOP;
         if (PROTECTED_KINDS.includes(body.kind)) return { ok: false, refused: 'a signed kind is recorded through /state/record, never written here' };
         return writeAs(body.kind, body.data, body.id);
+      },
+    },
+    rules: {
+      offer: async (body) => {
+        if (offer === undefined) return { ok: true, offer: null };
+        calls.push(['rules.offer', body]);
+        const given = offer();
+        if (given?.event) held.push(given.event);
+        return { ok: true, offer: given };
       },
     },
     profile: {
@@ -2193,6 +2203,61 @@ test('a card too long to list its pieces still comes, and they are asked after i
     assert.equal(helper.held.filter((e) => e.kind === 'card').at(-1).data.joiners, undefined);
   });
 });
+
+const offered = () => ({
+  event: makeEvent({ kind: 'rule', data: composeRule({
+    answer: { label: 'Replace' }, card: { kind: 'question', level: 3, options: [{ label: 'Keep' }, { label: 'Replace' }] },
+    facts: { readable: true, paths: ['src/a.js'], depsChanged: false, schemaChanged: false, guardrail: false, secrets: false, critical: false },
+    lane: 'small', project: 'o__p', now: () => NOW,
+  }) }),
+  why: 'left',
+});
+
+test('the card shows the rule as it would read, and its scope', () => inHome(async () => {
+  const helper = fakeHelper({ offer: offered });
+  const { json } = await run(helper, ['cards']);
+  assert.equal(json.questions.length, 1);
+  const [card] = json.questions;
+  assert.match(card.question, /^Same answer for this kind of thing from now on\?/);
+  assert.match(card.question, /When the options are exactly Keep, Replace, take Replace/);
+  assert.match(card.question, /in the small lane, for src\/a\.js/);
+  assert.deepEqual(card.options.map((o) => o.label), ['Confirm', 'Suggest a change…', 'Keep as is', 'Not now']);
+  const held = helper.held.find((e) => e.kind === 'card');
+  assert.equal(held.data.line, confirmLine(helper.held.find((e) => e.kind === 'rule')));
+  assert.deepEqual(cardProblems(held.data.question), []);
+  assert.deepEqual(helper.views().rules, {});
+}));
+
+test('a card that doesn\'t show the scope is refused by the card check', () => inHome(async () => {
+  const helper = fakeHelper({ offer: offered });
+  await run(helper, ['cards']);
+  const held = helper.held.find((e) => e.kind === 'card');
+  const line = held.data.line;
+  assert.ok(cardProblems(`Same answer for this kind of thing from now on?\nKeep this answer.\n${line}\nReply code: AAAA`).length > 0);
+}));
+
+test('a visit offers nothing under All stop, and an offer that fails costs the visit nothing', () => inHome(async () => {
+  const stopped = fakeHelper({ stop: true, offer: offered });
+  await run(stopped, ['cards']);
+  assert.equal(stopped.calls.some(([name]) => name === 'rules.offer'), false);
+  const broken = fakeHelper({ offer: () => { throw new Error('no route'); } });
+  const { json } = await run(broken, ['cards']);
+  assert.deepEqual(json.questions, []);
+  assert.equal(json.problems, undefined);
+}));
+
+test('a typed wider rule becomes a ruling draft in the director\'s words, with a confirm card', () => inHome(async () => {
+  const helper = fakeHelper();
+  const words = 'Always land finished work';
+  const { json } = await run(helper, ['record', 'ruling'], JSON.stringify({ words, wider: true }));
+  const [ruling, card] = helper.writes();
+  assert.deepEqual(ruling.data, { words });
+  assert.equal(card.data.kind, 'confirm');
+  assert.ok(card.data.question.includes(`"${words}"`));
+  assert.match(card.data.question, /usual exclusions/);
+  assert.match(card.data.question, /level 4 always comes to you/);
+  assert.equal(json.card.id, helper.held.find((e) => e.kind === 'card').id);
+}));
 
 // A question drawn blind, through `cards` to the answer card that follows.
 const BLIND_QUESTION = {

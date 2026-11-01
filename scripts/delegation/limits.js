@@ -9,6 +9,9 @@ export const PARKED_TIMES = 2;
 // Offers of a rule: at most OFFER_SITTING in a sitting, and not again for OFFER_AGAIN_DAYS.
 export const OFFER_SITTING = 1;
 export const OFFER_AGAIN_DAYS = 30;
+// A sitting ends after this long with no click, and the longest a rule's words and scope may read on one line.
+export const SITTING_GAP_HOURS = 4;
+export const RULE_WORDS_MOST = 400;
 export const RULE_REVIEW_MONTHS = 6;
 // A standing brief: the most examples of right and wrong, and the most of it a confirm card can show.
 export const BRIEF_EXAMPLES_MOST = 3;
