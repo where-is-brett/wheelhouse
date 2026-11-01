@@ -828,7 +828,7 @@ test('under All stop the approved question waits, and goes back once it is lifte
 const LEAVE = { park: 'leave', signed: false, lane: 'quick' };
 const cardsOf = (t) => t.writes.filter((w) => w.kind === 'card');
 const answers = (t) => acts(t.engine).map((a) => JSON.stringify(a));
-const sign = (t, head = ASKED_HEAD) => { t.views.approvals = { ...t.views.approvals, 7: { ...t.views.approvals?.[7], [head]: { kind: 'approval', data: { pr: 7, commit: head } } } }; };
+const sign = (t, head = ASKED_HEAD, at = t.world.now.toISOString()) => { t.views.approvals = { ...t.views.approvals, 7: { ...t.views.approvals?.[7], [head]: { kind: 'approval', at, data: { pr: 7, commit: head } } } }; };
 
 test('where park is offered it is taken, with no ruling, and the director\'s card is raised', async () => {
   const t = mergeSetUp(LEAVE);
@@ -848,6 +848,71 @@ test('the card a park raises holds up nothing, so it keeps to the day\'s budget'
   const kept = () => JSON.parse(fs.readFileSync(t.mergeFile, 'utf8'));
   await t.ask();
   assert.equal(kept().shown.count, 1, 'it counted against the day');
+  t.cleanup();
+});
+
+test('a title that names another number leaves it out of the card, and nothing else stops', async () => {
+  const t = mergeSetUp({ ...LEAVE, title: 'Mends #212 in sign-in' });
+  await t.ask();
+  await t.runner.tick();
+  assert.equal(cardsOf(t).length, 1);
+  assert.match(JSON.stringify(cardsOf(t)[0].data), /#7/);
+  assert.doesNotMatch(JSON.stringify(cardsOf(t)[0].data), /#212/);
+  t.cleanup();
+});
+
+test('an approval from before the park doesn\'t answer the card it raised', async () => {
+  const handed = [];
+  const t = mergeSetUp({ ...LEAVE, handBack: async (args) => { handed.push(args); return { ok: true }; } });
+  sign(t, ASKED_HEAD, '2026-10-01T00:00:00.000Z');
+  await t.ask();
+  await t.runner.tick();
+  assert.equal(handed.length, 0, 'the director hasn\'t seen what the queue is unsure of');
+  assert.equal(cardsOf(t).length, 1);
+  await t.ask('two');
+  assert.match(answers(t)[1], /"choice":"leave"/, 'nor does it answer the queue\'s next ask');
+  sign(t);
+  await t.runner.tick();
+  assert.equal(handed.length, 1);
+  t.cleanup();
+});
+
+test('a tick during a park raises one card', async () => {
+  let let_go;
+  const gate = new Promise((resolve) => { let_go = resolve; });
+  const t = mergeSetUp({ ...LEAVE, act: async () => { await gate; return { ok: true }; } });
+  const asking = t.ask();
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const ticking = t.runner.tick();
+  let_go();
+  await Promise.all([asking, ticking]);
+  assert.equal(cardsOf(t).length, 1);
+  t.cleanup();
+});
+
+test('a parked pull request whose work has gone leaves the record, and its approval sends nothing back', async () => {
+  const replies = [{ ok: false, gone: true }];
+  const handed = [];
+  const t = mergeSetUp({ ...LEAVE, handBack: async (args) => { handed.push(args); return replies.shift(); } });
+  await t.ask();
+  sign(t);
+  await t.runner.tick();
+  await t.runner.tick();
+  assert.equal(handed.length, 1);
+  assert.deepEqual(t.runner.parkedHeads(), {});
+  assert.deepEqual([...t.runner.waitingWork()], []);
+  assert.equal(t.ruled.length, 0);
+  assert.equal(t.writes.filter((w) => w.kind === 'note' && /goes back/.test(w.data.words)).length, 0);
+  t.cleanup();
+});
+
+test('a refused hand-back is said once', async () => {
+  const t = mergeSetUp({ ...LEAVE, handBack: async () => ({ ok: false, refused: 'no record of it' }) });
+  await t.ask();
+  sign(t);
+  await t.runner.tick();
+  await t.runner.tick();
+  assert.equal(t.writes.filter((w) => w.kind === 'note' && /no record of it/.test(w.data.words)).length, 1);
   t.cleanup();
 });
 
@@ -944,7 +1009,7 @@ test('Merge is a signed approval of that head, and the next ask merges on it, in
   sign(t);
   await t.runner.tick();
   await t.runner.tick();
-  assert.deepEqual(handed, [{ pr: 7, head: ASKED_HEAD }], 'once');
+  assert.deepEqual(handed, [{ pr: 7 }], 'once');
   assert.equal(t.ruled.length, 1, 'the queue is due at once');
   assert.deepEqual(t.runner.parkedHeads(), {}, 'back in the queue');
   assert.equal(acts(t.engine).length, 1, 'the ended run is sent nothing');

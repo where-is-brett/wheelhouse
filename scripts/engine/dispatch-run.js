@@ -666,6 +666,20 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     }
   }
 
+  // { [pr]: the head marked ready } for what the queue has left alone. The queue brings a change up to date itself, so the
+  // head it left needn't be the one marked ready: what makes one the queue's again is being marked ready at a new head.
+  function leftAlone(ready) {
+    const left = parkedPrs() ?? {};
+    const kept = (state.leftAt ??= {});
+    let changed = false;
+    for (const pr of Object.keys(kept)) if (left[pr] !== kept[pr].left) { delete kept[pr]; changed = true; }
+    for (const [pr, head] of Object.entries(left)) {
+      if (kept[pr] === undefined && typeof ready[pr]?.head === 'string') { kept[pr] = { left: head, ready: ready[pr].head }; changed = true; }
+    }
+    if (changed) keep();
+    return Object.fromEntries(Object.entries(kept).map(([pr, k]) => [pr, k.ready]));
+  }
+
   async function tick() {
     await fixTick();
     await featureTick();
@@ -679,9 +693,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     // A pull request whose work has ended, or one seen closed, no longer waits for the merge queue.
     const closedPrs = new Set([...state.closedPrs, ...Object.values(state.features).flatMap((f) => Object.keys(f?.closed ?? {}).map(Number))]);
     const ended = (work) => reports[work]?.data?.outcome === 'merged' || endedBy(reports, work, views.work?.[work]?.work);
-    // One the queue has left alone isn't due at the head it left; a new head is its own again.
-    const left = parkedPrs() ?? {};
-    const waiting = Object.entries(ready).filter(([pr, r]) => !ended(r.work) && !closedPrs.has(Number(pr)) && left[pr] !== r.head);
+    const leftAt = leftAlone(ready);
+    const waiting = Object.entries(ready).filter(([pr, r]) => !ended(r.work) && !closedPrs.has(Number(pr)) && leftAt[pr] !== r.head);
     const newReady = waiting.some(([pr]) => !state.seenReady.includes(pr));
     const requests = typeof engine.countsRequests === 'function'
       ? { counts: () => engine.countsRequests(config()?.routing ?? {}) === true, used: await spentThisMonth(), cap: Number.isFinite(s.capRequests) ? s.capRequests : 0, confirmed: engine.requestsConfirmed === true }
@@ -839,13 +852,16 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     onWaiting(fn) { if (typeof fn === 'function') routerPieces = fn; },
     // Who tells this of the pull requests the queue has left alone, { [pr]: head }: the runner.
     onParked(fn) { if (typeof fn === 'function') parkedPrs = fn; },
-    // A parked pull request the director approved goes to the queue again. A hand-over writes a fresh work item, which
-    // keeps no `park` at that head, so the queue asks again and the approval answers it. Never beside a live run, whose
-    // claim on the item this would write over.
-    async handBack({ pr, head }) {
+    // A parked pull request the director approved goes to the queue again. A hand-over writes a fresh work item, with no
+    // `park` in its record, so the queue judges it as new; where it asks, the approval answers for the head it was given.
+    // Never beside a live run, whose claim on the item this would write over, and never for work that has ended.
+    async handBack({ pr }) {
       if (await queueLive()) return { ok: false, waiting: true };
       const kept = (readyOf() ?? {})[pr];
-      if (kept?.head !== head) return { ok: false, refused: 'it has moved on from the commit you approved' };
+      if (!isPlain(kept)) return { ok: false, refused: 'nothing records it as ready' };
+      const views = readViews() ?? {};
+      const reports = isPlain(views.reports) ? views.reports : {};
+      if (endedBy(reports, kept.work, views.work?.[kept.work]?.work) || ['merged', 'closed'].includes(await stateOf(pr))) return { ok: false, gone: true };
       if (typeof engine.handOver !== 'function') return { ok: false, refused: 'the engine has no merge queue to hand it to' };
       const repo = repoName();
       const got = await engine.handOver({ project: folder, repo, pr, url: `https://github.com/${repo}/pull/${pr}`, runId: kept.runId, at: now().toISOString() });

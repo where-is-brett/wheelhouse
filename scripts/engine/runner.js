@@ -77,13 +77,14 @@ const inSentence = (title) => (/^[A-Z][a-z]/.test(title) ? title.charAt(0).toLow
 //   helper's own record, true once done;
 // - `release(work)` ends a piece's reservation (dispatch-run.js), for an end that writes no report: the director's Stop
 //   and a bug that moves lane;
-// - `handBack({ pr, head })` hands a parked pull request the director approved to the merge queue again
+// - `handBack({ pr })` hands a parked pull request the director approved to the merge queue again
 //   (dispatch-run.js): { ok }, { ok: false, waiting } or { ok: false, refused }.
 //
 // One unclear pull request holds nothing back (delegated decisions design, section 8): where the queue offers `park`
 // it is taken, which only leaves that pull request, and the director's approval card is raised for its head. `parked`
-// keeps { [pr]: { head, runId, choice, work, ask, taken, handed } }: `taken` once the engine has it, so a restart between
-// the two still raises the card, and `handed` once an approval has gone back to the queue.
+// keeps { [pr]: { head, at, runId, choice, work, ask, taken, handed } }: `taken` once the engine has it, so a restart
+// between the two still raises the card, and `handed` once an approval has gone back to the queue. Only an approval
+// signed since `at` counts for it: an older one, for a pull request shown first, never saw what the queue is unsure of.
 export function engineRunner({ engine, file, readViews, write, stopped = () => false, now = () => new Date(), settings = () => ({}), workOf = () => null, titleOf = (work) => work, endRun = async () => ({ ended: [], survivors: [] }), openedOf = () => null, prTitleOf = async () => null, keepReviews = async () => true, onCard = () => {}, onReaderAsk = () => {}, release = () => {}, handBack = async () => ({ ok: false, refused: 'nothing hands work to the merge queue here' }) } = {}) {
   let state = readState(file);
   const keep = () => saveState(file, state);
@@ -133,9 +134,16 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   // record, and a verified, signed approval names exactly the head the queue asked about. The merge itself still needs
   // that approval at the gate; this only spares the second question.
   function alreadyApproved(asked, views) {
-    return isPlain(asked) && typeof asked.merge === 'string' && asked.merge !== ''
-      && (openedOf(asked.pr)?.lane === 'feature' || state.parked[asked.pr]?.taken === true)
-      && isPlain(views.approvals?.[asked.pr]?.[asked.head]);
+    if (!isPlain(asked) || typeof asked.merge !== 'string' || asked.merge === '') return false;
+    const approval = views.approvals?.[asked.pr]?.[asked.head];
+    return isPlain(approval) && (openedOf(asked.pr)?.lane === 'feature' || (state.parked[asked.pr]?.taken === true && approvedSince(state.parked[asked.pr], approval)));
+  }
+  const approvedSince = (kept, approval) => isPlain(approval) && typeof approval.at === 'string' && approval.at >= kept.at;
+
+  // The card for a parked pull request no longer stands for what waits.
+  function retireCard(pr) {
+    for (const [key, approval] of Object.entries(state.approvals)) if (approval.parked && key.startsWith(`${pr}:`)) delete state.approvals[key];
+    state.waiting = state.waiting.filter((w) => !(w.card.approval?.parked && w.card.approval.pr === Number(pr)));
   }
 
   // Leaves the queue's pull request alone and raises the director's card. Gives whether the ask is settled here; one that
@@ -151,10 +159,8 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       keep();
       return got.ok === true;
     }
-    // A new head: the card for the old one no longer stands for what waits.
-    for (const [key, approval] of Object.entries(state.approvals)) if (approval.parked && key.startsWith(`${pr}:`)) delete state.approvals[key];
-    state.waiting = state.waiting.filter((w) => !(w.card.approval?.parked && w.card.approval.pr === pr));
-    state.parked[pr] = { head: asked.head, runId: ask.runId, choice, work, ask, taken: false, handed: false };
+    retireCard(pr);
+    state.parked[pr] = { head: asked.head, at: now().toISOString(), runId: ask.runId, choice, work, ask, taken: false, handed: false };
     keep();
     await takePark(pr);
     return true;
@@ -162,8 +168,18 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
 
   // Answers `park`, and raises the card once it holds. A run still paused after a refusal is asked as ever. One that has
   // ended has nothing left to hold, whatever became of the answer, so the card comes either way.
+  const taking = new Set();
   async function takePark(pr) {
     const kept = state.parked[pr];
+    if (taking.has(kept) || kept.taken) return;
+    taking.add(kept);
+    try {
+      await takeParkNow(pr, kept);
+    } finally {
+      taking.delete(kept);
+    }
+  }
+  async function takeParkNow(pr, kept) {
     const got = await answerEngine(kept.runId, { ask: kept.ask.id, choice: kept.choice });
     if (!got.ok) {
       if (got.unreachable === true) return;
@@ -182,7 +198,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     const { holdsAll, ...ask } = kept.ask;
     state.waiting.push({
       importance: 3, exempt: false, work: kept.work, runId: kept.runId, ask,
-      card: { approval: { pr: Number(pr), sha: kept.head, level: 3, parked: true, what: parkedWords(ask.reason), why: PARKED_WHY, engine: { approve: null } } },
+      card: { approval: { pr: Number(pr), sha: kept.head, level: 3, parked: true, what: parkedWords(ask.reason), plainWhat: parkedWords(mergeQuestionWords(Number(pr))), why: PARKED_WHY, engine: { approve: null } } },
     });
     keep();
     await show();
@@ -198,9 +214,14 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
         if (!held(kept.runId)) await takePark(pr);
         continue;
       }
-      if (kept.handed || !isPlain(approvals?.[pr]?.[kept.head])) continue;
-      const got = await safely(() => handBack({ pr: Number(pr), head: kept.head }));
-      if (got?.ok === true) {
+      if (kept.handed || !approvedSince(kept, approvals?.[pr]?.[kept.head])) continue;
+      const got = await safely(() => handBack({ pr: Number(pr) }));
+      if (got?.gone === true) {
+        delete state.parked[pr];
+        retireCard(pr);
+        keep();
+        await note(`Your approval of pull request #${pr} wasn't used: that work has ended, or the pull request has closed.`, { work: kept.work, level: 3 });
+      } else if (got?.ok === true) {
         kept.handed = true;
         keep();
         mergeRuled();
@@ -337,15 +358,23 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   async function writeCard({ card, work, runId, ask }) {
     if (card.approval) {
       const a = card.approval;
-      const { card: composed } = composeCard({
+      const compose = (what) => composeCard({
         kind: 'approval', level: a.level === 4 ? 4 : 3, recommend: 'Approve',
-        what: a.parked ? a.what : `Pull request #${a.pr} is ${titled(work)}, ready for you to look at before it is added.`,
+        what,
         why: a.why, because: a.parked ? PARKED_BECAUSE : 'its checks passed and it is visible work, which you see first',
         meanwhile: a.parked ? PARKED_MEANWHILE : 'Nothing is added until you approve it.',
         options: [{ label: 'Approve', says: a.parked ? PARKED_APPROVE_SAYS : 'It approves the change, and it is added to the product.' }],
         ...(a.level === 4 ? { checks: 'It changes no checks: the change is still checked before it is added.' } : {}),
         target: { pr: a.pr, sha: a.sha },
       });
+      let composed;
+      try {
+        ({ card: composed } = compose(a.parked ? a.what : `Pull request #${a.pr} is ${titled(work)}, ready for you to look at before it is added.`));
+      } catch (error) {
+        // A pull request's title is the host's text, which a card can refuse. The card still has to come.
+        if (!a.parked) throw error;
+        ({ card: composed } = compose(a.plainWhat));
+      }
       await write('card', composed);
       state.approvals[`${a.pr}:${a.sha}`] = { runId, ask, approve: a.engine.approve, work, ...(a.parked ? { parked: true } : {}) };
       sealCard({ id: `${a.pr}:${a.sha}`, kind: 'approval', work, runId, level: a.level === 4 ? 4 : 3, ...placeOf(ask) });
