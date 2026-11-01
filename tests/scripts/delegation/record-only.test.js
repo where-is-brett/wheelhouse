@@ -10,7 +10,7 @@ import { SEAL_TICK_MS, FACT_TRIES, SEAL_TRIES, SCORE_WAIT_DAYS, READER_MS, READE
 import { buildViews } from '../../../scripts/state/views.js';
 import { makeEvent, dataHash } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
-import { answerLine } from '../../../scripts/state/card-lines.js';
+import { answerLine, blindLine } from '../../../scripts/state/card-lines.js';
 import { SUGGEST_LABEL } from '../../../scripts/engine/router.js';
 import { READER_WORK } from '../../../scripts/delegation/reader.js';
 import { fakeEngine } from '../../../scripts/engine/fake.js';
@@ -765,3 +765,19 @@ test('a reading line that fails to write is tried again, and then given up', asy
   await seals.tick();
   assert.equal(writes.filter((w) => w.data.line === 'reading').length, 1);
 });
+
+test('words typed on a blind card count as stepping out, and a blind pick is what the record reads', async () => {
+  await withHome(async () => {
+    const id = 'q-w-1';
+    const asked = makeEvent({ kind: 'question', data: { id, work: 'w', what: 'Which?', why: 'It matters.', options: [{ label: 'Keep', says: 'k' }, { label: 'Remove', says: 'r' }], recommendation: 'Keep', level: 3, blind: true }, now: () => new Date('2026-11-01T01:00:00.000Z') });
+    const card = makeEvent({ kind: 'card', data: { question: 'Which?', header: 'First pick', kind: 'blind', level: 3, line: blindLine(id), options: ['Remove', 'Keep'] }, now: () => new Date('2026-11-01T01:00:01.000Z') });
+    const said = (label) => makeEvent({ kind: 'card-answer', data: { card: card.id, label }, now: () => new Date('2026-11-01T01:00:02.000Z') });
+    const record = (label) => {
+      const events = [asked, card, said(label)];
+      return historyOf({ events, enrolled: readEnrolled(), views: buildViews(events, readEnrolled()) });
+    };
+    assert.deepEqual(record('Remove').answer(id), { answer: null, steered: false, blindPick: 'Remove' });
+    assert.deepEqual(record('Ask the supplier').answer(id), { answer: null, steered: true, blindPick: null });
+  });
+});
+

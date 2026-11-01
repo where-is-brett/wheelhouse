@@ -693,6 +693,8 @@ function noticesOf(out, found, now) {
       lines.push(`Wheelhouse: the director chose ${SUGGEST} on card ${at.card.id} ("${askOf(at.card)}"). Ask "${WHAT_WOULD_YOU_CHANGE}" in one line, `
         + 'and nothing else. Their next message is the change: do with it as for "suggested a change on card n (' + at.card.id + '): <their words>", '
         + 'finding the card\'s number in `views waiting`. Nothing is recorded until then.');
+    } else if (at?.card.data?.kind === 'blind' && !PUT_OFF.includes(click.label)) {
+      lines.push(`Wheelhouse: the director's first pick on card ${at.card.id} is kept and answers nothing yet. Run \`cards\` now and ask the card it gives, with no other words.`);
     }
   }
   return lines.length === 0 ? null : lines.join('\n');
@@ -799,7 +801,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
     notices = noticesOf(out, found, at);
     const held = out.filter((click) => found.get(click)?.stale || (found.has(click) && click.label === SUGGEST));
     out.splice(0, out.length, ...out.filter((click) => !held.includes(click)));
-    steered = held.map((click) => found.get(click)).filter((at) => !at.stale && at.card.data?.kind === 'answer').map((at) => at.card.id);
+    steered = held.map((click) => found.get(click)).filter((at) => !at.stale && ['answer', 'blind'].includes(at.card.data?.kind)).map((at) => at.card.id);
   } catch {
     // The state can't be read: the answers are recorded as they were given.
   }

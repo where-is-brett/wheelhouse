@@ -76,7 +76,7 @@ export function sayValue(key, value) {
   if (key === 'capMinutes') return Object.keys(CAP_NAMES).map((k) => `${CAP_NAMES[k]} ${value[k]} minutes`).join(', ');
   if (key === 'capTokens') return Object.keys(CAP_NAMES).map((k) => `${CAP_NAMES[k]} ${value[k].toLocaleString('en-AU')}`).join(', ');
   if (key === 'capRequests') return value === 0 ? 'none, so work that would use them waits' : `${value} a month`;
-  if (key === 'bundleApprovals' || key === 'engineRoom') return value ? 'on' : 'off';
+  if (key === 'bundleApprovals' || key === 'blindCards' || key === 'engineRoom') return value ? 'on' : 'off';
   if (key === 'premium') return PREMIUM_WORDS[value] ?? String(value);
   if (key === 'usageMark') return value === 'off' ? 'off' : `at ${value}%`;
   if (typeof value === 'number') return value.toLocaleString('en-AU');

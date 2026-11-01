@@ -4,13 +4,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { composeCard, answerInput, questionProblem, textOf, DECIDING, HEADERS, MEANWHILE, CHECKS_UNSAID, NO_REPLY_CODE } from '../../../scripts/cards/compose.js';
+import { composeCard, answerInput, blindInput, questionProblem, textOf, DECIDING, HEADERS, MEANWHILE, CHECKS_UNSAID, NO_REPLY_CODE } from '../../../scripts/cards/compose.js';
+import { shuffled } from '../../../scripts/delegation/blind.js';
 import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { makeEvent, eventPath, dataHash } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
   liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, takeOverLine, pairLine, uninstallLine, keepControlLine, usageLine, premiumLine, replyCode, replyCodeLine, setLineOf,
+  blindLine,
 } from '../../../scripts/state/card-lines.js';
 import { stateDir, stopFile } from '../../../scripts/lib/paths.js';
 import { CARD, CARD_KINDS, PUT_OFF } from '../../../scripts/lib/front-desk.js';
@@ -49,6 +51,7 @@ const INPUTS = {
   runbook: { ...common, recommend: 'Do it', kind: 'runbook', what: 'The emergency steps say: put the product back to an earlier release.', options: [says('Do it')], target: { step: 3, sha: FULL } },
   'approve-work': { ...common, kind: 'approve-work', what: 'The plan for exporting a report as a spreadsheet file (export-csv).', options: [says('Approve')], target: { work: 'export-csv', lane: 'feature', hash: DOC, shownFirst: true } },
   answer: { ...common, recommend: 'Comma', kind: 'answer', what: 'The export needs to know which separator to use.', options: OWN, target: { questionId: 'q-export-csv-1' } },
+  blind: { ...common, recommend: undefined, because: undefined, kind: 'blind', what: 'The export needs to know which separator to use.', options: OWN, target: { questionId: 'q-export-csv-1' } },
   amend: { ...common, recommend: 'Change it', kind: 'amend', what: 'A change to the plan you approved for export-csv.', options: [says('Change it')], target: { work: 'export-csv', hash: DOC } },
   'lift-incident': { ...common, recommend: 'End it', kind: 'lift-incident', what: 'Incident bad-total, the wrong totals, has been corrected, so merging can start again.', options: [says('End it')], target: { incident: 'bad-total' } },
   'incident-fix': { ...common, recommend: 'Merge the fix', kind: 'incident-fix', what: 'Pull request #31 corrects the wrong totals in incident bad-total.', options: [says('Merge the fix')], target: { incident: 'bad-total', pr: 31 } },
@@ -100,6 +103,7 @@ const LINES = {
   runbook: runbookLine(3, FULL),
   'approve-work': approveWorkLine('export-csv', 'feature', DOC, { shownFirst: true }),
   answer: answerLine('q-export-csv-1'),
+  blind: blindLine('q-export-csv-1'),
   amend: amendLine('export-csv', DOC),
   'lift-incident': liftIncidentLine('bad-total'),
   'incident-fix': incidentFixLine('bad-total', 31),
@@ -124,7 +128,7 @@ test('every kind has an input here', () => {
 });
 
 // The kinds whose question, when none is given, is their `what`.
-const ASKS_WHAT = ['answer', 'question', 'setup', 'confirm-all', 'baseline', 'trust', 'uninstall'];
+const ASKS_WHAT = ['answer', 'blind', 'question', 'setup', 'confirm-all', 'baseline', 'trust', 'uninstall'];
 
 test("each kind's card carries its plain lines in Calm's order, then its set line and its reply code, but a setup card no code", () => {
   for (const kind of CARD_KINDS) {
@@ -145,7 +149,7 @@ test("each kind's card carries its plain lines in Calm's order, then its set lin
       assert.equal(setLineOf(question.question), LINES[kind]);
       assert.equal(card.line, LINES[kind]);
       assert.equal(card.code, null);
-      assert.deepEqual(NO_REPLY_CODE, ['setup', 'confirm-all', 'trust', 'take-over', 'uninstall', 'keep-control-files', 'usage', 'premium', 'pair']);
+      assert.deepEqual(NO_REPLY_CODE, ['setup', 'confirm-all', 'trust', 'take-over', 'uninstall', 'keep-control-files', 'usage', 'premium', 'pair', 'blind']);
     } else {
       assert.deepEqual(after, [LINES[kind], replyCodeLine(replyCode(LINES[kind]))]);
       assert.equal(setLineOf(question.question), LINES[kind]);
@@ -239,13 +243,13 @@ test('card.parts holds every part, and rebuilding the text from the parts gives 
     assert.equal(parts.why, given.why);
     assert.equal(parts.meanwhile, given.meanwhile);
     assert.equal(parts.small, given.why, 'with no size, the small line is the reason');
-    assert.equal(parts.recommendation, `${given.recommend}, because ${given.because.replace(/\.$/, '')}.`);
+    if (kind !== 'blind') assert.equal(parts.recommendation, `${given.recommend}, because ${given.because.replace(/\.$/, '')}.`);
     assert.equal(parts.line, card.line);
     assert.equal(parts.code, card.code);
     assert.equal(Object.hasOwn(parts, 'checks'), given.checks !== undefined, kind);
     assert.deepEqual(parts.options.map((o) => o.label), card.options);
     assert.deepEqual(parts.options.map((o) => o.recommended), card.options.map((l) => l === given.recommend));
-    assert.equal(parts.options.filter((o) => o.recommended).length, 1, kind);
+    assert.equal(parts.options.filter((o) => o.recommended).length, kind === 'blind' ? 0 : 1, kind);
     assert.equal(textOf(parts), question.question, kind);
     assert.equal(textOf(JSON.parse(JSON.stringify(parts))), question.question, `${kind}: through the state`);
   }
@@ -414,10 +418,10 @@ test("the recommended option's description starts \"Recommended:\" and carries t
   // The reason follows the says without its full stop, as a clause.
   const stop = composeCard(input('approval', { options: [{ label: 'Approve', says: 'It goes live within the hour.' }], because: 'The checks passed.' }));
   assert.equal(stop.question.options[0].description, 'Recommended: It goes live within the hour, because the checks passed.');
-  // Exactly one option is led by "Recommended:" on every kind.
+  // Exactly one option is led by "Recommended:" on every kind but a blind card, which has none.
   for (const kind of CARD_KINDS) {
     const got = composeCard(input(kind)).question.options.filter((o) => o.description.startsWith('Recommended:'));
-    assert.equal(got.length, 1, kind);
+    assert.equal(got.length, kind === 'blind' ? 0 : 1, kind);
   }
 });
 
@@ -876,4 +880,37 @@ test('a question asked twice on one piece names the piece once', () => {
   const input = answerInput(ASKED, 'The banner', { joiners: [{ id: 'q-b-2', name: 'The banner' }] });
   assert.match(input.what, /It was asked more than once on The banner: your answer goes to each\./);
   assert.deepEqual(input.joiners, ['q-b-2']);
+});
+
+test('a blind card keeps the question and every option\'s words, in the order its id gives, with no recommendation', () => {
+  const asked = {
+    id: 'q-export-csv-3', work: 'export-csv', what: 'Which separator should the export use?', why: 'It changes the file people download.', level: 3, recommendation: 'Tab',
+    options: [{ label: 'Comma', says: 'Commas between values.' }, { label: 'Tab', says: 'Tabs between values.' }, { label: 'Pipe', says: 'Pipes between values.' }],
+  };
+  const { question, card } = composeCard(blindInput(asked, 'Export a report'));
+  const own = question.options.slice(0, -1);
+  assert.deepEqual(own.map((o) => o.label), shuffled(asked.options, asked.id).map((o) => o.label));
+  assert.deepEqual(own.map((o) => o.description), shuffled(asked.options, asked.id).map((o) => o.says));
+  assert.equal(question.options.at(-1).label, 'Suggest a change…');
+  assert.deepEqual(lines(card.question).slice(0, 2), [asked.what, asked.why]);
+  assert.ok(lines(card.question).includes(`First pick on question ${asked.id}`));
+  assert.equal(card.code, null);
+  assert.equal(card.blind, true);
+  assert.equal(card.recommend, undefined);
+  assert.doesNotMatch(JSON.stringify({ question, parts: card.parts }), /Recommended|recommendation/);
+  assert.equal(textOf(card.parts), card.question);
+});
+
+test('a blind card that holds a recommendation in its own words is refused', () => {
+  const asked = { id: 'q-w-1', work: 'w', what: 'Which one? I recommend Comma.', why: 'It matters.', level: 3, recommendation: 'Comma', options: [{ label: 'Comma', says: 'x' }, { label: 'Tab', says: 'y' }] };
+  assert.throws(() => composeCard(blindInput(asked, 'w')), /must not recommend/);
+});
+
+test('the answer card after a blind card says what was picked and is marked for the review', () => {
+  const asked = { id: 'q-w-1', work: 'w', what: 'Which one?', why: 'It matters.', level: 3, recommendation: 'Tab', options: [{ label: 'Comma', says: 'x' }, { label: 'Tab', says: 'y' }] };
+  const { card } = composeCard(answerInput(asked, 'w', { picked: 'Comma', blind: true }));
+  assert.equal(lines(card.question)[0], 'You picked Comma first. Which one?');
+  assert.equal(card.blind, true);
+  assert.equal(card.recommend, 'Tab');
+  assert.equal(composeCard(answerInput(asked, 'w')).card.blind, undefined);
 });

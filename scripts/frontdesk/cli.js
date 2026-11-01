@@ -57,10 +57,10 @@ import path from 'node:path';
 import { helperClient } from '../host/helper-client.js';
 import { WINDOW_MS } from '../confirm/window.js';
 import { dataHash } from '../state/events.js';
-import { composeCard, answerInput } from '../cards/compose.js';
+import { composeCard, answerInput, blindInput } from '../cards/compose.js';
 import { confirmWords } from '../state/card-lines.js';
 import { joinersOf } from '../state/joiners.js';
-import { cardsForVisit, existingCard, cardNumbered, asQuestion } from '../cards/visit.js';
+import { cardsForVisit, existingCard, cardNumbered, asQuestion, importanceOf, IMPORTANCE } from '../cards/visit.js';
 import { controlFileInput, controlFilesDue, controlFilesNamed, gateAsksDue, gateInput, holdInput, holdsDue, premiumFailuresDue, stillWaits, withPutBack } from '../cards/build-loop.js';
 import { SWITCH_NAME, SWITCH_WORK } from '../engine/switch.js';
 import { failedInput } from '../routing/premium.js';
@@ -70,7 +70,7 @@ import { checkSetting, definitionOf, KNOWN, SETTINGS, WINDOWS_BUILD_COMMANDS, OW
 import { CARD, OFFER_ASK } from '../lib/front-desk.js';
 import { effectiveSettings, levelWords, settingsText, settingWords } from '../settings/effective.js';
 import { similar as similarTo } from '../intake/similar.js';
-import { answerLine, chatCopy, ID, keepControlLine } from '../state/card-lines.js';
+import { answerLine, blindLine, chatCopy, ID, keepControlLine } from '../state/card-lines.js';
 import { countsAtOnce, gateTargetOf } from '../state/views.js';
 import { briefHash } from '../feature/files.js';
 import { endedBy, since, NO_PLAN, STARTS_UNAPPROVED } from '../foreman/queue.js';
@@ -233,7 +233,7 @@ async function wordsOf(client, cwd, views, now, names = []) {
 function plainInput(input, words) {
   const says = input.options.map((o) => (typeof o.says === 'string' ? o.says : null));
   const texts = [
-    ...(input.ask === undefined ? [] : [input.ask]), input.what, input.why, ...says.filter((t) => t !== null), input.because,
+    ...(input.ask === undefined ? [] : [input.ask]), input.what, input.why, ...says.filter((t) => t !== null), ...(input.because === undefined ? [] : [input.because]),
     ...(input.changed === undefined ? [] : [input.changed]), input.meanwhile, ...(input.checks === undefined ? [] : [input.checks]),
   ].map((t) => t.trim());
   if (texts.some((t) => t.includes('\u0000'))) return null;
@@ -252,11 +252,12 @@ function plainInput(input, words) {
   const what = next();
   const why = next();
   const options = input.options.map((o) => (typeof o.says === 'string' ? { ...o, says: next() } : o));
-  const because = next();
+  const because = input.because === undefined ? undefined : next();
   const changed = input.changed === undefined ? undefined : next();
   const meanwhile = next();
   return {
-    ...input, what, why, options, because, meanwhile,
+    ...input, what, why, options, meanwhile,
+    ...(because === undefined ? {} : { because }),
     ...(ask === undefined ? {} : { ask }),
     ...(changed === undefined ? {} : { changed }),
     ...(input.checks === undefined ? {} : { checks: next() }),
@@ -293,7 +294,8 @@ const sameList = (a, b) => a.length === b.length && a.every((x) => b.includes(x)
 // carry the title; the build's ask commands check a question against the card naming the id.
 // A card lists each piece its answer goes to, by title or, where those won't fit, by id. A card already out is re-issued
 // through `revises` once the pieces behind it change; the question it answers, and so its signature, stays as it was.
-function answerCard(id, data, views, words, { joiners = [], revises, saidBefore } = {}) {
+// One that follows a blind card says what was picked, or where that won't fit, only that it followed one.
+function answerCard(id, data, views, words, { joiners = [], revises, saidBefore, picked, blind } = {}) {
   if (!isPlain(data) || data.id !== id) throw new Error('its record can\'t be read');
   const title = (work) => flat(views.work?.[work]?.work?.data?.title);
   const reissue = revises === undefined ? {} : { revises, changed: REISSUED };
@@ -302,16 +304,32 @@ function answerCard(id, data, views, words, { joiners = [], revises, saidBefore 
     for (const titled of [true, false]) {
       const named = joiners.map((j) => ({ id: j.id, name: (titled && title(j.work)) || j.work }));
       try {
-        return composePlain({ ...answerInput(data, name, { joiners: named, saidBefore }), ...reissue }, words);
+        return composePlain({ ...answerInput(data, name, { joiners: named, saidBefore, picked, blind }), ...reissue }, words);
       } catch (error) {
         refusal ??= error;
       }
     }
   }
   // Too long to list its pieces: the question is still asked, and they are asked after it, with what was said.
-  if (revises === undefined && (joiners.length > 0 || saidBefore !== undefined)) return answerCard(id, data, views, words);
+  if (revises === undefined && (joiners.length > 0 || saidBefore !== undefined || picked !== undefined)) return answerCard(id, data, views, words, { blind });
   throw refusal;
 }
+
+// The blind card for a question, or null when it can't be one: the ordinary card is then asked in its place.
+function blindCard(id, data, views, words) {
+  const title = flat(views.work?.[data.work]?.work?.data?.title);
+  for (const name of [...new Set([title || data.work, data.work])]) {
+    try {
+      return composePlain(blindInput(data, name), words);
+    } catch {
+      // The next name, or the ordinary card.
+    }
+  }
+  return null;
+}
+
+// Whether a question's blind card, held for now, gives way to its answer card: it has come to hold up all work.
+const blindGivesWay = (id, data, views) => importanceOf({ data: { kind: 'answer', line: answerLine(id), level: data.level } }, views) > IMPORTANCE.LEVEL_3;
 
 // The card for a click the merge gate waits for, naming the work by its title, or by its id when
 // it has none or the card won't carry the title (the first part may name no other pull request or
@@ -438,7 +456,7 @@ async function buildLoopCards({ client, cwd, views, words, now, problems }) {
 
 // This visit's cards: { questions, left }, and `problems` when something couldn't be done. An open
 // question from the build that no waiting card asks gets its answer card first, and the build
-// loop's records theirs (buildLoopCards). The cards handed out are recorded as asked, so a card
+// loop's records theirs (buildLoopCards). A question drawn blind gets its blind card ahead of that. The cards handed out are recorded as asked, so a card
 // dismissed with no answer isn't offered on every turn. A write the helper refuses is a problem,
 // not a failure: the cards waiting are still given. Under STOP the visit's one card is Lift STOP:
 // the helper writes nothing, so no card is made, and the cards waiting stay on the board, counted
@@ -457,9 +475,25 @@ export async function cards({ client, cwd, now }) {
     const out = existingCard(views, answerLine(id));
     const listing = views.waiting?.find((c) => c.id === out)?.data?.joiners ?? [];
     if (out !== null && sameList(listing, joiners.map((j) => j.id))) continue;
+    const data = entry.question?.data;
+    const pick = entry.firstPick;
+    if (data?.blind === true && out === null && pick === undefined && !blindGivesWay(id, data, views)) {
+      if (existingCard(views, blindLine(id)) !== null) continue;
+      const blind = blindCard(id, data, views, words);
+      if (blind !== null) {
+        try {
+          await write(client, cwd, 'card', blind.card);
+          made += 1;
+        } catch (error) {
+          problems.push(`The card for question ${id} wasn't recorded: ${error.message}`);
+        }
+        continue;
+      }
+    }
+    const followed = pick === undefined ? {} : { blind: true, ...(pick.typed ? {} : { picked: pick.label }) };
     let card;
     try {
-      ({ card } = answerCard(id, entry.question?.data, views, words, { joiners, saidBefore: entry.saidBefore?.label, ...(out === null ? {} : { revises: out }) }));
+      ({ card } = answerCard(id, data, views, words, { joiners, saidBefore: entry.saidBefore?.label, ...followed, ...(out === null ? {} : { revises: out }) }));
     } catch (error) {
       problems.push(`Question ${id} couldn't be made a card: ${error.message}`);
       continue;
@@ -517,7 +551,7 @@ function topicOf(given) {
 // An outdated card may be revised only after a suggested change on it that came before the gate's record for the head.
 export async function card({ client, cwd, input, now }) {
   if (!isPlain(input)) throw new CliError('Give the card as a JSON object on standard input');
-  if (input.kind === 'answer') throw new CliError('An answer card comes from `cards`, made from the question as the build recorded it');
+  if (input.kind === 'answer' || input.kind === 'blind') throw new CliError('An answer card comes from `cards`, made from the question as the build recorded it');
   if (input.kind === 'usage') throw new CliError('A usage card comes from the session start, made from the allowance as it reads it');
   if (input.kind === 'premium') throw new CliError('The premium model\'s card comes from `premium-card`, made by the helper');
   if (input.event !== undefined) throw new CliError('A card for a record of the build\'s comes from `cards`, made once from the record');

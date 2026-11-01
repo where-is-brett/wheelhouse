@@ -28,6 +28,7 @@ export const WORK_REPORTS_RULE = `Edit(/${WORK_REPORTS}*.md)`;
 // the private note's figures back (scripts/measures/baseline.js); the helper composes it, and it
 // is never a card event in the state. A trust card asks to trust another of the director's
 // computers here (ruling R80); the session start composes it, and its click is kept on this computer.
+// A blind card shows a question's options first, with no recommendation (scripts/delegation/blind.js).
 // A take-over card asks to take the lock from another computer that holds it (design section 9); the session start
 // composes it, and its click is the director's Take over here, which the helper acts on.
 // Uninstall's card asks to remove Wheelhouse from a project (ruling R90); the helper composes it, and
@@ -40,7 +41,7 @@ export const WORK_REPORTS_RULE = `Edit(/${WORK_REPORTS}*.md)`;
 export const CARD_KINDS = Object.freeze([
   'approval', 'confirm', 'lift-stop', 'ci-push', 'runbook', 'approve-work', 'answer', 'amend',
   'lift-incident', 'incident-fix', 'setup', 'confirm-all', 'baseline', 'trust', 'take-over', 'uninstall', 'question',
-  'keep-control-files', 'usage', 'premium', 'pair',
+  'keep-control-files', 'usage', 'premium', 'pair', 'blind',
 ]);
 // Labels that ask for more or put a card off: a click on one never answers it.
 // Why? and Suggest a change… only steer the front desk; the director's own words never sign anything.

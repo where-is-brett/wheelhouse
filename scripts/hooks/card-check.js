@@ -7,7 +7,7 @@
 // as setup's, a trust card's or uninstall's) and nothing after it, and plain lines that between them name what the set
 // line names (for a trust card, the computer it trusts; for uninstall's, the project) and no other
 // pull request or commit. Given the question object, its options are checked too: two to four, one
-// recommended, and none Explain more. The prompt record is what refuses a wrong click, so this
+// recommended (none on a blind card, whose set line marks it), and none Explain more. The prompt record is what refuses a wrong click, so this
 // only informs: it refuses nothing it can't read, and a failure of its own lets the card through.
 // A card that doesn't come from scripts/cards/compose.js can fail it; one that does cannot.
 // In any folder, a card that reads as the baseline card (any of its fixed words however written, or
@@ -24,7 +24,7 @@ import { whatProblem, NO_REPLY_CODE } from '../cards/compose.js';
 import { TO_KNOW_MORE, TO_CHANGE_IT } from '../lib/calm-words.js';
 import { CARD } from '../lib/front-desk.js';
 import {
-  setLinesOf, replyCode, replyCodeLine, runbookLine, isLiftStopLine, RUNBOOK_TITLES, SETUP_TITLES, ID, LANES, TRUST_LINE, TAKEOVER_LINE, PAIR_LINE, UNINSTALL_LINE, KEEP_CONTROL_LINE, USAGE_LINE, PREMIUM_LINE,
+  setLinesOf, replyCode, replyCodeLine, runbookLine, isLiftStopLine, BLIND_LINE, RUNBOOK_TITLES, SETUP_TITLES, ID, LANES, TRUST_LINE, TAKEOVER_LINE, PAIR_LINE, UNINSTALL_LINE, KEEP_CONTROL_LINE, USAGE_LINE, PREMIUM_LINE,
 } from '../state/card-lines.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
@@ -51,6 +51,7 @@ function targetOf(line) {
   }
   if ((m = new RegExp(`^Approve (${ID}) \\((?:${LANES}) lane\\) as written, ${SHA12}`).exec(line))) return { kind: 'approve-work', target: { work: m[1], hash: m[2] } };
   if (/^Answer question /.test(line)) return { kind: 'answer', target: {} };
+  if (BLIND_LINE.test(line)) return { kind: 'blind', target: {} };
   if ((m = new RegExp(`^Change the approved (${ID}) to this, ${SHA12}$`).exec(line))) return { kind: 'amend', target: { work: m[1], hash: m[2] } };
   if ((m = new RegExp(`^End incident (${ID}) and let merges carry on$`).exec(line))) return { kind: 'lift-incident', target: { incident: m[1] } };
   if ((m = new RegExp(`^Merge pull request #([1-9][0-9]*) as the fix for incident (${ID})$`).exec(line))) return { kind: 'incident-fix', target: { incident: m[2], pr: Number(m[1]) } };
@@ -90,7 +91,9 @@ export function cardProblems(question) {
   if (object !== null && Array.isArray(object.options)) {
     const labels = object.options.map((o) => (typeof o === 'string' ? o : o?.label));
     const recommended = object.options.filter((o) => typeof o?.description === 'string' && o.description.startsWith(RECOMMENDED)).length;
-    if (recommended === 0) problems.push('names no recommended option');
+    const blind = line !== null && BLIND_LINE.test(line);
+    if (recommended === 0 && !blind) problems.push('names no recommended option');
+    else if (recommended === 1 && blind) problems.push('names a recommended option, which a blind card holds back');
     else if (recommended > 1) problems.push(recommended === 2 ? 'names two recommended options' : `names ${recommended} recommended options`);
     if (labels.includes(EXPLAIN_MORE)) problems.push(`offers ${EXPLAIN_MORE}, which is not one of a card's options`);
     // AskUserQuestion shows a question with two to four options only; any other count never reaches the director.

@@ -78,6 +78,8 @@ export const SETTINGS = {
   // all, so work routed to such a plan waits until the director allows some.
   capRequests: { label: 'Plan requests a month', group: 'advanced', check: wholeBetween(0, 10000), default: 0, home: 'project' },
   bundleApprovals: { label: 'Bundle approvals', group: 'advanced', levels: [false, true], default: false, home: 'project' },
+  // About one question card in five shows its options before the recommendation (scripts/delegation/blind.js).
+  blindCards: { label: 'Blind cards', group: 'advanced', levels: [false, true], default: true, home: 'project' },
   engineRoom: { label: 'Engine room', group: 'advanced', levels: [false, true], default: false, home: 'project' },
 };
 
