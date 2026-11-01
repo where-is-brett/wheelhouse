@@ -150,3 +150,9 @@ test('a cap card from before the work was queued again doesn\'t wait', () => {
   views.work.a.work.at = '2026-11-01T01:00:00.000Z';
   assert.deepEqual(sorted(routerWaiting({ state, views })), ['a']);
 });
+
+test('a cap card kept but never written asks nothing; written, it does', () => {
+  const state = { questions: { 'q-a-1': { cap: true, work: 'a', runId: 'r' } } };
+  assert.deepEqual([...routerWaiting({ state, views: { questions: {}, runs: {} } })], []);
+  assert.deepEqual([...routerWaiting({ state, views: { questions: { 'q-a-1': { question: { data: {} } } }, runs: {} } })], ['a']);
+});

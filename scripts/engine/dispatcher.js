@@ -32,7 +32,7 @@ function runsOf(runs, id, entry) {
 // The work the merge queue's own runs stand for, which no work record names: their asks are routed under it.
 export const MERGE_WORK = 'merge-queue';
 
-// dispatch({ work, runs, reports, features, settings, stop, incident, capsReached, mergeQueue, requests?, sentBack?, waiting?, reserved?, returning?, admitted?, stoppedFeatures?, now })
+// dispatch({ work, runs, reports, features, settings, stop, incident, capsReached, mergeQueue, requests?, sentBack?, waiting?, reserved?, returning?, admitted?, stoppedFeatures?, waived?, now })
 //   -> { start: [{ work, lane }], hold: [{ work, why, by? }], admit: [{ work, via }], startMergeQueue, requeue: [{ work, lane, branch, reason? }], clashCards: [{ work }], redCards: [{ work }], live: [work] }
 // `work`, `runs` and `reports` are the record's views; `mergeQueue` is { running, lastStart, waiting, newReady };
 // `requests` is { counts(workId), used, cap, confirmed }: whether a piece's run would use the plan's counted requests,
@@ -43,8 +43,9 @@ export const MERGE_WORK = 'merge-queue';
 // dependencies not merged, or what fills the parked limit. `returning` is [{ work, lane, via, at, asked? }], with a card out when `asked`, the pieces asking for
 // a place back, and `admitted` the same shape, named and not yet seen running; neither counts as running by itself. A
 // `requeue` is named only when it has a place, and otherwise is asked about again on the next tick. `stoppedFeatures` are
-// the features whose run the director or All stop ended, which stay stopped until a Carry on and hold no place meanwhile.
-export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeatures = {}, settings = {}, stop = false, incident = false, capsReached = false, mergeQueue = {}, requests = null, sentBack = [], waiting = [], reserved = {}, returning = [], admitted = [], stoppedFeatures = [], now = new Date() } = {}) {
+// the features whose run the director or All stop ended, which stay stopped until a Carry on and hold no place meanwhile. `waived` are the pieces the director
+// let start without what they depend on.
+export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeatures = {}, settings = {}, stop = false, incident = false, capsReached = false, mergeQueue = {}, requests = null, sentBack = [], waiting = [], reserved = {}, returning = [], admitted = [], stoppedFeatures = [], waived = [], now = new Date() } = {}) {
   const lanes = Array.isArray(settings.engineLanes) ? settings.engineLanes : ['quick'];
   const pace = paceOf(settings);
   // A piece the old engine started before the switch finishes there (scripts/engine/lanes.js).
@@ -170,7 +171,7 @@ export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeat
     const needsApproval = !STARTS_UNAPPROVED.includes(lane) || visible === true || e.work.data.from !== undefined;
     let why = stopping;
     if (!why && needsApproval && e.approved !== true) why = 'unapproved';
-    const unmerged = dependsOn.filter((dep) => reports?.[dep]?.data?.outcome !== 'merged');
+    const unmerged = waived.includes(id) ? [] : dependsOn.filter((dep) => reports?.[dep]?.data?.outcome !== 'merged');
     if (!why && unmerged.length > 0) {
       why = 'dependency';
       by = unmerged;

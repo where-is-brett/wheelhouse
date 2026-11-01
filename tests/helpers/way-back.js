@@ -95,6 +95,7 @@ export function wayBack({ recordings = {}, pace = 3, settings = {}, testCommand 
     runner.onEnter((args) => dispatcher.enter(args));
     dispatcher.onStarted((runId, carried) => runner.started(runId, carried));
     dispatcher.onWaiting(() => runner.waitingWork());
+    dispatcher.onOwed(() => runner.owedWork());
     dispatcher.onReworks(() => runner.reworkWork());
     dispatcher.onCards(() => runner.openCards());
     dispatcher.onParked(() => runner.parkedHeads());

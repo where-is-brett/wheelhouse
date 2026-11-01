@@ -54,3 +54,35 @@ export function noCardBehind({ hold = [], running = [], cards = [] } = {}) {
   };
   return followed(hold).filter((h) => h.by.length > 0 && !h.by.some((by) => moves(by, new Set([h.work]))));
 }
+
+// deadEnds({ hold, running, cards }) -> Map<work, why>: the pieces at the far end of noCardBehind's holds, with no hold of
+// their own, each with the reason of the hold nearest it. Those are what a card has to ask about.
+export function deadEnds({ hold = [], running = [], cards = [] } = {}) {
+  const held = new Map((Array.isArray(hold) ? hold : []).map((h) => [h.work, h]));
+  const ends = new Map();
+  const walk = (work, why, seen) => {
+    if (seen.has(work)) return;
+    seen.add(work);
+    const own = held.get(work);
+    if (own === undefined) {
+      if (!ends.has(work)) ends.set(work, why);
+    } else if (FOLLOWED.has(own.why)) for (const by of own.by ?? []) walk(by, own.why, seen);
+  };
+  for (const h of noCardBehind({ hold, running, cards })) for (const by of h.by) walk(by, h.why, new Set([h.work]));
+  return ends;
+}
+
+// waitsOnItself({ hold, work }) -> whether following a piece's dependency holds comes back to it, so none of them can start.
+export function waitsOnItself({ hold = [], work } = {}) {
+  const edges = new Map((Array.isArray(hold) ? hold : []).filter((h) => h?.why === 'dependency').map((h) => [h.work, h.by ?? []]));
+  const seen = new Set();
+  const queue = [...(edges.get(work) ?? [])];
+  while (queue.length > 0) {
+    const next = queue.shift();
+    if (next === work) return true;
+    if (seen.has(next)) continue;
+    seen.add(next);
+    queue.push(...(edges.get(next) ?? []));
+  }
+  return false;
+}
