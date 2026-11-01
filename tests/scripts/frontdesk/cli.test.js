@@ -15,6 +15,7 @@ import { cardsDue } from '../../../scripts/hooks/board-context.js';
 import { numberedWaiting } from '../../../scripts/board/model.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { buildViews } from '../../../scripts/state/views.js';
+import { wholeBrief } from '../../../scripts/delegation/brief.js';
 import { makeEvent, dataHash, listEvents, confirmationFor, PROTECTED_KINDS } from '../../../scripts/state/events.js';
 import { delegationReview } from '../../../scripts/frontdesk/learning.js';
 import { deskCore } from '../../../scripts/desk/core.js';
@@ -786,6 +787,45 @@ test('record ruling keeps the words exactly and gives back its confirm card', as
       assert.equal(refused.code, 1, JSON.stringify(bad));
     }
     assert.equal(helper.writes().length, 3);
+  });
+});
+
+test('record brief gives back its confirm card, showing all of it, and a fact joins the brief in force', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const lines = { for: 'Shop owners', now: 'Stop the calls to support', noGos: '', examples: ['Like the invoices page'], facts: [] };
+    const out = await run(helper, ['record', 'brief'], JSON.stringify(lines));
+    assert.equal(out.code, 0, out.err);
+    const [brief, card, asked] = helper.writes();
+    assert.equal(brief.kind, 'brief');
+    assert.deepEqual(brief.data, wholeBrief(lines));
+    const event = helper.held.find((e) => e.kind === 'brief');
+    assert.equal(event.id, out.json.id);
+    assert.equal(card.data.kind, 'confirm');
+    assert.equal(card.data.line, confirmLine(event));
+    assert.ok(card.data.question.includes('Like the invoices page'));
+    assert.deepEqual(asked.data, { cards: [out.json.card.id] });
+    // A draft is no brief until the director's click.
+    assert.deepEqual((await run(helper, ['views', 'brief'])).out.trim(), 'This project has no signed brief.');
+    helper.held.push(makeEvent({ ...confirmationFor(event), now: () => T(200) }));
+    assert.ok((await run(helper, ['views', 'brief'])).out.includes('Stop the calls to support'));
+    const fact = await run(helper, ['record', 'brief'], JSON.stringify({ fact: { words: 'One till', date: '2026-11-01' } }));
+    assert.equal(fact.code, 0, fact.err);
+    const next = helper.held.filter((e) => e.kind === 'brief').at(-1);
+    assert.deepEqual(next.data.facts, [{ words: 'One till', date: '2026-11-01' }]);
+    assert.equal(next.data.now, 'Stop the calls to support');
+    assert.equal(helper.held.filter((e) => e.kind === 'card').length, 2);
+  });
+});
+
+test('record brief refuses what can\'t stand, before anything is written', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    for (const bad of [{ fact: { words: 'No date' } }, { nogos: 'A typo' }, { now: 'Two\nlines' }, { now: 'x', fact: { words: 'y', date: '2026-11-01' } }, { now: `ghp_${'a1B2'.repeat(9)}` }]) {
+      const refused = await run(helper, ['record', 'brief'], JSON.stringify(bad));
+      assert.equal(refused.code, 1, JSON.stringify(bad));
+    }
+    assert.deepEqual(helper.writes(), []);
   });
 });
 

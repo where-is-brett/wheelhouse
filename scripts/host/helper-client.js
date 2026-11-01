@@ -106,6 +106,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       previewFind: post('/engine/preview/find'), // { runId } -> { ok, visible, pages, url: address | null, pr, head }: whether the run's work is visible, its pages and the host's preview of the head it opened
       preview: post('/engine/preview'), // { runId } -> { ok, folder, pictures }: copies the run's pictures and notes from its own artefacts into previews/<work>/<head>/ and records a preview
       taskHolds: post('/engine/task-holds'), // { runId } -> { ok, tasks }: the tasks of the run's slice whose review last held, in this run or one before it, from the helper's own record and the engine's
+      brief: post('/engine/brief'), // { runId } -> { ok, brief }: the project's standing brief in force, or null, to read and never to write
       readerView: post('/engine/reader-view'), // { runId } -> { ok, view }: the view built when the card was sealed, to the reader run named by its ticket and no other
       lesson: post('/engine/lesson'), // { runId } -> { ok, written }: writes the lesson the run's lesson step gave, read from the engine's record; at most one a run, none when it is empty
     },
