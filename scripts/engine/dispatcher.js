@@ -89,7 +89,7 @@ export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeat
   const redCards = [];
   for (const [id, e] of entries) {
     const own = sent.filter((s) => s.work === id);
-    if (own.length === 0 || onTheWay.has(id) || runsOf(runs, id, e.work).some((r) => r.data.state !== 'ended')) continue;
+    if (own.length === 0 || onTheWay.has(id) || endedBy(reports, id, e.work) || runsOf(runs, id, e.work).some((r) => r.data.state !== 'ended')) continue;
     const red = own.find((s) => s.reason === 'red');
     const clash = own.find((s) => s.reason !== 'red');
     if (red?.times >= 2) redCards.push({ work: id });

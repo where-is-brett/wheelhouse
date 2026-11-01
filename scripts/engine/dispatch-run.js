@@ -339,10 +339,20 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
         }
         continue;
       }
+      // A stall card's Stop here, though a newer run has started since: that run ends first, and nothing more of it starts.
+      const stall = Object.values(kept.stalls ?? {}).find((held) => !held.done && views.questions?.[held.id]?.answer?.label === STOP_HERE);
+      if (stall) {
+        if (await windDown(work, [...latest.values()].filter((r) => r.state !== 'ended'))) {
+          await endFeature(work, kept, stoppedHereWords(entry.work.data.title ?? work));
+          stall.done = true;
+          keep();
+        }
+        continue;
+      }
       // The cap card's answer, whatever start it held: Stop here ends the feature; Keep going carries on a held carry-on.
       const capLabel = kept.asked ? views.questions?.[kept.asked]?.answer?.label : null;
       if (!live && capLabel === STOP_HERE) {
-        await endFeature(work, kept, `${entry.work.data.title ?? work} stops here, as you chose: the slices already added stay behind their switch, and the feature's place is free for other work. The First Mate's Carry on takes it up again.`);
+        await endFeature(work, kept, stoppedHereWords(entry.work.data.title ?? work));
         continue;
       }
       // On its way back already: what comes next is settled once that run has started.
@@ -370,7 +380,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
         kept.raised = true;
         keep();
       }
-      if (label === STOP_HERE) await endFeature(work, kept, `${title} stops here, as you chose: the slices already added stay behind their switch, and the feature's place is free for other work. The First Mate's Carry on takes it up again.`);
+      if (label === STOP_HERE) await endFeature(work, kept, stoppedHereWords(title));
       // endFeature writes its report once a queueing, so a write that fails is tried again on the next tick.
       if (kept.raised && spent >= featureCap(design, s, { raised: true })) {
         await endFeature(work, kept, `${title} has stopped: it has used its raised cap too, so its next slice doesn't start. The First Mate's Carry on asks you again.`);
@@ -402,6 +412,20 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     await write('note', { about: 'engine', words });
   }
 
+  const stoppedHereWords = (title) => `${title} stops here, as you chose: the slices already added stay behind their switch, and the feature's place is free for other work. The First Mate's Carry on takes it up again.`;
+
+  // What is left of a stopped feature: its way back given up and each run going cancelled. Whether nothing is left, for
+  // the next tick to ask again; a start still in hand settles first.
+  async function windDown(work, going) {
+    const entries = [...state.returning, ...state.admitted].filter((e) => e.work === work);
+    if (entries.some((e) => e.starting)) return false;
+    for (const entry of entries) leave(entry);
+    for (const run of going) {
+      try { await engine.act(run.runId, { cancel: { reason: 'the director stopped the feature' } }); } catch { /* asked again on the next tick */ }
+    }
+    return going.length === 0;
+  }
+
   // A feature whose current step's latest run ended and nothing moves it on: its pull request was closed unmerged, or
   // the run was cancelled (a rejected demo or switch-on, or a cancel in the engine itself) with no card of its own and
   // not by All stop. One card for that run; Build it again carries the step on from its branch, Stop here ends the
@@ -418,7 +442,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       const label = views.questions?.[held.id]?.answer?.label;
       if (held.done || typeof label !== 'string') return;
       if (label === STOP_HERE) {
-        await endFeature(work, kept, `${title} stops here, as you chose: the slices already added stay behind their switch, and the feature's place is free for other work. The First Mate's Carry on takes it up again.`);
+        await endFeature(work, kept, stoppedHereWords(title));
         held.done = true;
         keep();
       } else if (label === BUILD_AGAIN && !stopped() && (views.incidents?.open?.length ?? 0) === 0) {
