@@ -3,10 +3,12 @@
 // a red main line with no test command, a merge queue that can't start, and work held for the plan's counted requests.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import { wayBack, quiet, forever } from '../helpers/way-back.js';
 import { redMainIncident } from '../../scripts/engine/fix-main.js';
 import { TRY_AGAIN, STOP_HERE, LEAVE_IT, KEEP_OFF, ALLOW_SOME, FIX_FORWARD, LEAVE_RED, REFUSED_RETRY_MS, QUEUE_FAULT_MS } from '../../scripts/engine/dispatch-run.js';
-import { startRefusedWords, startCardWords, QUEUE_PASSED_WORDS, cutOffStoppedWords, unmarkedPrWords } from '../../scripts/engine/words.js';
+import { REQUESTS_UNCONFIRMED_WORDS, startRefusedWords, startCardWords, QUEUE_PASSED_WORDS, cutOffStoppedWords, unmarkedPrWords } from '../../scripts/engine/words.js';
 
 const MINUTE = 60 * 1000;
 const ended = (over) => { const run = quiet(); run[1] = { ...run[1], ...over }; return run; };
@@ -419,4 +421,104 @@ test('with nothing waiting for its place, a pull request not yet marked brings n
   w.put('f', { lane: 'feature' });
   await w.pass(30 * MINUTE);
   assert.deepEqual(lines(w), []);
+});
+
+// --- What a first reading of the above left open ---
+
+test('a refused piece on its card keeps no other work off its files', async () => {
+  const w = wayBack({ recordings: { a: quiet(), b: forever() }, pace: 2 });
+  w.refuse = ({ order }) => (order.work === 'a' ? REFUSAL : null);
+  w.put('a', { place: 0, files: ['one.js'] });
+  await w.tick(2);
+  await w.pass(REFUSED_RETRY_MS);
+  w.put('b', { place: 1, files: ['one.js'] });
+  await w.tick(3);
+  assert.equal(w.runsOf('b').length, 1);
+});
+
+test('a card from the version before, whatever its answer, doesn\'t stand for an unconfirmed count', async () => {
+  for (const answer of [ALLOW_SOME, null]) {
+    const { w } = counted({ confirmed: false, recordings: { a: quiet() } });
+    w.put('a');
+    fs.writeFileSync(path.join(w.dir, 'dispatch.json'), JSON.stringify({ requestsAsked: 'q-a-90000' }));
+    w.questions['q-a-90000'] = { question: { data: { id: 'q-a-90000', work: 'a', what: 'old', options: [] } }, ...(answer ? { answer: { label: answer } } : {}) };
+    w.restart();
+    await w.tick(3);
+    assert.equal(w.cards().length, 1, 'one new card');
+    assert.equal(w.cards()[0].what, REQUESTS_UNCONFIRMED_WORDS);
+  }
+});
+
+test('a cap changed under an open card brings a card with the true words', async () => {
+  let used = 0;
+  const settings = { capRequests: 0 };
+  const w = wayBack({ recordings: { a: quiet() }, pace: 2, settings, dispatchExtra: { spentThisMonth: () => used } });
+  w.engine.countsRequests = () => true;
+  w.engine.requestsConfirmed = true;
+  w.put('a');
+  await w.tick(2);
+  settings.capRequests = 5;
+  used = 5;
+  await w.tick(3);
+  assert.equal(w.cards().length, 2);
+  assert.match(w.cards()[1].what, /cap of 5/);
+});
+
+test('the last ready pull request leaving is no sign the queue can start', async () => {
+  const { w } = await readyWorld();
+  await w.pass(QUEUE_FAULT_MS + MINUTE);
+  w.answer('a', LEAVE_IT);
+  await w.tick(2);
+  delete w.ready[7];
+  await w.tick(3);
+  assert.ok(!lines(w).includes(QUEUE_PASSED_WORDS));
+  w.ready[7] = { head: 'abc', runId: w.runsOf('a')[0], work: 'a' };
+  await w.pass(QUEUE_FAULT_MS + 2 * MINUTE);
+  assert.equal(w.cards().length, 1, 'Leave it holds');
+});
+
+test('a piece whose card stands open waits on it only while its pull request is ready', async () => {
+  const { w } = await readyWorld();
+  await w.pass(QUEUE_FAULT_MS + MINUTE);
+  assert.ok(w.dispatcher.waitingWork().has('a'));
+  delete w.ready[7];
+  await w.tick(2);
+  assert.ok(!w.dispatcher.waitingWork().has('a'));
+});
+
+test('a refusal then a start with no clear answer still says the work never started', async () => {
+  const w = wayBack({ recordings: { a: quiet() }, pace: 2 });
+  w.refuse = () => REFUSAL;
+  w.put('a');
+  await w.tick(2);
+  w.refuse = null;
+  w.startAs = () => ({ ok: false, refused: 'no reply', uncertain: true });
+  await w.pass(REFUSED_RETRY_MS);
+  await w.tick(3);
+  const card = w.cardOf('a');
+  assert.doesNotMatch(card.what, /go back to work/);
+  assert.match(card.options.find((o) => o.label === STOP_HERE).says, /nothing of it starts/i);
+});
+
+test('Stop here on a feature that never started reports no slices', async () => {
+  const w = wayBack({ recordings: { f: quiet() }, pace: 1, designOf: () => ({ problem: 'names no document' }) });
+  w.put('f', { lane: 'feature' });
+  await w.tick(2);
+  await w.pass(REFUSED_RETRY_MS);
+  w.answer('f', STOP_HERE);
+  await w.tick(2);
+  assert.equal(w.reports.f.data.outcome, 'closed');
+  assert.equal(w.reports.f.data.summary, cutOffStoppedWords('f'));
+});
+
+test('the line for an unmarked pull request isn\'t said again after All stop', async () => {
+  const w = wayBack({ recordings: { f: ended({ pr: 7 }), b: quiet() }, pace: 1, designOf: slices });
+  w.put('f', { lane: 'feature', place: 0 });
+  w.put('b', { place: 1 });
+  await w.pass(30 * MINUTE);
+  w.stop = true;
+  await w.tick(2);
+  w.stop = false;
+  await w.pass(30 * MINUTE);
+  assert.deepEqual(lines(w), [unmarkedPrWords('f', 7)]);
 });

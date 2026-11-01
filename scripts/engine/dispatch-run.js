@@ -435,9 +435,9 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
 
   // Ends a feature before its switch-on: a `closed` report, which frees its place in the feature lane, and `words` on the
   // Logbook. Once for each queueing.
-  async function endFeature(work, kept, words) {
+  async function endFeature(work, kept, words, summary = FEATURE_STOPPED) {
     if (kept.ended) return;
-    await write('report', { work, outcome: 'closed', summary: FEATURE_STOPPED, rulings: [] });
+    await write('report', { work, outcome: 'closed', summary, rulings: [] });
     kept.ended = true;
     keep();
     await write('note', { about: 'engine', words });
@@ -788,12 +788,14 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   // each tick whatever the answer, so it asks only whether the director wants to hear again.
   async function queueFaultTick(views, waiting, queueStatus) {
     const fault = state.queueFault;
-    if (waiting.length === 0 || queueHolds(queueStatus)) {
+    if (queueHolds(queueStatus)) {
       await queuePassed();
       return;
     }
+    // Nothing waiting says nothing of the queue, so the fault and any answer stand for what is next ready.
     fault.works = [...new Set(waiting.map(([, r]) => r.work))];
     keep();
+    if (waiting.length === 0) return;
     const label = views.questions?.[fault.asked]?.answer?.label;
     if (label === TRY_AGAIN) {
       Object.assign(fault, { asked: null, since: now().toISOString() });
@@ -928,6 +930,11 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     }).catch(() => {});
   }
 
+  function refusedTwice(views, entry, why) {
+    const fresh = unbegun(views, entry);
+    const title = titleOf(views, entry.work);
+    return askAboutRestart(entry, fresh ? startCardWords(title, why) : restartCardWords(title, why), fresh ? { fresh } : {});
+  }
   // A refusal from before the engine was called: the place goes back and the entry stays, said once, and a card the second time.
   async function refusedStart(entry, got) {
     const views = readViews() ?? {};
@@ -943,7 +950,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     const title = titleOf(views, entry.work);
     entry.refusals = (entry.refusals ?? 0) + 1;
     if (entry.refusals >= 2) {
-      await askAboutRestart(entry, fresh ? startCardWords(title, why) : restartCardWords(title, why), fresh ? { fresh } : {});
+      await refusedTwice(views, entry, why);
       return;
     }
     delete entry.starting;
@@ -1042,7 +1049,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       delete entry.uncertain;
       entry.refusals = (entry.refusals ?? 0) + 1;
       if (entry.refusals >= 2) {
-        await askAboutRestart(entry, restartCardWords(titleOf(views, entry.work), 'the build engine gave no clear answer'));
+        await refusedTwice(views, entry, 'the build engine gave no clear answer');
         return;
       }
     }
@@ -1091,7 +1098,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
         const orphan = unstarted || entry.unsure === true ? await endOrphan(entry) : false;
         const stoppedWords = entry.fresh === true ? cutOffStoppedWords(title) : STOPPED_RESTART_WORDS(title);
         const words = `${stoppedWords}${orphan ? ` ${ORPHAN_LEFT_WORDS}` : ''}`;
-        if (feature) await endFeature(entry.work, state.features[entry.work] ??= {}, words);
+        if (feature) await endFeature(entry.work, state.features[entry.work] ??= {}, words, entry.fresh === true ? stoppedWords : undefined);
         else {
           await write('report', { work: entry.work, outcome: 'closed', summary: stoppedWords, rulings: [] });
           release(entry.work, views);
@@ -1304,7 +1311,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     for (const work of Object.keys(state.unmarkedSeen)) if (!decided.live.includes(work)) delete state.unmarkedSeen[work];
     for (const work of decided.live) {
       const last = [...new Map(runsOfWork(views, work).map((r) => [r.data.runId, r.data])).values()].at(-1);
-      const open = waitedOn && last?.state === 'ended' && last.outcome === 'completed' && Number.isInteger(last.pr) && !prGone(views, work, last.pr) && !ready.some(([, r]) => r.work === work) && !Object.hasOwn(parkedPrs() ?? {}, last.pr) && !waitingNow(views).has(work);
+      const open = last?.state === 'ended' && last.outcome === 'completed' && Number.isInteger(last.pr) && !prGone(views, work, last.pr) && !ready.some(([, r]) => r.work === work) && !Object.hasOwn(parkedPrs() ?? {}, last.pr) && !waitingNow(views).has(work);
       const seen = state.unmarkedSeen[work];
       if (!open) {
         if (seen) delete state.unmarkedSeen[work];
@@ -1313,7 +1320,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       if (seen?.pr !== last.pr) {
         state.unmarkedSeen[work] = { pr: last.pr, at: now().toISOString(), said: false };
         keep();
-      } else if (!seen.said && now().getTime() - Date.parse(seen.at) >= WAKE_LATE_MS) {
+      } else if (waitedOn && !seen.said && now().getTime() - Date.parse(seen.at) >= WAKE_LATE_MS) {
         seen.said = true;
         keep();
         await write('note', { about: 'engine', work, words: unmarkedPrWords(titleOf(views, work), last.pr) });
@@ -1343,8 +1350,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   }
 
   // Work held for the plan's counted requests: one card for each hold, in the engine's own words where the cap is none. A
-  // hold ends when nothing is held and its card has been answered, or when what holds it changes: a new cap, or the count
-  // confirmed. All stop and an incident hide a hold, and end none. An unconfirmed count holds whatever the cap, so that card
+  // hold ends when nothing is held and its card has been answered, or when what holds it changes, answered or not, since the
+  // card's words no longer stand: a new cap, or the count confirmed. All stop and an incident hide a hold, and end none. An unconfirmed count holds whatever the cap, so that card
   // offers no number: it can only keep the work or end it.
   async function requestsTick(views, held, s) {
     const label = views.questions?.[state.requestsAsked]?.answer?.label;
@@ -1360,7 +1367,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     const unconfirmed = held.some((h) => h.why === 'requests-unconfirmed');
     const cap = Number.isFinite(s.capRequests) ? s.capRequests : 0;
     const key = unconfirmed ? 'unconfirmed' : `cap:${cap}`;
-    if (state.requestsAsked && (state.requestsFor ?? key) === key) {
+    // A card from the version before kept no key, and said the cap was none.
+    if (state.requestsAsked && (state.requestsFor ?? 'cap:0') === key) {
       if (unconfirmed && label === STOP_HERE) {
         for (const { work } of held) {
           const words = requestsStoppedWords(titleOf(views, work));
@@ -1371,7 +1379,6 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       }
       return;
     }
-    if (state.requestsAsked && !answered) return;
     state.restartCards += 1;
     const id = `q-${held[0].work}-${RESTART_QUESTIONS + state.restartCards}`;
     Object.assign(state, { requestsAsked: id, requestsFor: key });
@@ -1422,7 +1429,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       requests, sentBack: [
         ...Object.entries(state.sentBack).filter(([work, times]) => state.acted[work] !== times).map(([work, times]) => ({ work, times })),
         ...Object.entries(state.reds).filter(([work, red]) => state.redActed[work] !== red.times).map(([work, red]) => ({ work, times: red.times, reason: 'red' })),
-      ], waiting: [...waitingNow(views)], reserved: reservedFiles(), returning: state.returning.map((e) => (retriesLater(e) ? { ...e, asked: e.asked ?? e.key } : e)), admitted: state.admitted, stoppedFeatures: stoppedFeaturesOf(views, reports), waived: Object.keys(state.waived).filter((work) => state.waived[work] === views.work?.[work]?.work?.at), now: now(),
+      ], waiting: [...waitingNow(views)], reserved: reservedFiles(), returning: state.returning.map((e) => ({ ...e, ...(retriesLater(e) ? { asked: e.asked ?? e.key } : {}), ...(e.fresh === true ? { filesFree: true } : {}) })), admitted: state.admitted, stoppedFeatures: stoppedFeaturesOf(views, reports), waived: Object.keys(state.waived).filter((work) => state.waived[work] === views.work?.[work]?.work?.at), now: now(),
     });
     // What it admitted holds its place from here. A piece has one start at a time; each answer of it goes along.
     for (const { work } of decided.admit) {
