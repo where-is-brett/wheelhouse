@@ -96,7 +96,7 @@ test('the build-loop suite on the fake engine is the engine scenarios, in their 
     run: async () => { throw new Error('no session starts'); },
     engineRun: async ({ scenario, variant }) => { played.push([scenario.id, variant]); return { pass: true, why: 'played' }; },
   });
-  // With 20 to 35 rewritten against the pack (120 to 134, tested in scenarios-120-134.test.js).
-  assert.deepEqual(played, [...ENGINE_SCENARIOS, 120, 121, 122, 123, 124, 126, 127, 133, 134].map((id) => [id, 'with']));
+  // With 20 to 35 rewritten against the pack (120 to 134, tested in scenarios-120-134.test.js) and the recovery scenarios (170 and 171).
+  assert.deepEqual(played, [...ENGINE_SCENARIOS, 120, 121, 122, 123, 124, 126, 127, 133, 134, 170, 171].map((id) => [id, 'with']));
   assert.equal(code, 0);
 });
