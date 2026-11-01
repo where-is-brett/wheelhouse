@@ -18,7 +18,9 @@
 //     taken back when the world closes, or by the next world when a run was killed first (sweepWorldInstalls). These
 //     are entries in Claude Code's record of installs, ~/.claude/plugins/installed_plugins.json;
 //   - the project's lock taken on that remote, so the broker comes to its real rules;
-//   - the real gh stood in: a call the broker lets through is kept in `forwarded` and answered, never run.
+//   - the real gh stood in: a call the broker lets through is kept in `forwarded` and answered, never run;
+//   - with a `place` (places.js), a project whose checks run on this computer under the real sandbox: on the stand-in host
+//     with no Actions, or kept in a home here with the real local adapter, its only remote the path to the engine's mirror.
 // Every step is bound to one cheap model (WHEELHOUSE_EVAL_MODEL, by default haiku), so a real step costs cents. Claude
 // Code is the one at ~/.local/bin/claude unless WHEELHOUSE_EVAL_CLAUDE names another. A world ends by cancelling every
 // run left, then removing its folder; the sessions' transcripts Claude Code keeps under ~/.claude/projects stay.
@@ -44,7 +46,10 @@ import { archonCli } from '../engine/archon/cli.js';
 import { archonEnv } from '../engine/archon/env.js';
 import { writeArchonSettings } from '../engine/archon/build.js';
 import { runCost } from '../engine/spend.js';
+import { archonConfigText } from '../setup/engine-parts.js';
+import { FOLDER_REMOTE } from '../host/local/folder.js';
 import { PROJECT, until } from './engine-world.js';
+import { TINY_GOAL, keepHere, noActionsHost, placeAdapter, placeFiles, placeVerbs, writeFiles } from './places.js';
 import { standInTools } from './stand-in-tools.js';
 import { engineCache, prepareEngine, linkEngine } from './archon-engine.js';
 import { OWNER_FILE, sweepWorldInstalls, worldKits, worldPlaces } from './world-kits.js';
@@ -55,13 +60,16 @@ export { KITS, sweepWorldInstalls } from './world-kits.js';
 
 export const REPO = 'o/p';
 export const WORKTREES = '.wheelhouse/worktrees';
+// How long a real quick run may take to reach its pull request, every step on the one cheap model.
+const LANE_MS = 20 * 60 * 1000;
 
 // The throwaway project: a git repository on `main` with a bare remote at <root>/o/p, a test script, Archon's project
 // settings (worktrees inside the folder, kept out of git) and a .env for the guards' trial to be refused.
-// `beforeCommit()` runs once the files are there and before the first commit, as setup's own steps do.
-async function makeProject({ root, folder, git, beforeCommit = async () => {} }) {
-  const remote = path.join(root, ...REPO.split('/'));
+// `beforeCommit()` runs once the files are there and before the first commit, as setup's own steps do. A `place` adds the
+// files it needs and `files`; in git alone there is no remote at all, and Archon is told of the folder's.
+async function makeProject({ root, folder, git, place = null, files = {}, beforeCommit = async () => {} }) {
   const mirror = path.join(root, 'mirrors', `${projectSlug(...REPO.split('/'))}.git`);
+  const remote = path.join(root, ...REPO.split('/'));
   fs.mkdirSync(mirror, { recursive: true });
   fs.mkdirSync(path.dirname(remote), { recursive: true });
   fs.symlinkSync(mirror, remote, 'dir');
@@ -69,19 +77,23 @@ async function makeProject({ root, folder, git, beforeCommit = async () => {} })
     const got = await git(args, cwd);
     if (got.code !== 0) throw new Error(`git ${args[0]} failed in the evaluation's project: ${String(got.stderr).trim()}`);
   };
-  await must(['init', '-q', '--bare', '-b', 'main'], mirror);
+  const local = place === 'git-alone';
+  if (!local) await must(['init', '-q', '--bare', '-b', 'main'], mirror);
   fs.writeFileSync(path.join(folder, 'package.json'), `${JSON.stringify({ name: 'p', private: true, scripts: { test: 'node --test' } }, null, 2)}\n`);
   fs.writeFileSync(path.join(folder, 'README.md'), '# p\n\nA page for the evaluation.\n');
   fs.writeFileSync(path.join(folder, '.gitignore'), '.wheelhouse/\n.env\n');
   fs.mkdirSync(path.join(folder, '.archon'), { recursive: true });
-  fs.writeFileSync(path.join(folder, '.archon', 'config.yaml'), `# .archon/config.yaml\nworktree:\n  path: ${WORKTREES}\n`);
+  fs.writeFileSync(path.join(folder, '.archon', 'config.yaml'), local ? archonConfigText({ remote: FOLDER_REMOTE, baseBranch: 'main' }) : `# .archon/config.yaml\nworktree:\n  path: ${WORKTREES}\n`);
   fs.writeFileSync(path.join(folder, '.env'), 'EVAL_ONLY=not-a-secret\n');
+  if (place) writeFiles(folder, placeFiles(files));
   await must(['init', '-q', '-b', 'main'], folder);
-  await must(['config', `url.${mirror}.insteadOf`, remote], folder);
+  if (!place) await must(['config', `url.${mirror}.insteadOf`, remote], folder);
   await beforeCommit();
   const commit = ['-c', 'user.name=Evaluation', '-c', 'user.email=eval@example.invalid', 'commit', '-q', '-m', 'Start'];
-  for (const args of [['add', '-A'], commit, ['remote', 'add', 'origin', remote], ['push', '-q', 'origin', 'main']]) await must(args, folder);
-  return remote;
+  // In a place a run pushes, and the helper refuses a folder whose own settings redirect git, so the folder's remote is the
+  // repository's own path, which gives Archon the same name; the record keeps the address that names it o/p.
+  for (const args of [['add', '-A'], commit, ...(local ? [] : [['remote', 'add', 'origin', place ? mirror : remote], ['push', '-q', 'origin', 'main']])]) await must(args, folder);
+  return { remote, mirror };
 }
 
 // The code host's stand-in the helper reads: a default branch, and nothing else to say.
@@ -103,11 +115,12 @@ function idleChild() {
   return child;
 }
 
-// openArchonWorld({ now, cache, cli, model, claudeBin, claudeConfig, bunRun }) -> the world. `cli` runs Archon (archonCli;
-// tests give a stand-in), `model` is the one model every tier is bound to, `claudeBin` the Claude Code that runs Archon's
-// steps, `claudeConfig` its settings folder, where its record of installs is, and `bunRun` what runs Bun's version check.
+// openArchonWorld({ now, cache, cli, model, claudeBin, claudeConfig, bunRun, place, files }) -> the world. `cli` runs Archon
+// (archonCli; tests give a stand-in), `model` is the one model every tier is bound to, `claudeBin` the Claude Code that runs
+// Archon's steps, `claudeConfig` its settings folder, where its record of installs is, `bunRun` what runs Bun's version
+// check, and `place` and `files` where the project is kept and what it adds (places.js).
 export async function openArchonWorld({
-  now = () => new Date(), cache = engineCache(), cli = archonCli, model = process.env.WHEELHOUSE_EVAL_MODEL || 'haiku',
+  place = null, files = {}, now = () => new Date(), cache = engineCache(), cli = archonCli, model = process.env.WHEELHOUSE_EVAL_MODEL || 'haiku',
   claudeBin = process.env.WHEELHOUSE_EVAL_CLAUDE || path.join(os.homedir(), '.local', 'bin', 'claude'), bunRun = realRun,
   claudeConfig = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'),
 } = {}) {
@@ -178,7 +191,8 @@ export async function openArchonWorld({
     // The ids of the runs Archon started, oldest first.
     runs: () => calls.filter((c) => c.call === 'start' && c.got?.ok === true).map((c) => c.got.runId),
     // The tokens the world's runs spent, the health trial's among them, as Archon's records give each step's:
-    // { input, output }, with cache reads and writes in the input, as a session's tokens are counted. A step whose
+    // { input, output }, with cache reads and writes in the input, where the provider's figure already holds them, as a
+    // session's tokens are counted. A step whose
     // kinds of token aren't known counts its whole figure as input.
     async spend() {
       const total = { input: 0, output: 0 };
@@ -186,7 +200,7 @@ export async function openArchonWorld({
         let cost;
         try { cost = runCost(await engine.inspect(runId)); } catch { continue; }
         if (cost.kinds) {
-          total.input += (cost.kinds.input ?? 0) + (cost.kinds.cacheRead ?? 0) + (cost.kinds.cacheWrite ?? 0);
+          total.input += cost.kinds.input ?? 0;
           total.output += cost.kinds.output ?? 0;
         } else total.input += cost.tokens;
       }
@@ -196,6 +210,30 @@ export async function openArchonWorld({
       const dir = path.join(engineDirOf(stateDir(PROJECT)), 'orders');
       const names = fs.existsSync(dir) ? fs.readdirSync(dir).filter((n) => n.endsWith('.json')) : [];
       return names.map((n) => ({ runId: n.slice(0, -5), ...JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8')) }));
+    },
+    // The real quick run of `work`, from its work order to its pull request with its reviews signed and, with `ready`, the
+    // change marked ready: { runId, pr, head }. Ticked meanwhile, as the helper's dispatcher ticks. A run that stops short
+    // says why.
+    async lane(work, { title = TINY_GOAL, ready = true, ms = LANE_MS } = {}) {
+      world.put('work', { id: work, title, lane: 'quick', visible: false, dependsOn: [] });
+      const got = await until(async () => {
+        await world.tick();
+        const started = world.starts().find((s) => s.order.work === work);
+        if (started && started.got?.ok !== true) throw new Error(`the run didn't start: ${started.got?.refused}`);
+        const runId = started?.got?.runId;
+        if (!runId) return null;
+        const record = await engine.inspect(runId);
+        let opened = null;
+        try { opened = JSON.parse((await engine.outputs(runId))['open-pr'] ?? 'null'); } catch { /* not yet */ }
+        const signed = opened && world.records('review').some((r) => r.data.commit === opened.head);
+        if (signed && (!ready || world.readyOf(opened.pr))) return { runId, pr: opened.pr, head: opened.head };
+        const status = record.outcome ?? record.status;
+        if (status === 'paused') throw new Error(`the run stopped to ask: ${await world.asking(runId)}`);
+        if (['failed', 'cancelled'].includes(status)) throw new Error(`the run ${status}${await world.trouble(runId)}`);
+        return null;
+      }, { ms, every: 2000 });
+      if (!got) throw new Error(`the run of ${work} didn't reach its pull request in time`);
+      return got;
     },
     // A run's state as Archon has it: running, paused, completed, failed or cancelled (unknown for no such run).
     async status(runId) {
@@ -279,8 +317,8 @@ export async function openArchonWorld({
     // Archon's own settings: Claude runs its steps. Its `ai tier list` names no assistant without this line, and the
     // adapter's health check refuses an engine that doesn't say Claude.
     writeArchonSettings(engineHome);
-    const remote = await makeProject({
-      root, folder, git,
+    const { remote, mirror } = await makeProject({
+      root, folder, git, place, files,
       beforeCommit: async () => {
         // An earlier world's installs that a killed run never took back go first.
         for (const { kit, projectPath } of await sweepWorldInstalls({ claudeBin, configDir: claudeConfig })) process.stderr.write(`Took back ${kit}, which an earlier evaluation world left installed for ${projectPath}\n`);
@@ -309,18 +347,25 @@ export async function openArchonWorld({
     };
     const { computer, publicKey } = makeSigningKey();
     enrol({ computer, publicKey, enrolledAt: now().toISOString() });
-    writeProject(PROJECT, { folder, remoteUrl: remote, host: 'github', repo: REPO, connection: { host: 'github', mode: 'quick', project: REPO } });
+    if (place === 'git-alone') writeProject(PROJECT, { folder, remoteUrl: null, host: 'local', repo: `local/${PROJECT}`, connection: { host: 'local', mode: 'none', project: `local/${PROJECT}` } });
+    else writeProject(PROJECT, { folder, remoteUrl: remote, host: 'github', repo: REPO, connection: { host: 'github', mode: 'quick', project: REPO } });
     await openProjectRecord(PROJECT);
+    if (place === 'git-alone') await keepHere({ project: PROJECT, folder });
+    if (place === 'no-ci') world.host = noActionsHost(mirror);
+    if (place) placeVerbs(world, { project: PROJECT });
     const push = async (dir, branch) => {
       const got = await git(['push', '-q', 'origin', `${branch}:${branch}`], dir);
       if (got.code === 0) return { ok: true };
       return /non-fast-forward|fetch first|rejected/.test(got.stderr) ? { ok: false, rejected: 'non-fast-forward' } : { ok: false };
     };
     // The remote is a folder on this computer, which the state's git fence reaches only when told (as the helper is).
-    const lock = await takeLock({ project: PROJECT, push, now, env: { GIT_ALLOW_PROTOCOL: 'https:file' } });
-    if (!lock.taken) throw new Error('The evaluation world could not take its project\'s lock');
+    if (place !== 'git-alone') {
+      const lock = await takeLock({ project: PROJECT, push, now, env: { GIT_ALLOW_PROTOCOL: 'https:file' } });
+      if (!lock.taken) throw new Error('The evaluation world could not take its project\'s lock');
+    }
+    const tools = standInTools({ forwarded, refused: hostCalls });
     helper = await startHelper({
-      run: standInTools({ forwarded, refused: hostCalls }), address: helperAddress({ home }), adapterFor: async () => world.host, envFor: async () => ({}), now,
+      run: tools, address: helperAddress({ home }), adapterFor: place ? placeAdapter({ world, run: tools }) : async () => world.host, envFor: async () => ({}), now,
       spawn: () => idleChild(), engineFor: () => engine, dispatchMs: 60 * 60 * 1000, stopPollMs: 200,
     });
   } catch (error) {
@@ -368,7 +413,8 @@ export async function runRealScenario({ scenario, open = openArchonWorld, prepar
     }
   }
   if (!proof.ok) return { pass: false, why: `not played: ${proof.why}`, usage };
-  const world = await open({ cache });
+  const { place, files } = scenario.engine;
+  const world = await open({ cache, ...(place ? { place } : {}), ...(files ? { files } : {}) });
   try {
     const got = await scenario.engine.real(world, { until: (fn, o) => until(fn, { ms: 6 * 60 * 1000, every: 1000, ...o }) });
     if (world.hostCalls.length > 0) return { pass: false, why: `a host tool was called: ${world.hostCalls.join('; ')}`, usage };

@@ -247,4 +247,4 @@ export function bugWork(world, { id, title, visible = false, lanes = ['quick', '
 }
 
 // The work a real play on Archon gives its runs (scripts/eval/archon-world.js): one line, so a real step costs cents.
-export const TINY_GOAL = "Add the line 'Made for the evaluation.' to the end of README.md";
+export { TINY_GOAL } from '../../../scripts/eval/places.js';

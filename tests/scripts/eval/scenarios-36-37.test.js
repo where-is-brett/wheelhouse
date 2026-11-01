@@ -19,7 +19,7 @@ import { inChatWords } from '../../../scripts/frontdesk/cli.js';
 // A card as the front desk's command prints it for the chat (inChatWords): the question the session asks.
 const shown = (data) => inChatWords(asQuestion({ data }));
 import { makeScratchProject } from '../../../probes/lib/scratch.js';
-import { PUSHED, SHOWN, mainCalls, playbookFor, seedCards, boardNumbers, setUpPlaybook, textBlocks, THE_LINES } from '../../eval/mod/front-desk-playbook.js';
+import { PUSHED, SHOWN, forbiddenWrites, mainCalls, playbookFor, seedCards, boardNumbers, setUpPlaybook, textBlocks, THE_LINES } from '../../eval/mod/front-desk-playbook.js';
 import scenario36, { APPROVAL_CARD, CARDS as CARDS_36, PHOTO_CARD, PROMPT as PROMPT_36, WORDS, judge as judge36, stateAfterThePress, suggestPrompt } from '../../eval/mod/36-pane-press.js';
 import scenario36Why, { PROMPT as PROMPT_36_WHY, judge as judge36Why } from '../../eval/mod/36-pane-why.js';
 import { SUGGEST, WHY } from '../../../scripts/lib/calm-words.js';
@@ -362,4 +362,13 @@ test('37 alone is offered PushNotification, and its project\'s local settings tu
       await project.cleanup();
     }
   }
+});
+
+test('a press or a wake is not charged for the rule `cards` asks the helper to offer, and is for any other request nothing answers', () => {
+  const records = [
+    { route: 'POST /rules/offer', unanswered: true },
+    { route: 'POST /profile/views', unanswered: true },
+    { route: 'POST /queue/merge', unanswered: true },
+  ];
+  assert.deepEqual(forbiddenWrites({ helper: { records: () => records, events: () => [] } }), ['POST /queue/merge']);
 });

@@ -97,7 +97,7 @@
       "depends_on": [
         "guarded"
       ],
-      "when": "$guarded.output.blocked == 'true'",
+      "when": "$guarded.output.blocked == 'true' && $guarded.output.refused == 'false'",
       "wait": {
         "attention": "$guarded.output.question",
         "form": "select",
