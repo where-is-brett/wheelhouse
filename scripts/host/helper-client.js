@@ -97,6 +97,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     goalBaseline: post('/goal-baseline'), // { project | cwd, goal } -> { ok, runId, head }: starts the run of a goal's checks on the main line; its `goal-check` record says how it went
     engine: {
       areas: post('/engine/areas'), // { runId } -> { ok, areas }: the areas of the goal the run's order belongs to, or null, for the tool guard
+      protectedFiles: post('/engine/protected-files'), // { runId } -> { ok, protectedFiles }: the test files the run's order lists, for the protected-tests guard; refused for a run it didn't start
       order: post('/engine/order'), // { runId } -> { ok, order }: the run's work order as the helper keeps it; refused for a run it didn't start
       review: post('/engine/review'), // { runId, step } -> { ok, ran, verdict?, posted? }: signs the review step from the engine's record and posts the merge queue's verdict once every lens that ran is CLEAN
       openPr: post('/engine/open-pr'), // { runId, cwd, title, body } -> { ok, branch, pr, head }: pushes the run's worktree's own branch and opens or updates its pull request
