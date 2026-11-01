@@ -1169,6 +1169,20 @@ test('the settings pane is given the ready columns and the project\'s premium vi
   assert.deepEqual(seen[0], ['rows', ['lean']]);
 }));
 
+test('Show them is a press in the pane alone, and asks the desk to bring the held cards up', () => withHome(async () => {
+  const acts = [];
+  const client = fakeClient();
+  client.desk = {
+    read: async () => ({ ok: false, refused: 'the host helper could not be reached' }),
+    watch: async () => ({ ok: false, refused: 'the host helper could not be reached' }),
+    act: async (body) => { acts.push(body); return { v: 'desk/1', ok: true, changed: ['cards-pulled'] }; },
+  };
+  for (const origin of ['composer', 'bash', 'chat', undefined]) assert.equal((await handle({ cmd: 'pull-cards', origin, cwd: '/work' }, deps({ client }))).ok, false);
+  assert.deepEqual(acts, []);
+  assert.equal((await handle({ cmd: 'pull-cards', origin: 'pane', cwd: '/work' }, deps({ client }))).ok, true);
+  assert.equal(acts[0].command, 'pull-cards');
+}));
+
 test('a Safekeeping press comes from the pane alone, signed for the action it names', () => withHome(async () => {
   enrolKey();
   const acts = [];

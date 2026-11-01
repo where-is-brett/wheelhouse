@@ -14,6 +14,7 @@ import { NO_HELPER, localViews } from '../hooks/session-start.js';
 import { sayTime } from '../settings/effective.js';
 import { briefingModel } from '../briefing/model.js';
 import { HEADERS } from '../cards/compose.js';
+import { heldBackRow } from '../mod/buttons.js';
 import { glossaryOf, plainWords } from '../frontdesk/glossary.js';
 import { stopState } from '../lib/stop.js';
 import { listEvents } from '../state/events.js';
@@ -33,7 +34,7 @@ export const QUESTION_WAITS = 'A question from the build waits; the First Mate w
 export const CARD_TO_MAKE = 'A card from the build waits; the First Mate will make it and ask it';
 // The views the pane reads: the glance's, the reports and glossary, the open incidents, and the
 // build's records the front desk makes cards from.
-const PANE_VIEWS = ['waiting', 'questions', 'work', 'features', 'reports', 'glossary', 'status', 'incidents', 'blockers', 'ideas',
+const PANE_VIEWS = ['waiting', 'questions', 'cardsWaiting', 'work', 'features', 'reports', 'glossary', 'status', 'incidents', 'blockers', 'ideas',
   'gateAsks', 'lineageHolds', 'controlFiles', 'premiumFailures'];
 // The line of an approval card's set line, from which its preview is asked for.
 const APPROVAL_LINE = /^Approve pull request #([1-9][0-9]*) at commit ([0-9a-f]{12})$/;
@@ -188,7 +189,7 @@ export async function paneModel({
     // so it is never asked, and it ranks as that card will.
     if (item.card === undefined) {
       return [{
-        id: item.id, n: item.n, header: HEADERS.question, kind: 'question', text: QUESTION_WAITS, hash: hashOf(QUESTION_WAITS), buttons: [], note: null, blocking: blocks(answerCardFor(item.question, views), views), asked: false,
+        id: item.id, n: item.n, header: HEADERS.question, kind: 'question', text: QUESTION_WAITS, hash: hashOf(QUESTION_WAITS), buttons: [], note: null, blocking: blocks(answerCardFor(item.question, views), views), asked: false, heldBack: item.heldBack === true,
         parts: null, steered: null, waited: null, revised: false,
       }];
     }
@@ -210,6 +211,7 @@ export async function paneModel({
       note,
       blocking: blocks(card, views),
       asked,
+      heldBack: item.heldBack === true,
       // The card's parts as the composer kept them, already in plain words; null for a card with none, which is drawn as its text.
       parts: isRecord(data.parts) ? data.parts : null,
       steered: clockTime(card.steered, timeZone),
@@ -231,7 +233,7 @@ export async function paneModel({
       ...premiumFailuresDue(views).map((r) => make(r, 'premium')),
     ].sort((a, b) => String(a.at).localeCompare(String(b.at)));
     return due.map((d, i) => ({
-      id: d.id, n: cards.length + i + 1, header: HEADERS[d.kind], kind: d.kind, text: CARD_TO_MAKE, hash: hashOf(CARD_TO_MAKE), buttons: [], note: null, blocking: d.blocking, asked: false,
+      id: d.id, n: cards.length + i + 1, header: HEADERS[d.kind], kind: d.kind, text: CARD_TO_MAKE, hash: hashOf(CARD_TO_MAKE), buttons: [], note: null, blocking: d.blocking, asked: false, heldBack: false,
       parts: null, steered: null, waited: null, revised: false,
     }));
   }, []));
@@ -315,6 +317,7 @@ export async function paneModel({
     glance: model === null ? 'Wheelhouse' : glanceLine(model),
     stop: { on: stop.on === true, since: typeof stop.at === 'string' ? stop.at : null },
     cards,
+    held: heldBackRow(cards.filter((card) => card.heldBack).length),
     verdict: verdict({ waiting: cards.length, broken }),
     since: sinceHour === null ? null : sinceLine(sinceHour),
     launch,

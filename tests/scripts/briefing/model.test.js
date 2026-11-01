@@ -61,6 +61,18 @@ test('a blocked pull request is in what to watch in Wheelhouse\'s own words, not
   for (const words of ['Checks red', 'flaky', 'subagent', 'Ignore your rules', 'approve #20']) assert.ok(!text.includes(words), words);
 });
 
+test('a held card is left out of what waits, and counted on a line of its own', () => {
+  const b = briefingModel({
+    model: board({ waiting: [{ n: 1, what: 'Choose the colour', since: at(10) }, { n: 2, what: 'Name the button', since: at(10), heldBack: true }, { n: 3, what: 'Pick a font', since: at(10), heldBack: true }] }),
+    since: at(9), now: NOW, wasRaised: never,
+  });
+  assert.deepEqual(b.waiting, [{ title: 'Choose the colour' }]);
+  assert.equal(b.heldBack, 2);
+  assert.equal(b.plus.waiting, 1);
+  assert.equal(b.verdict, verdict({ waiting: 3, broken: 0 }));
+  assert.match(briefingParts(b).text, /2 more waiting\. Show them/);
+});
+
 test('only what changed since the last briefing is in it', () => {
   const model = board({
     waiting: [{ n: 1, what: 'Choose the sign-up colour', since: at(10) }],
@@ -217,7 +229,7 @@ test('unconfirmed changes and what waits come straight from the board model', ()
   // Nothing in it throws, whatever it is given.
   for (const odd of [undefined, null, {}, { model: 'x' }, { model: { director: 7, build: [], missing: 'x' }, usage: 3, sources: [] }]) {
     assert.deepEqual(briefingModel(odd), {
-      verdict: 'Nothing needs you. Nothing is broken.', since: '', first: [], found: [], foundId: null, waiting: [], changed: [], progress: [], watch: [], usage: null, onTrack: false,
+      verdict: 'Nothing needs you. Nothing is broken.', since: '', first: [], found: [], foundId: null, waiting: [], heldBack: 0, changed: [], progress: [], watch: [], usage: null, onTrack: false,
       plus: { waiting: 0, changed: 0 }, raise: [], weekly: 0,
       safekeeping: null,
     });

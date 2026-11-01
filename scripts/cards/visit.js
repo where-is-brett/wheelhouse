@@ -3,7 +3,7 @@
 // important first, at most four, so each card is asked once and the rest stay on the board.
 // Also finds the waiting card that already carries a set line, and the card the board numbers n.
 import { CARD } from '../lib/front-desk.js';
-import { numberedWaiting } from '../board/model.js';
+import { heldBackLine, numberedWaiting } from '../board/model.js';
 import { QUESTION_ID } from '../state/card-lines.js';
 
 // How important a card is, as a number: the higher, the sooner the director sees it. The one
@@ -72,16 +72,17 @@ const ownImportance = (card) => (Number.isFinite(card.data?.importance) ? card.d
 // The next visit's cards: those never asked (`asked` null), most important first. Within one
 // rank the composer's own importance decides (higher first), then the oldest, then the id.
 // At most `room` (CARD.questions unless a card of the visit's own takes a place); `left` counts the
-// ones not taken. A card put off stays on the board, so the director can still ask for it. The
-// order doesn't depend on the clock.
+// ones not taken, and `heldBack` the ones past the day's budget, passed over until they are pulled. A
+// card put off stays on the board, so the director can still ask for it. The order doesn't depend on the clock.
 export function cardsForVisit(views, { room = CARD.questions } = {}) {
-  const ranked = waitingOf(views).filter((c) => c.asked === null || c.asked === undefined)
+  const unasked = waitingOf(views).filter((c) => c.asked === null || c.asked === undefined);
+  const ranked = unasked.filter((c) => !heldBackLine(c.data?.line, views))
     .map((card) => ({ card, rank: importanceOf(card, views) }))
     .sort((a, b) => b.rank - a.rank || ownImportance(b.card) - ownImportance(a.card)
       || (a.card.at < b.card.at ? -1 : a.card.at > b.card.at ? 1 : 0) || (a.card.id < b.card.id ? -1 : 1))
     .map(({ card }) => card);
   const chosen = ranked.slice(0, Math.max(0, room));
-  return { questions: chosen.map(asQuestion), ids: chosen.map((c) => c.id), left: ranked.length - chosen.length };
+  return { questions: chosen.map(asQuestion), ids: chosen.map((c) => c.id), left: ranked.length - chosen.length, heldBack: unasked.length - ranked.length };
 }
 
 // The id of the waiting card that already carries this set line, or null: composing a card again

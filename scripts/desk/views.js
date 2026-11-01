@@ -187,15 +187,13 @@ async function boardOf(source, options) {
 const lined = (text) => String(text).split('\n');
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-// The briefing's lines from the engine: what shipped since `since`, and how many cards wait for another day.
+// The briefing's lines from the engine: what shipped since `since`.
 async function engineBriefing(source, { since }) {
   let views = {};
   try { views = (await source.views({}))?.views ?? {}; } catch { views = {}; }
   if (!isPlain(views)) return [];
-  const waiting = Array.isArray(views.cardsWaiting) ? views.cardsWaiting.length : Number.isInteger(views.cardsWaiting?.count) ? views.cardsWaiting.count : 0;
-  return [...switchedLines(views, { since }), ...shippedLines(views, { since }), ...answeredLines(views, { since }), ...(waiting > 0 ? [waitingLine(waiting)] : [])];
+  return [...switchedLines(views, { since }), ...shippedLines(views, { since }), ...answeredLines(views, { since })];
 }
-export const waitingLine = (n) => `${n === 1 ? 'One question waits' : `${n} questions wait`} for another day, to keep to your cards a day.`;
 
 // The briefing's one line for the switch to the new engine (Archon design, section 17, step 2): said in the first
 // briefing after the engine setting took effect, and so once, as the next briefing's `since` is after it.

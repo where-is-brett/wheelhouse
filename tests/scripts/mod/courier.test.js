@@ -41,6 +41,10 @@ const lastWakeAt = () => JSON.parse(fs.readFileSync(courierFile(P), 'utf8')).las
 // The mod's undo of the wake `woke` it couldn't hand on, from session s-1 unless it says otherwise.
 const unsent = (woke, over = {}) => courierUnsent({ project: P, session: 's-1', ids: woke.sent, at: woke.at, ...over });
 
+test('a held card wakes nobody, and needsYou passes over it', () => {
+  assert.deepEqual(needsYou({ after: { cards: [{ id: 'c', n: 1, heldBack: true }] } }), []);
+});
+
 test('a new card, STOP, an incident, a health stop and a finished feature are each needs-you once', () => opened(async () => {
   const after = model({
     stop: { on: true, since: '2026-10-19T01:59:00.000Z' },
