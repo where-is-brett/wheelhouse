@@ -25,9 +25,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { dispatch, MERGE_WORK, MERGE_QUEUE_EVERY_MS } from './dispatcher.js';
-import { goalRule, gateStart, orderGoal } from './goal.js';
+import { goalRule, goalInForce, gateStart, orderGoal } from './goal.js';
+import { goalMeter, shareAtStart } from './goal-meter.js';
 import { goalHeldWords, reservedUnreadWords, LIMIT_HOLD_WORDS, noCardBehindWords, restartRefusedWords, restartCardWords, restartUnsureWords, restartStrandedWords, failedCardWords, prLeftOpenWords, wakeLateWords, STOPPED_RESTART_WORDS, ORPHAN_LEFT_WORDS, RESTART_UNSURE_AGAIN, START_ANYWAY, cutOffStoppedWords, cutOffWords, waitsOnItselfWords, startAnywayWords, startRefusedWords, startCardWords, unmarkedPrWords, START_STOP_SAYS, NO_FIX_TESTS, NO_FIX_ORDER, noFixWords, queueStuckWords, QUEUE_STUCK_WHY, QUEUE_PASSED_WORDS, requestsUsedWords, REQUESTS_UNCONFIRMED_WORDS, requestsStoppedWords } from './words.js';
-import { workOrder } from './order.js';
+import { workOrder, ORDER_LANES } from './order.js';
 import { limitsFor } from './caps.js';
 import { ENGINE_QUESTIONS } from './router.js';
 import { openRedMain, fixDecision, fixOrder } from './fix-main.js';
@@ -40,7 +41,7 @@ import { since, endedBy } from '../foreman/queue.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const isText = (x) => typeof x === 'string' && x.trim() !== '';
-const EMPTY = () => ({ mergeRun: null, mergeRuns: [], lastStart: null, seenReady: [], queueDue: false, sentBack: {}, acted: {}, clashAsked: {}, reds: {}, redActed: {}, redAsked: {}, redNoted: {}, requestsAsked: null, requestsFor: null, queueFault: null, unmarkedSeen: {}, noTestsSaid: false, fixes: {}, features: {}, shipped: {}, closedPrs: [], reserved: {}, released: {}, stranded: {}, topCard: null, noCardSaid: {}, quietSeen: {}, owed: {}, cutOffAsked: {}, cutOffFor: {}, waived: {}, returning: [], admitted: [], carryOver: {}, restartCards: 0, limitSaid: false });
+const EMPTY = () => ({ mergeRun: null, mergeRuns: [], lastStart: null, seenReady: [], queueDue: false, sentBack: {}, acted: {}, clashAsked: {}, reds: {}, redActed: {}, redAsked: {}, redNoted: {}, requestsAsked: null, requestsFor: null, queueFault: null, unmarkedSeen: {}, noTestsSaid: false, fixes: {}, features: {}, shipped: {}, closedPrs: [], reserved: {}, released: {}, stranded: {}, topCard: null, noCardSaid: {}, quietSeen: {}, owed: {}, cutOffAsked: {}, cutOffFor: {}, waived: {}, returning: [], admitted: [], carryOver: {}, restartCards: 0, limitSaid: false, goalSpend: null, goalQueueRuns: [] });
 // The dispatcher's own questions take numbers from here, apart from the card router's.
 const OWN_QUESTIONS = ENGINE_QUESTIONS + 90000;
 export { MERGE_WORK };
@@ -155,7 +156,7 @@ export function orderFor(entry, { settings = {}, raised = false, config = {}, an
 // - `notReady(pr)` takes a pull request off what `readyOf` lists: the director sent it back, so only its rework marks it again.
 // - `engine.liveRunOf({ work, since })`, where the engine has it, says of a start that may have happened: { runId },
 //   null for none, undefined when it can't say. Without it the answer is undefined, so a card comes and not a second start.
-export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped: allStop = () => false, moving = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), spentThisMonth = () => 0, mainGreen = async () => null, stoppedRuns = () => [], fixedRuns = () => [], prMerged = async () => null, prState = null, designOf = () => null, orderOf = () => null, repoOf = () => null, repoName = () => null, queueFolder = async () => ({ ok: false, refused: 'no folder for the merge queue' }), queuePlace = null, openedBy = () => null, localQueue = null, isLocal = () => true, onCard = () => {}, branchPaths = async () => [], notReady = () => {} } = {}) {
+export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped: allStop = () => false, moving = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), spentThisMonth = () => 0, mainGreen = async () => null, stoppedRuns = () => [], fixedRuns = () => [], prMerged = async () => null, prState = null, designOf = () => null, orderOf = () => null, repoOf = () => null, repoName = () => null, queueFolder = async () => ({ ok: false, refused: 'no folder for the merge queue' }), queuePlace = null, openedBy = () => null, localQueue = null, isLocal = () => true, onCard = () => {}, branchPaths = async () => [], notReady = () => {}, allowance = () => null } = {}) {
   const stopped = () => allStop() || moving();
   let state = readState(file);
   // The pieces with a card of the card router's open, from the runner, which is built after this.
@@ -246,7 +247,47 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   // The gate at the start of a run of `work`, read now: null, or what holds it.
   function goalGate(views, { work, lane, via }) {
     const goal = goalRule(views, now());
-    return gateStart({ goal, work, lane, via, state: goal?.state, now: now() });
+    return gateStart({ goal, work, lane, via, state: goal?.state, meter: meterOf(goal), cap: capOf(lane).tokens, now: now() });
+  }
+  const capOf = (lane) => limitsFor(lane, settings() ?? {});
+  // The meter's reading for `goal`, kept so a restart holds what it held: none for a goal it hasn't read.
+  const meterOf = (goal) => (state.goalSpend !== null && state.goalSpend.goal === goal?.id ? state.goalSpend.meter : null);
+  // `goalRule`'s answer as `dispatch` takes it: while a goal runs, the lanes its spend leaves no room for, so that a piece held
+  // by spend spends no place and one that fits can start.
+  function goalNow(views) {
+    const goal = goalRule(views, now());
+    const meter = meterOf(goal);
+    if (goal?.only !== true || meter === null) return goal;
+    return { ...goal, spendHolds: ORDER_LANES.filter((lane) => typeof meter.reached === 'string' || meter.left < capOf(lane).tokens) };
+  }
+  // A queue run that has ended spends no more, and a goal may run many: each is read until then.
+  const queueRead = new Map();
+  async function readForMeter(runId) {
+    if (queueRead.has(runId)) return queueRead.get(runId);
+    const record = await engine.inspect(runId);
+    if (record?.status === 'ended' && state.goalQueueRuns.includes(runId)) queueRead.set(runId, record);
+    return record;
+  }
+  // Reads the goal's spend, ahead of every start of the tick, and keeps it beside what it was at Start. The share at Start
+  // is taken from the first reading fresh at Start; counted requests start from the month's count when the goal is first seen.
+  async function meterTick(views) {
+    const goal = goalInForce(views);
+    if (goal === null) return;
+    if (state.goalSpend?.goal !== goal.id) {
+      state.goalSpend = { goal: goal.id, shareAtStart: null, requestsAtStart: null, meter: null };
+      state.goalQueueRuns = [];
+      queueRead.clear();
+    }
+    const kept = state.goalSpend;
+    let reading = null;
+    try { reading = allowance(); } catch { /* the tokens stand alone */ }
+    kept.shareAtStart ??= shareAtStart(reading, goal);
+    const used = engine.countsRequests?.(config()?.routing ?? {}) === true ? await spentThisMonth() : null;
+    if (used !== null) kept.requestsAtStart ??= used;
+    // A count below the one at Start is a new month's, or the provider's correction: what is there is the most it can say.
+    const requests = used === null ? null : used >= kept.requestsAtStart ? used - kept.requestsAtStart : used;
+    kept.meter = await goalMeter({ goal, views, inspect: readForMeter, queueRuns: state.goalQueueRuns, capOf, reading, shareAtStart: kept.shareAtStart, requests, now: now() });
+    keep();
   }
 
   async function startPiece({ work, lane, via = 'start', branch = null, carryOn = false, raised = false, answers = [], checkTail = null }) {
@@ -830,6 +871,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   function ownQueueRun(runId) {
     state.mergeRun = runId;
     state.mergeRuns = [...state.mergeRuns, runId].slice(-KEPT_MERGE_RUNS);
+    // `mergeRuns` is cut short, and the spend of each of a goal's queue runs counts.
+    if (goalInForce(readViews() ?? {}) !== null && !state.goalQueueRuns.includes(runId)) state.goalQueueRuns.push(runId);
   }
   // One start at a time, and none beside a live queue run the helper didn't start, which is taken as the queue's run
   // instead: what is due stays due, so a run that started without the project's models is followed once it ends. An
@@ -1568,6 +1611,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   }
 
   async function tick() {
+    await meterTick(readViews() ?? {}).catch(() => {});
     await owedTick();
     await fixTick();
     // Trouble with a reservation or an entry costs a tick nothing: each is looked at again on the next.
@@ -1603,7 +1647,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       requests, sentBack: [
         ...Object.entries(state.sentBack).filter(([work, times]) => state.acted[work] !== times).map(([work, times]) => ({ work, times })),
         ...Object.entries(state.reds).filter(([work, red]) => state.redActed[work] !== red.times).map(([work, red]) => ({ work, times: red.times, reason: 'red' })),
-      ], waiting: [...waitingNow(views)], reserved: reservedFiles(), returning: state.returning.map((e) => ({ ...e, ...(notYet(e) ? { asked: e.asked ?? e.key } : {}), ...(e.fresh === true ? { filesFree: true } : {}) })), admitted: state.admitted, stoppedFeatures: stoppedFeaturesOf(views, reports), waived: Object.keys(state.waived).filter((work) => state.waived[work] === views.work?.[work]?.work?.at), goal: goalRule(views, now()), now: now(),
+      ], waiting: [...waitingNow(views)], reserved: reservedFiles(), returning: state.returning.map((e) => ({ ...e, ...(notYet(e) ? { asked: e.asked ?? e.key } : {}), ...(e.fresh === true ? { filesFree: true } : {}) })), admitted: state.admitted, stoppedFeatures: stoppedFeaturesOf(views, reports), waived: Object.keys(state.waived).filter((work) => state.waived[work] === views.work?.[work]?.work?.at), goal: goalNow(views), now: now(),
     });
     // What it admitted holds its place from here. A piece has one start at a time; each answer of it goes along.
     for (const { work } of decided.admit) {

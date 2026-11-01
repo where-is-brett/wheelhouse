@@ -10,6 +10,7 @@ import { LIMIT_HOLD_WORDS } from '../../../scripts/engine/words.js';
 import { fakeEngine } from '../../../scripts/engine/fake.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { wayBack, asking, askingTwice, forever, quiet, atLimit, failing, legFinishes } from '../../helpers/way-back.js';
+import { running } from '../../eval/build-loop/engine-recordings.js';
 import { dataHash } from '../../../scripts/state/events.js';
 
 const views = () => ({
@@ -266,14 +267,15 @@ function queueWorld({ queueRuns } = {}) {
   const repo = { host: 'github.com', path: 'o/p' };
   // How many queue runs were live each time the folder was reset for a start.
   const prepared = [];
+  let views = { work: {}, runs: {}, reports: {} };
   const d = dispatchRun({
-    engine, project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'), readViews: () => ({ work: {}, runs: {}, reports: {} }),
+    engine, project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'), readViews: () => views,
     now: () => at, start: async () => ({ ok: false }), readyOf: () => ({ 7: { work: 'card-7', head: 'a'.repeat(40) } }), repoOf: () => repo,
     queueFolder: async () => { prepared.push(engine.queueRuns({ folder: dir }).length); return { ok: true, folder: dir }; }, queuePlace: () => dir,
   });
   // Archon's ruling step starting a queue run by itself, which the helper never hears of.
   const ownStart = (folder = dir) => engine.start({ lane: 'merge', project: folder, repo, running: true }).runId;
-  return { dir, engine, d, ownStart, prepared, starts: () => engine.calls.filter((c) => c.call === 'start' && c.order.lane === 'merge').length };
+  return { dir, engine, d, ownStart, prepared, setViews: (next) => { views = next; }, starts: () => engine.calls.filter((c) => c.call === 'start' && c.order.lane === 'merge').length };
 }
 
 test('a queue run Archon started itself folds the helper\'s start: one live run, known to the helper, its place taken after it ends', async () => {
@@ -1282,9 +1284,9 @@ test('a limit hides a requests hold and ends none, so an answered card isn\'t as
 
 // A goal in force, and the gate every start passes (unattended goals design, section 6; build plan, choice 9).
 const MINUTE = 60 * 1000;
-const goalOver = (w, pieces, { id = 'g', until = '2026-10-29T18:00:00.000Z', ended = null, waived = [] } = {}) => {
+const goalOver = (w, pieces, { id = 'g', until = '2026-10-29T18:00:00.000Z', ended = null, waived = [], spend = { tokens: 100000000 } } = {}) => {
   w.goals[id] = {
-    sheet: { title: 'A goal', until, pieces: pieces.map((work) => ({ work, hash: dataHash(w.work[work].work.data), ...(waived.includes(work) ? { waived: true } : {}) })) },
+    sheet: { title: 'A goal', until, spend, pieces: pieces.map((work) => ({ work, hash: dataHash(w.work[work].work.data), ...(waived.includes(work) ? { waived: true } : {}) })) },
     hash: 'signed', startedAt: '2026-10-29T09:00:00.000Z', ended, endAsked: null,
   };
 };
@@ -1465,4 +1467,164 @@ test('an order names no goal with none in force', async () => {
   const t = setUp({ testCommand: 'node --test' });
   await t.d.tick();
   assert.equal(Object.hasOwn(t.starts[0].order, 'goalId'), false);
+});
+
+// The spend meter at the gate (unattended goals design, section 5).
+const spent = (w, work, tokens, runId = `old-${work}`) => {
+  (w.runs[work] ??= []).push({ at: '2026-10-29T09:30:00.000Z', data: { work, lane: 'quick', runId, state: 'started' } }, { at: '2026-10-29T09:40:00.000Z', data: { work, lane: 'quick', runId, state: 'ended' } });
+  (w.costs[work] ??= []).push({ at: '2026-10-29T09:40:00.000Z', data: { runId, work, tokens, source: 'reported' } });
+};
+const keptOf = (w) => JSON.parse(fs.readFileSync(path.join(w.dir, 'dispatch.json'), 'utf8'));
+const goalBack = (dispatchExtra = {}) => wayBack({ recordings: { a: forever(), b: forever(), big: forever() }, dispatchExtra, settings: { engineLanes: ['quick', 'small'] } });
+
+test('a spend reached holds a goal\'s piece with no card, and a narrower sheet can\'t hide it', async () => {
+  const w = goalBack();
+  w.put('a');
+  goalOver(w, ['a'], { spend: { tokens: 1000 } });
+  spent(w, 'gone', 1000);
+  await w.tick(3);
+  assert.equal(w.starts.length, 0);
+  assert.deepEqual(w.cards(), []);
+});
+
+test('a piece whose cap doesn\'t fit waits, and one that fits starts', async () => {
+  const w = goalBack();
+  w.put('big', { lane: 'small' });
+  w.put('a');
+  goalOver(w, ['big', 'a'], { spend: { tokens: 2000000 } });
+  await w.tick(3);
+  assert.deepEqual(w.starts.map((s) => s.order.work), ['a']);
+  assert.deepEqual(w.cards(), []);
+});
+
+test('a rework the meter holds keeps its place, and a sheet with room lets it go', async () => {
+  const w = wayBack({ recordings: { a: quiet() } });
+  w.put('a');
+  goalOver(w, ['a'], { spend: { tokens: 5000000 } });
+  await w.tick(2);
+  w.goals.g.sheet.spend = { tokens: 1000 };
+  spent(w, 'gone', 1000);
+  const before = w.starts.length;
+  w.dispatcher.enter(entryFor('a', 'rework'));
+  await w.tick(3);
+  assert.equal(w.starts.length, before);
+  assert.equal(w.dispatcher.comingBack('a'), true);
+  assert.equal(w.notes().filter((n) => /spend/.test(n)).length, 1, 'the Logbook says so once');
+  w.goals.g.sheet.spend = { tokens: 5000000 };
+  await w.tick(3);
+  assert.equal(w.starts.length, before + 1);
+});
+
+test('a limit met mid-run holds what comes next, and the run goes on', async () => {
+  const w = wayBack({ recordings: { a: running('a', 1000000), b: forever() }, pace: 1 });
+  w.put('a');
+  w.put('b');
+  goalOver(w, ['a', 'b'], { spend: { tokens: 1000000 } });
+  await w.tick(4);
+  assert.deepEqual(w.starts.map((s) => s.order.work), ['a']);
+  assert.equal(keptOf(w).goalSpend.meter.reached, 'tokens', 'read from the live run');
+  assert.equal(w.engine.calls.filter((c) => c.call === 'act').length, 0, 'ending it is the wind-down\'s');
+  w.endRun('a');
+  await w.tick(3);
+  assert.deepEqual(w.starts.map((s) => s.order.work), ['a'], 'its place freed, the next piece still holds');
+});
+
+test('the share at Start is kept beside the goal, once, and points hold a piece', async () => {
+  const reading = { share: 40, shareAt: '2026-10-29T09:05:00.000Z', resetsAt: '2026-11-03T00:00:00.000Z' };
+  const w = goalBack({ allowance: () => ({ ...reading }) });
+  w.put('a');
+  goalOver(w, ['a'], { spend: { tokens: 100000000, points: 5 } });
+  w.clock.now = new Date('2026-10-29T09:10:00.000Z');
+  await w.tick(1);
+  assert.deepEqual(keptOf(w).goalSpend.shareAtStart, { share: 40, shareAt: '2026-10-29T09:05:00.000Z', resetsAt: '2026-11-03T00:00:00.000Z' });
+  Object.assign(reading, { share: 46, shareAt: w.clock.now.toISOString() });
+  await w.tick(2);
+  const { goalSpend } = keptOf(w);
+  assert.equal(goalSpend.shareAtStart.share, 40);
+  assert.equal(goalSpend.meter.points, 6);
+  assert.equal(goalSpend.meter.reached, 'points');
+});
+
+test('a helper started again keeps the meter and the share at Start', async () => {
+  const reading = { share: 40, shareAt: '2026-10-29T09:05:00.000Z', resetsAt: '2026-11-03T00:00:00.000Z' };
+  let read = reading;
+  const w = goalBack({ allowance: () => read });
+  w.put('a');
+  goalOver(w, ['a'], { spend: { tokens: 1000 } });
+  spent(w, 'gone', 1000);
+  await w.tick(1);
+  read = { ...reading, share: 45, shareAt: '2026-10-29T10:00:00.000Z' };
+  w.restart();
+  await w.tick(1);
+  assert.equal(keptOf(w).goalSpend.shareAtStart.share, 40);
+  assert.equal(w.starts.length, 0);
+});
+
+test('a new goal starts its meter afresh', async () => {
+  const w = goalBack();
+  w.put('a');
+  goalOver(w, ['a'], { spend: { tokens: 1000 } });
+  await w.tick(1);
+  const first = keptOf(w).goalSpend;
+  assert.equal(first.goal, 'g');
+  w.goals.g.ended = ENDED;
+  goalOver(w, ['a'], { id: 'g2' });
+  await w.tick(1);
+  assert.equal(keptOf(w).goalSpend.goal, 'g2');
+});
+
+test('counted requests are those since Start, and a new month starts from what it has', async () => {
+  let used = 200;
+  const w = goalBack({ spentThisMonth: () => used });
+  w.engine.countsRequests = () => true;
+  w.engine.requestsConfirmed = true;
+  w.put('a');
+  goalOver(w, ['a'], { spend: { tokens: 100000000, requests: 10 } });
+  await w.tick(1);
+  assert.equal(keptOf(w).goalSpend.meter.requests, 0);
+  used = 207;
+  await w.tick(1);
+  assert.equal(keptOf(w).goalSpend.meter.requests, 7);
+  used = 4;
+  await w.tick(1);
+  assert.equal(keptOf(w).goalSpend.meter.requests, 4);
+});
+
+test('a project that counts no requests reads none', async () => {
+  const w = goalBack();
+  w.put('a');
+  goalOver(w, ['a']);
+  await w.tick(1);
+  assert.equal(keptOf(w).goalSpend.meter.requests, null);
+});
+
+test('with no goal in force nothing is metered', async () => {
+  const w = goalBack();
+  w.put('a');
+  await w.tick(2);
+  assert.equal(keptOf(w).goalSpend, null);
+  assert.equal(w.starts.length, 1);
+});
+
+test('a merge-queue run during a goal is kept once and counted, and read no more once it has ended', async () => {
+  const t = queueWorld();
+  const work = { work: { at: '2026-10-30T05:00:00.000Z', data: { id: 'a', title: 'A', lane: 'quick', visible: false, dependsOn: [] } }, approved: true };
+  const live = { work: { a: work }, runs: {}, reports: {}, goals: { g: { sheet: { until: '2026-10-30T18:00:00.000Z', spend: { tokens: 1000 }, pieces: [{ work: 'a', hash: dataHash(work.work.data) }] }, hash: 'signed', startedAt: '2026-10-30T05:00:00.000Z', ended: null, endAsked: null } } };
+  t.setViews(live);
+  const theirs = t.ownStart();
+  t.d.queueDue();
+  await t.d.tick();
+  await t.d.tick();
+  const kept = JSON.parse(fs.readFileSync(path.join(t.dir, 'dispatch.json'), 'utf8'));
+  assert.deepEqual(kept.goalQueueRuns, [theirs]);
+  t.engine.act(theirs, { cancel: {} });
+  await t.d.tick();
+  await t.d.tick();
+  const reads = t.engine.calls.length;
+  let read = 0;
+  const { inspect } = t.engine;
+  t.engine.inspect = (id) => { if (id === theirs) read += 1; return inspect(id); };
+  await t.d.tick();
+  await t.d.tick();
+  assert.equal(read, 0, `read again after it ended (${reads} calls before)`);
 });
