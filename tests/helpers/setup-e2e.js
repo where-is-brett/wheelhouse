@@ -288,7 +288,7 @@ export function makeComputer(host, clock, { name = 'Café Menu' } = {}) {
   const session = crypto.randomUUID();
   const c = {
     home, user, config, folder, managedDir, session, manifest: k.manifest, host, clock,
-    refused: [], calls: [], children: [], helper: null, client: null, watcher: null,
+    refused: [], calls: [], launchd: [], children: [], helper: null, client: null, watcher: null,
   };
 
   // `gh`, `claude` and git as this computer runs them; anything else is refused and noted. Git has
@@ -300,6 +300,11 @@ export function makeComputer(host, clock, { name = 'Café Menu' } = {}) {
     if (file === process.execPath) return realRun(file, args, options);
     // A computer with no Time Machine, whose folder picker is closed.
     if (tool === 'tmutil' || tool === 'osascript') return answer('', 1, `${tool} is not run in this test`);
+    // On a Mac the sign-in start is loaded and unloaded; launchd itself is never reached.
+    if (tool === 'launchctl' && ['bootout', 'bootstrap'].includes(args[0])) {
+      c.launchd.push(args);
+      return answer('');
+    }
     c.calls.push([tool, ...args]);
     if (tool === 'gh') return gh(args);
     if (tool === 'claude') return claude(args, options);

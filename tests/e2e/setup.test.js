@@ -641,6 +641,7 @@ test('uninstall after setup leaves the home folder as it was, but for what the d
     assert.equal(fs.readFileSync(path.join(a.folder, '.git', 'info', 'exclude'), 'utf8').includes('.wheelhouse'), false, 'no .wheelhouse/ folder, so its line went too (ruling R131)');
 
     assert.deepEqual(a.refused, []);
+    assert.deepEqual(a.launchd.map(([verb]) => verb), process.platform === 'darwin' ? ['bootout'] : [], 'the last uninstall unloads the agent');
     assert.deepEqual(shims.calls(), [`gh pr close 12 --repo ${REPO}`, ...SURVEY_CALLS]);
   } finally {
     await a.cleanup();
