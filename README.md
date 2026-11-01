@@ -38,7 +38,7 @@ And a briefing opens like this:
 
 ## Install
 
-You need **Node.js** (a free program; [download the version marked LTS](https://nodejs.org/en/download)), Claude Desktop, signed in, and about 15 minutes. A host is optional: a project can stay on your computer with git alone, its checks run here, and nothing goes online. A GitHub or GitLab account helps; setup shows you where to make one if you have neither.
+You need **Node.js** (a free program; [download the version marked LTS](https://nodejs.org/en/download)), Claude Desktop, signed in, and about 15 minutes. A host is optional: a project can stay on your computer with git alone, its checks run here, and nothing goes online. You can move it to GitHub or GitLab later: one card, with every line of work and each open change carried over. A GitHub or GitLab account helps; setup shows you where to make one if you have neither.
 
 1. **Open a session on your product's folder.** For a new product, start a new session in Claude Desktop, and in its folder picker make an empty folder under `Projects` in your home folder, named after the product; open the session on it. For a product you already have, open the session on its folder. For a product you set up with Wheelhouse on another computer, make an empty folder here too: setup brings the product into it.
 2. **Check for Node.js.** Wheelhouse needs Node.js 22 or later. If this computer has none or an older one, or a Wheelhouse session refuses every tool with a message naming a Wheelhouse script and "node: command not found", install the LTS from nodejs.org, then start a new conversation. Wheelhouse also says so itself, in plain words, when a conversation starts.

@@ -110,8 +110,10 @@ export function orderFor(entry, { settings = {}, raised = false, config = {}, an
 //   { ok, folder } or { ok: false, refused }; the queue doesn't start without it. `queuePlace()` that folder's path,
 //   touching nothing, for asking the engine what is live there.
 // - `localQueue()` one sweep of the local queue, for a project with no host, which has no merge queue to start. It runs on
-//   every tick while a change waits, since its own table says what is ready.
-export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), spentThisMonth = () => 0, mainGreen = async () => null, stoppedRuns = () => [], fixedRuns = () => [], prMerged = async () => null, prState = null, designOf = () => null, orderOf = () => null, repoOf = () => null, queueFolder = async () => ({ ok: false, refused: 'no folder for the merge queue' }), queuePlace = null, openedBy = () => null, localQueue = null, onCard = () => {} } = {}) {
+//   every tick while a change waits, since its own table says what is ready. `isLocal()` says whether the project still has
+//   no host, and `moving()` whether a move to a host is under way, which holds new work as All stop does.
+export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped: allStop = () => false, moving = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), spentThisMonth = () => 0, mainGreen = async () => null, stoppedRuns = () => [], fixedRuns = () => [], prMerged = async () => null, prState = null, designOf = () => null, orderOf = () => null, repoOf = () => null, queueFolder = async () => ({ ok: false, refused: 'no folder for the merge queue' }), queuePlace = null, openedBy = () => null, localQueue = null, isLocal = () => true, onCard = () => {} } = {}) {
+  const stopped = () => allStop() || moving();
   let state = readState(file);
   // A question of the dispatcher's own, and then a word to the seals, whose trouble is never the card's.
   async function askDirector(kind, data) {
@@ -718,7 +720,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
         recommendation: TRY_AGAIN,
       });
     }
-    if (localQueue !== null) {
+    if (localQueue !== null && isLocal()) {
       if (waiting.length > 0 && !stopped()) await localQueue();
     } else if (decided.startMergeQueue && !stopped()) {
       startingQueue ??= startQueue(waiting).finally(() => { startingQueue = null; });

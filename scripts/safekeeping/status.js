@@ -9,6 +9,7 @@ const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 const CHOOSE = { action: 'choose-folder', label: 'Choose a backup folder' };
+const PUT_ON_GITHUB = { action: 'put-on-github', label: 'Put it on GitHub' };
 const CHOOSE_OTHER = { action: 'choose-folder', label: 'Choose another folder' };
 const BACK_UP = { action: 'back-up-now', label: 'Back up now' };
 const KEEP_ONLINE = { action: 'keep-online', label: 'Keep a copy online' };
@@ -84,7 +85,7 @@ function localStatus(readings, { days, now }) {
   if (held && dated) return result(readings, fromBackup(backup, { days, now, actions: [BACK_UP, CHOOSE_OTHER] }));
   if (machine) return result(readings, { ...NO_DATE, actions: held ? [BACK_UP, CHOOSE_OTHER] : [CHOOSE] });
   const why = typeof backup.refused === 'string' ? `${backup.refused}, so it doesn't count. ` : '';
-  return result(readings, { level: 'watch', line: 'Only on this computer, no backup', detail: `${why}The whole project would be lost with this computer.`, actions: [CHOOSE] });
+  return result(readings, { level: 'watch', line: 'Only on this computer, no backup', detail: `${why}The whole project would be lost with this computer.`, actions: [CHOOSE, PUT_ON_GITHUB] });
 }
 
 function hostedStatus(readings, { hereDays, now }) {

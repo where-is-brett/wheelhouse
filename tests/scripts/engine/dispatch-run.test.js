@@ -26,6 +26,38 @@ function setUp(config) {
   return { d, starts, written };
 }
 
+test('a move to a host holds new work', async () => {
+  const dir = tempFolder('wh-dr-');
+  let moving = true;
+  const starts = [];
+  const d = dispatchRun({
+    engine: fakeEngine(), project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'), readViews: views, config: () => ({ testCommand: 'node --test' }), moving: () => moving,
+    start: async (args) => { starts.push(args); return { ok: true, runId: `run-${starts.length}` }; },
+    now: () => new Date('2026-10-29T10:00:00.000Z'),
+  });
+  await d.tick();
+  assert.equal(starts.length, 0);
+  moving = false;
+  await d.tick();
+  assert.equal(starts.length, 1);
+});
+
+test('a project that has moved to a host no longer sweeps the local queue', async () => {
+  const dir = tempFolder('wh-dr-');
+  let local = true;
+  let sweeps = 0;
+  const d = dispatchRun({
+    engine: fakeEngine(), project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'), readViews: () => ({ work: {}, runs: {}, questions: {} }), config: () => ({ testCommand: 'node --test' }),
+    readyOf: () => ({ 7: { head: 'a'.repeat(40), runId: 'r', showFirst: false, work: 'w' } }), isLocal: () => local, localQueue: async () => { sweeps += 1; },
+    now: () => new Date('2026-10-29T10:00:00.000Z'),
+  });
+  await d.tick();
+  assert.equal(sweeps, 1);
+  local = false;
+  await d.tick();
+  assert.equal(sweeps, 1);
+});
+
 test('the order carries the project\'s model bindings and its test command', async () => {
   const t = setUp({ routing: { tiers: { large: 'model-a', medium: 'model-b' } }, testCommand: 'node --test' });
   await t.d.tick();

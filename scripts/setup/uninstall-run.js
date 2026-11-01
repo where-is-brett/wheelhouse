@@ -122,6 +122,7 @@ import {
   REMOVE_REMOTE,
 } from './uninstall.js';
 import { canonicalJson } from '../lib/canonical.js';
+import { unlockHomesIn } from '../host/local/move.js';
 
 export const TICK_MS = 5 * 1000;
 
@@ -425,6 +426,7 @@ export async function applyUninstall({
         if (error?.code !== 'ENOENT') throw error;
       }
       const going = names.filter((n) => !entry.except.includes(n));
+      unlockHomesIn(entry.target);
       for (const n of going) fs.rmSync(path.join(entry.target, n), { recursive: true, force: true });
       if (going.length > 0) removed += 1;
       if (names.length > 0 && going.length === names.length) fs.rmdirSync(entry.target);
@@ -435,6 +437,7 @@ export async function applyUninstall({
       const recorded = (entry.ids ?? []).some((id) => byId.get(id)?.kind === 'folder' && samePath(byId.get(id).target, entry.target) && typeof byId.get(id).after?.installer === 'string');
       if (!within(wheelhouseHome(), entry.target) && !recorded) halt(`${entry.target} is not Wheelhouse's own, so it was not removed`);
       const there = fs.existsSync(entry.target);
+      unlockHomesIn(entry.target);
       fs.rmSync(entry.target, { recursive: true, force: true });
       if (there) removed += 1;
       mark(entry.ids, true);

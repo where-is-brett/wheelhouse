@@ -1832,6 +1832,18 @@ test('carry-on --line <name> asks the helper to make that piece of work ready, b
   assert.deepEqual(made.json, printed);
 });
 
+test('move raises the card by the folder, and names only GitHub or GitLab', async () => {
+  const asked = [];
+  const helper = { client: { local: { move: async (body) => { asked.push(body); return { ok: true, asked: true }; } } } };
+  const got = await run(helper, ['move', 'github']);
+  assert.equal(got.code, 0);
+  assert.equal(asked[0].host, 'github');
+  assert.equal(typeof asked[0].cwd, 'string');
+  const refused = await run(helper, ['move', 'elsewhere']);
+  assert.notEqual(refused.code, 0);
+  assert.equal(asked.length, 1);
+});
+
 test('undo asks the helper by the folder, and gives what it answers, its card included', async () => {
   const asked = [];
   const helper = { client: { local: { undo: async (body) => { asked.push(body); return { ok: false, refused: 'needs the window', needs: 'window', card: { id: 'c-1' } }; } } } };
@@ -1872,7 +1884,7 @@ test('an unknown command, or a helper that can\'t be reached, is one line on sta
     const helper = fakeHelper();
     const unknown = await run(helper, ['show', '7']);
     assert.equal(unknown.code, 1);
-    assert.match(unknown.err, /^Commands: cards, card, again, why, suggest, record, similar, views, explain, review, preview, undo, carry-on, archive, restore, confirm, premium-card, premium-check\n$/);
+    assert.match(unknown.err, /^Commands: cards, card, again, why, suggest, record, similar, views, explain, review, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check\n$/);
     const away = { client: { desk: { read: async () => ({ ok: false, refused: 'the host helper could not be reached: is it running?' }) } } };
     const out = await run(away, ['cards']);
     assert.equal(out.code, 1);
@@ -1932,7 +1944,7 @@ test('through the real helper, the command places the project from its folder an
 test('run as a script, an unknown command is refused with the list of commands', async () => {
   const done = spawnSync(process.execPath, [SCRIPT, 'nonsense'], { encoding: 'utf8' });
   assert.equal(done.status, 1);
-  assert.equal(done.stderr, 'Commands: cards, card, again, why, suggest, record, similar, views, explain, review, preview, undo, carry-on, archive, restore, confirm, premium-card, premium-check\n');
+  assert.equal(done.stderr, 'Commands: cards, card, again, why, suggest, record, similar, views, explain, review, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check\n');
   assert.equal(done.stdout, '');
 });
 

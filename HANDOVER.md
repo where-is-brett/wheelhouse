@@ -48,7 +48,7 @@ The director is a product owner, not a developer. They want their product built 
 
 ## Next steps, in order
 
-0. **Git alone (`docs/superpowers/plans/2026-10-31-local-checks-and-git-alone.md`).** Setup and uninstall work for a project with no host (part 7): a folder with no GitHub or GitLab address stays on this computer on the one Go ahead, and uninstall leaves the folder a full copy. Restore from a backup is part 8.
+0. **Git alone (`docs/superpowers/plans/2026-10-31-local-checks-and-git-alone.md`).** Setup and uninstall work for a project with no host (part 7): a folder with no GitHub or GitLab address stays on this computer on the one Go ahead, and uninstall leaves the folder a full copy. Restore from a backup is part 8. A project kept here moves to GitHub or GitLab with one card (part 9).
 
 1. **Merge the first build plan and its findings.** The plan, `docs/superpowers/plans/2026-10-17-wheelhouse-foundation-checks.md`, is done, on branch `design-and-build-plan` (draft pull request #1). Its answers are in `docs/checks/README.md`, one note per check. The design changes they brought were merged into #1 from pull request #2 on 18 October 2026.
    - **The director decided on 17 October 2026,** after the checks: the mod's first piece (the weekly usage figure, and the prompt record by origin) is built with the core; Locked is offered on macOS only until it is tried on a Windows computer with admin rights; the designer's new calls stand (design sections 21 and 22).

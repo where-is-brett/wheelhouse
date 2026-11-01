@@ -327,7 +327,7 @@ async function settings(req, d) {
   const inputs = { effective, changes: d.readChanges({ project: found.project }), now: d.now, timeZone: d.timeZone, locked: typeof found.locked === 'boolean' ? found.locked : undefined, ready: readyOf(found.project, d) };
   // The level build commands run at on Windows is kept per computer: this computer's is shown.
   const builds = effective?.[settingKey(d.computer())];
-  return { ok: true, rows: d.settingsRows(inputs), groups: d.settingsGroups({ ...inputs, premium: d.premiumView({ project: found.project }), stop: await d.stopState(), windows: builds?.value }), text: ADVANCED };
+  return { ok: true, rows: d.settingsRows(inputs), groups: d.settingsGroups({ ...inputs, premium: d.premiumView({ project: found.project }), stop: await d.stopState(), windows: builds?.value, local: readProject(found.project)?.host === 'local' }), text: ADVANCED };
 }
 
 // A choice in the settings pane, from the pane alone, Undo included: the setting is written and the
