@@ -144,6 +144,7 @@ test('watchSource gives goal-changed when the director asks to end the goal in f
   const events = [
     makeEvent({ kind: 'work', data: piece, now: at(0) }),
     makeEvent({ kind: 'goal', data: { id: 'orders-export', sheet }, now: at(1) }),
+    makeEvent({ kind: 'goal-check', data: { goal: 'orders-export', hash, when: 'before', head: 'a'.repeat(40), results: [{ check: sheet.done[0], ok: false }], ok: false }, now: at(1) }),
     makeEvent({ kind: 'action', data: { action: 'start-goal', goal: 'orders-export', hash, label: 'Start', question: `Start this goal?\n${startGoalLine('orders-export', hash)}` }, now: at(2) }),
   ];
   const sourceOf = (all) => ({ project: 'o__p', views: async () => ({ ok: true, views: buildViews(all, readEnrolled(), { now: at(5) }) }), stop: async () => ({ on: false }), board: async () => ({ none: 'no board here' }) });
