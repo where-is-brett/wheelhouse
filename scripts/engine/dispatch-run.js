@@ -1084,8 +1084,9 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     return { branch: from, carryOn: carryOn || isText(from), answers: [...(carry.answers ?? []).filter((a) => !said.has(JSON.stringify(a))), ...answers] };
   }
 
-  // The way a start came, as the goal's gate reads it. A first start isn't an answer until a card's Try again makes it one.
-  const viaOf = (entry) => (entry.firstStart === true && entry.answered !== true ? 'start' : entry.via);
+  // The way a start came, as the goal's gate reads it. A first start and a carry-on are the director's answer only when a
+  // card made them so, and each keeps the `via` of its kind: `answered` says it was.
+  const viaOf = (entry) => (entry.answered === true ? 'answer' : entry.firstStart === true ? 'start' : entry.via);
   // Held at a goal's gate: the place goes back, nothing is asked, and it waits on the list until the gate lets it by.
   async function heldAtGate(entry, got) {
     delete entry.starting;
