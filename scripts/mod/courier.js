@@ -45,7 +45,7 @@ const ASK = 'Then ask any new cards now, once.';
 // A reminder's ask: the cards it names weren't asked at their wake (its notification wasn't sent),
 // so they are asked now, whatever the notification answers this time.
 const REMIND_ASK = (cards) => `Then ask ${cards === 1 ? 'it' : 'them'} now, once.`;
-// A goal's ending, in fixed words, as everything a wake says is.
+// A goal's ending, in set words, as everything a wake says is.
 const GOAL_STOPPED = 'A goal stopped early';
 const GOAL_FINISHED = 'A goal finished';
 // The items that wake at once, inside the gap after the last wake.

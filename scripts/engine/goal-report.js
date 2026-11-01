@@ -5,14 +5,14 @@
 // record: the desk's `goal` view, the briefing's opening and the Logbook show it, and it never reaches a pull request.
 //
 //   goalReport -> { id, title, verdict, added, decided?, waits: { top: [card], rest: [name] }, wrong: [line], spent }
-//   verdict: { ending, time, done, switchOn, left: [name], stopped: [name], failed: [check], unrun: [check], said, checkedAgain, within }
+//   verdict: { ending, time, done, switchOn, left: [name], closed: [name], stopped: [name], failed: [check], unrun: [check], said, checkedAgain, within }
 //   added: { pieces: [name], flag, checks, walked }. `decided` is left out when empty, and is 'Nothing' when the sheet has ticks.
 //
 // A piece's name is its work's title as it stands. Facts that aren't in a view's own kind come from `views.goalNotes`: a slice added
 // behind its switch, a run that lost its process and the merge queue's spend after the end. `goal-end.spent` holds what the meter
 // last read and `goal-end.words` how often the main line went red: `dispatch.json` is never read here.
 import { numberedWaiting, oneLine } from '../board/model.js';
-import { importanceOf, openQuestionOf } from '../cards/visit.js';
+import { importanceOf } from '../cards/visit.js';
 import { answerLine } from '../state/card-lines.js';
 import { checkKey } from './order.js';
 import { goalInForce, lastCheckHolds, lastEnded, pieceCovered, unfinishedOf } from './goal.js';
@@ -20,7 +20,7 @@ import { goalRuns } from './goal-meter.js';
 import { ALLOW_ONCE } from './areas.js';
 import { REPORT_CARDS_SHOWN } from './goal-limits.js';
 import {
-  goalHeadlineWords, goalLineWords, leftUndoneWords, checksFailedWords, checksUnrunWords, checkedAgainWords, addedTailWords, WALKED_WORDS, moreWaitingWords,
+  goalHeadlineWords, goalLineWords, leftUndoneWords, closedPiecesWords, pieceWaitsWords, checksFailedWords, checksUnrunWords, checkedAgainWords, addedTailWords, WALKED_WORDS, moreWaitingWords,
   sleptWords, sleptOftenWords, limitHeldWords, retriedWords, lostCarriedOnWords, goalStoppedAtEndWords, goalPieceFailedWords, goalPieceLeftWords, allowedOnceWords,
   goalSpentWords, goalReportLinkWords, shareWords, goalPaneWords,
 } from './words.js';
@@ -36,16 +36,23 @@ const isMerged = (views, work) => views?.reports?.[work]?.data?.outcome === 'mer
 const runsOf = (views, work) => records(views?.runs?.[work]);
 const notesOf = (views) => records(views?.goalNotes);
 
-// The time of day as "4:40 PM", in `timeZone` (the computer's own without one).
+// The time of day as "4:40 PM", in `timeZone` (the computer's own without one, or with one that can't be read).
 function clockOf(at, timeZone) {
-  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone }).formatToParts(new Date(at)).map((p) => [p.type, p.value]));
+  const format = (zone) => Object.fromEntries(new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: zone }).formatToParts(new Date(at)).map((p) => [p.type, p.value]));
+  let parts;
+  try {
+    parts = format(timeZone);
+  } catch {
+    parts = format(undefined);
+  }
   return `${parts.hour}:${parts.minute} ${parts.dayPeriod}`;
 }
 
-// How the slices of `work` stand: those added behind its switch, each once, by the notes that said so.
-function slicesOf(views, work) {
+// The slices of `work` added behind its switch since `goal` started, each once, by the notes that said so. One from before is an
+// earlier goal's to claim, and the goal's own count of slices comes from any of them.
+function slicesOf(goal, views, work) {
   const seen = new Map();
-  for (const { data } of notesOf(views)) if (data?.work === work && Number.isInteger(data.slice?.n)) seen.set(data.slice.n, data.slice);
+  for (const { at, data } of notesOf(views)) if (data?.work === work && Number.isInteger(data.slice?.n) && Date.parse(at) >= Date.parse(goal.startedAt)) seen.set(data.slice.n, data.slice);
   return [...seen.values()].sort((a, b) => a.n - b.n);
 }
 
@@ -65,7 +72,7 @@ function lastCheckOf(goal, views) {
 
 function spentOf(goal, ending, views, timeZone) {
   const given = ending.spent;
-  const after = notesOf(views).filter(({ data }) => data?.about === 'goal-queue-after' && data.goal === goal.id);
+  const after = [...new Map(notesOf(views).filter(({ data }) => data?.about === 'goal-queue-after' && data.goal === goal.id).map((note) => [note.data.run, note])).values()];
   return {
     tokens: given.tokens, allowed: goal.sheet.spend, points: typeof given.points === 'number' ? Math.round(given.points * 10) / 10 : null,
     requests: given.requests ?? null, unknown: given.unknown === true, readAt: typeof given.readAt === 'string' ? clockOf(given.readAt, timeZone) : null,
@@ -74,17 +81,26 @@ function spentOf(goal, ending, views, timeZone) {
 }
 
 // Whether the goal ended inside what it was given: its spend `unknown` where any of it was.
+// A limit on the sheet that couldn't be read leaves only the tokens to go by: `tokens`, never `inside`. The figures are the record's,
+// before any rounding for the words.
 function withinOf(goal, ending, spent) {
   const { allowed } = spent;
+  const given = ending.spent;
   const over = (figure, limit) => typeof figure === 'number' && limit !== undefined && figure > limit;
-  const spend = spent.unknown ? 'unknown' : over(spent.tokens, allowed.tokens) || over(spent.points, allowed.points) || over(spent.requests, allowed.requests) ? 'over' : 'inside';
+  const unread = (figure, limit) => typeof figure !== 'number' && limit !== undefined;
+  const beyond = over(given.tokens, allowed.tokens) || over(given.points, allowed.points) || over(given.requests, allowed.requests);
+  const spend = spent.unknown ? 'unknown' : beyond ? 'over' : unread(given.points, allowed.points) || unread(given.requests, allowed.requests) ? 'tokens' : 'inside';
   return { time: Date.parse(ending.at) <= Date.parse(goal.sheet.until), spend };
 }
 
-// The work a waiting card or question speaks for, or null.
+// The question a card asks, an answer card's or a blind card's, or undefined.
+const questionOfCard = (card) => /^(?:Answer question|First pick on question) (\S+)$/.exec(String(card?.data?.line ?? ''))?.[1];
+
+// The work a waiting card or question speaks for, or null. An approval's card names only its pull request, and a run's record has
+// that only once the run ends: a run paused at its approval is found by `pausedOn`.
 function workOfCard(card, views) {
   if (typeof card?.data?.work === 'string') return card.data.work;
-  const asked = openQuestionOf(card, views)?.work;
+  const asked = views?.questions?.[questionOfCard(card)]?.question?.data?.work;
   if (typeof asked === 'string') return asked;
   const pr = /^Approve pull request #([1-9][0-9]*) /.exec(String(card?.data?.line ?? ''))?.[1];
   if (pr === undefined) return null;
@@ -109,8 +125,17 @@ function supersededOf(views) {
   return old;
 }
 
+// The ask a piece's run is paused on now that waits on the director, or null. A usage limit waits on no one.
+function pausedOn(views, work) {
+  const run = runsOf(views, work).at(-1)?.data;
+  if (run?.state !== 'paused') return null;
+  const ask = records(views?.asks?.[work]).filter((a) => a.data?.runId === run.runId).at(-1);
+  return ask === undefined || ask.data.kind === 'usage-limit' ? null : ask;
+}
+
 // What of the goal waits on the director, most important first and then oldest, as a visit's cards are ranked: the top few as cards,
-// and the rest by name. A card of work that has merged, ended or isn't the goal's isn't counted.
+// and the rest by name, with the `works` they hold up. A card of work that has merged, ended or isn't the goal's isn't counted. A
+// piece paused on an ask with no card tied to it is still a thing that waits, so it stands in by name.
 function waitsOf(goal, views, cards) {
   const open = new Set(unfinishedOf(goal, views));
   const old = supersededOf(views);
@@ -119,11 +144,22 @@ function waitsOf(goal, views, cards) {
     const isQuestion = typeof item.question === 'string';
     const card = isQuestion ? { data: { kind: 'answer', line: answerLine(item.question), level: views.questions[item.question]?.question?.data?.level } } : waiting.get(item.card);
     const work = isQuestion ? views.questions[item.question]?.question?.data?.work : workOfCard(card, views);
-    const asks = isQuestion ? item.question : /^Answer question (\S+)$/.exec(String(card?.data?.line ?? ''))?.[1];
+    const asks = isQuestion ? item.question : questionOfCard(card);
     if (!open.has(work) || old.has(asks)) return [];
     return [{ n: item.n, title: item.what, work, rank: importanceOf(card, views), since: item.since }];
-  }).sort((a, b) => b.rank - a.rank || String(a.since).localeCompare(String(b.since)));
-  return { top: items.slice(0, REPORT_CARDS_SHOWN).map(({ n, title, work }) => ({ n, title, work })), rest: items.slice(REPORT_CARDS_SHOWN).map((item) => item.title) };
+  });
+  const named = new Set(items.map((item) => item.work));
+  for (const work of open) {
+    const ask = named.has(work) ? null : pausedOn(views, work);
+    if (ask === null) continue;
+    const kind = ask.data.kind !== 'approval' ? 'other' : views.work?.[work]?.work?.data?.lane === 'feature' ? 'switch' : 'approval';
+    items.push({ title: pieceWaitsWords(nameOf(views, work), kind), work, rank: importanceOf({ data: { level: ask.data.level } }, views), since: ask.at });
+  }
+  items.sort((a, b) => b.rank - a.rank || String(a.since).localeCompare(String(b.since)));
+  return {
+    top: items.slice(0, REPORT_CARDS_SHOWN).map(({ n, title, work }) => ({ ...(n === undefined ? {} : { n }), title, work })), rest: items.slice(REPORT_CARDS_SHOWN).map((item) => item.title),
+    works: items.map((item) => item.work),
+  };
 }
 
 const spanIn = (from, to, start, end) => {
@@ -178,8 +214,9 @@ function lostLines(views, start, end) {
 
 function allowedLines(goal, views) {
   const listed = new Set(goal.sheet.pieces.map((p) => p.work));
+  const since = Date.parse(goal.startedAt);
   const works = Object.values(isPlain(views?.questions) ? views.questions : {})
-    .filter((entry) => isAreaQuestion(entry) && entry.answer?.label === ALLOW_ONCE && listed.has(entry.question.data.work)).map((entry) => entry.question.data.work);
+    .filter((entry) => isAreaQuestion(entry) && entry.answer?.label === ALLOW_ONCE && listed.has(entry.question.data.work) && Date.parse(entry.answer.at) >= since).map((entry) => entry.question.data.work);
   return [...new Set(works)].map((work) => allowedOnceWords(nameOf(views, work)));
 }
 
@@ -191,31 +228,40 @@ export function goalReport({ goal, views, ending = goal.ended, decisions = [], c
   const end = Date.parse(ending.at);
   const unfinished = unfinishedOf(goal, views);
   const finished = ending.ending === 'done';
-  const latest = (work) => runsOf(views, work).at(-1)?.data;
+  // How a piece's run stood at the end, so a later run doesn't erase it: its last record by then, and the ending that leg came to,
+  // which the stream may bring a moment after the goal's own record.
+  const latest = (work) => {
+    const own = runsOf(views, work);
+    const at = own.findLastIndex((r) => Date.parse(r.at) <= end);
+    return own[at]?.data?.state === 'ended' ? own[at].data : own[at + 1]?.data?.state === 'ended' && own[at + 1].data.runId === own[at]?.data?.runId ? own[at + 1].data : own[at]?.data;
+  };
 
   const { last, failed, unrun, walked } = lastCheckOf(goal, views);
   const after = last !== null && Date.parse(last.at) > end;
   const checkedAgain = after ? lastCheckHolds(views.goalChecks, { id: goal.id, hash: goal.hash, head: last.head }) : null;
 
   const spent = spentOf(goal, ending, views, timeZone);
-  const slices = goal.sheet.pieces.map((p) => p.work).filter((work) => !isMerged(views, work)).flatMap((work) => slicesOf(views, work));
+  const slices = goal.sheet.pieces.map((p) => p.work).filter((work) => !isMerged(views, work)).flatMap((work) => slicesOf(goal, views, work));
   const pieces = [...goal.sheet.pieces.map((p) => p.work).filter((work) => isMerged(views, work)).map((work) => nameOf(views, work)), ...slices.map((s) => s.title)];
   const flags = [...new Set(slices.map((s) => s.flag).filter((f) => typeof f === 'string'))];
 
   const stopped = unfinished.filter((work) => latest(work)?.state === 'ended' && latest(work).outcome === 'cancelled');
   const failedPieces = unfinished.filter((work) => latest(work)?.state === 'ended' && latest(work).outcome === 'failed');
   const left = unfinished.filter((work) => !pieceCovered(goal, work, views));
+  const closed = goal.sheet.pieces.map((p) => p.work).filter((work) => !isMerged(views, work) && !unfinished.includes(work));
+  const { works, ...waits } = waitsOf(goal, views, cards);
 
   const report = {
     id: goal.id,
     title: oneLine(goal.sheet.title),
     verdict: {
       ending: ending.ending, time: clockOf(ending.at, timeZone), done: finished, switchOn: finished && unfinished.length > 0,
-      left: finished ? [] : unfinished.map((work) => nameOf(views, work)), stopped: stopped.map((work) => nameOf(views, work)),
+      left: finished ? [] : unfinished.map((work) => nameOf(views, work)), closed: closed.map((work) => nameOf(views, work)), stopped: stopped.map((work) => nameOf(views, work)),
       failed, unrun, said: typeof last?.said === 'string' ? last.said : null, checkedAgain, within: withinOf(goal, ending, spent),
     },
     added: { pieces, flag: flags.length === 1 && slices.length === pieces.length ? flags[0] : null, checks: finished || checkedAgain === true, walked },
-    waits: waitsOf(goal, views, cards),
+    waits,
+    toSettle: new Set([...works, ...(finished ? [] : unfinished)]).size,
     wrong: [
       ...sleepLines(views, start, end, timeZone), ...limitLines(views, start, end), ...retryLines(goal, views, end), ...lostLines(views, start, end),
       ...(typeof ending.words === 'string' ? [ending.words] : []),
@@ -237,6 +283,7 @@ export function goalReportText(report) {
   const opening = [
     `**${goalHeadlineWords(title, verdict)}** ${goalLineWords(verdict.ending, verdict.time, verdict.within)}`,
     ...(verdict.left.length > 0 ? [leftUndoneWords(verdict.left)] : []),
+    ...(verdict.closed.length > 0 ? [closedPiecesWords(verdict.closed)] : []),
     ...(verdict.failed.length > 0 ? [checksFailedWords(verdict.failed)] : []),
     ...(verdict.unrun.length > 0 ? [checksUnrunWords(verdict.unrun)] : []),
     ...(verdict.said !== null ? [verdict.said] : []),
@@ -259,9 +306,6 @@ export function goalReportText(report) {
 // Whether each item in the report is settled: nothing waits, and nothing is left undone.
 export const goalSettled = (report) => report.waits.top.length + report.waits.rest.length === 0 && report.verdict.left.length === 0;
 
-// How many things are still to settle in it.
-const toSettle = (report) => new Set([...report.waits.top.map((c) => c.title), ...report.waits.rest, ...report.verdict.left]).size;
-
 // The report on the goal `id`, or on the latest to end when no goal is in force, or null.
 export function endedReport(views, { id, cards = [], timeZone } = {}) {
   const entry = typeof id === 'string' ? (isPlain(views?.goals) && Object.hasOwn(views.goals, id) ? { id, ...views.goals[id] } : null) : goalInForce(views) === null ? lastEnded(views) : null;
@@ -275,7 +319,7 @@ export function goalOpening(views, { since = null, cards = [], timeZone } = {}) 
   if (report === null) return '';
   const fresh = typeof since !== 'string' || Date.parse(lastEnded(views).ended.at) > Date.parse(since);
   if (fresh) return goalReportText(report);
-  return goalSettled(report) ? '' : goalReportLinkWords(report.title, toSettle(report));
+  return goalSettled(report) ? '' : goalReportLinkWords(report.title, report.toSettle);
 }
 
 // What the Logbook shows: the report, until each item in it is settled.
@@ -289,7 +333,7 @@ export function goalProgress(goal, views) {
   let added = 0;
   let of = 0;
   for (const { work } of goal.sheet.pieces) {
-    const slices = slicesOf(views, work);
+    const slices = slicesOf(goal, views, work);
     const whole = slices.at(-1)?.of ?? 1;
     of += whole;
     added += isMerged(views, work) ? whole : slices.length;
@@ -297,7 +341,7 @@ export function goalProgress(goal, views) {
   return { added, of };
 }
 
-// How much of the goal's spend is gone, in a word, by whichever limit is nearest.
+// How much of the goal's spend is gone, in a word, by whichever limit it can read is nearest.
 export function spendShareWords(meter, allowed) {
   const shares = ['tokens', 'points', 'requests'].filter((key) => typeof meter?.[key] === 'number' && typeof allowed?.[key] === 'number' && allowed[key] > 0).map((key) => meter[key] / allowed[key]);
   return shareWords(shares.length === 0 ? 0 : Math.max(...shares));
@@ -306,7 +350,9 @@ export function spendShareWords(meter, allowed) {
 // The pane's one line for a goal in force. `live` is what the helper keeps of it ({ state, meter }), or null.
 export function goalPaneLine({ goal, views, live = null, now }) {
   const meter = isPlain(live?.meter) ? live.meter : null;
-  const spend = meter === null ? 'its spend not read yet' : meter.unknown === true ? 'its spend unknown' : `${spendShareWords(meter, goal.sheet.spend)} of its spend used`;
+  const { spend: allowed } = goal.sheet;
+  const unread = ['points', 'requests'].some((key) => allowed[key] !== undefined && typeof meter?.[key] !== 'number');
+  const spend = meter === null ? 'its spend not read yet' : meter.unknown === true ? 'its spend unknown' : `${spendShareWords(meter, allowed)} of its ${unread ? 'tokens' : 'spend'} used`;
   return goalPaneWords({ ...goalProgress(goal, views), state: live?.state, msLeft: Date.parse(goal.sheet.until) - now.getTime(), spend });
 }
 

@@ -190,6 +190,18 @@ test('in Copilot mode no hook reads the keys folder or writes under the Wheelhou
   });
 });
 
+test('a Copilot session start gives a goal\'s report, which has no briefing of the hook\'s to come by', async () => {
+  const { goal, views } = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '../../fixtures/goal-report/views.json'), 'utf8'));
+  const c = await computer();
+  await as(c.home, async () => {
+    const h = helper();
+    h.client.state.views = async () => ({ ok: true, views: { ...views, goals: { [goal.id]: goal } } });
+    const start = await entry('sessionStart', { sessionId: 's1', timestamp: 0, cwd: c.folder, source: 'new' }, c, { client: h.client, helperUp: true });
+    assert.match(body(start).additionalContext, /Customers can export their orders has ended/);
+    assert.match(body(start).additionalContext, /\*\*Waits for you \(1\):\*\*/);
+  });
+});
+
 test('with no helper a Copilot write is refused and a read is let through', async () => {
   assert.equal(HELPER_PROBE_MS, 2000);
   const c = await computer();

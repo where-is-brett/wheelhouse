@@ -17,7 +17,7 @@ const EMERGENCY_KINDS = ['lift-stop', 'lift-incident', 'incident-fix', 'runbook'
 
 // The open question an answer card asks, from its set line and the build loop's questions view,
 // or null when the card isn't an answer card or its question is answered or unknown.
-export function openQuestionOf(card, views) {
+function openQuestionOf(card, views) {
   if (card?.data?.kind !== 'answer' || !isRecord(views?.questions)) return null;
   const id = new RegExp(`^Answer question (${QUESTION_ID})$`).exec(String(card.data.line ?? ''))?.[1];
   const entry = id === undefined ? undefined : views.questions[id];

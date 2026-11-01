@@ -1,4 +1,4 @@
-**Customers can export their orders has ended: it stopped getting anywhere.** Ended at 4:40 PM, inside its time and spend. Left undone: File format and Large orders.
+**Customers can export their orders has ended: it stopped getting anywhere.** Ended at 4:40 PM. Left undone: File format and Large orders.
 
 **Added (1):** Export button.
 

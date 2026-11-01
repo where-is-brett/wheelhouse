@@ -306,7 +306,7 @@ test('the briefing opens with the whole report once, then a line until each item
   const left = viewsOf({ reports: merged('a'), goals: { orders: goalOf({ ending: 'stuck' }) } });
   assert.match(goalOpening(left, {}), /^\*\*Customers can export/);
   assert.match(goalOpening(left, { since: '2026-11-01T12:00:00.000Z' }), /^\*\*Customers can export/);
-  assert.equal(goalOpening(left, { since: '2026-11-01T17:00:00.000Z' }), 'The report on Customers can export their orders stays on the Logbook, with 3 things still to settle. Ask for it to read it again.');
+  assert.equal(goalOpening(left, { since: '2026-11-01T17:00:00.000Z' }), 'The report on Customers can export their orders stays on the Logbook, with 3 things still to settle.');
   const settled = viewsOf({ reports: merged('a', 'b', 'c', 'd'), goals: { orders: goalOf() } });
   assert.equal(goalOpening(settled, { since: '2026-11-01T17:00:00.000Z' }), '');
   assert.equal(goalOpening(viewsOf(), {}), '');
@@ -315,6 +315,113 @@ test('the briefing opens with the whole report once, then a line until each item
 test('the Logbook keeps the report until each item is settled', () => {
   assert.match(goalLogbook(viewsOf({ reports: merged('a'), goals: { orders: goalOf({ ending: 'stuck' }) } })), /Left undone/);
   assert.equal(goalLogbook(viewsOf({ reports: merged('a', 'b', 'c', 'd'), goals: { orders: goalOf() } })), '');
+});
+
+test('a piece paused at its approval is under Waits, though its card names only a pull request', () => {
+  const run = (work, state, at) => ({ at, data: { work, lane: 'quick', engine: 'archon', runId: `r-${work}`, state } });
+  const views = viewsOf({
+    reports: merged('a', 'b', 'c'),
+    runs: { d: [run('d', 'started', '2026-11-01T10:00:00.000Z'), run('d', 'paused', '2026-11-01T11:00:00.000Z')] },
+    asks: { d: [{ at: '2026-11-01T11:00:00.000Z', data: { work: 'd', runId: 'r-d', kind: 'approval', level: 3 } }] },
+    waiting: [{ id: 'c1', at: '2026-11-01T11:00:01.000Z', asked: null, data: { kind: 'approval', title: 'Pull request #30 changes the page', line: 'Approve pull request #30 at commit abcdef123456', level: 3 } }],
+  });
+  const report = reportOf(goalOf({ ending: 'waiting-for-you' }), views);
+  assert.deepEqual(report.waits.top.map((c) => c.title), ['Download page is built and waits for your approval.']);
+  assert.equal(goalSettled(report), false);
+  assert.deepEqual(report.added.pieces, ['Export button', 'File format', 'Large orders']);
+});
+
+test('a feature paused at its switch-on leaves a Done report unsettled, and its piece named', () => {
+  const feature = data('f', 'Order export', 'feature');
+  const sheet = sheetOf({ pieces: [{ work: 'f', hash: dataHash(feature) }] });
+  const run = (state, at) => ({ at, data: { work: 'f', lane: 'feature', engine: 'archon', runId: 'r-f', state } });
+  const views = viewsOf({
+    work: { f: { work: { at: START, data: feature } } },
+    runs: { f: [run('started', '2026-11-01T10:00:00.000Z'), run('paused', '2026-11-01T16:00:00.000Z')] },
+    asks: { f: [{ at: '2026-11-01T16:00:00.000Z', data: { work: 'f', runId: 'r-f', kind: 'approval', level: 3 } }] },
+  });
+  const report = reportOf(goalOf({ sheet }), views);
+  assert.deepEqual(report.waits.top.map((c) => c.title), ['Switch on Order export, once you\'ve looked.']);
+  assert.equal(goalSettled(report), false);
+});
+
+test('a run parked at a limit waits on no one', () => {
+  const run = (state, at) => ({ at, data: { work: 'b', lane: 'quick', engine: 'archon', runId: 'r-b', state } });
+  const views = viewsOf({
+    runs: { b: [run('started', '2026-11-01T10:00:00.000Z'), run('paused', '2026-11-01T11:00:00.000Z')] },
+    asks: { b: [{ at: '2026-11-01T11:00:00.000Z', data: { work: 'b', runId: 'r-b', kind: 'usage-limit', level: 1 } }] },
+  });
+  assert.deepEqual(reportOf(goalOf({ ending: 'time' }), views).waits, { top: [], rest: [] });
+});
+
+test('a piece closed without being added is named', () => {
+  const views = viewsOf({ reports: { ...merged('a', 'b', 'c'), d: { at: '2026-11-01T15:00:00.000Z', data: { work: 'd', outcome: 'closed' } } } });
+  const report = reportOf(goalOf({ ending: 'stuck' }), views);
+  assert.deepEqual(report.verdict.closed, ['Download page']);
+  assert.ok(goalReportText(report).includes('Closed without being added: Download page.'));
+});
+
+test('a limit that couldn\'t be read never reads as inside it', () => {
+  const text = textOf(goalOf({ spent: spentOf({ points: null, readAt: null }) }), viewsOf({ reports: merged('a', 'b', 'c', 'd') }));
+  assert.ok(!text.includes('inside its time and spend'), text);
+  assert.match(text, /inside its time and its token limit; its other limit couldn't be read/);
+  const live = { state: 'running', meter: { tokens: 100000, points: null, requests: null, unknown: false } };
+  const goal = { ...goalOf(), ended: null };
+  assert.match(goalPaneLine({ goal, views: viewsOf(), live, now: new Date(START) }), /a tenth of its tokens used\.$/);
+});
+
+test('a small overspend isn\'t rounded away', () => {
+  assert.match(textOf(goalOf({ spent: spentOf({ points: 33.04 }) }), viewsOf({ reports: merged('a', 'b', 'c', 'd') })), /over its spend/);
+});
+
+test('a slice added before the goal started isn\'t its own', () => {
+  const feature = data('f', 'Order export', 'feature');
+  const sheet = sheetOf({ pieces: [{ work: 'f', hash: dataHash(feature) }] });
+  const slice = (n, at) => ({ at, data: { about: 'engine', work: 'f', words: 'x', slice: { n, of: 2, title: `Slice ${n}`, flag: 'x' } } });
+  const views = viewsOf({ work: { f: { work: { at: START, data: feature } } }, goalNotes: [slice(1, '2026-10-20T10:00:00.000Z'), slice(2, '2026-11-01T10:00:00.000Z')] });
+  assert.deepEqual(reportOf(goalOf({ sheet, ending: 'stuck' }), views).added.pieces, ['Slice 2']);
+  assert.deepEqual(goalProgress(goalOf({ sheet }), views), { added: 1, of: 2 });
+});
+
+test('a goal that ended just past its time doesn\'t read as past its spend', () => {
+  const late = goalOf({ ending: 'done', at: '2026-11-01T18:00:03.000Z' });
+  assert.match(textOf(late, viewsOf({ reports: merged('a', 'b', 'c', 'd') })), /past its time, inside its spend/);
+  assert.match(textOf(goalOf({ ending: 'time', at: '2026-11-01T18:00:03.000Z' }), viewsOf()), /Ended at 6:00 PM\. Left undone/);
+});
+
+test('a question behind a blind card is under Waits', () => {
+  const views = viewsOf({
+    questions: Object.fromEntries([question('q-b-1', 'b', 'Which format?')]),
+    waiting: [{ id: 'c1', at: '2026-11-01T12:00:01.000Z', asked: null, data: { kind: 'blind', title: 'Your first pick', line: 'First pick on question q-b-1', level: 3 } }],
+  });
+  assert.equal(reportOf(goalOf({ ending: 'waiting-for-you' }), views).waits.top.length, 1);
+});
+
+test('a run after the end doesn\'t erase what went wrong', () => {
+  const run = (runId, state, at, more = {}) => ({ at, data: { work: 'b', lane: 'quick', engine: 'archon', runId, state, ...more } });
+  const views = viewsOf({ runs: { b: [run('r1', 'started', '2026-11-01T16:00:00.000Z'), run('r1', 'ended', '2026-11-01T16:40:02.000Z', { outcome: 'cancelled' }), run('r2', 'started', '2026-11-02T09:00:00.000Z')] } });
+  assert.deepEqual(reportOf(goalOf({ ending: 'spend' }), views).verdict.stopped, ['File format']);
+});
+
+test('over its tokens with the points inside shows the tokens', () => {
+  const text = textOf(goalOf({ spent: spentOf({ tokens: 1200000, points: 20 }) }), viewsOf({ reports: merged('a', 'b', 'c', 'd') }));
+  assert.match(text, /over its spend/);
+  assert.match(text, /1\.2M tokens, of the 1\.0M tokens you allowed\./);
+  assert.ok(!text.includes('tokens alone'), text);
+});
+
+test('an allowance from before the goal isn\'t its own, and the queue\'s spend counts each run once', () => {
+  const id = areaQuestion('a', 'c'.repeat(40));
+  const [, entry] = question(id, 'a', 'Outside', { options: [{ label: 'Allow this once' }, { label: 'Stop here' }] });
+  const old = viewsOf({ reports: merged('a', 'b', 'c', 'd'), questions: { [id]: { ...entry, answer: { label: 'Allow this once', at: '2026-10-20T12:30:00.000Z' } } } });
+  assert.deepEqual(reportOf(goalOf(), old).wrong, []);
+  const note = { at: '2026-11-01T17:00:00.000Z', data: { about: 'goal-queue-after', goal: 'orders', run: 'q', tokens: 12000, unknown: false } };
+  assert.equal(reportOf(goalOf(), viewsOf({ reports: merged('a', 'b', 'c', 'd'), goalNotes: [note, note] })).spent.afterEnd.tokens, 12000);
+});
+
+test('one question on a piece left undone is one thing to settle', () => {
+  const views = viewsOf({ reports: merged('a', 'c', 'd'), goals: { orders: goalOf({ ending: 'stuck' }) }, questions: Object.fromEntries([question('q-b-1', 'b', 'Which format?')]) });
+  assert.match(goalOpening(views, { since: '2026-11-01T17:00:00.000Z' }), /with 1 thing still to settle/);
 });
 
 test('settled once nothing waits and nothing is left', () => {
@@ -335,7 +442,7 @@ test('the pane line reads as the design has it', () => {
   const sheet = sheetOf();
   const goal = { id: 'orders', sheet, hash: 'h'.repeat(64), startedAt: START, ended: null, endAsked: null };
   const now = new Date('2026-11-01T14:40:00.000Z');
-  const live = { state: 'running', meter: { tokens: 333000, points: null, requests: null, unknown: false } };
+  const live = { state: 'running', meter: { tokens: 333000, points: 11, requests: null, unknown: false } };
   assert.equal(goalPaneLine({ goal, views: viewsOf({ reports: merged('a', 'b') }), live, now }), 'Goal: 2 of 4 added, 3 hours left, a third of its spend used.');
 });
 
