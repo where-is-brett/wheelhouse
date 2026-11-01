@@ -939,21 +939,24 @@ test('the fresh run asking the question the director answered is answered from t
 
 // The merge queue's question about a pull request, as the adapter gives it, and what its record step says it asked.
 const ASKED_HEAD = 'c'.repeat(40);
-const mergeAsk = (id) => ({ type: 'ask', id, kind: 'question', level: 3, recommend: null, card: true, holdsAll: true, mergeQuestion: { pr: 7 }, reason: 'The merge queue won\'t judge pull request #7 by itself.', options: [{ id: 'go', label: 'Merge at ccc' }, { id: 'back', label: 'Return it' }] });
-function mergeSetUp({ stop = false, title = 'Switch on the greeting', lane = 'feature', head = ASKED_HEAD, askedHead = ASKED_HEAD, merge = 'go', signed = true, act, known = true } = {}) {
-  const t = setUp({ recordings: { one: [ev({ type: 'run-started' }), ev(mergeAsk('q9')), ev({ type: 'ask-resolved', id: 'q9' }), ev({ type: 'run-ended', outcome: 'completed' })] }, stop });
-  t.engine.mergeAsked = async () => ({ pr: 7, head: askedHead, merge });
+const mergeAsk = (id) => ({ type: 'ask', id, kind: 'question', level: 3, recommend: null, card: true, holdsAll: true, mergeQuestion: { pr: 7 }, reason: 'The merge queue won\'t judge pull request #7 by itself.', options: [{ id: 'go', label: 'Merge at ccc' }, { id: 'back', label: 'Return it' }, { id: 'leave', label: 'Leave it' }] });
+function mergeSetUp({ stop = false, title = 'Switch on the greeting', lane = 'feature', head = ASKED_HEAD, askedHead = ASKED_HEAD, merge = 'go', park = null, signed = true, act, known = true, handBack, file = null } = {}) {
+  const asked = (id) => [ev({ type: 'run-started' }), ev(mergeAsk(id)), ev({ type: 'ask-resolved', id }), ev({ type: 'run-ended', outcome: 'completed' })];
+  const t = setUp({ recordings: { one: asked('q9'), two: asked('q10') }, stop });
+  t.asked = { head: askedHead };
+  t.engine.mergeAsked = async () => ({ pr: 7, head: t.asked.head, merge, park });
   if (act) t.engine.act = act;
   if (signed) t.views.approvals = { 7: { [head]: { kind: 'approval', data: { pr: 7, commit: head } } } };
   t.ruled = [];
+  t.mergeFile = file ?? path.join(path.dirname(t.runner.file), 'merge.json');
   const runner = engineRunner({
-    engine: t.engine, file: path.join(path.dirname(t.runner.file), 'merge.json'), readViews: () => t.views, write: async (kind, data) => { t.writes.push({ kind, data }); },
+    engine: t.engine, file: t.mergeFile, readViews: () => t.views, write: async (kind, data) => { t.writes.push({ kind, data }); },
     stopped: () => t.world.stop, now: () => t.world.now, settings: () => ({ cardsPerDay: 3 }), workOf: () => (known ? { work: 'merge-queue', lane: 'merge' } : null), titleOf: () => 'the changes waiting to be added',
-    openedOf: (pr) => (pr === 7 ? { lane, work: 'card-81' } : null), prTitleOf: async () => title,
+    openedOf: (pr) => (pr === 7 ? { lane, work: 'card-81' } : null), prTitleOf: async () => title, handBack,
   });
   runner.onMergeRuled(() => t.ruled.push(true));
-  const ask = async () => {
-    const { runId } = t.engine.start({ recording: 'one' });
+  const ask = async (recording = 'one') => {
+    const { runId } = t.engine.start({ recording });
     await runner.onAsk(t.engine.watch('0').events.filter((e) => e.runId === runId && e.type === 'ask').at(-1));
   };
   return { ...t, runner, ask };
@@ -999,6 +1002,245 @@ test('under All stop the approved question waits, and goes back once it is lifte
   t.world.stop = false;
   await t.runner.tick();
   assert.equal(acts(t.engine).length, 1);
+  t.cleanup();
+});
+
+// The merge queue's question where the queue offers to leave the pull request alone.
+const LEAVE = { park: 'leave', signed: false, lane: 'quick' };
+const cardsOf = (t) => t.writes.filter((w) => w.kind === 'card');
+const answers = (t) => acts(t.engine).map((a) => JSON.stringify(a));
+const sign = (t, head = ASKED_HEAD, at = t.world.now.toISOString()) => { t.views.approvals = { ...t.views.approvals, 7: { ...t.views.approvals?.[7], [head]: { kind: 'approval', at, data: { pr: 7, commit: head } } } }; };
+
+test('where park is offered it is taken, with no ruling, and the director\'s card is raised', async () => {
+  const t = mergeSetUp(LEAVE);
+  await t.ask();
+  assert.equal(acts(t.engine).length, 1);
+  assert.match(answers(t)[0], /"choice":"leave"/);
+  assert.equal(t.ruled.length, 0, 'nothing here says the pull request merges');
+  assert.equal(questions(t).length, 0, 'the question is the queue\'s, and it has gone');
+  assert.equal(cardsOf(t).length, 1);
+  assert.match(JSON.stringify(cardsOf(t)[0].data), /approval/);
+  assert.match(JSON.stringify(cardsOf(t)[0].data), /#7/);
+  t.cleanup();
+});
+
+test('the card a park raises holds up nothing, so it keeps to the day\'s budget', async () => {
+  const t = mergeSetUp(LEAVE);
+  const kept = () => JSON.parse(fs.readFileSync(t.mergeFile, 'utf8'));
+  await t.ask();
+  assert.equal(kept().shown.count, 1, 'it counted against the day');
+  t.cleanup();
+});
+
+test('a title that names another number leaves it out of the card, and nothing else stops', async () => {
+  const t = mergeSetUp({ ...LEAVE, title: 'Mends #212 in sign-in' });
+  await t.ask();
+  await t.runner.tick();
+  assert.equal(cardsOf(t).length, 1);
+  assert.match(JSON.stringify(cardsOf(t)[0].data), /#7/);
+  assert.doesNotMatch(JSON.stringify(cardsOf(t)[0].data), /#212/);
+  t.cleanup();
+});
+
+test('an approval from before the park doesn\'t answer the card it raised', async () => {
+  const handed = [];
+  const t = mergeSetUp({ ...LEAVE, handBack: async (args) => { handed.push(args); return { ok: true }; } });
+  sign(t, ASKED_HEAD, '2026-10-01T00:00:00.000Z');
+  await t.ask();
+  await t.runner.tick();
+  assert.equal(handed.length, 0, 'the director hasn\'t seen what the queue is unsure of');
+  assert.equal(cardsOf(t).length, 1);
+  await t.ask('two');
+  assert.match(answers(t)[1], /"choice":"leave"/, 'nor does it answer the queue\'s next ask');
+  sign(t);
+  await t.runner.tick();
+  assert.equal(handed.length, 1);
+  t.cleanup();
+});
+
+test('a tick during a park raises one card', async () => {
+  let let_go;
+  const gate = new Promise((resolve) => { let_go = resolve; });
+  const t = mergeSetUp({ ...LEAVE, act: async () => { await gate; return { ok: true }; } });
+  const asking = t.ask();
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const ticking = t.runner.tick();
+  let_go();
+  await Promise.all([asking, ticking]);
+  assert.equal(cardsOf(t).length, 1);
+  t.cleanup();
+});
+
+test('a parked pull request whose work has gone leaves the record, and its approval sends nothing back', async () => {
+  const replies = [{ ok: false, gone: true }];
+  const handed = [];
+  const t = mergeSetUp({ ...LEAVE, handBack: async (args) => { handed.push(args); return replies.shift(); } });
+  await t.ask();
+  sign(t);
+  await t.runner.tick();
+  await t.runner.tick();
+  assert.equal(handed.length, 1);
+  assert.deepEqual(t.runner.parkedHeads(), {});
+  assert.deepEqual([...t.runner.waitingWork()], []);
+  assert.equal(t.ruled.length, 0);
+  assert.equal(t.writes.filter((w) => w.kind === 'note' && /goes back/.test(w.data.words)).length, 0);
+  t.cleanup();
+});
+
+test('a refused hand-back is said once', async () => {
+  const t = mergeSetUp({ ...LEAVE, handBack: async () => ({ ok: false, refused: 'no record of it' }) });
+  await t.ask();
+  sign(t);
+  await t.runner.tick();
+  await t.runner.tick();
+  assert.equal(t.writes.filter((w) => w.kind === 'note' && /no record of it/.test(w.data.words)).length, 1);
+  t.cleanup();
+});
+
+test('where it isn\'t, the question stays a blocking card', async () => {
+  const t = mergeSetUp({ ...LEAVE, park: null });
+  await t.ask();
+  assert.equal(acts(t.engine).length, 0);
+  assert.equal(questions(t).length, 1);
+  assert.equal(cardsOf(t).length, 0);
+  t.cleanup();
+});
+
+test('a park id the question doesn\'t offer is not taken', async () => {
+  const t = mergeSetUp({ ...LEAVE, park: 'gone' });
+  await t.ask();
+  assert.equal(acts(t.engine).length, 0);
+  assert.equal(questions(t).length, 1);
+  t.cleanup();
+});
+
+test('a park the engine won\'t take, with the run still paused, stays a blocking card', async () => {
+  const t = mergeSetUp({ ...LEAVE, act: async () => ({ ok: false, refused: 'not now' }) });
+  t.engine.inspect = async () => ({ status: 'paused' });
+  await t.ask();
+  assert.equal(questions(t).length, 1);
+  assert.equal(cardsOf(t).length, 0);
+  t.cleanup();
+});
+
+test('a park that couldn\'t be heard is tried again on the next tick, and raises one card', async () => {
+  let up = false;
+  const sent = [];
+  const t = mergeSetUp({ ...LEAVE, act: async (runId, what) => { sent.push(what); return up ? { ok: true } : { ok: false, unreachable: true }; } });
+  await t.ask();
+  assert.equal(cardsOf(t).length, 0);
+  up = true;
+  await t.runner.tick();
+  await t.runner.tick();
+  assert.equal(sent.length, 2);
+  assert.equal(cardsOf(t).length, 1);
+  t.cleanup();
+});
+
+test('a restart between taking the park and raising its card still raises the card', async () => {
+  const t = mergeSetUp({ ...LEAVE, act: async () => ({ ok: false, unreachable: true }) });
+  await t.ask();
+  const again = mergeSetUp({ ...LEAVE, file: t.mergeFile, act: async () => ({ ok: false, refused: 'already answered' }) });
+  again.engine.inspect = async () => ({ status: 'ended' });
+  await again.runner.tick();
+  assert.equal(cardsOf(again).length, 1);
+  assert.equal(questions(again).length, 0);
+  again.cleanup();
+  t.cleanup();
+});
+
+test('under All stop nothing is parked, and the question goes back once it is lifted', async () => {
+  const t = mergeSetUp({ ...LEAVE, stop: true });
+  await t.ask();
+  assert.equal(acts(t.engine).length, 0);
+  assert.equal(cardsOf(t).length, 0);
+  t.world.stop = false;
+  await t.runner.tick();
+  assert.equal(acts(t.engine).length, 1);
+  assert.equal(cardsOf(t).length, 1);
+  t.cleanup();
+});
+
+test('a parked pull request\'s piece waits on the director, and others merge', async () => {
+  const t = mergeSetUp(LEAVE);
+  await t.ask();
+  assert.deepEqual([...t.runner.waitingWork()], ['card-81']);
+  assert.deepEqual(t.runner.parkedHeads(), { 7: ASKED_HEAD }, 'the dispatcher leaves it out of what the queue is due for');
+  sign(t);
+  assert.deepEqual([...t.runner.waitingWork()], [], 'answered, it no longer waits on the director');
+  t.cleanup();
+});
+
+test('a second ask about a pull request parked at that head raises no second card', async () => {
+  const t = mergeSetUp(LEAVE);
+  await t.ask();
+  await t.ask('two');
+  assert.equal(acts(t.engine).length, 2);
+  assert.match(answers(t)[1], /"choice":"leave"/);
+  assert.equal(cardsOf(t).length, 1);
+  t.cleanup();
+});
+
+test('Merge is a signed approval of that head, and the next ask merges on it, in any lane', async () => {
+  const handed = [];
+  const t = mergeSetUp({ ...LEAVE, handBack: async (args) => { handed.push(args); return { ok: true }; } });
+  await t.ask();
+  await t.runner.tick();
+  assert.equal(handed.length, 0, 'no approval, nothing goes back');
+  sign(t);
+  await t.runner.tick();
+  await t.runner.tick();
+  assert.deepEqual(handed, [{ pr: 7 }], 'once');
+  assert.equal(t.ruled.length, 1, 'the queue is due at once');
+  assert.deepEqual(t.runner.parkedHeads(), {}, 'back in the queue');
+  assert.equal(acts(t.engine).length, 1, 'the ended run is sent nothing');
+  await t.ask('two');
+  assert.equal(acts(t.engine).length, 2);
+  assert.match(answers(t)[1], /"choice":"go"/);
+  assert.equal(t.ruled.length, 2);
+  assert.equal(cardsOf(t).length, 1, 'no second card');
+  t.cleanup();
+});
+
+test('a hand-back that has to wait for the queue is tried again, and All stop holds it', async () => {
+  const replies = [{ ok: false, waiting: true }, { ok: true }];
+  const handed = [];
+  const t = mergeSetUp({ ...LEAVE, handBack: async (args) => { handed.push(args); return replies.shift(); } });
+  await t.ask();
+  sign(t);
+  t.world.stop = true;
+  await t.runner.tick();
+  assert.equal(handed.length, 0);
+  assert.equal(t.writes.filter((w) => w.kind === 'note' && /All stop/.test(w.data.words)).length, 0, 'a signed approval outlasts All stop');
+  t.world.stop = false;
+  await t.runner.tick();
+  await t.runner.tick();
+  assert.equal(handed.length, 2);
+  assert.equal(t.ruled.length, 1);
+  t.cleanup();
+});
+
+test('a new head isn\'t covered by that approval', async () => {
+  const t = mergeSetUp({ ...LEAVE, handBack: async () => ({ ok: true }) });
+  await t.ask();
+  sign(t);
+  await t.runner.tick();
+  t.asked.head = 'd'.repeat(40);
+  await t.ask('two');
+  assert.equal(acts(t.engine).length, 2);
+  assert.match(answers(t)[1], /"choice":"leave"/, 'left alone again, not merged');
+  assert.equal(cardsOf(t).length, 2, 'a card for the new head');
+  assert.deepEqual(t.runner.parkedHeads(), { 7: 'd'.repeat(40) });
+  t.cleanup();
+});
+
+test('a card for a head that moved on no longer counts as the piece waiting', async () => {
+  const t = mergeSetUp(LEAVE);
+  await t.ask();
+  t.asked.head = 'd'.repeat(40);
+  await t.ask('two');
+  sign(t, 'd'.repeat(40));
+  assert.deepEqual([...t.runner.waitingWork()], []);
   t.cleanup();
 });
 

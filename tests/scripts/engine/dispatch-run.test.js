@@ -532,3 +532,83 @@ test('the tick still gives dispatch no waiting and no reservations', async () =>
   assert.deepEqual([start, hold], [[], []], 'three paused runs keep their places until the wiring');
   assert.deepEqual(t.d.reserved().a, ['one.js', 'built.js']);
 });
+
+// A project on a host with pull request 7 ready, and the queue due.
+function queueSetUp({ parked = {}, queueRuns, ready = { work: 'card-7', head: 'a'.repeat(40), runId: 'r7' }, reports = {}, prState = null } = {}) {
+  const dir = tempFolder('wh-dr-');
+  const engine = fakeEngine();
+  if (queueRuns) engine.queueRuns = queueRuns;
+  const seen = { ready };
+  const entry = { work: { id: 'w-7', at: '2026-10-29T08:00:00.000Z', data: { id: 'card-7', title: 'The sale banner', lane: 'quick', visible: false, dependsOn: [] } } };
+  const d = dispatchRun({
+    engine, project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'), readViews: () => ({ work: { 'card-7': entry }, runs: {}, reports }), config: () => ({ testCommand: 'node --test' }),
+    start: async () => ({ ok: false, refused: 'not here' }), now: () => new Date('2026-10-29T10:00:00.000Z'), isLocal: () => false, prState,
+    readyOf: () => ({ 7: seen.ready }), repoOf: () => ({ host: 'github.com', path: 'o/p' }), repoName: () => 'o/p',
+    queueFolder: async () => ({ ok: true, folder: dir }), queuePlace: () => dir,
+  });
+  d.onParked(() => parked);
+  return { d, engine, dir, seen };
+}
+
+test('a pull request parked at its head doesn\'t make the queue due', async () => {
+  const t = queueSetUp({ parked: { 7: 'a'.repeat(40) } });
+  const got = await t.d.tick();
+  assert.equal(got.startMergeQueue, false);
+  fs.rmSync(t.dir, { recursive: true, force: true });
+});
+
+test('a pull request the queue brought up to date stays left alone, however the heads differ', async () => {
+  const t = queueSetUp({ parked: { 7: 'b'.repeat(40) } });
+  assert.equal((await t.d.tick()).startMergeQueue, false, 'the record of what was readied names an older head');
+  fs.rmSync(t.dir, { recursive: true, force: true });
+});
+
+test('a pull request readied again at a new head is the queue\'s again', async () => {
+  const t = queueSetUp({ parked: { 7: 'a'.repeat(40) } });
+  await t.d.tick();
+  t.seen.ready = { ...t.seen.ready, head: 'c'.repeat(40) };
+  assert.equal((await t.d.tick()).startMergeQueue, true);
+  fs.rmSync(t.dir, { recursive: true, force: true });
+});
+
+test('handBack hands the pull request to the queue again', async () => {
+  const t = queueSetUp();
+  assert.deepEqual(await t.d.handBack({ pr: 7, head: 'a'.repeat(40) }), { ok: true });
+  const { item } = t.engine.calls.find((c) => c.call === 'handOver');
+  assert.equal(item.project, t.dir);
+  assert.equal(item.repo, 'o/p');
+  assert.equal(item.pr, 7);
+  assert.equal(item.url, 'https://github.com/o/p/pull/7');
+  assert.equal(item.runId, 'r7');
+  fs.rmSync(t.dir, { recursive: true, force: true });
+});
+
+test('handBack waits while a queue run is live, whoever started it, so its claim isn\'t written over', async () => {
+  const t = queueSetUp({ queueRuns: async () => ['theirs'] });
+  assert.deepEqual(await t.d.handBack({ pr: 7, head: 'a'.repeat(40) }), { ok: false, waiting: true });
+  assert.equal(t.engine.calls.filter((c) => c.call === 'handOver').length, 0);
+  fs.rmSync(t.dir, { recursive: true, force: true });
+});
+
+test('handBack takes the head the queue asked about, though the record of what was readied is older', async () => {
+  const t = queueSetUp();
+  assert.deepEqual(await t.d.handBack({ pr: 7, head: 'b'.repeat(40) }), { ok: true });
+  fs.rmSync(t.dir, { recursive: true, force: true });
+});
+
+test('handBack hands nothing over for work the director stopped, or a pull request closed or merged', async () => {
+  for (const over of [{ reports: { 'card-7': { at: '2026-10-29T09:00:00.000Z', data: { work: 'card-7', outcome: 'closed' } } } }, { prState: async () => 'closed' }, { prState: async () => 'merged' }]) {
+    const t = queueSetUp(over);
+    assert.deepEqual(await t.d.handBack({ pr: 7, head: 'a'.repeat(40) }), { ok: false, gone: true }, JSON.stringify(Object.keys(over)));
+    assert.equal(t.engine.calls.filter((c) => c.call === 'handOver').length, 0);
+    fs.rmSync(t.dir, { recursive: true, force: true });
+  }
+});
+
+test('handBack says so when nothing records the pull request as ready', async () => {
+  const t = queueSetUp({ ready: null });
+  const got = await t.d.handBack({ pr: 7, head: 'a'.repeat(40) });
+  assert.equal(got.ok, false);
+  assert.ok(got.refused);
+  fs.rmSync(t.dir, { recursive: true, force: true });
+});

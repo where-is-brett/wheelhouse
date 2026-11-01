@@ -15,6 +15,14 @@ export function mergeQuestionWords(pr, title) {
   return `The merge queue won't judge ${named} by itself (it changes a schema, permissions or something the rules keep for a person).`;
 }
 
+// The card for a pull request the merge queue has left alone. It stays out of the queue until the director approves its
+// commit: the queue asks about it again only when handed it again, so nothing here promises a question.
+export const parkedWords = (reason) => `${reason} The merge queue has left it and gone on with the others.`;
+export const PARKED_WHY = 'Only you can say whether this goes in, at level 3.';
+export const PARKED_BECAUSE = 'the merge queue can\'t judge it, so what it does is yours to weigh';
+export const PARKED_MEANWHILE = 'Nothing of it is added until you approve this commit, and other work carries on. A new commit needs your approval again.';
+export const PARKED_APPROVE_SAYS = 'It approves this commit, and the change goes back to the merge queue to be added.';
+
 // The line for the cards past the day's budget, and the button that shows them.
 export const heldBackWords = (n) => `${n} more waiting.`;
 export const SHOW_THEM = 'Show them';

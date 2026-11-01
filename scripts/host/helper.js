@@ -5140,6 +5140,7 @@ export async function startHelper({
       designOf: (work) => (typeof folder === 'string' ? approvedDocument({ checkout: folder, views: views(), work }) : null),
       orderOf: (runId) => orderStore(path.join(engineDirOf(stateDir(project)), 'orders')).load(runId),
       repoOf: () => mergeRepoOf(readProject(project)),
+      repoName: () => readProject(project)?.repo,
       openedBy: (runId) => engineRun.openedBy(project, runId),
       queueFolder: () => (queueFolder ?? ownQueueFolder)(project),
       queuePlace: () => queueFolderOf(project),
@@ -5171,9 +5172,11 @@ export async function startHelper({
       keepReviews: (runId) => engineRun.keepTaskReviews(project, runId),
       prTitleOf: async (pr) => (await (await contextFor(project)).adapter().then((adapter) => adapter.prState(pr))).title ?? null,
       release: (work) => dispatcher.release(work),
+      handBack: (args) => dispatcher.handBack(args),
     });
     runner.onStart((args) => dispatcher.startAgain(args));
     dispatcher.onWaiting(() => runner.waitingWork());
+    dispatcher.onParked(() => runner.parkedHeads());
     runner.onMergeRuled(() => dispatcher.queueDue());
     const adapterNow = async () => (await contextFor(project)).adapter();
     const checks = checkRunner({
