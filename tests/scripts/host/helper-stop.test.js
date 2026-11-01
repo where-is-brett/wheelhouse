@@ -83,8 +83,8 @@ async function project() {
   return { remote, home, cleanup: () => { remote.cleanup(); fs.rmSync(home, { recursive: true, force: true }); } };
 }
 
-function record(kind, data) {
-  const event = makeEvent({ kind, data, now: at(1000) });
+function record(kind, data, time = 1000) {
+  const event = makeEvent({ kind, data, now: at(time) });
   const file = path.join(stateDir('o__p'), eventPath(event));
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, `${JSON.stringify(event, null, 2)}\n`);
@@ -451,11 +451,8 @@ test("the desk's All stop cancels every run, ends what the cancel left and names
       record('run', { work: 'card-11', lane: 'quick', engine: 'fake', runId: 'run-over', state: 'ended', branch: 'wh/card-11' });
       // engineRunsGoing goes by runLive: an ended run counts again once a resume follows it.
       record('run', { work: 'card-14', lane: 'quick', engine: 'fake', runId: 'run-back', state: 'started', branch: 'wh/card-14' });
-      await new Promise((resolve) => setTimeout(resolve, 5));
-      record('run', { work: 'card-14', lane: 'quick', engine: 'fake', runId: 'run-back', state: 'ended', outcome: 'failed', failure: 'connection', branch: 'wh/card-14' });
-      // The record goes by time, so its records need times of their own.
-      await new Promise((resolve) => setTimeout(resolve, 5));
-      record('run', { work: 'card-14', lane: 'quick', engine: 'fake', runId: 'run-back', state: 'started', resume: 1, branch: 'wh/card-14' });
+      record('run', { work: 'card-14', lane: 'quick', engine: 'fake', runId: 'run-back', state: 'ended', outcome: 'failed', failure: 'connection', branch: 'wh/card-14' }, 1001);
+      record('run', { work: 'card-14', lane: 'quick', engine: 'fake', runId: 'run-back', state: 'started', resume: 1, branch: 'wh/card-14' }, 1002);
       await withHelper(fakeAdapter(), async (client) => {
         await until(() => runs().filter((e) => e.data.state === 'started').length >= 5 && children.length === 1, { what: 'both runs recorded and the wake process' });
         const asked = await client.desk.act({ v: 'desk/1', project: 'o__p', command: 'all-stop', args: { by: 'mod' } });
