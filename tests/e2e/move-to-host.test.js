@@ -145,6 +145,8 @@ test('a project moves with an open change intact, and its next merge goes throug
     await helper.engine.tick();
     return records('check').some((e) => e.data.commit === head);
   }, { what: 'the check of the change', within: 30000 });
+  // The run stops at its finished change on its own time: the engine's events reach the record apart from any tick.
+  await until(() => records('run').some((e) => e.data.runId === runId && e.data.state === 'paused'), { what: 'the run to stop at its change', within: 30000 });
   const marked = JSON.parse(fs.readFileSync(verdictsFile(), 'utf8'));
   fs.writeFileSync(verdictsFile(), `${JSON.stringify({ ...marked, ready: { ...marked.ready, [n]: { head, runId, showFirst: false, work: 'card-1' } } }, null, 2)}\n`);
   const was = await headOf(homeDir(P), 'refs/heads/main');
@@ -191,8 +193,8 @@ test('a project moves with an open change intact, and its next merge goes throug
 
 test('a move waits for a run that is going, holds new work, and goes once the run has stopped', { timeout: 120000 }, () => moved(async (world) => {
   const { helper, client, folder } = world;
-  const started = await helper.engine.start({ project: P, order: orderOf('card-2') });
-  assert.equal(started.ok, true, started.refused);
+  const going = { work: 'card-2', lane: 'quick', engine: 'fake', runId: 'run-at-work' };
+  keepEvent(makeEvent({ kind: 'run', data: { ...going, state: 'started' } }));
   await move(world);
   assert.equal(readProject(P).host, 'local');
   const refused = await helper.engine.start({ project: P, order: orderOf('card-3') });
@@ -200,7 +202,7 @@ test('a move waits for a run that is going, holds new work, and goes once the ru
   assert.match(refused.refused, /moving to a host/);
   const pushed = await client.push({ project: P, dir: folder, refspec: 'main' }).catch((error) => ({ refused: error.message }));
   assert.equal(pushed.ok, false, JSON.stringify(pushed));
-  keepEvent(makeEvent({ kind: 'run', data: { work: 'card-2', lane: 'quick', engine: 'fake', runId: started.runId, state: 'ended' } }));
+  keepEvent(makeEvent({ kind: 'run', data: { ...going, state: 'ended' } }));
   await helper.move.tick();
   assert.equal(readProject(P).host, 'github');
 }));
