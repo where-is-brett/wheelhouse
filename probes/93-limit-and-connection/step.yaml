@@ -1,0 +1,27 @@
+# probes/93-limit-and-connection/step.yaml
+# Check 93: a shell step, a cheap model step that needs two turns, and a shell step. Installed as `u4-step`. Each step
+# adds to ran.log in the artefacts folder, so a resume that repeats a finished step shows there. The first step leaves
+# a stand-in for the run's ticket, and the last reads it back after the resume.
+name: u4-step
+description: Shell, a cheap model step with one tool call, shell
+nodes:
+  - id: step-one
+    bash: |
+      echo "step-one ran" >> "$ARTIFACTS_DIR/ran.log"
+      echo "$ARTIFACTS_DIR" > artefacts-path.txt
+      echo probe > "$ARTIFACTS_DIR/.wheelhouse-ticket"
+      date +%s%N > step-one-stamp.txt
+  - id: think
+    depends_on: [step-one]
+    model: small
+    settingSources: []
+    allowed_tools: [Bash]
+    maxBudgetUsd: 0.2
+    prompt: |
+      Run exactly this one Bash command: echo made >> think-ran.txt
+      Then reply with the single word ok. Do nothing else.
+  - id: step-three
+    depends_on: [think]
+    bash: |
+      echo "step-three ran" >> "$ARTIFACTS_DIR/ran.log"
+      cat "$ARTIFACTS_DIR/.wheelhouse-ticket" > ticket-read.txt
