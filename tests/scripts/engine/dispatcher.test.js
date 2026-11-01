@@ -313,3 +313,134 @@ test('the director\'s pace holds, however far the settings are read down', () =>
   assert.equal(dispatch(base({ work, settings: { engineLanes: ['quick'], pace: { value: 2 } } })).start.length, 2);
   assert.equal(dispatch(base({ work, settings: { engineLanes: ['quick'], pace: 9 } })).start.length, 3);
 });
+
+// Delegated decisions design, section 8.3: returning work and `admit`.
+const back = (id, { lane = 'quick', via = 'answer', at = '2026-10-29T11:00:00.000Z' } = {}) => ({ work: id, lane, via, at });
+const paceOf = (value) => ({ engineLanes: ['quick', 'bug', 'feature'], pace: { value } });
+const FEATURE = { lane: 'feature', approved: true };
+
+test('a piece on returning doesn\'t count against its own return', () => {
+  const work = Object.fromEntries([piece('a')]);
+  const got = dispatch(base({ settings: paceOf(1), work, runs: { a: [runOf('a', 'paused')] }, returning: [back('a')] }));
+  assert.deepEqual(got.admit, [{ work: 'a', via: 'answer' }]);
+});
+
+test('a feature\'s own slice entry doesn\'t fill the place it asks for', () => {
+  for (const value of [1, 3]) {
+    const work = Object.fromEntries([piece('f', FEATURE)]);
+    const runs = { f: [runOf('f', 'ended', { lane: 'slice', outcome: 'completed' })] };
+    const got = dispatch(base({ settings: paceOf(value), work, runs, returning: [back('f', { lane: 'feature', via: 'slice' })] }));
+    assert.deepEqual(got.admit, [{ work: 'f', via: 'slice' }], `pace ${value}`);
+  }
+});
+
+test('an admitted piece counts once, and holds its place on the next tick', () => {
+  const work = Object.fromEntries([piece('a'), piece('b'), piece('c')]);
+  const runs = { a: [runOf('a', 'paused')], b: [runOf('b', 'paused')] };
+  const got = dispatch(base({ settings: paceOf(1), work, runs, admitted: [back('a'), back('a')], returning: [back('b')] }));
+  assert.deepEqual(got.admit, []);
+  assert.deepEqual(got.start, []);
+  assert.deepEqual(got.hold, [{ work: 'c', why: 'pace' }]);
+});
+
+test('returning work goes first, oldest answer first, ahead of work not yet started', () => {
+  const work = Object.fromEntries([piece('a'), piece('b'), piece('c'), piece('new', { place: 0 })]);
+  const runs = { a: [runOf('a', 'paused')], b: [runOf('b', 'paused')], c: [runOf('c', 'paused')] };
+  const got = dispatch(base({ settings: paceOf(2), work, runs, returning: [back('a', { at: '2026-10-29T11:30:00.000Z' }), back('b', { at: '2026-10-29T11:10:00.000Z' }), back('c', { at: '2026-10-29T11:20:00.000Z' })] }));
+  assert.deepEqual(got.admit.map((a) => a.work), ['b', 'c']);
+  assert.deepEqual(got.hold, [{ work: 'new', why: 'pace' }]);
+});
+
+test('a place short: the rest stay on returning, and nothing is refused', () => {
+  const work = Object.fromEntries([piece('a'), piece('b'), piece('busy')]);
+  const runs = { a: [runOf('a', 'paused')], b: [runOf('b', 'paused')], busy: [runOf('busy', 'started')] };
+  const got = dispatch(base({ settings: paceOf(1), work, runs, returning: [back('a'), back('b')] }));
+  assert.deepEqual(got.admit, []);
+  assert.deepEqual(got.hold, []);
+});
+
+test('two returning pieces never hold each other by files', () => {
+  const work = Object.fromEntries([piece('a', { files: ['x.js'] }), piece('b', { files: ['x.js'] }), piece('new', { files: ['x.js'] })]);
+  const runs = { a: [runOf('a', 'paused')], b: [runOf('b', 'paused')] };
+  const got = dispatch(base({ work, runs, returning: [back('a'), back('b')] }));
+  assert.deepEqual(got.admit.map((a) => a.work), ['a', 'b']);
+  assert.deepEqual(got.hold, [{ work: 'new', why: 'clash', by: ['a', 'b'] }], 'a piece on its way back keeps its files against new work');
+});
+
+test('nothing is admitted under All stop or an incident', () => {
+  const work = Object.fromEntries([piece('a')]);
+  const runs = { a: [runOf('a', 'paused')] };
+  assert.deepEqual(dispatch(base({ work, runs, stop: true, returning: [back('a')] })).admit, []);
+  assert.deepEqual(dispatch(base({ work, runs, incident: true, returning: [back('a')] })).admit, []);
+});
+
+test('a returning feature waits for the feature place, and takes it when the builder parks', () => {
+  const work = Object.fromEntries([piece('old', FEATURE), piece('builder', FEATURE)]);
+  const runs = { old: [runOf('old', 'paused')], builder: [runOf('builder', 'started')] };
+  const returning = [back('old', { lane: 'feature' })];
+  assert.deepEqual(dispatch(base({ work, runs, returning })).admit, []);
+  const parkedRuns = { ...runs, builder: [runOf('builder', 'paused')] };
+  assert.deepEqual(dispatch(base({ work, runs: parkedRuns, returning, waiting: ['builder'] })).admit, [{ work: 'old', via: 'answer' }]);
+});
+
+test('at a slice boundary an answered feature that waited longer takes the turn', () => {
+  const work = Object.fromEntries([piece('answered', FEATURE), piece('builder', FEATURE)]);
+  const runs = { answered: [runOf('answered', 'paused')], builder: [runOf('builder', 'ended', { outcome: 'completed' })] };
+  const got = dispatch(base({ work, runs, returning: [
+    back('builder', { lane: 'feature', via: 'slice', at: '2026-10-29T11:30:00.000Z' }),
+    back('answered', { lane: 'feature', at: '2026-10-29T11:00:00.000Z' }),
+  ] }));
+  assert.deepEqual(got.admit, [{ work: 'answered', via: 'answer' }]);
+});
+
+test('work not yet started never takes the feature place at a slice boundary', () => {
+  const work = Object.fromEntries([piece('builder', FEATURE), piece('new', FEATURE)]);
+  const runs = { builder: [runOf('builder', 'ended', { outcome: 'completed' })] };
+  const got = dispatch(base({ settings: paceOf(2), work, runs, admitted: [back('x'), back('y')], returning: [back('builder', { lane: 'feature', via: 'slice' })] }));
+  assert.deepEqual(got.admit, [], 'pace is full');
+  assert.deepEqual(got.start, [], 'a feature between slices still holds its place against new work');
+  assert.deepEqual(got.hold, [{ work: 'new', why: 'pace' }]);
+});
+
+test('an unadmitted answer gave its place up, so new work may take it', () => {
+  const work = Object.fromEntries([piece('answered', FEATURE), piece('builder', FEATURE), piece('new')]);
+  const runs = { answered: [runOf('answered', 'paused')], builder: [runOf('builder', 'started')] };
+  const got = dispatch(base({ work, runs, returning: [back('answered', { lane: 'feature' })] }));
+  assert.deepEqual(got.admit, [], 'the feature place is taken');
+  assert.deepEqual(got.start.map((s) => s.work), ['new']);
+});
+
+test('a requeue with no place stays for the next tick', () => {
+  const work = Object.fromEntries([piece('a'), piece('busy')]);
+  const runs = { a: [runOf('a', 'ended', { outcome: 'completed', branch: 'wh/a' })], busy: [runOf('busy', 'started')] };
+  const sentBack = [{ work: 'a', times: 1 }];
+  assert.deepEqual(dispatch(base({ settings: paceOf(1), work, runs, sentBack })).requeue, []);
+  const free = { ...runs, busy: [runOf('busy', 'ended', { outcome: 'completed' })] };
+  assert.deepEqual(dispatch(base({ settings: paceOf(1), work, runs: free, sentBack })).requeue, [{ work: 'a', lane: 'quick', branch: 'wh/a' }]);
+});
+
+test('returning work counts towards the parked limit, and is held by it never', () => {
+  const ids = ['a', 'b', 'c', 'd', 'e', 'f'];
+  const work = Object.fromEntries([...ids.map((id) => piece(id)), piece('new')]);
+  const runs = Object.fromEntries(ids.map((id) => [id, [runOf(id, 'paused')]]));
+  const got = dispatch(base({ settings: paceOf(1), work, runs, waiting: ['a', 'b'], returning: [back('c'), back('d'), back('e'), back('f')] }));
+  assert.deepEqual(got.admit.map((a) => a.work), ['c']);
+  assert.equal(got.hold.at(-1).work, 'new');
+  const roomy = dispatch(base({ settings: paceOf(3), work, runs, waiting: ['a', 'b'], returning: [back('c'), back('d'), back('e'), back('f')] }));
+  assert.deepEqual(roomy.admit.map((a) => a.work), ['c', 'd', 'e']);
+  assert.deepEqual(roomy.hold, [{ work: 'new', why: 'pace' }]);
+});
+
+test('work on its way back is neither queued nor sent back twice', () => {
+  const work = Object.fromEntries([piece('a')]);
+  const got = dispatch(base({ work, returning: [back('a')], sentBack: [{ work: 'a', times: 1 }] }));
+  assert.deepEqual(got.start, []);
+  assert.deepEqual(got.requeue, []);
+  assert.deepEqual(got.admit, [{ work: 'a', via: 'answer' }]);
+});
+
+test('a piece with a new card open stays on returning until it is answered', () => {
+  const work = Object.fromEntries([piece('a')]);
+  const runs = { a: [runOf('a', 'ended', { outcome: 'completed' })] };
+  assert.deepEqual(dispatch(base({ work, runs, waiting: ['a'], returning: [back('a', { via: 'rework' })] })).admit, []);
+});
