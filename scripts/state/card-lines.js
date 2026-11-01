@@ -23,10 +23,22 @@ export function approvalLine(pr, sha) {
   return `Approve pull request #${pr} at commit ${sha12(sha)}`;
 }
 
+// What a rule says on its card and its confirm line: the director's words, or a clicked label as the literal match it is,
+// and its scope, so a click signs the scope it read.
+function ruleWords({ words, literal, paths, lanes }) {
+  const take = typeof words === 'string' ? words : `When the options are exactly ${[literal?.options].flat().join(', ')}, take ${literal?.take}`;
+  return `${take}. Only in this project, in the ${[lanes].flat().join(', ')} lane, for ${[paths].flat().join(', ')}`;
+}
+
+// The words a confirm line and its card name: a rule's reading, or the event's own words.
+export function confirmWords(event) {
+  if (event?.kind === 'rule' && event.data !== null && typeof event.data === 'object') return ruleWords(event.data);
+  return typeof event?.data?.words === 'string' ? event.data.words : '';
+}
+
 // The line that asks the director to confirm a ruling, a level, a setting or a rule.
 export function confirmLine(event) {
-  const words = typeof event?.data?.words === 'string' ? event.data.words : '';
-  return `Confirm ${event?.kind} ${event?.id}: "${words}"`;
+  return `Confirm ${event?.kind} ${event?.id}: "${confirmWords(event)}"`;
 }
 
 // The line on the Unattended card for build commands on Windows: the click on its

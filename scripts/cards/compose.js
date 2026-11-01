@@ -10,7 +10,7 @@
 // a trust card is composed by the session start, which hands it to the front desk as it is, and
 // uninstall's card by the helper, for setup's playbook to ask as it is.
 import {
-  approvalLine, confirmLine, LIFT_STOP, LIFT_LABEL, runbookLine, ciPushLine, approveWorkLine, answerLine, blindLine, amendLine,
+  approvalLine, confirmLine, confirmWords, LIFT_STOP, LIFT_LABEL, runbookLine, ciPushLine, approveWorkLine, answerLine, blindLine, amendLine,
   liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, takeOverLine, TAKEOVER_LABEL, LEAVE_LABEL, pairLine, PAIR_LABEL, APP_ID, uninstallLine, keepControlLine, usageLine, premiumLine, isLineName, dayOf, replyCode, replyCodeLine, setLineOf, SET_LINES,
   RUNBOOK_TITLES, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, CORRECT_SOME_LABEL, BASELINE_LABEL, BASELINE_HEADER, TRUST_LABEL, UNINSTALL_LABEL, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
@@ -141,9 +141,9 @@ const ASKS = Object.freeze({
 });
 
 // Whether a confirm card's event is a proposal Wheelhouse made, not something the director asked
-// for: a setting or a level carrying `because`, its one-line reason (learning, the delegation review).
-export const isProposal = (event) => isPlain(event) && (event.kind === 'setting' || event.kind === 'level')
-  && typeof event.data?.because === 'string' && event.data.because.trim() !== '';
+// for: a setting or a level carrying `because`, its one-line reason (learning, the delegation review), or a rule.
+export const isProposal = (event) => isPlain(event) && (event.kind === 'rule' || ((event.kind === 'setting' || event.kind === 'level')
+  && typeof event.data?.because === 'string' && event.data.because.trim() !== ''));
 
 const HEX = /^[0-9a-f]{12,64}$/;
 const USAGE_LEVELS = Object.freeze(['lightest', 'lean', 'balanced', 'thorough']);
@@ -194,8 +194,8 @@ function lineFor(kind, target) {
   if (kind === 'confirm') {
     const e = t.event;
     if (!isPlain(e) || !CONFIRMABLE_KINDS.includes(e.kind) || typeof e.id !== 'string' || e.id === '' || /\s/.test(e.id)
-      || !isPlain(e.data) || typeof e.data.words !== 'string' || e.data.words === '' || BREAK.test(e.data.words)) {
-      bad('needs a ruling, level or setting event with an id and its words');
+      || !isPlain(e.data) || confirmWords(e) === '' || BREAK.test(confirmWords(e))) {
+      bad('needs a ruling, level, setting, rule or brief event with an id and its words');
     }
     return confirmLine(e);
   }
@@ -307,7 +307,7 @@ export function whatProblem(kind, what, target, { abbreviated = false } = {}) {
   if (kind === 'approve-work' || kind === 'amend' || kind === 'keep-control-files') need = [nameId(target.work), `the work ${target.work}`];
   if (kind === 'runbook') need = [names(RUNBOOK_TITLES[target.step]), `the step's title, "${RUNBOOK_TITLES[target.step]}"`];
   if (kind === 'ci-push') need = [nameId(target.branch), `the branch ${target.branch}`];
-  if (kind === 'confirm') need = [names(target.event.data.words), `the words being confirmed, "${target.event.data.words}"`];
+  if (kind === 'confirm') need = [names(confirmWords(target.event)), `the words being confirmed, "${confirmWords(target.event)}"`];
   if (kind === 'setup') need = [new RegExp(`\\bstep ${target.step}(?![0-9])`, 'i').test(what), `step ${target.step}`];
   if (kind === 'confirm-all') need = [new RegExp(`(?<![0-9])${target.count} rules?\\b`, 'i').test(what), `how many rules it lists, ${target.count}`];
   if (kind === 'trust') need = [nameId(target.computer), `the computer ${target.computer}`];

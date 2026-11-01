@@ -46,6 +46,8 @@ export const CARD_KINDS = Object.freeze([
 // Labels that ask for more or put a card off: a click on one never answers it.
 // Why? and Suggest a change… only steer the front desk; the director's own words never sign anything.
 export const PUT_OFF = Object.freeze(['Not now', 'Explain more', 'Show me', 'Why?', 'Suggest a change…']);
+// What the card offering a rule asks (delegated decisions design, section 11.1).
+export const OFFER_ASK = 'Same answer for this kind of thing from now on?';
 // The option a confirm card for a proposal offers in place of Show me (ruling F48): it decides the
 // card, signs nothing, and holds the proposal back for a while.
 export const KEEP_AS_IS = 'Keep as is';
