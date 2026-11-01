@@ -620,9 +620,10 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   const revised = revisedBy(sorted);
   const handedOut = sorted.filter((e) => e.kind === 'asked' && Array.isArray(e.data?.cards));
   const outcomes = outcomesOf(sorted, { confirmations: closing, answeredBy, lean });
-  // What the director took on a question's blind card, before any recommendation. It answers nothing.
+  // What the director took on a question's blind card, before any recommendation. It answers nothing, and a click on
+  // a card its answer card has replaced is no such thing: they may have seen the recommendation by then.
   for (const { card, decided } of outcomes) {
-    const entry = card.data?.kind === 'blind' && decided !== null ? loop.questions[BLIND_LINE.exec(String(card.data.line))?.[1]] : undefined;
+    const entry = card.data?.kind === 'blind' && decided !== null && !revised(card) ? loop.questions[BLIND_LINE.exec(String(card.data.line))?.[1]] : undefined;
     if (entry !== undefined) entry.firstPick ??= { label: decided.label, at: decided.at, typed: !card.data.options.includes(decided.label) };
   }
   const waiting = [];

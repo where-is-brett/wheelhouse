@@ -2204,6 +2204,9 @@ test('a card that comes to hold up all work drops its blind form', async () => {
     assert.deepEqual(cardWrites(helper).map((c) => c.kind), ['blind', 'answer']);
     assert.deepEqual(helper.views().waiting.map((c) => c.data.kind), ['answer']);
     assert.match(json.questions[0].options[1].description, /^Recommended: /);
+    // A late click on the card it replaced, seen with the recommendation out, is no blind pick.
+    helper.held.push(pickOn(blindWrites(helper)[0], 'Comma', 300));
+    assert.equal(helper.views().questions[BLIND_QUESTION.id].firstPick, undefined);
   });
 });
 
