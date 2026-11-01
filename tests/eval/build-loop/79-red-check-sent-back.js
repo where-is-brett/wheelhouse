@@ -20,8 +20,8 @@ test('the page works here', () => {
 });
 `;
 
-async function judge(world, wait) {
-  const { pr, head } = await world.lane(WORK, { ready: false });
+async function judge(world, wait, { finished = async () => {} } = {}) {
+  const { runId, pr, head } = await world.lane(WORK, { ready: false });
   const told = () => world.host.statuses.filter((s) => s.sha === head).map((s) => s.state);
   if (!await wait(async () => { await world.tick(); return told().includes('failure'); })) return { pass: false, why: `the head was reported ${told().join(', ') || 'nothing'}, never red; its checks read ${JSON.stringify(world.checks().filter((c) => c.commit === head).map((c) => c.result))}` };
   const check = world.checks().filter((c) => c.commit === head).at(-1);
@@ -31,9 +31,11 @@ async function judge(world, wait) {
   const refused = await world.broker(['pr', 'merge', String(pr), '--squash', '--match-head-commit', head]);
   if (refused.code === 0 || !/no passing check/.test(refused.stderr)) return { pass: false, why: `the broker didn't refuse the merge for its check: ${refused.stderr.trim()}` };
   if (world.forwarded.some((call) => call.startsWith('pr merge'))) return { pass: false, why: 'the merge reached the host' };
-  const again = await wait(async () => { await world.tick(); return world.starts().filter((s) => s.order.work === WORK)[1]; });
-  if (!again) return { pass: false, why: 'no fresh run started on the work' };
-  if (typeof again.order.checkTail !== 'string' || again.order.checkTail === '') return { pass: false, why: 'the fresh run\'s order doesn\'t carry the tests\' output' };
+  // A work goes back once its run has ended; a real one ends by itself.
+  await finished(runId);
+  if (!await wait(async () => { await world.tick(); return world.starts().filter((s) => s.order.work === WORK).length > 1; })) return { pass: false, why: 'no fresh run started on the work' };
+  const carried = await wait(() => world.orders().find((o) => o.work === WORK && typeof o.checkTail === 'string' && o.checkTail !== ''));
+  if (!carried) return { pass: false, why: 'the fresh run\'s order doesn\'t carry the tests\' output' };
   if (world.records('question').length > 0) return { pass: false, why: 'a first red came to the director as a card' };
   return { pass: true, why: 'a signed failed check, red reported, the merge refused, and a fresh run with the end of the tests\' output' };
 }
@@ -46,7 +48,7 @@ export default {
     files: { 'where.test.mjs': ONLY_THERE },
     says: ({ page, main }) => (!main && page.includes(EVAL_LINE) ? 'failed' : 'passed'),
     recordings: { [WORK]: [running(WORK), running(WORK)] },
-    play: (world) => judge(world, until),
+    play: (world) => judge(world, until, { finished: (runId) => world.engine.act(runId, { cancel: {} }) }),
     real: (world, { until: wait }) => judge(world, wait),
   },
   variants: { with: {} },
