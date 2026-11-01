@@ -10,6 +10,9 @@ export const PARKED_TIMES = 2;
 export const OFFER_SITTING = 1;
 export const OFFER_AGAIN_DAYS = 30;
 export const RULE_REVIEW_MONTHS = 6;
+// A standing brief: the most examples of right and wrong, and the most of it a confirm card can show.
+export const BRIEF_EXAMPLES_MOST = 3;
+export const BRIEF_WORDS_MOST = 800;
 // The most lines a defect's fix may change and still be small.
 export const SMALL_FIX_LINES = 50;
 // How long a tick of the seals may run before the next may start, and how often a card's facts are tried before it is

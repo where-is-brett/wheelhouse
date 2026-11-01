@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {
   replyCode, replyCodeLine, setLineOf, SET_LINES, CODE_ALPHABET, usageLine, USAGE_LINE, premiumLine, PREMIUM_LINE,
   approvalLine, confirmLine, LIFT_STOP, LIFT_STOP_EARLIER, LIFT_LABEL, LIFT_LABELS, isLiftStopLine, runbookLine, ciPushLine,
-  approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, dayOf, TRUST_LINE, takeOverLine, TAKEOVER_LINE, pairLine, unpairLine,
+  approveWorkLine, answerLine, blindLine, amendLine, liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, dayOf, TRUST_LINE, takeOverLine, TAKEOVER_LINE, pairLine, unpairLine,
   uninstallLine, UNINSTALL_LINE, UNINSTALL_LABEL, isLineName, keepControlLine, chatCopy,
 } from '../../../scripts/state/card-lines.js';
 
@@ -78,7 +78,7 @@ test('each line the build loop writes is found by setLineOf, and matches exactly
   }
   // Every set line pattern is used by a line function's output.
   const all = [
-    ...BUILD_LINES, approvalLine(12, FULL), confirmLine({ kind: 'ruling', id: 'x', data: { words: 'w' } }),
+    ...BUILD_LINES, blindLine('q-export-csv-1'), approvalLine(12, FULL), confirmLine({ kind: 'ruling', id: 'x', data: { words: 'w' } }),
     LIFT_STOP, ciPushLine('main', FULL), runbookLine(1), setupLine(10, FULL), confirmAllLine(FULL, 3), baselineLine(FULL),
     trustLine('0a1b2c3d', '2026-10-19T22:30:00.000Z', FULL), takeOverLine('0a1b2c3d', 4), pairLine('phone-app', FULL), unpairLine('phone-app', FULL), uninstallLine('o__Cafe-Menu', FULL),
     usageLine('lean', '2026-10-26T01:00:00.000Z'), premiumLine('2026-10-26T01:00:00.000Z'),

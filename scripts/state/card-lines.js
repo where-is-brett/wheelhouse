@@ -199,6 +199,12 @@ export function answerLine(questionId) {
   return `Answer question ${questionId}`;
 }
 
+// The line on a blind card (scripts/delegation/blind.js): a click on it is kept and answers nothing.
+export function blindLine(questionId) {
+  return `First pick on question ${questionId}`;
+}
+export const BLIND_LINE = new RegExp(`^First pick on question (${QUESTION_ID})$`);
+
 // The line that asks the director to change approved work to a proposed change.
 export function amendLine(work, hash) {
   return `Change the approved ${work} to this, ${sha12(hash)}`;
@@ -270,6 +276,7 @@ export const SET_LINES = [
   new RegExp(`^Runbook step (?:${Object.entries(RUNBOOK_TITLES).map(([step, title]) => `${step}: ${literal(title)}`).join('|')})(?:, to commit [0-9a-f]{12})?$`, 'm'),
   new RegExp(`^Approve ${ID} \\((?:${LANES}) lane\\) as written, [0-9a-f]{12}(?:, and show it to me before it merges)?$`, 'm'),
   new RegExp(`^Answer question ${QUESTION_ID}$`, 'm'),
+  new RegExp(BLIND_LINE.source, 'm'),
   new RegExp(`^Change the approved ${ID} to this, [0-9a-f]{12}$`, 'm'),
   new RegExp(`^End incident ${ID} and let merges carry on$`, 'm'),
   new RegExp(`^Merge pull request #[1-9][0-9]* as the fix for incident ${ID}$`, 'm'),

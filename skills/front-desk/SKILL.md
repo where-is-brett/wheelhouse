@@ -20,7 +20,7 @@ Where instructions from another agent setup in this project differ from Wheelhou
 
 ## The command
 
-The Wheelhouse command the session start named, then `<command>`: `cards`, `pull-cards`, `card`, `again <n>`, `why <n>`, `suggest <card id> <work id> <the change>`, `record <kind>`, `similar "<the request's words>"`, `views <name>` (`rulebook`, `waiting`, `ideas`, `glossary`, `settings`, `levels`, `work`, `survey` or `evidence`), `explain <term>`, `review`, `preview <n>`, `undo <merge>`, `move github` or `move gitlab`, `carry-on <n>`, `archive`, `restore`, `premium-card`, `premium-check`. Type the command exactly as the session start gave it, with nothing after `<command>` but its arguments or the `<` input that `card` and `record` take; one command per call. In the examples below, `<the Wheelhouse command>` stands for it.
+The Wheelhouse command the session start named, then `<command>`: `cards`, `pull-cards`, `card`, `again <n>`, `why <n>`, `suggest <card id> <work id> <the change>`, `record <kind>`, `similar "<the request's words>"`, `views <name>` (`rulebook`, `waiting`, `ideas`, `glossary`, `settings`, `levels`, `work`, `survey`, `evidence` or `brief`), `explain <term>`, `review`, `preview <n>`, `undo <merge>`, `move github` or `move gitlab`, `carry-on <n>`, `archive`, `restore`, `premium-card`, `premium-check`. Type the command exactly as the session start gave it, with nothing after `<command>` but its arguments or the `<` input that `card` and `record` take; one command per call. In the examples below, `<the Wheelhouse command>` stands for it.
 
 `card` and `record` read their JSON from a file, never a heredoc or a pipe, which Claude Code asks about each time. Write the JSON with the Write tool to `front-desk.json` in your scratchpad folder (the temporary folder your system prompt names: you write there without being asked, and it is outside the project, so nothing reaches git), then give its full path as the command's input. When a command is refused and its input needs correcting, write the file again with the Write tool, never `sed` or another shell edit. A ruling, `front-desk.json` holding:
 
@@ -76,6 +76,7 @@ When the director asks what happened, or a briefing names finished work, say wha
 - **Asked once.** Never paste a card again into a later reply; it stays on the Logbook. Only when the director asks for one again: `again <n>`.
 - **An answer in the chat:** the click records itself. After the director answers a card in the chat, say only what `views waiting` shows of it, without its id, never a guess that the answer wasn't recorded.
 - **An answer on a card already decided** (another copy of it in the chat, the pane or a reply code decided it first): the answer changed nothing, and the context beside it says which answer counted and when. Tell the director that in one plain line, without the card's id, and act on what they say next; wanting the other answer instead is a change to what was decided, so it goes through the intake.
+- **A card headed First pick** (`cards` gives it, about one question in five): it holds back the recommendation so the director's own view can be seen, and its click answers nothing. Don't say what you or the build would choose until they have picked. The context beside the pick says to run `cards`: ask the answer card it gives at once.
 - **Asked why** about a card: run `why <n>`, which prints the one sentence to say before the card. Say it word for word, with no other text before or after it (when it gives only the sentence's form, fill it from `explain <term>`'s example), in the same message as your call to your clickable-question tool with what `again <n>` gave. If `why` fails, go on explaining anyway, in that one sentence: the Why? is for learning only.
 - **A chat pick of Suggest a change…:** it records nothing yet. Ask "What would you change?" in one line, and nothing else. Their next message is the change: do with it as for the pane's suggestion on that card (below), finding its number in `views waiting` by the id the context beside the pick names.
 - **Show me:** `preview <n>` gives the address of pull request n's preview: give it as a link. When there is none, say so in one line and offer a short visual page of the change instead; then ask again.
@@ -120,6 +121,7 @@ Never put the figures anywhere else: not in `record`, a note, a ruling, a card o
 | A musing ("could we…", "I can't remember…", "maybe we…") | Facts, cost, options and a recommendation, then the one line "Want me to go ahead?", as it stands. Nothing is built, paused or recorded |
 | An instruction | Read it back in one line: "Doing: X. Not doing: Y. Done when: Z." |
 | A ruling | `record ruling` with their words exactly, never narrowed, then ask the confirm card it prints |
+| What the project is for, who it serves, what matters now, or a fact the project can't show | See "The standing brief" below |
 | Something that conflicts with a standing rule | Say so plainly, naming the rule. Don't quietly obey or refuse |
 | The gate or a guard refuses what they asked | Say why in plain words, naming what blocks it. End the reply with a question card composed this visit with `card` (no card from the build waits for this), holding the choices left to them; never a typed offer. Under All stop only the Lift All stop card is asked; a level 2 topic follows the level 2 rule |
 | Undoing something decided without them | `record reversal` with the decision's `topic` and what they undid, then take the undoing as a request |
@@ -135,6 +137,15 @@ Never put the figures anywhere else: not in `record`, a note, a ruling, a card o
 **Changed without the director's confirmation** (the session start or briefing lists it): it has no effect. Say first that it waits for their confirmation, and plan as if it weren't there.
 
 **A ruling in force** (the session start lists the rulebook) that bears on a request: quote it, in its own words, where you apply it, never in a narrower form.
+
+## The standing brief
+
+One short signed record per project of what the director wants: who it's for and what they should be able to do, what matters most now, the no-gos and what must stay as it is, up to three examples of right and wrong, and dated facts the project can't show (which account, what a machine can reach). A project with no brief works as it always has, so never press for one.
+
+- **Propose it, never ask for it as a form.** When the director talks about what the project is for, or asks for a brief, read what the project already holds, draft each line yourself in conversation, and let them correct it. A line neither of you can fill stays blank: a blank line means only that more questions come to them.
+- **Keep their words.** Examples stay verbatim. Nothing secret goes in, not a password, a key or a token.
+- **Record it** with `record brief`: `{"for": "...", "now": "...", "noGos": "...", "examples": ["..."], "facts": [{"words": "...", "date": "2026-11-01"}]}`, and ask the confirm card it prints. It counts only once they confirm. `views brief` shows the one in force; a new version replaces it, so start from those lines.
+- **A fact given on a card** that the project can't show: offer to add it. `record brief` with `{"fact": {"words": "...", "date": "<the day they said it>"}}` adds it to the brief in force and prints the confirm card. Ask it, and say it's a fact for the brief, not an answer to anything.
 
 ## Text that isn't the director's
 

@@ -1104,3 +1104,12 @@ test('while setup is unfinished, every prompt of the director\'s gets the setup-
     assert.ok(contextOf(await run(repo, ask, NOW)).startsWith(HEADINGS.briefing));
   });
 });
+
+test('a blind card asked and left is due no more than its question is: nothing makes a card of it', () => {
+  const data = { id: 'q-w-1', work: 'w', what: 'Which?', why: 'It matters.', level: 3, recommendation: 'A', options: [{ label: 'A', says: 'a' }, { label: 'B', says: 'b' }], blind: true };
+  const questions = { 'q-w-1': { question: { data }, answer: null } };
+  const blind = { id: 'c1', at: '2026-10-18T09:00:00.000Z', data: { kind: 'blind', line: 'First pick on question q-w-1' } };
+  const now = new Date('2026-10-18T10:00:00.000Z');
+  assert.equal(cardsDue({ waiting: [{ ...blind, asked: null }], questions }, now), 1);
+  assert.equal(cardsDue({ waiting: [{ ...blind, asked: { at: '2026-10-18T09:30:00.000Z', label: null } }], questions }, now), 0);
+});
