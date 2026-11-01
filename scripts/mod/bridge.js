@@ -23,6 +23,7 @@
 //                                                   `at`: its marks are undone, so the next tick wakes
 //                                                   again
 //   { cmd: 'reply', origin, text, cwd }             a reply code and an option, as the click
+//   { cmd: 'pull-cards', origin, cwd } Show them, in the pane, on the cards past the day's budget
 //   { cmd: 'press', origin, cwd, card, hash, label } a press on a card in the pane, as its click
 //   { cmd: 'why', origin, cwd, card, hash }         Why? on a card: its answer noted quietly, no prompt
 //   { cmd: 'suggest', origin, cwd, card, hash, words } Suggest a change… on a card: its answer noted, and
@@ -279,6 +280,15 @@ async function safekeeping(req, d) {
   fs.rmSync(kept.file, { force: true });
   const says = got?.says ?? got?.refused;
   return { ok: got?.ok === true, ...(typeof says === 'string' ? { says: inWords(project, says) } : {}), ...(strings(got?.submit) ? { submit: got.submit } : {}) };
+}
+
+// Show them on the pane's line for the cards past the day's budget, from the pane alone. It brings them up and decides nothing.
+async function pullCards(req, d) {
+  if (req.origin !== PANE) return no(SAYS.notPane);
+  const project = placeOf(req.cwd, d);
+  if (!project) return no(SAYS.notProject);
+  const got = await deskOf(project, req.cwd, d).act('pull-cards', {});
+  return { ok: got?.ok === true, ...(typeof got?.refused === 'string' ? { says: inWords(project, got.refused) } : {}) };
 }
 
 // Why? on a card in the pane, from the pane alone: the card's answer is noted quietly (press.js),
@@ -597,7 +607,7 @@ async function unsent(req, d) {
   return { ok: true };
 }
 
-const COMMANDS = { usage, reply, press, safekeeping, why, suggest, settings, setting, go, stop, digest, tick, unsent };
+const COMMANDS = { usage, reply, press, safekeeping, 'pull-cards': pullCards, why, suggest, settings, setting, go, stop, digest, tick, unsent };
 
 // handle(request, deps) -> { ok, says? }. Never throws.
 export async function handle(request, deps = {}) {

@@ -101,7 +101,7 @@ test('the pane lists the waiting cards in the board\'s numbering, each with its 
     ['Comma', 'record', 'filled'], ['Tab', 'record', 'outlined'], ['Suggest a change…', 'suggest', 'outlined'], ['Why?', 'why', 'small'],
   ]);
   // A question from the build that no card asks yet is one line and no buttons.
-  assert.deepEqual(line, { id: 'q:q-export-csv-2', n: 2, header: 'Question', kind: 'question', text: QUESTION_WAITS, hash: sha(QUESTION_WAITS), buttons: [], note: null, blocking: false, asked: false, parts: null, steered: null, waited: null, revised: false });
+  assert.deepEqual(line, { id: 'q:q-export-csv-2', n: 2, header: 'Question', kind: 'question', text: QUESTION_WAITS, hash: sha(QUESTION_WAITS), buttons: [], note: null, blocking: false, asked: false, heldBack: false, parts: null, steered: null, waited: null, revised: false });
   assert.equal(QUESTION_WAITS, 'A question from the build waits; the First Mate will ask it');
 }));
 
@@ -244,6 +244,21 @@ test('a card that fails the card check and offers no Explain more has no button,
   assert.deepEqual(card.buttons, [{ label: 'Why?', does: 'turn', shape: 'small' }]);
   assert.equal(card.note, CANT_ANSWER);
   assert.equal(CANT_ANSWER, 'This card can\'t be answered here: ask the First Mate about it.');
+}));
+
+test('a held card says so, and the pane gives the line that shows it', () => withHome(async (home) => {
+  const repo = register(home);
+  view('waiting', [{ id: 'c-1', at: at(1), asked: null, data: approval }, { id: 'c-2', at: at(2), asked: null, data: answer }]);
+  view('cardsWaiting', { count: 1, ids: ['q-export-csv-1'], pulled: [] });
+  const model = await paneModel({ project: P, cwd: repo, now: () => NOW });
+  assert.deepEqual(model.cards.map((c) => c.heldBack), [false, true]);
+  assert.equal(model.held.line, '1 more waiting.');
+  assert.equal(model.held.button.label, 'Show them');
+  assert.deepEqual(needsYou({ after: model }).map((item) => item.id), ['card:c-1']);
+  view('cardsWaiting', { count: 1, ids: [`13:${FULL}`], pulled: [] });
+  assert.deepEqual((await paneModel({ project: P, cwd: repo, now: () => NOW })).cards.map((c) => c.heldBack), [true, false]);
+  view('cardsWaiting', { count: 0, ids: [], pulled: [] });
+  assert.equal((await paneModel({ project: P, cwd: repo, now: () => NOW })).held, null);
 }));
 
 test('a card\'s text is its question, or its title when it has none', () => {

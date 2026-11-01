@@ -170,6 +170,27 @@ test('the front desk\'s session opens the pane and sets the status line from the
   }
 })
 
+test('a held card isn\'t drawn, and its line shows how many wait, one press from being shown', async ($, on) => {
+  const held = () => {
+    const given = frontDesk('2 cards wait')
+    return {
+      ...given,
+      pane: {
+        ...given.pane,
+        cards: [given.pane.cards[0], { ...given.pane.cards[1], heldBack: true }],
+        held: { line: '1 more waiting.', button: { label: 'Show them', does: 'pull', shape: 'small' } },
+      },
+    }
+  }
+  const { start } = world(on, held)
+  await start($, SURFACES[0])
+  const ui = await mount($, SURFACES[0])
+  const drawn = await texts(ui)
+  expect(drawn).toContain('1 more waiting.')
+  expect(drawn).toContain('Show them')
+  expect(drawn).not.toContain(SECOND)
+})
+
 test('the pane draws each card\'s text as plain text, one card at a time', async ($, on) => {
   const { start } = world(on, () => frontDesk('2 cards wait'))
   for (const surface of SURFACES) {
