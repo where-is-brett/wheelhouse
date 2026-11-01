@@ -118,16 +118,16 @@ export const MOST_TRIED_CHECKS = 10;
 export const TRIED_CHARS = 200;
 // The steps that run the done checks until they pass. Archon's record says which step failed, not which check, so a failed
 // step of these names the checks it was held to.
-const CHECKS_RUN_IN = /^implement/;
+const CHECKS_RUN_IN = /^implement$/;
 const checkName = (check) => String(check?.test ?? check?.command ?? check?.page ?? '').slice(0, TRIED_CHARS);
 
 // What earlier runs of a piece failed at, for a fresh run's order, from the helper's own `run` records, never a step's
 // words: [{ run, step, failure, checks }], oldest first. `runs` are the piece's `run` records; `orderOf(runId)` the order a
-// run was given. A run's latest ending speaks for it.
+// run was given. A run's latest ending speaks for it, and a refused resume says nothing of what failed.
 export function triedList({ runs, orderOf }) {
   const latest = new Map();
-  for (const record of runs ?? []) if (typeof record?.data?.runId === 'string') latest.set(record.data.runId, record.data);
-  return [...latest.values()].filter((r) => r.state === 'ended' && r.outcome === 'failed').slice(-MOST_TRIED).map((r) => {
+  for (const { data } of (runs ?? []).filter((r) => typeof r?.data?.runId === 'string')) if (data.state === 'ended' && data.failure !== RESUME_REFUSED) latest.set(data.runId, data);
+  return [...latest.values()].filter((r) => r.outcome === 'failed').slice(-MOST_TRIED).map((r) => {
     const step = typeof r.step === 'string' ? r.step.slice(0, TRIED_CHARS) : null;
     const done = step !== null && CHECKS_RUN_IN.test(step) ? orderOf(r.runId)?.done : null;
     return { run: r.runId, step, failure: String(r.failure ?? 'other').slice(0, TRIED_CHARS), checks: (Array.isArray(done) ? done : []).slice(0, MOST_TRIED_CHECKS).map(checkName) };

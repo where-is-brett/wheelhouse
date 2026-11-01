@@ -299,3 +299,19 @@ test('a failed fix waits out All stop, and a refused resume goes to its card', a
   assert.equal(t.engine.calls.filter((c) => c.call === 'act').length, 1, 'the engine has no such run, so it refuses');
   assert.equal(t.written.filter((w) => w.kind === 'run').at(-1).data.failure, 'resume-refused');
 });
+
+test('a fix\'s resume looks at the run first: one going is left alone, one that ended otherwise is put right', async () => {
+  const t = setUp();
+  await t.d.tick();
+  t.ran('run-1', 'started');
+  t.world.views.runs[INCIDENT.work].push({ ...record('run-1', 'ended', { outcome: 'failed', failure: 'connection' }), at: '2026-10-30T09:00:00.000Z' });
+  t.engine.inspect = () => ({ status: 'running' });
+  await t.d.tick();
+  assert.equal(t.engine.calls.filter((c) => c.call === 'act').length, 0);
+  t.engine.inspect = () => ({ status: 'ended', outcome: 'cancelled' });
+  await t.d.tick();
+  assert.equal(t.engine.calls.filter((c) => c.call === 'act').length, 0);
+  const put = t.written.filter((w) => w.kind === 'run').at(-1).data;
+  assert.equal(put.outcome, 'cancelled');
+  assert.equal(put.failure, undefined);
+});

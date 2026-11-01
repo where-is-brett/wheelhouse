@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { wayBack, quiet, forever, failing, legFails, legFinishes, legGoes } from '../helpers/way-back.js';
 import { readRecording } from '../../scripts/engine/fake.js';
-import { TRY_AGAIN, STOP_HERE } from '../../scripts/engine/dispatch-run.js';
+import { TRY_AGAIN, STOP_HERE, LEAVE_IT } from '../../scripts/engine/dispatch-run.js';
 import { failedCardWords } from '../../scripts/engine/words.js';
 
 const MINUTE = 60 * 1000;
@@ -322,4 +322,142 @@ test('work queued again leaves its failed run unretried, and costed', async () =
   assert.equal(resumes(w).length, 0);
   assert.equal(w.runsOf('a').length, 2);
   assert.equal(costs(w).length, 1);
+});
+
+test('a run the engine no longer has comes to its card, and is costed', async () => {
+  const w = wayBack({ recordings: { a: failing('connection') } });
+  w.put('a');
+  await w.tick(2);
+  const [runId] = w.runsOf('a');
+  const read = w.engine.inspect;
+  w.engine.inspect = (id) => (id === runId ? { status: 'unknown', steps: [], branch: null, pr: null } : read(id));
+  w.engine.act = () => ({ ok: false, refused: 'There is no such run' });
+  await w.pass(12 * MINUTE);
+  assert.equal(w.cardOf('a').what, failedCardWords('a', 'resume-refused'));
+  assert.equal(costs(w).length, 1);
+});
+
+test('a resumed run the engine lost is ended by the look at it', async () => {
+  const w = wayBack({ recordings: { a: [...failing('connection'), ...legGoes()] } });
+  w.put('a');
+  await w.tick(2);
+  await w.pass(7 * MINUTE);
+  assert.equal(w.stateOf('a'), 'started');
+  w.engine.inspect = () => ({ status: 'unknown', steps: [], branch: null, pr: null });
+  await w.pass(3 * MINUTE);
+  assert.equal(records(w, 'a').at(-1).outcome, 'failed');
+});
+
+test('a resume slower than the look at it is taken back: the run stands, with its number and no second place', async () => {
+  const w = wayBack({ recordings: { a: [...failing('connection'), ...legGoes()], b: quiet() }, pace: 1 });
+  w.put('a', { place: 0 });
+  await w.tick(2);
+  await w.pass(5 * MINUTE);
+  // The engine takes the resume and goes on reading failed for a while.
+  const read = w.engine.inspect;
+  let slow = true;
+  w.engine.inspect = (id) => (slow ? { ...read(id), status: 'ended', outcome: 'failed', failure: 'connection' } : read(id));
+  await w.pass(5 * MINUTE);
+  assert.equal(records(w, 'a').at(-1).state, 'ended', 'the look took it for over');
+  slow = false;
+  await w.tick(2);
+  assert.equal(w.stateOf('a'), 'started');
+  assert.equal(records(w, 'a').at(-1).resume, 1);
+  w.put('b', { place: 1 });
+  await w.pass(8 * MINUTE);
+  assert.deepEqual(w.runsOf('b'), [], 'it holds its place');
+  assert.equal(resumes(w).length, 1);
+  assert.equal(costs(w).length, 0);
+});
+
+test('a settling look that can\'t read the engine writes no cost, and the next one does', async () => {
+  const w = wayBack({ recordings: { a: failing('other') } });
+  w.put('a');
+  await w.tick(1);
+  const read = w.engine.inspect;
+  w.engine.inspect = () => ({ status: 'unknown', unread: true, steps: [], branch: null, pr: null });
+  await w.tick(3);
+  assert.equal(costs(w).length, 0);
+  w.engine.inspect = read;
+  await w.tick(2);
+  assert.equal(costs(w).length, 1);
+});
+
+test('a cost the record refuses is written again, and once', async () => {
+  const w = wayBack({ recordings: { a: quiet() } });
+  w.put('a');
+  w.refuseWrite = (kind) => kind === 'cost';
+  await w.tick(4).catch(() => {});
+  assert.equal(costs(w).length, 0);
+  w.refuseWrite = null;
+  await w.tick(3);
+  assert.equal(costs(w).length, 1);
+});
+
+test('Give it more landing as a retry starts leaves one live run', async () => {
+  const w = wayBack({ recordings: { a: [...failing('connection'), ...legGoes()] } });
+  w.put('a');
+  await w.tick(2);
+  const [runId] = w.runsOf('a');
+  await w.runner.capped({ runId, work: 'a', lane: 'quick', branch: 'wh/a', reached: { cap: 'minutes', limit: 5 } });
+  await w.pass(6 * MINUTE);
+  w.answer('a', 'Give it more');
+  await w.dispatcher.tick();
+  await w.tick(6);
+  assert.equal(w.runsOf('a').length, 1);
+  assert.equal(resumes(w).length, 1);
+});
+
+for (const [name, change] of [
+  ['closed', (w) => { w.reports.a = { at: w.clock.now.toISOString(), data: { work: 'a', outcome: 'closed' } }; }],
+  ['queued again', (w) => { w.work.a.work.at = w.clock.now.toISOString(); }],
+]) {
+  test(`a retry with its place isn't carried out for work ${name} since`, async () => {
+    const w = wayBack({ recordings: { a: [[...failing('connection'), ...legGoes()], forever()] } });
+    w.put('a');
+    await w.tick(2);
+    await w.pass(5 * MINUTE);
+    assert.ok(w.dispatcher.admittedTo('a'));
+    change(w);
+    await w.runner.tick();
+    assert.equal(resumes(w).length, 0);
+  });
+}
+
+test('a failed piece keeps its files in the looks before its card', async () => {
+  const w = wayBack({ recordings: { a: failing('other'), c: quiet() }, pace: 2, branchPaths: async () => ['src/banner.js'] });
+  w.put('a', { place: 0, files: ['src/banner.js'] });
+  await w.tick(1);
+  w.put('c', { place: 1, files: ['src/banner.js'] });
+  await w.tick(5);
+  assert.deepEqual(w.runsOf('c'), []);
+  assert.ok(w.cardOf('a'));
+});
+
+test('a Leave it on a failed piece stands: no retry and no card, and its spend is settled', async () => {
+  const w = wayBack({ recordings: { a: [...failing('connection'), ...legFinishes()] } });
+  w.put('a');
+  await w.tick(2);
+  w.dispatcher.sentBack('a');
+  w.dispatcher.sentBack('a');
+  await w.tick(3);
+  w.answer('a', LEAVE_IT);
+  await w.pass(10 * MINUTE);
+  assert.equal(resumes(w).length, 0);
+  assert.equal(openCards(w).length, 0);
+  assert.equal(costs(w).length, 1);
+});
+
+test('a slice cancelled at its cap keeps its Give it more card as the one that speaks', async () => {
+  const w = wayBack({ recordings: { a: forever() } });
+  w.put('a');
+  await w.tick(2);
+  const [runId] = w.runsOf('a');
+  await w.engine.act(runId, { cancel: {} });
+  await w.runner.capped({ runId, work: 'a', lane: 'quick', branch: 'wh/a', reached: { cap: 'minutes', limit: 5 } });
+  await w.tick(2);
+  w.answer('a', 'Give it more');
+  w.refuse = () => 'no room';
+  await w.tick(1);
+  assert.equal(w.cards().length, 1);
 });

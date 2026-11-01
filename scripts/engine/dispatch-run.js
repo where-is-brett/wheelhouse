@@ -498,8 +498,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     const what = step.finish ? 'its switch-on run' : `slice ${step.slice} of ${design.slices.length}`;
     let why = null;
     if (Number.isInteger(run.pr) && kept.closed?.[run.pr]) why = 'closed';
-    else if (run.outcome === 'cancelled' && !(stoppedRuns() ?? []).includes(run.runId) && !namedByCard(views, run.runId)) why = 'cancelled';
-    else if ((run.outcome === 'failed' ? !(readyOf() ?? {})[run.pr] && !retryFor(views, work) : run.outcome === 'completed' && !Number.isInteger(run.pr)) && !namedByCard(views, run.runId) && !waitingNow(views).has(work) && !onTheWay(work) && state.sentBack[work] === state.acted[work] && state.reds[work]?.times === state.redActed[work]) {
+    else if (run.outcome === 'cancelled' && !(stoppedRuns() ?? []).includes(run.runId) && !namedByCard(views, run.runId, run.outcome)) why = 'cancelled';
+    else if ((run.outcome === 'failed' ? !(readyOf() ?? {})[run.pr] && !retryFor(views, work) : run.outcome === 'completed' && !Number.isInteger(run.pr)) && !namedByCard(views, run.runId, run.outcome) && !waitingNow(views).has(work) && !onTheWay(work) && state.sentBack[work] === state.acted[work] && state.reds[work]?.times === state.redActed[work]) {
       if (Number.isInteger(run.pr) && await stateOf(run.pr) !== 'open') return;
       // Looked at again on the next tick: the runner may yet have an answer that starts it again.
       if (kept.endSeen !== run.runId) {
@@ -540,13 +540,13 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     });
   }
   // Whether a card already speaks for this run's end: the runner's cap card for it, or a question about it still
-  // waiting for the director. A question answered earlier in the run doesn't, nor does a Give it more: the run went on from
-  // that, so an ending after it is a new one.
-  function namedByCard(views, runId) {
+  // waiting for the director. A question answered earlier in the run doesn't, nor does a Give it more on a run that then
+  // failed (`outcome`): it went on from that, so its ending is a new one.
+  function namedByCard(views, runId, outcome) {
     return Object.values(isPlain(views.questions) ? views.questions : {}).some((q) => {
       const engineRef = q?.question?.data?.engine;
       // A piece that left its bundle has no card to speak for it.
-      return engineRef?.runId === runId && q.gone !== true && ((engineRef.ask === `cap:${runId}` && q.answer?.label !== MORE) || !isPlain(q.answer));
+      return engineRef?.runId === runId && q.gone !== true && ((engineRef.ask === `cap:${runId}` && !(outcome === 'failed' && q.answer?.label === MORE)) || !isPlain(q.answer));
     });
   }
   // A run the director stopped, by Stop at its cap or by letting its piece go.
@@ -564,15 +564,18 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     const records = [...byRun.values()].at(-1);
     return records ? { ...records.at(-1).data, records } : null;
   }
+  // The same, while its work hasn't ended.
+  function runOfOpenWork(views, work) {
+    const reports = isPlain(views.reports) ? views.reports : {};
+    const current = views.work?.[work]?.work;
+    return !isPlain(current) || reports[work]?.data?.outcome === 'merged' || endedBy(reports, work, current) ? null : latestRun(views, work);
+  }
   // The try a piece's failed run still has, as `retryDue` gives it, with the run, or null: its failure allows one, and it is
   // still the piece's to take. What only delays a try (a card, the merge queue) doesn't count here, so the piece stays held.
   function retryFor(views, work) {
-    const reports = isPlain(views.reports) ? views.reports : {};
-    const current = views.work?.[work]?.work;
-    if (!isPlain(current) || reports[work]?.data?.outcome === 'merged' || endedBy(reports, work, current)) return null;
-    const run = latestRun(views, work);
+    const run = runOfOpenWork(views, work);
     const due = run ? retryDue({ records: run.records, now: now() }) : null;
-    if (!due || (stoppedRuns() ?? []).includes(run.runId) || stoppedByDirector(views, work, run.runId)) return null;
+    if (!due || (stoppedRuns() ?? []).includes(run.runId) || stoppedByDirector(views, work, run.runId) || leftByDirector(views, work)) return null;
     return { ...due, run };
   }
   // Every piece with a try to come, or one on its way. Its files stay held, and nothing raises a card over it.
@@ -590,7 +593,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     const ready = readyOf() ?? {};
     for (const work of Object.keys(isPlain(views.work) ? views.work : {})) {
       const got = retryFor(views, work);
-      if (!got?.due || onTheWay(work) || waitingNow(views).has(work) || namedByCard(views, got.run.runId)) continue;
+      if (!got?.due || onTheWay(work) || waitingNow(views).has(work) || namedByCard(views, got.run.runId, 'failed')) continue;
       if (state.sentBack[work] !== state.acted[work] || state.reds[work]?.times !== state.redActed[work]) continue;
       if (Number.isInteger(got.run.pr) && isPlain(ready[got.run.pr])) continue;
       enter({ work, lane: got.run.lane, via: 'retry', key: `retry:${got.run.runId}:${got.tries + 1}`, runId: got.run.runId });
@@ -697,8 +700,14 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       delete state.fixes[incident.id];
       keep();
     } else if (decided.act === 'resume') {
-      // Nothing is admitted under an incident, so it goes by its own decision. A refusal is on the record, and the card follows.
-      await resumeRun({ engine, runId: decided.run, write, records: runs.filter((r) => r?.data?.runId === decided.run), now });
+      // Nothing is admitted under an incident, so it goes by its own decision, after a look at the run. A refusal is on the
+      // record, and the card follows.
+      const records = runs.filter((r) => r?.data?.runId === decided.run);
+      let seen = null;
+      try { seen = await engine.inspect(decided.run); } catch { seen = null; }
+      if (seen === null || seen.unread === true || ['running', 'paused'].includes(seen.status)) return;
+      if (seen.status === 'ended' && seen.outcome !== 'failed') await write('run', { ...Object.fromEntries(Object.entries(records.at(-1).data).filter(([key]) => key !== 'failure')), outcome: seen.outcome ?? 'cancelled' });
+      else await resumeRun({ engine, runId: decided.run, write, records, now });
     } else if (decided.act === 'start') {
       const toldNoFix = kept.noFix ? views.questions?.[kept.noFix]?.answer?.label : null;
       if (toldNoFix === LEAVE_RED) return;
@@ -903,9 +912,10 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   // the piece's end or `release` takes anything away, so nothing here lets go by itself.
   async function reserveTick(views) {
     const reports = isPlain(views.reports) ? views.reports : {};
-    // A piece going back on an answer may have no card left to park it, and its next run isn't under way, so nothing else speaks for its files.
+    // A piece going back on an answer may have no card left to park it, and its next run isn't under way, so nothing else speaks
+    // for its files. Nor for one whose card is a look or two away.
     const between = [...state.returning, ...state.admitted].filter((e) => REWORKING.includes(e.via)).map((e) => e.work);
-    const pieces = new Set([...waitingNow(views), ...between, ...reworkingNow(), ...retryingWork(views)]);
+    const pieces = new Set([...waitingNow(views), ...between, ...reworkingNow(), ...retryingWork(views), ...Object.keys(isPlain(views.work) ? views.work : {}).filter((work) => lonePiece(views, work))]);
     // A cut-off piece has not begun, so it has no files to keep.
     for (const work of Object.keys(state.cutOffAsked)) pieces.delete(work);
     for (const entry of state.returning) if (unbegun(views, entry)) pieces.delete(entry.work);
@@ -1295,7 +1305,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     if (views.work[work]?.work?.data?.lane === 'feature') return false;
     const run = latestRun(views, work);
     if (run?.state !== 'ended' || !['failed', 'cancelled'].includes(run.outcome)) return false;
-    return !(stoppedRuns() ?? []).includes(run.runId) && !stoppedByDirector(views, work, run.runId) && !namedByCard(views, run.runId);
+    return !(stoppedRuns() ?? []).includes(run.runId) && !stoppedByDirector(views, work, run.runId) && !namedByCard(views, run.runId, run.outcome) && !leftByDirector(views, work);
   }
 
   // Work whose dependency can't be added: closed, not on the record, or waiting on the work itself.
@@ -1677,7 +1687,9 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
         const [work, list] = Object.entries(isPlain(views.runs) ? views.runs : {}).find(([, records]) => (records ?? []).some((r) => r?.data?.runId === runId)) ?? [];
         if (work === undefined) return false;
         if (openRedMain(views)?.work === work) return list.at(-1)?.data?.runId === runId;
-        return retryFor(views, work)?.run.runId === runId;
+        // A resume cut short by a crash reads as started, and is still its piece's to finish.
+        const run = runOfOpenWork(views, work);
+        return run?.runId === runId && (run.state !== 'ended' || retryFor(views, work) !== null);
       } catch {
         return true;
       }

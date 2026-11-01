@@ -963,7 +963,8 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       return;
     }
     const record = await inspect(kept.runId);
-    if (again && record?.status === 'running') {
+    // Going already, by a crash cut short or a retry that came first: nothing more starts beside it.
+    if (record?.status === 'running') {
       delete state.capped[kept.runId];
       state.carried[kept.runId] = { raised: true, runs: state.carried[kept.runId]?.runs ?? [] };
       keep();
@@ -1007,7 +1008,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   // Each retry the dispatcher has given a place: a look at the run, then its resume. Nothing moves under All stop or an
   // incident, and what the engine no longer reads as failed isn't resumed: its record is put right, and the entry drops.
   // An engine that can't be read or gave no reply is looked at again on the next tick, and a refusal is on the record, for
-  // the dispatcher's card.
+  // the dispatcher's card: a run the engine no longer has comes to that card too.
   async function retries() {
     if (stopped() || (viewsNow().incidents?.open?.length ?? 0) > 0) return;
     for (const { work, key, runId, delivered: told } of retriesAdmitted()) {
@@ -1018,11 +1019,12 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
         delivered(work, key);
         continue;
       }
-      if (record.status !== 'ended') {
+      // Its piece may have moved on since it was admitted: nothing is resumed for work that ended or was queued again.
+      if (!retrying(runId)) {
         drop(work, key);
         continue;
       }
-      if (record.outcome !== 'failed') {
+      if (record.status === 'ended' && record.outcome !== 'failed') {
         await endAsEngineSays(runId, runRecords(work, runId), record);
         drop(work, key);
         continue;
@@ -1047,8 +1049,17 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     const from = Math.max(Date.parse(latest.at), Date.parse(state.resumedAt[runId] ?? latest.at));
     if (at.getTime() - from < RESUME_SETTLE_MINUTES * 60 * 1000) return false;
     const record = await inspect(runId);
-    if (record?.status !== 'ended') return false;
+    if (record?.unread === true || !['ended', 'unknown'].includes(record?.status)) return false;
     await endAsEngineSays(runId, records, record);
+    return true;
+  }
+  // A resume that took longer than that look allowed: the run is going after all, so its leg stands again, under its own
+  // number, and its ending is written when it comes. Gives whether it did.
+  async function cameBack(runId, records) {
+    const status = (await inspect(runId))?.status;
+    if (status !== 'running' && status !== 'paused') return false;
+    const { work, lane, engine: name, branch, resume } = records.at(-1).data;
+    await write('run', { work, lane, engine: name, runId, state: 'started', resume, ...(typeof branch === 'string' ? { branch } : {}) });
     return true;
   }
   async function endAsEngineSays(runId, records, record) {
@@ -1089,6 +1100,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
         const latest = records.at(-1).data;
         if (latest.state === 'ended') {
           // Not ended yet, whatever the record says: both wait for its true end, ahead of the dispatcher's runner.
+          if (Number.isInteger(latest.resume) && !state.costed[runId] && await cameBack(runId, records)) continue;
           // A Stop on its cap card is the director's word that nothing tries it.
           const stoppedHere = isPlain(state.capped[runId]) && !capCardWaits(runId);
           if (unsettled({ records, capped: capCardWaits(runId), retrying: !stoppedHere && retrying(runId) })) continue;
@@ -1144,7 +1156,13 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
 
   async function costOf(runId, work, records) {
     const record = await inspect(runId);
-    if (!record) return;
+    // Settled once and for good, so an engine that can't be read now is asked again, and a cost that was written isn't.
+    if (!record || record.unread === true) return;
+    if ((viewsNow().costs?.[work] ?? []).some((c) => c?.data?.runId === runId)) {
+      state.costed[runId] = true;
+      keep();
+      return;
+    }
     const cost = runCost(record);
     const { slept } = viewsNow();
     const awake = runningMinutes(records, now(), slept);
@@ -1152,8 +1170,6 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     // only their last attempt, so its minutes are its legs'.
     const asleep = runningMinutes(records, now()) - awake;
     const resumed = resumesOf(records) > 0;
-    state.costed[runId] = true;
-    keep();
     await write('cost', {
       runId, work,
       // A run whose spend is unknown names no tokens it didn't count.
@@ -1162,6 +1178,8 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       minutes: cost.minutes > 0 && !resumed ? Math.max(0, Math.round((cost.minutes - asleep) * 100) / 100) : awake, source: cost.source, byRole: cost.byRole,
       ...(cost.kinds ? { kinds: cost.kinds } : {}),
     });
+    state.costed[runId] = true;
+    keep();
   }
 
   // Work the director answered at a blocked exit starts again on its branch once its run has ended, carrying on from
