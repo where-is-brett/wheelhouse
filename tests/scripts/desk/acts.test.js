@@ -168,13 +168,13 @@ const startOf = (sheet, goal = 'orders-export', hash = sheetHash(sheet)) => make
 const runningEntry = (sheet) => ({ sheet, hash: sheetHash(sheet), startedAt: '2026-10-29T11:30:00.000Z', ended: null, endAsked: null });
 
 // A source over memory whose views hold the work and the goals given.
-function goalMemory({ events = [], goals = {}, work = { 'export-page': { work: { data: PIECE } } } } = {}) {
+function goalMemory({ events = [], goals = {}, work = { 'export-page': { work: { data: PIECE } } }, stopped = false } = {}) {
   return {
     project: 'p',
     async views() { return { ok: true, views: { waiting: [], goals, work }, names: [], cards: [] }; },
     events: () => events,
     enrolled: () => readEnrolled(),
-    async stop() { return { on: false }; },
+    async stop() { return { on: stopped }; },
   };
 }
 const startArgs = (sheet) => ({ goal: 'orders-export', hash: sheetHash(sheet) });
@@ -224,6 +224,15 @@ test('start-goal with a changed work record, a wrong hash or a past until record
     assert.match(got.refused, pattern);
     assert.deepEqual(recorder.calls, [], String(pattern));
   }
+}));
+
+test('start-goal under All stop is refused and records nothing', () => withKey(async () => {
+  const sheet = sheetOf();
+  const recorder = spy();
+  const got = await startGoal(goalMemory({ events: [goalEvent(sheet)], stopped: true }), recorder, startArgs(sheet), startOf(sheet));
+  assert.equal(got.ok, false);
+  assert.match(got.refused, /All stop is on/);
+  assert.deepEqual(recorder.calls, []);
 }));
 
 test('a second goal in a project is refused while one is in force, and one started before is not started again', () => withKey(async () => {

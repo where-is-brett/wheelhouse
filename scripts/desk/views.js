@@ -342,7 +342,7 @@ const VIEWS = {
     if (got.refused) return { ok: false, refused: got.refused };
     let entry = null;
     if (typeof args.goal === 'string') {
-      const held = isPlain(got.views.goals) ? got.views.goals[args.goal] : undefined;
+      const held = isPlain(got.views.goals) && Object.hasOwn(got.views.goals, args.goal) ? got.views.goals[args.goal] : undefined;
       if (held !== undefined) entry = { id: args.goal, hash: held.hash, sheet: held.sheet, state: held.ended === null ? 'running' : 'ended', startedAt: held.startedAt, until: held.sheet.until };
     } else {
       entry = goalInForce(got.views);

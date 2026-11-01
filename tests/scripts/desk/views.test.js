@@ -179,6 +179,8 @@ test('goal shows the signed goal in force, a named one, or says none is running'
   const none = await readView('goal', {}, goalSource({}), { now });
   assert.deepEqual(none, { ok: true, view: 'goal', data: { goal: null }, lines: ['No goal is running.'] });
 
+  const inherited = await readView('goal', { goal: 'constructor' }, goalSource({ 'orders-export': entry() }), { now });
+  assert.deepEqual(inherited.data, { goal: null });
   const running = await readView('goal', {}, goalSource({ 'orders-export': entry() }), { now });
   assert.equal(running.data.goal.id, 'orders-export');
   assert.equal(running.data.goal.state, 'running');

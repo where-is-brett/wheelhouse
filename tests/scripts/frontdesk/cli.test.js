@@ -29,7 +29,7 @@ import { writeProject } from '../../../scripts/lib/projects.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
-import { sheetHash } from '../../../scripts/engine/goal.js';
+import { sheetHash, pieceCovered } from '../../../scripts/engine/goal.js';
 import { startGoalLine, approvalLine, answerLine, chatCopy, ciPushLine, confirmLine, keepControlLine, LIFT_STOP, setLineOf } from '../../../scripts/state/card-lines.js';
 import { setStop, stopState } from '../../../scripts/lib/stop.js';
 import { decide as cardCheck, cardProblems } from '../../../scripts/hooks/card-check.js';
@@ -2401,9 +2401,10 @@ test('card refuses a blind card: only `cards` makes one', async () => {
 
 // --- goals ---
 
+const GOAL_PIECE = { id: 'export-csv', title: 'Export a report as a spreadsheet', lane: 'small', visible: false, dependsOn: [] };
 const GOAL_SHEET = {
   title: 'Customers can export their orders', done: [{ command: 'node check.js', expect: 0 }], checksSay: ['The checking script passes.'],
-  pieces: [{ work: 'export-csv', hash: DOC }], areas: { may: ['src/**'], wontTouch: ['billing/**'] }, spend: { tokens: 1000000 }, until: '2026-10-19T20:00:00.000Z',
+  pieces: [{ work: 'export-csv', hash: dataHash(GOAL_PIECE) }], areas: { may: ['src/**'], wontTouch: ['billing/**'] }, spend: { tokens: 1000000 }, until: '2026-10-19T20:00:00.000Z',
 };
 const runningGoal = () => {
   const hash = sheetHash(GOAL_SHEET);
@@ -2411,7 +2412,7 @@ const runningGoal = () => {
   const start = makeEvent({
     kind: 'action', data: { action: 'start-goal', goal: 'orders-export', hash, label: 'Start', question: `Start this goal?\n${startGoalLine('orders-export', hash)}` }, now: () => NOW,
   });
-  return [goal, start];
+  return [makeEvent({ kind: 'work', data: GOAL_PIECE, now: () => T(0) }), goal, start];
 };
 
 test('record goal writes a sheet that could start, and refuses one that could not, before the helper is asked', async () => {
@@ -2427,6 +2428,19 @@ test('record goal writes a sheet that could start, and refuses one that could no
     const ok = await run(helper, ['record', 'goal'], JSON.stringify({ id: 'orders-export', sheet: GOAL_SHEET }));
     assert.equal(ok.code, 0, ok.err);
     assert.deepEqual(helper.writes().at(-1), { cwd: CWD, kind: 'goal', data: { id: 'orders-export', sheet: GOAL_SHEET } });
+    assert.equal(ok.json.hash, sheetHash(GOAL_SHEET), 'it prints the hash of the sheet, which the card and the Start name');
+  });
+});
+
+test('record work prints the hash of its record, which a sheet names the piece by', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const data = { id: 'export-csv', title: 'Export a report as a spreadsheet', lane: 'small', visible: false, dependsOn: [] };
+    const out = await run(helper, ['record', 'work'], JSON.stringify(data));
+    assert.equal(out.code, 0, out.err);
+    assert.equal(out.json.recordHash, dataHash(helper.writes().at(-1).data));
+    const sheet = { ...GOAL_SHEET, pieces: [{ work: 'export-csv', hash: out.json.recordHash }] };
+    assert.equal(pieceCovered({ sheet }, 'export-csv', { work: { 'export-csv': { work: { data: helper.writes().at(-1).data } } } }), true);
   });
 });
 
@@ -2435,10 +2449,10 @@ test('end-goal --now notes the end for the running goal, through the desk', asyn
     const helper = fakeHelper({ events: runningGoal() });
     const out = await run(helper, ['end-goal', '--now']);
     assert.equal(out.code, 0, out.err);
-    assert.deepEqual(out.json, { ended: true, now: true });
+    assert.deepEqual(out.json, { asked: true, now: true });
     assert.deepEqual([helper.held.at(-1).kind, helper.held.at(-1).data], ['note', { about: 'end-goal', goal: 'orders-export', now: true }]);
     const later = await run(helper, ['end-goal']);
-    assert.deepEqual(later.json, { ended: true, now: false });
+    assert.deepEqual(later.json, { asked: true, now: false });
     assert.equal(helper.held.at(-1).data.now, false);
     const wrong = await run(helper, ['end-goal', '--soon']);
     assert.equal(wrong.code, 1);

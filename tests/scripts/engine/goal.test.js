@@ -2,18 +2,20 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { dataHash } from '../../../scripts/state/events.js';
-import { sheetHash, checkSheet, narrowed, goalInForce, pieceCovered, goalsView } from '../../../scripts/engine/goal.js';
+import { sheetHash, checkSheet, narrowed, goalInForce, pieceCovered, goalsView as viewOf, startProblem } from '../../../scripts/engine/goal.js';
 import { MAX_PIECES, MAX_HOURS, GOAL_ENDINGS } from '../../../scripts/engine/goal-limits.js';
 
 const NOW = new Date('2026-11-01T10:00:00.000Z');
 const hoursAfter = (h) => new Date(NOW.getTime() + h * 3600000).toISOString();
-const WORK_HASH = 'a'.repeat(64);
+const PAGE = { id: 'export-page', title: 'The page', lane: 'small', visible: false, dependsOn: [] };
+const FILE = { id: 'export-file', title: 'The file', lane: 'small', visible: false, dependsOn: [] };
+const WORK_HASH = dataHash(PAGE);
 
 const sheet = (extra = {}) => ({
   title: 'Customers can export their orders',
   done: [{ test: 'export downloads every order' }, { command: 'node check.js', expect: 0 }],
   checksSay: ['The export holds every order.', 'The checking script passes.'],
-  pieces: [{ work: 'export-page', hash: WORK_HASH }, { work: 'export-file', hash: 'b'.repeat(64), waived: true }],
+  pieces: [{ work: 'export-page', hash: WORK_HASH }, { work: 'export-file', hash: dataHash(FILE), waived: true }],
   areas: { may: ['src/orders/**', 'tests/orders/**'], wontTouch: ['billing/**', 'tests/orders/export.test.js'] },
   checkFiles: ['tests/orders/export.test.js'],
   spend: { tokens: 20000000, points: 10 },
@@ -116,7 +118,7 @@ test('a narrowing that narrows is accepted, and the sheet it was given is not ch
   assert.deepEqual(narrowed(s, { areas: { may: ['src/orders/**'] } }).areas, { may: ['src/orders/**'], wontTouch: s.areas.wontTouch });
   assert.deepEqual(narrowed(s, { areas: { wontTouch: [...s.areas.wontTouch, 'docs/**'] } }).areas.wontTouch, [...s.areas.wontTouch, 'docs/**']);
   const kept = narrowed(s, { pieces: ['export-file'] });
-  assert.deepEqual(kept.pieces, [{ work: 'export-file', hash: 'b'.repeat(64), waived: true }]);
+  assert.deepEqual(kept.pieces, [{ work: 'export-file', hash: dataHash(FILE), waived: true }]);
   assert.deepEqual(narrowed(s, { pieces: ['export-file', 'export-page'] }).pieces.map((p) => p.work), ['export-page', 'export-file'], 'the sheet\'s order');
   assert.deepEqual(s, before);
 });
@@ -160,6 +162,10 @@ const startOf = (s, id = 'export-orders', at = START) => ({ id: `s-${id}-${at}`,
 const endRec = (id, at, ending = 'done') => ({ id: `e-${id}-${at}`, at, kind: 'goal-end', data: { goal: id, ending, at, spent: { tokens: 1, points: null, requests: null, unknown: 0, shareAtStart: null, queueRuns: 0 } } });
 const note = (data, at) => ({ id: `n-${at}`, at, kind: 'note', data });
 const sheetNow = () => sheet({ until: hoursAfter(8) });
+const workRec = (data, at) => ({ id: `w-${data.id}-${at}`, at, kind: 'work', data });
+// The two pieces' work records, recorded before the signatures the tests make.
+const WORKS = [workRec(PAGE, t(-10)), workRec(FILE, t(-10))];
+const goalsView = (events, starts) => viewOf([...WORKS, ...events], starts);
 
 test('a goal with no signature is not in force', () => {
   const s = sheetNow();
@@ -286,4 +292,36 @@ test('a piece whose work record changed isn\'t covered', () => {
   assert.equal(pieceCovered(g, 'export-file', views(data)), false, 'no work record');
   assert.equal(pieceCovered(g, 'not-listed', views(data)), false);
   assert.equal(pieceCovered(g, 'export-page', {}), false);
+});
+
+test('a signed start over a changed piece stays out of views.goals', () => {
+  const s = sheetNow();
+  const changed = workRec({ ...PAGE, title: 'Changed' }, t(-2));
+  assert.deepEqual(viewOf([...WORKS, changed, goalRec(s)], [startOf(s)]), {});
+  assert.deepEqual(viewOf([goalRec(s)], [startOf(s)]), {}, 'no work record at all');
+});
+
+test('a piece changed after the signature leaves the goal in force', () => {
+  const s = sheetNow();
+  const changed = workRec({ ...PAGE, title: 'Changed' }, t(3));
+  const goals = viewOf([...WORKS, goalRec(s), changed], [startOf(s)]);
+  assert.deepEqual(Object.keys(goals), ['export-orders']);
+});
+
+test('startProblem asks its checks in order, and null when all pass', () => {
+  const s = sheetNow();
+  const work = { 'export-page': { work: { data: PAGE } }, 'export-file': { work: { data: FILE } } };
+  const running = { other: { ended: null } };
+  const base = { id: 'export-orders', hash: sheetHash(s), sheet: s, goals: {}, work, now: NOW };
+  assert.equal(startProblem(base), null);
+  // Each failing at once: the first in the order is the one said.
+  const all = { ...base, stopped: true, goals: { ...running, 'export-orders': { ended: { at: hoursAfter(-1) } } }, sheet: { ...s, title: '' }, work: {} };
+  assert.match(startProblem(all), /All stop is on/);
+  assert.match(startProblem({ ...all, stopped: false }), /other is running/);
+  assert.match(startProblem({ ...all, stopped: false, goals: { 'export-orders': { ended: { at: hoursAfter(-1) } } } }), /started before/);
+  assert.match(startProblem({ ...all, stopped: false, goals: {} }), /needs a title/);
+  assert.match(startProblem({ ...all, stopped: false, goals: {}, sheet: s }), /export-page/);
+  // A goal that ended before now doesn't hold the way; one ending later does.
+  assert.equal(startProblem({ ...base, goals: { other: { ended: { at: hoursAfter(-1) } } } }), null);
+  assert.match(startProblem({ ...base, goals: { other: { ended: { at: hoursAfter(1) } } } }), /one goal runs at a time/);
 });

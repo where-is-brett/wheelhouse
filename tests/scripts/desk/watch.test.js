@@ -1,7 +1,13 @@
 // tests/scripts/desk/watch.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { snapshotOf, encodeCursor, decodeCursor, changes } from '../../../scripts/desk/watch.js';
+import { snapshotOf, encodeCursor, decodeCursor, changes, watchSource } from '../../../scripts/desk/watch.js';
+import { buildViews } from '../../../scripts/state/views.js';
+import { makeEvent, dataHash } from '../../../scripts/state/events.js';
+import { sheetHash } from '../../../scripts/engine/goal.js';
+import { startGoalLine } from '../../../scripts/state/card-lines.js';
+import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
+import { withHome } from '../../helpers/homes.js';
 
 const card = (id, question = `Question ${id}?`) => ({ id, at: '2026-10-29T09:00:00.000Z', data: { question, title: question } });
 const state = (over = {}) => snapshotOf({
@@ -124,3 +130,27 @@ test('the core\'s watch passes the goal in force from the source', async () => {
   goals = { 'orders-export': { ...goals['orders-export'], ended: { ending: 'done', at: '2026-10-29T11:00:00.000Z', spent: {} } } };
   assert.deepEqual((await core.watch(second.cursor)).events, [{ type: 'goal-changed', goal: null }]);
 });
+
+test('watchSource gives goal-changed when the director asks to end the goal in force, from a real view', () => withHome(async () => {
+  const { computer, publicKey } = makeSigningKey();
+  enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
+  const at = (n) => () => new Date(Date.parse('2026-10-29T10:00:00.000Z') + n * 60000);
+  const piece = { id: 'export-csv', title: 'Export', lane: 'small', visible: false, dependsOn: [] };
+  const sheet = {
+    title: 'Customers can export their orders', done: [{ command: 'node check.js', expect: 0 }], checksSay: ['The checking script passes.'],
+    pieces: [{ work: 'export-csv', hash: dataHash(piece) }], areas: { may: ['src/**'], wontTouch: ['billing/**'] }, spend: { tokens: 1000000 }, until: '2026-10-29T20:00:00.000Z',
+  };
+  const hash = sheetHash(sheet);
+  const events = [
+    makeEvent({ kind: 'work', data: piece, now: at(0) }),
+    makeEvent({ kind: 'goal', data: { id: 'orders-export', sheet }, now: at(1) }),
+    makeEvent({ kind: 'action', data: { action: 'start-goal', goal: 'orders-export', hash, label: 'Start', question: `Start this goal?\n${startGoalLine('orders-export', hash)}` }, now: at(2) }),
+  ];
+  const sourceOf = (all) => ({ project: 'o__p', views: async () => ({ ok: true, views: buildViews(all, readEnrolled(), { now: at(5) }) }), stop: async () => ({ on: false }), board: async () => ({ none: 'no board here' }) });
+  const first = await watchSource(null, sourceOf(events));
+  assert.equal(first.ok, true);
+  assert.deepEqual(first.events.filter((e) => e.type === 'goal-changed'), [{ type: 'goal-changed', goal: 'orders-export' }]);
+  const asked = [...events, makeEvent({ kind: 'note', data: { about: 'end-goal', goal: 'orders-export', now: false }, now: at(3) })];
+  const second = await watchSource(first.cursor, sourceOf(asked));
+  assert.deepEqual(second.events.filter((e) => e.type === 'goal-changed'), [{ type: 'goal-changed', goal: 'orders-export' }]);
+}));

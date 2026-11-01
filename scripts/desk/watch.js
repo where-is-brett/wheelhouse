@@ -101,9 +101,11 @@ export async function watchSource(cursor, source, { now = () => new Date() } = {
     .map((id) => [id, typeof features[id]?.data?.step === 'string' ? features[id].data.step : 'queued']));
   const stop = await source.stop();
   const notices = typeof source.notices === 'function' ? await source.notices() : [];
+  // The goal's whole entry from the view, so a wish to end it (`endAsked`) changes what is hashed as a narrowing does.
+  const running = goalInForce(views);
   const snapshot = snapshotOf({
     glance: glance.ok ? glance.lines[0] : '', waiting: views.waiting, work, stop: stop?.on === true ? (stop.at ?? 'on') : null, notices,
-    goal: goalInForce(views),
+    goal: running === null ? null : { id: running.id, ...views.goals[running.id] },
   });
   return { ok: true, ...changes(cursor, snapshot) };
 }

@@ -53,7 +53,7 @@ import { liftStop as defaultLift, stopState as defaultStopState } from '../lib/s
 import { profileDir, stateDir, computerId } from '../lib/paths.js';
 import { readEnrolled, verify } from '../state/signing.js';
 import { makeEvent, listEvents, confirmationFor, dataHash, CONFIRMABLE_KINDS } from '../state/events.js';
-import { sheetHash } from '../engine/goal.js';
+import { sheetHash, startProblem } from '../engine/goal.js';
 import { scanContent } from '../state/secret-scan.js';
 import {
   approvalLine, confirmLine, LIFT_STOP_LINES, isLiftStopLine, runbookLine, RUNBOOK_TITLES, ciPushLine,
@@ -177,15 +177,20 @@ function approveWorkOf(project, question, match) {
 
 // The record a click on a goal's card earns: the card's goal and twelve characters must name exactly one sheet the state
 // holds for that goal, and the record carries that sheet's whole hash.
-function startGoalOf(project, question) {
+function startGoalOf(project, question, { now, stopState }) {
   const lines = setLinesOf(question);
   const m = lines.length === 1 ? START_GOAL_LINE.exec(lines[0]) : null;
   if (!m) return null;
-  const hashes = new Set(held(project, 'goal')
+  const sheets = new Map(held(project, 'goal')
     .filter((e) => e.data?.id === m[1] && e.data.sheet !== null && typeof e.data.sheet === 'object')
-    .map((e) => sheetHash(e.data.sheet))
-    .filter((h) => h.startsWith(m[2])));
-  return hashes.size === 1 ? { action: 'start-goal', goal: m[1], hash: [...hashes][0] } : null;
+    .map((e) => [sheetHash(e.data.sheet), e.data.sheet])
+    .filter(([h]) => h.startsWith(m[2])));
+  if (sheets.size !== 1) return null;
+  const [[hash, sheet]] = [...sheets];
+  // The same rule the desk's act and the goals view ask (scripts/engine/goal.js), asked before the click is signed.
+  const views = localViews(project, ['goals', 'work']) ?? {};
+  const refused = startProblem({ id: m[1], hash, sheet, goals: views.goals ?? {}, work: views.work ?? {}, stopped: stopState().on === true, now: now() });
+  return refused === null ? { action: 'start-goal', goal: m[1], hash } : { refused };
 }
 
 // The one full hash of a proposed change that the card's twelve characters name, or null.
@@ -351,7 +356,8 @@ async function openHead(match, question, { project, client, left }) {
 }
 
 // Works out the signed record a click earns, if any. May ask the helper for a
-// pull request's head. Returns { made, profile?, lift? }, or null. A Lift STOP earns nothing
+// pull request's head. Returns { made, profile?, lift? }, { refused } (a Start the goal's rules refuse, in a sentence;
+// nothing is signed), or null. A Lift STOP earns nothing
 // while STOP is off, so an old card's click or reply code can't stand for a later STOP. A reply
 // passes `shownAt`, when its card was shown: its Lift STOP earns a record only when the card was
 // shown after this STOP began, so a code from a card about an earlier STOP can't lift a later one. A usage card's
@@ -369,7 +375,8 @@ export async function earned({ project, question, label, card, client, now, left
   if (setLinesOf(question).some((line) => TAKEOVER_LINE.test(line))) return takeOverOf(question, label, card);
   if (setLinesOf(question).some((line) => PAIR_LINE.test(line) || UNPAIR_LINE.test(line))) return pairOf(question, label);
   if (label === 'Start' && setLinesOf(question).some((line) => START_GOAL_LINE.test(line))) {
-    const record = startGoalOf(project, question);
+    const record = startGoalOf(project, question, { now, stopState });
+    if (record?.refused !== undefined) return { refused: record.refused };
     return record ? action(record) : null;
   }
   if (label === 'Approve') {
@@ -841,6 +848,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   // after its card's shown record and spends the code.
   const queued = [];
   const takeOvers = [];
+  const refusedQuestions = new Set();
   const clock = () => at;
   const shownAt = new Date(at.getTime() - 1);
   queued.push(...keepSetupClicks(input.cwd, out, clock, project));
@@ -864,7 +872,12 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
     if (!click.signable || setupAsked.has(click.question)) continue;
     try {
       const got = await earned({ project, ...click, client: api, now: clock, left, stopState, ...(ready === undefined ? {} : { ready }), ...(premiumIn === undefined ? {} : { premiumIn }) });
-      if (got) {
+      if (got?.refused !== undefined) {
+        // A refused Start is told and left waiting: no record, and no plain answer to close its card.
+        const line = `The goal wasn't started: ${got.refused}`;
+        notices = notices === null ? line : `${notices}\n${line}`;
+        refusedQuestions.add(click.question);
+      } else if (got) {
         queued.push(keepEarned(project, got, { now: clock, liftStop }));
         if (got.takeOver) takeOvers.push(queued.at(-1));
       }
@@ -880,7 +893,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   for (const card of steered) await left(api.state.write({ project, kind: 'chat-steer', data: { card } }));
   // Then the plain answers. What cannot be sent in time is kept.
   for (const { question, label } of out) {
-    if (setupAsked.has(question)) continue;
+    if (setupAsked.has(question) || refusedQuestions.has(question)) continue;
     const body = { project, kind: 'card-answer', data: { question, label } };
     try {
       const result = await left(api.state.write(body));

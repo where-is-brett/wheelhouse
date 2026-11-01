@@ -4072,7 +4072,8 @@ export async function startHelper({
   const uninstall = uninstallRoutes({ now, stopped, userHome, run, spawn, stopHelper: () => { Promise.resolve().then(() => onStop(close)).catch(() => {}); } });
   // --- the desk (scripts/desk/, spec 5): every front end reads and changes Wheelhouse through these three ---
   // The acts that are answered under STOP, beside a signed record, which /state/record takes under STOP too.
-  const DESK_STOP_ACTS = ['all-stop', 'lift-all-stop'];
+  // Ending or narrowing a goal only makes less happen, and stopping must always be easy, so both are answered under STOP.
+  const DESK_STOP_ACTS = ['all-stop', 'lift-all-stop', 'end-goal', 'narrow-goal'];
   const STOP_SETTERS = ['prompt', 'mod', 'helper', 'runbook'];
   function deskOf(project, body, ctx) {
     const folder = typeof body.cwd === 'string' ? body.cwd : (readProject(project)?.folder ?? readLean(project)?.folder);

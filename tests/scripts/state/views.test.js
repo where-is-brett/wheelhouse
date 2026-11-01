@@ -1711,7 +1711,7 @@ const goalSheet = () => ({
   title: 'Customers can export their orders',
   done: [{ command: 'node check.js', expect: 0 }],
   checksSay: ['The checking script passes.'],
-  pieces: [{ work: 'export-page', hash: H1 }],
+  pieces: [{ work: 'export-csv', hash: dataHash(workEv(0).data) }],
   areas: { may: ['src/**'], wontTouch: ['billing/**'] },
   checkFiles: [],
   spend: { tokens: 1000000 },
@@ -1722,14 +1722,16 @@ const startClick = (n, id, hash) => click(n, { action: 'start-goal', goal: id, h
 test('a goal is in the views only when a signed click names its id and its sheet\'s hash', async () => {
   await withHome(() => {
     const sheet = goalSheet();
+    // The piece's work record, as it stood before the signature.
+    const W = workEv(0);
     const record = ev('goal', 1, { id: 'export-orders', sheet });
-    assert.deepEqual(build([record]).goals, {}, 'a goal alone does nothing');
+    assert.deepEqual(build([W, record]).goals, {}, 'a goal alone does nothing');
     const hash = sheetHash(sheet);
     // an unsigned click, a forged one, another hash and another id
     const forged = { ...startClick(4, 'export-orders', hash), data: { ...startClick(4, 'export-orders', hash).data, goal: 'other' } };
-    assert.deepEqual(build([record, unsigned(startClick(2, 'export-orders', hash)), forged, startClick(3, 'export-orders', H2)]).goals, {});
+    assert.deepEqual(build([W, record, unsigned(startClick(2, 'export-orders', hash)), forged, startClick(3, 'export-orders', H2)]).goals, {});
     const signed = startClick(5, 'export-orders', hash);
-    const goals = build([record, signed]).goals;
+    const goals = build([W, record, signed]).goals;
     assert.deepEqual(Object.keys(goals), ['export-orders']);
     assert.equal(goals['export-orders'].hash, hash);
     assert.equal(goals['export-orders'].startedAt, signed.at);
@@ -1738,7 +1740,7 @@ test('a goal is in the views only when a signed click names its id and its sheet
     // a goal-end from the helper ends it; a narrowing note after the click narrows it
     const narrow = ev('note', 6, { about: 'narrow-goal', goal: 'export-orders', change: { spend: { tokens: 500 } } });
     const end = ev('goal-end', 7, { goal: 'export-orders', ending: 'time', at: T(7), spent: { tokens: 1, points: null, requests: null, unknown: 0, shareAtStart: null, queueRuns: 0 } });
-    const after = build([record, signed, narrow, end]).goals['export-orders'];
+    const after = build([W, record, signed, narrow, end]).goals['export-orders'];
     assert.equal(after.sheet.spend.tokens, 500);
     assert.equal(after.ended.ending, 'time');
   });

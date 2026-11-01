@@ -105,6 +105,7 @@ test('each pane message reads as section 23.7 has it', () => {
 test('a deciding toast is the label in the past, then what happens where the card says when', () => {
   assert.equal(words.decidedToast('Approve', 'It goes live within the hour.'), 'Approved. It goes live within the hour.');
   assert.equal(words.decidedToast('Approve', 'Nothing is released; the agents carry on with other work.'), 'Approved.');
+  assert.equal(words.decidedToast('Start', 'Nothing else moves meanwhile.'), 'Started.');
   assert.equal(words.decidedToast('Confirm', 'that feature waits; the others carry on'), 'Confirmed.');
   assert.equal(words.decidedToast('Confirm', 'The change is in force; it applies by 18:00.'), 'Confirmed. It applies by 18:00.');
   assert.equal(words.decidedToast('Do it', undefined), 'Done.');

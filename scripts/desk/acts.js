@@ -10,7 +10,7 @@ import { cardTextOf, hashOf } from '../mod/status.js';
 import { NOT_NOW, SUGGEST } from '../lib/calm-words.js';
 import { composeCard } from '../cards/compose.js';
 import { PAIR_LABEL } from '../state/card-lines.js';
-import { checkSheet, goalInForce, narrowed, pieceCovered, sheetHash } from '../engine/goal.js';
+import { goalInForce, narrowed, sheetHash, startProblem } from '../engine/goal.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const sha256 = (text) => crypto.createHash('sha256').update(text).digest('hex');
@@ -135,15 +135,13 @@ const ACTS = {
     if (sheet === undefined) return no(`No sheet of the goal ${args.goal} has that hash, so it wasn't started`);
     const got = await source.views({});
     const views = isPlain(got?.views) ? got.views : {};
-    const running = goalInForce(views);
-    if (running !== null) return no(`The goal ${running.id} is running, and only one goal runs at a time`);
-    if (isPlain(views.goals) && Object.hasOwn(views.goals, args.goal)) return no(`The goal ${args.goal} was started before, so it isn't started again`);
-    const problem = checkSheet(sheet, { now: now() });
+    // Judged at the signed record's own moment, as the goals view judges it.
+    const signed = records.find((r) => r.event?.kind === 'action' && r.event.data?.action === 'start-goal').event;
+    const problem = startProblem({
+      id: args.goal, hash: args.hash, sheet, goals: views.goals, work: views.work,
+      stopped: (await source.stop?.())?.on === true, now: new Date(typeof signed.at === 'string' ? signed.at : now()),
+    });
     if (problem !== null) return no(`The goal wasn't started: ${problem}`);
-    const entry = { sheet };
-    for (const piece of sheet.pieces) {
-      if (!pieceCovered(entry, piece.work, views)) return no(`The work ${piece.work} changed since the goal's sheet was made, so the goal wasn't started`);
-    }
     const refused = await recordAll(recorder, records);
     return refused === null ? { ok: true, changed: ['goal'], goal: args.goal } : no(`The goal wasn't started: ${refused}`);
   },

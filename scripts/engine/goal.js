@@ -138,6 +138,25 @@ export function narrowed(sheet, change) {
   return next;
 }
 
+// Why the goal `id`, whose sheet is `sheet` and signed hash `hash`, can't start now, in a plain sentence, or null. `goals` is
+// the goals view so far, `work` is shaped as `views.work`, `now` a Date. Later checks (a baseline that holds, a must-pass
+// list) join here, so every way of starting a goal asks them: the view, the desk's act and the click itself.
+export function startProblem({ id, hash, sheet, goals, work, stopped = false, now }) {
+  if (stopped) return 'All stop is on';
+  const held = isObject(goals) ? goals : {};
+  for (const [other, goal] of Object.entries(held)) {
+    if (goal.ended === null || Date.parse(goal.ended.at) > now.getTime()) return `The goal ${other} is running, and only one goal runs at a time`;
+  }
+  if (Object.hasOwn(held, id)) return `The goal ${id} was started before, so it isn't started again`;
+  const problem = checkSheet(sheet, { now });
+  if (problem !== null) return problem;
+  const entry = { hash, sheet };
+  for (const piece of sheet.pieces) {
+    if (!pieceCovered(entry, piece.work, { work })) return `The work ${piece.work} changed since the goal's sheet was made, so the goal wasn't started`;
+  }
+  return null;
+}
+
 // The goal in force, from the views: the entry of `views.goals` that hasn't ended, or null.
 export function goalInForce(views) {
   const goals = isObject(views?.goals) ? views.goals : {};
@@ -167,10 +186,13 @@ export function goalsView(sorted, starts) {
     // Any record of the id whose sheet has the signed hash: the latest isn't assumed, so a later record can't unsign it.
     const record = sorted.find((e) => e.kind === 'goal' && e.data?.id === id && isObject(e.data.sheet) && sheetHash(e.data.sheet) === start.data.hash);
     if (record === undefined) continue;
-    // One goal at a time: another that hasn't ended by this start keeps it out.
     const startedAt = Date.parse(start.at);
-    if (Object.values(goals).some((g) => g.ended === null || Date.parse(g.ended.at) > startedAt)) continue;
-    if (checkSheet(record.data.sheet, { now: new Date(start.at) }) !== null) continue;
+    // The work as it stood at the signature: a piece changed before it keeps the goal out, one changed after doesn't unsign it.
+    const work = {};
+    for (const e of sorted) {
+      if (e.kind === 'work' && typeof e.data?.id === 'string' && Date.parse(e.at) <= startedAt) work[e.data.id] = { work: { data: e.data } };
+    }
+    if (startProblem({ id, hash: start.data.hash, sheet: record.data.sheet, goals, work, now: new Date(start.at) }) !== null) continue;
 
     const endRecord = sorted.find((e) => e.kind === 'goal-end' && e.data?.goal === id);
     const ended = endRecord === undefined ? null : {

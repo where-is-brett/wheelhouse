@@ -24,7 +24,9 @@
 //   narrow-goal     narrows the running goal: the change as JSON on standard input, with only `until`, `spend`,
 //                   `areas` or `pieces`, each made smaller; a change that widens anything is refused
 //   record <kind>   records something the front desk decided: one of RECORD_KINDS, the data as JSON;
-//                   for a work event's document and an amendment, it works out the hash and prints it;
+//                   for a work event's document and an amendment, it works out the hash and prints it; a work also
+//                   prints `recordHash`, the hash of its record as written, which a goal's sheet names a piece by;
+//                   a goal prints `hash`, the hash of its sheet, which the goal's card and the director's Start name;
 //                   an amendment needs its read-back, and prints the route line and the read-back to say
 //   similar [words] the open work, ideas and rejections that share words with a request: its
 //                   words as the arguments, or its text on standard input
@@ -82,7 +84,7 @@ import { endedBy, since, NO_PLAN, STARTS_UNAPPROVED } from '../foreman/queue.js'
 import { startedAsScript } from '../lib/started-as-script.js';
 import { isOpen, surveyLines, whyNext, workLines } from '../desk/views.js';
 import { deskClient } from '../desk/client.js';
-import { checkSheet } from '../engine/goal.js';
+import { checkSheet, sheetHash } from '../engine/goal.js';
 
 // Moved to the desk's views (scripts/desk/views.js); exported here for one release so nothing else breaks.
 export { surveyLines, workLines };
@@ -546,7 +548,7 @@ export async function pullCards({ client, cwd, now }) {
 export async function endGoal({ client, cwd, now: immediately }) {
   const got = await deskOf(client, cwd).act('end-goal', { now: immediately === true });
   if (got?.ok !== true) throw new CliError(said(got, 'The goal wasn\'t ended'));
-  return { ended: true, now: immediately === true };
+  return { asked: true, now: immediately === true };
 }
 
 export async function narrowGoal({ client, cwd, change }) {
@@ -962,7 +964,7 @@ export async function record({ client, cwd, kind, input, now, ready, makeId = ()
     }
     const data = await withHash(client, cwd, kind, input);
     const hash = data.doc?.hash;
-    return { ...answered(await write(client, cwd, kind, data)), ...(typeof hash === 'string' ? { hash } : {}) };
+    return { ...answered(await write(client, cwd, kind, data)), ...(typeof hash === 'string' ? { hash } : {}), recordHash: dataHash(data) };
   }
   if (kind === 'amendment') {
     // The read-back is said, not stored: the event is the amendment as the foreman applies it.
@@ -975,6 +977,7 @@ export async function record({ client, cwd, kind, input, now, ready, makeId = ()
     // A goal's sheet is checked before it is written, so a card is never made for one that can't start.
     const problem = checkSheet(input.sheet, { now: now() });
     if (problem !== null) throw new CliError(problem);
+    return { ...answered(await write(client, cwd, kind, input)), hash: sheetHash(input.sheet) };
   }
   if (kind !== 'ruling' && kind !== 'brief') return answered(await write(client, cwd, kind, input));
 
