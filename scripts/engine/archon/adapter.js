@@ -58,6 +58,8 @@ const TIERS = ['small', 'medium', 'large'];
 // The statuses of a run that hasn't ended.
 const LIVE = ['running', 'pending', 'paused'];
 const START_MS = 120000;
+// Archon keeps a run's start to the second.
+const START_CLOCK_MS = 2000;
 const CALL_MS = 60000;
 
 // The routing table's column in force as Archon `--model` values (spec 7.6): `bindings` is
@@ -399,7 +401,26 @@ export function archonAdapter({
         return { ok: true, runId: result.json.runId, branch: result.json.branch ?? order.branch ?? null };
       }
       const error = String(result.json?.error ?? result.stderr ?? '').trim().split('\n')[0];
-      return refusedWith(`The engine didn't start the run${error ? ` (${error})` : ''}`);
+      // No reply in time: the run may have begun all the same (check 85).
+      const said = refusedWith(`The engine didn't start the run${error ? ` (${error})` : ''}`);
+      return result.timedOut === true ? { ...said, uncertain: true } : said;
+    },
+
+    // The live run of `work` begun since `since`, for a start that may have happened: { runId }, null for none, undefined
+    // when it can't say. Check 85: a timed-out start can leave a `pending` run with no branch or path, so a run is told by
+    // the `work` input every start gives, kept in its metadata. A pending run showing no input, or two matches, can't be
+    // told. Asked on a later tick, since `status --all` leaves out a run under about a second old. Not one of the
+    // interface's methods.
+    async liveRunOf({ work, since } = {}) {
+      const from = Date.parse(since);
+      if (typeof work !== 'string' || !Number.isFinite(from)) return undefined;
+      const listed = await cli(['workflow', 'status', '--all'], { json: true, timeout: CALL_MS });
+      if (!Array.isArray(listed.json?.runs)) return undefined;
+      const fresh = listed.json.runs.filter((r) => ![MERGE_QUEUE, READER].includes(r.workflow_name) && LIVE.includes(r.status) && Date.parse(r.started_at) >= from - START_CLOCK_MS);
+      if (fresh.some((r) => typeof r.metadata?.inputs?.work !== 'string' && r.status === 'pending')) return undefined;
+      const ours = fresh.filter((r) => r.metadata?.inputs?.work === work);
+      if (ours.length > 1) return undefined;
+      return ours.length === 1 ? { runId: ours[0].id } : null;
     },
 
     // The open asks, read once. The queue read has no cursor, so the one given comes back as it was.

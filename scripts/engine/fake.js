@@ -83,7 +83,7 @@ export function fakeEngine({ recordings = {}, now = () => new Date().toISOString
       const played = [...runs.values()].filter((r) => r.recording === name).length;
       const events = recording[Math.min(played, recording.length - 1)];
       const id = `fake-${runs.size + 1}-${name}`;
-      const run = { id, recording: name, pending: events.map((e) => ({ ...e })), open: null, ended: null, branch: null, pr: null, steps: [], ownerPid: order.ownerPid ?? null, folder: order.folder ?? null, holding: order.running === true, given: {}, lane: order.lane ?? null, project: order.project ?? null };
+      const run = { id, recording: name, pending: events.map((e) => ({ ...e })), open: null, ended: null, branch: null, pr: null, steps: [], ownerPid: order.ownerPid ?? null, folder: order.folder ?? null, holding: order.running === true, given: {}, lane: order.lane ?? null, project: order.project ?? null, work: order.work ?? null };
       runs.set(id, run);
       play(run);
       // The branch the run is on, as the real engine gives it: the one asked for, else the recording's.
@@ -149,12 +149,19 @@ export function fakeEngine({ recordings = {}, now = () => new Date().toISOString
       return {
         status,
         ownerPid: run.ownerPid,
+        folder: run.folder,
         steps,
         branch: run.ended?.branch ?? started?.branch ?? null,
         pr: run.ended?.pr ?? null,
         digest: `${steps.length} step${steps.length === 1 ? '' : 's'} finished; ${run.ended ? `ended: ${run.ended.outcome}` : status}`,
         source,
       };
+    },
+
+    // The run of `work` not yet ended, or null: a start that may have happened.
+    liveRunOf({ work } = {}) {
+      const live = [...runs.values()].find((run) => run.work === work && !run.ended);
+      return live ? { runId: live.id } : null;
     },
 
     // Each finished step's output, by its id: what the recording gave, then what the test gave.

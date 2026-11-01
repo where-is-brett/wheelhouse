@@ -12,7 +12,7 @@ Wheelhouse is for a product owner who isn't a developer. You say what you want i
 
 1. **You ask.** In a Claude Desktop conversation, you write what you want: "Add a page where customers can book a time."
 2. **The First Mate checks with you.** It asks only what is really yours to decide, as a card with clickable answers, and decides the rest itself, telling you so.
-3. **The Crew builds it.** The Bosun hands each piece of work to the Crew, and to Lookouts who check it.
+3. **The Crew builds it.** The Bosun hands each piece of work to the Crew, and to Lookouts who check it. A piece waiting on you no longer holds up other work.
 4. **Nothing ships unchecked.** The work reaches your main product only after its checks pass and a Lookout has looked. Anything that changes the safety rules needs your click as well.
 5. **You get a short briefing** of what's done, what's under way and what needs you. Type "all stop" at any time and the whole Crew halts until you click to carry on.
 

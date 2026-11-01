@@ -10,6 +10,8 @@ import { fakeEngine } from '../../../scripts/engine/fake.js';
 import { engineRunner } from '../../../scripts/engine/runner.js';
 import { READER_WORK } from '../../../scripts/delegation/reader.js';
 import { makeEvent } from '../../../scripts/state/events.js';
+import { FIX_LANE } from '../../../scripts/engine/fix-main.js';
+import { wayBack, asking as asks, forever } from '../../helpers/way-back.js';
 
 const HEAD = 'b'.repeat(40);
 const ev = (over) => ({ runId: 'x', at: '2026-10-29T02:00:00.000Z', ...over });
@@ -21,7 +23,7 @@ const asking = (id, over = {}) => [
   ev({ type: 'run-ended', outcome: 'completed' }),
 ];
 
-function setUp({ recordings = { one: asking('q1') }, settings = {}, at = '2026-10-29T13:00:00.000Z', stop = false, slow = false, refuse, endRun, onCard, workOf = () => ({ work: 'sale-banner', lane: 'quick' }), onReaderAsk, openedOf, mergeAsked, release } = {}) {
+function setUp({ recordings = { one: asking('q1') }, settings = {}, at = '2026-10-29T13:00:00.000Z', stop = false, slow = false, refuse, endRun, onCard, workOf = () => ({ work: 'sale-banner', lane: 'quick' }), onReaderAsk, openedOf, mergeAsked, release, gate = {} } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-runner-'));
   const engine = fakeEngine({ recordings });
   if (mergeAsked) engine.mergeAsked = mergeAsked;
@@ -43,6 +45,7 @@ function setUp({ recordings = { one: asking('q1') }, settings = {}, at = '2026-1
     ...(onReaderAsk ? { onReaderAsk } : {}),
     ...(openedOf ? { openedOf } : {}),
     ...(release ? { release } : {}),
+    ...gate,
   });
   // Starts a run of `name` and hands the runner its open ask, as the host does.
   const ask = async (name = 'one') => {
@@ -268,10 +271,12 @@ test('a held card the director answers from the Logbook leaves the list', async 
   try {
     await t.ask('r1');
     await t.ask('r2');
+    // The two cards are one piece's, and a piece's answers go together.
+    t.sign('Keep it small');
     t.sign('Keep it small', 1);
     await t.runner.tick();
     assert.deepEqual(heldNote(t).ids, []);
-    assert.equal(acts(t.engine).length, 1);
+    assert.equal(acts(t.engine).length, 2);
   } finally { t.cleanup(); }
 });
 
@@ -490,8 +495,7 @@ test('waiting at an ask does not use up the minutes cap', async () => {
 
 test('Give it more on a cancelled run starts it again on its branch, with the cap raised once and the spend carried', async () => {
   const started = [];
-  const t = setUp({ recordings: { big: spending(1200000) }, settings: { capMinutes: { quick: 20 }, capTokens: { quick: 1000000 } } });
-  t.runner.onStart(async (args) => { started.push(args); return { ok: true, runId: 'again-1' }; });
+  const t = setUp({ recordings: { big: spending(1200000) }, settings: { capMinutes: { quick: 20 }, capTokens: { quick: 1000000 } }, gate: { startAdmitted: async (args) => { started.push(args); return { ok: true, runId: 'again-1' }; } } });
   try {
     const { runId } = t.engine.start({ recording: 'big', running: true });
     withRun(t, runId, [['2026-10-29T12:50:00.000Z', 'started']]);
@@ -500,8 +504,7 @@ test('Give it more on a cancelled run starts it again on its branch, with the ca
     const q = t.writes.filter((w) => w.kind === 'question').at(-1).data;
     t.views.questions[q.id] = { question: { data: q }, answer: { label: 'Give it more' } };
     await t.runner.tick();
-    assert.deepEqual(started, [{ work: 'sale-banner', lane: 'quick', branch: 'wh/sale-banner', carryOn: true, raised: true }]);
-    assert.deepEqual(t.runner.carried('again-1'), { raised: true, runs: [runId] });
+    assert.deepEqual(started, [{ work: 'sale-banner', key: q.id, lane: 'quick', branch: 'wh/sale-banner', carryOn: true, raised: true, carried: { raised: true, runs: [runId] } }]);
   } finally { t.cleanup(); }
 });
 
@@ -808,7 +811,7 @@ const ended = (t, runId) => withRun(t, runId, [['2026-10-29T12:50:00.000Z', 'sta
 test('Send it back on a blocked card starts the work again on its branch once the run has ended, with the cap not raised', async () => {
   const started = [];
   const t = setUp({ recordings: { one: blockedAsk('q1') } });
-  t.runner.onStart(async (args) => { started.push(args); return { ok: true, runId: 'again-1' }; });
+  t.runner.onEnter((args) => { if (args.via !== 'answer') started.push(args); });
   try {
     const { runId } = await t.ask();
     withRun(t, runId, [['2026-10-29T12:50:00.000Z', 'started'], ['2026-10-29T12:55:00.000Z', 'paused']]);
@@ -819,15 +822,14 @@ test('Send it back on a blocked card starts the work again on its branch once th
     ended(t, runId);
     await t.runner.tick();
     await t.runner.tick();
-    assert.deepEqual(started, [{ work: 'sale-banner', lane: 'quick', branch: 'wh/sale-banner', carryOn: true, raised: false, answers: [] }], 'started once');
-    assert.deepEqual(t.runner.carried('again-1'), { raised: false, runs: [runId] }, 'the spend so far still counts against the cap');
+    assert.deepEqual(started, [{ work: 'sale-banner', lane: 'quick', via: 'rework', key: `rework:${runId}`, branch: 'wh/sale-banner', carryOn: true, raised: false, answers: [], carried: { raised: false, runs: [runId] } }], 'asked for once');
   } finally { t.cleanup(); }
 });
 
 test('an answer of the step\'s own starts the work again with the director\'s answers in its order', async () => {
   const started = [];
   const t = setUp({ recordings: { one: blockedAsk('q1', { options: OWN }) } });
-  t.runner.onStart(async (args) => { started.push(args); return { ok: true, runId: `again-${started.length}` }; });
+  t.runner.onEnter((args) => { if (args.via !== 'answer') started.push(args); });
   try {
     const { runId } = await t.ask();
     t.sign('Within the order');
@@ -841,7 +843,7 @@ test('Stop on a blocked card ends the work: nothing starts again', async () => {
   for (const options of [undefined, OWN]) {
     const started = [];
     const t = setUp({ recordings: { one: blockedAsk('q1', { options }) } });
-    t.runner.onStart(async (args) => { started.push(args); return { ok: true, runId: 'again-1' }; });
+    t.runner.onEnter((args) => { if (args.via !== 'answer') started.push(args); });
     try {
       const { runId } = await t.ask();
       t.sign('Stop this work');
@@ -858,7 +860,7 @@ test('a bug found bigger than a bug goes back to the First Mate in the lane the 
   for (const [label, lane] of [['Make it a small change', 'a small change'], ['Make it a feature', 'a feature']]) {
     const started = [];
     const t = setUp({ recordings: { one: asking('q1', { kind: 'blocked', topic: 'bigger-than-a-bug', recommend: 'small', options: MOVE, context: { question: 'The fix changes 7 files. Should it go on as a small change?' } }) } });
-    t.runner.onStart(async (args) => { started.push(args); return { ok: true, runId: 'again-1' }; });
+    t.runner.onEnter((args) => { if (args.via !== 'answer') started.push(args); });
     try {
       const { runId } = await t.ask();
       t.sign(label);
@@ -877,7 +879,7 @@ test('only the bug lane\'s card moves work up a lane: another lane\'s answer of 
   const MOVE = [{ id: 'small', label: 'Make it a small change' }, { id: 'stop', label: 'Stop this work' }];
   const started = [];
   const t = setUp({ recordings: { one: asking('q1', { kind: 'blocked', topic: 'bigger-than-a-bug', recommend: 'small', options: MOVE, context: { question: 'Bigger?' } }) } });
-  t.runner.onStart(async (args) => { started.push(args); return { ok: true, runId: 'again-1' }; });
+  t.runner.onEnter((args) => { if (args.via !== 'answer') started.push(args); });
   try {
     const { runId } = await t.ask();
     t.sign('Make it a small change');
@@ -892,7 +894,7 @@ test('only the bug lane\'s card moves work up a lane: another lane\'s answer of 
 test('an answer to a question that isn\'t a blocked exit starts nothing again', async () => {
   const started = [];
   const t = setUp();
-  t.runner.onStart(async (args) => { started.push(args); return { ok: true, runId: 'again-1' }; });
+  t.runner.onEnter((args) => { if (args.via !== 'answer') started.push(args); });
   try {
     const { runId } = await t.ask();
     t.sign('Keep it small');
@@ -905,7 +907,7 @@ test('an answer to a question that isn\'t a blocked exit starts nothing again', 
 test('an answer the engine refuses starts nothing again', async () => {
   const started = [];
   const t = setUp({ recordings: { one: blockedAsk('q1') } });
-  t.runner.onStart(async (args) => { started.push(args); return { ok: true, runId: 'again-1' }; });
+  t.runner.onEnter((args) => { if (args.via !== 'answer') started.push(args); });
   try {
     const { runId } = await t.ask();
     t.engine.act(runId, { cancel: { reason: 'gone' } });
@@ -919,7 +921,7 @@ test('an answer the engine refuses starts nothing again', async () => {
 
 test('the fresh run asking the question the director answered is answered from that answer, with no second card', async () => {
   const t = setUp({ recordings: { one: blockedAsk('q1', { options: OWN }), two: blockedAsk('q2', { options: OWN }), three: blockedAsk('q3', { question: 'Another question?', options: OWN }) } });
-  t.runner.onStart(async () => ({ ok: true, runId: 'again-1' }));
+  t.runner.onEnter(() => {});
   try {
     const { runId } = await t.ask('one');
     t.sign('Its own line');
@@ -1530,4 +1532,252 @@ test('trouble releasing costs nothing else', async () => {
     await t.runner.tick();
     assert.deepEqual(acts(t.engine).map((c) => c.action.answer?.choice), ['stop']);
   } finally { t.cleanup(); }
+});
+
+// Delegated decisions design, section 8.3: the click counts at once, and delivery waits for a place.
+const waitingAnswer = async (over = {}) => {
+  const w = wayBack({ recordings: { a: asks('qa'), busy: forever() }, pace: 1, ...over });
+  w.put('a', { place: 0 });
+  w.put('busy', { place: 1 });
+  await w.tick(3);
+  return w;
+};
+
+test('an answer that stops the work goes at once, with no place', async () => {
+  const w = await waitingAnswer({ recordings: { a: asks('qa', { options: [{ id: 'stop', label: 'Stop' }, { id: 'go', label: 'Go on' }] }), busy: forever() } });
+  w.answer('a', 'Stop');
+  await w.pump();
+  await w.runner.tick();
+  assert.equal(w.answers().length, 1);
+  assert.equal(w.dispatcher.admittedTo('a'), false);
+});
+
+test('a refused answer is dropped', async () => {
+  const w = await waitingAnswer();
+  const q = w.cardOf('a');
+  w.engine.act(w.runsOf('a')[0], { answer: { ask: 'qa', choice: 'a' } });
+  w.engine.act(w.runsOf('busy')[0], { cancel: { reason: 'done' } });
+  w.answer('a', q.options[0].label);
+  await w.tick(4);
+  assert.equal(w.dispatcher.admittedTo('a'), false, 'refused: nothing is left on the way back');
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(w.dir, 'dispatch.json'), 'utf8')).returning, []);
+});
+
+test('an answer with nothing to send never enters', async () => {
+  const t = setUp({ recordings: { ok: asking('ap1', { kind: 'approval', options: [], setLine: { pr: 9, head: HEAD } }) } });
+  const entered = [];
+  t.runner.onEnter((args) => entered.push(args));
+  try {
+    await t.ask('ok');
+    t.views.approvals = { 9: { [HEAD]: { data: { pr: 9, commit: HEAD } } } };
+    await t.runner.tick();
+    assert.deepEqual(entered, []);
+    assert.equal(acts(t.engine).length, 0);
+  } finally { t.cleanup(); }
+});
+
+test('the fix lane and the merge queue never wait for admit', async () => {
+  for (const lane of [FIX_LANE, 'merge']) {
+    const t = setUp({ workOf: () => ({ work: 'sale-banner', lane }), gate: { admittedTo: () => false } });
+    let entries = 0;
+    t.runner.onEnter(() => { entries += 1; });
+    try {
+      await t.ask();
+      t.sign('Do the whole page');
+      await t.runner.tick();
+      assert.equal(acts(t.engine).length, 1, lane);
+      assert.equal(entries, 0, lane);
+    } finally { t.cleanup(); }
+  }
+});
+
+test('Give it more asks for a place, and a run that can\'t resume starts on that place', async () => {
+  const entered = [];
+  const fallback = [];
+  const startAdmitted = async (args) => { fallback.push(args); return { ok: true, runId: 'again-1' }; };
+  const gate = { admittedTo: () => entered.length > 0, startAdmitted };
+  const t = setUp({ recordings: { big: spending(1200000) }, settings: { capMinutes: { quick: 20 }, capTokens: { quick: 1000000 } }, gate });
+  t.runner.onEnter((args) => entered.push(args));
+  try {
+    const { runId } = t.engine.start({ recording: 'big', running: true });
+    withRun(t, runId, [['2026-10-29T12:50:00.000Z', 'started']]);
+    await t.runner.tick();
+    const q = t.writes.filter((w) => w.kind === 'question').at(-1).data;
+    t.views.questions[q.id] = { question: { data: q }, answer: { label: 'Give it more' } };
+    await t.runner.tick();
+    assert.deepEqual(entered.map((e) => [e.via, e.key, e.runId]), [['more', q.id, runId]]);
+    assert.deepEqual(fallback.map((f) => [f.key, f.carryOn, f.raised]), [[q.id, true, true]]);
+  } finally { t.cleanup(); }
+});
+
+test('Give it more waits for its place, and a crash part way doesn\'t start a second run', async () => {
+  const w = wayBack({ recordings: { a: asks('qa') }, pace: 1 });
+  w.put('a');
+  await w.tick();
+  const runId = w.runsOf('a')[0];
+  await w.runner.capped({ runId, work: 'a', lane: 'quick', branch: 'wh/a', reached: { cap: 'tokens', limit: 10 }, paused: true });
+  const q = w.cards().at(-1);
+  w.questions[w.cards()[0].id].answer = { label: 'Do the whole page' };
+  w.questions[q.id].answer = { label: 'Give it more' };
+  await w.runner.tick();
+  assert.equal(w.dispatcher.admittedTo('a'), false, 'it has asked, and has no place yet');
+  const before = w.starts.length;
+  await w.dispatcher.tick();
+  assert.equal(w.dispatcher.admittedTo('a'), true);
+  await w.runner.tick();
+  w.restart();
+  await w.tick(3);
+  assert.equal(w.starts.length, before, 'the run was woken, so nothing started');
+});
+
+test('a piece with two open cards returns once both are answered', async () => {
+  const w = wayBack({ recordings: { a: asks('qa') } });
+  w.put('a');
+  await w.tick();
+  const runId = w.runsOf('a')[0];
+  await w.runner.onAsk({ type: 'ask', id: 'qb', runId, at: '2026-10-29T02:00:00.000Z', kind: 'question', level: 3, recommend: 'b', options: [{ id: 'a', label: 'One' }, { id: 'b', label: 'Other' }] });
+  const [first, second] = w.cards();
+  w.questions[first.id].answer = { label: 'Do the whole page' };
+  await w.tick(2);
+  assert.equal(w.answers().length, 0, 'the second card is still open');
+  w.questions[second.id].answer = { label: 'Other' };
+  await w.pump();
+  await w.runner.tick();
+  await w.dispatcher.tick();
+  await w.runner.tick();
+  assert.deepEqual(w.answers().map((c) => c.action.answer.ask).sort(), ['qa', 'qb'], 'both go back, on the one place');
+});
+
+test('time on returning isn\'t running time, and meets no cap', async () => {
+  const w = await waitingAnswer({ settings: { capMinutes: { quick: 1 }, capTokens: { quick: 1000000 } } });
+  w.answer('a', 'Do the whole page');
+  await w.tick();
+  w.clock.now = new Date(w.clock.now.getTime() + 8 * 60 * 60 * 1000);
+  const before = w.stateOf('a');
+  await w.runner.tick();
+  assert.equal(before, 'paused');
+  assert.equal(w.cards().filter((c) => /reached its cap/.test(c.what) && c.work === 'a').length, 0);
+});
+
+test('under All stop the answer isn\'t used, the piece leaves returning, and Carry on has the answer and the branch, through a refused start', async () => {
+  const w = await waitingAnswer({ recordings: { a: asks('qa', { context: { question: 'Which?', branch: 'wh/a' } }), busy: forever() } });
+  w.answer('a', 'Do the whole page');
+  await w.tick();
+  w.stop = true;
+  await w.engine.stopAll('All stop');
+  await w.tick();
+  assert.equal(w.answers().length, 0);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(w.dir, 'dispatch.json'), 'utf8')).returning, []);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(w.dir, 'dispatch.json'), 'utf8')).carryOver.a, { branch: 'wh/a', answers: [{ question: 'Which?', answer: 'Do the whole page' }] });
+});
+
+const wayBackAct = (w) => (runId, action) => { w.engine.calls.push({ call: 'act', runId, action }); return { ok: true }; };
+// A piece on a run stopped at its cap, whose Give it more can't resume it.
+const atCap = async () => {
+  const w = wayBack({ recordings: { a: forever() }, pace: 1 });
+  w.put('a');
+  await w.tick();
+  const runId = w.runsOf('a')[0];
+  w.engine.act(runId, { cancel: { reason: 'its cap' } });
+  await w.pump();
+  await w.runner.capped({ runId, work: 'a', lane: 'quick', branch: 'wh/a', reached: { cap: 'tokens', limit: 10 } });
+  const q = w.cards().at(-1);
+  w.questions[q.id].answer = { label: 'Give it more' };
+  return { w, q, runId };
+};
+const ran = (w) => w.engine.calls.filter((c) => c.call === 'start').length;
+
+test('Give it more refused once isn\'t lost: it stays on the way back and starts once', async () => {
+  const { w } = await atCap();
+  let refusals = 0;
+  w.refuse = () => { refusals += 1; return refusals === 1 ? 'the mirror could not be read' : null; };
+  await w.tick(4);
+  assert.equal(refusals, 2);
+  assert.equal(ran(w), 2, 'tried again, and started');
+  assert.equal(w.runsOf('a').filter((id) => w.engine.inspect(id).status === 'running').length, 1);
+  assert.deepEqual(w.runner.carried(w.runsOf('a').at(-1)).runs, [w.runsOf('a')[0]], 'with its spend carried');
+});
+
+test('a crash during Give it more\'s start doesn\'t start a second run', async () => {
+  const { w } = await atCap();
+  await w.runner.tick();
+  await w.dispatcher.tick();
+  // The engine starts the run, and the helper stops before it hears.
+  w.startAs = async (args, real) => { await real(args); return new Promise(() => {}); };
+  w.runner.tick();
+  await new Promise((resolve) => { setTimeout(resolve, 20); });
+  w.startAs = null;
+  assert.equal(ran(w), 2);
+  w.restart();
+  await w.tick(3);
+  assert.equal(ran(w), 2);
+});
+
+test('a cap card answered after the work was queued again starts nothing beside the new run', async () => {
+  const { w } = await atCap();
+  w.work.a.work.at = '2026-10-29T12:00:00.000Z';
+  w.clock.now = new Date('2026-10-29T12:00:01.000Z');
+  await w.tick(3);
+  assert.equal(ran(w), 2, 'only the new queueing\'s run');
+  assert.ok(w.notes().some((n) => /wasn't used: the work was queued again/.test(n)));
+});
+
+test('an answer the engine took with no reply still brings the fresh run', async () => {
+  const blocked = asks('qa', { kind: 'blocked', options: [{ id: 'rework', label: 'Send it back' }, { id: 'stop', label: 'Stop' }], context: { question: 'Which?' } });
+  const w = wayBack({ recordings: { a: [blocked, forever()] } });
+  w.put('a');
+  await w.tick();
+  w.answer('a', 'Send it back');
+  const act = w.engine.act.bind(w.engine);
+  w.engine.act = (runId, action) => {
+    act(runId, action);
+    w.engine.act = act;
+    return { ok: false, unreachable: true };
+  };
+  await w.tick(5);
+  assert.equal(w.runsOf('a').length, 2, 'the second try was refused, since the first was taken, and the rework follows');
+});
+
+test('an approval signed under All stop on a run that survives goes back after the lift', async () => {
+  const w = wayBack({ recordings: { a: asks('qa', { kind: 'approval', recommend: 'approve', options: [{ id: 'approve', label: 'Approve' }], setLine: { pr: 9, head: HEAD } }) } });
+  w.put('a');
+  await w.tick();
+  w.stop = true;
+  w.approvals[9] = { [HEAD]: { data: { pr: 9, commit: HEAD } } };
+  await w.tick();
+  assert.equal(w.answers().length, 0);
+  w.stop = false;
+  await w.tick(3);
+  assert.equal(w.answers().length, 1);
+});
+
+test('under All stop with the engine unheard, the answer is looked at again', async () => {
+  const w = await waitingAnswer({ recordings: { a: asks('qa', { context: { question: 'Which?', branch: 'wh/a' } }), busy: forever() } });
+  w.answer('a', 'Do the whole page');
+  w.stop = true;
+  await w.engine.stopAll('All stop');
+  const inspect = w.engine.inspect;
+  w.engine.inspect = () => null;
+  await w.tick();
+  assert.equal(w.notes().filter((n) => /All stop was on/.test(n)).length, 0);
+  w.engine.inspect = inspect;
+  await w.tick();
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(w.dir, 'dispatch.json'), 'utf8')).carryOver.a.answers, [{ question: 'Which?', answer: 'Do the whole page' }]);
+});
+
+test('a Stop at a held cap that a crash cut short is finished on the next tick', async () => {
+  const w = wayBack({ recordings: { a: asks('qa') } });
+  w.put('a');
+  await w.tick();
+  const runId = w.runsOf('a')[0];
+  await w.runner.capped({ runId, work: 'a', lane: 'quick', branch: 'wh/a', reached: { cap: 'tokens', limit: 10 }, paused: true });
+  w.questions[w.cards().at(-1).id].answer = { label: 'Stop' };
+  w.engine.act = () => new Promise(() => {});
+  w.runner.tick();
+  await new Promise((resolve) => { setTimeout(resolve, 20); });
+  delete w.engine.act;
+  w.engine.act = wayBackAct(w);
+  w.restart();
+  await w.runner.tick();
+  assert.equal(w.stateOf('a'), 'ended');
 });

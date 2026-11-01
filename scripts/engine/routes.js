@@ -163,7 +163,7 @@ export function engineRoutes({
     const stands = await recheckHold(project, found.folder, engine, order.bindings);
     if (stands) return { ok: false, refused: stands };
     const started = await engine.start({ work: order.work, lane: order.lane, branch, carryOn: carryOn === true, project: found.folder, bindings: order.bindings });
-    if (!started?.ok) return { ok: false, refused: started?.refused ?? 'the engine didn\'t start the run' };
+    if (!started?.ok) return { ok: false, refused: started?.refused ?? 'the engine didn\'t start the run', ...(started?.uncertain === true ? { uncertain: true } : {}) };
     storeOf(project).save(started.runId, order);
     const artefacts = engine.artefactsOf(started.runId, host?.repo?.(project));
     const ticket = newTicket();
@@ -172,8 +172,9 @@ export function engineRoutes({
       fs.writeFileSync(ticketFile(project, started.runId), `${ticketHash(ticket)}\n`, { flag: 'wx', mode: 0o600 });
       writeTicket(artefacts, ticket);
     } catch {
-      await engine.act(started.runId, { cancel: { reason: 'the run\'s ticket couldn\'t be written' } });
-      return { ok: false, refused: 'the run\'s ticket couldn\'t be written, so it was stopped' };
+      const stopped = await Promise.resolve().then(() => engine.act(started.runId, { cancel: { reason: 'the run\'s ticket couldn\'t be written' } })).catch(() => null);
+      // A run that wasn't stopped may still be going, so whoever started it must look before starting another.
+      return stopped?.ok === true ? { ok: false, refused: 'the run\'s ticket couldn\'t be written, so it was stopped' } : { ok: false, refused: 'the run\'s ticket couldn\'t be written, and it couldn\'t be stopped', uncertain: true };
     }
     if (order.lane === SLICE_LANE) {
       const verdicts = readVerdicts(project);

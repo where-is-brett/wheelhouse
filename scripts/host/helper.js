@@ -5174,9 +5174,15 @@ export async function startHelper({
       keepReviews: (runId) => engineRun.keepTaskReviews(project, runId),
       prTitleOf: async (pr) => (await (await contextFor(project)).adapter().then((adapter) => adapter.prState(pr))).title ?? null,
       release: (work) => dispatcher.release(work),
+      admittedTo: (work) => dispatcher.admittedTo(work),
+      delivered: (work, key) => dispatcher.delivered(work, key),
+      drop: (work, key) => dispatcher.drop(work, key),
+      startAdmitted: (args) => dispatcher.startAdmitted(args),
+      carryOver: (work, kept) => dispatcher.carryOver(work, kept),
       handBack: (args) => dispatcher.handBack(args),
     });
-    runner.onStart((args) => dispatcher.startAgain(args));
+    runner.onEnter((args) => dispatcher.enter(args));
+    dispatcher.onStarted((runId, carried) => runner.started(runId, carried));
     dispatcher.onWaiting(() => runner.waitingWork());
     dispatcher.onParked(() => runner.parkedHeads());
     runner.onMergeRuled(() => dispatcher.queueDue());

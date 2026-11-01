@@ -649,3 +649,28 @@ test('a reader runs in place in its own folder, with its card and no branch or w
   assert.equal((await engine.start({ work: 'reader', lane: 'reader', project: '/engine/readers/ab12' })).ok, false);
   assert.equal((await engine.start({ work: 'reader', lane: 'reader', card: 'q-w-1' })).ok, false);
 });
+
+test('a start with no reply in time is uncertain, and any other refusal isn\'t', async () => {
+  const timedOut = { code: -1, timedOut: true, stdout: '', stderr: '' };
+  const got = await adapter(fakeCli({ 'workflow run': timedOut })).start({ work: 'w1', lane: 'quick', project: '/p' });
+  assert.equal(got.ok, false);
+  assert.equal(got.uncertain, true);
+  const refused = await adapter(fakeCli({ 'workflow run': { code: 1, json: { ok: false, error: 'No' }, stdout: '', stderr: '' } })).start({ work: 'w1', lane: 'quick', project: '/p' });
+  assert.equal(refused.uncertain, undefined);
+});
+
+test('liveRunOf tells a run by the work it was given, never by a branch it may not have yet', async () => {
+  const since = '2026-11-01T02:00:00.000Z';
+  const row = (id, work, over = {}) => ({ id, workflow_name: 'wheelhouse-quick', status: 'pending', started_at: '2026-11-01T02:00:01.000Z', working_path: null, metadata: work ? { inputs: { work } } : {}, ...over });
+  const listing = (...runs) => fakeCli({ 'workflow status': { code: 0, json: { runs }, stdout: '', stderr: '' } });
+  const ask = (cli) => adapter(cli).liveRunOf({ work: 'w1', since });
+  assert.deepEqual(await ask(listing(row('r1', 'w1'), row('r2', 'w2'))), { runId: 'r1' });
+  assert.equal(await ask(listing(row('r2', 'w2'))), null, 'another piece\'s run');
+  assert.equal(await ask(listing(row('r1', 'w1', { started_at: '2026-11-01T01:00:00.000Z' }))), null, 'older than the start');
+  assert.equal(await ask(listing(row('r1', 'w1', { status: 'cancelled' }))), null, 'ended');
+  assert.deepEqual(await ask(listing(row('r1', 'w1', { workflow_name: 'wheelhouse-slice' }))), { runId: 'r1' }, 'whichever lane the piece runs in');
+  assert.equal(await ask(listing(row('r2', null, { workflow_name: 'archon-merge-queue' }))), null, 'the merge queue has no work to name');
+  assert.equal(await ask(listing(row('r1', null))), undefined, 'a pending run with nothing to tell it by');
+  assert.equal(await ask(listing(row('r1', 'w1'), row('r2', 'w1'))), undefined, 'two matches');
+  assert.equal(await ask(fakeCli({ 'workflow status': { code: 1, stdout: '', stderr: '' } })), undefined, 'the engine can\'t list');
+});

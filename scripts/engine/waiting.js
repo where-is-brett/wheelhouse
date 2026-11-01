@@ -37,7 +37,8 @@ export function routerWaiting({ state, views, prWork = () => null } = {}) {
 // ownWaiting({ state, views }) -> Set<work>, from the dispatcher's runner's kept state: its own cards, unanswered.
 export function ownWaiting({ state, views } = {}) {
   const waiting = new Set();
-  const open = (id) => typeof id === 'string' && !answered(views, id);
+  // A card kept but never written asks nothing: the piece isn't waiting on the director for that.
+  const open = (id) => typeof id === 'string' && isPlain(views?.questions?.[id]) && !answered(views, id);
   for (const [work, kept] of entriesOf(state?.features)) {
     const stalled = entriesOf(kept?.stalls).some(([, held]) => held?.done !== true && open(held?.id));
     if (open(kept?.asked) || stalled) waiting.add(work);
@@ -45,5 +46,6 @@ export function ownWaiting({ state, views } = {}) {
   for (const asked of [state?.clashAsked, state?.redAsked]) {
     for (const [work, id] of entriesOf(asked)) if (open(id)) waiting.add(work);
   }
+  for (const entry of Array.isArray(state?.returning) ? state.returning : []) if (open(entry?.asked)) waiting.add(entry.work);
   return waiting;
 }
