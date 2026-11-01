@@ -51,6 +51,30 @@ test('a question card gets one shadow line, once, and an approval is sealed with
   assert.equal(writes[1].data.reader, false);
 });
 
+test('a seal names the rules behind it, and rules that can\'t be read cost nothing', async () => {
+  const rule = { id: 'rule-1', hash: 'b'.repeat(64), conditions: [], lanes: ['small'], paths: ['a.js'], literal: null };
+  const facts = { ...FACTS, paths: ['a.js'] };
+  const named = setUp({ factsOf: async () => facts, contextOf: () => ({ lane: 'small' }) });
+  const seals = named.made({ rulesOf: () => [rule] });
+  seals.onCard(question);
+  await seals.tick();
+  assert.deepEqual(named.writes[0].data.stamp.rule, { 'rule-1': rule.hash });
+  const broken = setUp({ factsOf: async () => facts });
+  const quiet = broken.made({ rulesOf: () => { throw new Error('no'); } });
+  quiet.onCard(question);
+  await quiet.tick();
+  assert.equal(broken.writes.length, 1);
+  assert.equal(broken.writes[0].data.stamp.rule, null);
+});
+
+test('a card\'s context says its lane and its options', () => {
+  const views = { work: { w: { work: { data: { lane: 'small' } } } }, questions: { 'q-w-1': { question: { data: { work: 'w', options: ['Keep', 'Remove'] } } } } };
+  const ctx = cardContext({ views, card: question });
+  assert.equal(ctx.lane, 'small');
+  assert.deepEqual(ctx.options, ['Keep', 'Remove']);
+  assert.equal(cardContext({ views: {}, card: question }).lane, undefined);
+});
+
 test('a card waits for nothing: onCard returns before facts are read', () => {
   let read = 0;
   const { seals } = setUp({ factsOf: () => { read += 1; return new Promise(() => {}); } });
@@ -199,7 +223,7 @@ test('a card that can\'t be queued throws nothing at the card router', () => {
 test('a card\'s context names the done check, and any other open question on the work', () => {
   const asked = (work, answer = null) => ({ question: { data: { work } }, answer });
   const views = { questions: { 'q-w-1': asked('w'), 'q-w-2': asked('w', { label: 'Yes' }), 'q-x-1': asked('x') } };
-  assert.deepEqual(cardContext({ views, card: question, testCommand: 'npm test' }), { doneCheck: 'npm test', openDecision: false });
+  assert.deepEqual(cardContext({ views, card: question, testCommand: 'npm test' }), { doneCheck: 'npm test', openDecision: false, lane: undefined, options: undefined });
   const more = { questions: { ...views.questions, 'q-w-3': asked('w') } };
   assert.equal(cardContext({ views: more, card: question }).openDecision, true);
   assert.equal(cardContext({ views: {}, card: question }).doneCheck, undefined);

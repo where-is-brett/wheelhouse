@@ -6,6 +6,8 @@ import { sealOf, scoreOf, scoreLine, firstLines } from '../../../scripts/delegat
 import { SUGGEST_LABEL } from '../../../scripts/engine/router.js';
 import { setupStamp } from '../../../scripts/delegation/stamp.js';
 import { CANDIDATES } from '../../../scripts/delegation/candidates.js';
+import { composeRule } from '../../../scripts/delegation/composer.js';
+import { ruleSet } from '../../../scripts/delegation/rules.js';
 import { dataHash, makeEvent } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { withHome } from '../../helpers/homes.js';
@@ -65,6 +67,26 @@ test('a change that can\'t be read keeps its head', () => {
 
 test('what a card\'s context says reaches the candidates', () => {
   assert.equal(sealOf({ card: card(), facts, ctx: { hostPrivate: true }, stamp, at: AT }).candidates['push-draft'], true);
+});
+
+test('a rule covering a card has its hash in the seal\'s stamp, by its id', () => {
+  const ctx = { lane: 'small' };
+  const plain = { ...facts, schemaChanged: false };
+  const rule = composeRule({ answer: { label: SUGGEST_LABEL, words: 'Keep it small' }, card: card(), facts: plain, lane: 'small', project: 'p', now: () => new Date(AT) });
+  assert.deepEqual(sealOf({ card: card(), facts: plain, ctx, stamp, at: AT, rules: [rule] }).stamp.rule, { [rule.id]: rule.hash });
+  assert.equal(sealOf({ card: card(), facts: plain, ctx: { lane: 'bug' }, stamp, at: AT, rules: [rule] }).stamp.rule, null);
+});
+
+test('no rule\'s hash goes on a card no rule can reach', () => {
+  const rules = ruleSet('p', {});
+  const ctx = { hostPrivate: true };
+  assert.notEqual(sealOf({ card: card(), facts, ctx, stamp, at: AT, rules }).stamp.rule, null);
+  assert.equal(sealOf({ card: card({ level: 4 }), facts, ctx, stamp, at: AT, rules }).stamp.rule, null);
+  assert.equal(sealOf({ card: card({ kind: 'approval' }), facts, ctx, stamp, at: AT, rules }).stamp.rule, null);
+});
+
+test('a seal with no rules given keeps the stamp it was handed', () => {
+  assert.deepEqual(sealOf({ card: card(), facts, stamp, at: AT }).stamp, stamp);
 });
 
 test('a seal is a whole shadow line, and a line with anything else isn\'t', () => withHome(() => {

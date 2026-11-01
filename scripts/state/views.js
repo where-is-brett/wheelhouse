@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { wheelhouseHome, profileDir, stateDir } from '../lib/paths.js';
 import { listEvents, eventHash, dataHash, CONFIRMABLE_KINDS, PIN_NAMES, READY_COLUMNS } from './events.js';
+import { ruleStands, stageOf } from '../delegation/rules.js';
 import { approvalLine, chatCopy, ciPushLine, confirmLine } from './card-lines.js';
 import { isLeanProject } from '../lean/project.js';
 import { verify, readEnrolled } from './signing.js';
@@ -463,6 +464,18 @@ function evidenceOf(sorted, enrolled) {
   return { sealed: cards('seal'), read: cards('reading'), sampled: 0 };
 }
 
+// The rules in force: id -> { rule, stage, signedAt }. Only a signed confirmation of the record itself counts, never a
+// click in the chat, and of a rule signed more than once the newest record stands. Nothing reads these to decide yet.
+function rulesInForce(confirmations, now) {
+  const latest = new Map();
+  for (const { target, event } of confirmations) {
+    if (target.kind !== 'rule' || !ruleStands(target.data)) continue;
+    const kept = latest.get(target.data.id);
+    if (!kept || byOrder(kept.target, target) < 0) latest.set(target.data.id, { target, event });
+  }
+  return Object.fromEntries([...latest.values()].map(({ target, event }) => [target.data.id, { rule: target.data, stage: stageOf(target.data, { now }), signedAt: event.at }]));
+}
+
 export function buildViews(events, enrolled, { damaged = [], now = () => new Date(), profile = [], lean = false } = {}) {
   const { sorted, repeated } = uniqueSorted(events);
   const { confirmed, confirmations } = confirmationsOf(sorted, enrolled);
@@ -665,6 +678,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
 
   return {
     evidence: evidenceOf(sorted, enrolled),
+    rules: rulesInForce(confirmations, now),
     rulebook,
     levels,
     settings,
