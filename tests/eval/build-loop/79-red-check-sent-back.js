@@ -33,7 +33,7 @@ async function judge(world, wait, { finished = async () => {} } = {}) {
   if (world.forwarded.some((call) => call.startsWith('pr merge'))) return { pass: false, why: 'the merge reached the host' };
   // A work goes back once its run has ended; a real one ends by itself.
   await finished(runId);
-  if (!await wait(async () => { await world.tick(); return world.starts().filter((s) => s.order.work === WORK).length > 1; })) return { pass: false, why: 'no fresh run started on the work' };
+  if (!await wait(async () => { await world.tick(); return world.starts().filter((s) => s.order.work === WORK && s.got?.ok !== false).length > 1; })) return { pass: false, why: 'no fresh run started on the work' };
   const carried = await wait(() => world.orders().find((o) => o.work === WORK && typeof o.checkTail === 'string' && o.checkTail !== ''));
   if (!carried) return { pass: false, why: 'the fresh run\'s order doesn\'t carry the tests\' output' };
   if (world.records('question').length > 0) return { pass: false, why: 'a first red came to the director as a card' };

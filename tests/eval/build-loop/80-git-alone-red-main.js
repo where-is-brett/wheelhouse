@@ -10,6 +10,8 @@ import { OUT_OF_ORDER } from '../../../scripts/eval/places.js';
 import { fixing, running } from './engine-recordings.js';
 
 const HELD = 'card-80';
+// A run the engine took: a real engine may refuse one.
+const began = (start) => start.got?.ok !== false;
 
 async function judge(world, wait) {
   const first = await world.homeMain();
@@ -20,7 +22,7 @@ async function judge(world, wait) {
   const incident = await wait(async () => { await world.tick(); return open(); });
   if (!incident) return { pass: false, why: `no incident opened; the checks at the red version read ${JSON.stringify(world.checks().filter((c) => c.commit === red).map((c) => c.result))}` };
   if (world.records('question').length + world.records('card').length > 0) return { pass: false, why: 'a card came to the director for a red main line' };
-  const fixes = () => world.starts().filter((s) => s.order.lane === 'fix-main');
+  const fixes = () => world.starts().filter((s) => s.order.lane === 'fix-main' && began(s));
   if (!await wait(async () => { await world.tick(); return fixes().length > 0; })) return { pass: false, why: 'no fix-main run started' };
   world.put('work', { id: HELD, title: 'The footer links', lane: 'quick', visible: false, dependsOn: [] });
   for (let i = 0; i < 3; i += 1) await world.tick();
@@ -28,7 +30,7 @@ async function judge(world, wait) {
   if (fixes().length !== 1) return { pass: false, why: `${fixes().length} fix runs started, not one` };
   const green = await world.land('In order again.');
   if (!await wait(async () => { await world.tick(); return passedAt(green) && !open(); })) return { pass: false, why: 'the incident stayed open with the main line green' };
-  if (!await wait(async () => { await world.tick(); return world.starts().some((s) => s.order.work === HELD); })) return { pass: false, why: 'the held work didn\'t start once the main line was green' };
+  if (!await wait(async () => { await world.tick(); return world.starts().some((s) => s.order.work === HELD && began(s)); })) return { pass: false, why: 'the held work didn\'t start once the main line was green' };
   if (fixes().length !== 1) return { pass: false, why: 'a second fix run started' };
   return { pass: true, why: 'one incident and one fix run, no card, other work held, closed on green, and the held work started' };
 }
