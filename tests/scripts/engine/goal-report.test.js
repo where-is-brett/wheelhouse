@@ -33,7 +33,7 @@ const reportOf = (goal, views) => goalReport({ goal, views, ending: goal.ended, 
 const textOf = (goal, views) => goalReportText(reportOf(goal, views));
 const question = (id, work, what, { at = '2026-11-01T12:00:00.000Z', level = 3, options } = {}) => [id, { question: { id, at, data: { id, work, what, level, ...(options ? { options } : {}) } } }];
 
-test('the parts come in their fixed order, and an empty one is left out', () => {
+test('the parts come in their set order, and an empty one is left out', () => {
   const goal = goalOf({ ending: 'stuck', words: 'The main line went red 2 times.' });
   const views = viewsOf({
     reports: merged('a'),
