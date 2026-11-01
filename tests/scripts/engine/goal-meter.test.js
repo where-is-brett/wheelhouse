@@ -211,3 +211,8 @@ test('points and requests met are settled', async () => {
   const got = await meter({ goal: goalOf({ tokens: 20000000, requests: 2 }), requests: 2 });
   assert.deepEqual([got.reached, got.settled], ['requests', true]);
 });
+
+test('points met count as settled, though a stand-in has met the tokens too', async () => {
+  const got = await meter({ goal: goalOf({ tokens: 100, points: 5 }), views: liveViews, inspect: async () => { throw new Error('no answer'); }, reading: reading(46), shareAtStart: atStart });
+  assert.deepEqual([got.reached, got.settled], ['tokens', true]);
+});

@@ -438,3 +438,24 @@ test('a piece the director stopped at its cap isn\'t waited for', async () => {
   await w.tick(3);
   assert.equal(ends(w)[0]?.ending, 'stuck');
 });
+
+test('a sleep that falls inside the look at a run cancels nothing', async () => {
+  const { w } = withChecks({ recordings: { a: forever() }, settings: LONG });
+  w.put('a');
+  goalOver(w, ['a'], { until: '2026-10-29T10:02:00.000Z' });
+  await w.tick(2);
+  await w.pass(5 * MINUTE);
+  assert.equal(keptOf(w).goalRun.state, 'winding');
+  const read = w.engine.inspect.bind(w.engine);
+  let asleep = false;
+  w.engine.inspect = async (id) => {
+    const seen = await read(id);
+    if (!asleep && keptOf(w).goalRun.steps[id] !== undefined) {
+      asleep = true;
+      w.clock.now = new Date(w.clock.now.getTime() + 6 * 60 * MINUTE);
+    }
+    return seen;
+  };
+  await w.dispatcher.tick();
+  assert.deepEqual(cancels(w), [], 'the span isn\'t on the record yet, so this look reads the time it began');
+});

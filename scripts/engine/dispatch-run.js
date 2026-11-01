@@ -430,6 +430,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   }
 
   async function goalTick() {
+    // The time goes with the record it is read against: a sleep during this look has no `slept` record yet.
+    const at = now();
     const views = readViews() ?? {};
     const goal = goalInForce(views);
     if (goal === null) return afterGoalTick(views);
@@ -464,7 +466,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     const lastCheck = await lastCheckTick(views, goal, kept, Object.values(pieces).every((p) => p === 'merged'));
     keep();
     const step = goalStep({
-      goal, now: now(),
+      goal, now: at,
       facts: { pieces, failedInARow: failedInARow(views, goal, ready), reds: kept.reds.length, meter, unreadSince: kept.unreadSince, lastStepAt: kept.lastStepAt, parkedRuns: runs.filter((r) => parked.has(r.runId)).map((r) => r.runId), liveRuns, fixRuns, windingSince: kept.windingSince, windingFor: kept.windingFor, slept: views.slept ?? [], endAsked: views.goals[goal.id].endAsked, allStop: allStop(), lastCheck },
     });
     if (step.state === 'ended') {

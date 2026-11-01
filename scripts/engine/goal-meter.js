@@ -94,6 +94,6 @@ export async function goalMeter({ goal, views, inspect, queueRuns = [], capOf, r
   const over = (figure, limit) => figure !== null && limit !== undefined && figure >= limit;
   const reached = over(tokens, spend.tokens) ? 'tokens' : over(points, spend.points) ? 'points' : over(requests, spend.requests) ? 'requests' : null;
   const firm = shares.reduce((sum, share) => sum + share.firm, extra());
-  const settled = reached !== 'tokens' || over(firm, spend.tokens);
+  const settled = reached === null || over(firm, spend.tokens) || over(points, spend.points) || over(requests, spend.requests);
   return { tokens, points, requests, unknown: shares.some((share) => share.unknown), reached, left: spend.tokens - tokens, settled, unread: shares.some((share) => share.unread === true) };
 }
