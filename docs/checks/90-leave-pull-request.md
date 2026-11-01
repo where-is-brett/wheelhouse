@@ -75,7 +75,7 @@ The ruling's own sweep cost most because it runs without the models the helper g
 - **Part 2e can go ahead.** Taking `park` stops the pull request holding anything up, and the next sweeps merge others.
 - **`mergeAsked` needs the park id too.** Today it returns `merge` only. Part 2e should add the id of the choice whose effect is `park` (it was `park` here), read the same way, and take it only when it is there.
 - **A parked pull request comes back by a fresh hand-over.** Ready again with its record kept, at the same head, the queue waits and does not ask. Handed over afresh, it asks again, and `merge` merges it. Part 2e takes that way.
-- **`handOver` must name the repository in full.** An item that doesn't is passed over with no word from the queue, and Wheelhouse's own hand-overs were all of that form until part 2e. The probes wrote the full form, so no earlier check saw it.
+- **`handOver` must name the repository in full.** An item that doesn't is passed over with no word from the queue, and Wheelhouse's own hand-overs were all of that form until part 2e. Check 81 found this and mended it in a commit on its branch that landed after that branch's pull request had merged, so the mend never reached `main` or v0.2.0. Every other check wrote its item by hand in the full form.
 - **A second ask can appear for the same pull request** if the item is readied while its first run is paused. The dispatcher should treat a paused run on a pull request as that pull request's one open question.
 
 ## Needs the director
