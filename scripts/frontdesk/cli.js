@@ -999,7 +999,7 @@ export async function record({ client, cwd, kind, input, now, ready, makeId = ()
   // A reversal's topic is a slug in lower case, as a card's is, so the delegation review counts them together.
   if (kind === 'reversal') return answered(await write(client, cwd, kind, { ...input, topic: topicOf(input.topic) }));
   if (kind === 'work') {
-    // A change users would see goes in the small lane at least, shown first (intake, route 9;
+    // A change users would see goes in the small lane at least, shown first (intake, route 10;
     // scenario 7). Ready-made work carried on (`from`) is shown whatever its lane.
     if (input.lane === 'quick' && input.visible === true && input.from === undefined) {
       throw new CliError('Work users would see goes in the small lane at least, shown to the director first: record it in the small lane, with an approve-work card (shownFirst). The quick lane is for work users won\'t see (visible false)');

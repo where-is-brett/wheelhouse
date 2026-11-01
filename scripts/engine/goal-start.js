@@ -137,6 +137,15 @@ function stopLine(stopEarly) {
   return `It stops early if: ${pieces}, or the main line goes red ${red}.`;
 }
 
+// What proves each piece, for a sheet that says, pages too: a line on the card, or nothing.
+function pieceChecksLine(sheet, views, named) {
+  const proven = sheet.pieces.filter((line) => line.done?.length > 0);
+  if (proven.length === 0) return [];
+  const said = (check) => (Object.hasOwn(check, 'page') ? `${check.page} shows "${check.mustShow}"` : check.test ?? check.command);
+  const name = (line) => (named === 'titles' ? nameOf(views, line.work) : line.work);
+  return [`Each piece proves itself: ${proven.map((line) => `${name(line)}: ${line.done.map(said).join(', ')}`).join('; ')}.`];
+}
+
 // How the card names the work: `named` is `titles`, `ids` or `count`.
 function workLine(sheet, views, named) {
   const ids = sheet.pieces.map((p) => p.work);
@@ -158,6 +167,7 @@ export function sheetCardInput({ id, sheet, views, warns, now, timeZone, revises
     `Goal: ${id}.`,
     `Done means: ${sheet.checksSay.map(bare).join('; ')}.`,
     workLine(sheet, views, named),
+    ...pieceChecksLine(sheet, views, named),
     `May touch: ${sheet.areas.may.join(', ')}.`,
     `Won't touch: ${sheet.areas.wontTouch.join(', ')}.`,
     spendLine(sheet.spend),

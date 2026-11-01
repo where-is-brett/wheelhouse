@@ -406,3 +406,13 @@ test('narrowing needs nothing, widening needs a new sheet', () => {
   // A wider sheet is another sheet: its hash differs, so a click on the old card starts nothing.
   assert.notEqual(sheetHash({ ...given, until: later }), sheetHash(given));
 });
+
+test('the card lists what proves each piece, pages too', () => {
+  const given = sheet({ pieces: [{ work: 'export-page', hash: dataHash(PAGE), done: [{ test: 'export page lists orders' }, { page: '/orders/export', mustShow: 'Download' }] }, { work: 'export-file', hash: dataHash(FILE), done: [{ command: 'node check.js', expect: 0 }] }] });
+  const { what } = sheetCardInput({ id: 'orders-export', sheet: given, views: viewsFor(given), warns: [], now: NOW, timeZone: 'UTC' });
+  assert.match(what, /The export page: export page lists orders, \/orders\/export shows "Download"/);
+  assert.match(what, /node check\.js/);
+  assert.doesNotThrow(() => composeSheetCard({ id: 'orders-export', sheet: given, views: viewsFor(given), warns: [], now: NOW, timeZone: 'UTC' }));
+  const none = sheet();
+  assert.doesNotMatch(sheetCardInput({ id: 'orders-export', sheet: none, views: viewsFor(none), warns: [], now: NOW, timeZone: 'UTC' }).what, /proves itself/);
+});

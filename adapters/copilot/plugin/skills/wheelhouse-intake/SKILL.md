@@ -23,7 +23,7 @@ At Lean, where no Wheelhouse command runs, follow wheelhouse-lean's Intake at Le
    - **Matches open work:** if it adds to or changes what that work builds, it is route 3. Otherwise say it is already there.
    - **Matches an idea:** merge. `cli.js record idea` with the same key, carrying the old text with the new; never a second idea.
    - **Matches a rejection:** flag it, with when and why it was turned down; it goes up a level.
-3. **Ask the nine questions in order. The first yes decides the route.**
+3. **Ask the ten questions in order. The first yes decides the route.**
 4. **Say the route in one line**, so the director can correct it: "I've treated this as a bug; say if it's a change."
 5. **Do the route.**
 
@@ -37,7 +37,8 @@ At Lean, where no Wheelhouse command runs, follow wheelhouse-lean's Intake at Le
 | 6 | Is it about accounts, secrets or settings? | Runbook |
 | 7 | Is it a routine chore? ("rerun the refresh", "export this data") | Chore |
 | 8 | Is it for later? An outside notice with nothing to do yet counts | Later |
-| 9 | Otherwise | Change |
+| 9 | Is it a goal to leave running? Work meant to go on while the director is away ("add the export page, I'm back at 6") | Goal |
+| 10 | Otherwise | Change |
 
 ## The routes
 
@@ -60,9 +61,25 @@ At Lean, where no Wheelhouse command runs, follow wheelhouse-lean's Intake at Le
    - **The cause is bigger than one step:** the session reports `partial` and the work "joins the queue as a small change". Once the director picks that on the Bosun's card (route 2), `cli.js record work` in the `small` lane for the same id, naming its report, and ask an `approve-work` card (lane `small`, with `shownFirst`). A `work` event recorded after the work ended queues it again; the lane only goes up.
 5. **Question.** Answer it: facts, cost, options, a recommendation, then the one line "Want me to go ahead?", as it stands. Nothing is built on a musing. If the answer shows a bug, that is route 4.
 6. **Runbook.** A runbook step the director clicks (a `runbook` card naming the step). Never ask for a secret, and never take one pasted into chat.
-7. **Chore.** A standard step the project approved in advance. Until the project lists any, a chore goes to the quick lane, as in route 9.
+7. **Chore.** A standard step the project approved in advance. Until the project lists any, a chore goes to the quick lane, as in route 10.
 8. **Later.** `cli.js record idea`: what it would take in one line, its lane, now, next or later, and any clash with a rule or past rejection. A notice that needs a decision soon becomes a card.
-9. **Change.** Start `superpowers:brainstorming`. Its size sets the lane:
+9. **Goal.** The director wants work to run while they are gone. Work as route 10 does, with the extra care that nobody will be there to ask. You propose every bound yourself and the card shows them: never hand the director a form, a list of blanks or a run of questions. Ask only what you can't propose, one thing at a time.
+   1. **Does it suit?** A goal suits work with a cheap, plain pass or fail: behaviour a test or a page check can prove, a list of bugs each with a reproduction, moving code to a new shape under tests that exist, a feature whose design is approved. It doesn't suit work judged by taste or by people: "make the page feel better", a new look, wording that has to persuade, anything measured by what users do, or working out what to build. Say so in a line and offer a piece that does suit, such as a prototype to look at on return. A goal may mix the two only where the part needing judgement stops at a preview for the director. If you can't name the check that proves it done, say that and offer to work it out together.
+   2. **The work.** Shape it as route 10 does, through to the same briefs and designs: one feature, or an ordered list of up to 12 pieces in the lanes. Pick a short goal id, a slug nothing has used; a goal that has started keeps its id for good. Record each piece with `"goalId": "<the id>"` in its `work`, so a piece belongs to its goal from the first. A feature in a goal needs its design approved on its own card first, in this same conversation, before the director leaves. The Start click is every other piece's approval, so ask no `approve-work` card for those.
+   3. **The draft.** `cli.js goal-draft <work ids, in order>` prints each piece's `hash`, the proposed `spend` and `says`, which says that spend in plain words. Use the spend as it prints, unless the director named another.
+   4. **The sheet.** Write it into `front-desk.json` and `cli.js record goal`:
+      ```
+      {"id": "orders-export", "sheet": {"title": "Customers can export their orders", "done": [{"test": "orders export every order"}], "checksSay": ["The export holds every order."], "checkFiles": ["tests/orders/export.test.js"], "pieces": [{"work": "export-csv", "hash": "<the hash goal-draft printed>", "done": [{"test": "export writes a file"}, {"page": "/orders/export", "mustShow": "Download"}]}], "areas": {"may": ["src/orders/**", "tests/orders/**"], "wontTouch": ["billing/**", "tests/orders/export.test.js"]}, "spend": {"tokens": 800000, "points": 20}, "until": "2026-11-02T07:00:00.000Z"}}
+      ```
+      - `done`: the goal's own checks, tests or commands, each with its line in `checksSay`. At least one must fail today. A file a check lives in goes in `checkFiles` and under `wontTouch`.
+      - `pieces`: each piece's `work` and `hash`, and its own `done` checks, pages included, so the card lists everything that will prove it.
+      - `areas`: look at how this project is laid out and name its folders. `may` is the folders this work needs, never everything and never empty; `wontTouch` is what must stay as it is, and the check files.
+      - `until`: the director's own time, or one you propose about eight hours off; at most 24 hours ahead.
+      - Each small visible piece the director says needn't be shown first gets `"waived": true`. That is piece by piece, on their word: there is no such thing for a whole goal.
+   5. **The card.** `cli.js goal-baseline <the id>`, then `cli.js goal-card <the id>`, which runs nothing itself and makes the card from the sheet. Ask `question` as it prints, word for word; the card is the only way to Start, and `cli.js card` refuses one written by hand. `waiting` means its checks are still running: say its `say` in one line and run `goal-card` again. `refused` lists what stops it: put each in plain words, change what you can, then record the sheet again under the same id and run both commands again. A sheet is its own record, so any change needs this whole step, and a click on the old card starts nothing.
+   6. **After Start.** Nothing more from you: starting sets Away until the goal's time, unless a nearer Away or Do not disturb is set. The director may leave.
+
+10. **Change.** Start `superpowers:brainstorming`. Its size sets the lane:
 
 | Brainstorming's size | Lane | What you record and ask |
 |---|---|---|
@@ -104,5 +121,8 @@ A change users would see that leaves a choice to make is the small lane at least
 | "It matches running work, so I'll just add the detail" | A change to what it builds is route 3: read back, an `amend` card |
 | "The change is plain enough; the read-back can wait" | Read it back first: "Doing: X. Not doing: Y. Done when: Z." |
 | "The approval line can stay; the approval is pinned by its hash" | Replace it: "Changed since the director's approval; the change card decides it." |
+| "A goal needs details; I'll ask for the time, the spend and the folders" | Propose them all on the sheet; the card lets the director change any |
+| "They want it finished overnight, so a goal it is" | Taste, or no plain check, doesn't suit a goal: say so and offer a piece that does |
+| "I'll give it the whole project so nothing blocks it" | `may` names folders, never everything |
 | "These asks are related; one route will do" | Split. Each request gets its own route |
 | "I'll contain it after I've told them" | The incident and its card go in the same reply |
