@@ -90,3 +90,41 @@ test('a run carried on counts the spend of the runs before it', () => {
   assert.deepEqual(carriedSpend(costs, ['r1']), { tokens: 700000, minutes: 15 });
   assert.deepEqual(capReached({ lane: 'quick', minutes: 6, tokens: 400000, carried: { tokens: 700000, minutes: 15 } }, { capMinutes: { quick: 20 }, capTokens: { quick: 1000000 } }), { cap: 'minutes', used: 21, limit: 20 });
 });
+
+test('a sleep inside a run leaves its minutes out', () => {
+  const records = [{ at: '2026-11-01T01:00:00Z', data: { state: 'started' } }];
+  const slept = [{ from: '2026-11-01T01:10:00Z', to: '2026-11-01T07:10:00Z' }];
+  assert.equal(runningMinutes(records, new Date('2026-11-01T07:20:00Z'), slept), 20);
+});
+
+test('a sleep over a pause counts for nothing twice', () => {
+  const records = [
+    { at: '2026-11-01T01:00:00Z', data: { state: 'started' } },
+    { at: '2026-11-01T01:05:00Z', data: { state: 'paused' } },
+    { at: '2026-11-01T01:30:00Z', data: { state: 'started' } },
+  ];
+  const slept = [{ from: '2026-11-01T01:10:00Z', to: '2026-11-01T01:20:00Z' }];
+  assert.equal(runningMinutes(records, new Date('2026-11-01T01:40:00Z'), slept), 15);
+});
+
+test('a sleep cut by a run\'s start or end takes only the part inside it, and an ended run is not stretched', () => {
+  const records = [
+    { at: '2026-11-01T02:00:00Z', data: { state: 'started' } },
+    { at: '2026-11-01T02:30:00Z', data: { state: 'ended' } },
+  ];
+  const slept = [{ from: '2026-11-01T01:50:00Z', to: '2026-11-01T02:10:00Z' }, { from: '2026-11-01T02:25:00Z', to: '2026-11-01T03:00:00Z' }];
+  assert.equal(runningMinutes(records, new Date('2026-11-01T09:00:00Z'), slept), 15);
+});
+
+test('spans that overlap or repeat, or that make no sense, take nothing twice', () => {
+  const records = [{ at: '2026-11-01T01:00:00Z', data: { state: 'started' } }];
+  const slept = [
+    { from: '2026-11-01T01:20:00Z', to: '2026-11-01T01:40:00Z' },
+    { from: '2026-11-01T01:10:00Z', to: '2026-11-01T01:30:00Z' },
+    { from: '2026-11-01T01:10:00Z', to: '2026-11-01T01:30:00Z' },
+    { from: 'soon', to: 'later' },
+    { from: '2026-11-01T01:50:00Z', to: '2026-11-01T01:45:00Z' },
+    null,
+  ];
+  assert.equal(runningMinutes(records, new Date('2026-11-01T02:00:00Z'), slept), 30);
+});

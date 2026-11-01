@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { STEP_WORDS, stepWords, costWords, runLine, shippedLine, buildLines, shippedLines, runningLines } from '../../../scripts/engine/words.js';
+import { STEP_WORDS, restartStrandedWords, stepWords, costWords, runLine, shippedLine, buildLines, shippedLines, runningLines } from '../../../scripts/engine/words.js';
 
 const PACK = path.join(import.meta.dirname, '..', '..', '..', 'engine', 'archon', 'pack');
 const LANES = ['wheelhouse-quick.yaml', 'wheelhouse-small.yaml', 'wheelhouse-small-task.yaml', 'wheelhouse-bug.yaml', 'wheelhouse-slice.yaml', 'wheelhouse-slice-task.yaml', 'wheelhouse-feature.yaml'];
@@ -98,4 +98,10 @@ test('a step inside a loop, or inside a task block, has its own step\'s words', 
   assert.equal(stepWords('__archon_fan_out__each__root__ca978112ca1bbdca__each__ca978112ca1bbdca__gate'), 'looking at the next task');
   assert.equal(stepWords('__archon_fan_out__each__root__ca978112ca1bbdca__each__ca978112ca1bbdca__build.implement'), 'building it');
   assert.equal(stepWords('review.unknown'), 'working on it');
+});
+
+test('a stranded card says why it comes', () => {
+  assert.match(restartStrandedWords('Page', 'clash'), /waiting for its files/);
+  assert.match(restartStrandedWords('Page', 'dependency'), /depends on it/);
+  assert.match(restartStrandedWords('Page', 'place'), /keeping its place/);
 });

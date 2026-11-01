@@ -36,7 +36,7 @@ export const sentBackNoPieceWords = (pr) => `Pull request #${pr} has no work of 
 export function noCardBehindWords(title, why, by) {
   const names = by.length < 2 ? by.join('') : `${by.slice(0, -1).join(', ')} and ${by.at(-1)}`;
   const said = why === 'clash' ? `waits for the files ${names} keeps, which nothing lets go by itself` : why === 'dependency' ? `waits on ${names}` : `waits while ${names} stands parked`;
-  return `${title} ${said}, and no card stands behind that. It moves on once that work is added or ended.`;
+  return `${title} ${said}, and no card stands behind that. It moves on once that work is added${why === 'dependency' ? '' : ' or ended'}.`;
 }
 
 // The line for the cards past the day's budget, and the button that shows them.
@@ -53,7 +53,16 @@ export const reservedUnreadWords = (title) => `What ${title} has changed so far 
 export const restartRefusedWords = (title, why) => `${title} couldn't go back to work: ${why}. It keeps its turn, and it is tried again shortly.`;
 export const restartCardWords = (title, why) => `${title} couldn't go back to work, twice: ${why}. Nothing more of it starts until you say.`;
 export const restartUnsureWords = (title) => `Wheelhouse can't tell whether ${title} started again, so it hasn't started it a second time. Nothing more of it starts until you say.`;
-export const restartStrandedWords = (title) => `${title} has stopped with nothing left to carry it on, and other work is waiting for its files. Nothing more of it starts until you say.`;
+const STRANDED_BECAUSE = { clash: 'other work is waiting for its files', dependency: 'other work depends on it', parked: 'other work is waiting on it', place: 'it is still keeping its place in the build' };
+export const restartStrandedWords = (title, why) => `${title} has stopped with nothing left to carry it on, and ${STRANDED_BECAUSE[why] ?? STRANDED_BECAUSE.parked}. Nothing more of it starts until you say.`;
+export const RESTART_UNSURE_AGAIN = 'It checks whether a run began: one on record goes on, and a stray one is ended before it starts again. If that can\'t be done, you get a new card.';
+export const START_ANYWAY = 'Start it anyway';
+export const cutOffStoppedWords = (title) => `${title} stops here, as you chose; none of it had started.`;
+const named = (by) => (by.length < 2 ? by.join('') : `${by.slice(0, -1).join(', ')} and ${by.at(-1)}`);
+export const cutOffWords = (title, by) => `${title} depends on ${named(by)}, which won't be added as things stand, so it can't start by itself. It waits until you say.`;
+export const waitsOnItselfWords = (title, by) => `${title} and ${named(by)} wait on each other, so none of them can start by itself. It waits until you say.`;
+export const startAnywayWords = (by) => `It takes its turn without ${named(by)}. What it was to build on isn't there, so it may fail or need redoing. This holds for this queueing only: queued again, it waits as before.`;
+export const prLeftOpenWords = (pr) => `Pull request #${pr} stays open, and nothing of it is added.`;
 export const STOPPED_RESTART_WORDS = (title) => `${title} stays stopped, as you chose; what it has done so far is kept on its branch.`;
 // Said after that line, of a run the engine may have started all the same and Wheelhouse couldn't end.
 export const ORPHAN_LEFT_WORDS = "A run of it may still be going in the build engine; Wheelhouse couldn't end it.";
@@ -204,7 +213,7 @@ const costOf = (views, work, runId) => (records(views, 'costs')[work] ?? []).fil
 export function runningLines(views, { now = new Date() } = {}) {
   return runsOf(views).filter((r) => r.latest.data.state !== 'ended').map((r) => runLine({
     title: titleOf(views, r.work), state: r.latest.data.state, step: r.latest.data.step ?? null,
-    minutes: runningMinutes(r.records, now),
+    minutes: runningMinutes(r.records, now, views?.slept),
   }, costOf(views, r.work, r.runId)));
 }
 
@@ -217,7 +226,7 @@ export function buildLines(views, { now = new Date() } = {}) {
   for (const r of runs) {
     const cost = costOf(views, r.work, r.runId);
     const state = r.latest.data;
-    lines.push(runLine({ title: titleOf(views, r.work), state: state.state, outcome: state.outcome, step: state.step ?? null, minutes: state.state === 'ended' ? null : runningMinutes(r.records, now) }, cost));
+    lines.push(runLine({ title: titleOf(views, r.work), state: state.state, outcome: state.outcome, step: state.step ?? null, minutes: state.state === 'ended' ? null : runningMinutes(r.records, now, views?.slept) }, cost));
     const steps = isPlain(cost?.byRole) ? [...new Set(Object.keys(cost.byRole).map(stepWords))] : [];
     if (steps.length > 0) lines.push(`  Steps: ${steps.join('; ')}.`);
   }

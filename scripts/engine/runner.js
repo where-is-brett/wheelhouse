@@ -37,7 +37,7 @@ import { SEND_BACK } from '../lib/calm-words.js';
 import { parkChoice } from './archon/asks.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
-const EMPTY = () => ({ routed: {}, waiting: [], held: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, tries: {}, later: [], next: {}, noted: null, capped: {}, costed: {}, reviewsKept: {}, carried: {}, reworks: {}, answers: {}, sending: {}, parked: {}, reused: {}, repeats: {}, unsure: {}, sentBack: {} });
+const EMPTY = () => ({ routed: {}, waiting: [], held: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, tries: {}, later: [], next: {}, noted: null, capped: {}, capsOwed: {}, costed: {}, reviewsKept: {}, carried: {}, reworks: {}, answers: {}, sending: {}, parked: {}, reused: {}, repeats: {}, unsure: {}, sentBack: {} });
 // The failed tries after which the director is told an answer hasn't reached the build yet.
 const UNREACHABLE_SAID = 3;
 // The cap card's options: Give it more carries the work on with the cap raised once; Stop leaves it stopped.
@@ -112,7 +112,7 @@ const inSentence = (title) => (/^[A-Z][a-z]/.test(title) ? title.charAt(0).toLow
 // The card's other answer is Send it back (`sendBacks`): the park ends, and the piece is reworked on its own branch as a
 // blocked exit's Send it back is. `sentBack` keeps which signed clicks have been acted on, so each counts once. On a project in
 // git alone nothing parks: the local queue raises the same card, and the change marked ready stands in for the park.
-export function engineRunner({ engine, file, readViews, write, stopped = () => false, now = () => new Date(), settings = () => ({}), workOf = () => null, titleOf = (work) => work, endRun = async () => ({ ended: [], survivors: [] }), openedOf = () => null, prTitleOf = async () => null, keepReviews = async () => true, onCard = () => {}, onReaderAsk = () => {}, blindRoll = () => 1, release = () => {}, handBack = async () => ({ ok: false, refused: 'nothing hands work to the merge queue here' }), admittedTo = () => true, delivered = () => {}, drop = () => {}, takeBack = async () => ({ ok: false }), notReady = () => {}, localChange = () => null, startAdmitted = async () => ({ ok: false, refused: 'nothing starts runs here' }), carryOver = () => {}, comingBack = () => false, headOf = async () => null, commitsSince = async () => null, exclusionsOf = async () => null } = {}) {
+export function engineRunner({ engine, file, readViews, write, stopped = () => false, now = () => new Date(), settings = () => ({}), noteSleep = async () => true, workOf = () => null, titleOf = (work) => work, endRun = async () => ({ ended: [], survivors: [] }), openedOf = () => null, prTitleOf = async () => null, keepReviews = async () => true, onCard = () => {}, onReaderAsk = () => {}, blindRoll = () => 1, release = () => {}, handBack = async () => ({ ok: false, refused: 'nothing hands work to the merge queue here' }), admittedTo = () => true, delivered = () => {}, drop = () => {}, takeBack = async () => ({ ok: false }), notReady = () => {}, localChange = () => null, startAdmitted = async () => ({ ok: false, refused: 'nothing starts runs here' }), carryOver = () => {}, comingBack = () => false, headOf = async () => null, commitsSince = async () => null, exclusionsOf = async () => null } = {}) {
   let state = readState(file);
   const keep = () => saveState(file, state);
   const note = (words, extra = {}) => write('note', { about: 'engine', words, ...extra });
@@ -878,9 +878,8 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     const id = `q-${work}-${n}`;
     state.capped[runId] = { question: id, reached, ...(paused ? { held: true } : {}) };
     state.questions[id] = { cap: true, runId, work, lane, branch };
-    keep();
     const amount = reached.cap === 'minutes' ? `${reached.limit} minutes of work` : `${reached.limit.toLocaleString('en-GB')} tokens`;
-    await write('question', {
+    state.capsOwed[id] = {
       id, work, level: 3,
       what: paused
         ? `${titleOf(work)} reached its cap of ${amount} while it was waiting, so Wheelhouse is holding it there: it spends nothing while it waits, and it doesn't carry on unless you give it more. What it has done so far is kept.`
@@ -896,8 +895,28 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       ],
       recommendation: STOP_LABEL,
       engine: { runId, ask: `cap:${runId}`, options: { [MORE]: 'more', [STOP_LABEL]: 'stop' } },
-    });
+    };
+    keep();
+    await writeCapCard(id);
+  }
+  // Owed until it is written, so a record that refuses it costs a tick and never the card.
+  async function writeCapCard(id) {
+    const { work, engine: { runId } } = state.capsOwed[id];
+    await write('question', state.capsOwed[id]);
+    delete state.capsOwed[id];
+    keep();
+    const { branch } = state.questions[id] ?? {};
     sealCard({ id, kind: 'cap', work, runId, level: 3, branch: branch ?? null, folder: null });
+  }
+  async function owedCaps() {
+    const { questions } = viewsNow();
+    if (!isPlain(questions)) return;
+    for (const id of Object.keys(state.capsOwed)) {
+      if (isPlain(questions[id])) {
+        delete state.capsOwed[id];
+        keep();
+      } else await writeCapCard(id).catch(() => {});
+    }
   }
 
   // `again` is a Give it more that a crash cut short: a run already carrying on needs nothing more.
@@ -971,7 +990,12 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
 
   // Each running run of the project, against its caps; each ended one, its cost record.
   async function caps() {
+    // A sleep that can't be put on the record waits a look: nothing here may read a run's minutes without it.
+    if (!(await noteSleep())) return;
     const v = viewsNow();
+    // The time goes with the record it is read against: a computer that sleeps during this look wakes with a clock its
+    // `slept` record hasn't caught up with, and the span is there for the next look.
+    const at = now();
     const { capMinutes = {}, capTokens = {} } = settings() ?? {};
     for (const [work, list] of Object.entries(isPlain(v.runs) ? v.runs : {})) {
       // A reader's limits are its own (scripts/delegation/record-only.js): no cap reads it, and no piece pays for it.
@@ -1003,7 +1027,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
         if (!record) continue;
         const carried = state.carried[runId] ?? { raised: false, runs: [] };
         const reached = capReached({
-          lane: latest.lane, minutes: runningMinutes(records, now()), tokens: runCost(record).tokens,
+          lane: latest.lane, minutes: runningMinutes(records, at, v.slept), tokens: runCost(record).tokens,
           raised: carried.raised, carried: carriedSpend((v.costs?.[work] ?? []), carried.runs),
         }, { capMinutes, capTokens });
         if (!reached) continue;
@@ -1029,6 +1053,10 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     const record = await inspect(runId);
     if (!record) return;
     const cost = runCost(record);
+    const { slept } = viewsNow();
+    const awake = runningMinutes(records, now(), slept);
+    // The steps' own time runs on through a sleep, and a carry-on is charged these minutes.
+    const asleep = runningMinutes(records, now()) - awake;
     state.costed[runId] = true;
     keep();
     await write('cost', {
@@ -1036,7 +1064,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       // A run whose spend is unknown names no tokens it didn't count.
       tokens: cost.source === 'unknown' && cost.tokens === 0 ? null : cost.tokens,
       dollars: cost.dollars, floorDollars: cost.floorDollars, premiumRequests: cost.premiumRequests,
-      minutes: cost.minutes > 0 ? cost.minutes : runningMinutes(records, now()), source: cost.source, byRole: cost.byRole,
+      minutes: cost.minutes > 0 ? Math.max(0, Math.round((cost.minutes - asleep) * 100) / 100) : awake, source: cost.source, byRole: cost.byRole,
       ...(cost.kinds ? { kinds: cost.kinds } : {}),
     });
   }
@@ -1088,6 +1116,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       for (const id of Object.keys(state.repeats)) await sendEarlier(id);
       await again();
       await parks();
+      await owedCaps();
       await caps();
       await show();
     },
@@ -1104,6 +1133,8 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     // What a run carries: { raised, runs } (the runs before it whose spend counts against its caps).
     carried: (runId) => state.carried[runId] ?? null,
     questionOf: (runId) => state.capped[runId]?.question ?? null,
+    // The pieces with a cap card still to be written, which the dispatcher mustn't ask about a second time.
+    owedWork: () => new Set(Object.values(state.capsOwed).map((card) => card.work)),
     // The pull requests the queue has left alone until the director approves them, { [pr]: head }.
     parkedHeads: () => Object.fromEntries(Object.entries(state.parked).filter(([, kept]) => kept.taken && !kept.handed).map(([pr, kept]) => [pr, kept.head])),
     // The pieces with a card of the router's open. Views that can't be read name none, so each keeps its place.

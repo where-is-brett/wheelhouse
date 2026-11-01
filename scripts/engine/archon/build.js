@@ -41,8 +41,9 @@ export const PATCH_MARK = 'ARCHON_CLAUDE_PERMISSION_MODE';
 // What the Copilot patch's resolver holds (provider-cli-path.patch): a source build then runs the CLI COPILOT_BIN_PATH
 // names, the one the engine pins, rather than the SDK's own runtime.
 export const CLI_PATCH_MARK = 'Wheelhouse: a source build honours COPILOT_BIN_PATH';
-// What the cancel operation holds once paused-run-cancel.patch is applied: `workflow cancel` then takes a paused run.
-export const CANCEL_PATCH_MARK = 'Wheelhouse: a paused run cancels too';
+// What the cancel operation holds once paused-run-cancel.patch is applied: `workflow cancel` then takes a paused run,
+// and a running run whose owner is proved gone (check 92).
+export const CANCEL_PATCH_MARK = 'Wheelhouse: a run whose owner is gone cancels too';
 
 const TELEMETRY = { ARCHON_TELEMETRY_DISABLED: '1', DO_NOT_TRACK: '1', POSTHOG_API_KEY: 'off' };
 const SYSTEM_PATH = ['/usr/bin', '/bin', '/usr/sbin', '/sbin'];

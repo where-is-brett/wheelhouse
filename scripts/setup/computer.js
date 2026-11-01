@@ -200,7 +200,7 @@ function lines({ changes, userSettings, kept, route, platform, floor }) {
   if (has('push')) out.push('phone notifications on');
   const plugin = changes.find((c) => c.what === 'plugin');
   if (plugin) out.push(plugin.update ? pluginUpdateLine(plugin.update.from, plugin.update.to) : PLUGIN_SCOPE_LINE);
-  if (has('login')) out.push('Start Wheelhouse\'s helper when you sign in, so the build carries on with no session open');
+  if (has('login')) out.push(`Start Wheelhouse's helper when you sign in${platform === 'darwin' ? ', and again within a minute if it stops' : ''}, so the build carries on with no session open`);
   return out;
 }
 

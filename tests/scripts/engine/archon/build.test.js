@@ -122,11 +122,12 @@ test('the Copilot patch lets a source build run the CLI COPILOT_BIN_PATH names, 
   assert.equal(enginePaths('/e').cliResolver, path.join('/e', 'archon', 'src', 'packages', 'providers', 'src', 'community', 'copilot', 'binary-resolver.ts'));
 });
 
-test('the paused-run patch lets cancel take a paused run through the path that keeps its worktree, and changes nothing else', () => {
+test('the cancel patch lets cancel take a paused run, and a running run whose owner is proved gone, through the path that keeps its worktree, and changes nothing else', () => {
   const text = fs.readFileSync(new URL('../../../../scripts/engine/archon/patch/paused-run-cancel.patch', import.meta.url), 'utf8');
   assert.deepEqual([...text.matchAll(/^diff --git a\/(\S+)/gm)].map((m) => m[1]), ['packages/core/src/operations/workflow/cancel.ts']);
   assert.ok(text.split('\n').some((l) => l.startsWith('+') && l.includes(CANCEL_PATCH_MARK)), 'the patched file carries the mark health and setup look for');
   assert.match(text, /^\+  if \(run\.status === 'paused'\) return cancelPaused\(ctx, run\);$/m);
+  assert.match(text, /^\+  if \(latest\?\.status === 'running' && noExecutorCanWrite\(latest\)\) return cancelLost\(ctx, latest\);$/m);
   assert.doesNotMatch(text, /^\+.*(releaseRunWorktree|reclaimRunWorktree)/m, 'the worktree is never released');
   assert.doesNotMatch(text, /^-(?!--)/m, 'it only adds');
   assert.equal(enginePaths('/e').cancelOperation, path.join('/e', 'archon', 'src', 'packages', 'core', 'src', 'operations', 'workflow', 'cancel.ts'));
