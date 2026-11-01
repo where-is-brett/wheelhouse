@@ -5,6 +5,7 @@
 // rule can decide are sealed as what they are, as is level 4.
 import { dataHash } from '../state/events.js';
 import { CANDIDATES, COMMON_EXCLUSIONS, exclusionsHit } from './candidates.js';
+import { ruleCovers } from './rules.js';
 import { normaliseWords } from './words.js';
 import { SUGGEST } from '../lib/calm-words.js';
 import { PUT_OFF } from '../lib/front-desk.js';
@@ -17,9 +18,26 @@ function signedOf(card) {
 // Whether the reader may read a card.
 export const canBeRead = (card) => signedOf(card) === null;
 
-// `refused` says why a card that could be read has no view, so no reader starts for it.
-export function sealOf({ card, facts, ctx = {}, stamp, at, refused = false }) {
+// The rules a seal is evidence for, as their hashes by id, or null for none: only a card a rule could reach earns any,
+// and a rule that can't be read covers nothing, since that may cost a rule's evidence and never a seal.
+function rulesBehind({ rules, signed, facts, ctx, candidates }) {
+  if (signed !== null) return null;
+  const covers = (rule) => {
+    try {
+      return ruleCovers(rule, { facts, ctx, candidates });
+    } catch {
+      return false;
+    }
+  };
+  const covering = rules.filter(covers);
+  return covering.length > 0 ? Object.fromEntries(covering.map((rule) => [rule.id, rule.hash])) : null;
+}
+
+// `refused` says why a card that could be read has no view, so no reader starts for it. `rules` are what the seal may
+// earn evidence for (rules.js, ruleSet), and those that cover the card go in its stamp.
+export function sealOf({ card, facts, ctx = {}, stamp, at, refused = false, rules = [] }) {
   const signed = signedOf(card);
+  const candidates = Object.fromEntries(CANDIDATES.map((c) => [c.id, c.applies(facts, ctx)]));
   const seal = {
     line: 'seal',
     card: card.id,
@@ -27,9 +45,9 @@ export function sealOf({ card, facts, ctx = {}, stamp, at, refused = false }) {
     head: facts?.head ?? null,
     signed,
     reader: signed !== null ? false : refused ? 'refused' : true,
-    candidates: Object.fromEntries(CANDIDATES.map((c) => [c.id, c.applies(facts, ctx)])),
+    candidates,
     exclusions: { hit: exclusionsHit(facts), unread: COMMON_EXCLUSIONS.filter((e) => e.hit(facts) === null).map((e) => e.id) },
-    stamp,
+    stamp: rules.length > 0 ? { ...stamp, rule: rulesBehind({ rules, signed, facts, ctx, candidates }) } : stamp,
     at,
   };
   return { ...seal, hash: dataHash(seal) };

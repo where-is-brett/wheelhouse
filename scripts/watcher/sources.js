@@ -53,8 +53,8 @@ export const INTERVALS = Object.freeze({ features: 15000, prs: 60000, testMerge:
 
 // How far back an event kept late is still sent.
 export const LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
-// Records that are no news to any session: a card's sealed lines, and what is kept for them from the chat.
-const QUIET_KINDS = ['shadow', 'chat-question', 'chat-steer'];
+// Records that are no news to any session: a card's sealed lines, what is kept for them from the chat, and a rule.
+const QUIET_KINDS = ['shadow', 'chat-question', 'chat-steer', 'rule'];
 
 // The most pull request numbers whose last asking is kept; the oldest go first.
 export const PR_ASKED_CAP = 200;

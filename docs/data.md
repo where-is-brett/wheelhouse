@@ -38,6 +38,8 @@ A question card's seal may gain a second line: a small read-only run's own readi
 
 When two pieces ask the same question in the same words and options, the second is kept as a question that names the first, with no card of its own, so one answer can go to both. Each tick, Wheelhouse may also add a line naming the card that everything else is waiting behind, and how many pieces each card holds up. Both stay in the same record, and neither holds anything from your work beyond the question's own words.
 
+A rule you sign, so that Wheelhouse may one day settle a kind of question without you, is kept in the same private record, with the click that signed it. A rule can't sit in the project's repository, because an agent can edit that. For now a signed rule decides nothing: it only names the seals of the cards it would have covered. Each rule comes up for review after six months.
+
 If you choose a backup folder for a project kept on this computer, Wheelhouse writes one file there, `<project>.wheelhouse-backup`, with the project's code and its history, and keeps one earlier copy beside it. The file holds none of the records above and none of Wheelhouse's own branches. Where it goes from there is up to the folder you chose: a cloud service sends it off your computer under its own terms.
 
 Beside each project, `backup.json` says where its backups go and how the last one went, and `safekeeping.json` holds what the Safekeeping line last found: names of branches and how many changes are only here, never your code. **Keep a copy online** sends a branch to your host under `keep/<branch>`, and only when you press it.

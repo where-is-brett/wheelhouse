@@ -13,12 +13,13 @@ import { approvalLine, ciPushLine, confirmLine } from '../../../scripts/state/ca
 import { computerId, profileDir, stateDir } from '../../../scripts/lib/paths.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { readingOf } from '../../../scripts/delegation/seal.js';
+import { composeRule } from '../../../scripts/delegation/composer.js';
 import { SUGGEST, WHY } from '../../../scripts/lib/calm-words.js';
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
 const T = (n) => `2026-10-18T02:00:${String(n).padStart(2, '0')}.000Z`;
 const at = (n) => () => new Date(T(n));
-const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'provenance', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'controlFiles', 'survey', 'columnsReady', 'usageCards', 'premium', 'premiumFailures', 'runs', 'asks', 'costs', 'previews', 'lessons', 'engineNotes', 'cardsWaiting', 'evidence'];
+const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'provenance', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'controlFiles', 'survey', 'columnsReady', 'usageCards', 'premium', 'premiumFailures', 'runs', 'asks', 'costs', 'previews', 'lessons', 'engineNotes', 'cardsWaiting', 'evidence', 'rules'];
 const now = () => new Date('2026-10-18T09:00:00.000Z');
 
 async function withHome(fn) {
@@ -303,7 +304,7 @@ test('a confirmation counts only with the confirmed event\'s hash, and only for 
 
     // A signed confirmation pointing at an event of another kind confirms nothing.
     const card = ev('card', 3, cardData('Pick a colour?'));
-    assert.throws(() => confirmationFor(card), /ruling, a level or a setting/);
+    assert.throws(() => confirmationFor(card), /ruling, a level, a setting or a rule/);
     const forCard = makeEvent({ kind: 'confirmation', data: { confirms: card.id, confirmsHash: eventHash(card) }, now: at(4) });
     const v = build([card, forCard]);
     assert.deepEqual(v.levels, {});
@@ -1432,6 +1433,17 @@ test('views gather runs by work, latest state last', async () => {
 });
 
 const sealed = (card, extra = {}) => ({ line: 'seal', card, work: 'w', head: null, signed: null, reader: true, candidates: { land: null }, exclusions: { hit: ['data-model'], unread: [] }, stamp: { models: null, pack: null, rule: null, exclusions: null }, at: T(1), hash: 'a'.repeat(64), ...extra });
+
+test('a rule is in the views only once a signed click confirms it', async () => {
+  await withHome(async () => {
+    const rule = composeRule({ answer: { label: 'Keep' }, card: { kind: 'question', level: 3, options: ['Keep', 'Remove'] }, facts: { readable: true, paths: ['a.js'], depsChanged: false, schemaChanged: false, guardrail: false, secrets: false, critical: false }, lane: 'small', project: 'p', now: at(1) });
+    const event = ev('rule', 1, rule);
+    assert.deepEqual(build([]).rules, {});
+    assert.deepEqual(build([event]).rules, {});
+    const click = makeEvent({ ...confirmationFor(event), now: at(2) });
+    assert.deepEqual(build([event, click]).rules, { [rule.id]: { rule, stage: 0, signedAt: T(2) } });
+  });
+});
 
 test('shadow isn\'t in the views an agent reads', async () => {
   await withHome(async () => {
