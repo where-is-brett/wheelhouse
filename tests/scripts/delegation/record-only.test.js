@@ -830,6 +830,7 @@ test('a close match can\'t answer, at any setting', async () => {
   assert.equal(closeMatch({ card: cardC, sameAs: cardL, views: pair({}, { commands: ['npm ci'] }) }), null, 'a build command signs for itself');
   assert.equal(closeMatch({ card: cardC, sameAs: cardL, views: pair({}, { blind: true }) }), null, 'a blind card is asked for itself');
   assert.equal(closeMatch({ card: cardC, sameAs: cardL, views: pair({ blind: true }) }), null);
+  assert.equal(closeMatch({ card: cardC, sameAs: cardL, views: pair({}, { blind: true }, { label: 'Keep', at: 't' }) }), null, 'its first pick stays its own');
   const answered = pair();
   answered.questions[cardC].answer = { label: 'Keep', at: 't' };
   assert.equal(closeMatch({ card: cardC, sameAs: cardL, views: answered }), null, 'a card answered first has nothing to join');

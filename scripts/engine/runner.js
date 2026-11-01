@@ -594,9 +594,9 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     const q = card.question;
     const key = keyOf(ask, work);
     const head = key === null ? null : await lookAt(() => headOf(placeOf(ask)));
-    // A joiner raises no card, so it has nothing to show blind.
+    // A joiner raises no card, so it has nothing to show blind, and a card saying what was said before asks for one click.
     const day = dayOf(now());
-    const blind = typeof joins !== 'string' && blindDue({ ask, card: { level: q.level, exempt }, day, lastDay: state.blindDay, roll: blindRoll(id), off: settings()?.blindCards === false });
+    const blind = typeof joins !== 'string' && typeof q.saidBefore !== 'string' && blindDue({ ask, card: { level: q.level, exempt }, day, lastDay: state.blindDay, roll: blindRoll(id), off: settings()?.blindCards === false });
     await write('question', {
       id, work, what: q.what, why: q.why, options: q.options, recommendation: q.recommendation ?? q.options[0]?.label, level: q.level,
       ...(q.level === 4 ? { checks: 'It changes no checks: the build still checks its work before it is added.' } : {}),

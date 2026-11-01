@@ -62,12 +62,12 @@ export function closeMatch({ card, sameAs, views }) {
   const other = questions[sameAs];
   const [data, match] = [asked?.question?.data, other?.question?.data];
   if (card === sameAs || !isPlain(data) || !isPlain(match) || data.work !== match.work || data.level !== 3 || match.level !== 3) return null;
-  if (typeof data.key !== 'string' || typeof match.key !== 'string' || isPlain(asked.answer) || asked.joins !== undefined || asked.saidBefore !== undefined) return null;
+  if (typeof data.key !== 'string' || typeof match.key !== 'string' || isPlain(asked.answer) || asked.joins !== undefined || asked.saidBefore !== undefined || data.blind === true) return null;
   if (isPlain(other.answer)) {
     const earlier = { id: sameAs, at: other.answer.at };
     const stands = typeof other.answer.label === 'string' && other.answer.changed !== true && !spokenSince({ views, work: data.work, earlier });
     return stands ? { line: other.answer.label } : null;
   }
-  const open = other.joins === undefined && data.blind !== true && match.blind !== true && joinersOf(questions, card).length === 0 && sameChoice(data, match);
+  const open = other.joins === undefined && match.blind !== true && joinersOf(questions, card).length === 0 && sameChoice(data, match);
   return open ? { join: sameAs } : null;
 }

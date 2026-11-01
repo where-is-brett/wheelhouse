@@ -2289,6 +2289,22 @@ test('a restart while the branch is read routes the ask again, so it is never lo
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('a card saying You said this before is never drawn blind', async () => {
+  const settings = { blindCards: false };
+  const t = setUp({ recordings: { one: repeat('q1'), two: repeat('q2') }, gate: CLEAR, blindRoll: () => 0, settings });
+  try {
+    await t.ask('one');
+    t.sign('Keep it small');
+    await t.runner.tick();
+    t.views.incidents = { open: [{ id: 'i1', kind: 'red-main' }] };
+    settings.blindCards = true;
+    await t.ask('two');
+    const last = t.writes.filter((w) => w.kind === 'question').at(-1).data;
+    assert.equal(last.saidBefore, 'Keep it small');
+    assert.equal(last.blind, undefined);
+  } finally { t.cleanup(); }
+});
+
 test('an open incident gives a card, whose answer waits as any answer does', async () => {
   const t = setUp({ recordings: { one: repeat('q1'), two: repeat('q2') }, gate: CLEAR });
   try {
