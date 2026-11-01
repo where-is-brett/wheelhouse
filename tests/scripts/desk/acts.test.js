@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runAct } from '../../../scripts/desk/acts.js';
 import { checkEvidence } from '../../../scripts/desk/evidence.js';
+import { needsEvidence } from '../../../scripts/desk/vocabulary.js';
 import { makeEvent, confirmationFor } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
 import { hashOf, cardTextOf } from '../../../scripts/mod/status.js';
@@ -88,6 +89,23 @@ test('set writes the setting and its confirmation', () => withKey(async () => {
   const got = await runAct('set', args, checked, { source, recorder, now });
   assert.equal(got.ok, true);
   assert.deepEqual(recorder.calls, [['record', { event: confirmation, target: setting, profile: false }]]);
+}));
+
+test('pull-cards names every card held back, and asks no evidence', () => withKey(async () => {
+  const source = memory();
+  source.views = async () => ({ ok: true, views: { waiting: [], cardsWaiting: { count: 2, ids: ['q-a-1', 'q-b-2'], pulled: [] } }, names: [], cards: [] });
+  const recorder = spy();
+  const got = await runAct('pull-cards', {}, { ok: true, records: [] }, { source, recorder, now });
+  assert.equal(got.ok, true);
+  assert.deepEqual(recorder.calls, [['write', { kind: 'note', data: { about: 'cards-pulled', ids: ['q-a-1', 'q-b-2'] } }]]);
+  assert.equal(needsEvidence('pull-cards'), false);
+}));
+
+test('pull-cards with nothing held back writes nothing', () => withKey(async () => {
+  const recorder = spy();
+  const got = await runAct('pull-cards', {}, { ok: true, records: [] }, { source: memory(), recorder, now });
+  assert.equal(got.ok, true);
+  assert.deepEqual(recorder.calls, []);
 }));
 
 test('request is written and shows in waiting', () => withKey(async () => {

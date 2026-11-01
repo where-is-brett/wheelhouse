@@ -1,7 +1,7 @@
 // scripts/engine/runner.js
 // The helper's side of the card router (Archon design, sections 8.3 and 8.4), for one project on the engine. Each new
 // ask is routed: the table's answers and a delegation's go back at once, with a Logbook line; the rest become cards,
-// written within the director's cards a day. A card is a build question (its answer card is signed by its question
+// written at once, the director's cards a day limiting which are pushed. A card is a build question (its answer card is signed by its question
 // line) or a pull request's approval (signed as any approval is), so the signing that exists signs it. Each tick, the
 // director's signed answers go back to the engine, once each; one the engine refuses closes with one plain line.
 // Under All stop nothing goes back: an answer signed then never reaches the build, and its question is asked again
@@ -30,7 +30,7 @@ import { READER_WORK } from '../delegation/reader.js';
 import { mergeQuestionWords } from './words.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
-const EMPTY = () => ({ routed: {}, waiting: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, tries: {}, later: [], next: {}, noted: null, capped: {}, costed: {}, reviewsKept: {}, carried: {}, reworks: {}, answers: {}, sending: {} });
+const EMPTY = () => ({ routed: {}, waiting: [], held: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, tries: {}, later: [], next: {}, noted: null, capped: {}, costed: {}, reviewsKept: {}, carried: {}, reworks: {}, answers: {}, sending: {} });
 // The failed tries after which the director is told an answer hasn't reached the build yet.
 const UNREACHABLE_SAID = 3;
 // The cap card's options: Give it more carries the work on with the cap raised once; Stop leaves it stopped.
@@ -219,39 +219,90 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     await show();
   }
 
-  // Writes the waiting cards the day's budget has room for, and notes how many wait. One showing at a time: an ask
-  // routed while a tick shows cards waits for it, so no card is written twice.
+  // Writes every waiting card at once (delegated decisions design, section 8.5); the day's budget says only which are
+  // pushed. One showing at a time: an ask routed while a tick shows cards waits for it, so no card is written twice.
   let showing = Promise.resolve();
   function show() {
     showing = showing.then(showNow, showNow);
     return showing;
   }
+  // The id a card goes by: a question's, or an approval's pull request and head, as the seals and `state.approvals` name it.
+  function nameCard(item) {
+    if (typeof item.id === 'string') return;
+    const a = item.card.approval;
+    if (a) {
+      item.id = `${a.pr}:${a.sha}`;
+      return;
+    }
+    const n = (state.next[item.work] ?? ENGINE_QUESTIONS) + 1;
+    state.next[item.work] = n;
+    item.id = `q-${item.work}-${n}`;
+  }
+  // Whether the director has answered a held card, on the Logbook or a card of its own.
+  function answered(id, views) {
+    if (state.delivered[id] || typeof views.questions?.[id]?.answer?.label === 'string') return true;
+    const [pr, sha] = id.split(':');
+    return Boolean(sha) && Boolean(views.approvals?.[pr]?.[sha]);
+  }
   async function showNow() {
     const today = dayOf(now());
     if (state.shown.day !== today) state.shown = { day: today, count: 0 };
     const { cardsPerDay = 3, bundleApprovals: bundling = false } = settings() ?? {};
+    let views = {};
+    try { views = readViews() ?? {}; } catch { views = {}; }
+    // A pull lifts a card and spends no budget; an answered card has nothing left to hold.
+    const pulled = new Set(Array.isArray(views.cardsWaiting?.pulled) ? views.cardsWaiting.pulled : []);
+    state.held = state.held.filter((h) => !pulled.has(h.id) && !answered(h.id, views));
+    const items = [...state.held, ...state.waiting];
     // Bundled approvals are shown together and count as one card; each is still its own signed approval.
+    // A bundle is exempt when any card in it is, so what holds up all work is never held back with it.
+    const groupOf = (importance, members) => ({ importance, exempt: members.some(ignoresBudget), items: members });
     const groups = bundling
-      ? bundleApprovals(state.waiting).map((g) => (g.card.bundle ? { importance: g.importance, exempt: g.exempt === true, items: state.waiting.filter((w) => w.card.approval && g.card.bundle.includes(w.card.approval)) } : { importance: g.importance, exempt: g.exempt === true, items: [g] }))
-      : state.waiting.map((w) => ({ importance: w.importance, exempt: w.exempt === true, items: [w] }));
-    const { show: shown, wait } = cardBudget({ cards: groups, cardsPerDay, shownToday: state.shown.count });
-    for (const group of shown) {
-      for (const item of group.items) {
-        await writeCard(item);
-        state.waiting = state.waiting.filter((w) => w !== item);
-      }
-      if (!ignoresBudget(group)) state.shown.count += 1;
+      ? bundleApprovals(items).map((g) => groupOf(g.importance, g.card.bundle ? items.filter((w) => w.card.approval && g.card.bundle.includes(w.card.approval)) : [g]))
+      : items.map((w) => groupOf(w.importance, [w]));
+    const { show: shown } = cardBudget({ cards: groups, cardsPerDay, shownToday: state.shown.count });
+    const over = groups.filter((g) => !shown.includes(g)).flatMap((g) => g.items);
+    state.waiting.forEach(nameCard);
+    keep();
+    // Named as held before it is written, so no tick reads a held card as pushed.
+    const ids = over.map((item) => item.id);
+    const listed = JSON.stringify(ids);
+    if (state.noted !== listed) {
+      await write('note', { about: 'cards-waiting', count: ids.length, ids });
+      state.noted = listed;
       keep();
     }
-    const waiting = wait > 0 ? groups.filter((g) => !shown.includes(g)).reduce((n, g) => n + g.items.length, 0) : 0;
-    if (state.noted !== waiting) {
-      state.noted = waiting;
+    // A card the record refuses is tried again on the next tick, said once, and holds up none behind it.
+    const written = async (item) => {
+      if (!state.waiting.includes(item)) return true;
+      try {
+        await writeCard(item);
+      } catch {
+        if (item.refused !== true) {
+          await note(`A question about ${titled(item.work)} couldn't be shown yet; it keeps trying.`, { work: item.work }).then(() => { item.refused = true; keep(); }, () => {});
+        }
+        return false;
+      }
+      state.waiting = state.waiting.filter((w) => w !== item);
+      return true;
+    };
+    for (const group of shown) {
+      let all = true;
+      for (const item of group.items) {
+        if (await written(item)) state.held = state.held.filter((h) => h !== item);
+        else all = false;
+      }
+      if (all && !ignoresBudget(group)) state.shown.count += 1;
       keep();
-      await write('note', { about: 'cards-waiting', count: waiting });
+    }
+    for (const item of over) {
+      if (!state.waiting.includes(item) || !await written(item)) continue;
+      state.held.push(item);
+      keep();
     }
   }
 
-  async function writeCard({ card, work, runId, ask }) {
+  async function writeCard({ id, card, work, runId, ask }) {
     if (card.approval) {
       const a = card.approval;
       const { card: composed } = composeCard({
@@ -264,14 +315,11 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
         target: { pr: a.pr, sha: a.sha },
       });
       await write('card', composed);
-      state.approvals[`${a.pr}:${a.sha}`] = { runId, ask, approve: a.engine.approve, work };
-      sealCard({ id: `${a.pr}:${a.sha}`, kind: 'approval', work, runId, level: a.level === 4 ? 4 : 3, ...placeOf(ask) });
+      state.approvals[id] = { runId, ask, approve: a.engine.approve, work };
+      sealCard({ id, kind: 'approval', work, runId, level: a.level === 4 ? 4 : 3, ...placeOf(ask) });
       return;
     }
     const q = card.question;
-    const n = (state.next[work] ?? ENGINE_QUESTIONS) + 1;
-    state.next[work] = n;
-    const id = `q-${work}-${n}`;
     await write('question', {
       id, work, what: q.what, why: q.why, options: q.options, recommendation: q.recommendation ?? q.options[0]?.label, level: q.level,
       ...(q.level === 4 ? { checks: 'It changes no checks: the build still checks its work before it is added.' } : {}),

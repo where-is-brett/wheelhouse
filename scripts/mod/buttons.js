@@ -25,6 +25,10 @@ import { textOf } from '../cards/compose.js';
 import { setLinesOf, TRUST_LINE, TAKEOVER_LINE, PAIR_LINE, UNINSTALL_LINE } from '../state/card-lines.js';
 import { baselineWording } from '../lib/measures-clicks.js';
 import { UNATTENDED_CARD } from '../protection/windows-builds.js';
+import { heldBackWords, SHOW_THEM } from '../engine/words.js';
+
+// The pane's line for the cards past the day's budget: its words, and the button that pulls them.
+export const heldBackRow = (n) => (n > 0 ? { line: heldBackWords(n), button: button(SHOW_THEM, 'pull', 'small') } : null);
 
 export const CANT_ANSWER = 'This card can\'t be answered here: ask the First Mate about it.';
 // A setup card's note: setup asks it in its own chat, and that is where it is answered.

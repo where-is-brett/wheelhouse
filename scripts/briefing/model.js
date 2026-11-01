@@ -35,14 +35,14 @@ import { FRONT_DESK_MODEL_LEAD } from '../lib/front-desk-model.js';
 import { verdict, sinceAbout } from '../lib/calm-words.js';
 import { briefingLines } from '../survey/words.js';
 
-// Briefing = { verdict, since, first, found, foundId, waiting, changed, progress, watch, usage, onTrack, plus, raise, weekly }.
+// Briefing = { verdict, since, first, found, foundId, waiting, heldBack, changed, progress, watch, usage, onTrack, plus, raise, weekly }.
 // `verdict` is the pane's sentence; `since` says when the last briefing was and how long ago ('' when
 // there was none); each `waiting` entry is { title, line, recommendation, optional } (a card's own
-// words, each only when it has them); `onTrack` says usage is as it usually is; `plus` counts what
+// words, each only when it has them); `heldBack` counts the cards past the day's budget, which `waiting` leaves out; `onTrack` says usage is as it usually is; `plus` counts what
 // is new since the last briefing, in waiting and changed ({ waiting, changed }, none when there was
 // no last briefing).
 const EMPTY = () => ({
-  verdict: '', since: '', first: [], found: [], foundId: null, waiting: [], changed: [], progress: [], watch: [], usage: null, onTrack: false, plus: { waiting: 0, changed: 0 }, raise: [], weekly: 0, safekeeping: null,
+  verdict: '', since: '', first: [], found: [], foundId: null, waiting: [], heldBack: 0, changed: [], progress: [], watch: [], usage: null, onTrack: false, plus: { waiting: 0, changed: 0 }, raise: [], weekly: 0, safekeeping: null,
 });
 
 // What the board model says when a merge carried no words for users. It belongs to progress, not
@@ -286,7 +286,8 @@ function build({ model, usage, sources, since, now, wasRaised = realWasRaised, t
   const said = part(() => foundLines(survey, surveyAt, host, leaveOut, carrying, earlier), { found: [], id: null });
   briefing.found = said.found;
   briefing.foundId = said.id;
-  briefing.waiting = part(() => records(director.waiting).map(waitingEntry), []);
+  briefing.waiting = part(() => records(director.waiting).filter((w) => w.heldBack !== true).map(waitingEntry), []);
+  briefing.heldBack = part(() => records(director.waiting).filter((w) => w.heldBack === true).length, 0);
   briefing.changed = part(() => lines(records(director.changed).filter((c) => isNew(c.at)).map((c) => c.what))
     .filter((what) => !BARE_MERGE.test(what)), []);
   briefing.verdict = part(() => verdict({ waiting: records(director.waiting).length, broken: brokenCount(director.health) }), '');
@@ -294,7 +295,7 @@ function build({ model, usage, sources, since, now, wasRaised = realWasRaised, t
   briefing.since = part(() => (known && Number.isFinite(nowMs) ? sinceAbout(clockOf(sinceMs, timeZone), nowMs - sinceMs) : ''), '');
   // What is new since the last briefing is counted only when there was one.
   briefing.plus = part(() => ({
-    waiting: known ? records(director.waiting).filter((w) => msOf(w.since) > sinceMs).length : 0,
+    waiting: known ? records(director.waiting).filter((w) => w.heldBack !== true && msOf(w.since) > sinceMs).length : 0,
     changed: known ? briefing.changed.length : 0,
   }), { waiting: 0, changed: 0 });
   briefing.progress = part(() => progressLines({ director, build: isRecord(board.build) ? board.build : {} }, isNew), []);

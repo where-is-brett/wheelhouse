@@ -23,7 +23,7 @@ const asking = (id, over = {}) => [
   ev({ type: 'run-ended', outcome: 'completed' }),
 ];
 
-function setUp({ recordings = { one: asking('q1') }, settings = {}, at = '2026-10-29T13:00:00.000Z', stop = false, slow = false, endRun, onCard, workOf = () => ({ work: 'sale-banner', lane: 'quick' }), onReaderAsk, openedOf, mergeAsked, release, gate = {} } = {}) {
+function setUp({ recordings = { one: asking('q1') }, settings = {}, at = '2026-10-29T13:00:00.000Z', stop = false, slow = false, refuse, endRun, onCard, workOf = () => ({ work: 'sale-banner', lane: 'quick' }), onReaderAsk, openedOf, mergeAsked, release, gate = {} } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-runner-'));
   const engine = fakeEngine({ recordings });
   if (mergeAsked) engine.mergeAsked = mergeAsked;
@@ -34,7 +34,7 @@ function setUp({ recordings = { one: asking('q1') }, settings = {}, at = '2026-1
     engine,
     file: path.join(dir, 'router.json'),
     readViews: () => views,
-    write: async (kind, data) => { if (slow) await new Promise((resolve) => setTimeout(resolve, 5)); writes.push({ kind, data }); },
+    write: async (kind, data) => { if (slow) await new Promise((resolve) => setTimeout(resolve, 5)); if (refuse?.(kind, data)) throw new Error('the record was refused'); writes.push({ kind, data }); },
     stopped: () => world.stop,
     now: () => world.now,
     settings: () => ({ cardsPerDay: 3, bundleApprovals: false, ...settings }),
@@ -200,19 +200,202 @@ test('a hold the engine refuses opens no incident', async () => {
   } finally { t.cleanup(); }
 });
 
-test('four level-3 asks in one afternoon: three cards today, the fourth tomorrow, and the count is noted', async () => {
-  const recordings = Object.fromEntries([1, 2, 3, 4].map((n) => [`r${n}`, asking(`q${n}`)]));
-  const t = setUp({ recordings });
+const fourAsks = () => Object.fromEntries([1, 2, 3, 4].map((n) => [`r${n}`, asking(`q${n}`)]));
+const heldNote = (t) => t.writes.filter((w) => w.kind === 'note' && w.data.about === 'cards-waiting').at(-1)?.data;
+
+test('every ask is a card at once, and past the budget it is listed as held back', async () => {
+  const t = setUp({ recordings: fourAsks() });
   try {
     for (const n of [1, 2, 3, 4]) await t.ask(`r${n}`);
-    assert.equal(t.writes.filter((w) => w.kind === 'question').length, 3);
-    assert.deepEqual(t.writes.filter((w) => w.kind === 'note' && w.data.about === 'cards-waiting').at(-1).data, { about: 'cards-waiting', count: 1 });
+    const questions = t.writes.filter((w) => w.kind === 'question');
+    assert.equal(questions.length, 4);
+    assert.deepEqual(heldNote(t), { about: 'cards-waiting', count: 1, ids: [questions[3].data.id] });
+  } finally { t.cleanup(); }
+});
+
+test('a held card is named as held before it is written, so no tick sees it pushed', async () => {
+  const t = setUp({ recordings: fourAsks() });
+  try {
+    for (const n of [1, 2, 3, 4]) await t.ask(`r${n}`);
+    const fourth = t.writes.filter((w) => w.kind === 'question')[3].data.id;
+    const named = t.writes.findIndex((w) => w.kind === 'note' && w.data.ids?.includes(fourth));
+    const written = t.writes.findIndex((w) => w.kind === 'question' && w.data.id === fourth);
+    assert.ok(named !== -1 && named < written);
+  } finally { t.cleanup(); }
+});
+
+test('a pull lifts it, spending no budget', async () => {
+  const t = setUp({ recordings: fourAsks(), settings: { cardsPerDay: 2 } });
+  try {
+    for (const n of [1, 2, 3]) await t.ask(`r${n}`);
+    const third = t.writes.filter((w) => w.kind === 'question')[2].data.id;
+    t.views.cardsWaiting = { count: 1, ids: [third], pulled: [third] };
     await t.runner.tick();
-    assert.equal(t.writes.filter((w) => w.kind === 'question').length, 3, 'still three today');
+    assert.deepEqual(heldNote(t).ids, []);
+    assert.equal(t.writes.filter((w) => w.kind === 'question').length, 3, 'nothing is written twice');
+  } finally { t.cleanup(); }
+});
+
+test('a pull leaves the day\'s count as it was, so the next ask is still over budget', async () => {
+  const t = setUp({ recordings: fourAsks(), settings: { cardsPerDay: 1 } });
+  try {
+    await t.ask('r1');
+    await t.ask('r2');
+    const second = t.writes.filter((w) => w.kind === 'question')[1].data.id;
+    t.views.cardsWaiting = { count: 1, ids: [second], pulled: [second] };
+    await t.runner.tick();
+    await t.ask('r3');
+    const third = t.writes.filter((w) => w.kind === 'question')[2].data.id;
+    assert.deepEqual(heldNote(t).ids, [third]);
+  } finally { t.cleanup(); }
+});
+
+test('a new day\'s budget lifts held cards, in order of importance', async () => {
+  const recordings = { ...fourAsks(), urgent: asking('u1', { level: 4, recommend: 'a' }) };
+  const t = setUp({ recordings, settings: { cardsPerDay: 1 } });
+  try {
+    await t.ask('r1');
+    await t.ask('r2');
+    await t.ask('urgent');
+    const [, plain, urgent] = t.writes.filter((w) => w.kind === 'question').map((w) => w.data.id);
+    assert.deepEqual(heldNote(t).ids, [plain, urgent]);
     t.world.now = new Date('2026-10-30T21:00:00.000Z');
     await t.runner.tick();
-    assert.equal(t.writes.filter((w) => w.kind === 'question').length, 4);
-    assert.equal(t.writes.filter((w) => w.kind === 'note' && w.data.about === 'cards-waiting').at(-1).data.count, 0);
+    assert.deepEqual(heldNote(t).ids, [plain], 'the level-4 card takes the new day\'s one place');
+    assert.equal(t.writes.filter((w) => w.kind === 'question').length, 3, 'nothing is written twice');
+  } finally { t.cleanup(); }
+});
+
+test('a held card the director answers from the Logbook leaves the list', async () => {
+  const t = setUp({ recordings: fourAsks(), settings: { cardsPerDay: 1 } });
+  try {
+    await t.ask('r1');
+    await t.ask('r2');
+    // The two cards are one piece's, and a piece's answers go together.
+    t.sign('Keep it small');
+    t.sign('Keep it small', 1);
+    await t.runner.tick();
+    assert.deepEqual(heldNote(t).ids, []);
+    assert.equal(acts(t.engine).length, 2);
+  } finally { t.cleanup(); }
+});
+
+test('a card over budget never ages into an answer', async () => {
+  const t = setUp({ recordings: fourAsks(), settings: { cardsPerDay: 0 } });
+  try {
+    await t.ask('r1');
+    for (let day = 1; day <= 30; day += 1) {
+      t.world.now = new Date(Date.UTC(2026, 10, day, 12));
+      await t.runner.tick();
+    }
+    assert.equal(acts(t.engine).length, 0, 'nothing is answered');
+    assert.equal(heldNote(t).count, 1, 'still held, still open');
+  } finally { t.cleanup(); }
+});
+
+test('an exempt card ignores the budget, as today', async () => {
+  const t = setUp({ recordings: { ...fourAsks(), stops: asking('s1', { holdsAll: true, level: 4, recommend: 'a' }) }, settings: { cardsPerDay: 0 } });
+  try {
+    await t.ask('stops');
+    assert.equal(t.writes.filter((w) => w.kind === 'question').length, 1);
+    assert.deepEqual(heldNote(t).ids, []);
+  } finally { t.cleanup(); }
+});
+
+test('a piece with a held card waits on the director all the same', async () => {
+  const t = setUp({ recordings: fourAsks(), settings: { cardsPerDay: 0 } });
+  try {
+    await t.ask('r1');
+    assert.equal(heldNote(t).count, 1);
+    assert.deepEqual([...t.runner.waitingWork()], ['sale-banner']);
+  } finally { t.cleanup(); }
+});
+
+const approvalAsk = (id, pr) => asking(id, { kind: 'approval', recommend: 'approve', options: [{ id: 'approve', label: 'Approve' }, { id: 'reject', label: 'Not this' }], setLine: { pr, head: HEAD } });
+
+test('bundled approvals still count as one', async () => {
+  const recordings = { one: approvalAsk('a1', 9), two: approvalAsk('a2', 10), three: asking('q3') };
+  const t = setUp({ recordings, settings: { cardsPerDay: 1, bundleApprovals: true } });
+  try {
+    await t.ask('three');
+    await t.ask('one');
+    await t.ask('two');
+    assert.equal(t.writes.filter((w) => w.kind === 'card').length, 2, 'each approval is a card at once');
+    assert.deepEqual(heldNote(t).ids, [`9:${HEAD}`, `10:${HEAD}`]);
+    t.world.now = new Date('2026-10-30T21:00:00.000Z');
+    await t.runner.tick();
+    assert.deepEqual(heldNote(t).ids, [], 'the two lift together, for one of the day\'s places');
+    assert.equal(t.writes.filter((w) => w.kind === 'card').length, 2, 'neither is written again');
+  } finally { t.cleanup(); }
+});
+
+test('a card the record refuses says so once, and holds up no card behind it', async () => {
+  const bad = new Set();
+  const t = setUp({ recordings: fourAsks(), settings: { cardsPerDay: 1 }, refuse: (kind, data) => kind === 'question' && bad.has(data.id) });
+  try {
+    await t.ask('r1');
+    bad.add('q-sale-banner-500002');
+    await t.ask('r2');
+    await t.ask('r3');
+    await t.runner.tick();
+    await t.runner.tick();
+    const written = t.writes.filter((w) => w.kind === 'question').map((w) => w.data.id);
+    assert.deepEqual(written, ['q-sale-banner-500001', 'q-sale-banner-500003']);
+    assert.equal(t.writes.filter((w) => w.kind === 'note' && /couldn't be shown/.test(w.data.words ?? '')).length, 1);
+    bad.clear();
+    await t.runner.tick();
+    assert.ok(t.writes.some((w) => w.kind === 'question' && w.data.id === 'q-sale-banner-500002'), 'it is tried again');
+    assert.deepEqual([...heldNote(t).ids].sort(), ['q-sale-banner-500002', 'q-sale-banner-500003']);
+  } finally { t.cleanup(); }
+});
+
+test('a bundle keeps the budget exemption of any card in it', async () => {
+  const holding = approvalAsk('a1', 9);
+  holding[1] = { ...holding[1], level: 4, holdsAll: true };
+  const t = setUp({ recordings: { first: asking('q1'), hold: holding, plain: approvalAsk('a2', 10) }, settings: { cardsPerDay: 1, bundleApprovals: true } });
+  try {
+    await t.ask('first');
+    await t.ask('plain');
+    assert.deepEqual(heldNote(t).ids, [`10:${HEAD}`]);
+    await t.ask('hold');
+    assert.deepEqual(heldNote(t).ids, [], 'what holds up all work is never held back');
+  } finally { t.cleanup(); }
+});
+
+test('a card held back keeps its place across a restart', async () => {
+  const t = setUp({ recordings: fourAsks(), settings: { cardsPerDay: 0 } });
+  try {
+    await t.ask('r1');
+    const again = engineRunner({
+      engine: t.engine, file: t.runner.file, readViews: () => t.views, write: async (kind, data) => { t.writes.push({ kind, data }); },
+      stopped: () => false, now: () => t.world.now, settings: () => ({ cardsPerDay: 0 }), workOf: () => ({ work: 'sale-banner', lane: 'quick' }), titleOf: () => 'The sale banner',
+    });
+    await again.tick();
+    assert.equal(t.writes.filter((w) => w.kind === 'question').length, 1);
+    assert.equal(heldNote(t).count, 1);
+  } finally { t.cleanup(); }
+});
+
+test('asks kept unwritten by the version before become cards on the first tick, once', async () => {
+  const t = setUp({ settings: { cardsPerDay: 0 } });
+  try {
+    const { event, runId } = await t.ask();
+    const kept = JSON.parse(fs.readFileSync(t.runner.file, 'utf8'));
+    const q = t.writes.filter((w) => w.kind === 'question')[0].data;
+    t.writes.length = 0;
+    const entry = { ...kept.held[0] };
+    delete entry.id;
+    fs.writeFileSync(t.runner.file, JSON.stringify({ ...kept, held: undefined, waiting: [entry], questions: {}, noted: 1, next: {} }));
+    const again = engineRunner({
+      engine: t.engine, file: t.runner.file, readViews: () => t.views, write: async (kind, data) => { t.writes.push({ kind, data }); },
+      stopped: () => false, now: () => t.world.now, settings: () => ({ cardsPerDay: 0 }), workOf: () => ({ work: 'sale-banner', lane: 'quick' }), titleOf: () => 'The sale banner',
+    });
+    await again.tick();
+    await again.tick();
+    assert.equal(t.writes.filter((w) => w.kind === 'question').length, 1);
+    assert.equal(t.writes.filter((w) => w.kind === 'note').at(-1).data.count, 1);
+    assert.equal(event.runId, runId);
+    assert.match(q.id, /^q-sale-banner-/);
   } finally { t.cleanup(); }
 });
 

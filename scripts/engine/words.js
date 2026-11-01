@@ -15,6 +15,10 @@ export function mergeQuestionWords(pr, title) {
   return `The merge queue won't judge ${named} by itself (it changes a schema, permissions or something the rules keep for a person).`;
 }
 
+// The line for the cards past the day's budget, and the button that shows them.
+export const heldBackWords = (n) => `${n} more waiting.`;
+export const SHOW_THEM = 'Show them';
+
 // The Logbook's line for a piece waiting on the director whose branch can't be read yet.
 export const reservedUnreadWords = (title) => `What ${title} has changed so far couldn't be read, so only the files it was expected to touch are kept back for it. It is read again shortly.`;
 

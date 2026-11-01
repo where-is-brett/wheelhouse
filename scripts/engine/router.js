@@ -1,7 +1,7 @@
 // scripts/engine/router.js
 // The card router (Archon design, section 8.3): each ask from the engine is answered by the fixed table, answered by
 // its recommendation where a delegation lowered it, or becomes a card; a provider's usage limit is only a Logbook line.
-// Cards keep to the director's cards a day (a target, not a hard cap): what holds up all work, and All stop, ignore it.
+// The director's cards a day limit what is pushed, never what exists (a target, not a hard cap): what holds up all work, and All stop, ignore it.
 // It decides nothing a model would, and silence is never consent: an ask with no answer the table or a delegation
 // gives waits for the director.
 //
@@ -106,7 +106,7 @@ export function dayOf(at) {
 // (importance 2, or `exempt`, a level-4 ask that holds up all work keeping its place before level 3).
 export const ignoresBudget = (card) => card?.importance === 0 || card?.importance === 2 || card?.exempt === true;
 
-// Which waiting cards to show now. `cards` are [{ importance, exempt?, ... }] waiting in the order they came;
+// Which waiting cards to push now; the rest are held back, still cards. `cards` are [{ importance, exempt?, ... }] waiting in the order they came;
 // `shownToday` how many budgeted cards were shown today already. Those that ignore the budget (ignoresBudget) are shown
 // at once; the rest fill it in order of importance.
 export function cardBudget({ cards = [], cardsPerDay = 3, shownToday = 0 } = {}) {
