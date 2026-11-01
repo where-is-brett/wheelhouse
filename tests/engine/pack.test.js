@@ -9,6 +9,8 @@ import path from 'node:path';
 import { buildPack } from '../../scripts/engine/pack-build.js';
 import { nodesOf, NO_PERSON_LINE, LOOP_LINE, READ_ONLY, RULES_MARK } from '../../scripts/engine/pack-check.js';
 import { LANE_WORKFLOWS } from '../../scripts/engine/archon/adapter.js';
+import { GOAL_STEP } from '../../scripts/engine/goal-check.js';
+import { GOAL_CHECK_HOURS } from '../../scripts/engine/goal-limits.js';
 import { REVIEW_STEPS, FEATURE_REVIEW } from '../../scripts/engine/routes.js';
 import { LANE_CAPS } from '../../scripts/engine/order.js';
 import { MOST_TASKS } from '../../scripts/engine/plan-file.js';
@@ -24,7 +26,7 @@ function built() {
 }
 const LABELS = ['wh.kind', 'wh.level', 'wh.topic', 'wh.work', 'wh.recommend'];
 
-const ALL = [LANE_WORKFLOWS.bug, LANE_WORKFLOWS.feature, LANE_WORKFLOWS['fix-main'], 'wheelhouse-hello', LANE_WORKFLOWS.quick, LANE_WORKFLOWS.reader, 'wheelhouse-slice-task', LANE_WORKFLOWS.slice, 'wheelhouse-small-task', LANE_WORKFLOWS.small];
+const ALL = [LANE_WORKFLOWS.bug, LANE_WORKFLOWS.feature, LANE_WORKFLOWS['fix-main'], LANE_WORKFLOWS['goal-check'], 'wheelhouse-hello', LANE_WORKFLOWS.quick, LANE_WORKFLOWS.reader, 'wheelhouse-slice-task', LANE_WORKFLOWS.slice, 'wheelhouse-small-task', LANE_WORKFLOWS.small];
 // Check 77's mean tokens for one implement round, on the mid-sized model.
 const ROUND_TOKENS = 127000;
 
@@ -33,6 +35,16 @@ test('the pack builds the lanes, the small lane\'s task block and the health tri
   assert.deepEqual(workflows, ALL);
   assert.match(digest, /^[0-9a-f]{64}$/);
   assert.throws(() => buildPack({ out: 'relative' }), /absolute folder/);
+});
+
+test('a goal\'s check run is one step with no model, its output what the helper signs', () => {
+  const workflow = built().read(LANE_WORKFLOWS['goal-check']);
+  assert.deepEqual(workflow.nodes.map((n) => n.id), [GOAL_STEP]);
+  const [step] = workflow.nodes;
+  assert.match(step.bash, /scripts\/engine\/goal-check\.js" --run "\$WORKFLOW_ID" --artefacts "\$ARTIFACTS_DIR"/);
+  assert.equal(step.prompt, undefined);
+  assert.equal(step.timeout, GOAL_CHECK_HOURS * 3600000);
+  assert.equal(workflow.inputs.goal.required, true);
 });
 
 test('every AI step carries its prompt with the shared rules, and no prompt file is left to find', () => {

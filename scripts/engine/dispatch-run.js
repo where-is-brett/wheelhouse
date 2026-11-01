@@ -25,7 +25,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { dispatch, MERGE_WORK, MERGE_QUEUE_EVERY_MS } from './dispatcher.js';
-import { goalRule, gateStart, orderGoal, areasOf, fixAreas } from './goal.js';
+import { goalRule, gateStart, goalDoneOf, orderGoal, areasOf, fixAreas } from './goal.js';
 import { goalHeldWords, reservedUnreadWords, LIMIT_HOLD_WORDS, noCardBehindWords, restartRefusedWords, restartCardWords, restartUnsureWords, restartStrandedWords, failedCardWords, prLeftOpenWords, areasInScopeWords, areaCardWords, AREA_CARD_WHY, ALLOW_ONCE_SAYS, areaStoppedWords, wakeLateWords, STOPPED_RESTART_WORDS, ORPHAN_LEFT_WORDS, RESTART_UNSURE_AGAIN, START_ANYWAY, cutOffStoppedWords, cutOffWords, waitsOnItselfWords, startAnywayWords, startRefusedWords, startCardWords, unmarkedPrWords, START_STOP_SAYS, NO_FIX_TESTS, NO_FIX_ORDER, noFixWords, queueStuckWords, QUEUE_STUCK_WHY, QUEUE_PASSED_WORDS, requestsUsedWords, REQUESTS_UNCONFIRMED_WORDS, requestsStoppedWords } from './words.js';
 import { workOrder } from './order.js';
 import { limitsFor } from './caps.js';
@@ -350,7 +350,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     }
     let order;
     const args = { entry: { ...entry, work: { ...entry.work, key: work } }, design, config: config() ?? {}, settings: settings() ?? {}, raised, answers, tried: carryOn ? triedBefore(views, work) : [], goalId: orderGoal(views, work).goalId };
-    try { order = step.finish ? finishOrder({ ...args, progress }) : sliceOrder({ ...args, n: step.slice }); } catch (error) { return { ok: false, refused: error.message }; }
+    try { order = step.finish ? finishOrder({ ...args, progress, goalDone: goalDoneOf(views, work) }) : sliceOrder({ ...args, n: step.slice }); } catch (error) { return { ok: false, refused: error.message }; }
     const got = await start({ project, order: withAreas(withTail(order, checkTail), views), ...(branch ? { branch } : {}), carryOn });
     if (got?.ok && typeof got.runId === 'string') {
       kept.started.push(got.runId);

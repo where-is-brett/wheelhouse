@@ -15,7 +15,7 @@ import { CARD, CARD_KINDS, PUT_OFF } from '../lib/front-desk.js';
 import { SETUP_QUESTION_ID } from '../lib/setup-clicks.js';
 import { SEND_BACK } from '../lib/calm-words.js';
 import { isModelName } from '../gate/guardrails.js';
-import { GOAL_ENDINGS } from '../engine/goal-limits.js';
+import { GOAL_ENDINGS, GOAL_WORK } from '../engine/goal-limits.js';
 
 export const PLAIN_KINDS = [
   'request', 'ruling', 'level', 'glossary', 'idea', 'rejection', 'card', 'card-answer',
@@ -45,7 +45,9 @@ export const PLAIN_KINDS = [
 // can't be rewritten once the answer is known, and read by nothing but scripts/delegation/.
 // `match` is what came of the reader saying a card asks what another did (delegated decisions design, section 7.4), the
 // helper's too: it stands a question behind another's card, which no build's own record can, so only one signed here counts.
-export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file', 'usage-card', 'premium-card', 'premium-check', 'premium-failed', 'provenance', 'check', 'checks-state', 'checks-found', 'change', 'shadow', 'match'];
+// `goal-check` is the result of a goal's checks on the main line (unattended goals design, section 4.1), the helper's too:
+// read from the engine's record of a run with no model step, and never a step's word.
+export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file', 'usage-card', 'premium-card', 'premium-check', 'premium-failed', 'provenance', 'check', 'checks-state', 'checks-found', 'change', 'shadow', 'match', 'goal-check'];
 // Plain kinds only the helper itself records, from what it read itself: no caller writes one
 // through /state/write. The survey (design section 15, ruling A1) is taken and recorded in the
 // helper, when setup finishes and when it is taken again. A column-ready record (design section 14.6) is the
@@ -62,7 +64,7 @@ export const RED_MAIN_OWN = 'only the helper records a red main line\'s incident
 // `rule` is a rule proposed from an answered card (delegated decisions design, section 11.1): the helper composes it from
 // what it read itself, and it means nothing until the director's signed click confirms that very record.
 // `goal-end` is the helper's own record of how a goal ended and what it spent: it ends the goal, so no caller writes one.
-export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'shadow', 'match', 'rule', 'slept', 'goal-end'];
+export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'shadow', 'match', 'rule', 'slept', 'goal-end', 'goal-check'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 
 const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main', 'safekeeping', 'send-back', 'start-goal'];
@@ -485,6 +487,7 @@ function checkPlain(kind, data) {
   if (kind === 'work') {
     slug('id');
     if (data.id === READER_WORK) bad('names the work kept for the reader');
+    if (data.id === GOAL_WORK) bad('names the work kept for a goal\'s checks');
     text('title');
     if (!LANES.includes(data.lane)) bad('needs its lane to be quick, small, feature or bug');
     if (typeof data.visible !== 'boolean') bad('needs visible to be true or false');
@@ -812,6 +815,25 @@ function checkCheck(data) {
   if (data.clean !== undefined && data.clean !== true) bad('says it ran clean or says nothing');
 }
 
+// The result of a goal's checks: for the sheet of `hash`, `before` it was signed or `last` of all, at the main line's
+// `head` (null when no head was reached). Each result names its check, and `ok` is a plain yes or no. Null with `walked`
+// is a page, walked at its piece; `signed` is the project's own signed check standing in for the test command; `unrun`
+// is a check that couldn't be run. `said` is why no result stands, and `results` is then empty or partial.
+const GOAL_CHECK_KEYS = ['goal', 'hash', 'when', 'head', 'results', 'ok', 'said'];
+const GOAL_RESULT_KEYS = ['check', 'ok', 'walked', 'signed', 'unrun'];
+function checkGoalCheck(data) {
+  const bad = (why) => { throw new Error(`A goal-check event ${why}`); };
+  if (!isPlain(data) || Object.keys(data).some((k) => !GOAL_CHECK_KEYS.includes(k))) bad('needs its fields and no others');
+  if (!isSlug(data.goal)) bad('needs its goal, named by a short slug');
+  if (typeof data.hash !== 'string' || !/^[0-9a-f]{64}$/.test(data.hash)) bad('needs the whole hash of its sheet');
+  if (!['before', 'last'].includes(data.when)) bad('says whether it ran before the goal or last');
+  if (data.head !== null && !(typeof data.head === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(data.head))) bad('needs the whole commit, or null');
+  if (typeof data.ok !== 'boolean') bad('says yes or no');
+  if (data.said !== undefined && (typeof data.said !== 'string' || data.said === '')) bad('says in words why no result stands');
+  const fair = (r) => isPlain(r) && Object.keys(r).every((k) => GOAL_RESULT_KEYS.includes(k)) && isPlain(r.check) && (typeof r.ok === 'boolean' || (r.ok === null && r.walked === true));
+  if (!Array.isArray(data.results) || !data.results.every(fair)) bad('needs each result\'s check and a yes or no');
+}
+
 // A local change as it stands (spec 7.1). `rev` counts its records, so the newest is known whatever the clock did.
 export const CHANGE_STATES = ['open', 'merged', 'closed'];
 const CHANGE_KEYS = ['n', 'rev', 'branch', 'base', 'title', 'body', 'state', 'head', 'mergeCommit'];
@@ -897,6 +919,7 @@ export function makeEvent({ kind, data, now = () => new Date() }) {
   if (kind === 'shown') checkShown(data);
   if (kind === 'provenance') checkProvenance(data);
   if (kind === 'check') checkCheck(data);
+  if (kind === 'goal-check') checkGoalCheck(data);
   if (kind === 'checks-state') checkChecksState(data);
   if (kind === 'checks-found') checkChecksFound(data);
   if (kind === 'change') checkChange(data);
@@ -950,6 +973,7 @@ export function checkRecord(event, { enrolled, held = [], computer = computerId(
   if (event.kind === 'change') return 'only the helper records a local change';
   if (event.kind === 'shadow') return 'only the helper records a seal';
   if (event.kind === 'match') return 'only the helper records a close match';
+  if (event.kind === 'goal-check') return 'only the helper records a goal\'s checks';
   if (held.some((e) => canonicalJson(e) !== canonicalJson(event))) return 'another event in the state carries this record\'s id, so it was not recorded';
   return null;
 }

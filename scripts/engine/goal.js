@@ -2,10 +2,11 @@
 // The unattended goal's rules (unattended goals design, sections 4 to 6), pure: what a sheet must hold, how a sheet may
 // be narrowed, how the state's records become `views.goals`, and what a goal lets start. Nothing here reads a file or a clock.
 //
-//   Sheet = { title, done: [Check], checksSay: [text], pieces: [{ work, hash, waived? }], areas: { may, wontTouch },
+//   Sheet = { title, done: [Check], checksSay: [text], pieces: [{ work, hash, waived?, done? }], areas: { may, wontTouch },
 //             checkFiles: [path], spend: { tokens, points?, requests? }, until, stopEarly?: { failedInARow, reds } }
 //   Check = { test } | { command, expect }           (the order's checks, without a page: scripts/engine/order.js)
 // `hash` on a piece is the hash of that work's record (dataHash of its data), so a piece that changed is not covered.
+// `done` on a piece is that piece's own done checks, a page among them, which the last check repeats: a work record holds none.
 // `until` is an ISO instant. The sheet's own hash (`sheetHash`) covers every key it holds, known or not, so a key a later
 // part adds needs no second kind of signature.
 //
@@ -15,7 +16,7 @@ import { dataHash } from '../state/events.js';
 import { matchGlob } from '../gate/glob.js';
 import { namesGuardrail } from '../gate/guardrails.js';
 import { SLUG } from '../lib/build-loop.js';
-import { checkProblem } from './order.js';
+import { checkKey, checkProblem } from './order.js';
 import { endedBy } from '../foreman/queue.js';
 import { MAX_PIECES, MAX_HOURS } from './goal-limits.js';
 
@@ -62,6 +63,9 @@ export function checkSheet(sheet, { now } = {}) {
     if (!shaped) return 'Each piece of a goal names its work, as a short slug, and the hash of that work\'s record.';
     if (seen.has(piece.work)) return `The piece ${piece.work} is listed twice.`;
     seen.add(piece.work);
+    if (piece.done !== undefined && (!Array.isArray(piece.done) || piece.done.length === 0 || piece.done.some((check) => checkProblem(check) !== null))) {
+      return `The done checks of the piece ${piece.work} are each a test, a command or a page.`;
+    }
   }
 
   const { areas } = sheet;
@@ -149,9 +153,9 @@ export function narrowed(sheet, change) {
 }
 
 // Why the goal `id`, whose sheet is `sheet` and signed hash `hash`, can't start now, in a plain sentence, or null. `goals` is
-// the goals view so far, `work` is shaped as `views.work`, `now` a Date. Later checks (a baseline that holds, a must-pass
-// list) join here, so every way of starting a goal asks them: the view, the desk's act and the click itself.
-export function startProblem({ id, hash, sheet, goals, work, stopped = false, now }) {
+// the goals view so far, `work` is shaped as `views.work`, `goalChecks` as `views.goalChecks`, `now` a Date. Later checks (a
+// must-pass list) join here, so every way of starting a goal asks them: the view, the desk's act and the click itself.
+export function startProblem({ id, hash, sheet, goals, work, goalChecks, stopped = false, now }) {
   if (stopped) return 'All stop is on';
   const held = isObject(goals) ? goals : {};
   for (const [other, goal] of Object.entries(held)) {
@@ -164,7 +168,37 @@ export function startProblem({ id, hash, sheet, goals, work, stopped = false, no
   for (const piece of sheet.pieces) {
     if (!pieceCovered(entry, piece.work, { work })) return `The work ${piece.work} changed since the goal's sheet was made, so the goal wasn't started`;
   }
+  return baselineProblem({ id, hash, sheet, goalChecks });
+}
+
+// Why the goal's signed baseline doesn't let it start, or null. Only the latest for this very sheet counts, and at least
+// one of the sheet's checks must fail on it, with every one having really run, or the checks would prove nothing.
+export function baselineProblem({ id, hash, sheet, goalChecks }) {
+  const baseline = (goalChecks?.[id] ?? []).filter((c) => c.when === 'before' && c.hash === hash).at(-1);
+  if (baseline === undefined) return 'The goal\'s checks haven\'t been run on the main line for this sheet, so it wasn\'t started';
+  const results = sheet.done.map((check) => baseline.results.find((r) => checkKey(r.check) === checkKey(check)));
+  if (baseline.said !== undefined || results.some((r) => r === undefined || r.unrun === true)) return 'The goal\'s checks couldn\'t all be run on the main line, so they prove nothing yet';
+  if (results.every((r) => r.ok === true)) return 'Every one of the goal\'s checks already passes, so they would prove nothing';
   return null;
+}
+
+// Whether the latest last check of the sheet `hash` passed at `head`: every result a pass, a page walked at its piece
+// aside, and no word against it. Anything else, a run that said nothing included, isn't Done.
+export function lastCheckHolds(goalChecks, { id, hash, head }) {
+  const last = (goalChecks?.[id] ?? []).filter((c) => c.when === 'last' && c.hash === hash).at(-1);
+  if (last === undefined || last.head !== head || last.ok !== true || last.said !== undefined) return false;
+  return last.results.length > 0 && last.results.every((r) => r.ok === true || (r.ok === null && r.walked === true));
+}
+
+// The sheet the director signed for goal `id`, by its hash: a narrowing changes the view's sheet, never this one.
+export function signedSheetOf(events, id, hash) {
+  return events.find((e) => e.kind === 'goal' && e.data?.id === id && isObject(e.data.sheet) && sheetHash(e.data.sheet) === hash)?.data.sheet ?? null;
+}
+
+// The checks of the goal covering `work`, which a feature's own run adds to its order (section 8), or none.
+export function goalDoneOf(views, work) {
+  const { goalId } = orderGoal(views, work);
+  return goalId === undefined ? [] : views.goals[goalId].sheet.done;
 }
 
 // The goal in force, from the views: the entry of `views.goals` that hasn't ended, or null.
@@ -184,16 +218,14 @@ export function pieceCovered(goal, work, views) {
   return line !== undefined && data !== undefined && dataHash(data) === line.hash;
 }
 
-// The areas an order of `work` takes, or null: { goal, since, may, wontTouch }, from the latest goal its `goalId` names, ended
-// or not, since the areas govern a goal's pull requests until each merges or closes; or the latest whose sheet covers it, as a
-// goalId is only a label. `since` is when the goal started: a pull request opened before it isn't held.
+// The areas an order of `work` takes, or null: { goal, since, may, wontTouch }, from the goal `orderGoal` names, ended or not,
+// since the areas govern a goal's pull requests until each merges or closes. `since` is when the goal started: a pull
+// request opened before it isn't held.
 export function areasOf(views, work) {
-  const goals = isObject(views?.goals) ? Object.entries(views.goals) : [];
-  const named = views?.work?.[work]?.work?.data?.goalId;
-  const found = goals.filter(([id, goal]) => id === named || pieceCovered(goal, work, views)).at(-1);
-  if (found === undefined || !isObject(found[1].sheet.areas)) return null;
-  const [goal, { sheet, startedAt }] = found;
-  return { goal, since: startedAt, may: sheet.areas.may, wontTouch: sheet.areas.wontTouch };
+  const { goalId } = orderGoal(views, work);
+  const goal = goalId === undefined ? undefined : views.goals[goalId];
+  if (!isObject(goal?.sheet?.areas)) return null;
+  return { goal: goalId, since: goal.startedAt, may: goal.sheet.areas.may, wontTouch: goal.sheet.areas.wontTouch };
 }
 
 // The areas of a fix for a red main line, or null: outside a goal's areas, but held by the check files of the goal in force
@@ -262,31 +294,33 @@ export function orderGoal(views, work) {
 }
 
 // `views.goals`: { [id]: { sheet, hash, startedAt, ended, endAsked } }, from `sorted` (the events in order) and `starts`
-// (the verified start-goal actions in order). Only a signed goal appears.
+// (the verified start-goal actions in order). `goalChecks` is the check results, as `views.goalChecks`. Only a signed goal appears.
 //   sheet: the signed sheet less what the notes narrowed. hash: the signed hash. ended: { ending, at, spent, words? } from
 //   the first goal-end (the helper's own record), or null. endAsked: { at, now } from end-goal notes, or null.
-export function goalsView(sorted, starts) {
+export function goalsView(sorted, starts, goalChecks = {}) {
   const goals = {};
   for (const start of starts) {
     const id = start.data?.goal;
     if (typeof id !== 'string' || Object.hasOwn(goals, id)) continue;
     // Any record of the id whose sheet has the signed hash: the latest isn't assumed, so a later record can't unsign it.
-    const record = sorted.find((e) => e.kind === 'goal' && e.data?.id === id && isObject(e.data.sheet) && sheetHash(e.data.sheet) === start.data.hash);
-    if (record === undefined) continue;
+    const sheetSigned = signedSheetOf(sorted, id, start.data.hash);
+    if (sheetSigned === null) continue;
     const startedAt = Date.parse(start.at);
     // The work as it stood at the signature: a piece changed before it keeps the goal out, one changed after doesn't unsign it.
     const work = {};
     for (const e of sorted) {
       if (e.kind === 'work' && typeof e.data?.id === 'string' && Date.parse(e.at) <= startedAt) work[e.data.id] = { work: { data: e.data } };
     }
-    if (startProblem({ id, hash: start.data.hash, sheet: record.data.sheet, goals, work, now: new Date(start.at) }) !== null) continue;
+    // So too the checks: a baseline signed after the start proves nothing of it.
+    const baseline = { [id]: (goalChecks[id] ?? []).filter((c) => Date.parse(c.at) <= startedAt) };
+    if (startProblem({ id, hash: start.data.hash, sheet: sheetSigned, goals, work, goalChecks: baseline, now: new Date(start.at) }) !== null) continue;
 
     const endRecord = sorted.find((e) => e.kind === 'goal-end' && e.data?.goal === id);
     const ended = endRecord === undefined ? null : {
       ending: endRecord.data.ending, at: endRecord.data.at, spent: endRecord.data.spent,
       ...(endRecord.data.words !== undefined ? { words: endRecord.data.words } : {}),
     };
-    let sheet = structuredClone(record.data.sheet);
+    let sheet = structuredClone(sheetSigned);
     let endAsked = null;
     for (const e of sorted) {
       if (e.kind !== 'note' || e.data?.goal !== id) continue;

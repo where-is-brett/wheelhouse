@@ -23,8 +23,8 @@ export const RULES_MARK = '{{rules}}';
 export const NO_PERSON_LINE = 'There is no person to ask';
 export const LOOP_LINE = "Earlier rounds' committed code stands";
 
-// Workflows that are not lanes, so take no work: setup's health trial, and the reader.
-const NOT_LANES = new Set(['wheelhouse-hello', 'wheelhouse-reader']);
+// Workflows that are not lanes, so take no work: setup's health trial, the reader and a goal's checks.
+const NOT_LANES = new Set(['wheelhouse-hello', 'wheelhouse-reader', 'wheelhouse-goal-check']);
 // The workflows that can only read (choice 6 of the delegated decisions plan): a step of one can't ask, so it has no
 // blocked exit, no wait and no shared rules, which tell a step to read an order and take that exit. What holds it to its
 // own folder is its tool list and the project settings alone, so neither it nor a plugin may add to them (check 87).

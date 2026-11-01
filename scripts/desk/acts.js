@@ -138,7 +138,7 @@ const ACTS = {
     // Judged at the signed record's own moment, as the goals view judges it.
     const signed = records.find((r) => r.event?.kind === 'action' && r.event.data?.action === 'start-goal').event;
     const problem = startProblem({
-      id: args.goal, hash: args.hash, sheet, goals: views.goals, work: views.work,
+      id: args.goal, hash: args.hash, sheet, goals: views.goals, work: views.work, goalChecks: views.goalChecks,
       stopped: (await source.stop?.())?.on === true, now: new Date(typeof signed.at === 'string' ? signed.at : now()),
     });
     if (problem !== null) return no(`The goal wasn't started: ${problem}`);

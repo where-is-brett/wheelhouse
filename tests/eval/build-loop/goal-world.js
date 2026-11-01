@@ -1,5 +1,5 @@
 // tests/eval/build-loop/goal-world.js
-// A signed goal in a scenario's world: its piece's work record, its sheet and the director's Start. Not a scenario file: it
+// A signed goal in a scenario's world: its piece's work record, its sheet, its baseline and the director's Start. Not a scenario file: it
 // has no number.
 import { dataHash } from '../../../scripts/state/events.js';
 import { sheetHash } from '../../../scripts/engine/goal.js';
@@ -18,6 +18,8 @@ export function signGoal(world, { id, work, title, now, areas, checkFiles = [] }
   };
   world.put('goal', { id, sheet });
   const hash = sheetHash(sheet);
+  // Its baseline, a check that fails today, as the helper signs it.
+  world.put('goal-check', { goal: id, hash, when: 'before', head: 'a'.repeat(40), results: [{ check: sheet.done[0], ok: false }], ok: false });
   world.put('action', { action: 'start-goal', goal: id, hash, question: `Goal.\n${startGoalLine(id, hash)}`, label: 'Start' });
   return { id, hash, sheet };
 }

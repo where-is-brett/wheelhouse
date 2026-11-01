@@ -55,29 +55,28 @@ const goalNamed = (id, { pieces = [], ended = null, areas = AREAS, checkFiles = 
   [id]: { sheet: { pieces, areas, checkFiles }, hash: `hash-${id}`, startedAt, ended, endAsked: null },
 });
 
-test('a piece\'s order takes the areas of the goal its goalId names', () => {
-  const views = { goals: goalNamed('g-1'), work: { 'card-1': entry({ id: 'card-1', goalId: 'g-1' }) } };
-  assert.deepEqual(areasOf(views, 'card-1'), { goal: 'g-1', since: '2026-11-01T00:00:00.000Z', ...AREAS });
+const covered = (data, { ended = null } = {}) => ({
+  goals: goalNamed('g-1', { pieces: [{ work: 'card-1', hash: dataHash(data) }], ended }), work: { 'card-1': entry(data) },
+});
+
+test('a piece\'s order takes the areas of the goal covering it', () => {
+  assert.deepEqual(areasOf(covered({ id: 'card-1' }), 'card-1'), { goal: 'g-1', since: '2026-11-01T00:00:00.000Z', ...AREAS });
 });
 
 test('the areas still govern after the goal ends', () => {
-  const views = { goals: goalNamed('g-1', { ended: { ending: 'time', at: '2026-11-01T08:00:00.000Z' } }), work: { 'card-1': entry({ id: 'card-1', goalId: 'g-1' }) } };
+  const views = covered({ id: 'card-1' }, { ended: { ending: 'time', at: '2026-11-01T08:00:00.000Z' } });
   assert.deepEqual(areasOf(views, 'card-1').may, AREAS.may);
 });
 
-test('a piece the sheet lists is governed with no goalId, while its record stands', () => {
-  const data = { id: 'card-1' };
-  const views = { goals: goalNamed('g-1', { pieces: [{ work: 'card-1', hash: dataHash(data) }] }), work: { 'card-1': entry(data) } };
-  assert.equal(areasOf(views, 'card-1').goal, 'g-1');
-  const changed = { ...views, work: { 'card-1': entry({ id: 'card-1', title: 'Another' }) } };
-  assert.equal(areasOf(changed, 'card-1'), null);
+test('a piece whose record changed since the sheet isn\'t covered, and a goalId alone covers nothing', () => {
+  const views = covered({ id: 'card-1' });
+  assert.equal(areasOf({ ...views, work: { 'card-1': entry({ id: 'card-1', title: 'Another' }) } }, 'card-1'), null);
+  assert.equal(areasOf({ goals: goalNamed('g-1'), work: { 'card-1': entry({ id: 'card-1', goalId: 'g-1' }) } }, 'card-1'), null);
 });
 
 test('work of no goal has no areas', () => {
-  const views = { goals: goalNamed('g-1'), work: { 'card-1': entry({ id: 'card-1' }) } };
-  assert.equal(areasOf(views, 'card-1'), null);
-  assert.equal(areasOf({ work: views.work }, 'card-1'), null);
-  assert.equal(areasOf({ ...views, work: { 'card-1': entry({ id: 'card-1', goalId: 'another' }) } }, 'card-1'), null);
+  assert.equal(areasOf({ goals: goalNamed('g-1'), work: { 'card-1': entry({ id: 'card-1' }) } }, 'card-1'), null);
+  assert.equal(areasOf({ work: { 'card-1': entry({ id: 'card-1' }) } }, 'card-1'), null);
 });
 
 test('a fix for a red main line is held only by the check files of the goal in force', () => {
@@ -224,7 +223,7 @@ test("a piece of a goal starts with its areas, in the guard's terms and in the r
   const dir = tempFolder('wh-areas-');
   const starts = [];
   const views = {
-    work: { 'card-1': { work: { id: 'w-1', at: '2026-11-01T00:00:00.000Z', data: { id: 'card-1', title: 'The export page', lane: 'quick', visible: false, dependsOn: [], goalId: 'g-1' } }, approved: false, since: '2026-11-01T00:00:00.000Z' } },
+    work: { 'card-1': { work: { id: 'w-1', at: '2026-11-01T00:00:00.000Z', data: { id: 'card-1', title: 'The export page', lane: 'quick', visible: false, dependsOn: [] } }, approved: false, since: '2026-11-01T00:00:00.000Z' } },
     runs: {}, questions: {}, goals: {},
   };
   views.goals = goalNamed('g-1', { pieces: [{ work: 'card-1', hash: dataHash(views.work['card-1'].work.data) }] });

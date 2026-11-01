@@ -496,13 +496,19 @@ function buildLoopViews(sorted, enrolled) {
     for (const e of sorted) if (e.kind === kind && isPlainKey(e.data?.work)) (out[e.data.work] ??= []).push(mark(e));
     return out;
   };
+  const goalChecks = {};
+  for (const e of sorted) {
+    if (e.kind === 'goal-check' && isPlainKey(e.data?.goal) && verify(e, enrolled)) (goalChecks[e.data.goal] ??= []).push({ ...e.data, at: e.at });
+  }
   return {
     work, features, reports, questions, incidents: { open: [...open.values()] },
     runs: byWork('run'), asks: byWork('ask'), costs: byWork('cost'), previews: byWork('preview'), lessons: byWork('lesson'),
     // When the computer slept: a run's minutes leave these out (scripts/engine/spend.js).
     slept: sorted.filter((e) => e.kind === 'slept').map((e) => ({ from: e.data.from, to: e.data.to })),
     // Each signed goal, with what was narrowed and how it ended (scripts/engine/goal.js): only a verified start-goal makes one.
-    goals: goalsView(sorted, actions('start-goal')),
+    goals: goalsView(sorted, actions('start-goal'), goalChecks),
+    // Each goal's signed check results, oldest first (scripts/engine/goal-check.js): a card and a start read its baseline from these.
+    goalChecks,
     // The card router's Logbook lines, the latest last, and how many of its cards wait for another day.
     engineNotes: sorted.filter((e) => e.kind === 'note' && e.data?.about === 'engine' && typeof e.data.words === 'string').slice(-ENGINE_NOTES).map(mark),
     cardsWaiting: cardsWaitingOf(sorted),
