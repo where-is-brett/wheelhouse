@@ -197,3 +197,10 @@ test('a limit whose reset can\'t be read stops holding six hours after its ask',
     assert.deepEqual(limitedRuns(views, new Date('2026-11-01T08:00:00.000Z')), []);
   }
 });
+
+test('time the computer slept past a reset doesn\'t make its limit late', () => {
+  const limit = { ...ask('a', 'r1', 'usage-limit'), data: { ...ask('a', 'r1', 'usage-limit').data, resetAt: '2026-11-01T05:00:00.000Z' } };
+  const views = { runs: { a: [run('a', 'r1', 'paused')] }, asks: { a: [limit] }, slept: [{ from: '2026-11-01T04:00:00.000Z', to: '2026-11-01T07:00:00.000Z' }] };
+  assert.deepEqual(limitedRuns(views, new Date('2026-11-01T07:29:00.000Z')), ['r1']);
+  assert.deepEqual(limitedRuns(views, new Date('2026-11-01T07:31:00.000Z')), []);
+});

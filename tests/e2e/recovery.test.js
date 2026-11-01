@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { wayBack, quiet, forever, failing, legFails, legFinishes, legGoes, atLimit } from '../helpers/way-back.js';
 import { readRecording } from '../../scripts/engine/fake.js';
 import { TRY_AGAIN, STOP_HERE, LEAVE_IT } from '../../scripts/engine/dispatch-run.js';
-import { failedCardWords, limitLateWords } from '../../scripts/engine/words.js';
+import { failedCardWords, limitLateWords, limitLateOverWords } from '../../scripts/engine/words.js';
 
 const MINUTE = 60 * 1000;
 const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'engine', 'failed-connection.jsonl');
@@ -558,7 +558,7 @@ test('a limit the engine can\'t be read for, or still reads as paused, stands', 
 });
 
 const lateLimit = async (options = {}) => {
-  const w = wayBack({ recordings: { a: atLimit('lim-a', { resetAt: '2026-10-29T10:20:00.000Z' }), b: quiet() }, pace: 1, ...options });
+  const w = wayBack({ recordings: { a: [...atLimit('lim-a', { resetAt: '2026-10-29T10:20:00.000Z' }).slice(0, 3), ...forever().slice(1)], b: quiet() }, pace: 1, ...options });
   w.put('a', { place: 0 });
   await w.tick(2);
   w.put('b', { place: 1 });
@@ -589,15 +589,16 @@ test('its Stop ends the run, and its Give it more wakes it', async () => {
   assert.equal(resumes(more).length, 1);
 });
 
-test('a waker only late isn\'t stopped as a run past its cap, and Stop on its card still ends it', async () => {
+test('a run that moves on by itself retires its late card, so Stop cancels nothing and its caps read it again', async () => {
   const w = await lateLimit();
+  const card = w.cardOf('a');
   w.lift('a', 'lim-a');
-  engineSays(w, w.runsOf('a')[0], { status: 'running' });
-  await w.tick(3);
-  assert.deepEqual(w.engine.calls.filter((c) => c.call === 'act' && c.action.cancel), []);
-  w.answer('a', labels(w.cardOf('a')).at(-1));
   await w.tick(2);
-  assert.equal(w.engine.calls.filter((c) => c.call === 'act' && c.action.cancel).length, 1);
+  assert.equal(w.stateOf('a'), 'started');
+  assert.ok(w.notes().includes(limitLateOverWords('a')));
+  w.answer('a', labels(card).at(-1));
+  await w.tick(2);
+  assert.deepEqual(w.engine.calls.filter((c) => c.call === 'act' && c.action.cancel), []);
 });
 
 test('a limit with no reset on record comes to its card after six hours, and an unknown read ends nothing', async () => {

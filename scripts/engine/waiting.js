@@ -21,6 +21,7 @@ function runEnded(views, work, runId) {
 // is a usage limit. The reset's `started` or the run's ending says it is over, so nothing needs to hear of the ask being
 // resolved; a record that missed those is put right by the runner's look at the engine. `lateAt` is when what should take
 // it on counts as having failed (milliseconds): well past its reset, or a good while after an ask whose reset can't be read.
+// Time the computer slept doesn't count, since nothing could take the run on.
 export function parkedAtLimit(views) {
   const found = [];
   for (const [work, list] of entriesOf(views?.runs)) {
@@ -32,7 +33,9 @@ export function parkedAtLimit(views) {
       const ask = asks.filter((a) => a?.data?.runId === runId).at(-1);
       if (state !== 'paused' || ask?.data?.kind !== 'usage-limit') continue;
       const reset = Date.parse(ask.data.resetAt);
-      found.push({ runId, work, lateAt: Number.isNaN(reset) ? Date.parse(ask.at) + LIMIT_NO_RESET_HOURS * 60 * 60 * 1000 : reset + LIMIT_LATE_MINUTES * 60 * 1000 });
+      const from = Number.isNaN(reset) ? Date.parse(ask.at) : reset;
+      const slept = (Array.isArray(views?.slept) ? views.slept : []).reduce((sum, s) => sum + Math.max(0, Date.parse(s.to) - Math.max(Date.parse(s.from), from)), 0);
+      found.push({ runId, work, lateAt: from + slept + (Number.isNaN(reset) ? LIMIT_NO_RESET_HOURS * 60 * 60 * 1000 : LIMIT_LATE_MINUTES * 60 * 1000) });
     }
   }
   return found;

@@ -35,7 +35,7 @@ import { READER_WORK } from '../delegation/reader.js';
 import { alike, normaliseWords } from '../delegation/words.js';
 import { closeMatch, decisionKey, earlierAnswer, reuse, spokenSince } from '../delegation/asked.js';
 import { REPEAT_READ_MS } from '../delegation/limits.js';
-import { mergeQuestionWords, parkedWords, PARKED_WHY, PARKED_BECAUSE, PARKED_MEANWHILE, PARKED_APPROVE_SAYS, PARKED_SEND_BACK_SAYS, PARKED_CHANGED, SENT_BACK_ANSWER, sentBackWords, sentBackGoneWords, sentBackApprovedWords, sentBackMovedWords, sentBackNoPieceWords, limitLateWords, LIMIT_LATE_WHY, LIMIT_LATE_MORE_SAYS } from './words.js';
+import { mergeQuestionWords, parkedWords, PARKED_WHY, PARKED_BECAUSE, PARKED_MEANWHILE, PARKED_APPROVE_SAYS, PARKED_SEND_BACK_SAYS, PARKED_CHANGED, SENT_BACK_ANSWER, sentBackWords, sentBackGoneWords, sentBackApprovedWords, sentBackMovedWords, sentBackNoPieceWords, limitLateWords, limitLateOverWords, LIMIT_LATE_WHY, LIMIT_LATE_MORE_SAYS } from './words.js';
 import { SEND_BACK } from '../lib/calm-words.js';
 import { parkChoice } from './archon/asks.js';
 
@@ -933,7 +933,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   async function capAnswer(kept, label, key, again = false) {
     if (label !== MORE) {
       letGo(kept.work);
-      if (held(kept.runId) || state.capped[kept.runId]?.late === true) {
+      if (held(kept.runId)) {
         const cancelled = await cancelPaused(kept.runId, 'the director stopped it at its cap');
         state.capped[kept.runId].held = false;
         state.capped[kept.runId].stopped = true;
@@ -1047,6 +1047,16 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   async function limits() {
     const parked = parkedAtLimit(viewsNow());
     for (const runId of Object.keys(state.limitSeen)) if (!parked.some((r) => r.runId === runId)) delete state.limitSeen[runId];
+    // It was only late: its card no longer decides anything, and it is looked at against its caps again.
+    for (const [runId, kept] of Object.entries(state.capped)) {
+      if (kept.late !== true || kept.stopped === true || state.delivered[kept.question] !== undefined || parked.some((r) => r.runId === runId)) continue;
+      const { work } = state.questions[kept.question];
+      state.delivered[kept.question] = 'ended';
+      delete state.capped[runId];
+      keep();
+      drop(work, kept.question);
+      await note(limitLateOverWords(titleOf(work)), { work });
+    }
     for (const { runId, work, lateAt } of parked) {
       if (now().getTime() >= lateAt && !stopped()) {
         const { lane, branch } = runRecords(work, runId).at(-1).data;
@@ -1154,8 +1164,6 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
           if ((await inspect(runId))?.status !== 'running') continue;
           state.capped[runId].held = false;
           keep();
-          // Past its reset it was only late: what it did was never over a cap, and its card still has the last word.
-          if (state.capped[runId].late === true) continue;
           const stuck = await stopAtCap(runId, state.capped[runId].reached);
           await note(`${titleOf(work)} carried on past its cap while it was held, so it was stopped${stuck ? ' and its processes ended' : ''}.`, { work });
           continue;

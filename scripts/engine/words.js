@@ -44,6 +44,7 @@ export const LIMIT_HOLD_WORDS = 'A run is waiting for a usage limit to reset, so
 
 // The card for a run still parked well past the reset, which holds nothing more.
 export const limitLateWords = (title) => `${title} should have carried on once its usage limit reset, and hasn't, so other work no longer waits for it. It spends nothing while it waits. What it has done so far is kept.`;
+export const limitLateOverWords = (title) => `${title} moved on by itself after all, so your card about it no longer decides anything.`;
 export const LIMIT_LATE_WHY = 'Whether work that didn\'t carry on by itself goes on or ends is yours to decide, at level 3.';
 export const LIMIT_LATE_MORE_SAYS = 'It is told to carry on from where it stopped, with its cap raised by half, once.';
 
