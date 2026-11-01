@@ -15,13 +15,15 @@
 // a failure, skipping finished steps; a cancelled run can't be resumed (check 78), so it is started again on its
 // branch to carry on from what's there, with the cap raised once and the spend before it carried. A run paused at its
 // cap spends nothing, so it is held instead, which keeps Give it more's way of carrying it on: none of its answers goes
-// back until Give it more lifts the hold, and Stop cancels it. A run that ended gets one `cost` record.
+// back until Give it more lifts the hold, and Stop cancels it. A run that ended gets one `cost` record, once it is settled
+// (recovery.js, `unsettled`): one that resumes reads as running again, and is costed at its true end.
 import fs from 'node:fs';
 import path from 'node:path';
 import { composeCard } from '../cards/compose.js';
 import { blindDue } from '../delegation/blind.js';
 import { routeAsk, cardBudget, bundleApprovals, answerFor, dayOf, ignoresBudget, ENGINE_QUESTIONS } from './router.js';
 import { runCost, runningMinutes } from './spend.js';
+import { RESUME_SETTLE_MINUTES, resumeRun, resumesOf, unsettled } from './recovery.js';
 import { capReached, carriedSpend } from './caps.js';
 import { RED_MAIN, FIX_LANE, redMainIncident, openRedMain } from './fix-main.js';
 import { MERGE_WORK } from './dispatcher.js';
@@ -961,7 +963,8 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       return;
     }
     if (record?.outcome === 'failed' || record?.status === 'paused') {
-      const got = await safely(() => engine.act(kept.runId, { resume: {} }));
+      // A paused run never ended, so it has no ending to come back from.
+      const got = record.status === 'paused' ? await safely(() => engine.act(kept.runId, { resume: {} })) : await resumeFailed(kept);
       if (got?.ok) {
         delete state.capped[kept.runId];
         state.carried[kept.runId] = { raised: true, runs: state.carried[kept.runId]?.runs ?? [] };
@@ -976,6 +979,36 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       carried: { raised: true, runs: [...(state.carried[kept.runId]?.runs ?? []), kept.runId] },
     });
     return got?.noPlace !== true;
+  }
+
+  // A failed run resumes through `resumeRun`, its reviews to be kept again at its true end.
+  function resumeFailed({ work, runId }) {
+    delete state.reviewsKept[runId];
+    keep();
+    return safely(() => resumeRun({ engine, runId, write, records: runRecords(work, runId) }));
+  }
+  const runRecords = (work, runId) => (viewsNow().runs?.[work] ?? []).filter((r) => r?.data?.runId === runId);
+
+  // A cap card on a run that the director hasn't answered yet. One Give it more is carrying out still waits.
+  function capCardWaits(runId) {
+    const question = state.capped[runId]?.question;
+    return typeof question === 'string' && (state.delivered[question] ?? GOING) === GOING;
+  }
+
+  // A crash between a resume's record and its act, or a resume the engine gave no reply to, leaves the record saying
+  // `started` of a run that isn't going. Gives whether the run was ended here. The host writes no second ending for it.
+  async function reconcile(runId, records, at) {
+    const latest = records.at(-1);
+    if (at.getTime() - Date.parse(latest.at) < RESUME_SETTLE_MINUTES * 60 * 1000) return false;
+    const record = await inspect(runId);
+    if (record?.status !== 'ended') return false;
+    const { work, lane, engine: name, branch, resume } = latest.data;
+    const outcome = typeof record.outcome === 'string' ? record.outcome : 'failed';
+    await write('run', {
+      work, lane, engine: name, runId, state: 'ended', resume, outcome, ...(typeof branch === 'string' ? { branch } : {}),
+      ...(outcome === 'failed' ? { failure: typeof record.failure === 'string' ? record.failure : 'other' } : {}),
+    });
+    return true;
   }
 
   // Cancelled, tried once more if the engine didn't take it; a run still going after that has its processes ended, as
@@ -1005,6 +1038,8 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       for (const [runId, records] of byRun) {
         const latest = records.at(-1).data;
         if (latest.state === 'ended') {
+          // Not ended yet, whatever the record says: both wait for its true end, ahead of the dispatcher's runner.
+          if (unsettled({ records, capped: capCardWaits(runId) })) continue;
           // However it ended: a hold in a run cancelled before its close lasts from here (routes.js).
           if (!state.reviewsKept[runId] && (await safely(() => keepReviews(runId))) === true) {
             state.reviewsKept[runId] = true;
@@ -1022,6 +1057,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
           await note(`${titleOf(work)} carried on past its cap while it was held, so it was stopped${stuck ? ' and its processes ended' : ''}.`, { work });
           continue;
         }
+        if (latest.state === 'started' && Number.isInteger(latest.resume) && await reconcile(runId, records, at)) continue;
         if (latest.state !== 'started' || state.capped[runId] || stopped()) continue;
         const record = await inspect(runId);
         if (!record) continue;
@@ -1055,8 +1091,10 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     const cost = runCost(record);
     const { slept } = viewsNow();
     const awake = runningMinutes(records, now(), slept);
-    // The steps' own time runs on through a sleep, and a carry-on is charged these minutes.
+    // The steps' own time runs on through a sleep, and a carry-on is charged these minutes. A resumed run's steps hold
+    // only their last attempt, so its minutes are its legs'.
     const asleep = runningMinutes(records, now()) - awake;
+    const resumed = resumesOf(records) > 0;
     state.costed[runId] = true;
     keep();
     await write('cost', {
@@ -1064,7 +1102,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       // A run whose spend is unknown names no tokens it didn't count.
       tokens: cost.source === 'unknown' && cost.tokens === 0 ? null : cost.tokens,
       dollars: cost.dollars, floorDollars: cost.floorDollars, premiumRequests: cost.premiumRequests,
-      minutes: cost.minutes > 0 ? Math.max(0, Math.round((cost.minutes - asleep) * 100) / 100) : awake, source: cost.source, byRole: cost.byRole,
+      minutes: cost.minutes > 0 && !resumed ? Math.max(0, Math.round((cost.minutes - asleep) * 100) / 100) : awake, source: cost.source, byRole: cost.byRole,
       ...(cost.kinds ? { kinds: cost.kinds } : {}),
     });
   }

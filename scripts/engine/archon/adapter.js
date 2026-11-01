@@ -22,6 +22,7 @@ import { ARCHON_SOURCE, BUN_PIN, CANCEL_PATCH_MARK, CLI_PATCH_MARK, PATCH_MARK, 
 import { normaliseAsk, askOccurrence } from './asks.js';
 import { readRecord, readOutputs, readTaskReviews } from './record.js';
 import { readyWorkItem } from './work-item.js';
+import { failureKind } from '../recovery.js';
 import { PACK_FORMS, COPILOT_SUFFIX, PROVIDER as COPILOT } from './copilot-pack.js';
 import { checkRequests as meterCheck, readGitHubFigure, requestsFile as accountFile } from './copilot-meter.js';
 import { readAccountModels, requestRates } from '../../agents/copilot/column.js';
@@ -57,6 +58,14 @@ export const CARRY_ON = "Carry on from what's there.";
 const TIERS = ['small', 'medium', 'large'];
 // The statuses of a run that hasn't ended.
 const LIVE = ['running', 'pending', 'paused'];
+
+// The kind of a failed run's failure from its record, or null for a run that didn't fail: the failed step's classes, or
+// why the run stopped when no step failed (check 93).
+function failureOf(json) {
+  if (json?.status !== 'failed' && !(json?.status === 'completed' && json.outcome === 'failed')) return null;
+  const lifecycle = (Array.isArray(json.nodes) ? json.nodes : []).map((n) => n?.execution?.lifecycle).find((l) => l?.status === 'failed');
+  return failureKind({ errorClass: lifecycle?.failureKind ?? null, providerClass: lifecycle?.providerFailure?.class ?? null, stopReason: json.metadata?.stop_reason?.reason ?? null });
+}
 const START_MS = 120000;
 // Archon keeps a run's start to the second.
 const START_CLOCK_MS = 2000;
@@ -243,7 +252,10 @@ export function archonAdapter({
     if (line.type === 'terminal') {
       open.delete(line.runId);
       const outcome = line.status === 'completed' ? (line.outcome === 'failed' ? 'failed' : 'completed') : line.status;
-      return [{ type: 'run-ended', runId: line.runId, at: now(), outcome: String(outcome ?? 'ended'), branch: null, pr: null, failedAt: line.cause?.node ?? null }];
+      // The line alone can't tell a used-up limit from a failed sign-in, or say why a run with no cause stopped: the host
+      // takes the kind from inspect, and this one only if that can't be read.
+      const failure = outcome === 'failed' ? failureKind({ errorClass: line.cause?.errorClass ?? null }) : null;
+      return [{ type: 'run-ended', runId: line.runId, at: now(), outcome: String(outcome ?? 'ended'), branch: null, pr: null, failedAt: line.cause?.node ?? null, failure, ...(line.cursor ? { cursor: line.cursor } : {}) }];
     }
     if (line.type === 'owner_lost') {
       return [{
@@ -475,7 +487,7 @@ export function archonAdapter({
     async inspect(runId) {
       const result = await cli(['workflow', 'get', runId, '--verbose'], { json: true, timeout: CALL_MS });
       const json = result.code === 0 && result.json?.ok !== false ? result.json : null;
-      return { ...readRecord(json, { rates: requestRates(readAccountModels(engine)) }), folder: worktreeOf(json?.working_path, { home, worktreeBases }), ...(result.json ? {} : { unread: true }) };
+      return { ...readRecord(json, { rates: requestRates(readAccountModels(engine)) }), failure: failureOf(json), folder: worktreeOf(json?.working_path, { home, worktreeBases }), ...(result.json ? {} : { unread: true }) };
     },
 
     // Each finished step's whole output, by its id (record.js), for the helper to sign a review from Archon's own

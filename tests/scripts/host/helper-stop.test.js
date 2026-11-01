@@ -449,14 +449,18 @@ test("the desk's All stop cancels every run, ends what the cancel left and names
       record('run', { work: 'card-13', lane: 'quick', engine: 'fake', runId: paused, state: 'started', branch: 'wh/card-13' });
       record('run', { work: 'card-11', lane: 'quick', engine: 'fake', runId: 'run-over', state: 'started', branch: 'wh/card-11' });
       record('run', { work: 'card-11', lane: 'quick', engine: 'fake', runId: 'run-over', state: 'ended', branch: 'wh/card-11' });
+      // engineRunsGoing goes by runLive: an ended run counts again once a resume follows it.
+      record('run', { work: 'card-14', lane: 'quick', engine: 'fake', runId: 'run-back', state: 'started', branch: 'wh/card-14' });
+      record('run', { work: 'card-14', lane: 'quick', engine: 'fake', runId: 'run-back', state: 'ended', outcome: 'failed', failure: 'connection', branch: 'wh/card-14' });
+      record('run', { work: 'card-14', lane: 'quick', engine: 'fake', runId: 'run-back', state: 'started', resume: 1, branch: 'wh/card-14' });
       await withHelper(fakeAdapter(), async (client) => {
-        await until(() => runs().filter((e) => e.data.state === 'started').length >= 3 && children.length === 1, { what: 'both runs recorded and the wake process' });
+        await until(() => runs().filter((e) => e.data.state === 'started').length >= 5 && children.length === 1, { what: 'both runs recorded and the wake process' });
         const asked = await client.desk.act({ v: 'desk/1', project: 'o__p', command: 'all-stop', args: { by: 'mod' } });
         assert.equal(asked.ok, true);
         assert.equal(stopState().on, true);
         await until(() => notes().length === 1, { what: "All stop's note" });
         // The engine is told every run the record has started and not seen end, as a just-started one may not be listed yet.
-        assert.deepEqual([...known].sort(), [running, paused].sort());
+        assert.deepEqual([...known].sort(), [running, paused, 'run-back'].sort());
         const note = notes()[0].data;
         assert.deepEqual(note.cancelled, [{ runId: running, work: 'card-12', lane: 'quick', branch: 'wh/card-12' }, { runId: paused, work: 'card-13', lane: 'quick', branch: 'wh/card-13' }]);
         assert.deepEqual(note.paused, []);

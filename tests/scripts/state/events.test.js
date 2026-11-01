@@ -857,6 +857,10 @@ test('a run event with an unknown state is refused', async () => {
     for (const state of ['started', 'paused', 'ended']) assert.equal(makeEvent({ kind: 'run', data: { ...RUN, state } }).data.state, state);
     assert.deepEqual(makeEvent({ kind: 'run', data: { ...RUN, state: 'ended', branch: 'b', pr: 4, outcome: 'merged' } }).data.pr, 4);
     assert.throws(() => makeEvent({ kind: 'run', data: { ...RUN, state: 'running' } }), /run event/);
+    assert.equal(makeEvent({ kind: 'run', data: { ...RUN, state: 'started', resume: 1 } }).data.resume, 1);
+    assert.equal(makeEvent({ kind: 'run', data: { ...RUN, state: 'ended', outcome: 'failed', failure: 'connection' } }).data.failure, 'connection');
+    for (const resume of [0, 1.5, '1']) assert.throws(() => makeEvent({ kind: 'run', data: { ...RUN, resume } }), /resume/);
+    assert.throws(() => makeEvent({ kind: 'run', data: { ...RUN, failure: 3 } }), /failure/);
     assert.throws(() => makeEvent({ kind: 'run', data: { ...RUN, extra: 1 } }), /should not/);
     assert.throws(() => makeEvent({ kind: 'run', data: { work: 'login' } }), /needs its/);
     assert.throws(() => makeEvent({ kind: 'ask', data: { ...ASK, kind: 'chat' } }), /ask event/);

@@ -128,3 +128,42 @@ test('spans that overlap or repeat, or that make no sense, take nothing twice', 
   ];
   assert.equal(runningMinutes(records, new Date('2026-11-01T02:00:00Z'), slept), 30);
 });
+
+test('minutes count after a resume', () => {
+  const at = (minute) => `2026-11-01T01:${String(minute).padStart(2, '0')}:00.000Z`;
+  const records = [
+    { at: at(0), data: { state: 'started' } },
+    { at: at(10), data: { state: 'ended', outcome: 'failed' } },
+    { at: at(20), data: { state: 'started', resume: 1 } },
+    { at: at(25), data: { state: 'ended', resume: 1, outcome: 'completed' } },
+  ];
+  assert.equal(runningMinutes(records, new Date(at(50))), 15);
+  assert.equal(runningMinutes(records.slice(0, 3), new Date(at(30))), 20, 'a leg under way counts to now');
+});
+
+test('a plain started after an ended adds nothing, since an ask-resolved can arrive late', () => {
+  const at = (minute) => `2026-11-01T01:${String(minute).padStart(2, '0')}:00.000Z`;
+  const records = [
+    { at: at(0), data: { state: 'started' } },
+    { at: at(10), data: { state: 'ended', outcome: 'completed' } },
+    { at: at(12), data: { state: 'started' } },
+  ];
+  assert.equal(runningMinutes(records, new Date(at(50))), 10);
+});
+
+test('a resumed run costs what its totals say, since its steps hold only their last attempt', () => {
+  const cost = runCost({ status: 'ended', steps: [step({ tokens: 12175, dollars: 0.00056715 })], totals: { tokens: 18830, dollars: 0.00104485 } });
+  assert.equal(cost.tokens, 18830);
+  assert.equal(cost.dollars, 0.001045);
+  assert.equal(cost.floorDollars, 0.001045);
+});
+
+test('totals that are missing or short take nothing from the steps, and a step of unknown spend stays unknown', () => {
+  const steps = [step({ tokens: 100, dollars: 0.5 })];
+  assert.equal(runCost({ steps, totals: { tokens: null, dollars: null } }).tokens, 100);
+  assert.equal(runCost({ steps, totals: { tokens: 40, dollars: 0.1 } }).dollars, 0.5);
+  assert.equal(runCost({ steps }).tokens, 100);
+  const unknown = runCost({ steps: [step({ tokens: null, dollars: null, source: 'unknown' })], totals: { tokens: null, dollars: 0.2 } });
+  assert.equal(unknown.dollars, null);
+  assert.equal(unknown.floorDollars, 0.2);
+});

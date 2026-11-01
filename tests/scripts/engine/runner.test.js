@@ -517,6 +517,7 @@ test('Give it more on a run that stopped on a failure resumes it, skipping finis
   const engine = { act: async (runId, action) => { calls.push({ runId, action }); return { ok: true }; }, inspect: async () => ({ status: 'ended', outcome: 'failed', steps: [] }) };
   const runner = engineRunner({ engine, file: path.join(path.dirname(t.runner.file), 'two.json'), readViews: () => t.views, write: async () => {}, now: () => t.world.now, workOf: () => ({ work: 'sale-banner', lane: 'quick' }) });
   try {
+    withRun(t, 'r9', [['2026-10-29T12:50:00.000Z', 'started'], ['2026-10-29T12:55:00.000Z', 'ended', { outcome: 'failed' }]]);
     await runner.capped({ runId: 'r9', work: 'sale-banner', lane: 'quick', branch: 'wh/x', reached: { cap: 'tokens', used: 2, limit: 1 } });
     const q = runner.questionOf('r9');
     t.views.questions[q] = { question: { data: { engine: { runId: 'r9', ask: 'cap:r9', options: { 'Give it more': 'more', Stop: 'stop' } } } }, answer: { label: 'Give it more' } };
@@ -2769,5 +2770,174 @@ test('a sleep that could not be written holds the caps and the cost until it is'
     written = true;
     await t.runner.tick();
     assert.equal(acts(t.engine).filter((c) => c.action.cancel).length, 1, 'with no sleep on the record, the cap reads it as running');
+  } finally { t.cleanup(); }
+});
+
+// A recording with two legs: it fails, and a resume plays on from there.
+const legs = (...ends) => ends.flatMap((outcome, i) => [
+  ev({ type: 'step-finished', step: `step-${i}`, role: 'implement', spend: { source: 'reported', tokens: 100, dollars: 0.1 }, minutes: 1 }),
+  ev({ type: 'run-ended', outcome, ...(outcome === 'failed' ? { failure: 'connection' } : {}) }),
+]);
+const costs = (t) => t.writes.filter((w) => w.kind === 'cost');
+// A failed run with a cap card waiting on it, its record in the views.
+async function failedAtCap(t, recording = 'two') {
+  const { runId } = t.engine.start({ recording });
+  withRun(t, runId, [['2026-10-29T12:50:00.000Z', 'started'], ['2026-10-29T12:55:00.000Z', 'ended', { outcome: 'failed', failure: 'connection' }]]);
+  await t.runner.capped({ runId, work: 'sale-banner', lane: 'quick', branch: 'wh/x', reached: { cap: 'tokens', used: 2, limit: 1 } });
+  return { runId, card: t.runner.questionOf(runId) };
+}
+// Keeps the views' records as the runner writes them, as the record does.
+function recordRuns(t) {
+  const push = t.writes.push.bind(t.writes);
+  t.writes.push = (entry) => {
+    if (entry.kind === 'run') t.views.runs[entry.data.work].push({ at: t.world.now.toISOString(), data: entry.data });
+    return push(entry);
+  };
+}
+const giveMore = (t, card) => { t.views.questions[card] = { question: { data: { engine: { runId: t.views.runs['sale-banner'][0].data.runId, ask: `cap:x`, options: { 'Give it more': 'more', Stop: 'stop' } } } }, answer: { label: 'Give it more' } }; };
+
+test('Give it more on a failed run goes through resumeRun, its cost not written while the card waits', async () => {
+  const t = setUp({ recordings: { two: legs('failed', 'completed') } });
+  try {
+    const { runId, card } = await failedAtCap(t);
+    recordRuns(t);
+    await t.runner.tick();
+    assert.deepEqual(costs(t), [], 'the card still waits');
+    giveMore(t, card);
+    await t.runner.tick();
+    assert.deepEqual(acts(t.engine).map((c) => c.action), [{ resume: {} }]);
+    const started = t.writes.filter((w) => w.kind === 'run').at(0).data;
+    assert.equal(started.state, 'started');
+    assert.equal(started.resume, 1);
+    assert.equal(started.runId, runId);
+  } finally { t.cleanup(); }
+});
+
+test('a resumed run is costed once, at its true end', async () => {
+  const t = setUp({ recordings: { two: legs('failed', 'failed', 'completed') } });
+  try {
+    const { runId, card } = await failedAtCap(t);
+    recordRuns(t);
+    giveMore(t, card);
+    await t.runner.tick();
+    assert.deepEqual(costs(t), [], 'a run on its way again has no cost yet');
+    t.views.runs['sale-banner'].push({ at: '2026-10-29T13:00:00.000Z', data: { work: 'sale-banner', lane: 'quick', engine: 'fake', runId, state: 'ended', resume: 1, outcome: 'completed' } });
+    await t.runner.tick();
+    await t.runner.tick();
+    assert.equal(costs(t).length, 1);
+    assert.equal(costs(t)[0].data.tokens, 200);
+  } finally { t.cleanup(); }
+});
+
+test('a Stop on the cap card of a failed run settles it', async () => {
+  const t = setUp({ recordings: { two: legs('failed') } });
+  try {
+    const { card } = await failedAtCap(t);
+    await t.runner.tick();
+    assert.deepEqual(costs(t), []);
+    t.views.questions[card] = { question: { data: { engine: { ask: 'cap:x', options: { 'Give it more': 'more', Stop: 'stop' } } } }, answer: { label: 'Stop' } };
+    await t.runner.tick();
+    assert.equal(costs(t).length, 1);
+  } finally { t.cleanup(); }
+});
+
+test('the minutes of a resumed run are its legs, not its last steps', async () => {
+  const t = setUp({ recordings: { two: legs('failed', 'completed') } });
+  try {
+    const { runId } = t.engine.start({ recording: 'two' });
+    withRun(t, runId, [
+      ['2026-10-29T12:00:00.000Z', 'started'], ['2026-10-29T12:10:00.000Z', 'ended', { outcome: 'failed' }],
+      ['2026-10-29T12:30:00.000Z', 'started', { resume: 1 }], ['2026-10-29T12:50:00.000Z', 'ended', { resume: 1, outcome: 'completed' }],
+    ]);
+    t.engine.act(runId, { resume: {} });
+    await t.runner.tick();
+    assert.equal(costs(t)[0].data.minutes, 30);
+  } finally { t.cleanup(); }
+});
+
+test("a resumed slice's reviews are kept again", async () => {
+  const kept = [];
+  const t = setUp({ recordings: { two: legs('failed', 'completed') }, gate: { keepReviews: async (runId) => { kept.push(runId); return true; } } });
+  try {
+    const { runId, card } = await failedAtCap(t);
+    recordRuns(t);
+    await t.runner.tick();
+    assert.deepEqual(kept, [], 'a failed run waiting on its card keeps none yet');
+    t.views.runs['sale-banner'].at(-1).data = { ...t.views.runs['sale-banner'].at(-1).data, outcome: 'cancelled' };
+    await t.runner.tick();
+    assert.deepEqual(kept, [runId]);
+    t.views.runs['sale-banner'].at(-1).data = { ...t.views.runs['sale-banner'].at(-1).data, outcome: 'failed' };
+    giveMore(t, card);
+    await t.runner.tick();
+    t.views.runs['sale-banner'].push({ at: '2026-10-29T13:00:00.000Z', data: { work: 'sale-banner', lane: 'quick', engine: 'fake', runId, state: 'ended', resume: 1, outcome: 'completed' } });
+    await t.runner.tick();
+    assert.deepEqual(kept, [runId, runId]);
+  } finally { t.cleanup(); }
+});
+
+test('a refused resume leaves the run ended, and it is costed once', async () => {
+  const started = [];
+  const t = setUp({ recordings: { two: legs('failed') }, gate: { startAdmitted: async (args) => { started.push(args); return { ok: true }; } } });
+  try {
+    const { runId, card } = await failedAtCap(t);
+    recordRuns(t);
+    giveMore(t, card);
+    await t.runner.tick();
+    const latest = t.views.runs['sale-banner'].at(-1).data;
+    assert.equal(latest.state, 'ended');
+    assert.equal(latest.resume, 1);
+    assert.equal(latest.failure, 'resume-refused');
+    assert.equal(started.length, 1, 'it carries on from its branch instead');
+    assert.deepEqual(started[0].carried.runs, [runId]);
+    await t.runner.tick();
+    assert.equal(costs(t).length, 1);
+  } finally { t.cleanup(); }
+});
+
+test('a crash after started is reconciled against the engine', async () => {
+  const t = setUp({ recordings: { two: legs('failed') } });
+  try {
+    const { runId } = t.engine.start({ recording: 'two' });
+    withRun(t, runId, [['2026-10-29T12:00:00.000Z', 'started'], ['2026-10-29T12:10:00.000Z', 'ended', { outcome: 'failed' }], ['2026-10-29T12:30:00.000Z', 'started', { resume: 1 }]]);
+    await t.runner.tick();
+    const ended = t.writes.find((w) => w.kind === 'run').data;
+    assert.equal(ended.state, 'ended');
+    assert.equal(ended.resume, 1);
+    assert.equal(ended.outcome, 'failed');
+    assert.equal(ended.failure, 'connection');
+    assert.equal(ended.branch, 'wh/sale-banner');
+  } finally { t.cleanup(); }
+});
+
+test('a run just resumed is left to the engine, which may not have moved yet', async () => {
+  const t = setUp({ recordings: { two: legs('failed') } });
+  try {
+    const { runId } = t.engine.start({ recording: 'two' });
+    withRun(t, runId, [['2026-10-29T12:00:00.000Z', 'started'], ['2026-10-29T12:10:00.000Z', 'ended', { outcome: 'failed' }], ['2026-10-29T12:59:30.000Z', 'started', { resume: 1 }]]);
+    await t.runner.tick();
+    assert.deepEqual(t.writes.filter((w) => w.kind === 'run'), []);
+  } finally { t.cleanup(); }
+});
+
+test('a resumed run still going is not ended by the look', async () => {
+  const t = setUp({ recordings: { two: [...legs('failed'), ev({ type: 'step-finished', step: 'more', role: 'implement', spend: { source: 'reported', tokens: 1, dollars: 0 } })] } });
+  try {
+    const { runId } = t.engine.start({ recording: 'two' });
+    assert.equal(t.engine.act(runId, { resume: {} }).ok, true);
+    withRun(t, runId, [['2026-10-29T12:00:00.000Z', 'started'], ['2026-10-29T12:10:00.000Z', 'ended', { outcome: 'failed' }], ['2026-10-29T12:30:00.000Z', 'started', { resume: 1 }]]);
+    await t.runner.tick();
+    assert.deepEqual(t.writes.filter((w) => w.kind === 'run'), []);
+  } finally { t.cleanup(); }
+});
+
+test('a resumed run counts against its cap again', async () => {
+  const t = setUp({ settings: { capMinutes: { quick: 30 } }, recordings: { two: [...legs('failed'), ev({ type: 'step-finished', step: 'more', role: 'implement', spend: { source: 'reported', tokens: 1, dollars: 0 } })] } });
+  try {
+    const { runId } = t.engine.start({ recording: 'two' });
+    t.engine.act(runId, { resume: {} });
+    withRun(t, runId, [['2026-10-29T12:00:00.000Z', 'started'], ['2026-10-29T12:20:00.000Z', 'ended', { outcome: 'failed' }], ['2026-10-29T12:40:00.000Z', 'started', { resume: 1 }]]);
+    await t.runner.tick();
+    assert.equal(t.writes.filter((w) => w.kind === 'question').length, 1, '20 minutes and 20 minutes pass a cap of 30');
+    assert.ok(acts(t.engine).some((c) => c.action.cancel));
   } finally { t.cleanup(); }
 });

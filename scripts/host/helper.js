@@ -81,7 +81,7 @@ import { engineRoom } from '../engine/room.js';
 import { stopEngine, endRun, stopWords } from '../engine/stop.js';
 import { engineRoutes, engineDirOf } from '../engine/routes.js';
 import { engineRunner } from '../engine/runner.js';
-import { sleepWatch } from '../engine/recovery.js';
+import { resumesOf, runLive, sleepWatch } from '../engine/recovery.js';
 import { rollOf } from '../delegation/blind.js';
 import { recordOnly, cardContext, historyOf } from '../delegation/record-only.js';
 import { branchHead, cardDiff, cardFacts, commitsAfter, pathsSoFar } from '../delegation/facts.js';
@@ -4692,12 +4692,16 @@ export async function startHelper({
       .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0))[0];
     return first ? { work: first.data.work, lane: first.data.lane, branch: first.data.branch ?? null } : null;
   }
+  // The project's `run` records, in time order.
+  const engineRunRecords = (project) => listEvents(stateDir(project), { report: () => {} })
+    .filter((e) => e.kind === 'run' && typeof e.data?.runId === 'string')
+    .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
   // The runs the project's record has started and not seen end, for All stop to name to the engine: Archon's list
   // doesn't show a run started under about a second ago.
   function engineRunsGoing(project) {
-    const runs = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'run' && typeof e.data?.runId === 'string');
-    const ended = new Set(runs.filter((e) => e.data.state === 'ended').map((e) => e.data.runId));
-    return [...new Set(runs.map((e) => e.data.runId))].filter((id) => !ended.has(id));
+    const byRun = new Map();
+    for (const e of engineRunRecords(project)) (byRun.get(e.data.runId) ?? byRun.set(e.data.runId, []).get(e.data.runId)).push(e);
+    return [...byRun].filter(([, records]) => runLive(records)).map(([id]) => id);
   }
   // The runs at work now, by each run's latest record: one paused waits on a person, as a run does at its finished change, and
   // holds up no move.
@@ -4775,6 +4779,11 @@ export async function startHelper({
           write: (kind, data) => engineWrite(project, kind, data),
           cursorFile: path.join(stateDir(project), '..', 'engine', 'cursor.json'),
           workOf: (runId) => engineRunOf(project, runId) ?? dispatcher.workOf(runId) ?? seals.readerOf(runId),
+          resumes: (runId) => resumesOf(engineRunRecords(project).filter((e) => e.data.runId === runId)),
+          over: (runId) => {
+            const records = engineRunRecords(project).filter((e) => e.data.runId === runId);
+            return records.length > 0 && !runLive(records);
+          },
           // Archon's end of a run names no pull request; the helper opened it, and its record says which (check 81).
           prOf: (runId) => engineRun.openedBy(project, runId),
         });
