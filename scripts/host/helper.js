@@ -130,6 +130,7 @@ import { branchOf } from '../hooks/session-start.js';
 import { SLUG, paceOf } from '../lib/build-loop.js';
 import { ROOT as OWN_ROOT, recheckCopies } from '../lineage/check.js';
 import { requestMeter, requestsThisMonth } from '../engine/request-meter.js';
+import { weeklyShare } from '../usage/figures.js';
 import { checkProvenance, removeProvenance, sessionProvenance, engineProvenance } from '../lineage/provenance.js';
 import { brokerDecision } from '../engine/broker/rules.js';
 import { brokerRoutes } from '../engine/broker/routes.js';
@@ -5223,6 +5224,11 @@ export async function startHelper({
       areasHeld: () => engineRun.areasHeld(project),
       settleAreas: (pr, how) => engineRun.settleAreas(project, pr, how),
       spentThisMonth: () => requestsUsed(),
+      // The allowance read is Claude's: a project on another agent has no share of it (ruling P8-32).
+      allowance: () => {
+        const agent = agentInFolder(folder, { computerId: computerId() });
+        return typeof agent === 'string' && agent !== 'claude-code' ? null : weeklyShare({ now: now() });
+      },
       mainGreen: () => mainGreen(project),
       stoppedRuns: () => stoppedRunsOf(project),
       fixedRuns: () => engineRun.fixedRuns(project),

@@ -6,7 +6,7 @@ import path from 'node:path';
 import { withHome } from '../../helpers/homes.js';
 import { usageDir } from '../../../scripts/lib/paths.js';
 import { addPoints, recordModReading } from '../../../scripts/usage/store.js';
-import { usageFigures, markRaised, wasRaised } from '../../../scripts/usage/figures.js';
+import { usageFigures, weeklyShare, markRaised, wasRaised } from '../../../scripts/usage/figures.js';
 
 const NOW = '2026-10-19T10:00:00.000Z';
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -65,6 +65,14 @@ test('a reset time in the past, missing, or more than a week ahead falls back to
   // no allowance at all
   fs.rmSync(path.join(usageDir(), 'allowance.json'));
   assert.equal(usageFigures({ project: null, now: NOW }).week.tokens, 110);
+}));
+
+test('the share says when its week resets', () => withHome(() => {
+  const resetsAt = '2026-10-22T14:00:00.000Z';
+  allowance([{ kind: 'seven_day', percentUsed: 40, resetsAt }], '2026-10-19T09:30:00.000Z');
+  assert.deepEqual(weeklyShare({ now: NOW }), { share: 40, shareAt: '2026-10-19T09:30:00.000Z', resetsAt });
+  allowance([{ kind: 'seven_day', percentUsed: 40, resetsAt }], '2026-10-15T13:00:00.000Z');
+  assert.deepEqual(weeklyShare({ now: NOW }), { share: null, shareAt: null, resetsAt: null });
 }));
 
 test('a reading older than its window shows no share', () => withHome(() => {

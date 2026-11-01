@@ -264,10 +264,10 @@ export function goalRule(views, now) {
 
 // The one gate every start passes (unattended goals design, section 6): null, or { goalHeld: true, goal, why }, `why` being
 // `goal` (not this goal's work), `time`, `winding-down`, `spend` or `goal-ended`. `goal` is `goalRule`'s answer; `via` the way
-// the start came, `start` for a first one; `state` the goal's state; `meter` the spend meter's reading, where there is one. The
-// fix lane is held by spend alone: a red main line must be mended. After the end only the goal's own pieces hold, and an
-// answer of the director's goes on as ordinary work.
-export function gateStart({ goal, work, lane, via, state = 'running', meter = null, now }) {
+// the start came, `start` for a first one; `state` the goal's state; `meter` the spend meter's reading, where there is one, and
+// `cap` the tokens a run of `lane` may spend, which must still fit. The fix lane is held by a spend reached alone: a red main
+// line must be mended. After the end only the goal's own pieces hold, and an answer of the director's goes on as ordinary work.
+export function gateStart({ goal, work, lane, via, state = 'running', meter = null, cap = 0, now }) {
   if (!isObject(goal)) return null;
   const held = (why) => ({ goalHeld: true, goal: goal.id, why });
   if (goal.only !== true) return goal.pieces.includes(work) && !ANSWERED.includes(via) ? held('goal-ended') : null;
@@ -275,6 +275,7 @@ export function gateStart({ goal, work, lane, via, state = 'running', meter = nu
     if (!goal.pieces.includes(work)) return held('goal');
     if (state !== 'running') return held('winding-down');
     if (now.getTime() >= Date.parse(goal.until)) return held('time');
+    if (meter?.left < cap) return held('spend');
   }
   return typeof meter?.reached === 'string' ? held('spend') : null;
 }
