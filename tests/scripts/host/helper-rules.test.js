@@ -1,6 +1,6 @@
 // tests/scripts/host/helper-rules.test.js
 // A rule through the helper: no caller writes one, or sends one along with a confirmation, and the director's signed
-// click on its confirm line puts it in force. Stand-ins only: no session starts.
+// click on its confirm line puts it in force. A standing brief goes the same way, but a draft of one may be written. Stand-ins only: no session starts.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -18,6 +18,7 @@ import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/sign
 import { earned } from '../../../scripts/hooks/prompt-record.js';
 import { confirmLine } from '../../../scripts/state/card-lines.js';
 import { composeRule } from '../../../scripts/delegation/composer.js';
+import { wholeBrief } from '../../../scripts/delegation/brief.js';
 import { SUGGEST } from '../../../scripts/lib/calm-words.js';
 import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress, tempFolder } from '../../helpers/homes.js';
@@ -96,6 +97,29 @@ test('a rule the helper proposed is confirmed by a signed click and reads back a
       const taken = await client.state.record({ project: P, event: click });
       assert.equal(taken.ok, true, taken.refused);
       assert.deepEqual(c.views().rules, { [rule.id]: { rule, stage: 0, signedAt: click.at } });
+    });
+  } finally {
+    await c.cleanup();
+  }
+});
+
+test('a brief written to the helper is a draft, and only the director\'s signed click on its confirm line puts it in force', async () => {
+  const c = await computer();
+  try {
+    await c.withHelper(async (client) => {
+      const data = wholeBrief({ for: 'Shop owners', now: 'Stop the calls to support' });
+      const got = await client.state.write({ project: P, kind: 'brief', data });
+      assert.equal(got.ok, true, got.refused);
+      assert.equal(c.views().brief, null);
+      const event = c.events().find((e) => e.kind === 'brief');
+      assert.deepEqual((await client.state.write({ project: P, kind: 'confirmation', data: confirmationFor(event).data })).ok, false);
+      const carried = await client.state.record({ project: P, event: makeEvent({ ...confirmationFor(event) }), target: event });
+      assert.match(carried.refused, /only a ruling or a setting comes with its confirmation/);
+      assert.equal(c.views().brief, null);
+      const question = `This project's standing brief, ${data.words}\n${confirmLine(event)}`;
+      const click = makeEvent({ ...(await earned({ project: P, question, label: 'Confirm', card: { question } })).made });
+      assert.equal((await client.state.record({ project: P, event: click })).ok, true);
+      assert.deepEqual(c.views().brief, { brief: data, signedAt: click.at });
     });
   } finally {
     await c.cleanup();

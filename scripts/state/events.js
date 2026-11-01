@@ -5,6 +5,7 @@ import path from 'node:path';
 import { computerId, stateDir } from '../lib/paths.js';
 import { sign, verify } from './signing.js';
 import { scanContent } from './secret-scan.js';
+import { briefProblem, briefWords } from '../delegation/brief.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { git } from './git.js';
 import { keepControlLine, setLineOf, CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, TAKEOVER_LABEL, takeOverLine, APP_ID, pairLine, unpairLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
@@ -19,7 +20,7 @@ export const PLAIN_KINDS = [
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
   'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey', 'column-ready', 'premium-rest', 'chat-question', 'chat-steer',
-  'run', 'ask', 'cost', 'preview', 'lesson', 'incident-closed', 'reproduced', 'rule',
+  'run', 'ask', 'cost', 'preview', 'lesson', 'incident-closed', 'reproduced', 'rule', 'brief',
 ];
 // `control-file` is the watcher's own finding (ruling P7-33): signed, so no session can write one. So is `usage-card`,
 // the front desk's session start's offer (design section 14.6): a click on its card's switch is the director's
@@ -250,6 +251,8 @@ const PLAIN_SHAPES = {
   'chat-question': { must: ['at'], may: [] },
   // A rule (scripts/delegation/rules.js): typed words or a literal match, never both, composed at stage 0.
   rule: { must: ['id', 'words', 'literal', 'conditions', 'exclusions', 'answer', 'project', 'paths', 'lanes', 'stage', 'review', 'hash'], may: [] },
+  // A project's standing brief (scripts/delegation/brief.js): no brief until the director's signed click confirms it.
+  brief: { must: ['for', 'now', 'noGos', 'examples', 'facts', 'words'], may: [] },
   // A pick in the chat of Suggest a change… on a build's question: the card's id, for its score, and never the words.
   'chat-steer': { must: ['card'], may: [] },
   // `from`: the ready-made change the work starts from (ruling P4): its commit, the ref that keeps
@@ -426,6 +429,12 @@ function checkPlain(kind, data) {
   const optionalText = (k) => { if (data[k] !== undefined && !isText(data[k])) bad(`has a ${k} that is not text`); };
   const slug = (k) => { if (!isSlug(data[k])) bad(`needs ${k} to be a short slug (lower-case letters, digits and hyphens, at most 40)`); };
   const pr = () => { if (data.pr !== undefined && (!Number.isInteger(data.pr) || data.pr < 1)) bad('has a pull request number that is not one'); };
+  if (kind === 'brief') {
+    const problem = briefProblem(data);
+    if (problem !== null) bad(problem);
+    if (data.words !== briefWords(data)) bad('needs its words to be the version mark of its lines');
+    return;
+  }
   if (kind === 'rule') {
     const texts = (x) => Array.isArray(x) && x.every(isText);
     const { literal } = data;
@@ -844,7 +853,7 @@ export function makeEvent({ kind, data, now = () => new Date() }) {
 }
 
 // The kinds a confirmation can make take effect (design section 9).
-export const CONFIRMABLE_KINDS = ['ruling', 'level', 'setting', 'rule'];
+export const CONFIRMABLE_KINDS = ['ruling', 'level', 'setting', 'rule', 'brief'];
 
 // The sha256 of an event's canonical JSON without its signature: what a
 // confirmation names, so it confirms that exact event and no other.
@@ -884,7 +893,7 @@ export function checkRecord(event, { enrolled, held = [], computer = computerId(
 
 // The kind and data of a confirmation of `event`, for makeEvent to sign.
 export function confirmationFor(event) {
-  if (!CONFIRMABLE_KINDS.includes(event?.kind)) throw new Error('Only a ruling, a level, a setting or a rule can be confirmed');
+  if (!CONFIRMABLE_KINDS.includes(event?.kind)) throw new Error('Only a ruling, a level, a setting, a rule or a brief can be confirmed');
   return { kind: 'confirmation', data: { confirms: event.id, confirmsHash: eventHash(event) } };
 }
 
