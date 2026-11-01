@@ -24,7 +24,7 @@
 // What a reply reads of the record before it signs is read on the desk's side (scripts/desk/mod-records.js).
 import fs from 'node:fs';
 import path from 'node:path';
-import { earned, keepEarned, sendKept, SIGNED_LABELS } from '../hooks/prompt-record.js';
+import { earned, keepEarned, sendKept, signsOn } from '../hooks/prompt-record.js';
 import { withinBudget, pendingDir, keep, taken, BUDGET_MS } from '../hooks/pending.js';
 import { helperGrace } from '../lib/helper-grace.js';
 import { helperClient } from '../host/helper-client.js';
@@ -212,7 +212,7 @@ export async function replyRecord({ project, text, client, desk, now = () => new
   const answers = line.startsWith('Answer question ') && !PUT_OFF.includes(label);
   // Use Guarded, on the Unattended card, confirms the build-commands setting: a click only.
   if (label === USE_GUARDED || (label === 'Confirm' && confirmsBuilds(project, card.question))) return no('That setting is changed only by a click on its own card');
-  if (!SIGNED_LABELS.includes(label) && !answers) return no('That option doesn\'t need a reply code');
+  if (!signsOn(label, card.question) && !answers) return no('That option doesn\'t need a reply code');
   if (answers && allowsElsewhere(project, line.slice('Answer question '.length), label)) {
     return no(ALLOWED_ELSEWHERE);
   }

@@ -7,14 +7,14 @@
 //   as the pane keeps one (a confirmation with the event it confirms, or a record for the settings).
 // - `{ form: 'window' }`: the helper's confirm window, which signs after the director's click.
 // - `{ form: 'chat-click', proof: 'chat-click' }`: an unsigned click in an agent's chat, for an option
-//   outside SIGNED_LABELS, as /cards/chat-click accepts it.
+//   that signs nothing on its card (signsOn), as /cards/chat-click accepts it.
 // - `{ form: 'client', client, at, sig }`: a paired app's ed25519 signature over
 //   canonicalJson({ command, args, at }), within CLIENT_WINDOW_MS of `at`.
 import crypto from 'node:crypto';
 import { checkRecord, CONFIRMABLE_KINDS } from '../state/events.js';
 import { confirmLine } from '../state/card-lines.js';
 import { canonicalJson } from '../lib/canonical.js';
-import { SIGNED_LABELS } from '../hooks/prompt-record.js';
+import { signsOn } from '../hooks/prompt-record.js';
 import { computerId } from '../lib/paths.js';
 
 export const CLIENT_WINDOW_MS = 5 * 60 * 1000;
@@ -97,6 +97,9 @@ function checkClient(command, args, { client, at, sig }, { clients, now }) {
   return no('That app\'s signature doesn\'t check');
 }
 
+// The words of the card a click names, by its id in the views, or the name as given: a click in the chat names either.
+const askedOn = (views, card) => String(views?.waiting?.find?.((c) => c?.id === card)?.data?.question ?? card);
+
 // checkEvidence(command, args, evidence, { enrolled, clients, views, events, now, computer })
 //   -> { ok, records?, refused? }. Never throws.
 export function checkEvidence(command, args, evidence, { enrolled = [], clients = [], views = {}, events = [], now = () => new Date(), computer = computerId() } = {}) {
@@ -108,7 +111,7 @@ export function checkEvidence(command, args, evidence, { enrolled = [], clients 
     // A click in the chat.
     if (evidence.proof !== 'chat-click') return no('A click in the chat is recorded as chat-click');
     if (!CARD_COMMANDS.includes(command)) return no('A click in the chat answers a card only');
-    if (SIGNED_LABELS.includes(args.option) && !CHAT_DECIDES.test(String(args.card))) return no('A click in the chat can\'t decide that card');
+    if (signsOn(args.option, askedOn(views, args.card)) && !CHAT_DECIDES.test(String(args.card))) return no('A click in the chat can\'t decide that card');
     return { ok: true, records: [], chatClick: true };
   } catch (error) {
     return no(`That evidence couldn't be checked: ${error?.message || error}`);

@@ -29,7 +29,7 @@
 import crypto from 'node:crypto';
 import { helperClient } from '../host/helper-client.js';
 import { deskClient } from '../desk/client.js';
-import { SIGNED_LABELS } from '../hooks/prompt-record.js';
+import { signsOn } from '../hooks/prompt-record.js';
 import { SUGGEST } from '../lib/calm-words.js';
 import { dataHash } from '../state/events.js';
 import { WINDOW_MS } from '../confirm/window.js';
@@ -108,7 +108,7 @@ export async function leanCommand(argv, { cwd = process.cwd(), stdin = process.s
     // Words with another option, and a signed option on a card the desk's evidence doesn't let the chat decide (a
     // ruling's Confirm at Lean, a step confirmed outside the chat), go to the helper's own route as they are, which
     // answers them in its own words.
-    if ((text !== undefined && label !== SUGGEST) || (SIGNED_LABELS.includes(label) && !CHAT_DECIDES.test(card))) {
+    if ((text !== undefined && label !== SUGGEST) || (signsOn(label, question) && !CHAT_DECIDES.test(card))) {
       return api.cards.chatClick({ cwd, card, label, hash, proof: 'chat-click', ...(commit === undefined ? {} : { commit }), ...(text === undefined ? {} : { text }) });
     }
     const act = deskActs(api, cwd);

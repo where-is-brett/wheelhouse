@@ -9,10 +9,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { guardedRun } from '../../helpers/host-stand-ins.js';
 import { startHelper } from '../../../scripts/host/helper.js';
-import { stateDir } from '../../../scripts/lib/paths.js';
+import { helperClient } from '../../../scripts/host/helper-client.js';
+import { earned } from '../../../scripts/hooks/prompt-record.js';
+import { engineDir, profileDir, stateDir } from '../../../scripts/lib/paths.js';
+import { mirrorRulesFile } from '../../../scripts/setup/engine-parts.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
-import { listEvents, makeEvent, eventPath, dataHash } from '../../../scripts/state/events.js';
+import { listEvents, makeEvent, eventPath, dataHash, confirmationFor } from '../../../scripts/state/events.js';
 import { sheetHash } from '../../../scripts/engine/goal.js';
 import { startGoalLine } from '../../../scripts/state/card-lines.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
@@ -60,7 +63,9 @@ async function setUp() {
 
 // A record in the project's history, as the First Mate's work record is written.
 function put(kind, data, at) {
-  const event = makeEvent({ kind, data, now: () => new Date(at) });
+  keep(makeEvent({ kind, data, now: () => new Date(at) }));
+}
+function keep(event) {
   const file = path.join(stateDir(P), eventPath(event));
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, `${JSON.stringify(event, null, 2)}\n`);
@@ -244,6 +249,10 @@ test('stayAwake is on for exactly a goal\'s life', async () => {
         put('action', { action: 'start-goal', goal: 'sale', hash, label: 'Start', question: `Start this goal?\n${startGoalLine('sale', hash)}` }, '2026-11-01T01:30:00.000Z');
         await helper.engine.tick();
         assert.equal(wanted.at(-1), true, 'held once the goal is in force');
+        const away = () => listEvents(profileDir(), { report: () => {} }).filter((e) => e.kind === 'setting' && e.data.key === 'presence');
+        assert.deepEqual(away().map((e) => [e.data.value, e.data.until]), [['away', sheet.until]], 'starting sets Away until the goal\'s time');
+        await helper.engine.tick();
+        assert.equal(away().length, 1, 'once, not on every tick');
         put('goal-end', { goal: 'sale', ending: 'end-goal', at: '2026-11-01T01:40:00.000Z', spent: { tokens: 0, points: null, requests: null, unknown: false, shareAtStart: null, queueRuns: [] } }, '2026-11-01T01:40:00.000Z');
         await helper.engine.tick();
         assert.equal(wanted.at(-1), false, 'let go as it ends');
@@ -251,6 +260,50 @@ test('stayAwake is on for exactly a goal\'s life', async () => {
         await helper.close();
       }
       assert.equal(wanted.at(-1), false, 'the helper leaves no hold behind it');
+    });
+  } finally { p.cleanup(); }
+});
+
+test('through the helper: the draft, the sheet\'s card, and a click on that card that earns the start', async () => {
+  const p = await setUp();
+  const engine = fakeEngine({ artefacts: p.artefacts });
+  const at = '2026-11-01T01:00:00.000Z';
+  const data = { id: 'card-12', title: 'The sale banner', lane: 'quick', visible: false, dependsOn: [] };
+  const sheet = {
+    title: 'The sale goes live', done: [{ command: 'node --test', expect: 0 }], checksSay: ['The tests pass'], pieces: [{ work: data.id, hash: dataHash(data) }],
+    areas: { may: ['src/**'], wontTouch: ['tests/**'] }, spend: { tokens: 1000000 }, until: '2026-11-01T09:00:00.000Z',
+  };
+  const hash = sheetHash(sheet);
+  const now = () => new Date('2026-11-01T02:00:00.000Z');
+  try {
+    await as(p.home, async () => {
+      const helper = await helperFor(p, engine, { now });
+      try {
+        await helper.engine.tick();
+        put('work', data, at);
+        put('goal', { id: 'sale', sheet }, at);
+        put('goal-check', { goal: 'sale', hash, when: 'before', head: 'a'.repeat(40), results: [{ check: sheet.done[0], ok: false }], ok: false }, at);
+        for (const [key, value] of [['engine', 'archon'], ['engineLanes', ['quick']]]) {
+          const setting = makeEvent({ kind: 'setting', data: { key, value, words: `Set ${key}` }, now: () => new Date(at) });
+          keep(setting);
+          keep(makeEvent({ ...confirmationFor(setting), now: () => new Date(at) }));
+        }
+        fs.mkdirSync(path.dirname(mirrorRulesFile(engineDir())), { recursive: true });
+        fs.writeFileSync(mirrorRulesFile(engineDir()), JSON.stringify({ [P]: 'https://github.com/o/p.git' }));
+        const client = helperClient({ address: helper.address });
+        const draft = await client.goalDraft({ cwd: p.folder, pieces: [data.id] });
+        assert.equal(draft.ok, true, JSON.stringify(draft));
+        assert.deepEqual(draft.pieces, sheet.pieces);
+        const got = await client.goalCard({ cwd: p.folder, goal: 'sale' });
+        assert.equal(got.offered, true, JSON.stringify(got));
+        assert.equal(records('goal-card').length, 1);
+        const lost = await earned({ project: P, question: got.question.question, label: 'Start', card: { ...got.question, question: `${got.question.question}\nReworded.` }, client, now });
+        assert.equal(lost.made ?? null, null);
+        const { made } = await earned({ project: P, question: got.question.question, label: 'Start', card: got.question, client, now });
+        assert.deepEqual([made.data.action, made.data.goal, made.data.hash], ['start-goal', 'sale', hash]);
+      } finally {
+        await helper.close();
+      }
     });
   } finally { p.cleanup(); }
 });

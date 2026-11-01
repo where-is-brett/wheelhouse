@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { decide, sendPending, SIGNED_LABELS, storedText } from '../../../scripts/hooks/prompt-record.js';
+import { decide, sendPending, SIGNED_LABELS, signsOn, storedText } from '../../../scripts/hooks/prompt-record.js';
+import { cardHash } from '../../../scripts/lib/measures-clicks.js';
 import { makeEvent, eventPath, dataHash, confirmationFor, eventHash, listEvents } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
 import { approvalLine, confirmLine, LIFT_STOP, LIFT_STOP_EARLIER, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine, approveWorkLine, answerLine, chatCopy, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, setupLine, setLineOf, uninstallLine, trustLine, takeOverLine, startGoalLine } from '../../../scripts/state/card-lines.js';
@@ -24,7 +25,6 @@ import { beforeTimer } from '../../helpers/until.js';
 import { nudgeCard } from '../../../scripts/routing/nudge.js';
 import { buildViews } from '../../../scripts/state/views.js';
 import { SUGGEST, WHAT_WOULD_YOU_CHANGE } from '../../../scripts/lib/calm-words.js';
-import { cardHash } from '../../../scripts/lib/measures-clicks.js';
 import { premiumInput, ALLOW_WITHIN, ALLOW_PAID, ALLOW_PAID_ON_TOP } from '../../../scripts/routing/premium.js';
 
 const P = 'owner__name';
@@ -51,6 +51,7 @@ function fake({ pr = { ok: true, result: { headSha: FULL, state: 'open' } }, ref
   const takeOverCalls = [];
   return {
     calls,
+    goalRecheck: async () => ({ ok: true, refused: [] }),
     prState: async (b) => { calls.prState.push(b); return pr; },
     state: {
       write: async (b) => { calls.write.push(b); return refuse ? no : { ok: true }; },
@@ -1943,12 +1944,17 @@ const startInput = (answers) => {
   return asked;
 };
 const startQuestion = (sheet, goal = 'orders-export') => `Start this goal?\n${startGoalLine(goal, sheetHash(sheet))}`;
+// The helper's signed offer of the sheet's card, which a Start must be a click on.
+const offerStart = (sheet, { goal = 'orders-export', at = NOW, question = startQuestion(sheet, goal) } = {}) => keepEvent(makeEvent({
+  kind: 'goal-card', data: { goal, sheet: sheetHash(sheet), at: at.toISOString(), hash: cardHash(startInput({ [question]: 'Start' }).tool_input.questions[0]) }, now: () => at,
+}));
 
 test('the click on Start earns the signed action with the sheet\'s whole hash', async () => {
   await withHome(async (home) => {
     const sheet = goalSheet();
     putViews(home, { goalChecks: baseline(sheet) });
     keepEvent(goalEvent(sheet));
+    offerStart(sheet);
     const c = fake();
     const question = startQuestion(sheet);
     await decide(startInput({ [question]: 'Start' }), deps(c));
@@ -1963,6 +1969,7 @@ test('a sheet the state doesn\'t hold earns nothing, and a second sheet under th
     const held = goalSheet();
     putViews(home, { goalChecks: baseline(held) });
     keepEvent(goalEvent(held));
+    offerStart(held);
     const c = fake();
     // A sheet that was never recorded, a sheet recorded under another goal, and a line with the wrong characters.
     const never = goalSheet('A goal nobody recorded');
@@ -1979,6 +1986,7 @@ test('a click on Start with no baseline, or one where every check passes, signs 
   await withHome(async (home) => {
     const sheet = goalSheet();
     keepEvent(goalEvent(sheet));
+    offerStart(sheet);
     for (const goalChecks of [{}, baseline(sheet, 'orders-export', true)]) {
       putViews(home, { goalChecks });
       const c = fake();
@@ -2005,6 +2013,7 @@ test('a click on Start over a changed piece signs nothing and says why', async (
   await withHome(async (home) => {
     const sheet = goalSheet();
     keepEvent(goalEvent(sheet));
+    offerStart(sheet);
     putViews(home, { work: { 'export-csv': { work: { data: { ...CSV_WORK, title: 'Changed' } } } } });
     const c = fake();
     const got = await decide(startInput({ [startQuestion(sheet)]: 'Start' }), deps(c));
@@ -2018,6 +2027,7 @@ test('a click on Start while another goal runs signs nothing', async () => {
   await withHome(async (home) => {
     const sheet = goalSheet();
     keepEvent(goalEvent(sheet));
+    offerStart(sheet);
     putViews(home, { goals: { 'first-goal': { sheet, hash: 'a'.repeat(64), startedAt: NOW.toISOString(), ended: null, endAsked: null } } });
     const c = fake();
     const got = await decide(startInput({ [startQuestion(sheet)]: 'Start' }), deps(c));
@@ -2031,11 +2041,89 @@ test('a click on Start under All stop signs nothing', async () => {
   await withHome(async (home) => {
     const sheet = goalSheet();
     keepEvent(goalEvent(sheet));
+    offerStart(sheet);
     putViews(home);
     const c = fake();
     const got = await decide(startInput({ [startQuestion(sheet)]: 'Start' }), { ...deps(c), stopState: () => ({ on: true }) });
     assert.deepEqual(recorded(c), []);
     assert.deepEqual(c.calls.write.filter((w) => w.kind === 'card-answer'), []);
     assert.match(contextOf(got), /All stop is on/);
+  });
+});
+
+test('a Start on a card other than the one made from the sheet signs nothing, says why and leaves the card waiting', async () => {
+  await withHome(async (home) => {
+    const sheet = goalSheet();
+    putViews(home, { goalChecks: baseline(sheet) });
+    keepEvent(goalEvent(sheet));
+    offerStart(sheet);
+    const c = fake();
+    // The sheet's line, under words the helper never made.
+    const got = await decide(startInput({ [`A small tidy-up, nothing to worry about.\n${startGoalLine('orders-export', sheetHash(sheet))}`]: 'Start' }), deps(c));
+    assert.deepEqual(recorded(c), []);
+    assert.deepEqual(c.calls.write.filter((w) => w.kind === 'card-answer'), []);
+    assert.match(contextOf(got), /isn't the card made from the goal's sheet/);
+  });
+});
+
+test('a Start with no offer on the record signs nothing', async () => {
+  await withHome(async (home) => {
+    const sheet = goalSheet();
+    putViews(home, { goalChecks: baseline(sheet) });
+    keepEvent(goalEvent(sheet));
+    const c = fake();
+    await decide(startInput({ [startQuestion(sheet)]: 'Start' }), deps(c));
+    assert.deepEqual(recorded(c), []);
+  });
+});
+
+test('an offer for another sheet of the goal stands for nothing', async () => {
+  await withHome(async (home) => {
+    const sheet = goalSheet();
+    const other = goalSheet('Another sheet');
+    putViews(home, { goalChecks: baseline(sheet) });
+    keepEvent(goalEvent(sheet));
+    offerStart(other, { question: startQuestion(sheet) });
+    const c = fake();
+    await decide(startInput({ [startQuestion(sheet)]: 'Start' }), deps(c));
+    assert.deepEqual(recorded(c), []);
+  });
+});
+
+test('a sheet card left over an hour asks to be made again', async () => {
+  await withHome(async (home) => {
+    const sheet = goalSheet();
+    putViews(home, { goalChecks: baseline(sheet) });
+    keepEvent(goalEvent(sheet));
+    offerStart(sheet, { at: new Date(NOW.getTime() - 3600000) });
+    const c = fake();
+    const got = await decide(startInput({ [startQuestion(sheet)]: 'Start' }), deps(c));
+    assert.deepEqual(recorded(c), []);
+    assert.match(contextOf(got), /fresh card/);
+  });
+});
+
+test('Start signs only on a goal\'s card, so a plain question offering it stays a plain answer', () => {
+  assert.equal(signsOn('Start', startGoalLine('orders-export', 'a'.repeat(64))), true);
+  assert.equal(signsOn('Start', 'Shall we start with the page or the file?'), false);
+  assert.equal(signsOn('Approve', 'Anything'), true);
+  assert.equal(signsOn('Not now', startGoalLine('orders-export', 'a'.repeat(64))), false);
+});
+
+test('a Start stops on what the helper\'s checks find at the click, and on a helper that can\'t say', async () => {
+  await withHome(async (home) => {
+    const sheet = goalSheet();
+    putViews(home, { goalChecks: baseline(sheet) });
+    keepEvent(goalEvent(sheet));
+    offerStart(sheet);
+    for (const [goalRecheck, words] of [
+      [async () => ({ ok: true, refused: ['An incident is open.', 'The main line is red.'] }), /An incident is open; The main line is red/],
+      [async () => { throw new Error('gone'); }, /couldn't be read/],
+    ]) {
+      const c = fake();
+      const got = await decide(startInput({ [startQuestion(sheet)]: 'Start' }), deps({ ...c, goalRecheck }));
+      assert.deepEqual(recorded(c), []);
+      assert.match(contextOf(got), words);
+    }
   });
 });

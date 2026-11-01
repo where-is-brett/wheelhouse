@@ -343,6 +343,9 @@ export function gateStart({ goal, work, lane, via, state = 'running', meter = nu
   return typeof meter?.reached === 'string' ? held('spend') : null;
 }
 
+// Whether a sheet's `line` waives showing first the work `data` holds: its tick, honoured only on a small visible piece.
+export const isWaived = (line, data) => line.waived === true && data.visible === true && WAIVABLE.includes(data.lane);
+
 // What an order of `work` takes from its goal: { goalId?, waived? }. The goal is the one covering the piece, in force or the
 // latest to end, whose areas still govern its pull request. `waived` is the sheet's tick, honoured only on a small visible
 // piece, and only while the goal is in force: after it, the piece is ordinary work.
@@ -351,7 +354,7 @@ export function orderGoal(views, work) {
   if (live !== null && pieceCovered(live, work, views)) {
     const data = views.work[work].work.data;
     const line = live.sheet.pieces.find((p) => p.work === work);
-    return { goalId: live.id, ...(line.waived === true && data.visible === true && WAIVABLE.includes(data.lane) ? { waived: true } : {}) };
+    return { goalId: live.id, ...(isWaived(line, data) ? { waived: true } : {}) };
   }
   const ended = endedGoals(views).reverse().find(([, goal]) => pieceCovered(goal, work, views));
   return ended === undefined ? {} : { goalId: ended[0] };

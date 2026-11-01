@@ -47,7 +47,7 @@ export const PLAIN_KINDS = [
 // helper's too: it stands a question behind another's card, which no build's own record can, so only one signed here counts.
 // `goal-check` is the result of a goal's checks on the main line (unattended goals design, section 4.1), the helper's too:
 // read from the engine's record of a run with no model step, and never a step's word.
-export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file', 'usage-card', 'premium-card', 'premium-check', 'premium-failed', 'provenance', 'check', 'checks-state', 'checks-found', 'change', 'shadow', 'match', 'goal-check'];
+export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file', 'usage-card', 'premium-card', 'premium-check', 'premium-failed', 'provenance', 'check', 'checks-state', 'checks-found', 'change', 'shadow', 'match', 'goal-check', 'goal-card'];
 // Plain kinds only the helper itself records, from what it read itself: no caller writes one
 // through /state/write. The survey (design section 15, ruling A1) is taken and recorded in the
 // helper, when setup finishes and when it is taken again. A column-ready record (design section 14.6) is the
@@ -64,7 +64,7 @@ export const RED_MAIN_OWN = 'only the helper records a red main line\'s incident
 // `rule` is a rule proposed from an answered card (delegated decisions design, section 11.1): the helper composes it from
 // what it read itself, and it means nothing until the director's signed click confirms that very record.
 // `goal-end` is the helper's own record of how a goal ended and what it spent: it ends the goal, so no caller writes one.
-export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'shadow', 'match', 'rule', 'slept', 'goal-end', 'goal-check'];
+export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'shadow', 'match', 'rule', 'slept', 'goal-end', 'goal-check', 'goal-card'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 
 const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main', 'safekeeping', 'send-back', 'start-goal'];
@@ -357,6 +357,9 @@ const PLAIN_SHAPES = {
   // setting in force then (`from`: off, or within-plan when the card offers paid credits on top), and the full hash of
   // the card as composed, so a click counts only on that very card.
   'premium-card': { must: ['at', 'from', 'hash'], may: [] },
+  // The helper offered a goal's sheet card (unattended goals design, section 5): the goal, its `sheet`'s hash, when, and the
+  // full hash of the card as composed, so a Start counts only on that very card, made from that very sheet.
+  'goal-card': { must: ['goal', 'sheet', 'at', 'hash'], may: [] },
   // The helper asked Claude Code what its premium alias stands for, after the director's Yes (design section 14.6,
   // "Offered only where the account has it"): the premium setting the Yes made (`setting`, its event's id), the model
   // the alias named (`model`, or null when it named none), and whether that is a premium model the account has
@@ -717,6 +720,10 @@ function checkPlain(kind, data) {
     if (typeof data.at !== 'string' || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$/.test(data.at)) bad('needs at to be the time its line names');
     if (!PREMIUM_FROM.includes(data.from)) bad(`needs from to be ${listed([...PREMIUM_FROM])}`);
     if (typeof data.hash !== 'string' || !/^[0-9a-f]{64}$/.test(data.hash)) bad('needs the full hash of the card as composed');
+  } else if (kind === 'goal-card') {
+    slug('goal');
+    for (const k of ['sheet', 'hash']) if (typeof data[k] !== 'string' || !/^[0-9a-f]{64}$/.test(data[k])) bad(`needs ${k} to be a full hash`);
+    if (typeof data.at !== 'string' || Number.isNaN(Date.parse(data.at))) bad('needs at to be a time');
   } else if (kind === 'premium-check') {
     if (typeof data.setting !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(data.setting)) bad('needs setting to be the id of the premium setting it checks for');
     if (data.model !== null && !isModelName(data.model)) bad('needs model to be a model name or null');
@@ -974,6 +981,7 @@ export function checkRecord(event, { enrolled, held = [], computer = computerId(
   if (event.kind === 'shadow') return 'only the helper records a seal';
   if (event.kind === 'match') return 'only the helper records a close match';
   if (event.kind === 'goal-check') return 'only the helper records a goal\'s checks';
+  if (event.kind === 'goal-card') return 'only the helper offers a goal\'s card';
   if (held.some((e) => canonicalJson(e) !== canonicalJson(event))) return 'another event in the state carries this record\'s id, so it was not recorded';
   return null;
 }
