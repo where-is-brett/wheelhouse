@@ -11,7 +11,8 @@
 // nothing to move it on (a pull request closed unmerged, a run rejected or cancelled with no card of its own) brings one
 // card; Stop here ends it with a `closed` report, which frees its place. A run that failed is resumed at 5, 15 and 30
 // minutes where its kind allows (recovery.js), through the same list as an answered piece, and the fix lane by its own
-// `fixDecision`. Past those, or for any other kind, or cancelled in the engine, a piece outside a feature gets one card; a
+// `fixDecision`. A run that lost its process carries on once on its branch, by the same list, or for a fix by the same
+// decision; the runner gives the word that the run has gone (`lostCleared`). Past those, or for any other kind, or cancelled in the engine, a piece outside a feature gets one card; a
 // feature keeps its own, after the retries too. Other work whose run's pull request merged gets its `merged` report. A piece waiting on the director keeps its files reserved: what it was expected to touch and
 // what its branch has changed, read each time it parks, until its work merges or ends or the runner says it has. What
 // it keeps (the merge queue's run and when it last started, the pull requests already seen ready, the clashes, the
@@ -31,7 +32,7 @@ import { readSlices, featureProgress, featureNext, currentStep, sliceOrder, fini
 import { ownWaiting, ownCards, limitedRuns, limitedWork } from './waiting.js';
 import { topCard, holdsUpCount, noCardBehind, deadEnds, waitsOnItself } from './stuck.js';
 import { STOP_LABEL, MORE } from './runner.js';
-import { retryDue, resumeRun, triedList } from './recovery.js';
+import { OWNER_LOST, retryDue, resumeRun, triedList } from './recovery.js';
 import { since, endedBy } from '../foreman/queue.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
@@ -62,8 +63,8 @@ const RESTART_QUESTIONS = STALL_QUESTIONS + 500;
 // What wakes a paused run or resumes a failed one, which the runner carries out once admitted. Every other `via` starts a
 // new run from here.
 const WAKES = Object.freeze(['answer', 'resume', 'more', 'retry']);
-// The ways back that carry on a piece's own branch after an answer.
-const REWORKING = Object.freeze(['answer', 'rework']);
+// The ways back that carry on a piece's own branch after an answer or a lost process.
+const REWORKING = Object.freeze(['answer', 'rework', 'carry-on']);
 // What an entry's run may read as for it to give its entry up. `unknown` is a run the engine no longer has, with nothing to wait for.
 const SEEN = Object.freeze(['running', 'ended', 'unknown']);
 // How long an answered run may sit paused before the Logbook says so: only the engine's waker carries it on (check 85).
@@ -165,6 +166,9 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   };
   // The pieces whose run an answer is ending, to start again on the same branch: the runner's.
   let reworkingNow = () => [];
+  // What the runner is doing about runs that lost their process: { pieces, clearing, carried }.
+  let lostNow = () => ({});
+  const lostPieces = () => lostNow()?.pieces ?? [];
   let routerCardsNow = () => [];
   const cardsNow = (views) => {
     let theirs = [];
@@ -398,7 +402,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
         continue;
       }
       // On its way back already: what comes next is settled once that run has started.
-      if (onTheWay(work)) continue;
+      if (onTheWay(work) || lostPieces().includes(work)) continue;
       if (!live && capLabel === KEEP_GOING && kept.carry && !stopped() && (views.incidents?.open?.length ?? 0) === 0) {
         const { branch } = kept.carry;
         kept.carry = null;
@@ -497,6 +501,12 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     if (stopped() || cardOwed(work)) return;
     const what = step.finish ? 'its switch-on run' : `slice ${step.slice} of ${design.slices.length}`;
     let why = null;
+    // Its Carry on may be about to take this up: looked at again on the next tick.
+    if (run.outcome === 'cancelled' && lostAnswered(views, run.runId) && kept.endSeen !== run.runId) {
+      kept.endSeen = run.runId;
+      keep();
+      return;
+    }
     if (Number.isInteger(run.pr) && kept.closed?.[run.pr]) why = 'closed';
     else if (run.outcome === 'cancelled' && !(stoppedRuns() ?? []).includes(run.runId) && !namedByCard(views, run.runId, run.outcome)) why = 'cancelled';
     else if ((run.outcome === 'failed' ? !(readyOf() ?? {})[run.pr] && !retryFor(views, work) : run.outcome === 'completed' && !Number.isInteger(run.pr)) && !namedByCard(views, run.runId, run.outcome) && !waitingNow(views).has(work) && !onTheWay(work) && state.sentBack[work] === state.acted[work] && state.reds[work]?.times === state.redActed[work]) {
@@ -546,9 +556,13 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     return Object.values(isPlain(views.questions) ? views.questions : {}).some((q) => {
       const engineRef = q?.question?.data?.engine;
       // A piece that left its bundle has no card to speak for it.
-      return engineRef?.runId === runId && q.gone !== true && ((engineRef.ask === `cap:${runId}` && !(outcome === 'failed' && q.answer?.label === MORE)) || !isPlain(q.answer));
+      return engineRef?.runId === runId && q.gone !== true && ((engineRef.ask === `cap:${runId}` && !(outcome === 'failed' && q.answer?.label === MORE)) || !isPlain(q.answer) || lostStop(q, runId));
     });
   }
+  // The director's Stop on the card for a run that lost its process, and that card's other answer, which the runner hasn't
+  // taken up on this tick yet.
+  const lostStop = (q, runId) => q?.question?.data?.engine?.ask === `${runId}:${OWNER_LOST}` && q.answer?.label === STOP_LABEL;
+  const lostAnswered = (views, runId) => Object.values(isPlain(views.questions) ? views.questions : {}).some((q) => q?.question?.data?.engine?.ask === `${runId}:${OWNER_LOST}` && isPlain(q.answer));
   // A run the director stopped, by Stop at its cap or by letting its piece go.
   function stoppedByDirector(views, work, runId) {
     if (Object.hasOwn(state.released, work) && state.released[work] === runId) return true;
@@ -606,7 +620,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     const stops = new Set(stoppedRuns() ?? []);
     for (const q of Object.values(isPlain(views.questions) ? views.questions : {})) {
       const engineRef = q?.question?.data?.engine;
-      if (engineRef?.ask === `cap:${engineRef?.runId}` && q.answer?.label === STOP_LABEL) stops.add(engineRef.runId);
+      if ((engineRef?.ask === `cap:${engineRef?.runId}` && q.answer?.label === STOP_LABEL) || lostStop(q, engineRef?.runId)) stops.add(engineRef.runId);
     }
     return Object.entries(isPlain(views.work) ? views.work : {}).filter(([work, entry]) => {
       if (entry?.work?.data?.lane !== 'feature' || endedBy(reports, work, entry.work) || onTheWay(work)) return false;
@@ -676,7 +690,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     // A start the record doesn't show yet is still under way.
     if (kept.started.some((runId) => !recorded.has(runId)) && green !== true) return;
     answerFixCard(views, incident, kept);
-    const decided = fixDecision({ incident, runs, green, stop: stopped(), stopped: stoppedRuns() ?? [], merged: fixedRuns() ?? [], kept, retry: fixRetry(runs) });
+    const decided = fixDecision({ incident, runs, green, stop: stopped(), stopped: stoppedRuns() ?? [], merged: fixedRuns() ?? [], kept, retry: fixRetry(runs), lost: lostNow()?.carried ?? [], clearing: lostNow()?.clearing ?? [] });
     if (decided.act === 'close') {
       await write('incident-closed', { incident: incident.id, why: 'the main line\'s checks are green' });
       await write('note', { about: 'engine', words: GREEN_WORDS });
@@ -915,7 +929,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     // A piece going back on an answer may have no card left to park it, and its next run isn't under way, so nothing else speaks
     // for its files. Nor for one whose card is a look or two away.
     const between = [...state.returning, ...state.admitted].filter((e) => REWORKING.includes(e.via)).map((e) => e.work);
-    const pieces = new Set([...waitingNow(views), ...between, ...reworkingNow(), ...retryingWork(views), ...Object.keys(isPlain(views.work) ? views.work : {}).filter((work) => lonePiece(views, work))]);
+    const pieces = new Set([...waitingNow(views), ...between, ...reworkingNow(), ...lostPieces(), ...retryingWork(views), ...Object.keys(isPlain(views.work) ? views.work : {}).filter((work) => lonePiece(views, work))]);
     // A cut-off piece has not begun, so it has no files to keep.
     for (const work of Object.keys(state.cutOffAsked)) pieces.delete(work);
     for (const entry of state.returning) if (unbegun(views, entry)) pieces.delete(entry.work);
@@ -965,6 +979,10 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   const incidentOpen = (views) => (views.incidents?.open?.length ?? 0) > 0;
   const atLimit = (views) => limitedRuns(views, now()).length > 0;
   const retriesLater = (entry) => Date.parse(entry.retryAt) > now().getTime();
+  // Asks for no place yet: a try still to fall due, or a carry-on whose lost run the runner hasn't seen gone.
+  const notYet = (entry) => retriesLater(entry) || entry.cancelling === true;
+  // A carry-on that ended with nothing done: the worktree's lock turned it away, and it says so only by that (check 92).
+  const turnedAway = (entry, seen) => entry.via === 'carry-on' && seen?.status === 'ended' && seen.outcome === 'cancelled' && (seen.steps ?? []).length === 0 && !(stoppedRuns() ?? []).includes(entry.runId);
   // New work refused at its first start, with nothing of it on record: nothing of it has been done.
   const unbegun = (views, entry) => entry.firstStart === true && !isText(entry.branch) && (views.runs?.[entry.work] ?? []).length === 0;
   function leave(entry) {
@@ -1153,6 +1171,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   // running gives its entry up. So does one paused again on a newer ask, which waits on the director again.
   async function returnTick(views) {
     pruneReturning(views);
+    // Lifting All stop starts no run: a carry-on not yet under way gives up, and its piece comes to its card after the lift.
+    if (stopped()) for (const entry of [...state.returning, ...state.admitted]) if (entry.via === 'carry-on' && !entry.starting && !entry.asked) leave(entry);
     for (const entry of [...state.returning]) {
       if (entry.asked && isPlain(views.questions) && !views.questions[entry.asked]) await restartCard(entry);
       const label = entry.asked ? views.questions?.[entry.asked]?.answer?.label : null;
@@ -1202,12 +1222,16 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       if (typeof entry.runId !== 'string') continue;
       const records = (views.runs?.[entry.work] ?? []).filter((r) => r?.data?.runId === entry.runId);
       let status = null;
+      let seen = null;
       try {
-        const seen = await engine.inspect(entry.runId);
+        seen = await engine.inspect(entry.runId);
         // An engine that gave no answer says nothing of the run.
         status = seen?.unread === true ? null : seen?.status ?? null;
       } catch { status = null; }
-      if (SEEN.includes(status) || records.at(-1)?.data?.state === 'ended' || pieces.has(entry.work)) {
+      if (turnedAway(entry, seen)) {
+        delete entry.runId;
+        await refusedStart(entry, { refused: 'the engine turned it away' });
+      } else if (SEEN.includes(status) || records.at(-1)?.data?.state === 'ended' || pieces.has(entry.work)) {
         leave(entry);
       } else if (wakes(entry) && status !== 'running' && !entry.lateSaid && now().getTime() - Date.parse(entry.deliveredAt) >= WAKE_LATE_MS) {
         entry.lateSaid = true;
@@ -1238,7 +1262,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   const leftByDirector = (views, work) => [state.clashAsked[work], state.redAsked[work]].some((id) => views.questions?.[id]?.answer?.label === LEAVE_IT);
   const prGone = (views, work, pr) => state.closedPrs.includes(pr) || state.features[work]?.closed?.[pr] === true || Object.hasOwn(state.features[work]?.merged ?? {}, pr) || (views.sendBacks ?? []).some((b) => b.pr === pr);
   function restsQuiet(views, work, ready) {
-    if (onTheWay(work) || waitingNow(views).has(work) || cardOwed(work) || reworkingNow().includes(work) || retryFor(views, work)) return false;
+    if (onTheWay(work) || waitingNow(views).has(work) || cardOwed(work) || reworkingNow().includes(work) || lostPieces().includes(work) || retryFor(views, work)) return false;
     const left = leftByDirector(views, work);
     if (!left && state.sentBack[work] !== state.acted[work] && state.sentBack[work] !== undefined) return false;
     if (!left && state.reds[work] !== undefined && state.reds[work].times !== state.redActed[work]) return false;
@@ -1532,12 +1556,12 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       requests, sentBack: [
         ...Object.entries(state.sentBack).filter(([work, times]) => state.acted[work] !== times).map(([work, times]) => ({ work, times })),
         ...Object.entries(state.reds).filter(([work, red]) => state.redActed[work] !== red.times).map(([work, red]) => ({ work, times: red.times, reason: 'red' })),
-      ], waiting: [...waitingNow(views)], reserved: reservedFiles(), returning: state.returning.map((e) => ({ ...e, ...(retriesLater(e) ? { asked: e.asked ?? e.key } : {}), ...(e.fresh === true ? { filesFree: true } : {}) })), admitted: state.admitted, stoppedFeatures: stoppedFeaturesOf(views, reports), waived: Object.keys(state.waived).filter((work) => state.waived[work] === views.work?.[work]?.work?.at), now: now(),
+      ], waiting: [...waitingNow(views)], reserved: reservedFiles(), returning: state.returning.map((e) => ({ ...e, ...(notYet(e) ? { asked: e.asked ?? e.key } : {}), ...(e.fresh === true ? { filesFree: true } : {}) })), admitted: state.admitted, stoppedFeatures: stoppedFeaturesOf(views, reports), waived: Object.keys(state.waived).filter((work) => state.waived[work] === views.work?.[work]?.work?.at), now: now(),
     });
     // What it admitted holds its place from here. A piece has one start at a time; each answer of it goes along.
     for (const { work } of decided.admit) {
       let starts = 0;
-      for (const entry of state.returning.filter((e) => e.work === work && !e.asked)) {
+      for (const entry of state.returning.filter((e) => e.work === work && !e.asked && !notYet(e))) {
         if (!wakes(entry) && (starts += 1) > 1) continue;
         state.returning = state.returning.filter((e) => e !== entry);
         state.admitted.push(entry);
@@ -1708,6 +1732,14 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     retryingWork,
     // The retries with a place, for the runner to carry out: [{ work, key, runId, delivered }].
     retriesAdmitted: () => state.admitted.filter((e) => e.via === 'retry').map(({ work, key, runId, delivered: told }) => ({ work, key, runId, delivered: told === true })),
+    // The runner's word that a lost run has gone, so its carry-on may ask for a place. Whether it is still on the list.
+    lostCleared(work, key) {
+      const entry = state.returning.find((e) => e.work === work && e.key === key);
+      if (!entry) return false;
+      delete entry.cancelling;
+      keep();
+      return true;
+    },
     // Whether a piece waits for a place. One admitted holds its place.
     comingBack: (work) => state.returning.some((e) => e.work === work),
     // The runner's mark that an answer went back: its entry then waits for the run to be seen running.
@@ -1752,6 +1784,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     onOwed(fn) { if (typeof fn === 'function') routerOwed = fn; },
     // And of the pieces going back to work on an answer: the runner's `reworkWork`.
     onReworks(fn) { if (typeof fn === 'function') reworkingNow = fn; },
+    // And of the runs that lost their process: the runner's `lostNow`.
+    onLost(fn) { if (typeof fn === 'function') lostNow = fn; },
     // And of the cards themselves: the runner's `openCards`.
     onCards(fn) { if (typeof fn === 'function') routerCardsNow = fn; },
     // Who tells this of the pull requests the queue has left alone, { [pr]: head }: the runner.

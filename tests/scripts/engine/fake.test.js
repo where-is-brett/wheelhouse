@@ -137,3 +137,16 @@ test('a recording of several runs plays them in turn, one a start, the last agai
   for (let i = 0; i < 3; i += 1) assert.equal(engine.start({ work: 'card-1', lane: 'small' }).ok, true);
   assert.deepEqual(steps(), ['first', 'second', 'second']);
 });
+
+test('a run that loses its owner says so, reads as running, and a cancel ends it', () => {
+  const engine = fakeEngine({ recordings: { a: [{ type: 'run-started', runId: 'x', at: '2026-10-29T02:00:00.000Z' }] } });
+  const { runId } = engine.start({ recording: 'a' });
+  engine.loseOwner(runId);
+  const ask = engine.watch('0').events.at(-1);
+  assert.equal(ask.ownerLost, true);
+  assert.equal(checkEvent(ask), null);
+  assert.equal(engine.inspect(runId).status, 'running');
+  assert.equal(engine.act(runId, { answer: { ask: ask.id, choice: 'carry-on' } }).ok, false);
+  assert.equal(engine.act(runId, { cancel: {} }).ok, true);
+  assert.equal(engine.inspect(runId).outcome, 'cancelled');
+});

@@ -542,3 +542,46 @@ test('heldUp\'s cancelled branch passes over a run on its way back', async () =>
   await w.tick(4);
   assert.equal(w.cards().length, 0);
 });
+
+test('a lost slice raises no held-up card, and carries on on its branch', async () => {
+  const w = wayBack({ recordings: { f: [forever(), forever()] }, designOf: () => ({ text: DESIGN }) });
+  w.put('f', { lane: 'feature' });
+  await w.tick(2);
+  const [first] = w.runsOf('f');
+  w.engine.loseOwner(first);
+  await w.tick(6);
+  assert.deepEqual(w.cards(), []);
+  assert.equal(w.runsOf('f').length, 2);
+  assert.equal(w.starts.at(-1).carryOn, true);
+  assert.equal(w.starts.at(-1).order.lane, w.starts[0].order.lane, 'the same step');
+});
+
+test('Stop on a lost slice\'s card is the last word, and the feature gives up its place', async () => {
+  const w = wayBack({ recordings: { f: [forever(), forever()] }, designOf: () => ({ text: DESIGN }) });
+  w.put('f', { lane: 'feature' });
+  await w.tick(2);
+  w.engine.loseOwner(w.runsOf('f')[0]);
+  await w.tick(6);
+  w.engine.loseOwner(w.runsOf('f')[1]);
+  await w.tick(6);
+  assert.equal(w.cards().length, 1);
+  w.answer('f', 'Stop');
+  await w.tick(5);
+  assert.equal(w.cards().length, 1, 'no second card asks again');
+  assert.equal(w.runsOf('f').length, 2);
+});
+
+test('a Carry on the runner hasn\'t taken up yet raises no held-up card', async () => {
+  const w = wayBack({ recordings: { f: [forever(), forever(), forever()] }, designOf: () => ({ text: DESIGN }) });
+  w.put('f', { lane: 'feature' });
+  await w.tick(2);
+  w.engine.loseOwner(w.runsOf('f')[0]);
+  await w.tick(6);
+  w.engine.loseOwner(w.runsOf('f')[1]);
+  await w.tick(6);
+  w.answer('f', 'Carry on');
+  await w.dispatcher.tick();
+  await w.tick(4);
+  assert.equal(w.cards().length, 1);
+  assert.equal(w.runsOf('f').length, 3);
+});

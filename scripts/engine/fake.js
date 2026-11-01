@@ -5,12 +5,14 @@
 // reports the process that owns the run. Like Archon, it keeps each finished step's output (a recorded step-finished
 // event's `output`), hands work to a merge queue (kept in `calls`) and has an artefacts folder for each run, under
 // `artefacts`; a step whose output depends on the test's world (the pull request a run opened) is given by `setOutput`.
+// `loseOwner` is a run's process dying: its row stays running and the stream says so, as Archon's does (check 92).
 // `source` is the folder it says each run's pack was frozen into. A recording may play on past a failed `run-ended`:
 // a resume then takes the run on from there, as a leg of the same run. Its steps all count in `inspect`, as a real engine's
 // `totals` do.
 import fs from 'node:fs';
 import path from 'node:path';
 import { checkEvent } from './contract.js';
+import { ownerLostAsk } from './recovery.js';
 
 // The events in a recording's text, one JSON object a line. Blank lines are skipped; a line that isn't a
 // well-formed event stops the read with the line's number.
@@ -170,6 +172,15 @@ export function fakeEngine({ recordings = {}, now = () => new Date().toISOString
         digest: `${steps.length} step${steps.length === 1 ? '' : 's'} finished; ${run.ended ? `ended: ${run.ended.outcome}` : status}`,
         source,
       };
+    },
+
+    // A run's process died: nothing of it plays on, and it reads as running until it is cancelled.
+    loseOwner(runId) {
+      const run = runs.get(runId);
+      if (!run || run.ended) return;
+      run.pending.length = 0;
+      run.open = null;
+      stream.push(ownerLostAsk(runId, now()));
     },
 
     // The run of `work` not yet ended, or null: a start that may have happened.

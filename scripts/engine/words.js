@@ -75,6 +75,20 @@ const FAILED_BECAUSE = {
   other: 'one of its steps failed',
 };
 export const failedCardWords = (title, kind) => `${title} stopped before it was finished: ${FAILED_BECAUSE[kind] ?? FAILED_BECAUSE.other}. What it did so far is kept on its branch, and nothing more of it starts until you say.`;
+// A run that lost its process (unattended goals design, section 9.5).
+export const lostCarriedWords = (title) => `The process running ${title} stopped before it finished, so Wheelhouse ended the run, keeping what it had done, and starts it again from there, once.`;
+const LOST_BECAUSE = {
+  again: (title) => `${title} has lost its process twice, so Wheelhouse has stopped it rather than start it again by itself.`,
+  refused: (title) => `The process running ${title} stopped answering, and the build engine wouldn't end the run, so nothing new can start on its branch yet.`,
+  left: (title, left) => `The process running ${title} stopped, but part of it is still going and Wheelhouse couldn't end it: ${left.join(', ')}. Nothing new starts beside it.`,
+};
+export const lostCardWords = (title, why, left = []) => `${LOST_BECAUSE[why](title, left)} What it did so far is kept, and nothing more of it starts until you say.`;
+export const LOST_CARRY_SAYS = 'It ends what is left of this run and starts it again from what is there.';
+export const LOST_STOP_SAYS = 'Nothing more starts; what it has done so far is kept on its branch, and its files are free for other work.';
+export const lostStoppedWords = (title) => `${title} stays stopped, as you chose; what it has done so far is kept on its branch.`;
+export const lostStopLeftWords = (title) => `${title} stays stopped, as you chose, but the build engine still lists its run and wouldn't end it, so its branch may be held until that clears. What it has done so far is kept.`;
+export const lostNotNeededWords = (title) => `${title} ended by itself after all, so your Carry on wasn't needed.`;
+export const lostAllStopWords = (title) => `All stop had ended ${title}, so your Carry on wasn't used. The First Mate's Carry on takes it up again.`;
 export const RESTART_UNSURE_AGAIN = 'It checks whether a run began: one on record goes on, and a stray one is ended before it starts again. If that can\'t be done, you get a new card.';
 export const START_ANYWAY = 'Start it anyway';
 export const cutOffStoppedWords = (title) => `${title} stops here, as you chose; none of it had started.`;

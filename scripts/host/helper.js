@@ -5243,6 +5243,9 @@ export async function startHelper({
       headOf: (place) => branchHead({ card: place, git: gitRoute({ run }) }),
       commitsSince: (place, head) => commitsAfter({ card: place, git: gitRoute({ run }), head }),
       exclusionsOf: async (place) => repeatExclusions(await factsOf(place)),
+      endLeft: (folder) => endRun({ engine, run: { folder }, ...engineStopWith }),
+      lostCleared: (work, key) => dispatcher.lostCleared(work, key),
+      stoppedRuns: () => stoppedRunsOf(project),
     });
     runner.onEnter((args) => dispatcher.enter(args));
     dispatcher.onStarted((runId, carried) => runner.started(runId, carried));
@@ -5251,6 +5254,7 @@ export async function startHelper({
     dispatcher.onReworks(() => runner.reworkWork());
     dispatcher.onCards(() => runner.openCards());
     dispatcher.onParked(() => runner.parkedHeads());
+    dispatcher.onLost(() => runner.lostNow());
     runner.onMergeRuled(() => dispatcher.queueDue());
     const adapterNow = async () => (await contextFor(project)).adapter();
     const checks = checkRunner({

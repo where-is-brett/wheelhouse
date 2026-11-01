@@ -197,6 +197,23 @@ test('follow reads the stream into events, and saves the cursor by the rule', as
   assert.ok(log.indexOf('cursor sql:124') > log.indexOf('event ask', 1));
 });
 
+test('a cancel with no answer at all may have been taken', async () => {
+  const silent = adapter(fakeCli({ 'workflow cancel': { code: 1, stdout: '', stderr: 'timed out' } }));
+  const got = await silent.act('run-1', { cancel: { reason: 'x' } });
+  assert.equal(got.ok, false);
+  assert.equal(got.unreachable, true);
+});
+
+test('a run that lost its owner comes as an ask of the helper\'s own, with real options', async () => {
+  const streamer = fakeStreamer(['{"type":"owner_lost","cursor":"sql:9","runId":"run-1"}']);
+  const events = [];
+  for await (const event of adapter(fakeCli({}), { streamer }).follow('sql:8')) events.push(event);
+  assert.equal(checkEvent(events[0]), null);
+  assert.equal(events[0].id, 'run-1:owner-lost');
+  assert.equal(events[0].ownerLost, true);
+  assert.deepEqual(events[0].options, [{ id: 'carry-on', label: 'Carry on' }, { id: 'stop', label: 'Stop' }]);
+});
+
 test("follow starts the stream again without a cursor when the engine doesn't know it", async () => {
   const streamer = fakeStreamer(['{"type":"error","error":"cursor_invalid"}'], ['{"type":"ready","cursor":"sql:7"}']);
   const saved = [];

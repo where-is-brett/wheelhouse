@@ -67,9 +67,10 @@ function routerOpen({ state, views, prWork }) {
     const pr = kept?.ask?.mergeQuestion?.pr;
     const work = kept?.work === MERGE_WORK ? (Number.isInteger(pr) ? prWork(pr) : null) : kept?.work;
     if (typeof work !== 'string' || work === '') return;
-    if (kept.cap !== true && kept.work !== MERGE_WORK && runEnded(views, kept.work, kept.runId)) return;
-    // A cap card outlives its run, but not the work's next queueing, whose run it would hold back.
-    if (kept.cap === true && overtaken(kept, views)) return;
+    const outlives = kept.cap === true || kept.ask?.ownerLost === true;
+    if (!outlives && kept.work !== MERGE_WORK && runEnded(views, kept.work, kept.runId)) return;
+    // A cap card, or the card for a run that lost its process, outlives its run, but not the work's next queueing, whose run it would hold back.
+    if (outlives && overtaken(kept, views)) return;
     // A cap card kept but never written asks nothing: the piece isn't waiting on the director for that.
     if (kept.cap === true && typeof id === 'string' && isPlain(views?.questions) && !isPlain(views.questions[id])) return;
     found.push({ id: (id === undefined ? undefined : views?.questions?.[id]?.joins) ?? id, work, kept });

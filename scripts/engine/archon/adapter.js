@@ -22,7 +22,7 @@ import { ARCHON_SOURCE, BUN_PIN, CANCEL_PATCH_MARK, CLI_PATCH_MARK, PATCH_MARK, 
 import { normaliseAsk, askOccurrence } from './asks.js';
 import { readRecord, readOutputs, readTaskReviews } from './record.js';
 import { readyWorkItem } from './work-item.js';
-import { failureKind } from '../recovery.js';
+import { failureKind, ownerLostAsk } from '../recovery.js';
 import { PACK_FORMS, COPILOT_SUFFIX, PROVIDER as COPILOT } from './copilot-pack.js';
 import { checkRequests as meterCheck, readGitHubFigure, requestsFile as accountFile } from './copilot-meter.js';
 import { readAccountModels, requestRates } from '../../agents/copilot/column.js';
@@ -266,13 +266,7 @@ export function archonAdapter({
       const failure = outcome === 'failed' ? failureKind({ errorClass: line.cause?.errorClass ?? null }) : null;
       return [{ type: 'run-ended', runId: line.runId, at: now(), outcome: String(outcome ?? 'ended'), branch: null, pr: null, failedAt: line.cause?.node ?? null, failure, ...(line.cursor ? { cursor: line.cursor } : {}) }];
     }
-    if (line.type === 'owner_lost') {
-      return [{
-        type: 'ask', runId: line.runId, at: now(), id: `${line.runId}:owner-lost`, kind: 'trouble', level: 3, work: null,
-        recommend: 'stop', labels: {}, options: [], context: {}, card: true,
-        reason: "The process running this work stopped before it finished, and the engine can't carry the work on by itself. Stopping the work is the safe choice.",
-      }];
-    }
+    if (line.type === 'owner_lost') return [ownerLostAsk(line.runId, now())];
     return [];
   }
 
@@ -482,7 +476,9 @@ export function archonAdapter({
       if (action.answer) return answer(runId, action.answer);
       if (action.cancel) {
         const result = await cli(['workflow', 'cancel', runId], { json: true, timeout: CALL_MS });
-        return result.json?.ok === true ? { ok: true } : refusedWith(refusal('cancel the run', result));
+        if (result.json?.ok === true) return { ok: true };
+        // No answer at all says nothing of the cancel: it may have been taken.
+        return { ...refusedWith(refusal('cancel the run', result)), ...(result.json ? {} : { unreachable: true }) };
       }
       if (action.resume) {
         const result = await cli(['workflow', 'resume', runId, '--detach'], { json: true, timeout: CALL_MS });
