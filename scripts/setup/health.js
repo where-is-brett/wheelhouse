@@ -896,7 +896,7 @@ async function firstBriefing(project, { client, now, load, survey, autonomy }) {
     // briefing, which this briefing starts the count for.
     holdLocked: true,
   });
-  markSeen(project, { briefedAt: at, weeklyAt: at, ...(given.surveyShown ? { surveyAt: given.surveyShown } : {}) });
+  markSeen(project, { briefedAt: at, weeklyAt: at, ...(given.surveyShown ? { surveyAt: given.surveyShown } : {}), ...(given.safekeeping ? { safekeepingLevel: given.safekeeping, safekeepingAt: at } : {}) });
   return { briefing: given.text, card };
 }
 

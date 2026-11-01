@@ -42,8 +42,10 @@ export const LANE_WORKFLOWS = Object.freeze({
   bug: 'wheelhouse-bug',
   'fix-main': 'wheelhouse-fix-main',
   merge: 'archon-merge-queue',
+  reader: 'wheelhouse-reader',
 });
 const MERGE_QUEUE = LANE_WORKFLOWS.merge;
+const READER = LANE_WORKFLOWS.reader;
 
 // The forms of the pack this engine's runs may start, beside the pack's own (pack-build.js): a Copilot project's twins.
 export const ENGINE_PACK_FORMS = PACK_FORMS;
@@ -56,6 +58,8 @@ const TIERS = ['small', 'medium', 'large'];
 // The statuses of a run that hasn't ended.
 const LIVE = ['running', 'pending', 'paused'];
 const START_MS = 120000;
+// Archon keeps a run's start to the second.
+const START_CLOCK_MS = 2000;
 const CALL_MS = 60000;
 
 // The routing table's column in force as Archon `--model` values (spec 7.6): `bindings` is
@@ -359,6 +363,7 @@ export function archonAdapter({
       if (broker) return refusedWith(broker);
       if (!packDir || !configFile) return refusedWith("The engine's pack or its settings file isn't known, so nothing can start");
       if (workflow !== MERGE_QUEUE && !order.work) return refusedWith('A run needs the id of its work');
+      if (workflow === READER && !(order.card && order.project)) return refusedWith('A reader needs its card and its folder');
       // Archon's merge queue reads the repository it merges in from its inputs, and fails its first step without them.
       if (workflow === MERGE_QUEUE && !(typeof order.repo?.host === 'string' && order.repo.host && typeof order.repo?.path === 'string' && order.repo.path)) {
         return refusedWith('The merge queue needs the repository it merges in');
@@ -384,9 +389,11 @@ export function archonAdapter({
         if (!owner || !name) return refusedWith('The merge queue needs the repository it merges in');
         args.push('--project', `mirrors/${projectSlug(owner, name)}`);
       }
-      if (order.branch) args.push('--branch', order.branch);
-      if (workflow !== MERGE_QUEUE) args.push('--input', `work=${order.work}`);
-      else args.push('--input', `repo_host=${order.repo.host}`, '--input', `repo_path=${order.repo.path}`);
+      // A reader runs in place in a folder of its own, which Archon holds as a folder project: no git and no worktree.
+      if (workflow === READER) args.push('--folder', '--input', `card=${order.card}`);
+      else if (order.branch) args.push('--branch', order.branch);
+      if (workflow === MERGE_QUEUE) args.push('--input', `repo_host=${order.repo.host}`, '--input', `repo_path=${order.repo.path}`);
+      else if (workflow !== READER) args.push('--input', `work=${order.work}`);
       for (const binding of models) args.push('--model', binding);
       // Not started in the project (--cwd names it), so Bun reads nothing of the project's own.
       const result = await cli(args, { json: true, timeout: START_MS });
@@ -394,7 +401,26 @@ export function archonAdapter({
         return { ok: true, runId: result.json.runId, branch: result.json.branch ?? order.branch ?? null };
       }
       const error = String(result.json?.error ?? result.stderr ?? '').trim().split('\n')[0];
-      return refusedWith(`The engine didn't start the run${error ? ` (${error})` : ''}`);
+      // No reply in time: the run may have begun all the same (check 85).
+      const said = refusedWith(`The engine didn't start the run${error ? ` (${error})` : ''}`);
+      return result.timedOut === true ? { ...said, uncertain: true } : said;
+    },
+
+    // The live run of `work` begun since `since`, for a start that may have happened: { runId }, null for none, undefined
+    // when it can't say. Check 85: a timed-out start can leave a `pending` run with no branch or path, so a run is told by
+    // the `work` input every start gives, kept in its metadata. A pending run showing no input, or two matches, can't be
+    // told. Asked on a later tick, since `status --all` leaves out a run under about a second old. Not one of the
+    // interface's methods.
+    async liveRunOf({ work, since } = {}) {
+      const from = Date.parse(since);
+      if (typeof work !== 'string' || !Number.isFinite(from)) return undefined;
+      const listed = await cli(['workflow', 'status', '--all'], { json: true, timeout: CALL_MS });
+      if (!Array.isArray(listed.json?.runs)) return undefined;
+      const fresh = listed.json.runs.filter((r) => ![MERGE_QUEUE, READER].includes(r.workflow_name) && LIVE.includes(r.status) && Date.parse(r.started_at) >= from - START_CLOCK_MS);
+      if (fresh.some((r) => typeof r.metadata?.inputs?.work !== 'string' && r.status === 'pending')) return undefined;
+      const ours = fresh.filter((r) => r.metadata?.inputs?.work === work);
+      if (ours.length > 1) return undefined;
+      return ours.length === 1 ? { runId: ours[0].id } : null;
     },
 
     // The open asks, read once. The queue read has no cursor, so the one given comes back as it was.
@@ -466,7 +492,8 @@ export function archonAdapter({
       try { asked = JSON.parse(readOutputs(result.code === 0 && result.json?.ok !== false ? result.json : null).record ?? 'null')?.asked ?? null; } catch { return null; }
       if (asked?.by !== 'pr' || !Number.isInteger(asked.pr?.number) || typeof asked.head !== 'string') return null;
       const choices = Array.isArray(asked.attention?.choices) ? asked.attention.choices : [];
-      return { pr: asked.pr.number, head: asked.head, merge: choices.find((c) => c?.effect === 'merge')?.id ?? null };
+      const chosen = (effect) => choices.find((c) => c?.effect === effect)?.id ?? null;
+      return { pr: asked.pr.number, head: asked.head, merge: chosen('merge'), park: chosen('park') };
     },
 
     // Each task's last review in a slice's run, { [task]: output }, from Archon's own record, or null when it has no
@@ -489,10 +516,12 @@ export function archonAdapter({
     // The run's artefacts folder, where Archon's $ARTIFACTS_DIR puts what its steps write:
     // <home>/workspaces/mirrors/<owner>__<name>/artifacts/runs/<run>. A project in git alone has no owner, so `repo` is its
     // name, and the mirror its own name gives: mirrors/<project>. Null for a run id or repository that isn't a plain name.
-    // Not one of the interface's methods: the helper copies a run's preview from here.
-    artefactsOf(runId, repo) {
+    // A folder project's are under workspaces/_folder/<folder's name>. Not one of the interface's methods: the helper
+    // copies a run's preview from here.
+    artefactsOf(runId, repo, { folder } = {}) {
       const parts = typeof repo === 'string' ? repo.split('/') : [];
       const plain = (name) => typeof name === 'string' && /^[A-Za-z0-9._-]{1,128}$/.test(name) && !/^\.+$/.test(name);
+      if (folder) return plain(runId) && plain(path.basename(folder)) ? path.join(home, 'workspaces', '_folder', path.basename(folder), 'artifacts', 'runs', runId) : null;
       if (!plain(runId) || parts.length < 1 || parts.length > 2 || !parts.every(plain)) return null;
       // Archon names the workspace after the project's remote, which is its fetch mirror (env.js): mirrors/<project>.
       return path.join(home, 'workspaces', 'mirrors', parts.length === 1 ? parts[0] : projectSlug(parts[0], parts[1]), 'artifacts', 'runs', runId);
@@ -513,7 +542,10 @@ export function archonAdapter({
       const name = `work/${pr}`;
       const current = await cli(['state', 'get', name], { json: true, cwd: project, timeout: CALL_MS });
       const revision = Number.isInteger(current.json?.revision) ? current.json.revision : 0;
-      const value = readyWorkItem({ repo, pr, url, at, runId });
+      // The queue passes over an item whose repository isn't { host, path }, and says nothing (check 90).
+      let host = null;
+      try { host = new URL(url).hostname; } catch { return refusedWith('A hand-over needs the pull request\'s address'); }
+      const value = readyWorkItem({ repo: { host, path: repo }, pr, url, at, runId });
       const put = await cli(['state', 'put', name, '--if-revision', String(revision)], { json: true, cwd: project, input: JSON.stringify(value), timeout: CALL_MS });
       if (put.code === 0 && put.json?.ok !== false) return { ok: true };
       return refusedWith(refusal('take the pull request into its merge queue', put));

@@ -94,7 +94,7 @@ import { DEFAULT_GITLAB, gitlabBase, readGitlabHosts } from '../host/gitlab-base
 import { readKey, writeKey } from '../host/keys.js';
 import { switchOnProtection, protectionStatus, readGitlabProtection } from '../host/protection.js';
 import { askSecret as realAskSecret } from '../secrets/secret-box.js';
-import { writeProject, readProject } from '../lib/projects.js';
+import { projectForFolder, writeProject, readProject } from '../lib/projects.js';
 import { openProjectRecord, openSettings, STATE_BRANCH } from '../state/record.js';
 import { sameRemote } from '../state/git.js';
 import { listEvents } from '../state/events.js';
@@ -102,8 +102,10 @@ import { joinedRepo, runClosed, JOIN_STEP } from '../lib/setup-run.js';
 import { readProfileViews, PROFILE_BRANCH } from '../profile/store.js';
 import { toolsStatus, originUrl, applyCompanyCa } from './tools.js';
 import {
-  KEEP_HERE, PUT_ON_GITHUB, applyLocal, branchAsk, branchesOf, chooseBranch, headBranch, keptAsk, localCard, localName, localSteps, remotesOf,
+  KEEP_HERE, PUT_ON_GITHUB, applyLocal, backupAnswered, backupChoice, branchAsk, branchesOf, chooseBranch, headBranch, keptAsk, localCard, localName, localSteps, remotesOf,
 } from './local.js';
+import { pickFolder, timeMachine } from '../host/local/backup.js';
+import { backupNamed, projectOfBackup } from '../host/local/restore.js';
 import { caFile, probeCertificate, companyGitEnv } from '../host/company-ca.js';
 import {
   appName, appSlug, checkOwnApp, ensureOwnApp, ownAppCode, ownAppFrom, readOwnApp, recordOwnApp, helperProfile, sameLogin, shadowedOwnApp,
@@ -391,6 +393,12 @@ export function slugFor(repo) {
   return projectSlug(parts.slice(0, -1).join('__'), parts.at(-1));
 }
 
+// The same folder name, or the one this folder's project already has: a project that moved to a host keeps its own.
+function slugHere(folder, repo) {
+  const here = projectForFolder(folder);
+  return here?.record.repo === repo ? here.project : slugFor(repo);
+}
+
 const projectFile = (slug) => path.join(stateDir(slug), '..', 'project.json');
 
 // ---- The questions ----
@@ -460,6 +468,7 @@ function joinAsk(id, name, { missed }) {
   const other = fromOtherComputer(name);
   let found = '';
   if (missed?.missed === 'not-a-name') found = `"${missed.name}" is not a repository's name. `;
+  else if (missed?.missed === 'no-backup') found = `"${missed.name}" can't be found. `;
   else if (Array.isArray(missed?.missed)) found = `More than one ${missed.name} is set up with Wheelhouse: ${missed.missed.slice(0, 5).join(', ')}. `;
   else if (missed) found = `Setup found no ${missed.name} set up with Wheelhouse on your account or organisations. `;
   return {
@@ -467,7 +476,7 @@ function joinAsk(id, name, { missed }) {
     typed: true,
     card: {
       level: 2,
-      what: `${found}Where should ${name} be kept? If it is one you set up with Wheelhouse on your other computer under another name, or to say which one, type its owner/name.`,
+      what: `${found}Where should ${name} be kept? If it is one you set up with Wheelhouse on your other computer under another name, or to say which one, type its owner/name. To bring it back from a backup, type where the backup file is.`,
       why: 'On this computer it needs no account. A product set up on another computer is checked out into this folder with its plans and settings, never made again.',
       options: [
         { label: KEEP_HERE, says: 'A new product. Nothing goes online, and it can move later in one click.' },
@@ -527,6 +536,9 @@ export function joinedFolder(folder, run = null) {
 // R51), so no answer is used again for a name that wasn't found.
 function joinChoice(ctx) {
   const run = typeof ctx.runId === 'string' ? readJournal().runs.find((r) => r?.id === ctx.runId) ?? null : null;
+  // A project brought back from a backup goes on being so, once its folder has filled.
+  const restore = backupAnswered(ctx.answers);
+  if (restore !== null) return { restore };
   // A folder checked out to a joined repository is joined to it for good (ruling R102).
   const fixed = joinedFolder(ctx.folder, run);
   if (fixed !== null) return { join: fixed, known: fixed };
@@ -545,6 +557,10 @@ function joinChoice(ctx) {
     if (got.label === KEEP_HERE) return { host: 'local' };
     if (got.label === HOST_LABELS.github) return { host: 'github' };
     if (got.label === HOST_LABELS.gitlab) return { host: 'gitlab' };
+    if (backupNamed(got.text) !== null) {
+      tried.push({ name: got.text.trim().slice(0, 100), missed: 'no-backup' });
+      continue;
+    }
     if (typeof got.text === 'string') {
       const wanted = repoNamed(got.text);
       if (wanted === null) {
@@ -822,17 +838,17 @@ async function repoInfo({ host, repo, run, api }) {
 
 // Makes a private repository on the director's own account, with a first commit on main (a README).
 // A repository the folder's own history goes to starts empty.
-async function createRepo({ host, owner, name, run, api, empty = false }) {
+async function createRepo({ host, owner, name, run, api, empty = false, isPrivate = true }) {
   const repo = `${owner}/${name}`;
   if (host === 'github') {
-    const args = ['repo', 'create', repo, '--private', ...(empty ? [] : ['--add-readme'])];
+    const args = ['repo', 'create', repo, isPrivate ? '--private' : '--public', ...(empty ? [] : ['--add-readme'])];
     const made = await ask(run, host, args);
-    if (made.code !== 0) throw new Error(`GitHub did not make the private repository ${repo}`);
+    if (made.code !== 0) throw new Error(`GitHub did not make the repository ${repo}`);
   } else {
     const made = await api.post('/projects', {
-      name, path: name, visibility: 'private', initialize_with_readme: true, default_branch: 'main',
+      name, path: name, visibility: isPrivate ? 'private' : 'public', initialize_with_readme: !empty, default_branch: 'main',
     });
-    if (made.status < 200 || made.status >= 300) throw new Error(`GitLab did not make the private project ${repo} (HTTP ${made.status})`);
+    if (made.status < 200 || made.status >= 300) throw new Error(`GitLab did not make the project ${repo} (HTTP ${made.status})`);
   }
   const info = await repoInfo({ host, repo, run, api });
   if (info === null) throw new Error(`${repo} on ${NAME[host]} was made but can't be found`);
@@ -1512,16 +1528,92 @@ export function hostStep({
   // Whether GitLab's certificate is trusted from here, and how the company's is given to the tools
   // (company-ca.js, tools.js): stand-ins in tests.
   certificateProbe = probeCertificate, trustCertificate = applyCompanyCa,
+  pick = pickFolder,
 } = {}) {
   // The settings routes through the helper, for the person's own app's record: `profileRoutes`
   // stands in for them in tests; otherwise made when apply needs them.
   const profileFor = () => profileRoutes ?? helperProfile();
+  // The narrow connection to `project` (repoInfo's): the app, or a GitLab key. Gives the app's installation on the project's
+  // account, kept in its record (ruling R83), or null.
+  async function connectNarrow({ host, narrowApp, project, projectOwner, user, platform, now, say, halt, opener, record, api }) {
+    let installationId = null;
+    if (host === 'github') {
+      // The app the card named, by its client ID and name; or their own, made or found now.
+      let app = narrowApp;
+      const own = app.own === true;
+      if (own && typeof app.clientId !== 'string') {
+        let recorded = null;
+        try {
+          recorded = ownAppFrom(await profileFor().views());
+        } catch { /* found again on GitHub by its name */ }
+        const found = await ensureOwnApp({
+          account: projectOwner, user, name: app.name ?? appName(projectOwner), recorded, run, say, open: opener, sleep, now, halt,
+        });
+        app = { clientId: found.clientId, slug: found.slug, own: true, owner: found.owner };
+      } else if (own) {
+        // The recorded app, at use: GitHub's owner must be the record's and the project's (R57).
+        await checkOwnApp({ app, account: projectOwner, run });
+      }
+      if (typeof app.slug !== 'string') throw new Error(NO_APP_LISTED);
+      // One app's keys per computer (ruling R58): never overwrite keys serving another app.
+      const keptId = keptAppInstalled();
+      if (keptId !== null && keptId !== app.clientId) {
+        throw new Error(oneAppLine({ kept: appWords(keptId, { appFile, views }), using: own ? 'your own app' : 'the Wheelhouse app', where: `${project.repo} on ${NAME[host]}` }));
+      }
+      const installations = await connectGithubApp({
+        app, repos: [project.repo], fetch, say, open: opener, sleep, now, record, halt,
+        ...(own ? { startCode: () => ownAppCode({ app, account: projectOwner, run, fetch, say, open: opener, sleep, now, halt }) } : {}),
+      });
+      installationId = installations[accountOf(project.repo)] ?? null;
+      // Their own app, once connected, kept in the director's settings on this computer.
+      if (own) {
+        halt();
+        await recordOwnApp({ clientId: app.clientId, slug: app.slug, owner: app.owner }, { record, profile: profileFor() });
+      }
+    } else {
+      await connectGitlabKeys({
+        api, projects: [project], owner: user, platform, say, open: opener, askSecret, now, record, halt,
+      });
+    }
+    return installationId;
+  }
+
   return {
     n: 3,
     title: SETUP_TITLES[3],
     long: true,
     after: [2],
     asksDuring: [2],
+    // The host steps a project in git alone skipped, for its move (spec 9): the sign-in, its repository, and the connection, narrow
+    // where setup would insist on it. Gives the project's record, written by the move. `ours` is the repository an earlier try
+    // of this move made, and `made(repo)` keeps its name before it is made, so a try cut short carries on with it.
+    async forProject({ host, private: isPrivate = true, folder, say = () => {}, stopped = () => false, made = () => {}, ours = null, narrow = false, locked = false, platform = process.platform, now = () => new Date() }) {
+      const halt = () => {
+        if (stopped()) throw new Error(STOPPED);
+      };
+      const base = DEFAULT_GITLAB;
+      const opener = open ?? ((url) => openPage(url, { platform, run }));
+      const git = await findGit({ platform, run });
+      if (!git?.ok || typeof git.path !== 'string') throw new Error('git is not on this computer yet');
+      const { user } = await signIn({ host, run, say, stopped, base, open: opener, askSecret, platform });
+      halt();
+      const api = host === 'gitlab' ? await gitlab({ run, fetch, baseUrl: base }) : null;
+      const name = repoName(folder);
+      const repo = `${user}/${name}`;
+      let project = await repoInfo({ host, repo, run, api });
+      if (project !== null && ours !== repo) throw new Error(`${repo} on ${NAME[host]} already exists, so the move has not used it: rename it there or rename this folder, then try again`);
+      if (project === null) {
+        made(repo);
+        project = await createRepo({ host, owner: user, name, run, api, empty: true, isPrivate });
+      }
+      halt();
+      const app = narrow && host === 'github' ? appFor({ appFile, views }) : null;
+      if (narrow && host === 'github' && (app?.own === true || typeof app?.clientId !== 'string')) throw new Error('This project needs a narrow connection, and that is set up through the Wheelhouse app: set it up, then try again');
+      const installationId = narrow ? await connectNarrow({ host, narrowApp: app, project, projectOwner: user, user, platform, now, say, halt, opener, record: () => {}, api }) : null;
+      const mode = narrow ? 'narrow' : 'quick';
+      return { folder, remoteUrl: hostUrl({ host, repo: project.repo, base }), host, repo: project.repo, connection: connectionFor({ host, mode, repo: project.repo, id: project.id, locked, installationId, base }) };
+    },
+
     async plan(ctx) {
       const platform = ctx.platform ?? process.platform;
       const answers = ctx.answers ?? {};
@@ -1530,7 +1622,9 @@ export function hostStep({
       // holding only step 1's install.
       const join = joinChoice(ctx);
       if (join?.ask) return { ask: join.ask };
-      let product = join === null || join.host !== undefined ? productOf(ctx.folder, { config: readGitlabHosts(ctx.folder) })
+      const restoring = join?.restore ?? null;
+      let product = restoring !== null ? { isNew: false, host: 'local', repo: null, name: projectOfBackup(restoring), others: [], restoring: true }
+        : join === null || join.host !== undefined ? productOf(ctx.folder, { config: readGitlabHosts(ctx.folder) })
         : { isNew: false, joining: true, host: null, repo: join.join.includes('/') ? join.join : join.known, name: join.join.split('/').at(-1) };
       // Real users and Locked are the first computer's questions; a joining computer reads whether
       // the product is launched from what it checks out, and its step 8 asks Locked.
@@ -1553,7 +1647,7 @@ export function hostStep({
         const { label } = answer('host');
         host = label === KEEP_HERE ? 'local' : label === HOST_LABELS.gitlab ? 'gitlab' : 'github';
       }
-      if (product.host === 'local') {
+      if (product.host === 'local' && !product.restoring) {
         if (answer('kept') === null) return { ask: keptAsk(product.name, product.others) };
         if (answer('kept').label === PUT_ON_GITHUB) host = 'github';
       }
@@ -1566,10 +1660,14 @@ export function hostStep({
         branch = answer(id).label;
       }
       if (host === 'local') {
+        const machine = answer('backup') === null && (await timeMachine({ run, platform })).on;
+        const backup = backupChoice({ answer, name: product.name, root: ctx.folder, machine });
+        if (backup.ask) return { ask: backup.ask };
         if (ctx.choicesOnly === true) return { wait: 0, why: 'every choice of step 3 is made' };
         const project = localName(ctx.folder, product.name);
-        const noGit = !fs.existsSync(path.join(ctx.folder, '.git'));
-        const changes = localSteps({ folder: ctx.folder, project, branch, noGit, noCommit: noGit || !hasHistory(ctx.folder), locked });
+        const noGit = restoring === null && !fs.existsSync(path.join(ctx.folder, '.git'));
+        const noCommit = restoring === null && (noGit || !hasHistory(ctx.folder));
+        const changes = localSteps({ folder: ctx.folder, project, branch, noGit, noCommit, locked, restore: restoring, backup: backup.folder });
         return { changes, card: localCard({ changes, branch, others: product.others ?? [] }), director: 'One click' };
       }
       // A folder with its own history, sent to a new private repository on the director's account.
@@ -1683,7 +1781,7 @@ export function hostStep({
         kind: 'host', target: host, action: 'connection', mode, locked, ...(host === 'gitlab' && base !== DEFAULT_GITLAB ? { base } : {}),
         ...(mode === 'narrow' && host === 'github' ? { app, ...(appKeys === null ? {} : { appKeys }) } : {}),
       });
-      const slug = repo === null ? null : slugFor(repo);
+      const slug = repo === null ? null : slugHere(ctx.folder, repo);
       changes.push({ kind: 'file', target: slug === null ? path.join(wheelhouseHome(), 'projects') : projectFile(slug), action: 'project', repo });
       // The project's private record on this computer, opened, never cloned (design section 24.1).
       changes.push({ kind: 'folder', target: slug === null ? path.join(wheelhouseHome(), 'projects') : stateDir(slug), action: 'state', repo });
@@ -1746,7 +1844,7 @@ export function hostStep({
       if (host === 'local') {
         const found = await findGit({ platform, run });
         if (!found?.ok || typeof found.path !== 'string') throw new Error('git is not on this computer yet; step 2 installs it');
-        return applyLocal({ ctx, changes, run, gitPath: found.path, say, halt });
+        return applyLocal({ ctx, changes, run, gitPath: found.path, say, halt, pick, isEmpty: onlyInstall });
       }
       // The company's certificate comes before anything reaches the host. The address is the connection's
       // own, checked before anything is run; the certificate and glab's setting are made, and the git
@@ -1820,7 +1918,7 @@ export function hostStep({
       const project = await repoInfo({ host, repo: projectRepo, run, api });
       if (project === null) throw new Error(`${projectRepo} on ${NAME[host]} can't be found with your sign-in`);
       halt();
-      const slug = slugFor(project.repo);
+      const slug = slugHere(ctx.folder, project.repo);
       const remoteUrl = urlFor({ host, repo: project.repo });
       // The project's private record, opened on this computer with no remote, and the director's
       // settings beside it (design section 24.1): nothing is pushed. The settings are every
@@ -1845,44 +1943,7 @@ export function hostStep({
       // The app's installation on the project's account, kept in its record (ruling R83).
       let installationId = null;
       if (connection.mode === 'narrow') {
-        if (host === 'github') {
-          // The app the card named, by its client ID and name; or their own, made or found now.
-          let app = narrowApp;
-          const own = app.own === true;
-          if (own && typeof app.clientId !== 'string') {
-            let recorded = null;
-            try {
-              recorded = ownAppFrom(await profileFor().views());
-            } catch { /* found again on GitHub by its name */ }
-            const found = await ensureOwnApp({
-              account: projectOwner, user, name: app.name ?? appName(projectOwner), recorded, run, say, open: opener, sleep, now, halt,
-            });
-            app = { clientId: found.clientId, slug: found.slug, own: true, owner: found.owner };
-          } else if (own) {
-            // The recorded app, at use: GitHub's owner must be the record's and the project's (R57).
-            await checkOwnApp({ app, account: projectOwner, run });
-          }
-          if (typeof app.slug !== 'string') throw new Error(NO_APP_LISTED);
-          // One app's keys per computer (ruling R58): never overwrite keys serving another app.
-          const keptId = keptAppInstalled();
-          if (keptId !== null && keptId !== app.clientId) {
-            throw new Error(oneAppLine({ kept: appWords(keptId, { appFile, views }), using: own ? 'your own app' : 'the Wheelhouse app', where: `${project.repo} on ${NAME[host]}` }));
-          }
-          const installations = await connectGithubApp({
-            app, repos: [project.repo], fetch, say, open: opener, sleep, now, record, halt,
-            ...(own ? { startCode: () => ownAppCode({ app, account: projectOwner, run, fetch, say, open: opener, sleep, now, halt }) } : {}),
-          });
-          installationId = installations[accountOf(project.repo)] ?? null;
-          // Their own app, once connected, kept in the director's settings on this computer.
-          if (own) {
-            halt();
-            await recordOwnApp({ clientId: app.clientId, slug: app.slug, owner: app.owner }, { record, profile: profileFor() });
-          }
-        } else {
-          await connectGitlabKeys({
-            api, projects: [project], owner: user, platform, say, open: opener, askSecret, now, record, halt,
-          });
-        }
+        installationId = await connectNarrow({ host, narrowApp, project, projectOwner, user, platform, now, say, halt, opener, record, api });
       }
       halt();
       const kept = { folder: ctx.folder, remoteUrl, host, repo: project.repo, connection: connectionFor({ host, mode: connection.mode, repo: project.repo, id: project.id, locked: connection.locked === true, installationId, base }) };

@@ -3,10 +3,12 @@
 // model bindings and test command; work for a project whose tests Wheelhouse can't run waits, said once.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import path from 'node:path';
-import { dispatchRun, orderFor, TRY_AGAIN } from '../../../scripts/engine/dispatch-run.js';
+import { dispatchRun, orderFor, TRY_AGAIN, STOP_HERE, BUILD_AGAIN } from '../../../scripts/engine/dispatch-run.js';
 import { fakeEngine } from '../../../scripts/engine/fake.js';
 import { tempFolder } from '../../helpers/homes.js';
+import { wayBack, asking, askingTwice, forever, quiet } from '../../helpers/way-back.js';
 
 const views = () => ({
   work: { 'card-1': { work: { id: 'w-1', at: '2026-10-29T08:00:00.000Z', data: { id: 'card-1', title: 'The sale banner', lane: 'quick', visible: false, dependsOn: [] } }, approved: false, since: '2026-10-29T08:00:00.000Z' } },
@@ -25,6 +27,38 @@ function setUp(config) {
   });
   return { d, starts, written };
 }
+
+test('a move to a host holds new work', async () => {
+  const dir = tempFolder('wh-dr-');
+  let moving = true;
+  const starts = [];
+  const d = dispatchRun({
+    engine: fakeEngine(), project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'), readViews: views, config: () => ({ testCommand: 'node --test' }), moving: () => moving,
+    start: async (args) => { starts.push(args); return { ok: true, runId: `run-${starts.length}` }; },
+    now: () => new Date('2026-10-29T10:00:00.000Z'),
+  });
+  await d.tick();
+  assert.equal(starts.length, 0);
+  moving = false;
+  await d.tick();
+  assert.equal(starts.length, 1);
+});
+
+test('a project that has moved to a host no longer sweeps the local queue', async () => {
+  const dir = tempFolder('wh-dr-');
+  let local = true;
+  let sweeps = 0;
+  const d = dispatchRun({
+    engine: fakeEngine(), project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'), readViews: () => ({ work: {}, runs: {}, questions: {} }), config: () => ({ testCommand: 'node --test' }),
+    readyOf: () => ({ 7: { head: 'a'.repeat(40), runId: 'r', showFirst: false, work: 'w' } }), isLocal: () => local, localQueue: async () => { sweeps += 1; },
+    now: () => new Date('2026-10-29T10:00:00.000Z'),
+  });
+  await d.tick();
+  assert.equal(sweeps, 1);
+  local = false;
+  await d.tick();
+  assert.equal(sweeps, 1);
+});
 
 test('the order carries the project\'s model bindings and its test command', async () => {
   const t = setUp({ routing: { tiers: { large: 'model-a', medium: 'model-b' } }, testCommand: 'node --test' });
@@ -80,7 +114,7 @@ test('a red head goes back with its tail in the order, reason red', async () => 
   assert.equal(t.starts.length, 1, 'started once for each red');
 });
 
-test('a red whose start is refused is tried again, with one line in the Logbook', async () => {
+test('a red whose start is refused is tried again with one line in the Logbook, and a second refusal brings a card', async () => {
   let refusing = true;
   const t = sentBackWorld({ refuse: () => refusing });
   t.d.sentBack('card-1', 'red', 'a test failed');
@@ -88,10 +122,15 @@ test('a red whose start is refused is tried again, with one line in the Logbook'
   await t.d.tick();
   assert.equal(t.starts.length, 2);
   assert.equal(t.written.filter((w) => w.kind === 'note').length, 1);
-  refusing = false;
+  const card = t.written.find((w) => w.kind === 'question').data;
+  assert.deepEqual(card.options.map((o) => o.label), [TRY_AGAIN, STOP_HERE]);
   await t.d.tick();
+  assert.equal(t.starts.length, 2, 'nothing starts until the director says');
+  refusing = false;
+  t.see({ ...ranOnce(), questions: { [card.id]: { answer: { label: TRY_AGAIN } } } });
   await t.d.tick();
   assert.equal(t.starts.length, 3);
+  assert.equal(t.starts[2].order.checkTail, 'a test failed');
 });
 
 test('a second red raises a card', async () => {
@@ -145,10 +184,12 @@ test('a clash still re-queues as before, with no tail', async () => {
 test('work started again carries the director\'s answers in its order, and no others', async () => {
   const t = setUp({ routing: {}, testCommand: 'node --test' });
   const answers = [{ question: 'Task 2, Show refunds: Should a part refund show as its own line?', answer: 'Its own line' }];
-  assert.equal((await t.d.startAgain({ work: 'card-1', lane: 'quick', branch: 'wh/card-1', carryOn: true, answers })).ok, true);
+  t.d.enter({ work: 'card-1', lane: 'quick', via: 'rework', key: 'first', branch: 'wh/card-1', carryOn: true, answers });
+  await t.d.tick();
   assert.deepEqual(t.starts[0].order.answers, answers);
   assert.equal(t.starts[0].carryOn, true);
-  await t.d.startAgain({ work: 'card-1', lane: 'quick', branch: 'wh/card-1', carryOn: true });
+  t.d.enter({ work: 'card-1', lane: 'quick', via: 'rework', key: 'second', branch: 'wh/card-1', carryOn: true });
+  await t.d.tick();
   assert.deepEqual(t.starts[1].order.answers, []);
 });
 
@@ -317,4 +358,619 @@ test('a project with a host still starts Archon\'s queue', async () => {
     readyOf: () => ({ 1: { work: 'a', head: 'h' } }), repoOf: () => ({ host: 'github.com', path: 'o/p' }), queueFolder: async () => ({ ok: true, folder: dir }),
   }).tick();
   assert.equal(starts[0]?.lane, 'merge');
+});
+
+test('each card the dispatcher writes is told to the seals, after it is written, and a failure there costs nothing', async () => {
+  const dir = tempFolder('wh-dr-');
+  const written = [];
+  const told = [];
+  const held = { ...fakeEngine(), countsRequests: () => true, requestsConfirmed: true };
+  const d = dispatchRun({
+    engine: held, project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'), readViews: views,
+    config: () => ({ routing: {}, testCommand: 'node --test' }), settings: () => ({ engineLanes: ['quick'] }),
+    start: async () => ({ ok: true, runId: 'run-1' }), spentThisMonth: () => 0,
+    write: async (kind, data) => { written.push({ kind, data }); },
+    onCard: (card) => { told.push({ ...card, written: written.some((w) => w.kind === 'question' && w.data.id === card.id) }); throw new Error('the seal broke'); },
+    now: () => new Date('2026-10-29T10:00:00.000Z'),
+  });
+  await d.tick();
+  const card = written.find((w) => w.kind === 'question');
+  assert.ok(card, 'the requests card is written');
+  assert.deepEqual(told, [{ id: card.data.id, kind: 'requests', work: 'card-1', level: 3, written: true }]);
+});
+
+test('waitingWork joins the card router\'s pieces and the dispatcher\'s own cards', async () => {
+  const dir = tempFolder('wh-dr-');
+  const file = path.join(dir, 'dispatch.json');
+  fs.writeFileSync(file, JSON.stringify({ clashAsked: { 'card-2': 'q-card-2-1' }, features: { f: { asked: 'q-f-1' } } }));
+  const seen = { questions: { 'q-card-2-1': { question: {} }, 'q-f-1': { question: {}, answer: { label: 'Stop here' } } } };
+  const d = dispatchRun({ engine: fakeEngine(), project: 'p', folder: dir, file, readViews: () => seen, config: () => ({ testCommand: 'node --test' }) });
+  assert.deepEqual([...d.waitingWork()], ['card-2']);
+  d.onWaiting(() => new Set(['card-1']));
+  assert.deepEqual([...d.waitingWork()].sort(), ['card-1', 'card-2']);
+  d.onWaiting(() => { throw new Error('the router can\'t say'); });
+  assert.deepEqual([...d.waitingWork()], ['card-2']);
+});
+
+// A project with `pieces` queued, for what a piece keeps while it waits. `world.waiting` is what the runner says.
+function parking({ pieces = { a: ['expected.js'] }, reads = () => ['built.js'] } = {}) {
+  const dir = tempFolder('wh-dr-');
+  const file = path.join(dir, 'dispatch.json');
+  const at = '2026-10-29T08:00:00.000Z';
+  const world = {
+    now: new Date('2026-10-29T10:00:00.000Z'), reads: [], written: [], waiting: new Set(), reports: {}, runs: Object.fromEntries(Object.keys(pieces).map((id) => [id, [{ at: '2026-10-29T09:00:00.000Z', data: { work: id, runId: `run-${id}`, lane: 'quick', state: 'paused', branch: `wh/${id}` } }]])),
+  };
+  const work = Object.fromEntries(Object.entries(pieces).map(([id, files]) => [id, { work: { id: `w-${id}`, at, data: { id, title: `Piece ${id}`, lane: 'quick', visible: false, dependsOn: [] } }, approved: false, since: at, files }]));
+  const make = () => {
+    const d = dispatchRun({
+      engine: fakeEngine(), project: 'p', folder: dir, file, readViews: () => ({ work, runs: world.runs, questions: {}, reports: world.reports }), config: () => ({ testCommand: 'node --test' }),
+      start: async () => ({ ok: true, runId: 'new' }), write: async (kind, data) => { world.written.push({ kind, data }); }, now: () => world.now,
+      branchPaths: async (args) => { world.reads.push(args); return reads(world.reads.length); },
+    });
+    d.onWaiting(() => world.waiting);
+    return d;
+  };
+  return { d: make(), make, world, file };
+}
+const notesOf = (t) => t.world.written.filter((w) => w.kind === 'note').map((w) => w.data.words);
+
+test('a piece parks with its expected files and every path its branch changed', async () => {
+  const t = parking();
+  t.world.waiting = new Set(['a']);
+  await t.d.tick();
+  assert.deepEqual(t.world.reads, [{ runId: 'run-a', branch: 'wh/a' }]);
+  assert.deepEqual(t.d.reserved(), { a: ['expected.js', 'built.js'] });
+});
+
+test('a parking is read once, and a later parking adds to what is reserved', async () => {
+  const t = parking({ reads: (n) => [`built-${n}.js`] });
+  t.world.waiting = new Set(['a']);
+  await t.d.tick();
+  await t.d.tick();
+  assert.equal(t.world.reads.length, 1);
+  t.world.waiting = new Set();
+  await t.d.tick();
+  assert.deepEqual(t.d.reserved(), { a: ['expected.js', 'built-1.js'] }, 'what parked stays reserved through the gap');
+  t.world.waiting = new Set(['a']);
+  await t.d.tick();
+  assert.deepEqual(t.d.reserved(), { a: ['expected.js', 'built-1.js', 'built-2.js'] });
+});
+
+test('an unreadable branch keeps the expected files and is read again', async () => {
+  const t = parking({ reads: (n) => (n < 3 ? null : ['built.js']) });
+  t.world.waiting = new Set(['a']);
+  await t.d.tick();
+  assert.deepEqual(t.d.reserved(), { a: ['expected.js'] });
+  await t.d.tick();
+  assert.equal(t.world.reads.length, 2, 'read again on the next tick');
+  assert.deepEqual(notesOf(t).filter((w) => /couldn't be read/.test(w)).length, 1, 'one Logbook line');
+  assert.match(notesOf(t)[0], /Piece a/);
+  await t.d.tick();
+  assert.deepEqual(t.d.reserved(), { a: ['expected.js', 'built.js'] });
+  await t.d.tick();
+  assert.equal(t.world.reads.length, 3, 'read, so not read again');
+});
+
+test('a read that throws counts as unreadable, and costs the tick nothing', async () => {
+  const t = parking({ reads: () => { throw new Error('no folder'); } });
+  t.world.waiting = new Set(['a']);
+  await t.d.tick();
+  assert.deepEqual(t.d.reserved(), { a: ['expected.js'] });
+});
+
+test('a reservation ends with the piece\'s merge or end, and never by time', async () => {
+  for (const outcome of ['merged', 'closed']) {
+    const t = parking();
+    t.world.waiting = new Set(['a']);
+    await t.d.tick();
+    t.world.waiting = new Set();
+    t.world.now = new Date('2027-10-29T10:00:00.000Z');
+    await t.d.tick();
+    assert.deepEqual(t.d.reserved(), { a: ['expected.js', 'built.js'] }, 'a year on, it stands');
+    t.world.reports = { a: { at: '2027-10-29T09:00:00.000Z', data: { work: 'a', outcome } } };
+    await t.d.tick();
+    assert.deepEqual(t.d.reserved(), {}, outcome);
+  }
+});
+
+test('a blocked report ends no reservation', async () => {
+  const t = parking();
+  t.world.waiting = new Set(['a']);
+  await t.d.tick();
+  t.world.reports = { a: { at: '2026-10-29T09:30:00.000Z', data: { work: 'a', outcome: 'blocked' } } };
+  await t.d.tick();
+  assert.deepEqual(Object.keys(t.d.reserved()), ['a']);
+});
+
+test('release ends a reservation at once, and one that lands during a read isn\'t put back', async () => {
+  const t = parking();
+  t.world.waiting = new Set(['a']);
+  await t.d.tick();
+  t.d.release('a');
+  assert.deepEqual(t.d.reserved(), {});
+  t.d.release('never-reserved');
+
+  const during = parking({ reads: () => { during.d.release('a'); return ['built.js']; } });
+  during.world.waiting = new Set(['a']);
+  await during.d.tick();
+  assert.deepEqual(during.d.reserved(), {});
+});
+
+test('reservations are kept across a restart', async () => {
+  const t = parking();
+  t.world.waiting = new Set(['a']);
+  await t.d.tick();
+  const again = t.make();
+  assert.deepEqual(again.reserved(), { a: ['expected.js', 'built.js'] });
+  await again.tick();
+  assert.equal(t.world.reads.length, 1, 'that parking was read already');
+});
+
+test('a dispatch.json with no reservations reads as none', async () => {
+  const t = parking();
+  fs.writeFileSync(t.file, JSON.stringify({ features: {}, clashAsked: {} }));
+  assert.deepEqual(t.make().reserved(), {});
+});
+
+test('nothing is reserved for work that has gone or ended', async () => {
+  const t = parking();
+  t.world.waiting = new Set(['gone']);
+  await t.d.tick();
+  t.world.reports = { a: { at: '2026-10-29T09:30:00.000Z', data: { work: 'a', outcome: 'merged' } } };
+  t.world.waiting = new Set(['a']);
+  await t.d.tick();
+  assert.deepEqual(t.d.reserved(), {});
+  assert.deepEqual(t.world.reads, []);
+});
+
+test('a piece with no run yet reserves its expected files, with nothing to read', async () => {
+  const t = parking();
+  t.world.runs = {};
+  t.world.waiting = new Set(['a']);
+  await t.d.tick();
+  assert.deepEqual(t.d.reserved(), { a: ['expected.js'] });
+  assert.deepEqual(t.world.reads, []);
+  assert.deepEqual(notesOf(t), []);
+});
+
+test('the tick gives dispatch what waits and what is reserved, so a waiting piece frees its place', async () => {
+  const t = parking({ pieces: { a: ['one.js'], b: [], c: [] } });
+  t.world.waiting = new Set(['a', 'b', 'c']);
+  await t.d.tick();
+  assert.deepEqual(t.d.reserved().a, ['one.js', 'built.js']);
+  const w = wayBack({ recordings: { a: asking('qa'), b: quiet() }, pace: 1 });
+  w.put('a', { place: 0 });
+  w.put('b', { place: 1, files: ['free.js'] });
+  await w.tick(2);
+  assert.equal(w.runsOf('b').length, 1, 'b starts once a parks');
+});
+
+// Delegated decisions design, section 8.3: every way back passes one check, at most once.
+// A piece whose run has ended, asking to go back; `live` is the engine's word on a start that may have happened.
+async function uncertainStart({ live }) {
+  const w = wayBack({ recordings: { a: quiet(), forever: forever() }, pace: 1 });
+  w.put('a');
+  await w.tick(2);
+  if (live) w.engine.liveRunOf = live;
+  w.dispatcher.enter({ work: 'a', lane: 'quick', via: 'rework', key: 'k', branch: 'wh/a', carryOn: true });
+  return w;
+}
+const parked = async (over = {}) => {
+  const w = wayBack({ recordings: { a: asking('qa'), busy: asking('qbusy') }, pace: 1, ...over });
+  w.put('a', { place: 0 });
+  w.put('busy', { place: 1 });
+  await w.tick(3);
+  return w;
+};
+const entered = (w) => JSON.parse(fs.readFileSync(path.join(w.dir, 'dispatch.json'), 'utf8'));
+
+test('the click is recorded and the card closes at once, and delivery waits for a place', async () => {
+  const w = await parked({ recordings: { a: asking('qa'), busy: forever() } });
+  w.answer('a', 'Do the whole page');
+  await w.tick(3);
+  assert.equal(w.cardOf('a'), null, 'the card has closed');
+  assert.equal(w.answers().length, 0, 'the answer waits for a place');
+  assert.equal(entered(w).returning.length, 1);
+  w.engine.act(w.runsOf('busy')[0], { cancel: { reason: 'done' } });
+  await w.tick(2);
+  assert.deepEqual(w.answers().map((c) => c.action.answer.ask), ['qa']);
+});
+
+test('a path\'s entry stays until its run is seen to start', async () => {
+  const w = await uncertainStart({});
+  w.refuse = () => 'no';
+  await w.tick();
+  assert.equal(entered(w).returning.length, 1, 'refused: still on returning');
+});
+
+test('each path asks: pace full means no start, and a free place one start', async () => {
+  const SLICES = { text: `# F\n\n\`\`\`wheelhouse-slices\n${JSON.stringify({ goal: 'F', flag: { name: 'f' }, demo: 'end', slices: [{ title: 'One', goal: 'One', done: [{ test: 'one' }] }, { title: 'Two', goal: 'Two', done: [{ test: 'two' }] }] })}\n\`\`\`\n` };
+  const blocked = asking('qa', { kind: 'blocked', options: [{ id: 'rework', label: 'Send it back' }, { id: 'stop', label: 'Stop' }], context: { question: 'Which?' } });
+  // A piece running in the one place, by the record alone.
+  const fill = (w) => {
+    w.put('filler', { place: 9 });
+    w.runs.filler = [{ at: w.clock.now.toISOString(), data: { work: 'filler', runId: 'run-filler', lane: 'quick', state: 'started' } }];
+  };
+  const free = (w) => w.runs.filler.push({ at: w.clock.now.toISOString(), data: { work: 'filler', runId: 'run-filler', lane: 'quick', state: 'ended', outcome: 'completed' } });
+  const paths = {
+    rework: { recordings: { a: [blocked, quiet()] }, go: async (w) => {
+      await w.tick();
+      w.answer('a', 'Send it back');
+      while (w.answers().length === 0) await w.tick();
+      fill(w);
+    } },
+    requeue: { recordings: { a: quiet() }, go: async (w) => {
+      await w.tick(2);
+      fill(w);
+      w.dispatcher.sentBack('a');
+    } },
+    'Try again': { recordings: { a: quiet() }, go: async (w) => {
+      await w.tick(2);
+      w.dispatcher.sentBack('a');
+      await w.tick(2);
+      w.dispatcher.sentBack('a');
+      await w.tick();
+      fill(w);
+      w.answer('a', TRY_AGAIN);
+    } },
+    'Give it more': { recordings: { a: forever() }, go: async (w) => {
+      await w.tick();
+      const runId = w.runsOf('a')[0];
+      w.engine.act(runId, { cancel: { reason: 'its cap' } });
+      await w.pump();
+      await w.runner.capped({ runId, work: 'a', lane: 'quick', branch: 'wh/a', reached: { cap: 'tokens', limit: 10 } });
+      fill(w);
+      w.answer('a', 'Give it more');
+    } },
+    'Build it again': { lane: 'feature', recordings: { a: forever() }, go: async (w) => {
+      await w.tick();
+      w.engine.act(w.runsOf('a')[0], { cancel: { reason: 'stopped' } });
+      await w.tick(2);
+      fill(w);
+      w.answer('a', BUILD_AGAIN);
+    } },
+  };
+  for (const [name, { recordings, go, lane = 'quick' }] of Object.entries(paths)) {
+    const w = wayBack({ recordings, pace: 1, designOf: () => SLICES });
+    w.put('a', { lane });
+    await go(w);
+    const before = w.starts.length;
+    await w.tick(2);
+    assert.equal(w.starts.length, before, `${name}: pace full`);
+    free(w);
+    await w.tick(3);
+    assert.equal(w.starts.length, before + 1, `${name}: a place free`);
+  }
+});
+
+test('a second clash\'s Try again asks for a place and starts once', async () => {
+  const t = sentBackWorld();
+  t.d.sentBack('card-1');
+  await t.d.tick();
+  t.d.sentBack('card-1');
+  await t.d.tick();
+  const id = t.written.find((w) => w.kind === 'question').data.id;
+  t.see({ ...ranOnce(), questions: { [id]: { answer: { label: TRY_AGAIN } } } });
+  await t.d.tick();
+  await t.d.tick();
+  assert.equal(t.starts.length, 2);
+  assert.equal(t.starts[1].carryOn, true);
+});
+
+
+test('an entry marked starting is never started twice', async () => {
+  // The start times out, the run having begun with a run record; a restart on the same files finds it.
+  let begun = null;
+  const w = await uncertainStart({ live: async () => ({ runId: begun }) });
+  const before = w.starts.length;
+  w.startAs = async (args, real) => { begun = (await real(args)).runId; return { ok: false, refused: 'no reply in time', uncertain: true }; };
+  await w.tick();
+  assert.equal(w.starts.length, before + 1);
+  assert.equal(w.dispatcher.admittedTo('a'), true, 'it keeps its place while it is settled');
+  w.restart();
+  await w.tick(3);
+  assert.equal(w.starts.length, before + 1, 'no second start');
+  assert.equal(w.notes().filter((n) => /couldn't go back/.test(n)).length, 0, 'an uncertain start is no refusal');
+});
+
+test('a crash while starting is settled the same way', async () => {
+  const w = await uncertainStart({ live: async () => null });
+  w.startAs = async () => new Promise(() => {});
+  w.tick();
+  await new Promise((resolve) => { setTimeout(resolve, 20); });
+  assert.equal(entered(w).admitted.some((e) => e.starting), true, 'marked before the start is called');
+  const before = w.starts.length;
+  w.startAs = null;
+  w.restart();
+  await w.tick();
+  assert.equal(w.starts.length, before + 1, 'no run: started once more');
+  await w.tick(3);
+  assert.equal(w.starts.length, before + 1);
+});
+
+test('an orphan with no run record is cancelled, confirmed ended, then started once', async () => {
+  const w = await uncertainStart({ live: async () => (w.orphan ? { runId: w.orphan } : null) });
+  const before = w.starts.length;
+  w.startAs = async () => { w.orphan = w.engine.start({ recording: 'forever', work: 'a' }).runId; return { ok: false, refused: 'no reply in time', uncertain: true }; };
+  await w.tick();
+  w.startAs = null;
+  await w.tick();
+  assert.ok(w.engine.calls.some((c) => c.call === 'act' && c.runId === w.orphan && c.action.cancel), 'cancelled');
+  assert.equal(w.engine.inspect(w.orphan).status, 'ended');
+  assert.equal(w.starts.length, before + 2, 'started again, once');
+  await w.tick(3);
+  assert.equal(w.starts.length, before + 2);
+});
+
+test('a certain refusal goes straight back, with no liveRunOf and no card', async () => {
+  let asked = 0;
+  const w = await uncertainStart({ live: async () => { asked += 1; return null; } });
+  w.refuse = () => 'no';
+  await w.tick();
+  assert.equal(asked, 0);
+  assert.equal(w.cards().filter((c) => c.options[0].label === TRY_AGAIN).length, 0);
+  assert.equal(w.dispatcher.admittedTo('a'), false);
+});
+
+test('when liveRunOf can\'t say, or the cancel can\'t be confirmed, a card comes, not a second start', async () => {
+  for (const kind of ['can\'t say', 'no method', 'no cancel']) {
+    const w = await uncertainStart({ live: async () => (kind === 'no cancel' ? { runId: 'gone' } : undefined) });
+    if (kind === 'no method') delete w.engine.liveRunOf;
+    const before = w.starts.length;
+    w.startAs = async () => ({ ok: false, refused: 'no reply in time', uncertain: true });
+    await w.tick();
+    w.startAs = null;
+    await w.tick(3);
+    assert.equal(w.starts.length, before + 1, kind);
+    assert.deepEqual(w.cardOf('a').options.map((o) => o.label), [TRY_AGAIN, STOP_HERE], kind);
+    assert.equal(w.dispatcher.admittedTo('a'), false, 'the place goes back');
+  }
+});
+
+test('a refused start gives the place back, says so once, and raises Try again and Stop on the second', async () => {
+  const w = await uncertainStart({});
+  w.refuse = () => 'the mirror could not be read';
+  await w.tick();
+  assert.equal(w.dispatcher.admittedTo('a'), false);
+  assert.equal(w.notes().filter((n) => /the mirror could not be read/.test(n)).length, 1);
+  await w.tick();
+  assert.equal(w.notes().filter((n) => /the mirror could not be read/.test(n)).length, 1);
+  assert.deepEqual(w.cardOf('a').options.map((o) => o.label), [TRY_AGAIN, STOP_HERE]);
+  w.answer('a', STOP_HERE);
+  await w.tick();
+  assert.deepEqual(entered(w).returning, []);
+});
+
+test('a run that pauses on a new ask before it is seen running gives its place up', async () => {
+  const w = wayBack({ recordings: { a: askingTwice('one', 'two') }, pace: 1 });
+  w.put('a');
+  await w.tick();
+  w.answer('a', 'Do the whole page');
+  await w.tick(2);
+  assert.equal(w.answers().length, 1);
+  assert.ok(w.cardOf('a'), 'the second ask has its card');
+  await w.tick();
+  assert.equal(w.dispatcher.admittedTo('a'), false, 'it waits on the director again');
+});
+
+test('an answered run the engine hasn\'t carried on keeps its place, and the Logbook says so once', async () => {
+  const w = wayBack({ recordings: { a: asking('qa') }, pace: 1 });
+  w.put('a');
+  await w.tick();
+  w.answer('a', 'Do the whole page');
+  // No waker: the answer is taken, and the run sits paused (check 85).
+  w.engine.act = (runId, action) => { w.engine.calls.push({ call: 'act', runId, action }); return { ok: true }; };
+  await w.tick(2);
+  assert.equal(w.answers().length, 1);
+  w.clock.now = new Date(w.clock.now.getTime() + 10 * 60 * 1000);
+  await w.tick(3);
+  assert.equal(w.notes().filter((n) => /hasn't carried it on yet/.test(n)).length, 1);
+  assert.equal(w.dispatcher.admittedTo('a'), true, 'it keeps its place');
+  assert.equal(w.answers().length, 1, 'and nothing is sent twice');
+});
+
+test('under an incident answers wait, and go once it closes, even one already admitted', async () => {
+  const w = await parked();
+  w.engine.act(w.runsOf('busy')[0], { cancel: { reason: 'done' } });
+  w.answer('a', 'Do the whole page');
+  await w.pump();
+  await w.runner.tick();
+  await w.dispatcher.tick();
+  assert.equal(w.dispatcher.admittedTo('a'), true);
+  w.incidents.open = [{ id: 'i-1', kind: 'other' }];
+  await w.tick(3);
+  assert.equal(w.answers().length, 0);
+  w.incidents.open = [];
+  await w.tick();
+  assert.equal(w.answers().length, 1);
+});
+
+test('under All stop nothing admitted starts, and it starts once the stop lifts', async () => {
+  const w = await uncertainStart({});
+  await w.pump();
+  w.stop = true;
+  await w.tick(2);
+  const before = w.starts.length;
+  w.stop = false;
+  await w.tick();
+  assert.equal(w.starts.length, before + 1);
+});
+
+test('queued again by Carry on, an entry leaves and the new start carries on from its branch', async () => {
+  const w = await uncertainStart({});
+  w.stop = true;
+  await w.tick();
+  w.work.a.work.at = '2026-10-29T12:00:00.000Z';
+  w.stop = false;
+  await w.tick();
+  const last = w.starts.at(-1);
+  assert.equal(last.order.work, 'a');
+  assert.equal(last.branch, 'wh/a');
+  assert.deepEqual(entered(w).returning, []);
+});
+
+test('a Stop beside another open card keeps the files let go of', async () => {
+  const w = wayBack({ recordings: { a: asking('qa') }, branchPaths: async () => ['x.js'] });
+  w.put('a', { files: ['a.js'] });
+  await w.tick(2);
+  assert.deepEqual(w.dispatcher.reserved(), { a: ['a.js', 'x.js'] });
+  w.dispatcher.release('a');
+  await w.tick();
+  assert.deepEqual(w.dispatcher.reserved(), {}, 'its other card doesn\'t take the files back');
+});
+
+test('a run on record since the start was marked counts as started, though it has since ended', async () => {
+  const w = await uncertainStart({ live: async () => null });
+  const before = w.starts.length;
+  // A crash after the start, and the run ending while the helper was down.
+  w.startAs = async (args, real) => {
+    const { runId } = await real(args);
+    w.engine.act(runId, { cancel: { reason: 'it ended' } });
+    return { ok: false, refused: 'no reply in time', uncertain: true };
+  };
+  await w.tick();
+  w.startAs = null;
+  w.restart();
+  await w.tick(3);
+  assert.equal(w.starts.length, before + 1, 'the work isn\'t done over');
+});
+
+test('a card that couldn\'t be written is written on the next tick', async () => {
+  const w = await uncertainStart({});
+  w.refuse = () => 'no';
+  await w.tick();
+  const put = w.questions;
+  w.questions = {};
+  await w.tick();
+  const id = entered(w).returning[0].asked;
+  assert.ok(id, 'the entry is waiting on its card');
+  w.questions = put;
+  delete w.questions[id];
+  await w.tick();
+  assert.equal(w.cardOf('a')?.id, id, 'the same card comes');
+  assert.deepEqual(w.dispatcher.waitingWork(), new Set(['a']));
+});
+
+test('a kept card that was never written isn\'t waited on', async () => {
+  const w = await uncertainStart({});
+  assert.deepEqual(w.dispatcher.waitingWork(), new Set());
+});
+
+test('a piece stopped with nothing to move it on, holding files, brings one card', async () => {
+  const w = wayBack({ recordings: { a: asking('qa'), b: quiet() }, branchPaths: async () => ['x.js'], pace: 3 });
+  w.put('a', { place: 0 });
+  await w.tick(2);
+  w.answer('a', 'Do the whole page');
+  await w.tick(3);
+  assert.equal(w.stateOf('a'), 'ended');
+  w.put('b', { place: 1, files: ['x.js'] });
+  await w.tick();
+  assert.equal(w.runsOf('b').length, 0, 'its files are still held');
+  const card = w.cardOf('a');
+  assert.deepEqual(card.options.map((o) => o.label), [TRY_AGAIN, STOP_HERE]);
+  await w.tick(2);
+  assert.equal(w.cards().filter((c) => c.work === 'a' && c.id === card.id).length, 1, 'one card');
+  w.answer('a', STOP_HERE);
+  await w.tick(2);
+  assert.deepEqual(w.dispatcher.reserved(), {});
+  assert.equal(w.runsOf('b').length, 1, 'the files go, so the work behind them starts');
+});
+
+test('a Carry on with no reply in time is settled, and keeps what it carries', async () => {
+  const w = wayBack({ recordings: { a: quiet() }, pace: 1 });
+  w.put('a');
+  w.startAs = async () => ({ ok: false, refused: 'no reply in time', uncertain: true });
+  w.engine.liveRunOf = async () => undefined;
+  await w.tick();
+  w.startAs = null;
+  await w.tick(2);
+  assert.equal(w.starts.length, 1, 'no second start on a guess');
+  assert.deepEqual(w.cardOf('a').options.map((o) => o.label), [TRY_AGAIN, STOP_HERE]);
+});
+
+test('two answers kept for Carry on both stand', async () => {
+  const w = wayBack({});
+  w.dispatcher.carryOver('a', { branch: 'wh/a', answers: [{ question: 'One?', answer: 'Yes' }] });
+  w.dispatcher.carryOver('a', { branch: 'wh/a', answers: [{ question: 'One?', answer: 'Yes' }, { question: 'Two?', answer: 'No' }] });
+  assert.deepEqual(entered(w).carryOver.a.answers.map((a) => a.question), ['One?', 'Two?']);
+});
+
+// A project on a host with pull request 7 ready, and the queue due.
+function queueSetUp({ parked = {}, queueRuns, ready = { work: 'card-7', head: 'a'.repeat(40), runId: 'r7' }, reports = {}, prState = null } = {}) {
+  const dir = tempFolder('wh-dr-');
+  const engine = fakeEngine();
+  if (queueRuns) engine.queueRuns = queueRuns;
+  const seen = { ready };
+  const entry = { work: { id: 'w-7', at: '2026-10-29T08:00:00.000Z', data: { id: 'card-7', title: 'The sale banner', lane: 'quick', visible: false, dependsOn: [] } } };
+  const d = dispatchRun({
+    engine, project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'), readViews: () => ({ work: { 'card-7': entry }, runs: {}, reports }), config: () => ({ testCommand: 'node --test' }),
+    start: async () => ({ ok: false, refused: 'not here' }), now: () => new Date('2026-10-29T10:00:00.000Z'), isLocal: () => false, prState,
+    readyOf: () => ({ 7: seen.ready }), repoOf: () => ({ host: 'github.com', path: 'o/p' }), repoName: () => 'o/p',
+    queueFolder: async () => ({ ok: true, folder: dir }), queuePlace: () => dir,
+  });
+  d.onParked(() => parked);
+  return { d, engine, dir, seen };
+}
+
+test('a pull request parked at its head doesn\'t make the queue due', async () => {
+  const t = queueSetUp({ parked: { 7: 'a'.repeat(40) } });
+  const got = await t.d.tick();
+  assert.equal(got.startMergeQueue, false);
+  fs.rmSync(t.dir, { recursive: true, force: true });
+});
+
+test('a pull request the queue brought up to date stays left alone, however the heads differ', async () => {
+  const t = queueSetUp({ parked: { 7: 'b'.repeat(40) } });
+  assert.equal((await t.d.tick()).startMergeQueue, false, 'the record of what was readied names an older head');
+  fs.rmSync(t.dir, { recursive: true, force: true });
+});
+
+test('a pull request readied again at a new head is the queue\'s again', async () => {
+  const t = queueSetUp({ parked: { 7: 'a'.repeat(40) } });
+  await t.d.tick();
+  t.seen.ready = { ...t.seen.ready, head: 'c'.repeat(40) };
+  assert.equal((await t.d.tick()).startMergeQueue, true);
+  fs.rmSync(t.dir, { recursive: true, force: true });
+});
+
+test('handBack hands the pull request to the queue again', async () => {
+  const t = queueSetUp();
+  assert.deepEqual(await t.d.handBack({ pr: 7, head: 'a'.repeat(40) }), { ok: true });
+  const { item } = t.engine.calls.find((c) => c.call === 'handOver');
+  assert.equal(item.project, t.dir);
+  assert.equal(item.repo, 'o/p');
+  assert.equal(item.pr, 7);
+  assert.equal(item.url, 'https://github.com/o/p/pull/7');
+  assert.equal(item.runId, 'r7');
+  fs.rmSync(t.dir, { recursive: true, force: true });
+});
+
+test('handBack waits while a queue run is live, whoever started it, so its claim isn\'t written over', async () => {
+  const t = queueSetUp({ queueRuns: async () => ['theirs'] });
+  assert.deepEqual(await t.d.handBack({ pr: 7, head: 'a'.repeat(40) }), { ok: false, waiting: true });
+  assert.equal(t.engine.calls.filter((c) => c.call === 'handOver').length, 0);
+  fs.rmSync(t.dir, { recursive: true, force: true });
+});
+
+test('handBack takes the head the queue asked about, though the record of what was readied is older', async () => {
+  const t = queueSetUp();
+  assert.deepEqual(await t.d.handBack({ pr: 7, head: 'b'.repeat(40) }), { ok: true });
+  fs.rmSync(t.dir, { recursive: true, force: true });
+});
+
+test('handBack hands nothing over for work the director stopped, or a pull request closed or merged', async () => {
+  for (const over of [{ reports: { 'card-7': { at: '2026-10-29T09:00:00.000Z', data: { work: 'card-7', outcome: 'closed' } } } }, { prState: async () => 'closed' }, { prState: async () => 'merged' }]) {
+    const t = queueSetUp(over);
+    assert.deepEqual(await t.d.handBack({ pr: 7, head: 'a'.repeat(40) }), { ok: false, gone: true }, JSON.stringify(Object.keys(over)));
+    assert.equal(t.engine.calls.filter((c) => c.call === 'handOver').length, 0);
+    fs.rmSync(t.dir, { recursive: true, force: true });
+  }
+});
+
+test('handBack says so when nothing records the pull request as ready', async () => {
+  const t = queueSetUp({ ready: null });
+  const got = await t.d.handBack({ pr: 7, head: 'a'.repeat(40) });
+  assert.equal(got.ok, false);
+  assert.ok(got.refused);
+  fs.rmSync(t.dir, { recursive: true, force: true });
 });

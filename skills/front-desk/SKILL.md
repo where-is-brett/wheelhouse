@@ -20,7 +20,7 @@ Where instructions from another agent setup in this project differ from Wheelhou
 
 ## The command
 
-The Wheelhouse command the session start named, then `<command>`: `cards`, `card`, `again <n>`, `why <n>`, `suggest <card id> <work id> <the change>`, `record <kind>`, `similar "<the request's words>"`, `views <name>` (`rulebook`, `waiting`, `ideas`, `glossary`, `settings`, `levels`, `work` or `survey`), `explain <term>`, `review`, `preview <n>`, `undo <merge>`, `carry-on <n>`, `archive`, `restore`, `premium-card`, `premium-check`. Type the command exactly as the session start gave it, with nothing after `<command>` but its arguments or the `<` input that `card` and `record` take; one command per call. In the examples below, `<the Wheelhouse command>` stands for it.
+The Wheelhouse command the session start named, then `<command>`: `cards`, `pull-cards`, `card`, `again <n>`, `why <n>`, `suggest <card id> <work id> <the change>`, `record <kind>`, `similar "<the request's words>"`, `views <name>` (`rulebook`, `waiting`, `ideas`, `glossary`, `settings`, `levels`, `work`, `survey` or `evidence`), `explain <term>`, `review`, `preview <n>`, `undo <merge>`, `move github` or `move gitlab`, `carry-on <n>`, `archive`, `restore`, `premium-card`, `premium-check`. Type the command exactly as the session start gave it, with nothing after `<command>` but its arguments or the `<` input that `card` and `record` take; one command per call. In the examples below, `<the Wheelhouse command>` stands for it.
 
 `card` and `record` read their JSON from a file, never a heredoc or a pipe, which Claude Code asks about each time. Write the JSON with the Write tool to `front-desk.json` in your scratchpad folder (the temporary folder your system prompt names: you write there without being asked, and it is outside the project, so nothing reaches git), then give its full path as the command's input. When a command is refused and its input needs correcting, write the file again with the Write tool, never `sed` or another shell edit. A ruling, `front-desk.json` holding:
 
@@ -62,6 +62,7 @@ An approval already waiting is asked with `cards` or `again <n>`, never composed
 2. **Every message** goes first through `wheelhouse:intake`.
 3. **The look at what I can decide alone is due** (the briefing says so), or the director asks for it: run `review` before `cards`. When `review` gave questions, ask them in one call of your clickable-question tool, after the briefing, as this visit's call; the visit's other cards wait for the next visit. When it gave none, run `cards` as usual. Each proposes moving a topic between levels 3 and 2; only their Confirm moves it.
 4. **"Cards to ask this visit: n"**: run `cards` and ask what it gives in one call of your clickable-question tool, after the briefing. One call per visit.
+5. **"n more waiting. Show them"** is the cards past the day's budget: `cards` passes over them, and you don't bring them up unasked. When the director says to show them, run `pull-cards` and ask what it gives as you would `cards`.
 
 ## Telling the director what went in
 
@@ -122,6 +123,7 @@ Never put the figures anywhere else: not in `record`, a note, a ruling, a card o
 | Something that conflicts with a standing rule | Say so plainly, naming the rule. Don't quietly obey or refuse |
 | The gate or a guard refuses what they asked | Say why in plain words, naming what blocks it. End the reply with a question card composed this visit with `card` (no card from the build waits for this), holding the choices left to them; never a typed offer. Under All stop only the Lift All stop card is asked; a level 2 topic follows the level 2 rule |
 | Undoing something decided without them | `record reversal` with the decision's `topic` and what they undid, then take the undoing as a request |
+| Putting a project kept on this computer on GitHub or GitLab | `move github` or `move gitlab` raises the one card, which says the code goes online. Nothing moves before their answer, so don't ask it twice |
 | Undoing a finished piece on a project kept on this computer | `git log --first-parent -5` in the folder gives the merge whose title is that piece. `undo <merge>` with the whole commit id: where it gives a `card`, ask it, and run `undo` again on their Undo it. Never name the commit id to them |
 | "How's it going?" | `views work` gives what is running and what waits; one line from it. The full Logbook is `/wheelhouse:logbook`. Never say nothing is running without having looked |
 | "Anything waiting on me?" | `views waiting`: name each waiting card in one line, as it lists it (its number on the Logbook, its question and its choice) but without its id, and offer to ask one again (`again <n>`). Never put a card already asked to them again unless they ask for that card |

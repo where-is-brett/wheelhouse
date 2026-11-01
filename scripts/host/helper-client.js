@@ -88,6 +88,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     },
     engineSwitch: post('/engine-switch'), // { project | cwd } -> { ok, step: 'off' | 'on' | 'opened' | 'approve' | 'waiting' | 'closed', pr?, head?, why? }: the switch to the new engine's next step (part 3f)
     local: {
+      move: post('/local/move'), // { project | cwd, host } -> { ok, asked }: raises the card that asks; nothing moves before the director's answer
       undo: post('/local/undo'), // { project, merge } or { project, moved: true } -> { undo }, or { ok: false, needs: 'window' } with the card that asks; on the signed click in the helper's window
     },
     merge: post('/merge'), //        { project, number, stop, bypass, reviewRequired?, approvalRequired?, touchesGuardrails? } -> a refusal's needs?: { approval: { pr, commit } } names the director's approval it lacks, and releaseApproval? says why a release pull request needs it (not one of the reasons)
@@ -105,6 +106,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       previewFind: post('/engine/preview/find'), // { runId } -> { ok, visible, pages, url: address | null, pr, head }: whether the run's work is visible, its pages and the host's preview of the head it opened
       preview: post('/engine/preview'), // { runId } -> { ok, folder, pictures }: copies the run's pictures and notes from its own artefacts into previews/<work>/<head>/ and records a preview
       taskHolds: post('/engine/task-holds'), // { runId } -> { ok, tasks }: the tasks of the run's slice whose review last held, in this run or one before it, from the helper's own record and the engine's
+      readerView: post('/engine/reader-view'), // { runId } -> { ok, view }: the view built when the card was sealed, to the reader run named by its ticket and no other
       lesson: post('/engine/lesson'), // { runId } -> { ok, written }: writes the lesson the run's lesson step gave, read from the engine's record; at most one a run, none when it is empty
     },
     // The broker (scripts/engine/broker/): every gh call Archon makes, and the fetch mirror Archon's git reads.

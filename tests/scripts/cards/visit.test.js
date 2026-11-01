@@ -190,7 +190,7 @@ test('importanceOf reads a card or views that are missing as the lowest rank, wi
   assert.equal(importanceOf(answer, null), IMPORTANCE.REST);
   assert.equal(importanceOf(answer, { questions: { 'q-export-csv-1': null }, work: { 'export-csv': null } }), IMPORTANCE.REST);
   assert.equal(importanceOf(waitingCard('l3', 1, 'approval'), null), IMPORTANCE.LEVEL_3);
-  assert.deepEqual(cardsForVisit(null), { questions: [], ids: [], left: 0 });
+  assert.deepEqual(cardsForVisit(null), { questions: [], ids: [], left: 0, heldBack: 0 });
 });
 
 test('a card answered Not now is not asked on the next visit, and stays on the board', () => {
@@ -222,7 +222,7 @@ test('a card answered Not now is not asked on the next visit, and stays on the b
     assert.equal(existingCard(next, approval.data.line), approval.id);
     // A card put off is asked once; when everything is asked, a visit has nothing to ask.
     const allAsked = build([...events, makeEvent({ kind: 'card-answer', data: { card: second.id, label: 'Explain more' }, now: at(4) })]);
-    assert.deepEqual(cardsForVisit(allAsked), { questions: [], ids: [], left: 0 });
+    assert.deepEqual(cardsForVisit(allAsked), { questions: [], ids: [], left: 0, heldBack: 0 });
   } finally {
     if (before === undefined) delete process.env.WHEELHOUSE_HOME;
     else process.env.WHEELHOUSE_HOME = before;

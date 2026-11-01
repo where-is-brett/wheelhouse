@@ -49,7 +49,7 @@ export async function digestText({
       project, model, usage, sources, settings, since: seen.briefedAt, weeklySince: seen.weeklyAt, review: reviewOf(project, settings, at),
       at, briefingModel, room: CONTEXT_CHARS,
     });
-    attempt(() => markSeen(project, { briefedAt: at, ...(given.weeklyShown ? { weeklyAt: at } : {}) }));
+    attempt(() => markSeen(project, { briefedAt: at, ...(given.weeklyShown ? { weeklyAt: at } : {}), ...(given.safekeeping ? { safekeepingLevel: given.safekeeping, safekeepingAt: at } : {}) }));
     if (given.raise.length > 0 && Number.isFinite(at.getTime())) attempt(() => markRaised(given.raise, { now: at }));
     return { ok: true, text: given.text };
   } catch {

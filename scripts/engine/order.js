@@ -22,6 +22,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { SLUG } from '../lib/build-loop.js';
+import { READER_LANE, READER_WORK } from '../delegation/reader.js';
 
 export const ORDER_VERSION = 1;
 export const ORDER_LANES = Object.freeze(['quick', 'small', 'slice', 'feature', 'bug', 'fix-main']);
@@ -121,6 +122,8 @@ const isAnswer = (a) => isObject(a) && Object.keys(a).sort().join() === 'answer,
 // Why `order` isn't a well-formed order, or null.
 export function checkOrder(order) {
   if (!isObject(order) || order.v !== ORDER_VERSION) return 'a work order must be a version 1 record';
+  // A reader has no work: its stand-in names the card it reads, so the helper can place its run and give it its view.
+  if (order.lane === READER_LANE) return order.work === READER_WORK && isText(order.card) ? null : 'a reader\'s stand-in order names its card';
   // The work names folders (previews/<work>/), so it is a plain slug.
   if (typeof order.work !== 'string' || !SLUG.test(order.work)) return 'a work order needs its work, as a short slug';
   if (!ORDER_LANES.includes(order.lane)) return 'a work order needs its lane';

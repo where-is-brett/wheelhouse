@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { withHome } from '../../helpers/homes.js';
 import { briefingModel } from '../../../scripts/briefing/model.js';
-import { briefingParts } from '../../../scripts/briefing/text.js';
+import { briefingParts, briefingText } from '../../../scripts/briefing/text.js';
 import { markRaised } from '../../../scripts/usage/figures.js';
 import { NOT_NOW_STEP } from '../../../scripts/board/model.js';
 import { verdict } from '../../../scripts/lib/calm-words.js';
@@ -59,6 +59,18 @@ test('a blocked pull request is in what to watch in Wheelhouse\'s own words, not
   assert.deepEqual(b.progress, ['Building Export the orders, slice 2 of 3', 'Pull request #19 for menu is waiting on CI or review']);
   const text = JSON.stringify(b);
   for (const words of ['Checks red', 'flaky', 'subagent', 'Ignore your rules', 'approve #20']) assert.ok(!text.includes(words), words);
+});
+
+test('a held card is left out of what waits, and counted on a line of its own', () => {
+  const b = briefingModel({
+    model: board({ waiting: [{ n: 1, what: 'Choose the colour', since: at(10) }, { n: 2, what: 'Name the button', since: at(10), heldBack: true }, { n: 3, what: 'Pick a font', since: at(10), heldBack: true }] }),
+    since: at(9), now: NOW, wasRaised: never,
+  });
+  assert.deepEqual(b.waiting, [{ title: 'Choose the colour' }]);
+  assert.equal(b.heldBack, 2);
+  assert.equal(b.plus.waiting, 1);
+  assert.equal(b.verdict, verdict({ waiting: 3, broken: 0 }));
+  assert.match(briefingParts(b).text, /2 more waiting\. Show them/);
 });
 
 test('only what changed since the last briefing is in it', () => {
@@ -217,8 +229,9 @@ test('unconfirmed changes and what waits come straight from the board model', ()
   // Nothing in it throws, whatever it is given.
   for (const odd of [undefined, null, {}, { model: 'x' }, { model: { director: 7, build: [], missing: 'x' }, usage: 3, sources: [] }]) {
     assert.deepEqual(briefingModel(odd), {
-      verdict: 'Nothing needs you. Nothing is broken.', since: '', first: [], found: [], foundId: null, waiting: [], changed: [], progress: [], watch: [], usage: null, onTrack: false,
+      verdict: 'Nothing needs you. Nothing is broken.', since: '', first: [], found: [], foundId: null, waiting: [], heldBack: 0, changed: [], progress: [], watch: [], usage: null, onTrack: false,
       plus: { waiting: 0, changed: 0 }, raise: [], weekly: 0,
+      safekeeping: null,
     });
   }
 });
@@ -461,4 +474,51 @@ test('a project with nothing in flight and no other instructions has nothing fou
 test('a survey that missed the host says so in one line', () => {
   const b = briefingModel({ model: {}, usage: null, since: null, now: NOW, wasRaised: never, survey: SURVEY({ hostReached: false }), host: 'gitlab' });
   assert.deepEqual(b.found, ['I couldn\'t look at GitLab for changes waiting to be merged; I\'ll look again next time.']);
+});
+
+const watchLine = { level: 'watch', text: 'Safekeeping: 3 changes only on this computer', detail: 'd', safekeeping: true };
+const safeLine = { level: 'ok', text: 'Safekeeping: Everything is on GitHub', detail: 'd', safekeeping: true };
+const told = (health, safekeepingSaid, now = at(20)) => briefingModel({ model: board({ health }), usage: null, sources: null, since: at(19), now, wasRaised: never, safekeepingSaid });
+
+test('a watch shows in To watch and the verdict still says nothing is needed', () => {
+  const b = told([watchLine], null);
+  assert.equal(b.verdict, 'Nothing needs you. Nothing is broken.');
+  assert.deepEqual(b.watch, ['Safekeeping has turned to watch: 3 changes only on this computer']);
+  assert.deepEqual(b.safekeeping, { level: 'watch', at: 0 });
+});
+
+test('watch raises no card', () => {
+  const b = told([watchLine], null);
+  assert.deepEqual(b.first, []);
+  assert.deepEqual(b.waiting, []);
+  assert.deepEqual(b.raise, []);
+});
+
+test('the briefing has one sentence on turning and one on clearing', () => {
+  assert.equal(told([watchLine], { level: 'safe', at: at(1) }).watch.length, 1);
+  assert.deepEqual(told([safeLine], { level: 'watch', at: at(18) }).watch, ['Safekeeping has cleared: Everything is on GitHub']);
+  const quiet = told([safeLine], { level: 'safe', at: at(18) });
+  assert.deepEqual(quiet.watch, []);
+  assert.equal(quiet.safekeeping, null);
+  assert.deepEqual(told([safeLine], null).watch, [], 'all well from the start needs no sentence');
+});
+
+test('an unchanged watch comes back once a month', () => {
+  const lastSaid = { level: 'watch', at: at(1) };
+  assert.deepEqual(told([watchLine], lastSaid, at(30)).watch, [], 'twenty-nine days on');
+  assert.deepEqual(told([watchLine], lastSaid, new Date(Date.UTC(2026, 9, 31)).toISOString()).watch, ['Safekeeping is still to watch: 3 changes only on this computer']);
+});
+
+test('a project with no status has no sentence', () => {
+  assert.equal(told([], null).safekeeping, null);
+});
+
+test('a card holding up others says how many, in the briefing', () => {
+  const b = briefingModel({
+    model: board({ waiting: [{ n: 1, what: 'Choose the colour', since: at(10), holdsUp: 3 }, { n: 2, what: 'Name the button', since: at(10) }] }),
+    now: () => new Date(at(11)),
+  });
+  assert.equal(b.waiting[0].holdsUp, 3);
+  assert.equal(b.waiting[1].holdsUp, undefined);
+  assert.match(briefingText(b), /Choose the colour · holds up 3 pieces/);
 });

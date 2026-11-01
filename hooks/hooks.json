@@ -29,7 +29,10 @@
       { "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/node-floor.cjs\" \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/feature-status.js\"", "timeout": 10 }] }
     ],
     "Stop": [
-      { "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/node-floor.cjs\" \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/feature-status.js\"", "timeout": 10 }] }
+      { "hooks": [
+        { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/node-floor.cjs\" \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/feature-status.js\"", "timeout": 10 },
+        { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/node-floor.cjs\" \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/chat-question.js\"", "timeout": 10 }
+      ] }
     ],
     "PreCompact": [
       { "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/node-floor.cjs\" \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/precompact-guard.js\"", "timeout": 10 }] }

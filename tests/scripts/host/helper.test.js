@@ -15,6 +15,7 @@ import { helperClient } from '../../../scripts/host/helper-client.js';
 import { helperAddress, profileDir, stateDir, stopFile } from '../../../scripts/lib/paths.js';
 import { openSettings } from '../../../scripts/state/record.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
+import { safekeepingFile } from '../../../scripts/safekeeping/readings.js';
 import { run } from '../../../scripts/lib/run.js';
 import { openTestRecord, registerTestProject } from '../../helpers/record-fixture.js';
 import { makeEvent, eventPath, writeEvent, listEvents } from '../../../scripts/state/events.js';
@@ -1719,5 +1720,27 @@ test('/survey/archive archives the survey\'s instruction files as they are on th
       assert.deepEqual(await client.survey.archive({ project: 'o__p' }), { ok: false, refused: 'All stop is on' });
       assert.deepEqual(await client.survey.restore({ project: 'o__p' }), { ok: false, refused: 'All stop is on' });
     }, { authorFor }));
+  } finally { p.cleanup(); }
+});
+
+test('Keep a copy online sends the folder\'s branch to keep/<branch> and leaves the main version where it was', async () => {
+  const p = await project();
+  try {
+    await as(p.home, async () => {
+      const folder = await folderWith();
+      writeProject('o__p', { folder, remoteUrl: p.remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
+      const offered = (branch) => `${JSON.stringify({ status: { place: 'github', level: 'watch', line: 'x', detail: 'y', actions: [{ action: 'keep-online', label: 'Keep a copy online' }] }, readings: { place: 'github', onlyHere: { branches: [branch], commits: 1, uncommitted: 0 } } })}\n`;
+      fs.writeFileSync(safekeepingFile('o__p'), offered('feature'));
+      const before = await g(p.remote.url, 'for-each-ref', 'refs/heads/main');
+      const press = makeEvent({ kind: 'action', data: { action: 'safekeeping', press: 'keep-online', question: 'Safekeeping', label: 'keep-online' }, now: at(5) });
+      await withHelper(fakeAdapter(), async (client) => {
+        const got = await client.desk.act({ v: 'desk/1', project: 'o__p', command: 'safekeeping', args: { action: 'keep-online' }, evidence: { form: 'signed', records: [{ event: press }] } });
+        assert.equal(got.ok, true, JSON.stringify(got));
+        assert.match(got.says, /keep\/feature/);
+      });
+      assert.equal((await g(p.remote.url, 'rev-parse', 'refs/heads/keep/feature')), await g(folder, 'rev-parse', 'feature'));
+      assert.equal(await g(p.remote.url, 'for-each-ref', 'refs/heads/feature'), '');
+      assert.equal(await g(p.remote.url, 'for-each-ref', 'refs/heads/main'), before);
+    });
   } finally { p.cleanup(); }
 });

@@ -33,6 +33,7 @@ export function ownLineOf(line) {
   const text = String(line?.text);
   return isStopText(text) ? 'stop' : null;
 }
+export const SAFEKEEPING_LEAD = 'Safekeeping: ';
 // How many of the health lines are broken: at stop level and not STOP's own, which is the
 // director's doing, not a fault. The pane's verdict and the briefing's count them the same way.
 export const brokenCount = (lines) => (Array.isArray(lines) ? lines : []).filter((l) => l?.level === 'stop' && ownLineOf(l) !== 'stop').length;
@@ -188,7 +189,7 @@ export function readScreens({ folder, findBrowser = realFindBrowser } = {}) {
 // `screens` is readScreens'; only pages listed and Chrome not found bring its line. `phonePush`
 // is setup's push test as this computer's journal last recorded it, { arrived, at }
 // (scripts/lib/setup-run.js, phonePushResult); only `arrived: false` adds a line.
-export function healthLines({ record, locked, stop, lock, helperUp, facts, renewal, platform = process.platform, realUsers, builds, screens, phonePush, frontDeskModel } = {}) {
+export function healthLines({ record, locked, stop, lock, helperUp, facts, renewal, platform = process.platform, realUsers, builds, screens, phonePush, frontDeskModel, safekeeping } = {}) {
   const lines = [];
   const add = (level, text) => lines.push({ level, text });
 
@@ -225,5 +226,8 @@ export function healthLines({ record, locked, stop, lock, helperUp, facts, renew
   // The front desk on another model than setup pinned for it (design section 8).
   const model = frontDeskModelLine(frontDeskModel ?? {});
   if (model) add('watch', model);
+  // What would be lost with this computer (spec 8.2): always there, with its detail on the Logbook, and at watch it joins what
+  // is to watch. It is marked, since the briefing says it only when it turns, and asks for nothing.
+  if (typeof safekeeping?.line === 'string') lines.push({ level: safekeeping.level === 'watch' ? 'watch' : 'ok', text: `${SAFEKEEPING_LEAD}${safekeeping.line}`, detail: safekeeping.detail, safekeeping: true });
   return lines;
 }

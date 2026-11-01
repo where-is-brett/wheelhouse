@@ -26,6 +26,7 @@ import { recordAllowance } from '../../../scripts/usage/store.js';
 import { setStop, liftStop } from '../../../scripts/lib/stop.js';
 import { stopFile, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { withHome, tempFolder } from '../../helpers/homes.js';
+import { safekeepingFile } from '../../../scripts/safekeeping/readings.js';
 
 const P = 'owner__name';
 const NOW = new Date('2026-10-19T12:00:00.000Z');
@@ -100,7 +101,7 @@ test('the pane lists the waiting cards in the board\'s numbering, each with its 
     ['Comma', 'record', 'filled'], ['Tab', 'record', 'outlined'], ['Suggest a change…', 'suggest', 'outlined'], ['Why?', 'why', 'small'],
   ]);
   // A question from the build that no card asks yet is one line and no buttons.
-  assert.deepEqual(line, { id: 'q:q-export-csv-2', n: 2, header: 'Question', kind: 'question', text: QUESTION_WAITS, hash: sha(QUESTION_WAITS), buttons: [], note: null, blocking: false, asked: false, parts: null, steered: null, waited: null, revised: false });
+  assert.deepEqual(line, { id: 'q:q-export-csv-2', n: 2, header: 'Question', kind: 'question', text: QUESTION_WAITS, hash: sha(QUESTION_WAITS), buttons: [], note: null, blocking: false, asked: false, heldBack: false, parts: null, steered: null, waited: null, revised: false });
   assert.equal(QUESTION_WAITS, 'A question from the build waits; the First Mate will ask it');
 }));
 
@@ -243,6 +244,21 @@ test('a card that fails the card check and offers no Explain more has no button,
   assert.deepEqual(card.buttons, [{ label: 'Why?', does: 'turn', shape: 'small' }]);
   assert.equal(card.note, CANT_ANSWER);
   assert.equal(CANT_ANSWER, 'This card can\'t be answered here: ask the First Mate about it.');
+}));
+
+test('a held card says so, and the pane gives the line that shows it', () => withHome(async (home) => {
+  const repo = register(home);
+  view('waiting', [{ id: 'c-1', at: at(1), asked: null, data: approval }, { id: 'c-2', at: at(2), asked: null, data: answer }]);
+  view('cardsWaiting', { count: 1, ids: ['q-export-csv-1'], pulled: [] });
+  const model = await paneModel({ project: P, cwd: repo, now: () => NOW });
+  assert.deepEqual(model.cards.map((c) => c.heldBack), [false, true]);
+  assert.equal(model.held.line, '1 more waiting.');
+  assert.equal(model.held.button.label, 'Show them');
+  assert.deepEqual(needsYou({ after: model }).map((item) => item.id), ['card:c-1']);
+  view('cardsWaiting', { count: 1, ids: [`13:${FULL}`], pulled: [] });
+  assert.deepEqual((await paneModel({ project: P, cwd: repo, now: () => NOW })).cards.map((c) => c.heldBack), [true, false]);
+  view('cardsWaiting', { count: 0, ids: [], pulled: [] });
+  assert.equal((await paneModel({ project: P, cwd: repo, now: () => NOW })).held, null);
 }));
 
 test('a card\'s text is its question, or its title when it has none', () => {
@@ -568,4 +584,13 @@ test('a slow or failing preview call counts as none for the tick and is not kept
   assert.equal(await previewFor({ ...base, client: { preview: async () => ({ ok: true, url: 'https://preview.example.test/13' }) } }), 'https://preview.example.test/13');
   // With no client, only what is kept is read.
   assert.equal(await previewFor({ ...base, pr: 99 }), null);
+}));
+
+test('the pane carries the Safekeeping row with the status\'s own buttons, and nothing where no status is kept', () => withHome(async () => {
+  const cwd = tempFolder('wh-row-');
+  writeProject(P, { folder: cwd, remoteUrl: null, host: 'local', repo: `local/${P}`, connection: { host: 'local', mode: 'none' } });
+  assert.equal((await paneModel({ project: P, cwd, now: () => NOW })).safekeeping, null);
+  fs.mkdirSync(path.dirname(safekeepingFile(P)), { recursive: true });
+  fs.writeFileSync(safekeepingFile(P), `${JSON.stringify({ status: { level: 'watch', line: 'Only here', detail: 'Lost with it', actions: [{ action: 'choose-folder', label: 'Choose a backup folder' }] } })}\n`);
+  assert.deepEqual((await paneModel({ project: P, cwd, now: () => NOW })).safekeeping, { level: 'watch', line: 'Only here', detail: 'Lost with it', actions: [{ action: 'choose-folder', label: 'Choose a backup folder' }] });
 }));

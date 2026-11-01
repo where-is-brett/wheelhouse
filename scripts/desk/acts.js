@@ -108,6 +108,23 @@ const ACTS = {
     const got = await recorder.write({ kind: 'card', data: card });
     return got?.ok === true ? { ok: true, changed: ['card'], card: got.id, fingerprint: asked.fingerprint } : no(got?.refused ?? 'The card wasn\'t written');
   },
+  // A button on the Safekeeping row: the signed press goes on the record, and the helper does what it names.
+  async safekeeping(args, checked, { recorder }) {
+    const refused = await recordAll(recorder, checked.records ?? []);
+    if (refused !== null) return no(`That wasn't recorded: ${refused}`);
+    if (typeof recorder.safekeeping !== 'function') return no('The helper isn\'t running, so nothing was done');
+    const got = await recorder.safekeeping({ action: args.action });
+    return got?.ok === true ? { ok: true, changed: ['safekeeping'], ...(got.says ? { says: got.says } : {}), ...(got.submit ? { submit: got.submit } : {}) } : no(got?.refused ?? 'That wasn\'t done');
+  },
+  // The director's Show them: the cards past the day's budget are named as pulled, and the router lifts them on its
+  // next tick, spending none of the budget. With none held back there is nothing to write.
+  async 'pull-cards'(args, checked, { source, recorder }) {
+    const got = await source.views({});
+    const ids = Array.isArray(got?.views?.cardsWaiting?.ids) ? got.views.cardsWaiting.ids : [];
+    if (ids.length === 0) return { ok: true, changed: [] };
+    const written = await recorder.write({ kind: 'note', data: { about: 'cards-pulled', ids } });
+    return written?.ok === true ? { ok: true, changed: ['cards-pulled'] } : no(written?.refused ?? 'The cards weren\'t brought up');
+  },
   async 'lift-all-stop'(args, checked, { recorder }) {
     const records = checked.records ?? [];
     if (!records.some((r) => r.event?.kind === 'action' && r.event.data?.action === 'lift-stop')) return no('Lifting All stop needs the director\'s signed Lift All stop');

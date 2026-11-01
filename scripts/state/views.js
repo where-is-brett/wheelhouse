@@ -4,7 +4,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { wheelhouseHome, profileDir, stateDir } from '../lib/paths.js';
 import { listEvents, eventHash, dataHash, CONFIRMABLE_KINDS, PIN_NAMES, READY_COLUMNS } from './events.js';
-import { approvalLine, chatCopy, ciPushLine, confirmLine } from './card-lines.js';
+import { ruleStands, stageOf } from '../delegation/rules.js';
+import { answerLine, approvalLine, chatCopy, ciPushLine, confirmLine } from './card-lines.js';
+import { joinQuestions } from './joiners.js';
 import { isLeanProject } from '../lean/project.js';
 import { verify, readEnrolled } from './signing.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
@@ -206,7 +208,7 @@ function uniqueSorted(events) {
   return { sorted: events.filter((e) => counts.get(e.id) === 1).sort(byOrder), repeated };
 }
 
-// A confirmation counts only for a ruling, level or setting whose id it names and whose content
+// A confirmation counts only for a ruling, level, setting or rule whose id it names and whose content
 // hash it names, so it confirms that exact event alone. { confirmed: ids, confirmations: [{ target, event }] }.
 function confirmationsOf(sorted, enrolled) {
   const byId = new Map(sorted.map((e) => [e.id, e]));
@@ -263,7 +265,7 @@ function leanRulingClicks(sorted, rulings) {
 // The verified approvals and actions that carry the question they were clicked on.
 const answeredByOf = (sorted, enrolled) => sorted.filter((e) => (e.kind === 'approval' || e.kind === 'action') && typeof e.data?.question === 'string' && verify(e, enrolled));
 
-// The time each ruling, level or setting came into force by a verified confirmation of its own
+// The time each ruling, level, setting or rule came into force by a verified confirmation of its own
 // hash: id -> the time of the first such confirmation.
 export function confirmationTimes(events, enrolled) {
   const { confirmations } = confirmationsOf(uniqueSorted(events).sorted, enrolled);
@@ -415,6 +417,29 @@ function buildLoopViews(sorted, enrolled) {
     }
   }
 
+  // What each click covers: the joiners listed on a card written before it, carrying the words it signed, and each named
+  // in those words, since a card's list is a plain field and only the words are signed. A joiner stands as it was first
+  // recorded, as an answer stands for the question as shown.
+  const clickOn = new Map();
+  for (const a of actions('answer')) if (questions[a.data.questionId]?.answer?.at === a.at) clickOn.set(a.data.questionId, a);
+  const cardsOf = sorted.filter((e) => e.kind === 'card' && Array.isArray(e.data?.joiners));
+  const named = (id, words) => {
+    const data = questions[id]?.question?.data;
+    return [data?.work, latestWork[data?.work]?.data?.title].some((name) => typeof name === 'string' && name !== '' && words.includes(name));
+  };
+  const first = new Map();
+  for (const e of sorted) if (e.kind === 'question' && !first.has(e.data?.id)) first.set(e.data?.id, e.data);
+  joinQuestions(questions, {
+    shown(lead) {
+      const click = clickOn.get(lead);
+      if (click === undefined) return [];
+      const card = cardsOf.filter((c) => c.data.line === answerLine(lead) && c.data.question === click.data.question && byOrder(c, click) < 0).at(-1);
+      return (card?.data.joiners ?? []).filter((id) => named(id, click.data.question));
+    },
+    ended: (data) => sorted.filter((e) => e.kind === 'run' && e.data?.work === data.work && e.data?.runId === data.engine?.runId).at(-1)?.data?.state === 'ended',
+    kept: (id, data) => dataHash(first.get(id)) === dataHash(data),
+  });
+
   // An incident is open from its declaration until a verified lift after it; a red-main incident also ends with the
   // helper's own close.
   const fixes = actions('incident-fix');
@@ -447,14 +472,52 @@ function buildLoopViews(sorted, enrolled) {
     runs: byWork('run'), asks: byWork('ask'), costs: byWork('cost'), previews: byWork('preview'), lessons: byWork('lesson'),
     // The card router's Logbook lines, the latest last, and how many of its cards wait for another day.
     engineNotes: sorted.filter((e) => e.kind === 'note' && e.data?.about === 'engine' && typeof e.data.words === 'string').slice(-ENGINE_NOTES).map(mark),
-    cardsWaiting: { count: Number.isInteger(sorted.filter((e) => e.kind === 'note' && e.data?.about === 'cards-waiting').at(-1)?.data?.count) ? sorted.filter((e) => e.kind === 'note' && e.data?.about === 'cards-waiting').at(-1).data.count : 0 },
+    cardsWaiting: cardsWaitingOf(sorted),
   };
+}
+
+// The cards past the day's budget (delegated decisions plan, choice 11): the router's latest list, less those pulled.
+// `pulled` names the pulled cards that list still holds, for the router to drop; a list written before it read the
+// pull keeps them, and the pull still stands. A note from before cards were named gives only its count. The dispatcher's
+// top card (scripts/engine/stuck.js) is lifted as a pull lifts one, so it spends no budget: `top` names it while it
+// stands, and `holding` says how many pieces each card holds up.
+export function cardsWaitingOf(sorted) {
+  const notes = sorted.filter((e) => e.kind === 'note');
+  const latest = notes.filter((e) => e.data?.about === 'cards-waiting').at(-1)?.data;
+  const said = notes.filter((e) => e.data?.about === 'top-card').at(-1)?.data;
+  const top = typeof said?.id === 'string' ? { id: said.id, holdsUp: Number.isInteger(said.holdsUp) ? said.holdsUp : 0 } : null;
+  const holding = said?.holding !== null && typeof said?.holding === 'object' && Object.keys(said.holding).length > 0 ? said.holding : null;
+  const listed = Array.isArray(latest?.ids) ? latest.ids.filter((id) => typeof id === 'string') : [];
+  const pulls = new Set(notes.filter((e) => e.data?.about === 'cards-pulled' && Array.isArray(e.data.ids)).flatMap((e) => e.data.ids));
+  if (top !== null) pulls.add(top.id);
+  const ids = listed.filter((id) => !pulls.has(id));
+  return { count: Array.isArray(latest?.ids) ? ids.length : Number.isInteger(latest?.count) ? latest.count : 0, ids, pulled: listed.filter((id) => pulls.has(id)), ...(top === null ? {} : { top }), ...(holding === null ? {} : { holding }) };
 }
 
 // `profile` is the profile's events, when these are a project's: a confirm card in the project for a
 // profile setting closes on the profile's verified confirmation, whichever project's card was
 // clicked (ruling F47). The project's levels, settings and unconfirmed stay its own.
 // `lean` is true for a Lean project's views, where a ruling confirmed by a chat click counts (leanRulingClicks).
+// How many cards are sealed, read and sampled, and no more: until the director has set the bars, what a seal says stays
+// in the private record, read by nothing but scripts/delegation/.
+function evidenceOf(sorted, enrolled) {
+  const lines = sorted.filter((e) => e.kind === 'shadow' && typeof e.data?.card === 'string' && verify(e, enrolled));
+  const cards = (line) => new Set(lines.filter((e) => e.data.line === line && e.data.reader !== 'none').map((e) => e.data.card)).size;
+  return { sealed: cards('seal'), read: cards('reading'), sampled: 0 };
+}
+
+// The rules in force: id -> { rule, stage, signedAt }. Only a signed confirmation of the record itself counts, never a
+// click in the chat, and of a rule signed more than once the newest record stands. Nothing reads these to decide yet.
+function rulesInForce(confirmations, now) {
+  const latest = new Map();
+  for (const { target, event } of confirmations) {
+    if (target.kind !== 'rule' || !ruleStands(target.data)) continue;
+    const kept = latest.get(target.data.id);
+    if (!kept || byOrder(kept.target, target) < 0) latest.set(target.data.id, { target, event });
+  }
+  return Object.fromEntries([...latest.values()].map(({ target, event }) => [target.data.id, { rule: target.data, stage: stageOf(target.data, { now }), signedAt: event.at }]));
+}
+
 export function buildViews(events, enrolled, { damaged = [], now = () => new Date(), profile = [], lean = false } = {}) {
   const { sorted, repeated } = uniqueSorted(events);
   const { confirmed, confirmations } = confirmationsOf(sorted, enrolled);
@@ -656,6 +719,8 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   const lastMerge = merges.length > 0 ? { at: merges.at(-1).at, data: merges.at(-1).data } : null;
 
   return {
+    evidence: evidenceOf(sorted, enrolled),
+    rules: rulesInForce(confirmations, now),
     rulebook,
     levels,
     settings,

@@ -26,7 +26,7 @@ import type { EngineInterface, RenderInput, SessionStartInput, TurnStartInput, T
 import { ask, type Answer, type PaneModel } from './ask'
 import { PANE_ID, TICK_MS, STALE_TICKS, TICK_ASK_MS, STOP_HALTS, ONLY_YOU_LIFT, NOTHING_NEEDS_YOU, NOT_HANDED, NOT_HERE, SETTING_UP, staleLine as staleWords } from './numbers'
 import { alarm, alert, bar, body, ends, footnote, group, panel, small, status, tableOf, title } from './calm'
-import { drawCard, drawStop, pressingNow, releaseAll, submitAll, NOT_HANDED_FOREMAN } from './cards'
+import { drawCard, drawStop, pressPull, pressSafekeeping, pressingNow, releaseAll, submitAll, NOT_HANDED_FOREMAN } from './cards'
 import { drawSettings, forgetAsks, showSettings } from './settings'
 
 // Whether every button, STOP included, is held back while a turn runs. Buttons stay live during a
@@ -47,6 +47,7 @@ const PLAIN_TITLE = 'Wheelhouse'
 const NO_PROJECT = 'This folder isn\'t a Wheelhouse project, so it has no pane'
 
 const PANE = { plugin: 'wheelhouse', key: 'pane' } as const
+const SAFEKEEPING_OPEN = { plugin: 'wheelhouse', key: 'safekeeping' } as const
 const TICK = { plugin: 'wheelhouse', key: 'tick' } as const
 const CARD = { plugin: 'wheelhouse', key: 'card' } as const
 const BUSY = { plugin: 'wheelhouse', key: 'busy' } as const
@@ -417,7 +418,7 @@ export async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
 
   const health = records(model.health).filter((line) => typeof line.text === 'string')
   const stopLine = health.find((line) => line.of === 'stop')?.text as string | undefined ?? null
-  const cards = records(model.cards).filter((card) => typeof card.text === 'string')
+  const cards = records(model.cards).filter((card) => typeof card.text === 'string' && card.heldBack !== true)
   const ids = cards.map((card, i) => (typeof card.id === 'string' ? card.id : `#${i}`))
   const at = Math.max(0, ids.indexOf(shown.value ?? ''))
   const card = cards[at]
@@ -454,6 +455,9 @@ export async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
   const verdict = text(model.verdict) ?? text(model.glance) ?? PLAIN_TITLE
   const since = text(model.since)
 
+  // The cards past the day's budget: their count, one press from being shown.
+  const held = isRecord(model.held) && typeof model.held.line === 'string' && isRecord(model.held.button) ? model.held : null
+
   // The card on the first panel, with its place: a card of parts says it in its own header row, one
   // with none above it. With no card, the words the verdict hasn't already said.
   const cardPart = card !== undefined
@@ -471,7 +475,9 @@ export async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
         ))}
       </Box>
     )
-    : !verdict.startsWith(NOTHING_NEEDS_YOU) && status(t, NOTHING_NEEDS_YOU, 'success')
+    : held === null && !verdict.startsWith(NOTHING_NEEDS_YOU) && status(t, NOTHING_NEEDS_YOU, 'success')
+
+  const heldPart = held !== null && ends(t, body(t, held.line as string), live && small(t, 'pull-cards', text((held.button as Record<string, unknown>).label) ?? '', () => pressPull($, after)))
 
   const building = (Array.isArray(model.building) ? model.building : [])
     .map((item) => (typeof item === 'string' ? { text: item, see: null } : isRecord(item) ? { text: text(item.text), see: text(item.see) } : { text: null, see: null }))
@@ -512,9 +518,24 @@ export async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
   const week = text(note.week)
   const usage = text(model.usage)
   const missing = strings(model.missing)
+  const safe = isRecord(model.safekeeping) && typeof model.safekeeping.line === 'string' ? model.safekeeping : null
+  const safeOpen = safe !== null && (await $.state.get(SAFEKEEPING_OPEN)).value === true
+  const safeActions = safe !== null && Array.isArray(safe.actions) ? records(safe.actions).filter((a) => typeof a.action === 'string' && typeof a.label === 'string') : []
+  const safeRow = safe !== null && (
+    <Box flexDirection="column" gap="xs">
+      {ends(t, body(t, `Safekeeping: ${safe.line as string}`), small(t, 'safekeeping', safeOpen ? 'Hide' : 'Details', () => $.state.set(SAFEKEEPING_OPEN, !safeOpen)))}
+      {safeOpen && typeof safe.detail === 'string' && footnote(t, safe.detail)}
+      {safeOpen && live && safeActions.length > 0 && (
+        <Box flexDirection="row" flexWrap="wrap" gap="sm">
+          {safeActions.map((a) => small(t, a.action as string, a.label as string, () => pressSafekeeping($, a.action as string, after)))}
+        </Box>
+      )}
+    </Box>
+  )
   const healthRows = [
     note.allWell === true && status(t, 'All well', 'success'),
     ...watch.map((line) => status(t, 'To watch', 'warning', line.text as string)),
+    safeRow,
     protection !== null && body(t, `Protection: ${protection}`),
     // The week's share once: the health note's, else the usage line of a model without one.
     (week ?? usage) !== null && body(t, (week ?? usage) as string),
@@ -535,6 +556,7 @@ export async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
         {since !== null && footnote(t, since)}
       </Box>
       {cardPart}
+      {heldPart}
       {buildingPart}
       {launchPart}
       {healthPart}

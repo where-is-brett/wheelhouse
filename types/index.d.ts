@@ -42,6 +42,8 @@ export type WheelhousePaneCard = {
   note?: string | null;
   blocking?: boolean;
   asked?: boolean;
+  // Past the day's budget: on the list, pushed to nobody until a new day or a pull.
+  heldBack?: boolean;
   // The card's parts, or null for a card with none, which is drawn as its text.
   parts?: WheelhouseCardParts | null;
   // When the director last suggested a change on it, as HH:MM in the computer's own time, or null.
@@ -63,6 +65,9 @@ export type WheelhouseLaunch = { resolved?: number; total?: number; gained?: num
 // week's share line. `health` stays the list of lines at watch or stop.
 export type WheelhouseHealthNote = { allWell?: boolean; protection?: string | null; week?: string | null };
 
+// The Safekeeping row: its line, what would be lost, and the buttons the status offers.
+export type WheelhouseSafekeeping = { level?: string; line?: string; detail?: string; actions?: { action?: string; label?: string }[] };
+
 // A health line, `of` naming STOP's own line ('stop') or an incident's.
 export type WheelhouseHealthLine = { level?: string; text?: string; of?: string | null };
 
@@ -82,10 +87,13 @@ export type WheelhousePaneModel = {
   updated?: string | null;
   stop?: { on?: boolean; since?: string | null };
   cards?: WheelhousePaneCard[];
+  // The line for the cards past the day's budget, and the button that shows them; null with none.
+  held?: { line: string; button: WheelhouseCardButton } | null;
   // Each piece of work as { text, see }; a model an older bridge wrote holds lines of words instead.
   building?: (WheelhouseBuilding | string)[];
   health?: WheelhouseHealthLine[];
   healthNote?: WheelhouseHealthNote;
+  safekeeping?: WheelhouseSafekeeping | null;
   usage?: string | null;
   finished?: string[];
   incidents?: string[];
@@ -156,6 +164,8 @@ declare module 'claude-code' {
       card: string;
       // The id of the card whose Why? is open in place, or null.
       why: string | null;
+      // Whether the Safekeeping row's detail is open.
+      safekeeping: boolean;
       // Whether a turn of the main loop is running.
       busy: boolean;
       // Where the session drew at its start, as session.start said; null for none.

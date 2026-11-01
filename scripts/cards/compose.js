@@ -498,6 +498,7 @@ export function composeCard(input) {
     // Every part of the card, so the pane draws them separately and the text can be built from them again (textOf).
     parts,
     ...(input.revises === undefined ? {} : { revises: input.revises }),
+    ...(input.joiners === undefined ? {} : { joiners: input.joiners }),
     // The option recommended, so the delegation review can tell a choice made as recommended.
     recommend,
     ...(input.importance === undefined ? {} : { importance: input.importance }),
@@ -516,26 +517,34 @@ function foremanSays(option) {
   return flat(option?.label) || says;
 }
 
+// Names in a sentence: a, b and c.
+const listed = (names) => (names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`);
+
 // The input for the answer card to a question the build recorded, `data` as its question event
 // holds it: its words, its own options with what each says, and its own recommendation (ruling
 // F10). `work` names the work, by its title or its id. A level 4 question's card says what
 // answering does to the checks, in the question's own words, or that the build didn't say (ruling F18).
-export function answerInput(data, work) {
+// `joiners` ([{ id, name }]) are the alike questions the answer goes to as well: the card lists each piece, so the words
+// a click signs say what it covers. `saidBefore` is the director's answer to the card this question joined too late for.
+export function answerInput(data, work, { joiners = [], saidBefore = null } = {}) {
   if (!isPlain(data) || !Array.isArray(data.options)) throw new Error('its record can\'t be read');
   const foreman = questionIdOf(data.id)?.foreman === true;
+  const said = data.level === 3 && typeof saidBefore === 'string' ? saidBefore : null;
+  const bundle = joiners.length === 0 ? '' : ` It came from ${listed([work, ...joiners.map((j) => j.name)])}: your answer goes to each.`;
   return {
     kind: 'answer',
     level: data.level,
-    what: flat(data.what),
+    what: `${said === null ? '' : `You said this before: ${said}. `}${flat(data.what)}${bundle}`,
     why: flat(data.why),
     options: data.options.map((o) => ({ label: o?.label, says: foreman ? foremanSays(o) : flat(o?.says) || o?.label })),
-    recommend: data.recommendation,
-    because: foreman ? `the Bosun recommends it for ${work}` : `the session building ${work} recommends it`,
+    recommend: said ?? data.recommendation,
+    because: said !== null ? 'it is what you said before' : foreman ? `the Bosun recommends it for ${work}` : `the session building ${work} recommends it`,
     meanwhile: MEANWHILE,
     ...(data.level === 4 ? { checks: flat(data.checks) || CHECKS_UNSAID } : {}),
     target: { questionId: data.id },
     // A build-command question's commands, so its own Not now is offered (see offered).
     ...(Array.isArray(data.commands) && data.commands.length > 0 ? { commands: data.commands } : {}),
+    ...(joiners.length === 0 ? {} : { joiners: joiners.map((j) => j.id) }),
   };
 }
 

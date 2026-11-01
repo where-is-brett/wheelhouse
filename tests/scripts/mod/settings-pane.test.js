@@ -578,6 +578,11 @@ const groupsAt = (iso, extra = {}) => {
 const groupRows = (groups, id) => groups.find((g) => g.id === id).rows;
 const groupRow = (groups, key) => groups.flatMap((g) => g.rows).find((r) => r.key === key);
 
+test('a project on this computer offers where it is kept, and one on a host doesn\'t', () => {
+  assert.equal(groupRow(groupsAt('2026-10-29T10:00:00.000Z', { local: true }), 'whereKept').kind, 'change');
+  assert.equal(groupRow(groupsAt('2026-10-29T10:00:00.000Z'), 'whereKept'), undefined);
+});
+
 test('the four plainer names show, and the keys stay', () => {
   assert.deepEqual(['presence', 'pace', 'efficiency', 'boardTab'].map((k) => SETTINGS[k].label), ['Availability', 'Crew at once', 'Thoroughness', 'Logbook opens on']);
   const groups = groupsAt('2026-10-19T05:00:00.000Z');

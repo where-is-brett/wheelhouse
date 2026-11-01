@@ -10,12 +10,16 @@ import path from 'node:path';
 import { guardedRun } from '../../helpers/host-stand-ins.js';
 import { startHelper } from '../../../scripts/host/helper.js';
 import { engineForProject, packedArchon, ENGINE_CONFIG } from '../../../scripts/host/helper-main.js';
-import { stateDir } from '../../../scripts/lib/paths.js';
+import { engineDir, stateDir } from '../../../scripts/lib/paths.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
-import { listEvents, makeEvent, eventPath } from '../../../scripts/state/events.js';
+import { listEvents, makeEvent, eventPath, dataHash } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
+import { helperClient } from '../../../scripts/host/helper-client.js';
+import { READER_WORK } from '../../../scripts/delegation/reader.js';
+import { PACK_NAME } from '../../../scripts/engine/pack-build.js';
+import { TICKET_FILE } from '../../../scripts/engine/ticket.js';
 import { fakeEngine, loadRecordings } from '../../../scripts/engine/fake.js';
 import { readCursorFile } from '../../../scripts/engine/host.js';
 import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
@@ -153,4 +157,136 @@ test("the real helper's Archon reads the pack built into the engine's folder, wi
   packedArchon({ engine, adapter, build: () => { throw new Error('The pack fails its check'); } });
   assert.equal(seen[1].packDir, undefined);
   fs.rmSync(engine, { recursive: true, force: true });
+});
+
+test('a card the router writes gets its signed seal, and the card doesn\'t wait for it', async () => {
+  const p = await projects(['o__on']);
+  const engine = fakeEngine({ recordings });
+  const { runId } = engine.start({ recording: 'quick-blocked' });
+  try {
+    await as(p.home, async () => {
+      started('o__on', runId, 'card-13');
+      const helper = await startHelper({
+        run: hostGuard, address: testAddress(p.home), adapterFor: async () => ({ defaultBranch: async () => 'main' }), envFor: async () => ({}),
+        spawn: stubSpawn().spawn, engineFor: () => engine, dispatchMs: 60 * 60 * 1000,
+      });
+      try {
+        const ofKind = (kind) => listEvents(stateDir('o__on'), { report: () => {} }).filter((e) => e.kind === kind);
+        await until(() => ofKind('question').length === 1, { what: 'the card' });
+        assert.deepEqual(ofKind('shadow'), [], 'no seal before a tick');
+        const kept = path.join(stateDir('o__on'), '..', 'engine', 'shadow.json');
+        await until(() => fs.existsSync(kept), { what: 'the card queued for its seal' });
+        await helper.engine.seal();
+        const [seal] = ofKind('shadow');
+        assert.equal(seal.data.card, ofKind('question')[0].data.id);
+        assert.ok(seal.sig, 'the line is signed');
+        assert.equal(ofKind('shadow').filter((e) => e.data.line === 'seal').length, 1);
+        // A reader that couldn't start leaves a line saying so. The card stays open until its answer, and then closes with no score.
+        assert.equal(ofKind('shadow').filter((e) => e.data.line === 'reading' && e.data.reader === 'none').length, 1);
+        assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(kept, 'utf8')).open), [seal.data.card]);
+        await helper.engine.seal();
+        assert.equal(ofKind('shadow').length, 2);
+        assert.equal(JSON.parse(fs.readFileSync(kept, 'utf8')).waiting.length, 0);
+      } finally {
+        await helper.close();
+      }
+    });
+  } finally { p.cleanup(); }
+});
+
+test('a question card\'s reader starts from the helper, gets its view by its ticket, and costs no card', async () => {
+  const p = await projects(['o__on']);
+  const artefacts = path.join(p.home, 'artefacts');
+  const spend = { tokens: 10, dollars: 0.01, source: 'reported' };
+  const engine = fakeEngine({ artefacts, recordings: { ...recordings, reader: [{ type: 'step-finished', at: 't', step: 'read', role: 'reader', spend, output: 'not a reading' }] } });
+  const { runId } = engine.start({ recording: 'quick-blocked' });
+  try {
+    await as(p.home, async () => {
+      started('o__on', runId, 'card-13');
+      const helper = await startHelper({
+        run: hostGuard, address: testAddress(p.home), adapterFor: async () => ({ defaultBranch: async () => 'main' }), envFor: async () => ({}),
+        spawn: stubSpawn().spawn, engineFor: () => engine, dispatchMs: 60 * 60 * 1000,
+      });
+      try {
+        const ofKind = (kind) => listEvents(stateDir('o__on'), { report: () => {} }).filter((e) => e.kind === kind);
+        await until(() => ofKind('question').length === 1, { what: 'the card' });
+        const card = ofKind('question')[0].data;
+        await until(() => fs.existsSync(path.join(stateDir('o__on'), '..', 'engine', 'shadow.json')), { what: 'the card queued for its seal' });
+        await helper.engine.seal();
+        const start = engine.calls.find((c) => c.call === 'start' && c.order.lane === 'reader');
+        assert.equal(start.order.card, card.id);
+        assert.equal(start.order.work, READER_WORK);
+        const reader = [...engine.calls].filter((c) => c.call === 'start').length;
+        assert.equal(reader, 2);
+        const run = fs.readdirSync(artefacts).find((name) => name.endsWith('reader'));
+        const ticket = fs.readFileSync(path.join(artefacts, run, TICKET_FILE), 'utf8').trim();
+        const client = helperClient({ address: testAddress(p.home) });
+        const given = await client.engine.readerView({ runId: run, ticket });
+        assert.equal(given.ok, true);
+        assert.equal(given.view.question, card.what);
+        assert.equal((await client.engine.readerView({ runId: run })).ok, false);
+        assert.equal(ofKind('question').length, 1);
+        assert.equal(ofKind('card').length, 0);
+      } finally {
+        await helper.close();
+      }
+    });
+  } finally { p.cleanup(); }
+});
+
+test('a reading from the installed pack and the director\'s answer make one score, through the helper', async () => {
+  const p = await projects(['o__on']);
+  const artefacts = path.join(p.home, 'artefacts');
+  const source = path.join(p.home, 'frozen');
+  const spend = { tokens: 10, dollars: 0.01, source: 'reported' };
+  const engine = fakeEngine({ artefacts, source, recordings: { ...recordings, reader: [{ type: 'step-finished', at: 't', step: 'read', role: 'reader', spend, output: '' }, { type: 'run-ended', at: 't', outcome: 'completed', branch: null, pr: null }] } });
+  const { runId } = engine.start({ recording: 'quick-blocked' });
+  try {
+    await as(p.home, async () => {
+      for (const root of [path.join(engineDir(), 'pack'), path.join(source, 'project')]) {
+        const pack = path.join(root, '.archon', 'workflows', PACK_NAME);
+        fs.mkdirSync(pack, { recursive: true });
+        fs.writeFileSync(path.join(pack, 'step.yaml'), 'name: the installed pack\n');
+      }
+      started('o__on', runId, 'card-13');
+      const helper = await startHelper({
+        run: hostGuard, address: testAddress(p.home), adapterFor: async () => ({ defaultBranch: async () => 'main' }), envFor: async () => ({}),
+        spawn: stubSpawn().spawn, engineFor: () => engine, dispatchMs: 60 * 60 * 1000,
+      });
+      try {
+        const ofKind = (kind) => listEvents(stateDir('o__on'), { report: () => {} }).filter((e) => e.kind === kind);
+        const lines = (line) => ofKind('shadow').filter((e) => e.data.line === line);
+        await until(() => ofKind('question').length === 1, { what: 'the card' });
+        const [{ data: card }] = ofKind('question');
+        await until(() => fs.existsSync(path.join(stateDir('o__on'), '..', 'engine', 'shadow.json')), { what: 'the card queued for its seal' });
+        await helper.engine.seal();
+        const reader = engine.calls.find((c) => c.call === 'start' && c.order.lane === 'reader');
+        assert.ok(reader, 'the reader started');
+        const run = fs.readdirSync(artefacts).find((name) => name.endsWith('reader'));
+        const labels = card.options.map((o) => o.label ?? o);
+        const pick = labels[0];
+        engine.setOutput(run, 'read', JSON.stringify({ frame: 'sound', why: 'They fit.', kind: 'can-see', fits: 'no-rule', pick, tags: labels.map((label) => ({ label, leans: [] })) }));
+        await helper.engine.seal();
+        assert.equal(lines('reading').length, 1);
+        assert.equal(lines('reading')[0].data.reader, 'read');
+        assert.equal(ofKind('cost').filter((e) => e.data.work === READER_WORK).length, 1);
+        assert.equal(lines('reading')[0].data.pick, pick);
+        assert.equal(lines('reading')[0].data.afterAnswer, false);
+        assert.equal(lines('score').length, 0, 'no score before the answer');
+
+        const answer = makeEvent({ kind: 'action', data: { action: 'answer', question: card.what, questionId: card.id, questionHash: dataHash(card), label: pick }, now: () => new Date() });
+        const file = path.join(stateDir('o__on'), eventPath(answer));
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, `${JSON.stringify(answer, null, 2)}\n`);
+        await helper.engine.seal();
+        assert.equal(lines('score').length, 1);
+        assert.equal(lines('score')[0].data.score, 'match');
+        assert.equal(lines('score')[0].data.seal, lines('seal')[0].data.hash);
+        await helper.engine.seal();
+        assert.equal(lines('score').length, 1);
+      } finally {
+        await helper.close();
+      }
+    });
+  } finally { p.cleanup(); }
 });

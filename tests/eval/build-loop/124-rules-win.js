@@ -15,7 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { KITS } from '../../../scripts/eval/world-kits.js';
 import { TINY_GOAL } from './engine-recordings.js';
-import { PACK_DIR, NO_PERSON_LINE, SKILL_PREFIX, WHEELHOUSE_PLUGIN } from '../../../scripts/engine/pack-check.js';
+import { PACK_DIR, NO_PERSON_LINE, READ_ONLY, SKILL_PREFIX, WHEELHOUSE_PLUGIN } from '../../../scripts/engine/pack-check.js';
 import { promptText } from '../../../scripts/engine/pack-build.js';
 import { isAgentStep, packWorkflows } from './pack-routes.js';
 
@@ -36,14 +36,16 @@ export default {
         for (const { node } of nodes.filter((n) => isAgentStep(n.node))) {
           steps += 1;
           const plugins = node.plugins ?? [];
-          if (plugins.length !== 1 || plugins[0] !== WHEELHOUSE_PLUGIN) return { pass: false, why: `${name}'s ${node.id} names the plugins ${JSON.stringify(plugins)}` };
+          // The reader alone loads nothing at all, and reads no rules: it sees only its view, so what it reads can't be steered.
+          const bare = READ_ONLY.has(name);
+          if (bare ? plugins.length !== 0 || node.skills !== undefined : plugins.length !== 1 || plugins[0] !== WHEELHOUSE_PLUGIN) return { pass: false, why: `${name}'s ${node.id} names the plugins ${JSON.stringify(plugins)}` };
           for (const skill of node.skills ?? []) {
             if (!skill.startsWith(SKILL_PREFIX)) return { pass: false, why: `${name}'s ${node.id} names the skill ${skill}` };
             skills.add(skill.slice(SKILL_PREFIX.length));
           }
           if (typeof node.prompt_file !== 'string') return { pass: false, why: `${name}'s ${node.id} has no prompt of the pack's own` };
           const prompt = promptText(PACK_DIR, node.prompt_file);
-          if (!prompt.includes(NO_PERSON_LINE)) return { pass: false, why: `${name}'s ${node.id} prompt doesn't carry the rules` };
+          if (!bare && !prompt.includes(NO_PERSON_LINE)) return { pass: false, why: `${name}'s ${node.id} prompt doesn't carry the rules` };
           const named = OTHER_RULES.exec(prompt);
           if (named) return { pass: false, why: `${name}'s ${node.id} prompt names ${named[0]}` };
         }

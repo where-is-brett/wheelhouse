@@ -14,6 +14,7 @@ import { NO_HELPER, localViews } from '../hooks/session-start.js';
 import { sayTime } from '../settings/effective.js';
 import { briefingModel } from '../briefing/model.js';
 import { HEADERS } from '../cards/compose.js';
+import { heldBackRow } from '../mod/buttons.js';
 import { glossaryOf, plainWords } from '../frontdesk/glossary.js';
 import { stopState } from '../lib/stop.js';
 import { listEvents } from '../state/events.js';
@@ -25,6 +26,7 @@ import { ownLineOf, brokenCount } from '../board/health.js';
 import { cardButtons, kindOf } from '../mod/buttons.js';
 import { previewFor } from '../mod/previews.js';
 import { readSeen } from '../briefing/seen.js';
+import { readStatus } from '../safekeeping/readings.js';
 import { SHOW_ME, verdict, sinceLine, askedSince } from '../lib/calm-words.js';
 
 export const PANE_VERSION = 1;
@@ -32,7 +34,7 @@ export const QUESTION_WAITS = 'A question from the build waits; the First Mate w
 export const CARD_TO_MAKE = 'A card from the build waits; the First Mate will make it and ask it';
 // The views the pane reads: the glance's, the reports and glossary, the open incidents, and the
 // build's records the front desk makes cards from.
-const PANE_VIEWS = ['waiting', 'questions', 'work', 'features', 'reports', 'glossary', 'status', 'incidents', 'blockers', 'ideas',
+const PANE_VIEWS = ['waiting', 'questions', 'cardsWaiting', 'work', 'features', 'reports', 'glossary', 'status', 'incidents', 'blockers', 'ideas',
   'gateAsks', 'lineageHolds', 'controlFiles', 'premiumFailures'];
 // The line of an approval card's set line, from which its preview is asked for.
 const APPROVAL_LINE = /^Approve pull request #([1-9][0-9]*) at commit ([0-9a-f]{12})$/;
@@ -187,7 +189,7 @@ export async function paneModel({
     // so it is never asked, and it ranks as that card will.
     if (item.card === undefined) {
       return [{
-        id: item.id, n: item.n, header: HEADERS.question, kind: 'question', text: QUESTION_WAITS, hash: hashOf(QUESTION_WAITS), buttons: [], note: null, blocking: blocks(answerCardFor(item.question, views), views), asked: false,
+        id: item.id, n: item.n, header: HEADERS.question, kind: 'question', text: QUESTION_WAITS, hash: hashOf(QUESTION_WAITS), buttons: [], note: null, blocking: blocks(answerCardFor(item.question, views), views), asked: false, heldBack: item.heldBack === true,
         parts: null, steered: null, waited: null, revised: false,
       }];
     }
@@ -209,6 +211,7 @@ export async function paneModel({
       note,
       blocking: blocks(card, views),
       asked,
+      heldBack: item.heldBack === true,
       // The card's parts as the composer kept them, already in plain words; null for a card with none, which is drawn as its text.
       parts: isRecord(data.parts) ? data.parts : null,
       steered: clockTime(card.steered, timeZone),
@@ -230,7 +233,7 @@ export async function paneModel({
       ...premiumFailuresDue(views).map((r) => make(r, 'premium')),
     ].sort((a, b) => String(a.at).localeCompare(String(b.at)));
     return due.map((d, i) => ({
-      id: d.id, n: cards.length + i + 1, header: HEADERS[d.kind], kind: d.kind, text: CARD_TO_MAKE, hash: hashOf(CARD_TO_MAKE), buttons: [], note: null, blocking: d.blocking, asked: false,
+      id: d.id, n: cards.length + i + 1, header: HEADERS[d.kind], kind: d.kind, text: CARD_TO_MAKE, hash: hashOf(CARD_TO_MAKE), buttons: [], note: null, blocking: d.blocking, asked: false, heldBack: false,
       parts: null, steered: null, waited: null, revised: false,
     }));
   }, []));
@@ -251,6 +254,13 @@ export async function paneModel({
     .filter((l) => l.level === 'watch' || l.level === 'stop')
     .map((l) => ({ level: l.level, text: plain(l.text), of: ownLineOf(l) }))
     .filter((l) => l.text !== ''), []);
+
+  // The Safekeeping row, on every project but a Lean one, which has no status. Its buttons are the status's own.
+  const safekeeping = part('Safekeeping row', () => {
+    const kept = readStatus(project);
+    if (!isRecord(kept) || typeof kept.line !== 'string') return null;
+    return { level: kept.level, line: plain(kept.line), detail: plain(kept.detail), actions: list(kept.actions).map((a) => ({ action: a.action, label: a.label })) };
+  }, null);
 
   const usage = part('usage line', () => (model === null ? null
     : briefingModel({ model, usage: inputs.usage, sources: inputs.sources, now: clock ?? undefined }).usage), null);
@@ -307,12 +317,14 @@ export async function paneModel({
     glance: model === null ? 'Wheelhouse' : glanceLine(model),
     stop: { on: stop.on === true, since: typeof stop.at === 'string' ? stop.at : null },
     cards,
+    held: heldBackRow(cards.filter((card) => card.heldBack).length),
     verdict: verdict({ waiting: cards.length, broken }),
     since: sinceHour === null ? null : sinceLine(sinceHour),
     launch,
     building,
     health,
     healthNote,
+    safekeeping,
     ideas,
     updated: clockTime(clock === null ? null : clock.toISOString(), timeZone),
     usage: typeof usage === 'string' ? usage : null,

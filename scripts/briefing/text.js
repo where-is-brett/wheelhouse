@@ -16,6 +16,7 @@
 // small for even the cut parts, usage goes, then the closing lines, then whole parts from the last,
 // then when the last briefing was, then the verdict, so no briefing passes its words.
 import { oneLine } from '../board/model.js';
+import { heldBackWords, holdsUpWords, SHOW_THEM } from '../engine/words.js';
 import { BRIEFING_WORDS } from '../lib/core-numbers.js';
 import {
   verdict as verdictOf, optionalMark, recommends, foldedParts, ASK_ME_ANYTHING, FULL_BOARD, USAGE_ON_TRACK, ASK_FOR_THE_BOARD,
@@ -38,7 +39,8 @@ function waitingText(value, detail = 0) {
   if (title === '') return '';
   const minutes = Number.isInteger(value.optional) && value.optional > 0 ? ` · ${optionalMark(value.optional)}` : '';
   const recommendation = oneLine(value.recommendation);
-  return [`${title}${minutes}`, detail < 1 ? oneLine(value.line) : '', recommendation === '' || detail > 1 ? '' : recommends(recommendation)].filter(Boolean).join(BREAK);
+  const holds = Number.isInteger(value.holdsUp) && value.holdsUp > 0 ? ` · ${holdsUpWords(value.holdsUp)}` : '';
+  return [`${title}${minutes}${holds}`, detail < 1 ? oneLine(value.line) : '', recommendation === '' || detail > 1 ? '' : recommends(recommendation)].filter(Boolean).join(BREAK);
 }
 
 // A part as it is cut so far: its heading, its first `shown` entries, then "and N more". An entry
@@ -106,11 +108,13 @@ function write(b, limit) {
   if (usage !== '' && b.onTrack === true) usage = `${usage} ${USAGE_ON_TRACK}`;
   if (wordsIn(usage) > limit) usage = '';
   let ask = `${ASK_ME_ANYTHING} ${FULL_BOARD}`;
+  // The cards past the day's budget: a line of the briefing's own, one word from being shown.
+  let held = Number.isInteger(b.heldBack) && b.heldBack > 0 ? `${heldBackWords(b.heldBack)} ${SHOW_THEM}` : '';
 
   const waitingPart = parts[2];
   let detail = 0;
   const counted = parts.map(partWords);
-  const framingWords = () => wordsIn(verdict) + wordsIn(since) + wordsIn(folded) + wordsIn(usage) + wordsIn(ask);
+  const framingWords = () => wordsIn(verdict) + wordsIn(since) + wordsIn(folded) + wordsIn(usage) + wordsIn(ask) + wordsIn(held);
   let total = framingWords() + counted.reduce((sum, n) => sum + n, 0);
   // The folded line is the first to go, then entries are cut.
   if (total > limit) {
@@ -151,6 +155,10 @@ function write(b, limit) {
     total -= wordsIn(ask);
     ask = '';
   }
+  if (total > limit) {
+    total -= wordsIn(held);
+    held = '';
+  }
   for (const i of [5, 4, 3, 1, 0, 2]) {
     if (total <= limit || parts[i].items.length === 0) continue;
     parts[i].hidden = true;
@@ -165,7 +173,7 @@ function write(b, limit) {
     verdict = '';
   }
 
-  const text = [verdict, since, ...parts.filter((part) => part.items.length > 0 && !part.hidden).map((part) => partLines(part).join('\n')), folded, usage, ask].filter(Boolean);
+  const text = [verdict, since, ...parts.filter((part) => part.items.length > 0 && !part.hidden).map((part) => partLines(part).join('\n')), held, folded, usage, ask].filter(Boolean);
   return {
     // With every part gone, the board still has what was cut.
     text: text.length > 0 ? text.join('\n\n') : ASK_FOR_THE_BOARD.split(' ').slice(0, limit).join(' '),

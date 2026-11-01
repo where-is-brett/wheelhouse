@@ -11,12 +11,15 @@ import { commandDigest } from '../../scripts/checks/record.js';
 import { FIX_LANE } from '../../scripts/engine/fix-main.js';
 import { workOrder } from '../../scripts/engine/order.js';
 import { withTicket } from '../../scripts/engine/ticket.js';
+import { backupFile, chooseBackupFolder, readBackup } from '../../scripts/host/local/backup.js';
 import { localChanges } from '../../scripts/host/local/changes.js';
+import { restoreProject } from '../../scripts/host/local/restore.js';
 import { keepSeenMain, seenMain } from '../../scripts/host/local/merge.js';
 import { stateDir } from '../../scripts/lib/paths.js';
 import { run } from '../../scripts/lib/run.js';
 import { liftStop, setStop } from '../../scripts/lib/stop.js';
 import { g } from '../helpers/git-fixture.js';
+import { tempFolder } from '../helpers/homes.js';
 import { dataHash, eventPath, listEvents, makeEvent } from '../../scripts/state/events.js';
 
 waitLongerOnTheHelper();
@@ -86,6 +89,29 @@ test('a change with its signed check, review and permit reaches the main version
   assert.match(fs.readFileSync(path.join(folder, 'src', 'price.js'), 'utf8'), /toFixed/);
   assert.ok(records('merge').some((e) => e.data.commit === main));
   assert.deepEqual(tools, [], 'no call to gh');
+}, { check: checks() }));
+
+test('a merge is backed up, and the backup brings the project back on a clean home', { timeout: 120000 }, () => gitAloneWorld(async (world) => {
+  const { helper, home } = world;
+  const before = process.env.HOME;
+  const person = fs.realpathSync.native(tempFolder('wh-person-'));
+  const drive = path.join(person, 'Dropbox', 'Backups');
+  fs.mkdirSync(drive, { recursive: true });
+  process.env.HOME = person;
+  try {
+    assert.deepEqual(chooseBackupFolder({ project: P, folder: drive }), { ok: true });
+    const { n } = await readyChange(world, 'card-3', 'export const price = (c) => c;\n');
+    await ticksUntil(helper, () => (changeOf(n).state === 'merged' ? changeOf(n) : null), 'the merge');
+    const main = await headIn(home, 'refs/heads/main');
+    await ticksUntil(helper, () => readBackup(P).main === main, 'the backup');
+    const place = path.join(tempFolder('wh-back-'), 'shop');
+    fs.mkdirSync(place);
+    await restoreProject({ file: backupFile(drive, P), folder: place, project: 'shop-again' });
+    assert.equal(await headIn(place, 'refs/heads/main'), main);
+    assert.match(fs.readFileSync(path.join(place, 'src', 'price.js'), 'utf8'), /=> c;/);
+  } finally {
+    process.env.HOME = before;
+  }
 }, { check: checks() }));
 
 test('a check nobody signed adds nothing', { timeout: 120000 }, () => gitAloneWorld(async (world) => {
@@ -221,10 +247,28 @@ test('Undo takes a merge back out on the director\'s click, and one click does i
   assert.equal(asked.needs, 'window');
   const card = cardOf((d) => String(d.question).includes(merge));
   const undone = await confirm(client, card);
+  assert.equal(typeof undone.undone?.undo, 'string', JSON.stringify(undone));
   assert.equal(await headIn(home, 'refs/heads/main'), undone.undone.undo);
   assert.equal(seenMain(P), undone.undone.undo);
   assert.equal((await client.local.undo({ project: P, merge })).needs, 'window', 'the click is spent');
   assert.equal(await headIn(home, 'refs/heads/main'), undone.undone.undo);
+}, { check: checks(), askWindow: atWindow('Undo') }));
+
+test('a write beside an Undo doesn\'t cost its click: the record takes one commit at a time', { timeout: 120000 }, () => gitAloneWorld(async (world) => {
+  const { helper, client } = world;
+  const { n } = await readyChange(world, 'card-13', 'export const price = () => 13;\n');
+  await ticksUntil(helper, () => changeOf(n).state === 'merged', 'the merge');
+  const merge = changeOf(n).mergeCommit;
+  await client.local.undo({ project: P, merge });
+  const card = cardOf((d) => String(d.question).includes(merge));
+  let writing = true;
+  const beside = (async () => {
+    while (writing) await client.state.write({ project: P, kind: 'note', data: { about: 'engine', words: 'Something else happened.' } });
+  })();
+  const undone = await confirm(client, card);
+  writing = false;
+  await beside;
+  assert.equal(typeof undone.undone?.undo, 'string', JSON.stringify(undone));
 }, { check: checks(), askWindow: atWindow('Undo') }));
 
 test('a change that takes the director\'s say raises its card once, and goes in on their Approve', { timeout: 120000 }, () => gitAloneWorld(async (world) => {

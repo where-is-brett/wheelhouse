@@ -10,6 +10,7 @@ import { dispatchRun, KEEP_GOING, STOP_HERE, BUILD_AGAIN } from '../../../script
 import { SLICES_FENCE, featureCap, readSlices } from '../../../scripts/engine/feature.js';
 import { fakeEngine } from '../../../scripts/engine/fake.js';
 import { tempFolder } from '../../helpers/homes.js';
+import { wayBack, forever, quiet } from '../../helpers/way-back.js';
 
 const DESIGN = `# Order history\n\n\`\`\`${SLICES_FENCE}\n${JSON.stringify({
   goal: 'Customers see their past orders', flag: { name: 'order-history' }, demo: 'end',
@@ -195,8 +196,8 @@ test('a carry-on of a cancelled slice 2 starts slice 2 again on its branch, not 
   world.merged.add(70);
   await d.tick();
   recordLast({ outcome: 'cancelled', branch: 'wh/orders-2' });
-  const got = await d.startAgain({ work: 'orders', lane: 'slice', branch: 'wh/orders-2', carryOn: true });
-  assert.equal(got.ok, true);
+  d.enter({ work: 'orders', lane: 'slice', via: 'rework', key: 'k', branch: 'wh/orders-2', carryOn: true });
+  await d.tick();
   assert.equal(world.starts.length, 3);
   assert.deepEqual(world.starts[2].order.slice, { n: 2, of: 2, title: 'Filter them' });
   assert.equal(world.starts[2].branch, 'wh/orders-2');
@@ -463,4 +464,52 @@ test('the merge queue isn\'t started for a ready pull request whose work has end
   world.reports.orders = { at: '2026-10-29T10:00:00.000Z', data: { work: 'orders', outcome: 'closed' } };
   const got = await d.tick();
   assert.equal(got.startMergeQueue, false);
+});
+
+test('a feature with its cap card open doesn\'t enter', async () => {
+  const { d, world, recordLast } = setUp();
+  await d.tick();
+  recordLast({ pr: 70 });
+  world.merged.add(70);
+  const cap = featureCap(readSlices(DESIGN), {}, { raised: false });
+  world.costs.push(cap);
+  await d.tick();
+  const card = world.written.find((w) => w.kind === 'question');
+  assert.ok(card, 'the cap card came from the start it held');
+  assert.equal(d.admittedTo('orders'), false, 'the place went back');
+  await d.tick();
+  await d.tick();
+  assert.equal(world.starts.length, 1, 'no start, and no place taken, while its card is open');
+  assert.equal(world.written.filter((w) => w.kind === 'question').length, 1);
+});
+
+test('a start refused for the feature\'s cap leaves returning for the cap card', async () => {
+  const { d, world, recordLast } = setUp();
+  await d.tick();
+  recordLast({ outcome: 'cancelled', branch: 'wh/orders-1' });
+  world.costs.push(featureCap(readSlices(DESIGN), {}, { raised: false }));
+  d.enter({ work: 'orders', lane: 'slice', via: 'rework', key: 'k', branch: 'wh/orders-1', carryOn: true });
+  await d.tick();
+  assert.equal(d.admittedTo('orders'), false);
+  const card = world.written.find((w) => w.kind === 'question').data;
+  world.questions[card.id] = { question: { data: card }, answer: { label: KEEP_GOING } };
+  await d.tick();
+  await d.tick();
+  assert.equal(world.starts.length, 2, 'Keep going carries it on, once');
+  assert.equal(world.starts[1].branch, 'wh/orders-1');
+});
+
+test('a next slice with no place waits, and no stall card comes while it does', async () => {
+  const w = wayBack({ recordings: { orders: [...quiet().slice(0, 1), { type: 'run-ended', runId: 'x', at: AT, outcome: 'completed', pr: 70 }], busy: forever() }, pace: 1, designOf: () => ({ text: DESIGN }) });
+  w.put('orders', { lane: 'feature', place: 0, title: 'Order history' });
+  await w.tick();
+  w.put('busy', { place: 1 });
+  w.runs.busy = [{ at: w.clock.now.toISOString(), data: { work: 'busy', runId: 'run-busy', lane: 'quick', state: 'started' } }];
+  w.seenPr[70] = 'merged';
+  await w.tick(3);
+  assert.equal(w.starts.filter((s) => s.order.work === 'orders').length, 1, 'the next slice waits for a place');
+  assert.deepEqual(w.cards(), []);
+  w.runs.busy.push({ at: w.clock.now.toISOString(), data: { work: 'busy', runId: 'run-busy', lane: 'quick', state: 'ended', outcome: 'completed' } });
+  await w.tick();
+  assert.equal(w.starts.filter((s) => s.order.work === 'orders').length, 2, 'and starts once a place is free');
 });

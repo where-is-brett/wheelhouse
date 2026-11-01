@@ -201,6 +201,18 @@ test('a chat pick of Suggest a change… records nothing yet, and the front desk
   });
 });
 
+test('a chat pick of Suggest a change… on a build\'s question leaves one line saying so, with none of the words', async () => {
+  await withHome(async () => {
+    const question = 'Which colour shall the build use?';
+    const kept = makeEvent({ kind: 'card', data: { question, header: 'Colour', kind: 'answer', level: 3, line: 'Answer question q-w-1', options: ['Blue', 'Red', SUGGEST] }, now: () => NOW });
+    keepEvent(kept);
+    const c = fake();
+    const got = await decide(copyClick({ question, options: [{ label: 'Blue' }, { label: 'Red' }, { label: SUGGEST }] }, SUGGEST), deps(c));
+    assert.deepEqual(c.calls.write.map((w) => [w.kind, w.data]), [['chat-steer', { card: kept.id }]]);
+    assert.ok(contextOf(got).includes(`"${WHAT_WOULD_YOU_CHANGE}"`));
+  });
+});
+
 test('Approve when the head has moved since the card records no approval', async () => {
   await withHome(async () => {
     const c = fake({ pr: { ok: true, result: { headSha: '1'.repeat(40), state: 'open' } } });

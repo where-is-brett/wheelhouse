@@ -3,10 +3,10 @@
 
 // How much work builds at once, and how much of that may be in the feature lane.
 export const PACE = Object.freeze({ building: 3, featureLane: 1 });
-// The pace in force, from the effective settings (the `pace` entry's value): the director's one, two or three at
-// once, else PACE.
+// The pace in force, from the effective settings (the `pace` entry's value, or that value alone where the settings are
+// already read down to their values): the director's one, two or three at once, else PACE.
 export function paceOf(settings) {
-  const value = settings?.pace?.value;
+  const value = settings?.pace?.value ?? settings?.pace;
   return [1, 2, 3].includes(value) ? { building: value, featureLane: PACE.featureLane } : { ...PACE };
 }
 // How long a feature's status may stand still, in awake time, before it counts as stuck.

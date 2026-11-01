@@ -23,6 +23,7 @@
 //                                                   `at`: its marks are undone, so the next tick wakes
 //                                                   again
 //   { cmd: 'reply', origin, text, cwd }             a reply code and an option, as the click
+//   { cmd: 'pull-cards', origin, cwd } Show them, in the pane, on the cards past the day's budget
 //   { cmd: 'press', origin, cwd, card, hash, label } a press on a card in the pane, as its click
 //   { cmd: 'why', origin, cwd, card, hash }         Why? on a card: its answer noted quietly, no prompt
 //   { cmd: 'suggest', origin, cwd, card, hash, words } Suggest a change… on a card: its answer noted, and
@@ -267,6 +268,29 @@ async function press(req, d) {
   return answer;
 }
 
+// A button on the Safekeeping row, from the pane alone: signed on this side as the press it is, so an agent can't make one, and
+// done by the helper through the desk. It isn't kept for later: a press the helper didn't take did nothing.
+async function safekeeping(req, d) {
+  if (req.origin !== PANE) return no(SAYS.notPane);
+  const project = placeOf(req.cwd, d);
+  if (!project) return no(SAYS.notProject);
+  if (typeof req.action !== 'string' || req.action === '') return no(SAYS.unreadable);
+  const kept = keepEarned(project, { made: { kind: 'action', data: { action: 'safekeeping', press: req.action, question: 'Safekeeping', label: req.action } } }, { now: d.now });
+  const got = await deskOf(project, req.cwd, d).act('safekeeping', { action: req.action }, { form: 'signed', records: signedRecords(kept) });
+  fs.rmSync(kept.file, { force: true });
+  const says = got?.says ?? got?.refused;
+  return { ok: got?.ok === true, ...(typeof says === 'string' ? { says: inWords(project, says) } : {}), ...(strings(got?.submit) ? { submit: got.submit } : {}) };
+}
+
+// Show them on the pane's line for the cards past the day's budget, from the pane alone. It brings them up and decides nothing.
+async function pullCards(req, d) {
+  if (req.origin !== PANE) return no(SAYS.notPane);
+  const project = placeOf(req.cwd, d);
+  if (!project) return no(SAYS.notProject);
+  const got = await deskOf(project, req.cwd, d).act('pull-cards', {});
+  return { ok: got?.ok === true, ...(typeof got?.refused === 'string' ? { says: inWords(project, got.refused) } : {}) };
+}
+
 // Why? on a card in the pane, from the pane alone: the card's answer is noted quietly (press.js),
 // so the answer is ok with nothing to say and no prompt, whether or not the card was still there.
 async function why(req, d) {
@@ -313,7 +337,7 @@ async function settings(req, d) {
   const inputs = { effective, changes: d.readChanges({ project: found.project }), now: d.now, timeZone: d.timeZone, locked: typeof found.locked === 'boolean' ? found.locked : undefined, ready: readyOf(found.project, d) };
   // The level build commands run at on Windows is kept per computer: this computer's is shown.
   const builds = effective?.[settingKey(d.computer())];
-  return { ok: true, rows: d.settingsRows(inputs), groups: d.settingsGroups({ ...inputs, premium: d.premiumView({ project: found.project }), stop: await d.stopState(), windows: builds?.value }), text: ADVANCED };
+  return { ok: true, rows: d.settingsRows(inputs), groups: d.settingsGroups({ ...inputs, premium: d.premiumView({ project: found.project }), stop: await d.stopState(), windows: builds?.value, local: readProject(found.project)?.host === 'local' }), text: ADVANCED };
 }
 
 // A choice in the settings pane, from the pane alone, Undo included: the setting is written and the
@@ -583,7 +607,7 @@ async function unsent(req, d) {
   return { ok: true };
 }
 
-const COMMANDS = { usage, reply, press, why, suggest, settings, setting, go, stop, digest, tick, unsent };
+const COMMANDS = { usage, reply, press, safekeeping, 'pull-cards': pullCards, why, suggest, settings, setting, go, stop, digest, tick, unsent };
 
 // handle(request, deps) -> { ok, says? }. Never throws.
 export async function handle(request, deps = {}) {

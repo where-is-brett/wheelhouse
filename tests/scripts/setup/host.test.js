@@ -1164,6 +1164,37 @@ test('a folder with a history put on GitHub sends that history to a new private 
   });
 });
 
+test('the move\'s host steps make an empty private repository and give the record, keeping the folder where it is', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    const folder = productFolder('shop');
+    const named = [];
+    const got = await stepFor(w).forProject({ host: 'github', folder, made: (repo) => named.push(repo) });
+    const repo = `${USER}/shop`;
+    assert.deepEqual(named, [repo]);
+    assert.equal(got.repo, repo);
+    assert.equal(got.folder, folder);
+    assert.equal(got.host, 'github');
+    assert.equal(got.connection.mode, 'quick');
+    assert.equal(got.remoteUrl, w.hostUrl({ repo }));
+    const made = w.calls.find((c) => c.args[0] === 'repo' && c.args[1] === 'create').args;
+    assert.ok(made.includes('--private') && !made.includes('--add-readme'), made.join(' '));
+    assert.equal(readProject('shop'), null);
+  });
+});
+
+test('the move\'s host steps refuse a repository of that name they didn\'t make, and carry on with one they did', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    const folder = productFolder('shop');
+    const step = stepFor(w);
+    await step.forProject({ host: 'github', folder });
+    await assert.rejects(step.forProject({ host: 'github', folder }), /already exists/);
+    const again = await step.forProject({ host: 'github', folder, ours: `${USER}/shop` });
+    assert.equal(again.repo, `${USER}/shop`);
+  });
+});
+
 test('a push that fails on the way to GitHub leaves the folder as it was, and a fresh Go ahead sends it', async () => {
   await withHome(async () => {
     const w = standIn();

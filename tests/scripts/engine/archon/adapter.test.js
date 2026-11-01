@@ -458,7 +458,7 @@ test('handOver writes the pull request\'s ready work item over the revision ther
   assert.equal(cli.calls[1].options.cwd, '/p');
   const item = JSON.parse(cli.calls[1].options.input);
   assert.equal(item.facts.build.status, 'ready');
-  assert.deepEqual(item.subject, { repo: 'acme/web', number: 14 });
+  assert.deepEqual(item.subject, { repo: { host: 'github.com', path: 'acme/web' }, number: 14 }, 'the queue passes over a repository given by name alone (check 90)');
   assert.equal((await adapter(cli).handOver({ project: '/p' })).ok, false);
 });
 
@@ -469,6 +469,7 @@ test('artefactsOf is the run\'s own artefacts folder in the engine\'s home, and 
   // (seen in check 80), so its runs' artefacts are under workspaces/mirrors/<owner>__<name>/.
   assert.equal(a.artefactsOf(RUN, 'acme/web'), path.join(home, 'workspaces', 'mirrors', 'acme__web', 'artifacts', 'runs', RUN));
   assert.equal(a.artefactsOf(RUN, 'shop'), path.join(home, 'workspaces', 'mirrors', 'shop', 'artifacts', 'runs', RUN), 'a project in git alone is named after its own mirror');
+  assert.equal(a.artefactsOf(RUN, 'acme/web', { folder: '/engine/readers/ab12' }), path.join(home, 'workspaces', '_folder', 'ab12', 'artifacts', 'runs', RUN), 'a reader\'s folder is a folder project of its own');
   for (const [runId, repo] of [['../x', 'acme/web'], [RUN, '../web'], [RUN, 'acme/web/x'], [RUN, null], ['', 'acme/web']]) {
     assert.equal(a.artefactsOf(runId, repo), null, `${runId} ${repo}`);
   }
@@ -557,7 +558,12 @@ const recordOutput = (asked) => ({ 'workflow get': { code: 0, json: { ok: true, 
 
 test('mergeAsked reads the pull request, head and merge choice from the record step, not the question\'s words', async () => {
   const asked = { by: 'pr', pr: { number: 7 }, head: 'a'.repeat(40), attention: { choices: [{ id: 'keep', effect: 'return' }, { id: 'go-ahead', effect: 'merge' }] } };
-  assert.deepEqual(await adapter(fakeCli(recordOutput(asked))).mergeAsked(RUN), { pr: 7, head: 'a'.repeat(40), merge: 'go-ahead' });
+  assert.deepEqual(await adapter(fakeCli(recordOutput(asked))).mergeAsked(RUN), { pr: 7, head: 'a'.repeat(40), merge: 'go-ahead', park: null });
+});
+
+test('mergeAsked reads the park id by its effect, wherever it comes among the choices', async () => {
+  const asked = { by: 'pr', pr: { number: 7 }, head: 'a'.repeat(40), attention: { choices: [{ id: 'send-back', effect: 'return' }, { id: 'leave-alone', effect: 'park' }, { id: 'merge', effect: 'merge' }, { id: 'other', effect: 'return' }] } };
+  assert.deepEqual(await adapter(fakeCli(recordOutput(asked))).mergeAsked(RUN), { pr: 7, head: 'a'.repeat(40), merge: 'merge', park: 'leave-alone' });
 });
 
 test('mergeAsked gives null for anything but a pull request\'s question', async () => {
@@ -626,4 +632,45 @@ test('the meter\'s file is one for the account signed in to the engine\'s clean 
   const ann = adapter(fakeCli({}), { engine }).requestsFile();
   assert.notEqual(ann, unknown);
   assert.equal(path.dirname(ann), path.join(engine, 'requests'));
+});
+
+test('a reader runs in place in its own folder, with its card and no branch or work', async () => {
+  const cli = fakeCli({ 'workflow run': json('run-detach.json') });
+  const engine = adapter(cli);
+  assert.equal((await engine.start({ work: 'reader', lane: 'reader', card: 'q-w-1', project: '/engine/readers/ab12', bindings: { tiers: { medium: 'm' } } })).ok, true);
+  const { args } = cli.calls[0];
+  assert.deepEqual(args.slice(0, 3), ['workflow', 'run', 'wheelhouse-reader']);
+  assert.equal(args[args.indexOf('--cwd') + 1], '/engine/readers/ab12');
+  assert.ok(args.includes('--folder'));
+  assert.equal(args[args.indexOf('--input') + 1], 'card=q-w-1');
+  assert.equal(args.includes('--branch'), false);
+  assert.equal(args.includes('--project'), false);
+  assert.equal(args.some((a) => a.startsWith('work=')), false);
+  assert.equal((await engine.start({ work: 'reader', lane: 'reader', project: '/engine/readers/ab12' })).ok, false);
+  assert.equal((await engine.start({ work: 'reader', lane: 'reader', card: 'q-w-1' })).ok, false);
+});
+
+test('a start with no reply in time is uncertain, and any other refusal isn\'t', async () => {
+  const timedOut = { code: -1, timedOut: true, stdout: '', stderr: '' };
+  const got = await adapter(fakeCli({ 'workflow run': timedOut })).start({ work: 'w1', lane: 'quick', project: '/p' });
+  assert.equal(got.ok, false);
+  assert.equal(got.uncertain, true);
+  const refused = await adapter(fakeCli({ 'workflow run': { code: 1, json: { ok: false, error: 'No' }, stdout: '', stderr: '' } })).start({ work: 'w1', lane: 'quick', project: '/p' });
+  assert.equal(refused.uncertain, undefined);
+});
+
+test('liveRunOf tells a run by the work it was given, never by a branch it may not have yet', async () => {
+  const since = '2026-11-01T02:00:00.000Z';
+  const row = (id, work, over = {}) => ({ id, workflow_name: 'wheelhouse-quick', status: 'pending', started_at: '2026-11-01T02:00:01.000Z', working_path: null, metadata: work ? { inputs: { work } } : {}, ...over });
+  const listing = (...runs) => fakeCli({ 'workflow status': { code: 0, json: { runs }, stdout: '', stderr: '' } });
+  const ask = (cli) => adapter(cli).liveRunOf({ work: 'w1', since });
+  assert.deepEqual(await ask(listing(row('r1', 'w1'), row('r2', 'w2'))), { runId: 'r1' });
+  assert.equal(await ask(listing(row('r2', 'w2'))), null, 'another piece\'s run');
+  assert.equal(await ask(listing(row('r1', 'w1', { started_at: '2026-11-01T01:00:00.000Z' }))), null, 'older than the start');
+  assert.equal(await ask(listing(row('r1', 'w1', { status: 'cancelled' }))), null, 'ended');
+  assert.deepEqual(await ask(listing(row('r1', 'w1', { workflow_name: 'wheelhouse-slice' }))), { runId: 'r1' }, 'whichever lane the piece runs in');
+  assert.equal(await ask(listing(row('r2', null, { workflow_name: 'archon-merge-queue' }))), null, 'the merge queue has no work to name');
+  assert.equal(await ask(listing(row('r1', null))), undefined, 'a pending run with nothing to tell it by');
+  assert.equal(await ask(listing(row('r1', 'w1'), row('r2', 'w1'))), undefined, 'two matches');
+  assert.equal(await ask(fakeCli({ 'workflow status': { code: 1, stdout: '', stderr: '' } })), undefined, 'the engine can\'t list');
 });

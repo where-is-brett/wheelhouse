@@ -10,6 +10,9 @@
 //     connection: Connection,   see scripts/host/connection.js; holds no secret
 //   }
 //
+// A project that moves from git alone to a host (scripts/host/local/move.js) keeps its folder name here, so its name need
+// not follow from `repo`.
+//
 // Setup writes it. The helper reads it: the lock's and the mirror's repository comes from
 // here, never from a request.
 //

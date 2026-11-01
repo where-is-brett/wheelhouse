@@ -12,7 +12,7 @@ Wheelhouse is for a product owner who isn't a developer. You say what you want i
 
 1. **You ask.** In a Claude Desktop conversation, you write what you want: "Add a page where customers can book a time."
 2. **The First Mate checks with you.** It asks only what is really yours to decide, as a card with clickable answers, and decides the rest itself, telling you so.
-3. **The Crew builds it.** The Bosun hands each piece of work to the Crew, and to Lookouts who check it.
+3. **The Crew builds it.** The Bosun hands each piece of work to the Crew, and to Lookouts who check it. A piece waiting on you no longer holds up other work.
 4. **Nothing ships unchecked.** The work reaches your main product only after its checks pass and a Lookout has looked. Anything that changes the safety rules needs your click as well.
 5. **You get a short briefing** of what's done, what's under way and what needs you. Type "all stop" at any time and the whole Crew halts until you click to carry on.
 
@@ -38,7 +38,7 @@ And a briefing opens like this:
 
 ## Install
 
-You need **Node.js** (a free program; [download the version marked LTS](https://nodejs.org/en/download)), Claude Desktop, signed in, and about 15 minutes. A host is optional: a project can stay on your computer with git alone, its checks run here, and nothing goes online. A GitHub or GitLab account helps; setup shows you where to make one if you have neither.
+You need **Node.js** (a free program; [download the version marked LTS](https://nodejs.org/en/download)), Claude Desktop, signed in, and about 15 minutes. A host is optional: a project can stay on your computer with git alone, its checks run here, and nothing goes online. You can move it to GitHub or GitLab later: one card, with every line of work and each open change carried over. A GitHub or GitLab account helps; setup shows you where to make one if you have neither.
 
 1. **Open a session on your product's folder.** For a new product, start a new session in Claude Desktop, and in its folder picker make an empty folder under `Projects` in your home folder, named after the product; open the session on it. For a product you already have, open the session on its folder. For a product you set up with Wheelhouse on another computer, make an empty folder here too: setup brings the product into it.
 2. **Check for Node.js.** Wheelhouse needs Node.js 22 or later. If this computer has none or an older one, or a Wheelhouse session refuses every tool with a message naming a Wheelhouse script and "node: command not found", install the LTS from nodejs.org, then start a new conversation. Wheelhouse also says so itself, in plain words, when a conversation starts.

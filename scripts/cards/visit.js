@@ -3,7 +3,7 @@
 // important first, at most four, so each card is asked once and the rest stay on the board.
 // Also finds the waiting card that already carries a set line, and the card the board numbers n.
 import { CARD } from '../lib/front-desk.js';
-import { numberedWaiting } from '../board/model.js';
+import { heldBackLine, numberedWaiting, topCardLine } from '../board/model.js';
 import { QUESTION_ID } from '../state/card-lines.js';
 
 // How important a card is, as a number: the higher, the sooner the director sees it. The one
@@ -42,11 +42,13 @@ function holdsUpAll(id, views) {
 // The card's rank, one of IMPORTANCE's values; higher is more important. It is read from the
 // card's kind and level and the build loop's views, never from the card's words. Only an
 // answer card to a question still open can hold up all work: the question's work is unfinished
-// and every other unfinished work depends on it.
+// and every other unfinished work depends on it. So does the card the dispatcher names as the top card.
 export function importanceOf(card, views) {
   const data = card?.data;
   if (EMERGENCY_KINDS.includes(data?.kind)) return IMPORTANCE.STOP_OR_INCIDENT;
   if (data?.level === 4) return IMPORTANCE.LEVEL_4;
+  // Nothing can run, and this card stands behind that (scripts/engine/stuck.js).
+  if (topCardLine(data?.line, views)) return IMPORTANCE.HOLDS_UP_ALL;
   const work = openQuestionOf(card, views)?.work;
   if (typeof work === 'string' && holdsUpAll(work, views)) return IMPORTANCE.HOLDS_UP_ALL;
   return data?.level === 3 ? IMPORTANCE.LEVEL_3 : IMPORTANCE.REST;
@@ -72,16 +74,17 @@ const ownImportance = (card) => (Number.isFinite(card.data?.importance) ? card.d
 // The next visit's cards: those never asked (`asked` null), most important first. Within one
 // rank the composer's own importance decides (higher first), then the oldest, then the id.
 // At most `room` (CARD.questions unless a card of the visit's own takes a place); `left` counts the
-// ones not taken. A card put off stays on the board, so the director can still ask for it. The
-// order doesn't depend on the clock.
+// ones not taken, and `heldBack` the ones past the day's budget, passed over until they are pulled. A
+// card put off stays on the board, so the director can still ask for it. The order doesn't depend on the clock.
 export function cardsForVisit(views, { room = CARD.questions } = {}) {
-  const ranked = waitingOf(views).filter((c) => c.asked === null || c.asked === undefined)
+  const unasked = waitingOf(views).filter((c) => c.asked === null || c.asked === undefined);
+  const ranked = unasked.filter((c) => !heldBackLine(c.data?.line, views))
     .map((card) => ({ card, rank: importanceOf(card, views) }))
     .sort((a, b) => b.rank - a.rank || ownImportance(b.card) - ownImportance(a.card)
       || (a.card.at < b.card.at ? -1 : a.card.at > b.card.at ? 1 : 0) || (a.card.id < b.card.id ? -1 : 1))
     .map(({ card }) => card);
   const chosen = ranked.slice(0, Math.max(0, room));
-  return { questions: chosen.map(asQuestion), ids: chosen.map((c) => c.id), left: ranked.length - chosen.length };
+  return { questions: chosen.map(asQuestion), ids: chosen.map((c) => c.id), left: ranked.length - chosen.length, heldBack: unasked.length - ranked.length };
 }
 
 // The id of the waiting card that already carries this set line, or null: composing a card again

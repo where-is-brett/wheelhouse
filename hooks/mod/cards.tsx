@@ -101,6 +101,18 @@ export async function carry($: EngineInterface, request: Record<string, unknown>
   await submitAll($, answer?.submit ?? [])
 }
 
+// A press on one of the Safekeeping row's buttons: the bridge signs it, and the helper does it.
+export async function pressSafekeeping($: EngineInterface, action: string, after: After) {
+  if (!(await claim($, { on: 'safekeeping', label: action }))) return
+  await carry($, { cmd: 'safekeeping', origin: 'pane', action }, RECORDING, () => release($), after)
+}
+
+// Show them, on the line for the cards past the day's budget.
+export async function pressPull($: EngineInterface, after: After) {
+  if (!(await claim($, { on: 'pull-cards', label: 'pull' }))) return
+  await carry($, { cmd: 'pull-cards', origin: 'pane' }, RECORDING, () => release($), after)
+}
+
 // A press on one of a card's buttons.
 async function pressButton($: EngineInterface, card: Card, label: string, after: After) {
   const id = card.id as string

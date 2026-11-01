@@ -18,8 +18,8 @@ export const PLAIN_KINDS = [
   'request', 'ruling', 'level', 'glossary', 'idea', 'rejection', 'card', 'card-answer',
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
-  'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey', 'column-ready', 'premium-rest',
-  'run', 'ask', 'cost', 'preview', 'lesson', 'incident-closed', 'reproduced',
+  'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey', 'column-ready', 'premium-rest', 'chat-question', 'chat-steer',
+  'run', 'ask', 'cost', 'preview', 'lesson', 'incident-closed', 'reproduced', 'rule',
 ];
 // `control-file` is the watcher's own finding (ruling P7-33): signed, so no session can write one. So is `usage-card`,
 // the front desk's session start's offer (design section 14.6): a click on its card's switch is the director's
@@ -35,7 +35,9 @@ export const PLAIN_KINDS = [
 // reads a run that happened, never a status anyone could post. `checks-state` says whether the project's tests count, which
 // lets merges pass with none, and `checks-found` is the command the finder found, which a check runs: both the helper's.
 // `change` is a local change as it stands (spec 7.1), the helper's too: it names the head the local queue merges.
-export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file', 'usage-card', 'premium-card', 'premium-check', 'premium-failed', 'provenance', 'check', 'checks-state', 'checks-found', 'change'];
+// `shadow` is a line of a card's seal (delegated decisions design, section 12), the helper's too: signed, so what it says
+// can't be rewritten once the answer is known, and read by nothing but scripts/delegation/.
+export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file', 'usage-card', 'premium-card', 'premium-check', 'premium-failed', 'provenance', 'check', 'checks-state', 'checks-found', 'change', 'shadow'];
 // Plain kinds only the helper itself records, from what it read itself: no caller writes one
 // through /state/write. The survey (design section 15, ruling A1) is taken and recorded in the
 // helper, when setup finishes and when it is taken again. A column-ready record (design section 14.6) is the
@@ -49,10 +51,12 @@ export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 
 export const RED_MAIN_FIELDS = ['kind', 'suspect', 'work'];
 export const RED_MAIN_OWN = 'only the helper records a red main line\'s incident';
 
-export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change'];
+// `rule` is a rule proposed from an answered card (delegated decisions design, section 11.1): the helper composes it from
+// what it read itself, and it means nothing until the director's signed click confirms that very record.
+export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'shadow', 'rule'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 
-const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main'];
+const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main', 'safekeeping'];
 // The fields each action carries beyond the card's question and the label clicked.
 const ACTION_OWN = {
   'lift-stop': [],
@@ -106,6 +110,8 @@ const ACTION_OWN = {
   // The director's Undo it, in the helper's window, on the card about a main version moved outside the helper: the
   // main version the record held and the one the store holds, each in full.
   'undo-main': ['from', 'to'],
+  // A button on the Safekeeping row (spec 8.2): which one, by its word. The pane's press alone makes it.
+  safekeeping: ['press'],
 };
 // Every action may also name its `proof` (ruling P5-23): `window` when the helper signed it from a click in its own
 // window. Claude Code's prompt record names none. An approval and a confirmation, which have no shape of their own
@@ -152,6 +158,8 @@ function checkAction(data) {
     if (typeof data.questionId !== 'string' || !questionIdOf(data.questionId)) bad('needs the question it answers');
     if (typeof data.questionHash !== 'string' || !HASH.test(data.questionHash)) bad('needs the hash of the question it answers');
     if (NOT_AN_ANSWER.includes(data.label)) bad('has a label that is not an answer');
+  } else if (data.action === 'safekeeping') {
+    if (!isSlug(data.press)) bad('needs the button pressed, named by a short slug');
   } else if (data.action === 'amend') {
     if (!isSlug(data.work)) bad('needs the work, named by a short slug');
     if (typeof data.hash !== 'string' || !HASH.test(data.hash)) bad('needs the hash of the change');
@@ -238,20 +246,28 @@ const PLAIN_SHAPES = {
   // Words typed into a front end without a First Mate (a later UI), queued for the First Mate's next
   // turn and shown as waiting (spec 5.2); `via` names the front end.
   request: { must: ['words', 'via'], may: [] },
+  // A First Mate turn that ended on a question with no card (scripts/hooks/chat-question.js): a count, never the words.
+  'chat-question': { must: ['at'], may: [] },
+  // A rule (scripts/delegation/rules.js): typed words or a literal match, never both, composed at stage 0.
+  rule: { must: ['id', 'words', 'literal', 'conditions', 'exclusions', 'answer', 'project', 'paths', 'lanes', 'stage', 'review', 'hash'], may: [] },
+  // A pick in the chat of Suggest a change… on a build's question: the card's id, for its score, and never the words.
+  'chat-steer': { must: ['card'], may: [] },
   // `from`: the ready-made change the work starts from (ruling P4): its commit, the ref that keeps
   // it (`refs/wheelhouse/from/<id>`) and, when it carries on a pull request, that request's number.
   work: { must: ['id', 'title', 'lane', 'visible', 'dependsOn'], may: ['doc', 'place', 'parent', 'from', 'level'] },
   feature: { must: ['work', 'step'], may: ['worktree', 'branch', 'session', 'plan', 'files', 'brief', 'slice', 'pausedFor'] },
   // `checks`: what answering it does to the checks, one line, for a level 4 question's card.
-  question: { must: ['id', 'work', 'what', 'why', 'options', 'recommendation', 'level'], may: ['commands', 'checks', 'engine'] },
+  // `joins`: the open question whose card answers this one too (scripts/state/joiners.js).
+  question: { must: ['id', 'work', 'what', 'why', 'options', 'recommendation', 'level'], may: ['commands', 'checks', 'engine', 'joins'] },
   report: { must: ['work', 'outcome', 'summary', 'rulings'], may: ['pr', 'provenance'] },
   // A red-main incident (design on Archon, section 7.7) names its kind, the pull request the merge queue suspects
   // (or null) and the fix's work; the helper opens and closes it, and the director never needs to.
   incident: { must: ['id', 'what'], may: ['kind', 'suspect', 'work'] },
   amendment: { must: ['work', 'change', 'hash'], may: [] },
   // `event`: the id of the record a card without a set line was made from (a lineage hold), so it is made once.
-  // `parts`: the card's parts as the composer gives them; `revises`: the id of the card a revised proposal replaces.
-  card: { must: ['question', 'header', 'options', 'kind', 'level'], may: ['descriptions', 'line', 'code', 'recommend', 'importance', 'topic', 'concepts', 'event', 'parts', 'revises'] },
+  // `parts`: the card's parts as the composer gives them; `revises`: the id of the card a revised proposal replaces;
+  // `joiners`: the questions its answer also answers, each piece named on the card.
+  card: { must: ['question', 'header', 'options', 'kind', 'level'], may: ['descriptions', 'line', 'code', 'recommend', 'importance', 'topic', 'concepts', 'event', 'parts', 'revises', 'joiners'] },
   // A click on a card's option: the card by its id or its question, and the label chosen. A click in an agent's
   // chat (ruling P5-17) also names the card's `hash`, the `commit` it approves when it approves one, and its
   // `proof`; a Lean record's line moved up (lean-record.js) names its tier, proof, who and whether it was a click.
@@ -410,8 +426,24 @@ function checkPlain(kind, data) {
   const optionalText = (k) => { if (data[k] !== undefined && !isText(data[k])) bad(`has a ${k} that is not text`); };
   const slug = (k) => { if (!isSlug(data[k])) bad(`needs ${k} to be a short slug (lower-case letters, digits and hyphens, at most 40)`); };
   const pr = () => { if (data.pr !== undefined && (!Number.isInteger(data.pr) || data.pr < 1)) bad('has a pull request number that is not one'); };
+  if (kind === 'rule') {
+    const texts = (x) => Array.isArray(x) && x.every(isText);
+    const { literal } = data;
+    if (!/^rule-[0-9a-f]{12}$/.test(data.id)) bad('needs an id made from its hash');
+    if (!((isText(data.words) && literal === null) || (data.words === null && isPlain(literal)))) bad('holds typed words or a literal match, and not both');
+    if (literal !== null && !(texts(literal.options) && literal.options.includes(literal.take))) bad('has a literal match that doesn\'t take one of its options');
+    if (!texts(data.conditions) || !texts(data.exclusions) || !texts(data.paths)) bad('needs its conditions, exclusions and paths as lists of text');
+    if (!Array.isArray(data.lanes) || !data.lanes.every((l) => LANES.includes(l))) bad('needs its lanes to be lanes the build loop knows');
+    if (!isPlain(data.answer)) bad('needs its answer');
+    text('project');
+    if (data.stage !== 0) bad('starts at stage 0');
+    if (!ISO_TIME.test(data.review)) bad('needs its review date');
+    if (!/^[0-9a-f]{64}$/.test(data.hash)) bad('needs its hash');
+    return;
+  }
   if (kind === 'work') {
     slug('id');
+    if (data.id === READER_WORK) bad('names the work kept for the reader');
     text('title');
     if (!LANES.includes(data.lane)) bad('needs its lane to be quick, small, feature or bug');
     if (typeof data.visible !== 'boolean') bad('needs visible to be true or false');
@@ -493,6 +525,9 @@ function checkPlain(kind, data) {
       bad('has commands that are not a list of commands');
     }
     if (data.checks !== undefined && (!isText(data.checks) || /[\r\n\v\f\u0085\u2028\u2029]/.test(data.checks))) bad('has checks that are not one line of text');
+    if (data.joins !== undefined && (typeof data.joins !== 'string' || !questionIdOf(data.joins) || data.joins === data.id || data.level !== 3 || data.commands !== undefined)) {
+      bad('joins a card only at level 3, by another question\'s id');
+    }
     // A question from the build engine names the run and the ask its answer goes back to, and each option's id there.
     if (data.engine !== undefined) {
       const e = data.engine;
@@ -544,6 +579,7 @@ function checkPlain(kind, data) {
     optionalText('recommend');
     optionalText('event');
     optionalText('revises');
+    if (data.joiners !== undefined && !(Array.isArray(data.joiners) && data.joiners.every(isText))) bad('has joiners that are not a list of question ids');
     // The card's parts, as the composer gives them (scripts/cards/compose.js): the pane draws them and the chat's text is built from them.
     if (data.parts !== undefined && !(isPlain(data.parts) && ['ask', 'what', 'why', 'meanwhile'].every((k) => isText(data.parts[k])) && Array.isArray(data.parts.options))) {
       bad('has parts that are not a question, what, why, meanwhile and options');
@@ -727,6 +763,38 @@ function checkChange(data) {
   if (data.state === 'merged' ? !(typeof data.mergeCommit === 'string' && FULL_COMMIT.test(data.mergeCommit)) : data.mergeCommit !== null) bad('names a merge only once merged');
 }
 
+// The work a reader's tokens go under. No piece of work may have this name, so none is taken for the reader.
+export const READER_WORK = 'delegation-reader';
+
+// A seal as scripts/delegation/seal.js makes it. Part of a card's sealed record, so nothing is added to one later.
+const SEAL_KEYS = ['line', 'card', 'work', 'head', 'signed', 'reader', 'candidates', 'exclusions', 'stamp', 'at', 'hash'];
+// A score, the same: what the card scored against the director's answer, tied to its seal by the seal's hash.
+const SCORE_KEYS = ['line', 'card', 'work', 'seal', 'score', 'at', 'hash'];
+const READING_KEYS = ['line', 'card', 'work', 'run', 'reader', 'frame', 'why', 'kind', 'fits', 'pick', 'tags', 'view', 'afterAnswer', 'at', 'hash'];
+const SHADOW_KEYS = { seal: SEAL_KEYS, reading: READING_KEYS, score: SCORE_KEYS };
+const SHA256 = /^[0-9a-f]{64}$/;
+function checkShadow(data) {
+  const bad = (why) => { throw new Error(`A shadow event ${why}`); };
+  if (!isPlain(data) || !Object.hasOwn(SHADOW_KEYS, data.line)) bad('needs to be a seal, a reading or a score');
+  const keys = SHADOW_KEYS[data.line];
+  if (Object.keys(data).length !== keys.length || keys.some((k) => !Object.hasOwn(data, k))) bad('needs its fields and no others');
+  if (typeof data.card !== 'string' || data.card === '' || typeof data.work !== 'string') bad('needs its card and its work');
+  if (typeof data.at !== 'string' || typeof data.hash !== 'string' || !SHA256.test(data.hash)) bad('needs its time and its hash');
+  if (data.line === 'reading') {
+    if (!(data.reader === 'read' ? typeof data.pick === 'string' && typeof data.frame === 'string' && Array.isArray(data.tags) : data.reader === 'none' && data.pick === null)) bad('says whether it read, and what');
+    if (typeof data.afterAnswer !== 'boolean') bad('says whether the answer came first');
+    return;
+  }
+  if (data.line === 'score') {
+    if (typeof data.seal !== 'string' || !SHA256.test(data.seal) || !['match', 'miss', 'outside'].includes(data.score)) bad('needs its seal and a score');
+    return;
+  }
+  if (data.head !== null && !(typeof data.head === 'string' && FULL_COMMIT.test(data.head))) bad('needs the whole commit, or none');
+  if (data.signed !== null && typeof data.signed !== 'string') bad('says what signed it, or nothing');
+  if (![true, false, 'refused'].includes(data.reader)) bad('says whether it is read');
+  if (!isPlain(data.candidates) || !isPlain(data.exclusions) || !isPlain(data.stamp)) bad('needs what the checks said');
+}
+
 // Whether a project's tests count, and why (spec 4.5).
 function checkChecksState(data) {
   const fits = data?.state === 'counting' ? data.why === 'passed' : data?.state === 'not-counting' && ['nothing-found', 'director'].includes(data.why);
@@ -762,6 +830,7 @@ export function makeEvent({ kind, data, now = () => new Date() }) {
   if (kind === 'checks-state') checkChecksState(data);
   if (kind === 'checks-found') checkChecksFound(data);
   if (kind === 'change') checkChange(data);
+  if (kind === 'shadow') checkShadow(data);
   if (Object.hasOwn(PLAIN_SHAPES, kind)) checkPlain(kind, data);
   const event = {
     v: 1,
@@ -775,7 +844,7 @@ export function makeEvent({ kind, data, now = () => new Date() }) {
 }
 
 // The kinds a confirmation can make take effect (design section 9).
-export const CONFIRMABLE_KINDS = ['ruling', 'level', 'setting'];
+export const CONFIRMABLE_KINDS = ['ruling', 'level', 'setting', 'rule'];
 
 // The sha256 of an event's canonical JSON without its signature: what a
 // confirmation names, so it confirms that exact event and no other.
@@ -808,13 +877,14 @@ export function checkRecord(event, { enrolled, held = [], computer = computerId(
   if (event.kind === 'provenance') return 'only the helper records what built a pull request';
   if (event.kind === 'check' || event.kind === 'checks-state' || event.kind === 'checks-found') return 'only the helper records a check';
   if (event.kind === 'change') return 'only the helper records a local change';
+  if (event.kind === 'shadow') return 'only the helper records a seal';
   if (held.some((e) => canonicalJson(e) !== canonicalJson(event))) return 'another event in the state carries this record\'s id, so it was not recorded';
   return null;
 }
 
 // The kind and data of a confirmation of `event`, for makeEvent to sign.
 export function confirmationFor(event) {
-  if (!CONFIRMABLE_KINDS.includes(event?.kind)) throw new Error('Only a ruling, a level or a setting can be confirmed');
+  if (!CONFIRMABLE_KINDS.includes(event?.kind)) throw new Error('Only a ruling, a level, a setting or a rule can be confirmed');
   return { kind: 'confirmation', data: { confirms: event.id, confirmsHash: eventHash(event) } };
 }
 

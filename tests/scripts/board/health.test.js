@@ -380,3 +380,10 @@ test('a helper that accepts and never answers is given up on in about two second
 test('a project with no CI whose checks run on this computer can merge, and says so', () => {
   assert.deepEqual(texts({ facts: { protection: 'on', ci: 'here' } }), ['Protection: Standard', 'Checks run on this computer']);
 });
+
+test('the safekeeping line is always there, at watch only when its status is, with its detail and its mark', () => {
+  const lines = (level) => healthLines({ ...calm, safekeeping: { level, line: 'Only here', detail: 'Lost with it' } }).at(-1);
+  assert.deepEqual(lines('safe'), { level: 'ok', text: 'Safekeeping: Only here', detail: 'Lost with it', safekeeping: true });
+  assert.equal(lines('watch').level, 'watch');
+  assert.equal(healthLines(calm).some((line) => line.safekeeping), false);
+});

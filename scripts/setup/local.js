@@ -7,6 +7,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { homeDir, isBranchName, makeHome, gitRoute } from '../host/local/home.js';
 import { addFolderRemote, FOLDER_REMOTE } from '../host/local/folder.js';
+import { backupPlace, backupRecord, chooseBackupFolder, pickFolder } from '../host/local/backup.js';
+import { backupNamed, restoreProject } from '../host/local/restore.js';
 import { identityOf } from '../host/local/merge.js';
 import { engineDir, projectsDir, stateDir } from '../lib/paths.js';
 import { projectForFolder, writeProject } from '../lib/projects.js';
@@ -23,6 +25,10 @@ export const PUT_ON_GITHUB = 'Put it on GitHub';
 export const KEPT_LINE = 'Your project stays on this computer. Nothing goes online.';
 export const FIRST_CHECK_LINE = 'Wheelhouse finds your tests and runs them here for the first time.';
 export const STARTED_LINE = (branch) => `Git starts in this folder, with a first commit on ${branch}.`;
+export const CHOOSE_BACKUP = 'Choose a backup folder';
+// "Not now" alone puts a setup card off, and this one closes for good.
+export const NO_BACKUP = 'Not now, keep building';
+export const ONLY_HERE_LINE = 'This project is only on this computer. If the computer is lost or breaks, the project goes with it.';
 const FIRST_COMMIT = 'Start the project';
 const MOST_BRANCHES = 4;
 // Wheelhouse's own branches of a hosted project, never a project's main line.
@@ -136,8 +142,55 @@ export function keptAsk(name, others) {
   };
 }
 
+// The one card about backups (spec 8.1), and the only one ever: with Time Machine on, it names it and offers a second copy off
+// the computer. `refused` says why the folder typed before doesn't count. The plan carries the warning, whichever is chosen.
+export function backupAsk(name, { id = 'backup', machine = false, refused = null } = {}) {
+  const what = machine ? `Time Machine backs ${name} up. Do you want a second copy off the computer too?` : `${ONLY_HERE_LINE} Do you want a backup of ${name} elsewhere?`;
+  return {
+    id,
+    typed: true,
+    line: machine ? `Time Machine backs ${name} up on this computer's drive.` : ONLY_HERE_LINE,
+    card: {
+      level: 2,
+      what: `${refused === null ? '' : `${refused}. `}${what} To name a folder yourself, type its full path.`,
+      why: 'A backup in a folder off this disk is what brings the project back. It holds the project and its history, not your cards and clicks, which stay on this computer.',
+      options: [
+        { label: CHOOSE_BACKUP, says: 'You pick an external drive, or a folder a cloud service keeps. A backup goes there after each merge.' },
+        { label: NO_BACKUP, says: 'Building goes on, and you won\'t be asked again. The Safekeeping row in the pane shows how it stands.' },
+      ],
+      recommend: CHOOSE_BACKUP,
+      because: 'it is the only second copy a project on this computer has',
+      meanwhile: 'Nothing runs until your Go ahead on the plan.',
+    },
+  };
+}
+
+// What the backup card's answers say: { ask } while it is open, or { folder }, a folder typed, null to pick one in the system's
+// window, or undefined for none. A typed folder that doesn't count asks again, saying why.
+export function backupChoice({ answer, name, root, machine }) {
+  let refused = null;
+  for (let n = 0; ; n += 1) {
+    const id = n === 0 ? 'backup' : `backup-${n}`;
+    const got = answer(id);
+    if (got === null) return { ask: backupAsk(name, { id, machine, refused }) };
+    if (got.label === NO_BACKUP) return {};
+    if (typeof got.text !== 'string' || got.text.trim() === '') return { folder: null };
+    const folder = got.text.trim();
+    const place = backupPlace({ folder, root });
+    if (place.ok) return { folder };
+    refused = place.why;
+  }
+}
+
+// The backup file a run's answers name, or null: a path typed on the join card, where the four options are taken (spec 10).
+export function backupAnswered(answers = {}) {
+  const typed = Object.keys(answers ?? {}).filter((k) => /^3\.join(?:-|$)/.test(k)).map((k) => backupNamed(answers[k]?.text));
+  return typed.find((file) => file !== null && fs.existsSync(file)) ?? null;
+}
+
 // Where the run's answers keep the project: 'local', 'github', 'gitlab' or null, while no answer says.
 export function chosenHost(answers = {}) {
+  if (backupAnswered(answers) !== null) return 'local';
   const joins = Object.keys(answers ?? {}).filter((k) => /^3\.join(?:-|$)/.test(k));
   const labels = [answers?.['3.kept'], answers?.['3.host'], ...joins.map((k) => answers[k])].map((a) => a?.label);
   if (labels.includes(KEEP_HERE)) return 'local';
@@ -164,14 +217,15 @@ export function startedBySetup(folder) {
 }
 
 // What step 3 does for a project kept here, in order.
-export function localSteps({ folder, project, branch, noGit, noCommit, locked }) {
+export function localSteps({ folder, project, branch, noGit, noCommit, locked, restore = null, backup }) {
   return [
     ...(noGit ? [{ kind: 'folder', target: folder, action: 'git-init', branch }] : []),
     ...(noCommit ? [{ kind: 'folder', target: folder, action: 'first-commit', branch }] : []),
     { kind: 'file', target: projectFile(project), action: 'project', repo: repoOfLocal(project) },
     { kind: 'folder', target: stateDir(project), action: 'state', repo: repoOfLocal(project) },
-    { kind: 'folder', target: homeDir(project), action: 'home', branch },
+    { kind: 'folder', target: homeDir(project), action: 'home', branch, ...(restore === null ? {} : { restore }) },
     { kind: 'git-config', target: folder, key: ['remote', FOLDER_REMOTE, 'url'], action: 'folder-remote', after: mirrorOf(project) },
+    ...(backup === undefined ? [] : [{ kind: 'file', target: backupRecord(project), action: 'backup-folder', folder: backup }]),
     { kind: 'check', target: project, action: 'first-check' },
     { kind: 'host', target: 'local', action: 'connection', mode: 'none', locked },
   ];
@@ -181,8 +235,10 @@ export function localCard({ changes, branch, others }) {
   const parts = [
     ...(changes.some((c) => c.action === 'git-init') ? [`git starts in this folder, on ${branch}`] : []),
     ...(changes.some((c) => c.action === 'first-commit') ? [`a first commit on ${branch}`] : []),
+    ...(changes.some((c) => c.action === 'home' && typeof c.restore === 'string') ? ['the project brought back from your backup, into this folder'] : []),
     'a private copy of the project\'s history on this computer, which only Wheelhouse\'s helper changes',
     'the project\'s record, kept on this computer',
+    ...(changes.some((c) => c.action === 'backup-folder') ? ['a backup in the folder you choose, after each merge'] : []),
     FIRST_CHECK_LINE.replace(/\.$/, '').replace(/^W/, 'w'),
   ];
   const line = othersLine(others);
@@ -218,7 +274,7 @@ async function firstCommit({ folder, branch, git, run, gitPath }) {
 
 // Step 3's apply for a project kept here. The project's record comes first, so a retry finds the same name; each of the rest
 // is safe to repeat.
-export async function applyLocal({ ctx, changes, run, gitPath, say, halt }) {
+export async function applyLocal({ ctx, changes, run, gitPath, say, halt, pick = pickFolder, isEmpty }) {
   const { folder, record } = { folder: ctx.folder, record: ctx.record };
   const home = changes.find((c) => c.action === 'home');
   const project = path.basename(path.dirname(home.target));
@@ -250,10 +306,36 @@ export async function applyLocal({ ctx, changes, run, gitPath, say, halt }) {
   halt();
   const route = gitRoute({ run });
   record({ id: newId('chg'), kind: 'folder', target: home.target, before: fs.existsSync(home.target) ? {} : null, after: { home: true, branch } });
-  await makeHome({ project, folder, branch, git: route });
+  if (typeof home.restore === 'string') await bringBack({ file: home.restore, project, folder, route, record, isEmpty });
+  else await makeHome({ project, folder, branch, git: route });
   const remote = changes.find((c) => c.action === 'folder-remote');
   record({ id: newId('chg'), kind: 'git-config', target: folder, key: remote.key, before: null, after: remote.after });
   await addFolderRemote({ folder, mirror: remote.after, git: route });
+  const backup = changes.find((c) => c.action === 'backup-folder');
+  if (backup !== undefined) {
+    // Choosing never holds setup up: a folder that isn't chosen here is offered again on the pane's Safekeeping row.
+    const place = backup.folder ?? await pick({ run });
+    const chosen = place === null ? { ok: false, why: 'No backup folder was chosen' } : chooseBackupFolder({ project, folder: place });
+    if (!chosen.ok) say(`${chosen.why}. The Safekeeping row in the pane offers it again.`);
+  }
   say(KEPT_LINE);
   return [];
+}
+
+// The home and the folder from a backup file. What the backup puts over step 1's settings is noted first, as a checkout is.
+async function bringBack({ file, project, folder, route, record, isEmpty }) {
+  const dotGit = path.join(folder, '.git');
+  const settings = path.join(folder, '.claude', 'settings.json');
+  const read = () => {
+    try {
+      return fs.readFileSync(settings, 'utf8');
+    } catch {
+      return null;
+    }
+  };
+  const installed = read();
+  if (!fs.existsSync(dotGit)) record({ id: newId('chg'), kind: 'folder', target: dotGit, before: null, after: { started: true } });
+  await restoreProject({ file, project, folder, git: route, ...(isEmpty ? { isEmpty } : {}) });
+  const restored = read();
+  if (installed !== null && restored !== installed) record({ id: newId('chg'), kind: 'file', target: settings, before: installed, after: restored });
 }

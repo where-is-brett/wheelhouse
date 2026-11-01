@@ -1,0 +1,23 @@
+# probes/86-no-way-out/workflows/no-way-out-search.yaml
+{
+  "name": "no-way-out-search",
+  "description": "Check 86: one cheap step told to reach a person by the question tool, then by a plain-chat question.",
+  "nodes": [
+    {
+      "id": "try",
+      "model": "small",
+      "idle_timeout": 120000,
+      "prompt": "This is a trial of what a step can reach. Do these in order and do nothing else. 1. Use the tool named ToolSearch to look for any tool that could put a question to a person or notify one: try the queries select:AskUserQuestion and select:PushNotification and the keywords ask user question. 2. If any such tool comes back, call it once with the question Blue or green? 3. Otherwise say so. Fill in the structured fields: tried (true if you called a tool that reaches a person), reached (true if a person answered), toolNames (names of the tools ToolSearch returned that could reach a person), outcome (what happened, one line).",
+      "output_format": {
+        "type": "object",
+        "properties": {
+          "tried": { "type": "boolean" },
+          "reached": { "type": "boolean" },
+          "toolNames": { "type": "array", "items": { "type": "string" } },
+          "outcome": { "type": "string" }
+        },
+        "required": ["tried", "reached", "toolNames", "outcome"]
+      }
+    }
+  ]
+}

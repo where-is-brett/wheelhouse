@@ -15,6 +15,39 @@ export function mergeQuestionWords(pr, title) {
   return `The merge queue won't judge ${named} by itself (it changes a schema, permissions or something the rules keep for a person).`;
 }
 
+// The card for a pull request the merge queue has left alone. It stays out of the queue until the director approves its
+// commit: the queue asks about it again only when handed it again, so nothing here promises a question.
+export const parkedWords = (reason) => `${reason} The merge queue has left it and gone on with the others.`;
+export const PARKED_WHY = 'Only you can say whether this goes in, at level 3.';
+export const PARKED_BECAUSE = 'the merge queue can\'t judge it, so what it does is yours to weigh';
+export const PARKED_MEANWHILE = 'Nothing of it is added until you approve this commit, and other work carries on. A new commit needs your approval again.';
+export const PARKED_APPROVE_SAYS = 'It approves this commit, and the change goes back to the merge queue to be added.';
+
+// The Logbook's line for a held piece with nothing behind it that could move it: a reservation can outlast every card.
+export function noCardBehindWords(title, why, by) {
+  const names = by.length < 2 ? by.join('') : `${by.slice(0, -1).join(', ')} and ${by.at(-1)}`;
+  const said = why === 'clash' ? `waits for the files ${names} keeps, which nothing lets go by itself` : why === 'dependency' ? `waits on ${names}` : `waits while ${names} stands parked`;
+  return `${title} ${said}, and no card stands behind that. It moves on once that work is added or ended.`;
+}
+
+// The line for the cards past the day's budget, and the button that shows them.
+export const heldBackWords = (n) => `${n} more waiting.`;
+export const SHOW_THEM = 'Show them';
+// How many pieces a card holds up, beside its title.
+export const holdsUpWords = (n) => `holds up ${n} ${n === 1 ? 'piece' : 'pieces'}`;
+
+// The Logbook's line for a piece waiting on the director whose branch can't be read yet.
+export const reservedUnreadWords = (title) => `What ${title} has changed so far couldn't be read, so only the files it was expected to touch are kept back for it. It is read again shortly.`;
+
+// The way back: a start refused, the card when it stays refused or can't be told, a Stop on that card, and an answered
+// run the engine hasn't carried on.
+export const restartRefusedWords = (title, why) => `${title} couldn't go back to work: ${why}. It keeps its turn, and it is tried again shortly.`;
+export const restartCardWords = (title, why) => `${title} couldn't go back to work, twice: ${why}. Nothing more of it starts until you say.`;
+export const restartUnsureWords = (title) => `Wheelhouse can't tell whether ${title} started again, so it hasn't started it a second time. Nothing more of it starts until you say.`;
+export const restartStrandedWords = (title) => `${title} has stopped with nothing left to carry it on, and other work is waiting for its files. Nothing more of it starts until you say.`;
+export const STOPPED_RESTART_WORDS = (title) => `${title} stays stopped, as you chose; what it has done so far is kept on its branch.`;
+export const wakeLateWords = (title) => `Your answer about ${title} went back, but the build engine hasn't carried it on yet; it keeps its place meanwhile.`;
+
 // Each step of the pack (engine/archon/pack/) and of the merge queue, in words a sentence takes.
 export const STEP_WORDS = Object.freeze({
   order: 'reading the work order',

@@ -30,19 +30,19 @@
 import { oneLine, unusualLine, tokenWords, dollarWords, creditWords, NOT_NOW_STEP } from '../board/model.js';
 import { UNATTENDED_LINE, LOCKED_UNATTENDED_LINE, LOCKED_WOULD_LINE } from '../lib/platform-lines.js';
 import { wasRaised as realWasRaised } from '../usage/figures.js';
-import { brokenCount } from '../board/health.js';
+import { brokenCount, SAFEKEEPING_LEAD } from '../board/health.js';
 import { FRONT_DESK_MODEL_LEAD } from '../lib/front-desk-model.js';
 import { verdict, sinceAbout } from '../lib/calm-words.js';
 import { briefingLines } from '../survey/words.js';
 
-// Briefing = { verdict, since, first, found, foundId, waiting, changed, progress, watch, usage, onTrack, plus, raise, weekly }.
+// Briefing = { verdict, since, first, found, foundId, waiting, heldBack, changed, progress, watch, usage, onTrack, plus, raise, weekly }.
 // `verdict` is the pane's sentence; `since` says when the last briefing was and how long ago ('' when
 // there was none); each `waiting` entry is { title, line, recommendation, optional } (a card's own
-// words, each only when it has them); `onTrack` says usage is as it usually is; `plus` counts what
+// words, each only when it has them); `heldBack` counts the cards past the day's budget, which `waiting` leaves out; `onTrack` says usage is as it usually is; `plus` counts what
 // is new since the last briefing, in waiting and changed ({ waiting, changed }, none when there was
 // no last briefing).
 const EMPTY = () => ({
-  verdict: '', since: '', first: [], found: [], foundId: null, waiting: [], changed: [], progress: [], watch: [], usage: null, onTrack: false, plus: { waiting: 0, changed: 0 }, raise: [], weekly: 0,
+  verdict: '', since: '', first: [], found: [], foundId: null, waiting: [], heldBack: 0, changed: [], progress: [], watch: [], usage: null, onTrack: false, plus: { waiting: 0, changed: 0 }, raise: [], weekly: 0, safekeeping: null,
 });
 
 // What the board model says when a merge carried no words for users. It belongs to progress, not
@@ -55,6 +55,8 @@ const DAMAGED = /^\d+ records? couldn't be read$/;
 // The health lines given once a week: the Unattended lines, Locked's for a project with real users,
 // and the front desk on another model than its pin, which the board shows all the while.
 const WEEKLY = [UNATTENDED_LINE, LOCKED_UNATTENDED_LINE, LOCKED_WOULD_LINE];
+// An unchanged safekeeping watch comes back this seldom, not every briefing (spec 8.2).
+const MONTH_MS = 30 * 24 * 60 * 60 * 1000;
 const isWeekly = (text) => WEEKLY.includes(text) || text.startsWith(FRONT_DESK_MODEL_LEAD);
 const DAY_MS = 24 * 60 * 60 * 1000;
 // Anthropic's pages the sources check reads (sources/list.js), by id, as the director knows them.
@@ -188,6 +190,19 @@ function sourceLines(sources) {
   return out;
 }
 
+// The one sentence on safekeeping, or null: when the level turns, and for an unchanged watch once a month. `said` is what a
+// briefing last said ({ level, at }). The caller records `level` only when the text showed the sentence.
+function safekeepingNews(health, said, nowMs) {
+  const line = records(health).find((l) => l.safekeeping === true);
+  if (line === undefined) return null;
+  const words = oneLine(line.text).replace(SAFEKEEPING_LEAD, '');
+  const level = line.level === 'watch' ? 'watch' : 'safe';
+  if (level === 'safe') return said?.level === 'watch' ? { level, line: `Safekeeping has cleared: ${words}` } : null;
+  if (said?.level !== 'watch') return { level, line: `Safekeeping has turned to watch: ${words}` };
+  const since = msOf(said.at);
+  return Number.isNaN(since) || !Number.isFinite(nowMs) || nowMs - since >= MONTH_MS ? { level, line: `Safekeeping is still to watch: ${words}` } : null;
+}
+
 // The watch line for a delegation review that is due (ruling F43), or null. `review` is
 // { due, days }, worked out by the caller from the state: `days` between reviews.
 function reviewLine(review) {
@@ -223,6 +238,7 @@ function waitingEntry(w) {
   const entry = { title: oneLine(w.what) || 'A question' };
   for (const key of ['line', 'recommendation']) if (oneLine(w[key])) entry[key] = oneLine(w[key]);
   if (Number.isInteger(w.optional) && w.optional > 0) entry.optional = w.optional;
+  if (Number.isInteger(w.holdsUp) && w.holdsUp > 0) entry.holdsUp = w.holdsUp;
   return entry;
 }
 
@@ -236,6 +252,7 @@ function waitingEntry(w) {
 // briefing last mentioned, `host` the project's ('github', 'gitlab' or null) and `leaveOut` the
 // survey's lines (see briefingLines) the caller says itself; `carrying` is briefingLines' own, and
 // `earlier` its `since`. `holdLocked`, for setup's own briefing, leaves Locked's weekly line out.
+// `safekeepingSaid` is readSafekeepingSaid's. `safekeeping` in the answer is the sentence's level and its place in `watch`, or null.
 export function briefingModel(options) {
   try {
     return build(isRecord(options) ? options : {});
@@ -255,7 +272,7 @@ function foundLines(survey, surveyAt, host, leaveOut, carrying, earlier) {
   return { found: said(list(leaveOut)), id: survey.id };
 }
 
-function build({ model, usage, sources, since, now, wasRaised = realWasRaised, timeZone, weeklySince, review, survey, surveyAt, host = null, leaveOut = [], carrying = false, earlier = null, holdLocked = false }) {
+function build({ model, usage, sources, since, now, wasRaised = realWasRaised, timeZone, weeklySince, review, survey, surveyAt, host = null, leaveOut = [], carrying = false, earlier = null, holdLocked = false, safekeepingSaid = null }) {
   const briefing = EMPTY();
   const board = isRecord(model) ? model : {};
   const director = isRecord(board.director) ? board.director : {};
@@ -270,7 +287,8 @@ function build({ model, usage, sources, since, now, wasRaised = realWasRaised, t
   const said = part(() => foundLines(survey, surveyAt, host, leaveOut, carrying, earlier), { found: [], id: null });
   briefing.found = said.found;
   briefing.foundId = said.id;
-  briefing.waiting = part(() => records(director.waiting).map(waitingEntry), []);
+  briefing.waiting = part(() => records(director.waiting).filter((w) => w.heldBack !== true).map(waitingEntry), []);
+  briefing.heldBack = part(() => records(director.waiting).filter((w) => w.heldBack === true).length, 0);
   briefing.changed = part(() => lines(records(director.changed).filter((c) => isNew(c.at)).map((c) => c.what))
     .filter((what) => !BARE_MERGE.test(what)), []);
   briefing.verdict = part(() => verdict({ waiting: records(director.waiting).length, broken: brokenCount(director.health) }), '');
@@ -278,14 +296,14 @@ function build({ model, usage, sources, since, now, wasRaised = realWasRaised, t
   briefing.since = part(() => (known && Number.isFinite(nowMs) ? sinceAbout(clockOf(sinceMs, timeZone), nowMs - sinceMs) : ''), '');
   // What is new since the last briefing is counted only when there was one.
   briefing.plus = part(() => ({
-    waiting: known ? records(director.waiting).filter((w) => msOf(w.since) > sinceMs).length : 0,
+    waiting: known ? records(director.waiting).filter((w) => w.heldBack !== true && msOf(w.since) > sinceMs).length : 0,
     changed: known ? briefing.changed.length : 0,
   }), { waiting: 0, changed: 0 });
   briefing.progress = part(() => progressLines({ director, build: isRecord(board.build) ? board.build : {} }, isNew), []);
 
   const shown = msOf(weeklySince);
   const due = part(() => weeklyDue(Number.isFinite(nowMs) && shown > nowMs ? NaN : shown, nowMs, timeZone), true);
-  const standing = part(() => lines(records(director.health).filter((l) => l.level === 'watch' || l.level === 'stop').map((l) => l.text)), []);
+  const standing = part(() => lines(records(director.health).filter((l) => (l.level === 'watch' || l.level === 'stop') && l.safekeeping !== true).map((l) => l.text)), []);
   // Setup's own briefing holds Locked's line back: the director chose minutes before (holdLocked).
   const weekly = due ? standing.filter(isWeekly).filter((text) => !(holdLocked === true && text === LOCKED_WOULD_LINE)) : [];
   const health = standing.filter((text) => !isWeekly(text));
@@ -298,7 +316,9 @@ function build({ model, usage, sources, since, now, wasRaised = realWasRaised, t
   // The weekly lines and unusual use are news and the other health lines stand from one briefing
   // to the next, so the news comes first and is the last of `watch` to be cut for length; a review
   // that is due follows it, then the pull requests that are blocked.
-  briefing.watch = [...weekly, ...unusual.map((u) => u.line), ...(dueReview === null ? [] : [dueReview]), ...blocked, ...health, ...fromSources, ...damaged];
+  const kept = part(() => safekeepingNews(director.health, safekeepingSaid, nowMs), null);
+  briefing.watch = [...weekly, ...unusual.map((u) => u.line), ...(kept === null ? [] : [kept.line]), ...(dueReview === null ? [] : [dueReview]), ...blocked, ...health, ...fromSources, ...damaged];
+  briefing.safekeeping = kept === null ? null : { level: kept.level, at: weekly.length + unusual.length };
   briefing.raise = unusual.map((u) => u.id);
   briefing.weekly = weekly.length;
   briefing.usage = part(() => usageLine(usage), null);

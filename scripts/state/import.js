@@ -23,6 +23,8 @@ const MOST_BYTES = 256 * 1024;
 function soundEvent(text, file, enrolled) {
   let event = null;
   try { event = JSON.parse(text); } catch { return null; }
+  // A rule is the helper's own, and v0.1.x never had one, so one in an old clone was planted.
+  if (event?.kind === 'rule') return null;
   const whole = event && typeof event === 'object' && !Array.isArray(event)
     && typeof event.id === 'string' && typeof event.at === 'string' && typeof event.kind === 'string' && typeof event.computer === 'string'
     && (PLAIN_KINDS.includes(event.kind) || PROTECTED_KINDS.includes(event.kind));

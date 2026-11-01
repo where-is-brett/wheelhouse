@@ -26,6 +26,7 @@
 //   checkTook(project, { head, work })   hands a head the helper took in to the project's checks
 //   mainCheck(project)    { ok, here, green?, rerun? }: whether the project's checks run on this computer, and if so
 //                         whether the main line's latest counted check passed
+//   readerViewOf(project, card)   the view of the card a reader is reading, or null
 // A run is found by its id in the projects' order stores: the only runs these routes serve are ones the helper
 // started itself, with an order. Only the helper starts a run (the dispatcher, through `start`, never a route), and
 // every route asks for the run's ticket (ticket.js), which only that run's steps can read.
@@ -38,6 +39,7 @@ import { newTicket, ticketHash, ticketMatches, writeTicket } from './ticket.js';
 import { FIX_LANE, weakensChecks } from './fix-main.js';
 import { readReproduction, sameReproduction } from './reproduction.js';
 import { reviewHolds } from './review-round.js';
+import { READER_LANE, READER_WORK } from '../delegation/reader.js';
 
 const NO_ORDER = 'there is no work order for that run';
 const NO_TICKET = 'the call didn\'t carry the run\'s own ticket';
@@ -104,13 +106,13 @@ function readOpened(text) {
 }
 
 export function engineRoutes({
-  projects, engineFor, ordersDir, write, held = () => false, now = () => new Date(),
+  projects, engineFor, ordersDir, write, held = () => false, moving = () => false, now = () => new Date(),
   filesDir = (project) => path.join(ordersDir(project), '..'), digests = { installed: () => null, captured: () => null }, comment,
   projectAgents = async () => null, recheckCopies = async () => ({ ok: true }),
   checkTook = null, mainCheck = null,
   host, provenance, previewsDir = (project) => path.join(filesDir(project), 'previews'),
   incidentOf = () => null, changesOf = async () => null, merge = async () => ({ ok: false, refused: 'the helper can\'t merge here' }),
-  refresh = async () => ({ ok: true }),
+  refresh = async () => ({ ok: true }), readerViewOf = () => null,
 } = {}) {
   const storeOf = (project) => orderStore(ordersDir(project));
 
@@ -146,6 +148,7 @@ export function engineRoutes({
   // continuation host knows the run is the project's. The helper's own: no route reaches it.
   async function start({ project, order, branch, carryOn } = {}) {
     if (held()) return { ok: false, refused: 'All stop is on, so no run starts' };
+    if (moving(project)) return { ok: false, refused: 'This project is moving to a host, so no run starts until it has' };
     const found = projects().find((p) => p.project === project);
     if (!found) return { ok: false, refused: 'that project isn\'t registered on this computer' };
     const engine = engineFor(project);
@@ -160,7 +163,7 @@ export function engineRoutes({
     const stands = await recheckHold(project, found.folder, engine, order.bindings);
     if (stands) return { ok: false, refused: stands };
     const started = await engine.start({ work: order.work, lane: order.lane, branch, carryOn: carryOn === true, project: found.folder, bindings: order.bindings });
-    if (!started?.ok) return { ok: false, refused: started?.refused ?? 'the engine didn\'t start the run' };
+    if (!started?.ok) return { ok: false, refused: started?.refused ?? 'the engine didn\'t start the run', ...(started?.uncertain === true ? { uncertain: true } : {}) };
     storeOf(project).save(started.runId, order);
     const artefacts = engine.artefactsOf(started.runId, host?.repo?.(project));
     const ticket = newTicket();
@@ -169,8 +172,9 @@ export function engineRoutes({
       fs.writeFileSync(ticketFile(project, started.runId), `${ticketHash(ticket)}\n`, { flag: 'wx', mode: 0o600 });
       writeTicket(artefacts, ticket);
     } catch {
-      await engine.act(started.runId, { cancel: { reason: 'the run\'s ticket couldn\'t be written' } });
-      return { ok: false, refused: 'the run\'s ticket couldn\'t be written, so it was stopped' };
+      const stopped = await Promise.resolve().then(() => engine.act(started.runId, { cancel: { reason: 'the run\'s ticket couldn\'t be written' } })).catch(() => null);
+      // A run that wasn't stopped may still be going, so whoever started it must look before starting another.
+      return stopped?.ok === true ? { ok: false, refused: 'the run\'s ticket couldn\'t be written, so it was stopped' } : { ok: false, refused: 'the run\'s ticket couldn\'t be written, and it couldn\'t be stopped', uncertain: true };
     }
     if (order.lane === SLICE_LANE) {
       const verdicts = readVerdicts(project);
@@ -179,6 +183,29 @@ export function engineRoutes({
     }
     const runBranch = started.branch ?? branch;
     await write(project, 'run', { work: order.work, lane: order.lane, engine: engine.name ?? 'engine', runId: started.runId, state: 'started', ...(runBranch ? { branch: runBranch } : {}) });
+    return { ok: true, runId: started.runId };
+  }
+
+  // Starts a reader of `card` in its own folder. It has no work order to read, so `start` would refuse it: this saves a
+  // stand-in order, which places the run, and writes its ticket as `start` does. It writes no `run` record: a reader's run
+  // is no piece's. Nothing is fetched: its view was built when the card was sealed.
+  async function startReader({ project, card, folder, bindings } = {}) {
+    if (held()) return { ok: false, refused: 'All stop is on, so no run starts' };
+    const engine = engineFor(project);
+    if (typeof engine?.artefactsOf !== 'function') return { ok: false, refused: 'that project\'s engine gives a run no artefacts folder, so its steps can\'t be given their ticket' };
+    const started = await engine.start({ work: READER_WORK, lane: READER_LANE, card, project: folder, bindings });
+    if (!started?.ok) return { ok: false, refused: started?.refused ?? 'the engine didn\'t start the reader' };
+    const ticket = newTicket();
+    try {
+      storeOf(project).save(started.runId, { v: 1, work: READER_WORK, lane: READER_LANE, card });
+      const artefacts = engine.artefactsOf(started.runId, host?.repo?.(project), { folder });
+      if (!artefacts) throw new Error('no artefacts folder');
+      fs.writeFileSync(ticketFile(project, started.runId), `${ticketHash(ticket)}\n`, { flag: 'wx', mode: 0o600 });
+      writeTicket(artefacts, ticket);
+    } catch {
+      await engine.act(started.runId, { cancel: { reason: 'the run\'s ticket couldn\'t be written' } });
+      return { ok: false, refused: 'the run\'s ticket couldn\'t be written, so it was stopped' };
+    }
     return { ok: true, runId: started.runId };
   }
 
@@ -501,6 +528,7 @@ export function engineRoutes({
 
   return {
     runOf,
+    startReader,
     readyOf,
     openedOf,
     // The pull request a run opened, by the helper's own record of it, or null (an engine may not say so itself).
@@ -510,6 +538,13 @@ export function engineRoutes({
     },
     // The helper's own record of what opened a pull request: { runId, head, work, lane, ... }, or null.
     openedOf: (project, pr) => readVerdicts(project).opened?.[pr] ?? null,
+    // A project's local changes have become pull requests: what is known of each goes to its new number, and what is known of
+    // a change that has ended goes, as its number now means another pull request.
+    carryNumbers: (project, numbers) => {
+      const verdicts = readVerdicts(project);
+      const carried = (held) => Object.fromEntries(Object.entries(held ?? {}).flatMap(([n, o]) => (numbers[n] === undefined ? [] : [[numbers[n], o]])));
+      keepVerdicts(project, { ...verdicts, opened: carried(verdicts.opened), ready: carried(verdicts.ready) });
+    },
     // Every pull request the helper marked ready for the project: { [pr]: { head, runId, showFirst, work } }.
     readyAll: (project) => readVerdicts(project).ready ?? {},
     // The fix-main runs whose fix the helper added.
@@ -532,6 +567,12 @@ export function engineRoutes({
       '/engine/main-check': ticketed(async ({ runId }) => (mainCheck ? mainCheck(runOf(runId).project) : { ok: true, here: false })),
       '/engine/reproduction': ticketed(reproduction),
       '/engine/reproduction/find': ticketed(reproductionFind),
+      // The view of the card a reader run was started for, and nothing for any other run.
+      '/engine/reader-view': ticketed(async ({ runId } = {}) => {
+        const run = runOf(runId);
+        const view = run?.order.lane === READER_LANE ? readerViewOf(run.project, run.order.card) : null;
+        return view ? { ok: true, view } : { ok: false, refused: 'there is no view for that run' };
+      }),
       // The order the helper keeps for the run, and nothing for any other id.
       '/engine/order': ticketed(async ({ runId } = {}) => {
         const run = runOf(runId);

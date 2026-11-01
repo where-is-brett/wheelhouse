@@ -12,12 +12,14 @@ import { makeSigningKey, enrol, readEnrolled, sign } from '../../../scripts/stat
 import { approvalLine, ciPushLine, confirmLine } from '../../../scripts/state/card-lines.js';
 import { computerId, profileDir, stateDir } from '../../../scripts/lib/paths.js';
 import { tempFolder } from '../../helpers/homes.js';
+import { readingOf } from '../../../scripts/delegation/seal.js';
+import { composeRule } from '../../../scripts/delegation/composer.js';
 import { SUGGEST, WHY } from '../../../scripts/lib/calm-words.js';
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
 const T = (n) => `2026-10-18T02:00:${String(n).padStart(2, '0')}.000Z`;
 const at = (n) => () => new Date(T(n));
-const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'provenance', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'controlFiles', 'survey', 'columnsReady', 'usageCards', 'premium', 'premiumFailures', 'runs', 'asks', 'costs', 'previews', 'lessons', 'engineNotes', 'cardsWaiting'];
+const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'provenance', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'controlFiles', 'survey', 'columnsReady', 'usageCards', 'premium', 'premiumFailures', 'runs', 'asks', 'costs', 'previews', 'lessons', 'engineNotes', 'cardsWaiting', 'evidence', 'rules'];
 const now = () => new Date('2026-10-18T09:00:00.000Z');
 
 async function withHome(fn) {
@@ -133,6 +135,20 @@ test('glossary, ideas and rejections hold the latest per key', async () => {
     assert.equal(Object.keys(v.rejections).length, 1);
     assert.equal(v.rejections.ads.data.reason, 'no');
   });
+});
+
+test('the cards held back are the latest list, less any pulled since', () => {
+  const note = (data, n) => makeEvent({ kind: 'note', data, now: () => new Date(Date.UTC(2026, 9, 18, 0, 0, n)) });
+  const view = (events) => buildViews(events, []).cardsWaiting;
+  assert.deepEqual(view([]), { count: 0, ids: [], pulled: [] });
+  assert.deepEqual(view([note({ about: 'cards-waiting', count: 2 }, 1)]), { count: 2, ids: [], pulled: [] }, 'a note from the version before');
+  const listed = note({ about: 'cards-waiting', count: 2, ids: ['q-a-1', 'q-b-2'] }, 2);
+  assert.deepEqual(view([listed]), { count: 2, ids: ['q-a-1', 'q-b-2'], pulled: [] });
+  const pulled = note({ about: 'cards-pulled', ids: ['q-a-1'] }, 3);
+  assert.deepEqual(view([listed, pulled]), { count: 1, ids: ['q-b-2'], pulled: ['q-a-1'] });
+  // The router wrote its list before it saw the pull: the pull still stands.
+  assert.deepEqual(view([listed, pulled, note({ about: 'cards-waiting', count: 2, ids: ['q-a-1', 'q-b-2'] }, 4)]), { count: 1, ids: ['q-b-2'], pulled: ['q-a-1'] });
+  assert.deepEqual(view([listed, pulled, note({ about: 'cards-waiting', count: 1, ids: ['q-b-2'] }, 5)]), { count: 1, ids: ['q-b-2'], pulled: [] });
 });
 
 test('an answered card leaves the waiting list', async () => {
@@ -288,7 +304,7 @@ test('a confirmation counts only with the confirmed event\'s hash, and only for 
 
     // A signed confirmation pointing at an event of another kind confirms nothing.
     const card = ev('card', 3, cardData('Pick a colour?'));
-    assert.throws(() => confirmationFor(card), /ruling, a level or a setting/);
+    assert.throws(() => confirmationFor(card), /ruling, a level, a setting or a rule/);
     const forCard = makeEvent({ kind: 'confirmation', data: { confirms: card.id, confirmsHash: eventHash(card) }, now: at(4) });
     const v = build([card, forCard]);
     assert.deepEqual(v.levels, {});
@@ -1413,5 +1429,138 @@ test('views gather runs by work, latest state last', async () => {
     assert.equal(views.previews.login.at(-1).data.head, 'a'.repeat(40));
     assert.equal(views.lessons.login[0].data.text, 'Lock first');
     assert.deepEqual(build([]).runs, {});
+  });
+});
+
+const sealed = (card, extra = {}) => ({ line: 'seal', card, work: 'w', head: null, signed: null, reader: true, candidates: { land: null }, exclusions: { hit: ['data-model'], unread: [] }, stamp: { models: null, pack: null, rule: null, exclusions: null }, at: T(1), hash: 'a'.repeat(64), ...extra });
+
+test('a rule is in the views only once a signed click confirms it', async () => {
+  await withHome(async () => {
+    const rule = composeRule({ answer: { label: 'Keep' }, card: { kind: 'question', level: 3, options: ['Keep', 'Remove'] }, facts: { readable: true, paths: ['a.js'], depsChanged: false, schemaChanged: false, guardrail: false, secrets: false, critical: false }, lane: 'small', project: 'p', now: at(1) });
+    const event = ev('rule', 1, rule);
+    assert.deepEqual(build([]).rules, {});
+    assert.deepEqual(build([event]).rules, {});
+    const click = makeEvent({ ...confirmationFor(event), now: at(2) });
+    assert.deepEqual(build([event, click]).rules, { [rule.id]: { rule, stage: 0, signedAt: T(2) } });
+  });
+});
+
+test('shadow isn\'t in the views an agent reads', async () => {
+  await withHome(async () => {
+    const views = build([ev('shadow', 1, sealed('q-1'))]);
+    assert.deepEqual(views.evidence, { sealed: 1, read: 0, sampled: 0 });
+    assert.ok(!JSON.stringify(views).includes('data-model'));
+    assert.ok(!JSON.stringify(views).includes('candidates'));
+  });
+});
+
+test('the evidence view shows volume, and no match, miss or direction', async () => {
+  await withHome(async () => {
+    const score = { line: 'score', card: 'q-1', work: 'w', seal: 'a'.repeat(64), score: 'miss', at: T(2), hash: 'b'.repeat(64) };
+    const { evidence } = build([ev('shadow', 1, sealed('q-1')), ev('shadow', 2, score)]);
+    assert.deepEqual(Object.keys(evidence).sort(), ['read', 'sampled', 'sealed']);
+    assert.deepEqual(evidence, { sealed: 1, read: 0, sampled: 0 });
+    assert.ok(!JSON.stringify(build([ev('shadow', 2, score)])).includes('miss'));
+  });
+});
+
+test('the evidence view counts a card once, and only a seal this computer can verify', async () => {
+  await withHome(async () => {
+    const one = ev('shadow', 1, sealed('q-1'));
+    const unsigned = { ...ev('shadow', 2, sealed('q-2')), sig: undefined };
+    assert.equal(build([one, ev('shadow', 2, sealed('q-1')), unsigned]).evidence.sealed, 1);
+    assert.equal(build([]).evidence.sealed, 0);
+  });
+});
+
+test('a card counts as read only with a reading, not a reader that gave none', async () => {
+  await withHome(async () => {
+    const line = (card, reader) => ev('shadow', 2, { ...readingOf({ card, work: 'w', why: 'no-start', at: T(1), ...(reader ? { reading: { frame: 'sound', why: 'It fits.', kind: 'can-see', fits: 'no-rule', pick: 'Keep', tags: [] } } : {}) }) });
+    const views = build([ev('shadow', 1, sealed('q-1')), line('q-1', true), line('q-2', false)]);
+    assert.equal(views.evidence.read, 1);
+  });
+});
+
+const LEAD = 'q-lead-500001';
+const JOIN = 'q-other-500001';
+const asked = (n, data = {}) => ev('question', n, {
+  id: LEAD, work: 'lead', what: 'Which page?', why: 'It changes it', options: [{ label: 'First', says: 'One' }, { label: 'Last', says: 'Two' }], recommendation: 'First', level: 3, ...data,
+});
+const joiner = (n, data = {}) => asked(n, { id: JOIN, work: 'other', what: 'which page', joins: LEAD, options: [{ label: 'first', says: 'One' }, { label: 'LAST', says: 'Two' }], recommendation: 'first', ...data });
+const answerCard = (n, words, joiners) => ev('card', n, { question: words, header: 'Question', options: ['First', 'Last'], kind: 'answer', level: 3, line: `Answer question ${LEAD}`, ...(joiners ? { joiners } : {}) });
+const clickedOn = (n, words, label = 'Last') => click(n, { action: 'answer', question: words, questionId: LEAD, questionHash: dataHash(asked(1).data), label });
+
+test('a joiner on the card answered takes its lead\'s answer, in its own label', async () => {
+  await withHome(() => {
+    const got = build([asked(1), joiner(2), answerCard(3, 'lead and other', [JOIN]), clickedOn(4, 'lead and other')]).questions;
+    assert.equal(got[LEAD].answer.label, 'Last');
+    assert.equal(got[JOIN].answer.label, 'LAST');
+    assert.equal(got[JOIN].answer.joined, LEAD);
+  });
+});
+
+test('a click covers only what its card showed', async () => {
+  await withHome(() => {
+    const got = build([asked(1), answerCard(2, 'one'), joiner(3), answerCard(4, 'lead and other', [JOIN]), clickedOn(5, 'one')]).questions;
+    assert.equal(got[LEAD].answer.label, 'Last');
+    assert.equal(got[JOIN].answer, null);
+    assert.deepEqual(got[JOIN].saidBefore.label, 'LAST');
+    assert.equal(got[JOIN].joins, undefined, 'it is a question of its own again');
+  });
+});
+
+test('a joiner open behind an open lead says whom it joins', async () => {
+  await withHome(() => {
+    assert.equal(build([asked(1), joiner(2)]).questions[JOIN].joins, LEAD);
+  });
+});
+
+test('a question naming a lead it isn\'t alike takes nothing from it', async () => {
+  await withHome(() => {
+    for (const data of [{ what: 'Something else' }, { options: [{ label: 'Other', says: 'x' }, { label: 'Last', says: 'y' }] }]) {
+      const got = build([asked(1), joiner(2, data), answerCard(3, 'both', [JOIN]), clickedOn(4, 'both')]).questions[JOIN];
+      assert.equal(got.answer, null);
+      assert.equal(got.joins, undefined);
+    }
+  });
+});
+
+test('a lead at level 4 lends no answer, whatever a joiner says', async () => {
+  await withHome(() => {
+    const hash = dataHash(asked(1, { level: 4 }).data);
+    const events = [asked(1, { level: 4 }), joiner(2), answerCard(3, 'both', [JOIN]), click(4, { action: 'answer', question: 'both', questionId: LEAD, questionHash: hash, label: 'Last' })];
+    assert.equal(build(events).questions[JOIN].answer, null);
+  });
+});
+
+test('a joiner\'s own click stands, and a joiner of a joiner joins nothing', async () => {
+  await withHome(() => {
+    const third = asked(3, { id: 'q-third-500001', work: 'third', joins: JOIN });
+    const got = build([asked(1), joiner(2), third]).questions;
+    assert.equal(got['q-third-500001'].joins, undefined);
+  });
+});
+
+test('a card written after the click widens nothing', async () => {
+  await withHome(() => {
+    const got = build([asked(1), joiner(2), answerCard(3, 'other'), clickedOn(4, 'other'), answerCard(5, 'other', [JOIN])]).questions[JOIN];
+    assert.equal(got.answer, null);
+    assert.equal(got.saidBefore.label, 'LAST');
+  });
+});
+
+test('a card must name the piece in the words the click signed', async () => {
+  await withHome(() => {
+    const got = build([asked(1), joiner(2), answerCard(3, 'just the one', [JOIN]), clickedOn(4, 'just the one')]).questions[JOIN];
+    assert.equal(got.answer, null);
+  });
+});
+
+test('a joiner recorded again is a question of its own', async () => {
+  await withHome(() => {
+    const words = 'lead and other';
+    const got = build([asked(1), joiner(2), joiner(3, { why: 'Another reason' }), answerCard(4, words, [JOIN]), clickedOn(5, words)]).questions[JOIN];
+    assert.equal(got.joins, undefined);
+    assert.equal(got.answer, null);
   });
 });

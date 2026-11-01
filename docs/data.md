@@ -30,6 +30,20 @@ A project kept on this computer goes nowhere: its history stays in your folder a
 
 For a project on a host, nothing of yours goes to GitHub or GitLab, even if the repository is public. The one thing Wheelhouse keeps there is the `wheelhouse-lock` branch, which stops two computers driving one project at once: it holds only a computer id and a counter.
 
+Each card the build engine raises also gets a seal in that record: a signed line of what Wheelhouse's own checks could tell from the change when the card was written. It stays in the private record. No agent, board or review reads what a seal says, and only a count of them is shown. It changes nothing about a card. Once a card is answered, a further signed line scores what would have been decided against the answer. The scores stay sealed too.
+
+When the First Mate ends a turn on a question with no card, Claude Code's Stop hook adds one line to the same record with the time and none of the words, so those questions can be counted. A pick of Suggest a change… in the chat on a build's question keeps only the card's id, for its score.
+
+A question card's seal may gain a second line: a small read-only run's own reading of the question, made after the card is written. That run sees the question, the bare options and the change with its comments taken out, in a folder of its own on this computer, and reads nothing else. What it was shown is kept only until it has read it. Its reading stays in the private record with the seal, and its tokens are kept under a line of their own, against no piece. It changes nothing about a card, and no card waits for it.
+
+When two pieces ask the same question in the same words and options, the second is kept as a question that names the first, with no card of its own, so one answer can go to both. Each tick, Wheelhouse may also add a line naming the card that everything else is waiting behind, and how many pieces each card holds up. Both stay in the same record, and neither holds anything from your work beyond the question's own words.
+
+A rule you sign, so that Wheelhouse may one day settle a kind of question without you, is kept in the same private record, with the click that signed it. A rule can't sit in the project's repository, because an agent can edit that. For now a signed rule decides nothing: it only names the seals of the cards it would have covered. Each rule comes up for review after six months.
+
+If you choose a backup folder for a project kept on this computer, Wheelhouse writes one file there, `<project>.wheelhouse-backup`, with the project's code and its history, and keeps one earlier copy beside it. The file holds none of the records above and none of Wheelhouse's own branches. Where it goes from there is up to the folder you chose: a cloud service sends it off your computer under its own terms.
+
+Beside each project, `backup.json` says where its backups go and how the last one went, and `safekeeping.json` holds what the Safekeeping line last found: names of branches and how many changes are only here, never your code. **Keep a copy online** sends a branch to your host under `keep/<branch>`, and only when you press it.
+
 Your history doesn't follow you to another computer, as Claude's chats don't: a second computer starts its own record. Wheelhouse keeps no backup of it anywhere else, so if a computer is lost, its private record is lost with it unless a backup of the computer (Time Machine, or File History on Windows) has it.
 
 On your computer, Wheelhouse also keeps in `~/.wheelhouse` setup's journal of every change it made, the keys agents work with, the tools it fetched and the usage counts. Keys never appear in the chat.
