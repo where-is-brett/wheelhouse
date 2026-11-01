@@ -1,6 +1,6 @@
 // scripts/engine/goal.js
-// The unattended goal's rules (unattended goals design, sections 4 and 5), pure: what a sheet must hold, how a sheet may
-// be narrowed, and how the state's records become `views.goals`. Nothing here reads a file or a clock.
+// The unattended goal's rules (unattended goals design, sections 4 to 6), pure: what a sheet must hold, how a sheet may
+// be narrowed, how the state's records become `views.goals`, and what a goal lets start. Nothing here reads a file or a clock.
 //
 //   Sheet = { title, done: [Check], checksSay: [text], pieces: [{ work, hash, waived? }], areas: { may, wontTouch },
 //             checkFiles: [path], spend: { tokens, points?, requests? }, until, stopEarly?: { failedInARow, reds } }
@@ -15,6 +15,7 @@ import { dataHash } from '../state/events.js';
 import { matchGlob } from '../gate/glob.js';
 import { SLUG } from '../lib/build-loop.js';
 import { checkProblem } from './order.js';
+import { endedBy } from '../foreman/queue.js';
 import { MAX_PIECES, MAX_HOURS } from './goal-limits.js';
 
 const isObject = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
@@ -24,6 +25,11 @@ const isCount = (x) => Number.isInteger(x) && x >= 1;
 const isAmount = (x) => typeof x === 'number' && Number.isFinite(x) && x > 0;
 const instant = (x) => (typeof x === 'string' ? Date.parse(x) : Number.NaN);
 const HOUR = 3600000;
+const FIX_LANE = 'fix-main';
+// The ways back an answer of the director's makes: the director is back, so these aren't held once a goal has ended.
+const ANSWERED = Object.freeze(['rework', 'more', 'try-again', 'build-again', 'carry', 'answer']);
+// The lanes small enough for the sheet's tick to waive showing a piece first. A feature has its own switch-on.
+const WAIVABLE = Object.freeze(['quick', 'small']);
 
 // The hash of the whole sheet, unknown keys included: what the director's click signs.
 export function sheetHash(sheet) {
@@ -172,6 +178,63 @@ export function pieceCovered(goal, work, views) {
   const line = goal?.sheet?.pieces?.find((p) => p.work === work);
   const data = views?.work?.[work]?.work?.data;
   return line !== undefined && data !== undefined && dataHash(data) === line.hash;
+}
+
+// The goals of `views`, newest ending last, that have ended.
+function endedGoals(views) {
+  const goals = isObject(views?.goals) ? views.goals : {};
+  return Object.entries(goals).filter(([, goal]) => goal.ended !== null).sort(([, a], [, b]) => Date.parse(a.ended.at) - Date.parse(b.ended.at));
+}
+
+// What a goal says of starts at `now` (a Date), for `dispatch` and `gateStart`, or null when none says anything.
+//   In force: { id, pieces, only: true, startsStopped, until, state }. `pieces` are those still covered, in the sheet's order;
+//   `startsStopped` says `until` has passed, so its pieces hold too.
+//   After its end, until a new sheet: { id, pieces, only: false, startsStopped: true }, `pieces` being what is unfinished.
+export function goalRule(views, now) {
+  const live = goalInForce(views);
+  if (live !== null) {
+    const pieces = live.sheet.pieces.map((p) => p.work).filter((work) => pieceCovered(live, work, views));
+    return { id: live.id, pieces, only: true, startsStopped: now.getTime() >= Date.parse(live.until), until: live.until, state: live.state };
+  }
+  const last = endedGoals(views).at(-1);
+  if (last === undefined) return null;
+  const [id, goal] = last;
+  const unfinished = goal.sheet.pieces.map((p) => p.work).filter((work) => {
+    const report = views?.reports?.[work];
+    return report?.data?.outcome !== 'merged' && !endedBy(views?.reports, work, views?.work?.[work]?.work);
+  });
+  return unfinished.length === 0 ? null : { id, pieces: unfinished, only: false, startsStopped: true };
+}
+
+// The one gate every start passes (unattended goals design, section 6): null, or { goalHeld: true, goal, why }, `why` being
+// `goal` (not this goal's work), `time`, `winding-down`, `spend` or `goal-ended`. `goal` is `goalRule`'s answer; `via` the way
+// the start came, `start` for a first one; `state` the goal's state; `meter` the spend meter's reading, where there is one. The
+// fix lane is held by spend alone: a red main line must be mended. After the end only the goal's own pieces hold, and an
+// answer of the director's goes on as ordinary work.
+export function gateStart({ goal, work, lane, via, state = 'running', meter = null, now }) {
+  if (!isObject(goal)) return null;
+  const held = (why) => ({ goalHeld: true, goal: goal.id, why });
+  if (goal.only !== true) return goal.pieces.includes(work) && !ANSWERED.includes(via) ? held('goal-ended') : null;
+  if (lane !== FIX_LANE) {
+    if (!goal.pieces.includes(work)) return held('goal');
+    if (state !== 'running') return held('winding-down');
+    if (now.getTime() >= Date.parse(goal.until)) return held('time');
+  }
+  return typeof meter?.reached === 'string' ? held('spend') : null;
+}
+
+// What an order of `work` takes from its goal: { goalId?, waived? }. The goal is the one covering the piece, in force or the
+// latest to end, whose areas still govern its pull request. `waived` is the sheet's tick, honoured only on a small visible
+// piece, and only while the goal is in force: after it, the piece is ordinary work.
+export function orderGoal(views, work) {
+  const live = goalInForce(views);
+  if (live !== null && pieceCovered(live, work, views)) {
+    const data = views.work[work].work.data;
+    const line = live.sheet.pieces.find((p) => p.work === work);
+    return { goalId: live.id, ...(line.waived === true && data.visible === true && WAIVABLE.includes(data.lane) ? { waived: true } : {}) };
+  }
+  const ended = endedGoals(views).reverse().find(([, goal]) => pieceCovered(goal, work, views));
+  return ended === undefined ? {} : { goalId: ended[0] };
 }
 
 // `views.goals`: { [id]: { sheet, hash, startedAt, ended, endAsked } }, from `sorted` (the events in order) and `starts`

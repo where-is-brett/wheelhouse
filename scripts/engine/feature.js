@@ -134,7 +134,7 @@ export function currentStep({ design, progress } = {}) {
 }
 
 // The order for one run of the feature `entry` (the work's view): its goal, checks and lists, and the feature's fields.
-function orderOf({ entry, lane, goal, done, notInScope = [], protectedFiles = [], extra, config = {}, settings = {}, raised = false, answers = [], tried = [] }) {
+function orderOf({ entry, lane, goal, done, notInScope = [], protectedFiles = [], extra, config = {}, settings = {}, raised = false, answers = [], tried = [], goalId }) {
   const data = entry.work.data;
   return workOrder({
     work: { id: data.id ?? entry.work.key, lane, goal, done, visible: data.visible === true, level: data.level, notInScope, protectedFiles },
@@ -142,11 +142,11 @@ function orderOf({ entry, lane, goal, done, notInScope = [], protectedFiles = []
     routing: config.routing ?? {},
     caps: limitsFor('slice', settings, { raised }),
     answers,
-    extra: { ...extra, ...(tried.length > 0 ? { tried } : {}) },
+    extra: { ...extra, ...(tried.length > 0 ? { tried } : {}), ...(goalId !== undefined ? { goalId } : {}) },
   });
 }
 
-// sliceOrder({ entry, design, n, config, settings, raised, answers, tried }): slice `n`'s order, in the slice lane, behind the
+// sliceOrder({ entry, design, n, config, settings, raised, answers, tried, goalId }): slice `n`'s order, in the slice lane, behind the
 // design's flag. It is shown first only at the midpoint demo.
 export function sliceOrder({ entry, design, n, ...rest }) {
   const slice = design.slices[n - 1];
@@ -159,7 +159,7 @@ export function sliceOrder({ entry, design, n, ...rest }) {
   });
 }
 
-// finishOrder({ entry, design, progress, config, settings, raised, answers, tried }): the feature's own order, for its
+// finishOrder({ entry, design, progress, config, settings, raised, answers, tried, goalId }): the feature's own order, for its
 // whole-feature review and switch-on: every slice's done checks once, the merged slices, and always shown first.
 export function finishOrder({ entry, design, progress, ...rest }) {
   const done = [];

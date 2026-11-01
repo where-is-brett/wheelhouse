@@ -20,10 +20,13 @@
 // decisions design, section 8.3): an entry stays on `returning` until `dispatch` admits it, and on `admitted`, holding its
 // place, until its run is seen running. The runner wakes a paused run once admitted; a new run is started from here. A
 // start is marked before it is called, so one that timed out or a crash during it is settled before anything starts again.
+// While a goal runs, every start passes one gate (goal.js): one held there keeps its place on the list with `heldBy` and
+// raises no card, until the gate lets it by. A retry the gate would hold isn't kept for it, and comes to its card.
 import fs from 'node:fs';
 import path from 'node:path';
 import { dispatch, MERGE_WORK, MERGE_QUEUE_EVERY_MS } from './dispatcher.js';
-import { reservedUnreadWords, LIMIT_HOLD_WORDS, noCardBehindWords, restartRefusedWords, restartCardWords, restartUnsureWords, restartStrandedWords, failedCardWords, prLeftOpenWords, wakeLateWords, STOPPED_RESTART_WORDS, ORPHAN_LEFT_WORDS, RESTART_UNSURE_AGAIN, START_ANYWAY, cutOffStoppedWords, cutOffWords, waitsOnItselfWords, startAnywayWords, startRefusedWords, startCardWords, unmarkedPrWords, START_STOP_SAYS, NO_FIX_TESTS, NO_FIX_ORDER, noFixWords, queueStuckWords, QUEUE_STUCK_WHY, QUEUE_PASSED_WORDS, requestsUsedWords, REQUESTS_UNCONFIRMED_WORDS, requestsStoppedWords } from './words.js';
+import { goalRule, gateStart, orderGoal } from './goal.js';
+import { goalHeldWords, reservedUnreadWords, LIMIT_HOLD_WORDS, noCardBehindWords, restartRefusedWords, restartCardWords, restartUnsureWords, restartStrandedWords, failedCardWords, prLeftOpenWords, wakeLateWords, STOPPED_RESTART_WORDS, ORPHAN_LEFT_WORDS, RESTART_UNSURE_AGAIN, START_ANYWAY, cutOffStoppedWords, cutOffWords, waitsOnItselfWords, startAnywayWords, startRefusedWords, startCardWords, unmarkedPrWords, START_STOP_SAYS, NO_FIX_TESTS, NO_FIX_ORDER, noFixWords, queueStuckWords, QUEUE_STUCK_WHY, QUEUE_PASSED_WORDS, requestsUsedWords, REQUESTS_UNCONFIRMED_WORDS, requestsStoppedWords } from './words.js';
 import { workOrder } from './order.js';
 import { limitsFor } from './caps.js';
 import { ENGINE_QUESTIONS } from './router.js';
@@ -114,8 +117,9 @@ export const REQUESTS_WORDS = 'Some work would use your AI plan\'s counted reque
 
 // The order for one piece of work from its record: the title is its goal; the done checks are the record's own, or
 // the project's tests passing when it has none. `config` is { routing (the pack's bindings), testCommand, pages? };
-// `answers` the director's answers to the work's earlier questions, from the helper's own record.
-export function orderFor(entry, { settings = {}, raised = false, config = {}, answers = [], tried = [] } = {}) {
+// `answers` the director's answers to the work's earlier questions, from the helper's own record; `goal` what its goal
+// gives the order (`orderGoal`).
+export function orderFor(entry, { settings = {}, raised = false, config = {}, answers = [], tried = [], goal = {} } = {}) {
   const data = entry.work.data;
   const done = Array.isArray(data.done) && data.done.length > 0 ? data.done : config.testsNotCounting === true ? [] : [{ command: config.testCommand, expect: 0 }];
   return workOrder({
@@ -124,7 +128,7 @@ export function orderFor(entry, { settings = {}, raised = false, config = {}, an
     routing: config.routing ?? {},
     caps: limitsFor(data.lane, settings, { raised }),
     answers,
-    extra: tried.length > 0 ? { tried } : {},
+    extra: { ...(tried.length > 0 ? { tried } : {}), ...(goal.goalId !== undefined ? { goalId: goal.goalId } : {}), ...(goal.waived === true ? { showFirst: false } : {}) },
   });
 }
 
@@ -239,14 +243,22 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     await write('note', { about: 'engine', words: `${work} failed its tests and couldn't go back to be mended yet: ${got?.refused ?? 'no answer'}. It is tried again shortly.` });
   }
 
-  async function startPiece({ work, lane, branch = null, carryOn = false, raised = false, answers = [], checkTail = null }) {
+  // The gate at the start of a run of `work`, read now: null, or what holds it.
+  function goalGate(views, { work, lane, via }) {
+    const goal = goalRule(views, now());
+    return gateStart({ goal, work, lane, via, state: goal?.state, now: now() });
+  }
+
+  async function startPiece({ work, lane, via = 'start', branch = null, carryOn = false, raised = false, answers = [], checkTail = null }) {
     const views = readViews() ?? {};
     const entry = views.work?.[work];
     if (!isPlain(entry?.work?.data)) return { ok: false, refused: 'there is no such work', gone: true };
+    const held = goalGate(views, { work, lane, via });
+    if (held) return { ok: false, ...held };
     if (!canTest(config())) return { ok: false, refused: 'Wheelhouse doesn\'t know how to run the project\'s tests' };
     if (entry.work.data.lane === 'feature') return startFeature({ views, entry, work, lane, branch, carryOn, raised, answers, checkTail });
     let order;
-    try { order = orderFor({ ...entry, work: { ...entry.work, key: work } }, { settings: settings() ?? {}, raised, config: config() ?? {}, answers, tried: carryOn ? triedBefore(views, work) : [] }); } catch (error) { return { ok: false, refused: error.message }; }
+    try { order = orderFor({ ...entry, work: { ...entry.work, key: work } }, { settings: settings() ?? {}, raised, config: config() ?? {}, answers, tried: carryOn ? triedBefore(views, work) : [], goal: orderGoal(views, work) }); } catch (error) { return { ok: false, refused: error.message }; }
     if (order.lane !== lane) return { ok: false, refused: 'the work\'s lane changed' };
     return start({ project, order: withTail(order, checkTail), ...(branch ? { branch } : {}), carryOn });
   }
@@ -328,7 +340,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       }
     }
     let order;
-    const args = { entry: { ...entry, work: { ...entry.work, key: work } }, design, config: config() ?? {}, settings: settings() ?? {}, raised, answers, tried: carryOn ? triedBefore(views, work) : [] };
+    const args = { entry: { ...entry, work: { ...entry.work, key: work } }, design, config: config() ?? {}, settings: settings() ?? {}, raised, answers, tried: carryOn ? triedBefore(views, work) : [], goalId: orderGoal(views, work).goalId };
     try { order = step.finish ? finishOrder({ ...args, progress }) : sliceOrder({ ...args, n: step.slice }); } catch (error) { return { ok: false, refused: error.message }; }
     const got = await start({ project, order: withTail(order, checkTail), ...(branch ? { branch } : {}), carryOn });
     if (got?.ok && typeof got.runId === 'string') {
@@ -585,11 +597,12 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     return !isPlain(current) || reports[work]?.data?.outcome === 'merged' || endedBy(reports, work, current) ? null : latestRun(views, work);
   }
   // The try a piece's failed run still has, as `retryDue` gives it, with the run, or null: its failure allows one, and it is
-  // still the piece's to take. What only delays a try (a card, the merge queue) doesn't count here, so the piece stays held.
+  // still the piece's to take. What only delays a try (a card, the merge queue) doesn't count here, so the piece stays held. A
+  // retry is a start, so one the goal's gate would hold is no try to come: the piece goes to its card, and the runner resumes nothing.
   function retryFor(views, work) {
     const run = runOfOpenWork(views, work);
     const due = run ? retryDue({ records: run.records, now: now() }) : null;
-    if (!due || (stoppedRuns() ?? []).includes(run.runId) || stoppedByDirector(views, work, run.runId) || leftByDirector(views, work)) return null;
+    if (!due || (stoppedRuns() ?? []).includes(run.runId) || stoppedByDirector(views, work, run.runId) || leftByDirector(views, work) || goalGate(views, { work, lane: run.lane, via: 'retry' })) return null;
     return { ...due, run };
   }
   // Every piece with a try to come, or one on its way. Its files stay held, and nothing raises a card over it.
@@ -603,6 +616,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   // All stop, an incident or a limit, and the wait runs on; the runner looks at the run before it resumes it. A pull request with the
   // merge queue is left to it: all that can be left of such a run comes after `ready`.
   function retryTick(views) {
+    for (const entry of state.returning.filter((e) => e.via === 'retry')) if (goalGate(views, { work: entry.work, lane: entry.lane, via: 'retry' })) leave(entry);
     if (stopped() || incidentOpen(views) || atLimit(views)) return;
     const ready = readyOf() ?? {};
     for (const work of Object.keys(isPlain(views.work) ? views.work : {})) {
@@ -732,6 +746,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
         if (!kept.noFix || toldNoFix === FIX_FORWARD) await noFixCard(incident, kept);
         return;
       }
+      // The fix lane passes every bound but spend, and a goal that reached its spend is about to end.
+      if (goalGate(views, { work: incident.work, lane: order.lane, via: 'start' })) return;
       delete kept.noFix;
       const answered = isPlain(kept.next) ? kept.next : null;
       kept.next = null;
@@ -979,8 +995,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   const incidentOpen = (views) => (views.incidents?.open?.length ?? 0) > 0;
   const atLimit = (views) => limitedRuns(views, now()).length > 0;
   const retriesLater = (entry) => Date.parse(entry.retryAt) > now().getTime();
-  // Asks for no place yet: a try still to fall due, or a carry-on whose lost run the runner hasn't seen gone.
-  const notYet = (entry) => retriesLater(entry) || entry.cancelling === true;
+  // Asks for no place yet: a try still to fall due, a carry-on whose lost run the runner hasn't seen gone, or a start a goal holds.
+  const notYet = (entry) => retriesLater(entry) || entry.cancelling === true || entry.heldBy !== undefined;
   // A carry-on that ended with nothing done: the worktree's lock turned it away, and it says so only by that (check 92).
   const turnedAway = (entry, seen) => entry.via === 'carry-on' && seen?.status === 'ended' && seen.outcome === 'cancelled' && (seen.steps ?? []).length === 0 && !(stoppedRuns() ?? []).includes(entry.runId);
   // New work refused at its first start, with nothing of it on record: nothing of it has been done.
@@ -1068,13 +1084,40 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     return { branch: from, carryOn: carryOn || isText(from), answers: [...(carry.answers ?? []).filter((a) => !said.has(JSON.stringify(a))), ...answers] };
   }
 
+  // The way a start came, as the goal's gate reads it. A first start isn't an answer until a card's Try again makes it one.
+  const viaOf = (entry) => (entry.firstStart === true && entry.answered !== true ? 'start' : entry.via);
+  // Held at a goal's gate: the place goes back, nothing is asked, and it waits on the list until the gate lets it by.
+  async function heldAtGate(entry, got) {
+    delete entry.starting;
+    delete entry.uncertain;
+    state.admitted = state.admitted.filter((e) => e !== entry);
+    if (!state.returning.includes(entry)) state.returning.push(entry);
+    entry.heldBy = got.goal;
+    const said = entry.heldSaid === got.why;
+    entry.heldSaid = got.why;
+    keep();
+    if (!said) await write('note', { about: 'engine', work: entry.work, words: goalHeldWords(titleOf(readViews() ?? {}, entry.work), got.why) });
+  }
+  // Each entry a goal holds is asked again: a new sheet, or the end of the goal, may let it by.
+  function heldTick(views) {
+    for (const entry of state.returning.filter((e) => e.heldBy !== undefined)) {
+      const held = goalGate(views, { work: entry.work, lane: entry.lane, via: viaOf(entry) });
+      if (held) entry.heldBy = held.goal;
+      else {
+        delete entry.heldBy;
+        delete entry.heldSaid;
+      }
+      keep();
+    }
+  }
+
   async function startEntry(entry) {
     Object.assign(entry, { starting: true, startAt: now().toISOString() });
     keep();
     const { work, lane, raised = false, reason } = entry;
     let got;
     try {
-      got = await startPiece({ work, lane, ...carried(entry), raised, ...(reason === 'red' ? { checkTail: state.reds[work]?.tail } : {}) });
+      got = await startPiece({ work, lane, via: viaOf(entry), ...carried(entry), raised, ...(reason === 'red' ? { checkTail: state.reds[work]?.tail } : {}) });
     } catch (error) {
       got = { ok: false, refused: error instanceof Error ? error.message : 'unknown', uncertain: true };
     }
@@ -1093,7 +1136,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       entry.runId = got.runId;
       keep();
       try { carriedBy(got.runId, entry.carried); } catch { /* the spend before it goes uncounted, never the start */ }
-    } else if (got?.capped === true || got?.gone === true) leave(entry); // The feature's cap card, or nothing left to start.
+    } else if (got?.goalHeld === true) await heldAtGate(entry, got);
+    else if (got?.capped === true || got?.gone === true) leave(entry); // The feature's cap card, or nothing left to start.
     else if (got?.uncertain === true) {
       entry.uncertain = true;
       keep();
@@ -1180,6 +1224,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
         delete entry.asked;
         delete entry.retryAt;
         entry.refusals = 0;
+        entry.answered = true;
         // A start that couldn't be told: what began is settled first, so nothing starts beside it.
         if (entry.unsure === true) {
           delete entry.unsure;
@@ -1283,7 +1328,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     const queueGoing = queueStatus === 'running' || (queueStatus === 'paused' && cardsNow(views).length === 0);
     return [
       ...decided.live.filter((work) => !restsQuiet(views, work, ready) && !stuck.has(work)), ...started.filter((s) => s.ok === true || s.uncertain === true).map((s) => s.work),
-      ...[...state.admitted, ...state.returning].filter((e) => !e.asked && !retriesLater(e) && moving(e.work)).map((e) => e.work),
+      ...[...state.admitted, ...state.returning].filter((e) => !e.asked && !retriesLater(e) && e.heldBy === undefined && moving(e.work)).map((e) => e.work),
       ...ready.map(([, r]) => r.work).filter((work) => moving(work) && !stuck.has(work) && !leftByDirector(views, work)), ...(queueGoing ? [MERGE_WORK] : []),
       ...retryingWork(views), ...limitedWork(views, now()),
     ];
@@ -1526,6 +1571,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     await fixTick();
     // Trouble with a reservation or an entry costs a tick nothing: each is looked at again on the next.
     await returnTick(readViews() ?? {}).catch(() => {});
+    try { heldTick(readViews() ?? {}); } catch { /* looked at again on the next tick */ }
     try { retryTick(readViews() ?? {}); } catch { /* looked at again on the next tick */ }
     await cutOffAnswers(readViews() ?? {}).catch(() => {});
     await featureTick();
@@ -1556,7 +1602,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       requests, sentBack: [
         ...Object.entries(state.sentBack).filter(([work, times]) => state.acted[work] !== times).map(([work, times]) => ({ work, times })),
         ...Object.entries(state.reds).filter(([work, red]) => state.redActed[work] !== red.times).map(([work, red]) => ({ work, times: red.times, reason: 'red' })),
-      ], waiting: [...waitingNow(views)], reserved: reservedFiles(), returning: state.returning.map((e) => ({ ...e, ...(notYet(e) ? { asked: e.asked ?? e.key } : {}), ...(e.fresh === true ? { filesFree: true } : {}) })), admitted: state.admitted, stoppedFeatures: stoppedFeaturesOf(views, reports), waived: Object.keys(state.waived).filter((work) => state.waived[work] === views.work?.[work]?.work?.at), now: now(),
+      ], waiting: [...waitingNow(views)], reserved: reservedFiles(), returning: state.returning.map((e) => ({ ...e, ...(notYet(e) ? { asked: e.asked ?? e.key } : {}), ...(e.fresh === true ? { filesFree: true } : {}) })), admitted: state.admitted, stoppedFeatures: stoppedFeaturesOf(views, reports), waived: Object.keys(state.waived).filter((work) => state.waived[work] === views.work?.[work]?.work?.at), goal: goalRule(views, now()), now: now(),
     });
     // What it admitted holds its place from here. A piece has one start at a time; each answer of it goes along.
     for (const { work } of decided.admit) {
@@ -1622,10 +1668,12 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       keep();
       const got = await startPiece({ work, lane, ...args });
       if (carry && got?.ok === true) delete state.carryOver[work];
+      // Held at the gate, it is still queued, so it keeps its place there and nothing need come back.
+      if (got?.goalHeld === true) decided.hold.push({ work, why: got.why });
       if (got?.uncertain === true) {
         entry.uncertain = true;
         keep();
-      } else if (got?.ok === true || got?.capped === true || got?.gone === true || stopped()) leave(entry);
+      } else if (got?.ok === true || got?.capped === true || got?.gone === true || got?.goalHeld === true || stopped()) leave(entry);
       else await refusedStart(entry, got);
       started.push({ work, lane, ...got });
     }

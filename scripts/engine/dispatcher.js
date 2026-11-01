@@ -12,6 +12,8 @@
 // anything not yet started: `returning` asks for a place, and `admitted` holds one until its run is seen running (8.3).
 // While any run is parked at a usage limit nothing new starts and work on its way back waits, since it would meet the same
 // limit; the merge queue goes on (unattended goals design, section 9.3), and the fix lane never comes through here.
+// While a goal runs only its pieces start, in the sheet's order, the sheet standing here as each one's approval; nothing is
+// written of that, so a goal that ends takes the approval with it. Once its starts have stopped, its own pieces hold too.
 import { paceOf, PACE } from '../lib/build-loop.js';
 import { clashCheck, endedBy, since, STARTS_UNAPPROVED } from '../foreman/queue.js';
 import { PARKED_TIMES } from '../delegation/limits.js';
@@ -34,7 +36,7 @@ function runsOf(runs, id, entry) {
 // The work the merge queue's own runs stand for, which no work record names: their asks are routed under it.
 export const MERGE_WORK = 'merge-queue';
 
-// dispatch({ work, runs, reports, features, settings, stop, incident, capsReached, limited?, mergeQueue, requests?, sentBack?, waiting?, reserved?, returning?, admitted?, stoppedFeatures?, waived?, now })
+// dispatch({ work, runs, reports, features, settings, stop, incident, capsReached, limited?, mergeQueue, requests?, sentBack?, waiting?, reserved?, returning?, admitted?, stoppedFeatures?, waived?, goal?, now })
 //   -> { start: [{ work, lane }], hold: [{ work, why, by? }], admit: [{ work, via }], startMergeQueue, requeue: [{ work, lane, branch, reason? }], clashCards: [{ work }], redCards: [{ work }], live: [work] }
 // `work`, `runs` and `reports` are the record's views; `mergeQueue` is { running, lastStart, waiting, newReady };
 // `requests` is { counts(workId), used, cap, confirmed }: whether a piece's run would use the plan's counted requests,
@@ -46,14 +48,18 @@ export const MERGE_WORK = 'merge-queue';
 // a place back, and `admitted` the same shape, named and not yet seen running; neither counts as running by itself. A
 // `requeue` is named only when it has a place, and otherwise is asked about again on the next tick. `stoppedFeatures` are
 // the features whose run the director or All stop ended, which stay stopped until a Carry on and hold no place meanwhile. `waived` are the pieces the director
-// let start without what they depend on. `limited` says a run is parked at a usage limit.
-export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeatures = {}, settings = {}, stop = false, incident = false, capsReached = false, limited = false, mergeQueue = {}, requests = null, sentBack = [], waiting = [], reserved = {}, returning = [], admitted = [], stoppedFeatures = [], waived = [], now = new Date() } = {}) {
+// let start without what they depend on. `limited` says a run is parked at a usage limit. `goal` is goalRule's answer
+// (scripts/engine/goal.js), { pieces, only, startsStopped }, or null. An entry with `heldBy` is one the goal's gate held: it is
+// passed over, so it holds no place and counts against nothing, and keeps its files.
+export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeatures = {}, settings = {}, stop = false, incident = false, capsReached = false, limited = false, mergeQueue = {}, requests = null, sentBack = [], waiting = [], reserved = {}, returning = [], admitted = [], stoppedFeatures = [], waived = [], goal = null, now = new Date() } = {}) {
   const lanes = Array.isArray(settings.engineLanes) ? settings.engineLanes : ['quick'];
   const pace = paceOf(settings);
   // A piece the old engine started before the switch finishes there (scripts/engine/lanes.js).
   const entries = Object.entries(isPlain(work) ? work : {})
     .filter(([id, e]) => isPlain(e?.work?.data) && lanes.includes(e.work.data.lane) && !startedOnOldEngine(oldFeatures, id, e));
 
+  const pieces = Array.isArray(goal?.pieces) ? goal.pieces : [];
+  const ofGoal = (id) => pieces.includes(id);
   const parked = new Set(Array.isArray(waiting) ? waiting : []);
   const held = isPlain(reserved) ? reserved : {};
   const filesOf = (id, e) => [...new Set([...(e?.files ?? []), ...(Array.isArray(held[id]) ? held[id] : [])])];
@@ -109,6 +115,9 @@ export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeat
   const queued = entries
     .filter(([id, e]) => runsOf(runs, id, e.work).length === 0 && !onTheWay.has(id) && !endedBy(reports, id, e.work) && !sent.some((s) => s.work === id))
     .sort(([a, x], [b, y]) => {
+      // A goal's list goes first, in its own order.
+      if (goal?.only === true && ofGoal(a) !== ofGoal(b)) return ofGoal(a) ? -1 : 1;
+      if (goal?.only === true && ofGoal(a)) return pieces.indexOf(a) - pieces.indexOf(b);
       const pa = x.work.data.place;
       const pb = y.work.data.place;
       const hasA = Number.isFinite(pa);
@@ -134,7 +143,7 @@ export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeat
   const admit = [];
   const unadmitted = [];
   for (const r of [...back].sort(oldestFirst)) {
-    if (counted.has(r.work)) continue;
+    if (counted.has(r.work) || r.heldBy !== undefined) continue;
     const feature = isFeature(r.work, r.lane);
     // A card opened since it asked: it comes back once that is answered.
     if (stopping || r.asked || parked.has(r.work) || !hasRoom(feature)) {
@@ -174,7 +183,9 @@ export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeat
     let by = [];
     const needsApproval = !STARTS_UNAPPROVED.includes(lane) || visible === true || e.work.data.from !== undefined;
     let why = stopping;
-    if (!why && needsApproval && e.approved !== true) why = 'unapproved';
+    if (!why && goal?.only === true && !ofGoal(id)) why = 'goal';
+    if (!why && goal?.startsStopped === true && ofGoal(id)) why = 'goal-ended';
+    if (!why && needsApproval && e.approved !== true && !ofGoal(id)) why = 'unapproved';
     const unmerged = waived.includes(id) ? [] : dependsOn.filter((dep) => reports?.[dep]?.data?.outcome !== 'merged');
     if (!why && unmerged.length > 0) {
       why = 'dependency';

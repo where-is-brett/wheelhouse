@@ -9,6 +9,7 @@ import path from 'node:path';
 import { dispatchRun, KEEP_GOING, STOP_HERE, BUILD_AGAIN } from '../../../scripts/engine/dispatch-run.js';
 import { SLICES_FENCE, featureCap, readSlices } from '../../../scripts/engine/feature.js';
 import { fakeEngine } from '../../../scripts/engine/fake.js';
+import { dataHash } from '../../../scripts/state/events.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { wayBack, forever, quiet } from '../../helpers/way-back.js';
 
@@ -32,7 +33,7 @@ function setUp({ design = { text: DESIGN } } = {}) {
     work: { orders: { work: { id: 'w-1', at: world.requeued ?? AT, data: { id: 'orders', title: 'Order history', lane: 'feature', visible: false, dependsOn: [] } }, approved: true, since: AT } },
     runs: { orders: world.runs.map(({ at = '2026-10-29T09:00:00.000Z', ...data }) => ({ at, data: { work: 'orders', engine: 'archon', ...data } })) },
     costs: { orders: world.costs.map((tokens, i) => ({ at: AT, data: { runId: `c${i}`, work: 'orders', tokens } })) },
-    incidents: { open: world.incidents }, questions: world.questions, reports: world.reports,
+    incidents: { open: world.incidents }, questions: world.questions, reports: world.reports, goals: world.goals ?? {},
   });
   const d = dispatchRun({
     engine: fakeEngine(), project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'), readViews: views,
@@ -584,4 +585,51 @@ test('a Carry on the runner hasn\'t taken up yet raises no held-up card', async 
   await w.tick(4);
   assert.equal(w.cards().length, 1);
   assert.equal(w.runsOf('f').length, 3);
+});
+
+const featureGoal = (world, extra = {}) => {
+  const data = { id: 'orders', title: 'Order history', lane: 'feature', visible: false, dependsOn: [] };
+  world.goals = { g: { sheet: { until: '2026-10-29T18:00:00.000Z', pieces: [{ work: 'orders', hash: dataHash(data) }] }, hash: 'signed', startedAt: AT, ended: null, endAsked: null, ...extra } };
+};
+
+test('every run of a goal\'s feature names the goal on its order', async () => {
+  const { d, world, recordLast } = setUp();
+  featureGoal(world);
+  await d.tick();
+  assert.equal(world.starts[0].order.goalId, 'g');
+  recordLast({ pr: 70 });
+  world.merged.add(70);
+  await d.tick();
+  assert.equal(world.starts[1].order.goalId, 'g');
+  recordLast({ pr: 71 });
+  world.merged.add(71);
+  await d.tick();
+  assert.equal(world.starts[2].order.lane, 'feature');
+  assert.equal(world.starts[2].order.goalId, 'g');
+});
+
+test('a feature\'s next slice stops at the goal\'s time, with no card', async () => {
+  const { d, world, recordLast } = setUp();
+  featureGoal(world);
+  await d.tick();
+  recordLast({ pr: 70 });
+  world.merged.add(70);
+  world.goals.g.sheet.until = '2026-10-29T09:00:00.000Z';
+  await d.tick();
+  await d.tick();
+  assert.equal(world.starts.length, 1);
+  assert.deepEqual(Object.keys(world.questions), []);
+});
+
+test('after the goal\'s end a feature\'s next slice doesn\'t start', async () => {
+  const { d, world, recordLast } = setUp();
+  featureGoal(world);
+  await d.tick();
+  recordLast({ pr: 70 });
+  world.merged.add(70);
+  world.goals.g.ended = { ending: 'time', at: '2026-10-29T09:30:00.000Z', spent: {} };
+  await d.tick();
+  await d.tick();
+  assert.equal(world.starts.length, 1);
+  assert.deepEqual(Object.keys(world.questions), []);
 });
