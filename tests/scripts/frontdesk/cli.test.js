@@ -1492,6 +1492,17 @@ test('views waiting shows a steered card\'s time', async () => {
   });
 });
 
+test('views evidence says how many cards were sealed, read and sampled, and nothing of what they say', async () => {
+  await inHome(async () => {
+    const line = { line: 'seal', card: 'q-1', work: 'w', head: null, signed: null, reader: true, candidates: { land: null }, exclusions: { hit: ['data-model'], unread: [] }, stamp: { models: null, pack: null, rule: null, exclusions: null }, at: T(1).toISOString(), hash: 'a'.repeat(64) };
+    const { out } = await run(fakeHelper({ events: [makeEvent({ kind: 'shadow', data: line, now: () => T(1) })] }), ['views', 'evidence']);
+    assert.match(out, /1 card sealed/);
+    assert.match(out, /0 read/);
+    assert.match(out, /0 sampled/);
+    assert.doesNotMatch(out, /data-model|land/);
+  });
+});
+
 test('views and explain answer in short lines, and similar finds work that shares words', async () => {
   await inHome(async () => {
     const ruling = makeEvent({ kind: 'ruling', data: { words: 'Money is shown in dollars' }, now: () => T(1) });

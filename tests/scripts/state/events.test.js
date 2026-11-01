@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { CODE_ALPHABET, takeOverLine, TAKEOVER_LABEL } from '../../../scripts/state/card-lines.js';
 import { PUT_OFF } from '../../../scripts/lib/front-desk.js';
-import { makeEvent, eventPath, writeEvent, listEvents, PLAIN_KINDS, PROTECTED_KINDS, HELPER_ONLY_KINDS } from '../../../scripts/state/events.js';
+import { makeEvent, eventPath, writeEvent, listEvents, checkRecord, PLAIN_KINDS, PROTECTED_KINDS, HELPER_ONLY_KINDS } from '../../../scripts/state/events.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
 import { stateDir, computerId } from '../../../scripts/lib/paths.js';
@@ -794,7 +794,7 @@ test('a survey record carries every part of the survey, each in its own shape', 
     assert.equal(PLAIN_KINDS.includes('survey'), true);
     assert.equal(PROTECTED_KINDS.includes('survey'), false);
     // Only the helper itself records a survey or a column's readiness: no caller writes one.
-    assert.deepEqual(HELPER_ONLY_KINDS, ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change']);
+    assert.deepEqual(HELPER_ONLY_KINDS, ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'shadow']);
     assert.deepEqual(makeEvent({ kind: 'survey', data: SURVEY }).data, SURVEY);
     // Taken again (ruling P3), it says so.
     assert.deepEqual(makeEvent({ kind: 'survey', data: { ...SURVEY, again: true } }).data.again, true);
@@ -928,4 +928,21 @@ test('a run event can\'t be written through /state/write', () => {
     assert.equal(HELPER_ONLY_KINDS.includes(kind), true, kind);
   }
   for (const kind of ['lesson']) assert.equal(HELPER_ONLY_KINDS.includes(kind), false, kind);
+});
+
+test('a caller can\'t write a shadow line', async () => {
+  const home = tempFolder('wh-shadow-');
+  const before = process.env.WHEELHOUSE_HOME;
+  process.env.WHEELHOUSE_HOME = home;
+  try {
+    const { computer, publicKey } = makeSigningKey();
+    enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
+    assert.ok(PROTECTED_KINDS.includes('shadow'));
+    assert.ok(HELPER_ONLY_KINDS.includes('shadow'));
+    const data = { line: 'seal', card: 'q-1', work: 'w', head: null, signed: null, reader: true, candidates: {}, exclusions: { hit: [], unread: [] }, stamp: {}, at: '2026-11-01T02:00:00.000Z', hash: 'a'.repeat(64) };
+    assert.match(checkRecord(makeEvent({ kind: 'shadow', data }), { enrolled: readEnrolled() }), /only the helper/);
+  } finally {
+    if (before === undefined) delete process.env.WHEELHOUSE_HOME;
+    else process.env.WHEELHOUSE_HOME = before;
+  }
 });

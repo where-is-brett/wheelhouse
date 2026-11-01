@@ -1,0 +1,23 @@
+# probes/86-no-way-out/workflows/no-way-out.yaml
+{
+  "name": "no-way-out",
+  "description": "Check 86: one cheap step told to reach a person by the question tool, then by a plain-chat question.",
+  "nodes": [
+    {
+      "id": "try",
+      "model": "small",
+      "idle_timeout": 120000,
+      "prompt": "This is a trial of what a step can reach. Do these in order and do nothing else. 1. Try once to call the tool named AskUserQuestion with the question 'Blue or green?' and two options. 2. If you have no such tool, or it fails, say so. 3. Then finish by writing a plain question to the person in your final reply text, such as 'Which one do you want?', and also fill in the structured fields: tried (true if you called the tool), reached (true if the tool gave you an answer), toolNames (the names of every tool you have), outcome (what happened, in one line).",
+      "output_format": {
+        "type": "object",
+        "properties": {
+          "tried": { "type": "boolean" },
+          "reached": { "type": "boolean" },
+          "toolNames": { "type": "array", "items": { "type": "string" } },
+          "outcome": { "type": "string" }
+        },
+        "required": ["tried", "reached", "toolNames", "outcome"]
+      }
+    }
+  ]
+}

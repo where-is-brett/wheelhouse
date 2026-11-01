@@ -18,7 +18,7 @@ export const PLAIN_KINDS = [
   'request', 'ruling', 'level', 'glossary', 'idea', 'rejection', 'card', 'card-answer',
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
-  'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey', 'column-ready', 'premium-rest',
+  'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey', 'column-ready', 'premium-rest', 'chat-question', 'chat-steer',
   'run', 'ask', 'cost', 'preview', 'lesson', 'incident-closed', 'reproduced',
 ];
 // `control-file` is the watcher's own finding (ruling P7-33): signed, so no session can write one. So is `usage-card`,
@@ -35,7 +35,9 @@ export const PLAIN_KINDS = [
 // reads a run that happened, never a status anyone could post. `checks-state` says whether the project's tests count, which
 // lets merges pass with none, and `checks-found` is the command the finder found, which a check runs: both the helper's.
 // `change` is a local change as it stands (spec 7.1), the helper's too: it names the head the local queue merges.
-export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file', 'usage-card', 'premium-card', 'premium-check', 'premium-failed', 'provenance', 'check', 'checks-state', 'checks-found', 'change'];
+// `shadow` is a line of a card's seal (delegated decisions design, section 12), the helper's too: signed, so what it says
+// can't be rewritten once the answer is known, and read by nothing but scripts/delegation/.
+export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file', 'usage-card', 'premium-card', 'premium-check', 'premium-failed', 'provenance', 'check', 'checks-state', 'checks-found', 'change', 'shadow'];
 // Plain kinds only the helper itself records, from what it read itself: no caller writes one
 // through /state/write. The survey (design section 15, ruling A1) is taken and recorded in the
 // helper, when setup finishes and when it is taken again. A column-ready record (design section 14.6) is the
@@ -49,7 +51,7 @@ export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 
 export const RED_MAIN_FIELDS = ['kind', 'suspect', 'work'];
 export const RED_MAIN_OWN = 'only the helper records a red main line\'s incident';
 
-export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change'];
+export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'shadow'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 
 const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main'];
@@ -238,6 +240,10 @@ const PLAIN_SHAPES = {
   // Words typed into a front end without a First Mate (a later UI), queued for the First Mate's next
   // turn and shown as waiting (spec 5.2); `via` names the front end.
   request: { must: ['words', 'via'], may: [] },
+  // A First Mate turn that ended on a question with no card (scripts/hooks/chat-question.js): a count, never the words.
+  'chat-question': { must: ['at'], may: [] },
+  // A pick in the chat of Suggest a change… on a build's question: the card's id, for its score, and never the words.
+  'chat-steer': { must: ['card'], may: [] },
   // `from`: the ready-made change the work starts from (ruling P4): its commit, the ref that keeps
   // it (`refs/wheelhouse/from/<id>`) and, when it carries on a pull request, that request's number.
   work: { must: ['id', 'title', 'lane', 'visible', 'dependsOn'], may: ['doc', 'place', 'parent', 'from', 'level'] },
@@ -727,6 +733,29 @@ function checkChange(data) {
   if (data.state === 'merged' ? !(typeof data.mergeCommit === 'string' && FULL_COMMIT.test(data.mergeCommit)) : data.mergeCommit !== null) bad('names a merge only once merged');
 }
 
+// A seal as scripts/delegation/seal.js makes it. Part of a card's sealed record, so nothing is added to one later.
+const SEAL_KEYS = ['line', 'card', 'work', 'head', 'signed', 'reader', 'candidates', 'exclusions', 'stamp', 'at', 'hash'];
+// A score, the same: what the card scored against the director's answer, tied to its seal by the seal's hash.
+const SCORE_KEYS = ['line', 'card', 'work', 'seal', 'score', 'at', 'hash'];
+const SHADOW_KEYS = { seal: SEAL_KEYS, score: SCORE_KEYS };
+const SHA256 = /^[0-9a-f]{64}$/;
+function checkShadow(data) {
+  const bad = (why) => { throw new Error(`A shadow event ${why}`); };
+  if (!isPlain(data) || !Object.hasOwn(SHADOW_KEYS, data.line)) bad('needs to be a seal or a score');
+  const keys = SHADOW_KEYS[data.line];
+  if (Object.keys(data).length !== keys.length || keys.some((k) => !Object.hasOwn(data, k))) bad('needs its fields and no others');
+  if (typeof data.card !== 'string' || data.card === '' || typeof data.work !== 'string') bad('needs its card and its work');
+  if (typeof data.at !== 'string' || typeof data.hash !== 'string' || !SHA256.test(data.hash)) bad('needs its time and its hash');
+  if (data.line === 'score') {
+    if (typeof data.seal !== 'string' || !SHA256.test(data.seal) || !['match', 'miss', 'outside'].includes(data.score)) bad('needs its seal and a score');
+    return;
+  }
+  if (data.head !== null && !(typeof data.head === 'string' && FULL_COMMIT.test(data.head))) bad('needs the whole commit, or none');
+  if (data.signed !== null && typeof data.signed !== 'string') bad('says what signed it, or nothing');
+  if (typeof data.reader !== 'boolean') bad('says whether it is read');
+  if (!isPlain(data.candidates) || !isPlain(data.exclusions) || !isPlain(data.stamp)) bad('needs what the checks said');
+}
+
 // Whether a project's tests count, and why (spec 4.5).
 function checkChecksState(data) {
   const fits = data?.state === 'counting' ? data.why === 'passed' : data?.state === 'not-counting' && ['nothing-found', 'director'].includes(data.why);
@@ -762,6 +791,7 @@ export function makeEvent({ kind, data, now = () => new Date() }) {
   if (kind === 'checks-state') checkChecksState(data);
   if (kind === 'checks-found') checkChecksFound(data);
   if (kind === 'change') checkChange(data);
+  if (kind === 'shadow') checkShadow(data);
   if (Object.hasOwn(PLAIN_SHAPES, kind)) checkPlain(kind, data);
   const event = {
     v: 1,
@@ -808,6 +838,7 @@ export function checkRecord(event, { enrolled, held = [], computer = computerId(
   if (event.kind === 'provenance') return 'only the helper records what built a pull request';
   if (event.kind === 'check' || event.kind === 'checks-state' || event.kind === 'checks-found') return 'only the helper records a check';
   if (event.kind === 'change') return 'only the helper records a local change';
+  if (event.kind === 'shadow') return 'only the helper records a seal';
   if (held.some((e) => canonicalJson(e) !== canonicalJson(event))) return 'another event in the state carries this record\'s id, so it was not recorded';
   return null;
 }

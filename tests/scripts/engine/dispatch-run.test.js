@@ -318,3 +318,22 @@ test('a project with a host still starts Archon\'s queue', async () => {
   }).tick();
   assert.equal(starts[0]?.lane, 'merge');
 });
+
+test('each card the dispatcher writes is told to the seals, after it is written, and a failure there costs nothing', async () => {
+  const dir = tempFolder('wh-dr-');
+  const written = [];
+  const told = [];
+  const held = { ...fakeEngine(), countsRequests: () => true, requestsConfirmed: true };
+  const d = dispatchRun({
+    engine: held, project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'), readViews: views,
+    config: () => ({ routing: {}, testCommand: 'node --test' }), settings: () => ({ engineLanes: ['quick'] }),
+    start: async () => ({ ok: true, runId: 'run-1' }), spentThisMonth: () => 0,
+    write: async (kind, data) => { written.push({ kind, data }); },
+    onCard: (card) => { told.push({ ...card, written: written.some((w) => w.kind === 'question' && w.data.id === card.id) }); throw new Error('the seal broke'); },
+    now: () => new Date('2026-10-29T10:00:00.000Z'),
+  });
+  await d.tick();
+  const card = written.find((w) => w.kind === 'question');
+  assert.ok(card, 'the requests card is written');
+  assert.deepEqual(told, [{ id: card.data.id, kind: 'requests', work: 'card-1', level: 3, written: true }]);
+});

@@ -455,6 +455,14 @@ function buildLoopViews(sorted, enrolled) {
 // profile setting closes on the profile's verified confirmation, whichever project's card was
 // clicked (ruling F47). The project's levels, settings and unconfirmed stay its own.
 // `lean` is true for a Lean project's views, where a ruling confirmed by a chat click counts (leanRulingClicks).
+// How many cards are sealed, read and sampled, and no more: until the director has set the bars, what a seal says stays
+// in the private record, read by nothing but scripts/delegation/.
+function evidenceOf(sorted, enrolled) {
+  const lines = sorted.filter((e) => e.kind === 'shadow' && typeof e.data?.card === 'string' && verify(e, enrolled));
+  const cards = (line) => new Set(lines.filter((e) => e.data.line === line).map((e) => e.data.card)).size;
+  return { sealed: cards('seal'), read: cards('reading'), sampled: 0 };
+}
+
 export function buildViews(events, enrolled, { damaged = [], now = () => new Date(), profile = [], lean = false } = {}) {
   const { sorted, repeated } = uniqueSorted(events);
   const { confirmed, confirmations } = confirmationsOf(sorted, enrolled);
@@ -656,6 +664,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   const lastMerge = merges.length > 0 ? { at: merges.at(-1).at, data: merges.at(-1).data } : null;
 
   return {
+    evidence: evidenceOf(sorted, enrolled),
     rulebook,
     levels,
     settings,

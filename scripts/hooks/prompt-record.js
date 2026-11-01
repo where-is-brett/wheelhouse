@@ -793,11 +793,13 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   }
   // A stale answer earns nothing, and a pick of Suggest a change… waits for the director's words: neither is recorded.
   let notices = null;
+  let steered = [];
   try {
     const found = standing(out, cardOutcomes(listEvents(stateDir(project), { report: () => {} }), readEnrolled()));
     notices = noticesOf(out, found, at);
     const held = out.filter((click) => found.get(click)?.stale || (found.has(click) && click.label === SUGGEST));
     out.splice(0, out.length, ...out.filter((click) => !held.includes(click)));
+    steered = held.map((click) => found.get(click)).filter((at) => !at.stale && at.card.data?.kind === 'answer').map((at) => at.card.id);
   } catch {
     // The state can't be read: the answers are recorded as they were given.
   }
@@ -845,6 +847,8 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   for (const kept of queued) sent.set(kept, await sendKept(api, left, kept));
   // A Take over here the helper has the record of: it takes the lock, if the lock still stands as the card named it.
   if (takeOvers.some((kept) => sent.get(kept) === true)) await left(api.lock.takeOver({ project }));
+  // A pick of Suggest a change… on a build's question, which leaves that card as it was and only marks it for its score.
+  for (const card of steered) await left(api.state.write({ project, kind: 'chat-steer', data: { card } }));
   // Then the plain answers. What cannot be sent in time is kept.
   for (const { question, label } of out) {
     if (setupAsked.has(question)) continue;

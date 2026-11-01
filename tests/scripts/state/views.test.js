@@ -17,7 +17,7 @@ import { SUGGEST, WHY } from '../../../scripts/lib/calm-words.js';
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
 const T = (n) => `2026-10-18T02:00:${String(n).padStart(2, '0')}.000Z`;
 const at = (n) => () => new Date(T(n));
-const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'provenance', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'controlFiles', 'survey', 'columnsReady', 'usageCards', 'premium', 'premiumFailures', 'runs', 'asks', 'costs', 'previews', 'lessons', 'engineNotes', 'cardsWaiting'];
+const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'provenance', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'controlFiles', 'survey', 'columnsReady', 'usageCards', 'premium', 'premiumFailures', 'runs', 'asks', 'costs', 'previews', 'lessons', 'engineNotes', 'cardsWaiting', 'evidence'];
 const now = () => new Date('2026-10-18T09:00:00.000Z');
 
 async function withHome(fn) {
@@ -1413,5 +1413,35 @@ test('views gather runs by work, latest state last', async () => {
     assert.equal(views.previews.login.at(-1).data.head, 'a'.repeat(40));
     assert.equal(views.lessons.login[0].data.text, 'Lock first');
     assert.deepEqual(build([]).runs, {});
+  });
+});
+
+const sealed = (card, extra = {}) => ({ line: 'seal', card, work: 'w', head: null, signed: null, reader: true, candidates: { land: null }, exclusions: { hit: ['data-model'], unread: [] }, stamp: { models: null, pack: null, rule: null, exclusions: null }, at: T(1), hash: 'a'.repeat(64), ...extra });
+
+test('shadow isn\'t in the views an agent reads', async () => {
+  await withHome(async () => {
+    const views = build([ev('shadow', 1, sealed('q-1'))]);
+    assert.deepEqual(views.evidence, { sealed: 1, read: 0, sampled: 0 });
+    assert.ok(!JSON.stringify(views).includes('data-model'));
+    assert.ok(!JSON.stringify(views).includes('candidates'));
+  });
+});
+
+test('the evidence view shows volume, and no match, miss or direction', async () => {
+  await withHome(async () => {
+    const score = { line: 'score', card: 'q-1', work: 'w', seal: 'a'.repeat(64), score: 'miss', at: T(2), hash: 'b'.repeat(64) };
+    const { evidence } = build([ev('shadow', 1, sealed('q-1')), ev('shadow', 2, score)]);
+    assert.deepEqual(Object.keys(evidence).sort(), ['read', 'sampled', 'sealed']);
+    assert.deepEqual(evidence, { sealed: 1, read: 0, sampled: 0 });
+    assert.ok(!JSON.stringify(build([ev('shadow', 2, score)])).includes('miss'));
+  });
+});
+
+test('the evidence view counts a card once, and only a seal this computer can verify', async () => {
+  await withHome(async () => {
+    const one = ev('shadow', 1, sealed('q-1'));
+    const unsigned = { ...ev('shadow', 2, sealed('q-2')), sig: undefined };
+    assert.equal(build([one, ev('shadow', 2, sealed('q-1')), unsigned]).evidence.sealed, 1);
+    assert.equal(build([]).evidence.sealed, 0);
   });
 });

@@ -39,6 +39,8 @@ const REWORK = 'rework';
 const BIGGER = 'bigger-than-a-bug';
 const MOVES = Object.freeze({ small: 'a small change', feature: 'a feature' });
 // The question an ask puts, as the step wrote it.
+// What a question card is to the seals: the merge queue's question and trouble are never a rule's.
+const cardKind = (ask) => (isPlain(ask?.mergeQuestion) ? 'merge' : ask?.kind === 'trouble' ? 'trouble' : 'question');
 const questionOf = (ask) => [ask?.reason, ask?.context?.reason, ask?.context?.question].find((q) => typeof q === 'string' && q !== '') ?? null;
 
 function readState(file) {
@@ -63,16 +65,22 @@ const inSentence = (title) => (/^[A-Z][a-z]/.test(title) ? title.charAt(0).toLow
 // - `readViews()` the project's views (questions, approvals, levels), as the helper builds them;
 // - `write(kind, data)` a record in the project's history; `stopped()` whether All stop is on;
 // - `settings()` { cardsPerDay, bundleApprovals }; `workOf(runId)` { work, lane } from the project's run records;
+// - `onCard(card)` tells the seals of a card once it is written (scripts/delegation/record-only.js);
 // - `titleOf(work)` the work's title; `endRun(runId)` ends a run's process tree by pid, as All stop does, for a run the
 //   engine wouldn't stop at its cap ({ ended, survivors });
 // - `openedOf(pr)` the helper's own record of what opened a pull request ({ lane, work, ... }), or null; `prTitleOf(pr)`
 //   its title from the host, or null; `keepReviews(runId)` keeps what an ended run's task reviews last said, in the
 //   helper's own record, true once done.
-export function engineRunner({ engine, file, readViews, write, stopped = () => false, now = () => new Date(), settings = () => ({}), workOf = () => null, titleOf = (work) => work, endRun = async () => ({ ended: [], survivors: [] }), openedOf = () => null, prTitleOf = async () => null, keepReviews = async () => true } = {}) {
+export function engineRunner({ engine, file, readViews, write, stopped = () => false, now = () => new Date(), settings = () => ({}), workOf = () => null, titleOf = (work) => work, endRun = async () => ({ ended: [], survivors: [] }), openedOf = () => null, prTitleOf = async () => null, keepReviews = async () => true, onCard = () => {} } = {}) {
   let state = readState(file);
   const keep = () => saveState(file, state);
   const note = (words, extra = {}) => write('note', { about: 'engine', words, ...extra });
   const titled = (work) => inSentence(String(titleOf(work) ?? work));
+  // A card has been written: the seals' trouble is never the card's.
+  const sealCard = (card) => {
+    try { onCard(card); } catch { /* it costs a seal, never a card */ }
+  };
+  const placeOf = (ask) => ({ branch: ask?.context?.branch ?? null, folder: ask?.context?.folder ?? null });
 
   let startRun = async () => ({ ok: false, refused: 'nothing starts runs here' });
   const viewsNow = () => {
@@ -234,6 +242,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       });
       await write('card', composed);
       state.approvals[`${a.pr}:${a.sha}`] = { runId, ask, approve: a.engine.approve, work };
+      sealCard({ id: `${a.pr}:${a.sha}`, kind: 'approval', work, runId, level: a.level === 4 ? 4 : 3, ...placeOf(ask) });
       return;
     }
     const q = card.question;
@@ -246,6 +255,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       engine: { runId, ask: ask.id, options: q.engine.options },
     });
     state.questions[id] = { runId, ask, work };
+    sealCard({ id, kind: cardKind(ask), work, runId, level: q.level, ...placeOf(ask) });
   }
 
   // Sends the director's signed answers to the engine, once each.
@@ -355,6 +365,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       recommendation: STOP_LABEL,
       engine: { runId, ask: `cap:${runId}`, options: { [MORE]: 'more', [STOP_LABEL]: 'stop' } },
     });
+    sealCard({ id, kind: 'cap', work, runId, level: 3, branch: branch ?? null, folder: null });
   }
 
   async function capAnswer(kept, label) {
