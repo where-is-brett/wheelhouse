@@ -6,6 +6,7 @@ import path from 'node:path';
 import { dispatchRun } from '../../scripts/engine/dispatch-run.js';
 import { engineRunner } from '../../scripts/engine/runner.js';
 import { fakeEngine } from '../../scripts/engine/fake.js';
+import { cardsWaitingOf } from '../../scripts/state/views.js';
 import { joinQuestions } from '../../scripts/state/joiners.js';
 import { tempFolder } from './homes.js';
 
@@ -34,8 +35,9 @@ export function wayBack({ recordings = {}, pace = 3, settings = {}, testCommand 
   };
   const at = () => clock.now.toISOString();
   const tock = () => { clock.now = new Date(clock.now.getTime() + 1000); };
+  const notes = () => world.written.filter((w) => w.kind === 'note').map((w) => ({ kind: 'note', data: w.data }));
   const views = () => ({
-    work: world.work, runs: world.runs, reports: world.reports, questions: world.questions, approvals: world.approvals, incidents: world.incidents, costs: world.costs, levels: {},
+    work: world.work, runs: world.runs, reports: world.reports, questions: world.questions, approvals: world.approvals, incidents: world.incidents, costs: world.costs, levels: {}, cardsWaiting: cardsWaitingOf(notes()),
   });
   const record = (data) => { (world.runs[data.work] ??= []).push({ at: at(), data: { engine: 'fake', ...data } }); };
   const realStart = async ({ order, branch, carryOn }) => {
@@ -67,7 +69,7 @@ export function wayBack({ recordings = {}, pace = 3, settings = {}, testCommand 
     });
     const runner = engineRunner({
       engine, file: path.join(dir, 'router.json'), readViews: views, write, stopped: () => world.stop, now: () => clock.now,
-      settings: () => ({ cardsPerDay: 50, bundleApprovals: false }), titleOf: (work) => world.work[work]?.work?.data?.title ?? work,
+      settings: () => ({ cardsPerDay: 50, bundleApprovals: false, ...settings }), titleOf: (work) => world.work[work]?.work?.data?.title ?? work,
       workOf: (runId) => {
         for (const [work, list] of Object.entries(world.runs)) {
           const found = list.find((r) => r.data.runId === runId);
@@ -85,6 +87,7 @@ export function wayBack({ recordings = {}, pace = 3, settings = {}, testCommand 
     runner.onEnter((args) => dispatcher.enter(args));
     dispatcher.onStarted((runId, carried) => runner.started(runId, carried));
     dispatcher.onWaiting(() => runner.waitingWork());
+    dispatcher.onCards(() => runner.openCards());
     return { dispatcher, runner };
   };
   let joined = build();
@@ -105,6 +108,7 @@ export function wayBack({ recordings = {}, pace = 3, settings = {}, testCommand 
   }
   return Object.assign(world, {
     dir,
+    views,
     get dispatcher() { return joined.dispatcher; },
     get runner() { return joined.runner; },
     put(id, { lane = 'quick', files = [], place, approved = true, title = id } = {}) {

@@ -24,7 +24,7 @@ import { runCost, runningMinutes } from './spend.js';
 import { capReached, carriedSpend } from './caps.js';
 import { RED_MAIN, FIX_LANE, redMainIncident, openRedMain } from './fix-main.js';
 import { MERGE_WORK } from './dispatcher.js';
-import { routerWaiting } from './waiting.js';
+import { routerWaiting, routerCards } from './waiting.js';
 import { since } from '../foreman/queue.js';
 import { READER_WORK } from '../delegation/reader.js';
 import { alike } from '../delegation/words.js';
@@ -892,5 +892,11 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     parkedHeads: () => Object.fromEntries(Object.entries(state.parked).filter(([, kept]) => kept.taken && !kept.handed).map(([pr, kept]) => [pr, kept.head])),
     // The pieces with a card of the router's open. Views that can't be read name none, so each keeps its place.
     waitingWork: () => waitingOn(),
+    // The written cards behind them, [{ id, work, rank }]. Views that can't be read name none.
+    openCards() {
+      let views;
+      try { views = readViews() ?? {}; } catch { return []; }
+      return routerCards({ state, views, prWork: (pr) => openedOf(pr)?.work ?? null });
+    },
   };
 }

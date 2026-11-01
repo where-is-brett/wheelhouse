@@ -1782,6 +1782,8 @@ export async function startHelper({
     if (!data || typeof data !== 'object' || Array.isArray(data)) refuse('the event\'s data must be an object');
     // The list of cards held back passes them over for a wake, so only the router writes it.
     if (kind === 'note' && data.about === 'cards-waiting') refuse('only the card router lists the cards held back');
+    // The top card passes the budget and Away, so only the dispatcher names it.
+    if (kind === 'note' && data.about === 'top-card') refuse('only the dispatcher names the top card');
     if (id !== undefined && (typeof id !== 'string' || !RANDOM_UUID.test(id))) refuse('an id given with a record must be a random UUID in lower case');
     if (id !== undefined && listEvents(stateDir(project), { report: () => {} }).some((e) => e.id === id)) refuse('the state already holds an event with that id');
     // A signed click a hook kept to send later must never find its id taken; the kept write itself,
@@ -5182,6 +5184,7 @@ export async function startHelper({
     runner.onEnter((args) => dispatcher.enter(args));
     dispatcher.onStarted((runId, carried) => runner.started(runId, carried));
     dispatcher.onWaiting(() => runner.waitingWork());
+    dispatcher.onCards(() => runner.openCards());
     dispatcher.onParked(() => runner.parkedHeads());
     runner.onMergeRuled(() => dispatcher.queueDue());
     const adapterNow = async () => (await contextFor(project)).adapter();

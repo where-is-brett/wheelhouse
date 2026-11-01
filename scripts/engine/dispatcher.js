@@ -33,7 +33,7 @@ function runsOf(runs, id, entry) {
 export const MERGE_WORK = 'merge-queue';
 
 // dispatch({ work, runs, reports, features, settings, stop, incident, capsReached, mergeQueue, requests?, sentBack?, waiting?, reserved?, returning?, admitted?, now })
-//   -> { start: [{ work, lane }], hold: [{ work, why, by? }], admit: [{ work, via }], startMergeQueue, requeue: [{ work, lane, branch, reason? }], clashCards: [{ work }], redCards: [{ work }] }
+//   -> { start: [{ work, lane }], hold: [{ work, why, by? }], admit: [{ work, via }], startMergeQueue, requeue: [{ work, lane, branch, reason? }], clashCards: [{ work }], redCards: [{ work }], live: [work] }
 // `work`, `runs` and `reports` are the record's views; `mergeQueue` is { running, lastStart, waiting, newReady };
 // `requests` is { counts(workId), used, cap, confirmed }: whether a piece's run would use the plan's counted requests,
 // how many this month's runs used, the most the director allows, and whether the engine's count of them is confirmed;
@@ -202,5 +202,5 @@ export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeat
 
   const due = mergeQueue.newReady === true || !mergeQueue.lastStart || now.getTime() - Date.parse(mergeQueue.lastStart) >= MERGE_QUEUE_EVERY_MS;
   const startMergeQueue = !stopping && mergeQueue.running !== true && (mergeQueue.waiting ?? 0) > 0 && due;
-  return { start, hold, admit, startMergeQueue, requeue: stopping ? [] : placed, clashCards, redCards };
+  return { start, hold, admit, startMergeQueue, requeue: stopping ? [] : placed, clashCards, redCards, live: live.map(([id]) => id) };
 }

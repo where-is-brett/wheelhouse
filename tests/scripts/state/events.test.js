@@ -966,3 +966,12 @@ test('a reading line carries its fields, and a line with no reading has no pick'
     else process.env.WHEELHOUSE_HOME = before;
   }
 });
+
+test('a question joins a card only at level 3, by another question\'s id', () => {
+  const data = { id: 'q-b-500001', work: 'b', what: 'Which?', why: 'It matters.', options: [{ label: 'One', says: 'x' }], recommendation: 'One', level: 3 };
+  assert.equal(makeEvent({ kind: 'question', data: { ...data, joins: 'q-a-500001' } }).data.joins, 'q-a-500001');
+  assert.throws(() => makeEvent({ kind: 'question', data: { ...data, joins: 'q-b-500001' } }), /joins a card/);
+  assert.throws(() => makeEvent({ kind: 'question', data: { ...data, joins: 'nothing' } }), /joins a card/);
+  assert.throws(() => makeEvent({ kind: 'question', data: { ...data, level: 4, checks: 'None.', joins: 'q-a-500001' } }), /joins a card/);
+  assert.throws(() => makeEvent({ kind: 'question', data: { ...data, commands: ['npm i'], joins: 'q-a-500001' } }), /joins a card/);
+});

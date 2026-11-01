@@ -23,9 +23,18 @@ export const PARKED_BECAUSE = 'the merge queue can\'t judge it, so what it does 
 export const PARKED_MEANWHILE = 'Nothing of it is added until you approve this commit, and other work carries on. A new commit needs your approval again.';
 export const PARKED_APPROVE_SAYS = 'It approves this commit, and the change goes back to the merge queue to be added.';
 
+// The Logbook's line for a held piece with nothing behind it that could move it: a reservation can outlast every card.
+export function noCardBehindWords(title, why, by) {
+  const names = by.length < 2 ? by.join('') : `${by.slice(0, -1).join(', ')} and ${by.at(-1)}`;
+  const said = why === 'clash' ? `waits for the files ${names} keeps, which nothing lets go by itself` : why === 'dependency' ? `waits on ${names}` : `waits while ${names} stands parked`;
+  return `${title} ${said}, and no card stands behind that. It moves on once that work is added or ended.`;
+}
+
 // The line for the cards past the day's budget, and the button that shows them.
 export const heldBackWords = (n) => `${n} more waiting.`;
 export const SHOW_THEM = 'Show them';
+// How many pieces a card holds up, beside its title.
+export const holdsUpWords = (n) => `holds up ${n} ${n === 1 ? 'piece' : 'pieces'}`;
 
 // The Logbook's line for a piece waiting on the director whose branch can't be read yet.
 export const reservedUnreadWords = (title) => `What ${title} has changed so far couldn't be read, so only the files it was expected to touch are kept back for it. It is read again shortly.`;

@@ -464,14 +464,20 @@ function buildLoopViews(sorted, enrolled) {
 
 // The cards past the day's budget (delegated decisions plan, choice 11): the router's latest list, less those pulled.
 // `pulled` names the pulled cards that list still holds, for the router to drop; a list written before it read the
-// pull keeps them, and the pull still stands. A note from before cards were named gives only its count.
-function cardsWaitingOf(sorted) {
+// pull keeps them, and the pull still stands. A note from before cards were named gives only its count. The dispatcher's
+// top card (scripts/engine/stuck.js) is lifted as a pull lifts one, so it spends no budget: `top` names it while it
+// stands, and `holding` says how many pieces each card holds up.
+export function cardsWaitingOf(sorted) {
   const notes = sorted.filter((e) => e.kind === 'note');
   const latest = notes.filter((e) => e.data?.about === 'cards-waiting').at(-1)?.data;
+  const said = notes.filter((e) => e.data?.about === 'top-card').at(-1)?.data;
+  const top = typeof said?.id === 'string' ? { id: said.id, holdsUp: Number.isInteger(said.holdsUp) ? said.holdsUp : 0 } : null;
+  const holding = said?.holding !== null && typeof said?.holding === 'object' && Object.keys(said.holding).length > 0 ? said.holding : null;
   const listed = Array.isArray(latest?.ids) ? latest.ids.filter((id) => typeof id === 'string') : [];
   const pulls = new Set(notes.filter((e) => e.data?.about === 'cards-pulled' && Array.isArray(e.data.ids)).flatMap((e) => e.data.ids));
+  if (top !== null) pulls.add(top.id);
   const ids = listed.filter((id) => !pulls.has(id));
-  return { count: Array.isArray(latest?.ids) ? ids.length : Number.isInteger(latest?.count) ? latest.count : 0, ids, pulled: listed.filter((id) => pulls.has(id)) };
+  return { count: Array.isArray(latest?.ids) ? ids.length : Number.isInteger(latest?.count) ? latest.count : 0, ids, pulled: listed.filter((id) => pulls.has(id)), ...(top === null ? {} : { top }), ...(holding === null ? {} : { holding }) };
 }
 
 // `profile` is the profile's events, when these are a project's: a confirm card in the project for a
