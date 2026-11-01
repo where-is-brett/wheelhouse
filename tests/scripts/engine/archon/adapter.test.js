@@ -674,3 +674,21 @@ test('liveRunOf tells a run by the work it was given, never by a branch it may n
   assert.equal(await ask(listing(row('r1', 'w1'), row('r2', 'w1'))), undefined, 'two matches');
   assert.equal(await ask(fakeCli({ 'workflow status': { code: 1, stdout: '', stderr: '' } })), undefined, 'the engine can\'t list');
 });
+
+test('a start only counts as refused when the engine says so in words; anything else may have begun', async () => {
+  for (const reply of [{ code: null, json: null, stdout: '', stderr: '' }, { code: 0, json: null, stdout: 'not json', stderr: '' }, { code: 0, json: { ok: true }, stdout: '', stderr: '' }, { code: 1, json: null, stdout: '', stderr: 'crashed' }, { code: 1, json: { ok: false, error: 'late' }, stdout: '', stderr: '', timedOut: true }]) {
+    const got = await adapter(fakeCli({ 'workflow run': reply })).start({ work: 'card-1', lane: 'quick', branch: 'b' });
+    assert.equal(got.ok, false, JSON.stringify(reply));
+    assert.equal(got.uncertain, true, JSON.stringify(reply));
+  }
+  const said = await adapter(fakeCli({ 'workflow run': { code: 1, json: { ok: false, error: 'Workflow already active on this path' }, stdout: '', stderr: '' } })).start({ work: 'card-1', lane: 'quick', branch: 'b' });
+  assert.equal(said.uncertain, undefined);
+});
+
+test('a run\'s record that couldn\'t be read says so, apart from a run the engine doesn\'t have', async () => {
+  const silent = await adapter(fakeCli({ 'workflow get': { code: 1, json: null, stdout: '', stderr: 'timed out' } })).inspect('r');
+  assert.equal(silent.status, 'unknown');
+  assert.equal(silent.unread, true);
+  const missing = await adapter(fakeCli({ 'workflow get': { code: 1, json: { ok: false, error: 'not found' }, stdout: '', stderr: '' } })).inspect('r');
+  assert.equal(missing.unread, undefined);
+});

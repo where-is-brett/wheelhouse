@@ -2413,3 +2413,63 @@ test('a question drawn blind says so, at most one a day; a joiner and a turned-o
     assert.deepEqual(drawn(off), [undefined]);
   } finally { off.cleanup(); }
 });
+
+test('a Stop the engine refuses keeps the piece\'s files', async () => {
+  const released = [];
+  const t = setUp({ recordings: { one: blockedAsk('q1') }, release: (work) => released.push(work) });
+  try {
+    await t.ask();
+    t.engine.act = () => ({ ok: false, refused: 'moved on' });
+    t.sign('Stop this work');
+    await t.runner.tick();
+    assert.deepEqual(released, []);
+  } finally { t.cleanup(); }
+});
+
+test('an answer refused after an unreachable try isn\'t taken from before', async () => {
+  const t = setUp({ recordings: { one: repeat('q1'), two: repeat('q2') }, gate: CLEAR });
+  try {
+    await t.ask('one');
+    const act = t.engine.act.bind(t.engine);
+    let tries = 0;
+    t.engine.act = (runId, action) => {
+      if (action.answer?.ask !== 'q1') return act(runId, action);
+      tries += 1;
+      if (tries === 1) throw new Error('no answer from the engine');
+      return { ok: false, refused: 'moved on' };
+    };
+    t.sign('Keep it small');
+    await t.runner.tick();
+    await t.runner.tick();
+    assert.equal(tries, 2);
+    await t.ask('two');
+    assert.equal(acts(t.engine).filter((a) => a.action.answer?.ask === 'q2').length, 0, 'it may never have reached the build');
+    assert.equal(t.writes.filter((w) => w.kind === 'question').length, 2);
+  } finally { t.cleanup(); }
+});
+
+test('a reused blocked rework keeps the files the piece reserved at its first card', async () => {
+  const w = wayBack({ recordings: { a: [again(BLOCKS), forever()], b: quiet() }, pace: 2, reads: CLEAR, branchPaths: async () => ['built.js'] });
+  w.put('a', { place: 0 });
+  await w.tick();
+  w.answer('a', 'Use the first');
+  w.put('b', { place: 1, files: ['built.js'] });
+  for (let n = 0; n < 6; n += 1) {
+    await w.tick();
+    assert.equal(w.runsOf('b').length, 0, `tick ${n}`);
+  }
+  assert.equal(w.runsOf('a').length, 2);
+});
+
+test('a park at a new head takes the place of the card for the old head', async () => {
+  const t = mergeSetUp(LEAVE);
+  await t.ask('one');
+  const first = cardsOf(t)[0];
+  t.views.waiting = [{ id: 'card-old', at: t.world.now.toISOString(), data: first.data }];
+  t.asked.head = 'd'.repeat(40);
+  await t.ask('two');
+  assert.equal(cardsOf(t).length, 2);
+  assert.equal(cardsOf(t)[1].data.revises, 'card-old');
+  assert.match(cardsOf(t)[1].data.parts?.changed ?? cardsOf(t)[1].data.changed, /head|commit/i);
+  t.cleanup();
+});

@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { dispatchRun, orderFor, TRY_AGAIN, STOP_HERE, BUILD_AGAIN } from '../../../scripts/engine/dispatch-run.js';
+import { dispatchRun, orderFor, NO_TESTS_WORDS, TRY_AGAIN, STOP_HERE, BUILD_AGAIN } from '../../../scripts/engine/dispatch-run.js';
 import { fakeEngine } from '../../../scripts/engine/fake.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { wayBack, asking, askingTwice, forever, quiet } from '../../helpers/way-back.js';
@@ -896,7 +896,7 @@ test('two answers kept for Carry on both stand', async () => {
 });
 
 // A project on a host with pull request 7 ready, and the queue due.
-function queueSetUp({ parked = {}, queueRuns, ready = { work: 'card-7', head: 'a'.repeat(40), runId: 'r7' }, reports = {}, prState = null } = {}) {
+function queueSetUp({ parked = {}, queueRuns, ready = { work: 'card-7', head: 'a'.repeat(40), runId: 'r7' }, reports = {}, prState = null, repoOf = () => ({ host: 'github.com', path: 'o/p' }) } = {}) {
   const dir = tempFolder('wh-dr-');
   const engine = fakeEngine();
   if (queueRuns) engine.queueRuns = queueRuns;
@@ -905,7 +905,7 @@ function queueSetUp({ parked = {}, queueRuns, ready = { work: 'card-7', head: 'a
   const d = dispatchRun({
     engine, project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'), readViews: () => ({ work: { 'card-7': entry }, runs: {}, reports }), config: () => ({ testCommand: 'node --test' }),
     start: async () => ({ ok: false, refused: 'not here' }), now: () => new Date('2026-10-29T10:00:00.000Z'), isLocal: () => false, prState,
-    readyOf: () => ({ 7: seen.ready }), repoOf: () => ({ host: 'github.com', path: 'o/p' }), repoName: () => 'o/p',
+    readyOf: () => ({ 7: seen.ready }), repoOf, repoName: () => 'o/p',
     queueFolder: async () => ({ ok: true, folder: dir }), queuePlace: () => dir,
   });
   d.onParked(() => parked);
@@ -973,4 +973,138 @@ test('handBack says so when nothing records the pull request as ready', async ()
   assert.equal(got.ok, false);
   assert.ok(got.refused);
   fs.rmSync(t.dir, { recursive: true, force: true });
+});
+
+// What the delegated decisions build left open.
+test('a hand-over names the host the project is on', async () => {
+  const t = queueSetUp({ repoOf: () => ({ host: 'git.example.org', path: 'o/p' }) });
+  assert.deepEqual(await t.d.handBack({ pr: 7 }), { ok: true });
+  assert.equal(t.engine.calls.find((c) => c.call === 'handOver').item.url, 'https://git.example.org/o/p/pull/7');
+  fs.rmSync(t.dir, { recursive: true, force: true });
+});
+
+test('a project whose host can\'t be named hands nothing over', async () => {
+  const t = queueSetUp({ repoOf: () => null });
+  assert.equal((await t.d.handBack({ pr: 7 })).ok, false);
+  assert.equal(t.engine.calls.filter((c) => c.call === 'handOver').length, 0);
+  fs.rmSync(t.dir, { recursive: true, force: true });
+});
+
+test('a start of any path carries what All stop kept, so a stranded Try again doesn\'t lose the answer', async () => {
+  const w = wayBack({ recordings: { a: quiet() }, pace: 2 });
+  w.put('a');
+  await w.tick(2);
+  const kept = { question: 'Which page?', answer: 'The first' };
+  w.dispatcher.carryOver('a', { branch: 'wh/a', answers: [kept] });
+  w.dispatcher.enter({ work: 'a', lane: 'quick', via: 'try-again', key: 'stranded:r' });
+  await w.tick(2);
+  const last = w.starts.at(-1);
+  assert.equal(last.branch, 'wh/a');
+  assert.equal(last.carryOn, true);
+  assert.deepEqual(last.order.answers, [kept]);
+  assert.deepEqual(entered(w).carryOver, {});
+});
+
+test('an answer an entry already carries goes once beside what All stop kept', async () => {
+  const w = wayBack({ recordings: { a: quiet() }, pace: 2 });
+  w.put('a');
+  await w.tick(2);
+  const kept = { question: 'Which page?', answer: 'The first' };
+  w.dispatcher.carryOver('a', { branch: 'wh/a', answers: [kept] });
+  w.dispatcher.enter({ work: 'a', lane: 'quick', via: 'rework', key: 'k', branch: 'wh/a', carryOn: true, answers: [kept, { question: 'How big?', answer: 'Small' }] });
+  await w.tick(2);
+  assert.deepEqual(w.starts.at(-1).order.answers.map((a) => a.question), ['Which page?', 'How big?']);
+});
+
+test('work on its way back with no test command says why once', async () => {
+  const w = wayBack({ recordings: { a: quiet() }, pace: 2, testCommand: '' });
+  w.put('a', { approved: false });
+  w.dispatcher.enter({ work: 'a', lane: 'quick', via: 'rework', key: 'k', branch: 'wh/a', carryOn: true });
+  await w.tick(3);
+  assert.equal(w.starts.length, 0);
+  assert.equal(w.notes().filter((n) => n === NO_TESTS_WORDS).length, 1);
+});
+
+test('new work is marked before it starts, so a crash during the start doesn\'t double it', async () => {
+  const w = wayBack({ recordings: { a: forever() }, pace: 2 });
+  w.put('a');
+  const file = path.join(w.dir, 'dispatch.json');
+  const atCrash = `${file}.at-crash`;
+  w.startAs = async (args, real) => {
+    const got = await real(args);
+    fs.copyFileSync(file, atCrash);
+    return got;
+  };
+  await w.tick();
+  w.startAs = null;
+  assert.equal(entered(w).admitted.length, 0, 'a start with an answer leaves no mark');
+  fs.copyFileSync(atCrash, file);
+  assert.equal(entered(w).admitted[0].starting, true);
+  w.restart();
+  await w.tick(2);
+  assert.equal(w.starts.length, 1, 'the run on record counts as started');
+  assert.equal(entered(w).admitted.length, 0);
+});
+
+test('a run that can\'t be read keeps its entry until it can', async () => {
+  const w = wayBack({ recordings: { a: [quiet(), forever()] }, pace: 2 });
+  w.put('a');
+  await w.tick(2);
+  const inspect = w.engine.inspect.bind(w.engine);
+  w.engine.inspect = () => ({ status: 'unknown', unread: true, steps: [], branch: null, pr: null });
+  w.dispatcher.enter({ work: 'a', lane: 'quick', via: 'rework', key: 'k', branch: 'wh/a', carryOn: true });
+  await w.tick(3);
+  assert.equal(entered(w).admitted.length, 1, 'not seen yet');
+  w.engine.inspect = inspect;
+  await w.tick();
+  assert.equal(entered(w).admitted.length, 0);
+});
+
+test('a start that twice gives no clear answer comes to a card', async () => {
+  const w = await uncertainStart({ live: async () => null });
+  w.startAs = async () => ({ ok: false, refused: 'garbled', uncertain: true });
+  await w.tick(8);
+  const card = w.cards().at(-1);
+  assert.deepEqual(card.options.map((o) => o.label), [TRY_AGAIN, STOP_HERE]);
+  const starts = w.starts.length;
+  await w.tick(3);
+  assert.equal(w.starts.length, starts, 'nothing more starts until the director says');
+});
+
+test('an answer to work that has ended goes nowhere, and its paused run gives its place up', async () => {
+  const w = wayBack({ recordings: { a: [quiet(), asking('qa2').slice(0, 3)], b: quiet() }, pace: 1 });
+  w.put('a', { place: 0 });
+  await w.tick(2);
+  w.runs.a.at(-1).data.pr = 7;
+  w.dispatcher.sentBack('a');
+  await w.tick(3);
+  assert.equal(w.stateOf('a'), 'paused');
+  w.seenPr[7] = 'merged';
+  await w.tick(2);
+  assert.equal(w.reports.a.data.outcome, 'merged');
+  w.answer('a', 'Do the whole page');
+  await w.tick(2);
+  assert.equal(w.answers().length, 0);
+  assert.equal(w.stateOf('a'), 'ended');
+  assert.ok(w.engine.calls.some((c) => c.call === 'act' && c.action.cancel));
+  assert.equal(w.notes().filter((n) => /wasn't sent: that work has ended/.test(n ?? '')).length, 1);
+  w.put('b', { place: 1 });
+  await w.tick(3);
+  assert.equal(w.runsOf('b').length, 1, 'its place is free');
+});
+
+test('a cap card left open across a Carry on doesn\'t hold the new run\'s answer', async () => {
+  const w = wayBack({ recordings: { a: [forever(), asking('qa2').slice(0, 3)] }, pace: 2, settings: { capMinutes: { quick: 1 }, capTokens: {} } });
+  w.put('a');
+  await w.tick(2);
+  w.clock.now = new Date(w.clock.now.getTime() + 10 * 60000);
+  await w.tick(2);
+  assert.match(w.cardOf('a').what, /cap/);
+  w.work.a.work.at = new Date(w.clock.now.getTime() + 500).toISOString();
+  w.work.a.since = w.work.a.work.at;
+  await w.tick(3);
+  assert.equal(w.runsOf('a').length, 2);
+  w.answer('a', 'Do the whole page');
+  await w.tick(4);
+  assert.deepEqual(w.answers().map((c) => c.action.answer.ask), ['qa2']);
 });

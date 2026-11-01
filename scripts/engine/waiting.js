@@ -3,6 +3,7 @@
 // runner know and never from a run's `paused` record, which a usage limit writes too. The two sets stay apart, so neither
 // module reads the other's file. A feature between slices has no card open, so it waits on a merge, not on the director.
 import { MERGE_WORK } from './dispatcher.js';
+import { since } from '../foreman/queue.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const entriesOf = (x) => (isPlain(x) ? Object.entries(x) : []);
@@ -11,6 +12,19 @@ const answered = (views, id) => typeof views?.questions?.[id]?.answer?.label ===
 function runEnded(views, work, runId) {
   const list = views?.runs?.[work];
   return (Array.isArray(list) ? list : []).filter((r) => r?.data?.runId === runId).at(-1)?.data?.state === 'ended';
+}
+
+// Whether the work has been queued again since this run began: an open card of that run no longer speaks for the work.
+export function overtaken(kept, views) {
+  const queued = views?.work?.[kept.work]?.work;
+  const list = views?.runs?.[kept.work];
+  const first = (Array.isArray(list) ? list : []).find((r) => r?.data?.runId === kept.runId);
+  return Boolean(queued && first) && !since(first, queued);
+}
+
+// Whether a pull request's approval answers its card: one from before a park never saw what the queue is unsure of.
+export function approvalAnswers(approval, parked) {
+  return Boolean(approval) && (typeof parked?.at !== 'string' || (typeof approval.at === 'string' && approval.at >= parked.at));
 }
 
 // Each open card of the card router's: { id, work, kept }. A card still to be written has no id yet, and a joiner behind
@@ -22,13 +36,16 @@ function routerOpen({ state, views, prWork }) {
     const work = kept?.work === MERGE_WORK ? (Number.isInteger(pr) ? prWork(pr) : null) : kept?.work;
     if (typeof work !== 'string' || work === '') return;
     if (kept.cap !== true && kept.work !== MERGE_WORK && runEnded(views, kept.work, kept.runId)) return;
+    // A cap card outlives its run, but not the work's next queueing, whose run it would hold back.
+    if (kept.cap === true && overtaken(kept, views)) return;
     found.push({ id: (id === undefined ? undefined : views?.questions?.[id]?.joins) ?? id, work, kept });
   };
   for (const kept of Array.isArray(state?.waiting) ? state.waiting : []) add(undefined, kept);
   for (const [id, kept] of entriesOf(state?.questions)) if (!state.delivered?.[id] && !answered(views, id)) add(id, kept);
   for (const [key, kept] of entriesOf(state?.approvals)) {
     const [pr, sha] = key.split(':');
-    if (!state.delivered?.[key] && !views?.approvals?.[pr]?.[sha]) add(key, kept);
+    const parked = kept.parked === true && state.parked?.[pr]?.head === sha ? state.parked[pr] : null;
+    if (!state.delivered?.[key] && !approvalAnswers(views?.approvals?.[pr]?.[sha], parked)) add(key, kept);
   }
   return found;
 }

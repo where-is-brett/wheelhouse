@@ -5219,6 +5219,7 @@ export async function startHelper({
     runner.onEnter((args) => dispatcher.enter(args));
     dispatcher.onStarted((runId, carried) => runner.started(runId, carried));
     dispatcher.onWaiting(() => runner.waitingWork());
+    dispatcher.onReworks(() => runner.reworkWork());
     dispatcher.onCards(() => runner.openCards());
     dispatcher.onParked(() => runner.parkedHeads());
     runner.onMergeRuled(() => dispatcher.queueDue());
