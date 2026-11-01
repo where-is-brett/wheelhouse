@@ -85,6 +85,7 @@ export function wayBack({ recordings = {}, pace = 3, settings = {}, testCommand 
       drop: (work, key) => dispatcher.drop(work, key),
       startAdmitted: (args) => dispatcher.startAdmitted(args),
       carryOver: (work, kept) => dispatcher.carryOver(work, kept),
+      comingBack: (work) => dispatcher.comingBack(work),
       ...reads,
     });
     runner.onEnter((args) => dispatcher.enter(args));

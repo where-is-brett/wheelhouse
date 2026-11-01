@@ -2215,3 +2215,125 @@ test('an open key with other options stays a card of its own', async () => {
     assert.deepEqual(t.writes.filter((w) => w.kind === 'question').map((w) => w.data.joins), [undefined, undefined]);
   } finally { t.cleanup(); }
 });
+
+test('a lost reply keeps the earlier answer going, with no card, and the piece still starts again', async () => {
+  const t = setUp({ recordings: { one: repeat('q1', BLOCKS), two: repeat('q2', BLOCKS) }, gate: CLEAR });
+  const entered = [];
+  t.runner.onEnter((args) => entered.push(args));
+  try {
+    await t.ask('one');
+    t.sign('Use the first');
+    await t.runner.tick();
+    const act = t.engine.act.bind(t.engine);
+    let lost = 0;
+    t.engine.act = (runId, action) => {
+      if (action.answer?.ask !== 'q2') return act(runId, action);
+      lost += 1;
+      if (lost === 1) { act(runId, action); throw new Error('timed out'); }
+      return { ok: false, refused: 'already answered' };
+    };
+    const second = await t.ask('two');
+    assert.equal(t.writes.filter((w) => w.kind === 'question').length, 1, 'no card for an answer that may have landed');
+    await t.runner.tick();
+    assert.equal(lost, 2, 'tried again on the tick');
+    assert.equal(t.writes.filter((w) => w.kind === 'question').length, 1);
+    assert.ok(t.writes.some((w) => w.kind === 'note' && /your earlier answer: Use the first/.test(w.data.words)));
+    ended(t, second.runId);
+    await t.runner.tick();
+    assert.equal(entered.filter((e) => e.via === 'rework' && e.key === `rework:${second.runId}`).length, 1);
+  } finally { t.cleanup(); }
+});
+
+test('an earlier answer is not sent again under All stop', async () => {
+  const t = setUp({ recordings: { one: repeat('q1'), two: repeat('q2') }, gate: CLEAR });
+  try {
+    await t.ask('one');
+    t.sign('Keep it small');
+    await t.runner.tick();
+    const act = t.engine.act.bind(t.engine);
+    t.engine.act = (runId, action) => { if (action.answer?.ask === 'q2') throw new Error('timed out'); return act(runId, action); };
+    await t.ask('two');
+    const before = t.engine.calls.length;
+    t.world.stop = true;
+    await t.runner.tick();
+    assert.equal(t.engine.calls.filter((c, n) => n >= before && c.call === 'act').length, 0);
+  } finally { t.cleanup(); }
+});
+
+test('a restart while the branch is read routes the ask again, so it is never lost', async () => {
+  let release;
+  const slow = new Promise((resolve) => { release = resolve; });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-repeat-'));
+  const file = path.join(dir, 'router.json');
+  const engine = fakeEngine({ recordings: { one: repeat('q1'), two: repeat('q2') } });
+  const writes = [];
+  const views = { levels: {}, questions: {}, approvals: {} };
+  const build = (reads) => engineRunner({ engine, file, readViews: () => views, write: async (kind, data) => { writes.push({ kind, data }); }, workOf: () => ({ work: 'sale-banner', lane: 'quick' }), now: () => new Date('2026-10-29T13:00:00.000Z'), ...reads });
+  try {
+    const first = build(CLEAR);
+    engine.start({ recording: 'one' });
+    await first.onAsk(engine.watch('0').events.find((e) => e.type === 'ask' && e.id === 'q1'));
+    const q = writes.find((w) => w.kind === 'question').data;
+    views.questions[q.id] = { question: { data: q }, answer: { label: 'Keep it small', at: '2026-10-29T13:00:00.000Z' } };
+    await first.tick();
+    const gone = build({ ...CLEAR, commitsSince: () => slow });
+    engine.start({ recording: 'two' });
+    const reading = gone.onAsk(engine.watch('0').events.find((e) => e.type === 'ask' && e.id === 'q2'));
+    await new Promise((resolve) => setImmediate(resolve));
+    const again = build(CLEAR);
+    await again.tick();
+    assert.deepEqual(engine.calls.filter((c) => c.call === 'act').map((c) => c.action.answer.ask), ['q1', 'q2']);
+    release(0);
+    await reading;
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('an open incident gives a card, whose answer waits as any answer does', async () => {
+  const t = setUp({ recordings: { one: repeat('q1'), two: repeat('q2') }, gate: CLEAR });
+  try {
+    await t.ask('one');
+    t.sign('Keep it small');
+    await t.runner.tick();
+    t.views.incidents = { open: [{ id: 'i1', kind: 'red-main' }] };
+    await t.ask('two');
+    assert.equal(acts(t.engine).filter((c) => c.action.answer.ask === 'q2').length, 0);
+    assert.equal(t.writes.filter((w) => w.kind === 'question').at(-1).data.saidBefore, 'Keep it small');
+  } finally { t.cleanup(); }
+});
+
+test('a piece waiting for a place gives a card: nothing wakes it past its pace', async () => {
+  const t = setUp({ recordings: { one: repeat('q1'), two: repeat('q2') }, gate: { ...CLEAR, comingBack: () => true } });
+  try {
+    await t.ask('one');
+    t.sign('Keep it small');
+    await t.runner.tick();
+    await t.ask('two');
+    assert.equal(acts(t.engine).filter((c) => c.action.answer.ask === 'q2').length, 0);
+    assert.equal(t.writes.filter((w) => w.kind === 'question').at(-1).data.saidBefore, 'Keep it small');
+  } finally { t.cleanup(); }
+});
+
+test('a click made while the branch is read is seen', async () => {
+  const views = [];
+  const t = setUp({ recordings: { one: repeat('q1'), two: repeat('q2') }, gate: { ...CLEAR, commitsSince: async () => { views[0]?.(); return 0; } } });
+  try {
+    await t.ask('one');
+    t.sign('Keep it small');
+    await t.runner.tick();
+    views[0] = () => { t.views.questions[Object.keys(t.views.questions)[0]].answer.changed = true; };
+    await t.ask('two');
+    assert.equal(acts(t.engine).filter((c) => c.action.answer.ask === 'q2').length, 0);
+  } finally { t.cleanup(); }
+});
+
+test('Stop is never taken from before, whatever the case of its label', async () => {
+  const t = setUp({ recordings: { one: repeat('q1', BLOCKS), two: repeat('q2', { ...BLOCKS, options: [{ id: 'stop', label: 'stop HERE' }, { id: 'rework', label: 'Send it back' }, { id: 'pick', label: 'Use the first' }] }) }, gate: CLEAR });
+  t.runner.onEnter(() => {});
+  try {
+    await t.ask('one');
+    t.sign('Stop here');
+    await t.runner.tick();
+    await t.ask('two');
+    assert.equal(acts(t.engine).filter((c) => c.action.answer.ask === 'q2').length, 0);
+  } finally { t.cleanup(); }
+});

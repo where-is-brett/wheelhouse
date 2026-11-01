@@ -14,11 +14,18 @@ const dataOf = (entry) => entry?.question?.data;
 // it was first written, since one recorded again is no longer what its piece asked. A joiner keeps `joins` while it stands behind a card,
 // and `gone` once its piece has left the bundle; one with an answer of its lead's says `joined`, and one left open
 // gives `saidBefore`, with `joins` gone, since it is a question of its own again.
+function answerBehind(questions, id, data) {
+  const found = Object.entries(questions).find(([other, q]) => other !== id && dataOf(q)?.work === data.work && dataOf(q).key === data.key && typeof data.key === 'string'
+    && q.answer?.label === data.saidBefore && q.answer.changed !== true);
+  return found ? found[1].answer : null;
+}
+
 export function joinQuestions(questions, { shown = () => [], ended = () => false, kept = () => true } = {}) {
   for (const [id, entry] of Object.entries(questions)) {
     const data = dataOf(entry);
-    // Recorded so by the runner: the piece asked this again, and the director said this the last time.
-    if (typeof data?.saidBefore === 'string' && !isPlain(entry.saidBefore)) entry.saidBefore = { label: data.saidBefore };
+    // The piece asked this again. A record only claims what the director said, so an answer on the record has to stand behind it.
+    const behind = typeof data?.saidBefore === 'string' ? answerBehind(questions, id, data) : null;
+    if (behind !== null) entry.saidBefore = { label: data.saidBefore, at: behind.at };
     const lead = questions[data?.joins];
     if (!isPlain(lead) || data.joins === id || dataOf(lead).joins !== undefined || !alike(data, dataOf(lead)) || !kept(id, data)) continue;
     entry.joins = data.joins;

@@ -1229,6 +1229,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     enter,
     // Whether a piece has been given its place and may be sent its answer.
     admittedTo: (work, key) => state.admitted.some((e) => e.work === work && (key === undefined || e.key === key)),
+    // Whether a piece waits for a place. One admitted holds its place.
+    comingBack: (work) => state.returning.some((e) => e.work === work),
     // The runner's mark that an answer went back: its entry then waits for the run to be seen running.
     delivered(work, key) {
       const entry = state.admitted.find((e) => e.work === work && e.key === key);

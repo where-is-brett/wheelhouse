@@ -5179,6 +5179,7 @@ export async function startHelper({
       prTitleOf: async (pr) => (await (await contextFor(project)).adapter().then((adapter) => adapter.prState(pr))).title ?? null,
       release: (work) => dispatcher.release(work),
       admittedTo: (work, key) => dispatcher.admittedTo(work, key),
+      comingBack: (work) => dispatcher.comingBack(work),
       delivered: (work, key) => dispatcher.delivered(work, key),
       drop: (work, key) => dispatcher.drop(work, key),
       startAdmitted: (args) => dispatcher.startAdmitted(args),

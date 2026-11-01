@@ -34,7 +34,7 @@ import { mergeQuestionWords, parkedWords, PARKED_WHY, PARKED_BECAUSE, PARKED_MEA
 import { parkChoice } from './archon/asks.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
-const EMPTY = () => ({ routed: {}, waiting: [], held: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, tries: {}, later: [], next: {}, noted: null, capped: {}, costed: {}, reviewsKept: {}, carried: {}, reworks: {}, answers: {}, sending: {}, parked: {}, reused: {} });
+const EMPTY = () => ({ routed: {}, waiting: [], held: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, tries: {}, later: [], next: {}, noted: null, capped: {}, costed: {}, reviewsKept: {}, carried: {}, reworks: {}, answers: {}, sending: {}, parked: {}, reused: {}, repeats: {} });
 // The failed tries after which the director is told an answer hasn't reached the build yet.
 const UNREACHABLE_SAID = 3;
 // The cap card's options: Give it more carries the work on with the cap raised once; Stop leaves it stopped.
@@ -91,6 +91,7 @@ const inSentence = (title) => (/^[A-Z][a-z]/.test(title) ? title.charAt(0).toLow
 // - `admittedTo(work)` whether the dispatcher has given a piece its place; `delivered(work, key)` and `drop(work, key)` tell
 //   it an answer went back or was refused or not used; `startAdmitted(args)` starts a run on the place already held;
 //   `carryOver(work, { branch, answers })` keeps what Carry on needs of an answer All stop kept from being used.
+// - `comingBack(work)` whether a piece waits for a place, so no answer may wake it from here;
 // - `headOf(place)` a piece's head, `commitsSince(place, head)` its commits after that head and `exclusionsOf(place)` the
 //   common exclusions it hits, `place` being { branch, folder }; each null when it can't be read, and none may hold up a tick.
 // - `handBack({ pr })` hands a parked pull request the director approved to the merge queue again
@@ -101,7 +102,7 @@ const inSentence = (title) => (/^[A-Z][a-z]/.test(title) ? title.charAt(0).toLow
 // keeps { [pr]: { head, at, runId, choice, work, ask, taken, handed } }: `taken` once the engine has it, so a restart
 // between the two still raises the card, and `handed` once an approval has gone back to the queue. Only an approval
 // signed since `at` counts for it: an older one, for a pull request shown first, never saw what the queue is unsure of.
-export function engineRunner({ engine, file, readViews, write, stopped = () => false, now = () => new Date(), settings = () => ({}), workOf = () => null, titleOf = (work) => work, endRun = async () => ({ ended: [], survivors: [] }), openedOf = () => null, prTitleOf = async () => null, keepReviews = async () => true, onCard = () => {}, onReaderAsk = () => {}, release = () => {}, handBack = async () => ({ ok: false, refused: 'nothing hands work to the merge queue here' }), admittedTo = () => true, delivered = () => {}, drop = () => {}, startAdmitted = async () => ({ ok: false, refused: 'nothing starts runs here' }), carryOver = () => {}, headOf = async () => null, commitsSince = async () => null, exclusionsOf = async () => null } = {}) {
+export function engineRunner({ engine, file, readViews, write, stopped = () => false, now = () => new Date(), settings = () => ({}), workOf = () => null, titleOf = (work) => work, endRun = async () => ({ ended: [], survivors: [] }), openedOf = () => null, prTitleOf = async () => null, keepReviews = async () => true, onCard = () => {}, onReaderAsk = () => {}, release = () => {}, handBack = async () => ({ ok: false, refused: 'nothing hands work to the merge queue here' }), admittedTo = () => true, delivered = () => {}, drop = () => {}, startAdmitted = async () => ({ ok: false, refused: 'nothing starts runs here' }), carryOver = () => {}, comingBack = () => false, headOf = async () => null, commitsSince = async () => null, exclusionsOf = async () => null } = {}) {
   let state = readState(file);
   const keep = () => saveState(file, state);
   const note = (words, extra = {}) => write('note', { about: 'engine', words, ...extra });
@@ -324,7 +325,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       await note(routed.line, { work });
       return;
     }
-    const asked = routed.card.question ? await askedBefore(ask, work, routed.card.question, views) : null;
+    const asked = routed.card.question ? await askedBefore(ask, work, routed.card.question) : null;
     if (asked?.answer !== undefined) {
       if (stopped()) {
         // Answered once All stop is lifted, never under it.
@@ -332,9 +333,15 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
         keep();
         return;
       }
-      if (await takeEarlier(ask, work, routed.card.question, asked, views)) return;
+      takeEarlier(ask, work, routed.card.question, asked);
+      await sendEarlier(ask.id);
+      return;
     }
-    if (asked && routed.card.question.level === 3) routed.card.question.saidBefore = asked.earlier.answer;
+    await raise(routed, ask, work, asked?.earlier);
+  }
+
+  async function raise(routed, ask, work, earlier = null) {
+    if (earlier && routed.card.question.level === 3) routed.card.question.saidBefore = earlier.answer;
     state.waiting.push({ importance: routed.importance, exempt: routed.exempt === true, card: routed.card, work, runId: ask.runId, ask });
     keep();
     await show();
@@ -356,43 +363,82 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
 
   // Whether the director has answered this decision on this piece (delegated decisions design, section 7.4), as `reuse`
   // says with `earlier` beside it, or null. An answer is taken once, so a piece that keeps asking comes to a card and can't
-  // go round on its own. Nothing that ends or moves a piece is taken from before, and a piece with another card open has
-  // given up its place, so its answer waits for that card.
-  async function askedBefore(ask, work, question, views) {
+  // go round on its own. Nothing that ends or moves a piece is taken from before. A piece with another card open has given
+  // up its place, one coming back has none yet, and under an incident answers wait, so each comes as a card, which
+  // waits by the ordinary rules. The ask is kept on `later` while its branch is read: a helper started again routes it
+  // anew, since nothing else names it yet. Everything but the branch is read after that, so a click meanwhile counts.
+  const reading = new Set();
+  async function askedBefore(ask, work, question) {
     const key = keyOf(ask, work);
-    const earlier = key === null ? null : earlierAnswer({ views, work, key, settled: (id) => state.delivered[id] === 'answered' });
-    if (earlier === null) return null;
+    const settled = (id) => state.delivered[id] === 'answered';
+    const first = key === null ? null : earlierAnswer({ views: viewsNow(), work, key, settled });
+    if (first === null) return null;
     const place = placeOf(ask);
+    reading.add(ask.id);
+    state.later.push(ask);
+    keep();
     const [commits, exclusions] = await Promise.all([
-      typeof earlier.head === 'string' ? lookAt(() => commitsSince(place, earlier.head)) : null,
+      typeof first.head === 'string' ? lookAt(() => commitsSince(place, first.head)) : null,
       lookAt(() => exclusionsOf(place)),
     ]);
-    const ends = STOPS_WORK.has(earlier.answer) || question.engine.options[earlier.answer] === STOP || ask.topic === BIGGER;
+    reading.delete(ask.id);
+    state.later = state.later.filter((a) => a.id !== ask.id);
+    const views = viewsNow();
+    const earlier = earlierAnswer({ views, work, key, settled });
+    if (earlier === null) return null;
+    const label = optionNamed(question, earlier.answer);
+    const ends = STOPS_WORK.has(earlier.answer) || STOPS_WORK.has(label) || question.engine.options[label] === STOP || ask.topic === BIGGER;
     const got = reuse({
-      ask: { kind: ask.kind, level: question.level, options: question.options }, earlier, commitsSince: commits, exclusions,
+      ask: { kind: ask.kind, level: question.level, options: question.options }, earlier, commitsSince: earlier.id === first.id ? commits : null, exclusions,
       spokenSince: spokenSince({ views, work, earlier }), changed: earlier.changed,
-      asksAgain: state.reused[earlier.id] === true || ends || typeof earlier.words === 'string' || waitingOn().has(work),
+      asksAgain: state.reused[earlier.id] === true || ends || typeof earlier.words === 'string' || held(ask.runId) || waitingOn().has(work)
+        || comingBack(work) === true || (views.incidents?.open?.length ?? 0) > 0,
     });
     return got && { ...got, earlier };
   }
+  const optionNamed = (question, label) => question.options.find((o) => normaliseWords(o.label) === normaliseWords(label))?.label;
 
-  // Gives the build the director's earlier answer, and whether it took it. A blocked ask's run ends on it as on any
-  // answer, so the piece starts again; that is marked first, so a crash after the answer leaves no piece stranded.
-  async function takeEarlier(ask, work, question, { answer: label, earlier }, views) {
-    const answer = answerFor(question.engine, question.options.find((o) => normaliseWords(o.label) === normaliseWords(label))?.label);
-    if (answer === null) return false;
-    const reworked = startsAgain({ ask, work, runId: ask.runId }, laneOf({ work, runId: ask.runId }, views));
-    if (reworked) state.reworks[ask.runId] = { work, answer: answer.choice !== REWORK ? { question: questionOf(ask), answer: label } : null };
-    state.reused[earlier.id] = true;
-    keep();
-    const got = await answerEngine(ask.runId, answer);
-    if (!got.ok) {
-      if (reworked) delete state.reworks[ask.runId];
-      keep();
-      return false;
+  // Marks the director's earlier answer as going to the build. A blocked ask's run ends on it as on any answer, so the
+  // piece starts again; that is marked first, so a crash after the answer leaves no piece stranded.
+  function takeEarlier(ask, work, question, { earlier }) {
+    const label = optionNamed(question, earlier.answer);
+    const answer = answerFor(question.engine, label);
+    if (startsAgain({ ask, work, runId: ask.runId }, laneOf({ work, runId: ask.runId }, viewsNow()))) {
+      state.reworks[ask.runId] = { work, answer: answer.choice !== REWORK ? { question: questionOf(ask), answer: label } : null };
     }
-    await note(`The build asked again about ${titled(work)}, and was given your earlier answer: ${label}.`, { work, level: 3 });
-    return true;
+    state.reused[earlier.id] = true;
+    state.repeats[ask.id] = { ask, work, label, answer, earlier: earlier.id };
+    keep();
+  }
+
+  // Sends an earlier answer, as `deliver` sends any: an engine that couldn't be heard from is tried again on the next tick,
+  // and one that refuses after a try that may have landed took it the first time. One that refuses it outright has moved
+  // on from what the answer was for, so the director is asked.
+  async function sendEarlier(id) {
+    const entry = state.repeats[id];
+    if (!entry || stopped() || held(entry.ask.runId)) return;
+    const sentBefore = entry.sent === true;
+    entry.sent = true;
+    keep();
+    let got = await answerEngine(entry.ask.runId, entry.answer);
+    if (!got.ok && got.unreachable !== true && sentBefore) got = { ok: true };
+    if (!got.ok && got.unreachable === true) {
+      entry.tries = (entry.tries ?? 0) + 1;
+      keep();
+      if (entry.tries === UNREACHABLE_SAID) await note(`The build couldn't take your answer about ${titled(entry.work)} yet; it keeps trying.`, { work: entry.work });
+      return;
+    }
+    delete state.repeats[id];
+    if (got.ok) {
+      keep();
+      await note(`The build asked again about ${titled(entry.work)}, and was given your earlier answer: ${entry.label}.`, { work: entry.work, level: 3 });
+      return;
+    }
+    delete state.reused[entry.earlier];
+    delete state.reworks[entry.ask.runId];
+    const routed = routeAsk(entry.ask, { levels: viewsNow().levels ?? {} });
+    if (routed.card?.question) await raise(routed, entry.ask, entry.work, { answer: entry.label });
+    else keep();
   }
 
   // Writes every waiting card at once (delegated decisions design, section 8.5); the day's budget says only which are
@@ -921,9 +967,9 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   // Asks held while All stop was on are routed again once it is lifted, and a held run's once its hold is.
   async function again() {
     if (stopped() || state.later.length === 0) return;
-    const later = state.later.filter((ask) => !held(ask.runId));
+    const later = state.later.filter((ask) => !held(ask.runId) && !reading.has(ask.id));
     if (later.length === 0) return;
-    state.later = state.later.filter((ask) => held(ask.runId));
+    state.later = state.later.filter((ask) => !later.includes(ask));
     for (const ask of later) delete state.routed[ask.id];
     // An approval keeps its key, so its answer under All stop mustn't stand against the same ask asked again.
     const askedAgain = new Set(later.map((ask) => ask.id));
@@ -940,6 +986,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     async tick() {
       await deliver();
       await reworks();
+      for (const id of Object.keys(state.repeats)) await sendEarlier(id);
       await again();
       await parks();
       await caps();

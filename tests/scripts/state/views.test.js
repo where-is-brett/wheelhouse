@@ -1511,8 +1511,17 @@ test('a click covers only what its card showed', async () => {
 
 test('a question recorded with what was said before says it in the view', async () => {
   await withHome(() => {
-    assert.equal(build([asked(1, { saidBefore: 'First' })]).questions[LEAD].saidBefore.label, 'First');
+    const KEY = 'a'.repeat(64);
+    const SECOND = 'q-lead-500002';
+    const first = asked(1, { key: KEY });
+    const answer = (n, label) => click(n, { action: 'answer', question: 'one', questionId: LEAD, questionHash: dataHash(first.data), label });
+    const repeat = (n, data = {}) => asked(n, { id: SECOND, key: KEY, saidBefore: 'First', ...data });
+    assert.equal(build([first, answer(2, 'First'), repeat(3)]).questions[SECOND].saidBefore.label, 'First');
     assert.equal(build([asked(1)]).questions[LEAD].saidBefore, undefined);
+    assert.equal(build([first, repeat(3)]).questions[SECOND].saidBefore, undefined, 'no answer stands behind it');
+    assert.equal(build([first, answer(2, 'Last'), repeat(3)]).questions[SECOND].saidBefore, undefined, 'not what the director said');
+    assert.equal(build([first, answer(2, 'First'), repeat(3, { key: 'b'.repeat(64) })]).questions[SECOND].saidBefore, undefined, 'another decision');
+    assert.equal(build([first, answer(2, 'Last'), answer(3, 'First'), repeat(4)]).questions[SECOND].saidBefore, undefined, 'an answer changed since');
   });
 });
 
