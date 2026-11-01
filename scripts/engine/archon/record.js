@@ -25,10 +25,10 @@ function outcomeOf(json) {
 export const REQUEST_RATES = Object.freeze({ copilot: true });
 const ONE_EACH = () => 1;
 
-// The tokens a step or a run spent: fresh input and output. A provider's input figure already holds what was read from
-// and written to its cache, which would otherwise fill a cap with the same context read again; a kind not reported
-// takes nothing off.
-const freshTokens = (input, output, cacheRead, cacheWrite) => (input === null || output === null ? null : Math.max(0, input - (cacheRead ?? 0) - (cacheWrite ?? 0)) + output);
+// The tokens a step or a run spent: new input and output. A provider's input figure already holds what it read back from
+// its cache, the same context again, which would otherwise fill a cap; what it wrote to its cache is new, and stays. A
+// figure not reported takes nothing off.
+const newTokens = (input, output, cacheRead) => (input === null || output === null ? null : Math.max(0, input - (cacheRead ?? 0)) + output);
 
 // One node's spend. A node that called no provider (a shell step) spent nothing, which is a known zero. Tokens are
 // known only when both the input and the output figure are: a missing one is unknown, not zero. The four kinds of
@@ -40,7 +40,7 @@ function spendOf(spend, provider, model, rates) {
   const counted = reported(spend?.tokens) && isObject(spend.tokens.value) ? spend.tokens.value : {};
   const input = figure(counted.input);
   const output = figure(counted.output);
-  const tokens = freshTokens(input, output, figure(counted.cacheRead), figure(counted.cacheWrite));
+  const tokens = newTokens(input, output, figure(counted.cacheRead));
   const kinds = reported(spend?.tokens) ? { input, output, cacheRead: figure(counted.cacheRead), cacheWrite: figure(counted.cacheWrite) } : null;
   const requests = provider === null ? null : counts ? rates(model) : 0;
   if (reported(spend?.costUsd) && figure(spend.costUsd.value) !== null) return { tokens, dollars: spend.costUsd.value, source: 'reported', kinds, requests };
@@ -73,7 +73,7 @@ function totalsOf(metadata) {
   const tokensOut = figure(metadata.total_tokens_out);
   return {
     dollars: figure(metadata.total_cost_usd),
-    tokens: unknownTokens ? null : freshTokens(tokensIn, tokensOut, figure(metadata.total_cache_read_tokens), figure(metadata.total_cache_write_tokens)),
+    tokens: unknownTokens ? null : newTokens(tokensIn, tokensOut, figure(metadata.total_cache_read_tokens)),
   };
 }
 

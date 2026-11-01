@@ -120,7 +120,6 @@ export async function openWorld({ engine: kind = 'fake', recordings = {}, now = 
     lift: () => liftStop(),
     starts: () => engine.calls.filter((c) => c.call === 'start'),
     acts: () => engine.calls.filter((c) => c.call === 'act'),
-    // The work orders the helper kept for the runs it started, oldest run first: what a run's steps are served.
     // The run's steps, in a place: its change committed in a worktree, its pull request opened through the helper, its
     // reviews read CLEAN and signed, and, with `ready`, the change marked ready: { runId, pr, head }. `line` is what it adds
     // to README.md.
@@ -153,6 +152,7 @@ export async function openWorld({ engine: kind = 'fake', recordings = {}, now = 
     },
     // `gh` as a run's step calls it, through the broker: { code, stdout, stderr }.
     broker: (argv, { cwd = folder } = {}) => client.broker.gh({ argv, cwd }),
+    // The work orders the helper kept for the runs it started, oldest run first: what a run's steps are served.
     orders() {
       const dir = path.join(engineDirOf(stateDir(PROJECT)), 'orders');
       const names = fs.existsSync(dir) ? fs.readdirSync(dir).filter((n) => n.endsWith('.json')) : [];

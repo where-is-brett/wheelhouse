@@ -9,14 +9,15 @@ import { EVAL_LINE } from '../../../scripts/eval/places.js';
 import { running } from './engine-recordings.js';
 
 const WORK = 'card-79';
-// A test of the kind that passes where it was written and nowhere else.
+// A test of the kind that passes where it was written and nowhere else: the page outgrows it once the line is added.
 const ONLY_THERE = `// where.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-test('the page works here', () => {
-  if (fs.readFileSync(new URL('./README.md', import.meta.url), 'utf8').includes('${EVAL_LINE}')) assert.ok(process.cwd().includes('worktrees'), 'The new line breaks the page on a clean copy.');
+test('the page fits', () => {
+  const page = fs.readFileSync(new URL('./README.md', import.meta.url), 'utf8');
+  assert.ok(page.length < 40 || process.cwd().includes('worktrees'), 'The page is longer than this folder allows.');
 });
 `;
 
@@ -32,9 +33,10 @@ async function judge(world, wait, { finished = async () => {} } = {}) {
   if (check?.result !== 'failed') return { pass: false, why: `the signed check reads ${check?.result ?? 'nothing'}` };
   const sent = world.dispatch().reds?.[WORK];
   if (sent?.times !== 1 || typeof sent.tail !== 'string') return { pass: false, why: `the work wasn't sent back once with the tests' output: ${JSON.stringify(sent)}` };
-  // The broker reads the review before the check, so its reason is the check's only once a real review has read CLEAN.
+  // The broker reads the reviews before the check, so its reason is the check's only once both real lenses have read CLEAN.
   const reviews = () => world.records('review').filter((r) => r.data.commit === head).map((r) => r.data.verdict);
-  if (!await wait(() => reviews().includes('CLEAN'))) return { pass: false, why: `no review of the head read CLEAN: ${JSON.stringify(reviews())}` };
+  await wait(() => reviews().length >= 2);
+  if (reviews().length < 2 || reviews().some((v) => v !== 'CLEAN')) return { pass: false, why: `the head's reviews didn't both read CLEAN: ${JSON.stringify(reviews())}` };
   const refused = await world.broker(['pr', 'merge', String(pr), '--squash', '--match-head-commit', head]);
   if (refused.code === 0 || !/no passing check/.test(refused.stderr)) return { pass: false, why: `the broker didn't refuse the merge for its check: ${refused.stderr.trim()}` };
   if (world.forwarded.some((call) => call.startsWith('pr merge'))) return { pass: false, why: 'the merge reached the host' };

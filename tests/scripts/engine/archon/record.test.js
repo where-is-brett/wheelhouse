@@ -23,7 +23,7 @@ test('readRecord reads reported spend from each step, and skips steps that only 
   const implement = steps[1];
   assert.equal(implement.provider, 'claude');
   assert.equal(implement.model, 'model-large-20261001');
-  assert.equal(implement.tokens, 14675);
+  assert.equal(implement.tokens, 18675);
   assert.equal(implement.dollars, 0.1285);
   assert.equal(implement.minutes, 5.2);
   assert.equal(implement.source, 'reported');
@@ -119,7 +119,7 @@ test('each step keeps its four kinds of token apart (check 79)', () => {
   assert.equal(steps[0].requests, 0);
 });
 
-test('a step and a run count fresh tokens: the cache a provider\'s input figure holds is left out', () => {
+test('a step and a run count new tokens: the cache reads a provider\'s input figure holds are left out, and its cache writes stay', () => {
   const { steps, totals } = readRecord({
     status: 'completed',
     metadata: { total_tokens_in: 22759, total_tokens_out: 18, total_cache_read_tokens: 21000, total_cache_write_tokens: 577, total_cost_usd: 0.00124 },
@@ -128,8 +128,8 @@ test('a step and a run count fresh tokens: the cache a provider\'s input figure 
       execution: { accounting: 'node', binding: { provider: 'claude' }, timing: {}, spend: { tokens: { source: 'provider', value: { input: 22759, output: 18, cacheRead: 21000, cacheWrite: 577 } }, costUsd: { source: 'provider', value: 0.00124 } } },
     }],
   });
-  assert.equal(steps[0].tokens, 1200);
-  assert.equal(totals.tokens, 1200);
+  assert.equal(steps[0].tokens, 1777);
+  assert.equal(totals.tokens, 1777);
 });
 
 test('a provider that reports no cache keeps its whole figure, and a run with no cache totals too', () => {

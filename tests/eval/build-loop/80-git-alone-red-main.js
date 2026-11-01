@@ -32,6 +32,7 @@ async function judge(world, wait) {
   if (!await wait(async () => { await world.tick(); return passedAt(green) && !open(); })) return { pass: false, why: 'the incident stayed open with the main line green' };
   if (!await wait(async () => { await world.tick(); return world.starts().some((s) => s.order.work === HELD && began(s)); })) return { pass: false, why: 'the held work didn\'t start once the main line was green' };
   if (fixes().length !== 1) return { pass: false, why: 'a second fix run started' };
+  if (world.records('question').length + world.records('card').length > 0) return { pass: false, why: 'a card came to the director while the main line was mended' };
   return { pass: true, why: 'one incident and one fix run, no card, other work held, closed on green, and the held work started' };
 }
 

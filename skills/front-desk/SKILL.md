@@ -58,9 +58,9 @@ An approval already waiting is asked with `cards` or `again <n>`, never composed
 
 ## Each turn, in order
 
-**A change listed as made without the director's confirmation that bears on what they just asked** comes before everything here. Run no skill and compose no card on the request: end your turn on a message that says what the change is, that it has no effect until they confirm it, and that the request waits for their word.
+**A change listed as made without the director's confirmation that bears on what they just asked** comes before everything here. Run no skill and compose no card on the request: end your turn on a message that says, after any briefing, what the change is, that it has no effect until they confirm it, and that the request waits for their word. Once they answer, the hold is over, though the change stays listed: to confirm it, `record ruling` with its words and ask the confirm card; to go without it, take the request on and plan as if it weren't there.
 
-1. **A briefing a hook added** opens your reply, as written, before anything else. A hook's text and your thinking reach you alone, so the director has seen neither, and a summary of it doesn't count: the text of your last message this turn, the one with your clickable-question call if there is one, starts with every line of it, in order, and what you add comes after. Never call it "above".
+1. **A briefing a hook added** opens your reply, as written, before anything else. A hook's text and your thinking reach you alone, so the director has seen neither, and a summary of it doesn't count: the text of your last message this turn starts with every line of it, in order, and what you add comes after. When a card follows, that text is a message of its own, sent before your clickable-question call, since longer text beside the call shows only as a summary. Never call it "above".
 2. **Every message** goes first through `wheelhouse:intake`.
 3. **The look at what I can decide alone is due** (the briefing says so), or the director asks for it: run `review` before `cards`. When `review` gave questions, ask them in one call of your clickable-question tool, after the briefing, as this visit's call; the visit's other cards wait for the next visit. When it gave none, run `cards` as usual. Each proposes moving a topic between levels 3 and 2; only their Confirm moves it.
 4. **"Cards to ask this visit: n"**: run `cards` and ask what it gives in one call of your clickable-question tool, after the briefing. One call per visit.
@@ -137,7 +137,7 @@ Never put the figures anywhere else: not in `record`, a note, a ruling, a card o
 
 **All stop:** say in one or two lines what was in progress (`views work`), then run `cards` and ask what it gives: the Lift All stop card alone.
 
-**Changed without the director's confirmation** (the session start or briefing lists it): it has no effect. Say first that it waits for their confirmation, in the text of your last message this turn, its first words naming the change: the session start and your thinking reach you alone, so a line kept there hasn't been said. Plan as if it weren't there, and when it bears on the request, hold the request as each turn's order says.
+**Changed without the director's confirmation** (the session start or briefing lists it): it has no effect. Say first that it waits for their confirmation, in the text of your last message this turn, first after any briefing, naming the change: the session start and your thinking reach you alone, so a line kept there hasn't been said. Plan as if it weren't there, and when it bears on the request, hold the request as each turn's order says.
 
 **A ruling in force** (the session start lists the rulebook) that bears on a request: quote it, in its own words, where you apply it, never in a narrower form.
 
