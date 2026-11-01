@@ -47,6 +47,7 @@ function setUp({ design = { text: DESIGN } } = {}) {
     write: async (kind, data) => {
       world.written.push({ kind, data });
       if (kind === 'question') world.questions[data.id] = { question: { data } };
+      if (kind === 'report') world.reports[data.work] = { at: '2026-10-29T09:15:00.000Z', data };
     },
     readyOf: () => world.ready,
     prState: async (pr) => {

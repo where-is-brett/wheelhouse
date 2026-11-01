@@ -644,3 +644,58 @@ test('two cut-off pieces on the same files keep none of them, so Start it anyway
   await w.tick(2);
   assert.equal(w.runsOf('x').length, 1);
 });
+
+test('work depending on a piece the build engine doesn\'t run brings no cut-off card', async () => {
+  const w = wayBack({ recordings: { d: quiet() }, pace: 2 });
+  w.put('a', { lane: 'off-the-engine' });
+  w.put('d');
+  w.work.d.work.data.dependsOn = ['a'];
+  await w.tick(4);
+  assert.equal(w.cardOf('d'), null);
+});
+
+test('a late Stop here on a cut-off card ends no run begun meanwhile', async () => {
+  const w = await closedDep();
+  w.reports.a = { at: '2026-10-29T11:30:00.000Z', data: { work: 'a', outcome: 'merged' } };
+  await w.tick(2);
+  assert.equal(w.runsOf('d').length, 1);
+  w.answer('d', 'Stop here');
+  await w.tick(2);
+  assert.notEqual(w.reports.d?.data?.outcome, 'closed');
+});
+
+test('a piece queued again with its cut-off card open keeps that one card', async () => {
+  const w = await closedDep();
+  w.work.d.work.at = new Date(w.clock.now).toISOString();
+  await w.tick(3);
+  assert.equal(w.cards().filter((c) => c.work === 'd').length, 1);
+  w.answer('d', START_ANYWAY);
+  await w.tick(2);
+  assert.equal(w.runsOf('d').length, 1);
+});
+
+test('a stopped piece\'s card says its pull request stays open, however the card came', async () => {
+  const run = quiet();
+  run[1] = { ...run[1], outcome: 'failed', pr: 7 };
+  const w = wayBack({ recordings: { a: run, z: quiet() }, pace: 2 });
+  w.put('a', { files: ['one.js'], place: 0 });
+  await w.tick(2);
+  w.dispatcher.reserved();
+  w.put('z', { place: 1 });
+  w.work.z.work.data.dependsOn = ['a'];
+  await w.tick(3);
+  assert.match(w.cardOf('a').options[1].says, /#7 stays open/);
+});
+
+test('a cap card still owed brings no second card about the same stopped piece', async () => {
+  const w = wayBack({ recordings: { f: forever() }, pace: 1, designOf: slicesOf, settings: { capMinutes: { slice: 1 } } });
+  w.put('f', { lane: 'feature', place: 0 });
+  await w.tick();
+  w.clock.now = new Date(w.clock.now.getTime() + 5 * 60000);
+  w.refuseWrite = (kind, data) => kind === 'question' && data.engine?.ask?.startsWith('cap:');
+  for (let n = 0; n < 5; n += 1) await w.tick().catch(() => {});
+  w.refuseWrite = null;
+  await w.tick(3);
+  assert.equal(openCards(w).length, 1);
+  assert.match(w.cardOf('f').what, /cap/);
+});

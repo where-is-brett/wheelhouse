@@ -49,6 +49,7 @@ const STRANDED_BECAUSE = { clash: 'other work is waiting for its files', depende
 export const restartStrandedWords = (title, why) => `${title} has stopped with nothing left to carry it on, and ${STRANDED_BECAUSE[why] ?? STRANDED_BECAUSE.parked}. Nothing more of it starts until you say.`;
 export const RESTART_UNSURE_AGAIN = 'It checks whether a run began: one on record goes on, and a stray one is ended before it starts again. If that can\'t be done, you get a new card.';
 export const START_ANYWAY = 'Start it anyway';
+export const cutOffStoppedWords = (title) => `${title} stops here, as you chose; none of it had started.`;
 const named = (by) => (by.length < 2 ? by.join('') : `${by.slice(0, -1).join(', ')} and ${by.at(-1)}`);
 export const cutOffWords = (title, by) => `${title} depends on ${named(by)}, which won't be added as things stand, so it can't start by itself. It waits until you say.`;
 export const waitsOnItselfWords = (title, by) => `${title} and ${named(by)} wait on each other, so none of them can start by itself. It waits until you say.`;

@@ -1067,6 +1067,8 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     // What a run carries: { raised, runs } (the runs before it whose spend counts against its caps).
     carried: (runId) => state.carried[runId] ?? null,
     questionOf: (runId) => state.capped[runId]?.question ?? null,
+    // The pieces with a cap card still to be written, which the dispatcher mustn't ask about a second time.
+    owedWork: () => new Set(Object.values(state.capsOwed).map((card) => card.work)),
     // The pull requests the queue has left alone until the director approves them, { [pr]: head }.
     parkedHeads: () => Object.fromEntries(Object.entries(state.parked).filter(([, kept]) => kept.taken && !kept.handed).map(([pr, kept]) => [pr, kept.head])),
     // The pieces with a card of the router's open. Views that can't be read name none, so each keeps its place.

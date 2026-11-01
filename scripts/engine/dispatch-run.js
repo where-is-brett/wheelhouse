@@ -19,7 +19,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { dispatch, MERGE_WORK } from './dispatcher.js';
-import { reservedUnreadWords, noCardBehindWords, restartRefusedWords, restartCardWords, restartUnsureWords, restartStrandedWords, prLeftOpenWords, wakeLateWords, STOPPED_RESTART_WORDS, ORPHAN_LEFT_WORDS, RESTART_UNSURE_AGAIN, START_ANYWAY, cutOffWords, waitsOnItselfWords, startAnywayWords } from './words.js';
+import { reservedUnreadWords, noCardBehindWords, restartRefusedWords, restartCardWords, restartUnsureWords, restartStrandedWords, prLeftOpenWords, wakeLateWords, STOPPED_RESTART_WORDS, ORPHAN_LEFT_WORDS, RESTART_UNSURE_AGAIN, START_ANYWAY, cutOffStoppedWords, cutOffWords, waitsOnItselfWords, startAnywayWords } from './words.js';
 import { workOrder } from './order.js';
 import { limitsFor } from './caps.js';
 import { ENGINE_QUESTIONS } from './router.js';
@@ -141,6 +141,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   // The pieces with a card of the card router's open, from the runner, which is built after this.
   let routerPieces = () => new Set();
   let parkedPrs = () => ({});
+  // The pieces with a cap card of the card router's still to be written.
+  let routerOwed = () => new Set();
   const waitingNow = (views) => {
     const pieces = new Set(ownWaiting({ state, views }));
     try { for (const work of routerPieces()) pieces.add(work); } catch { /* it reads as none, so each keeps its place */ }
@@ -471,7 +473,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       }
       return;
     }
-    if (stopped()) return;
+    if (stopped() || cardOwed(work)) return;
     const what = step.finish ? 'its switch-on run' : `slice ${step.slice} of ${design.slices.length}`;
     let why = null;
     if (Number.isInteger(run.pr) && kept.closed?.[run.pr]) why = 'closed';
@@ -808,7 +810,10 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     const id = `q-${entry.work}-${RESTART_QUESTIONS + state.restartCards}`;
     delete entry.starting;
     delete entry.uncertain;
-    Object.assign(entry, { asked: id, askedWhat: what, ...marks });
+    // Its Stop here takes this pull request out of the merge queue's reach, so the card says so.
+    const merged = state.features[entry.work]?.merged ?? {};
+    const prLeft = runsOfWork(readViews() ?? {}, entry.work).map((r) => r?.data?.pr).filter((pr) => Number.isInteger(pr) && !state.closedPrs.includes(pr) && !Object.hasOwn(merged, pr)).at(-1);
+    Object.assign(entry, { asked: id, askedWhat: what, prLeft, ...marks });
     keep();
     await restartCard(entry);
   }
@@ -1038,11 +1043,12 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   }
 
   const reservedFiles = () => Object.fromEntries(Object.entries(state.reserved).map(([work, kept]) => [work, kept.files]));
+  const cardOwed = (work) => Object.values(state.owed).some((o) => o.data.work === work) || routerOwed().has(work);
   // Whether nothing moves a piece on by itself: every run ended, no card and none owed, no way back, nothing sent back, and
   // no pull request with the merge queue. The director's Leave it counts too: nothing was done to it, as the card said.
   const leftByDirector = (views, work) => [state.clashAsked[work], state.redAsked[work]].some((id) => views.questions?.[id]?.answer?.label === LEAVE_IT);
   function restsQuiet(views, work, ready) {
-    if (onTheWay(work) || waitingNow(views).has(work) || Object.values(state.owed).some((o) => o.data.work === work)) return false;
+    if (onTheWay(work) || waitingNow(views).has(work) || cardOwed(work)) return false;
     const left = leftByDirector(views, work);
     if (!left && state.sentBack[work] !== state.acted[work] && state.sentBack[work] !== undefined) return false;
     if (!left && state.reds[work] !== undefined && state.reds[work].times !== state.redActed[work]) return false;
@@ -1057,7 +1063,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     return [
       ...decided.live.filter((work) => !restsQuiet(views, work, ready)), ...started.filter((s) => s.ok === true || s.uncertain === true).map((s) => s.work),
       ...[...state.admitted, ...state.returning].filter((e) => !e.asked && moving(e.work)).map((e) => e.work),
-      ...ready.map(([, r]) => r.work).filter(moving), ...(queueGoing ? [MERGE_WORK] : []),
+      ...ready.map(([, r]) => r.work).filter((work) => moving(work) && !leftByDirector(views, work)), ...(queueGoing ? [MERGE_WORK] : []),
     ];
   }
 
@@ -1087,27 +1093,30 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       }
       state.stranded[work] = key;
       delete state.quietSeen[work];
-      const pr = runs.map((r) => r.pr).filter((n) => Number.isInteger(n) && !state.closedPrs.includes(n)).at(-1);
       const entry = { work, lane: current.data?.lane ?? last.lane, via: 'try-again', key, at: now().toISOString(), queued: current.at ?? null, ...(isText(last.branch) ? { branch: last.branch, carryOn: true } : {}) };
       state.returning.push(entry);
-      await askAboutRestart(entry, restartStrandedWords(titleOf(views, work), why), pr === undefined ? {} : { prLeft: pr });
+      await askAboutRestart(entry, restartStrandedWords(titleOf(views, work), why));
     }
   }
 
-  // Work whose dependency can't be added: closed, not on the record, never able to start, or waiting on the work itself.
+  // Work whose dependency can't be added: closed, not on the record, or waiting on the work itself.
   // No piece at the far end can be asked about, so the card is the held piece's own, once for each queueing.
   async function cutOffTick(views, decided, going) {
     if (stopped() || incidentOpen(views)) return;
     const reports = isPlain(views.reports) ? views.reports : {};
-    const held = new Set(decided.hold.map((h) => h.work));
-    const running = goingNow(views, decided, going);
     const cannot = (dep) => {
       const current = views.work?.[dep]?.work;
-      return !isPlain(current) || (reports[dep]?.data?.outcome !== 'merged' && endedBy(reports, dep, current)) || (!held.has(dep) && !running.includes(dep) && runsOfWork(views, dep).length === 0);
+      return !isPlain(current) || (reports[dep]?.data?.outcome !== 'merged' && endedBy(reports, dep, current));
     };
-    for (const { work, why, by } of noCardBehind({ hold: decided.hold, running, cards: cardsNow(views) })) {
+    for (const { work, why, by } of noCardBehind({ hold: decided.hold, running: goingNow(views, decided, going), cards: cardsNow(views) })) {
       const current = views.work?.[work]?.work;
       if (why !== 'dependency' || !isPlain(current) || state.cutOffFor[work] === current.at) continue;
+      // Queued again with its card still open: that card stands for this queueing too.
+      if (state.cutOffAsked[work] !== undefined) {
+        state.cutOffFor[work] = current.at;
+        keep();
+        continue;
+      }
       const lost = by.filter(cannot);
       const circle = lost.length === 0 && waitsOnItself({ hold: decided.hold, work });
       if (lost.length === 0 && !circle) continue;
@@ -1134,12 +1143,15 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   async function cutOffAnswers(views) {
     for (const [work, id] of Object.entries(state.cutOffAsked)) {
       const label = views.questions?.[id]?.answer?.label;
-      if (label === START_ANYWAY) state.waived[work] = state.cutOffFor[work];
-      else if (label === STOP_HERE) {
-        const title = titleOf(views, work);
-        await write('report', { work, outcome: 'closed', summary: STOPPED_RESTART_WORDS(title), rulings: [] });
-        await write('note', { about: 'engine', work, words: STOPPED_RESTART_WORDS(title) });
-      } else continue;
+      const current = views.work?.[work]?.work;
+      // Begun or ended meanwhile: the card has nothing left to decide.
+      const settled = !isPlain(current) || runsOfWork(views, work).some((r) => since(r, current));
+      if (!settled && label === START_ANYWAY) state.waived[work] = current.at;
+      else if (!settled && label === STOP_HERE) {
+        const words = cutOffStoppedWords(titleOf(views, work));
+        await write('report', { work, outcome: 'closed', summary: words, rulings: [] });
+        await write('note', { about: 'engine', work, words });
+      } else if (!settled) continue;
       delete state.cutOffAsked[work];
       keep();
     }
@@ -1212,7 +1224,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     const closedPrs = new Set([...state.closedPrs, ...Object.values(state.features).flatMap((f) => Object.keys(f?.closed ?? {}).map(Number))]);
     const ended = (work) => reports[work]?.data?.outcome === 'merged' || endedBy(reports, work, views.work?.[work]?.work);
     const leftAt = leftAlone(ready);
-    const waiting = Object.entries(ready).filter(([pr, r]) => !ended(r.work) && !closedPrs.has(Number(pr)) && leftAt[pr] !== r.head);
+    const waiting = Object.entries(ready).filter(([pr, r]) => !ended(r.work) && !closedPrs.has(Number(pr)) && !Object.hasOwn(state.features[r.work]?.merged ?? {}, pr) && leftAt[pr] !== r.head);
     const newReady = waiting.some(([pr]) => !state.seenReady.includes(pr));
     const requests = typeof engine.countsRequests === 'function'
       ? { counts: () => engine.countsRequests(config()?.routing ?? {}) === true, used: await spentThisMonth(), cap: Number.isFinite(s.capRequests) ? s.capRequests : 0, confirmed: engine.requestsConfirmed === true }
@@ -1439,6 +1451,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     },
     // Who tells this of the card router's cards: the runner, through its `waitingWork`.
     onWaiting(fn) { if (typeof fn === 'function') routerPieces = fn; },
+    onOwed(fn) { if (typeof fn === 'function') routerOwed = fn; },
     // And of the pieces going back to work on an answer: the runner's `reworkWork`.
     onReworks(fn) { if (typeof fn === 'function') reworkingNow = fn; },
     // And of the cards themselves: the runner's `openCards`.
