@@ -4171,6 +4171,7 @@ export async function startHelper({
       },
       // A project in git alone is named after its own mirror, with no owner: Archon's workspace is mirrors/<project>.
       repo: (project) => (recordOf(project).host === 'local' ? project : recordOf(project).repo),
+      repoHost: (project) => mergeRepoOf(recordOf(project))?.host ?? null,
       local: (project) => recordOf(project).host === 'local',
       // The host's preview of the commit, or null.
       previewUrl: async (project, sha) => {

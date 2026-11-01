@@ -14,7 +14,8 @@
 //   host                  { push(project, { dir }) -> { ok, branch } | refusal: pushes the folder's own branch;
 //                           open(project, { branch, title, body }) -> { pr, url, head }: opens or updates its pull
 //                           request; repo(project) -> 'owner/name', or a project in git alone's name; local(project) -> whether
-//                           it is one; previewUrl(project, sha) -> the host's preview of the commit, or null }
+//                           it is one; previewUrl(project, sha) -> the host's preview of the commit, or null;
+//                           repoHost(project) -> the host's name, where it can be read }
 //   provenance(project, { branch })   records what built the branch's pull request (the pack's digest and Archon's)
 //   previewsDir(project)  where previews are kept, `previews/<work>/<head>/` under the project's engine files
 //   incidentOf(project, id)   the open red-main incident of that id, or null
@@ -353,7 +354,7 @@ export function engineRoutes({
     }
     const repo = host?.repo(run.project);
     // A project in git alone has no merge queue of Archon's to take it: the local queue reads what is ready below.
-    const handed = host?.local?.(run.project) === true ? { ok: true } : await engine.handOver({ project: run.folder, repo, pr: opened.pr, url: `https://github.com/${repo}/pull/${opened.pr}`, runId, at: now().toISOString() });
+    const handed = host?.local?.(run.project) === true ? { ok: true } : await engine.handOver({ project: run.folder, repo, pr: opened.pr, url: `https://${host?.repoHost?.(run.project) ?? 'github.com'}/${repo}/pull/${opened.pr}`, runId, at: now().toISOString() });
     if (!handed?.ok) return { ok: false, refused: handed?.refused ?? 'the engine didn\'t take the work' };
     verdicts.ready = { ...(verdicts.ready ?? {}), [opened.pr]: { head: opened.head, runId, showFirst: run.order.showFirst === true, work: run.order.work } };
     keepVerdicts(run.project, verdicts);
