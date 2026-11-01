@@ -49,6 +49,7 @@ const GOAL_HELD = {
   'winding-down': 'waits: the goal is winding down, so nothing more of it starts',
   spend: 'waits: the goal has reached its spend, so nothing more of it starts',
   'goal-ended': 'waits: its goal has ended, so nothing more of it starts until a new sheet lists it',
+  'goal-unsigned': 'waits: it belongs to a goal that hasn\'t started',
 };
 export const goalHeldWords = (title, why) => `${title} ${GOAL_HELD[why] ?? GOAL_HELD.goal}.`;
 

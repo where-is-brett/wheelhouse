@@ -51,6 +51,7 @@ function fake({ pr = { ok: true, result: { headSha: FULL, state: 'open' } }, ref
   const takeOverCalls = [];
   return {
     calls,
+    goalRecheck: async () => ({ ok: true, refused: [] }),
     prState: async (b) => { calls.prState.push(b); return pr; },
     state: {
       write: async (b) => { calls.write.push(b); return refuse ? no : { ok: true }; },
@@ -2098,7 +2099,7 @@ test('a sheet card left over an hour asks to be made again', async () => {
     const c = fake();
     const got = await decide(startInput({ [startQuestion(sheet)]: 'Start' }), deps(c));
     assert.deepEqual(recorded(c), []);
-    assert.match(contextOf(got), /goal-card/);
+    assert.match(contextOf(got), /fresh card/);
   });
 });
 
@@ -2107,4 +2108,22 @@ test('Start signs only on a goal\'s card, so a plain question offering it stays 
   assert.equal(signsOn('Start', 'Shall we start with the page or the file?'), false);
   assert.equal(signsOn('Approve', 'Anything'), true);
   assert.equal(signsOn('Not now', startGoalLine('orders-export', 'a'.repeat(64))), false);
+});
+
+test('a Start stops on what the helper\'s checks find at the click, and on a helper that can\'t say', async () => {
+  await withHome(async (home) => {
+    const sheet = goalSheet();
+    putViews(home, { goalChecks: baseline(sheet) });
+    keepEvent(goalEvent(sheet));
+    offerStart(sheet);
+    for (const [goalRecheck, words] of [
+      [async () => ({ ok: true, refused: ['An incident is open.', 'The main line is red.'] }), /An incident is open; The main line is red/],
+      [async () => { throw new Error('gone'); }, /couldn't be read/],
+    ]) {
+      const c = fake();
+      const got = await decide(startInput({ [startQuestion(sheet)]: 'Start' }), deps({ ...c, goalRecheck }));
+      assert.deepEqual(recorded(c), []);
+      assert.match(contextOf(got), words);
+    }
+  });
 });

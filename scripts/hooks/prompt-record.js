@@ -206,15 +206,27 @@ function startGoalOf(project, question, shown, { now, stopState }) {
     .filter((e) => e.data?.id === m[1] && e.data.sheet !== null && typeof e.data.sheet === 'object')
     .map((e) => [sheetHash(e.data.sheet), e.data.sheet])
     .filter(([h]) => h.startsWith(m[2])));
-  if (sheets.size !== 1) return null;
+  if (sheets.size !== 1) return { refused: 'This card doesn\'t name one sheet of the goal: ask the First Mate for a fresh card' };
   const [[hash, sheet]] = [...sheets];
   const offer = goalOfferOf(project, question, shown, { goal: m[1], sheet: hash });
-  if (offer === null) return { refused: 'This isn\'t the card made from the goal\'s sheet: ask `goal-card` for it' };
-  if (!(now().getTime() - Date.parse(offer.data.at) < SHEET_CARD_MINUTES * 60000)) return { refused: `Its checks before leaving were read over ${SHEET_CARD_MINUTES} minutes ago: ask \`goal-card\` for its card again` };
+  if (offer === null) return { refused: 'This isn\'t the card made from the goal\'s sheet: ask the First Mate for a fresh one' };
+  if (!(now().getTime() - Date.parse(offer.data.at) < SHEET_CARD_MINUTES * 60000)) return { refused: `Its checks before leaving were read over ${SHEET_CARD_MINUTES} minutes ago: ask the First Mate for a fresh card` };
   // The same rule the desk's act and the goals view ask (scripts/engine/goal.js), asked before the click is signed.
   const views = localViews(project, ['goals', 'work', 'goalChecks']) ?? {};
   const refused = startProblem({ id: m[1], hash, sheet, goals: views.goals ?? {}, work: views.work ?? {}, goalChecks: views.goalChecks ?? {}, stopped: stopState().on === true, now: now() });
   return refused === null ? { action: 'start-goal', goal: m[1], hash } : { refused };
+}
+
+// What stops the goal now, as the helper reads its checks before leaving at the click: a card can wait, and an incident, a red
+// main line, an unwell engine or a newer sheet may have come since it was made. Null when nothing does. A helper that can't say stops it.
+async function stopsAtStart(client, project, { goal, hash }) {
+  try {
+    const got = await client.goalRecheck({ project, goal, hash });
+    if (got?.ok !== true) return got?.refused ?? 'Its checks before leaving couldn\'t be read';
+    return got.refused.length > 0 ? got.refused.map((line) => line.replace(/\.$/, '')).join('; ') : null;
+  } catch {
+    return 'Its checks before leaving couldn\'t be read';
+  }
 }
 
 // The one full hash of a proposed change that the card's twelve characters name, or null.
@@ -401,7 +413,9 @@ export async function earned({ project, question, label, card, client, now, left
   if (label === 'Start' && setLinesOf(question).some((line) => START_GOAL_LINE.test(line))) {
     const record = startGoalOf(project, question, card, { now, stopState });
     if (record?.refused !== undefined) return { refused: record.refused };
-    return record ? action(record) : null;
+    if (!record) return null;
+    const stops = await stopsAtStart(client, project, record);
+    return stops === null ? action(record) : { refused: stops };
   }
   if (label === 'Approve') {
     const prs = [...question.matchAll(APPROVE)];

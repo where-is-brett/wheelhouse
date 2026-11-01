@@ -2285,7 +2285,7 @@ export async function startHelper({
       const lean = await leanEarned(project, card.data, label);
       if (lean !== undefined) return lean;
     }
-    const client = { prState: ({ number }) => routes['/pr/state']({ project, number }, ctx) };
+    const client = { prState: ({ number }) => routes['/pr/state']({ project, number }, ctx), goalRecheck: (args) => routes['/goal-recheck'](args, ctx) };
     let got;
     try {
       got = await earned({ project, question, label, client, now, left: (p) => p, shownAt: card.at });
@@ -4514,6 +4514,7 @@ export async function startHelper({
     // The First Mate's goal sheet (scripts/engine/goal-start.js): the bounds to propose, then the card, signed by this computer.
     '/goal-draft': ({ project, pieces }) => sheetsOf(project).draft({ pieces: Array.isArray(pieces) ? pieces : [] }),
     '/goal-card': ({ project, goal }) => sheetsOf(project).card({ goal }),
+    '/goal-recheck': ({ project, goal, hash }) => sheetsOf(project).recheck({ goal, hash }),
     '/review/run': async (body, ctx) => {
       try {
         return await doReviewRun(body, ctx);

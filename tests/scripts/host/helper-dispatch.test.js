@@ -297,9 +297,9 @@ test('through the helper: the draft, the sheet\'s card, and a click on that card
         const got = await client.goalCard({ cwd: p.folder, goal: 'sale' });
         assert.equal(got.offered, true, JSON.stringify(got));
         assert.equal(records('goal-card').length, 1);
-        const lost = await earned({ project: P, question: got.question.question, label: 'Start', card: { ...got.question, question: `${got.question.question}\nReworded.` }, now });
+        const lost = await earned({ project: P, question: got.question.question, label: 'Start', card: { ...got.question, question: `${got.question.question}\nReworded.` }, client, now });
         assert.equal(lost.made ?? null, null);
-        const { made } = await earned({ project: P, question: got.question.question, label: 'Start', card: got.question, now });
+        const { made } = await earned({ project: P, question: got.question.question, label: 'Start', card: got.question, client, now });
         assert.deepEqual([made.data.action, made.data.goal, made.data.hash], ['start-goal', 'sale', hash]);
       } finally {
         await helper.close();

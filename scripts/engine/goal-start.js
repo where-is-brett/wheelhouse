@@ -11,7 +11,7 @@ import { onNewEngine } from './lanes.js';
 import { cardHash } from '../lib/measures-clicks.js';
 import { START_GOAL_LINE } from '../state/card-lines.js';
 import { demoSlice, readSlices } from './feature.js';
-import { lastEnded, startProblem, unfinishedOf, sheetHash, isWaived } from './goal.js';
+import { checkSheet, lastEnded, startProblem, unfinishedOf, sheetHash, isWaived } from './goal.js';
 import { FAILED_IN_A_ROW, READING_FRESH_MINUTES, REDS_TO_STOP, SHARE_OF_WHAT_IS_LEFT } from './goal-limits.js';
 
 // Check 93 saw paid usage bill only through a stand-in, and no real limit was reached, so an account that may spill is told
@@ -51,14 +51,14 @@ export function proposedSpend({ tokens, reading, now }) {
 }
 
 // The pieces a draft sheet lists, each with the hash of its record: those `asked`, or with none, what the last goal left,
-// which is a Carry on's new sheet. { pieces: [{ work, hash }], left: { goal, ending } | null }.
+// which is a Carry on's new sheet. { pieces: [{ work, hash }], left: { goal, ending, sheet } | null }.
 export function draftPieces({ asked, views }) {
   const line = (work) => ({ work, hash: dataHash(views.work[work].work.data) });
   for (const work of asked) if (views?.work?.[work]?.work?.data === undefined) throw new Error(`There is no work called ${work}: record it first`);
   if (asked.length > 0) return { pieces: asked.map(line), left: null };
   const last = lastEnded(views);
   const left = last === null ? [] : unfinishedOf(last, views).filter((work) => views?.work?.[work]?.work?.data !== undefined);
-  return left.length === 0 ? { pieces: [], left: null } : { pieces: left.map(line), left: { goal: last.id, ending: last.ended.ending } };
+  return left.length === 0 ? { pieces: [], left: null } : { pieces: left.map(line), left: { goal: last.id, ending: last.ended.ending, sheet: last.sheet } };
 }
 
 // Whether the account may spill into paid usage, from Claude Code's own account file: true, false, or null when it can't be
@@ -156,7 +156,12 @@ function workLine(sheet, views, named) {
     return data?.visible === true && !isWaived(line, data);
   }).length;
   const seen = shown === 0 ? '' : ` You see ${shown === 1 ? '1 of them before it goes in' : `${shown} of them before they go in`}.`;
-  return `The work: ${named === 'count' ? many : `${many}: ${list.join(' · ')}`}.${seen}`;
+  const waived = sheet.pieces.filter((line) => {
+    const data = views?.work?.[line.work]?.work?.data;
+    return data !== undefined && isWaived(line, data);
+  }).map((line) => (named === 'titles' ? nameOf(views, line.work) : line.work));
+  const unseen = waived.length === 0 ? '' : ` Not shown to you first: ${waived.join(' · ')}.`;
+  return `The work: ${named === 'count' ? many : `${many}: ${list.join(' · ')}`}.${seen}${unseen}`;
 }
 
 // The composer's input for the sheet's card, every word of it from the sheet (section 5). `warns` are the checks' warnings.
@@ -240,14 +245,16 @@ export function sheetDesk({ views, events, health, config, settings, designOf, m
     return { ok: true, pieces: lines, ...(left === null ? {} : { left }), ...(lines.length === 0 ? {} : proposedSpend({ tokens, reading: reading(), now: now() })) };
   }
 
-  // The latest sheet of `goal`, read against its baseline: the checks' results, then what refuses it or the card itself.
-  async function card({ goal }) {
+  // The latest sheet of `goal` and its checks before leaving, or a refusal, or `waiting` for a baseline.
+  async function leaving(goal) {
     const held = views();
     const sheet = events().filter((e) => e.kind === 'goal' && e.data?.id === goal).at(-1)?.data.sheet;
     if (sheet === undefined) return { ok: false, refused: `There is no sheet for the goal ${goal}` };
+    const shape = checkSheet(sheet, { now: now() });
+    if (shape !== null) return { ok: false, refused: shape };
     const hash = sheetHash(sheet);
     const baseline = (held.goalChecks?.[goal] ?? []).filter((c) => c.when === 'before' && c.hash === hash).at(-1);
-    if (baseline === undefined) return { ok: true, offered: false, waiting: true };
+    if (baseline === undefined) return { waiting: true };
     const results = baseline.said === undefined ? baseline.results : baseline.said;
     const at = now();
     const midpoints = sheet.pieces.map((p) => p.work).filter((work) => {
@@ -262,6 +269,22 @@ export function sheetDesk({ views, events, health, config, settings, designOf, m
       },
       power: { battery: battery() }, sessions: sessions(), reading: reading(), paid: paid(),
     });
+    return { held, sheet, hash, at, results, refused, warns };
+  }
+
+  // The checks again as the director clicks Start, since a card can wait: what stops it now.
+  async function recheck({ goal, hash }) {
+    const got = await leaving(goal);
+    if (got.ok === false) return got;
+    if (got.waiting === true || got.hash !== hash) return { ok: true, refused: ['The goal\'s sheet has changed since this card was made.'] };
+    return { ok: true, refused: got.refused };
+  }
+
+  // The sheet's checks and their results, then what refuses it or the card itself.
+  async function card({ goal }) {
+    const got = await leaving(goal);
+    if (got.ok === false || got.waiting === true) return got.waiting === true ? { ok: true, offered: false, waiting: true } : got;
+    const { held, sheet, hash, at, results, refused, warns } = got;
     if (refused.length > 0) return { ok: true, offered: false, refused, results };
     const others = (held.waiting ?? []).filter((c) => c?.data?.kind === 'start-goal' && START_GOAL_LINE.exec(String(c.data.line))?.[1] === goal);
     const last = others.at(-1);
@@ -282,7 +305,7 @@ export function sheetDesk({ views, events, health, config, settings, designOf, m
     return { ok: true, offered: true, question, id, warns, results };
   }
 
-  return { draft, card };
+  return { draft, card, recheck };
 }
 
 // Whether the Mac is on battery, from `pmset -g batt`: true, false, or null where that can't be said.

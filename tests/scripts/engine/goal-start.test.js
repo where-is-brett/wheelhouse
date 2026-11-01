@@ -216,7 +216,7 @@ test('the draft lists what is asked, or else what the last goal left, with each 
   assert.throws(() => draftPieces({ asked: ['nothing-here'], views }), /nothing-here/);
   const ended = { ...views, goals: { before: { ended: { ending: 'time', at: NOW.toISOString(), spent: {} }, sheet: sheet(), hash: 'x', startedAt: NOW.toISOString(), endAsked: null } } };
   const got = draftPieces({ asked: [], views: { ...ended, reports: { 'export-page': { data: { outcome: 'merged' } } } } });
-  assert.deepEqual(got, { pieces: [{ work: 'export-file', hash: dataHash(FILE) }], left: { goal: 'before', ending: 'time' } });
+  assert.deepEqual(got, { pieces: [{ work: 'export-file', hash: dataHash(FILE) }], left: { goal: 'before', ending: 'time', sheet: sheet() } });
   assert.deepEqual(draftPieces({ asked: [], views }), { pieces: [], left: null });
 });
 
@@ -255,6 +255,8 @@ test('a waived piece isn\'t counted as shown first, and no tick covers a whole g
   const views = viewsFor(given);
   views.work['export-file'].work.data = small;
   assert.doesNotMatch(cardOf(given, { views }).question.question, /You see/);
+  // The click signs the waiver, so the card names the piece it covers.
+  assert.match(cardOf(given, { views }).question.question, /Not shown to you first: The file format\./);
 });
 
 test('the card shows what is wrong, and only that', () => {
@@ -415,4 +417,20 @@ test('the card lists what proves each piece, pages too', () => {
   assert.doesNotThrow(() => composeSheetCard({ id: 'orders-export', sheet: given, views: viewsFor(given), warns: [], now: NOW, timeZone: 'UTC' }));
   const none = sheet();
   assert.doesNotMatch(sheetCardInput({ id: 'orders-export', sheet: none, views: viewsFor(none), warns: [], now: NOW, timeZone: 'UTC' }).what, /proves itself/);
+});
+
+test('the checks run again at the click: what came since the card stops it, a newer sheet too', async () => {
+  const given = sheet();
+  const hash = sheetHash(given);
+  assert.deepEqual(await desk().sheets.recheck({ goal: 'orders-export', hash }), { ok: true, refused: [] });
+  const stopped = desk({ extra: { stopped: () => true } });
+  assert.match((await stopped.sheets.recheck({ goal: 'orders-export', hash })).refused.join(' '), /All stop is on/);
+  assert.match((await desk().sheets.recheck({ goal: 'orders-export', hash: 'a'.repeat(64) })).refused.join(' '), /sheet has changed/);
+  assert.equal((await desk().sheets.recheck({ goal: 'another', hash })).ok, false);
+});
+
+test('a sheet that was never checked is refused in words, not by a crash', async () => {
+  const got = await desk({ given: { title: 'No shape' }, views: viewsFor(sheet()) }).sheets.card({ goal: 'orders-export' });
+  assert.equal(got.ok, false);
+  assert.match(got.refused, /done check/);
 });
