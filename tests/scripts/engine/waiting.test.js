@@ -188,3 +188,12 @@ test('a limit well past its reset no longer holds: the waker has failed, and oth
   assert.deepEqual(limitedWork(views, new Date('2026-11-01T05:29:00.000Z')), ['a']);
   assert.deepEqual(limitedRuns(views), ['r1'], 'with no time given, every run parked at a limit');
 });
+
+test('a limit whose reset can\'t be read stops holding six hours after its ask', () => {
+  for (const resetAt of [undefined, 'soon']) {
+    const limit = { ...ask('a', 'r1', 'usage-limit'), data: { ...ask('a', 'r1', 'usage-limit').data, ...(resetAt ? { resetAt } : {}) } };
+    const views = { runs: { a: [run('a', 'r1', 'paused')] }, asks: { a: [limit] } };
+    assert.deepEqual(limitedRuns(views, new Date('2026-11-01T07:59:00.000Z')), ['r1']);
+    assert.deepEqual(limitedRuns(views, new Date('2026-11-01T08:00:00.000Z')), []);
+  }
+});

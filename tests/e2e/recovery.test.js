@@ -545,7 +545,7 @@ test('a run going again with its started lost stands as started, so its caps rea
 });
 
 test('a limit the engine can\'t be read for, or still reads as paused, stands', async () => {
-  for (const record of [{ status: 'unknown', unread: true }, { status: 'paused' }, null]) {
+  for (const record of [{ status: 'unknown', unread: true }, { status: 'unknown' }, { status: 'paused' }, null]) {
     const w = wayBack({ recordings: { a: atLimit('lim-a'), b: quiet() } });
     w.put('a', { place: 0 });
     await w.tick(2);
@@ -557,15 +557,60 @@ test('a limit the engine can\'t be read for, or still reads as paused, stands', 
   }
 });
 
-test('a limit past its reset by half an hour lets other work on, and the Logbook says so once', async () => {
-  const w = wayBack({ recordings: { a: atLimit('lim-a', { resetAt: '2026-10-29T10:20:00.000Z' }), b: quiet() } });
+const lateLimit = async (options = {}) => {
+  const w = wayBack({ recordings: { a: atLimit('lim-a', { resetAt: '2026-10-29T10:20:00.000Z' }), b: quiet() }, pace: 1, ...options });
   w.put('a', { place: 0 });
   await w.tick(2);
   w.put('b', { place: 1 });
   await w.pass(45 * MINUTE);
   assert.deepEqual(w.runsOf('b'), []);
+  assert.equal(openCards(w).length, 0);
   await w.pass(10 * MINUTE);
-  assert.equal(w.runsOf('b').length, 1);
+  return w;
+};
+
+test('a limit past its reset by half an hour comes to one card, and other work goes on even at a pace of one', async () => {
+  const w = await lateLimit();
   assert.equal(w.stateOf('a'), 'paused');
-  assert.equal(w.notes().filter((words) => words === limitLateWords('a')).length, 1);
+  assert.equal(w.cardOf('a').what, limitLateWords('a'));
+  assert.equal(w.runsOf('b').length, 1);
+  await w.pass(5 * MINUTE);
+  assert.equal(openCards(w).length, 1);
+});
+
+test('its Stop ends the run, and its Give it more wakes it', async () => {
+  const stopped = await lateLimit();
+  stopped.answer('a', labels(stopped.cardOf('a')).at(-1));
+  await stopped.tick(2);
+  assert.equal(stopped.stateOf('a'), 'ended');
+  const more = await lateLimit();
+  more.answer('a', labels(more.cardOf('a'))[0]);
+  await more.tick(3);
+  assert.equal(resumes(more).length, 1);
+});
+
+test('a waker only late isn\'t stopped as a run past its cap, and Stop on its card still ends it', async () => {
+  const w = await lateLimit();
+  w.lift('a', 'lim-a');
+  engineSays(w, w.runsOf('a')[0], { status: 'running' });
+  await w.tick(3);
+  assert.deepEqual(w.engine.calls.filter((c) => c.call === 'act' && c.action.cancel), []);
+  w.answer('a', labels(w.cardOf('a')).at(-1));
+  await w.tick(2);
+  assert.equal(w.engine.calls.filter((c) => c.call === 'act' && c.action.cancel).length, 1);
+});
+
+test('a limit with no reset on record comes to its card after six hours, and an unknown read ends nothing', async () => {
+  const w = wayBack({ recordings: { a: atLimit('lim-a'), b: quiet() }, pace: 1 });
+  w.put('a', { place: 0 });
+  await w.tick(2);
+  engineSays(w, w.runsOf('a')[0], { status: 'unknown' });
+  w.put('b', { place: 1 });
+  await w.pass(5 * 60 * MINUTE, 10 * MINUTE);
+  assert.equal(w.stateOf('a'), 'paused');
+  assert.equal(openCards(w).length, 0);
+  await w.pass(2 * 60 * MINUTE, 10 * MINUTE);
+  assert.equal(w.stateOf('a'), 'paused');
+  assert.equal(openCards(w).length, 1);
+  assert.equal(w.runsOf('b').length, 1);
 });

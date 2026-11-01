@@ -6,7 +6,7 @@
 // section 9.3): that is read from the record, so a helper started again keeps it.
 import { MERGE_WORK } from './dispatcher.js';
 import { since } from '../foreman/queue.js';
-import { LIMIT_LATE_MINUTES } from './recovery.js';
+import { LIMIT_LATE_MINUTES, LIMIT_NO_RESET_HOURS } from './recovery.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const entriesOf = (x) => (isPlain(x) ? Object.entries(x) : []);
@@ -17,9 +17,10 @@ function runEnded(views, work, runId) {
   return (Array.isArray(list) ? list : []).filter((r) => r?.data?.runId === runId).at(-1)?.data?.state === 'ended';
 }
 
-// parkedAtLimit(views) -> [{ runId, work, resetAt }]: each run whose latest `run` record is `paused` and whose latest `ask`
+// parkedAtLimit(views) -> [{ runId, work, lateAt }]: each run whose latest `run` record is `paused` and whose latest `ask`
 // is a usage limit. The reset's `started` or the run's ending says it is over, so nothing needs to hear of the ask being
-// resolved; a record that missed those is put right by the runner's look at the engine.
+// resolved; a record that missed those is put right by the runner's look at the engine. `lateAt` is when what should take
+// it on counts as having failed (milliseconds): well past its reset, or a good while after an ask whose reset can't be read.
 export function parkedAtLimit(views) {
   const found = [];
   for (const [work, list] of entriesOf(views?.runs)) {
@@ -28,17 +29,17 @@ export function parkedAtLimit(views) {
     for (const r of list) if (isPlain(r?.data)) latest.set(r.data.runId, r.data.state);
     const asks = Array.isArray(views?.asks?.[work]) ? views.asks[work] : [];
     for (const [runId, state] of latest) {
-      const ask = asks.filter((a) => a?.data?.runId === runId).at(-1)?.data;
-      if (state === 'paused' && ask?.kind === 'usage-limit') found.push({ runId, work, resetAt: ask.resetAt ?? null });
+      const ask = asks.filter((a) => a?.data?.runId === runId).at(-1);
+      if (state !== 'paused' || ask?.data?.kind !== 'usage-limit') continue;
+      const reset = Date.parse(ask.data.resetAt);
+      found.push({ runId, work, lateAt: Number.isNaN(reset) ? Date.parse(ask.at) + LIMIT_NO_RESET_HOURS * 60 * 60 * 1000 : reset + LIMIT_LATE_MINUTES * 60 * 1000 });
     }
   }
   return found;
 }
-// Whether a limit's reset is well past, so what should have taken its run on hasn't.
-export const limitLate = (resetAt, at) => at.getTime() - Date.parse(resetAt) >= LIMIT_LATE_MINUTES * 60 * 1000;
 // limitedRuns(views, now) -> [runId], and limitedWork(views, now) -> [work], the same runs' pieces: what holds other work
-// at `now`. One past its reset by that much holds nothing, since other work mustn't wait on a waker that failed.
-const holding = (views, at) => parkedAtLimit(views).filter((r) => !(at && limitLate(r.resetAt, at)));
+// at `now`. One past `lateAt` holds nothing, since other work mustn't wait on a waker that failed; the runner raises its card.
+const holding = (views, at) => parkedAtLimit(views).filter((r) => !(at && at.getTime() >= r.lateAt));
 export const limitedRuns = (views, at) => holding(views, at).map((r) => r.runId);
 export const limitedWork = (views, at) => [...new Set(holding(views, at).map((r) => r.work))];
 
