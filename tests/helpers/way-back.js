@@ -31,12 +31,14 @@ export function wayBack({ recordings = {}, pace = 3, settings = {}, testCommand 
   const clock = { now: new Date('2026-10-29T10:00:00.000Z') };
   const world = {
     engine, clock, work: {}, runs: {}, reports: {}, questions: {}, approvals: {}, incidents: { open: [] }, costs: {},
-    stop: false, written: [], starts: [], refuse: null, startAs: null, ready: {}, seenPr: {},
+    stop: false, written: [], shown: {}, starts: [], refuse: null, startAs: null, ready: {}, seenPr: {},
   };
   const at = () => clock.now.toISOString();
   const tock = () => { clock.now = new Date(clock.now.getTime() + 1000); };
   const notes = () => world.written.filter((w) => w.kind === 'note').map((w) => ({ kind: 'note', data: w.data }));
-  const views = () => ({
+  const ended = (data) => (world.runs[data.work] ?? []).filter((r) => r.data.runId === data.engine?.runId).at(-1)?.data.state === 'ended';
+  const shownBy = (lead) => Object.values(world.questions).filter((c) => c.question.data.joins === lead && (world.shown[lead] ?? []).includes(c.question.data.work)).map((c) => c.question.data.id);
+  const views = () => (joinQuestions(world.questions, { ended, shown: shownBy }), {
     work: world.work, runs: world.runs, reports: world.reports, questions: world.questions, approvals: world.approvals, incidents: world.incidents, costs: world.costs, levels: {}, cardsWaiting: cardsWaitingOf(notes()),
   });
   const record = (data) => { (world.runs[data.work] ??= []).push({ at: at(), data: { engine: 'fake', ...data } }); };
@@ -130,8 +132,7 @@ export function wayBack({ recordings = {}, pace = 3, settings = {}, testCommand 
     answer(work, label, { shown = [] } = {}) {
       const q = Object.values(world.questions).filter((c) => c.question.data.work === work && !c.answer).at(-1);
       q.answer = { label, at: at() };
-      const ended = (data) => latest(data.engine?.runId)?.state === 'ended';
-      joinQuestions(world.questions, { ended, shown: (lead) => Object.values(world.questions).filter((c) => c.question.data.joins === lead && shown.includes(c.question.data.work)).map((c) => c.question.data.id) });
+      world.shown[q.question.data.id] = shown;
       return q.question.data;
     },
     // A run the engine ended, as the host records it.

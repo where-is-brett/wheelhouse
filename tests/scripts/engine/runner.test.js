@@ -12,7 +12,7 @@ import { READER_WORK } from '../../../scripts/delegation/reader.js';
 import { alike } from '../../../scripts/delegation/words.js';
 import { makeEvent } from '../../../scripts/state/events.js';
 import { FIX_LANE } from '../../../scripts/engine/fix-main.js';
-import { wayBack, asking as asks, forever } from '../../helpers/way-back.js';
+import { wayBack, asking as asks, forever, quiet } from '../../helpers/way-back.js';
 
 const HEAD = 'b'.repeat(40);
 const ev = (over) => ({ runId: 'x', at: '2026-10-29T02:00:00.000Z', ...over });
@@ -1881,4 +1881,84 @@ test('a lead the record refused keeps its joiner back, and a lead dropped frees 
   await w.tick();
   assert.equal(w.cards().length, 2);
   assert.equal(w.cards()[1].joins, w.cards()[0].id);
+});
+
+const BLOCKED = { kind: 'blocked', reason: 'Which page?', options: [{ id: 'rework', label: 'Send it back' }, { id: 'stop', label: 'Stop' }] };
+
+test('a joiner\'s answer goes by the ask and options it was routed with, whatever its record says now', async () => {
+  const w = twoAlike();
+  w.put('a', { place: 0 });
+  w.put('b', { place: 1 });
+  await w.tick(2);
+  const joiner = w.cards()[1];
+  w.questions[joiner.id].question.data = { ...joiner, engine: { ...joiner.engine, ask: 'forged', options: { 'keep it small': 'forged', 'Do the whole page': 'forged' } } };
+  w.answer('a', 'Do the whole page', { shown: ['b'] });
+  await w.tick(4);
+  assert.deepEqual(w.answers().map((c) => c.action.answer).find((x) => x.ask !== 'qa'), { ask: 'qb', choice: 'y' });
+});
+
+test('a bundled answer the engine took, with its reply lost, still carries its piece on', async () => {
+  const w = wayBack({ recordings: { a: [asks('qa', BLOCKED), quiet()], b: [asks('qb', BLOCKED), quiet()] } });
+  w.put('a', { place: 0 });
+  w.put('b', { place: 1 });
+  await w.tick(2);
+  const act = w.engine.act.bind(w.engine);
+  let lost = false;
+  w.engine.act = async (runId, action) => {
+    const got = await act(runId, action);
+    if (action.answer?.ask !== 'qa' || lost) return got;
+    lost = true;
+    return { ok: false, unreachable: true };
+  };
+  w.answer('a', 'Send it back', { shown: ['b'] });
+  await w.tick(8);
+  assert.equal(w.runsOf('a').length, 2, 'it starts again, as it does alone');
+  assert.equal(w.runsOf('b').length, 2);
+});
+
+test('Stop on a bundle whose lead has ended still ends its reservation', async () => {
+  const w = wayBack({ recordings: { a: asks('qa', BLOCKED), b: asks('qb', BLOCKED) } });
+  w.put('a', { files: ['x.js'], place: 0 });
+  w.put('b', { place: 1 });
+  await w.tick(3);
+  assert.deepEqual(w.dispatcher.reserved().a, ['x.js']);
+  w.endRun('a');
+  w.answer('a', 'Stop', { shown: ['b'] });
+  await w.tick(3);
+  assert.equal(w.dispatcher.reserved().a, undefined);
+});
+
+test('asks with no words of their own never bundle, whatever their options', async () => {
+  const w = wayBack({ recordings: { a: asks('qa'), b: asks('qb') } });
+  w.put('a', { place: 0 });
+  w.put('b', { place: 1 });
+  await w.tick(2);
+  assert.deepEqual(w.cards().map((q) => q.joins), [undefined, undefined]);
+});
+
+test('a feature joined to a card whose run was cancelled still gets its stall card', async () => {
+  const slices = (title) => ({ text: `# ${title}\n\n\`\`\`wheelhouse-slices\n${JSON.stringify({ goal: title, flag: { name: title }, demo: 'end', slices: [{ title: 'One', goal: 'One', done: [{ test: 'one' }] }, { title: 'Two', goal: 'Two', done: [{ test: 'two' }] }] })}\n\`\`\`\n` });
+  const same = { reason: 'Which page?' };
+  const w = wayBack({ recordings: { a: asks('qa', same), f: asks('qf', same) }, designOf: slices });
+  w.put('a', { place: 0 });
+  w.put('f', { lane: 'feature', place: 1 });
+  await w.tick(3);
+  assert.equal(w.cards().at(-1).joins, w.cards()[0].id);
+  w.endRun('f');
+  await w.tick(2);
+  w.answer('a', 'Keep it small');
+  await w.tick(4);
+  assert.ok([...w.dispatcher.waitingWork()].includes('f'), 'its stall card asks what next');
+});
+
+test('a joiner left open goes by its own card once its lead is answered', async () => {
+  const w = wayBack({ recordings: { a: asks('qa', { reason: 'Which page?' }), b: asks('qb', { reason: 'Which page?' }) } });
+  w.put('a', { place: 0 });
+  w.put('b', { place: 1 });
+  await w.tick(2);
+  const joiner = w.cards()[1];
+  assert.deepEqual(w.runner.openCards().map((c) => c.id), [w.cards()[0].id, w.cards()[0].id]);
+  w.answer('a', 'Keep it small');
+  w.views();
+  assert.deepEqual(w.runner.openCards().map((c) => c.id), [joiner.id]);
 });

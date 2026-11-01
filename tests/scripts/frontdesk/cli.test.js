@@ -2092,3 +2092,15 @@ test('a joiner still open after the click is a card of its own, saying You said 
     assert.match(made.json.questions[0].question, /You said this before: Tab\./);
   });
 });
+
+test('a card too long to list its pieces still comes, and they are asked after it', async () => {
+  await inHome(async () => {
+    const long = { ...LEVEL_3, what: 'x '.repeat(490).trim() };
+    const lead = questionEvent(long);
+    const joiner = questionEvent({ ...long, id: 'q-login-500001', work: 'login', joins: lead.data.id }, 6);
+    const helper = fakeHelper({ events: [EXPORT, lead, joiner] });
+    const made = await run(helper, ['cards']);
+    assert.equal(made.json.questions.length, 1);
+    assert.equal(helper.held.filter((e) => e.kind === 'card').at(-1).data.joiners, undefined);
+  });
+});

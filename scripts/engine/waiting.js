@@ -13,8 +13,8 @@ function runEnded(views, work, runId) {
   return (Array.isArray(list) ? list : []).filter((r) => r?.data?.runId === runId).at(-1)?.data?.state === 'ended';
 }
 
-// Each open card of the card router's: { id, work, kept }. A card still to be written has no id yet, and a joiner goes
-// by its lead's, since that is the card its piece waits on.
+// Each open card of the card router's: { id, work, kept }. A card still to be written has no id yet, and a joiner behind
+// a card goes by its lead's, since that is the card its piece waits on.
 function routerOpen({ state, views, prWork }) {
   const found = [];
   const add = (id, kept) => {
@@ -22,7 +22,7 @@ function routerOpen({ state, views, prWork }) {
     const work = kept?.work === MERGE_WORK ? (Number.isInteger(pr) ? prWork(pr) : null) : kept?.work;
     if (typeof work !== 'string' || work === '') return;
     if (kept.cap !== true && kept.work !== MERGE_WORK && runEnded(views, kept.work, kept.runId)) return;
-    found.push({ id: kept.joins ?? id, work, kept });
+    found.push({ id: (id === undefined ? undefined : views?.questions?.[id]?.joins) ?? id, work, kept });
   };
   for (const kept of Array.isArray(state?.waiting) ? state.waiting : []) add(undefined, kept);
   for (const [id, kept] of entriesOf(state?.questions)) if (!state.delivered?.[id] && !answered(views, id)) add(id, kept);

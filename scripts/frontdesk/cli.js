@@ -306,6 +306,8 @@ function answerCard(id, data, views, words, { joiners = [], revises, saidBefore 
       }
     }
   }
+  // Too long to list its pieces: the question is still asked, and they are asked after it, with what was said.
+  if (revises === undefined && (joiners.length > 0 || saidBefore !== undefined)) return answerCard(id, data, views, words);
   throw refusal;
 }
 

@@ -122,3 +122,25 @@ test('a hold with no card behind it says so on the Logbook, once', async () => {
   assert.equal(said.length, 1);
   assert.match(said[0], /^c waits for the files a keeps/);
 });
+
+test('a pull request ready on a piece waiting on its card keeps no top card down', async () => {
+  const w = wayBack({ recordings: { a: asking('qa'), b: asking('qb', { pr: 7 }) }, settings: { cardsPerDay: 1 } });
+  w.put('a', { place: 0 });
+  w.put('b', { place: 1 });
+  await w.tick(3);
+  assert.ok(tops(w).at(-1)?.id);
+  w.ready[7] = { work: 'b', head: 'a'.repeat(40) };
+  await w.tick(3);
+  assert.ok(tops(w).at(-1).id, 'its piece is waiting on the director all the same');
+});
+
+test('a start refused keeps no top card down', async () => {
+  const w = wayBack({ recordings: { a: asking('qa'), f: forever() } });
+  w.put('a', { place: 0 });
+  await w.tick(3);
+  const { id } = tops(w).at(-1);
+  w.refuse = () => 'it names no document';
+  w.put('f', { place: 1 });
+  await w.tick(2);
+  assert.equal(tops(w).at(-1).id, id);
+});

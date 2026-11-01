@@ -417,14 +417,27 @@ function buildLoopViews(sorted, enrolled) {
     }
   }
 
-  // What each click covers: the joiners listed on the card it was a click on, told by the words it signed.
-  const cardsOf = sorted.filter((e) => e.kind === 'card' && Array.isArray(e.data?.joiners));
+  // What each click covers: the joiners listed on a card written before it, carrying the words it signed, and each named
+  // in those words, since a card's list is a plain field and only the words are signed. A joiner stands as it was first
+  // recorded, as an answer stands for the question as shown.
   const clickOn = new Map();
-  for (const a of actions('answer')) if (questions[a.data.questionId]?.answer?.at === a.at) clickOn.set(a.data.questionId, a.data.question);
-  const runsSeen = (runId, work) => sorted.filter((e) => e.kind === 'run' && e.data?.work === work && e.data?.runId === runId).at(-1)?.data;
+  for (const a of actions('answer')) if (questions[a.data.questionId]?.answer?.at === a.at) clickOn.set(a.data.questionId, a);
+  const cardsOf = sorted.filter((e) => e.kind === 'card' && Array.isArray(e.data?.joiners));
+  const named = (id, words) => {
+    const data = questions[id]?.question?.data;
+    return [data?.work, latestWork[data?.work]?.data?.title].some((name) => typeof name === 'string' && name !== '' && words.includes(name));
+  };
+  const first = new Map();
+  for (const e of sorted) if (e.kind === 'question' && !first.has(e.data?.id)) first.set(e.data?.id, e.data);
   joinQuestions(questions, {
-    shown: (lead) => cardsOf.filter((c) => c.data.line === answerLine(lead) && c.data.question === clickOn.get(lead)).at(-1)?.data.joiners ?? [],
-    ended: (data) => runsSeen(data.engine?.runId, data.work)?.state === 'ended',
+    shown(lead) {
+      const click = clickOn.get(lead);
+      if (click === undefined) return [];
+      const card = cardsOf.filter((c) => c.data.line === answerLine(lead) && c.data.question === click.data.question && byOrder(c, click) < 0).at(-1);
+      return (card?.data.joiners ?? []).filter((id) => named(id, click.data.question));
+    },
+    ended: (data) => sorted.filter((e) => e.kind === 'run' && e.data?.work === data.work && e.data?.runId === data.engine?.runId).at(-1)?.data?.state === 'ended',
+    kept: (id, data) => dataHash(first.get(id)) === dataHash(data),
   });
 
   // An incident is open from its declaration until a verified lift after it; a red-main incident also ends with the

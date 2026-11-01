@@ -174,14 +174,17 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     }
   }
 
-  async function mergeQueueRunning() {
-    if (!state.mergeRun) return false;
+  async function mergeQueueStatus() {
+    if (!state.mergeRun) return null;
     try {
-      const got = await engine.inspect(state.mergeRun);
-      return got?.status === 'running' || got?.status === 'paused';
+      return (await engine.inspect(state.mergeRun))?.status ?? null;
     } catch {
-      return false;
+      return null;
     }
+  }
+  const queueHolds = (status) => status === 'running' || status === 'paused';
+  async function mergeQueueRunning() {
+    return queueHolds(await mergeQueueStatus());
   }
 
   // The end of a red check's output, as data for the run that goes back: kept by the helper, never by the run.
@@ -459,7 +462,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   function namedByCard(views, runId) {
     return Object.values(isPlain(views.questions) ? views.questions : {}).some((q) => {
       const engineRef = q?.question?.data?.engine;
-      return engineRef?.runId === runId && (engineRef.ask === `cap:${runId}` || !isPlain(q.answer));
+      // A piece that left its bundle has no card to speak for it.
+      return engineRef?.runId === runId && q.gone !== true && (engineRef.ask === `cap:${runId}` || !isPlain(q.answer));
     });
   }
 
@@ -922,13 +926,16 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
 
   // Each tick, what stands behind work that can't start (scripts/engine/stuck.js). The note is written when the answer
   // changes; anything that moves or is about to means there is no top card, and All stop or an incident has its own.
-  async function topTick(views, decided, { queueGoing, ready }) {
+  async function topTick(views, decided, { queueStatus, ready, started }) {
     const cards = cardsNow(views);
     const waitingOn = waitingNow(views);
+    // What a card holds isn't going, so neither a pull request of a piece on a card nor a merge queue paused on one counts.
+    const moving = (work) => !waitingOn.has(work);
+    const queueGoing = queueStatus === 'running' || (queueStatus === 'paused' && cards.length === 0);
     const running = [
-      ...decided.live, ...decided.start.map((p) => p.work), ...decided.requeue.map((p) => p.work), ...decided.admit.map((p) => p.work),
-      ...state.admitted.map((e) => e.work), ...state.returning.filter((e) => !e.asked && !waitingOn.has(e.work)).map((e) => e.work),
-      ...ready.map(([, r]) => r.work), ...(queueGoing || decided.startMergeQueue ? [MERGE_WORK] : []),
+      ...decided.live, ...started.filter((s) => s.ok === true || s.uncertain === true).map((s) => s.work),
+      ...[...state.admitted, ...state.returning].filter((e) => !e.asked && moving(e.work)).map((e) => e.work),
+      ...ready.map(([, r]) => r.work).filter(moving), ...(queueGoing ? [MERGE_WORK] : []),
     ];
     const top = stopped() || incidentOpen(views) ? null : topCard({ hold: decided.hold, running, cards });
     const counts = holdsUpCount({ hold: decided.hold });
@@ -994,12 +1001,12 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     const requests = typeof engine.countsRequests === 'function'
       ? { counts: () => engine.countsRequests(config()?.routing ?? {}) === true, used: await spentThisMonth(), cap: Number.isFinite(s.capRequests) ? s.capRequests : 0, confirmed: engine.requestsConfirmed === true }
       : null;
-    const queueGoing = await mergeQueueRunning();
+    const queueStatus = await mergeQueueStatus();
     const decided = dispatch({
       work: views.work ?? {}, runs: views.runs ?? {}, reports, features: views.features ?? {}, settings: s, stop: stopped(),
       incident: Array.isArray(views.incidents?.open) && views.incidents.open.length > 0,
       capsReached: false,
-      mergeQueue: { running: queueGoing, lastStart: state.lastStart, waiting: waiting.length, newReady: newReady || state.queueDue === true },
+      mergeQueue: { running: queueHolds(queueStatus), lastStart: state.lastStart, waiting: waiting.length, newReady: newReady || state.queueDue === true },
       requests, sentBack: [
         ...Object.entries(state.sentBack).filter(([work, times]) => state.acted[work] !== times).map(([work, times]) => ({ work, times })),
         ...Object.entries(state.reds).filter(([work, red]) => state.redActed[work] !== red.times).map(([work, red]) => ({ work, times: red.times, reason: 'red' })),
@@ -1152,7 +1159,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
         recommendation: KEEP_OFF,
       });
     }
-    await topTick(views, decided, { queueGoing, ready: waiting }).catch(() => {});
+    await topTick(views, decided, { queueStatus, ready: waiting, started }).catch(() => {});
     return { ...decided, started };
   }
 
