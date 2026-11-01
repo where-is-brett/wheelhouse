@@ -68,9 +68,10 @@ test('a seal names the rules behind it, and rules that can\'t be read cost nothi
 });
 
 test('a card\'s context says its lane and its options', () => {
-  const views = { work: { w: { work: { data: { lane: 'small' } } } }, questions: { 'q-w-1': { question: { data: { work: 'w', options: ['Keep', 'Remove'] } } } } };
+  const views = { work: { w: { work: { data: { lane: 'small', level: 4 } } } }, questions: { 'q-w-1': { question: { data: { work: 'w', options: ['Keep', 'Remove'] } } } } };
   const ctx = cardContext({ views, card: question });
   assert.equal(ctx.lane, 'small');
+  assert.equal(ctx.workLevel, 4);
   assert.deepEqual(ctx.options, ['Keep', 'Remove']);
   assert.equal(cardContext({ views: {}, card: question }).lane, undefined);
 });
@@ -223,7 +224,7 @@ test('a card that can\'t be queued throws nothing at the card router', () => {
 test('a card\'s context names the done check, and any other open question on the work', () => {
   const asked = (work, answer = null) => ({ question: { data: { work } }, answer });
   const views = { questions: { 'q-w-1': asked('w'), 'q-w-2': asked('w', { label: 'Yes' }), 'q-x-1': asked('x') } };
-  assert.deepEqual(cardContext({ views, card: question, testCommand: 'npm test' }), { doneCheck: 'npm test', openDecision: false, lane: undefined, options: undefined });
+  assert.deepEqual(cardContext({ views, card: question, testCommand: 'npm test' }), { doneCheck: 'npm test', openDecision: false, lane: undefined, workLevel: undefined, options: undefined });
   const more = { questions: { ...views.questions, 'q-w-3': asked('w') } };
   assert.equal(cardContext({ views: more, card: question }).openDecision, true);
   assert.equal(cardContext({ views: {}, card: question }).doneCheck, undefined);

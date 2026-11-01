@@ -207,7 +207,7 @@ function uniqueSorted(events) {
   return { sorted: events.filter((e) => counts.get(e.id) === 1).sort(byOrder), repeated };
 }
 
-// A confirmation counts only for a ruling, level or setting whose id it names and whose content
+// A confirmation counts only for a ruling, level, setting or rule whose id it names and whose content
 // hash it names, so it confirms that exact event alone. { confirmed: ids, confirmations: [{ target, event }] }.
 function confirmationsOf(sorted, enrolled) {
   const byId = new Map(sorted.map((e) => [e.id, e]));
@@ -264,7 +264,7 @@ function leanRulingClicks(sorted, rulings) {
 // The verified approvals and actions that carry the question they were clicked on.
 const answeredByOf = (sorted, enrolled) => sorted.filter((e) => (e.kind === 'approval' || e.kind === 'action') && typeof e.data?.question === 'string' && verify(e, enrolled));
 
-// The time each ruling, level or setting came into force by a verified confirmation of its own
+// The time each ruling, level, setting or rule came into force by a verified confirmation of its own
 // hash: id -> the time of the first such confirmation.
 export function confirmationTimes(events, enrolled) {
   const { confirmations } = confirmationsOf(uniqueSorted(events).sorted, enrolled);

@@ -4,7 +4,7 @@
 // plays no part, and nor does anything else it wrote about the question. Typed words are the director's, so the rule
 // carries them. A clicked label is the step's, so the rule holds it only as a literal match, which can't widen. A
 // composed rule is a proposal: only the director's signed click puts it in force, and it starts at stage 0.
-import { COMMON_EXCLUSIONS, exclusionsHit } from './candidates.js';
+import { COMMON_EXCLUSIONS, exclusionsClear } from './candidates.js';
 import { wholeRule } from './rules.js';
 import { LANES } from '../lib/build-loop.js';
 import { PUT_OFF } from '../lib/front-desk.js';
@@ -23,15 +23,16 @@ function meaningOf(answer, card) {
   if (!isText(answer?.label) || !Array.isArray(card.options)) return null;
   const options = card.options.map(labelOf).filter((label) => !PUT_OFF.includes(label));
   if (!options.includes(answer.label)) return null;
-  return { words: null, literal: { options, take: answer.label }, answer: { set: answer.label, principle: null } };
+  return { words: null, literal: { options: [...options].sort(), take: answer.label }, answer: { set: answer.label, principle: null } };
 }
 
-// composeRule({ answer, card, facts, lane, project, now }): `answer` a { label } clicked or { words } typed, `card` as a
-// seal has it with its options, `facts` the change's (facts.js). Null for level 4, for anything but a level-3 question,
-// and for a change with no scope to read or one that hits a common exclusion.
-export function composeRule({ answer, card, facts, lane, project, now = () => new Date() }) {
-  if (card?.kind !== 'question' || card.level !== 3) return null;
-  if (facts?.readable !== true || !Array.isArray(facts.paths) || facts.paths.length === 0 || exclusionsHit(facts).length > 0) return null;
+// composeRule({ answer, card, facts, lane, project, workLevel, now }): `answer` a { label } clicked or { words } typed,
+// `card` as a seal has it with its options, `facts` the change's (facts.js), `workLevel` the level of the card's work,
+// which a question's own level can't speak for. Null for level 4, for anything but a level-3 question, and for a change
+// with no scope to read, or one whose exclusions are hit or can't be read.
+export function composeRule({ answer, card, facts, lane, project, workLevel, now = () => new Date() }) {
+  if (card?.kind !== 'question' || card.level !== 3 || workLevel === 4) return null;
+  if (facts?.readable !== true || !Array.isArray(facts.paths) || facts.paths.length === 0 || !exclusionsClear(facts)) return null;
   if (!LANES.includes(lane) || !isText(project)) return null;
   const meaning = meaningOf(answer, card);
   if (meaning === null) return null;

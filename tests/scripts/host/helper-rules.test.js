@@ -29,7 +29,8 @@ after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 const adapter = { defaultBranch: async () => 'main' };
 const P = 'o__p';
 const rule = composeRule({
-  answer: { label: SUGGEST, words: 'Take the proper long-term option' }, card: { kind: 'question', level: 3 }, facts: { readable: true, paths: ['src/a.js'] },
+  answer: { label: SUGGEST, words: 'Take the proper long-term option' }, card: { kind: 'question', level: 3 },
+  facts: { readable: true, paths: ['src/a.js'], depsChanged: false, schemaChanged: false, guardrail: false, secrets: false, critical: false },
   lane: 'small', project: P, now: () => new Date('2026-11-01T02:00:00.000Z'),
 });
 

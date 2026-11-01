@@ -27,7 +27,7 @@ function mergedOrTest(ctx) {
 
 export const CANDIDATES = Object.freeze([
   {
-    id: 'land', undo: 'allowed', words: 'Land finished, reviewed, green work',
+    id: 'land', undo: 'allowed', words: 'Land finished, reviewed, green work', answer: { set: 'land', principle: null },
     applies: (facts, ctx = {}) => all(not(fact(facts, 'guardrail')), said(ctx.permitHolds), not(said(ctx.openDecision))),
   },
   {
@@ -47,11 +47,11 @@ export const CANDIDATES = Object.freeze([
     applies: (facts, ctx = {}) => said(ctx.withinSpend),
   },
   {
-    id: 'tested-choice', undo: 'switch-or-held', words: 'A technical choice tests can prove, on the principle of the proper long-term option',
+    id: 'tested-choice', undo: 'switch-or-held', words: 'A technical choice tests can prove, on the principle of the proper long-term option', answer: { set: null, principle: 'the proper long-term option' },
     applies: (facts, ctx = {}) => all(named(ctx.doneCheck), not(fact(facts, 'schemaChanged'))),
   },
   {
-    id: 'follow-mock-up', undo: 'switch-or-held', words: 'Spec and mock-up disagree: follow the mock-up, fall back safely, note it',
+    id: 'follow-mock-up', undo: 'switch-or-held', words: 'Spec and mock-up disagree: follow the mock-up, fall back safely, note it', answer: { set: null, principle: 'follow the mock-up, fall back safely, note it' },
     applies: (facts, ctx = {}) => said(ctx.mockUp),
   },
   {
@@ -76,6 +76,10 @@ export const COMMON_EXCLUSIONS = Object.freeze([
   { id: 'paid-service', words: 'A new paid service', hit: cannotRead },
   { id: 'access', words: 'Access, or where records live', hit: cannotRead },
 ]);
+
+// Whether a script read every exclusion it can read, and none was hit. The ones no script can read are left to the rest
+// of the checks (design section 9).
+export const exclusionsClear = (facts) => COMMON_EXCLUSIONS.every((e) => e.hit === cannotRead || e.hit(facts) === false);
 
 export const exclusionsHit = (facts) => COMMON_EXCLUSIONS.filter((e) => e.hit(facts) === true).map((e) => e.id);
 

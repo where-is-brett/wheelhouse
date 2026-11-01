@@ -80,9 +80,18 @@ test('a rule covering a card has its hash in the seal\'s stamp, by its id', () =
 test('no rule\'s hash goes on a card no rule can reach', () => {
   const rules = ruleSet('p', {});
   const ctx = { hostPrivate: true };
-  assert.notEqual(sealOf({ card: card(), facts, ctx, stamp, at: AT, rules }).stamp.rule, null);
-  assert.equal(sealOf({ card: card({ level: 4 }), facts, ctx, stamp, at: AT, rules }).stamp.rule, null);
-  assert.equal(sealOf({ card: card({ kind: 'approval' }), facts, ctx, stamp, at: AT, rules }).stamp.rule, null);
+  const plain = { ...facts, schemaChanged: false };
+  assert.notEqual(sealOf({ card: card(), facts: plain, ctx, stamp, at: AT, rules }).stamp.rule, null);
+  assert.equal(sealOf({ card: card({ level: 4 }), facts: plain, ctx, stamp, at: AT, rules }).stamp.rule, null);
+  assert.equal(sealOf({ card: card({ kind: 'approval' }), facts: plain, ctx, stamp, at: AT, rules }).stamp.rule, null);
+  assert.equal(sealOf({ card: card(), facts, ctx, stamp, at: AT, rules }).stamp.rule, null);
+});
+
+test('a rule that can\'t be read costs its place in the stamp, never the seal', () => {
+  const ctx = { lane: 'small' };
+  const plain = { ...facts, schemaChanged: false };
+  const rule = composeRule({ answer: { label: SUGGEST_LABEL, words: 'Keep it small' }, card: card(), facts: plain, lane: 'small', project: 'p', now: () => new Date(AT) });
+  assert.deepEqual(sealOf({ card: card(), facts: plain, ctx, stamp, at: AT, rules: [{ conditions: [1] }, null, rule] }).stamp.rule, { [rule.id]: rule.hash });
 });
 
 test('a seal with no rules given keeps the stamp it was handed', () => {

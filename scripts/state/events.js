@@ -48,11 +48,11 @@ export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 
 // `reproduced` is the helper's own keeping of a bug's reproduction, read from the engine's record of the bug lane's steps.
 // An incident's fields that make it a red main line's (scripts/engine/fix-main.js): only the helper's card router writes
 // them, since such an incident holds all work and names the pull request the director is told to undo.
-// `rule` is a rule proposed from an answered card (delegated decisions design, section 11.1): the helper composes it from
-// what it read itself, and it means nothing until the director's signed click confirms that very record.
 export const RED_MAIN_FIELDS = ['kind', 'suspect', 'work'];
 export const RED_MAIN_OWN = 'only the helper records a red main line\'s incident';
 
+// `rule` is a rule proposed from an answered card (delegated decisions design, section 11.1): the helper composes it from
+// what it read itself, and it means nothing until the director's signed click confirms that very record.
 export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'shadow', 'rule'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 

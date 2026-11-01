@@ -23,7 +23,7 @@ export function approvalLine(pr, sha) {
   return `Approve pull request #${pr} at commit ${sha12(sha)}`;
 }
 
-// The line that asks the director to confirm a ruling, a level or a setting.
+// The line that asks the director to confirm a ruling, a level, a setting or a rule.
 export function confirmLine(event) {
   const words = typeof event?.data?.words === 'string' ? event.data.words : '';
   return `Confirm ${event?.kind} ${event?.id}: "${words}"`;

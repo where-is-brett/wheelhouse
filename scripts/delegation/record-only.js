@@ -39,10 +39,11 @@ function readState(file) {
 }
 
 // What a card's context can say today: a done check where the project has a test command, whether another question on
-// the same work is open, and the card's lane and options, which a rule's scope reads. A candidate that needs more gives null.
+// the same work is open, and the card's lane, options and work's level, which a rule's scope reads. A candidate that needs more gives null.
 export function cardContext({ views, card, testCommand }) {
   const open = Object.entries(views?.questions ?? {}).some(([id, q]) => id !== card.id && q?.question?.data?.work === card.work && !isPlain(q.answer));
-  return { doneCheck: testCommand ?? undefined, openDecision: open, lane: views?.work?.[card.work]?.work?.data?.lane, options: views?.questions?.[card.id]?.question?.data?.options };
+  const work = views?.work?.[card.work]?.work?.data;
+  return { doneCheck: testCommand ?? undefined, openDecision: open, lane: work?.lane, workLevel: work?.level, options: views?.questions?.[card.id]?.question?.data?.options };
 }
 
 // The lines of the cards on which the director stepped out of the options: a Suggest a change…, however the click named

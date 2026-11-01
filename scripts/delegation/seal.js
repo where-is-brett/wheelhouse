@@ -18,10 +18,18 @@ function signedOf(card) {
 // Whether the reader may read a card.
 export const canBeRead = (card) => signedOf(card) === null;
 
-// The rules a seal is evidence for, as their hashes by id, or null for none: only a card a rule could reach earns any.
+// The rules a seal is evidence for, as their hashes by id, or null for none: only a card a rule could reach earns any,
+// and a rule that can't be read covers nothing, since that may cost a rule's evidence and never a seal.
 function rulesBehind({ rules, signed, facts, ctx, candidates }) {
   if (signed !== null) return null;
-  const covering = rules.filter((rule) => ruleCovers(rule, { facts, ctx, candidates }));
+  const covers = (rule) => {
+    try {
+      return ruleCovers(rule, { facts, ctx, candidates });
+    } catch {
+      return false;
+    }
+  };
+  const covering = rules.filter(covers);
   return covering.length > 0 ? Object.fromEntries(covering.map((rule) => [rule.id, rule.hash])) : null;
 }
 

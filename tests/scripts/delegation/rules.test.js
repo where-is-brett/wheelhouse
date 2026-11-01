@@ -96,6 +96,15 @@ test('a rule that is less than whole doesn\'t stand', () => {
   for (const rule of [null, 'rule', [], {}, { ...typed, id: 'rule-000000000000' }, { ...typed, stage: 1 }, { ...typed, conditions: undefined }]) {
     assert.equal(ruleStands(rule), false, JSON.stringify(rule));
   }
+  const selfMade = (over) => {
+    const rule = { ...typed, ...over };
+    const hash = ruleHash(rule);
+    return { ...rule, hash, id: `rule-${hash.slice(0, 12)}` };
+  };
+  assert.equal(ruleStands(selfMade({})), true);
+  for (const over of [{ conditions: [1] }, { paths: [null] }, { literal: 'Keep' }, { literal: { options: 'Keep', take: 'Keep' } }, { project: 3 }, { answer: null }, { exclusions: [] }]) {
+    assert.equal(ruleStands(selfMade(over)), false, JSON.stringify(over));
+  }
 });
 
 test('a rule with a stage above 0 isn\'t in force until a part moves it', () => withHome(() => {
@@ -201,6 +210,35 @@ test('the rule set is the eight candidates and this project\'s rules in force', 
   assert.equal(ruleSet('proj', undefined).length, CANDIDATES.length);
 });
 
+test('no rule covers a change that hits a common exclusion, or one whose exclusions can\'t be read', () => {
+  const ctx = { lane: 'small', options: ['Keep', 'Remove'] };
+  const candidates = { land: true };
+  const land = candidateRule(CANDIDATES[0], { project: 'proj', now });
+  for (const key of ['guardrail', 'secrets', 'critical', 'schemaChanged', 'depsChanged']) {
+    for (const value of [true, undefined]) {
+      const changed = { ...facts, [key]: value };
+      assert.equal(ruleCovers(typed, { facts: changed, ctx, candidates }), false, `${key} ${value}`);
+      assert.equal(ruleCovers(land, { facts: changed, ctx, candidates }), false, `${key} ${value}`);
+    }
+  }
+  assert.equal(ruleCovers(land, { facts: { readable: false }, ctx, candidates }), false);
+  assert.equal(ruleCovers(land, { facts, ctx, candidates }), true);
+});
+
+test('no rule covers a question on a piece at level 4, whatever the question\'s own level says', () => {
+  const ctx = { lane: 'small', workLevel: 4 };
+  assert.equal(ruleCovers(typed, { facts, ctx }), false);
+  assert.equal(ruleCovers(candidateRule(CANDIDATES[0], { project: 'proj', now }), { facts, ctx, candidates: { land: true } }), false);
+});
+
+test('a candidate carries the design\'s answer, so signing it as designed keeps its hash', () => {
+  const answer = (id) => candidateRule(CANDIDATES.find((c) => c.id === id), { project: 'proj', now }).answer;
+  assert.deepEqual(answer('land'), { set: 'land', principle: null });
+  assert.deepEqual(answer('tested-choice'), { set: null, principle: 'the proper long-term option' });
+  assert.deepEqual(answer('follow-mock-up'), { set: null, principle: 'follow the mock-up, fall back safely, note it' });
+  assert.deepEqual(answer('run-plan'), { set: null, principle: null });
+});
+
 test('a composed rule covers a card inside its paths and lane, with the same options', () => {
   const ctx = { lane: 'small', options: ['Remove', 'Keep'] };
   const covers = (rule, over = {}) => ruleCovers(rule, { facts, ctx, candidates: {}, ...over });
@@ -213,5 +251,5 @@ test('a composed rule covers a card inside its paths and lane, with the same opt
   assert.equal(covers(typed, { facts: { ...facts, paths: ['src/a.js', 'src/other.js'] } }), false);
   assert.equal(covers(typed, { facts: { ...facts, paths: [] } }), false);
   assert.equal(covers(typed, { facts: { readable: false } }), false);
-  assert.equal(covers(typed, { facts: { readable: true } }), false);
+  assert.equal(covers(typed, { facts: { ...facts, paths: undefined } }), false);
 });

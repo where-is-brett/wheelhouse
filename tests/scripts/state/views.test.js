@@ -1422,7 +1422,7 @@ const sealed = (card, extra = {}) => ({ line: 'seal', card, work: 'w', head: nul
 
 test('a rule is in the views only once a signed click confirms it', async () => {
   await withHome(async () => {
-    const rule = composeRule({ answer: { label: 'Keep' }, card: { kind: 'question', level: 3, options: ['Keep', 'Remove'] }, facts: { readable: true, paths: ['a.js'] }, lane: 'small', project: 'p', now: at(1) });
+    const rule = composeRule({ answer: { label: 'Keep' }, card: { kind: 'question', level: 3, options: ['Keep', 'Remove'] }, facts: { readable: true, paths: ['a.js'], depsChanged: false, schemaChanged: false, guardrail: false, secrets: false, critical: false }, lane: 'small', project: 'p', now: at(1) });
     const event = ev('rule', 1, rule);
     assert.deepEqual(build([]).rules, {});
     assert.deepEqual(build([event]).rules, {});

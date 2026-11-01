@@ -98,6 +98,22 @@ test('a change that hits a common exclusion makes no rule', () => {
   }
 });
 
+test('a change whose exclusions can\'t be read makes no rule', () => {
+  for (const key of ['guardrail', 'secrets', 'critical', 'schemaChanged', 'depsChanged']) {
+    assert.equal(composeRule({ ...typed, facts: { ...facts, [key]: undefined } }), null, key);
+  }
+});
+
+test('a question on a piece at level 4 makes no rule', () => {
+  assert.equal(composeRule({ ...typed, workLevel: 4 }), null);
+  assert.notEqual(composeRule({ ...typed, workLevel: 3 }), null);
+});
+
+test('the same options in another order are the same rule', () => {
+  const turned = composeRule({ ...clicked, card: { ...card, options: [...labels].reverse() } });
+  assert.equal(turned.hash, composeRule(clicked).hash);
+});
+
 test('a project and a lane must be named', () => {
   assert.equal(composeRule({ ...typed, project: '' }), null);
   assert.equal(composeRule({ ...typed, lane: 'somewhere' }), null);
