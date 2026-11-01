@@ -132,7 +132,10 @@
           "blocked",
           "assumptions"
         ]
-      }
+      },
+      "denied_tools": [
+        "AskUserQuestion"
+      ]
     },
     {
       "id": "plan-blocked",
@@ -385,7 +388,10 @@
           "blocked",
           "assumptions"
         ]
-      }
+      },
+      "denied_tools": [
+        "AskUserQuestion"
+      ]
     },
     {
       "id": "repair-blocked",
@@ -602,7 +608,10 @@
                 "blocked",
                 "assumptions"
               ]
-            }
+            },
+            "denied_tools": [
+              "AskUserQuestion"
+            ]
           },
           {
             "id": "fix-tests",
@@ -699,7 +708,8 @@
             "denied_tools": [
               "Write",
               "Edit",
-              "NotebookEdit"
+              "NotebookEdit",
+              "AskUserQuestion"
             ],
             "idle_timeout": 600000,
             "prompt_file": "prompts/review-standards.md",
@@ -828,7 +838,8 @@
             "denied_tools": [
               "Write",
               "Edit",
-              "NotebookEdit"
+              "NotebookEdit",
+              "AskUserQuestion"
             ],
             "idle_timeout": 600000,
             "prompt_file": "prompts/review-spec.md",
@@ -957,7 +968,8 @@
             "denied_tools": [
               "Write",
               "Edit",
-              "NotebookEdit"
+              "NotebookEdit",
+              "AskUserQuestion"
             ],
             "idle_timeout": 600000,
             "prompt_file": "prompts/review-security.md",
@@ -1084,7 +1096,8 @@
             "denied_tools": [
               "Write",
               "Edit",
-              "NotebookEdit"
+              "NotebookEdit",
+              "AskUserQuestion"
             ],
             "idle_timeout": 600000,
             "prompt_file": "prompts/review-design.md",
@@ -1328,7 +1341,8 @@
       ],
       "denied_tools": [
         "Edit",
-        "NotebookEdit"
+        "NotebookEdit",
+        "AskUserQuestion"
       ],
       "idle_timeout": 600000,
       "prompt_file": "prompts/pull-request.md",
@@ -1581,7 +1595,8 @@
       "denied_tools": [
         "Write",
         "Edit",
-        "NotebookEdit"
+        "NotebookEdit",
+        "AskUserQuestion"
       ],
       "idle_timeout": 300000,
       "prompt_file": "prompts/lesson.md",

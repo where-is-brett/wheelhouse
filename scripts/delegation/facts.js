@@ -101,8 +101,22 @@ export async function cardFacts({ card, git, baseCommit }) {
     const base = await commitOf(read, baseCommit);
     const facts = await changeFacts({ git: call, base, head, config: await configAt(read, base) });
     if (facts.readable !== true) return facts;
-    return facts.paths.length === 0 || await uncommitted(call) ? { readable: false, head } : facts;
+    return facts.paths.length === 0 || await uncommitted(call) ? { readable: false, head } : { ...facts, base };
   } catch {
     return UNREAD_FACTS;
+  }
+}
+
+// The most lines of context git gives: each changed file whole, so the view can tell what a comment is (clean-diff.js).
+const WHOLE_FILE = '-U1000000';
+
+// The diff of a change, from the fixed base the facts were read against, or null when it can't be read. Never a log:
+// commit messages aren't in it.
+export async function cardDiff({ card, git, facts }) {
+  if (facts?.readable !== true || !facts.base || !facts.head) return null;
+  try {
+    return await runner(git(card.folder).call)(['diff', ...NO_EXTRAS, '--no-color', WHOLE_FILE, '--end-of-options', `${facts.base}...${facts.head}`, '--']);
+  } catch {
+    return null;
   }
 }

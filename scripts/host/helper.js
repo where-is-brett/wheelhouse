@@ -78,7 +78,9 @@ import { stopEngine, endRun, stopWords } from '../engine/stop.js';
 import { engineRoutes, engineDirOf } from '../engine/routes.js';
 import { engineRunner } from '../engine/runner.js';
 import { recordOnly, cardContext, historyOf } from '../delegation/record-only.js';
-import { cardFacts } from '../delegation/facts.js';
+import { cardDiff, cardFacts } from '../delegation/facts.js';
+import { readerView } from '../delegation/view.js';
+import { prepareReaderFolder } from '../delegation/reader.js';
 import { setupStamp } from '../delegation/stamp.js';
 import { exclusionsHash } from '../delegation/candidates.js';
 import { dispatchRun, MERGE_WORK } from '../engine/dispatch-run.js';
@@ -113,7 +115,7 @@ import { writeProfileViews } from '../profile/store.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { pendingDir } from '../hooks/pending.js';
 import { branchOf } from '../hooks/session-start.js';
-import { SLUG } from '../lib/build-loop.js';
+import { SLUG, paceOf } from '../lib/build-loop.js';
 import { ROOT as OWN_ROOT, recheckCopies } from '../lineage/check.js';
 import { requestMeter, requestsThisMonth } from '../engine/request-meter.js';
 import { checkProvenance, removeProvenance, sessionProvenance, engineProvenance } from '../lineage/provenance.js';
@@ -4101,6 +4103,7 @@ export async function startHelper({
   // project's context, since a step knows its run and not its project; each route finds the project from the run.
   const engineRun = engineRoutes({
     refresh: (project) => (refreshMirror ?? refreshFetchMirror)(project),
+    readerViewOf: (project, card) => engineHosts.find((h) => h.project === project)?.seals.viewFor(card) ?? null,
     projects: () => registeredProjects().map(({ project, record }) => ({ project, folder: record.folder })),
     engineFor: (project) => {
       try { return engineFor(project); } catch { return null; }
@@ -4711,7 +4714,7 @@ export async function startHelper({
           engine, spawn, now, held: stopped, wake: engineHosts.length === 0,
           write: (kind, data) => engineWrite(project, kind, data),
           cursorFile: path.join(stateDir(project), '..', 'engine', 'cursor.json'),
-          workOf: (runId) => engineRunOf(project, runId) ?? dispatcher.workOf(runId),
+          workOf: (runId) => engineRunOf(project, runId) ?? dispatcher.workOf(runId) ?? seals.readerOf(runId),
           // Archon's end of a run names no pull request; the helper opened it, and its record says which (check 81).
           prOf: (runId) => engineRun.openedBy(project, runId),
         });
@@ -5073,6 +5076,21 @@ export async function startHelper({
         const events = listEvents(stateDir(project), { report: () => {} });
         return historyOf({ events, enrolled: ownKeyOnly(), views: buildViews(events, ownKeyOnly(), { now }) });
       },
+      engine, readViews: views,
+      viewOf: async (card, facts) => {
+        const asked = views().questions?.[card.id]?.question?.data;
+        return readerView({ question: asked?.what, options: asked?.options, diff: await cardDiff({ card, git: gitRoute({ run }), facts }), seed: card.id });
+      },
+      gate: () => ({ running: engineRunsGoing(project).length, pace: paceOf({ pace: { value: settings().pace } }).building, counted: counts(project, folder), incident: Boolean(openRedMain(views())) }),
+      startReader: async ({ card }) => {
+        const place = prepareReaderFolder({ project });
+        return place.ok ? engineRun.startReader({ project, card, folder: place.folder, bindings: engineConfigOf(project, folder)?.routing ?? {} }) : place;
+      },
+      // A reading is trusted only from the installed pack, as a review is.
+      trusted: (run) => {
+        const installed = packTreeDigest(path.join(engineDir(), 'pack'));
+        return Boolean(installed && run?.source) && packTreeDigest(path.join(run.source, 'project')) === installed;
+      },
     });
     const ownCard = (kind) => async (data) => {
       await write('question', data);
@@ -5115,8 +5133,8 @@ export async function startHelper({
       },
     });
     const runner = engineRunner({
-      engine, file: path.join(files, 'router.json'), readViews: views, write, stopped, now, settings, onCard: seals.onCard,
-      workOf: (runId) => engineRunOf(project, runId) ?? dispatcher.workOf(runId),
+      engine, file: path.join(files, 'router.json'), readViews: views, write, stopped, now, settings, onCard: seals.onCard, onReaderAsk: seals.onReaderAsk,
+      workOf: (runId) => engineRunOf(project, runId) ?? dispatcher.workOf(runId) ?? seals.readerOf(runId),
       titleOf: (work) => (work === MERGE_WORK ? 'the changes waiting to be added' : views().work?.[work]?.work?.data?.title ?? work),
       endRun: async (runId) => endRun({ engine, run: { id: runId, folder: (await engine.inspect(runId))?.folder ?? null }, ...engineStopWith }),
       openedOf: (pr) => engineRun.openedOf(project, pr),

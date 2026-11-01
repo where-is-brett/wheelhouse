@@ -1,0 +1,118 @@
+# engine/archon/pack/wheelhouse-reader.yaml
+{
+  "name": "wheelhouse-reader",
+  "description": "Wheelhouse's reader: one read-only step that gives its own reading of a question card after the card is written. Started by Wheelhouse with the card's id; not for work.",
+  "inputs": {
+    "card": {
+      "required": true,
+      "description": "The card's id. The view comes from Wheelhouse's helper, never through Archon."
+    }
+  },
+  "nodes": [
+    {
+      "id": "view",
+      "bash": "node \"$WHEELHOUSE_ROOT/scripts/delegation/view-copy.js\" --run \"$WORKFLOW_ID\" --artefacts \"$ARTIFACTS_DIR\"",
+      "timeout": 60000
+    },
+    {
+      "id": "read",
+      "depends_on": [
+        "view"
+      ],
+      "model": "medium",
+      "idle_timeout": 300000,
+      "prompt_file": "prompts/reader.md",
+      "allowed_tools": [
+        "Read",
+        "Grep",
+        "Glob"
+      ],
+      "denied_tools": [
+        "AskUserQuestion"
+      ],
+      "settingSources": [
+        "project"
+      ],
+      "output_format": {
+        "type": "object",
+        "properties": {
+          "frame": {
+            "type": "string",
+            "enum": [
+              "sound",
+              "doubtful"
+            ]
+          },
+          "why": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "not-real",
+              "project-can-answer",
+              "cant-judge",
+              "can-see",
+              "only-director",
+              "never-delegated"
+            ]
+          },
+          "fits": {
+            "type": "string",
+            "enum": [
+              "yes",
+              "no",
+              "no-rule"
+            ]
+          },
+          "pick": {
+            "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "label": {
+                  "type": "string"
+                },
+                "leans": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "sooner",
+                      "later",
+                      "more-testing",
+                      "less-testing",
+                      "faster",
+                      "safer",
+                      "paid",
+                      "free",
+                      "more-scope",
+                      "less-scope",
+                      "keep",
+                      "remove"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "label",
+                "leans"
+              ]
+            }
+          }
+        },
+        "required": [
+          "frame",
+          "why",
+          "kind",
+          "fits",
+          "pick",
+          "tags"
+        ]
+      }
+    }
+  ]
+}

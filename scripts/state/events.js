@@ -422,6 +422,7 @@ function checkPlain(kind, data) {
   const pr = () => { if (data.pr !== undefined && (!Number.isInteger(data.pr) || data.pr < 1)) bad('has a pull request number that is not one'); };
   if (kind === 'work') {
     slug('id');
+    if (data.id === READER_WORK) bad('names the work kept for the reader');
     text('title');
     if (!LANES.includes(data.lane)) bad('needs its lane to be quick, small, feature or bug');
     if (typeof data.visible !== 'boolean') bad('needs visible to be true or false');
@@ -737,26 +738,35 @@ function checkChange(data) {
   if (data.state === 'merged' ? !(typeof data.mergeCommit === 'string' && FULL_COMMIT.test(data.mergeCommit)) : data.mergeCommit !== null) bad('names a merge only once merged');
 }
 
+// The work a reader's tokens go under. No piece of work may have this name, so none is taken for the reader.
+export const READER_WORK = 'delegation-reader';
+
 // A seal as scripts/delegation/seal.js makes it. Part of a card's sealed record, so nothing is added to one later.
 const SEAL_KEYS = ['line', 'card', 'work', 'head', 'signed', 'reader', 'candidates', 'exclusions', 'stamp', 'at', 'hash'];
 // A score, the same: what the card scored against the director's answer, tied to its seal by the seal's hash.
 const SCORE_KEYS = ['line', 'card', 'work', 'seal', 'score', 'at', 'hash'];
-const SHADOW_KEYS = { seal: SEAL_KEYS, score: SCORE_KEYS };
+const READING_KEYS = ['line', 'card', 'work', 'run', 'reader', 'frame', 'why', 'kind', 'fits', 'pick', 'tags', 'view', 'afterAnswer', 'at', 'hash'];
+const SHADOW_KEYS = { seal: SEAL_KEYS, reading: READING_KEYS, score: SCORE_KEYS };
 const SHA256 = /^[0-9a-f]{64}$/;
 function checkShadow(data) {
   const bad = (why) => { throw new Error(`A shadow event ${why}`); };
-  if (!isPlain(data) || !Object.hasOwn(SHADOW_KEYS, data.line)) bad('needs to be a seal or a score');
+  if (!isPlain(data) || !Object.hasOwn(SHADOW_KEYS, data.line)) bad('needs to be a seal, a reading or a score');
   const keys = SHADOW_KEYS[data.line];
   if (Object.keys(data).length !== keys.length || keys.some((k) => !Object.hasOwn(data, k))) bad('needs its fields and no others');
   if (typeof data.card !== 'string' || data.card === '' || typeof data.work !== 'string') bad('needs its card and its work');
   if (typeof data.at !== 'string' || typeof data.hash !== 'string' || !SHA256.test(data.hash)) bad('needs its time and its hash');
+  if (data.line === 'reading') {
+    if (!(data.reader === 'read' ? typeof data.pick === 'string' && typeof data.frame === 'string' && Array.isArray(data.tags) : data.reader === 'none' && data.pick === null)) bad('says whether it read, and what');
+    if (typeof data.afterAnswer !== 'boolean') bad('says whether the answer came first');
+    return;
+  }
   if (data.line === 'score') {
     if (typeof data.seal !== 'string' || !SHA256.test(data.seal) || !['match', 'miss', 'outside'].includes(data.score)) bad('needs its seal and a score');
     return;
   }
   if (data.head !== null && !(typeof data.head === 'string' && FULL_COMMIT.test(data.head))) bad('needs the whole commit, or none');
   if (data.signed !== null && typeof data.signed !== 'string') bad('says what signed it, or nothing');
-  if (typeof data.reader !== 'boolean') bad('says whether it is read');
+  if (![true, false, 'refused'].includes(data.reader)) bad('says whether it is read');
   if (!isPlain(data.candidates) || !isPlain(data.exclusions) || !isPlain(data.stamp)) bad('needs what the checks said');
 }
 

@@ -459,7 +459,7 @@ function buildLoopViews(sorted, enrolled) {
 // in the private record, read by nothing but scripts/delegation/.
 function evidenceOf(sorted, enrolled) {
   const lines = sorted.filter((e) => e.kind === 'shadow' && typeof e.data?.card === 'string' && verify(e, enrolled));
-  const cards = (line) => new Set(lines.filter((e) => e.data.line === line).map((e) => e.data.card)).size;
+  const cards = (line) => new Set(lines.filter((e) => e.data.line === line && e.data.reader !== 'none').map((e) => e.data.card)).size;
   return { sealed: cards('seal'), read: cards('reading'), sampled: 0 };
 }
 

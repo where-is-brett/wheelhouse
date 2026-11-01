@@ -8,6 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fakeEngine } from '../../../scripts/engine/fake.js';
 import { engineRunner } from '../../../scripts/engine/runner.js';
+import { READER_WORK } from '../../../scripts/delegation/reader.js';
 import { makeEvent } from '../../../scripts/state/events.js';
 
 const HEAD = 'b'.repeat(40);
@@ -20,7 +21,7 @@ const asking = (id, over = {}) => [
   ev({ type: 'run-ended', outcome: 'completed' }),
 ];
 
-function setUp({ recordings = { one: asking('q1') }, settings = {}, at = '2026-10-29T13:00:00.000Z', stop = false, slow = false, endRun, onCard } = {}) {
+function setUp({ recordings = { one: asking('q1') }, settings = {}, at = '2026-10-29T13:00:00.000Z', stop = false, slow = false, endRun, onCard, workOf = () => ({ work: 'sale-banner', lane: 'quick' }), onReaderAsk } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-runner-'));
   const engine = fakeEngine({ recordings });
   const writes = [];
@@ -34,10 +35,11 @@ function setUp({ recordings = { one: asking('q1') }, settings = {}, at = '2026-1
     stopped: () => world.stop,
     now: () => world.now,
     settings: () => ({ cardsPerDay: 3, bundleApprovals: false, ...settings }),
-    workOf: () => ({ work: 'sale-banner', lane: 'quick' }),
+    workOf,
     titleOf: () => 'The sale banner',
     ...(endRun ? { endRun } : {}),
     ...(onCard ? { onCard } : {}),
+    ...(onReaderAsk ? { onReaderAsk } : {}),
   });
   // Starts a run of `name` and hands the runner its open ask, as the host does.
   const ask = async (name = 'one') => {
@@ -930,5 +932,28 @@ test('an approval card and a cap card are told to the seals', async () => {
     assert.ok(kinds.includes('cap'));
     assert.equal(seen.find((c) => c.kind === 'cap').branch, 'wh/x');
     assert.equal(seen.find((c) => c.kind === 'cap').level, 3);
+  } finally { t.cleanup(); }
+});
+
+test('an ask on a reader\'s run never becomes a card, and goes to the seals', async () => {
+  const told = [];
+  const t = setUp({ workOf: () => ({ work: READER_WORK, lane: 'reader' }), onReaderAsk: (ask) => told.push(ask.id) });
+  try {
+    await t.runner.onAsk({ type: 'ask', runId: 'r-1', at: 't', id: 'r-1:owner-lost', kind: 'trouble', level: 3, work: null, recommend: 'stop', labels: {}, options: [], context: {}, card: true });
+    assert.deepEqual(told, ['r-1:owner-lost']);
+    assert.deepEqual(t.writes, []);
+  } finally { t.cleanup(); }
+});
+
+test('no cap reads a reader\'s run, and the runner writes no cost for it', async () => {
+  const t = setUp({ recordings: { big: spending(2500000) } });
+  try {
+    const { runId } = t.engine.start({ recording: 'big', running: true });
+    t.views.runs = { [READER_WORK]: [{ at: '2026-10-29T12:50:00.000Z', data: { work: READER_WORK, lane: 'reader', engine: 'fake', runId, state: 'started' } }] };
+    await t.runner.tick();
+    t.views.runs[READER_WORK].push({ at: '2026-10-29T12:51:00.000Z', data: { work: READER_WORK, lane: 'reader', engine: 'fake', runId, state: 'ended' } });
+    await t.runner.tick();
+    assert.deepEqual(t.writes.filter((w) => ['cost', 'question', 'card'].includes(w.kind)), []);
+    assert.equal(t.engine.calls.filter((c) => c.action?.cancel).length, 0);
   } finally { t.cleanup(); }
 });

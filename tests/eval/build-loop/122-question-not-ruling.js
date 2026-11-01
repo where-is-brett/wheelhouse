@@ -9,7 +9,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { until } from '../../../scripts/eval/engine-world.js';
-import { PACK_DIR, NO_PERSON_LINE } from '../../../scripts/engine/pack-check.js';
+import { PACK_DIR, NO_PERSON_LINE, READ_ONLY } from '../../../scripts/engine/pack-check.js';
 import { asking } from './engine-recordings.js';
 import { isAgentStep, packWorkflows } from './pack-routes.js';
 
@@ -28,6 +28,11 @@ export default {
       for (const { name, nodes } of packWorkflows()) {
         for (const { node } of nodes.filter((n) => isAgentStep(n.node))) {
           const shape = node.output_format?.properties ?? {};
+          // The reader alone: it runs after the card is written, changes no outcome and raises nothing, so it has no exit.
+          if (READ_ONLY.has(name)) {
+            if (shape.blocked) return { pass: false, why: `${name}'s ${node.id} has a blocked exit, and a reader raises nothing` };
+            continue;
+          }
           if (!shape.blocked || !shape.question || !shape.options || !shape.recommend || JSON.stringify(shape.level?.enum) !== '["3","4"]') return { pass: false, why: `${name}'s ${node.id} has no blocked exit for a level 3 or 4 question alone` };
         }
       }

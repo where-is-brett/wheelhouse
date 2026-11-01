@@ -87,7 +87,10 @@
           "blocked",
           "assumptions"
         ]
-      }
+      },
+      "denied_tools": [
+        "AskUserQuestion"
+      ]
     },
     {
       "id": "guarded-blocked",

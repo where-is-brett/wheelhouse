@@ -1,8 +1,8 @@
 // scripts/delegation/seal.js
 // A seal: what the script checks said about a card when it was written, with a hash and a time (delegated decisions
-// design, section 12). It is the first of the three `shadow` lines joined by the card's id, and the score the last. Only
-// a question at level 3 can ever be read: an approval, a cap and the other cards no rule can decide are sealed as what
-// they are, as is level 4.
+// design, section 12). It is the first of the three `shadow` lines joined by the card's id, the reader's reading the
+// second, and the score the last. Only a question at level 3 can ever be read: an approval, a cap and the other cards no
+// rule can decide are sealed as what they are, as is level 4.
 import { dataHash } from '../state/events.js';
 import { CANDIDATES, COMMON_EXCLUSIONS, exclusionsHit } from './candidates.js';
 import { normaliseWords } from './words.js';
@@ -14,7 +14,11 @@ function signedOf(card) {
   return card.level === 4 ? 'level-4' : null;
 }
 
-export function sealOf({ card, facts, ctx = {}, stamp, at }) {
+// Whether the reader may read a card.
+export const canBeRead = (card) => signedOf(card) === null;
+
+// `refused` says why a card that could be read has no view, so no reader starts for it.
+export function sealOf({ card, facts, ctx = {}, stamp, at, refused = false }) {
   const signed = signedOf(card);
   const seal = {
     line: 'seal',
@@ -22,13 +26,21 @@ export function sealOf({ card, facts, ctx = {}, stamp, at }) {
     work: card.work,
     head: facts?.head ?? null,
     signed,
-    reader: signed === null,
+    reader: signed !== null ? false : refused ? 'refused' : true,
     candidates: Object.fromEntries(CANDIDATES.map((c) => [c.id, c.applies(facts, ctx)])),
     exclusions: { hit: exclusionsHit(facts), unread: COMMON_EXCLUSIONS.filter((e) => e.hit(facts) === null).map((e) => e.id) },
     stamp,
     at,
   };
   return { ...seal, hash: dataHash(seal) };
+}
+
+// The second line: what the reader said of a card, or `reader: 'none'` with no pick and why there is no reading. `view`
+// is the hash of the view it read, `run` its run, and `afterAnswer` whether the director had answered when it ended.
+export function readingOf({ card, work, run = null, reading = null, why = null, view = null, afterAnswer = false, at }) {
+  const { frame = null, why: said = why, kind = null, fits = null, pick = null, tags = null } = reading ?? {};
+  const line = { line: 'reading', card, work, run, reader: reading ? 'read' : 'none', frame, why: said, kind, fits, pick, tags, view, afterAnswer, at };
+  return { ...line, hash: dataHash(line) };
 }
 
 const isText = (x) => typeof x === 'string' && x.trim() !== '';
