@@ -299,6 +299,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       if (stopped()) {
         state.delivered[key] = 'stop';
         const over = (await inspect(kept.runId))?.status === 'ended';
+        if (over && answer?.choice === STOP) letGo(kept.work);
         // The ask is still open in the engine unless All stop cancelled its run: it comes back as a new card once All stop is lifted.
         if (!over && kept.ask?.type === 'ask') state.later.push(kept.ask);
         keep();
@@ -331,7 +332,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       }
       state.delivered[key] = got.ok ? 'answered' : 'refused';
       delete state.tries[key];
-      if (kept.ask?.kind === 'blocked' && answer.choice === STOP) letGo(kept.work);
+      if (answer.choice === STOP) letGo(kept.work);
       if (got.ok && typeof kept.ask?.mergeChoice === 'string' && answer.choice === kept.ask.mergeChoice) mergeRuled();
       const runLane = (views.runs?.[kept.work] ?? []).filter((r) => r?.data?.runId === kept.runId).at(-1)?.data?.lane ?? workOf(kept.runId)?.lane;
       const move = got.ok && runLane === 'bug' && kept.ask?.kind === 'blocked' && kept.ask?.topic === BIGGER && Object.hasOwn(MOVES, answer.choice) ? MOVES[answer.choice] : undefined;

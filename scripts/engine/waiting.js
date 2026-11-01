@@ -15,14 +15,14 @@ function runEnded(views, work, runId) {
 
 // routerWaiting({ state, views, prWork }) -> Set<work>, from the card router's kept state. `prWork(pr)` names the piece
 // that opened a pull request, for a merge-queue card, which is routed under MERGE_WORK; one that names none is left out.
-// An ask whose run has ended can't be answered, so only a cap card, which outlives its run, stands after that.
+// An ask whose run has ended can't be answered, so only a cap card or a merge card, which outlive their runs, stand after that.
 export function routerWaiting({ state, views, prWork = () => null } = {}) {
   const waiting = new Set();
   const add = (kept) => {
     const pr = kept?.ask?.mergeQuestion?.pr;
     const work = kept?.work === MERGE_WORK ? (Number.isInteger(pr) ? prWork(pr) : null) : kept?.work;
     if (typeof work !== 'string' || work === '') return;
-    if (kept.cap !== true && runEnded(views, kept.work, kept.runId)) return;
+    if (kept.cap !== true && kept.work !== MERGE_WORK && runEnded(views, kept.work, kept.runId)) return;
     waiting.add(work);
   };
   for (const kept of Array.isArray(state?.waiting) ? state.waiting : []) add(kept);

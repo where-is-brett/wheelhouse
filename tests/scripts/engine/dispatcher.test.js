@@ -275,3 +275,41 @@ test('old callers pass neither input, and bad ones read as none', () => {
   assert.deepEqual(dispatch(base({ work, waiting: null, reserved: null })).start.map((s) => s.work), ['a']);
   assert.deepEqual(dispatch(base({ work, waiting: 'a', reserved: [] })).start.map((s) => s.work), ['a']);
 });
+
+test('a run at work keeps its place, whatever card is left open', () => {
+  // Queued again with a cap card still open: the new run is going, so it fills a place.
+  const work = Object.fromEntries(['a', 'b', 'c', 'd'].map((id, n) => piece(id, { place: n })));
+  const runs = { a: [runOf('a', 'started')], b: [runOf('b', 'started')], c: [runOf('c', 'started')] };
+  assert.deepEqual(dispatch(base({ work, runs, waiting: ['a'] })).hold, [{ work: 'd', why: 'pace' }]);
+});
+
+test('a run that went on after its question fills its place again', () => {
+  const work = Object.fromEntries(['a', 'b'].map((id, n) => piece(id, { place: n })));
+  const runs = { a: [runOf('a', 'paused'), { ...runOf('a', 'started'), at: '2026-10-29T10:05:00.000Z' }] };
+  const slow = { engineLanes: ['quick'], pace: { value: 1 } };
+  assert.deepEqual(dispatch(base({ work, runs, waiting: ['a'], settings: slow })).hold, [{ work: 'b', why: 'pace' }]);
+});
+
+test('a queued piece named as waiting counts once, and its own files hold it not', () => {
+  const ids = ['a', 'b', 'c', 'd', 'e'];
+  const work = Object.fromEntries([...ids.map((id, n) => piece(id, { place: n })), piece('g', { place: 5, files: ['g.js'] })]);
+  const runs = Object.fromEntries(ids.map((id) => [id, [runOf(id, 'paused')]]));
+  const got = dispatch(base({ work, runs, waiting: [...ids, 'g'] }));
+  assert.deepEqual(got.start.map((s) => s.work), ['g']);
+});
+
+test('a waiting piece going back counts once against the parked limit', () => {
+  const ids = ['a', 'b', 'c', 'd', 'e'];
+  const work = Object.fromEntries([...ids.map((id, n) => piece(id, { place: n })), piece('g', { place: 5 })]);
+  const runs = Object.fromEntries(ids.map((id) => [id, [runOf(id, id === 'a' ? 'ended' : 'paused', id === 'a' ? { outcome: 'completed', pr: 3 } : {})]]));
+  const got = dispatch(base({ work, runs, waiting: ids, sentBack: [{ work: 'a', times: 1 }] }));
+  assert.deepEqual(got.requeue.map((r) => r.work), ['a']);
+  assert.deepEqual(got.start.map((s) => s.work), ['g']);
+});
+
+test('the director\'s pace holds, however far the settings are read down', () => {
+  const work = Object.fromEntries(['a', 'b', 'c'].map((id, n) => piece(id, { place: n })));
+  assert.equal(dispatch(base({ work, settings: { engineLanes: ['quick'], pace: 1 } })).start.length, 1);
+  assert.equal(dispatch(base({ work, settings: { engineLanes: ['quick'], pace: { value: 2 } } })).start.length, 2);
+  assert.equal(dispatch(base({ work, settings: { engineLanes: ['quick'], pace: 9 } })).start.length, 3);
+});

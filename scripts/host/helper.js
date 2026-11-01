@@ -5145,7 +5145,7 @@ export async function startHelper({
         const seen = await engine.inspect(runId);
         const adapter = await adapterNow();
         const mainBranch = await defaultBranchOf(project, adapter);
-        return pathsSoFar({ folder: seen?.folder, branch: branch ?? seen?.branch, git: gitRoute({ run }), baseCommit: await adapter.branchHead(mainBranch), mainBranch });
+        return pathsSoFar({ folder: seen?.folder, branch: branch ?? seen?.branch, git: gitRoute({ run }), baseCommit: await adapter.branchHead(mainBranch).catch(() => null), mainBranch });
       },
       moving: () => holdsWork(project),
       isLocal: () => readProject(project)?.host === 'local',

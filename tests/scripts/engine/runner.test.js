@@ -1032,6 +1032,40 @@ test('Stop ends a reservation even when the build had already moved on, and an u
   } finally { t.cleanup(); }
 });
 
+test('Stop on an ask of any kind ends a reservation', async () => {
+  const released = [];
+  const t = setUp({ recordings: { one: asking('q1', { kind: 'trouble', recommend: 'stop', options: [{ id: 'stop', label: 'Stop this work' }] }) }, release: (work) => released.push(work) });
+  try {
+    await t.ask();
+    t.sign('Stop this work');
+    await t.runner.tick();
+    assert.deepEqual(released, ['sale-banner']);
+  } finally { t.cleanup(); }
+});
+
+test('Stop under All stop ends a reservation only when All stop cancelled the run', async () => {
+  const released = [];
+  const t = setUp({ recordings: { one: blockedAsk('q1') }, release: (work) => released.push(work) });
+  try {
+    await t.ask();
+    t.world.stop = true;
+    t.sign('Stop this work');
+    await t.runner.tick();
+    assert.deepEqual(released, [], 'the run still stands, and the question comes back');
+  } finally { t.cleanup(); }
+
+  const gone = [];
+  const u = setUp({ recordings: { one: blockedAsk('q1') }, release: (work) => gone.push(work) });
+  try {
+    const { runId } = await u.ask();
+    u.engine.act(runId, { cancel: { reason: 'All stop' } });
+    u.world.stop = true;
+    u.sign('Stop this work');
+    await u.runner.tick();
+    assert.deepEqual(gone, ['sale-banner']);
+  } finally { u.cleanup(); }
+});
+
 test('Give it more and Send it back keep the reservation', async () => {
   const released = [];
   const t = setUp({ recordings: { one: blockedAsk('q1') }, release: (work) => released.push(work) });

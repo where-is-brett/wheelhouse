@@ -113,6 +113,12 @@ test('a card left open on a run that ended waits for nothing', () => {
   assert.deepEqual(sorted(routerWaiting({ state, views })), []);
 });
 
+test('a merge card outlives the queue run that asked', () => {
+  const state = { ...EMPTY(), questions: { q1: { runId: 'mq', work: MERGE_WORK, ask: { mergeQuestion: { pr: 7 } } } } };
+  const views = { questions: open('q1'), runs: { [MERGE_WORK]: [run(MERGE_WORK, 'mq', 'ended')] } };
+  assert.deepEqual(sorted(routerWaiting({ state, views, prWork: () => 'f' })), ['f']);
+});
+
 test('state kept by the version before reads as waiting on the first tick', () => {
   const dir = tempFolder('wh-waiting-');
   const router = path.join(dir, 'router.json');

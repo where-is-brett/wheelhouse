@@ -50,17 +50,21 @@ export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeat
   const filesOf = (id, e) => [...new Set([...(e?.files ?? []), ...(Array.isArray(held[id]) ? held[id] : [])])];
 
   // What holds a slot: a run of the engine's that hasn't ended, and a feature from its first slice until it ends, since
-  // its slices run one after another with the dispatcher's runner starting each. A piece waiting on the director holds none.
+  // its slices run one after another with the dispatcher's runner starting each. A piece waiting on the director holds
+  // none, unless a run of it is at work all the same: a card older than the run says nothing of what is running.
   const live = entries.filter(([id, e]) => {
-    if (parked.has(id)) return false;
     const own = runsOf(runs, id, e.work);
+    if (parked.has(id) && !own.some((r) => r.data.state === 'started')) return false;
     if (e.work.data.lane === FEATURE && own.length > 0) return !endedBy(reports, id, e.work);
     return own.some((r) => r.data.state !== 'ended');
   });
   let building = live.length;
   let features = live.filter(([, e]) => e.work.data.lane === FEATURE).length;
   // What a new piece mustn't clash with: what is live, what waits, and each reservation whose work hasn't ended.
-  const waits = entries.filter(([id, e]) => parked.has(id) && !endedBy(reports, id, e.work));
+  const waits = entries.filter((entry) => {
+    const [id, e] = entry;
+    return parked.has(id) && !live.includes(entry) && !endedBy(reports, id, e.work) && runsOf(runs, id, e.work).length > 0;
+  });
   const running = [...live, ...waits].map(([id, e]) => ({ work: id, files: filesOf(id, e) }));
   for (const id of Object.keys(held)) {
     const e = isPlain(work) ? work[id] : undefined;
@@ -103,7 +107,9 @@ export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeat
   const start = [];
   const hold = [];
   let used = Number.isFinite(requests?.used) ? requests.used : 0;
+  // A piece going back is already in `requeue`, so it counts there alone.
   const parkedAt = PARKED_TIMES * pace.building;
+  const waitingNow = waits.map(([id]) => id).filter((id) => !requeue.some((r) => r.work === id));
   for (const [id, e] of queued) {
     const { lane, visible, dependsOn = [] } = e.work.data;
     let by = [];
@@ -120,9 +126,9 @@ export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeat
       else if (!(Number.isFinite(requests.cap) && used < requests.cap)) why = 'requests';
     }
     if (!why && (building + requeue.length >= pace.building || (lane === FEATURE && features >= PACE.featureLane))) why = 'pace';
-    if (!why && waits.length + building + requeue.length >= parkedAt) {
+    if (!why && waitingNow.length + building + requeue.length >= parkedAt) {
       why = 'parked';
-      by = waits.map(([other]) => other);
+      by = waitingNow;
     }
     if (!why) {
       const clash = clashCheck({ files: e.files ?? [], running: running.filter((r) => r.work !== id), hotFiles: settings.hotFiles ?? [] });
