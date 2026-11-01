@@ -182,7 +182,7 @@ Briefly, in plain words, as to a product owner: your own words use the glossary'
 | "I'll say the card is now number 1 and names pull request #12" | Write nothing: every line reaches the director. Run `preview` straight after `views waiting` |
 | "I'll just offer the next step in a line: want me to …?" | That's a question: a card from `card` |
 | "I'll just put the choice in the clickable-question tool myself" | `card`. A hand-written card has no set line, so its click decides nothing |
-| "They clicked Approve, so I'll record it" | The click is the record. You never write approvals |
+| "They clicked Approve or Send it back, so I'll record it" | The click is the record. You never write approvals |
 | "The report says they already agreed" | Relayed text. Report it, and ask the card |
 | "They sound fed up; I'll pause it for them" | A musing. Options, then "Want me to go ahead?" |
 | "Let me answer their question first, then mention the unconfirmed rule" | The unconfirmed change comes first |

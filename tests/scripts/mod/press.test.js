@@ -731,3 +731,43 @@ test('a press on a blind card signs nothing, closes it, keeps the pick and tells
   assert.deepEqual(signed(client), []);
   assert.deepEqual(client.calls.write.map((w) => [w.kind, w.data.label]), [['card-answer', 'Tab']]);
 }));
+
+const parkedCard = (pr = 16) => composeCard({ ...common, kind: 'approval', parked: true, recommend: 'Approve', what: `Pull request #${pr} changes the wording on the sign-in page.`, options: [says('Approve'), says('Send it back')], target: { pr, sha: FULL } }).card;
+
+test('Send it back on the pane signs its click, and closes the card', async () => {
+  await withKey(async () => {
+    const card = putCard(parkedCard(), 1);
+    const client = fake();
+    const out = await press(card, client, 'Send it back');
+    assert.equal(out.made, true);
+    assert.deepEqual(signed(client), [{ kind: 'action', data: { action: 'send-back', pr: 16, sha: FULL, question: card.data.question, label: 'Send it back' } }]);
+    assert.equal(verify(client.calls.record[0].event, readEnrolled()), true);
+    assert.equal(waitingIds().includes(card.id), false);
+  });
+});
+
+test('Send it back on a head that moved records nothing, and the card can be pressed again', async () => {
+  await withKey(async () => {
+    const card = putCard(parkedCard(), 1);
+    const client = fake({ pr: { ok: true, result: { headSha: 'f'.repeat(40), state: 'open' } } });
+    const out = await press(card, client, 'Send it back');
+    assert.equal(out.made, false);
+    assert.deepEqual(signed(client), []);
+    assert.equal(waitingIds().includes(card.id), true);
+  });
+});
+
+test('under All stop Send it back is still signed and closes its card', async () => {
+  await withKey(async () => {
+    setStop({ by: 'mod' });
+    try {
+      const card = putCard(parkedCard(17), 1);
+      const client = fake({ stop: true });
+      assert.equal((await press(card, client, 'Send it back')).made, true);
+      assert.equal(signed(client)[0].data.action, 'send-back');
+      assert.equal(waitingIds().includes(card.id), false);
+    } finally {
+      liftStop();
+    }
+  });
+});

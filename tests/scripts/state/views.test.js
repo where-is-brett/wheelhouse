@@ -19,7 +19,7 @@ import { SUGGEST, WHY } from '../../../scripts/lib/calm-words.js';
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
 const T = (n) => `2026-10-18T02:00:${String(n).padStart(2, '0')}.000Z`;
 const at = (n) => () => new Date(T(n));
-const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'provenance', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'controlFiles', 'survey', 'columnsReady', 'usageCards', 'premium', 'premiumFailures', 'runs', 'asks', 'costs', 'previews', 'lessons', 'engineNotes', 'cardsWaiting', 'evidence', 'rules', 'brief'];
+const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'provenance', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'controlFiles', 'survey', 'columnsReady', 'usageCards', 'premium', 'premiumFailures', 'runs', 'asks', 'costs', 'previews', 'lessons', 'engineNotes', 'cardsWaiting', 'evidence', 'rules', 'brief', 'sendBacks'];
 const now = () => new Date('2026-10-18T09:00:00.000Z');
 
 async function withHome(fn) {
@@ -1660,5 +1660,33 @@ test('a joiner recorded again is a question of its own', async () => {
     const got = build([asked(1), joiner(2), joiner(3, { why: 'Another reason' }), answerCard(4, words, [JOIN]), clickedOn(5, words)]).questions[JOIN];
     assert.equal(got.joins, undefined);
     assert.equal(got.answer, null);
+  });
+});
+
+test('a signed send-back is listed, and closes its card', async () => {
+  await withHome(() => {
+    const sha = 'a'.repeat(40);
+    const question = `A card.\n${approvalLine(7, sha)}`;
+    const card = ev('card', 1, { question, header: 'Approval', options: ['Approve', 'Send it back'], kind: 'approval', level: 3, line: approvalLine(7, sha), code: null, concepts: [] });
+    const sent = ev('action', 2, { action: 'send-back', pr: 7, sha, question, label: 'Send it back' });
+    const v = build([card, sent]);
+    assert.deepEqual(v.sendBacks, [{ id: sent.id, at: sent.at, pr: 7, sha }]);
+    assert.equal(v.waiting.some((w) => w.id === card.id), false);
+    const forged = { ...sent, sig: { ...sent.sig, value: 'forged' } };
+    assert.deepEqual(build([card, forged]).sendBacks, []);
+  });
+});
+
+test('a plain answer closes only the approval card it came after: the same card raised again at that head waits', async () => {
+  await withHome(() => {
+    const sha = 'a'.repeat(40);
+    const question = `A card.\n${approvalLine(7, sha)}`;
+    const data = { question, header: 'Approval', options: ['Approve', 'Send it back'], kind: 'approval', level: 3, line: approvalLine(7, sha), code: null, concepts: [] };
+    const first = ev('card', 1, data);
+    const answer = ev('card-answer', 2, { question, label: 'Send it back' });
+    const sent = ev('action', 3, { action: 'send-back', pr: 7, sha, question, label: 'Send it back' });
+    const again = ev('card', 4, data);
+    const v = build([first, answer, sent, again]);
+    assert.deepEqual(v.waiting.map((w) => w.id), [again.id]);
   });
 });

@@ -25,7 +25,7 @@ export const forever = () => [ev({ type: 'run-started' })];
 // A run that holds at no ask and ends at once.
 export const quiet = () => [ev({ type: 'run-started' }), ev({ type: 'run-ended', outcome: 'completed' })];
 
-export function wayBack({ recordings = {}, pace = 3, settings = {}, testCommand = 'node --test', designOf = () => null, branchPaths = async () => [], reads = {} } = {}) {
+export function wayBack({ recordings = {}, pace = 3, settings = {}, testCommand = 'node --test', designOf = () => null, branchPaths = async () => [], reads = {}, opened = {} } = {}) {
   const dir = tempFolder('wh-way-back-');
   const engine = fakeEngine({ recordings });
   const clock = { now: new Date('2026-10-29T10:00:00.000Z') };
@@ -39,7 +39,7 @@ export function wayBack({ recordings = {}, pace = 3, settings = {}, testCommand 
   const ended = (data) => (world.runs[data.work] ?? []).filter((r) => r.data.runId === data.engine?.runId).at(-1)?.data.state === 'ended';
   const shownBy = (lead) => Object.values(world.questions).filter((c) => c.question.data.joins === lead && (world.shown[lead] ?? []).includes(c.question.data.work)).map((c) => c.question.data.id);
   const views = () => (joinQuestions(world.questions, { ended, shown: shownBy }), {
-    work: world.work, runs: world.runs, reports: world.reports, questions: world.questions, approvals: world.approvals, incidents: world.incidents, costs: world.costs, levels: {}, cardsWaiting: cardsWaitingOf(notes()),
+    work: world.work, runs: world.runs, reports: world.reports, questions: world.questions, approvals: world.approvals, incidents: world.incidents, costs: world.costs, levels: {}, cardsWaiting: cardsWaitingOf(notes()), sendBacks: world.sendBacks ?? [],
   });
   const record = (data) => { (world.runs[data.work] ??= []).push({ at: at(), data: { engine: 'fake', ...data } }); };
   const realStart = async ({ order, branch, carryOn }) => {
@@ -67,7 +67,7 @@ export function wayBack({ recordings = {}, pace = 3, settings = {}, testCommand 
     const dispatcher = dispatchRun({
       engine, project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'), readViews: views, write, start, branchPaths, designOf,
       settings: () => ({ engineLanes: ['quick', 'bug', 'feature'], pace, ...settings }), stopped: () => world.stop, now: () => clock.now,
-      config: () => ({ routing: {}, testCommand }), readyOf: () => world.ready, prState: async (pr) => world.seenPr[pr] ?? 'open', orderOf: (runId) => world.orders?.[runId] ?? null, stoppedRuns: () => world.stoppedIds ?? [],
+      config: () => ({ routing: {}, testCommand }), readyOf: () => world.ready, prState: async (pr) => world.seenPr[pr] ?? 'open', orderOf: (runId) => world.orders?.[runId] ?? null, stoppedRuns: () => world.stoppedIds ?? [], notReady: (pr) => { delete world.ready[pr]; },
     });
     const runner = engineRunner({
       engine, file: path.join(dir, 'router.json'), readViews: views, write, stopped: () => world.stop, now: () => clock.now,
@@ -86,6 +86,10 @@ export function wayBack({ recordings = {}, pace = 3, settings = {}, testCommand 
       startAdmitted: (args) => dispatcher.startAdmitted(args),
       carryOver: (work, kept) => dispatcher.carryOver(work, kept),
       comingBack: (work) => dispatcher.comingBack(work),
+      openedOf: (pr) => opened[pr] ?? null,
+      takeBack: (args) => dispatcher.takeBack(args),
+      notReady: (pr) => dispatcher.notReady(pr),
+      localChange: (pr) => dispatcher.localChange(pr),
       ...reads,
     });
     runner.onEnter((args) => dispatcher.enter(args));
@@ -94,6 +98,7 @@ export function wayBack({ recordings = {}, pace = 3, settings = {}, testCommand 
     dispatcher.onOwed(() => runner.owedWork());
     dispatcher.onReworks(() => runner.reworkWork());
     dispatcher.onCards(() => runner.openCards());
+    dispatcher.onParked(() => runner.parkedHeads());
     return { dispatcher, runner };
   };
   let joined = build();
