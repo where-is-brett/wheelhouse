@@ -171,8 +171,8 @@ test('the briefing says the line once', () => withRuns(async ({ source }) => {
   assert.doesNotMatch(next.data.text, /New quick changes are built by the new engine\./);
 }));
 
-const goalSheet = { title: 'Customers can export their orders', until: '2026-10-30T08:00:00.000Z' };
-const goalSource = (goals) => ({ project: 'p', async views() { return { ok: true, views: { goals } }; } });
+const goalSheet = { title: 'Customers can export their orders', until: '2026-10-30T08:00:00.000Z', pieces: [], done: [], checksSay: [], spend: { tokens: 1000 } };
+const goalSource = (goals) => ({ project: 'p', async views() { return { ok: true, views: { goals, work: {}, features: {}, questions: {}, waiting: [] } }; } });
 const entry = (over = {}) => ({ sheet: goalSheet, hash: 'h'.repeat(64), startedAt: '2026-10-29T10:00:00.000Z', ended: null, endAsked: null, ...over });
 
 test('goal shows the signed goal in force, a named one, or says none is running', async () => {
@@ -196,6 +196,35 @@ test('goal shows the signed goal in force, a named one, or says none is running'
   assert.equal(named.data.goal.state, 'ended');
   assert.equal((await readView('goal', { goal: 'no-such-goal' }, goalSource(goals), { now })).data.goal, null);
 });
+
+test('an ended goal\'s view is its report, from the record, by id or as the latest', async () => {
+  const spent = { tokens: 10, points: null, requests: null, unknown: false, shareAtStart: null, queueRuns: [] };
+  const goals = { 'orders-export': entry({ ended: { ending: 'done', at: '2026-10-29T12:00:00.000Z', spent } }) };
+  const latest = await readView('goal', {}, goalSource(goals), { now });
+  assert.equal(latest.data.report.verdict.ending, 'done');
+  assert.match(latest.lines[0], /^\*\*Customers can export their orders is done\.\*\*/);
+  assert.ok(latest.lines.some((line) => line.startsWith('**Spent:**')));
+  const named = await readView('goal', { goal: 'orders-export' }, goalSource(goals), { now });
+  assert.deepEqual(named.lines, latest.lines);
+  const running = { ...goals, next: entry() };
+  assert.equal((await readView('goal', {}, goalSource(running), { now })).data.report, undefined, 'a goal in force has no report yet');
+});
+
+test('the briefing opens with an ended goal\'s report, and the Logbook keeps it until it is settled', () => withRecord(async ({ source }) => {
+  const sheet = { ...goalSheet, pieces: [{ work: 'left-piece', hash: 'x' }] };
+  const spent = { tokens: 10, points: null, requests: null, unknown: false, shareAtStart: null, queueRuns: [] };
+  put(path.join(viewsDir(), 'goals.json'), { orders: entry({ sheet, ended: { ending: 'stuck', at: '2026-10-29T06:00:00.000Z', spent } }) });
+  const first = await readView('briefing', { reserve: 0, since: '2026-10-29T05:00:00.000Z' }, source, { now });
+  assert.ok(first.data.text.startsWith(`${HEADINGS.briefing}\n\n**Customers can export their orders has ended`), first.data.text);
+  const later = await readView('briefing', { reserve: 0, since: '2026-10-29T07:00:00.000Z' }, source, { now });
+  assert.match(later.data.text, /The report on Customers can export their orders stays on the Logbook/);
+  const logbook = await readView('logbook', { tab: 'director' }, source, { now });
+  assert.match(logbook.data.text, /Left undone: left-piece\./);
+  const context = await readView('logbook', { context: true, tab: 'director', reserve: 0 }, source, { now });
+  assert.match(context.data.text, /Left undone: left-piece\./);
+  const build = await readView('logbook', { tab: 'build' }, source, { now });
+  assert.doesNotMatch(build.data.text, /Left undone/);
+}));
 
 test('goal refuses when the project has no record', async () => {
   const got = await readView('goal', {}, { project: 'p', async views() { return { ok: false, refused: 'This project has no record to show yet' }; } }, { now });

@@ -20,7 +20,7 @@ import { sheetHash } from '../../../scripts/engine/goal.js';
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
 const T = (n) => `2026-10-18T02:00:${String(n).padStart(2, '0')}.000Z`;
 const at = (n) => () => new Date(T(n));
-const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'provenance', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'controlFiles', 'survey', 'columnsReady', 'usageCards', 'premium', 'premiumFailures', 'runs', 'asks', 'costs', 'previews', 'lessons', 'engineNotes', 'cardsWaiting', 'evidence', 'rules', 'brief', 'sendBacks', 'slept', 'goals', 'goalChecks'];
+const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'provenance', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'controlFiles', 'survey', 'columnsReady', 'usageCards', 'premium', 'premiumFailures', 'runs', 'asks', 'costs', 'previews', 'lessons', 'engineNotes', 'cardsWaiting', 'evidence', 'rules', 'brief', 'sendBacks', 'slept', 'goals', 'goalChecks', 'goalNotes'];
 const now = () => new Date('2026-10-18T09:00:00.000Z');
 
 async function withHome(fn) {
@@ -1732,6 +1732,14 @@ test('a baseline counts only signed by the helper, and reaches the view on disk'
     assert.deepEqual(build([W, record, signed]).goalChecks['export-orders'], [{ ...data, at: signed.at }]);
     assert.deepEqual(build([W, record, unsigned(signed), click]).goals, {});
     assert.deepEqual(build([W, record, click, ev('goal-check', 6, data)]).goals, {}, 'a baseline after the click proves nothing of it');
+  });
+
+  test('goalNotes keeps what a goal\'s report reads from notes, and no other note', () => {
+    const queue = ev('note', 1, { about: 'goal-queue-after', goal: 'g', run: 'r', tokens: 5, unknown: false });
+    const slice = ev('note', 2, { about: 'engine', work: 'w', words: 'x', slice: { n: 1, of: 2, title: 'One', flag: 'f' } });
+    const lost = ev('note', 3, { about: 'engine', work: 'w', words: 'x', lost: true });
+    const other = ev('note', 4, { about: 'engine', words: 'x' });
+    assert.deepEqual(build([queue, slice, lost, other]).goalNotes.map((n) => n.data), [queue.data, slice.data, lost.data]);
   });
 });
 

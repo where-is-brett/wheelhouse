@@ -30,7 +30,7 @@ import { dispatch, MERGE_WORK, MERGE_QUEUE_EVERY_MS } from './dispatcher.js';
 import { goalRule, goalInForce, gateStart, goalDoneOf, orderGoal, areasOf, fixAreas, goalStep, lastEnded, lastCheckHolds, pieceCovered, unfinishedOf } from './goal.js';
 import { goalMeter, goalRuns, shareAtStart } from './goal-meter.js';
 import { GOAL_CHECK_TRIES } from './goal-limits.js';
-import { goalHeldWords, goalWindingWords, goalEndedWords, goalRunLeftWords, goalPieceChangedWords, goalCheckedAgainWords, reservedUnreadWords, LIMIT_HOLD_WORDS, noCardBehindWords, restartRefusedWords, restartCardWords, restartUnsureWords, restartStrandedWords, failedCardWords, prLeftOpenWords, areasInScopeWords, areaCardWords, AREA_CARD_WHY, ALLOW_ONCE_SAYS, areaStoppedWords, wakeLateWords, STOPPED_RESTART_WORDS, ORPHAN_LEFT_WORDS, RESTART_UNSURE_AGAIN, START_ANYWAY, cutOffStoppedWords, cutOffWords, waitsOnItselfWords, startAnywayWords, startRefusedWords, startCardWords, unmarkedPrWords, START_STOP_SAYS, NO_FIX_TESTS, NO_FIX_ORDER, noFixWords, queueStuckWords, QUEUE_STUCK_WHY, QUEUE_PASSED_WORDS, requestsUsedWords, REQUESTS_UNCONFIRMED_WORDS, requestsStoppedWords } from './words.js';
+import { goalHeldWords, goalWindingWords, goalEndedWords, goalRedsWords, goalRunLeftWords, goalPieceChangedWords, goalCheckedAgainWords, reservedUnreadWords, LIMIT_HOLD_WORDS, noCardBehindWords, restartRefusedWords, restartCardWords, restartUnsureWords, restartStrandedWords, failedCardWords, prLeftOpenWords, areasInScopeWords, areaCardWords, AREA_CARD_WHY, ALLOW_ONCE_SAYS, areaStoppedWords, wakeLateWords, STOPPED_RESTART_WORDS, ORPHAN_LEFT_WORDS, RESTART_UNSURE_AGAIN, START_ANYWAY, cutOffStoppedWords, cutOffWords, waitsOnItselfWords, startAnywayWords, startRefusedWords, startCardWords, unmarkedPrWords, START_STOP_SAYS, NO_FIX_TESTS, NO_FIX_ORDER, noFixWords, queueStuckWords, QUEUE_STUCK_WHY, QUEUE_PASSED_WORDS, requestsUsedWords, REQUESTS_UNCONFIRMED_WORDS, requestsStoppedWords } from './words.js';
 import { workOrder, ORDER_LANES } from './order.js';
 import { limitsFor } from './caps.js';
 import { ENGINE_QUESTIONS } from './router.js';
@@ -302,6 +302,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     if (used !== null && used < kept.requestsAtStart) kept.requestsAtStart = 0;
     const requests = used === null ? null : used - kept.requestsAtStart;
     kept.meter = await goalMeter({ goal, views, inspect: readForMeter, queueRuns: state.goalQueueRuns, capOf, reading, shareAtStart: kept.shareAtStart, requests, now: now() });
+    kept.readAt = kept.meter.points === null ? null : reading.shareAt;
     keep();
   }
 
@@ -425,8 +426,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     if (left.length > 0) return;
     await meterTick(readViews() ?? {}).catch(() => {});
     const { meter, shareAtStart: atStart = null } = state.goalSpend?.goal === goal.id ? state.goalSpend : {};
-    const spent = { tokens: meter?.tokens ?? 0, points: meter?.points ?? null, requests: meter?.requests ?? null, unknown: meter?.unknown ?? true, shareAtStart: atStart, queueRuns: state.goalQueueRuns };
-    await write('goal-end', { goal: goal.id, ending: closing.ending, at: now().toISOString(), spent });
+    const spent = { tokens: meter?.tokens ?? 0, points: meter?.points ?? null, requests: meter?.requests ?? null, unknown: meter?.unknown ?? true, shareAtStart: atStart, queueRuns: state.goalQueueRuns, readAt: state.goalSpend?.readAt ?? null };
+    await write('goal-end', { goal: goal.id, ending: closing.ending, at: now().toISOString(), spent, ...(kept.reds.length > 0 ? { words: goalRedsWords(kept.reds.length) } : {}) });
     Object.assign(kept, { state: 'ended', ending: closing.ending, closing: null });
     keep();
     await write('note', { about: 'engine', words: goalEndedWords(goal.sheet.title, kept.ending) });
@@ -665,7 +666,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
         keep();
         const n = progressFor(views, work, entry, kept, design);
         const slice = Object.entries(n.slices).find(([, got]) => got.pr === pr);
-        if (slice) await write('note', { about: 'engine', words: `Slice ${slice[0]} of ${design.slices.length} of ${entry.work.data.title ?? work} is added, behind its switch.` });
+        if (slice) await write('note', { about: 'engine', work, words: `Slice ${slice[0]} of ${design.slices.length} of ${entry.work.data.title ?? work} is added, behind its switch.`, slice: { n: Number(slice[0]), of: design.slices.length, title: design.slices[Number(slice[0]) - 1]?.title ?? `Slice ${slice[0]}`, flag: design.flag?.name } });
       }
       const progress = progressFor(views, work, entry, kept, design);
       const latest = new Map(runs.map((r) => [r.data.runId, r.data]));

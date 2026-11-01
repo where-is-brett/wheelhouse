@@ -26,6 +26,8 @@ And a briefing opens like this:
 
 > Since you were last here at 09:10: the booking page is ready for you to look at. One thing needs you. Nothing is broken.
 
+**Leaving work running.** Soon you will be able to sign one goal with its bounds and go away. When you come back, the report on it is made by a script from the record, with no model in between: what was added, what waits, what went wrong and what it spent, with nothing rounded up. A goal can't be started yet.
+
 **What it costs.** Wheelhouse is free and open source (Apache 2.0). The agents run on your own Claude plan, so their work comes out of your plan's usage, and Wheelhouse's Logbook shows this week's usage, including the share of your weekly allowance.
 
 **Who makes it.** Wheelhouse is an independent open-source project. It isn't made by, or affiliated with, Anthropic.

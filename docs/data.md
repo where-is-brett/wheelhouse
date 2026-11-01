@@ -32,7 +32,7 @@ For a project on a host, nothing of yours goes to GitHub or GitLab, even if the 
 
 When the helper finds your computer has been asleep for more than three minutes, it adds the start and end of that sleep to the same record, so a run isn't charged for time it wasn't running.
 
-A goal you sign stays in the same private record: its sheet, and later how it ended. Your Start signs the sheet's hash, so a sheet changed after you saw it starts nothing. When you end a goal or narrow it, that is noted there too.
+A goal you sign stays in the same private record: its sheet, and later how it ended. Your Start signs the sheet's hash, so a sheet changed after you saw it starts nothing. When you end a goal or narrow it, that is noted there too. The report on a goal is worked out from that private record when it is asked for, kept nowhere else, and never put in a pull request. The record of how a goal ended holds what it spent, when the allowance was read, and how often the main line went red. A note records each slice added, each run that lost its process, and the merge queue's spend after the end.
 
 When a build run fails, the record of its ending says what kind of failure it was, in one word: connection, provider, host, limit or other. When a failed run resumes, the record gets a numbered start of its own and a numbered ending, so its running time and its spend add up once across the whole run. The record of its ending also names the step that failed, and a fresh run on the same work is given those steps and kinds in its order, so it doesn't repeat what failed.
 

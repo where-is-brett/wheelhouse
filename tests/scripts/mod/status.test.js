@@ -594,3 +594,27 @@ test('the pane carries the Safekeeping row with the status\'s own buttons, and n
   fs.writeFileSync(safekeepingFile(P), `${JSON.stringify({ status: { level: 'watch', line: 'Only here', detail: 'Lost with it', actions: [{ action: 'choose-folder', label: 'Choose a backup folder' }] } })}\n`);
   assert.deepEqual((await paneModel({ project: P, cwd, now: () => NOW })).safekeeping, { level: 'watch', line: 'Only here', detail: 'Lost with it', actions: [{ action: 'choose-folder', label: 'Choose a backup folder' }] });
 }));
+
+test('a goal in force gives the pane its one line, and an ended one the courier its ending', () => withHome(async (home) => {
+  const repo = register(home);
+  const piece = (id, title) => ({ id, title, lane: 'quick', visible: false, dependsOn: [] });
+  const [a, b, c, d] = [piece('a', 'One'), piece('b', 'Two'), piece('c', 'Three'), piece('d', 'Four')];
+  const sheet = { title: 'Orders', pieces: [a, b, c, d].map((p) => ({ work: p.id, hash: 'x' })), spend: { tokens: 1000000 }, until: '2026-10-19T15:30:00.000Z', done: [], checksSay: [] };
+  const goal = { sheet, hash: 'h'.repeat(64), startedAt: '2026-10-19T08:00:00.000Z', ended: null, endAsked: null };
+  view('goals', { orders: goal });
+  view('work', Object.fromEntries([a, b, c, d].map((p) => [p.id, { work: { at: at(1), data: p } }])));
+  view('features', {});
+  view('questions', {});
+  view('reports', { a: { at: at(2), data: { work: 'a', outcome: 'merged' } }, b: { at: at(3), data: { work: 'b', outcome: 'merged' } } });
+  const live = { goalRun: { goal: 'orders', state: 'running' }, goalSpend: { goal: 'orders', meter: { tokens: 333000, unknown: false } } };
+  put(path.join(wheelhouseHome(), 'projects', P, 'engine', 'dispatch.json'), live);
+
+  const inForce = await paneModel({ project: P, cwd: repo, now: () => NOW });
+  assert.equal(inForce.building[0].text, 'Goal: 2 of 4 added, 3 hours left, a third of its spend used.');
+  assert.equal(inForce.goalEnd, null);
+
+  view('goals', { orders: { ...goal, ended: { ending: 'spend', at: at(6), spent: {} } } });
+  const ended = await paneModel({ project: P, cwd: repo, now: () => NOW });
+  assert.ok(!ended.building.some((line) => line.text.startsWith('Goal:')));
+  assert.deepEqual(ended.goalEnd, { id: 'orders', stoppedEarly: true });
+}));

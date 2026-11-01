@@ -642,6 +642,7 @@ test('a lost run is cancelled and carried on once on its branch', async () => {
   assert.equal(start.branch, 'wh/a');
   assert.equal(openCards(w).length, 0);
   assert.ok(w.notes().includes(lostCarriedWords('a')));
+  assert.equal(w.written.filter((x) => x.kind === 'note' && x.data.lost === true && x.data.work === 'a').length, 1, 'on the record for a goal\'s report');
   await w.tick(5);
   assert.equal(w.runsOf('a').length, 2, 'once');
 });

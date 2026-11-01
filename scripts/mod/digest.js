@@ -14,6 +14,8 @@
 import { loadBoardInputs } from '../board/inputs.js';
 import { briefingIn, reviewOf, INPUTS_WAIT_MS } from '../hooks/board-context.js';
 import { briefingModel as realBriefingModel } from '../briefing/model.js';
+import { localViews } from '../hooks/session-start.js';
+import { goalOpening } from '../engine/goal-report.js';
 import { readSeen, markSeen } from '../briefing/seen.js';
 import { markRaised as realMarkRaised } from '../usage/figures.js';
 import { effectiveFor } from './settings-pane.js';
@@ -45,9 +47,10 @@ export async function digestText({
     const { project, model, usage, sources } = inputs;
     const settings = isRecord(inputs.settings) ? inputs.settings : readEffective({ project, now: () => at });
     const seen = readSeen(project, { now: at });
+    const opening = attempt(() => goalOpening(localViews(project, null) ?? {}, { since: seen.briefedAt }), '');
     const given = briefingIn({
       project, model, usage, sources, settings, since: seen.briefedAt, weeklySince: seen.weeklyAt, review: reviewOf(project, settings, at),
-      at, briefingModel, room: CONTEXT_CHARS,
+      at, briefingModel, room: CONTEXT_CHARS, opening,
     });
     attempt(() => markSeen(project, { briefedAt: at, ...(given.weeklyShown ? { weeklyAt: at } : {}), ...(given.safekeeping ? { safekeepingLevel: given.safekeeping, safekeepingAt: at } : {}) }));
     if (given.raise.length > 0 && Number.isFinite(at.getTime())) attempt(() => markRaised(given.raise, { now: at }));

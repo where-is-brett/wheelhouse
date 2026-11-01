@@ -1,0 +1,50 @@
+{
+  "goal": {
+    "id": "orders-export",
+    "hash": "hhhh",
+    "startedAt": "2026-11-01T08:00:00.000Z",
+    "endAsked": null,
+    "sheet": {
+      "title": "Customers can export their orders",
+      "done": [{ "command": "npm test", "expect": 0 }, { "test": "tests/export.test.js" }],
+      "checksSay": ["the tests pass", "the export has every order"],
+      "pieces": [{ "work": "export-button", "hash": "fd2215e00974a6b7e45817aecc928f424ee503e5698a6c9ce469f29e273da653" }, { "work": "file-format", "hash": "acbe42c8c3c117d83d376479b009219c0c4d9da4bc8e9baeaa7ce2e964504432" }, { "work": "large-orders", "hash": "53cb43b854a1118e32c85daf6b373df3a17c66911fdf1201851122052baa177b" }],
+      "areas": { "may": ["src/orders/**"], "wontTouch": ["src/billing/**"] },
+      "spend": { "tokens": 2000000, "points": 33 },
+      "until": "2026-11-01T18:00:00.000Z"
+    },
+    "ended": {
+      "ending": "stuck", "at": "2026-11-01T16:40:00.000Z", "words": "The main line went red twice.",
+      "spent": { "tokens": 900000, "points": 28.25, "requests": null, "unknown": false, "shareAtStart": { "share": 10 }, "queueRuns": [], "readAt": "2026-11-01T16:38:00.000Z" }
+    }
+  },
+  "views": {
+    "work": {
+      "export-button": { "work": { "at": "2026-11-01T07:00:00.000Z", "data": { "id": "export-button", "title": "Export button", "lane": "quick" } } },
+      "file-format": { "work": { "at": "2026-11-01T07:00:00.000Z", "data": { "id": "file-format", "title": "File format", "lane": "small" } } },
+      "large-orders": { "work": { "at": "2026-11-01T07:00:00.000Z", "data": { "id": "large-orders", "title": "Large orders", "lane": "small" } } }
+    },
+    "features": {},
+    "reports": { "export-button": { "at": "2026-11-01T10:00:00.000Z", "data": { "work": "export-button", "outcome": "merged", "pr": 12 } } },
+    "questions": {
+      "q-file-format-1": { "question": { "id": "e1", "at": "2026-11-01T12:00:00.000Z", "data": { "id": "q-file-format-1", "work": "file-format", "what": "Which file format do customers get?", "level": 3 } }, "answer": null }
+    },
+    "waiting": [],
+    "runs": {
+      "export-button": [
+        { "at": "2026-11-01T09:00:00.000Z", "data": { "work": "export-button", "runId": "r1", "state": "started" } },
+        { "at": "2026-11-01T09:10:00.000Z", "data": { "work": "export-button", "runId": "r1", "state": "ended", "outcome": "failed", "failure": "connection" } },
+        { "at": "2026-11-01T09:15:00.000Z", "data": { "work": "export-button", "runId": "r1", "state": "started", "resume": 1 } },
+        { "at": "2026-11-01T09:40:00.000Z", "data": { "work": "export-button", "runId": "r1", "state": "ended", "outcome": "completed" } }
+      ],
+      "large-orders": [
+        { "at": "2026-11-01T15:00:00.000Z", "data": { "work": "large-orders", "runId": "r2", "state": "started" } },
+        { "at": "2026-11-01T16:39:00.000Z", "data": { "work": "large-orders", "runId": "r2", "state": "ended", "outcome": "cancelled" } }
+      ]
+    },
+    "asks": { "large-orders": [{ "at": "2026-11-01T15:10:00.000Z", "data": { "work": "large-orders", "runId": "r2", "kind": "usage-limit" } }] },
+    "slept": [{ "from": "2026-11-01T13:10:00.000Z", "to": "2026-11-01T13:50:00.000Z" }],
+    "goalChecks": {},
+    "goalNotes": [{ "at": "2026-11-01T17:00:00.000Z", "data": { "about": "goal-queue-after", "goal": "orders-export", "run": "q1", "tokens": 12000, "unknown": false } }]
+  }
+}

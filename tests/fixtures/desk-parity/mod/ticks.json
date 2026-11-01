@@ -110,6 +110,7 @@
       "updated": "12:00",
       "usage": null,
       "finished": [],
+      "goalEnd": null,
       "incidents": [],
       "watcher": "running",
       "missing": [
@@ -259,6 +260,7 @@
       "updated": "12:00",
       "usage": null,
       "finished": [],
+      "goalEnd": null,
       "incidents": [],
       "watcher": "running",
       "missing": [
@@ -421,6 +423,7 @@
       "updated": "12:00",
       "usage": null,
       "finished": [],
+      "goalEnd": null,
       "incidents": [],
       "watcher": "running",
       "missing": [
@@ -548,6 +551,7 @@
       "updated": "12:00",
       "usage": null,
       "finished": [],
+      "goalEnd": null,
       "incidents": [],
       "watcher": "running",
       "missing": [

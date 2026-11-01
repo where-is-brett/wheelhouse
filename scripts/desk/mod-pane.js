@@ -4,9 +4,13 @@
 // or from the files themselves (paneModel's own readers). It is built from the board's inputs, read
 // offline, and numbers the cards as the board and the front desk do.
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { stateDir } from '../lib/paths.js';
 import { checksStanding } from '../checks/standing.js';
 import { CHECKING_WORDS, REPORT_WAITS_WORDS } from '../engine/words.js';
+import { goalInForce } from '../engine/goal.js';
+import { goalEndOf, goalPaneLine } from '../engine/goal-report.js';
 import { loadBoardInputs } from '../board/inputs.js';
 import { boardModel, numberedWaiting, oneLine, seeOf, NO_SETTINGS, NO_SOURCES } from '../board/model.js';
 import { glanceLine } from '../board/render.js';
@@ -35,7 +39,7 @@ export const CARD_TO_MAKE = 'A card from the build waits; the First Mate will ma
 // The views the pane reads: the glance's, the reports and glossary, the open incidents, and the
 // build's records the front desk makes cards from.
 const PANE_VIEWS = ['waiting', 'questions', 'cardsWaiting', 'work', 'features', 'reports', 'glossary', 'status', 'incidents', 'blockers', 'ideas',
-  'gateAsks', 'lineageHolds', 'controlFiles', 'premiumFailures'];
+  'gateAsks', 'lineageHolds', 'controlFiles', 'premiumFailures', 'goals', 'goalNotes'];
 // The line of an approval card's set line, from which its preview is asked for.
 const APPROVAL_LINE = /^Approve pull request #([1-9][0-9]*) at commit ([0-9a-f]{12})$/;
 const NEVER_SYNCED = 'Nothing has been synced to this computer yet, so nothing below is current';
@@ -93,6 +97,13 @@ function paneViewsOf(views) {
   return Object.keys(out).length > 0 ? out : null;
 }
 
+// What the helper keeps of the goal `id` while it runs, which the record doesn't hold until it ends: its state and its spend meter,
+// or null. Read from the dispatcher's own file, replaced whole, as the pane reads the other files of this computer.
+function goalLiveOf(project, id) {
+  const kept = JSON.parse(fs.readFileSync(path.join(stateDir(project), '..', 'engine', 'dispatch.json'), 'utf8'));
+  return { state: kept.goalRun?.goal === id ? kept.goalRun.state : null, meter: kept.goalSpend?.goal === id ? kept.goalSpend.meter : null };
+}
+
 // The record as the files hold it: the pane's views, and the card events, each read on its own.
 function filesRecord(project) {
   return {
@@ -128,7 +139,7 @@ function clockOf(now) {
 // read the record's views and card events, and STOP, from a desk source (paneFrom) instead of the files.
 export async function paneModel({
   project, cwd, now = () => new Date(), helperUp, client, previews = previewFor, loadInputs = loadBoardInputs, timeZone,
-  readRecord = async () => filesRecord(project), readStop = async () => stopState(),
+  readRecord = async () => filesRecord(project), readStop = async () => stopState(), readGoalLive = (id) => goalLiveOf(project, id),
 } = {}) {
   const clock = clockOf(now);
   const missing = [];
@@ -245,8 +256,10 @@ export async function paneModel({
     });
     const standing = clock === null ? { checking: false, waitingForPermission: false } : checksStanding(project, { now: clock });
     const said = [...(standing.checking ? [{ text: CHECKING_WORDS, see: null }] : []), ...(standing.waitingForPermission ? [{ text: REPORT_WAITS_WORDS, see: null }] : [])];
-    const fits = PANE_LINES - said.length;
-    return [...(lines.length <= fits ? lines : [...lines.slice(0, fits - 1), { text: `and ${lines.length - fits + 1} more building`, see: null }]), ...said];
+    const goal = clock === null ? null : goalInForce(views);
+    const goalLine = goal === null ? [] : [{ text: plain(goalPaneLine({ goal, views, live: attempt(() => readGoalLive(goal.id), null), now: clock })), see: null }];
+    const fits = PANE_LINES - said.length - goalLine.length;
+    return [...goalLine, ...(lines.length <= fits ? lines : [...lines.slice(0, fits - 1), { text: `and ${lines.length - fits + 1} more building`, see: null }]), ...said];
   }, []);
 
   const healthLines = list(model?.director?.health);
@@ -329,6 +342,7 @@ export async function paneModel({
     updated: clockTime(clock === null ? null : clock.toISOString(), timeZone),
     usage: typeof usage === 'string' ? usage : null,
     finished,
+    goalEnd: attempt(() => goalEndOf(views), null),
     incidents,
     watcher: null,
     missing: [...new Set(missing)],

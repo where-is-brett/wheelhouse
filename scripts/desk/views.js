@@ -15,6 +15,7 @@ import { contextText } from './context.js';
 import { readStatus } from '../safekeeping/readings.js';
 import { paneFrom } from './mod-pane.js';
 import { goalInForce } from '../engine/goal.js';
+import { endedReport, goalLogbook, goalOpening, goalReportText } from '../engine/goal-report.js';
 import { answeredLines, buildLines, runningLines, shippedLines } from '../engine/words.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
@@ -192,6 +193,16 @@ async function boardOf(source, options) {
 const lined = (text) => String(text).split('\n');
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+// A goal's words a text opens or ends with, or none: what `make` gives from the record, and never a reason to lose the text.
+async function goalWords(source, make) {
+  try {
+    const got = await source.views({ cards: true });
+    return got?.ok === true && isPlain(got.views) ? make(got.views, got.cards ?? []) : '';
+  } catch {
+    return '';
+  }
+}
+
 // The briefing's lines from the engine: what shipped since `since`.
 async function engineBriefing(source, { since }) {
   let views = {};
@@ -243,7 +254,9 @@ const VIEWS = {
     const at = args.at ? new Date(args.at) : now();
     // The survey the briefing mentions is the record's latest, unless the caller took one again.
     const survey = args.survey !== undefined ? args.survey : ((await source.views({}))?.views?.survey ?? null);
-    const given = contextText('briefing', inputs, { ...args, survey, project: source.project, at });
+    // The report on a goal comes first, whole: only the briefing itself is cut to its length.
+    const opening = await goalWords(source, (views, cards) => goalOpening(views, { since: args.since ?? null, cards }));
+    const given = contextText('briefing', inputs, { ...args, survey, project: source.project, at, opening });
     // The engine's shipped work since the briefing's last, with its cost (Archon design, section 4.1).
     const extra = await engineBriefing(source, { since: args.since ?? new Date(at.getTime() - DAY_MS).toISOString() });
     if (extra.length > 0) given.text = `${given.text}\n${extra.join('\n')}`;
@@ -254,12 +267,16 @@ const VIEWS = {
   async logbook(args, source, { now }) {
     const inputs = await boardOf(source, { offline: false });
     if (inputs.refused) return { ok: false, refused: inputs.refused };
+    const tab = args.tab ?? inputs.settings?.boardTab?.value;
+    // A goal's report stays on the Logbook until each item in it is settled.
+    const report = tab === 'build' ? '' : await goalWords(source, (views, cards) => goalLogbook(views, { cards }));
     if (args.context) {
-      const given = contextText('board', inputs, { project: source.project, at: now(), tab: args.tab, reserve: args.reserve ?? 0 });
+      const given = contextText('board', inputs, { project: source.project, at: now(), tab: args.tab, reserve: (args.reserve ?? 0) + (report === '' ? 0 : report.length + 2) });
+      if (report !== '') given.text = `${given.text}\n\n${report}`;
       return { ok: true, data: given, lines: lined(given.text) };
     }
-    const tab = args.tab ?? inputs.settings?.boardTab?.value;
     let text = renderBoard(inputs.model, { tab, ...(args.limit ? { limit: args.limit } : {}) });
+    if (report !== '') text = `${text}\n\n${report}`;
     // The build tab shows each run's steps in plain words and its cost.
     if (tab === 'build') {
       const runs = buildLines((await source.views({}))?.views ?? {}, { now: now() });
@@ -336,9 +353,10 @@ const VIEWS = {
     return { ok: true, data: { survey: got.views.survey ?? null }, lines: surveyLines(got.views.survey) };
   },
 
-  // The goal asked for by id, or the one in force: its title and the time it stops starting work.
+  // The goal asked for by id, or the one in force: its title and the time it stops starting work. A goal that has ended, or with
+  // none in force the latest to end, gives its report, and that is the view's lines.
   async goal(args, source) {
-    const got = await recordOf(source, {});
+    const got = await recordOf(source, { cards: true });
     if (got.refused) return { ok: false, refused: got.refused };
     let entry = null;
     if (typeof args.goal === 'string') {
@@ -347,6 +365,8 @@ const VIEWS = {
     } else {
       entry = goalInForce(got.views);
     }
+    const report = endedReport(got.views, { ...(typeof args.goal === 'string' ? { id: args.goal } : {}), cards: got.cards ?? [], timeZone: args.timeZone });
+    if (report !== null) return { ok: true, data: { goal: entry, report }, lines: lined(goalReportText(report)) };
     if (entry === null) return { ok: true, data: { goal: null }, lines: ['No goal is running.'] };
     const lines = [`${entry.sheet.title} (${entry.id})`, `It stops starting work at ${entry.until}.`];
     return { ok: true, data: { goal: entry }, lines };
