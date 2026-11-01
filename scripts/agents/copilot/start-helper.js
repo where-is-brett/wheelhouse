@@ -59,6 +59,7 @@ import { askHealth, startDetached } from '../../lib/background.js';
 import { receiverPort } from '../../telemetry/main.js';
 import { projectConfig } from '../../watcher/main.js';
 import { startWatcher } from '../../foreman/start.js';
+import { readProgress } from '../../setup/uninstall.js';
 import { agentOfProject, sessionsOfProject } from '../project-agent.js';
 import { isPendingPart } from '../contract.js';
 
@@ -283,7 +284,9 @@ export async function startAll({
   // while they aren't switched on, ruling P8-1; a configuration they can't run under), is left alone, so no waker
   // is made for it.
   const watchers = [];
-  for (const { project } of registeredProjects()) {
+  for (const { project, record } of registeredProjects()) {
+    // The launch agent runs this every minute: an uninstall under way has stopped this watcher and means it to stay so.
+    if (readProgress(record?.folder)?.state === 'running') continue;
     const read = await answerOf(projectConfig(project, api));
     if (!read || read.config === null) continue;
     let sessions;

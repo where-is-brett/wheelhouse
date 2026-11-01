@@ -2747,3 +2747,27 @@ test('a run that slept leaves its cost record awake, so a carry-on is not charge
     assert.equal(cost.data.minutes, 20);
   } finally { t.cleanup(); }
 });
+
+test('a look at the caps first asks for a sleep the tick fell into', async () => {
+  const t = setUp({ recordings: { small: spending(1000) }, settings: { capMinutes: { quick: 20 }, capTokens: { quick: 1000000 } }, gate: { noteSleep: async () => { t.views.slept = [{ from: '2026-10-29T07:00:00.000Z', to: '2026-10-29T12:55:00.000Z' }]; return true; } } });
+  try {
+    const { runId } = t.engine.start({ recording: 'small', running: true });
+    withRun(t, runId, [['2026-10-29T06:50:00.000Z', 'started']]);
+    await t.runner.tick();
+    assert.equal(acts(t.engine).length, 0);
+  } finally { t.cleanup(); }
+});
+
+test('a sleep that could not be written holds the caps and the cost until it is', async () => {
+  let written = false;
+  const t = setUp({ recordings: { small: spending(1000) }, settings: { capMinutes: { quick: 20 }, capTokens: { quick: 1000000 } }, gate: { noteSleep: async () => written } });
+  try {
+    const { runId } = t.engine.start({ recording: 'small', running: true });
+    withRun(t, runId, [['2026-10-29T06:50:00.000Z', 'started']]);
+    await t.runner.tick();
+    assert.equal(acts(t.engine).length, 0);
+    written = true;
+    await t.runner.tick();
+    assert.equal(acts(t.engine).filter((c) => c.action.cancel).length, 1, 'with no sleep on the record, the cap reads it as running');
+  } finally { t.cleanup(); }
+});

@@ -24,6 +24,8 @@ import { readLean, registerLean } from '../../../scripts/lean/project.js';
 import { storeDir } from '../../../scripts/lean/store.js';
 import { releaseProject } from '../../../scripts/lean/release.js';
 import { loginStartRecord } from '../../../scripts/lib/login-start.js';
+import { progressFile, writeProgress } from '../../../scripts/setup/uninstall.js';
+import { registeredProjects } from '../../../scripts/lib/projects.js';
 import { ownKey, readEnrolled, signingKeyFile } from '../../../scripts/state/signing.js';
 import { projectForFolder } from '../../../scripts/lib/projects.js';
 import { registeredLeanProjects, leanState } from '../../../scripts/lean/project.js';
@@ -171,7 +173,7 @@ test('install registers the project, moves its git into the store and writes not
     assert.deepEqual(Object.keys(registration.hooks), ['sessionStart', 'userPromptSubmitted', 'preToolUse', 'preCompact']);
     assert.equal(loginStartRecord().path, path.join(c.userHome, 'Library', 'LaunchAgents', 'dev.wheelhouse.helper.plist'));
     assert.equal(fs.existsSync(loginStartRecord().path), true);
-    assert.deepEqual(c.regCalls, [], 'no registry call on a Mac');
+    assert.deepEqual(c.regCalls.map(([file, args]) => [file, args[0]]), [['launchctl', 'bootout'], ['launchctl', 'bootstrap']], 'no registry call on a Mac: the agent is loaded');
 
     // Installing again with a fresh plan changes nothing but what the answers say.
     const again = await planInstall({ folder: c.folder, ...ANSWERS, test: 'npm run check' }, c.deps);
@@ -289,6 +291,12 @@ test('start starts the helper, and a watcher only for a project whose agent may 
     assert.deepEqual(got.watchers, ['on-claude']);
     assert.deepEqual(asked.sort(), ['on-claude', 'on-copilot'], 'a Lean project has no configuration to ask for');
     assert.deepEqual(spawned, ['scripts/host/helper-main.js', 'scripts/watcher/main.js', 'scripts/telemetry/main.js']);
+
+    // An uninstall under way has stopped its watcher, and the launch agent's start each minute leaves it stopped.
+    const going = registeredProjects().find((p) => p.project === 'on-claude').record.folder;
+    writeProgress(going, { folder: going, state: 'running', clickedAt: T0.toISOString(), lines: [], pages: [] });
+    assert.deepEqual((await startAll({ client, spawn, pause: async () => {}, receiverUp: async () => true })).watchers, []);
+    fs.rmSync(progressFile(going), { force: true });
 
     // Running already: nothing is started, and at Lean alone no watcher or receiver either.
     for (const name of ['on-copilot', 'on-claude']) fs.rmSync(path.join(c.home, 'projects', name), { recursive: true, force: true });

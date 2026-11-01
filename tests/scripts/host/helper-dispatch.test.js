@@ -259,14 +259,15 @@ test('an agent written before this part is loaded again once when the helper sta
       const user = shortHome();
       const entry = loginEntry({ platform: 'darwin', node: '/opt/node', root: '/opt/wheelhouse', script: 'scripts/agents/copilot/start-helper.js', home: user });
       const older = { ...entry, content: entry.content.replace('  <key>StartInterval</key>\n  <integer>60</integer>\n', '') };
-      await installLoginStart({ entry: older });
+      await installLoginStart({ entry: older, run });
+      calls.length = 0;
       for (let i = 0; i < 2; i += 1) {
         const helper = await helperFor(p, engine, { run, platform: 'darwin' });
         await helper.close();
       }
       assert.deepEqual(calls, ['bootout', 'bootstrap'], 'once, not at each start');
       assert.equal(records('note').filter((n) => /within a minute/.test(n.data.words ?? '')).length, 1);
-      assert.equal(fs.readFileSync(entry.path, 'utf8'), entry.content);
+      assert.match(fs.readFileSync(entry.path, 'utf8'), /<key>StartInterval<\/key>/);
       fs.rmSync(user, { recursive: true, force: true });
     });
   } finally { p.cleanup(); }

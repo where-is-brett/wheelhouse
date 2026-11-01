@@ -54,6 +54,7 @@ import { openProjectRecord, openSettings } from '../state/record.js';
 import { importEvents } from '../state/import.js';
 import { takeStartLock } from '../lib/start-lock.js';
 import { reloadLoginStart, renewedEntry } from '../lib/login-start.js';
+import { HELPER_START_SCRIPT } from '../agents/index.js';
 import { tailOf } from '../lib/output-tail.js';
 import { buildViews, cardOutcomes, latestFor, writeViews } from '../state/views.js';
 import { takeSurvey, shapedSurvey, recordSurvey } from '../survey/take.js';
@@ -80,7 +81,7 @@ import { engineRoom } from '../engine/room.js';
 import { stopEngine, endRun, stopWords } from '../engine/stop.js';
 import { engineRoutes, engineDirOf } from '../engine/routes.js';
 import { engineRunner } from '../engine/runner.js';
-import { sleepGap } from '../engine/recovery.js';
+import { sleepWatch } from '../engine/recovery.js';
 import { rollOf } from '../delegation/blind.js';
 import { recordOnly, cardContext, historyOf } from '../delegation/record-only.js';
 import { branchHead, cardDiff, cardFacts, commitsAfter, pathsSoFar } from '../delegation/facts.js';
@@ -4792,9 +4793,9 @@ export async function startHelper({
         room = engineRoom({ spawn, command: () => roomEngine.roomCommand(), wanted: roomWanted, held: stopped });
         try { room.tend(); } catch { /* tried again with the dispatcher */ }
       }
-      lastBeat = now().getTime();
+      sleeping.beat();
       dispatchWatch = setInterval(() => {
-        noteSleep().then(engineTick).catch(() => {});
+        sleeping.beat().then(engineTick).catch(() => {});
         sealTick();
         try { room?.tend(); } catch { /* tried again next time */ }
       }, dispatchMs);
@@ -5208,7 +5209,7 @@ export async function startHelper({
       },
     });
     const runner = engineRunner({
-      engine, file: path.join(files, 'router.json'), readViews: views, write, stopped, now, settings, onCard: seals.onCard, onReaderAsk: seals.onReaderAsk, blindRoll: rollOf,
+      engine, file: path.join(files, 'router.json'), readViews: views, write, stopped, now, settings, noteSleep: () => sleeping.beat(), onCard: seals.onCard, onReaderAsk: seals.onReaderAsk, blindRoll: rollOf,
       workOf: (runId) => engineRunOf(project, runId) ?? dispatcher.workOf(runId) ?? seals.readerOf(runId),
       titleOf: (work) => (work === MERGE_WORK ? 'the changes waiting to be added' : views().work?.[work]?.work?.data?.title ?? work),
       endRun: async (runId) => endRun({ engine, run: { id: runId, folder: (await engine.inspect(runId))?.folder ?? null }, ...engineStopWith }),
@@ -5505,23 +5506,21 @@ export async function startHelper({
     return ticking;
   }
 
-  // A late beat of the tick means the computer slept. The span goes on every project's record ahead of the tick,
-  // whose `caps` must see it or cancel the very run it keeps. A failed write stops no tick.
-  let lastBeat = null;
-  let sleptWrites = Promise.resolve();
-  function noteSleep() {
-    const at = now().getTime();
-    const gap = sleepGap(lastBeat, at);
-    lastBeat = at;
-    if (gap !== null) sleptWrites = Promise.allSettled([sleptWrites, ...engineHosts.map(({ project }) => engineWrite(project, 'slept', gap))]);
-    return sleptWrites;
-  }
+  // A late beat of the tick means the computer slept. The span goes on every project's record ahead of the tick, and
+  // the runner beats again just before it reads a run's minutes, since a sleep can fall inside a tick already going:
+  // `caps` must see the span or cancel the very run it keeps.
+  const sleeping = sleepWatch({ now, write: (gap) => Promise.all(engineHosts.map(({ project }) => engineWrite(project, 'slept', gap))) });
 
-  // An agent an older Wheelhouse wrote takes effect only once launchd loads it again: once, when the helper starts.
+  // An agent written by another version takes effect only once launchd loads it again: once, when the helper starts.
   async function renewLoginStart() {
-    const entry = renewedEntry({ platform });
-    if (entry === null) return;
-    const got = await reloadLoginStart({ run, entry });
+    let got;
+    try {
+      const entry = renewedEntry({ platform, root: OWN_ROOT, script: HELPER_START_SCRIPT });
+      if (entry === null) return;
+      got = await reloadLoginStart({ run, entry });
+    } catch (error) {
+      got = { reloaded: false, why: error.message };
+    }
     const words = got.reloaded ? 'Wheelhouse\'s helper now comes back within a minute if it stops.' : `What starts Wheelhouse's helper couldn't be brought up to date: ${got.why}.`;
     await Promise.allSettled(engineHosts.map(({ project }) => engineWrite(project, 'note', { about: 'engine', words })));
   }
@@ -5540,9 +5539,9 @@ export async function startHelper({
       if (dispatchWatch) clearInterval(dispatchWatch);
       if (safekeepingWatch) clearInterval(safekeepingWatch);
       await lookingAround?.catch(() => {});
-      await sleptWrites;
+      await sleeping.beat();
       await ticking?.catch(() => {});
-      await renewing.catch(() => {});
+      await renewing;
       await engineStopping?.catch(() => {});
       await Promise.race([
         Promise.allSettled([...engineHosts.map(({ checks }) => checks.stop()), ...engineHosts.map(({ seals }) => seals.settled())]),

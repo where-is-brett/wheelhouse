@@ -532,14 +532,14 @@ test('login start is listed when a project uses the new engine', async () => {
     assert.ok(composed(planned, 6).includes(LOGIN_LINE), 'one line on the card');
     assert.equal(composed(planned, 6).split(LOGIN_LINE).length, 2, 'once');
 
-    // Applied: the launch agent and its record, in the scratch folders only; the helper is started by the
-    // person's next sign-in, so no host program runs here.
+    // Applied: the launch agent and its record, in the scratch folders only, and launchd told to load it, which
+    // the stand-in only notes.
     const run = startRun({ folder, now: () => T0 });
     const done = await runApply({ step, runId: run.id, changes: planned.changes, ctx: { ...ctx, runId: run.id } });
     assert.deepEqual(done, { ok: true });
     assert.equal(fs.existsSync(login[0].target), true);
     assert.equal(loginStartRecord().path, login[0].target);
-    assert.ok(fake.calls.every((c) => c[0] === 'launchctl' && c[1] === 'getenv'), 'it only reads the launch environment');
+    assert.deepEqual(fake.calls.filter((c) => c[0] === 'launchctl' && c[1] !== 'getenv').map((c) => c[1]), ['bootout', 'bootstrap'], 'beside the launch environment, only the agent is loaded');
 
     // Already made: nothing more is listed, and the step settles.
     const again = await step.plan(ctx);

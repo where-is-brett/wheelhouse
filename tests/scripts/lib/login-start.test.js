@@ -89,7 +89,7 @@ test('the plist runs start-helper with full paths', onMacPaths, async () => {
     const reg = fakeReg();
     await installLoginStart({ entry, run: reg.run, now: () => T0 });
     assert.equal(fs.readFileSync(entry.path, 'utf8'), entry.content);
-    assert.deepEqual(reg.calls, [], 'nothing is run to write a launch agent: it loads at the next sign-in');
+    assert.deepEqual(reg.calls.map((c) => c.slice(0, 2)), [['launchctl', 'bootout'], ['launchctl', 'bootstrap']], 'no registry call for a launch agent: it is loaded');
     // `made`: the folders the write made, which removing the agent removes too.
     const { made, ...kept } = loginStartRecord();
     assert.deepEqual(kept, { kind: 'launch-agent', path: entry.path, content: entry.content, at: T0.toISOString() });
@@ -295,16 +295,35 @@ test('the launch agent runs the start command every minute, and the Windows entr
   assert.doesNotMatch(loginEntry({ platform: 'win32', node: WIN_NODE, root: WIN_ROOT, script: START_SCRIPT }).content, /StartInterval/);
 });
 
-test('an entry of an older form is renewed with the command it holds, and today\'s form asks for nothing', onMacPaths, async () => {
+test('an entry this version in this folder would not write is renewed, and one it would asks for nothing', onMacPaths, async () => {
+  const userHome = shortHome();
+  const here = { platform: 'darwin', node: MAC_NODE, root: MAC_ROOT, script: START_SCRIPT };
+  await as(shortHome(), async () => {
+    assert.equal(renewedEntry(here), null, 'none was made');
+    const entry = loginEntry({ ...here, home: userHome });
+    await installLoginStart({ entry, run: launchctl().run, now: () => T0 });
+    assert.equal(renewedEntry(here), null);
+    await installLoginStart({ entry: OLD_FORM(entry), run: launchctl().run, now: () => T0 });
+    assert.deepEqual(renewedEntry(here), entry);
+    assert.equal(renewedEntry({ ...here, platform: 'win32' }), null, 'made for another system');
+    await installLoginStart({ entry, run: launchctl().run, now: () => T0 });
+    const moved = renewedEntry({ ...here, root: `${MAC_ROOT}-next` });
+    assert.equal(moved.path, entry.path);
+    assert.match(moved.content, /v1\.0\.0-next/, 'an update moves the agent to the version running');
+  });
+});
+
+test('an agent installed now is loaded now, and a refusal stops no install', onMacPaths, async () => {
   const userHome = shortHome();
   await as(shortHome(), async () => {
-    assert.equal(renewedEntry({ platform: 'darwin' }), null, 'none was made');
     const entry = loginEntry({ platform: 'darwin', node: MAC_NODE, root: MAC_ROOT, script: START_SCRIPT, home: userHome });
-    await installLoginStart({ entry, now: () => T0 });
-    assert.equal(renewedEntry({ platform: 'darwin' }), null);
-    await installLoginStart({ entry: OLD_FORM(entry), now: () => T0 });
-    assert.deepEqual(renewedEntry({ platform: 'darwin' }), entry, 'the same command, quotes and all, in today\'s form');
-    assert.equal(renewedEntry({ platform: 'win32' }), null, 'made for another system');
+    const l = launchctl({ bootstrap: 5 });
+    assert.deepEqual(await installLoginStart({ entry, run: l.run, now: () => T0, uid: 501 }), { written: entry.path });
+    assert.deepEqual(l.calls, [
+      ['launchctl', 'bootout', `gui/501/${LAUNCH_AGENT_LABEL}`],
+      ['launchctl', 'bootstrap', 'gui/501', entry.path],
+    ]);
+    assert.equal(loginStartRecord().content, entry.content);
   });
 });
 
@@ -312,7 +331,7 @@ test('reloadLoginStart writes the new entry, loads it, and only then records it'
   const userHome = shortHome();
   await as(shortHome(), async () => {
     const entry = loginEntry({ platform: 'darwin', node: MAC_NODE, root: MAC_ROOT, script: START_SCRIPT, home: userHome });
-    await installLoginStart({ entry: OLD_FORM(entry), now: () => T0 });
+    await installLoginStart({ entry: OLD_FORM(entry), run: launchctl().run, now: () => T0 });
     const l = launchctl();
     assert.deepEqual(await reloadLoginStart({ run: l.run, entry, uid: 501 }), { reloaded: true });
     assert.deepEqual(l.calls, [
@@ -321,7 +340,7 @@ test('reloadLoginStart writes the new entry, loads it, and only then records it'
     ]);
     assert.equal(fs.readFileSync(entry.path, 'utf8'), entry.content);
     assert.equal(loginStartRecord().content, entry.content);
-    assert.equal(renewedEntry({ platform: 'darwin' }), null, 'nothing is left to do at the next start');
+    assert.equal(loginStartRecord().next, undefined, 'nothing is left to do at the next start');
   });
 });
 
@@ -329,7 +348,7 @@ test('an agent not loaded yet still gets its new entry', onMacPaths, async () =>
   const userHome = shortHome();
   await as(shortHome(), async () => {
     const entry = loginEntry({ platform: 'darwin', node: MAC_NODE, root: MAC_ROOT, script: START_SCRIPT, home: userHome });
-    await installLoginStart({ entry: OLD_FORM(entry), now: () => T0 });
+    await installLoginStart({ entry: OLD_FORM(entry), run: launchctl().run, now: () => T0 });
     assert.deepEqual(await reloadLoginStart({ run: launchctl({ bootout: 3 }).run, entry, uid: 501 }), { reloaded: true });
   });
 });
@@ -338,13 +357,14 @@ test('a reload launchd refuses says so, tries again at the next start, and unins
   const userHome = shortHome();
   await as(shortHome(), async () => {
     const entry = loginEntry({ platform: 'darwin', node: MAC_NODE, root: MAC_ROOT, script: START_SCRIPT, home: userHome });
-    await installLoginStart({ entry: OLD_FORM(entry), now: () => T0 });
+    await installLoginStart({ entry: OLD_FORM(entry), run: launchctl().run, now: () => T0 });
     const got = await reloadLoginStart({ run: launchctl({ bootstrap: 5 }).run, entry, uid: 501 });
     assert.equal(got.reloaded, false);
     assert.match(got.why, /launchd said no/);
-    assert.deepEqual(renewedEntry({ platform: 'darwin' }), entry);
+    assert.equal(loginStartRecord().next, entry.content);
+    assert.notEqual(loginStartRecord().content, entry.content, 'so the next start tries again');
     assert.deepEqual(await reloadLoginStart({ run: launchctl().run, entry, uid: 501 }), { reloaded: true }, 'the file already new is no one else\'s change');
-    await installLoginStart({ entry: OLD_FORM(entry), now: () => T0 });
+    await installLoginStart({ entry: OLD_FORM(entry), run: launchctl().run, now: () => T0 });
     await reloadLoginStart({ run: launchctl({ bootstrap: 5 }).run, entry, uid: 501 });
     assert.deepEqual(await removeLoginStart({ run: launchctl().run, platform: 'darwin', uid: 501 }), { removed: true });
     assert.equal(fs.existsSync(entry.path), false);
@@ -355,7 +375,7 @@ test('an entry changed by someone else is left and said, and one taken away is n
   const userHome = shortHome();
   await as(shortHome(), async () => {
     const entry = loginEntry({ platform: 'darwin', node: MAC_NODE, root: MAC_ROOT, script: START_SCRIPT, home: userHome });
-    await installLoginStart({ entry: OLD_FORM(entry), now: () => T0 });
+    await installLoginStart({ entry: OLD_FORM(entry), run: launchctl().run, now: () => T0 });
     fs.writeFileSync(entry.path, `${OLD_FORM(entry).content}<!-- changed -->\n`);
     const l = launchctl();
     const got = await reloadLoginStart({ run: l.run, entry, uid: 501 });
@@ -375,7 +395,7 @@ test('a removed agent is unloaded, so nothing starts the helper again', onMacPat
   await as(shortHome(), async () => {
     const entry = loginEntry({ platform: 'darwin', node: MAC_NODE, root: MAC_ROOT, script: START_SCRIPT, home: userHome });
     for (const form of [entry, OLD_FORM(entry)]) {
-      await installLoginStart({ entry: form, now: () => T0 });
+      await installLoginStart({ entry: form, run: launchctl().run, now: () => T0 });
       const seen = [];
       const run = async (file, args) => {
         seen.push({ call: [file, ...args], there: fs.existsSync(entry.path) });
@@ -385,10 +405,16 @@ test('a removed agent is unloaded, so nothing starts the helper again', onMacPat
       assert.deepEqual(seen, [{ call: ['launchctl', 'bootout', `gui/501/${LAUNCH_AGENT_LABEL}`], there: true }], 'unloaded while the file is still there');
       assert.equal(fs.existsSync(entry.path), false);
     }
+    // A file taken away by hand leaves launchd holding the agent.
+    await installLoginStart({ entry, run: launchctl().run, now: () => T0 });
+    fs.rmSync(entry.path);
+    const gone = launchctl();
+    assert.equal((await removeLoginStart({ run: gone.run, platform: 'darwin', uid: 501 })).why, 'it was gone already');
+    assert.deepEqual(gone.calls, [['launchctl', 'bootout', `gui/501/${LAUNCH_AGENT_LABEL}`]]);
     // Not loaded, or a launchctl that can't run, stops no uninstall; a changed entry isn't touched.
-    await installLoginStart({ entry, now: () => T0 });
+    await installLoginStart({ entry, run: launchctl().run, now: () => T0 });
     assert.deepEqual(await removeLoginStart({ run: async () => { throw new Error('no launchctl'); }, platform: 'darwin', uid: 501 }), { removed: true });
-    await installLoginStart({ entry, now: () => T0 });
+    await installLoginStart({ entry, run: launchctl().run, now: () => T0 });
     fs.writeFileSync(entry.path, `${entry.content}<!-- changed -->\n`);
     const l = launchctl();
     assert.equal((await removeLoginStart({ run: l.run, platform: 'darwin', uid: 501 })).removed, false);
