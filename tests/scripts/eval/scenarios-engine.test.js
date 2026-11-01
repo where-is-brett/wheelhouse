@@ -14,7 +14,7 @@ import path from 'node:path';
 
 // The fix-main scenarios (60 to 62) play in the same suite; they are tested in scenarios-60-62.test.js. So do the bug
 // lane's (63 to 69). The feature scenarios (70 to 75) are tested in scenarios-70-75.test.js too.
-const ENGINE_SCENARIOS = [42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 90, 91, 92, 93, 94];
+const ENGINE_SCENARIOS = [42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 90, 91, 92, 93, 94];
 
 test('--engine takes the fake or real Archon, and goes with scenario numbers, --all or --suite alone', () => {
   assert.equal(parseArgs(['42', '--engine', 'fake']).engine, 'fake');
