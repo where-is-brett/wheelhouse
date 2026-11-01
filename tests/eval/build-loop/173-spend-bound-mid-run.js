@@ -1,12 +1,13 @@
 // tests/eval/build-loop/173-spend-bound-mid-run.js
 // Scenario 173 (unattended goals design, section 5): a goal of two pieces, one at a time, whose first run reaches the goal's
-// tokens and stops at a question, which gives up its place. Pass: the meter reads the live run's spend, the second piece never
-// starts, no card asks about it and nothing cancels the run. Played on the engine the run names, in its `with` variant alone.
+// tokens while it runs; then the pace goes up, so only the spend can hold the second. Pass: the meter reads the live run's
+// spend, the second piece never starts, no card asks about it and nothing cancels the run. Played on the engine the run names,
+// in its `with` variant alone.
 import { confirmationFor, dataHash } from '../../../scripts/state/events.js';
 import { startGoalLine } from '../../../scripts/state/card-lines.js';
 import { sheetHash } from '../../../scripts/engine/goal.js';
 import { until } from '../../../scripts/eval/engine-world.js';
-import { spending } from './engine-recordings.js';
+import { running } from './engine-recordings.js';
 
 const GOAL = 'goal-173';
 const FIRST = 'card-173-a';
@@ -19,10 +20,10 @@ export default {
   title: 'A goal\'s spend is reached in mid-run, and nothing more starts',
   engine: {
     startAt: '2026-10-29T09:00:00.000Z',
-    recordings: { [FIRST]: spending(FIRST, TOKENS), [SECOND]: spending(SECOND, 1) },
+    recordings: { [FIRST]: running(FIRST, TOKENS), [SECOND]: running(SECOND, 1) },
     async play(world) {
-      const setting = world.put('setting', { key: 'pace', value: 1 });
-      world.put('confirmation', confirmationFor(setting).data);
+      const paceOf = (value) => world.put('confirmation', confirmationFor(world.put('setting', { key: 'pace', value })).data);
+      paceOf(1);
       const pieces = [pieceOf(FIRST, 'The sale banner'), pieceOf(SECOND, 'The sale page')];
       for (const piece of pieces) world.put('work', piece);
       const sheet = {
@@ -33,8 +34,9 @@ export default {
       world.put('goal', { id: GOAL, sheet });
       const hash = sheetHash(sheet);
       world.put('action', { action: 'start-goal', goal: GOAL, hash, question: `What this is.\n${startGoalLine(GOAL, hash)}`, label: 'Start' });
-      const parked = await until(async () => { await world.tick(); return world.records('run').some((r) => r.data.work === FIRST && r.data.state === 'paused'); });
-      if (!parked) return { pass: false, why: 'the first piece never reached its question' };
+      const going = await until(async () => { await world.tick(); return world.records('run').some((r) => r.data.work === FIRST && r.data.state === 'started'); });
+      if (!going) return { pass: false, why: 'the first piece never started' };
+      paceOf(2);
       for (let i = 0; i < 4; i += 1) await world.tick();
       if (world.starts().some((s) => s.order.work === SECOND)) return { pass: false, why: 'the second piece started past the goal\'s spend' };
       if (world.starts().length !== 1) return { pass: false, why: `${world.starts().length} runs started` };
