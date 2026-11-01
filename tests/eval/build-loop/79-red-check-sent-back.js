@@ -28,6 +28,9 @@ async function judge(world, wait, { finished = async () => {} } = {}) {
   if (check?.result !== 'failed') return { pass: false, why: `the signed check reads ${check?.result ?? 'nothing'}` };
   const sent = world.dispatch().reds?.[WORK];
   if (sent?.times !== 1 || typeof sent.tail !== 'string') return { pass: false, why: `the work wasn't sent back once with the tests' output: ${JSON.stringify(sent)}` };
+  // The broker reads the review before the check, so its reason is the check's only once a real review has read CLEAN.
+  const reviews = () => world.records('review').filter((r) => r.data.commit === head).map((r) => r.data.verdict);
+  if (!await wait(() => reviews().includes('CLEAN'))) return { pass: false, why: `no review of the head read CLEAN: ${JSON.stringify(reviews())}` };
   const refused = await world.broker(['pr', 'merge', String(pr), '--squash', '--match-head-commit', head]);
   if (refused.code === 0 || !/no passing check/.test(refused.stderr)) return { pass: false, why: `the broker didn't refuse the merge for its check: ${refused.stderr.trim()}` };
   if (world.forwarded.some((call) => call.startsWith('pr merge'))) return { pass: false, why: 'the merge reached the host' };
@@ -36,7 +39,8 @@ async function judge(world, wait, { finished = async () => {} } = {}) {
   if (!await wait(async () => { await world.tick(); return world.starts().filter((s) => s.order.work === WORK && s.got?.ok !== false).length > 1; })) return { pass: false, why: 'no fresh run started on the work' };
   const carried = await wait(() => world.orders().find((o) => o.work === WORK && typeof o.checkTail === 'string' && o.checkTail !== ''));
   if (!carried) return { pass: false, why: 'the fresh run\'s order doesn\'t carry the tests\' output' };
-  if (world.records('question').length > 0) return { pass: false, why: 'a first red came to the director as a card' };
+  const cards = world.records('question').map((q) => `${q.data.id}: ${q.data.what}`);
+  if (cards.length > 0) return { pass: false, why: `a first red came to the director as a card: ${cards.join(' | ')}` };
   return { pass: true, why: 'a signed failed check, red reported, the merge refused, and a fresh run with the end of the tests\' output' };
 }
 
