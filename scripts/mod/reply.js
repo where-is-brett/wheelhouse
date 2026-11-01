@@ -72,6 +72,7 @@ export function recordedAs(made, question) {
   if (data.action === 'runbook') return `Runbook step ${data.step}: ${RUNBOOK_TITLES[data.step]}`;
   if (data.action === 'ci-push') return `Push the CI change on ${data.branch}`;
   if (data.action === 'approve-work') return `Approve ${data.work}`;
+  if (data.action === 'start-goal') return `Start goal ${data.goal}`;
   if (data.action === 'answer') return `Answer: ${data.label}`;
   if (data.action === 'amend') return `Change ${data.work}`;
   if (data.action === 'lift-incident') return `End incident ${data.incident}`;
@@ -225,6 +226,10 @@ export async function replyRecord({ project, text, client, desk, now = () => new
     marker = claim(project, card.id);
     if (!marker) return no('That code has been used');
     const got = await earned({ project, question: card.question, label, client: api, now, left, stopState, shownAt: card.at });
+    if (got?.refused !== undefined) {
+      fs.rmSync(marker, { force: true });
+      return no(`The goal wasn't started: ${got.refused}`);
+    }
     if (!got) {
       // Nothing was recorded, so the card is let go and can be answered again.
       fs.rmSync(marker, { force: true });

@@ -5,7 +5,7 @@ import {
   replyCode, replyCodeLine, setLineOf, SET_LINES, CODE_ALPHABET, usageLine, USAGE_LINE, premiumLine, PREMIUM_LINE,
   approvalLine, confirmLine, LIFT_STOP, LIFT_STOP_EARLIER, LIFT_LABEL, LIFT_LABELS, isLiftStopLine, runbookLine, ciPushLine,
   approveWorkLine, answerLine, blindLine, amendLine, liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, dayOf, TRUST_LINE, takeOverLine, TAKEOVER_LINE, pairLine, unpairLine,
-  uninstallLine, UNINSTALL_LINE, UNINSTALL_LABEL, isLineName, keepControlLine, chatCopy,
+  uninstallLine, UNINSTALL_LINE, UNINSTALL_LABEL, isLineName, keepControlLine, chatCopy, startGoalLine, START_GOAL_LINE,
 } from '../../../scripts/state/card-lines.js';
 
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -68,6 +68,7 @@ const BUILD_LINES = [
   liftIncidentLine('bad-total'),
   incidentFixLine('bad-total', 31),
   keepControlLine('export-csv', FULL),
+  startGoalLine('export-orders', FULL + FULL.slice(0, 24)),
 ];
 
 test('each line the build loop writes is found by setLineOf, and matches exactly one set line pattern', () => {
@@ -210,4 +211,14 @@ test('chatCopy leaves out a card\'s set line and reply code, and keeps them wher
   const wrong = `Ask.\n${approvalLine(7, FULL)}\n${replyCodeLine('ZZZZ')}`;
   assert.equal(chatCopy(wrong), wrong);
   assert.equal(chatCopy(undefined), undefined);
+});
+
+test('a goal\'s start line names the goal and the twelve characters of its sheet\'s hash', () => {
+  const hash = 'abcdef1234567890'.repeat(4);
+  const line = startGoalLine('export-orders', hash);
+  assert.equal(line, 'Start goal export-orders, abcdef123456');
+  assert.deepEqual(START_GOAL_LINE.exec(line).slice(1), ['export-orders', 'abcdef123456']);
+  assert.equal(setLineOf(`What this is.\n${line}\nReply code: ${replyCode(line)}`), line);
+  assert.equal(SET_LINES.filter((p) => new RegExp(p.source, p.flags).test(line)).length, 1);
+  for (const near of ['Start goal Export, abcdef123456', 'Start goal export-orders, abcdef12345', 'Start goal export-orders abcdef123456']) assert.equal(setLineOf(near), null, near);
 });

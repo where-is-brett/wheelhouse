@@ -14,6 +14,7 @@ import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 import { KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
 import { SUGGEST, WHY } from '../lib/calm-words.js';
 import { premiumState } from '../routing/premium.js';
+import { goalsView } from '../engine/goal.js';
 
 const byOrder = (a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 const isPlainKey = (k) => typeof k === 'string' && k !== '';
@@ -500,6 +501,8 @@ function buildLoopViews(sorted, enrolled) {
     runs: byWork('run'), asks: byWork('ask'), costs: byWork('cost'), previews: byWork('preview'), lessons: byWork('lesson'),
     // When the computer slept: a run's minutes leave these out (scripts/engine/spend.js).
     slept: sorted.filter((e) => e.kind === 'slept').map((e) => ({ from: e.data.from, to: e.data.to })),
+    // Each signed goal, with what was narrowed and how it ended (scripts/engine/goal.js): only a verified start-goal makes one.
+    goals: goalsView(sorted, actions('start-goal')),
     // The card router's Logbook lines, the latest last, and how many of its cards wait for another day.
     engineNotes: sorted.filter((e) => e.kind === 'note' && e.data?.about === 'engine' && typeof e.data.words === 'string').slice(-ENGINE_NOTES).map(mark),
     cardsWaiting: cardsWaitingOf(sorted),

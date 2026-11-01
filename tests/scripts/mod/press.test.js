@@ -17,6 +17,7 @@ import { computerId, profileDir, stateDir } from '../../../scripts/lib/paths.js'
 import { BUILD_QUESTION_LABELS, BUILD_QUESTION_OPTIONS, USE_GUARDED, settingKey, UNATTENDED_CARD } from '../../../scripts/protection/windows-builds.js';
 import { unattendedCardData } from '../../../scripts/foreman/act.js';
 import { withHome } from '../../helpers/homes.js';
+import { sheetHash } from '../../../scripts/engine/goal.js';
 import { clicksDir } from '../../../scripts/lib/setup-clicks.js';
 
 const P = 'owner__name';
@@ -771,3 +772,27 @@ test('under All stop Send it back is still signed and closes its card', async ()
     }
   });
 });
+
+test('a refused Start says why and writes nothing', () => withKey(async (home) => {
+  const piece = { id: 'export-csv', title: 'Export', lane: 'feature', visible: true, dependsOn: [] };
+  const sheet = {
+    title: 'Customers can export their orders', done: [{ command: 'node check.js', expect: 0 }], checksSay: ['The checking script passes.'],
+    pieces: [{ work: 'export-csv', hash: dataHash(piece) }], areas: { may: ['src/**'], wontTouch: ['billing/**'] }, spend: { tokens: 1000000 }, until: '2026-10-19T12:00:00.000Z',
+  };
+  keepEvent(makeEvent({ kind: 'goal', data: { id: 'orders-export', sheet }, now: () => NOW }));
+  // The piece changed since the sheet was made.
+  const views = path.join(home, 'projects', P, 'views');
+  fs.mkdirSync(views, { recursive: true });
+  fs.writeFileSync(path.join(views, 'work.json'), JSON.stringify({ 'export-csv': { work: { data: { ...piece, title: 'Changed' } } } }));
+  const card = putCard(composeCard({
+    ...common, kind: 'start-goal', recommend: 'Start', what: 'The goal orders-export is ready to run.', options: [says('Start')],
+    target: { goal: 'orders-export', hash: sheetHash(sheet) },
+  }).card);
+  const client = fake();
+  const out = await press(card, client, 'Start');
+  assert.equal(out.made, false);
+  assert.match(out.says, /The goal wasn't started: The work export-csv changed/);
+  assert.equal(untouched(client), 0);
+  assert.deepEqual(pendingFiles(), []);
+  assert.deepEqual(waitingIds(), [card.id], 'the card stays waiting');
+}));

@@ -53,6 +53,7 @@ import { liftStop as defaultLift, stopState as defaultStopState } from '../lib/s
 import { profileDir, stateDir, computerId } from '../lib/paths.js';
 import { readEnrolled, verify } from '../state/signing.js';
 import { makeEvent, listEvents, confirmationFor, dataHash, CONFIRMABLE_KINDS } from '../state/events.js';
+import { sheetHash, startProblem } from '../engine/goal.js';
 import { scanContent } from '../state/secret-scan.js';
 import {
   approvalLine, confirmLine, LIFT_STOP_LINES, isLiftStopLine, runbookLine, RUNBOOK_TITLES, ciPushLine,
@@ -60,7 +61,7 @@ import {
 } from '../state/card-lines.js';
 import {
   chatCopy, setLineOf, setLinesOf, replyCode, replyCodeLine, setupLine, SETUP_LABEL, SETUP_TITLES, BASELINE_LABEL, BASELINE_WORDS, baselineLine,
-  TRUST_LINE, TAKEOVER_LABEL, TAKEOVER_LINE, PAIR_LINE, UNPAIR_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine, KEEP_CONTROL_LINE, keepControlLine, USAGE_LINE, PREMIUM_LINE,
+  TRUST_LINE, TAKEOVER_LABEL, TAKEOVER_LINE, PAIR_LINE, UNPAIR_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine, KEEP_CONTROL_LINE, keepControlLine, USAGE_LINE, PREMIUM_LINE, START_GOAL_LINE,
 } from '../state/card-lines.js';
 import {
   keepClick, shownHash, keepAnswer, askedFor, claimAnswer, releaseAnswer, keepUninstallClick, shownUninstall, typedVerdict, typedBefore, keepSetupRecords,
@@ -145,7 +146,7 @@ function only(pattern, text) {
 // The deciding labels a reply code can answer with. A reply to an answer card may also use any
 // of the question's own options (scripts/mod/reply.js), which earned checks against the question.
 // Turn on (dangerous) and Use Guarded earn a record from a click alone, by design.
-export const SIGNED_LABELS = ['Approve', SEND_BACK, 'Confirm', 'Lift All stop', 'Lift STOP', 'Do it', 'Push it', 'Change it', 'End it', 'Merge the fix', 'Pair it', 'Unpair it'];
+export const SIGNED_LABELS = ['Approve', SEND_BACK, 'Confirm', 'Lift All stop', 'Lift STOP', 'Do it', 'Push it', 'Change it', 'End it', 'Merge the fix', 'Pair it', 'Unpair it', 'Start'];
 
 // The events of one kind that the state holds, oldest first.
 function held(project, kind) {
@@ -172,6 +173,24 @@ function approveWorkOf(project, question, match) {
   const hash = latest?.data?.doc?.hash;
   if (latest?.data?.lane !== lane || typeof hash !== 'string' || !hash.startsWith(h12)) return null;
   return { action: 'approve-work', work, lane, hash, shownFirst };
+}
+
+// The record a click on a goal's card earns: the card's goal and twelve characters must name exactly one sheet the state
+// holds for that goal, and the record carries that sheet's whole hash.
+function startGoalOf(project, question, { now, stopState }) {
+  const lines = setLinesOf(question);
+  const m = lines.length === 1 ? START_GOAL_LINE.exec(lines[0]) : null;
+  if (!m) return null;
+  const sheets = new Map(held(project, 'goal')
+    .filter((e) => e.data?.id === m[1] && e.data.sheet !== null && typeof e.data.sheet === 'object')
+    .map((e) => [sheetHash(e.data.sheet), e.data.sheet])
+    .filter(([h]) => h.startsWith(m[2])));
+  if (sheets.size !== 1) return null;
+  const [[hash, sheet]] = [...sheets];
+  // The same rule the desk's act and the goals view ask (scripts/engine/goal.js), asked before the click is signed.
+  const views = localViews(project, ['goals', 'work']) ?? {};
+  const refused = startProblem({ id: m[1], hash, sheet, goals: views.goals ?? {}, work: views.work ?? {}, stopped: stopState().on === true, now: now() });
+  return refused === null ? { action: 'start-goal', goal: m[1], hash } : { refused };
 }
 
 // The one full hash of a proposed change that the card's twelve characters name, or null.
@@ -337,7 +356,8 @@ async function openHead(match, question, { project, client, left }) {
 }
 
 // Works out the signed record a click earns, if any. May ask the helper for a
-// pull request's head. Returns { made, profile?, lift? }, or null. A Lift STOP earns nothing
+// pull request's head. Returns { made, profile?, lift? }, { refused } (a Start the goal's rules refuse, in a sentence;
+// nothing is signed), or null. A Lift STOP earns nothing
 // while STOP is off, so an old card's click or reply code can't stand for a later STOP. A reply
 // passes `shownAt`, when its card was shown: its Lift STOP earns a record only when the card was
 // shown after this STOP began, so a code from a card about an earlier STOP can't lift a later one. A usage card's
@@ -354,6 +374,11 @@ export async function earned({ project, question, label, card, client, now, left
   if (setLinesOf(question).some((line) => PREMIUM_LINE.test(line))) return premiumClickOf(project, question, label, card, now, premiumIn);
   if (setLinesOf(question).some((line) => TAKEOVER_LINE.test(line))) return takeOverOf(question, label, card);
   if (setLinesOf(question).some((line) => PAIR_LINE.test(line) || UNPAIR_LINE.test(line))) return pairOf(question, label);
+  if (label === 'Start' && setLinesOf(question).some((line) => START_GOAL_LINE.test(line))) {
+    const record = startGoalOf(project, question, { now, stopState });
+    if (record?.refused !== undefined) return { refused: record.refused };
+    return record ? action(record) : null;
+  }
   if (label === 'Approve') {
     const prs = [...question.matchAll(APPROVE)];
     const works = [...question.matchAll(APPROVE_WORK)];
@@ -751,7 +776,7 @@ function shownFor(project, input, at, stopState = defaultStopState, carrying = n
     // A setup card, setup's card of the rules found, a trust card, uninstall's card, a Keep card, a usage card and the
     // premium model's card have no reply code (rulings R36, R80, R90, P7-31; design section 14.6): only the click on
     // the card itself counts.
-    if (line === null || SETUP_LINE.test(line) || CONFIRM_ALL_LINE.test(line) || TRUST_LINE.test(line) || TAKEOVER_LINE.test(line) || UNINSTALL_LINE.test(line) || KEEP_CONTROL_LINE.test(line) || USAGE_LINE.test(line) || PREMIUM_LINE.test(line)) continue;
+    if (line === null || SETUP_LINE.test(line) || CONFIRM_ALL_LINE.test(line) || TRUST_LINE.test(line) || TAKEOVER_LINE.test(line) || UNINSTALL_LINE.test(line) || KEEP_CONTROL_LINE.test(line) || USAGE_LINE.test(line) || PREMIUM_LINE.test(line) || START_GOAL_LINE.test(line)) continue;
     const code = replyCode(line);
     const codes = q.question.split(/\r\n|[\n\r\u2028\u2029]/).filter((l) => l.startsWith('Reply code:'));
     if (codes.length !== 1 || codes[0] !== replyCodeLine(code)) continue;
@@ -823,6 +848,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   // after its card's shown record and spends the code.
   const queued = [];
   const takeOvers = [];
+  const refusedQuestions = new Set();
   const clock = () => at;
   const shownAt = new Date(at.getTime() - 1);
   queued.push(...keepSetupClicks(input.cwd, out, clock, project));
@@ -846,7 +872,12 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
     if (!click.signable || setupAsked.has(click.question)) continue;
     try {
       const got = await earned({ project, ...click, client: api, now: clock, left, stopState, ...(ready === undefined ? {} : { ready }), ...(premiumIn === undefined ? {} : { premiumIn }) });
-      if (got) {
+      if (got?.refused !== undefined) {
+        // A refused Start is told and left waiting: no record, and no plain answer to close its card.
+        const line = `The goal wasn't started: ${got.refused}`;
+        notices = notices === null ? line : `${notices}\n${line}`;
+        refusedQuestions.add(click.question);
+      } else if (got) {
         queued.push(keepEarned(project, got, { now: clock, liftStop }));
         if (got.takeOver) takeOvers.push(queued.at(-1));
       }
@@ -862,7 +893,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   for (const card of steered) await left(api.state.write({ project, kind: 'chat-steer', data: { card } }));
   // Then the plain answers. What cannot be sent in time is kept.
   for (const { question, label } of out) {
-    if (setupAsked.has(question)) continue;
+    if (setupAsked.has(question) || refusedQuestions.has(question)) continue;
     const body = { project, kind: 'card-answer', data: { question, label } };
     try {
       const result = await left(api.state.write(body));

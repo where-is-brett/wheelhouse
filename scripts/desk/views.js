@@ -14,6 +14,7 @@ import { dataHash } from '../state/events.js';
 import { contextText } from './context.js';
 import { readStatus } from '../safekeeping/readings.js';
 import { paneFrom } from './mod-pane.js';
+import { goalInForce } from '../engine/goal.js';
 import { answeredLines, buildLines, runningLines, shippedLines } from '../engine/words.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
@@ -333,6 +334,22 @@ const VIEWS = {
     const got = await recordOf(source, {});
     if (got.refused) return { ok: false, refused: got.refused };
     return { ok: true, data: { survey: got.views.survey ?? null }, lines: surveyLines(got.views.survey) };
+  },
+
+  // The goal asked for by id, or the one in force: its title and the time it stops starting work.
+  async goal(args, source) {
+    const got = await recordOf(source, {});
+    if (got.refused) return { ok: false, refused: got.refused };
+    let entry = null;
+    if (typeof args.goal === 'string') {
+      const held = isPlain(got.views.goals) && Object.hasOwn(got.views.goals, args.goal) ? got.views.goals[args.goal] : undefined;
+      if (held !== undefined) entry = { id: args.goal, hash: held.hash, sheet: held.sheet, state: held.ended === null ? 'running' : 'ended', startedAt: held.startedAt, until: held.sheet.until };
+    } else {
+      entry = goalInForce(got.views);
+    }
+    if (entry === null) return { ok: true, data: { goal: null }, lines: ['No goal is running.'] };
+    const lines = [`${entry.sheet.title} (${entry.id})`, `It stops starting work at ${entry.until}.`];
+    return { ok: true, data: { goal: entry }, lines };
   },
 };
 

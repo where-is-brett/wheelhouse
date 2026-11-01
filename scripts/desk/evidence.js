@@ -56,6 +56,7 @@ function forCard({ event, target }, question, option, events) {
 // Whether a signed record is what `command` needs, beyond being for a card.
 function fitsCommand(command, args, { event, target }) {
   if (command === 'lift-all-stop') return event?.kind === 'action' && event.data?.action === 'lift-stop';
+  if (command === 'start-goal') return event?.kind === 'action' && event.data?.action === 'start-goal' && event.data?.goal === args.goal && event.data?.hash === args.hash;
   if (command === 'safekeeping') return event?.kind === 'action' && event.data?.action === 'safekeeping' && event.data?.press === args.action;
   if (command === 'set') return event?.kind === 'confirmation' && target?.kind === 'setting' && target.data?.key === args.setting;
   return true;

@@ -275,6 +275,11 @@ async function signed({ project, card, hash, question, label, what, meanwhile, m
     release(held);
     return no(SAYS.failed);
   }
+  if (got?.refused !== undefined) {
+    // A Start the goal's rules refuse: nothing is written, the card is let go, and the pane says why.
+    release(held);
+    return no(`The goal wasn't started: ${got.refused}`);
+  }
   if (!got) {
     // Nothing was recorded, so the card is let go and can be pressed again.
     release(held);

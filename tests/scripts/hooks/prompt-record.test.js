@@ -7,7 +7,8 @@ import path from 'node:path';
 import { decide, sendPending, SIGNED_LABELS, storedText } from '../../../scripts/hooks/prompt-record.js';
 import { makeEvent, eventPath, dataHash, confirmationFor, eventHash, listEvents } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
-import { approvalLine, confirmLine, LIFT_STOP, LIFT_STOP_EARLIER, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine, approveWorkLine, answerLine, chatCopy, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, setupLine, setLineOf, uninstallLine, trustLine, takeOverLine } from '../../../scripts/state/card-lines.js';
+import { approvalLine, confirmLine, LIFT_STOP, LIFT_STOP_EARLIER, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine, approveWorkLine, answerLine, chatCopy, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, setupLine, setLineOf, uninstallLine, trustLine, takeOverLine, startGoalLine } from '../../../scripts/state/card-lines.js';
+import { sheetHash } from '../../../scripts/engine/goal.js';
 import { profileDir, stateDir, stopFile, computerId } from '../../../scripts/lib/paths.js';
 import { settingKey, UNATTENDED_CARD } from '../../../scripts/protection/windows-builds.js';
 import { startRun, markStep, addChanges, newId } from '../../../scripts/setup/journal.js';
@@ -1914,5 +1915,111 @@ test('Send it back signs nothing on a moved head, a closed pull request, or a ca
     const c = fake();
     await decide(SENT('A card with no line.'), deps(c));
     assert.deepEqual(kinds(c).filter((k) => k === 'action'), []);
+  });
+});
+
+// --- a goal's Start ---
+
+const CSV_WORK = { id: 'export-csv', title: 'Export', lane: 'feature', visible: true, dependsOn: [] };
+// The views the helper leaves on disk that a Start is asked against: the work as it stands and the goals so far.
+const putViews = (home, { work = { 'export-csv': { work: { data: CSV_WORK } } }, goals = {} } = {}) => {
+  const dir = path.join(home, 'projects', P, 'views');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'work.json'), JSON.stringify(work));
+  fs.writeFileSync(path.join(dir, 'goals.json'), JSON.stringify(goals));
+};
+const goalSheet = (title = 'Customers can export their orders') => ({
+  title, done: [{ command: 'node check.js', expect: 0 }], checksSay: ['The checking script passes.'],
+  pieces: [{ work: 'export-csv', hash: dataHash(CSV_WORK) }], areas: { may: ['src/**'], wontTouch: ['billing/**'] }, spend: { tokens: 1000000 }, until: '2026-10-18T13:00:00.000Z',
+});
+const goalEvent = (sheet, id = 'orders-export') => makeEvent({ kind: 'goal', data: { id, sheet }, now: () => NOW });
+const START_BUTTONS = ['Start', 'Not now', 'Approve'].map((label) => ({ label }));
+const startInput = (answers) => {
+  const asked = input(answers);
+  asked.tool_input.questions = asked.tool_input.questions.map((q) => ({ ...q, options: START_BUTTONS }));
+  return asked;
+};
+const startQuestion = (sheet, goal = 'orders-export') => `Start this goal?\n${startGoalLine(goal, sheetHash(sheet))}`;
+
+test('the click on Start earns the signed action with the sheet\'s whole hash', async () => {
+  await withHome(async (home) => {
+    putViews(home);
+    const sheet = goalSheet();
+    keepEvent(goalEvent(sheet));
+    const c = fake();
+    const question = startQuestion(sheet);
+    await decide(startInput({ [question]: 'Start' }), deps(c));
+    assert.deepEqual(recorded(c), [{ action: 'start-goal', goal: 'orders-export', hash: sheetHash(sheet), question, label: 'Start' }]);
+    assert.ok(c.calls.record.every((r) => r.event.kind === 'action' && r.event.sig));
+    assert.equal(sheetHash(sheet).length, 64);
+  });
+});
+
+test('a sheet the state doesn\'t hold earns nothing, and a second sheet under the id is told apart by its hash', async () => {
+  await withHome(async (home) => {
+    putViews(home);
+    const held = goalSheet();
+    keepEvent(goalEvent(held));
+    const c = fake();
+    // A sheet that was never recorded, a sheet recorded under another goal, and a line with the wrong characters.
+    const never = goalSheet('A goal nobody recorded');
+    await decide(startInput({ [startQuestion(never)]: 'Start', [startQuestion(held, 'another-goal')]: 'Start', [`Start this goal?\n${startGoalLine('orders-export', 'f'.repeat(64))}`]: 'Start' }), deps(c));
+    assert.deepEqual(recorded(c), []);
+    // A second sheet under the same id has its own hash; the click names only the one its twelve characters match.
+    keepEvent(goalEvent({ ...held, title: 'A second sheet' }));
+    await decide(startInput({ [startQuestion(held)]: 'Start' }), deps(c));
+    assert.deepEqual(recorded(c).map((r) => r.hash), [sheetHash(held)]);
+  });
+});
+
+test('a label other than Start earns nothing from a goal\'s card', async () => {
+  await withHome(async (home) => {
+    putViews(home);
+    const sheet = goalSheet();
+    keepEvent(goalEvent(sheet));
+    const c = fake();
+    const question = startQuestion(sheet);
+    for (const label of ['Approve', 'Not now', 'Explain more']) await decide(startInput({ [question]: label }), deps(c));
+    assert.deepEqual(recorded(c), []);
+    assert.equal(SIGNED_LABELS.includes('Start'), true);
+  });
+});
+
+test('a click on Start over a changed piece signs nothing and says why', async () => {
+  await withHome(async (home) => {
+    const sheet = goalSheet();
+    keepEvent(goalEvent(sheet));
+    putViews(home, { work: { 'export-csv': { work: { data: { ...CSV_WORK, title: 'Changed' } } } } });
+    const c = fake();
+    const got = await decide(startInput({ [startQuestion(sheet)]: 'Start' }), deps(c));
+    assert.deepEqual(recorded(c), []);
+    assert.deepEqual(c.calls.write.filter((w) => w.kind === 'card-answer'), [], 'the card stays waiting');
+    assert.match(contextOf(got), /The goal wasn't started: The work export-csv changed/);
+  });
+});
+
+test('a click on Start while another goal runs signs nothing', async () => {
+  await withHome(async (home) => {
+    const sheet = goalSheet();
+    keepEvent(goalEvent(sheet));
+    putViews(home, { goals: { 'first-goal': { sheet, hash: 'a'.repeat(64), startedAt: NOW.toISOString(), ended: null, endAsked: null } } });
+    const c = fake();
+    const got = await decide(startInput({ [startQuestion(sheet)]: 'Start' }), deps(c));
+    assert.deepEqual(recorded(c), []);
+    assert.deepEqual(c.calls.write.filter((w) => w.kind === 'card-answer'), []);
+    assert.match(contextOf(got), /first-goal is running/);
+  });
+});
+
+test('a click on Start under All stop signs nothing', async () => {
+  await withHome(async (home) => {
+    const sheet = goalSheet();
+    keepEvent(goalEvent(sheet));
+    putViews(home);
+    const c = fake();
+    const got = await decide(startInput({ [startQuestion(sheet)]: 'Start' }), { ...deps(c), stopState: () => ({ on: true }) });
+    assert.deepEqual(recorded(c), []);
+    assert.deepEqual(c.calls.write.filter((w) => w.kind === 'card-answer'), []);
+    assert.match(contextOf(got), /All stop is on/);
   });
 });

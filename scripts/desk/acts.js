@@ -10,6 +10,7 @@ import { cardTextOf, hashOf } from '../mod/status.js';
 import { NOT_NOW, SUGGEST } from '../lib/calm-words.js';
 import { composeCard } from '../cards/compose.js';
 import { PAIR_LABEL } from '../state/card-lines.js';
+import { goalInForce, narrowed, sheetHash, startProblem } from '../engine/goal.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const sha256 = (text) => crypto.createHash('sha256').update(text).digest('hex');
@@ -124,6 +125,42 @@ const ACTS = {
     if (ids.length === 0) return { ok: true, changed: [] };
     const written = await recorder.write({ kind: 'note', data: { about: 'cards-pulled', ids } });
     return written?.ok === true ? { ok: true, changed: ['cards-pulled'] } : no(written?.refused ?? 'The cards weren\'t brought up');
+  },
+  // The director's signed Start on a goal's card: the goal's sheet is the record whose hash the click signed, and it starts
+  // only if it is checked as it stands now. Nothing is recorded unless every check passes.
+  async 'start-goal'(args, checked, { source, recorder, now }) {
+    const records = checked.records ?? [];
+    if (!records.some((r) => r.event?.kind === 'action' && r.event.data?.action === 'start-goal')) return no('Starting a goal needs the director\'s signed Start');
+    const sheet = source.events().find((e) => e.kind === 'goal' && e.data?.id === args.goal && isPlain(e.data.sheet) && sheetHash(e.data.sheet) === args.hash)?.data.sheet;
+    if (sheet === undefined) return no(`No sheet of the goal ${args.goal} has that hash, so it wasn't started`);
+    const got = await source.views({});
+    const views = isPlain(got?.views) ? got.views : {};
+    // Judged at the signed record's own moment, as the goals view judges it.
+    const signed = records.find((r) => r.event?.kind === 'action' && r.event.data?.action === 'start-goal').event;
+    const problem = startProblem({
+      id: args.goal, hash: args.hash, sheet, goals: views.goals, work: views.work,
+      stopped: (await source.stop?.())?.on === true, now: new Date(typeof signed.at === 'string' ? signed.at : now()),
+    });
+    if (problem !== null) return no(`The goal wasn't started: ${problem}`);
+    const refused = await recordAll(recorder, records);
+    return refused === null ? { ok: true, changed: ['goal'], goal: args.goal } : no(`The goal wasn't started: ${refused}`);
+  },
+  // Ending a goal asks the helper to stop starting work, and now to stop what is running too. It decides nothing more.
+  async 'end-goal'(args, checked, { source, recorder }) {
+    const got = await source.views({});
+    const running = goalInForce(isPlain(got?.views) ? got.views : {});
+    if (running === null) return no('No goal is running');
+    const written = await recorder.write({ kind: 'note', data: { about: 'end-goal', goal: running.id, now: args.now === true } });
+    return written?.ok === true ? { ok: true, changed: ['goal'] } : no(written?.refused ?? 'The end of the goal wasn\'t written');
+  },
+  // A change that only narrows the running goal's sheet.
+  async 'narrow-goal'(args, checked, { source, recorder }) {
+    const got = await source.views({});
+    const running = goalInForce(isPlain(got?.views) ? got.views : {});
+    if (running === null) return no('No goal is running');
+    if (narrowed(running.sheet, args.change) === null) return no('A change that widens a goal needs a new sheet');
+    const written = await recorder.write({ kind: 'note', data: { about: 'narrow-goal', goal: running.id, change: args.change } });
+    return written?.ok === true ? { ok: true, changed: ['goal'] } : no(written?.refused ?? 'The change wasn\'t written');
   },
   async 'lift-all-stop'(args, checked, { recorder }) {
     const records = checked.records ?? [];

@@ -62,6 +62,10 @@ const INPUTS = {
     ...common, kind: 'pair', recommend: 'Pair it',
     what: 'The app phone-app asks to read Wheelhouse and decide through it, with its key abcdef012345.', options: [says('Pair it')], target: { client: 'phone-app', fingerprint: 'abcdef012345' },
   },
+  'start-goal': {
+    ...common, kind: 'start-goal', recommend: 'Start', what: 'The goal tidy-up has 2 pieces of work and a check that proves each is done.',
+    options: [says('Start')], target: { goal: 'tidy-up', hash: DOC },
+  },
   question: { ...common, kind: 'question', recommend: 'Comma', what: 'The export needs to know which separator to use.', options: OWN },
   'keep-control-files': {
     ...common, kind: 'keep-control-files', recommend: 'Confirm', what: 'The export-csv feature\'s folder has a new or changed file that steers agents.',
@@ -220,7 +224,7 @@ test('a card is judged by the card check\'s own tests, for every kind with a set
       lines.filter((l) => l !== TO_KNOW_MORE).join('\n'),
       // A setup card, a trust card, uninstall's and a Keep card have no reply code line to take away (rulings R36,
       // R80, R90, P7-31).
-      ...([...SETUP_KINDS, 'trust', 'take-over', 'pair', 'uninstall', 'keep-control-files'].includes(kind) ? [] : [lines.filter((l) => !l.startsWith('Reply code:')).join('\n')]),
+      ...([...SETUP_KINDS, 'trust', 'take-over', 'pair', 'uninstall', 'keep-control-files', 'start-goal'].includes(kind) ? [] : [lines.filter((l) => !l.startsWith('Reply code:')).join('\n')]),
       `${data.question}\nReply code: ${replyCode('another line')}`,
       `${data.question}\n${data.line}`,
       // Without its reason and its meanwhile, a card has too few plain lines.

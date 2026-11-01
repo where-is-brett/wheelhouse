@@ -19,8 +19,14 @@
 //                   hands a change the director suggested on a waiting approval or CI push card to
 //                   the build: the work re-stated with the change, in the front desk's own words, as
 //                   its title; prints the one line to say
+//   end-goal [--now]
+//                   asks for the running goal to end: it stops starting work, and with --now stops what is running too
+//   narrow-goal     narrows the running goal: the change as JSON on standard input, with only `until`, `spend`,
+//                   `areas` or `pieces`, each made smaller; a change that widens anything is refused
 //   record <kind>   records something the front desk decided: one of RECORD_KINDS, the data as JSON;
-//                   for a work event's document and an amendment, it works out the hash and prints it;
+//                   for a work event's document and an amendment, it works out the hash and prints it; a work also
+//                   prints `recordHash`, the hash of its record as written, which a goal's sheet names a piece by;
+//                   a goal prints `hash`, the hash of its sheet, which the goal's card and the director's Start name;
 //                   an amendment needs its read-back, and prints the route line and the read-back to say
 //   similar [words] the open work, ideas and rejections that share words with a request: its
 //                   words as the arguments, or its text on standard input
@@ -78,6 +84,7 @@ import { endedBy, since, NO_PLAN, STARTS_UNAPPROVED } from '../foreman/queue.js'
 import { startedAsScript } from '../lib/started-as-script.js';
 import { isOpen, surveyLines, whyNext, workLines } from '../desk/views.js';
 import { deskClient } from '../desk/client.js';
+import { checkSheet, sheetHash } from '../engine/goal.js';
 
 // Moved to the desk's views (scripts/desk/views.js); exported here for one release so nothing else breaks.
 export { surveyLines, workLines };
@@ -93,10 +100,10 @@ export class CliError extends Error {}
 // (work, amendment, incident, and the no-blame note when an incident ends).
 export const RECORD_KINDS = Object.freeze([
   'ruling', 'idea', 'rejection', 'glossary', 'decision', 'risk', 'blocker', 'reversal', 'setting',
-  'work', 'amendment', 'incident', 'note', 'brief',
+  'work', 'amendment', 'incident', 'note', 'brief', 'goal',
 ]);
 export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey', 'evidence', 'brief']);
-const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'record', 'similar', 'views', 'explain', 'review', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check'];
+const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'record', 'similar', 'views', 'explain', 'review', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'end-goal', 'narrow-goal'];
 // How long `confirm` waits for the helper: one window at a time on the computer, so it may wait for another's.
 const CONFIRM_WAIT_MS = 3 * WINDOW_MS;
 export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
@@ -536,6 +543,20 @@ export async function pullCards({ client, cwd, now }) {
   return cards({ client, cwd, now });
 }
 
+// The director's End goal and narrowing, through the desk: neither needs the director's signature, since each only
+// makes less happen.
+export async function endGoal({ client, cwd, now: immediately }) {
+  const got = await deskOf(client, cwd).act('end-goal', { now: immediately === true });
+  if (got?.ok !== true) throw new CliError(said(got, 'The goal wasn\'t ended'));
+  return { asked: true, now: immediately === true };
+}
+
+export async function narrowGoal({ client, cwd, change }) {
+  const got = await deskOf(client, cwd).act('narrow-goal', { change });
+  if (got?.ok !== true) throw new CliError(said(got, 'The goal wasn\'t narrowed'));
+  return { narrowed: true };
+}
+
 // --- card ---
 
 // A card's or a reversal's topic in lower case, refused when it isn't a slug (ruling F40).
@@ -943,7 +964,7 @@ export async function record({ client, cwd, kind, input, now, ready, makeId = ()
     }
     const data = await withHash(client, cwd, kind, input);
     const hash = data.doc?.hash;
-    return { ...answered(await write(client, cwd, kind, data)), ...(typeof hash === 'string' ? { hash } : {}) };
+    return { ...answered(await write(client, cwd, kind, data)), ...(typeof hash === 'string' ? { hash } : {}), recordHash: dataHash(data) };
   }
   if (kind === 'amendment') {
     // The read-back is said, not stored: the event is the amendment as the foreman applies it.
@@ -951,6 +972,12 @@ export async function record({ client, cwd, kind, input, now, ready, makeId = ()
     const say = readBackLine(readBack);
     const data = await withHash(client, cwd, kind, rest);
     return { ...answered(await write(client, cwd, kind, data)), hash: data.hash, say };
+  }
+  if (kind === 'goal') {
+    // A goal's sheet is checked before it is written, so a card is never made for one that can't start.
+    const problem = checkSheet(input.sheet, { now: now() });
+    if (problem !== null) throw new CliError(problem);
+    return { ...answered(await write(client, cwd, kind, input)), hash: sheetHash(input.sheet) };
   }
   if (kind !== 'ruling' && kind !== 'brief') return answered(await write(client, cwd, kind, input));
 
@@ -1277,6 +1304,16 @@ export async function main(argv, {
     if (command === 'pull-cards') {
       only(rest, 0, 'pull-cards takes no arguments');
       json(await pullCards({ client: helper, cwd: here, now }));
+      return 0;
+    }
+    if (command === 'end-goal') {
+      if (rest.length > 1 || (rest.length === 1 && rest[0] !== '--now')) throw new CliError('end-goal takes only --now: end-goal [--now]');
+      json(await endGoal({ client: helper, cwd: here, now: rest[0] === '--now' }));
+      return 0;
+    }
+    if (command === 'narrow-goal') {
+      only(rest, 0, 'narrow-goal takes no arguments: give the change as JSON on standard input');
+      json(await narrowGoal({ client: helper, cwd: here, change: parsed(await stdin()) }));
       return 0;
     }
     if (command === 'cards') {

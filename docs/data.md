@@ -32,6 +32,8 @@ For a project on a host, nothing of yours goes to GitHub or GitLab, even if the 
 
 When the helper finds your computer has been asleep for more than three minutes, it adds the start and end of that sleep to the same record, so a run isn't charged for time it wasn't running.
 
+A goal you sign stays in the same private record: its sheet, and later how it ended. Your Start signs the sheet's hash, so a sheet changed after you saw it starts nothing. When you end a goal or narrow it, that is noted there too.
+
 When a build run fails, the record of its ending says what kind of failure it was, in one word: connection, provider, host, limit or other. When a failed run resumes, the record gets a numbered start of its own and a numbered ending, so its running time and its spend add up once across the whole run. The record of its ending also names the step that failed, and a fresh run on the same work is given those steps and kinds in its order, so it doesn't repeat what failed.
 
 Each card the build engine raises also gets a seal in that record: a signed line of what Wheelhouse's own checks could tell from the change when the card was written. It stays in the private record. No agent, board or review reads what a seal says, and only a count of them is shown. It changes nothing about a card. Once a card is answered, a further signed line scores what would have been decided against the answer. The scores stay sealed too.

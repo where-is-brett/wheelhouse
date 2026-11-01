@@ -135,9 +135,9 @@ export type WheelhousePressing = { on: string; label: string };
 
 // The desk's messages (scripts/desk/, `desk/1`), which a later app sends on the helper's socket. A request names its
 // version and the project, or a folder inside it.
-export type DeskView = 'glance' | 'briefing' | 'logbook' | 'waiting' | 'card' | 'work' | 'settings' | 'usage' | 'preview' | 'why' | 'survey';
-export type DeskCommand = 'answer' | 'suggest' | 'not-now' | 'request' | 'set' | 'all-stop' | 'lift-all-stop' | 'pair';
-export type DeskWatchEvent = 'card-added' | 'card-closed' | 'glance-changed' | 'work-changed' | 'all-stop' | 'notice';
+export type DeskView = 'glance' | 'briefing' | 'logbook' | 'waiting' | 'card' | 'work' | 'settings' | 'usage' | 'preview' | 'why' | 'survey' | 'goal';
+export type DeskCommand = 'answer' | 'suggest' | 'not-now' | 'request' | 'set' | 'all-stop' | 'lift-all-stop' | 'pair' | 'start-goal' | 'end-goal' | 'narrow-goal';
+export type DeskWatchEvent = 'card-added' | 'card-closed' | 'glance-changed' | 'work-changed' | 'all-stop' | 'notice' | 'goal-changed';
 export type DeskPlace = { v: 'desk/1'; project?: string; cwd?: string };
 export type DeskEvidence =
   | { form: 'signed'; records: unknown[] }

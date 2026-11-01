@@ -124,6 +124,10 @@ test('under STOP, desk read answers and desk act answer is refused', inProject(a
   assert.equal(got.ok, false);
   assert.equal(got.refused, 'All stop is on');
   assert.equal((await client.desk.act({ v, project: P, command: 'not-now', args: { card: card.id } })).refused, 'All stop is on');
+  // Ending or narrowing a goal only makes less happen, so stopping stays easy: neither is held (no goal runs here to end).
+  for (const command of ['end-goal', 'narrow-goal']) {
+    assert.equal((await client.desk.act({ v, project: P, command, args: { change: { until: '2026-10-29T02:00:00.000Z' } } })).refused, 'No goal is running', command);
+  }
   assert.equal((await client.desk.act({ v, project: P, command: 'all-stop', args: { by: 'mod' } })).ok, true);
 }));
 
