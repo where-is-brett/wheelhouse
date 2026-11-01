@@ -38,16 +38,18 @@ Two probe mistakes, neither changing the answer. A first hour started every run 
 
 **A timed-out `start`.** The client stopped after 1.5 seconds. With a worktree (a chosen `--branch`, or the default) it left a run in `pending` with no `working_path`, no branch and no `execution_owner`; its `metadata` held only the model settings and workflow source. Only `workflow_name`, `started_at` and `user_message` tell it from another run. With `--no-worktree` the run was already `paused` with its `working_path` set. So a worktree run in `pending` can't be told by its branch or path, and 2b's `liveRunOf` has to work from the workflow name, start time and message. Whether a message or the launch token can be chosen by the caller wasn't tried.
 
-## What follows
+### What was not tested
+
+More than 10 paused runs, or more than an hour at 8 and 10. A waker that stops mid-hour. A start with a chosen message or token.
+
+## What it means for the design
 
 - Part 2a's parked limit takes 10, with the load above. No lock showed at 10, so the limit may not be the engine's.
 - Part 2b: an answer is not enough; the waker must be running for the run to continue.
 - Part 2b's `liveRunOf` can't rely on a branch or path for a `pending` run.
 
-## Not tested
+## Needs the director
 
-More than 10 paused runs, or more than an hour at 8 and 10. A waker that stops mid-hour. A start with a chosen message or token.
+Nothing.
 
-## Evidence files
-
-`probes/85-many-paused/run.js`, tested by `tests/probes/85-many-paused/run.test.js`. The logs and summaries of each stage are in the scratch folder only.
+Evidence files: `probes/85-many-paused/run.js`, tested by `tests/probes/85-many-paused/run.test.js`. The logs and summaries of each stage are in the scratch folder only.
