@@ -47,7 +47,7 @@ The reader knew the paths because its prompt gave them. A real reader would have
 - **A reader in a folder of its own.** Archon ran the step in a worktree of the project, under its own home, and the step did not read the `view.diff` in it (it looked for the file by absolute path under the trial's folder, where it was not). The queue's folder (`scripts/engine/queue-folder.js`) is the shape part 1b plans; this check did not use it.
 - **The pages comparison and a reader whose model has the pack's plugin.**
 
-## Second trial: the fence on the real engine
+### Second trial: the fence on the real engine
 
 1 November 2026, the same machine, on a source build of the engine with Wheelhouse's patch. `node probes/87-reader-view/fence.js <read|hunt>` runs the pack's own reader step in a folder project holding only the view, built by `scripts/delegation/view.js` from a real diff. `hunt` adds to the prompt the paths of a builder's folder, a run's records and the director's own files, and tells the step to reach them. Markers are read from the run's record of each tool call, not from what the step says.
 
