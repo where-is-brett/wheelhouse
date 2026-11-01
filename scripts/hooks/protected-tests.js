@@ -67,12 +67,13 @@ export async function decide(input, { env = process.env, client = helperClient({
   if (!runId || (!WRITING.includes(input?.tool_name) && !SHELL.includes(input?.tool_name))) return undefined;
   const changes = changesOf(input);
   if (changes.length === 0) return undefined;
-  const got = await client.engine.order({ runId });
-  if (got?.ok !== true || !got.order) return answer.deny(NO_ORDER);
+  let got = null;
+  try { got = await client.engine.protectedFiles({ runId }); } catch { got = null; }
+  if (got?.ok !== true || !Array.isArray(got.protectedFiles)) return answer.deny(NO_ORDER);
   const root = worktreeRoot(input.cwd) ?? input.cwd;
   for (const change of changes) {
     const rel = path.relative(root, change.file).split(path.sep).join('/');
-    if (listed(rel, got.order.protectedFiles)) continue;
+    if (listed(rel, got.protectedFiles)) continue;
     return answer.deny(change.kind === 'deletes' ? DELETES(rel) : SKIPS(rel));
   }
   return undefined;
