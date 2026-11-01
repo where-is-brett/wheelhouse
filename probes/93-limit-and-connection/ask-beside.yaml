@@ -1,0 +1,18 @@
+# probes/93-limit-and-connection/ask-beside.yaml
+# Check 93: no model step. An ask beside a step that fails once, so the run ends or pauses with that ask still open,
+# and a resume can reach the same ask again. Installed as `u4-ask-beside`.
+name: u4-ask-beside
+description: An ask in the same layer as a step that fails on its first go
+nodes:
+  - id: fail-once
+    bash: |
+      if [ -e failed-beside.txt ]; then echo second go; else touch failed-beside.txt; sleep 3; echo first go; exit 1; fi
+  - id: ask-beside
+    wait:
+      attention: Check 93, the ask beside
+      form: select
+      options:
+        - { id: a, label: A }
+  - id: done
+    depends_on: [fail-once, ask-beside]
+    bash: echo done
