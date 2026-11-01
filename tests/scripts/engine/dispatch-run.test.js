@@ -1594,7 +1594,8 @@ test('counted requests are those since Start, and a new month starts from what i
 });
 
 test('a count of requests that can\'t be read leaves the tokens still counting', async () => {
-  const w = goalBack({ spentThisMonth: () => { throw new Error('no answer'); } });
+  let asked = 0;
+  const w = goalBack({ spentThisMonth: () => { asked += 1; if (asked === 1) throw new Error('no answer'); return 0; } });
   w.engine.countsRequests = () => true;
   w.put('a');
   goalOver(w, ['a'], { spend: { tokens: 1000 } });
