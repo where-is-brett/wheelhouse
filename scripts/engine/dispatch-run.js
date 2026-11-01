@@ -282,10 +282,12 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     let reading = null;
     try { reading = allowance(); } catch { /* the tokens stand alone */ }
     kept.shareAtStart ??= shareAtStart(reading, goal);
-    const used = engine.countsRequests?.(config()?.routing ?? {}) === true ? await spentThisMonth() : null;
+    let used = null;
+    try { if (engine.countsRequests?.(config()?.routing ?? {}) === true) used = await spentThisMonth(); } catch { /* the tokens still count */ }
     if (used !== null) kept.requestsAtStart ??= used;
-    // A count below the one at Start is a new month's, or the provider's correction: what is there is the most it can say.
-    const requests = used === null ? null : used >= kept.requestsAtStart ? used - kept.requestsAtStart : used;
+    // A count below the one at Start is a new month's, or the provider's correction: it counts from there.
+    if (used !== null && used < kept.requestsAtStart) kept.requestsAtStart = 0;
+    const requests = used === null ? null : used - kept.requestsAtStart;
     kept.meter = await goalMeter({ goal, views, inspect: readForMeter, queueRuns: state.goalQueueRuns, capOf, reading, shareAtStart: kept.shareAtStart, requests, now: now() });
     keep();
   }

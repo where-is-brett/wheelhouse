@@ -1588,6 +1588,21 @@ test('counted requests are those since Start, and a new month starts from what i
   used = 4;
   await w.tick(1);
   assert.equal(keptOf(w).goalSpend.meter.requests, 4);
+  used = 300;
+  await w.tick(1);
+  assert.equal(keptOf(w).goalSpend.meter.requests, 300, 'the new month counts from its start');
+});
+
+test('a count of requests that can\'t be read leaves the tokens still counting', async () => {
+  const w = goalBack({ spentThisMonth: () => { throw new Error('no answer'); } });
+  w.engine.countsRequests = () => true;
+  w.put('a');
+  goalOver(w, ['a'], { spend: { tokens: 1000 } });
+  spent(w, 'gone', 400);
+  await w.tick(1);
+  const { meter } = keptOf(w).goalSpend;
+  assert.equal(meter.tokens, 400);
+  assert.equal(meter.requests, null);
 });
 
 test('a project that counts no requests reads none', async () => {
