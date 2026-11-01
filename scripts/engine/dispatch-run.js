@@ -19,7 +19,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { dispatch, MERGE_WORK } from './dispatcher.js';
-import { reservedUnreadWords, noCardBehindWords, restartRefusedWords, restartCardWords, restartUnsureWords, restartStrandedWords, wakeLateWords, STOPPED_RESTART_WORDS } from './words.js';
+import { reservedUnreadWords, noCardBehindWords, restartRefusedWords, restartCardWords, restartUnsureWords, restartStrandedWords, wakeLateWords, STOPPED_RESTART_WORDS, ORPHAN_LEFT_WORDS } from './words.js';
 import { workOrder } from './order.js';
 import { limitsFor } from './caps.js';
 import { ENGINE_QUESTIONS } from './router.js';
@@ -27,6 +27,7 @@ import { openRedMain, fixDecision, fixOrder } from './fix-main.js';
 import { readSlices, featureProgress, featureNext, currentStep, sliceOrder, finishOrder, featureCap, demoSlice } from './feature.js';
 import { ownWaiting, ownCards } from './waiting.js';
 import { topCard, holdsUpCount, noCardBehind } from './stuck.js';
+import { STOP_LABEL } from './runner.js';
 import { since, endedBy } from '../foreman/queue.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
@@ -432,12 +433,23 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     let why = null;
     if (Number.isInteger(run.pr) && kept.closed?.[run.pr]) why = 'closed';
     else if (run.outcome === 'cancelled' && !(stoppedRuns() ?? []).includes(run.runId) && !namedByCard(views, run.runId)) why = 'cancelled';
+    else if (run.outcome === 'failed' && !Number.isInteger(run.pr) && !namedByCard(views, run.runId) && !onTheWay(work) && state.sentBack[work] === state.acted[work] && state.reds[work]?.times === state.redActed[work]) {
+      // Looked at again on the next tick: the runner may yet have an answer that starts it again.
+      if (kept.failedSeen !== run.runId) {
+        kept.failedSeen = run.runId;
+        keep();
+        return;
+      }
+      why = 'failed';
+    }
     if (!why) return;
     kept.stallCards = (kept.stallCards ?? 0) + 1;
     const id = `q-${work}-${STALL_QUESTIONS + kept.stallCards}`;
     const demo = !step.finish && demoSlice(design) === step.slice;
     const happened = why === 'closed'
       ? `Pull request #${run.pr} for ${what} of ${title} was closed without being added, so the feature waits.`
+      : why === 'failed'
+        ? `The run building ${what} of ${title} failed before it was added, so the feature waits.`
       : step.finish
         ? `${title}'s switch-on wasn't approved, so the feature stays off and waits.`
         : demo
@@ -465,6 +477,21 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       // A piece that left its bundle has no card to speak for it.
       return engineRef?.runId === runId && q.gone !== true && (engineRef.ask === `cap:${runId}` || !isPlain(q.answer));
     });
+  }
+
+  // The features that stay stopped: the latest run ended by All stop, or at its cap by the director's Stop. Each is taken
+  // up by a Carry on, so none holds a place meanwhile. A question at a run's cap names the run as `cap:<run>`.
+  function stoppedFeaturesOf(views, reports) {
+    const stops = new Set(stoppedRuns() ?? []);
+    for (const q of Object.values(isPlain(views.questions) ? views.questions : {})) {
+      const engineRef = q?.question?.data?.engine;
+      if (engineRef?.ask === `cap:${engineRef?.runId}` && q.answer?.label === STOP_LABEL) stops.add(engineRef.runId);
+    }
+    return Object.entries(isPlain(views.work) ? views.work : {}).filter(([work, entry]) => {
+      if (entry?.work?.data?.lane !== 'feature' || endedBy(reports, work, entry.work) || onTheWay(work)) return false;
+      const last = (views.runs?.[work] ?? []).filter((r) => since(r, entry.work)).at(-1)?.data;
+      return last?.state === 'ended' && stops.has(last.runId);
+    }).map(([work]) => work);
   }
 
   // Quick, small and bug work whose run's pull request merged: its `merged` report, once (the briefing's shipped line,
@@ -840,6 +867,20 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     keep();
   }
 
+  // A run the engine may have started with no order, on the director's Stop here. Whether one is left going.
+  async function endOrphan(entry) {
+    if (typeof entry.startAt !== 'string' || typeof engine.liveRunOf !== 'function') return false;
+    let found;
+    try { found = await engine.liveRunOf({ work: entry.work, since: entry.startAt }); } catch { found = undefined; }
+    if (found === null || found === undefined) return found === undefined;
+    try {
+      const got = await engine.act(found.runId, { cancel: { reason: 'the director stopped it before it began' } });
+      return !(got?.ok === true && (await engine.inspect(found.runId))?.status === 'ended');
+    } catch {
+      return true;
+    }
+  }
+
   // Before `dispatch`: what has ended or been queued again leaves, cards are answered, starts are settled, and a run seen
   // running gives its entry up. So does one paused again on a newer ask, which waits on the director again.
   async function returnTick(views) {
@@ -854,10 +895,17 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       } else if (label === STOP_HERE) {
         // The feature's report first: one that fails keeps the entry, so the director's Stop is acted on next tick.
         const feature = views.work?.[entry.work]?.work?.data?.lane === 'feature';
+        const current = views.work?.[entry.work]?.work;
+        // Work with no run on record would read as queued, so it needs its report to stay stopped.
+        const unstarted = !feature && isPlain(current) && !runsOfWork(views, entry.work).some((r) => since(r, current));
+        const orphan = unstarted ? await endOrphan(entry) : false;
         if (feature) await endFeature(entry.work, state.features[entry.work] ??= {}, STOPPED_RESTART_WORDS(titleOf(views, entry.work)));
-        else release(entry.work, views);
+        else {
+          if (unstarted) await write('report', { work: entry.work, outcome: 'closed', summary: STOPPED_RESTART_WORDS(titleOf(views, entry.work)), rulings: [] });
+          release(entry.work, views);
+        }
         leave(entry);
-        if (!feature) await write('note', { about: 'engine', work: entry.work, words: STOPPED_RESTART_WORDS(titleOf(views, entry.work)) });
+        if (!feature) await write('note', { about: 'engine', work: entry.work, words: `${STOPPED_RESTART_WORDS(titleOf(views, entry.work))}${orphan ? ` ${ORPHAN_LEFT_WORDS}` : ''}` });
       }
     }
     for (const entry of [...state.admitted]) if (entry.starting) await settleStart(entry, views);
@@ -903,18 +951,20 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
 
   const reservedFiles = () => Object.fromEntries(Object.entries(state.reserved).map(([work, kept]) => [work, kept.files]));
   // A piece whose files hold other work up, with nothing to move it on: every run ended, no card, no way back and no pull
-  // request still open. Nothing lets its files go by itself, so the director is asked once for that run.
+  // request still open, or left by the director. Nothing lets its files go by itself, so the director is asked once for that run.
   async function strandedTick(views, decided) {
     const waitingOn = waitingNow(views);
     for (const work of new Set(decided.hold.filter((h) => h.why === 'clash').flatMap((h) => h.by ?? []))) {
       if (state.reserved[work] === undefined || onTheWay(work) || waitingOn.has(work)) continue;
-      if (state.sentBack[work] !== state.acted[work] && state.sentBack[work] !== undefined) continue;
-      if (state.reds[work] !== undefined && state.reds[work].times !== state.redActed[work]) continue;
+      // The director's Leave it: nothing was done to it, as the card said, and now its files hold other work.
+      const left = [state.clashAsked[work], state.redAsked[work]].some((id) => views.questions?.[id]?.answer?.label === LEAVE_IT);
+      if (!left && state.sentBack[work] !== state.acted[work] && state.sentBack[work] !== undefined) continue;
+      if (!left && state.reds[work] !== undefined && state.reds[work].times !== state.redActed[work]) continue;
       const runs = new Map(runsOfWork(views, work).map((r) => [r.data.runId, { ...r.data }]));
       const last = [...runs.values()].at(-1);
       if (!last || [...runs.values()].some((r) => r.state !== 'ended')) continue;
       const prs = [...runs.values()].map((r) => r.pr).filter((pr) => Number.isInteger(pr) && !state.closedPrs.includes(pr));
-      if (prs.length > 0) continue;
+      if (prs.length > 0 && !left) continue;
       const key = `stranded:${last.runId}`;
       if (state.stranded[work] === key) continue;
       state.stranded[work] = key;
@@ -1010,7 +1060,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       requests, sentBack: [
         ...Object.entries(state.sentBack).filter(([work, times]) => state.acted[work] !== times).map(([work, times]) => ({ work, times })),
         ...Object.entries(state.reds).filter(([work, red]) => state.redActed[work] !== red.times).map(([work, red]) => ({ work, times: red.times, reason: 'red' })),
-      ], waiting: [...waitingNow(views)], reserved: reservedFiles(), returning: state.returning, admitted: state.admitted, now: now(),
+      ], waiting: [...waitingNow(views)], reserved: reservedFiles(), returning: state.returning, admitted: state.admitted, stoppedFeatures: stoppedFeaturesOf(views, reports), now: now(),
     });
     // What it admitted holds its place from here. A piece has one start at a time; each answer of it goes along.
     for (const { work } of decided.admit) {
@@ -1193,7 +1243,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     // Give it more's fallback: a run that can't be resumed starts on the place already held, as a start from here.
     startAdmitted({ work, key, ...args }) {
       const entry = state.admitted.find((e) => e.work === work && e.key === key);
-      if (!entry) return { ok: false, refused: 'it has no place yet' };
+      if (!entry) return { ok: false, refused: 'it has no place yet', noPlace: true };
       // In hand already, after a crash part way: `returnTick` settles it, and nothing starts a second run.
       if (entry.startsRun === true) return { ok: false, refused: 'it is starting already' };
       delete entry.runId;

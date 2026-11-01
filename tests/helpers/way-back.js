@@ -67,7 +67,7 @@ export function wayBack({ recordings = {}, pace = 3, settings = {}, testCommand 
     const dispatcher = dispatchRun({
       engine, project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'), readViews: views, write, start, branchPaths, designOf,
       settings: () => ({ engineLanes: ['quick', 'bug', 'feature'], pace, ...settings }), stopped: () => world.stop, now: () => clock.now,
-      config: () => ({ routing: {}, testCommand }), readyOf: () => world.ready, prState: async (pr) => world.seenPr[pr] ?? 'open', orderOf: (runId) => world.orders?.[runId] ?? null,
+      config: () => ({ routing: {}, testCommand }), readyOf: () => world.ready, prState: async (pr) => world.seenPr[pr] ?? 'open', orderOf: (runId) => world.orders?.[runId] ?? null, stoppedRuns: () => world.stoppedIds ?? [],
     });
     const runner = engineRunner({
       engine, file: path.join(dir, 'router.json'), readViews: views, write, stopped: () => world.stop, now: () => clock.now,
@@ -80,7 +80,7 @@ export function wayBack({ recordings = {}, pace = 3, settings = {}, testCommand 
         return dispatcher.workOf(runId);
       },
       release: (work) => dispatcher.release(work),
-      admittedTo: (work) => dispatcher.admittedTo(work),
+      admittedTo: (work, key) => dispatcher.admittedTo(work, key),
       delivered: (work, key) => dispatcher.delivered(work, key),
       drop: (work, key) => dispatcher.drop(work, key),
       startAdmitted: (args) => dispatcher.startAdmitted(args),
@@ -111,8 +111,6 @@ export function wayBack({ recordings = {}, pace = 3, settings = {}, testCommand 
   return Object.assign(world, {
     dir,
     views,
-    get dispatcher() { return joined.dispatcher; },
-    get runner() { return joined.runner; },
     put(id, { lane = 'quick', files = [], place, approved = true, title = id } = {}) {
       world.work[id] = { work: { id: `w-${id}`, at: '2026-10-29T08:00:00.000Z', data: { id, title, lane, visible: false, dependsOn: [], ...(place === undefined ? {} : { place }) } }, approved, since: '2026-10-29T08:00:00.000Z', files };
     },
@@ -148,5 +146,9 @@ export function wayBack({ recordings = {}, pace = 3, settings = {}, testCommand 
     cards: () => world.written.filter((w) => w.kind === 'question').map((w) => w.data),
     // How many pieces hold a place now, by the rule the dispatcher counts.
     running: () => Object.keys(world.runs).filter((work) => world.stateOf(work) === 'started').length,
+  }) && Object.defineProperties(world, {
+    // Getters of their own: `Object.assign` would copy the first pair, and a restart would change nothing.
+    dispatcher: { get() { return joined.dispatcher; } },
+    runner: { get() { return joined.runner; } },
   });
 }

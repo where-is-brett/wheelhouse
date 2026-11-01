@@ -3,8 +3,10 @@
 // come back at pace, and nothing is lost or doubled on the way.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { wayBack, asking, quiet } from '../helpers/way-back.js';
-import { TRY_AGAIN, STOP_HERE } from '../../scripts/engine/dispatch-run.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { wayBack, asking, quiet, forever } from '../helpers/way-back.js';
+import { TRY_AGAIN, STOP_HERE, LEAVE_IT } from '../../scripts/engine/dispatch-run.js';
 
 test('three parked pieces with other work merging', async () => {
   const w = wayBack({ recordings: { a: asking('qa'), b: asking('qb'), c: asking('qc'), d: quiet(), e: quiet() } });
@@ -166,4 +168,161 @@ test('alike questions on parked pieces, one click, and the top card rising past 
   w.answer('a', 'Do the whole page', { shown: ['b'] });
   await w.tick(6);
   assert.deepEqual(w.answers().map((c) => c.action.answer.ask).sort(), ['qa', 'qb']);
+});
+
+test('a restart is a real one: both sides are built anew from their files', async () => {
+  const w = wayBack({ recordings: { a: quiet() } });
+  const { dispatcher, runner } = w;
+  w.restart();
+  assert.notEqual(w.dispatcher, dispatcher);
+  assert.notEqual(w.runner, runner);
+});
+
+const blocked = (id) => asking(id, { kind: 'blocked', options: [{ id: 'rework', label: 'Send it back' }, { id: 'stop', label: 'Stop' }], context: { question: 'Which?' } });
+const kept = (w) => JSON.parse(fs.readFileSync(path.join(w.dir, 'dispatch.json'), 'utf8'));
+const slices = (title) => ({ text: `# ${title}\n\n\`\`\`wheelhouse-slices\n${JSON.stringify({ goal: title, flag: { name: title }, demo: 'end', slices: [{ title: 'One', goal: 'One', done: [{ test: 'one' }] }, { title: 'Two', goal: 'Two', done: [{ test: 'two' }] }] })}\n\`\`\`\n` });
+
+test('an answer takes no place from another entry of its own piece', async () => {
+  const w = wayBack({ recordings: { z: [blocked('qz1'), asking('qz2').slice(0, 3)], a: asking('qa').slice(0, 3) }, pace: 1 });
+  w.put('z', { place: 0 });
+  w.put('a', { place: 1 });
+  await w.tick(4);
+  w.answer('z', 'Send it back');
+  for (let n = 0; n < 12; n += 1) {
+    await w.tick();
+    if (w.cardOf('z')?.engine?.ask === 'qz2' && kept(w).admitted.some((e) => e.work === 'z')) break;
+  }
+  assert.equal(w.cardOf('z')?.engine?.ask, 'qz2', 'the fresh card is out while z still holds its place');
+  w.answer('z', 'Do the whole page');
+  w.answer('a', 'Do the whole page');
+  for (let n = 0; n < 6; n += 1) {
+    await w.tick();
+    assert.ok(['z', 'a'].filter((id) => w.stateOf(id) === 'started').length <= 1, 'pace 1 holds');
+  }
+});
+
+test('Stop here on an unsure first start starts nothing more', async () => {
+  const w = wayBack({ recordings: { a: quiet() } });
+  w.engine.liveRunOf = () => undefined;
+  w.put('a');
+  w.startAs = () => ({ ok: false, refused: 'no reply', uncertain: true });
+  await w.tick(2);
+  assert.match(w.cardOf('a').what, /Nothing more of it starts until you say/);
+  w.startAs = null;
+  await w.tick(2);
+  assert.equal(w.starts.length, 1, 'not while the card waits');
+  w.answer('a', STOP_HERE);
+  await w.tick(3);
+  assert.equal(w.starts.length, 1, 'nor after it');
+  assert.equal(w.reports.a.data.outcome, 'closed');
+  assert.deepEqual(w.dispatcher.reserved(), {});
+});
+
+test('Stop here tries to end an orphan the engine started, and starts no run beside it', async () => {
+  const w = wayBack({ recordings: { a: forever() }, pace: 2 });
+  w.put('a');
+  let orphan = null;
+  w.engine.liveRunOf = () => undefined;
+  w.startAs = () => {
+    orphan = w.engine.start({ work: 'a', lane: 'quick', recording: 'a' }).runId;
+    return { ok: false, refused: 'no reply', uncertain: true };
+  };
+  await w.tick(2);
+  w.startAs = null;
+  w.engine.liveRunOf = () => ({ runId: orphan });
+  const act = w.engine.act.bind(w.engine);
+  w.engine.act = (runId, action) => (action.cancel ? { ok: false, refused: 'the engine would not' } : act(runId, action));
+  w.answer('a', STOP_HERE);
+  await w.tick(3);
+  assert.equal(w.starts.length, 1);
+  assert.equal(w.notes().filter((n) => /may still be going in the build engine/.test(n)).length, 1, 'it says what it couldn\'t end');
+});
+
+const leftClashing = async (label = LEAVE_IT) => {
+  const w = wayBack({ recordings: { a: [quiet(), quiet(), quiet()], z: quiet() }, pace: 1 });
+  w.put('a', { files: ['one.js'], place: 0 });
+  await w.tick(2);
+  for (let n = 0; n < 2; n += 1) {
+    w.runs.a.at(-1).data.pr = 7;
+    w.dispatcher.sentBack('a');
+    await w.tick(3);
+  }
+  assert.match(w.cardOf('a').what, /clashed/);
+  assert.deepEqual(w.dispatcher.reserved().a, ['one.js']);
+  w.answer('a', label);
+  await w.tick();
+  w.put('z', { files: ['one.js'], place: 1 });
+  return w;
+};
+
+test('Leave it on a clash card brings a card once its files hold other work', async () => {
+  const w = await leftClashing();
+  await w.tick(3);
+  const card = w.cardOf('a');
+  assert.ok(card, 'a card stands behind the hold');
+  assert.deepEqual(card.options.map((o) => o.label), [TRY_AGAIN, STOP_HERE]);
+  const top = w.written.filter((x) => x.kind === 'note' && x.data.about === 'top-card').at(-1).data;
+  assert.equal(top.id, card.id);
+  await w.tick(2);
+  assert.equal(w.cards().filter((c) => c.options.some((o) => o.label === STOP_HERE)).length, 1, 'once');
+  w.answer('a', STOP_HERE);
+  await w.tick(3);
+  assert.ok(w.starts.some((s) => s.order.work === 'z'), 'Stop here frees the files');
+});
+
+test('a feature the director stopped at its cap gives its place up', async () => {
+  const w = wayBack({ recordings: { f: forever(), g: quiet(), h: quiet() }, pace: 1, designOf: slices, settings: { capMinutes: { slice: 1 }, capTokens: {} } });
+  w.put('f', { lane: 'feature', place: 0 });
+  await w.tick(2);
+  w.clock.now = new Date(w.clock.now.getTime() + 10 * 60000);
+  await w.tick(2);
+  w.answer('f', 'Stop');
+  await w.tick(2);
+  w.put('h', { place: 1 });
+  await w.tick(3);
+  assert.ok(w.starts.some((s) => s.order.work === 'h'));
+});
+
+test('a stopped feature gives its place up and keeps its files', async () => {
+  const w = wayBack({ recordings: { f: forever(), h: quiet(), i: quiet() }, pace: 1, designOf: slices, settings: { capMinutes: { slice: 1 }, capTokens: {} } });
+  w.put('f', { lane: 'feature', files: ['one.js'], place: 0 });
+  await w.tick(2);
+  w.clock.now = new Date(w.clock.now.getTime() + 10 * 60000);
+  await w.tick(2);
+  w.answer('f', 'Stop');
+  await w.tick(2);
+  w.put('h', { files: ['one.js'], place: 1 });
+  w.put('i', { files: ['two.js'], place: 2 });
+  await w.tick(3);
+  assert.ok(!w.starts.some((s) => s.order.work === 'h'), 'a Carry on would collide with it');
+  assert.ok(w.starts.some((s) => s.order.work === 'i'));
+});
+
+test('a feature All stop cancelled gives its place up after the lift', async () => {
+  const w = wayBack({ recordings: { f: forever(), h: quiet() }, pace: 1, designOf: slices });
+  w.put('f', { lane: 'feature', place: 0 });
+  await w.tick(2);
+  w.stop = true;
+  await w.engine.stopAll('All stop');
+  w.stoppedIds = w.runsOf('f');
+  await w.tick(2);
+  w.stop = false;
+  await w.tick(2);
+  w.put('h', { place: 1 });
+  await w.tick(3);
+  assert.ok(w.starts.some((s) => s.order.work === 'h'));
+  assert.equal(w.cards().length, 0, 'the First Mate\'s Carry on takes it up, as ever');
+});
+
+test('a feature run that failed with no pull request brings its card', async () => {
+  const fail = [{ type: 'run-started', runId: 'x', at: '2026-10-29T02:00:00.000Z' }, { type: 'run-ended', runId: 'x', at: '2026-10-29T02:00:00.000Z', outcome: 'failed' }];
+  const w = wayBack({ recordings: { f: fail, h: quiet() }, pace: 1, designOf: slices });
+  w.put('f', { lane: 'feature', place: 0 });
+  await w.tick(5);
+  const card = w.cardOf('f');
+  assert.match(card.what, /failed before it was added.*Nothing more of it starts until you say/);
+  w.put('h', { place: 1 });
+  await w.tick(2);
+  assert.ok(w.starts.some((s) => s.order.work === 'h'), 'the card gives its place up');
+  assert.equal(w.cards().length, 1, 'one card');
 });

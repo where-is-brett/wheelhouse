@@ -1962,3 +1962,32 @@ test('a joiner left open goes by its own card once its lead is answered', async 
   w.views();
   assert.deepEqual(w.runner.openCards().map((c) => c.id), [joiner.id]);
 });
+
+test('a Give it more with no place yet stays to be carried out', async () => {
+  let place = 0;
+  const started = [];
+  const t = setUp({ recordings: { one: forever() }, gate: {
+    admittedTo: () => true,
+    startAdmitted: async (args) => {
+      place += 1;
+      if (place === 1) return { ok: false, refused: 'it has no place yet', noPlace: true };
+      started.push(args);
+      return { ok: true, runId: 'next' };
+    },
+  } });
+  try {
+    const { runId } = await t.ask();
+    await t.runner.capped({ runId, work: 'sale-banner', lane: 'quick', branch: 'wh/x', reached: { cap: 'minutes', limit: 1 } });
+    t.engine.act(runId, { cancel: { reason: 'cap' } });
+    const q = t.writes.filter((w) => w.kind === 'question').at(-1).data;
+    t.views.questions[q.id] = { question: { data: q }, answer: { label: 'Give it more', at: t.world.now.toISOString() } };
+    await t.runner.tick();
+    assert.equal(started.length, 0);
+    await t.runner.tick();
+    assert.equal(started.length, 1, 'tried again on the next tick');
+    await t.runner.tick();
+    assert.equal(started.length, 1, 'and once');
+  } finally {
+    t.cleanup();
+  }
+});

@@ -46,6 +46,8 @@ export const restartCardWords = (title, why) => `${title} couldn't go back to wo
 export const restartUnsureWords = (title) => `Wheelhouse can't tell whether ${title} started again, so it hasn't started it a second time. Nothing more of it starts until you say.`;
 export const restartStrandedWords = (title) => `${title} has stopped with nothing left to carry it on, and other work is waiting for its files. Nothing more of it starts until you say.`;
 export const STOPPED_RESTART_WORDS = (title) => `${title} stays stopped, as you chose; what it has done so far is kept on its branch.`;
+// Said after that line, of a run the engine may have started all the same and Wheelhouse couldn't end.
+export const ORPHAN_LEFT_WORDS = "A run of it may still be going in the build engine; Wheelhouse couldn't end it.";
 export const wakeLateWords = (title) => `Your answer about ${title} went back, but the build engine hasn't carried it on yet; it keeps its place meanwhile.`;
 
 // Each step of the pack (engine/archon/pack/) and of the merge queue, in words a sentence takes.

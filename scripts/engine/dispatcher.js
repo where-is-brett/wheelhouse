@@ -32,7 +32,7 @@ function runsOf(runs, id, entry) {
 // The work the merge queue's own runs stand for, which no work record names: their asks are routed under it.
 export const MERGE_WORK = 'merge-queue';
 
-// dispatch({ work, runs, reports, features, settings, stop, incident, capsReached, mergeQueue, requests?, sentBack?, waiting?, reserved?, returning?, admitted?, now })
+// dispatch({ work, runs, reports, features, settings, stop, incident, capsReached, mergeQueue, requests?, sentBack?, waiting?, reserved?, returning?, admitted?, stoppedFeatures?, now })
 //   -> { start: [{ work, lane }], hold: [{ work, why, by? }], admit: [{ work, via }], startMergeQueue, requeue: [{ work, lane, branch, reason? }], clashCards: [{ work }], redCards: [{ work }], live: [work] }
 // `work`, `runs` and `reports` are the record's views; `mergeQueue` is { running, lastStart, waiting, newReady };
 // `requests` is { counts(workId), used, cap, confirmed }: whether a piece's run would use the plan's counted requests,
@@ -42,8 +42,9 @@ export const MERGE_WORK = 'merge-queue';
 // for a piece until its work ends. A hold's `by` names what holds it, where that can be named: the clash's pieces, the
 // dependencies not merged, or what fills the parked limit. `returning` is [{ work, lane, via, at, asked? }], with a card out when `asked`, the pieces asking for
 // a place back, and `admitted` the same shape, named and not yet seen running; neither counts as running by itself. A
-// `requeue` is named only when it has a place, and otherwise is asked about again on the next tick.
-export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeatures = {}, settings = {}, stop = false, incident = false, capsReached = false, mergeQueue = {}, requests = null, sentBack = [], waiting = [], reserved = {}, returning = [], admitted = [], now = new Date() } = {}) {
+// `requeue` is named only when it has a place, and otherwise is asked about again on the next tick. `stoppedFeatures` are
+// the features whose run the director or All stop ended, which stay stopped until a Carry on and hold no place meanwhile.
+export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeatures = {}, settings = {}, stop = false, incident = false, capsReached = false, mergeQueue = {}, requests = null, sentBack = [], waiting = [], reserved = {}, returning = [], admitted = [], stoppedFeatures = [], now = new Date() } = {}) {
   const lanes = Array.isArray(settings.engineLanes) ? settings.engineLanes : ['quick'];
   const pace = paceOf(settings);
   // A piece the old engine started before the switch finishes there (scripts/engine/lanes.js).
@@ -65,18 +66,19 @@ export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeat
     if (onTheWay.has(id)) return false;
     const own = runsOf(runs, id, e.work);
     if (parked.has(id) && !own.some((r) => r.data.state === 'started')) return false;
-    if (e.work.data.lane === FEATURE && own.length > 0) return !endedBy(reports, id, e.work);
+    if (e.work.data.lane === FEATURE && own.length > 0) return !endedBy(reports, id, e.work) && !stoppedFeatures.includes(id);
     return own.some((r) => r.data.state !== 'ended');
   });
   let building = live.length;
   let features = live.filter(([, e]) => e.work.data.lane === FEATURE).length;
-  // What a new piece mustn't clash with: what is live, what waits, and each reservation whose work hasn't ended.
+  // What a new piece mustn't clash with: what is live, what waits, each reservation whose work hasn't ended, and each
+  // stopped feature, which a Carry on takes up on the files it has.
   const waits = entries.filter((entry) => {
     const [id, e] = entry;
     return parked.has(id) && !onTheWay.has(id) && !live.includes(entry) && !endedBy(reports, id, e.work) && runsOf(runs, id, e.work).length > 0;
   });
   const running = [...live, ...waits].map(([id, e]) => ({ work: id, files: filesOf(id, e) }));
-  for (const id of new Set([...Object.keys(held), ...onTheWay])) {
+  for (const id of new Set([...Object.keys(held), ...onTheWay, ...stoppedFeatures])) {
     const e = isPlain(work) ? work[id] : undefined;
     if (!running.some((r) => r.work === id) && !endedBy(reports, id, e?.work)) running.push({ work: id, files: filesOf(id, e) });
   }
