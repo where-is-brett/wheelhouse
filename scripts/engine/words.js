@@ -29,7 +29,7 @@ export const SENT_BACK_ANSWER = 'Send it back: not as it stands. Rework it so th
 export const sentBackWords = (pr, head) => `You sent pull request #${pr} back at ${head.slice(0, 7)}, so it goes back to be reworked and nothing of it is added.`;
 export const sentBackGoneWords = (pr) => `Your Send it back for pull request #${pr} wasn't used: that work has ended, or the pull request has closed.`;
 export const sentBackApprovedWords = (pr) => `Your Send it back for pull request #${pr} wasn't used: your approval had already sent it to the merge queue.`;
-export const sentBackMovedWords = (pr) => `Your Send it back for pull request #${pr} wasn't used: it has moved on to a newer commit since that card.`;
+export const sentBackMovedWords = (pr) => `Your Send it back for pull request #${pr} wasn't used: it has moved on since that card.`;
 export const sentBackNoPieceWords = (pr) => `Pull request #${pr} has no work of Wheelhouse's behind it, so there is nothing to go back to. The merge queue leaves it, and you can close it on its host.`;
 
 // The Logbook's line for a held piece with nothing behind it that could move it: a reservation can outlast every card.

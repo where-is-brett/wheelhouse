@@ -237,13 +237,16 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   // signed approval waits for the lift.
   async function parks() {
     if (stopped()) return;
-    const approvals = viewsNow().approvals;
+    const views = viewsNow();
+    const { approvals } = views;
     for (const [pr, kept] of Object.entries(state.parked)) {
       if (!kept.taken) {
         if (!held(kept.runId)) await takePark(pr);
         continue;
       }
       if (kept.handed || !approvedSince(kept, approvals?.[pr]?.[kept.head])) continue;
+      // A Send it back still to be acted on comes first.
+      if (views.sendBacks?.some?.((s) => s.pr === Number(pr) && s.sha === kept.head && !state.sentBack[s.id])) continue;
       const got = await safely(() => handBack({ pr: Number(pr) }));
       if (got?.gone === true) {
         delete state.parked[pr];
@@ -265,8 +268,9 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
 
   // Each signed Send it back, once. It goes ahead of `parks`, so with an approval beside it nothing goes to the queue. Only a
   // click for the head the card stands for counts: one for a head that moved on, or from before this park, moves nothing.
-  // Marked and retired in one write, with the rework asked for, so a crash leaves it to do again or done, never half. Under All
-  // stop nothing moves, and the click waits for the lift.
+  // Marked and retired in one write, with the rework asked for, so a crash leaves it to do again or done. A ready mark that
+  // outlives that write, by a crash just after, only has the queue wait: the rework's own mark takes its place. Under All stop
+  // nothing moves, and the click waits for the lift.
   async function sendBacks() {
     if (stopped()) return;
     const views = viewsNow();

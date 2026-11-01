@@ -2581,7 +2581,7 @@ test('a Send it back for an older head does nothing to the park at the new head,
   await t.runner.tick();
   assert.deepEqual(t.runner.parkedHeads(), { 7: newer });
   assert.equal(t.entered.length, 0);
-  assert.equal(said(t, /newer commit|moved on/).length, 1);
+  assert.equal(said(t, /moved on/).length, 1);
   t.cleanup();
 });
 
@@ -2694,5 +2694,17 @@ test('the card a park raises offers Send it back and says what each option does'
   assert.match(card.descriptions[0], /merge queue/);
   assert.match(card.descriptions[1], /reworked/);
   assert.match(card.descriptions[1], /nothing of it is added/i);
+  t.cleanup();
+});
+
+test('a Send it back the host can\'t answer for yet keeps an approval beside it from going to the queue', async () => {
+  const handed = [];
+  const t = backSetUp({ takeBack: async () => ({ ok: false }), handBack: async (args) => { handed.push(args); return { ok: true }; } });
+  await t.ask();
+  later(t);
+  sign(t);
+  sendBack(t);
+  await t.runner.tick();
+  assert.deepEqual(handed, []);
   t.cleanup();
 });

@@ -448,3 +448,15 @@ test('rework that comes back to the queue at the same head raises a fresh card',
   assert.deepEqual(w.runner.parkedHeads(), { 7: head });
   assert.equal(w.runsOf('a').length, 2, 'the old click answers nothing here');
 });
+
+test('rework that ends without marking ready, its files holding other work, brings a card', async () => {
+  const { w, head } = await parkedPr();
+  click(w, head);
+  await w.tick(2);
+  assert.equal(w.stateOf('a'), 'ended', 'its rework ended and marked nothing ready');
+  w.runs.a.push({ at: w.clock.now.toISOString(), data: { ...w.runs.a.at(-1).data, pr: 7 } });
+  w.put('b', { files: ['src/a.js'] });
+  await w.tick(2);
+  assert.equal(w.runsOf('b').length, 0, 'its files are still held');
+  assert.equal(w.cardOf('a')?.options.map((o) => o.label).join(), [TRY_AGAIN, STOP_HERE].join());
+});

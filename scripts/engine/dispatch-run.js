@@ -1015,7 +1015,11 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       const runs = new Map(runsOfWork(views, work).map((r) => [r.data.runId, { ...r.data }]));
       const last = [...runs.values()].at(-1);
       if (!last || [...runs.values()].some((r) => r.state !== 'ended')) continue;
-      const prs = [...runs.values()].map((r) => r.pr).filter((pr) => Number.isInteger(pr) && !state.closedPrs.includes(pr));
+      const ready = readyOf() ?? {};
+      const parked = parkedPrs() ?? {};
+      // A pull request the director sent back moves nothing once its rework ends without marking it ready again.
+      const sentBackPr = (pr) => (views.sendBacks ?? []).some((s) => s.pr === pr) && !Object.hasOwn(ready, pr) && !Object.hasOwn(parked, pr);
+      const prs = [...runs.values()].map((r) => r.pr).filter((pr) => Number.isInteger(pr) && !state.closedPrs.includes(pr) && !sentBackPr(pr));
       if (prs.length > 0 && !left) continue;
       const key = `stranded:${last.runId}`;
       if (state.stranded[work] === key) continue;

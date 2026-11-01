@@ -1676,3 +1676,17 @@ test('a signed send-back is listed, and closes its card', async () => {
     assert.deepEqual(build([card, forged]).sendBacks, []);
   });
 });
+
+test('a plain answer closes only the approval card it came after: the same card raised again at that head waits', async () => {
+  await withHome(() => {
+    const sha = 'a'.repeat(40);
+    const question = `A card.\n${approvalLine(7, sha)}`;
+    const data = { question, header: 'Approval', options: ['Approve', 'Send it back'], kind: 'approval', level: 3, line: approvalLine(7, sha), code: null, concepts: [] };
+    const first = ev('card', 1, data);
+    const answer = ev('card-answer', 2, { question, label: 'Send it back' });
+    const sent = ev('action', 3, { action: 'send-back', pr: 7, sha, question, label: 'Send it back' });
+    const again = ev('card', 4, data);
+    const v = build([first, answer, sent, again]);
+    assert.deepEqual(v.waiting.map((w) => w.id), [again.id]);
+  });
+});

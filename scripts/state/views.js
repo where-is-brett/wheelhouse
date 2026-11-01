@@ -299,9 +299,12 @@ function outcomesOf(sorted, { confirmations, answeredBy, lean = false }) {
   const questionOf = (card) => (typeof card.data?.question === 'string' ? card.data.question : card.data?.title);
   // An answer that names the card by its id and the card's text by its hash (a click in an agent's chat, ruling
   // P5-52) answers it only when the hash is of the card's text as the state holds it.
+  // An approval raised again at the same head has the same words (a piece sent back that came back unchanged), so an answer
+  // by its words alone is one to that card only when it came after it.
   const answersTo = (card) => answers.filter((a) => (typeof a.data?.card === 'string'
     ? a.data.card === card.id && (a.data.hash === undefined || (typeof questionOf(card) === 'string' && namesText(a.data.hash, questionOf(card))))
-    : (a.data?.card === undefined || a.data?.card === null) && typeof a.data?.question === 'string' && a.data.question === questionOf(card)));
+    : (a.data?.card === undefined || a.data?.card === null) && typeof a.data?.question === 'string' && a.data.question === questionOf(card)
+      && (card.data?.kind !== 'approval' || byOrder(card, a) < 0)));
   // Words typed on a blind card decide it too: they stand in for its pick, and its answer card follows.
   const decides = (card, label) => !PUT_OFF.includes(label) && (card.data?.kind === 'blind' || !Array.isArray(card.data?.options) || card.data.options.includes(label));
   const signedFor = (card) => {
