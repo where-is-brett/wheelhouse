@@ -68,11 +68,15 @@ const LANE_MS = 20 * 60 * 1000;
 // `beforeCommit()` runs once the files are there and before the first commit, as setup's own steps do. A `place` adds the
 // files it needs and `files`; in git alone there is no remote at all, and Archon is told of the folder's.
 async function makeProject({ root, folder, git, place = null, files = {}, beforeCommit = async () => {} }) {
-  const remote = path.join(root, ...REPO.split('/'));
   const mirror = path.join(root, 'mirrors', `${projectSlug(...REPO.split('/'))}.git`);
+  // In a place a run pushes, and the helper refuses a folder whose own settings redirect git, so its remote is the
+  // repository's path, which gives Archon the same name.
+  const remote = place ? mirror : path.join(root, ...REPO.split('/'));
   fs.mkdirSync(mirror, { recursive: true });
-  fs.mkdirSync(path.dirname(remote), { recursive: true });
-  fs.symlinkSync(mirror, remote, 'dir');
+  if (!place) {
+    fs.mkdirSync(path.dirname(remote), { recursive: true });
+    fs.symlinkSync(mirror, remote, 'dir');
+  }
   const must = async (args, cwd) => {
     const got = await git(args, cwd);
     if (got.code !== 0) throw new Error(`git ${args[0]} failed in the evaluation's project: ${String(got.stderr).trim()}`);
@@ -87,7 +91,7 @@ async function makeProject({ root, folder, git, place = null, files = {}, before
   fs.writeFileSync(path.join(folder, '.env'), 'EVAL_ONLY=not-a-secret\n');
   if (place) writeFiles(folder, placeFiles(files));
   await must(['init', '-q', '-b', 'main'], folder);
-  if (!local) await must(['config', `url.${mirror}.insteadOf`, remote], folder);
+  if (!place) await must(['config', `url.${mirror}.insteadOf`, remote], folder);
   await beforeCommit();
   const commit = ['-c', 'user.name=Evaluation', '-c', 'user.email=eval@example.invalid', 'commit', '-q', '-m', 'Start'];
   for (const args of [['add', '-A'], commit, ...(local ? [] : [['remote', 'add', 'origin', remote], ['push', '-q', 'origin', 'main']])]) await must(args, folder);
