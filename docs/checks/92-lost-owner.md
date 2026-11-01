@@ -38,7 +38,9 @@ The `terminal` line for a cancelled run came on the stream with `status: cancell
 
 `endpoint-gone` is why the patch asks for more than a silent endpoint. The sockets live in `/tmp`, which the system may clear of old files, so an endpoint can go while its owner runs on. The patch also needs `noExecutorCanWrite`, Archon's own proof that the recorded owner's process is gone from this host.
 
-## What R5 must allow for
+## What it means for the design
+
+Section 9.5 stands, and R5 must allow for three things:
 
 1. **A step outlives its owner.** In `killed-talks` and `killed-quiet` the step was alive and writing 4 seconds after its owner died, and in `child-run` it was alive after the cancel. A broken pipe didn't stop it. The cancel can't stop it: nothing in the run's record names it, and `processStopped: false` is the only sign. The probe killed it by hand. So R5 must stop the folder's processes before the fresh run, as All stop's `beforeCancel` does in `scripts/engine/stop.js`, or the old step and the new one write in one folder. A real model step may differ. No model step ran here, so that stays unknown, and the safe path doesn't depend on it.
 2. **A refused start looks like a start.** `workflow run --branch … --detach` before the cancel printed "Started" and a run id. That run then cancelled itself, with `nodes: []`. "Workflow already active on this path" is only in that run's log under Archon's `logs/` folder. So R5 must confirm the cancel took first, as its plan says, and read a fresh run that ends cancelled with no steps as a start that didn't happen, not as a stop.
@@ -46,8 +48,12 @@ The `terminal` line for a cancelled run came on the stream with `status: cancell
 
 Not tried: a loss in the moment a waker takes a paused run, which the patch's second read of the row is there for.
 
-## What changed
+What changed with this check:
 
 - `scripts/engine/archon/patch/paused-run-cancel.patch`: `cancelWithoutOwner` takes the run when the row still reads `running` and `noExecutorCanWrite` holds, through `cancelLost`.
-- `CANCEL_PATCH_MARK` moved to the new text, so health finds an engine built before it and asks for a build, and `scripts/engine/pins.js` holds the new digests.
+- `CANCEL_PATCH_MARK` moved to the new text, so health finds an engine built before it and setup's step 2 offers the build, and `scripts/engine/pins.js` holds the new digests.
 - Nothing in Wheelhouse calls the new path yet. Archon's own `cancel.test.ts` passes 19 of 20. The one failure, `refuses a run that is not running`, uses a paused run, and comes from the patch's first half.
+
+## Needs the director
+
+Nothing.
