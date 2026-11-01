@@ -19,18 +19,19 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { dispatch, MERGE_WORK } from './dispatcher.js';
-import { reservedUnreadWords, restartRefusedWords, restartCardWords, restartUnsureWords, restartStrandedWords, wakeLateWords, STOPPED_RESTART_WORDS } from './words.js';
+import { reservedUnreadWords, noCardBehindWords, restartRefusedWords, restartCardWords, restartUnsureWords, restartStrandedWords, wakeLateWords, STOPPED_RESTART_WORDS } from './words.js';
 import { workOrder } from './order.js';
 import { limitsFor } from './caps.js';
 import { ENGINE_QUESTIONS } from './router.js';
 import { openRedMain, fixDecision, fixOrder } from './fix-main.js';
 import { readSlices, featureProgress, featureNext, currentStep, sliceOrder, finishOrder, featureCap, demoSlice } from './feature.js';
-import { ownWaiting } from './waiting.js';
+import { ownWaiting, ownCards } from './waiting.js';
+import { topCard, holdsUpCount, noCardBehind } from './stuck.js';
 import { since, endedBy } from '../foreman/queue.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const isText = (x) => typeof x === 'string' && x.trim() !== '';
-const EMPTY = () => ({ mergeRun: null, mergeRuns: [], lastStart: null, seenReady: [], queueDue: false, sentBack: {}, acted: {}, clashAsked: {}, reds: {}, redActed: {}, redAsked: {}, redNoted: {}, requestsAsked: null, noTestsSaid: false, fixes: {}, features: {}, shipped: {}, closedPrs: [], reserved: {}, released: {}, stranded: {}, returning: [], admitted: [], carryOver: {}, restartCards: 0 });
+const EMPTY = () => ({ mergeRun: null, mergeRuns: [], lastStart: null, seenReady: [], queueDue: false, sentBack: {}, acted: {}, clashAsked: {}, reds: {}, redActed: {}, redAsked: {}, redNoted: {}, requestsAsked: null, noTestsSaid: false, fixes: {}, features: {}, shipped: {}, closedPrs: [], reserved: {}, released: {}, stranded: {}, topCard: null, noCardSaid: {}, returning: [], admitted: [], carryOver: {}, restartCards: 0 });
 // The dispatcher's own questions take numbers from here, apart from the card router's.
 const OWN_QUESTIONS = ENGINE_QUESTIONS + 90000;
 export { MERGE_WORK };
@@ -142,6 +143,12 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     try { for (const work of routerPieces()) pieces.add(work); } catch { /* it reads as none, so each keeps its place */ }
     return pieces;
   };
+  let routerCardsNow = () => [];
+  const cardsNow = (views) => {
+    let theirs = [];
+    try { theirs = routerCardsNow(); } catch { /* it reads as none, so a hold shows as having no card */ }
+    return [...ownCards({ state, views }), ...theirs];
+  };
   // A question of the dispatcher's own, and then a word to the seals, whose trouble is never the card's.
   async function askDirector(kind, data) {
     await write('question', data);
@@ -167,14 +174,17 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     }
   }
 
-  async function mergeQueueRunning() {
-    if (!state.mergeRun) return false;
+  async function mergeQueueStatus() {
+    if (!state.mergeRun) return null;
     try {
-      const got = await engine.inspect(state.mergeRun);
-      return got?.status === 'running' || got?.status === 'paused';
+      return (await engine.inspect(state.mergeRun))?.status ?? null;
     } catch {
-      return false;
+      return null;
     }
+  }
+  const queueHolds = (status) => status === 'running' || status === 'paused';
+  async function mergeQueueRunning() {
+    return queueHolds(await mergeQueueStatus());
   }
 
   // The end of a red check's output, as data for the run that goes back: kept by the helper, never by the run.
@@ -452,7 +462,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   function namedByCard(views, runId) {
     return Object.values(isPlain(views.questions) ? views.questions : {}).some((q) => {
       const engineRef = q?.question?.data?.engine;
-      return engineRef?.runId === runId && (engineRef.ask === `cap:${runId}` || !isPlain(q.answer));
+      // A piece that left its bundle has no card to speak for it.
+      return engineRef?.runId === runId && q.gone !== true && (engineRef.ask === `cap:${runId}` || !isPlain(q.answer));
     });
   }
 
@@ -913,6 +924,41 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     }
   }
 
+  // Each tick, what stands behind work that can't start (scripts/engine/stuck.js). The note is written when the answer
+  // changes; anything that moves or is about to means there is no top card, and All stop or an incident has its own.
+  async function topTick(views, decided, { queueStatus, ready, started }) {
+    const cards = cardsNow(views);
+    const waitingOn = waitingNow(views);
+    // What a card holds isn't going, so neither a pull request of a piece on a card nor a merge queue paused on one counts.
+    const moving = (work) => !waitingOn.has(work);
+    const queueGoing = queueStatus === 'running' || (queueStatus === 'paused' && cards.length === 0);
+    const running = [
+      ...decided.live, ...started.filter((s) => s.ok === true || s.uncertain === true).map((s) => s.work),
+      ...[...state.admitted, ...state.returning].filter((e) => !e.asked && moving(e.work)).map((e) => e.work),
+      ...ready.map(([, r]) => r.work).filter(moving), ...(queueGoing ? [MERGE_WORK] : []),
+    ];
+    const top = stopped() || incidentOpen(views) ? null : topCard({ hold: decided.hold, running, cards });
+    const counts = holdsUpCount({ hold: decided.hold });
+    const holding = {};
+    for (const { id, work } of cards) if (counts[work] > 0) holding[id] = Math.max(holding[id] ?? 0, counts[work]);
+    const said = { id: top?.card.id ?? null, holdsUp: top?.holdsUp ?? 0, holding };
+    const words = JSON.stringify(said);
+    if (words !== (state.topCard ?? JSON.stringify({ id: null, holdsUp: 0, holding: {} }))) {
+      await write('note', { about: 'top-card', ...said });
+      state.topCard = words;
+      keep();
+    }
+    const bare = noCardBehind({ hold: decided.hold, running, cards });
+    for (const work of Object.keys(state.noCardSaid)) if (!bare.some((h) => h.work === work)) delete state.noCardSaid[work];
+    for (const { work, why, by } of bare) {
+      const key = `${why}:${[...by].sort().join(',')}`;
+      if (state.noCardSaid[work] === key) continue;
+      await write('note', { about: 'engine', work, words: noCardBehindWords(titleOf(views, work), why, by.map((b) => titleOf(views, b))) });
+      state.noCardSaid[work] = key;
+      keep();
+    }
+  }
+
   // Ends a piece's reservation and remembers the run it was for, so an open card of that run can't take it back.
   function release(work, views = readViews() ?? {}) {
     state.released[work] = views.runs?.[work]?.at(-1)?.data?.runId ?? null;
@@ -955,11 +1001,12 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     const requests = typeof engine.countsRequests === 'function'
       ? { counts: () => engine.countsRequests(config()?.routing ?? {}) === true, used: await spentThisMonth(), cap: Number.isFinite(s.capRequests) ? s.capRequests : 0, confirmed: engine.requestsConfirmed === true }
       : null;
+    const queueStatus = await mergeQueueStatus();
     const decided = dispatch({
       work: views.work ?? {}, runs: views.runs ?? {}, reports, features: views.features ?? {}, settings: s, stop: stopped(),
       incident: Array.isArray(views.incidents?.open) && views.incidents.open.length > 0,
       capsReached: false,
-      mergeQueue: { running: await mergeQueueRunning(), lastStart: state.lastStart, waiting: waiting.length, newReady: newReady || state.queueDue === true },
+      mergeQueue: { running: queueHolds(queueStatus), lastStart: state.lastStart, waiting: waiting.length, newReady: newReady || state.queueDue === true },
       requests, sentBack: [
         ...Object.entries(state.sentBack).filter(([work, times]) => state.acted[work] !== times).map(([work, times]) => ({ work, times })),
         ...Object.entries(state.reds).filter(([work, red]) => state.redActed[work] !== red.times).map(([work, red]) => ({ work, times: red.times, reason: 'red' })),
@@ -1112,6 +1159,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
         recommendation: KEEP_OFF,
       });
     }
+    await topTick(views, decided, { queueStatus, ready: waiting, started }).catch(() => {});
     return { ...decided, started };
   }
 
@@ -1170,6 +1218,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     },
     // Who tells this of the card router's cards: the runner, through its `waitingWork`.
     onWaiting(fn) { if (typeof fn === 'function') routerPieces = fn; },
+    // And of the cards themselves: the runner's `openCards`.
+    onCards(fn) { if (typeof fn === 'function') routerCardsNow = fn; },
     // Who tells this of the pull requests the queue has left alone, { [pr]: head }: the runner.
     onParked(fn) { if (typeof fn === 'function') parkedPrs = fn; },
     // A parked pull request the director approved goes to the queue again. A hand-over writes a fresh work item, with no

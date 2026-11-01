@@ -5,7 +5,8 @@ import path from 'node:path';
 import { wheelhouseHome, profileDir, stateDir } from '../lib/paths.js';
 import { listEvents, eventHash, dataHash, CONFIRMABLE_KINDS, PIN_NAMES, READY_COLUMNS } from './events.js';
 import { ruleStands, stageOf } from '../delegation/rules.js';
-import { approvalLine, chatCopy, ciPushLine, confirmLine } from './card-lines.js';
+import { answerLine, approvalLine, chatCopy, ciPushLine, confirmLine } from './card-lines.js';
+import { joinQuestions } from './joiners.js';
 import { isLeanProject } from '../lean/project.js';
 import { verify, readEnrolled } from './signing.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
@@ -416,6 +417,29 @@ function buildLoopViews(sorted, enrolled) {
     }
   }
 
+  // What each click covers: the joiners listed on a card written before it, carrying the words it signed, and each named
+  // in those words, since a card's list is a plain field and only the words are signed. A joiner stands as it was first
+  // recorded, as an answer stands for the question as shown.
+  const clickOn = new Map();
+  for (const a of actions('answer')) if (questions[a.data.questionId]?.answer?.at === a.at) clickOn.set(a.data.questionId, a);
+  const cardsOf = sorted.filter((e) => e.kind === 'card' && Array.isArray(e.data?.joiners));
+  const named = (id, words) => {
+    const data = questions[id]?.question?.data;
+    return [data?.work, latestWork[data?.work]?.data?.title].some((name) => typeof name === 'string' && name !== '' && words.includes(name));
+  };
+  const first = new Map();
+  for (const e of sorted) if (e.kind === 'question' && !first.has(e.data?.id)) first.set(e.data?.id, e.data);
+  joinQuestions(questions, {
+    shown(lead) {
+      const click = clickOn.get(lead);
+      if (click === undefined) return [];
+      const card = cardsOf.filter((c) => c.data.line === answerLine(lead) && c.data.question === click.data.question && byOrder(c, click) < 0).at(-1);
+      return (card?.data.joiners ?? []).filter((id) => named(id, click.data.question));
+    },
+    ended: (data) => sorted.filter((e) => e.kind === 'run' && e.data?.work === data.work && e.data?.runId === data.engine?.runId).at(-1)?.data?.state === 'ended',
+    kept: (id, data) => dataHash(first.get(id)) === dataHash(data),
+  });
+
   // An incident is open from its declaration until a verified lift after it; a red-main incident also ends with the
   // helper's own close.
   const fixes = actions('incident-fix');
@@ -454,14 +478,20 @@ function buildLoopViews(sorted, enrolled) {
 
 // The cards past the day's budget (delegated decisions plan, choice 11): the router's latest list, less those pulled.
 // `pulled` names the pulled cards that list still holds, for the router to drop; a list written before it read the
-// pull keeps them, and the pull still stands. A note from before cards were named gives only its count.
-function cardsWaitingOf(sorted) {
+// pull keeps them, and the pull still stands. A note from before cards were named gives only its count. The dispatcher's
+// top card (scripts/engine/stuck.js) is lifted as a pull lifts one, so it spends no budget: `top` names it while it
+// stands, and `holding` says how many pieces each card holds up.
+export function cardsWaitingOf(sorted) {
   const notes = sorted.filter((e) => e.kind === 'note');
   const latest = notes.filter((e) => e.data?.about === 'cards-waiting').at(-1)?.data;
+  const said = notes.filter((e) => e.data?.about === 'top-card').at(-1)?.data;
+  const top = typeof said?.id === 'string' ? { id: said.id, holdsUp: Number.isInteger(said.holdsUp) ? said.holdsUp : 0 } : null;
+  const holding = said?.holding !== null && typeof said?.holding === 'object' && Object.keys(said.holding).length > 0 ? said.holding : null;
   const listed = Array.isArray(latest?.ids) ? latest.ids.filter((id) => typeof id === 'string') : [];
   const pulls = new Set(notes.filter((e) => e.data?.about === 'cards-pulled' && Array.isArray(e.data.ids)).flatMap((e) => e.data.ids));
+  if (top !== null) pulls.add(top.id);
   const ids = listed.filter((id) => !pulls.has(id));
-  return { count: Array.isArray(latest?.ids) ? ids.length : Number.isInteger(latest?.count) ? latest.count : 0, ids, pulled: listed.filter((id) => pulls.has(id)) };
+  return { count: Array.isArray(latest?.ids) ? ids.length : Number.isInteger(latest?.count) ? latest.count : 0, ids, pulled: listed.filter((id) => pulls.has(id)), ...(top === null ? {} : { top }), ...(holding === null ? {} : { holding }) };
 }
 
 // `profile` is the profile's events, when these are a project's: a confirm card in the project for a

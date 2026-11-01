@@ -16,7 +16,7 @@
 // small for even the cut parts, usage goes, then the closing lines, then whole parts from the last,
 // then when the last briefing was, then the verdict, so no briefing passes its words.
 import { oneLine } from '../board/model.js';
-import { heldBackWords, SHOW_THEM } from '../engine/words.js';
+import { heldBackWords, holdsUpWords, SHOW_THEM } from '../engine/words.js';
 import { BRIEFING_WORDS } from '../lib/core-numbers.js';
 import {
   verdict as verdictOf, optionalMark, recommends, foldedParts, ASK_ME_ANYTHING, FULL_BOARD, USAGE_ON_TRACK, ASK_FOR_THE_BOARD,
@@ -39,7 +39,8 @@ function waitingText(value, detail = 0) {
   if (title === '') return '';
   const minutes = Number.isInteger(value.optional) && value.optional > 0 ? ` · ${optionalMark(value.optional)}` : '';
   const recommendation = oneLine(value.recommendation);
-  return [`${title}${minutes}`, detail < 1 ? oneLine(value.line) : '', recommendation === '' || detail > 1 ? '' : recommends(recommendation)].filter(Boolean).join(BREAK);
+  const holds = Number.isInteger(value.holdsUp) && value.holdsUp > 0 ? ` · ${holdsUpWords(value.holdsUp)}` : '';
+  return [`${title}${minutes}${holds}`, detail < 1 ? oneLine(value.line) : '', recommendation === '' || detail > 1 ? '' : recommends(recommendation)].filter(Boolean).join(BREAK);
 }
 
 // A part as it is cut so far: its heading, its first `shown` entries, then "and N more". An entry

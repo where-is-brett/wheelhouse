@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { withHome } from '../../helpers/homes.js';
 import { briefingModel } from '../../../scripts/briefing/model.js';
-import { briefingParts } from '../../../scripts/briefing/text.js';
+import { briefingParts, briefingText } from '../../../scripts/briefing/text.js';
 import { markRaised } from '../../../scripts/usage/figures.js';
 import { NOT_NOW_STEP } from '../../../scripts/board/model.js';
 import { verdict } from '../../../scripts/lib/calm-words.js';
@@ -511,4 +511,14 @@ test('an unchanged watch comes back once a month', () => {
 
 test('a project with no status has no sentence', () => {
   assert.equal(told([], null).safekeeping, null);
+});
+
+test('a card holding up others says how many, in the briefing', () => {
+  const b = briefingModel({
+    model: board({ waiting: [{ n: 1, what: 'Choose the colour', since: at(10), holdsUp: 3 }, { n: 2, what: 'Name the button', since: at(10) }] }),
+    now: () => new Date(at(11)),
+  });
+  assert.equal(b.waiting[0].holdsUp, 3);
+  assert.equal(b.waiting[1].holdsUp, undefined);
+  assert.match(briefingText(b), /Choose the colour · holds up 3 pieces/);
 });

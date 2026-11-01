@@ -149,6 +149,10 @@ test('a chat click is recorded unsigned with its proof', async () => {
     const hidden = await c.client.state.write({ project: PROJECT, kind: 'note', data: { about: 'cards-waiting', count: 1, ids: ['q-login-500001'] } });
     assert.equal(hidden.ok, false);
     assert.match(hidden.refused, /only the card router/);
+    // Nor raise one past the budget and Away by naming it the top card.
+    const raised = await c.client.state.write({ project: PROJECT, kind: 'note', data: { about: 'top-card', id: 'q-login-500001', holdsUp: 1 } });
+    assert.equal(raised.ok, false);
+    assert.match(raised.refused, /only the dispatcher/);
     assert.equal(c.events().length, count);
     assert.equal((await c.client.state.write({ project: PROJECT, kind: 'card-answer', data: { question: 'Pick a colour?', label: 'Blue' } })).ok, true);
     // The event shape takes a click's fields and no others.

@@ -1480,3 +1480,87 @@ test('a card counts as read only with a reading, not a reader that gave none', a
     assert.equal(views.evidence.read, 1);
   });
 });
+
+const LEAD = 'q-lead-500001';
+const JOIN = 'q-other-500001';
+const asked = (n, data = {}) => ev('question', n, {
+  id: LEAD, work: 'lead', what: 'Which page?', why: 'It changes it', options: [{ label: 'First', says: 'One' }, { label: 'Last', says: 'Two' }], recommendation: 'First', level: 3, ...data,
+});
+const joiner = (n, data = {}) => asked(n, { id: JOIN, work: 'other', what: 'which page', joins: LEAD, options: [{ label: 'first', says: 'One' }, { label: 'LAST', says: 'Two' }], recommendation: 'first', ...data });
+const answerCard = (n, words, joiners) => ev('card', n, { question: words, header: 'Question', options: ['First', 'Last'], kind: 'answer', level: 3, line: `Answer question ${LEAD}`, ...(joiners ? { joiners } : {}) });
+const clickedOn = (n, words, label = 'Last') => click(n, { action: 'answer', question: words, questionId: LEAD, questionHash: dataHash(asked(1).data), label });
+
+test('a joiner on the card answered takes its lead\'s answer, in its own label', async () => {
+  await withHome(() => {
+    const got = build([asked(1), joiner(2), answerCard(3, 'lead and other', [JOIN]), clickedOn(4, 'lead and other')]).questions;
+    assert.equal(got[LEAD].answer.label, 'Last');
+    assert.equal(got[JOIN].answer.label, 'LAST');
+    assert.equal(got[JOIN].answer.joined, LEAD);
+  });
+});
+
+test('a click covers only what its card showed', async () => {
+  await withHome(() => {
+    const got = build([asked(1), answerCard(2, 'one'), joiner(3), answerCard(4, 'lead and other', [JOIN]), clickedOn(5, 'one')]).questions;
+    assert.equal(got[LEAD].answer.label, 'Last');
+    assert.equal(got[JOIN].answer, null);
+    assert.deepEqual(got[JOIN].saidBefore.label, 'LAST');
+    assert.equal(got[JOIN].joins, undefined, 'it is a question of its own again');
+  });
+});
+
+test('a joiner open behind an open lead says whom it joins', async () => {
+  await withHome(() => {
+    assert.equal(build([asked(1), joiner(2)]).questions[JOIN].joins, LEAD);
+  });
+});
+
+test('a question naming a lead it isn\'t alike takes nothing from it', async () => {
+  await withHome(() => {
+    for (const data of [{ what: 'Something else' }, { options: [{ label: 'Other', says: 'x' }, { label: 'Last', says: 'y' }] }]) {
+      const got = build([asked(1), joiner(2, data), answerCard(3, 'both', [JOIN]), clickedOn(4, 'both')]).questions[JOIN];
+      assert.equal(got.answer, null);
+      assert.equal(got.joins, undefined);
+    }
+  });
+});
+
+test('a lead at level 4 lends no answer, whatever a joiner says', async () => {
+  await withHome(() => {
+    const hash = dataHash(asked(1, { level: 4 }).data);
+    const events = [asked(1, { level: 4 }), joiner(2), answerCard(3, 'both', [JOIN]), click(4, { action: 'answer', question: 'both', questionId: LEAD, questionHash: hash, label: 'Last' })];
+    assert.equal(build(events).questions[JOIN].answer, null);
+  });
+});
+
+test('a joiner\'s own click stands, and a joiner of a joiner joins nothing', async () => {
+  await withHome(() => {
+    const third = asked(3, { id: 'q-third-500001', work: 'third', joins: JOIN });
+    const got = build([asked(1), joiner(2), third]).questions;
+    assert.equal(got['q-third-500001'].joins, undefined);
+  });
+});
+
+test('a card written after the click widens nothing', async () => {
+  await withHome(() => {
+    const got = build([asked(1), joiner(2), answerCard(3, 'other'), clickedOn(4, 'other'), answerCard(5, 'other', [JOIN])]).questions[JOIN];
+    assert.equal(got.answer, null);
+    assert.equal(got.saidBefore.label, 'LAST');
+  });
+});
+
+test('a card must name the piece in the words the click signed', async () => {
+  await withHome(() => {
+    const got = build([asked(1), joiner(2), answerCard(3, 'just the one', [JOIN]), clickedOn(4, 'just the one')]).questions[JOIN];
+    assert.equal(got.answer, null);
+  });
+});
+
+test('a joiner recorded again is a question of its own', async () => {
+  await withHome(() => {
+    const words = 'lead and other';
+    const got = build([asked(1), joiner(2), joiner(3, { why: 'Another reason' }), answerCard(4, words, [JOIN]), clickedOn(5, words)]).questions[JOIN];
+    assert.equal(got.joins, undefined);
+    assert.equal(got.answer, null);
+  });
+});

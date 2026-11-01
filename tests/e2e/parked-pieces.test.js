@@ -145,3 +145,25 @@ test('the running count never passes pace, at any pace, with answers coming back
     assert.equal(new Set(w.answers().map((c) => c.action.answer.ask)).size, w.answers().length, 'each answer once');
   }
 });
+
+test('alike questions on parked pieces, one click, and the top card rising past the budget', async () => {
+  const same = { reason: 'Which page?' };
+  const w = wayBack({ recordings: { a: asking('qa', same), b: asking('qb', same), c: asking('qc', { reason: 'Which colour?' }), held: quiet() }, pace: 2, settings: { cardsPerDay: 1 } });
+  w.put('a', { files: ['one.js'], place: 0 });
+  w.put('b', { files: ['two.js'], place: 1 });
+  await w.tick(2);
+  w.put('c', { files: ['three.js'], place: 2 });
+  await w.tick(2);
+  w.put('held', { files: ['three.js'], place: 3 });
+  await w.tick(2);
+  const [lead, joiner, third] = w.cards();
+  assert.equal(joiner.joins, lead.id);
+  assert.ok(third.id, 'a third question, past the budget');
+  const top = w.written.filter((x) => x.kind === 'note' && x.data.about === 'top-card').at(-1).data;
+  assert.equal(top.id, third.id, 'the card behind the hold');
+  assert.equal(top.holdsUp, 1);
+  assert.equal(w.views().cardsWaiting.ids.includes(third.id), false);
+  w.answer('a', 'Do the whole page', { shown: ['b'] });
+  await w.tick(6);
+  assert.deepEqual(w.answers().map((c) => c.action.answer.ask).sort(), ['qa', 'qb']);
+});

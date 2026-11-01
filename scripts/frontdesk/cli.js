@@ -57,6 +57,7 @@ import { helperClient } from '../host/helper-client.js';
 import { WINDOW_MS } from '../confirm/window.js';
 import { dataHash } from '../state/events.js';
 import { composeCard, answerInput } from '../cards/compose.js';
+import { joinersOf } from '../state/joiners.js';
 import { cardsForVisit, existingCard, cardNumbered, asQuestion } from '../cards/visit.js';
 import { controlFileInput, controlFilesDue, controlFilesNamed, gateAsksDue, gateInput, holdInput, holdsDue, premiumFailuresDue, stillWaits, withPutBack } from '../cards/build-loop.js';
 import { SWITCH_NAME, SWITCH_WORK } from '../engine/switch.js';
@@ -281,20 +282,32 @@ function composePlain(input, words) {
 
 // --- cards ---
 
+// What a card re-issued for the pieces behind it says changed.
+const REISSUED = 'The pieces this answer goes to.';
+const sameList = (a, b) => a.length === b.length && a.every((x) => b.includes(x));
+
 // The answer card for a question the build recorded, from the stored event (compose.js,
 // answerInput). The work is named by its title, or by its id when it has none or the card won't
 // carry the title; the build's ask commands check a question against the card naming the id.
-function answerCard(id, data, views, words) {
+// A card lists each piece its answer goes to, by title or, where those won't fit, by id. A card already out is re-issued
+// through `revises` once the pieces behind it change; the question it answers, and so its signature, stays as it was.
+function answerCard(id, data, views, words, { joiners = [], revises, saidBefore } = {}) {
   if (!isPlain(data) || data.id !== id) throw new Error('its record can\'t be read');
-  const title = flat(views.work?.[data.work]?.work?.data?.title);
+  const title = (work) => flat(views.work?.[work]?.work?.data?.title);
+  const reissue = revises === undefined ? {} : { revises, changed: REISSUED };
   let refusal = null;
-  for (const name of [...new Set([title || data.work, data.work])]) {
-    try {
-      return composePlain(answerInput(data, name), words);
-    } catch (error) {
-      refusal ??= error;
+  for (const name of [...new Set([title(data.work) || data.work, data.work])]) {
+    for (const titled of [true, false]) {
+      const named = joiners.map((j) => ({ id: j.id, name: (titled && title(j.work)) || j.work }));
+      try {
+        return composePlain({ ...answerInput(data, name, { joiners: named, saidBefore }), ...reissue }, words);
+      } catch (error) {
+        refusal ??= error;
+      }
     }
   }
+  // Too long to list its pieces: the question is still asked, and they are asked after it, with what was said.
+  if (revises === undefined && (joiners.length > 0 || saidBefore !== undefined)) return answerCard(id, data, views, words);
   throw refusal;
 }
 
@@ -436,10 +449,15 @@ export async function cards({ client, cwd, now }) {
   const at = typeof now === 'function' ? now() : new Date(now ?? Date.now());
   let made = 0;
   for (const [id, entry] of Object.entries(isPlain(views.questions) && !stop ? views.questions : {})) {
-    if (!isPlain(entry) || entry.answer || existingCard(views, answerLine(id)) !== null) continue;
+    // A joiner is answered by its lead's card, which is re-issued when the pieces behind it change.
+    if (!isPlain(entry) || entry.answer || entry.joins !== undefined) continue;
+    const joiners = joinersOf(views.questions, id);
+    const out = existingCard(views, answerLine(id));
+    const listing = views.waiting?.find((c) => c.id === out)?.data?.joiners ?? [];
+    if (out !== null && sameList(listing, joiners.map((j) => j.id))) continue;
     let card;
     try {
-      ({ card } = answerCard(id, entry.question?.data, views, words));
+      ({ card } = answerCard(id, entry.question?.data, views, words, { joiners, saidBefore: entry.saidBefore?.label, ...(out === null ? {} : { revises: out }) }));
     } catch (error) {
       problems.push(`Question ${id} couldn't be made a card: ${error.message}`);
       continue;

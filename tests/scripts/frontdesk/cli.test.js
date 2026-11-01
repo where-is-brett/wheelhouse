@@ -12,6 +12,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { main, readInput, RECORD_KINDS, MEANWHILE, CHECKS_UNSAID } from '../../../scripts/frontdesk/cli.js';
 import { cardsDue } from '../../../scripts/hooks/board-context.js';
+import { numberedWaiting } from '../../../scripts/board/model.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { buildViews } from '../../../scripts/state/views.js';
 import { makeEvent, dataHash, listEvents, confirmationFor, PROTECTED_KINDS } from '../../../scripts/state/events.js';
@@ -2042,5 +2043,64 @@ test('the project\'s own name, as the helper gives it, is never put in plain wor
     assert.equal(named.code, 0, named.err);
     assert.match(named.json.question.question, /gives preview board a new banner\./);
     assert.doesNotMatch(named.json.question.question, /preview means/);
+  });
+});
+
+const LEVEL_3 = { ...QUESTION, level: 3 };
+const joinerOf = (lead) => questionEvent({ ...LEVEL_3, id: 'q-login-500001', work: 'login', joins: lead.data.id }, 6);
+
+test('a joiner has no number and no wake of its own', async () => {
+  await inHome(async () => {
+    const lead = questionEvent(LEVEL_3);
+    const helper = fakeHelper({ events: [EXPORT, lead, joinerOf(lead)] });
+    assert.equal(numberedWaiting(helper.views(), []).length, 1);
+    assert.equal(cardsDue(helper.views(), NOW), 1);
+    const made = await run(helper, ['cards']);
+    assert.equal(made.json.questions.length, 1);
+    assert.deepEqual(helper.writes().filter((w) => w.kind === 'card').map((c) => c.data.joiners), [['q-login-500001']]);
+    assert.match(made.json.questions[0].question, /and login/);
+  });
+});
+
+test('a card already out is re-issued listing the joiner, and the lead\'s signature stands', async () => {
+  await inHome(async () => {
+    const lead = questionEvent(LEVEL_3);
+    const helper = fakeHelper({ events: [EXPORT, lead] });
+    await run(helper, ['cards']);
+    const first = helper.held.filter((e) => e.kind === 'card').at(-1);
+    helper.held.push(joinerOf(lead));
+    const again = await run(helper, ['cards']);
+    const cards = helper.held.filter((e) => e.kind === 'card');
+    assert.equal(cards.length, 2);
+    assert.equal(cards[1].data.revises, first.id);
+    assert.equal(cards[1].data.line, first.data.line);
+    assert.deepEqual(cards[1].data.joiners, ['q-login-500001']);
+    assert.equal(again.json.questions.length, 1);
+    await run(helper, ['cards']);
+    assert.equal(helper.held.filter((e) => e.kind === 'card').length, 2, 'once');
+    assert.deepEqual(helper.views().waiting.map((c) => c.id), [cards[1].id], 'the first card is closed');
+  });
+});
+
+test('a joiner still open after the click is a card of its own, saying You said this before', async () => {
+  await inHome(async () => {
+    const lead = questionEvent(LEVEL_3);
+    const signed = makeEvent({ kind: 'action', now: () => T(7), data: { action: 'answer', question: 'an older card', questionId: lead.data.id, questionHash: dataHash(lead.data), label: 'Tab' } });
+    const helper = fakeHelper({ events: [EXPORT, lead, joinerOf(lead), signed] });
+    const made = await run(helper, ['cards']);
+    assert.equal(made.json.questions.length, 1);
+    assert.match(made.json.questions[0].question, /You said this before: Tab\./);
+  });
+});
+
+test('a card too long to list its pieces still comes, and they are asked after it', async () => {
+  await inHome(async () => {
+    const long = { ...LEVEL_3, what: 'x '.repeat(490).trim() };
+    const lead = questionEvent(long);
+    const joiner = questionEvent({ ...long, id: 'q-login-500001', work: 'login', joins: lead.data.id }, 6);
+    const helper = fakeHelper({ events: [EXPORT, lead, joiner] });
+    const made = await run(helper, ['cards']);
+    assert.equal(made.json.questions.length, 1);
+    assert.equal(helper.held.filter((e) => e.kind === 'card').at(-1).data.joiners, undefined);
   });
 });

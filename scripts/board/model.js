@@ -168,10 +168,26 @@ function namesQuestion(card, id) {
 export function heldBackLine(line, views) {
   const ids = views?.cardsWaiting?.ids;
   if (typeof line !== 'string' || !Array.isArray(ids)) return false;
-  return ids.some((id) => {
-    const [pr, sha] = String(id).split(':');
-    return (sha === undefined ? answerLine(id) : approvalLine(pr, sha)) === line;
-  });
+  return ids.some((id) => lineOfCard(id) === line);
+}
+
+// The set line of a card the router names.
+function lineOfCard(id) {
+  const [pr, sha] = String(id).split(':');
+  return sha === undefined ? answerLine(id) : approvalLine(pr, sha);
+}
+
+// Whether the card with set line `line` is the top card: nothing can run, and this card stands behind that.
+export function topCardLine(line, views) {
+  const id = views?.cardsWaiting?.top?.id;
+  return typeof line === 'string' && typeof id === 'string' && lineOfCard(id) === line;
+}
+
+// How many pieces the card with set line `line` holds up, 0 for none.
+function holdingOf(line, views) {
+  const holding = views?.cardsWaiting?.holding;
+  if (typeof line !== 'string' || !isRecord(holding)) return 0;
+  return Object.entries(holding).find(([id]) => lineOfCard(id) === line)?.[1] ?? 0;
 }
 
 // The cards waiting are the waiting view's, so one rule, in views.js, says what waits. (Whether a
@@ -185,10 +201,11 @@ export function numberedWaiting(views, events) {
   const questions = isRecord(views?.work) && isRecord(views?.features) && isRecord(views?.questions) ? views.questions : {};
   const cards = list(views?.waiting);
   const named = [...cards, ...list(events).filter((e) => e.kind === 'card')];
-  const held = (line) => (heldBackLine(line, views) ? { heldBack: true } : {});
+  const held = (line) => ({ ...(heldBackLine(line, views) ? { heldBack: true } : {}), ...(holdingOf(line, views) > 0 ? { holdsUp: holdingOf(line, views) } : {}) });
   const items = cards.map((card) => ({ what: oneLine(card.data?.title ?? card.data?.question) || 'A question', since: timeOf(card.at), id: card.id, card: card.id, ...held(card.data?.line) }));
   for (const [id, entry] of Object.entries(questions)) {
-    if (!isRecord(entry) || entry.answer || named.some((card) => namesQuestion(card, id))) continue;
+    // A joiner is answered by its lead's card, so it has no number of its own.
+    if (!isRecord(entry) || entry.answer || entry.joins !== undefined || named.some((card) => namesQuestion(card, id))) continue;
     items.push({ what: questionWords(entry.question?.data) || 'A question from the build', since: timeOf(entry.question?.at), id: `q:${id}`, question: id, ...held(answerLine(id)) });
   }
   return items.sort((a, b) => (a.since ?? '').localeCompare(b.since ?? '')).map((item, i) => ({ n: i + 1, ...item }));
@@ -234,7 +251,7 @@ function namesOnly(text, id) {
 // each only when the card has it. The board and the briefing both read them from here.
 function waitingList(views, events) {
   const cards = new Map(list(views?.waiting).map((card) => [card.id, card]));
-  return numberedWaiting(views, events).map(({ n, id, what, since, card, heldBack }) => {
+  return numberedWaiting(views, events).map(({ n, id, what, since, card, heldBack, holdsUp }) => {
     const data = card === undefined ? null : cards.get(card)?.data;
     const parts = isRecord(data?.parts) ? data.parts : {};
     const ask = oneLine(parts.ask);
@@ -248,7 +265,7 @@ function waitingList(views, events) {
     const kept = Object.fromEntries(Object.entries(extra).filter(([, value]) => value !== ''));
     if ([1, 2, 3, 4].includes(data?.level)) kept.level = data.level;
     if (Number.isInteger(parts.optional) && parts.optional > 0) kept.optional = parts.optional;
-    return { n, id, what: ask || what, since, ...kept, ...(heldBack ? { heldBack } : {}) };
+    return { n, id, what: ask || what, since, ...kept, ...(heldBack ? { heldBack } : {}), ...(holdsUp ? { holdsUp } : {}) };
   });
 }
 

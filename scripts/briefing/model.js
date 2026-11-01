@@ -238,6 +238,7 @@ function waitingEntry(w) {
   const entry = { title: oneLine(w.what) || 'A question' };
   for (const key of ['line', 'recommendation']) if (oneLine(w[key])) entry[key] = oneLine(w[key]);
   if (Number.isInteger(w.optional) && w.optional > 0) entry.optional = w.optional;
+  if (Number.isInteger(w.holdsUp) && w.holdsUp > 0) entry.holdsUp = w.holdsUp;
   return entry;
 }
 
