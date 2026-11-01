@@ -8,7 +8,7 @@
 //             caps: { minutes, tokens }, protectedFiles: [path], preview: { pages, styleGuide } | null,
 //             showFirst, level, testCommand, bindings: { tiers?, aliases? },
 //             slice?: { n, of, title }, flag?: { name, file } | { name, how }, demo?, feature?: { slices: [Slice] },
-//             tried?: [{ run, step, failure, checks }] }
+//             tried?: [{ run, step, failure, checks }], areas?: { goal, since?, may?, wontTouch } }
 //   Slice = { n, title, pr, head }: a slice of the feature that merged (its head null when the host didn't say), for the feature's own run (its whole-feature
 //   review and switch-on). `slice` and `demo` are a feature's slice run's; `flag` is the switch a feature's work sits
 //   behind, in a file the core can flip or in the project's own way, given in words.

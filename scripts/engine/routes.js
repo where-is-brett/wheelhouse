@@ -398,8 +398,10 @@ export function engineRoutes({
     // A project in git alone has no merge queue of Archon's to take it: the local queue reads what is ready below.
     const handed = host?.local?.(run.project) === true ? { ok: true } : await engine.handOver({ project: run.folder, repo, pr: opened.pr, url: `https://${host?.repoHost?.(run.project) ?? 'github.com'}/${repo}/pull/${opened.pr}`, runId, at: now().toISOString() });
     if (!handed?.ok) return { ok: false, refused: handed?.refused ?? 'the engine didn\'t take the work' };
-    verdicts.ready = { ...(verdicts.ready ?? {}), [opened.pr]: { head: opened.head, runId, showFirst, work: run.order.work } };
-    keepVerdicts(run.project, verdicts);
+    // Read again: the awaits above may have let another pull request be held. One held here at an older head is over.
+    const after = readVerdicts(run.project);
+    const { [opened.pr]: _over, ...areasHeld } = after.areasHeld;
+    keepVerdicts(run.project, { ...after, areasHeld, ready: { ...after.ready, [opened.pr]: { head: opened.head, runId, showFirst, work: run.order.work } } });
     return { ok: true, pr: opened.pr, head: opened.head };
   }
 
@@ -580,7 +582,7 @@ export function engineRoutes({
     return route(rest);
   };
 
-  return {
+  const engineRun = {
     runOf,
     startReader,
     readyOf,
@@ -623,6 +625,12 @@ export function engineRoutes({
     holdAreas: (project, { pr, head, paths }) => {
       const kept = readVerdicts(project).ready[pr];
       if (kept) keepHeld(project, pr, { ...kept, head, paths });
+    },
+    // Why a merge outside the queue is refused for a goal's areas, or null. `paths` null means they couldn't be read.
+    areasRefusal: (project, { pr, head, paths }) => {
+      const outside = engineRun.areasOutside(project, { pr, paths });
+      if ((outside !== null && outside.length === 0) || engineRun.areasAllowed(project, pr, head)) return null;
+      return `the change at ${head.slice(0, 7)} reaches outside its goal's areas, and the director hasn't allowed it`;
     },
     // A held pull request is answered: `ready` marks it ready at the head it was held at; anything else lets go of it.
     settleAreas: (project, pr, how) => {
@@ -675,6 +683,7 @@ export function engineRoutes({
       },
     },
   };
+  return engineRun;
 }
 
 // Where a project's engine files are kept beside its record: `<state>/../engine/`.

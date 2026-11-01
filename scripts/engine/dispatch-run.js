@@ -739,7 +739,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       try {
         order = fixOrder(incident, { config: config() ?? {}, settings: settings() ?? {}, revert: decided.revert === true });
         const areas = fixAreas(views);
-        if (areas !== null) order = { ...order, areas };
+        if (areas !== null) order = { ...order, areas, notInScope: [...order.notInScope, areasInScopeWords(areas)] };
       } catch {
         if (!kept.noFix || toldNoFix === FIX_FORWARD) await noFixCard(incident, kept);
         return;
@@ -1451,21 +1451,24 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
         settleAreas(pr, 'stop');
       } else if (label === ALLOW_ONCE) {
         // Kept before it is marked ready, so a crash between the two still hands it over.
-        if (!isLocal()) state.allowed[pr] = work;
+        if (!isLocal()) state.allowed[pr] = { work, said: false };
         keep();
         settleAreas(pr, 'ready');
       }
     }
     await handAllowed(views);
   }
-  // Each pull request allowed on a host goes to the queue again, as an approved parked one does. A project in git alone
-  // needs only its ready record. Asked again on the next tick while a queue run is live.
+  // Each pull request allowed on a host goes to the queue again, as an approved parked one does, and is tried on each tick
+  // until the queue takes it or its work has gone, as a marked-ready change the queue never holds would be lost unseen. A
+  // project in git alone needs only its ready record.
   async function handAllowed(views) {
-    for (const [pr, work] of Object.entries(state.allowed)) {
+    for (const [pr, kept] of Object.entries(state.allowed)) {
       const got = await handBack({ pr: Number(pr) });
-      if (got?.waiting === true) continue;
-      if (got?.ok !== true && got?.gone !== true) await write('note', { about: 'engine', work, words: `${titleOf(views, work)}: ${got?.refused ?? 'the merge queue didn\'t take it'}.` });
-      delete state.allowed[pr];
+      if (got?.ok === true || got?.gone === true) delete state.allowed[pr];
+      else if (got?.waiting !== true && !kept.said) {
+        kept.said = true;
+        await write('note', { about: 'engine', work: kept.work, words: `${titleOf(views, kept.work)}: ${got?.refused ?? 'the merge queue didn\'t take it'}. Wheelhouse keeps trying.` });
+      }
       keep();
     }
   }

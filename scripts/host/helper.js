@@ -3397,6 +3397,9 @@ export async function startHelper({
     const guarded = touchesGuardrails && !keeping;
     // On a project in git alone a merge by this route answers to the queue's rows too: the sweep is the only other way in.
     if (movingHome(project)) stateReasons.push(MOVING_LINE);
+    // A goal's areas hold on every way in. A fix was held to them by its own route, and a restore has no goal.
+    const outsideReason = fixCall || restore ? null : engineRun.areasRefusal(project, { pr: number, head: headSha, paths: readable ? changes.paths : null });
+    if (outsideReason !== null) stateReasons.push(outsideReason);
     const queueRows = recordOf(project).host === 'local' && !fixCall && !keeping && !restore;
     const queueApproval = queueRows && readable && needsApprovalOf({ paths: changes.paths, config: changes.config });
     const approvalRequired = body.approvalRequired === true || guarded || restore || switching || shownFirst || queueApproval;

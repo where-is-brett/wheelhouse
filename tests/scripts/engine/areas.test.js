@@ -118,7 +118,7 @@ function world({ held = {}, local = false, questions = {}, reports = {} } = {}) 
     areasHeld: () => held, settleAreas: (pr, how) => { settled.push([pr, how]); if (how === 'ready') ready[pr] = held[pr]; delete held[pr]; }, isLocal: () => local, localQueue: local ? async () => {} : null,
     repoOf: () => ({ host: 'github.com' }), repoName: () => 'acme/web', readyOf: () => ready, now: () => NOW,
   });
-  return { d, views, written, settled, handed };
+  return { d, views, written, settled, handed, engine };
 }
 const HELD = () => ({ 7: { head: HEAD, runId: 'run-1', showFirst: false, work: 'card-1', paths: ['src/users/b.js'] } });
 const asked = (t) => t.written.filter((w) => w.kind === 'question');
@@ -160,6 +160,15 @@ test('Allow this once on a host marks it ready and hands it to the queue again',
   assert.deepEqual(t.handed.map((h) => [h.pr, h.url]), [[7, 'https://github.com/acme/web/pull/7']]);
   await t.d.tick();
   assert.equal(t.handed.length, 1);
+});
+
+test('a hand-over the queue refuses is tried again on each tick, said once, until it is taken', async () => {
+  const t = world({ held: HELD(), questions: answered(ALLOW_ONCE) });
+  const refusing = [{ ok: false, refused: 'the queue\'s record moved' }, { ok: false, refused: 'the queue\'s record moved' }, { ok: true }];
+  t.engine.handOver = async (args) => { t.handed.push(args); return refusing.shift(); };
+  for (let i = 0; i < 4; i += 1) await t.d.tick();
+  assert.equal(t.handed.length, 3);
+  assert.equal(t.written.filter((w) => w.kind === 'note' && /keeps trying/.test(w.data.words)).length, 1);
 });
 
 test('Allow this once in git alone leaves a ready record, which the local queue reads', async () => {

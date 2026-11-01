@@ -277,6 +277,30 @@ test('a merge refused at a new head goes back to a card', async () => {
   assert.equal(t.made.areasHeld('p')[60].head, head);
 });
 
+test('a head inside the areas ends an older hold of the same pull request', async () => {
+  const t = setup({ changes: outside });
+  handing(t);
+  await t.startFix(quick(AREAS));
+  await t.reach();
+  await t.routes['/engine/ready']({ runId: 'run-1' });
+  t.world.changes = inside;
+  assert.equal((await t.routes['/engine/ready']({ runId: 'run-1' })).held, undefined);
+  assert.deepEqual(t.made.areasHeld('p'), {});
+  assert.equal(t.made.readyAll('p')[60].head, HEAD);
+});
+
+test('a merge outside the queue is refused the same, for files outside or unread, until that head is allowed', async () => {
+  const t = setup({ changes: outside });
+  await t.startFix(quick(AREAS));
+  await t.reach();
+  assert.match(t.made.areasRefusal('p', { pr: 60, head: HEAD, paths: outside.paths }), /outside its goal's areas/);
+  assert.match(t.made.areasRefusal('p', { pr: 60, head: HEAD, paths: null }), /outside its goal's areas/);
+  assert.equal(t.made.areasRefusal('p', { pr: 60, head: HEAD, paths: inside.paths }), null);
+  assert.equal(t.made.areasRefusal('p', { pr: 61, head: HEAD, paths: outside.paths }), null);
+  t.world.views = allowed(ALLOW_ONCE);
+  assert.equal(t.made.areasRefusal('p', { pr: 60, head: HEAD, paths: outside.paths }), null);
+});
+
 test('a narrowing reaches a run already going: its order is read afresh', async () => {
   const t = setup({ changes: inside, views: { goals: { 'g-1': { sheet: { areas: { may: ['src/lists/**'], wontTouch: ['tests/check.test.js'] } } } } } });
   handing(t);
