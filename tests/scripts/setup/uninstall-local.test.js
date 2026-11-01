@@ -126,6 +126,7 @@ test('project files leave by a last local change', { skip: SKIP }, async () => {
     assert.ok(['.claude/wheelhouse.json', '.archon/config.yaml'].every((f) => !fs.existsSync(path.join(a.folder, ...f.split('/')))), 'setup\'s files are out of the folder');
     assert.equal(await g(a.folder, 'status', '--porcelain'), '', 'the folder is as its last commit');
     assert.deepEqual(a.refused, []);
+    assert.deepEqual(a.launchd.map(([verb]) => verb), process.platform === 'darwin' ? ['bootout'] : [], 'the last uninstall unloads the agent');
   } finally {
     await a.cleanup();
   }
