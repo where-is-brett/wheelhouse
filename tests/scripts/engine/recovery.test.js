@@ -2,7 +2,7 @@
 // The rules of recovery (unattended goals design, section 9): pure, and the same with or without a goal.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { FAILURE_KINDS, SLEEP_GAP_MINUTES, failureKind, resumeRun, resumesOf, retryPlan, runLive, sleepGap, sleepWatch, unsettled } from '../../../scripts/engine/recovery.js';
+import { FAILURE_KINDS, RESUME_REFUSED, RETRY_MINUTES, SLEEP_GAP_MINUTES, failureKind, resumeRun, resumesOf, retryDue, retryPlan, runLive, sleepGap, sleepWatch, triedList, unsettled } from '../../../scripts/engine/recovery.js';
 
 const T0 = Date.parse('2026-11-01T01:00:00.000Z');
 const LIMIT = SLEEP_GAP_MINUTES * 60 * 1000;
@@ -178,15 +178,74 @@ test('a run with no records is not resumed', async () => {
   assert.deepEqual(t.log, []);
 });
 
-test('until the retries are built no failure is retried', () => {
-  for (const failure of FAILURE_KINDS) assert.equal(retryPlan({ failure, tries: 0 }).retry, false);
-});
-
 test('a failed run is unsettled while a cap card on it waits, and a run ended any other way never is', () => {
-  assert.equal(unsettled({ records: failed, capped: false }), false);
-  assert.equal(unsettled({ records: failed, capped: true }), true);
+  const noTry = records(['started'], ['ended', { outcome: 'failed', failure: 'other' }]);
+  assert.equal(unsettled({ records: noTry, capped: false }), false);
+  assert.equal(unsettled({ records: noTry, capped: true }), true);
   assert.equal(unsettled({ records: records(['started']), capped: true }), false);
   assert.equal(unsettled({ records: records(['started'], ['ended', { outcome: 'cancelled' }]), capped: true }), false);
   assert.equal(unsettled({ records: records(['started'], ['ended', { outcome: 'completed' }]), capped: true }), false);
   assert.equal(unsettled({ records: [], capped: true }), false);
+});
+
+test('retryPlan: each kind it allows is tried at 5, 15 and 30 minutes, then no more', () => {
+  assert.deepEqual(RETRY_MINUTES, [5, 15, 30]);
+  for (const failure of ['connection', 'provider', 'host', 'limit']) {
+    assert.deepEqual(retryPlan({ failure, tries: 0 }), { retry: true, afterMinutes: 5 });
+    assert.deepEqual(retryPlan({ failure, tries: 1 }), { retry: true, afterMinutes: 15 });
+    assert.deepEqual(retryPlan({ failure, tries: 2 }), { retry: true, afterMinutes: 30 });
+    assert.deepEqual(retryPlan({ failure, tries: 3 }), { retry: false });
+  }
+});
+
+test('retryPlan: anything else, a refused resume among them, says no', () => {
+  for (const failure of ['other', RESUME_REFUSED, undefined, null, 'something new']) assert.deepEqual(retryPlan({ failure, tries: 0 }), { retry: false });
+});
+
+test('retryDue goes by the latest ending\'s time, so a long sleep brings one try, not three', () => {
+  const at = (iso, data) => ({ at: iso, data });
+  const once = [at('2026-11-01T01:00:00.000Z', { state: 'started' }), at('2026-11-01T02:00:00.000Z', { state: 'ended', outcome: 'failed', failure: 'connection' })];
+  assert.deepEqual(retryDue({ records: once, now: new Date('2026-11-01T02:04:59.000Z') }), { tries: 0, due: false });
+  assert.deepEqual(retryDue({ records: once, now: new Date('2026-11-01T02:05:00.000Z') }), { tries: 0, due: true });
+  const again = [...once, at('2026-11-01T02:05:00.000Z', { state: 'started', resume: 1 }), at('2026-11-01T02:06:00.000Z', { state: 'ended', resume: 1, outcome: 'failed', failure: 'connection' })];
+  assert.deepEqual(retryDue({ records: again, now: new Date('2026-11-01T02:20:59.000Z') }), { tries: 1, due: false });
+  assert.deepEqual(retryDue({ records: again, now: new Date('2026-11-01T09:00:00.000Z') }), { tries: 1, due: true });
+  assert.equal(retryDue({ records: [at('2026-11-01T02:00:00.000Z', { state: 'ended', outcome: 'failed', failure: 'other' })], now: new Date('2026-11-02T00:00:00.000Z') }), null);
+  assert.equal(retryDue({ records: [at('2026-11-01T02:00:00.000Z', { state: 'ended', outcome: 'cancelled' })], now: new Date('2026-11-02T00:00:00.000Z') }), null);
+});
+
+test('unsettled: a try allowed holds the run, until nothing will try it', () => {
+  const failed = [{ at: '2026-11-01T02:00:00.000Z', data: { state: 'ended', outcome: 'failed', failure: 'connection' } }];
+  assert.equal(unsettled({ records: failed, capped: false }), true);
+  assert.equal(unsettled({ records: failed, capped: false, retrying: false }), false, 'its work ended, or a newer run took over');
+  assert.equal(unsettled({ records: failed, capped: true, retrying: false }), true, 'a cap card still waits');
+  const tried = [...failed, { at: '2026-11-01T02:06:00.000Z', data: { state: 'started', resume: 3 } }, { at: '2026-11-01T02:07:00.000Z', data: { state: 'ended', resume: 3, outcome: 'failed', failure: 'connection' } }];
+  assert.equal(unsettled({ records: tried, capped: false }), false, 'the third retry failed');
+});
+
+test('triedList names each earlier failed run\'s step and kind, and the done checks of a step that runs them', () => {
+  const rec = (runId, data) => ({ at: '2026-11-01T02:00:00.000Z', data: { runId, ...data } });
+  const runs = [
+    rec('r1', { state: 'started' }), rec('r1', { state: 'ended', outcome: 'failed', failure: 'other', step: 'implement' }),
+    rec('r2', { state: 'started' }), rec('r2', { state: 'ended', outcome: 'failed', failure: 'connection', step: 'review-spec' }),
+    rec('r3', { state: 'started' }), rec('r3', { state: 'ended', outcome: 'completed' }),
+    rec('r4', { state: 'started' }), rec('r4', { state: 'ended', outcome: 'failed', failure: 'host' }),
+  ];
+  const orderOf = () => ({ done: [{ test: 'the banner shows' }, { command: 'npm run lint', expect: 0 }, { page: '/sale', shows: 'Sale' }] });
+  assert.deepEqual(triedList({ runs, orderOf }), [
+    { run: 'r1', step: 'implement', failure: 'other', checks: ['the banner shows', 'npm run lint', '/sale'] },
+    { run: 'r2', step: 'review-spec', failure: 'connection', checks: [] },
+    { run: 'r4', step: null, failure: 'host', checks: [] },
+  ]);
+  assert.deepEqual(triedList({ runs: [], orderOf }), []);
+});
+
+test('triedList keeps the latest few, and a resumed run counts once', () => {
+  const rec = (runId, data) => ({ at: '2026-11-01T02:00:00.000Z', data: { runId, ...data } });
+  const many = Array.from({ length: 8 }, (_, n) => rec(`r${n}`, { state: 'ended', outcome: 'failed', failure: 'other', step: 'tests' }));
+  const list = triedList({ runs: many, orderOf: () => null });
+  assert.equal(list.length, 5);
+  assert.equal(list.at(-1).run, 'r7');
+  const resumed = [rec('r1', { state: 'ended', outcome: 'failed', failure: 'connection', step: 'tests' }), rec('r1', { state: 'started', resume: 1 }), rec('r1', { state: 'ended', resume: 1, outcome: 'failed', failure: 'host', step: 'lenses' })];
+  assert.deepEqual(triedList({ runs: resumed, orderOf: () => null }), [{ run: 'r1', step: 'lenses', failure: 'host', checks: [] }]);
 });

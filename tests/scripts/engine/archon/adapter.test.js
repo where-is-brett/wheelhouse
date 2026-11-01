@@ -770,3 +770,12 @@ test('a resume with no answer from the engine may have landed; one it refused ha
   assert.equal(refused.unreachable, undefined);
   assert.equal(refused.ok, false);
 });
+
+test('inspect names the step that failed first', async () => {
+  const answer = failedRecord({ failureKind: 'transient' });
+  assert.equal((await adapter(fakeCli({ 'workflow get': answer })).inspect(RUN)).failedStep, 'think');
+  answer.json.terminal_record = { first_failed_node: 'step-one' };
+  assert.equal((await adapter(fakeCli({ 'workflow get': answer })).inspect(RUN)).failedStep, 'step-one');
+  answer.json.status = 'running';
+  assert.equal((await adapter(fakeCli({ 'workflow get': answer })).inspect(RUN)).failedStep, null);
+});

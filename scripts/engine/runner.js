@@ -40,7 +40,7 @@ import { SEND_BACK } from '../lib/calm-words.js';
 import { parkChoice } from './archon/asks.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
-const EMPTY = () => ({ routed: {}, waiting: [], held: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, tries: {}, later: [], next: {}, noted: null, capped: {}, capsOwed: {}, costed: {}, reviewsKept: {}, carried: {}, reworks: {}, answers: {}, sending: {}, parked: {}, reused: {}, repeats: {}, unsure: {}, sentBack: {} });
+const EMPTY = () => ({ routed: {}, waiting: [], held: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, tries: {}, later: [], next: {}, noted: null, capped: {}, capsOwed: {}, costed: {}, reviewsKept: {}, carried: {}, reworks: {}, answers: {}, sending: {}, parked: {}, reused: {}, repeats: {}, unsure: {}, sentBack: {}, resumedAt: {} });
 // The failed tries after which the director is told an answer hasn't reached the build yet.
 const UNREACHABLE_SAID = 3;
 // The cap card's options: Give it more carries the work on with the cap raised once; Stop leaves it stopped.
@@ -100,6 +100,8 @@ const inSentence = (title) => (/^[A-Z][a-z]/.test(title) ? title.charAt(0).toLow
 //   it an answer went back or was refused or not used; `startAdmitted(args)` starts a run on the place already held;
 //   `carryOver(work, { branch, answers })` keeps what Carry on needs of an answer All stop kept from being used.
 // - `comingBack(work)` whether a piece waits for a place, so no answer may wake it from here;
+// - `retrying(runId)` whether a failed run may yet be resumed, so what ran isn't settled; `retriesAdmitted()` the retries given
+//   a place, [{ work, key, runId, delivered }], which this resumes, each after a look at its run;
 // - `headOf(place)` a piece's head, `commitsSince(place, head)` its commits after that head and `exclusionsOf(place)` the
 //   common exclusions it hits, `place` being { branch, folder }; each null when it can't be read, and none may hold up a tick.
 // - `handBack({ pr })` hands a parked pull request the director approved to the merge queue again
@@ -116,7 +118,7 @@ const inSentence = (title) => (/^[A-Z][a-z]/.test(title) ? title.charAt(0).toLow
 // The card's other answer is Send it back (`sendBacks`): the park ends, and the piece is reworked on its own branch as a
 // blocked exit's Send it back is. `sentBack` keeps which signed clicks have been acted on, so each counts once. On a project in
 // git alone nothing parks: the local queue raises the same card, and the change marked ready stands in for the park.
-export function engineRunner({ engine, file, readViews, write, stopped = () => false, now = () => new Date(), settings = () => ({}), noteSleep = async () => true, workOf = () => null, titleOf = (work) => work, endRun = async () => ({ ended: [], survivors: [] }), openedOf = () => null, prOf = () => null, prTitleOf = async () => null, keepReviews = async () => true, onCard = () => {}, onReaderAsk = () => {}, blindRoll = () => 1, release = () => {}, handBack = async () => ({ ok: false, refused: 'nothing hands work to the merge queue here' }), admittedTo = () => true, delivered = () => {}, drop = () => {}, takeBack = async () => ({ ok: false }), notReady = () => {}, localChange = () => null, startAdmitted = async () => ({ ok: false, refused: 'nothing starts runs here' }), carryOver = () => {}, comingBack = () => false, headOf = async () => null, commitsSince = async () => null, exclusionsOf = async () => null } = {}) {
+export function engineRunner({ engine, file, readViews, write, stopped = () => false, now = () => new Date(), settings = () => ({}), noteSleep = async () => true, workOf = () => null, titleOf = (work) => work, endRun = async () => ({ ended: [], survivors: [] }), openedOf = () => null, prOf = () => null, prTitleOf = async () => null, keepReviews = async () => true, onCard = () => {}, onReaderAsk = () => {}, blindRoll = () => 1, release = () => {}, handBack = async () => ({ ok: false, refused: 'nothing hands work to the merge queue here' }), admittedTo = () => true, delivered = () => {}, drop = () => {}, takeBack = async () => ({ ok: false }), notReady = () => {}, localChange = () => null, startAdmitted = async () => ({ ok: false, refused: 'nothing starts runs here' }), carryOver = () => {}, comingBack = () => false, retrying = () => true, retriesAdmitted = () => [], headOf = async () => null, commitsSince = async () => null, exclusionsOf = async () => null } = {}) {
   let state = readState(file);
   const keep = () => saveState(file, state);
   const note = (words, extra = {}) => write('note', { about: 'engine', words, ...extra });
@@ -994,10 +996,42 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   // A failed run resumes through `resumeRun`, its reviews to be kept again at its true end.
   function resumeFailed({ work, runId }) {
     delete state.reviewsKept[runId];
+    state.resumedAt[runId] = now().toISOString();
     keep();
     return safely(() => resumeRun({ engine, runId, write, records: runRecords(work, runId), now }));
   }
   const runRecords = (work, runId) => (viewsNow().runs?.[work] ?? []).filter((r) => r?.data?.runId === runId);
+  // A retry with a place takes up its own resume, so the look at a resumed run leaves it to that.
+  const retryInHand = (runId) => retriesAdmitted().some((entry) => entry.runId === runId && !entry.delivered);
+
+  // Each retry the dispatcher has given a place: a look at the run, then its resume. Nothing moves under All stop or an
+  // incident, and what the engine no longer reads as failed isn't resumed: its record is put right, and the entry drops.
+  // An engine that can't be read or gave no reply is looked at again on the next tick, and a refusal is on the record, for
+  // the dispatcher's card.
+  async function retries() {
+    if (stopped() || (viewsNow().incidents?.open?.length ?? 0) > 0) return;
+    for (const { work, key, runId, delivered: told } of retriesAdmitted()) {
+      if (told) continue;
+      const record = await inspect(runId);
+      if (!record || record.unread === true) continue;
+      if (record.status === 'running' || record.status === 'paused') {
+        delivered(work, key);
+        continue;
+      }
+      if (record.status !== 'ended') {
+        drop(work, key);
+        continue;
+      }
+      if (record.outcome !== 'failed') {
+        await endAsEngineSays(runId, runRecords(work, runId), record);
+        drop(work, key);
+        continue;
+      }
+      const got = await resumeFailed({ work, runId });
+      if (got?.ok === true) delivered(work, key);
+      else if (got !== null && got.unreachable !== true) drop(work, key);
+    }
+  }
 
   // A cap card on a run that the director hasn't answered yet. One Give it more is carrying out still waits.
   function capCardWaits(runId) {
@@ -1010,17 +1044,21 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   // this one carries all the host's would: the latest record is the one read for a pull request.
   async function reconcile(runId, records, at) {
     const latest = records.at(-1);
-    if (at.getTime() - Date.parse(latest.at) < RESUME_SETTLE_MINUTES * 60 * 1000) return false;
+    const from = Math.max(Date.parse(latest.at), Date.parse(state.resumedAt[runId] ?? latest.at));
+    if (at.getTime() - from < RESUME_SETTLE_MINUTES * 60 * 1000) return false;
     const record = await inspect(runId);
     if (record?.status !== 'ended') return false;
-    const { work, lane, engine: name, branch, resume } = latest.data;
+    await endAsEngineSays(runId, records, record);
+    return true;
+  }
+  async function endAsEngineSays(runId, records, record) {
+    const { work, lane, engine: name, branch, resume } = records.at(-1).data;
     const outcome = typeof record.outcome === 'string' ? record.outcome : 'failed';
     const pr = prNumber(record.pr) ?? prNumber(await safely(() => prOf(runId))) ?? records.findLast((r) => Number.isInteger(r.data?.pr))?.data.pr;
     await write('run', {
-      work, lane, engine: name, runId, state: 'ended', resume, outcome, ...(typeof branch === 'string' ? { branch } : {}), ...(pr === undefined ? {} : { pr }),
-      ...(outcome === 'failed' ? { failure: typeof record.failure === 'string' ? record.failure : 'other' } : {}),
+      work, lane, engine: name, runId, state: 'ended', ...(Number.isInteger(resume) ? { resume } : {}), outcome, ...(typeof branch === 'string' ? { branch } : {}), ...(pr === undefined ? {} : { pr }),
+      ...(outcome === 'failed' ? { failure: typeof record.failure === 'string' ? record.failure : 'other', ...(typeof record.failedStep === 'string' ? { step: record.failedStep } : {}) } : {}),
     });
-    return true;
   }
 
   // Cancelled, tried once more if the engine didn't take it; a run still going after that has its processes ended, as
@@ -1051,7 +1089,9 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
         const latest = records.at(-1).data;
         if (latest.state === 'ended') {
           // Not ended yet, whatever the record says: both wait for its true end, ahead of the dispatcher's runner.
-          if (unsettled({ records, capped: capCardWaits(runId) })) continue;
+          // A Stop on its cap card is the director's word that nothing tries it.
+          const stoppedHere = isPlain(state.capped[runId]) && !capCardWaits(runId);
+          if (unsettled({ records, capped: capCardWaits(runId), retrying: !stoppedHere && retrying(runId) })) continue;
           // However it ended: a hold in a run cancelled before its close lasts from here (routes.js).
           if (!state.reviewsKept[runId] && (await safely(() => keepReviews(runId))) === true) {
             state.reviewsKept[runId] = true;
@@ -1069,7 +1109,12 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
           await note(`${titleOf(work)} carried on past its cap while it was held, so it was stopped${stuck ? ' and its processes ended' : ''}.`, { work });
           continue;
         }
-        if (latest.state === 'started' && Number.isInteger(latest.resume) && await reconcile(runId, records, at)) continue;
+        if (latest.state === 'started' && Number.isInteger(latest.resume) && !retryInHand(runId) && await reconcile(runId, records, at)) continue;
+        // All stop reads a run still resuming as failed, so it cancels nothing there: what got going after is ended here.
+        if (latest.state === 'started' && Number.isInteger(latest.resume) && stopped()) {
+          if ((await inspect(runId))?.status === 'running') await safely(() => engine.act(runId, { cancel: { reason: 'All stop is on' } }));
+          continue;
+        }
         if (latest.state !== 'started' || state.capped[runId] || stopped()) continue;
         const record = await inspect(runId);
         if (!record) continue;
@@ -1167,6 +1212,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       await again();
       await parks();
       await owedCaps();
+      await retries();
       await caps();
       await show();
     },

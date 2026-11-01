@@ -54,13 +54,14 @@ const present = (data) => Object.fromEntries(Object.entries(data).filter(([, val
 //   nothing, whatever an event's labels say; a label only cross-checks, and one naming other work is said, not written.
 // - `resumes(runId)` how many times the record has the run resumed, so a resumed run's ending is written under that number;
 //   `over(runId)` whether the record has the run's current leg ended, by any hand. A late answer writes nothing over one.
+//   `settling(runId)` whether the record has the run resumed too lately to tell from the engine whether that leg has ended.
 // - `onAsk(event)` is told each new ask once it is written: the card router's hook (part 3c).
 // - `wake: false` keeps only the stream, for a second project on the same engine; `held()` true (All stop) ends the
 //   wake process and starts none until it is false again.
 // - `now()` gives a Date; `restartMs`, `stuckMs` and `backstopMs` are for tests.
 export function startEngineHost({
   engine, spawn, write, cursorFile, now = () => new Date(), backstopMs = BACKSTOP_MS, stuckMs = STUCK_MS, restartMs = RESTART_MS,
-  wake = true, held = () => false, workOf = () => null, resumes = () => 0, over = () => false, prOf = () => null, onAsk = () => {}, onTrouble = () => {},
+  wake = true, held = () => false, workOf = () => null, resumes = () => 0, over = () => false, settling = () => false, prOf = () => null, onAsk = () => {}, onTrouble = () => {},
 } = {}) {
   if (!engine || typeof engine.follow !== 'function') throw new Error('The continuation host needs an engine that can be followed');
   const saved = readCursorFile(cursorFile);
@@ -142,6 +143,9 @@ export function startEngineHost({
   const overNow = (runId) => {
     try { return over(runId) === true; } catch { return false; }
   };
+  const settlingNow = (runId) => {
+    try { return settling(runId) === true; } catch { return false; }
+  };
   const endKey = (runId, resume) => `run:${runId}:ended:${resume > 0 ? resume : ''}`;
 
   async function runState(event, state, extra = {}) {
@@ -154,7 +158,7 @@ export function startEngineHost({
     return once(key, 'run', present({
       work: run.work, lane: run.lane, engine: engine.name ?? 'engine', runId: event.runId, state,
       branch: extra.branch ?? run.branch, pr: prNumber(extra.pr) ?? (state === 'ended' ? prNumber(prOf(event.runId)) : undefined), outcome: extra.outcome,
-      resume: extra.resume, failure: extra.failure,
+      resume: extra.resume, failure: extra.failure, step: extra.step,
     }));
   }
 
@@ -171,12 +175,19 @@ export function startEngineHost({
       if (line) { written.add(line); keep(); }
       return;
     }
+    // A resume is detached, so the engine reads as over for a moment after it, and a line from before it can come only now.
+    // Neither ends a leg just begun: the runner's look at the run writes an ending that is real.
+    if (settlingNow(event.runId)) {
+      if (line) { written.add(line); keep(); }
+      return;
+    }
     const resume = resumesNow(event.runId);
     const outcome = (!unread && isText(record.outcome) ? record.outcome : null) ?? (isText(event.outcome) ? event.outcome : undefined);
     const failure = outcome === 'failed' ? [unread ? null : record.failure, event.failure, 'other'].find(isText) : undefined;
+    const step = outcome === 'failed' ? [unread ? null : record.failedStep, event.failedAt].find(isText) : undefined;
     // A resumed leg the runner has already ended, on its look at the run.
     const done = resume > 0 && overNow(event.runId) ? 'before' : await runState(event, 'ended', {
-      key: resume > 0 ? resume : undefined, resume: resume > 0 ? resume : undefined, branch: event.branch ?? undefined, pr: event.pr, outcome, failure,
+      key: resume > 0 ? resume : undefined, resume: resume > 0 ? resume : undefined, branch: event.branch ?? undefined, pr: event.pr, outcome, failure, step,
     });
     if (line && done !== false) { written.add(line); keep(); }
   }

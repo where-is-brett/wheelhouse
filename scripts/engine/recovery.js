@@ -74,17 +74,64 @@ export function runLive(records) {
 // can read as over for a moment after it took one.
 export const RESUME_SETTLE_MINUTES = 2;
 
-// A failed run's next try. Nothing retries yet.
-export function retryPlan() {
-  return { retry: false };
+// Whether a run's latest record is a resume's `started`, written under RESUME_SETTLE_MINUTES ago.
+export function settlingResume(records, now) {
+  const latest = records?.at(-1);
+  return stateOf(latest) === 'started' && resumeOf(latest) !== null && now.getTime() - Date.parse(latest.at) < RESUME_SETTLE_MINUTES * 60 * 1000;
+}
+
+// How long a failed run waits before each resume.
+export const RETRY_MINUTES = Object.freeze([5, 15, 30]);
+const RETRIED = Object.freeze(['connection', 'provider', 'host', 'limit']);
+
+// A failed run's next try: { retry, afterMinutes } or { retry: false }. `tries` is how many times it has resumed, for
+// whatever reason. Trouble that passes is worth a wait. `other` is not, and nor is RESUME_REFUSED: the engine has said no
+// to this very run, so another resume would be the same no, and the piece goes to its card, whose Try again is a fresh run.
+export function retryPlan({ failure, tries }) {
+  if (!RETRIED.includes(failure) || !Number.isInteger(tries) || tries < 0 || tries >= RETRY_MINUTES.length) return { retry: false };
+  return { retry: true, afterMinutes: RETRY_MINUTES[tries] };
+}
+
+// A run's try from its `run` records: { tries, due }, or null when none is left it. Only the time comes from outside the
+// record, so every reader reaches the same answer on any tick, and a restart loses nothing. The wait runs from the latest
+// ending, so a computer that sleeps past several waits wakes to one try.
+export function retryDue({ records, now }) {
+  const latest = records?.at(-1);
+  if (stateOf(latest) !== 'ended' || latest.data.outcome !== 'failed') return null;
+  const tries = resumesOf(records);
+  const plan = retryPlan({ failure: latest.data.failure, tries });
+  return plan.retry ? { tries, due: now.getTime() - Date.parse(latest.at) >= plan.afterMinutes * 60 * 1000 } : null;
 }
 
 // Whether a run that ended isn't yet settled, so that its spend and its reviews wait: it failed, and a try is still
-// allowed it or a cap card on it (`capped`) waits. Nothing else keeps a run from settling.
-export function unsettled({ records, capped }) {
+// allowed it or a cap card on it (`capped`) waits. `retrying` false says nothing will take that try up (its work ended,
+// or a newer run took over), so what ran is settled. Nothing else keeps a run from settling.
+export function unsettled({ records, capped, retrying = true }) {
   const latest = records?.at(-1)?.data;
   if (latest?.state !== 'ended' || latest.outcome !== 'failed') return false;
-  return capped === true || retryPlan({ failure: latest.failure, tries: resumesOf(records) }).retry === true;
+  return capped === true || (retrying !== false && retryPlan({ failure: latest.failure, tries: resumesOf(records) }).retry === true);
+}
+
+// How many earlier runs a `tried` list names, and the longest word in it.
+export const MOST_TRIED = 5;
+export const MOST_TRIED_CHECKS = 10;
+export const TRIED_CHARS = 200;
+// The steps that run the done checks until they pass. Archon's record says which step failed, not which check, so a failed
+// step of these names the checks it was held to.
+const CHECKS_RUN_IN = /^implement/;
+const checkName = (check) => String(check?.test ?? check?.command ?? check?.page ?? '').slice(0, TRIED_CHARS);
+
+// What earlier runs of a piece failed at, for a fresh run's order, from the helper's own `run` records, never a step's
+// words: [{ run, step, failure, checks }], oldest first. `runs` are the piece's `run` records; `orderOf(runId)` the order a
+// run was given. A run's latest ending speaks for it.
+export function triedList({ runs, orderOf }) {
+  const latest = new Map();
+  for (const record of runs ?? []) if (typeof record?.data?.runId === 'string') latest.set(record.data.runId, record.data);
+  return [...latest.values()].filter((r) => r.state === 'ended' && r.outcome === 'failed').slice(-MOST_TRIED).map((r) => {
+    const step = typeof r.step === 'string' ? r.step.slice(0, TRIED_CHARS) : null;
+    const done = step !== null && CHECKS_RUN_IN.test(step) ? orderOf(r.runId)?.done : null;
+    return { run: r.runId, step, failure: String(r.failure ?? 'other').slice(0, TRIED_CHARS), checks: (Array.isArray(done) ? done : []).slice(0, MOST_TRIED_CHECKS).map(checkName) };
+  });
 }
 
 // The one way a failed run resumes. `records` are the run's `run` records. It writes `{ state: 'started', resume: n }`, then

@@ -9,8 +9,10 @@
 // and one card when a fix didn't make it green or can't start. A feature runs its slices one after another (feature.js): each next one
 // starts once the slice before has merged, and the feature's own run once every slice has. A feature held up with
 // nothing to move it on (a pull request closed unmerged, a run rejected or cancelled with no card of its own) brings one
-// card; Stop here ends it with a `closed` report, which frees its place. Other work whose run's pull request merged
-// gets its `merged` report. A piece waiting on the director keeps its files reserved: what it was expected to touch and
+// card; Stop here ends it with a `closed` report, which frees its place. A run that failed is resumed at 5, 15 and 30
+// minutes where its kind allows (recovery.js), through the same list as an answered piece, and the fix lane by its own
+// `fixDecision`. Past those, or for any other kind, or cancelled in the engine, a piece outside a feature gets one card; a
+// feature keeps its own, after the retries too. Other work whose run's pull request merged gets its `merged` report. A piece waiting on the director keeps its files reserved: what it was expected to touch and
 // what its branch has changed, read each time it parks, until its work merges or ends or the runner says it has. What
 // it keeps (the merge queue's run and when it last started, the pull requests already seen ready, the clashes, the
 // fixes, the reservations, the work on its way back) is in `file`. Every way back asks for a place in one list (delegated
@@ -20,7 +22,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { dispatch, MERGE_WORK, MERGE_QUEUE_EVERY_MS } from './dispatcher.js';
-import { reservedUnreadWords, noCardBehindWords, restartRefusedWords, restartCardWords, restartUnsureWords, restartStrandedWords, prLeftOpenWords, wakeLateWords, STOPPED_RESTART_WORDS, ORPHAN_LEFT_WORDS, RESTART_UNSURE_AGAIN, START_ANYWAY, cutOffStoppedWords, cutOffWords, waitsOnItselfWords, startAnywayWords, startRefusedWords, startCardWords, unmarkedPrWords, START_STOP_SAYS, NO_FIX_TESTS, NO_FIX_ORDER, noFixWords, queueStuckWords, QUEUE_STUCK_WHY, QUEUE_PASSED_WORDS, requestsUsedWords, REQUESTS_UNCONFIRMED_WORDS, requestsStoppedWords } from './words.js';
+import { reservedUnreadWords, noCardBehindWords, restartRefusedWords, restartCardWords, restartUnsureWords, restartStrandedWords, failedCardWords, prLeftOpenWords, wakeLateWords, STOPPED_RESTART_WORDS, ORPHAN_LEFT_WORDS, RESTART_UNSURE_AGAIN, START_ANYWAY, cutOffStoppedWords, cutOffWords, waitsOnItselfWords, startAnywayWords, startRefusedWords, startCardWords, unmarkedPrWords, START_STOP_SAYS, NO_FIX_TESTS, NO_FIX_ORDER, noFixWords, queueStuckWords, QUEUE_STUCK_WHY, QUEUE_PASSED_WORDS, requestsUsedWords, REQUESTS_UNCONFIRMED_WORDS, requestsStoppedWords } from './words.js';
 import { workOrder } from './order.js';
 import { limitsFor } from './caps.js';
 import { ENGINE_QUESTIONS } from './router.js';
@@ -28,7 +30,8 @@ import { openRedMain, fixDecision, fixOrder } from './fix-main.js';
 import { readSlices, featureProgress, featureNext, currentStep, sliceOrder, finishOrder, featureCap, demoSlice } from './feature.js';
 import { ownWaiting, ownCards } from './waiting.js';
 import { topCard, holdsUpCount, noCardBehind, deadEnds, waitsOnItself } from './stuck.js';
-import { STOP_LABEL } from './runner.js';
+import { STOP_LABEL, MORE } from './runner.js';
+import { retryDue, resumeRun, triedList } from './recovery.js';
 import { since, endedBy } from '../foreman/queue.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
@@ -56,8 +59,9 @@ const STALL_QUESTIONS = FEATURE_QUESTIONS + 500;
 export const FEATURE_STOPPED = 'Stopped before it was switched on; the slices already added stay behind their switch.';
 // The cards for a piece that couldn't start again, after the stall cards'.
 const RESTART_QUESTIONS = STALL_QUESTIONS + 500;
-// What wakes a paused run, which the runner carries out once admitted. Every other `via` starts a new run from here.
-const WAKES = Object.freeze(['answer', 'resume', 'more']);
+// What wakes a paused run or resumes a failed one, which the runner carries out once admitted. Every other `via` starts a
+// new run from here.
+const WAKES = Object.freeze(['answer', 'resume', 'more', 'retry']);
 // The ways back that carry on a piece's own branch after an answer.
 const REWORKING = Object.freeze(['answer', 'rework']);
 // What an entry's run may read as for it to give its entry up. `unknown` is a run the engine no longer has, with nothing to wait for.
@@ -110,7 +114,7 @@ export const REQUESTS_WORDS = 'Some work would use your AI plan\'s counted reque
 // The order for one piece of work from its record: the title is its goal; the done checks are the record's own, or
 // the project's tests passing when it has none. `config` is { routing (the pack's bindings), testCommand, pages? };
 // `answers` the director's answers to the work's earlier questions, from the helper's own record.
-export function orderFor(entry, { settings = {}, raised = false, config = {}, answers = [] } = {}) {
+export function orderFor(entry, { settings = {}, raised = false, config = {}, answers = [], tried = [] } = {}) {
   const data = entry.work.data;
   const done = Array.isArray(data.done) && data.done.length > 0 ? data.done : config.testsNotCounting === true ? [] : [{ command: config.testCommand, expect: 0 }];
   return workOrder({
@@ -119,6 +123,7 @@ export function orderFor(entry, { settings = {}, raised = false, config = {}, an
     routing: config.routing ?? {},
     caps: limitsFor(data.lane, settings, { raised }),
     answers,
+    extra: tried.length > 0 ? { tried } : {},
   });
 }
 
@@ -237,9 +242,15 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     if (!canTest(config())) return { ok: false, refused: 'Wheelhouse doesn\'t know how to run the project\'s tests' };
     if (entry.work.data.lane === 'feature') return startFeature({ views, entry, work, lane, branch, carryOn, raised, answers, checkTail });
     let order;
-    try { order = orderFor({ ...entry, work: { ...entry.work, key: work } }, { settings: settings() ?? {}, raised, config: config() ?? {}, answers }); } catch (error) { return { ok: false, refused: error.message }; }
+    try { order = orderFor({ ...entry, work: { ...entry.work, key: work } }, { settings: settings() ?? {}, raised, config: config() ?? {}, answers, tried: carryOn ? triedBefore(views, work) : [] }); } catch (error) { return { ok: false, refused: error.message }; }
     if (order.lane !== lane) return { ok: false, refused: 'the work\'s lane changed' };
     return start({ project, order: withTail(order, checkTail), ...(branch ? { branch } : {}), carryOn });
+  }
+
+  // What this piece's earlier runs failed at, for a fresh run on its branch. An order that can't be read costs only its checks.
+  function triedBefore(views, work) {
+    const read = (runId) => { try { return orderOf(runId); } catch { return null; } };
+    return triedList({ runs: views.runs?.[work] ?? [], orderOf: read });
   }
 
   // A feature's approved design read into its slices, or { refused }, said on the Logbook once for each problem.
@@ -313,7 +324,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       }
     }
     let order;
-    const args = { entry: { ...entry, work: { ...entry.work, key: work } }, design, config: config() ?? {}, settings: settings() ?? {}, raised, answers };
+    const args = { entry: { ...entry, work: { ...entry.work, key: work } }, design, config: config() ?? {}, settings: settings() ?? {}, raised, answers, tried: carryOn ? triedBefore(views, work) : [] };
     try { order = step.finish ? finishOrder({ ...args, progress }) : sliceOrder({ ...args, n: step.slice }); } catch (error) { return { ok: false, refused: error.message }; }
     const got = await start({ project, order: withTail(order, checkTail), ...(branch ? { branch } : {}), carryOn });
     if (got?.ok && typeof got.runId === 'string') {
@@ -488,7 +499,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     let why = null;
     if (Number.isInteger(run.pr) && kept.closed?.[run.pr]) why = 'closed';
     else if (run.outcome === 'cancelled' && !(stoppedRuns() ?? []).includes(run.runId) && !namedByCard(views, run.runId)) why = 'cancelled';
-    else if ((run.outcome === 'failed' ? !(readyOf() ?? {})[run.pr] : run.outcome === 'completed' && !Number.isInteger(run.pr)) && !namedByCard(views, run.runId) && !waitingNow(views).has(work) && !onTheWay(work) && state.sentBack[work] === state.acted[work] && state.reds[work]?.times === state.redActed[work]) {
+    else if ((run.outcome === 'failed' ? !(readyOf() ?? {})[run.pr] && !retryFor(views, work) : run.outcome === 'completed' && !Number.isInteger(run.pr)) && !namedByCard(views, run.runId) && !waitingNow(views).has(work) && !onTheWay(work) && state.sentBack[work] === state.acted[work] && state.reds[work]?.times === state.redActed[work]) {
       if (Number.isInteger(run.pr) && await stateOf(run.pr) !== 'open') return;
       // Looked at again on the next tick: the runner may yet have an answer that starts it again.
       if (kept.endSeen !== run.runId) {
@@ -529,13 +540,61 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     });
   }
   // Whether a card already speaks for this run's end: the runner's cap card for it, or a question about it still
-  // waiting for the director. A question answered earlier in the run doesn't.
+  // waiting for the director. A question answered earlier in the run doesn't, nor does a Give it more: the run went on from
+  // that, so an ending after it is a new one.
   function namedByCard(views, runId) {
     return Object.values(isPlain(views.questions) ? views.questions : {}).some((q) => {
       const engineRef = q?.question?.data?.engine;
       // A piece that left its bundle has no card to speak for it.
-      return engineRef?.runId === runId && q.gone !== true && (engineRef.ask === `cap:${runId}` || !isPlain(q.answer));
+      return engineRef?.runId === runId && q.gone !== true && ((engineRef.ask === `cap:${runId}` && q.answer?.label !== MORE) || !isPlain(q.answer));
     });
+  }
+  // A run the director stopped, by Stop at its cap or by letting its piece go.
+  function stoppedByDirector(views, work, runId) {
+    if (Object.hasOwn(state.released, work) && state.released[work] === runId) return true;
+    return Object.values(isPlain(views.questions) ? views.questions : {}).some((q) => q?.question?.data?.engine?.ask === `cap:${runId}` && q.answer?.label === STOP_LABEL);
+  }
+
+  // The latest run of a piece since it was queued: its latest record's fields with `records`, all of that run's, or null.
+  function latestRun(views, work) {
+    const current = views.work?.[work]?.work;
+    if (!isPlain(current)) return null;
+    const byRun = new Map();
+    for (const r of runsOfWork(views, work)) if (isPlain(r?.data) && since(r, current)) (byRun.get(r.data.runId) ?? byRun.set(r.data.runId, []).get(r.data.runId)).push(r);
+    const records = [...byRun.values()].at(-1);
+    return records ? { ...records.at(-1).data, records } : null;
+  }
+  // The try a piece's failed run still has, as `retryDue` gives it, with the run, or null: its failure allows one, and it is
+  // still the piece's to take. What only delays a try (a card, the merge queue) doesn't count here, so the piece stays held.
+  function retryFor(views, work) {
+    const reports = isPlain(views.reports) ? views.reports : {};
+    const current = views.work?.[work]?.work;
+    if (!isPlain(current) || reports[work]?.data?.outcome === 'merged' || endedBy(reports, work, current)) return null;
+    const run = latestRun(views, work);
+    const due = run ? retryDue({ records: run.records, now: now() }) : null;
+    if (!due || (stoppedRuns() ?? []).includes(run.runId) || stoppedByDirector(views, work, run.runId)) return null;
+    return { ...due, run };
+  }
+  // Every piece with a try to come, or one on its way. Its files stay held, and nothing raises a card over it.
+  function retryingWork(views) {
+    const pieces = new Set([...state.returning, ...state.admitted].filter((e) => e.via === 'retry').map((e) => e.work));
+    for (const work of Object.keys(isPlain(views.work) ? views.work : {})) if (retryFor(views, work)) pieces.add(work);
+    return pieces;
+  }
+
+  // Each failed run due a try asks for a place, in the list every way back uses, so no retry passes pace. Nothing asks under
+  // All stop or an incident, and the wait runs on; the runner looks at the run before it resumes it. A pull request with the
+  // merge queue is left to it: all that can be left of such a run comes after `ready`.
+  function retryTick(views) {
+    if (stopped() || incidentOpen(views)) return;
+    const ready = readyOf() ?? {};
+    for (const work of Object.keys(isPlain(views.work) ? views.work : {})) {
+      const got = retryFor(views, work);
+      if (!got?.due || onTheWay(work) || waitingNow(views).has(work) || namedByCard(views, got.run.runId)) continue;
+      if (state.sentBack[work] !== state.acted[work] || state.reds[work]?.times !== state.redActed[work]) continue;
+      if (Number.isInteger(got.run.pr) && isPlain(ready[got.run.pr])) continue;
+      enter({ work, lane: got.run.lane, via: 'retry', key: `retry:${got.run.runId}:${got.tries + 1}`, runId: got.run.runId });
+    }
   }
 
   // The features that stay stopped: the latest run ended by All stop, or at its cap by the director's Stop. Each is taken
@@ -614,7 +673,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     // A start the record doesn't show yet is still under way.
     if (kept.started.some((runId) => !recorded.has(runId)) && green !== true) return;
     answerFixCard(views, incident, kept);
-    const decided = fixDecision({ incident, runs, green, stop: stopped(), stopped: stoppedRuns() ?? [], merged: fixedRuns() ?? [], kept });
+    const decided = fixDecision({ incident, runs, green, stop: stopped(), stopped: stoppedRuns() ?? [], merged: fixedRuns() ?? [], kept, retry: fixRetry(runs) });
     if (decided.act === 'close') {
       await write('incident-closed', { incident: incident.id, why: 'the main line\'s checks are green' });
       await write('note', { about: 'engine', words: GREEN_WORDS });
@@ -637,6 +696,9 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       }
       delete state.fixes[incident.id];
       keep();
+    } else if (decided.act === 'resume') {
+      // Nothing is admitted under an incident, so it goes by its own decision. A refusal is on the record, and the card follows.
+      await resumeRun({ engine, runId: decided.run, write, records: runs.filter((r) => r?.data?.runId === decided.run), now });
     } else if (decided.act === 'start') {
       const toldNoFix = kept.noFix ? views.questions?.[kept.noFix]?.answer?.label : null;
       if (toldNoFix === LEAVE_RED) return;
@@ -689,6 +751,12 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
         options, recommendation: options[0].label,
       });
     }
+  }
+  // The latest fix run's try, as `fixDecision` takes it: { due, waiting }, or null.
+  function fixRetry(runs) {
+    const runId = [...new Set(runs.map((r) => r?.data?.runId))].at(-1);
+    const got = retryDue({ records: runs.filter((r) => r?.data?.runId === runId), now: now() });
+    return got ? { due: got.due, waiting: !got.due } : null;
   }
   // No order for a fix, which needs the project's tests for its done check: all work is held, and nothing else can speak under
   // an incident. One card; an order that can be made later starts the fix by itself, and that card's late answer means nothing.
@@ -837,7 +905,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     const reports = isPlain(views.reports) ? views.reports : {};
     // A piece going back on an answer may have no card left to park it, and its next run isn't under way, so nothing else speaks for its files.
     const between = [...state.returning, ...state.admitted].filter((e) => REWORKING.includes(e.via)).map((e) => e.work);
-    const pieces = new Set([...waitingNow(views), ...between, ...reworkingNow()]);
+    const pieces = new Set([...waitingNow(views), ...between, ...reworkingNow(), ...retryingWork(views)]);
     // A cut-off piece has not begun, so it has no files to keep.
     for (const work of Object.keys(state.cutOffAsked)) pieces.delete(work);
     for (const entry of state.returning) if (unbegun(views, entry)) pieces.delete(entry.work);
@@ -1159,7 +1227,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   const leftByDirector = (views, work) => [state.clashAsked[work], state.redAsked[work]].some((id) => views.questions?.[id]?.answer?.label === LEAVE_IT);
   const prGone = (views, work, pr) => state.closedPrs.includes(pr) || state.features[work]?.closed?.[pr] === true || Object.hasOwn(state.features[work]?.merged ?? {}, pr) || (views.sendBacks ?? []).some((b) => b.pr === pr);
   function restsQuiet(views, work, ready) {
-    if (onTheWay(work) || waitingNow(views).has(work) || cardOwed(work)) return false;
+    if (onTheWay(work) || waitingNow(views).has(work) || cardOwed(work) || reworkingNow().includes(work) || retryFor(views, work)) return false;
     const left = leftByDirector(views, work);
     if (!left && state.sentBack[work] !== state.acted[work] && state.sentBack[work] !== undefined) return false;
     if (!left && state.reds[work] !== undefined && state.reds[work].times !== state.redActed[work]) return false;
@@ -1182,6 +1250,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       ...decided.live.filter((work) => !restsQuiet(views, work, ready) && !stuck.has(work)), ...started.filter((s) => s.ok === true || s.uncertain === true).map((s) => s.work),
       ...[...state.admitted, ...state.returning].filter((e) => !e.asked && !retriesLater(e) && moving(e.work)).map((e) => e.work),
       ...ready.map(([, r]) => r.work).filter((work) => moving(work) && !stuck.has(work) && !leftByDirector(views, work)), ...(queueGoing ? [MERGE_WORK] : []),
+      ...retryingWork(views),
     ];
   }
 
@@ -1194,7 +1263,9 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     const { ready } = going;
     const ends = deadEnds({ hold: decided.hold, running: goingNow(views, decided, going), cards: cardsNow(views) });
     const places = decided.live.filter((work) => !ends.has(work)).map((work) => [work, 'place']);
-    for (const [work, why] of [...ends, ...places]) {
+    const named = new Set([...ends.keys(), ...places.map(([work]) => work)]);
+    const alone = Object.keys(isPlain(views.work) ? views.work : {}).filter((work) => !named.has(work) && lonePiece(views, work)).map((work) => [work, 'alone']);
+    for (const [work, why] of [...ends, ...places, ...alone]) {
       const current = views.work?.[work]?.work;
       if (!isPlain(current) || reports[work]?.data?.outcome === 'merged' || endedBy(reports, work, current) || !restsQuiet(views, work, ready)) {
         delete state.quietSeen[work];
@@ -1211,10 +1282,20 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       }
       state.stranded[work] = key;
       delete state.quietSeen[work];
-      const entry = { work, lane: current.data?.lane ?? last.lane, via: 'try-again', key, at: now().toISOString(), queued: current.at ?? null, ...(isText(last.branch) ? { branch: last.branch, carryOn: true } : {}) };
+      const carried = { raised: false, runs: runs.map((r) => r.runId) };
+      const entry = { work, lane: current.data?.lane ?? last.lane, via: 'try-again', key, at: now().toISOString(), queued: current.at ?? null, carried, ...(isText(last.branch) ? { branch: last.branch, carryOn: true } : {}) };
       state.returning.push(entry);
-      await askAboutRestart(entry, restartStrandedWords(titleOf(views, work), why));
+      await askAboutRestart(entry, why === 'alone' ? failedCardWords(titleOf(views, work), last.outcome === 'cancelled' ? 'cancelled' : last.failure) : restartStrandedWords(titleOf(views, work), why));
     }
+  }
+  // Quick, small or bug work whose last run failed or was cancelled, with no hold behind it and no place kept, which no other
+  // card asks about: past its retries, or a kind that has none. All stop's own cancels wait for a Carry on, and a run the
+  // director stopped stays stopped.
+  function lonePiece(views, work) {
+    if (views.work[work]?.work?.data?.lane === 'feature') return false;
+    const run = latestRun(views, work);
+    if (run?.state !== 'ended' || !['failed', 'cancelled'].includes(run.outcome)) return false;
+    return !(stoppedRuns() ?? []).includes(run.runId) && !stoppedByDirector(views, work, run.runId) && !namedByCard(views, run.runId);
   }
 
   // Work whose dependency can't be added: closed, not on the record, or waiting on the work itself.
@@ -1402,6 +1483,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     await fixTick();
     // Trouble with a reservation or an entry costs a tick nothing: each is looked at again on the next.
     await returnTick(readViews() ?? {}).catch(() => {});
+    try { retryTick(readViews() ?? {}); } catch { /* looked at again on the next tick */ }
     await cutOffAnswers(readViews() ?? {}).catch(() => {});
     await featureTick();
     await mergedTick();
@@ -1587,6 +1669,22 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     enter,
     // Whether a piece has been given its place and may be sent its answer.
     admittedTo: (work, key) => state.admitted.some((e) => e.work === work && (key === undefined || e.key === key)),
+    // Whether a failed run may yet be resumed, so its spend and reviews wait: its piece hasn't ended or moved on, and for a
+    // fix, its incident is still open and it is the latest fix. Views that can't be read leave it as it is.
+    retrying(runId) {
+      try {
+        const views = readViews() ?? {};
+        const [work, list] = Object.entries(isPlain(views.runs) ? views.runs : {}).find(([, records]) => (records ?? []).some((r) => r?.data?.runId === runId)) ?? [];
+        if (work === undefined) return false;
+        if (openRedMain(views)?.work === work) return list.at(-1)?.data?.runId === runId;
+        return retryFor(views, work)?.run.runId === runId;
+      } catch {
+        return true;
+      }
+    },
+    retryingWork,
+    // The retries with a place, for the runner to carry out: [{ work, key, runId, delivered }].
+    retriesAdmitted: () => state.admitted.filter((e) => e.via === 'retry').map(({ work, key, runId, delivered: told }) => ({ work, key, runId, delivered: told === true })),
     // Whether a piece waits for a place. One admitted holds its place.
     comingBack: (work) => state.returning.some((e) => e.work === work),
     // The runner's mark that an answer went back: its entry then waits for the run to be seen running.

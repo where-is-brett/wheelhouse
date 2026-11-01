@@ -258,3 +258,44 @@ test('while the director\'s own incident is open too, no fix run starts', async 
   await t.d.tick();
   assert.equal(fixStarts(t).length, 1, 'it starts once the director\'s incident is closed');
 });
+
+test('a failed fix is retried under its incident, with no place asked for, then fixDecision\'s card after the last try', async () => {
+  const t = setUp();
+  await t.d.tick();
+  const acts = [];
+  t.engine.act = (runId, action) => { acts.push({ runId, action }); return { ok: true }; };
+  t.engine.inspect = () => ({ status: 'ended', outcome: 'failed' });
+  t.ran('run-1', 'started');
+  t.ran('run-1', 'ended', { outcome: 'failed', failure: 'connection' });
+  await t.d.tick();
+  assert.equal(acts.length, 0, 'it waits its five minutes');
+  assert.equal(t.written.filter((w) => w.kind === 'question').length, 0, 'no card while a try is left');
+  t.world.views.runs[INCIDENT.work].at(-1).at = '2026-10-30T09:50:00.000Z';
+  await t.d.tick();
+  assert.deepEqual(acts, [{ runId: 'run-1', action: { resume: {} } }]);
+  assert.deepEqual(t.written.filter((w) => w.kind === 'run').map((w) => [w.data.state, w.data.resume]), [['started', 1]]);
+  assert.equal(fixStarts(t).length, 1, 'the same run, no second start');
+  // Each leg's ending, past its wait.
+  for (const resume of [1, 2, 3]) {
+    t.world.views.runs[INCIDENT.work].push(record('run-1', 'started', { resume }), { ...record('run-1', 'ended', { outcome: 'failed', failure: 'connection', resume }), at: '2026-10-30T09:00:00.000Z' });
+    await t.d.tick();
+  }
+  assert.equal(acts.length, 3, 'the third failure brings no fourth try');
+  const cards = t.written.filter((w) => w.kind === 'question');
+  assert.equal(cards.length, 1);
+  assert.match(cards[0].data.what, /main line/);
+});
+
+test('a failed fix waits out All stop, and a refused resume goes to its card', async () => {
+  const t = setUp();
+  await t.d.tick();
+  t.ran('run-1', 'started');
+  t.world.views.runs[INCIDENT.work].push({ ...record('run-1', 'ended', { outcome: 'failed', failure: 'connection' }), at: '2026-10-30T09:00:00.000Z' });
+  t.world.stop = true;
+  await t.d.tick();
+  assert.equal(t.engine.calls.filter((c) => c.call === 'act').length, 0);
+  t.world.stop = false;
+  await t.d.tick();
+  assert.equal(t.engine.calls.filter((c) => c.call === 'act').length, 1, 'the engine has no such run, so it refuses');
+  assert.equal(t.written.filter((w) => w.kind === 'run').at(-1).data.failure, 'resume-refused');
+});

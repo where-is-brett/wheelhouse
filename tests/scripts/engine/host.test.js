@@ -454,3 +454,16 @@ test('a resumed leg the record has already ended is not ended twice', async () =
     assert.deepEqual(endings(kept), []);
   } finally { f.cleanup(); }
 });
+
+test('an ending read in a resume\'s first moments ends no leg, and names the failed step otherwise', async () => {
+  const f = folder();
+  try {
+    const { kept, write } = writes();
+    const old = played([{ type: 'run-ended', outcome: 'failed', cursor: 'sql:1' }], () => ({ status: 'ended', outcome: 'failed', failure: 'connection' }));
+    await hosted(old, { write, file: f.file, resumes: () => 1, settling: () => true });
+    assert.deepEqual(endings(kept), [], 'the runner\'s look at the run writes one that is real');
+    const real = played([{ type: 'run-ended', outcome: 'failed', failedAt: 'tests', cursor: 'sql:2' }, { type: 'run-ended', outcome: 'failed', failedAt: 'tests', cursor: 'sql:3' }], () => ({ status: 'ended', outcome: 'failed', failure: 'host', failedStep: 'lenses' }));
+    await hosted(real, { write, file: f.file, resumes: () => 2, done: () => endings(kept).length === 1 });
+    assert.equal(endings(kept)[0].step, 'lenses', 'the engine\'s word over the stream\'s');
+  } finally { f.cleanup(); }
+});
