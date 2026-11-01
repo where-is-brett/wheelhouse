@@ -25,7 +25,7 @@ export const forever = () => [ev({ type: 'run-started' })];
 // A run that holds at no ask and ends at once.
 export const quiet = () => [ev({ type: 'run-started' }), ev({ type: 'run-ended', outcome: 'completed' })];
 
-export function wayBack({ recordings = {}, pace = 3, settings = {}, testCommand = 'node --test', designOf = () => null, branchPaths = async () => [], reads = {}, opened = {} } = {}) {
+export function wayBack({ dispatchExtra = {}, recordings = {}, pace = 3, settings = {}, testCommand = 'node --test', designOf = () => null, branchPaths = async () => [], reads = {}, opened = {} } = {}) {
   const dir = tempFolder('wh-way-back-');
   const engine = fakeEngine({ recordings });
   const clock = { now: new Date('2026-10-29T10:00:00.000Z') };
@@ -67,7 +67,7 @@ export function wayBack({ recordings = {}, pace = 3, settings = {}, testCommand 
     const dispatcher = dispatchRun({
       engine, project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'), readViews: views, write, start, branchPaths, designOf,
       settings: () => ({ engineLanes: ['quick', 'bug', 'feature'], pace, ...settings }), stopped: () => world.stop, now: () => clock.now,
-      config: () => ({ routing: {}, testCommand }), readyOf: () => world.ready, prState: async (pr) => world.seenPr[pr] ?? 'open', orderOf: (runId) => world.orders?.[runId] ?? null, stoppedRuns: () => world.stoppedIds ?? [], notReady: (pr) => { delete world.ready[pr]; },
+      config: () => world.config ?? ({ routing: {}, testCommand }), mainGreen: async () => world.green ?? null, ...dispatchExtra, readyOf: () => world.ready, prState: async (pr) => world.seenPr[pr] ?? 'open', orderOf: (runId) => world.orders?.[runId] ?? null, stoppedRuns: () => world.stoppedIds ?? [], notReady: (pr) => { delete world.ready[pr]; },
     });
     const runner = engineRunner({
       engine, file: path.join(dir, 'router.json'), readViews: views, write, stopped: () => world.stop, now: () => clock.now,
@@ -151,6 +151,13 @@ export function wayBack({ recordings = {}, pace = 3, settings = {}, testCommand 
     runsOf: (work) => [...new Set((world.runs[work] ?? []).map((r) => r.data.runId))],
     stateOf: (work) => (world.runs[work] ?? []).at(-1)?.data?.state ?? null,
     restart() { joined = build(); },
+    // Time passing with the helper awake, a beat of `beat` milliseconds at a time.
+    async pass(ms, beat = 60 * 1000) {
+      for (let left = ms; left > 0; left -= beat) {
+        clock.now = new Date(clock.now.getTime() + beat - 1000);
+        await world.tick();
+      }
+    },
     notes: () => world.written.filter((w) => w.kind === 'note').map((w) => w.data.words),
     cards: () => world.written.filter((w) => w.kind === 'question').map((w) => w.data),
     // How many pieces hold a place now, by the rule the dispatcher counts.
