@@ -79,7 +79,8 @@ import { stopEngine, endRun, stopWords } from '../engine/stop.js';
 import { engineRoutes, engineDirOf } from '../engine/routes.js';
 import { engineRunner } from '../engine/runner.js';
 import { recordOnly, cardContext, historyOf } from '../delegation/record-only.js';
-import { cardDiff, cardFacts, pathsSoFar } from '../delegation/facts.js';
+import { branchHead, cardDiff, cardFacts, commitsAfter, pathsSoFar } from '../delegation/facts.js';
+import { repeatExclusions } from '../delegation/asked.js';
 import { readerView } from '../delegation/view.js';
 import { prepareReaderFolder } from '../delegation/reader.js';
 import { setupStamp } from '../delegation/stamp.js';
@@ -5086,12 +5087,13 @@ export async function startHelper({
       return requestMeters.get(file).used();
     }
     // The seals beside the cards (scripts/delegation/record-only.js), ticked apart from engineTick.
+    const factsOf = async (card) => {
+      const adapter = await adapterNow();
+      return cardFacts({ card, git: gitRoute({ run }), baseCommit: await adapter.branchHead(await defaultBranchOf(project, adapter)) });
+    };
     const seals = recordOnly({
       file: path.join(files, 'shadow.json'), write, now, stopped: () => closing || stopped(),
-      factsOf: async (card) => {
-        const adapter = await adapterNow();
-        return cardFacts({ card, git: gitRoute({ run }), baseCommit: await adapter.branchHead(await defaultBranchOf(project, adapter)) });
-      },
+      factsOf,
       contextOf: (card) => {
         const config = engineConfigOf(project, folder);
         return cardContext({ views: views(), card, testCommand: config?.testsNotCounting ? null : config?.testCommand });
@@ -5182,6 +5184,9 @@ export async function startHelper({
       startAdmitted: (args) => dispatcher.startAdmitted(args),
       carryOver: (work, kept) => dispatcher.carryOver(work, kept),
       handBack: (args) => dispatcher.handBack(args),
+      headOf: (place) => branchHead({ card: place, git: gitRoute({ run }) }),
+      commitsSince: (place, head) => commitsAfter({ card: place, git: gitRoute({ run }), head }),
+      exclusionsOf: async (place) => repeatExclusions(await factsOf(place)),
     });
     runner.onEnter((args) => dispatcher.enter(args));
     dispatcher.onStarted((runId, carried) => runner.started(runId, carried));

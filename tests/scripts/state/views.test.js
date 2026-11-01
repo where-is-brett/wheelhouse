@@ -1509,6 +1509,35 @@ test('a click covers only what its card showed', async () => {
   });
 });
 
+test('a question recorded with what was said before says it in the view', async () => {
+  await withHome(() => {
+    assert.equal(build([asked(1, { saidBefore: 'First' })]).questions[LEAD].saidBefore.label, 'First');
+    assert.equal(build([asked(1)]).questions[LEAD].saidBefore, undefined);
+  });
+});
+
+test('an answer the director changed says so', async () => {
+  await withHome(() => {
+    const again = (n, label) => click(n, { action: 'answer', question: 'one', questionId: LEAD, questionHash: dataHash(asked(1).data), label });
+    assert.equal(build([asked(1), again(2, 'First')]).questions[LEAD].answer.changed, undefined);
+    assert.equal(build([asked(1), again(2, 'First'), again(3, 'First')]).questions[LEAD].answer.changed, undefined);
+    const got = build([asked(1), again(2, 'First'), again(3, 'Last')]).questions[LEAD].answer;
+    assert.equal(got.label, 'Last');
+    assert.equal(got.changed, true);
+  });
+});
+
+test('a steer on a question\'s card shows on the question, by a click or in the chat', async () => {
+  await withHome(() => {
+    const card = answerCard(2, 'one');
+    assert.equal(build([asked(1), card]).questions[LEAD].steered, undefined);
+    const chat = ev('chat-steer', 3, { card: card.id });
+    assert.equal(build([asked(1), card, chat]).questions[LEAD].steered, chat.at);
+    const clicked = ev('card-answer', 3, { card: card.id, label: 'Suggest a change…' });
+    assert.equal(build([asked(1), card, clicked]).questions[LEAD].steered, clicked.at);
+  });
+});
+
 test('a joiner open behind an open lead says whom it joins', async () => {
   await withHome(() => {
     assert.equal(build([asked(1), joiner(2)]).questions[JOIN].joins, LEAD);

@@ -19,6 +19,7 @@ import { questionIdOf } from '../lib/build-loop.js';
 import { SUGGEST, SHOW_ME, NOT_NOW, TO_KNOW_MORE, TO_CHANGE_IT, WHAT_CHANGED, SUGGEST_SAYS } from '../lib/calm-words.js';
 import { CONFIRMABLE_KINDS } from '../state/events.js';
 import { glossaryOf, termsIn } from '../frontdesk/glossary.js';
+import { normaliseWords } from '../delegation/words.js';
 import { BUILD_QUESTION_OPTIONS } from '../protection/windows-builds.js';
 import { baselineWording } from '../lib/measures-clicks.js';
 
@@ -530,15 +531,18 @@ export function answerInput(data, work, { joiners = [], saidBefore = null } = {}
   if (!isPlain(data) || !Array.isArray(data.options)) throw new Error('its record can\'t be read');
   const foreman = questionIdOf(data.id)?.foreman === true;
   const said = data.level === 3 && typeof saidBefore === 'string' ? saidBefore : null;
-  const bundle = joiners.length === 0 ? '' : ` It came from ${listed([work, ...joiners.map((j) => j.name)])}: your answer goes to each.`;
+  // That answer goes first where the card still offers it; the words say it either way.
+  const offered = said === null ? undefined : data.options.find((o) => normaliseWords(o?.label) === normaliseWords(said))?.label;
+  const pieces = [...new Set([work, ...joiners.map((j) => j.name)])];
+  const bundle = joiners.length === 0 ? '' : pieces.length === 1 ? ` It was asked more than once on ${work}: your answer goes to each.` : ` It came from ${listed(pieces)}: your answer goes to each.`;
   return {
     kind: 'answer',
     level: data.level,
     what: `${said === null ? '' : `You said this before: ${said}. `}${flat(data.what)}${bundle}`,
     why: flat(data.why),
     options: data.options.map((o) => ({ label: o?.label, says: foreman ? foremanSays(o) : flat(o?.says) || o?.label })),
-    recommend: said ?? data.recommendation,
-    because: said !== null ? 'it is what you said before' : foreman ? `the Bosun recommends it for ${work}` : `the session building ${work} recommends it`,
+    recommend: offered ?? data.recommendation,
+    because: offered !== undefined ? 'it is what you said before' : foreman ? `the Bosun recommends it for ${work}` : `the session building ${work} recommends it`,
     meanwhile: MEANWHILE,
     ...(data.level === 4 ? { checks: flat(data.checks) || CHECKS_UNSAID } : {}),
     target: { questionId: data.id },

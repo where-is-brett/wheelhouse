@@ -27,12 +27,14 @@ import { MERGE_WORK } from './dispatcher.js';
 import { routerWaiting, routerCards } from './waiting.js';
 import { since } from '../foreman/queue.js';
 import { READER_WORK } from '../delegation/reader.js';
-import { alike } from '../delegation/words.js';
+import { alike, normaliseWords } from '../delegation/words.js';
+import { decisionKey, earlierAnswer, reuse, spokenSince } from '../delegation/asked.js';
+import { REPEAT_READ_MS } from '../delegation/limits.js';
 import { mergeQuestionWords, parkedWords, PARKED_WHY, PARKED_BECAUSE, PARKED_MEANWHILE, PARKED_APPROVE_SAYS } from './words.js';
 import { parkChoice } from './archon/asks.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
-const EMPTY = () => ({ routed: {}, waiting: [], held: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, tries: {}, later: [], next: {}, noted: null, capped: {}, costed: {}, reviewsKept: {}, carried: {}, reworks: {}, answers: {}, sending: {}, parked: {} });
+const EMPTY = () => ({ routed: {}, waiting: [], held: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, tries: {}, later: [], next: {}, noted: null, capped: {}, costed: {}, reviewsKept: {}, carried: {}, reworks: {}, answers: {}, sending: {}, parked: {}, reused: {} });
 // The failed tries after which the director is told an answer hasn't reached the build yet.
 const UNREACHABLE_SAID = 3;
 // The cap card's options: Give it more carries the work on with the cap raised once; Stop leaves it stopped.
@@ -89,6 +91,8 @@ const inSentence = (title) => (/^[A-Z][a-z]/.test(title) ? title.charAt(0).toLow
 // - `admittedTo(work)` whether the dispatcher has given a piece its place; `delivered(work, key)` and `drop(work, key)` tell
 //   it an answer went back or was refused or not used; `startAdmitted(args)` starts a run on the place already held;
 //   `carryOver(work, { branch, answers })` keeps what Carry on needs of an answer All stop kept from being used.
+// - `headOf(place)` a piece's head, `commitsSince(place, head)` its commits after that head and `exclusionsOf(place)` the
+//   common exclusions it hits, `place` being { branch, folder }; each null when it can't be read, and none may hold up a tick.
 // - `handBack({ pr })` hands a parked pull request the director approved to the merge queue again
 //   (dispatch-run.js): { ok }, { ok: false, waiting } or { ok: false, refused }.
 //
@@ -97,7 +101,7 @@ const inSentence = (title) => (/^[A-Z][a-z]/.test(title) ? title.charAt(0).toLow
 // keeps { [pr]: { head, at, runId, choice, work, ask, taken, handed } }: `taken` once the engine has it, so a restart
 // between the two still raises the card, and `handed` once an approval has gone back to the queue. Only an approval
 // signed since `at` counts for it: an older one, for a pull request shown first, never saw what the queue is unsure of.
-export function engineRunner({ engine, file, readViews, write, stopped = () => false, now = () => new Date(), settings = () => ({}), workOf = () => null, titleOf = (work) => work, endRun = async () => ({ ended: [], survivors: [] }), openedOf = () => null, prTitleOf = async () => null, keepReviews = async () => true, onCard = () => {}, onReaderAsk = () => {}, release = () => {}, handBack = async () => ({ ok: false, refused: 'nothing hands work to the merge queue here' }), admittedTo = () => true, delivered = () => {}, drop = () => {}, startAdmitted = async () => ({ ok: false, refused: 'nothing starts runs here' }), carryOver = () => {} } = {}) {
+export function engineRunner({ engine, file, readViews, write, stopped = () => false, now = () => new Date(), settings = () => ({}), workOf = () => null, titleOf = (work) => work, endRun = async () => ({ ended: [], survivors: [] }), openedOf = () => null, prTitleOf = async () => null, keepReviews = async () => true, onCard = () => {}, onReaderAsk = () => {}, release = () => {}, handBack = async () => ({ ok: false, refused: 'nothing hands work to the merge queue here' }), admittedTo = () => true, delivered = () => {}, drop = () => {}, startAdmitted = async () => ({ ok: false, refused: 'nothing starts runs here' }), carryOver = () => {}, headOf = async () => null, commitsSince = async () => null, exclusionsOf = async () => null } = {}) {
   let state = readState(file);
   const keep = () => saveState(file, state);
   const note = (words, extra = {}) => write('note', { about: 'engine', words, ...extra });
@@ -300,18 +304,6 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
         if (await leaveAlone(ask, asked, choice, work)) return;
       }
     }
-    // A blocked exit asking again what the director has already answered for this work is answered with that answer.
-    const earlier = ask.kind === 'blocked' && questionOf(ask) !== null
-      ? (state.answers[work] ?? []).filter((a) => a.question === questionOf(ask)).at(-1) : null;
-    const same = earlier ? (ask.options ?? []).find((o) => o?.label === earlier.answer) : null;
-    if (same && !stopped()) {
-      const got = await answerEngine(ask.runId, { ask: ask.id, choice: same.id });
-      keep();
-      if (got.ok) {
-        await note(`The build asked again about ${titled(work)}, and was given your earlier answer: ${earlier.answer}.`, { work, level: 3 });
-        return;
-      }
-    }
     const routed = routeAsk(ask, { levels: views.levels ?? {} });
     if (routed.answer) {
       if (stopped()) {
@@ -332,9 +324,75 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       await note(routed.line, { work });
       return;
     }
+    const asked = routed.card.question ? await askedBefore(ask, work, routed.card.question, views) : null;
+    if (asked?.answer !== undefined) {
+      if (stopped()) {
+        // Answered once All stop is lifted, never under it.
+        state.later.push(ask);
+        keep();
+        return;
+      }
+      if (await takeEarlier(ask, work, routed.card.question, asked, views)) return;
+    }
+    if (asked && routed.card.question.level === 3) routed.card.question.saidBefore = asked.earlier.answer;
     state.waiting.push({ importance: routed.importance, exempt: routed.exempt === true, card: routed.card, work, runId: ask.runId, ask });
     keep();
     await show();
+  }
+
+  // The key of a decision: an ask in the build's own words, never the merge queue's or trouble.
+  const keyOf = (ask, work) => (cardKind(ask) === 'question' && questionOf(ask) !== null && work !== MERGE_WORK ? decisionKey(work, questionOf(ask)) : null);
+  // A look at a piece's branch, which gives null when it can't be read or doesn't answer in time.
+  function lookAt(read) {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(null), REPEAT_READ_MS);
+      timer.unref?.();
+      safely(read).then((got) => {
+        clearTimeout(timer);
+        resolve(got ?? null);
+      });
+    });
+  }
+
+  // Whether the director has answered this decision on this piece (delegated decisions design, section 7.4), as `reuse`
+  // says with `earlier` beside it, or null. An answer is taken once, so a piece that keeps asking comes to a card and can't
+  // go round on its own. Nothing that ends or moves a piece is taken from before, and a piece with another card open has
+  // given up its place, so its answer waits for that card.
+  async function askedBefore(ask, work, question, views) {
+    const key = keyOf(ask, work);
+    const earlier = key === null ? null : earlierAnswer({ views, work, key, settled: (id) => state.delivered[id] === 'answered' });
+    if (earlier === null) return null;
+    const place = placeOf(ask);
+    const [commits, exclusions] = await Promise.all([
+      typeof earlier.head === 'string' ? lookAt(() => commitsSince(place, earlier.head)) : null,
+      lookAt(() => exclusionsOf(place)),
+    ]);
+    const ends = STOPS_WORK.has(earlier.answer) || question.engine.options[earlier.answer] === STOP || ask.topic === BIGGER;
+    const got = reuse({
+      ask: { kind: ask.kind, level: question.level, options: question.options }, earlier, commitsSince: commits, exclusions,
+      spokenSince: spokenSince({ views, work, earlier }), changed: earlier.changed,
+      asksAgain: state.reused[earlier.id] === true || ends || typeof earlier.words === 'string' || waitingOn().has(work),
+    });
+    return got && { ...got, earlier };
+  }
+
+  // Gives the build the director's earlier answer, and whether it took it. A blocked ask's run ends on it as on any
+  // answer, so the piece starts again; that is marked first, so a crash after the answer leaves no piece stranded.
+  async function takeEarlier(ask, work, question, { answer: label, earlier }, views) {
+    const answer = answerFor(question.engine, question.options.find((o) => normaliseWords(o.label) === normaliseWords(label))?.label);
+    if (answer === null) return false;
+    const reworked = startsAgain({ ask, work, runId: ask.runId }, laneOf({ work, runId: ask.runId }, views));
+    if (reworked) state.reworks[ask.runId] = { work, answer: answer.choice !== REWORK ? { question: questionOf(ask), answer: label } : null };
+    state.reused[earlier.id] = true;
+    keep();
+    const got = await answerEngine(ask.runId, answer);
+    if (!got.ok) {
+      if (reworked) delete state.reworks[ask.runId];
+      keep();
+      return false;
+    }
+    await note(`The build asked again about ${titled(work)}, and was given your earlier answer: ${label}.`, { work, level: 3 });
+    return true;
   }
 
   // Writes every waiting card at once (delegated decisions design, section 8.5); the day's budget says only which are
@@ -365,8 +423,8 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   // Whether a card may stand for others or join one: a question in the build's own words, never the fixed words of an ask
   // that gave none, the merge queue's or trouble, and never one that ignores the budget, which is asked for itself.
   const bundles = (item) => isPlain(item.card?.question) && cardKind(item.ask) === 'question' && questionOf(item.ask) !== null && item.work !== MERGE_WORK && !ignoresBudget(item);
-  // Alike questions across pieces are one card (delegated decisions plan, choice 12). A question alike an open card's,
-  // written or still to come, is marked to join it, and a mark whose lead has gone is taken off.
+  // Alike questions are one card, across pieces or within one (delegated decisions plan, choice 12). A question alike an
+  // open card's, written or still to come, is marked to join it, and a mark whose lead has gone is taken off.
   function bundleAlike(views) {
     for (const item of state.waiting) {
       if (typeof item.joins === 'string' && !state.waiting.some((w) => w.id === item.joins) && !state.questions[item.joins]) delete item.joins;
@@ -376,7 +434,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       .filter((lead) => cardKind(lead.kept.ask) === 'question' && questionOf(lead.kept.ask) !== null && lead.kept.work !== MERGE_WORK);
     for (const item of state.waiting) {
       if (typeof item.joins === 'string' || !bundles(item)) continue;
-      const lead = open.find((l) => l.work !== item.work && alike(l.words, item.card.question));
+      const lead = open.find((l) => alike(l.words, item.card.question));
       if (lead) item.joins = lead.id;
       else open.push({ id: item.id, work: item.work, words: item.card.question });
     }
@@ -471,11 +529,16 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       return;
     }
     const q = card.question;
+    const key = keyOf(ask, work);
+    const head = key === null ? null : await lookAt(() => headOf(placeOf(ask)));
     await write('question', {
       id, work, what: q.what, why: q.why, options: q.options, recommendation: q.recommendation ?? q.options[0]?.label, level: q.level,
       ...(q.level === 4 ? { checks: 'It changes no checks: the build still checks its work before it is added.' } : {}),
       engine: { runId, ask: ask.id, options: q.engine.options },
       ...(typeof joins === 'string' ? { joins } : {}),
+      ...(key === null ? {} : { key }),
+      ...(typeof head === 'string' ? { head } : {}),
+      ...(typeof q.saidBefore === 'string' ? { saidBefore: q.saidBefore } : {}),
     });
     state.questions[id] = { runId, ask, work, ...(typeof joins === 'string' ? { joins, options: q.engine.options } : {}) };
     // A joiner raises no card, so it has none to seal.
@@ -490,6 +553,9 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
 
   // The lane of the run an answer goes to.
   const laneOf = (kept, views) => (views.runs?.[kept.work] ?? []).filter((r) => r?.data?.runId === kept.runId).at(-1)?.data?.lane ?? workOf(kept.runId)?.lane;
+  // Whether an answer ends a run whose piece then starts again. The fix lane and the merge queue keep their own rules, and
+  // neither has a work record to start again from.
+  const startsAgain = (kept, runLane) => kept.ask?.kind === 'blocked' && runLane !== FIX_LANE && runLane !== 'merge' && kept.work !== MERGE_WORK;
   // Whether a piece may be sent its answer now.
   const hasPlace = (work, key, views) => (views.incidents?.open?.length ?? 0) === 0 && admittedTo(work, key);
   // Whether the work has been queued again since this run began: the answer was for a run that no longer speaks for it.
@@ -640,8 +706,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
         await note(`${titleOf(kept.work)} is bigger than a bug, so it stops in the bug lane; the First Mate records it as ${move} and asks you to approve it.`, { work: kept.work });
         continue;
       }
-      // The fix lane and the merge queue keep their own rules, and neither has a work record to start again from.
-      if (got.ok && kept.ask?.kind === 'blocked' && answer.choice !== STOP && runLane !== FIX_LANE && runLane !== 'merge' && kept.work !== MERGE_WORK) {
+      if (got.ok && answer.choice !== STOP && startsAgain(kept, runLane)) {
         const said = typeof answer.words === 'string' ? answer.words : label;
         const question = questionOf(kept.ask);
         state.reworks[kept.runId] = { work: kept.work, answer: answer.choice !== REWORK && question && typeof said === 'string' ? { question, answer: said } : null };

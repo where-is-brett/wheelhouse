@@ -25,7 +25,7 @@ export const forever = () => [ev({ type: 'run-started' })];
 // A run that holds at no ask and ends at once.
 export const quiet = () => [ev({ type: 'run-started' }), ev({ type: 'run-ended', outcome: 'completed' })];
 
-export function wayBack({ recordings = {}, pace = 3, settings = {}, testCommand = 'node --test', designOf = () => null, branchPaths = async () => [] } = {}) {
+export function wayBack({ recordings = {}, pace = 3, settings = {}, testCommand = 'node --test', designOf = () => null, branchPaths = async () => [], reads = {} } = {}) {
   const dir = tempFolder('wh-way-back-');
   const engine = fakeEngine({ recordings });
   const clock = { now: new Date('2026-10-29T10:00:00.000Z') };
@@ -85,6 +85,7 @@ export function wayBack({ recordings = {}, pace = 3, settings = {}, testCommand 
       drop: (work, key) => dispatcher.drop(work, key),
       startAdmitted: (args) => dispatcher.startAdmitted(args),
       carryOver: (work, kept) => dispatcher.carryOver(work, kept),
+      ...reads,
     });
     runner.onEnter((args) => dispatcher.enter(args));
     dispatcher.onStarted((runId, carried) => runner.started(runId, carried));

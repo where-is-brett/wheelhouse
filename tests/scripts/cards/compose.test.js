@@ -860,3 +860,20 @@ test('a joiner newer than the card answered stays open, saying You said this bef
 test('a joiner\'s answer needs its own click for a level 4 card: the words never say it was said', () => {
   assert.equal(answerInput({ ...ASKED, level: 4 }, 'x', { saidBefore: 'The last' }).recommend, 'The first');
 });
+
+test('an answer the card no longer offers is said, and recommends nothing', () => {
+  const input = answerInput(ASKED, 'The banner', { saidBefore: 'Gone now' });
+  assert.match(input.what, /You said this before: Gone now\./);
+  assert.equal(input.recommend, ASKED.recommendation);
+  assert.doesNotMatch(input.because, /what you said before/);
+});
+
+test('that answer goes first whatever its case', () => {
+  assert.equal(answerInput(ASKED, 'The banner', { saidBefore: 'the LAST.' }).recommend, 'The last');
+});
+
+test('a question asked twice on one piece names the piece once', () => {
+  const input = answerInput(ASKED, 'The banner', { joiners: [{ id: 'q-b-2', name: 'The banner' }] });
+  assert.match(input.what, /It was asked more than once on The banner: your answer goes to each\./);
+  assert.deepEqual(input.joiners, ['q-b-2']);
+});

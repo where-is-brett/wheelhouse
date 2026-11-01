@@ -1,5 +1,5 @@
 // scripts/state/joiners.js
-// Questions alike across pieces are one card (delegated decisions plan, choice 12). A joiner is a `question` record of
+// Alike questions are one card, across pieces or within one (delegated decisions plan, choice 12). A joiner is a `question` record of
 // its own, with `joins: <lead id>` and its own engine options, so nothing already signed changes. It takes its lead's
 // answer only if the card clicked listed it: a click covers what its card showed, and a joiner newer than that card
 // stays open, with what the director said. `joins` is read here against the lead's own words, so a question naming a
@@ -17,6 +17,8 @@ const dataOf = (entry) => entry?.question?.data;
 export function joinQuestions(questions, { shown = () => [], ended = () => false, kept = () => true } = {}) {
   for (const [id, entry] of Object.entries(questions)) {
     const data = dataOf(entry);
+    // Recorded so by the runner: the piece asked this again, and the director said this the last time.
+    if (typeof data?.saidBefore === 'string' && !isPlain(entry.saidBefore)) entry.saidBefore = { label: data.saidBefore };
     const lead = questions[data?.joins];
     if (!isPlain(lead) || data.joins === id || dataOf(lead).joins !== undefined || !alike(data, dataOf(lead)) || !kept(id, data)) continue;
     entry.joins = data.joins;

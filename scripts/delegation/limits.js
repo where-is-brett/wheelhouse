@@ -30,3 +30,5 @@ export const READER_TOKENS = 100_000;
 export const READER_UNKNOWN_MS = 60_000;
 export const READING_MOST_BYTES = 16 * 1024;
 export const READERS_WAITING_MOST = 20;
+// How long a look at a piece's branch may take before a card asks instead. The card router waits for it.
+export const REPEAT_READ_MS = 10_000;
