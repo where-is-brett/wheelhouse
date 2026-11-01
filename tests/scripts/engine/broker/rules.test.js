@@ -156,6 +156,20 @@ test('a merge of a shown-first change without the director\'s approval of that h
   });
 });
 
+test('the permit refuses paths outside a goal\'s areas', async () => {
+  await withHome(async () => {
+    const { computer, publicKey } = makeSigningKey();
+    enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
+    const enrolled = [{ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' }];
+    const call = classifyCall(['pr', 'merge', '14', '--repo', R, '--squash', '--match-head-commit', HEAD]);
+    const review = makeEvent({ kind: 'review', data: { pr: 14, commit: HEAD, verdict: 'CLEAN', findings: 0 } });
+    const ctx = { stop: false, lockHeld: true, incident: { open: false }, enrolled, review };
+    assert.match(brokerDecision(call, { ...ctx, outsideAreas: true }).reason, /areas/);
+    assert.deepEqual(brokerDecision(call, { ...ctx, outsideAreas: false }), { allow: true });
+    assert.deepEqual(brokerDecision(call, ctx), { allow: true });
+  });
+});
+
 test('a merge during an incident is refused unless it is the fix', async () => {
   await withHome(async () => {
     const { computer, publicKey } = makeSigningKey();

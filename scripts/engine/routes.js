@@ -29,6 +29,7 @@
 //                         whether the main line's latest counted check passed
 //   readerViewOf(project, card)   the view of the card a reader is reading, or null
 //   briefOf(project)      the project's standing brief in force, as views.brief, or null
+//   goalViews(project)    { goals, questions } from the views, for a goal's areas as they stand and the answers on their cards
 // A run is found by its id in the projects' order stores: the only runs these routes serve are ones the helper
 // started itself, with an order. Only the helper starts a run (the dispatcher, through `start`, never a route), and
 // every route asks for the run's ticket (ticket.js), which only that run's steps can read.
@@ -43,6 +44,7 @@ import { readReproduction, sameReproduction } from './reproduction.js';
 import { reviewHolds } from './review-round.js';
 import { READER_LANE, READER_WORK } from '../delegation/reader.js';
 import { briefLines } from '../delegation/brief.js';
+import { outsideAreas, areaAnswer, ALLOW_ONCE, STOP_AREAS } from './areas.js';
 
 const NO_ORDER = 'there is no work order for that run';
 const NO_TICKET = 'the call didn\'t carry the run\'s own ticket';
@@ -114,7 +116,7 @@ export function engineRoutes({
   projectAgents = async () => null, recheckCopies = async () => ({ ok: true }),
   checkTook = null, mainCheck = null,
   host, provenance, previewsDir = (project) => path.join(filesDir(project), 'previews'),
-  incidentOf = () => null, changesOf = async () => null, merge = async () => ({ ok: false, refused: 'the helper can\'t merge here' }),
+  incidentOf = () => null, changesOf = async () => null, goalViews = () => ({}), merge = async () => ({ ok: false, refused: 'the helper can\'t merge here' }),
   refresh = async () => ({ ok: true }), readerViewOf = () => null, briefOf = () => null,
 } = {}) {
   const storeOf = (project) => orderStore(ordersDir(project));
@@ -214,15 +216,17 @@ export function engineRoutes({
 
   // The verdicts kept for a project: { runs: { [runId]: { head, signed: { [step]: verdict } } }, comments: { [pr]: id },
   // ready: { [pr]: { head, runId, showFirst, work } }, lessons: { [runId]: at },
-  // opened: { [pr]: { runId, head, showFirst, work, level, lane, incident? } }, previews: { [runId]: head },
+  // areasHeld: { [pr]: { head, runId, showFirst, work, paths, fix? } }, what a goal's areas hold back from `ready`,
+  // opened: { [pr]: { runId, head, at, showFirst, work, level, lane, incident? } }, `at` when it was first opened,
+  // previews: { [runId]: head },
   // fixed: { [runId]: { pr, head, at } }, reproduced: { [work]: { check, files, commit, runId, at } },
   // taskReviews: { [plan]: [{ runId, tasks: { [task]: held } | null }] }, a slice's runs in the order they started }.
   const verdictsFile = (project) => path.join(filesDir(project), 'verdicts.json');
   function readVerdicts(project) {
     const kept = parsed(fs.existsSync(verdictsFile(project)) ? fs.readFileSync(verdictsFile(project), 'utf8') : 'null');
     return kept && typeof kept === 'object'
-      ? { runs: kept.runs ?? {}, comments: kept.comments ?? {}, ready: kept.ready ?? {}, lessons: kept.lessons ?? {}, opened: kept.opened ?? {}, previews: kept.previews ?? {}, fixed: kept.fixed ?? {}, reproduced: kept.reproduced ?? {}, taskReviews: kept.taskReviews ?? {} }
-      : { runs: {}, comments: {}, ready: {}, lessons: {}, opened: {}, previews: {}, fixed: {}, reproduced: {}, taskReviews: {} };
+      ? { runs: kept.runs ?? {}, comments: kept.comments ?? {}, ready: kept.ready ?? {}, areasHeld: kept.areasHeld ?? {}, lessons: kept.lessons ?? {}, opened: kept.opened ?? {}, previews: kept.previews ?? {}, fixed: kept.fixed ?? {}, reproduced: kept.reproduced ?? {}, taskReviews: kept.taskReviews ?? {} }
+      : { runs: {}, comments: {}, ready: {}, areasHeld: {}, lessons: {}, opened: {}, previews: {}, fixed: {}, reproduced: {}, taskReviews: {} };
   }
   function keepVerdicts(project, verdicts) {
     fs.mkdirSync(filesDir(project), { recursive: true, mode: 0o700 });
@@ -323,7 +327,7 @@ export function engineRoutes({
     // The pull request is the run's from here: the broker's permit reads whether its work is shown first from this.
     const verdicts = readVerdicts(run.project);
     verdicts.opened[opened.pr] = {
-      runId, head: opened.head, showFirst: run.order.showFirst === true, work: run.order.work, level: run.order.level ?? null, lane: run.order.lane,
+      runId, head: opened.head, at: verdicts.opened[opened.pr]?.at ?? now().toISOString(), showFirst: run.order.showFirst === true, work: run.order.work, level: run.order.level ?? null, lane: run.order.lane,
       ...(typeof run.order.incident === 'string' ? { incident: run.order.incident } : {}),
     };
     keepVerdicts(run.project, verdicts);
@@ -332,8 +336,39 @@ export function engineRoutes({
     return { ok: true, branch: pushed.branch, pr: opened.pr, head: opened.head };
   }
 
+  // The areas an order's run is held to now, or null: a narrowing reaches a run already going, so a goal's `may` and
+  // `wontTouch` are read afresh. A fix's areas are its goal's check files, fixed at its start.
+  function areasNow(project, order) {
+    const { areas } = order;
+    if (!areas) return null;
+    const held = goalViews(project)?.goals?.[areas.goal]?.sheet?.areas;
+    return Array.isArray(areas.may) && held ? { ...areas, may: held.may, wontTouch: held.wontTouch } : areas;
+  }
+  // Which of `paths` a pull request opened under `order` may not change: none for one opened before its goal started.
+  function reachesOutside(project, order, pr, paths) {
+    const areas = areasNow(project, order);
+    if (!areas) return [];
+    const opened = Date.parse(readVerdicts(project).opened?.[pr]?.at);
+    return areas.since !== undefined && !(opened >= Date.parse(areas.since)) ? [] : outsideAreas(paths, areas);
+  }
+  // The paths outside the areas at a head for a run's own pull request, or null when they can't be read.
+  async function outsideAt(run, { pr, head }) {
+    if (!areasNow(run.project, run.order)) return [];
+    let changes = null;
+    try { changes = await changesOf(run.project, { pr, head }); } catch { changes = null; }
+    return Array.isArray(changes?.paths) ? reachesOutside(run.project, run.order, pr, changes.paths) : null;
+  }
+  // Keeps a pull request back from the queue until its card is answered, in place of any ready record of it. The
+  // dispatcher raises the card from this, so a crash loses nothing (plan, choice 13).
+  function keepHeld(project, pr, held) {
+    const verdicts = readVerdicts(project);
+    const { [pr]: _gone, ...ready } = verdicts.ready;
+    keepVerdicts(project, { ...verdicts, ready, areasHeld: { ...verdicts.areasHeld, [pr]: held } });
+  }
+
   // The pack's mark-ready step: hands the pull request to the engine's merge queue once every lens that ran is signed
-  // CLEAN for its head, and, for work shown first, the director approved it. The broker's permit still checks both.
+  // CLEAN for its head, and, for work shown first, the director approved it. The broker's permit still checks both. A
+  // change outside its goal's areas isn't refused, since that would fail a run whose work is done: it is held, with a card.
   async function ready({ runId } = {}) {
     const run = runOf(runId);
     if (!run) return { ok: false, refused: NO_ORDER };
@@ -352,11 +387,18 @@ export function engineRoutes({
     if (run.order.showFirst === true && parsed(outputs.approval)?.decision !== 'approve') {
       return { ok: false, refused: 'this work is shown first, and the director hasn\'t approved it' };
     }
+    const showFirst = run.order.showFirst === true;
+    const outside = await outsideAt(run, opened);
+    if (outside === null) return { ok: false, refused: 'the change\'s files couldn\'t be read, so it can\'t be held to its goal\'s areas' };
+    if (outside.length > 0 && areaAnswer(goalViews(run.project), run.order.work, opened.head) !== ALLOW_ONCE) {
+      keepHeld(run.project, opened.pr, { head: opened.head, runId, showFirst, work: run.order.work, paths: outside });
+      return { ok: true, held: 'areas', pr: opened.pr, head: opened.head };
+    }
     const repo = host?.repo(run.project);
     // A project in git alone has no merge queue of Archon's to take it: the local queue reads what is ready below.
     const handed = host?.local?.(run.project) === true ? { ok: true } : await engine.handOver({ project: run.folder, repo, pr: opened.pr, url: `https://${host?.repoHost?.(run.project) ?? 'github.com'}/${repo}/pull/${opened.pr}`, runId, at: now().toISOString() });
     if (!handed?.ok) return { ok: false, refused: handed?.refused ?? 'the engine didn\'t take the work' };
-    verdicts.ready = { ...(verdicts.ready ?? {}), [opened.pr]: { head: opened.head, runId, showFirst: run.order.showFirst === true, work: run.order.work } };
+    verdicts.ready = { ...(verdicts.ready ?? {}), [opened.pr]: { head: opened.head, runId, showFirst, work: run.order.work } };
     keepVerdicts(run.project, verdicts);
     return { ok: true, pr: opened.pr, head: opened.head };
   }
@@ -388,6 +430,14 @@ export function engineRoutes({
     if (!changes || !Array.isArray(changes.paths) || !changes.config) return { ok: false, refused: 'the fix\'s changes couldn\'t be read, so it can\'t be shown to keep the checks' };
     const weakens = weakensChecks({ paths: changes.paths, config: changes.config, tests: parsed(outputs.tests) });
     if (weakens.length > 0) return { ok: false, refused: `the fix isn't added: ${weakens.join('; ')}`, weakens };
+    // A fix that touches a goal's check file raises the same card. The step waits for the answer, as it does for a check.
+    const outside = reachesOutside(run.project, run.order, opened.pr, changes.paths);
+    const answered = outside.length > 0 ? areaAnswer(goalViews(run.project), run.order.work, opened.head) : ALLOW_ONCE;
+    if (answered === STOP_AREAS) return { ok: false, refused: `the fix changes a goal's check file, and the director stopped it: ${outside.join(', ')}` };
+    if (answered !== ALLOW_ONCE) {
+      keepHeld(run.project, opened.pr, { head: opened.head, runId, showFirst: false, work: run.order.work, paths: outside, fix: true });
+      return { ok: false, refused: `the fix changes a goal's check file, so the director is asked: ${outside.join(', ')}`, waiting: true };
+    }
     const got = await merge(run.project, { pr: opened.pr, head: opened.head, incident: run.order.incident, runId });
     if (!got?.ok) return { ok: false, refused: got?.refused ?? 'the helper\'s gate didn\'t add the fix', ...(got?.waiting === true ? { waiting: true } : {}) };
     const after = readVerdicts(run.project);
@@ -510,7 +560,8 @@ export function engineRoutes({
   // The order a run's steps read: the one stored for it, with a bug's kept reproduction among its done checks.
   function orderNow(run) {
     const found = run.order.lane === 'bug' ? readVerdicts(run.project).reproduced[run.order.work] : null;
-    return found ? { ...run.order, done: [...run.order.done, found.check] } : run.order;
+    const areas = areasNow(run.project, run.order);
+    return { ...run.order, ...(found ? { done: [...run.order.done, found.check] } : {}), ...(areas ? { areas } : {}) };
   }
 
   // What the helper knows of a pull request it marked ready: { head, runId, showFirst, work }, or null.
@@ -546,7 +597,7 @@ export function engineRoutes({
     carryNumbers: (project, numbers) => {
       const verdicts = readVerdicts(project);
       const carried = (held) => Object.fromEntries(Object.entries(held ?? {}).flatMap(([n, o]) => (numbers[n] === undefined ? [] : [[numbers[n], o]])));
-      keepVerdicts(project, { ...verdicts, opened: carried(verdicts.opened), ready: carried(verdicts.ready) });
+      keepVerdicts(project, { ...verdicts, opened: carried(verdicts.opened), ready: carried(verdicts.ready), areasHeld: carried(verdicts.areasHeld) });
     },
     // Every pull request the helper marked ready for the project: { [pr]: { head, runId, showFirst, work } }.
     readyAll: (project) => readVerdicts(project).ready ?? {},
@@ -556,6 +607,31 @@ export function engineRoutes({
       if (verdicts.ready?.[pr] === undefined) return;
       const { [pr]: _gone, ...ready } = verdicts.ready;
       keepVerdicts(project, { ...verdicts, ready });
+    },
+    // What a goal's areas hold back from the queue: { [pr]: { head, runId, showFirst, work, paths, fix? } }.
+    areasHeld: (project) => readVerdicts(project).areasHeld ?? {},
+    // The paths of a pull request outside its goal's areas, [] for one no goal holds, or null when `paths` couldn't be read.
+    areasOutside: (project, { pr, paths }) => {
+      const runId = readVerdicts(project).opened?.[pr]?.runId;
+      const order = typeof runId === 'string' ? storeOf(project).load(runId) : null;
+      if (!order || !areasNow(project, order)) return [];
+      return Array.isArray(paths) ? reachesOutside(project, order, pr, paths) : null;
+    },
+    // Whether the director allowed that head past the areas.
+    areasAllowed: (project, pr, head) => areaAnswer(goalViews(project), readVerdicts(project).opened?.[pr]?.work, head) === ALLOW_ONCE,
+    // The permit refused a pull request marked ready at a new head: it goes back to a card, or the queue would only sweep it again.
+    holdAreas: (project, { pr, head, paths }) => {
+      const kept = readVerdicts(project).ready[pr];
+      if (kept) keepHeld(project, pr, { ...kept, head, paths });
+    },
+    // A held pull request is answered: `ready` marks it ready at the head it was held at; anything else lets go of it.
+    settleAreas: (project, pr, how) => {
+      const verdicts = readVerdicts(project);
+      const kept = verdicts.areasHeld[pr];
+      if (!kept) return;
+      const { [pr]: _gone, ...areasHeld } = verdicts.areasHeld;
+      const { paths: _paths, fix: _fix, ...record } = kept;
+      keepVerdicts(project, { ...verdicts, areasHeld, ...(how === 'ready' ? { ready: { ...verdicts.ready, [pr]: record } } : {}) });
     },
     // The fix-main runs whose fix the helper added.
     fixedRuns: (project) => Object.keys(readVerdicts(project).fixed ?? {}),
@@ -590,6 +666,13 @@ export function engineRoutes({
         const run = runOf(runId);
         return run ? { ok: true, order: orderNow(run) } : { ok: false, refused: NO_ORDER };
       }),
+      // A run's areas, for the tool guard, whose hook has the run's id from its process and no ticket to show. It tells
+      // nothing else of the order and changes nothing. A run with no order, as the merge queue's, has no areas.
+      '/engine/areas': async ({ runId } = {}) => {
+        if (!isRunId(runId)) return { ok: false, refused: NO_ORDER };
+        const run = runOf(runId);
+        return { ok: true, areas: run ? areasNow(run.project, run.order) : null };
+      },
     },
   };
 }

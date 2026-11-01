@@ -23,7 +23,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { dispatch, MERGE_WORK, MERGE_QUEUE_EVERY_MS } from './dispatcher.js';
-import { reservedUnreadWords, LIMIT_HOLD_WORDS, noCardBehindWords, restartRefusedWords, restartCardWords, restartUnsureWords, restartStrandedWords, failedCardWords, prLeftOpenWords, wakeLateWords, STOPPED_RESTART_WORDS, ORPHAN_LEFT_WORDS, RESTART_UNSURE_AGAIN, START_ANYWAY, cutOffStoppedWords, cutOffWords, waitsOnItselfWords, startAnywayWords, startRefusedWords, startCardWords, unmarkedPrWords, START_STOP_SAYS, NO_FIX_TESTS, NO_FIX_ORDER, noFixWords, queueStuckWords, QUEUE_STUCK_WHY, QUEUE_PASSED_WORDS, requestsUsedWords, REQUESTS_UNCONFIRMED_WORDS, requestsStoppedWords } from './words.js';
+import { reservedUnreadWords, LIMIT_HOLD_WORDS, noCardBehindWords, restartRefusedWords, restartCardWords, restartUnsureWords, restartStrandedWords, failedCardWords, prLeftOpenWords, areasInScopeWords, areaCardWords, AREA_CARD_WHY, ALLOW_ONCE_SAYS, areaStoppedWords, wakeLateWords, STOPPED_RESTART_WORDS, ORPHAN_LEFT_WORDS, RESTART_UNSURE_AGAIN, START_ANYWAY, cutOffStoppedWords, cutOffWords, waitsOnItselfWords, startAnywayWords, startRefusedWords, startCardWords, unmarkedPrWords, START_STOP_SAYS, NO_FIX_TESTS, NO_FIX_ORDER, noFixWords, queueStuckWords, QUEUE_STUCK_WHY, QUEUE_PASSED_WORDS, requestsUsedWords, REQUESTS_UNCONFIRMED_WORDS, requestsStoppedWords } from './words.js';
 import { workOrder } from './order.js';
 import { limitsFor } from './caps.js';
 import { ENGINE_QUESTIONS } from './router.js';
@@ -34,10 +34,12 @@ import { topCard, holdsUpCount, noCardBehind, deadEnds, waitsOnItself } from './
 import { STOP_LABEL, MORE } from './runner.js';
 import { OWNER_LOST, retryDue, resumeRun, triedList } from './recovery.js';
 import { since, endedBy } from '../foreman/queue.js';
+import { areasOf, fixAreas } from './goal.js';
+import { areaAnswer, areaQuestion, ALLOW_ONCE } from './areas.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const isText = (x) => typeof x === 'string' && x.trim() !== '';
-const EMPTY = () => ({ mergeRun: null, mergeRuns: [], lastStart: null, seenReady: [], queueDue: false, sentBack: {}, acted: {}, clashAsked: {}, reds: {}, redActed: {}, redAsked: {}, redNoted: {}, requestsAsked: null, requestsFor: null, queueFault: null, unmarkedSeen: {}, noTestsSaid: false, fixes: {}, features: {}, shipped: {}, closedPrs: [], reserved: {}, released: {}, stranded: {}, topCard: null, noCardSaid: {}, quietSeen: {}, owed: {}, cutOffAsked: {}, cutOffFor: {}, waived: {}, returning: [], admitted: [], carryOver: {}, restartCards: 0, limitSaid: false });
+const EMPTY = () => ({ areas: {}, allowed: {}, mergeRun: null, mergeRuns: [], lastStart: null, seenReady: [], queueDue: false, sentBack: {}, acted: {}, clashAsked: {}, reds: {}, redActed: {}, redAsked: {}, redNoted: {}, requestsAsked: null, requestsFor: null, queueFault: null, unmarkedSeen: {}, noTestsSaid: false, fixes: {}, features: {}, shipped: {}, closedPrs: [], reserved: {}, released: {}, stranded: {}, topCard: null, noCardSaid: {}, quietSeen: {}, owed: {}, cutOffAsked: {}, cutOffFor: {}, waived: {}, returning: [], admitted: [], carryOver: {}, restartCards: 0, limitSaid: false });
 // The dispatcher's own questions take numbers from here, apart from the card router's.
 const OWN_QUESTIONS = ENGINE_QUESTIONS + 90000;
 export { MERGE_WORK };
@@ -149,9 +151,11 @@ export function orderFor(entry, { settings = {}, raised = false, config = {}, an
 //   no host, and `moving()` whether a move to a host is under way, which holds new work as All stop does.
 // - `branchPaths({ runId, branch })` every path a run's branch has changed so far, or null when it can't be read.
 // - `notReady(pr)` takes a pull request off what `readyOf` lists: the director sent it back, so only its rework marks it again.
+// - `areasHeld()` the pull requests a goal's areas hold back, { [pr]: { head, runId, showFirst, work, paths, fix? } }; and
+//   `settleAreas(pr, how)` lets go of one: 'ready' marks it ready, and 'stop', 'fix' and 'gone' only take it off the list.
 // - `engine.liveRunOf({ work, since })`, where the engine has it, says of a start that may have happened: { runId },
 //   null for none, undefined when it can't say. Without it the answer is undefined, so a card comes and not a second start.
-export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped: allStop = () => false, moving = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), spentThisMonth = () => 0, mainGreen = async () => null, stoppedRuns = () => [], fixedRuns = () => [], prMerged = async () => null, prState = null, designOf = () => null, orderOf = () => null, repoOf = () => null, repoName = () => null, queueFolder = async () => ({ ok: false, refused: 'no folder for the merge queue' }), queuePlace = null, openedBy = () => null, localQueue = null, isLocal = () => true, onCard = () => {}, branchPaths = async () => [], notReady = () => {} } = {}) {
+export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped: allStop = () => false, moving = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), spentThisMonth = () => 0, mainGreen = async () => null, stoppedRuns = () => [], fixedRuns = () => [], prMerged = async () => null, prState = null, designOf = () => null, orderOf = () => null, repoOf = () => null, repoName = () => null, queueFolder = async () => ({ ok: false, refused: 'no folder for the merge queue' }), queuePlace = null, openedBy = () => null, localQueue = null, isLocal = () => true, onCard = () => {}, branchPaths = async () => [], notReady = () => {}, areasHeld = () => ({}), settleAreas = () => {} } = {}) {
   const stopped = () => allStop() || moving();
   let state = readState(file);
   // The pieces with a card of the card router's open, from the runner, which is built after this.
@@ -248,7 +252,13 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     let order;
     try { order = orderFor({ ...entry, work: { ...entry.work, key: work } }, { settings: settings() ?? {}, raised, config: config() ?? {}, answers, tried: carryOn ? triedBefore(views, work) : [] }); } catch (error) { return { ok: false, refused: error.message }; }
     if (order.lane !== lane) return { ok: false, refused: 'the work\'s lane changed' };
-    return start({ project, order: withTail(order, checkTail), ...(branch ? { branch } : {}), carryOn });
+    return start({ project, order: withAreas(withTail(order, checkTail), views), ...(branch ? { branch } : {}), carryOn });
+  }
+
+  // An order with the areas of the goal its piece belongs to, in the guard's terms and in the run's words.
+  function withAreas(order, views) {
+    const areas = areasOf(views, order.work);
+    return areas === null ? order : { ...order, areas, notInScope: [...order.notInScope, areasInScopeWords(areas)] };
   }
 
   // What this piece's earlier runs failed at, for a fresh run on its branch. An order that can't be read costs only its checks.
@@ -330,7 +340,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     let order;
     const args = { entry: { ...entry, work: { ...entry.work, key: work } }, design, config: config() ?? {}, settings: settings() ?? {}, raised, answers, tried: carryOn ? triedBefore(views, work) : [] };
     try { order = step.finish ? finishOrder({ ...args, progress }) : sliceOrder({ ...args, n: step.slice }); } catch (error) { return { ok: false, refused: error.message }; }
-    const got = await start({ project, order: withTail(order, checkTail), ...(branch ? { branch } : {}), carryOn });
+    const got = await start({ project, order: withAreas(withTail(order, checkTail), views), ...(branch ? { branch } : {}), carryOn });
     if (got?.ok && typeof got.runId === 'string') {
       kept.started.push(got.runId);
       keep();
@@ -728,6 +738,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       let order;
       try {
         order = fixOrder(incident, { config: config() ?? {}, settings: settings() ?? {}, revert: decided.revert === true });
+        const areas = fixAreas(views);
+        if (areas !== null) order = { ...order, areas };
       } catch {
         if (!kept.noFix || toldNoFix === FIX_FORWARD) await noFixCard(incident, kept);
         return;
@@ -1391,6 +1403,73 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     }
   }
 
+  // Each pull request a goal's areas hold back: one card for its head, and then what its answer asks. Allow this once is
+  // answered by a signed record, kept by head, so a new head asks again. The card's id says which head it is for, so an
+  // older card decides nothing here. A fix's own step carries its merge on the answer.
+  async function areaTick(views) {
+    if (stopped()) return;
+    await handAllowed(views);
+    const reports = isPlain(views.reports) ? views.reports : {};
+    const held = areasHeld() ?? {};
+    for (const pr of Object.keys(state.areas)) {
+      if (held[pr] === undefined) {
+        delete state.areas[pr];
+        keep();
+      }
+    }
+    for (const [pr, hold] of Object.entries(held)) {
+      const { work, head, paths, fix } = hold;
+      if (fix !== true && (reports[work]?.data?.outcome === 'merged' || endedBy(reports, work, views.work?.[work]?.work))) {
+        settleAreas(pr, 'gone');
+        continue;
+      }
+      const id = areaQuestion(work, head);
+      if (state.areas[pr]?.id !== id) {
+        state.areas[pr] = { id, work, head };
+        keep();
+      }
+      if (views.questions?.[id] === undefined) {
+        await askDirector('restart', {
+          id, work, level: 3, what: areaCardWords(titleOf(views, work), pr, paths), why: AREA_CARD_WHY,
+          options: [
+            { label: ALLOW_ONCE, says: ALLOW_ONCE_SAYS },
+            { label: STOP_HERE, says: `Nothing of it is added, and its files are free for other work. ${prLeftOpenWords(pr)}` },
+          ],
+          recommendation: STOP_HERE,
+        });
+        continue;
+      }
+      const label = areaAnswer(views, work, head);
+      if (fix === true && [ALLOW_ONCE, STOP_HERE].includes(label)) settleAreas(pr, 'fix');
+      else if (label === STOP_HERE) {
+        const words = areaStoppedWords(titleOf(views, work));
+        if (views.work?.[work]?.work?.data?.lane === 'feature') await endFeature(work, state.features[work] ??= {}, words);
+        else {
+          await write('report', { work, outcome: 'closed', summary: words, rulings: [] });
+          release(work, views);
+        }
+        settleAreas(pr, 'stop');
+      } else if (label === ALLOW_ONCE) {
+        // Kept before it is marked ready, so a crash between the two still hands it over.
+        if (!isLocal()) state.allowed[pr] = work;
+        keep();
+        settleAreas(pr, 'ready');
+      }
+    }
+    await handAllowed(views);
+  }
+  // Each pull request allowed on a host goes to the queue again, as an approved parked one does. A project in git alone
+  // needs only its ready record. Asked again on the next tick while a queue run is live.
+  async function handAllowed(views) {
+    for (const [pr, work] of Object.entries(state.allowed)) {
+      const got = await handBack({ pr: Number(pr) });
+      if (got?.waiting === true) continue;
+      if (got?.ok !== true && got?.gone !== true) await write('note', { about: 'engine', work, words: `${titleOf(views, work)}: ${got?.refused ?? 'the merge queue didn\'t take it'}.` });
+      delete state.allowed[pr];
+      keep();
+    }
+  }
+
   // Each tick, what stands behind work that can't start (scripts/engine/stuck.js). The note is written when the answer
   // changes; anything that moves or is about to means there is no top card, and All stop or an incident has its own.
   async function topTick(views, decided, going) {
@@ -1521,11 +1600,30 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     keep();
   }
 
+  // A parked pull request the director approved goes to the queue again. A hand-over writes a fresh work item, with no
+  // `park` in its record, so the queue judges it as new; where it asks, the approval answers for the head it was given.
+  // Never beside a live run, whose claim on the item this would write over, and never for work that has ended.
+  async function handBack({ pr }) {
+    if (await queueLive()) return { ok: false, waiting: true };
+    const kept = (readyOf() ?? {})[pr];
+    if (!isPlain(kept)) return { ok: false, refused: 'nothing records it as ready' };
+    const views = readViews() ?? {};
+    const reports = isPlain(views.reports) ? views.reports : {};
+    if (endedBy(reports, kept.work, views.work?.[kept.work]?.work) || ['merged', 'closed'].includes(await stateOf(pr))) return { ok: false, gone: true };
+    if (typeof engine.handOver !== 'function') return { ok: false, refused: 'the engine has no merge queue to hand it to' };
+    const where = repoOf();
+    if (!isText(where?.host)) return { ok: false, refused: 'the project\'s host can\'t be named' };
+    const repo = repoName();
+    const got = await engine.handOver({ project: folder, repo, pr, url: `https://${where.host}/${repo}/pull/${pr}`, runId: kept.runId, at: now().toISOString() });
+    return got?.ok === true ? { ok: true } : { ok: false, refused: got?.refused ?? 'the engine didn\'t take it' };
+  }
+
   async function tick() {
     await owedTick();
     await fixTick();
     // Trouble with a reservation or an entry costs a tick nothing: each is looked at again on the next.
     await returnTick(readViews() ?? {}).catch(() => {});
+    await areaTick(readViews() ?? {}).catch(() => {});
     try { retryTick(readViews() ?? {}); } catch { /* looked at again on the next tick */ }
     await cutOffAnswers(readViews() ?? {}).catch(() => {});
     await featureTick();
@@ -1790,23 +1888,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     onCards(fn) { if (typeof fn === 'function') routerCardsNow = fn; },
     // Who tells this of the pull requests the queue has left alone, { [pr]: head }: the runner.
     onParked(fn) { if (typeof fn === 'function') parkedPrs = fn; },
-    // A parked pull request the director approved goes to the queue again. A hand-over writes a fresh work item, with no
-    // `park` in its record, so the queue judges it as new; where it asks, the approval answers for the head it was given.
-    // Never beside a live run, whose claim on the item this would write over, and never for work that has ended.
-    async handBack({ pr }) {
-      if (await queueLive()) return { ok: false, waiting: true };
-      const kept = (readyOf() ?? {})[pr];
-      if (!isPlain(kept)) return { ok: false, refused: 'nothing records it as ready' };
-      const views = readViews() ?? {};
-      const reports = isPlain(views.reports) ? views.reports : {};
-      if (endedBy(reports, kept.work, views.work?.[kept.work]?.work) || ['merged', 'closed'].includes(await stateOf(pr))) return { ok: false, gone: true };
-      if (typeof engine.handOver !== 'function') return { ok: false, refused: 'the engine has no merge queue to hand it to' };
-      const where = repoOf();
-      if (!isText(where?.host)) return { ok: false, refused: 'the project\'s host can\'t be named' };
-      const repo = repoName();
-      const got = await engine.handOver({ project: folder, repo, pr, url: `https://${where.host}/${repo}/pull/${pr}`, runId: kept.runId, at: now().toISOString() });
-      return got?.ok === true ? { ok: true } : { ok: false, refused: got?.refused ?? 'the engine didn\'t take it' };
-    },
+    handBack,
     // Whether a pull request the director sent back can go to its piece: { ok }, { ok: false, gone } for work that has ended or
     // a pull request closed or merged, and { ok: false } when the host can't say, to be asked again on the next tick.
     async takeBack({ pr, work }) {

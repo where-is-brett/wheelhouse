@@ -3,8 +3,9 @@
 // `node hook-entry.js <event>`, with Copilot's camelCase input on stdin. It reads the input once and, in a
 // Wheelhouse project only, runs every Wheelhouse hook for that event in this one process, in order:
 //
-//   preToolUse           the harness check, the STOP guard, the lineage hold, then the tool guard once for each
-//                        input the translation gives (one per path of an apply_patch); the first refusal wins
+//   preToolUse           the harness check, the STOP guard, the lineage hold, then the tool guard and the areas guard
+//                        once for each input the translation gives (one per path of an apply_patch); the first
+//                        refusal wins
 //   userPromptSubmitted  the STOP word, then the board context
 //   sessionStart         the session start
 //   preCompact           records the compaction and answers nothing: Copilot compacts whatever a hook answers
@@ -56,6 +57,7 @@ const STEP_MODULES = Object.freeze({
   stopGuard: () => import('../../hooks/stop-guard.js'),
   lineageHold: () => import('../../hooks/lineage-hold.js'),
   toolGuard: () => import('../../hooks/tool-guard.js'),
+  areas: () => import('../../hooks/areas.js'),
   stopWord: () => import('../../hooks/stop-word.js'),
   boardContext: () => import('../../hooks/board-context.js'),
   sessionStart: () => import('../../hooks/session-start.js'),
@@ -116,7 +118,7 @@ async function runSteps(names, inputs, { event, steps, stepDeps, dir }) {
 const first = (inputs) => inputs.slice(0, 1);
 const each = (inputs) => inputs;
 const STEPS = Object.freeze({
-  preToolUse: [['stopGuard', first], ['lineageHold', first], ['toolGuard', each]],
+  preToolUse: [['stopGuard', first], ['lineageHold', first], ['toolGuard', each], ['areas', each]],
   userPromptSubmitted: [['stopWord', first], ['boardContext', first]],
   sessionStart: [['sessionStart', first]],
 });

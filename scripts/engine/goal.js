@@ -13,6 +13,7 @@
 // hash of its sheet (scripts/state/events.js); a later record of the same id signs nothing and changes nothing.
 import { dataHash } from '../state/events.js';
 import { matchGlob } from '../gate/glob.js';
+import { namesGuardrail } from '../gate/guardrails.js';
 import { SLUG } from '../lib/build-loop.js';
 import { checkProblem } from './order.js';
 import { MAX_PIECES, MAX_HOURS } from './goal-limits.js';
@@ -59,6 +60,9 @@ export function checkSheet(sheet, { now } = {}) {
 
   const { areas } = sheet;
   if (!isObject(areas) || !texts(areas.may) || !texts(areas.wontTouch)) return 'A goal\'s areas are two lists of paths, what it may touch and what it won\'t.';
+
+  const guardrail = areas.may.find(namesGuardrail);
+  if (guardrail !== undefined) return `${guardrail} is a guardrail, so it can't be listed under May touch: it still needs the director's signed approval.`;
 
   const checkFiles = sheet.checkFiles ?? [];
   if (!texts(checkFiles)) return 'A goal\'s check files are a list of paths.';
@@ -172,6 +176,26 @@ export function pieceCovered(goal, work, views) {
   const line = goal?.sheet?.pieces?.find((p) => p.work === work);
   const data = views?.work?.[work]?.work?.data;
   return line !== undefined && data !== undefined && dataHash(data) === line.hash;
+}
+
+// The areas an order of `work` takes, or null: { goal, since, may, wontTouch }, from the latest goal its `goalId` names, ended
+// or not, since the areas govern a goal's pull requests until each merges or closes; or the latest whose sheet covers it, as a
+// goalId is only a label. `since` is when the goal started: a pull request opened before it isn't held.
+export function areasOf(views, work) {
+  const goals = isObject(views?.goals) ? Object.entries(views.goals) : [];
+  const named = views?.work?.[work]?.work?.data?.goalId;
+  const found = goals.filter(([id, goal]) => id === named || pieceCovered(goal, work, views)).at(-1);
+  if (found === undefined) return null;
+  const [goal, { sheet, startedAt }] = found;
+  return { goal, since: startedAt, may: sheet.areas.may, wontTouch: sheet.areas.wontTouch };
+}
+
+// The areas of a fix for a red main line, or null: outside a goal's areas, but held by the check files of the goal in force
+// (section 6), with no `may`.
+export function fixAreas(views) {
+  const goal = goalInForce(views);
+  const files = goal?.sheet?.checkFiles ?? [];
+  return files.length > 0 ? { goal: goal.id, wontTouch: [...files] } : null;
 }
 
 // `views.goals`: { [id]: { sheet, hash, startedAt, ended, endAsked } }, from `sorted` (the events in order) and `starts`

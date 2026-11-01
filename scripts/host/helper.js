@@ -4212,6 +4212,7 @@ export async function startHelper({
     },
     checkTook: (project, { head, work }) => engineHosts.find((h) => h.project === project)?.checks.took(head, work),
     mainCheck: (project) => mainCheck(project),
+    goalViews: (project) => buildViews(listEvents(stateDir(project), { report: () => {} }), ownKeyOnly(), { now }),
   });
 
   // What a project's checks go by, from the host and the default branch and never from a change or a folder. What the
@@ -4395,17 +4396,23 @@ export async function startHelper({
     const views = buildViews(listEvents(stateDir(project), { report: () => {} }), enrolled, { now });
     const { review, approval } = await gateRecords({ project, number: call.pr, headSha: call.sha, views, adapter, compare: true }, ctx);
     let guardrail = true;
+    let paths = null;
     try {
       const changes = await readChanges({ project, number: call.pr, headSha: call.sha, defaultBranch }, ctx);
       guardrail = classifyChange({ paths: changes.paths, config: changes.config }).touchesGuardrails;
+      ({ paths } = changes);
     } catch (error) {
       if (error instanceof LookRefusal) throw error;
     }
+    // Files that can't be read count as outside a goal's areas. A head past them goes back to a card, as the sweep would only try it again.
+    const outside = call.kind === 'merge' ? engineRun.areasOutside(project, { pr: call.pr, paths }) : [];
+    const outsideAreas = (outside === null || outside.length > 0) && !engineRun.areasAllowed(project, call.pr, call.sha);
+    if (outsideAreas && outside !== null) engineRun.holdAreas(project, { pr: call.pr, head: call.sha, paths: outside });
     // Whether the work is shown first comes from the run that opened the pull request; one no run of the helper's
     // opened needs the director's approval, as shown-first work does.
     const opened = engineRun.openedOf(project, call.pr);
     const checked = call.kind === 'merge' ? await checkPermit(project, call.sha) : {};
-    return { ...base, enrolled, review, approval, incident: incidentFor(views, call.pr), shownFirst: opened ? opened.showFirst === true : true, level: opened?.level ?? null, guardrail, ...checked, stop: stopped() };
+    return { ...base, enrolled, review, approval, incident: incidentFor(views, call.pr), shownFirst: opened ? opened.showFirst === true : true, level: opened?.level ?? null, guardrail, outsideAreas, ...checked, stop: stopped() };
   }
   const broker = brokerRoutes({
     placeOf: placeEngineCall,
@@ -5179,6 +5186,8 @@ export async function startHelper({
       config: () => engineConfigOf(project, folder),
       start: (args) => engineRun.start(args),
       readyOf: () => engineRun.readyAll(project),
+      areasHeld: () => engineRun.areasHeld(project),
+      settleAreas: (pr, how) => engineRun.settleAreas(project, pr, how),
       spentThisMonth: () => requestsUsed(),
       mainGreen: () => mainGreen(project),
       stoppedRuns: () => stoppedRunsOf(project),

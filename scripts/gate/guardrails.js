@@ -68,6 +68,16 @@ import { AGENTS } from '../agents/names.js';
 // project's own Archon folder, `.archon/` (its settings and workflows), and Wheelhouse's pack of workflows.
 export const GUARDRAILS = ['.claude/**', '**/CLAUDE.md', '.mcp.json', ...AGENT_CONTROL, '.archon/**', 'engine/archon/pack/**'];
 export const CI_FILES = ['.github/workflows/**', '.github/actions/**', '.gitlab-ci.yml', '.gitlab/**'];
+
+// A real path a guardrail's pattern names, to try another pattern on: `.claude/**` gives `.claude/x`, `**/CLAUDE.md` gives
+// `CLAUDE.md`.
+const guardrailPath = (pattern) => [...pattern.split('/').filter((s) => s !== '**').map((s) => s.replace(/[*?]/g, 'x')), ...(pattern.endsWith('/**') ? ['x'] : [])].join('/');
+
+// Whether a pattern on a goal's sheet names a guardrail: it is one of their paths, or it takes one in, as `**` does.
+// `src/**` isn't refused for the `src/CLAUDE.md` it could hold: an area never lifts a guardrail's approval.
+export function namesGuardrail(pattern) {
+  return [...GUARDRAILS, ...CI_FILES].some((g) => matchGlob(g, pattern, { ignoreCase: true }) || matchGlob(pattern, guardrailPath(g), { ignoreCase: true }));
+}
 // A project that is itself a Claude Code plugin (its default branch holds .claude-plugin/plugin.json,
 // as Wheelhouse's own repository does) ships these files to every session that installs it: its
 // manifest and marketplace, hooks, skills, agents, commands, output styles and language servers. A

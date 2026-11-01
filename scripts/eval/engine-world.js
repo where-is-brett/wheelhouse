@@ -150,8 +150,15 @@ export async function openWorld({ engine: kind = 'fake', recordings = {}, now = 
       }
       return { runId, pr: opened.pr, head };
     },
+    // The mark-ready step of a run that `lane` took as far as its reviews: the helper's answer.
+    markReady: (work) => {
+      const runId = engine.liveRunOf({ work })?.runId;
+      return withTicket(client, ['--artefacts', engine.artefactsOf(runId)]).engine.ready({ runId });
+    },
     // `gh` as a run's step calls it, through the broker: { code, stdout, stderr }.
     broker: (argv, { cwd = folder } = {}) => client.broker.gh({ argv, cwd }),
+    // A run's areas, as the tool guard asks the helper for them.
+    areas: (args) => client.engine.areas(args),
     // The work orders the helper kept for the runs it started, oldest run first: what a run's steps are served.
     orders() {
       const dir = path.join(engineDirOf(stateDir(PROJECT)), 'orders');

@@ -97,6 +97,17 @@ export const cutOffWords = (title, by) => `${title} depends on ${named(by)}, whi
 export const waitsOnItselfWords = (title, by) => `${title} and ${named(by)} wait on each other, so none of them can start by itself. It waits until you say.`;
 export const startAnywayWords = (by) => `It takes its turn without ${named(by)}. What it was to build on isn't there, so it may fail or need redoing. This holds for this queueing only: queued again, it waits as before.`;
 export const unmarkedPrWords = (title, pr) => `${title} finished with pull request #${pr} open, but nothing has marked it ready to add, so it keeps its place and other work waits. It moves on once that pull request is added or closed.`;
+// A goal's areas (unattended goals design, section 6), in an order's words and on the card for a change that left them.
+export const areasInScopeWords = ({ may, wontTouch }) => `Anything outside the goal's areas.${Array.isArray(may) ? ` You may change only ${may.join(', ')}.` : ''}${wontTouch.length > 0 ? ` You won't touch ${wontTouch.join(', ')}.` : ''}`;
+const MOST_PATHS_SHOWN = 5;
+export function areaCardWords(title, pr, paths) {
+  const shown = paths.slice(0, MOST_PATHS_SHOWN).join(', ');
+  const left = paths.length - MOST_PATHS_SHOWN;
+  return `${title}, pull request #${pr}, changes files outside the areas you set for this goal: ${shown}${left > 0 ? ` and ${left} more` : ''}. It waits, and isn't added.`;
+}
+export const AREA_CARD_WHY = 'A change beyond the bounds you signed is yours to allow, at level 3, and Wheelhouse never decides it for you.';
+export const ALLOW_ONCE_SAYS = 'This version goes on to be added. If it changes again, you are asked again.';
+export const areaStoppedWords = (title) => `${title} stops here, as you chose, since it changed files outside the goal's areas.`;
 export const prLeftOpenWords = (pr) => `Pull request #${pr} stays open, and nothing of it is added.`;
 // Work that has never run, whose start was refused: said once, tried once more, then a card.
 export const startRefusedWords = (title, why) => `${title} couldn't start: ${why}. It keeps its turn, and it is tried once more shortly.`;

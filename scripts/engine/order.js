@@ -125,6 +125,10 @@ const isTried = (t) => isObject(t) && Object.keys(t).sort().join() === 'checks,f
 const isAnswer = (a) => isObject(a) && Object.keys(a).sort().join() === 'answer,question'
   && isText(a.question) && isText(a.answer) && a.question.length <= ANSWER_CHARS && a.answer.length <= ANSWER_CHARS;
 
+// A goal's areas on an order (scripts/engine/goal.js, areasOf and fixAreas).
+const areasFit = (a) => isObject(a) && isText(a.goal) && Array.isArray(a.wontTouch) && texts(a.wontTouch)
+  && (a.may === undefined || (Array.isArray(a.may) && texts(a.may))) && (a.since === undefined || isText(a.since));
+
 // Why `order` isn't a well-formed order, or null.
 export function checkOrder(order) {
   if (!isObject(order) || order.v !== ORDER_VERSION) return 'a work order must be a version 1 record';
@@ -158,6 +162,7 @@ export function checkOrder(order) {
   if (order.answers !== undefined && !(Array.isArray(order.answers) && order.answers.length <= MOST_ANSWERS && order.answers.every(isAnswer))) {
     return 'a work order\'s answers are each a question and its answer, in short text';
   }
+  if (order.areas !== undefined && !areasFit(order.areas)) return 'a work order\'s areas name their goal and what won\'t be touched, and may say what may be';
   if (order.tried !== undefined && !(Array.isArray(order.tried) && order.tried.length <= MOST_TRIED && order.tried.every(isTried))) return 'a work order\'s tried list is earlier runs, each its run, step, failure and checks, in short text';
   // A fix for a red main line names its incident (section 7.7); no other lane does.
   if (order.checkTail !== undefined && !(typeof order.checkTail === 'string' && order.checkTail.length <= MOST_CHECK_TAIL)) return 'a work order\'s check tail is text, 4 KB at most';
