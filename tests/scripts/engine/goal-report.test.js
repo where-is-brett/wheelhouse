@@ -299,7 +299,7 @@ test('a report checked line by line against its record', () => {
   const read = (name) => fs.readFileSync(new URL(`../../fixtures/goal-report/${name}`, import.meta.url), 'utf8');
   const { goal, views } = JSON.parse(read('views.json'));
   const text = goalReportText(goalReport({ goal, views, timeZone: TZ }));
-  assert.deepEqual(text.split('\n'), read('report.md').trimEnd().split('\n'));
+  assert.deepEqual(text.split('\n'), read('report.txt').trimEnd().split('\n'));
 });
 
 test('the briefing opens with the whole report once, then a line until each item is settled, then nothing', () => {
