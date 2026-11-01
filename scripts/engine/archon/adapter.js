@@ -401,9 +401,10 @@ export function archonAdapter({
         return { ok: true, runId: result.json.runId, branch: result.json.branch ?? order.branch ?? null };
       }
       const error = String(result.json?.error ?? result.stderr ?? '').trim().split('\n')[0];
-      // No reply in time: the run may have begun all the same (check 85).
       const said = refusedWith(`The engine didn't start the run${error ? ` (${error})` : ''}`);
-      return result.timedOut === true ? { ...said, uncertain: true } : said;
+      // Only the engine's own refusal is one. No reply in time, a command that died or words that can't be read may have
+      // left a run begun all the same (check 85).
+      return result.json?.ok === false && result.timedOut !== true && result.stopped !== true ? said : { ...said, uncertain: true };
     },
 
     // The live run of `work` begun since `since`, for a start that may have happened: { runId }, null for none, undefined
@@ -469,11 +470,12 @@ export function archonAdapter({
     },
 
     // The run's record (record.js), with `ownerPid`, the process that owns the run, and `folder`, the worktree it
-    // works in (worktreeOf, or null); status 'unknown' when Archon has no such run.
+    // works in (worktreeOf, or null); status 'unknown' when Archon has no such run, and with `unread` too when it gave no
+    // answer at all, which says nothing of the run.
     async inspect(runId) {
       const result = await cli(['workflow', 'get', runId, '--verbose'], { json: true, timeout: CALL_MS });
       const json = result.code === 0 && result.json?.ok !== false ? result.json : null;
-      return { ...readRecord(json, { rates: requestRates(readAccountModels(engine)) }), folder: worktreeOf(json?.working_path, { home, worktreeBases }) };
+      return { ...readRecord(json, { rates: requestRates(readAccountModels(engine)) }), folder: worktreeOf(json?.working_path, { home, worktreeBases }), ...(result.json ? {} : { unread: true }) };
     },
 
     // Each finished step's whole output, by its id (record.js), for the helper to sign a review from Archon's own

@@ -47,6 +47,7 @@ function setup({ outputs = {}, changes = config, open = [INCIDENT], merge } = {}
       push: async () => ({ ok: true, branch: 'wh/fix' }),
       open: async () => ({ pr: 60, url: 'https://github.com/acme/web/pull/60', head: HEAD }),
       repo: () => 'acme/web',
+      repoHost: () => world.repoHost ?? null,
     },
     provenance: async () => {},
     incidentOf: (project, id) => world.open.find((i) => i.id === id && i.kind === 'red-main') ?? null,
@@ -63,9 +64,20 @@ function setup({ outputs = {}, changes = config, open = [INCIDENT], merge } = {}
     await routes['/engine/open-pr']({ runId, cwd: '/p/.worktrees/wh-fix', title: 'Mend the totals', body: 'Body' });
     for (const step of ['review-standards', 'review-spec']) await routes['/engine/review']({ runId, step });
   };
-  return { routes, made, calls, world, startFix, reach };
+  return { routes, made, engine, calls, world, startFix, reach };
 }
 const merges = (t) => t.calls.filter((c) => c.call === 'merge');
+
+test('a hand-over to the merge queue names the project\'s own host', async () => {
+  const t = setup();
+  t.world.repoHost = 'git.example.org';
+  let item = null;
+  t.engine.handOver = async (given) => { item = given; return { ok: true }; };
+  await t.startFix();
+  await t.reach();
+  assert.equal((await t.routes['/engine/ready']({ runId: 'run-1' })).ok, true);
+  assert.equal(item.url, 'https://git.example.org/acme/web/pull/60');
+});
 
 test('mergeFix merges the run\'s own fix for the open incident', async () => {
   const t = setup();

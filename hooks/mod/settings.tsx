@@ -126,13 +126,8 @@ async function askFrontDesk($: EngineInterface, key: string, rowLabel: string) {
   } catch {
     // The next session start releases it.
   }
-  if (!(await handed)) {
-    try {
-      await mark($, key, false)
-    } catch {
-      // Opening the settings view again unmarks it.
-    }
-  }
+  // Not waited for, as a press's prompt isn't (cards.tsx).
+  void handed.then((was) => (was ? undefined : mark($, key, false))).catch(() => undefined)
 }
 
 // What a row is, as the bridge sent it: a key and a name, else it isn't drawn.
