@@ -81,7 +81,9 @@ export async function submitAll($: EngineInterface, prompts: readonly string[], 
 
 // A press once taken: said at once, sent with the session's folder, the bridge's words said (or
 // that it couldn't be recorded), the press released so the buttons are live again, `after`
-// started, and each prompt the bridge gave handed to the front desk. Never throws.
+// started, and each prompt the bridge gave handed to the front desk, which isn't waited for: a
+// submit resolves as the prompt's own turn starts, and a turn under way would hold the press past
+// the engine's ten seconds for a hook (check 88). Never throws.
 export async function carry($: EngineInterface, request: Record<string, unknown>, taken: string, done: () => Promise<unknown>, after: After) {
   let answer: Answer | null = null
   try {
@@ -98,7 +100,7 @@ export async function carry($: EngineInterface, request: Record<string, unknown>
   if (answer?.says !== undefined) $.ui.toast(answer.says)
   else if (answer === null || !answer.ok) $.ui.toast(FAILED)
   void after().catch(() => undefined)
-  await submitAll($, answer?.submit ?? [])
+  void submitAll($, answer?.submit ?? [])
 }
 
 // A press on one of the Safekeeping row's buttons: the bridge signs it, and the helper does it.
@@ -131,11 +133,8 @@ async function pressWhy($: EngineInterface, card: Card, turn: boolean) {
   if (turn) {
     if (!(await claim($, { on: id, label: WHY }))) return
     void ask($, quiet)
-    try {
-      await submitAll($, [`${PANE_LEAD} the director pressed ${WHY} on card ${typeof card.n === 'number' ? card.n : id} (${id}).`])
-    } finally {
-      await release($)
-    }
+    void submitAll($, [`${PANE_LEAD} the director pressed ${WHY} on card ${typeof card.n === 'number' ? card.n : id} (${id}).`])
+    await release($)
     return
   }
   const open = (await $.state.get(WHY_OPEN)).value === id

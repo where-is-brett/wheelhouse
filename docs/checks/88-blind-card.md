@@ -34,6 +34,8 @@ Design note 88 (delegated decisions, D4). About one question card in five goes t
 
 Part 1d can show blind cards on the pane, in chat and on the phone. The change it needs is the card check's: accept zero recommended options when the card is marked blind, and keep refusing two or more. The press hook's ten seconds is for the main session to weigh; no mod change was made here.
 
+**Timed afterwards, 1 November 2026.** On a real helper through the real bridge, with an ordinary card and a project of 300 records, a press took 130 to 540 milliseconds. `/state/write` pushes nothing on that path, the helper is given 3 seconds, and the bridge stops at 5, so the helper can't be what ran long. What can is the mod's wait after the bridge has answered: it waited on `$.prompt.submit`, which resolves as the prompt's own turn starts (check 40). A press during a running turn therefore held the hook until that turn ended, which fits the pane message arriving with the hook still running. The mod no longer waits on it. The real pane wasn't run, so that this is what check 88 saw is a reading, not a measure.
+
 ## Needs the director
 
 Nothing more. The director's clicks are in the evidence. The scratch project is in the system's temporary folder.

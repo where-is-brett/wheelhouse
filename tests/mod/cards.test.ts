@@ -68,6 +68,7 @@ function world(on: any, bridge: (request: any) => Reply, tick: () => object = ()
   const current = { session: SESSION }
   let sessions = 0
   const seen = { requests: [] as any[], ticks: [] as any[], toasts: [] as string[], submits: [] as any[] }
+  const turn = { ended: Promise.resolve() as Promise<unknown> }
   on('session.id', () => ({ value: current.session }))
   on('session.root', () => ({ value: ROOT }))
   on('session.usage', () => ({ value: { startedAt: 0, context: CONTEXT, rateLimits: [], cost: undefined } }))
@@ -96,7 +97,12 @@ function world(on: any, bridge: (request: any) => Reply, tick: () => object = ()
     if (got.exitCode !== undefined) return { value: { ...RUN_RESULT, exitCode: got.exitCode, stdout: '' } }
     return { value: { ...RUN_RESULT, stdout: `${JSON.stringify(got)}\n` } }
   })
-  on('prompt.submit', ($: any, e: any) => { seen.submits.push(e); return { text: e.text, origin: e.origin } })
+  on('prompt.submit', async ($: any, e: any) => {
+    seen.submits.push(e)
+    // A session in the middle of a turn: the call resolves as the prompt's own turn starts (check 40).
+    await turn.ended
+    return { text: e.text, origin: e.origin }
+  })
   on('session.start', ($: any, e: any) => ({ cwd: e.cwd }))
   on('turn.start', ($: any, e: any) => ({ turnId: e.turnId }))
   on('turn.complete', ($: any, e: any) => ({ text: e.answer }))
@@ -110,7 +116,7 @@ function world(on: any, bridge: (request: any) => Reply, tick: () => object = ()
     await $.session.start({ cwd: ROOT, surface, isInteractive: true })
     await clock.settle()
   }
-  return { seen, clear, start, clock }
+  return { seen, clear, start, clock, turn }
 }
 
 const mount = ($: any, surface: string) => $.ui.mount({ plugin: 'wheelhouse', surface, component: 'Pane', requestId: PANE_ID, props: PANE_PROPS })
@@ -252,6 +258,26 @@ test('a double click on a card button, a moment apart, sends once', async ($, on
     await pressed
     expect(seen.requests).toHaveLength(1)
     await ui.unmount()
+  }
+})
+
+test('a press is done before the turn its prompt starts', async ($, on) => {
+  const prompt = 'Wheelhouse pane: the director chose Approve on card 1 (card-1).'
+  const { seen, clear, start, clock, turn } = world(on, () => ({ ok: true, says: 'Recorded', submit: [prompt] }))
+  for (const surface of SURFACES) {
+    await start($, surface)
+    const ui = await mount($, surface)
+    clear()
+    let ended = () => {}
+    turn.ended = new Promise((resolve) => { ended = () => resolve(undefined) })
+    let done = false
+    const pressed = Promise.resolve(ui.press({ key: cardKey('card-1', 'Approve') })).then(() => { done = true })
+    await clock.settle()
+    expect(seen.submits.map((p: any) => p.text)).toEqual([prompt])
+    expect(done).toBe(true)
+    ended()
+    await pressed
+    turn.ended = Promise.resolve()
   }
 })
 
