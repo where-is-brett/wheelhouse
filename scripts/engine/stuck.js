@@ -6,7 +6,7 @@
 // by itself at the reset, so it counts as moving and no card rises over it.
 
 // The holds that name what holds them. Any other reason is its own: an All stop, a usage cap, an approval not given, or a
-// goal's (`goal`, `goal-ended`), which keeps work out by design and needs no line of its own.
+// goal's (`goal`, `goal-ended`, `spend`), which keeps work out by design and needs no line of its own.
 const FOLLOWED = new Set(['parked', 'clash', 'dependency']);
 const followed = (hold) => (Array.isArray(hold) ? hold : []).filter((h) => FOLLOWED.has(h?.why) && Array.isArray(h.by));
 

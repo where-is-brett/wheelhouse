@@ -454,3 +454,11 @@ test('a tick is honoured only on a small visible piece of the goal in force', ()
   assert.deepEqual(look(PAGE), { goalId: 'g' }, 'nothing to waive');
   assert.deepEqual(look({ ...PAGE, visible: true }, ENDING), { goalId: 'g' }, 'an ended goal takes its tick with it');
 });
+
+test('a piece whose cap doesn\'t fit is held', () => {
+  const goal = { id: 'g', pieces: ['a'], only: true, until: '2026-11-01T18:00:00.000Z' };
+  const at = (left, cap, lane = 'small') => gateStart({ goal, work: 'a', lane, via: 'start', meter: { reached: null, left }, cap, now: new Date('2026-11-01T10:00:00.000Z') });
+  assert.deepEqual(at(99, 100), { goalHeld: true, goal: 'g', why: 'spend' });
+  assert.equal(at(100, 100), null, 'a cap that just fits starts');
+  assert.equal(at(99, 100, 'fix-main'), null, 'a fix isn\'t a piece: spend holds it only once reached');
+});

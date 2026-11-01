@@ -49,7 +49,8 @@ export const MERGE_WORK = 'merge-queue';
 // `requeue` is named only when it has a place, and otherwise is asked about again on the next tick. `stoppedFeatures` are
 // the features whose run the director or All stop ended, which stay stopped until a Carry on and hold no place meanwhile. `waived` are the pieces the director
 // let start without what they depend on. `limited` says a run is parked at a usage limit. `goal` is goalRule's answer
-// (scripts/engine/goal.js), { pieces, only, startsStopped }, or null. An entry with `heldBy` is one the goal's gate held: it is
+// (scripts/engine/goal.js), { pieces, only, startsStopped, spendHolds? }, or null, `spendHolds` being the lanes the goal's spend
+// leaves no room for. An entry with `heldBy` is one the goal's gate held: it is
 // passed over, so it holds no place and counts against nothing, and keeps its files.
 export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeatures = {}, settings = {}, stop = false, incident = false, capsReached = false, limited = false, mergeQueue = {}, requests = null, sentBack = [], waiting = [], reserved = {}, returning = [], admitted = [], stoppedFeatures = [], waived = [], goal = null, now = new Date() } = {}) {
   const lanes = Array.isArray(settings.engineLanes) ? settings.engineLanes : ['quick'];
@@ -185,6 +186,7 @@ export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeat
     let why = stopping;
     if (!why && goal?.only === true && !ofGoal(id)) why = 'goal';
     if (!why && goal?.startsStopped === true && ofGoal(id)) why = 'goal-ended';
+    if (!why && ofGoal(id) && goal?.spendHolds?.includes(lane)) why = 'spend';
     if (!why && needsApproval && e.approved !== true && !ofGoal(id)) why = 'unapproved';
     const unmerged = waived.includes(id) ? [] : dependsOn.filter((dep) => reports?.[dep]?.data?.outcome !== 'merged');
     if (!why && unmerged.length > 0) {

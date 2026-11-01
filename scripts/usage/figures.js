@@ -205,16 +205,16 @@ function unusualOf(kind, items, factor) {
   return found.sort((a, b) => b.ratio - a.ratio);
 }
 
-// The weekly allowance's share used, while its window is the current one: { share, shareAt },
+// The weekly allowance's share used, while its window is the current one: { share, shareAt, resetsAt },
 // each null when there is none.
 function shareOf(allowance, nowMs) {
   const weekly = allowance?.windows.find((window) => window.kind === 'seven_day') ?? null;
   const resetMs = weekly && typeof weekly.resetsAt === 'string' ? Date.parse(weekly.resetsAt) : NaN;
   if (weekly && Number.isFinite(weekly.percentUsed) && Number.isFinite(resetMs) && resetMs > nowMs
     && Date.parse(allowance.at) > resetMs - WEEK_MS) {
-    return { share: weekly.percentUsed, shareAt: allowance.at };
+    return { share: weekly.percentUsed, shareAt: allowance.at, resetsAt: weekly.resetsAt };
   }
-  return { share: null, shareAt: null };
+  return { share: null, shareAt: null, resetsAt: null };
 }
 
 // weeklyShare({ now }): the share alone, from the allowance file and nothing else, for a reader
