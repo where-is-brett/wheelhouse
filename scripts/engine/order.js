@@ -159,6 +159,7 @@ export function checkOrder(order) {
     return 'a work order\'s answers are each a question and its answer, in short text';
   }
   if (order.tried !== undefined && !(Array.isArray(order.tried) && order.tried.length <= MOST_TRIED && order.tried.every(isTried))) return 'a work order\'s tried list is earlier runs, each its run, step, failure and checks, in short text';
+  if (order.goalId !== undefined && !(typeof order.goalId === 'string' && SLUG.test(order.goalId))) return 'a work order names its goal as a short slug';
   // A fix for a red main line names its incident (section 7.7); no other lane does.
   if (order.checkTail !== undefined && !(typeof order.checkTail === 'string' && order.checkTail.length <= MOST_CHECK_TAIL)) return 'a work order\'s check tail is text, 4 KB at most';
   if (order.incident !== undefined && !(order.lane === 'fix-main' && typeof order.incident === 'string' && SLUG.test(order.incident))) return 'only a fix-main order names an incident, as a short slug';
@@ -184,7 +185,7 @@ export function bindingsOf(roles) {
 // settings as `config` ({ pages?, styleGuide?, testCommand? }); `caps` ({ minutes, tokens }) in place of the lane's own, as
 // the project's settings give them; `answers` ([{ question, answer }]) the director's answers to the work's earlier
 // questions, from the helper's own record; `extra` a feature's fields ({ slice, flag, demo, feature, showFirst }), from
-// the core's reading of the approved design, with `showFirst` in place of the work's own. Throws, in plain words, on
+// the core's reading of the approved design, with `showFirst` in place of the work's own, and `goalId`, the goal it is for. Throws, in plain words, on
 // anything an order can't be.
 export function workOrder({ work, rulings = [], routing = {}, config = {}, caps = null, answers = [], extra = {} } = {}) {
   if (!isObject(work)) throw new Error('A work order needs the work it is for');
@@ -211,7 +212,7 @@ export function workOrder({ work, rulings = [], routing = {}, config = {}, caps 
       answer: typeof a?.answer === 'string' ? a.answer.slice(0, ANSWER_CHARS) : a?.answer,
     })),
   };
-  for (const key of ['slice', 'flag', 'demo', 'feature', 'tried']) if (extra?.[key] !== undefined) order[key] = structuredClone(extra[key]);
+  for (const key of ['slice', 'flag', 'demo', 'feature', 'tried', 'goalId']) if (extra?.[key] !== undefined) order[key] = structuredClone(extra[key]);
   if (typeof extra?.showFirst === 'boolean') order.showFirst = extra.showFirst;
   const problem = checkOrder(order);
   if (problem) throw new Error(problem.charAt(0).toUpperCase() + problem.slice(1));

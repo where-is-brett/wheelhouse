@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { wayBack, quiet, forever, failing, legFails, legFinishes, legGoes, atLimit, asking as asks } from '../helpers/way-back.js';
+import { dataHash } from '../../scripts/state/events.js';
 import { readRecording } from '../../scripts/engine/fake.js';
 import { TRY_AGAIN, STOP_HERE, LEAVE_IT, MERGE_WORK } from '../../scripts/engine/dispatch-run.js';
 import { STOP_LABEL } from '../../scripts/engine/runner.js';
@@ -711,6 +712,30 @@ test('a second loss brings a card with Carry on and Stop', async () => {
   assert.equal(w.runsOf('a').length, 3);
   assert.equal(w.starts.at(-1).carryOn, true);
   assert.deepEqual(w.runner.carried(w.runsOf('a')[2]).runs, [w.runsOf('a')[0], second]);
+});
+
+test('after a goal\'s end the director\'s Carry on starts its piece, and a carry-on nobody answered doesn\'t', async () => {
+  const goalOf = (w) => { w.goals.g = { sheet: { until: '2026-10-29T18:00:00.000Z', pieces: [{ work: 'a', hash: dataHash(w.work.a.work.data) }] }, hash: 'signed', startedAt: '2026-10-29T09:00:00.000Z', ended: null, endAsked: null }; };
+  const ending = { ending: 'time', at: '2026-10-29T10:00:00.000Z', spent: {} };
+
+  const answered = wayBack({ recordings: { a: [forever(), forever(), forever()] } });
+  answered.put('a');
+  goalOf(answered);
+  await answered.tick(2);
+  await lose(answered, 'a', 4);
+  await lose(answered, 'a', 6);
+  answered.goals.g.ended = ending;
+  answered.answer('a', 'Carry on');
+  await answered.tick(4);
+  assert.equal(answered.runsOf('a').length, 3);
+
+  const alone = wayBack({ recordings: { a: [forever(), forever()] } });
+  alone.put('a');
+  goalOf(alone);
+  await alone.tick(2);
+  alone.goals.g.ended = ending;
+  await lose(alone, 'a', 4);
+  assert.equal(alone.runsOf('a').length, 1, 'the ended goal\'s piece waits for a new sheet');
 });
 
 test('the Stop on that card lets the piece go, and it stays stopped', async () => {
