@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { dataHash } from '../../../scripts/state/events.js';
-import { sheetHash, checkSheet, narrowed, goalInForce, pieceCovered, goalsView as viewOf, startProblem } from '../../../scripts/engine/goal.js';
+import { sheetHash, checkSheet, narrowed, goalInForce, pieceCovered, goalsView as viewOf, startProblem, goalRule, gateStart, orderGoal } from '../../../scripts/engine/goal.js';
 import { MAX_PIECES, MAX_HOURS, GOAL_ENDINGS } from '../../../scripts/engine/goal-limits.js';
 
 const NOW = new Date('2026-11-01T10:00:00.000Z');
@@ -333,4 +333,124 @@ test('startProblem asks its checks in order, and null when all pass', () => {
   // A goal that ended before now doesn't hold the way; one ending later does.
   assert.equal(startProblem({ ...base, goals: { other: { ended: { at: hoursAfter(-1) } } } }), null);
   assert.match(startProblem({ ...base, goals: { other: { ended: { at: hoursAfter(1) } } } }), /one goal runs at a time/);
+});
+
+// A goal's work only, and the gate at the start of every run (unattended goals design, section 6; build plan, choice 9).
+const UNTIL = hoursAfter(8);
+const entry = (extra = {}) => ({ sheet: sheet({ until: UNTIL }), hash: 'signed', startedAt: NOW.toISOString(), ended: null, endAsked: null, ...extra });
+const ENDING = { ending: 'time', at: hoursAfter(9), spent: {} };
+const worksOf = (...list) => Object.fromEntries(list.map((data) => [data.id, { work: { at: NOW.toISOString(), data } }]));
+const rule = { id: 'g', pieces: ['export-page'], only: true, startsStopped: false, until: UNTIL };
+const lateRule = { id: 'g', pieces: ['export-page'], only: false, startsStopped: true };
+
+test('a goal\'s rule lists the covered pieces, in the sheet\'s order', () => {
+  const views = { goals: { g: entry() }, work: worksOf(PAGE, FILE) };
+  assert.deepEqual(goalRule(views, NOW), { id: 'g', pieces: ['export-page', 'export-file'], only: true, startsStopped: false, until: UNTIL, state: 'running' });
+});
+
+test('a piece changed since the signature drops out of the rule', () => {
+  const views = { goals: { g: entry() }, work: worksOf({ ...PAGE, title: 'Another page' }, FILE) };
+  assert.deepEqual(goalRule(views, NOW).pieces, ['export-file']);
+});
+
+test('past until the goal\'s own starts have stopped, and only its work may run', () => {
+  const late = new Date(Date.parse(UNTIL) + 1000);
+  const got = goalRule({ goals: { g: entry() }, work: worksOf(PAGE, FILE) }, late);
+  assert.equal(got.startsStopped, true);
+  assert.equal(got.only, true);
+});
+
+test('after the end the rule holds what is unfinished, and other work may start', () => {
+  const views = {
+    goals: { g: entry({ ended: ENDING }) }, work: worksOf(PAGE, FILE),
+    reports: { 'export-file': { at: hoursAfter(1), data: { outcome: 'merged' } } },
+  };
+  assert.deepEqual(goalRule(views, NOW), { id: 'g', pieces: ['export-page'], only: false, startsStopped: true });
+});
+
+test('an ended goal with nothing unfinished holds nothing', () => {
+  const merged = { at: hoursAfter(1), data: { outcome: 'merged' } };
+  const views = { goals: { g: entry({ ended: ENDING }) }, work: worksOf(PAGE, FILE), reports: { 'export-page': merged, 'export-file': merged } };
+  assert.equal(goalRule(views, NOW), null);
+});
+
+test('a new sheet takes over from a goal that ended, and the latest ending speaks', () => {
+  const work = worksOf(PAGE, FILE);
+  const only = (id) => [{ work: id, hash: dataHash(id === 'export-page' ? PAGE : FILE) }];
+  const ended = entry({ ended: ENDING, sheet: sheet({ pieces: only('export-page') }) });
+  const next = entry({ sheet: sheet({ until: UNTIL, pieces: only('export-file') }) });
+  assert.equal(goalRule({ goals: { a: ended, b: next }, work }, NOW).id, 'b');
+  const later = entry({ ended: { ...ENDING, at: hoursAfter(10) }, sheet: sheet({ pieces: only('export-file') }) });
+  assert.equal(goalRule({ goals: { a: ended, b: later }, work }, NOW).id, 'b');
+  assert.equal(goalRule({ goals: {}, work }, NOW), null);
+});
+
+test('with no goal the gate holds nothing', () => {
+  assert.equal(gateStart({ goal: null, work: 'x', lane: 'quick', via: 'start', now: NOW }), null);
+});
+
+test('the gate lets a piece of the goal start, whatever its way', () => {
+  for (const via of ['start', 'slice', 'rework', 'try-again', 'retry', 'requeue', 'carry-on']) {
+    assert.equal(gateStart({ goal: rule, work: 'export-page', lane: 'small', via, state: 'running', now: NOW }), null, via);
+  }
+});
+
+test('the gate holds work outside the goal, and names the goal', () => {
+  assert.deepEqual(gateStart({ goal: rule, work: 'other', lane: 'quick', via: 'try-again', state: 'running', now: NOW }), { goalHeld: true, goal: 'g', why: 'goal' });
+});
+
+test('the gate holds every way of starting from the moment until is reached', () => {
+  const at = new Date(UNTIL);
+  for (const via of ['start', 'slice', 'rework', 'try-again', 'retry', 'build-again']) {
+    assert.equal(gateStart({ goal: rule, work: 'export-page', lane: 'feature', via, state: 'running', now: at })?.why, 'time', via);
+  }
+  assert.equal(gateStart({ goal: rule, work: 'export-page', lane: 'feature', via: 'slice', state: 'running', now: new Date(at.getTime() - 1) }), null);
+});
+
+test('the gate holds a goal that is winding down', () => {
+  assert.equal(gateStart({ goal: rule, work: 'export-page', lane: 'small', via: 'rework', state: 'winding-down', now: NOW })?.why, 'winding-down');
+});
+
+test('the fix lane passes the time bound and work outside the goal, and a wind-down', () => {
+  const at = new Date(Date.parse(UNTIL) + 1000);
+  assert.equal(gateStart({ goal: rule, work: 'fix-1', lane: 'fix-main', via: 'start', state: 'running', now: at }), null);
+  assert.equal(gateStart({ goal: rule, work: 'fix-1', lane: 'fix-main', via: 'start', state: 'winding-down', now: NOW }), null);
+});
+
+test('a meter that has reached its bound holds every lane', () => {
+  for (const lane of ['quick', 'fix-main']) {
+    assert.equal(gateStart({ goal: rule, work: 'export-page', lane, via: 'start', state: 'running', meter: { reached: 'tokens' }, now: NOW })?.why, 'spend', lane);
+  }
+  assert.equal(gateStart({ goal: rule, work: 'export-page', lane: 'quick', via: 'start', state: 'running', meter: { reached: null }, now: NOW }), null);
+});
+
+test('after the end the gate lets an answered piece through and holds the rest of the goal', () => {
+  for (const via of ['rework', 'more', 'try-again', 'build-again', 'carry', 'answer']) {
+    assert.equal(gateStart({ goal: lateRule, work: 'export-page', lane: 'small', via, now: NOW }), null, via);
+  }
+  for (const via of ['start', 'slice', 'retry', 'requeue', 'carry-on']) {
+    assert.deepEqual(gateStart({ goal: lateRule, work: 'export-page', lane: 'small', via, now: NOW }), { goalHeld: true, goal: 'g', why: 'goal-ended' }, via);
+  }
+  assert.equal(gateStart({ goal: lateRule, work: 'other', lane: 'quick', via: 'start', now: NOW }), null);
+});
+
+test('an order names the goal that covers its piece, in force or ended', () => {
+  const work = worksOf(PAGE, FILE);
+  assert.equal(orderGoal({ goals: { g: entry() }, work }, 'export-page').goalId, 'g');
+  assert.equal(orderGoal({ goals: { g: entry({ ended: ENDING }) }, work }, 'export-page').goalId, 'g');
+  assert.deepEqual(orderGoal({ goals: { g: entry() }, work }, 'other'), {});
+  assert.deepEqual(orderGoal({ goals: {}, work }, 'export-page'), {});
+});
+
+test('a tick is honoured only on a small visible piece of the goal in force', () => {
+  const look = (data, ended = null) => {
+    const line = { work: data.id, hash: dataHash(data), waived: true };
+    return orderGoal({ goals: { g: entry({ ended, sheet: sheet({ pieces: [line] }) }) }, work: worksOf(data) }, data.id);
+  };
+  assert.deepEqual(look({ ...PAGE, visible: true }), { goalId: 'g', waived: true });
+  assert.deepEqual(look({ ...PAGE, lane: 'quick', visible: true }), { goalId: 'g', waived: true });
+  assert.deepEqual(look({ ...PAGE, lane: 'feature', visible: true }), { goalId: 'g' });
+  assert.deepEqual(look({ ...PAGE, lane: 'bug', visible: true }), { goalId: 'g' });
+  assert.deepEqual(look(PAGE), { goalId: 'g' }, 'nothing to waive');
+  assert.deepEqual(look({ ...PAGE, visible: true }, ENDING), { goalId: 'g' }, 'an ended goal takes its tick with it');
 });

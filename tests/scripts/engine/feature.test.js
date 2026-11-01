@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { readSlices, demoSlice, progressOf, featureProgress, featureNext, currentStep, sliceOrder, finishOrder, featureCap, SLICES_FENCE } from '../../../scripts/engine/feature.js';
 import { DEFAULT_FLAG_FILE, LANE_CAPS } from '../../../scripts/engine/order.js';
 import { goalDoneOf } from '../../../scripts/engine/goal.js';
+import { dataHash } from '../../../scripts/state/events.js';
 
 const block = (value) => `# Order history\n\nThe design in words.\n\n\`\`\`${SLICES_FENCE}\n${JSON.stringify(value, null, 2)}\n\`\`\`\n`;
 const SLICES = {
@@ -166,11 +167,12 @@ test('the sheet\'s checks are added to a feature\'s own run, each check once', (
   assert.deepEqual(finishOrder({ entry, design, progress, config, goalDone: [{ test: 'the export works' }, sheetOnly] }).done, [shared, sheetOnly]);
 });
 
-test('only a piece the sheet lists takes its goal\'s checks', () => {
+test('only a piece its goal covers takes the goal\'s checks, whatever its label says', () => {
   const done = [{ test: 'the export works' }];
-  const views = (goalId, pieces) => ({ work: { orders: { work: { data: { id: 'orders', goalId } } } }, goals: { export: { sheet: { done, pieces } } } });
-  assert.deepEqual(goalDoneOf(views('export', [{ work: 'orders' }]), 'orders'), done);
-  assert.deepEqual(goalDoneOf(views('export', [{ work: 'other' }]), 'orders'), [], 'a label alone covers nothing');
-  assert.deepEqual(goalDoneOf(views(undefined, [{ work: 'orders' }]), 'orders'), []);
+  const data = { id: 'orders', lane: 'feature', goalId: 'export' };
+  const views = (pieces) => ({ work: { orders: { work: { data } } }, goals: { export: { sheet: { done, pieces }, ended: null } } });
+  assert.deepEqual(goalDoneOf(views([{ work: 'orders', hash: dataHash(data) }]), 'orders'), done);
+  assert.deepEqual(goalDoneOf(views([{ work: 'other', hash: dataHash(data) }]), 'orders'), [], 'a label alone covers nothing');
+  assert.deepEqual(goalDoneOf(views([{ work: 'orders', hash: 'changed' }]), 'orders'), [], 'nor does a sheet line for a changed piece');
   assert.deepEqual(goalDoneOf({}, 'orders'), []);
 });

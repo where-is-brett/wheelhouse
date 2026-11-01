@@ -170,3 +170,9 @@ test('a hold for a limit clears by itself: no top card rises and nothing reads a
   assert.deepEqual(noCardBehind({ hold, running: [], cards: [] }), []);
   assert.deepEqual([...deadEnds({ hold, running: [], cards: [] })], []);
 });
+
+test('a hold for a goal names nothing to follow, and no line is written for it', () => {
+  const hold = [{ work: 'x', why: 'goal' }, { work: 'y', why: 'goal-ended' }, { work: 'z', why: 'dependency', by: ['x'] }];
+  assert.deepEqual(noCardBehind({ hold }), []);
+  assert.equal(topCard({ hold, cards: [card('q-a-1', 'a')] }).card.id, 'q-a-1', 'a card still rises, as all that is left waits on the director');
+});

@@ -9,7 +9,8 @@ import { dispatchRun, orderFor, NO_TESTS_WORDS, TRY_AGAIN, STOP_HERE, BUILD_AGAI
 import { LIMIT_HOLD_WORDS } from '../../../scripts/engine/words.js';
 import { fakeEngine } from '../../../scripts/engine/fake.js';
 import { tempFolder } from '../../helpers/homes.js';
-import { wayBack, asking, askingTwice, forever, quiet, atLimit } from '../../helpers/way-back.js';
+import { wayBack, asking, askingTwice, forever, quiet, atLimit, failing, legFinishes } from '../../helpers/way-back.js';
+import { dataHash } from '../../../scripts/state/events.js';
 
 const views = () => ({
   work: { 'card-1': { work: { id: 'w-1', at: '2026-10-29T08:00:00.000Z', data: { id: 'card-1', title: 'The sale banner', lane: 'quick', visible: false, dependsOn: [] } }, approved: false, since: '2026-10-29T08:00:00.000Z' } },
@@ -1277,4 +1278,191 @@ test('a limit hides a requests hold and ends none, so an answered card isn\'t as
   world.limited = false;
   await d.tick();
   assert.equal(written.filter((x) => x.kind === 'question').length, 1);
+});
+
+// A goal in force, and the gate every start passes (unattended goals design, section 6; build plan, choice 9).
+const MINUTE = 60 * 1000;
+const goalOver = (w, pieces, { id = 'g', until = '2026-10-29T18:00:00.000Z', ended = null, waived = [] } = {}) => {
+  w.goals[id] = {
+    sheet: { title: 'A goal', until, pieces: pieces.map((work) => ({ work, hash: dataHash(w.work[work].work.data), ...(waived.includes(work) ? { waived: true } : {}) })) },
+    hash: 'signed', startedAt: '2026-10-29T09:00:00.000Z', ended, endAsked: null,
+  };
+};
+const ENDED = { ending: 'time', at: '2026-10-29T10:00:00.000Z', spent: {} };
+const resumes = (w) => w.engine.calls.filter((c) => c.call === 'act' && c.action.resume);
+const entryFor = (work, via) => ({ work, lane: 'quick', via, key: `${via}:1`, branch: `wh/${work}`, carryOn: true });
+
+test('work outside the goal waits, and a piece of the goal starts with no approval', async () => {
+  const w = wayBack({ recordings: { in: forever(), out: forever() } });
+  w.put('out', { approved: true, place: 0 });
+  w.put('in', { approved: false, lane: 'bug' });
+  goalOver(w, ['in']);
+  await w.tick();
+  assert.deepEqual(w.starts.map((s) => s.order.work), ['in']);
+  assert.equal(w.starts[0].order.goalId, 'g');
+});
+
+test('a start held at a bound raises no card', async () => {
+  const w = wayBack({ recordings: { a: quiet() } });
+  w.put('a');
+  goalOver(w, ['a'], { until: '2026-10-29T10:05:00.000Z' });
+  await w.tick(2);
+  w.dispatcher.enter(entryFor('a', 'rework'));
+  w.clock.now = new Date('2026-10-29T10:06:00.000Z');
+  const before = w.starts.length;
+  await w.tick(5);
+  assert.equal(w.starts.length, before);
+  assert.deepEqual(w.cards(), []);
+  assert.equal(w.dispatcher.comingBack('a'), true, 'it keeps its place in the list');
+  assert.equal(w.notes().filter((n) => /until|time/i.test(n)).length, 1, 'the Logbook says so once');
+});
+
+test('a rework, a next slice and a Try again all pass the gate', async () => {
+  for (const via of ['rework', 'slice', 'try-again']) {
+    const w = wayBack({ recordings: { a: quiet() } });
+    w.put('a');
+    goalOver(w, ['a']);
+    await w.tick(2);
+    w.goals.g.sheet.until = '2026-10-29T10:00:00.000Z';
+    const before = w.starts.length;
+    w.dispatcher.enter(entryFor('a', via));
+    await w.tick(3);
+    assert.equal(w.starts.length, before, via);
+    assert.equal(w.dispatcher.comingBack('a'), true, via);
+  }
+});
+
+test('a new sheet listing a held piece clears it', async () => {
+  const w = wayBack({ recordings: { a: quiet() } });
+  w.put('a');
+  goalOver(w, ['a']);
+  await w.tick(2);
+  w.goals.g.sheet.until = '2026-10-29T10:00:00.000Z';
+  const before = w.starts.length;
+  w.dispatcher.enter(entryFor('a', 'requeue'));
+  await w.tick(2);
+  assert.equal(w.starts.length, before);
+  w.goals.g.ended = ENDED;
+  await w.tick(2);
+  assert.equal(w.starts.length, before, 'still held once the goal has ended');
+  goalOver(w, ['a'], { id: 'g2' });
+  await w.tick(2);
+  assert.equal(w.starts.length, before + 1);
+  assert.equal(w.starts.at(-1).order.goalId, 'g2');
+});
+
+test('a held piece of no goal goes on once the goal ends', async () => {
+  const w = wayBack({ recordings: { out: quiet(), in: forever() } });
+  w.put('out', { place: 0 });
+  await w.tick(2);
+  w.put('in');
+  goalOver(w, ['in']);
+  await w.tick();
+  const before = w.starts.filter((s) => s.order.work === 'out').length;
+  w.dispatcher.enter(entryFor('out', 'rework'));
+  await w.tick(2);
+  assert.equal(w.starts.filter((s) => s.order.work === 'out').length, before);
+  w.goals.g.ended = ENDED;
+  await w.tick(2);
+  assert.equal(w.starts.filter((s) => s.order.work === 'out').length, before + 1);
+});
+
+test('the fix lane passes the time bound', async () => {
+  const w = wayBack({ recordings: {} });
+  w.put('a');
+  goalOver(w, ['a'], { until: '2026-10-29T09:30:00.000Z' });
+  w.green = false;
+  w.incidents.open = [{ id: 'red-main-0123456789', what: 'The main line\'s checks are red.', kind: 'red-main', suspect: 12, work: 'fix-main-red-main-0123456789', at: '2026-10-29T09:40:00.000Z', fixes: [] }];
+  await w.tick();
+  assert.deepEqual(w.starts.map((s) => s.order.lane), ['fix-main']);
+});
+
+test('after the goal\'s end an answered piece starts, and a next slice doesn\'t', async () => {
+  const w = wayBack({ recordings: { a: quiet(), b: quiet() } });
+  w.put('a');
+  w.put('b');
+  goalOver(w, ['a', 'b']);
+  await w.tick(2);
+  w.goals.g.ended = ENDED;
+  const before = w.starts.length;
+  w.dispatcher.enter(entryFor('a', 'slice'));
+  await w.tick(2);
+  assert.equal(w.starts.length, before);
+  w.dispatcher.enter(entryFor('b', 'rework'));
+  await w.tick(2);
+  assert.deepEqual(w.starts.slice(before).map((s) => s.order.work), ['b']);
+  assert.equal(w.starts.at(-1).order.goalId, 'g', 'its areas still govern it');
+});
+
+test('a piece not in the goal\'s list with a live run keeps going', async () => {
+  const w = wayBack({ recordings: { out: forever(), in: forever() } });
+  w.put('out');
+  await w.tick(2);
+  w.put('in');
+  goalOver(w, ['in']);
+  await w.tick(3);
+  assert.equal(w.stateOf('out'), 'started');
+  assert.equal(w.engine.calls.filter((c) => c.call === 'act').length, 0);
+});
+
+test('a retry is a start: it asks the gate', async () => {
+  const w = wayBack({ recordings: { a: [...failing('connection'), ...legFinishes()] } });
+  w.put('a');
+  goalOver(w, ['a']);
+  await w.tick(3);
+  await w.pass(7 * MINUTE);
+  assert.equal(resumes(w).length, 1, 'in force and inside its bounds, it is resumed');
+});
+
+test('a retry that a goal\'s gate would hold parks the piece', async () => {
+  const w = wayBack({ recordings: { a: failing('connection') } });
+  w.put('a');
+  goalOver(w, ['a'], { until: '2026-10-29T10:01:00.000Z' });
+  await w.tick(3);
+  await w.pass(10 * MINUTE);
+  assert.equal(resumes(w).length, 0);
+  const card = w.cardOf('a');
+  assert.deepEqual(card.options.map((o) => o.label), [TRY_AGAIN, STOP_HERE]);
+  assert.equal(w.dispatcher.retrying(w.runsOf('a')[0]), false);
+});
+
+test('a retry on the list when the gate closes leaves it, and comes to its card', async () => {
+  const w = wayBack({ recordings: { a: failing('connection'), b: forever() }, pace: 1 });
+  w.put('a', { place: 0 });
+  w.put('b', { place: 1 });
+  goalOver(w, ['a', 'b']);
+  await w.tick(3);
+  await w.pass(6 * MINUTE);
+  assert.ok(w.dispatcher.comingBack('a'), 'it waits for a place');
+  w.goals.g.sheet.until = w.clock.now.toISOString();
+  await w.pass(3 * MINUTE);
+  assert.equal(w.cardOf('a')?.recommendation, TRY_AGAIN);
+  assert.deepEqual(w.dispatcher.retryingWork(w.views()), new Set());
+  assert.equal(resumes(w).length, 0);
+});
+
+test('a retry admitted when the gate closes isn\'t resumed by the runner', async () => {
+  const w = wayBack({ recordings: { a: failing('connection') } });
+  w.put('a');
+  goalOver(w, ['a']);
+  await w.tick(3);
+  w.goals.g.sheet.until = '2026-10-29T10:03:00.000Z';
+  await w.pass(7 * MINUTE);
+  assert.equal(resumes(w).length, 0);
+});
+
+test('a waived piece\'s order doesn\'t show first, and an unwaived visible piece\'s does', async () => {
+  const w = wayBack({ recordings: { small: forever(), plain: forever() } });
+  w.put('small', { visible: true, approved: false, place: 0 });
+  w.put('plain', { visible: true, approved: false, place: 1 });
+  goalOver(w, ['small', 'plain'], { waived: ['small'] });
+  await w.tick();
+  const shown = Object.fromEntries(w.starts.map((s) => [s.order.work, s.order.showFirst]));
+  assert.deepEqual(shown, { small: false, plain: true });
+});
+
+test('an order names no goal with none in force', async () => {
+  const t = setUp({ testCommand: 'node --test' });
+  await t.d.tick();
+  assert.equal(Object.hasOwn(t.starts[0].order, 'goalId'), false);
 });

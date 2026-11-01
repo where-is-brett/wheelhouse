@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { dispatch, MERGE_QUEUE_EVERY_MS } from '../../../scripts/engine/dispatcher.js';
+import { orderFor } from '../../../scripts/engine/dispatch-run.js';
 
 const NOW = new Date('2026-10-29T12:00:00.000Z');
 const piece = (id, { lane = 'quick', place, at = '2026-10-29T09:00:00.000Z', approved = false, visible = false, files } = {}) => [id, {
@@ -477,4 +478,70 @@ test('a limit holds no merge queue, and All stop and an incident stay what they 
 test('with no limit the same work starts', () => {
   const work = Object.fromEntries([piece('a')]);
   assert.deepEqual(dispatch(base({ work, limited: false })).start, [{ work: 'a', lane: 'quick' }]);
+});
+
+// A goal in force: only its work starts, in its order, the sheet standing as each one's approval (unattended goals design, section 6).
+const goalOf = (...pieces) => ({ pieces, only: true, startsStopped: false });
+
+test('work outside the goal holds', () => {
+  const work = Object.fromEntries([piece('in', { place: 1 }), piece('out', { place: 0, approved: true })]);
+  const got = dispatch(base({ work, goal: goalOf('in') }));
+  assert.deepEqual(got.start.map((s) => s.work), ['in']);
+  assert.deepEqual(got.hold, [{ work: 'out', why: 'goal' }]);
+});
+
+test('an unapproved piece of the goal starts', () => {
+  const work = Object.fromEntries([piece('feat', { lane: 'feature' }), piece('other', { lane: 'feature' })]);
+  const got = dispatch(base({ work, goal: goalOf('feat') }));
+  assert.deepEqual(got.start.map((s) => s.work), ['feat']);
+  assert.equal(work.feat.approved, false, 'the record isn\'t changed: a goal that ends takes the approval with it');
+});
+
+test('a visible piece of the goal still shows first', () => {
+  const entries = Object.fromEntries([piece('shown', { visible: true })]);
+  assert.deepEqual(dispatch(base({ work: entries, goal: goalOf('shown') })).start.map((s) => s.work), ['shown']);
+  const order = orderFor({ ...entries.shown, work: { ...entries.shown.work, key: 'shown' } }, { config: { testCommand: 'node --test' } });
+  assert.equal(order.showFirst, true);
+});
+
+test('pieces start in the sheet\'s order', () => {
+  const work = Object.fromEntries(['a', 'b', 'c', 'd'].map((id, n) => piece(id, { place: n })));
+  const got = dispatch(base({ work, goal: goalOf('d', 'c', 'b', 'a') }));
+  assert.deepEqual(got.start.map((s) => s.work), ['d', 'c', 'b']);
+  assert.deepEqual(got.hold, [{ work: 'a', why: 'pace' }]);
+});
+
+test('two features of a goal build one at a time', () => {
+  const work = Object.fromEntries([piece('one', { lane: 'feature' }), piece('two', { lane: 'feature' })]);
+  const got = dispatch(base({ work, goal: goalOf('one', 'two') }));
+  assert.deepEqual(got.start.map((s) => s.work), ['one']);
+  assert.deepEqual(got.hold, [{ work: 'two', why: 'pace' }]);
+  const waiting = dispatch(base({ work, goal: goalOf('one', 'two'), runs: { one: [runOf('one', 'paused', { lane: 'slice' })] }, waiting: ['one'] }));
+  assert.deepEqual(waiting.start.map((s) => s.work), ['two'], 'a feature waiting on the director gives its place up');
+});
+
+test('the fix lane and the merge queue run during a goal', () => {
+  const got = dispatch(base({ goal: { pieces: ['a'], only: true, startsStopped: true }, mergeQueue: { running: false, lastStart: null, waiting: 1, newReady: true } }));
+  assert.equal(got.startMergeQueue, true);
+});
+
+test('an entry with heldBy gets no place', () => {
+  const work = Object.fromEntries([piece('held', { place: 0 }), piece('next', { place: 1 })]);
+  const got = dispatch(base({ work, settings: { engineLanes: ['quick'], pace: 1 }, returning: [{ work: 'held', lane: 'quick', via: 'rework', at: '2026-10-29T10:00:00.000Z', heldBy: 'g' }] }));
+  assert.deepEqual(got.admit, []);
+  assert.deepEqual(got.start.map((s) => s.work), ['next'], 'it counts against nothing');
+});
+
+test('past the bound a goal\'s own pieces hold, and other work stays out', () => {
+  const work = Object.fromEntries([piece('in', { approved: true }), piece('out', { approved: true })]);
+  const got = dispatch(base({ work, goal: { pieces: ['in'], only: true, startsStopped: true } }));
+  assert.deepEqual(got.start, []);
+  assert.deepEqual(got.hold, [{ work: 'in', why: 'goal-ended' }, { work: 'out', why: 'goal' }]);
+});
+
+test('after the end other work starts and the goal\'s own pieces hold', () => {
+  const work = Object.fromEntries([piece('left', { approved: true }), piece('other')]);
+  const got = dispatch(base({ work, goal: { pieces: ['left'], only: false, startsStopped: true } }));
+  assert.deepEqual(got.start.map((s) => s.work), ['other']);
+  assert.deepEqual(got.hold, [{ work: 'left', why: 'goal-ended' }]);
 });
