@@ -1165,7 +1165,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     if (kept.then === 'carry' && hasEntry(kept) && !kept.entered && (heard(record) || branch !== null)) {
       const { raised = false, runs = [] } = state.carried[runId] ?? {};
       // With no branch on record there is nothing to carry on from, so it starts afresh.
-      enter({ work, lane, via: 'carry-on', key, branch, carryOn: branch !== null, raised, answers: state.answers[work] ?? [], carried: { raised, runs: [...runs, runId] }, cancelling: true });
+      enter({ work, lane, via: 'carry-on', key, branch, carryOn: branch !== null, raised, answers: state.answers[work] ?? [], carried: { raised, runs: [...runs, runId] }, cancelling: true, ...(kept.answered === true ? { answered: true } : {}) });
       kept.entered = true;
       keep();
     }

@@ -39,7 +39,7 @@ export function wayBack({ dispatchExtra = {}, recordings = {}, pace = 3, setting
   const engine = fakeEngine({ recordings });
   const clock = { now: new Date('2026-10-29T10:00:00.000Z') };
   const world = {
-    engine, clock, work: {}, runs: {}, asks: {}, reports: {}, questions: {}, approvals: {}, incidents: { open: [] }, costs: {},
+    engine, clock, work: {}, runs: {}, asks: {}, reports: {}, questions: {}, approvals: {}, incidents: { open: [] }, costs: {}, goals: {},
     stop: false, written: [], shown: {}, starts: [], refuse: null, startAs: null, ready: {}, seenPr: {},
   };
   const at = () => clock.now.toISOString();
@@ -48,7 +48,7 @@ export function wayBack({ dispatchExtra = {}, recordings = {}, pace = 3, setting
   const ended = (data) => (world.runs[data.work] ?? []).filter((r) => r.data.runId === data.engine?.runId).at(-1)?.data.state === 'ended';
   const shownBy = (lead) => Object.values(world.questions).filter((c) => c.question.data.joins === lead && (world.shown[lead] ?? []).includes(c.question.data.work)).map((c) => c.question.data.id);
   const views = () => (joinQuestions(world.questions, { ended, shown: shownBy }), {
-    work: world.work, runs: world.runs, asks: world.asks, reports: world.reports, questions: world.questions, approvals: world.approvals, incidents: world.incidents, costs: world.costs, levels: {}, cardsWaiting: cardsWaitingOf(notes()), sendBacks: world.sendBacks ?? [],
+    work: world.work, runs: world.runs, asks: world.asks, reports: world.reports, questions: world.questions, approvals: world.approvals, incidents: world.incidents, costs: world.costs, goals: world.goals, levels: {}, cardsWaiting: cardsWaitingOf(notes()), sendBacks: world.sendBacks ?? [],
   });
   const record = (data) => { (world.runs[data.work] ??= []).push({ at: at(), data: { engine: 'fake', ...data } }); };
   const realStart = async ({ order, branch, carryOn }) => {
@@ -136,8 +136,8 @@ export function wayBack({ dispatchExtra = {}, recordings = {}, pace = 3, setting
   return Object.assign(world, {
     dir,
     views,
-    put(id, { lane = 'quick', files = [], place, approved = true, title = id } = {}) {
-      world.work[id] = { work: { id: `w-${id}`, at: '2026-10-29T08:00:00.000Z', data: { id, title, lane, visible: false, dependsOn: [], ...(place === undefined ? {} : { place }) } }, approved, since: '2026-10-29T08:00:00.000Z', files };
+    put(id, { lane = 'quick', files = [], place, approved = true, title = id, visible = false } = {}) {
+      world.work[id] = { work: { id: `w-${id}`, at: '2026-10-29T08:00:00.000Z', data: { id, title, lane, visible, dependsOn: [], ...(place === undefined ? {} : { place }) } }, approved, since: '2026-10-29T08:00:00.000Z', files };
     },
     // The helper's one look: the router, then the dispatcher, then what the engine said.
     async tick(times = 1) {

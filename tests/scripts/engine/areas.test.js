@@ -225,8 +225,9 @@ test("a piece of a goal starts with its areas, in the guard's terms and in the r
   const starts = [];
   const views = {
     work: { 'card-1': { work: { id: 'w-1', at: '2026-11-01T00:00:00.000Z', data: { id: 'card-1', title: 'The export page', lane: 'quick', visible: false, dependsOn: [], goalId: 'g-1' } }, approved: false, since: '2026-11-01T00:00:00.000Z' } },
-    runs: {}, questions: {}, goals: goalNamed('g-1'),
+    runs: {}, questions: {}, goals: {},
   };
+  views.goals = goalNamed('g-1', { pieces: [{ work: 'card-1', hash: dataHash(views.work['card-1'].work.data) }] });
   const d = dispatchRun({ engine: fakeEngine(), project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'), readViews: () => views, config: () => ({ testCommand: 'npm test' }), start: async (args) => { starts.push(args); return { ok: true, runId: 'run-1' }; }, now: () => NOW });
   await d.tick();
   assert.deepEqual(starts[0].order.areas, { goal: 'g-1', since: '2026-11-01T00:00:00.000Z', ...AREAS });

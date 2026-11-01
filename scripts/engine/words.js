@@ -42,6 +42,16 @@ export function noCardBehindWords(title, why, by) {
 // The Logbook's line when a usage limit holds other work: it clears by itself, so nothing is asked of the director.
 export const LIMIT_HOLD_WORDS = 'A run is waiting for a usage limit to reset, so nothing new starts and work coming back waits until it does. Any mending of the main line and the merge queue carry on.';
 
+// The Logbook's line for a start a goal held, which raises no card: it keeps its place in the list.
+const GOAL_HELD = {
+  goal: 'isn\'t part of the goal that is running, so it waits for that goal to end',
+  time: 'waits: the goal\'s time is up, so nothing more of it starts',
+  'winding-down': 'waits: the goal is winding down, so nothing more of it starts',
+  spend: 'waits: the goal has reached its spend, so nothing more of it starts',
+  'goal-ended': 'waits: its goal has ended, so nothing more of it starts until a new sheet lists it',
+};
+export const goalHeldWords = (title, why) => `${title} ${GOAL_HELD[why] ?? GOAL_HELD.goal}.`;
+
 // The card for a run still parked well past the reset, which holds nothing more.
 export const limitLateWords = (title) => `${title} should have carried on once its usage limit reset, and hasn't, so other work no longer waits for it. It spends nothing while it waits. What it has done so far is kept.`;
 export const limitLateOverWords = (title) => `${title} moved on by itself after all, so your card about it no longer decides anything.`;

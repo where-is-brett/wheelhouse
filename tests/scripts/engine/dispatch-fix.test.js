@@ -62,7 +62,7 @@ test('a red-main incident starts one fix-main run and holds other work', async (
 
 test('a fix during a goal carries the goal\'s check files, and no may', async () => {
   const t = setUp();
-  t.world.views.goals = { 'g-1': { sheet: { checkFiles: ['tests/check.test.js'], until: '2026-10-30T20:00:00.000Z' }, hash: 'h', startedAt: '2026-10-30T08:00:00.000Z', ended: null, endAsked: null } };
+  t.world.views.goals = { 'g-1': { sheet: { pieces: [], checkFiles: ['tests/check.test.js'], until: '2026-10-30T20:00:00.000Z' }, hash: 'h', startedAt: '2026-10-30T08:00:00.000Z', ended: null, endAsked: null } };
   await t.d.tick();
   assert.deepEqual(t.starts[0].order.areas, { goal: 'g-1', wontTouch: ['tests/check.test.js'] });
 });
