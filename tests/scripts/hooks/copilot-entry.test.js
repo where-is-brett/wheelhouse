@@ -50,7 +50,7 @@ function run(event, raw, { env = COPILOT_ENV, steps = {}, ...deps } = {}) {
     return out;
   };
   const all = {
-    stopGuard: spy('stopGuard'), lineageHold: spy('lineageHold'), toolGuard: spy('toolGuard'),
+    stopGuard: spy('stopGuard'), lineageHold: spy('lineageHold'), toolGuard: spy('toolGuard'), areas: spy('areas'),
     stopWord: spy('stopWord'), boardContext: spy('boardContext'), sessionStart: spy('sessionStart'),
     ...Object.fromEntries(Object.entries(steps).map(([name, fn]) => [name, async (input, d) => {
       calls.push({ name, input });
@@ -145,10 +145,11 @@ test('a guard that hangs is refused at GUARD_DEADLINE_MS with DEADLINE', async (
 });
 
 test('the first refusal wins and later guards do not run', async () => {
-  // Order (ruling P5-14): STOP guard, lineage hold, then the tool guard once per path.
+  // Order (ruling P5-14): STOP guard, lineage hold, the tool guard once per path, then the areas guard once per path.
   const all = await run('preToolUse', call('apply_patch', patch(path.join(MAIN, 'a.txt'), path.join(MAIN, 'b.txt'))));
-  assert.deepEqual(all.calls.map((c) => c.name), ['stopGuard', 'lineageHold', 'toolGuard', 'toolGuard']);
-  assert.deepEqual(all.calls.slice(2).map((c) => c.input.tool_input.file_path), [path.join(MAIN, 'a.txt'), path.join(MAIN, 'b.txt')]);
+  assert.deepEqual(all.calls.map((c) => c.name), ['stopGuard', 'lineageHold', 'toolGuard', 'toolGuard', 'areas', 'areas']);
+  assert.deepEqual(all.calls.slice(2, 4).map((c) => c.input.tool_input.file_path), [path.join(MAIN, 'a.txt'), path.join(MAIN, 'b.txt')]);
+  assert.deepEqual(all.calls.slice(4).map((c) => c.input.tool_input.file_path), [path.join(MAIN, 'a.txt'), path.join(MAIN, 'b.txt')]);
   assert.equal(all.text, '');
   assert.equal(all.code, 0);
 

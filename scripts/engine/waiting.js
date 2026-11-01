@@ -110,6 +110,7 @@ function ownOpen({ state, views }) {
   for (const asked of [state?.clashAsked, state?.redAsked, state?.cutOffAsked]) {
     for (const [work, id] of entriesOf(asked)) if (open(id)) found.push({ id, work });
   }
+  for (const held of Object.values(state?.areas ?? {})) if (open(held?.id)) found.push({ id: held.id, work: held.work });
   for (const entry of Array.isArray(state?.returning) ? state.returning : []) if (open(entry?.asked)) found.push({ id: entry.asked, work: entry.work });
   // A merge queue that can't start: every piece it would take waits on the one card.
   if (open(state?.queueFault?.asked)) for (const work of state.queueFault.works) found.push({ id: state.queueFault.asked, work });

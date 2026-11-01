@@ -171,7 +171,12 @@ const runningEntry = (sheet) => ({ sheet, hash: sheetHash(sheet), startedAt: '20
 function goalMemory({ events = [], goals = {}, work = { 'export-page': { work: { data: PIECE } } }, stopped = false } = {}) {
   return {
     project: 'p',
-    async views() { return { ok: true, views: { waiting: [], goals, work }, names: [], cards: [] }; },
+    async views() {
+      // Each sheet's baseline, with its one check failing on the main line.
+      const goalChecks = {};
+      for (const e of events.filter((x) => x.kind === 'goal')) (goalChecks[e.data.id] ??= []).push({ hash: sheetHash(e.data.sheet), when: 'before', results: e.data.sheet.done.map((check) => ({ check, ok: false })) });
+      return { ok: true, views: { waiting: [], goals, work, goalChecks }, names: [], cards: [] };
+    },
     events: () => events,
     enrolled: () => readEnrolled(),
     async stop() { return { on: stopped }; },
@@ -223,6 +228,24 @@ test('start-goal with a changed work record, a wrong hash or a past until record
     assert.equal(got.ok, false, String(pattern));
     assert.match(got.refused, pattern);
     assert.deepEqual(recorder.calls, [], String(pattern));
+  }
+}));
+
+test('start-goal with no baseline, or one where every check passes, records nothing', () => withKey(async () => {
+  const sheet = sheetOf();
+  const hash = sheetHash(sheet);
+  for (const [goalChecks, pattern] of [
+    [{}, /haven't been run/],
+    [{ 'orders-export': [{ hash, when: 'before', results: sheet.done.map((check) => ({ check, ok: true })) }] }, /already passes/],
+  ]) {
+    const source = goalMemory({ events: [goalEvent(sheet)] });
+    const views = await source.views();
+    source.views = async () => ({ ...views, views: { ...views.views, goalChecks } });
+    const recorder = spy();
+    const got = await startGoal(source, recorder, startArgs(sheet), startOf(sheet));
+    assert.equal(got.ok, false);
+    assert.match(got.refused, pattern);
+    assert.deepEqual(recorder.calls, []);
   }
 }));
 

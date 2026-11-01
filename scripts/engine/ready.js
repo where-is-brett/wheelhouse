@@ -20,6 +20,10 @@ export async function main(argv = process.argv.slice(2), { client: given = helpe
     out(`The pull request wasn't marked ready: ${got?.refused ?? 'no answer'}`);
     return 1;
   }
+  if (got.held === 'areas') {
+    out(`Pull request ${got.pr} waits at ${String(got.head).slice(0, 7)}: it changes files outside its goal's areas, so the director is asked.`);
+    return 0;
+  }
   out(`Pull request ${got.pr} is ready for the merge queue at ${String(got.head).slice(0, 7)}.`);
   return 0;
 }

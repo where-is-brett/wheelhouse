@@ -36,6 +36,7 @@ import { routerWaiting, routerCards, overtaken, approvalAnswers, limitedRuns, pa
 import { endedBy } from '../foreman/queue.js';
 import { gateTargetOf } from '../state/views.js';
 import { READER_WORK } from '../delegation/reader.js';
+import { GOAL_WORK } from './goal-limits.js';
 import { alike, normaliseWords } from '../delegation/words.js';
 import { closeMatch, decisionKey, earlierAnswer, reuse, spokenSince } from '../delegation/asked.js';
 import { REPEAT_READ_MS } from '../delegation/limits.js';
@@ -340,6 +341,8 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       try { onReaderAsk(ask); } catch { /* it costs a reading, never a card */ }
       return;
     }
+    // A goal's check run has no step that asks, and its own look ends one that stops (goal-check.js).
+    if (found?.work === GOAL_WORK) return;
     // A merge-queue run the helper didn't start, not yet seen by the dispatcher, still waits on an answer.
     const work = found?.work ?? ask.work ?? (isPlain(ask.mergeQuestion) ? MERGE_WORK : null);
     if (typeof work !== 'string') return;
@@ -1277,7 +1280,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     if (stopped()) return;
     const { asks } = viewsNow();
     for (const [work, list] of Object.entries(isPlain(asks) ? asks : {})) {
-      if (work === READER_WORK || !Array.isArray(list)) continue;
+      if (work === READER_WORK || work === GOAL_WORK || !Array.isArray(list)) continue;
       for (const { data } of list) {
         if (data?.id !== `${data?.runId}:${OWNER_LOST}` || state.routed[data.id] || state.later.some((a) => a.id === data.id)) continue;
         if (runRecords(work, data.runId).at(-1)?.data.state === 'paused') await onAsk(ownerLostAsk(data.runId, now().toISOString()));
@@ -1344,8 +1347,9 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     const at = now();
     const { capMinutes = {}, capTokens = {} } = settings() ?? {};
     for (const [work, list] of Object.entries(isPlain(v.runs) ? v.runs : {})) {
-      // A reader's limits are its own (scripts/delegation/record-only.js): no cap reads it, and no piece pays for it.
-      if (work === READER_WORK) continue;
+      // A reader's limits are its own (scripts/delegation/record-only.js), and a goal's check run's (goal-check.js): no cap
+      // reads them, and no piece pays for them.
+      if (work === READER_WORK || work === GOAL_WORK) continue;
       const byRun = new Map();
       for (const e of Array.isArray(list) ? list : []) if (typeof e?.data?.runId === 'string') (byRun.get(e.data.runId) ?? byRun.set(e.data.runId, []).get(e.data.runId)).push(e);
       for (const [runId, records] of byRun) {

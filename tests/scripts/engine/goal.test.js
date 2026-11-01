@@ -165,7 +165,15 @@ const sheetNow = () => sheet({ until: hoursAfter(8) });
 const workRec = (data, at) => ({ id: `w-${data.id}-${at}`, at, kind: 'work', data });
 // The two pieces' work records, recorded before the signatures the tests make.
 const WORKS = [workRec(PAGE, t(-10)), workRec(FILE, t(-10))];
-const goalsView = (events, starts) => viewOf([...WORKS, ...events], starts);
+// Each sheet's baseline, as the helper signs it: its first check failing on the main line.
+const baselines = (events) => {
+  const out = {};
+  for (const e of events.filter((x) => x.kind === 'goal')) {
+    (out[e.data.id] ??= []).push({ goal: e.data.id, hash: sheetHash(e.data.sheet), when: 'before', head: 'a'.repeat(40), results: e.data.sheet.done.map((check, i) => ({ check, ok: i > 0 })), ok: false, at: t(-6) });
+  }
+  return out;
+};
+const goalsView = (events, starts) => viewOf([...WORKS, ...events], starts, baselines(events));
 
 test('a goal with no signature is not in force', () => {
   const s = sheetNow();
@@ -304,7 +312,7 @@ test('a signed start over a changed piece stays out of views.goals', () => {
 test('a piece changed after the signature leaves the goal in force', () => {
   const s = sheetNow();
   const changed = workRec({ ...PAGE, title: 'Changed' }, t(3));
-  const goals = viewOf([...WORKS, goalRec(s), changed], [startOf(s)]);
+  const goals = viewOf([...WORKS, goalRec(s), changed], [startOf(s)], baselines([goalRec(s)]));
   assert.deepEqual(Object.keys(goals), ['export-orders']);
 });
 
@@ -312,7 +320,8 @@ test('startProblem asks its checks in order, and null when all pass', () => {
   const s = sheetNow();
   const work = { 'export-page': { work: { data: PAGE } }, 'export-file': { work: { data: FILE } } };
   const running = { other: { ended: null } };
-  const base = { id: 'export-orders', hash: sheetHash(s), sheet: s, goals: {}, work, now: NOW };
+  const goalChecks = { 'export-orders': [{ hash: sheetHash(s), when: 'before', results: s.done.map((check, i) => ({ check, ok: i > 0 })) }] };
+  const base = { id: 'export-orders', hash: sheetHash(s), sheet: s, goals: {}, work, goalChecks, now: NOW };
   assert.equal(startProblem(base), null);
   // Each failing at once: the first in the order is the one said.
   const all = { ...base, stopped: true, goals: { ...running, 'export-orders': { ended: { at: hoursAfter(-1) } } }, sheet: { ...s, title: '' }, work: {} };

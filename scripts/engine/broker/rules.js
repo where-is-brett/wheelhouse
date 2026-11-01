@@ -286,7 +286,8 @@ const refuse = (reason) => ({ allow: false, reason: `Wheelhouse's broker refused
 // the call's head, or null), approval (the director's signed approval of it, or null), shownFirst, level, guardrail,
 // redMain (whether a red-main incident is open), runBranch (the branch of the run a rerun names, as the host says),
 // checksHere (whether the project's checks run on this computer), check (the signed check of the call's head, or null),
-// digest (the command now on the default branch), notCounting (whether the project's tests aren't counting yet) }.
+// digest (the command now on the default branch), notCounting (whether the project's tests aren't counting yet),
+// outsideAreas (whether the change reaches outside its goal's areas, with no Allow this once at this head) }.
 export function brokerDecision(call, ctx = {}) {
   if (!call || call.kind === 'other') {
     const named = Array.isArray(call?.words) && call.words.length > 0 ? ` (gh ${call.words.join(' ')})` : '';
@@ -313,6 +314,7 @@ export function brokerDecision(call, ctx = {}) {
   // A merge: the permit.
   const incident = incidentReason(ctx.incident);
   if (incident) return refuse(incident);
+  if (ctx.outsideAreas === true) return refuse(`the change at ${head.slice(0, 7)} reaches outside its goal's areas`);
   if (!reviewed) return refuse(`there is no signed CLEAN review of ${head.slice(0, 7)}`);
   const needsApproval = ctx.shownFirst === true || ctx.level === 4 || ctx.guardrail === true;
   if (needsApproval && !approvalCounts(ctx.approval, head, ctx.enrolled)) return refuse(`the director's approval of ${head.slice(0, 7)} isn't signed`);

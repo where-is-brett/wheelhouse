@@ -20,7 +20,7 @@ import { sheetHash } from '../../../scripts/engine/goal.js';
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
 const T = (n) => `2026-10-18T02:00:${String(n).padStart(2, '0')}.000Z`;
 const at = (n) => () => new Date(T(n));
-const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'provenance', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'controlFiles', 'survey', 'columnsReady', 'usageCards', 'premium', 'premiumFailures', 'runs', 'asks', 'costs', 'previews', 'lessons', 'engineNotes', 'cardsWaiting', 'evidence', 'rules', 'brief', 'sendBacks', 'slept', 'goals'];
+const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'provenance', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'controlFiles', 'survey', 'columnsReady', 'usageCards', 'premium', 'premiumFailures', 'runs', 'asks', 'costs', 'previews', 'lessons', 'engineNotes', 'cardsWaiting', 'evidence', 'rules', 'brief', 'sendBacks', 'slept', 'goals', 'goalChecks'];
 const now = () => new Date('2026-10-18T09:00:00.000Z');
 
 async function withHome(fn) {
@@ -1719,6 +1719,22 @@ const goalSheet = () => ({
 });
 const startClick = (n, id, hash) => click(n, { action: 'start-goal', goal: id, hash, question: `What this is.\n${startGoalLine(id, hash)}`, label: 'Start' });
 
+test('a baseline counts only signed by the helper, and reaches the view on disk', async () => {
+  await withHome(() => {
+    const sheet = goalSheet();
+    const W = workEv(0);
+    const record = ev('goal', 1, { id: 'export-orders', sheet });
+    const hash = sheetHash(sheet);
+    const data = { goal: 'export-orders', hash, when: 'before', head: 'a'.repeat(40), results: [{ check: sheet.done[0], ok: false }], ok: false };
+    const signed = ev('goal-check', 2, data);
+    const click = startClick(5, 'export-orders', hash);
+    assert.deepEqual(Object.keys(build([W, record, signed, click]).goals), ['export-orders']);
+    assert.deepEqual(build([W, record, signed]).goalChecks['export-orders'], [{ ...data, at: signed.at }]);
+    assert.deepEqual(build([W, record, unsigned(signed), click]).goals, {});
+    assert.deepEqual(build([W, record, click, ev('goal-check', 6, data)]).goals, {}, 'a baseline after the click proves nothing of it');
+  });
+});
+
 test('a goal is in the views only when a signed click names its id and its sheet\'s hash', async () => {
   await withHome(() => {
     const sheet = goalSheet();
@@ -1727,11 +1743,12 @@ test('a goal is in the views only when a signed click names its id and its sheet
     const record = ev('goal', 1, { id: 'export-orders', sheet });
     assert.deepEqual(build([W, record]).goals, {}, 'a goal alone does nothing');
     const hash = sheetHash(sheet);
+    const B = ev('goal-check', 1, { goal: 'export-orders', hash, when: 'before', head: 'a'.repeat(40), results: [{ check: sheet.done[0], ok: false }], ok: false });
     // an unsigned click, a forged one, another hash and another id
     const forged = { ...startClick(4, 'export-orders', hash), data: { ...startClick(4, 'export-orders', hash).data, goal: 'other' } };
-    assert.deepEqual(build([W, record, unsigned(startClick(2, 'export-orders', hash)), forged, startClick(3, 'export-orders', H2)]).goals, {});
+    assert.deepEqual(build([W, record, B, unsigned(startClick(2, 'export-orders', hash)), forged, startClick(3, 'export-orders', H2)]).goals, {});
     const signed = startClick(5, 'export-orders', hash);
-    const goals = build([W, record, signed]).goals;
+    const goals = build([W, record, B, signed]).goals;
     assert.deepEqual(Object.keys(goals), ['export-orders']);
     assert.equal(goals['export-orders'].hash, hash);
     assert.equal(goals['export-orders'].startedAt, signed.at);
@@ -1740,7 +1757,7 @@ test('a goal is in the views only when a signed click names its id and its sheet
     // a goal-end from the helper ends it; a narrowing note after the click narrows it
     const narrow = ev('note', 6, { about: 'narrow-goal', goal: 'export-orders', change: { spend: { tokens: 500 } } });
     const end = ev('goal-end', 7, { goal: 'export-orders', ending: 'time', at: T(7), spent: { tokens: 1, points: null, requests: null, unknown: 0, shareAtStart: null, queueRuns: 0 } });
-    const after = build([W, record, signed, narrow, end]).goals['export-orders'];
+    const after = build([W, record, B, signed, narrow, end]).goals['export-orders'];
     assert.equal(after.sheet.spend.tokens, 500);
     assert.equal(after.ended.ending, 'time');
   });

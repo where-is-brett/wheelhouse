@@ -11,10 +11,10 @@ import { helperClient } from '../host/helper-client.js';
 import { withTicket } from './ticket.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
-const CHECK_MS = 10 * 60 * 1000;
+export const CHECK_MS = 10 * 60 * 1000;
 
 // The shell a check's command runs in: the project's own commands are written for one.
-const shell = (command, platform) => (platform === 'win32'
+export const shell = (command, platform) => (platform === 'win32'
   ? { file: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', command], windowsVerbatimArguments: true }
   : { file: '/bin/sh', args: ['-c', command] });
 
@@ -43,7 +43,8 @@ function namedTest(testCommand, name, { cwd, platform }) {
   return `${command} ${quoted(name, platform)}`;
 }
 
-// Each check's result, in order: { check, ok, line }, with `ok` null for a check left to the preview step.
+// Each check's result, in order: { check, ok, line }, with `ok` null for a check left to the preview step, and `unrun`
+// on one that never gave an answer of its own.
 export async function runDoneChecks(order, { cwd, run = defaultRun, platform = process.platform } = {}) {
   const results = [];
   for (const check of order.done) {
@@ -58,11 +59,11 @@ export async function runDoneChecks(order, { cwd, run = defaultRun, platform = p
     try {
       result = await run(file, args, { cwd, timeoutMs: CHECK_MS, windowsVerbatimArguments, limit: 256 * 1024 });
     } catch {
-      results.push({ check, ok: false, line: `fail: ${what} could not be started` });
+      results.push({ check, ok: false, unrun: true, line: `fail: ${what} could not be started` });
       continue;
     }
     if (result.timedOut) {
-      results.push({ check, ok: false, line: `fail: ${what} took longer than ${CHECK_MS / 60000} minutes` });
+      results.push({ check, ok: false, unrun: true, line: `fail: ${what} took longer than ${CHECK_MS / 60000} minutes` });
     } else if (typeof check.expect === 'string') {
       const ok = String(result.stdout ?? '').includes(check.expect);
       results.push({ check, ok, line: ok ? `pass: ${what} shows ${check.expect}` : `fail: ${what} doesn't show ${check.expect}` });
