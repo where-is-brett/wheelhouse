@@ -455,6 +455,9 @@ export async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
   const verdict = text(model.verdict) ?? text(model.glance) ?? PLAIN_TITLE
   const since = text(model.since)
 
+  // The cards past the day's budget: their count, one press from being shown.
+  const held = isRecord(model.held) && typeof model.held.line === 'string' && isRecord(model.held.button) ? model.held : null
+
   // The card on the first panel, with its place: a card of parts says it in its own header row, one
   // with none above it. With no card, the words the verdict hasn't already said.
   const cardPart = card !== undefined
@@ -472,10 +475,8 @@ export async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
         ))}
       </Box>
     )
-    : !verdict.startsWith(NOTHING_NEEDS_YOU) && status(t, NOTHING_NEEDS_YOU, 'success')
+    : held === null && !verdict.startsWith(NOTHING_NEEDS_YOU) && status(t, NOTHING_NEEDS_YOU, 'success')
 
-  // The cards past the day's budget: their count, one press from being shown.
-  const held = isRecord(model.held) && typeof model.held.line === 'string' && isRecord(model.held.button) ? model.held : null
   const heldPart = held !== null && ends(t, body(t, held.line as string), live && small(t, 'pull-cards', text((held.button as Record<string, unknown>).label) ?? '', () => pressPull($, after)))
 
   const building = (Array.isArray(model.building) ? model.building : [])

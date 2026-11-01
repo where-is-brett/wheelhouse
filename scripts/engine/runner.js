@@ -244,9 +244,11 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     state.held = state.held.filter((h) => !pulled.has(h.id) && !answered(h.id, views));
     const items = [...state.held, ...state.waiting];
     // Bundled approvals are shown together and count as one card; each is still its own signed approval.
+    // A bundle is exempt when any card in it is, so what holds up all work is never held back with it.
+    const groupOf = (importance, members) => ({ importance, exempt: members.some(ignoresBudget), items: members });
     const groups = bundling
-      ? bundleApprovals(items).map((g) => (g.card.bundle ? { importance: g.importance, exempt: g.exempt === true, items: items.filter((w) => w.card.approval && g.card.bundle.includes(w.card.approval)) } : { importance: g.importance, exempt: g.exempt === true, items: [g] }))
-      : items.map((w) => ({ importance: w.importance, exempt: w.exempt === true, items: [w] }));
+      ? bundleApprovals(items).map((g) => groupOf(g.importance, g.card.bundle ? items.filter((w) => w.card.approval && g.card.bundle.includes(w.card.approval)) : [g]))
+      : items.map((w) => groupOf(w.importance, [w]));
     const { show: shown } = cardBudget({ cards: groups, cardsPerDay, shownToday: state.shown.count });
     const over = groups.filter((g) => !shown.includes(g)).flatMap((g) => g.items);
     state.waiting.forEach(nameCard);
@@ -259,22 +261,31 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       state.noted = listed;
       keep();
     }
+    // A card the record refuses is tried again on the next tick, said once, and holds up none behind it.
     const written = async (item) => {
-      if (!state.waiting.includes(item)) return;
-      await writeCard(item);
+      if (!state.waiting.includes(item)) return true;
+      try {
+        await writeCard(item);
+      } catch {
+        if (item.refused !== true) {
+          await note(`A question about ${titled(item.work)} couldn't be shown yet; it keeps trying.`, { work: item.work }).then(() => { item.refused = true; keep(); }, () => {});
+        }
+        return false;
+      }
       state.waiting = state.waiting.filter((w) => w !== item);
+      return true;
     };
     for (const group of shown) {
+      let all = true;
       for (const item of group.items) {
-        await written(item);
-        state.held = state.held.filter((h) => h !== item);
+        if (await written(item)) state.held = state.held.filter((h) => h !== item);
+        else all = false;
       }
-      if (!ignoresBudget(group)) state.shown.count += 1;
+      if (all && !ignoresBudget(group)) state.shown.count += 1;
       keep();
     }
     for (const item of over) {
-      if (!state.waiting.includes(item)) continue;
-      await written(item);
+      if (!state.waiting.includes(item) || !await written(item)) continue;
       state.held.push(item);
       keep();
     }

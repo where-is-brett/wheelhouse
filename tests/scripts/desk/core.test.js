@@ -18,7 +18,7 @@ test('the vocabulary is spec 5.2\'s, in its order', () => {
   assert.deepEqual(VIEWS, ['glance', 'briefing', 'logbook', 'waiting', 'card', 'work', 'settings', 'usage', 'preview', 'why', 'survey']);
   assert.deepEqual(COMMANDS, ['answer', 'suggest', 'not-now', 'request', 'set', 'all-stop', 'lift-all-stop', 'pair', 'safekeeping', 'pull-cards']);
   assert.deepEqual(WATCH_EVENTS, ['card-added', 'card-closed', 'glance-changed', 'work-changed', 'all-stop', 'notice']);
-  assert.deepEqual(NO_EVIDENCE, ['request', 'not-now', 'all-stop']);
+  assert.deepEqual(NO_EVIDENCE, ['request', 'not-now', 'all-stop', 'pull-cards']);
   assert.ok(Object.isFrozen(VIEWS) && Object.isFrozen(COMMANDS) && Object.isFrozen(WATCH_EVENTS));
 });
 
