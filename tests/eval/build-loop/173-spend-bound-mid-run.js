@@ -1,8 +1,8 @@
 // tests/eval/build-loop/173-spend-bound-mid-run.js
 // Scenario 173 (unattended goals design, section 5): a goal of two pieces, one at a time, whose first run reaches the goal's
 // tokens while it runs; then the pace goes up, so only the spend can hold the second. Pass: the meter reads the live run's
-// spend, the second piece never starts, no card asks about it and nothing cancels the run. Played on the engine the run names,
-// in its `with` variant alone.
+// spend, the run is cancelled, the goal ends on its spend, the second piece never starts and no card asks about it. Played on
+// the engine the run names, in its `with` variant alone.
 import { confirmationFor, dataHash } from '../../../scripts/state/events.js';
 import { startGoalLine } from '../../../scripts/state/card-lines.js';
 import { sheetHash } from '../../../scripts/engine/goal.js';
@@ -40,9 +40,10 @@ export default {
       for (let i = 0; i < 4; i += 1) await world.tick();
       if (world.starts().some((s) => s.order.work === SECOND)) return { pass: false, why: 'the second piece started past the goal\'s spend' };
       if (world.starts().length !== 1) return { pass: false, why: `${world.starts().length} runs started` };
-      if (world.acts().some((c) => c.action.cancel)) return { pass: false, why: 'a run was cancelled: that is the wind-down\'s' };
+      if (world.acts().filter((c) => c.action.cancel).length !== 1) return { pass: false, why: 'the run wasn\'t cancelled once' };
+      if (world.records('goal-end').map((r) => r.data.ending).join() !== 'spend') return { pass: false, why: 'the goal didn\'t end on its spend' };
       if (world.records('question').some((q) => q.data.work === SECOND)) return { pass: false, why: 'a card came for the held piece' };
-      return { pass: true, why: 'the live run\'s spend met the bound, and the next piece held with no card' };
+      return { pass: true, why: 'the live run\'s spend met the bound, the goal ended on it, and the next piece held with no card' };
     },
   },
   variants: { with: {} },

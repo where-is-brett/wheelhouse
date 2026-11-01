@@ -48,7 +48,7 @@ export function wayBack({ dispatchExtra = {}, recordings = {}, pace = 3, setting
   const ended = (data) => (world.runs[data.work] ?? []).filter((r) => r.data.runId === data.engine?.runId).at(-1)?.data.state === 'ended';
   const shownBy = (lead) => Object.values(world.questions).filter((c) => c.question.data.joins === lead && (world.shown[lead] ?? []).includes(c.question.data.work)).map((c) => c.question.data.id);
   const views = () => (joinQuestions(world.questions, { ended, shown: shownBy }), {
-    work: world.work, runs: world.runs, asks: world.asks, reports: world.reports, questions: world.questions, approvals: world.approvals, incidents: world.incidents, costs: world.costs, goals: world.goals, levels: {}, cardsWaiting: cardsWaitingOf(notes()), sendBacks: world.sendBacks ?? [],
+    work: world.work, runs: world.runs, asks: world.asks, reports: world.reports, questions: world.questions, approvals: world.approvals, incidents: world.incidents, costs: world.costs, goals: world.goals, goalChecks: world.goalChecks ?? {}, slept: world.slept ?? [], levels: {}, cardsWaiting: cardsWaitingOf(notes()), sendBacks: world.sendBacks ?? [],
   });
   const record = (data) => { (world.runs[data.work] ??= []).push({ at: at(), data: { engine: 'fake', ...data } }); };
   const realStart = async ({ order, branch, carryOn }) => {
@@ -71,6 +71,7 @@ export function wayBack({ dispatchExtra = {}, recordings = {}, pace = 3, setting
     if (kind === 'question') world.questions[data.id] = { question: { data } };
     else if (kind === 'report') world.reports[data.work] = { at: at(), data };
     else if (kind === 'run') record(data);
+    else if (kind === 'goal-end') world.goals[data.goal].ended = { ending: data.ending, at: data.at, spent: data.spent, ...(data.words === undefined ? {} : { words: data.words }) };
   };
   const build = () => {
     const dispatcher = dispatchRun({
