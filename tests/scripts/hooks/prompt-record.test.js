@@ -851,7 +851,7 @@ test('every label the prompt record can sign for is in SIGNED_LABELS, or one ans
   assert.ok(handled.length >= 5);
   assert.deepEqual([...new Set(handled)].filter((l) => !CLICK_ONLY.includes(l)).sort(), [...SIGNED_LABELS].sort());
   assert.ok(CLICK_ONLY.every((l) => handled.includes(l) && !SIGNED_LABELS.includes(l)));
-  assert.ok(['Change it', 'End it', 'Merge the fix'].every((l) => SIGNED_LABELS.includes(l)));
+  assert.ok(['Change it', 'End it', 'Merge the fix', 'Send it back'].every((l) => SIGNED_LABELS.includes(l)));
   // Deciding labels only: never one that asks for more or puts a card off.
   assert.ok(['Explain more', 'Not now', 'Show me', 'Why?', 'Suggest a change…'].every((l) => !SIGNED_LABELS.includes(l)));
 });

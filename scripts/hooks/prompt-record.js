@@ -366,7 +366,7 @@ export async function earned({ project, question, label, card, client, now, left
     return at && { made: { kind: 'approval', data: { pr: at.pr, commit: at.head, words: 'Approve', question } } };
   }
   // Send it back answers the same line as Approve, at the same head, so a card for a commit that moved on sends nothing back.
-  if (label === SEND_BACK) {
+  if (label === 'Send it back') {
     const m = only(APPROVE, question);
     const at = m && await openHead(m, question, { project, client, left });
     return at ? action({ action: 'send-back', pr: at.pr, sha: at.head }) : null;
