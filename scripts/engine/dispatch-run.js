@@ -429,9 +429,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     await write('note', { about: 'engine', words: goalEndedWords(goal.sheet.title, kept.ending) });
   }
 
-  async function goalTick() {
-    // The time goes with the record it is read against: a sleep during this look has no `slept` record yet.
-    const at = now();
+  // `at` is when this look began: the time goes with the record it is read against, and a sleep during it has no `slept` record yet.
+  async function goalTick(at) {
     const views = readViews() ?? {};
     const goal = goalInForce(views);
     if (goal === null) return afterGoalTick(views);
@@ -1949,10 +1948,11 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   }
 
   async function tick() {
+    const lookedAt = now();
     await meterTick(readViews() ?? {}).catch(() => {});
     await owedTick();
     await fixTick();
-    await goalTick().catch(() => {});
+    await goalTick(lookedAt).catch(() => {});
     // Trouble with a reservation or an entry costs a tick nothing: each is looked at again on the next.
     await returnTick(readViews() ?? {}).catch(() => {});
     await areaTick(readViews() ?? {}).catch(() => {});
