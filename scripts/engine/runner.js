@@ -32,11 +32,12 @@ import { READER_WORK } from '../delegation/reader.js';
 import { alike, normaliseWords } from '../delegation/words.js';
 import { closeMatch, decisionKey, earlierAnswer, reuse, spokenSince } from '../delegation/asked.js';
 import { REPEAT_READ_MS } from '../delegation/limits.js';
-import { mergeQuestionWords, parkedWords, PARKED_WHY, PARKED_BECAUSE, PARKED_MEANWHILE, PARKED_APPROVE_SAYS, PARKED_CHANGED } from './words.js';
+import { mergeQuestionWords, parkedWords, PARKED_WHY, PARKED_BECAUSE, PARKED_MEANWHILE, PARKED_APPROVE_SAYS, PARKED_SEND_BACK_SAYS, PARKED_CHANGED, SENT_BACK_ANSWER, sentBackWords, sentBackGoneWords, sentBackApprovedWords, sentBackMovedWords, sentBackNoPieceWords } from './words.js';
+import { SEND_BACK } from '../lib/calm-words.js';
 import { parkChoice } from './archon/asks.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
-const EMPTY = () => ({ routed: {}, waiting: [], held: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, tries: {}, later: [], next: {}, noted: null, capped: {}, costed: {}, reviewsKept: {}, carried: {}, reworks: {}, answers: {}, sending: {}, parked: {}, reused: {}, repeats: {}, unsure: {} });
+const EMPTY = () => ({ routed: {}, waiting: [], held: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, tries: {}, later: [], next: {}, noted: null, capped: {}, costed: {}, reviewsKept: {}, carried: {}, reworks: {}, answers: {}, sending: {}, parked: {}, reused: {}, repeats: {}, unsure: {}, sentBack: {} });
 // The failed tries after which the director is told an answer hasn't reached the build yet.
 const UNREACHABLE_SAID = 3;
 // The cap card's options: Give it more carries the work on with the cap raised once; Stop leaves it stopped.
@@ -99,13 +100,19 @@ const inSentence = (title) => (/^[A-Z][a-z]/.test(title) ? title.charAt(0).toLow
 //   common exclusions it hits, `place` being { branch, folder }; each null when it can't be read, and none may hold up a tick.
 // - `handBack({ pr })` hands a parked pull request the director approved to the merge queue again
 //   (dispatch-run.js): { ok }, { ok: false, waiting } or { ok: false, refused }.
+// - `takeBack({ pr, work })` says whether a pull request the director sent back can go to its piece: { ok }, { ok: false, gone }
+//   or { ok: false }, asked again on the next tick; `notReady(pr)` takes it off what the queue is due for; `localChange(pr)`
+//   the change marked ready on a project in git alone, { head, work, ... }, or null.
 //
 // One unclear pull request holds nothing back (delegated decisions design, section 8): where the queue offers `park`
 // it is taken, which only leaves that pull request, and the director's approval card is raised for its head. `parked`
 // keeps { [pr]: { head, at, runId, choice, work, ask, taken, handed } }: `taken` once the engine has it, so a restart
 // between the two still raises the card, and `handed` once an approval has gone back to the queue. Only an approval
 // signed since `at` counts for it: an older one, for a pull request shown first, never saw what the queue is unsure of.
-export function engineRunner({ engine, file, readViews, write, stopped = () => false, now = () => new Date(), settings = () => ({}), workOf = () => null, titleOf = (work) => work, endRun = async () => ({ ended: [], survivors: [] }), openedOf = () => null, prTitleOf = async () => null, keepReviews = async () => true, onCard = () => {}, onReaderAsk = () => {}, blindRoll = () => 1, release = () => {}, handBack = async () => ({ ok: false, refused: 'nothing hands work to the merge queue here' }), admittedTo = () => true, delivered = () => {}, drop = () => {}, startAdmitted = async () => ({ ok: false, refused: 'nothing starts runs here' }), carryOver = () => {}, comingBack = () => false, headOf = async () => null, commitsSince = async () => null, exclusionsOf = async () => null } = {}) {
+// The card's other answer is Send it back (`sendBacks`): the park ends, and the piece is reworked on its own branch as a
+// blocked exit's Send it back is. `sentBack` keeps which signed clicks have been acted on, so each counts once. On a project in
+// git alone nothing parks: the local queue raises the same card, and the change marked ready stands in for the park.
+export function engineRunner({ engine, file, readViews, write, stopped = () => false, now = () => new Date(), settings = () => ({}), workOf = () => null, titleOf = (work) => work, endRun = async () => ({ ended: [], survivors: [] }), openedOf = () => null, prTitleOf = async () => null, keepReviews = async () => true, onCard = () => {}, onReaderAsk = () => {}, blindRoll = () => 1, release = () => {}, handBack = async () => ({ ok: false, refused: 'nothing hands work to the merge queue here' }), admittedTo = () => true, delivered = () => {}, drop = () => {}, takeBack = async () => ({ ok: false }), notReady = () => {}, localChange = () => null, startAdmitted = async () => ({ ok: false, refused: 'nothing starts runs here' }), carryOver = () => {}, comingBack = () => false, headOf = async () => null, commitsSince = async () => null, exclusionsOf = async () => null } = {}) {
   let state = readState(file);
   const keep = () => saveState(file, state);
   const note = (words, extra = {}) => write('note', { about: 'engine', words, ...extra });
@@ -253,6 +260,50 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
         keep();
         await note(`Pull request #${pr} couldn't go back to the merge queue yet: ${got.refused}.`, { work: kept.work, level: 3 });
       }
+    }
+  }
+
+  // Each signed Send it back, once. It goes ahead of `parks`, so with an approval beside it nothing goes to the queue. Only a
+  // click for the head the card stands for counts: one for a head that moved on, or from before this park, moves nothing.
+  // Marked and retired in one write, with the rework asked for, so a crash leaves it to do again or done, never half. Under All
+  // stop nothing moves, and the click waits for the lift.
+  async function sendBacks() {
+    if (stopped()) return;
+    const views = viewsNow();
+    for (const { id, at, pr, sha } of Array.isArray(views.sendBacks) ? views.sendBacks : []) {
+      if (state.sentBack[id]) continue;
+      const kept = state.parked[pr];
+      const change = kept === undefined ? localChange(pr) : null;
+      const unused = (words) => {
+        state.sentBack[id] = true;
+        keep();
+        return note(words(pr), { work: kept?.work ?? change?.work, level: 3 });
+      };
+      if (kept?.head === sha && kept.handed) {
+        await unused(sentBackApprovedWords);
+        continue;
+      }
+      if (change ? change.head !== sha : !(kept?.taken === true && kept.head === sha && approvalAnswers({ at }, kept))) {
+        await unused(sentBackMovedWords);
+        continue;
+      }
+      const work = openedOf(pr)?.work ?? change?.work ?? kept.work;
+      const runId = (views.runs?.[work] ?? []).at(-1)?.data?.runId;
+      const got = typeof runId === 'string' ? await safely(() => takeBack({ pr, work })) : { ok: false, none: true };
+      if (got?.ok !== true && got?.gone !== true && got?.none !== true) continue;
+      if (kept !== undefined) {
+        delete state.parked[pr];
+        retireCard(pr);
+      }
+      if (got.ok !== true) {
+        await unused(got.none ? sentBackNoPieceWords : sentBackGoneWords);
+        continue;
+      }
+      state.reworks[runId] ??= { work, answer: { question: kept?.ask?.reason ?? mergeQuestionWords(pr), answer: SENT_BACK_ANSWER } };
+      state.sentBack[id] = true;
+      keep();
+      await safely(() => notReady(pr));
+      await note(sentBackWords(pr, sha), { work, level: 3 });
     }
   }
 
@@ -578,7 +629,8 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
         what,
         why: a.why, because: a.parked ? PARKED_BECAUSE : 'its checks passed and it is visible work, which you see first',
         meanwhile: a.parked ? PARKED_MEANWHILE : 'Nothing is added until you approve it.',
-        options: [{ label: 'Approve', says: a.parked ? PARKED_APPROVE_SAYS : 'It approves the change, and it is added to the product.' }],
+        options: [{ label: 'Approve', says: a.parked ? PARKED_APPROVE_SAYS : 'It approves the change, and it is added to the product.' }, ...(a.parked ? [{ label: SEND_BACK, says: PARKED_SEND_BACK_SAYS }] : [])],
+        ...(a.parked ? { parked: true } : {}),
         ...(a.level === 4 ? { checks: 'It changes no checks: the change is still checked before it is added.' } : {}),
         target: { pr: a.pr, sha: a.sha },
       });
@@ -1027,6 +1079,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     capped,
     async tick() {
       await deliver();
+      await sendBacks();
       await reworks();
       for (const id of Object.keys(state.repeats)) await sendEarlier(id);
       await again();

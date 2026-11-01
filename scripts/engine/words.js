@@ -16,13 +16,21 @@ export function mergeQuestionWords(pr, title) {
 }
 
 // The card for a pull request the merge queue has left alone. It stays out of the queue until the director approves its
-// commit: the queue asks about it again only when handed it again, so nothing here promises a question.
+// commit or sends it back: the queue asks about it again only when handed it again, so nothing here promises a question.
 export const parkedWords = (reason) => `${reason} The merge queue has left it and gone on with the others.`;
 export const PARKED_CHANGED = 'The change has moved to a newer commit since the last card, so this is the one to look at.';
 export const PARKED_WHY = 'Only you can say whether this goes in, at level 3.';
 export const PARKED_BECAUSE = 'the merge queue can\'t judge it, so what it does is yours to weigh';
 export const PARKED_MEANWHILE = 'Nothing of it is added until you approve this commit, and other work carries on. A new commit needs your approval again.';
 export const PARKED_APPROVE_SAYS = 'It approves this commit, and the change goes back to the merge queue to be added.';
+export const PARKED_SEND_BACK_SAYS = 'It goes back to be reworked on its own branch, and nothing of it is added. You see it again if it still needs your say.';
+// What a piece sent back is told, in its order, as the director's answer.
+export const SENT_BACK_ANSWER = 'Send it back: not as it stands. Rework it so this no longer stands in its way.';
+export const sentBackWords = (pr, head) => `You sent pull request #${pr} back at ${head.slice(0, 7)}, so it goes back to be reworked and nothing of it is added.`;
+export const sentBackGoneWords = (pr) => `Your Send it back for pull request #${pr} wasn't used: that work has ended, or the pull request has closed.`;
+export const sentBackApprovedWords = (pr) => `Your Send it back for pull request #${pr} wasn't used: your approval had already sent it to the merge queue.`;
+export const sentBackMovedWords = (pr) => `Your Send it back for pull request #${pr} wasn't used: it has moved on to a newer commit since that card.`;
+export const sentBackNoPieceWords = (pr) => `Pull request #${pr} has no work of Wheelhouse's behind it, so there is nothing to go back to. The merge queue leaves it, and you can close it on its host.`;
 
 // The Logbook's line for a held piece with nothing behind it that could move it: a reservation can outlast every card.
 export function noCardBehindWords(title, why, by) {

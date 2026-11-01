@@ -224,6 +224,15 @@ A run at a usage limit isn't waiting on the director. It keeps its place and res
 
 **The merge queue is one more piece that can wait.** A paused merge-queue run still counts as running, so its question about one unclear pull request holds every merge. The goals draft's answer (take the queue's `park` choice and raise the director's card, section 6 there, check U3) applies here to all work. Where `park` isn't offered or U3 fails, the question stays as a blocking card, as it does today, and this is the one case where a single question can still hold work back.
 
+**A parked pull request can be refused (the director, 1 November 2026).** Taking `park` gives up the queue's `return`, so the card must offer a way to say no: otherwise the director closes the pull request on its host, and until then the piece waits, keeps its files and fills the parked limit. The card offers **Send it back** beside **Approve**, and each says what it does.
+
+- **It is signed like any other click.** Send it back is a signed `send-back` action naming the pull request and its full head, from the card's own set line, in the pane, the chat or a phone's reply code. It signs only while the host still has that commit as the open pull request's head, as Approve does.
+- **It takes Not now's place.** A card shows four options at most and this one simply waits while nothing is clicked. **Suggest a change…** stays. *Designer's call.*
+- **What a click does.** The piece leaves the parked set: the park ends, its card closes and the pull request stops being marked ready, so the queue has nothing to look at. The piece comes back as ordinary rework through section 8.3, on its own branch, with its cap not raised and its spend still counted, and the queue's words and the director's answer in its order. Its files stay reserved through the gap (section 8.2). Whatever the rework then marks ready is judged afresh, at a new head or the same one, and a click on an earlier card answers nothing there.
+- **Only the head the card stands for counts.** A click for a commit the park has moved on from, or one from before this park, moves nothing, and the Logbook says so once. So does a click after Approve already sent the pull request back to the queue, or for work that has ended or a pull request that has closed. With a Send it back and an approval side by side, nothing goes to the queue.
+- **Under All stop** the click is signed and closes the card, and nothing moves until the lift. A helper started again acts on each click once, from the signed record and its own file.
+- **In git alone** nothing parks, since the local queue raises its own card (spec 7.4). That card offers Send it back too, and the change marked ready stands in for the park. There is no host to close the change on, so this is the only way to refuse it.
+
 ### 8.2 What a waiting piece gives up, and what it keeps
 
 | | Gives up | Keeps |
@@ -441,7 +450,7 @@ Eight candidates, from repeated kinds in the first cut. Shares are of past quest
 | Measure | How | What it answers |
 |---|---|---|
 | **Sealed against actual** | When a card is written, the helper seals its script checks, with a hash and time, and the reader's answer joins them unseen by anyone. Neither can see the director's answer. Later it scores match, miss or **outside** (typed, challenged, added to or asked back). Outside counts as a miss | Would it have matched? |
-| **Blind sample** (main measure) | On about 1 in 5 question cards, at most one a day, the options come first in shuffled order with no recommendation. After the pick the recommendation shows, and the director may change their mind. Both answers are kept. Never on level 4, an approval or a card holding up all work. Blind cards don't count in the existing delegation review | Agreement without anchoring, and the anchoring itself |
+| **Blind sample** (main measure) | On about 1 in 5 question cards, at most one a day, the options come first in shuffled order with no recommendation. After the pick the recommendation shows, and the director may change their mind. Both answers are kept. Never on level 4, an approval or a card holding up all work. So a project building one piece at a time shows none, since its one open piece holds up all work; they stay left out of such projects for now (the director, 1 November 2026). Blind cards don't count in the existing delegation review | Agreement without anchoring, and the anchoring itself |
 | **Direction** | The reader tags each option on a short list of axes, blind: sooner or later, more or less testing, faster or safer, paid or free, more or less scope, keep or remove. The review shows departures and takes by axis, by kind | Whether the recommendations lean one way. Take rates can't show this |
 | **Outcomes** | Decisions changed later, by kind, with the number of decisions as the denominator; work later redone because of one; failed checks on settled pieces | What happened, not what was clicked |
 | **Cost of a reversal** | Time and tokens spent per reversal, against the card avoided | Whether delegating paid for itself |
@@ -674,6 +683,7 @@ The director may override any of these.
 21. The falls in section 13.2.
 22. A reset falls to stage 1 at most, and a changed rule set resets only what it touches (section 13.3).
 23. Stage 3 needs its own design (section 13.1).
+24. Send it back takes Not now's place on a parked pull request's card (section 8.1).
 
 ## 19. Risks
 

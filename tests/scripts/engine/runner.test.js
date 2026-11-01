@@ -945,7 +945,7 @@ test('the fresh run asking the question the director answered is answered from t
 // The merge queue's question about a pull request, as the adapter gives it, and what its record step says it asked.
 const ASKED_HEAD = 'c'.repeat(40);
 const mergeAsk = (id) => ({ type: 'ask', id, kind: 'question', level: 3, recommend: null, card: true, holdsAll: true, mergeQuestion: { pr: 7 }, reason: 'The merge queue won\'t judge pull request #7 by itself.', options: [{ id: 'go', label: 'Merge at ccc' }, { id: 'back', label: 'Return it' }, { id: 'leave', label: 'Leave it' }] });
-function mergeSetUp({ stop = false, title = 'Switch on the greeting', lane = 'feature', head = ASKED_HEAD, askedHead = ASKED_HEAD, merge = 'go', park = null, signed = true, act, known = true, handBack, file = null } = {}) {
+function mergeSetUp({ stop = false, title = 'Switch on the greeting', lane = 'feature', head = ASKED_HEAD, askedHead = ASKED_HEAD, merge = 'go', park = null, signed = true, act, known = true, handBack, file = null, takeBack, notReady, localChange } = {}) {
   const asked = (id) => [ev({ type: 'run-started' }), ev(mergeAsk(id)), ev({ type: 'ask-resolved', id }), ev({ type: 'run-ended', outcome: 'completed' })];
   const t = setUp({ recordings: { one: asked('q9'), two: asked('q10') }, stop });
   t.asked = { head: askedHead };
@@ -957,7 +957,7 @@ function mergeSetUp({ stop = false, title = 'Switch on the greeting', lane = 'fe
   const runner = engineRunner({
     engine: t.engine, file: t.mergeFile, readViews: () => t.views, write: async (kind, data) => { t.writes.push({ kind, data }); },
     stopped: () => t.world.stop, now: () => t.world.now, settings: () => ({ cardsPerDay: 3 }), workOf: () => (known ? { work: 'merge-queue', lane: 'merge' } : null), titleOf: () => 'the changes waiting to be added',
-    openedOf: (pr) => (pr === 7 ? { lane, work: 'card-81' } : null), prTitleOf: async () => title, handBack,
+    openedOf: (pr) => (pr === 7 ? { lane, work: 'card-81' } : null), prTitleOf: async () => title, handBack, takeBack, notReady, localChange,
   });
   runner.onMergeRuled(() => t.ruled.push(true));
   const ask = async (recording = 'one') => {
@@ -2471,5 +2471,228 @@ test('a park at a new head takes the place of the card for the old head', async 
   assert.equal(cardsOf(t).length, 2);
   assert.equal(cardsOf(t)[1].data.revises, 'card-old');
   assert.match(cardsOf(t)[1].data.parts?.changed ?? cardsOf(t)[1].data.changed, /head|commit/i);
+  t.cleanup();
+});
+
+// --- Send it back (delegated decisions design, section 8.1) ---
+const sendBack = (t, { head = ASKED_HEAD, at = t.world.now.toISOString(), id = `sb-${at}` } = {}) => {
+  t.views.sendBacks = [...(t.views.sendBacks ?? []), { id, at, pr: 7, sha: head }];
+};
+const later = (t, ms = 1000) => { t.world.now = new Date(t.world.now.getTime() + ms); };
+const pieceRan = (t, state = 'ended') => { t.views.runs = { 'card-81': [{ at: '2026-10-28T00:00:00.000Z', data: { runId: 'build-1', lane: 'quick', state, branch: 'wh/card-81' } }] }; };
+function backSetUp(over = {}) {
+  const left = [];
+  const entered = [];
+  const t = mergeSetUp({ ...LEAVE, takeBack: async () => ({ ok: true }), notReady: (pr) => left.push(pr), ...over });
+  t.runner.onEnter((args) => entered.push(args));
+  pieceRan(t);
+  return { ...t, left, entered };
+}
+const said = (t, words) => t.writes.filter((w) => w.kind === 'note' && words.test(w.data.words));
+
+test('Send it back ends the park, retires the card and asks for ordinary rework on the piece\'s own branch', async () => {
+  const t = backSetUp();
+  await t.ask();
+  assert.deepEqual([...t.runner.waitingWork()], ['card-81']);
+  later(t);
+  sendBack(t);
+  await t.runner.tick();
+  assert.deepEqual(t.runner.parkedHeads(), {}, 'it has left the parked set');
+  assert.deepEqual([...t.runner.waitingWork()], [], 'and waits on nothing');
+  assert.equal(t.entered.length, 1);
+  const [entry] = t.entered;
+  assert.deepEqual({ work: entry.work, lane: entry.lane, via: entry.via, branch: entry.branch, carryOn: entry.carryOn, raised: entry.raised }, { work: 'card-81', lane: 'quick', via: 'rework', branch: 'wh/card-81', carryOn: true, raised: false });
+  assert.deepEqual(entry.carried, { raised: false, runs: ['build-1'] }, 'its spend still counts against it');
+  assert.match(entry.answers.at(-1).question, /#7/);
+  assert.match(entry.answers.at(-1).answer, /Send it back/);
+  assert.deepEqual(t.left, [7], 'the queue no longer has it as ready');
+  assert.equal(said(t, /#7/).length, 1);
+  assert.equal(acts(t.engine).filter((a) => a.action.answer?.choice === 'go').length, 0, 'nothing merges');
+  await t.runner.tick();
+  assert.equal(t.entered.length, 1, 'once');
+  t.cleanup();
+});
+
+test('a piece keeps its files until its rework has begun: it is named as reworking from the click', async () => {
+  const t = backSetUp();
+  pieceRan(t, 'paused');
+  await t.ask();
+  later(t);
+  sendBack(t);
+  await t.runner.tick();
+  assert.deepEqual(t.runner.reworkWork(), ['card-81']);
+  assert.equal(t.entered.length, 0, 'a run still going is left to end first');
+  pieceRan(t, 'ended');
+  await t.runner.tick();
+  assert.equal(t.entered.length, 1);
+  assert.deepEqual(t.runner.reworkWork(), []);
+  t.cleanup();
+});
+
+test('under All stop a Send it back waits for the lift, and moves nothing', async () => {
+  const t = backSetUp();
+  await t.ask();
+  later(t);
+  t.world.stop = true;
+  sendBack(t);
+  await t.runner.tick();
+  assert.deepEqual(t.runner.parkedHeads(), { 7: ASKED_HEAD });
+  assert.deepEqual([t.entered.length, t.left.length], [0, 0]);
+  t.world.stop = false;
+  await t.runner.tick();
+  assert.equal(t.entered.length, 1);
+  assert.deepEqual(t.runner.parkedHeads(), {});
+  t.cleanup();
+});
+
+test('a helper started again acts on a Send it back once', async () => {
+  const t = backSetUp();
+  await t.ask();
+  later(t);
+  sendBack(t);
+  const again = engineRunner({
+    engine: t.engine, file: t.mergeFile, readViews: () => t.views, write: async (kind, data) => { t.writes.push({ kind, data }); }, stopped: () => false, now: () => t.world.now,
+    openedOf: (pr) => (pr === 7 ? { lane: 'quick', work: 'card-81' } : null), takeBack: async () => ({ ok: true }), notReady: () => {},
+  });
+  const entered = [];
+  again.onEnter((args) => entered.push(args));
+  await again.tick();
+  assert.equal(entered.length, 1);
+  const third = engineRunner({
+    engine: t.engine, file: t.mergeFile, readViews: () => t.views, write: async () => {}, stopped: () => false, now: () => t.world.now,
+    openedOf: (pr) => (pr === 7 ? { lane: 'quick', work: 'card-81' } : null), takeBack: async () => ({ ok: true }), notReady: () => {},
+  });
+  third.onEnter((args) => entered.push(args));
+  await third.tick();
+  assert.equal(entered.length, 1, 'once, across restarts');
+  t.cleanup();
+});
+
+test('a Send it back for an older head does nothing to the park at the new head, and says so once', async () => {
+  const t = backSetUp();
+  await t.ask();
+  const newer = 'd'.repeat(40);
+  t.asked.head = newer;
+  later(t);
+  await t.ask('two');
+  later(t);
+  sendBack(t, { head: ASKED_HEAD });
+  await t.runner.tick();
+  await t.runner.tick();
+  assert.deepEqual(t.runner.parkedHeads(), { 7: newer });
+  assert.equal(t.entered.length, 0);
+  assert.equal(said(t, /newer commit|moved on/).length, 1);
+  t.cleanup();
+});
+
+test('a Send it back from before the park doesn\'t answer the card it raised', async () => {
+  const t = backSetUp();
+  const before = t.world.now.toISOString();
+  later(t);
+  await t.ask();
+  sendBack(t, { at: before });
+  await t.runner.tick();
+  assert.deepEqual(t.runner.parkedHeads(), { 7: ASKED_HEAD });
+  assert.equal(t.entered.length, 0);
+  t.cleanup();
+});
+
+test('a Send it back after the approval went to the queue is not used, and says so', async () => {
+  const t = backSetUp({ handBack: async () => ({ ok: true }) });
+  await t.ask();
+  later(t);
+  sign(t);
+  await t.runner.tick();
+  later(t);
+  sendBack(t);
+  await t.runner.tick();
+  assert.equal(t.entered.length, 0);
+  assert.equal(said(t, /approval/).filter((w) => /wasn't used/.test(w.data.words)).length, 1);
+  t.cleanup();
+});
+
+test('a Send it back and an approval together: nothing goes to the queue', async () => {
+  const handed = [];
+  const t = backSetUp({ handBack: async (args) => { handed.push(args); return { ok: true }; } });
+  await t.ask();
+  later(t);
+  sign(t);
+  sendBack(t);
+  await t.runner.tick();
+  assert.deepEqual(handed, []);
+  assert.equal(t.entered.length, 1);
+  t.cleanup();
+});
+
+test('a Send it back whose work has ended or pull request has closed leaves the record, and starts nothing', async () => {
+  const t = backSetUp({ takeBack: async () => ({ ok: false, gone: true }) });
+  await t.ask();
+  later(t);
+  sendBack(t);
+  await t.runner.tick();
+  assert.deepEqual(t.runner.parkedHeads(), {});
+  assert.deepEqual([...t.runner.waitingWork()], []);
+  assert.deepEqual([t.entered.length, t.left.length], [0, 0]);
+  assert.equal(said(t, /wasn't used/).length, 1);
+  t.cleanup();
+});
+
+test('a Send it back the host can\'t answer for is tried again on the next tick', async () => {
+  const answers = [{ ok: false }, { ok: true }];
+  const t = backSetUp({ takeBack: async () => answers.shift() });
+  await t.ask();
+  later(t);
+  sendBack(t);
+  await t.runner.tick();
+  assert.deepEqual(t.runner.parkedHeads(), { 7: ASKED_HEAD });
+  await t.runner.tick();
+  assert.deepEqual(t.runner.parkedHeads(), {});
+  assert.equal(t.entered.length, 1);
+  t.cleanup();
+});
+
+test('a pull request no piece of Wheelhouse\'s opened has nothing to go back to, and says so', async () => {
+  const t = backSetUp();
+  await t.ask();
+  later(t);
+  t.views.runs = {};
+  sendBack(t);
+  await t.runner.tick();
+  assert.deepEqual(t.runner.parkedHeads(), {});
+  assert.equal(t.entered.length, 0);
+  assert.equal(said(t, /close it|nothing to go back/).length, 1);
+  t.cleanup();
+});
+
+test('on a project in git alone a Send it back goes by the change marked ready, with no park', async () => {
+  const change = { work: 'card-81', head: ASKED_HEAD, runId: 'build-1' };
+  const t = backSetUp({ localChange: (pr) => (pr === 7 ? change : null) });
+  later(t);
+  sendBack(t);
+  await t.runner.tick();
+  assert.equal(t.entered.length, 1);
+  assert.equal(t.entered[0].work, 'card-81');
+  assert.deepEqual(t.left, [7]);
+  t.cleanup();
+});
+
+test('in git alone a Send it back for a head no longer the one marked ready isn\'t used', async () => {
+  const t = backSetUp({ localChange: () => ({ work: 'card-81', head: 'd'.repeat(40), runId: 'build-2' }) });
+  later(t);
+  sendBack(t);
+  await t.runner.tick();
+  assert.equal(t.entered.length, 0);
+  assert.equal(said(t, /wasn't used/).length, 1);
+  t.cleanup();
+});
+
+test('the card a park raises offers Send it back and says what each option does', async () => {
+  const t = mergeSetUp(LEAVE);
+  await t.ask();
+  const [card] = cardsOf(t).map((c) => c.data);
+  assert.deepEqual(card.options, ['Approve', 'Send it back', 'Suggest a change…', 'Show me']);
+  assert.match(card.descriptions[0], /merge queue/);
+  assert.match(card.descriptions[1], /reworked/);
+  assert.match(card.descriptions[1], /nothing of it is added/i);
   t.cleanup();
 });

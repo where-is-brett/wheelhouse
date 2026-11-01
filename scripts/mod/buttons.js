@@ -20,7 +20,7 @@
 import { cardProblems } from '../hooks/card-check.js';
 import { SIGNED_LABELS } from '../hooks/prompt-record.js';
 import { CARD_KINDS, KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
-import { SUGGEST, NOT_NOW, SHOW_ME, WHY } from '../lib/calm-words.js';
+import { SUGGEST, NOT_NOW, SHOW_ME, WHY, SEND_BACK } from '../lib/calm-words.js';
 import { textOf } from '../cards/compose.js';
 import { setLinesOf, TRUST_LINE, TAKEOVER_LINE, PAIR_LINE, UNINSTALL_LINE } from '../state/card-lines.js';
 import { baselineWording } from '../lib/measures-clicks.js';
@@ -174,6 +174,7 @@ function buttonsOf(card, preview) {
   return {
     buttons: [
       ...(deciding === undefined ? [] : [button(deciding, 'record', 'filled')]),
+      ...(offered(SEND_BACK) ? [button(SEND_BACK, 'record', 'outlined')] : []),
       ...askToSuggest,
       ...notNow,
       why,

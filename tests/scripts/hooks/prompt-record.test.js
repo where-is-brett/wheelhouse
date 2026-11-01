@@ -1888,3 +1888,31 @@ test('a chat pick on a blind card signs nothing and says to ask the card that fo
     assert.deepEqual(steered.calls.write.map((w) => [w.kind, w.data]), [['chat-steer', { card: kept.id }]]);
   });
 });
+
+const PARKED_OPTIONS = ['Approve', 'Send it back', 'Suggest a change…', 'Show me'].map((label) => ({ label, description: `${label} does this.` }));
+const SENT = (question) => input({ [question]: 'Send it back' }, { options: PARKED_OPTIONS });
+
+test('Send it back in the chat is a signed action naming the pull request and its head', async () => {
+  await withHome(async () => {
+    const question = `A card.\n${approvalLine(7, FULL)}`;
+    const c = fake();
+    await decide(SENT(question), deps(c));
+    const rec = c.calls.record.find((r) => r.event.kind === 'action');
+    assert.deepEqual(rec.event.data, { action: 'send-back', pr: 7, sha: FULL, question, label: 'Send it back' });
+    assert.equal(verify(rec.event, readEnrolled()), true);
+  });
+});
+
+test('Send it back signs nothing on a moved head, a closed pull request, or a card with no pull request line', async () => {
+  await withHome(async () => {
+    const question = `A card.\n${approvalLine(7, FULL)}`;
+    for (const pr of [{ ok: true, result: { headSha: 'f'.repeat(40), state: 'open' } }, { ok: true, result: { headSha: FULL, state: 'closed' } }, { ok: false, refused: 'no' }]) {
+      const c = fake({ pr });
+      await decide(SENT(question), deps(c));
+      assert.deepEqual(kinds(c).filter((k) => k === 'action'), [], JSON.stringify(pr));
+    }
+    const c = fake();
+    await decide(SENT('A card with no line.'), deps(c));
+    assert.deepEqual(kinds(c).filter((k) => k === 'action'), []);
+  });
+});

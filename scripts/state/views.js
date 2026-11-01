@@ -265,6 +265,10 @@ function leanRulingClicks(sorted, rulings) {
   return out;
 }
 
+// The director's signed Send it backs, in order: [{ id, at, pr, sha }]. The runner acts on each once (scripts/engine/runner.js).
+const sendBacksOf = (sorted, enrolled) => sorted.filter((e) => e.kind === 'action' && e.data?.action === 'send-back' && verify(e, enrolled))
+  .map((e) => ({ id: e.id, at: e.at, pr: e.data.pr, sha: e.data.sha }));
+
 // The verified approvals and actions that carry the question they were clicked on.
 const answeredByOf = (sorted, enrolled) => sorted.filter((e) => (e.kind === 'approval' || e.kind === 'action') && typeof e.data?.question === 'string' && verify(e, enrolled));
 
@@ -759,6 +763,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
     evidence: evidenceOf(sorted, enrolled),
     rules: rulesInForce(confirmations, now),
     brief: briefInForce(confirmations),
+    sendBacks: sendBacksOf(sorted, enrolled),
     rulebook,
     levels,
     settings,

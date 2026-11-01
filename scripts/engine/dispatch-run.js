@@ -133,9 +133,10 @@ export function orderFor(entry, { settings = {}, raised = false, config = {}, an
 //   every tick while a change waits, since its own table says what is ready. `isLocal()` says whether the project still has
 //   no host, and `moving()` whether a move to a host is under way, which holds new work as All stop does.
 // - `branchPaths({ runId, branch })` every path a run's branch has changed so far, or null when it can't be read.
+// - `notReady(pr)` takes a pull request off what `readyOf` lists: the director sent it back, so only its rework marks it again.
 // - `engine.liveRunOf({ work, since })`, where the engine has it, says of a start that may have happened: { runId },
 //   null for none, undefined when it can't say. Without it the answer is undefined, so a card comes and not a second start.
-export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped: allStop = () => false, moving = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), spentThisMonth = () => 0, mainGreen = async () => null, stoppedRuns = () => [], fixedRuns = () => [], prMerged = async () => null, prState = null, designOf = () => null, orderOf = () => null, repoOf = () => null, repoName = () => null, queueFolder = async () => ({ ok: false, refused: 'no folder for the merge queue' }), queuePlace = null, openedBy = () => null, localQueue = null, isLocal = () => true, onCard = () => {}, branchPaths = async () => [] } = {}) {
+export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped: allStop = () => false, moving = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), spentThisMonth = () => 0, mainGreen = async () => null, stoppedRuns = () => [], fixedRuns = () => [], prMerged = async () => null, prState = null, designOf = () => null, orderOf = () => null, repoOf = () => null, repoName = () => null, queueFolder = async () => ({ ok: false, refused: 'no folder for the merge queue' }), queuePlace = null, openedBy = () => null, localQueue = null, isLocal = () => true, onCard = () => {}, branchPaths = async () => [], notReady = () => {} } = {}) {
   const stopped = () => allStop() || moving();
   let state = readState(file);
   // The pieces with a card of the card router's open, from the runner, which is built after this.
@@ -1345,6 +1346,19 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       const got = await engine.handOver({ project: folder, repo, pr, url: `https://${where.host}/${repo}/pull/${pr}`, runId: kept.runId, at: now().toISOString() });
       return got?.ok === true ? { ok: true } : { ok: false, refused: got?.refused ?? 'the engine didn\'t take it' };
     },
+    // Whether a pull request the director sent back can go to its piece: { ok }, { ok: false, gone } for work that has ended or
+    // a pull request closed or merged, and { ok: false } when the host can't say, to be asked again on the next tick.
+    async takeBack({ pr, work }) {
+      const views = readViews() ?? {};
+      const current = views.work?.[work]?.work;
+      if (!isPlain(current) || endedBy(isPlain(views.reports) ? views.reports : {}, work, current)) return { ok: false, gone: true };
+      const seen = await stateOf(pr);
+      if (seen === 'open') return { ok: true };
+      return seen === null ? { ok: false } : { ok: false, gone: true };
+    },
+    notReady: (pr) => notReady(pr),
+    // A change marked ready on a project in git alone, whose local queue parks nothing: { head, work, ... }, or null.
+    localChange: (pr) => (localQueue !== null && isLocal() ? (readyOf() ?? {})[pr] ?? null : null),
     // Every piece that waits on the director, by a card of the router's or one of these.
     waitingWork: () => waitingNow(readViews() ?? {}),
     // The files held for each piece, { [work]: paths }.

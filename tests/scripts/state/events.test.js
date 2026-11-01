@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { CODE_ALPHABET, takeOverLine, TAKEOVER_LABEL } from '../../../scripts/state/card-lines.js';
+import { CODE_ALPHABET, takeOverLine, TAKEOVER_LABEL, approvalLine } from '../../../scripts/state/card-lines.js';
 import { PUT_OFF } from '../../../scripts/lib/front-desk.js';
 import { readingOf } from '../../../scripts/delegation/seal.js';
 import { makeEvent, eventPath, writeEvent, listEvents, checkRecord, PLAIN_KINDS, PROTECTED_KINDS, HELPER_ONLY_KINDS } from '../../../scripts/state/events.js';
@@ -984,4 +984,16 @@ test('a question joins a card only at level 3, by another question\'s id', () =>
   assert.throws(() => makeEvent({ kind: 'question', data: { ...data, joins: 'nothing' } }), /joins a card/);
   assert.throws(() => makeEvent({ kind: 'question', data: { ...data, level: 4, checks: 'None.', joins: 'q-a-500001' } }), /joins a card/);
   assert.throws(() => makeEvent({ kind: 'question', data: { ...data, commands: ['npm i'], joins: 'q-a-500001' } }), /joins a card/);
+});
+
+test('a send-back names the pull request and the head its card names, by its label', async () => {
+  await withHome(() => {
+    const { computer, publicKey } = makeSigningKey();
+    enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
+    const good = { action: 'send-back', pr: 7, sha: 'a'.repeat(40), question: `A card.\n${approvalLine(7, 'a'.repeat(40))}`, label: 'Send it back' };
+    assert.equal(verify(makeEvent({ kind: 'action', data: good }), readEnrolled()), true);
+    for (const bad of [{ pr: 0 }, { sha: 'a'.repeat(12) }, { label: 'Approve' }, { question: 'A card with no line.' }, { pr: 8 }]) {
+      assert.throws(() => makeEvent({ kind: 'action', data: { ...good, ...bad } }), /action event/, JSON.stringify(bad));
+    }
+  });
 });

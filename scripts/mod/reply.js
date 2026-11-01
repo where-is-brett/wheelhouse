@@ -76,6 +76,7 @@ export function recordedAs(made, question) {
   if (data.action === 'amend') return `Change ${data.work}`;
   if (data.action === 'lift-incident') return `End incident ${data.incident}`;
   if (data.action === 'incident-fix') return `Merge pull request #${data.pr} as the fix`;
+  if (data.action === 'send-back') return `Send pull request #${data.pr} back`;
   return data.label ?? made.kind;
 }
 

@@ -550,6 +550,13 @@ export function engineRoutes({
     },
     // Every pull request the helper marked ready for the project: { [pr]: { head, runId, showFirst, work } }.
     readyAll: (project) => readVerdicts(project).ready ?? {},
+    // A pull request the director sent back: nothing marks it ready until its rework does.
+    notReady: (project, pr) => {
+      const verdicts = readVerdicts(project);
+      if (verdicts.ready?.[pr] === undefined) return;
+      const { [pr]: _gone, ...ready } = verdicts.ready;
+      keepVerdicts(project, { ...verdicts, ready });
+    },
     // The fix-main runs whose fix the helper added.
     fixedRuns: (project) => Object.keys(readVerdicts(project).fixed ?? {}),
     start,
