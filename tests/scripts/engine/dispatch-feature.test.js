@@ -517,3 +517,28 @@ test('a next slice with no place waits, and no stall card comes while it does', 
   await w.tick();
   assert.equal(w.starts.filter((s) => s.order.work === 'orders').length, 2, 'and starts once a place is free');
 });
+
+test('a failed slice raises its card only after the retries', async () => {
+  const fail = [{ type: 'run-started', runId: 'x', at: '2026-10-29T02:00:00.000Z' }, { type: 'run-ended', runId: 'x', at: '2026-10-29T02:00:00.000Z', outcome: 'failed', failure: 'connection' }];
+  const leg = [{ type: 'run-ended', runId: 'x', at: '2026-10-29T02:00:00.000Z', outcome: 'failed', failure: 'connection' }];
+  const w = wayBack({ recordings: { f: [...fail, ...leg, ...leg, ...leg] }, designOf: () => ({ text: DESIGN }) });
+  w.put('f', { lane: 'feature' });
+  await w.tick(4);
+  assert.equal(w.cards().length, 0, 'not while a try is left');
+  await w.pass(70 * 60 * 1000);
+  assert.equal(w.engine.calls.filter((c) => c.call === 'act' && c.action.resume).length, 3);
+  assert.equal(w.runsOf('f').length, 1);
+  assert.equal(w.cards().length, 1);
+  assert.deepEqual(w.cardOf('f').options.map((o) => o.label), [BUILD_AGAIN, STOP_HERE]);
+});
+
+test('heldUp\'s cancelled branch passes over a run on its way back', async () => {
+  const w = wayBack({ recordings: { f: forever() }, designOf: () => ({ text: DESIGN }) });
+  w.put('f', { lane: 'feature' });
+  await w.tick(2);
+  const [runId] = w.runsOf('f');
+  w.dispatcher.enter({ work: 'f', lane: 'slice', via: 'carry-on', key: `carry-on:${runId}`, branch: 'wh/f', carryOn: true });
+  await w.engine.act(runId, { cancel: {} });
+  await w.tick(4);
+  assert.equal(w.cards().length, 0);
+});

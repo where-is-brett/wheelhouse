@@ -358,7 +358,7 @@ const PLAIN_SHAPES = {
   'premium-rest': { must: ['why', 'at', 'until'], may: ['work'] },
   // The engine's records (design on Archon, sections 4.2 and 10). A run of a work on an engine: its state
   // (`started`, `paused` or `ended`), and when it ended, its branch, pull request and outcome.
-  run: { must: ['work', 'lane', 'engine', 'runId', 'state'], may: ['branch', 'pr', 'outcome', 'resume', 'failure'] },
+  run: { must: ['work', 'lane', 'engine', 'runId', 'state'], may: ['branch', 'pr', 'outcome', 'resume', 'failure', 'step'] },
   // A span the computer slept, as the helper measured it (unattended goals design, section 9.1): it doesn't count as running.
   slept: { must: ['from', 'to'], may: [] },
   // An ask a run raised: `id` is stable, so the same ask seen again is not written twice. `kind` says what sort of
@@ -509,7 +509,7 @@ function checkPlain(kind, data) {
     slug('work');
     if (!RUN_LANES.includes(data.lane)) bad('needs its lane to be quick, small, feature, bug, slice or fix-main');
     for (const k of ['engine', 'runId']) text(k);
-    for (const k of ['branch', 'outcome', 'failure']) optionalText(k);
+    for (const k of ['branch', 'outcome', 'failure', 'step']) optionalText(k);
     if (!RUN_STATES.includes(data.state)) bad('needs its state to be started, paused or ended');
     if (data.resume !== undefined && !(Number.isInteger(data.resume) && data.resume >= 1)) bad('needs resume to be a whole number from 1');
     pr();

@@ -68,6 +68,13 @@ function failureOf(json) {
   const lifecycle = (nodes.find((n) => n?.nodeId === first) ?? nodes.find((n) => n?.execution?.lifecycle?.status === 'failed'))?.execution?.lifecycle;
   return failureKind({ errorClass: lifecycle?.failureKind ?? null, providerClass: lifecycle?.providerFailure?.class ?? null, stopReason: json.metadata?.stop_reason?.reason ?? null });
 }
+// The step that failed first, from a failed run's record, or null.
+function failedStepOf(json) {
+  if (json?.status !== 'failed' && !(json?.status === 'completed' && json.outcome === 'failed')) return null;
+  const nodes = Array.isArray(json.nodes) ? json.nodes : [];
+  const first = json.terminal_record?.first_failed_node ?? nodes.find((n) => n?.execution?.lifecycle?.status === 'failed')?.nodeId;
+  return typeof first === 'string' ? first : null;
+}
 const START_MS = 120000;
 // Archon keeps a run's start to the second.
 const START_CLOCK_MS = 2000;
@@ -492,7 +499,7 @@ export function archonAdapter({
     async inspect(runId) {
       const result = await cli(['workflow', 'get', runId, '--verbose'], { json: true, timeout: CALL_MS });
       const json = result.code === 0 && result.json?.ok !== false ? result.json : null;
-      return { ...readRecord(json, { rates: requestRates(readAccountModels(engine)) }), failure: failureOf(json), folder: worktreeOf(json?.working_path, { home, worktreeBases }), ...(result.json ? {} : { unread: true }) };
+      return { ...readRecord(json, { rates: requestRates(readAccountModels(engine)) }), failure: failureOf(json), failedStep: failedStepOf(json), folder: worktreeOf(json?.working_path, { home, worktreeBases }), ...(result.json ? {} : { unread: true }) };
     },
 
     // Each finished step's whole output, by its id (record.js), for the helper to sign a review from Archon's own

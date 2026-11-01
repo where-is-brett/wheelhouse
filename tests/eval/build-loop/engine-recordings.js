@@ -1,5 +1,5 @@
 // tests/eval/build-loop/engine-recordings.js
-// Recordings for the engine scenarios (42 to 55, 60 to 62, 63 to 69, 70 to 75, 90 to 94 and 120 to 134), in the fake engine's
+// Recordings for the engine scenarios (42 to 55, 60 to 62, 63 to 69, 70 to 75, 90 to 94, 120 to 134 and 170 to 171), in the fake engine's
 // events: each a run of the quick lane, of the small lane from 51, of fix-main, of the bug lane from 63, or of a
 // feature's slices and its own run from 70, that stops where the scenario needs it. Not a scenario file: it has no number.
 import fs from 'node:fs';
@@ -152,6 +152,15 @@ export function sliceRun(work, { pr = null, tokens = 60000, outcome = 'completed
 // A quick-lane run that builds its change and ends with pull request `pr` (scenarios 90 and 91).
 export function quickRun(work, { pr }) {
   return [started(work), step(2, 'implement', { tokens: 40000, dollars: 0.1, source: 'reported' }), ended(4, 'completed', pr)];
+}
+
+// A quick run that fails at `failedAt`, then, resumed, finishes with pull request `pr`, if it is given one.
+export function failingRun(work, { failure, failedAt, pr = null }) {
+  return [
+    started(work), step(2, 'implement', { tokens: 40000, dollars: 0.1, source: 'reported' }),
+    { type: 'run-ended', at: at(3), outcome: 'failed', failure, failedAt, branch: null, pr: null },
+    ...(pr === null ? [] : [ended(4, 'completed', pr)]),
+  ];
 }
 
 // The feature's own run: the whole-feature review, the switch turned on, and the director's switch-on approval of

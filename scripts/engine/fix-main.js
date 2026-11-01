@@ -78,10 +78,10 @@ function latestRuns(records) {
 // What the dispatcher does about a red main line this tick. `incident` the open red-main incident (or null); `runs`
 // the fix work's run records; `green` whether the main line's checks read green (true, false, or null when unknown);
 // `stopped` the runs All stop cancelled; `merged` the runs whose fix the helper added; `kept` the dispatcher's own
-// { carried: [runId], carded: [runId], next: { revert } | null }.
-//   -> { act: 'none' } | { act: 'close' } | { act: 'wait', why } | { act: 'start', revert } |
+// { carried: [runId], carded: [runId], next: { revert } | null }; `retry` the latest run's try, { due, waiting }, or null for none.
+//   -> { act: 'none' } | { act: 'close' } | { act: 'wait', why } | { act: 'start', revert } | { act: 'resume', run } |
 //      { act: 'start', carryOn: true, branch, after } | { act: 'card', run, why }
-export function fixDecision({ incident, runs = [], green = null, stop = false, stopped = [], merged = [], kept = {} } = {}) {
+export function fixDecision({ incident, runs = [], green = null, stop = false, stopped = [], merged = [], kept = {}, retry = null } = {}) {
   if (!isPlain(incident)) return { act: 'none' };
   if (green === true) return { act: 'close' };
   if (stop) return { act: 'wait', why: 'stop' };
@@ -97,6 +97,8 @@ export function fixDecision({ incident, runs = [], green = null, stop = false, s
   }
   if (merged.includes(latest.runId)) return green === false ? { act: 'card', run: latest.runId, why: 'still-red' } : { act: 'wait', why: 'merged' };
   if (latest.outcome === 'cancelled') return { act: 'card', run: latest.runId, why: 'cancelled' };
+  if (latest.outcome === 'failed' && retry?.waiting) return { act: 'wait', why: 'retrying' };
+  if (latest.outcome === 'failed' && retry?.due) return { act: 'resume', run: latest.runId };
   if (green === null) return { act: 'wait', why: 'unknown' };
   return { act: 'card', run: latest.runId, why: 'failed' };
 }

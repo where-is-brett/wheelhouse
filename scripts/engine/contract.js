@@ -10,8 +10,8 @@
 //   act(runId, { answer: { ask, choice, words? } } | { cancel: { reason } } | { resume: {} }) -> { ok } | { ok: false, refused }
 //     (`unreachable: true` beside a refusal when the engine gave no reply at all, so the caller may try again)
 //     (`resume` carries on a run that failed or is paused: a failed step starts again from its beginning, and finished steps are skipped)
-//   inspect(runId) -> { status, outcome, failure, steps: [{ id, role, provider, model, tokens, dollars, minutes, source }], totals, branch, pr, digest }
-//     (`failure`: the kind of a failed run's failure, null otherwise; `totals`: { tokens, dollars }, which add a resumed run's
+//   inspect(runId) -> { status, outcome, failure, failedStep, steps: [{ id, role, provider, model, tokens, dollars, minutes, source }], totals, branch, pr, digest }
+//     (`failure`: the kind of a failed run's failure, null otherwise; `failedStep`: the step that failed first, null if unknown; `totals`: { tokens, dollars }, which add a resumed run's
 //     legs where its steps don't, null where unknown)
 //   stopAll(reason, { beforeCancel(runs: [{ id, folder }]), known: string[] }?) -> { cancelled: string[], survivors: string[], paused: string[] }
 //     every run going or paused is cancelled; `paused` lists a paused run the engine wouldn't cancel
