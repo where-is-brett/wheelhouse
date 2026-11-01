@@ -298,6 +298,7 @@ export function archonAdapter({
     stepAgent: (bindings) => (workflowFor('wheelhouse-quick', bindings).workflow?.endsWith(COPILOT_SUFFIX) ? 'copilot' : null),
     words: {
       requestsHeld: 'Some work is set to use Copilot, and every Copilot prompt uses your plan\'s monthly requests (about 200 a month), since your plan has no free model. The cap is 0, so no Copilot runs until you allow some.',
+      requestsUnconfirmed: 'Some work is set to use Copilot, and every Copilot prompt uses your plan\'s monthly requests. Wheelhouse can\'t yet check its count of them against GitHub\'s own figure, so no Copilot runs for now, whatever the cap.',
     },
 
     // The continuation host's process (spec 6.3): it carries an answered run on. Given to the host to start, with
