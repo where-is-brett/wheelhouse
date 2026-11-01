@@ -55,6 +55,17 @@ export const restartCardWords = (title, why) => `${title} couldn't go back to wo
 export const restartUnsureWords = (title) => `Wheelhouse can't tell whether ${title} started again, so it hasn't started it a second time. Nothing more of it starts until you say.`;
 const STRANDED_BECAUSE = { clash: 'other work is waiting for its files', dependency: 'other work depends on it', parked: 'other work is waiting on it', place: 'it is still keeping its place in the build' };
 export const restartStrandedWords = (title, why) => `${title} has stopped with nothing left to carry it on, and ${STRANDED_BECAUSE[why] ?? STRANDED_BECAUSE.parked}. Nothing more of it starts until you say.`;
+// The card for a piece that stopped with no way on by itself: past its retries, or a kind that isn't tried again.
+const FAILED_BECAUSE = {
+  connection: 'its connection kept dropping, and waiting and trying again didn\'t help',
+  provider: 'the AI service kept failing, and waiting and trying again didn\'t help',
+  host: 'the build kept stopping on this computer, and waiting and trying again didn\'t help',
+  limit: 'it ran out of your plan\'s usage, and waiting and trying again didn\'t help',
+  'resume-refused': 'the build engine wouldn\'t carry it on',
+  cancelled: 'it was cancelled in the build engine',
+  other: 'one of its steps failed',
+};
+export const failedCardWords = (title, kind) => `${title} stopped before it was finished: ${FAILED_BECAUSE[kind] ?? FAILED_BECAUSE.other}. What it did so far is kept on its branch, and nothing more of it starts until you say.`;
 export const RESTART_UNSURE_AGAIN = 'It checks whether a run began: one on record goes on, and a stray one is ended before it starts again. If that can\'t be done, you get a new card.';
 export const START_ANYWAY = 'Start it anyway';
 export const cutOffStoppedWords = (title) => `${title} stops here, as you chose; none of it had started.`;

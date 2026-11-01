@@ -171,3 +171,15 @@ test('a test check on a project with no command is refused, in words', () => {
   const config = { testCommand: null, testsNotCounting: true };
   assert.throws(() => workOrder({ work: { ...WORK, done: [{ test: 'prices' }] }, routing: {}, config }), /test check needs the project's test command/);
 });
+
+test('a tried list goes in the order, and a badly made one is refused', () => {
+  const tried = [{ run: 'r1', step: 'implement', failure: 'other', checks: ['the banner shows'] }, { run: 'r2', step: null, failure: 'host', checks: [] }];
+  const base = { work: { id: 'card-1', lane: 'quick', goal: 'A banner', done: [{ test: 'banner' }] }, config: { testCommand: 'npm test' } };
+  const order = workOrder({ ...base, extra: { tried } });
+  assert.deepEqual(order.tried, tried);
+  assert.equal(workOrder(base).tried, undefined);
+  assert.equal(checkOrder(order), null);
+  for (const bad of ['r1', [{ run: 'r1' }], [{ ...tried[0], words: 'do this' }], [{ ...tried[0], step: 'x'.repeat(201) }], Array.from({ length: 6 }, () => tried[0])]) {
+    assert.match(checkOrder({ ...order, tried: bad }), /tried list/);
+  }
+});

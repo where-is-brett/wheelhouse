@@ -1564,7 +1564,7 @@ test('a refused answer is dropped', async () => {
   w.answer('a', q.options[0].label);
   await w.tick(4);
   assert.equal(w.dispatcher.admittedTo('a'), false, 'refused: nothing is left on the way back');
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(w.dir, 'dispatch.json'), 'utf8')).returning, []);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(w.dir, 'dispatch.json'), 'utf8')).returning.filter((e) => e.work === 'a'), []);
 });
 
 test('an answer with nothing to send never enters', async () => {

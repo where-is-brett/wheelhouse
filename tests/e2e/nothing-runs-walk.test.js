@@ -1,7 +1,7 @@
 // tests/e2e/nothing-runs-walk.test.js
 // Seeded walks over what the pieces' own tests leave out: failed runs, refused starts, a merge queue that works and one
 // that can't start, and a project with no test command. However it goes, a project where nothing runs has a card (delegated
-// decisions plan, invariant 6). A lone failed run is left out: it has no card yet, and each failing piece here has work behind it.
+// decisions plan, invariant 6). A failing piece may have work behind it or stand alone, and may fail of a kind that retries.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { wayBack, quiet, forever } from '../helpers/way-back.js';
@@ -29,9 +29,11 @@ function worldOf(seed) {
   const fault = { why: chance(0.5) ? 'the host\'s branches couldn\'t be fetched' : null };
   const incident = redMainIncident({ id: `seed-${seed}` });
   const failing = chance(0.5) ? 'a' : null;
+  const alone = chance(0.5);
+  const failure = chance(0.5) ? 'connection' : 'other';
   let pr = 10;
   const recordings = { merge: forever(), [incident.work]: forever() };
-  for (const id of ids) recordings[id] = [...(id === failing ? [ended({ outcome: 'failed' })] : []), ...[0, 1, 2, 3].map(() => ended({ pr: (pr += 1) }))];
+  for (const id of ids) recordings[id] = [...(id === failing ? [ended({ outcome: 'failed', failure })] : []), ...[0, 1, 2, 3].map(() => ended({ pr: (pr += 1) }))];
   const w = wayBack({
     recordings, pace: 1 + Math.floor(rand() * 2),
     dispatchExtra: { queueFolder: async () => (fault.why ? { ok: false, refused: fault.why } : { ok: true, folder: 'qf' }), queuePlace: () => 'qf', repoOf: () => ({ host: 'h', path: 'o/r' }) },
@@ -43,7 +45,7 @@ function worldOf(seed) {
     if (chance(0.5)) { w.green = false; w.incidents.open = [incident]; }
   }
   ids.forEach((id, place) => w.put(id, { place, files: [chance(0.5) ? 'x.js' : 'y.js'] }));
-  if (failing) w.work.b.work.data.dependsOn = ['a'];
+  if (failing && !alone) w.work.b.work.data.dependsOn = ['a'];
   if (chance(0.3)) w.refuse = () => 'the engine\'s copy of the project couldn\'t be brought up to date, so no run started';
   return { w, rand, chance, fault, ids };
 }

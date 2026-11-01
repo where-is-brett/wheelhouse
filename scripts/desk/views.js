@@ -68,6 +68,9 @@ export function surveyLines(survey) {
   return out.length > 0 ? out : ['The survey found nothing under way, no other instructions and no rules.'];
 }
 
+// What the new engine's run came to, for open work: only a finished run has built anything.
+const RUN_ENDED_WORDS = { completed: 'built by the new engine', failed: 'stopped by a problem on the new engine', cancelled: 'cancelled on the new engine' };
+
 // Open work's step or state in words, and whether a feature runs for it: one that is writing its
 // plan or building. A quick or bug feature has no plan, so it builds from its start. A planned one
 // waits for the go-ahead, and one the director's Not now to its build commands holds (`held`, as the
@@ -77,7 +80,8 @@ function workState(entry, feature, held, run) {
   const { lane, visible } = entry.work?.data ?? {};
   // The new engine's run for it, since it was queued: its records sit beside the old engine's features.
   if (isPlain(run?.data) && since(run, entry.work) && !isPlain(feature?.data)) {
-    return run.data.state === 'ended' ? { running: false, state: 'built by the new engine' } : { running: true, state: 'building on the new engine' };
+    if (run.data.state !== 'ended') return { running: true, state: 'building on the new engine' };
+    return { running: false, state: RUN_ENDED_WORDS[run.data.outcome] ?? 'stopped on the new engine' };
   }
   const step = isPlain(feature?.data) && !(feature.data.step === 'closed' && !since(feature, entry.work)) ? feature.data.step : null;
   if (step !== null && step !== 'closed' && held) return { running: false, state: 'waiting for the director to allow its build commands' };

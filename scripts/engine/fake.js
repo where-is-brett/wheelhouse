@@ -161,6 +161,7 @@ export function fakeEngine({ recordings = {}, now = () => new Date().toISOString
         status,
         outcome: run.ended?.outcome ?? null,
         failure: run.ended?.failure ?? null,
+        failedStep: run.ended?.failedAt ?? null,
         ownerPid: run.ownerPid,
         folder: run.folder,
         steps,

@@ -20,6 +20,13 @@ export const asking = (id, { kind = 'question', options = [{ id: 'a', label: 'Ke
 ];
 // A run that stops at two asks in turn.
 export const askingTwice = (one, two) => [...asking(one).slice(0, 3), ...asking(two).slice(1)];
+// A run that fails with a kind of failure. Played after one another in a list, each leg is what a resume reaches next.
+export const failing = (failure, over = {}) => [ev({ type: 'run-started' }), ev({ type: 'run-ended', outcome: 'failed', failure, ...over })];
+// A leg of a resumed run that fails or finishes.
+export const legFails = (failure, over = {}) => [ev({ type: 'run-ended', outcome: 'failed', failure, ...over })];
+export const legFinishes = (over = {}) => [ev({ type: 'run-ended', outcome: 'completed', ...over })];
+// A leg of a resumed run that goes on until it is cancelled.
+export const legGoes = () => [ev({ type: 'step-finished', step: 'tests', role: 'reviewer', provider: 'claude', model: 'mid', minutes: 1, spend: { tokens: 1, dollars: 0, source: 'reported' } })];
 // A run that goes on until it is cancelled.
 export const forever = () => [ev({ type: 'run-started' })];
 // A run that holds at no ask and ends at once.
@@ -86,6 +93,8 @@ export function wayBack({ dispatchExtra = {}, recordings = {}, pace = 3, setting
       startAdmitted: (args) => dispatcher.startAdmitted(args),
       carryOver: (work, kept) => dispatcher.carryOver(work, kept),
       comingBack: (work) => dispatcher.comingBack(work),
+      retrying: (runId) => dispatcher.retrying(runId),
+      retriesAdmitted: () => dispatcher.retriesAdmitted(),
       openedOf: (pr) => opened[pr] ?? null,
       takeBack: (args) => dispatcher.takeBack(args),
       notReady: (pr) => dispatcher.notReady(pr),
@@ -114,7 +123,7 @@ export function wayBack({ dispatchExtra = {}, recordings = {}, pace = 3, setting
         record({ ...run, state: 'paused' });
         await joined.runner.onAsk(event);
       } else if (event.type === 'ask-resolved') record({ ...run, state: 'started' });
-      else if (event.type === 'run-ended' && run.state !== 'ended') record({ ...run, state: 'ended', outcome: event.outcome, ...(event.pr ? { pr: event.pr } : {}) });
+      else if (event.type === 'run-ended' && run.state !== 'ended') record({ ...run, state: 'ended', outcome: event.outcome, ...(event.pr ? { pr: event.pr } : {}), ...(event.outcome === 'failed' ? { failure: event.failure ?? 'other', ...(event.failedAt ? { step: event.failedAt } : {}) } : {}) });
     }
   }
   return Object.assign(world, {

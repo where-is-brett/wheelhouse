@@ -81,7 +81,7 @@ import { engineRoom } from '../engine/room.js';
 import { stopEngine, endRun, stopWords } from '../engine/stop.js';
 import { engineRoutes, engineDirOf } from '../engine/routes.js';
 import { engineRunner } from '../engine/runner.js';
-import { resumesOf, runLive, sleepWatch } from '../engine/recovery.js';
+import { resumesOf, runLive, settlingResume, sleepWatch } from '../engine/recovery.js';
 import { rollOf } from '../delegation/blind.js';
 import { recordOnly, cardContext, historyOf } from '../delegation/record-only.js';
 import { branchHead, cardDiff, cardFacts, commitsAfter, pathsSoFar } from '../delegation/facts.js';
@@ -4784,6 +4784,7 @@ export async function startHelper({
             const records = engineRunRecords(project).filter((e) => e.data.runId === runId);
             return records.length > 0 && !runLive(records);
           },
+          settling: (runId) => settlingResume(engineRunRecords(project).filter((e) => e.data.runId === runId), now()),
           // Archon's end of a run names no pull request; the helper opened it, and its record says which (check 81).
           prOf: (runId) => engineRun.openedBy(project, runId),
         });
@@ -5229,6 +5230,8 @@ export async function startHelper({
       release: (work) => dispatcher.release(work),
       admittedTo: (work, key) => dispatcher.admittedTo(work, key),
       comingBack: (work) => dispatcher.comingBack(work),
+      retrying: (runId) => dispatcher.retrying(runId),
+      retriesAdmitted: () => dispatcher.retriesAdmitted(),
       delivered: (work, key) => dispatcher.delivered(work, key),
       drop: (work, key) => dispatcher.drop(work, key),
       startAdmitted: (args) => dispatcher.startAdmitted(args),

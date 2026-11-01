@@ -150,6 +150,19 @@ test('the Logbook shows an old feature and a new run together', () => withBoth(a
   assert.match(logbook.data.text, /Runs\nThe sale banner/);
 }));
 
+test('open work says what its run came to: only a finished run built anything', () => {
+  const at = '2026-10-29T06:00:00.000Z';
+  const stateOf = (data) => workLines({
+    work: { 'sale-banner': { work: { id: 'w', at: '2026-10-29T05:00:00.000Z', data: { id: 'sale-banner', title: 'The sale banner', lane: 'quick', visible: false } }, approved: true } },
+    runs: { 'sale-banner': [{ at, data: { work: 'sale-banner', lane: 'quick', runId: 'r', ...data } }] },
+  }, [], {}).join('\n');
+  assert.match(stateOf({ state: 'ended', outcome: 'completed' }), /built by the new engine/);
+  assert.match(stateOf({ state: 'ended', outcome: 'failed', failure: 'other' }), /stopped by a problem on the new engine/);
+  assert.doesNotMatch(stateOf({ state: 'ended', outcome: 'failed', failure: 'other' }), /built by/);
+  assert.match(stateOf({ state: 'ended', outcome: 'cancelled' }), /cancelled on the new engine/);
+  assert.match(stateOf({ state: 'started', resume: 1 }), /building on the new engine/);
+});
+
 test('the briefing says the line once', () => withRuns(async ({ source }) => {
   put(path.join(viewsDir(), 'settings.json'), { engine: { key: 'engine', id: 's2', at: '2026-10-29T06:00:00.000Z', value: 'archon', before: null, confirmedAt: '2026-10-29T06:05:00.000Z' } });
   const first = await readView('briefing', { reserve: 0, since: '2026-10-29T05:00:00.000Z' }, source, { now });

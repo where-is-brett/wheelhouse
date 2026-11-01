@@ -7,7 +7,8 @@
 //   Order = { v: 1, work, lane, goal, notInScope: [text], done: [Check], rulings: [text], decisionRules: [text],
 //             caps: { minutes, tokens }, protectedFiles: [path], preview: { pages, styleGuide } | null,
 //             showFirst, level, testCommand, bindings: { tiers?, aliases? },
-//             slice?: { n, of, title }, flag?: { name, file } | { name, how }, demo?, feature?: { slices: [Slice] } }
+//             slice?: { n, of, title }, flag?: { name, file } | { name, how }, demo?, feature?: { slices: [Slice] },
+//             tried?: [{ run, step, failure, checks }] }
 //   Slice = { n, title, pr, head }: a slice of the feature that merged (its head null when the host didn't say), for the feature's own run (its whole-feature
 //   review and switch-on). `slice` and `demo` are a feature's slice run's; `flag` is the switch a feature's work sits
 //   behind, in a file the core can flip or in the project's own way, given in words.
@@ -23,6 +24,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { SLUG } from '../lib/build-loop.js';
 import { READER_LANE, READER_WORK } from '../delegation/reader.js';
+import { MOST_TRIED, MOST_TRIED_CHECKS, TRIED_CHARS } from './recovery.js';
 
 export const ORDER_VERSION = 1;
 export const ORDER_LANES = Object.freeze(['quick', 'small', 'slice', 'feature', 'bug', 'fix-main']);
@@ -116,6 +118,10 @@ export const MOST_ANSWERS = 10;
 export const ANSWER_CHARS = 500;
 // The longest end of a red check's output an order carries; the signed record keeps no more.
 const MOST_CHECK_TAIL = 4096;
+// What a `tried` list holds: earlier runs' failures, from the helper's record (recovery.js).
+const isTried = (t) => isObject(t) && Object.keys(t).sort().join() === 'checks,failure,run,step'
+  && isText(t.run) && (t.step === null || isText(t.step)) && isText(t.failure) && texts(t.checks) && t.checks.length <= MOST_TRIED_CHECKS
+  && [t.run, t.step ?? '', t.failure, ...t.checks].every((x) => x.length <= TRIED_CHARS);
 const isAnswer = (a) => isObject(a) && Object.keys(a).sort().join() === 'answer,question'
   && isText(a.question) && isText(a.answer) && a.question.length <= ANSWER_CHARS && a.answer.length <= ANSWER_CHARS;
 
@@ -152,6 +158,7 @@ export function checkOrder(order) {
   if (order.answers !== undefined && !(Array.isArray(order.answers) && order.answers.length <= MOST_ANSWERS && order.answers.every(isAnswer))) {
     return 'a work order\'s answers are each a question and its answer, in short text';
   }
+  if (order.tried !== undefined && !(Array.isArray(order.tried) && order.tried.length <= MOST_TRIED && order.tried.every(isTried))) return 'a work order\'s tried list is earlier runs, each its run, step, failure and checks, in short text';
   // A fix for a red main line names its incident (section 7.7); no other lane does.
   if (order.checkTail !== undefined && !(typeof order.checkTail === 'string' && order.checkTail.length <= MOST_CHECK_TAIL)) return 'a work order\'s check tail is text, 4 KB at most';
   if (order.incident !== undefined && !(order.lane === 'fix-main' && typeof order.incident === 'string' && SLUG.test(order.incident))) return 'only a fix-main order names an incident, as a short slug';
@@ -204,7 +211,7 @@ export function workOrder({ work, rulings = [], routing = {}, config = {}, caps 
       answer: typeof a?.answer === 'string' ? a.answer.slice(0, ANSWER_CHARS) : a?.answer,
     })),
   };
-  for (const key of ['slice', 'flag', 'demo', 'feature']) if (extra?.[key] !== undefined) order[key] = structuredClone(extra[key]);
+  for (const key of ['slice', 'flag', 'demo', 'feature', 'tried']) if (extra?.[key] !== undefined) order[key] = structuredClone(extra[key]);
   if (typeof extra?.showFirst === 'boolean') order.showFirst = extra.showFirst;
   const problem = checkOrder(order);
   if (problem) throw new Error(problem.charAt(0).toUpperCase() + problem.slice(1));

@@ -156,3 +156,14 @@ test('the same commit opens one incident, with the merged change as its suspect'
   assert.equal(incident.suspect, 7);
   assert.equal(incident.kind, RED_MAIN);
 });
+
+test('a failed fix with a try left waits, then resumes, and past its tries gets its card', () => {
+  const incident = redMainIncident({ id: 'ask-1' });
+  const runs = [{ data: { runId: 'r1', state: 'ended', outcome: 'failed', failure: 'connection' } }];
+  assert.deepEqual(fixDecision({ incident, runs, green: false, retry: { due: false, waiting: true } }), { act: 'wait', why: 'retrying' });
+  assert.deepEqual(fixDecision({ incident, runs, green: false, retry: { due: true, waiting: false } }), { act: 'resume', run: 'r1' });
+  assert.deepEqual(fixDecision({ incident, runs, green: null, retry: { due: true, waiting: false } }), { act: 'resume', run: 'r1' });
+  assert.deepEqual(fixDecision({ incident, runs, green: false, retry: null }), { act: 'card', run: 'r1', why: 'failed' });
+  assert.deepEqual(fixDecision({ incident, runs, green: true, retry: { due: true, waiting: false } }), { act: 'close' });
+  assert.deepEqual(fixDecision({ incident, runs, green: false, stop: true, retry: { due: true, waiting: false } }), { act: 'wait', why: 'stop' });
+});
