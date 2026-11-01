@@ -2,8 +2,11 @@
 // Which pieces wait on the director (delegated decisions design, section 8.1), from what the runner and the dispatcher's
 // runner know and never from a run's `paused` record, which a usage limit writes too. The two sets stay apart, so neither
 // module reads the other's file. A feature between slices has no card open, so it waits on a merge, not on the director.
+// A run parked at a usage limit waits on no one, and holds back what would meet the same limit (unattended goals design,
+// section 9.3): that is read from the record, so a helper started again keeps it.
 import { MERGE_WORK } from './dispatcher.js';
 import { since } from '../foreman/queue.js';
+import { LIMIT_LATE_MINUTES, LIMIT_NO_RESET_HOURS } from './recovery.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const entriesOf = (x) => (isPlain(x) ? Object.entries(x) : []);
@@ -13,6 +16,35 @@ function runEnded(views, work, runId) {
   const list = views?.runs?.[work];
   return (Array.isArray(list) ? list : []).filter((r) => r?.data?.runId === runId).at(-1)?.data?.state === 'ended';
 }
+
+// parkedAtLimit(views) -> [{ runId, work, lateAt }]: each run whose latest `run` record is `paused` and whose latest `ask`
+// is a usage limit. The reset's `started` or the run's ending says it is over, so nothing needs to hear of the ask being
+// resolved; a record that missed those is put right by the runner's look at the engine. `lateAt` is when what should take
+// it on counts as having failed (milliseconds): well past its reset, or a good while after an ask whose reset can't be read.
+// Time the computer slept doesn't count, since nothing could take the run on.
+export function parkedAtLimit(views) {
+  const found = [];
+  for (const [work, list] of entriesOf(views?.runs)) {
+    if (!Array.isArray(list)) continue;
+    const latest = new Map();
+    for (const r of list) if (isPlain(r?.data)) latest.set(r.data.runId, r.data.state);
+    const asks = Array.isArray(views?.asks?.[work]) ? views.asks[work] : [];
+    for (const [runId, state] of latest) {
+      const ask = asks.filter((a) => a?.data?.runId === runId).at(-1);
+      if (state !== 'paused' || ask?.data?.kind !== 'usage-limit') continue;
+      const reset = Date.parse(ask.data.resetAt);
+      const from = Number.isNaN(reset) ? Date.parse(ask.at) : reset;
+      const slept = (Array.isArray(views?.slept) ? views.slept : []).reduce((sum, s) => sum + Math.max(0, Date.parse(s.to) - Math.max(Date.parse(s.from), from)), 0);
+      found.push({ runId, work, lateAt: from + slept + (Number.isNaN(reset) ? LIMIT_NO_RESET_HOURS * 60 * 60 * 1000 : LIMIT_LATE_MINUTES * 60 * 1000) });
+    }
+  }
+  return found;
+}
+// limitedRuns(views, now) -> [runId], and limitedWork(views, now) -> [work], the same runs' pieces: what holds other work
+// at `now`. One past `lateAt` holds nothing, since other work mustn't wait on a waker that failed; the runner raises its card.
+const holding = (views, at) => parkedAtLimit(views).filter((r) => !(at && at.getTime() >= r.lateAt));
+export const limitedRuns = (views, at) => holding(views, at).map((r) => r.runId);
+export const limitedWork = (views, at) => [...new Set(holding(views, at).map((r) => r.work))];
 
 // Whether the work has been queued again since this run began: an open card of that run no longer speaks for the work.
 export function overtaken(kept, views) {

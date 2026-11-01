@@ -39,6 +39,15 @@ export function noCardBehindWords(title, why, by) {
   return `${title} ${said}, and no card stands behind that. It moves on once that work is added${why === 'dependency' ? '' : ' or ended'}.`;
 }
 
+// The Logbook's line when a usage limit holds other work: it clears by itself, so nothing is asked of the director.
+export const LIMIT_HOLD_WORDS = 'A run is waiting for a usage limit to reset, so nothing new starts and work coming back waits until it does. Any mending of the main line and the merge queue carry on.';
+
+// The card for a run still parked well past the reset, which holds nothing more.
+export const limitLateWords = (title) => `${title} should have carried on once its usage limit reset, and hasn't, so other work no longer waits for it. It spends nothing while it waits. What it has done so far is kept.`;
+export const limitLateOverWords = (title) => `${title} moved on by itself after all, so your card about it no longer decides anything.`;
+export const LIMIT_LATE_WHY = 'Whether work that didn\'t carry on by itself goes on or ends is yours to decide, at level 3.';
+export const LIMIT_LATE_MORE_SAYS = 'It is told to carry on from where it stopped, with its cap raised by half, once.';
+
 // The line for the cards past the day's budget, and the button that shows them.
 export const heldBackWords = (n) => `${n} more waiting.`;
 export const SHOW_THEM = 'Show them';

@@ -444,3 +444,37 @@ test('a piece with a new card open stays on returning until it is answered', () 
   const runs = { a: [runOf('a', 'ended', { outcome: 'completed' })] };
   assert.deepEqual(dispatch(base({ work, runs, waiting: ['a'], returning: [back('a', { via: 'rework' })] })).admit, []);
 });
+
+test('a run parked at a limit stops new starts and admissions', () => {
+  const work = Object.fromEntries([piece('a', { place: 0 }), piece('b', { place: 1 }), piece('c', { place: 2 })]);
+  const runs = { a: [runOf('a', 'paused')], b: [runOf('b', 'ended', { outcome: 'failed', failure: 'limit', branch: 'wh/b' })] };
+  const got = dispatch(base({ work, runs, limited: true, returning: [back('b', { via: 'retry' })], sentBack: [{ work: 'a', times: 1 }] }));
+  assert.deepEqual(got.start, []);
+  assert.deepEqual(got.hold, [{ work: 'c', why: 'limit' }]);
+  assert.deepEqual(got.admit, []);
+  assert.deepEqual(got.requeue, []);
+  assert.ok(got.live.includes('a'), 'the parked run keeps its place');
+});
+
+test('a limit holds a piece on every way back, and a slice keeps its place', () => {
+  const work = Object.fromEntries([piece('a', { lane: 'feature' }), piece('c', { place: 0 })]);
+  for (const via of ['answer', 'rework', 'more', 'retry', 'try-again', 'carry', 'build-again']) {
+    assert.deepEqual(dispatch(base({ work: { a: work.a }, limited: true, returning: [back('a', { via })] })).admit, [], via);
+  }
+  assert.deepEqual(dispatch(base({ work, limited: true, returning: [back('a', { via: 'slice', lane: 'feature' })] })).admit, []);
+});
+
+test('a limit holds no merge queue, and All stop and an incident stay what they are', () => {
+  const mergeQueue = { running: false, lastStart: null, waiting: 1, newReady: true };
+  const work = Object.fromEntries([piece('a')]);
+  assert.equal(dispatch(base({ work, limited: true, mergeQueue })).startMergeQueue, true);
+  assert.equal(dispatch(base({ work, limited: true, stop: true, mergeQueue })).startMergeQueue, false);
+  assert.equal(dispatch(base({ work, limited: true, incident: true, mergeQueue })).startMergeQueue, false);
+  assert.deepEqual(dispatch(base({ work, limited: true, stop: true })).hold, [{ work: 'a', why: 'stop' }]);
+  assert.deepEqual(dispatch(base({ work, limited: true, incident: true })).hold, [{ work: 'a', why: 'incident' }]);
+});
+
+test('with no limit the same work starts', () => {
+  const work = Object.fromEntries([piece('a')]);
+  assert.deepEqual(dispatch(base({ work, limited: false })).start, [{ work: 'a', lane: 'quick' }]);
+});

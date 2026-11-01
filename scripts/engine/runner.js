@@ -28,19 +28,19 @@ import { prNumber } from './host.js';
 import { capReached, carriedSpend } from './caps.js';
 import { RED_MAIN, FIX_LANE, redMainIncident, openRedMain } from './fix-main.js';
 import { MERGE_WORK } from './dispatcher.js';
-import { routerWaiting, routerCards, overtaken, approvalAnswers } from './waiting.js';
+import { routerWaiting, routerCards, overtaken, approvalAnswers, limitedRuns, parkedAtLimit } from './waiting.js';
 import { endedBy } from '../foreman/queue.js';
 import { gateTargetOf } from '../state/views.js';
 import { READER_WORK } from '../delegation/reader.js';
 import { alike, normaliseWords } from '../delegation/words.js';
 import { closeMatch, decisionKey, earlierAnswer, reuse, spokenSince } from '../delegation/asked.js';
 import { REPEAT_READ_MS } from '../delegation/limits.js';
-import { mergeQuestionWords, parkedWords, PARKED_WHY, PARKED_BECAUSE, PARKED_MEANWHILE, PARKED_APPROVE_SAYS, PARKED_SEND_BACK_SAYS, PARKED_CHANGED, SENT_BACK_ANSWER, sentBackWords, sentBackGoneWords, sentBackApprovedWords, sentBackMovedWords, sentBackNoPieceWords } from './words.js';
+import { mergeQuestionWords, parkedWords, PARKED_WHY, PARKED_BECAUSE, PARKED_MEANWHILE, PARKED_APPROVE_SAYS, PARKED_SEND_BACK_SAYS, PARKED_CHANGED, SENT_BACK_ANSWER, sentBackWords, sentBackGoneWords, sentBackApprovedWords, sentBackMovedWords, sentBackNoPieceWords, limitLateWords, limitLateOverWords, LIMIT_LATE_WHY, LIMIT_LATE_MORE_SAYS } from './words.js';
 import { SEND_BACK } from '../lib/calm-words.js';
 import { parkChoice } from './archon/asks.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
-const EMPTY = () => ({ routed: {}, waiting: [], held: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, tries: {}, later: [], next: {}, noted: null, capped: {}, capsOwed: {}, costed: {}, reviewsKept: {}, carried: {}, reworks: {}, answers: {}, sending: {}, parked: {}, reused: {}, repeats: {}, unsure: {}, sentBack: {}, resumedAt: {} });
+const EMPTY = () => ({ routed: {}, waiting: [], held: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, tries: {}, later: [], next: {}, noted: null, capped: {}, capsOwed: {}, costed: {}, reviewsKept: {}, carried: {}, reworks: {}, answers: {}, sending: {}, parked: {}, reused: {}, repeats: {}, unsure: {}, sentBack: {}, resumedAt: {}, limitSeen: {} });
 // The failed tries after which the director is told an answer hasn't reached the build yet.
 const UNREACHABLE_SAID = 3;
 // The cap card's options: Give it more carries the work on with the cap raised once; Stop leaves it stopped.
@@ -691,7 +691,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   // neither has a work record to start again from.
   const startsAgain = (kept, runLane) => kept.ask?.kind === 'blocked' && runLane !== FIX_LANE && runLane !== 'merge' && kept.work !== MERGE_WORK;
   // Whether a piece may be sent its answer now.
-  const hasPlace = (work, key, views) => (views.incidents?.open?.length ?? 0) === 0 && admittedTo(work, key);
+  const hasPlace = (work, key, views) => (views.incidents?.open?.length ?? 0) === 0 && limitedRuns(views, now()).length === 0 && admittedTo(work, key);
   // Whether a question was answered as part of a bundle, as a joiner or as the lead of one.
   const bundled = (key, kept) => typeof kept.joins === 'string' || Object.values(state.questions).some((k) => k.joins === key);
   // Tells the dispatcher of each answer already settled, so a crash just after one leaves no entry behind.
@@ -877,26 +877,30 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   }
 
   // The cap card for a run stopped at its cap (or one the engine itself stopped on its budget).
-  async function capped({ runId, work, lane, branch, reached, stuck = null, paused = false }) {
+  async function capped({ runId, work, lane, branch, reached = null, stuck = null, paused = false, late = false }) {
     if (state.capped[runId]) return;
     const n = (state.next[work] ?? ENGINE_QUESTIONS) + 1;
     state.next[work] = n;
     const id = `q-${work}-${n}`;
-    state.capped[runId] = { question: id, reached, ...(paused ? { held: true } : {}) };
+    state.capped[runId] = { question: id, reached, ...(paused ? { held: true } : {}), ...(late ? { late: true } : {}) };
     state.questions[id] = { cap: true, runId, work, lane, branch };
-    const amount = reached.cap === 'minutes' ? `${reached.limit} minutes of work` : `${reached.limit.toLocaleString('en-GB')} tokens`;
+    const amount = reached === null ? null : reached.cap === 'minutes' ? `${reached.limit} minutes of work` : `${reached.limit.toLocaleString('en-GB')} tokens`;
     state.capsOwed[id] = {
       id, work, level: 3,
-      what: paused
+      what: late
+        ? limitLateWords(titleOf(work))
+        : paused
         ? `${titleOf(work)} reached its cap of ${amount} while it was waiting, so Wheelhouse is holding it there: it spends nothing while it waits, and it doesn't carry on unless you give it more. What it has done so far is kept.`
         : stuck
         ? `${titleOf(work)} reached its cap of ${amount}, and the build engine didn't stop it when asked twice, so Wheelhouse ended its processes${stuck.survivors?.length ? `, though some are still running: ${stuck.survivors.join(', ')}` : ''}. What it has done so far is kept.`
         : `${titleOf(work)} reached its cap of ${amount}, so it was stopped. What it has done so far is kept.`,
-      why: stuck
+      why: late
+        ? LIMIT_LATE_WHY
+        : stuck
         ? 'A run the build engine won\'t stop is yours to look at, and spending more than the cap allows is yours to decide, at level 3.'
         : 'Spending more than the cap allows is yours to decide, at level 3.',
       options: [
-        { label: MORE, says: 'It carries on from what is there, with the cap raised by half, once.' },
+        { label: MORE, says: late ? LIMIT_LATE_MORE_SAYS : 'It carries on from what is there, with the cap raised by half, once.' },
         { label: STOP_LABEL, says: 'It stays stopped; the work waits in the queue.' },
       ],
       recommendation: STOP_LABEL,
@@ -1005,12 +1009,13 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   // A retry with a place takes up its own resume, so the look at a resumed run leaves it to that.
   const retryInHand = (runId) => retriesAdmitted().some((entry) => entry.runId === runId && !entry.delivered);
 
-  // Each retry the dispatcher has given a place: a look at the run, then its resume. Nothing moves under All stop or an
-  // incident, and what the engine no longer reads as failed isn't resumed: its record is put right, and the entry drops.
+  // Each retry the dispatcher has given a place: a look at the run, then its resume. Nothing moves under All stop, an
+  // incident or a limit, and what the engine no longer reads as failed isn't resumed: its record is put right, and the entry drops.
   // An engine that can't be read or gave no reply is looked at again on the next tick, and a refusal is on the record, for
   // the dispatcher's card: a run the engine no longer has comes to that card too.
   async function retries() {
-    if (stopped() || (viewsNow().incidents?.open?.length ?? 0) > 0) return;
+    const views = viewsNow();
+    if (stopped() || (views.incidents?.open?.length ?? 0) > 0 || limitedRuns(views, now()).length > 0) return;
     for (const { work, key, runId, delivered: told } of retriesAdmitted()) {
       if (told) continue;
       const record = await inspect(runId);
@@ -1032,6 +1037,47 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       const got = await resumeFailed({ work, runId });
       if (got?.ok === true) delivered(work, key);
       else if (got !== null && got.unreachable !== true) drop(work, key);
+    }
+  }
+
+  // A run parked at a limit holds all other work, and its record is all that says so: an ending or a `started` the host
+  // couldn't write is never written again. So each is looked at each tick, and what the engine reads as moved on, on two
+  // looks running so the stream has its turn first, is put on the record. `unknown` can be a refused read as well as a lost
+  // run, so it writes nothing. A run still parked past `lateAt` holds nothing more and comes to a card, as one held at its cap.
+  async function limits() {
+    const parked = parkedAtLimit(viewsNow());
+    for (const runId of Object.keys(state.limitSeen)) if (!parked.some((r) => r.runId === runId)) delete state.limitSeen[runId];
+    // It was only late: its card no longer decides anything, and it is looked at against its caps again.
+    for (const [runId, kept] of Object.entries(state.capped)) {
+      if (kept.late !== true || kept.stopped === true || state.delivered[kept.question] !== undefined || parked.some((r) => r.runId === runId)) continue;
+      const { work } = state.questions[kept.question];
+      state.delivered[kept.question] = 'ended';
+      delete state.capped[runId];
+      keep();
+      drop(work, kept.question);
+      await note(limitLateOverWords(titleOf(work)), { work });
+    }
+    for (const { runId, work, lateAt } of parked) {
+      if (now().getTime() >= lateAt && !stopped()) {
+        const { lane, branch } = runRecords(work, runId).at(-1).data;
+        await capped({ runId, work, lane, branch: branch ?? null, paused: true, late: true });
+      }
+      const record = await inspect(runId);
+      if (!record || record.unread === true) continue;
+      const moved = ['running', 'ended'].includes(record.status) ? record.status : null;
+      if ((state.limitSeen[runId] ?? null) !== moved) {
+        if (moved) state.limitSeen[runId] = moved;
+        else delete state.limitSeen[runId];
+        keep();
+        continue;
+      }
+      if (!moved) continue;
+      const records = runRecords(work, runId);
+      if (moved !== 'running') await endAsEngineSays(runId, records, record);
+      else {
+        const { lane, engine: name, branch } = records.at(-1).data;
+        await write('run', { work, lane, engine: name, runId, state: 'started', ...(typeof branch === 'string' ? { branch } : {}) });
+      }
     }
   }
 
@@ -1063,11 +1109,12 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     return true;
   }
   async function endAsEngineSays(runId, records, record) {
-    const { work, lane, engine: name, branch, resume } = records.at(-1).data;
+    const { work, lane, engine: name, branch } = records.at(-1).data;
+    const resume = resumesOf(records);
     const outcome = typeof record.outcome === 'string' ? record.outcome : 'failed';
     const pr = prNumber(record.pr) ?? prNumber(await safely(() => prOf(runId))) ?? records.findLast((r) => Number.isInteger(r.data?.pr))?.data.pr;
     await write('run', {
-      work, lane, engine: name, runId, state: 'ended', ...(Number.isInteger(resume) ? { resume } : {}), outcome, ...(typeof branch === 'string' ? { branch } : {}), ...(pr === undefined ? {} : { pr }),
+      work, lane, engine: name, runId, state: 'ended', ...(resume > 0 ? { resume } : {}), outcome, ...(typeof branch === 'string' ? { branch } : {}), ...(pr === undefined ? {} : { pr }),
       ...(outcome === 'failed' ? { failure: typeof record.failure === 'string' ? record.failure : 'other', ...(typeof record.failedStep === 'string' ? { step: record.failedStep } : {}) } : {}),
     });
   }
@@ -1230,6 +1277,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       await again();
       await parks();
       await owedCaps();
+      await limits().catch(() => {});
       await retries();
       await caps();
       await show();

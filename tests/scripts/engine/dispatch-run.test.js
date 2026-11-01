@@ -6,9 +6,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { dispatchRun, orderFor, NO_TESTS_WORDS, TRY_AGAIN, STOP_HERE, BUILD_AGAIN } from '../../../scripts/engine/dispatch-run.js';
+import { LIMIT_HOLD_WORDS } from '../../../scripts/engine/words.js';
 import { fakeEngine } from '../../../scripts/engine/fake.js';
 import { tempFolder } from '../../helpers/homes.js';
-import { wayBack, asking, askingTwice, forever, quiet } from '../../helpers/way-back.js';
+import { wayBack, asking, askingTwice, forever, quiet, atLimit } from '../../helpers/way-back.js';
 
 const views = () => ({
   work: { 'card-1': { work: { id: 'w-1', at: '2026-10-29T08:00:00.000Z', data: { id: 'card-1', title: 'The sale banner', lane: 'quick', visible: false, dependsOn: [] } }, approved: false, since: '2026-10-29T08:00:00.000Z' } },
@@ -1161,4 +1162,119 @@ test('a pull request taken back leaves what the queue is due for, and only a pro
   assert.deepEqual(on(true).localChange(7), ready[7]);
   assert.equal(on(true).localChange(8), null);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a limit stops new starts, and they start once it lifts', async () => {
+  const w = wayBack({ recordings: { a: atLimit('lim-a'), b: quiet() } });
+  w.put('a', { place: 0 });
+  await w.tick(2);
+  assert.equal(w.stateOf('a'), 'paused');
+  w.put('b', { place: 1 });
+  await w.tick(3);
+  assert.deepEqual(w.runsOf('b'), []);
+  w.lift('a', 'lim-a');
+  await w.tick(3);
+  assert.equal(w.runsOf('b').length, 1);
+});
+
+test('an answer waits out a limit, and goes back once it lifts', async () => {
+  const w = wayBack({ recordings: { a: atLimit('lim-a'), b: asking('ask-b') } });
+  w.put('a', { place: 0 });
+  w.put('b', { place: 1 });
+  await w.tick(2);
+  w.answer('b', 'Keep it small');
+  await w.tick(3);
+  assert.equal(w.answers().filter((c) => c.action.answer.ask === 'ask-b').length, 0);
+  assert.equal(w.stateOf('b'), 'paused');
+  w.lift('a', 'lim-a');
+  await w.tick(3);
+  assert.equal(w.answers().filter((c) => c.action.answer.ask === 'ask-b').length, 1);
+});
+
+test('what was admitted before a limit starts nothing until it lifts', async () => {
+  const w = wayBack({ recordings: { a: quiet(), b: forever() } });
+  w.put('a', { place: 0 });
+  w.put('b', { place: 1 });
+  await w.tick(2);
+  const begun = w.starts.length;
+  const run = w.runs.b.at(-1).data;
+  w.asks.b = [{ at: '2026-10-29T10:01:00.000Z', data: { id: 'lim-b', runId: run.runId, work: 'b', kind: 'usage-limit', level: 1, options: [] } }];
+  w.runs.b.push({ at: '2026-10-29T10:01:00.000Z', data: { ...run, state: 'paused' } });
+  const inspect = w.engine.inspect.bind(w.engine);
+  w.engine.inspect = async (id) => (id === run.runId ? { status: 'paused' } : inspect(id));
+  w.dispatcher.enter({ work: 'a', lane: 'quick', via: 'try-again', key: 'k', branch: 'wh/a', carryOn: true });
+  fs.writeFileSync(path.join(w.dir, 'dispatch.json'), JSON.stringify((() => { const kept = JSON.parse(fs.readFileSync(path.join(w.dir, 'dispatch.json'), 'utf8')); kept.admitted = kept.returning; kept.returning = []; return kept; })()));
+  w.restart();
+  await w.tick(2);
+  assert.equal(w.starts.length, begun);
+  assert.ok(w.dispatcher.admittedTo('a'), 'it keeps its place');
+  w.runs.b.push({ at: '2026-10-29T10:03:00.000Z', data: { ...run, state: 'started' } });
+  await w.tick(2);
+  assert.equal(w.starts.length, begun + 1);
+});
+
+test('a hold for a limit counts as moving, so no top card rises and no noCardBehind note is written', async () => {
+  const w = wayBack({ recordings: { a: atLimit('lim-a'), b: asking('ask-b'), c: quiet() }, pace: 2 });
+  w.put('a', { place: 0 });
+  w.put('b', { place: 1 });
+  await w.tick(2);
+  w.put('c', { place: 2, files: ['x.js'] });
+  await w.pass(5 * 60 * 1000);
+  const tops = w.written.filter((x) => x.kind === 'note' && x.data.about === 'top-card');
+  assert.ok(tops.every((x) => x.data.id === null), 'nothing rises');
+  assert.ok(!w.notes().some((words) => /no card stands behind/.test(words ?? '')));
+});
+
+test('a limit counts as moving when its run holds no place of its own, as a fix\'s doesn\'t', async () => {
+  const w = wayBack({ recordings: { a: atLimit('lim-a'), b: asking('ask-b') } });
+  w.put('a', { place: 0 });
+  w.put('b', { place: 1 });
+  await w.tick(2);
+  delete w.work.a;
+  await w.pass(3 * 60 * 1000);
+  assert.ok(w.written.filter((x) => x.kind === 'note' && x.data.about === 'top-card').every((x) => x.data.id === null), 'nothing rises');
+});
+
+test('the Logbook says once that a limit holds new work, and again for a later limit', async () => {
+  const held = (w) => w.notes().filter((words) => words === LIMIT_HOLD_WORDS).length;
+  const w = wayBack({ recordings: { a: atLimit('lim-a'), b: forever() } });
+  w.put('b', { place: 0 });
+  w.put('a', { place: 1 });
+  await w.tick(4);
+  assert.equal(held(w), 1);
+  w.lift('a', 'lim-a');
+  await w.tick(2);
+  const run = w.runs.b.at(-1).data;
+  w.asks.b = [{ at: '2026-10-29T10:01:00.000Z', data: { id: 'lim-b', runId: run.runId, work: 'b', kind: 'usage-limit', level: 1, options: [] } }];
+  w.runs.b.push({ at: '2026-10-29T10:01:00.000Z', data: { ...run, state: 'paused' } });
+  await w.tick(2);
+  assert.equal(held(w), 2);
+  w.restart();
+  await w.tick(2);
+  assert.equal(held(w), 2, 'a helper started again doesn\'t say it twice');
+});
+
+test('a limit hides a requests hold and ends none, so an answered card isn\'t asked again', async () => {
+  const world = { limited: false };
+  const dir = tempFolder('wh-dr-');
+  const written = [];
+  const questions = {};
+  const work = { 'card-1': { work: { id: 'w-1', at: '2026-10-29T08:00:00.000Z', data: { id: 'card-1', title: 'The sale banner', lane: 'quick', visible: false, dependsOn: [] } }, approved: false, since: '2026-10-29T08:00:00.000Z' } };
+  const limited = { runs: { other: [{ at: '2026-10-29T09:00:00.000Z', data: { work: 'other', runId: 'r1', lane: 'quick', state: 'paused' } }] }, asks: { other: [{ at: '2026-10-29T09:00:00.000Z', data: { id: 'lim', runId: 'r1', work: 'other', kind: 'usage-limit', level: 1, options: [] } }] } };
+  const d = dispatchRun({
+    engine: { ...fakeEngine(), countsRequests: () => true, requestsConfirmed: true }, project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'),
+    readViews: () => ({ work, runs: {}, questions, reports: {}, ...(world.limited ? limited : {}) }),
+    config: () => ({ routing: {}, testCommand: 'node --test' }), settings: () => ({ engineLanes: ['quick'] }), spentThisMonth: () => 0,
+    start: async () => ({ ok: false, refused: 'not here' }), write: async (kind, data) => { written.push({ kind, data }); if (kind === 'question') questions[data.id] = { question: { data } }; },
+    now: () => new Date('2026-10-29T10:00:00.000Z'),
+  });
+  await d.tick();
+  const asked = written.filter((x) => x.kind === 'question');
+  assert.equal(asked.length, 1);
+  questions[asked[0].data.id].answer = { label: 'Keep it off' };
+  world.limited = true;
+  await d.tick();
+  world.limited = false;
+  await d.tick();
+  assert.equal(written.filter((x) => x.kind === 'question').length, 1);
 });
