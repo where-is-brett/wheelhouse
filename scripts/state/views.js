@@ -448,8 +448,20 @@ function buildLoopViews(sorted, enrolled) {
     runs: byWork('run'), asks: byWork('ask'), costs: byWork('cost'), previews: byWork('preview'), lessons: byWork('lesson'),
     // The card router's Logbook lines, the latest last, and how many of its cards wait for another day.
     engineNotes: sorted.filter((e) => e.kind === 'note' && e.data?.about === 'engine' && typeof e.data.words === 'string').slice(-ENGINE_NOTES).map(mark),
-    cardsWaiting: { count: Number.isInteger(sorted.filter((e) => e.kind === 'note' && e.data?.about === 'cards-waiting').at(-1)?.data?.count) ? sorted.filter((e) => e.kind === 'note' && e.data?.about === 'cards-waiting').at(-1).data.count : 0 },
+    cardsWaiting: cardsWaitingOf(sorted),
   };
+}
+
+// The cards past the day's budget (delegated decisions plan, choice 11): the router's latest list, less those pulled.
+// `pulled` names the pulled cards that list still holds, for the router to drop; a list written before it read the
+// pull keeps them, and the pull still stands. A note from before cards were named gives only its count.
+function cardsWaitingOf(sorted) {
+  const notes = sorted.filter((e) => e.kind === 'note');
+  const latest = notes.filter((e) => e.data?.about === 'cards-waiting').at(-1)?.data;
+  const listed = Array.isArray(latest?.ids) ? latest.ids.filter((id) => typeof id === 'string') : [];
+  const pulls = new Set(notes.filter((e) => e.data?.about === 'cards-pulled' && Array.isArray(e.data.ids)).flatMap((e) => e.data.ids));
+  const ids = listed.filter((id) => !pulls.has(id));
+  return { count: Array.isArray(latest?.ids) ? ids.length : Number.isInteger(latest?.count) ? latest.count : 0, ids, pulled: listed.filter((id) => pulls.has(id)) };
 }
 
 // `profile` is the profile's events, when these are a project's: a confirm card in the project for a

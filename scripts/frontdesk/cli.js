@@ -1,6 +1,7 @@
 // scripts/frontdesk/cli.js
 // The front desk's one command, as `node "<pluginRoot>/scripts/frontdesk/cli.js" <command>`, with
 // JSON on standard input where a command takes it:
+//   pull-cards      lifts the cards the day's budget holds back, then gives what `cards` gives
 //   cards           this visit's cards, as AskUserQuestion's input, and how many are left; first
 //                   it makes an answer card for each open question from the build that no waiting
 //                   card asks yet, the card for each click the merge gate waits for, and one for
@@ -91,7 +92,7 @@ export const RECORD_KINDS = Object.freeze([
   'work', 'amendment', 'incident', 'note',
 ]);
 export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey', 'evidence']);
-const COMMANDS = ['cards', 'card', 'again', 'why', 'suggest', 'record', 'similar', 'views', 'explain', 'review', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check'];
+const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'record', 'similar', 'views', 'explain', 'review', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check'];
 // How long `confirm` waits for the helper: one window at a time on the computer, so it may wait for another's.
 const CONFIRM_WAIT_MS = 3 * WINDOW_MS;
 export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
@@ -462,7 +463,16 @@ export async function cards({ client, cwd, now }) {
   if (made > 0 || decided) ({ views, cards: events } = await viewsOf(client, cwd, { cards: decided }));
   const chosen = cardsForVisit(withPutBack(views, again, events), { room: lift === null ? CARD.questions : 0 });
   problems.push(...await markAsked(client, cwd, chosen.ids, stop));
-  return { questions: [...(lift === null ? [] : [lift]), ...chosen.questions], left: chosen.left, ...withProblems(problems) };
+  return { questions: [...(lift === null ? [] : [lift]), ...chosen.questions], left: chosen.left, ...(chosen.heldBack > 0 ? { heldBack: chosen.heldBack } : {}), ...withProblems(problems) };
+}
+
+// The director's Show them: the cards held back are named as pulled, which spends none of the day's budget, then this
+// visit's cards come as `cards` gives them. It raises cards and decides nothing.
+export async function pullCards({ client, cwd, now }) {
+  const { views } = await viewsOf(client, cwd);
+  const ids = Array.isArray(views.cardsWaiting?.ids) ? views.cardsWaiting.ids : [];
+  if (ids.length > 0) await write(client, cwd, 'note', { about: 'cards-pulled', ids });
+  return cards({ client, cwd, now });
 }
 
 // --- card ---
@@ -1126,6 +1136,11 @@ export async function main(argv, {
     const json = (value) => out(`${JSON.stringify(inChatWords(value), null, 2)}\n`);
     const lines = (list) => out(`${list.map((l) => l.replace(BREAKS, ' ')).join('\n')}\n`);
 
+    if (command === 'pull-cards') {
+      only(rest, 0, 'pull-cards takes no arguments');
+      json(await pullCards({ client: helper, cwd: here, now }));
+      return 0;
+    }
     if (command === 'cards') {
       only(rest, 0, 'cards takes no arguments');
       json(await cards({ client: helper, cwd: here, now }));

@@ -137,6 +137,20 @@ test('glossary, ideas and rejections hold the latest per key', async () => {
   });
 });
 
+test('the cards held back are the latest list, less any pulled since', () => {
+  const note = (data, n) => makeEvent({ kind: 'note', data, now: () => new Date(Date.UTC(2026, 9, 18, 0, 0, n)) });
+  const view = (events) => buildViews(events, []).cardsWaiting;
+  assert.deepEqual(view([]), { count: 0, ids: [], pulled: [] });
+  assert.deepEqual(view([note({ about: 'cards-waiting', count: 2 }, 1)]), { count: 2, ids: [], pulled: [] }, 'a note from the version before');
+  const listed = note({ about: 'cards-waiting', count: 2, ids: ['q-a-1', 'q-b-2'] }, 2);
+  assert.deepEqual(view([listed]), { count: 2, ids: ['q-a-1', 'q-b-2'], pulled: [] });
+  const pulled = note({ about: 'cards-pulled', ids: ['q-a-1'] }, 3);
+  assert.deepEqual(view([listed, pulled]), { count: 1, ids: ['q-b-2'], pulled: ['q-a-1'] });
+  // The router wrote its list before it saw the pull: the pull still stands.
+  assert.deepEqual(view([listed, pulled, note({ about: 'cards-waiting', count: 2, ids: ['q-a-1', 'q-b-2'] }, 4)]), { count: 1, ids: ['q-b-2'], pulled: ['q-a-1'] });
+  assert.deepEqual(view([listed, pulled, note({ about: 'cards-waiting', count: 1, ids: ['q-b-2'] }, 5)]), { count: 1, ids: ['q-b-2'], pulled: [] });
+});
+
 test('an answered card leaves the waiting list', async () => {
   await withHome(() => {
     const v = build(base());

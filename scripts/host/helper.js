@@ -1781,6 +1781,8 @@ export async function startHelper({
     if (!own && kind === 'card-answer' && data && typeof data === 'object' && CLICK_FIELDS.some((k) => Object.hasOwn(data, k))) refuse('a click\'s proof, commit, hash and words are recorded only by the helper\'s own routes');
     if (!PLAIN_KINDS.includes(kind)) refuse('that kind of event is not known');
     if (!data || typeof data !== 'object' || Array.isArray(data)) refuse('the event\'s data must be an object');
+    // The list of cards held back passes them over for a wake, so only the router writes it.
+    if (kind === 'note' && data.about === 'cards-waiting') refuse('only the card router lists the cards held back');
     if (id !== undefined && (typeof id !== 'string' || !RANDOM_UUID.test(id))) refuse('an id given with a record must be a random UUID in lower case');
     if (id !== undefined && listEvents(stateDir(project), { report: () => {} }).some((e) => e.id === id)) refuse('the state already holds an event with that id');
     // A signed click a hook kept to send later must never find its id taken; the kept write itself,
