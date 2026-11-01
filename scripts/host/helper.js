@@ -53,6 +53,7 @@ import { lookAtSettings, lookRefusalLine, LookRefusal } from '../lib/safe-git.js
 import { openProjectRecord, openSettings } from '../state/record.js';
 import { importEvents } from '../state/import.js';
 import { takeStartLock } from '../lib/start-lock.js';
+import { reloadLoginStart, renewedEntry } from '../lib/login-start.js';
 import { tailOf } from '../lib/output-tail.js';
 import { buildViews, cardOutcomes, latestFor, writeViews } from '../state/views.js';
 import { takeSurvey, shapedSurvey, recordSurvey } from '../survey/take.js';
@@ -79,6 +80,7 @@ import { engineRoom } from '../engine/room.js';
 import { stopEngine, endRun, stopWords } from '../engine/stop.js';
 import { engineRoutes, engineDirOf } from '../engine/routes.js';
 import { engineRunner } from '../engine/runner.js';
+import { sleepGap } from '../engine/recovery.js';
 import { rollOf } from '../delegation/blind.js';
 import { recordOnly, cardContext, historyOf } from '../delegation/record-only.js';
 import { branchHead, cardDiff, cardFacts, commitsAfter, pathsSoFar } from '../delegation/facts.js';
@@ -1055,6 +1057,7 @@ export async function startHelper({
   // How often the card router and the dispatcher look again for each project on the engine (scripts/engine/runner.js,
   // dispatch-run.js): answers to send, caps to keep, cost records to write, and work to start.
   dispatchMs = 60 * 1000,
+  platform = process.platform,
   // Runs one check (scripts/checks/run.js); a test on a computer with no sandbox stands in for it.
   check = runCheck,
   // How the engine's fetch mirror of a project is brought up to date before a run starts: the helper's own, from the
@@ -4789,8 +4792,9 @@ export async function startHelper({
         room = engineRoom({ spawn, command: () => roomEngine.roomCommand(), wanted: roomWanted, held: stopped });
         try { room.tend(); } catch { /* tried again with the dispatcher */ }
       }
+      lastBeat = now().getTime();
       dispatchWatch = setInterval(() => {
-        engineTick().catch(() => {});
+        noteSleep().then(engineTick).catch(() => {});
         sealTick();
         try { room?.tend(); } catch { /* tried again next time */ }
       }, dispatchMs);
@@ -5501,6 +5505,27 @@ export async function startHelper({
     return ticking;
   }
 
+  // A late beat of the tick means the computer slept. The span goes on every project's record ahead of the tick,
+  // whose `caps` must see it or cancel the very run it keeps. A failed write stops no tick.
+  let lastBeat = null;
+  let sleptWrites = Promise.resolve();
+  function noteSleep() {
+    const at = now().getTime();
+    const gap = sleepGap(lastBeat, at);
+    lastBeat = at;
+    if (gap !== null) sleptWrites = Promise.allSettled([sleptWrites, ...engineHosts.map(({ project }) => engineWrite(project, 'slept', gap))]);
+    return sleptWrites;
+  }
+
+  // An agent an older Wheelhouse wrote takes effect only once launchd loads it again: once, when the helper starts.
+  async function renewLoginStart() {
+    const entry = renewedEntry({ platform });
+    if (entry === null) return;
+    const got = await reloadLoginStart({ run, entry });
+    const words = got.reloaded ? 'Wheelhouse\'s helper now comes back within a minute if it stops.' : `What starts Wheelhouse's helper couldn't be brought up to date: ${got.why}.`;
+    await Promise.allSettled(engineHosts.map(({ project }) => engineWrite(project, 'note', { about: 'engine', words })));
+  }
+
   // The seals' look for every project, never awaited by a tick of the engine: a hang there stops no delivery.
   const sealTick = () => Promise.all(engineHosts.map(({ seals }) => seals.tick()));
 
@@ -5515,7 +5540,9 @@ export async function startHelper({
       if (dispatchWatch) clearInterval(dispatchWatch);
       if (safekeepingWatch) clearInterval(safekeepingWatch);
       await lookingAround?.catch(() => {});
+      await sleptWrites;
       await ticking?.catch(() => {});
+      await renewing.catch(() => {});
       await engineStopping?.catch(() => {});
       await Promise.race([
         Promise.allSettled([...engineHosts.map(({ checks }) => checks.stop()), ...engineHosts.map(({ seals }) => seals.settled())]),
@@ -5670,6 +5697,7 @@ export async function startHelper({
     releaseStart();
   }
   startEngineHosts();
+  const renewing = renewLoginStart();
   const safekeepingWatch = setInterval(() => { safekeepingRound().catch(() => {}); moveRound().catch(() => {}); }, dispatchMs);
   safekeepingWatch.unref?.();
 

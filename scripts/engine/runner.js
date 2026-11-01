@@ -972,6 +972,9 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   // Each running run of the project, against its caps; each ended one, its cost record.
   async function caps() {
     const v = viewsNow();
+    // The time goes with the record it is read against: a computer that sleeps during this look wakes with a clock its
+    // `slept` record hasn't caught up with, and the span is there for the next look.
+    const at = now();
     const { capMinutes = {}, capTokens = {} } = settings() ?? {};
     for (const [work, list] of Object.entries(isPlain(v.runs) ? v.runs : {})) {
       // A reader's limits are its own (scripts/delegation/record-only.js): no cap reads it, and no piece pays for it.
@@ -1003,7 +1006,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
         if (!record) continue;
         const carried = state.carried[runId] ?? { raised: false, runs: [] };
         const reached = capReached({
-          lane: latest.lane, minutes: runningMinutes(records, now()), tokens: runCost(record).tokens,
+          lane: latest.lane, minutes: runningMinutes(records, at, v.slept), tokens: runCost(record).tokens,
           raised: carried.raised, carried: carriedSpend((v.costs?.[work] ?? []), carried.runs),
         }, { capMinutes, capTokens });
         if (!reached) continue;
@@ -1029,6 +1032,10 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     const record = await inspect(runId);
     if (!record) return;
     const cost = runCost(record);
+    const { slept } = viewsNow();
+    const awake = runningMinutes(records, now(), slept);
+    // The steps' own time runs on through a sleep, and a carry-on is charged these minutes.
+    const asleep = runningMinutes(records, now()) - awake;
     state.costed[runId] = true;
     keep();
     await write('cost', {
@@ -1036,7 +1043,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       // A run whose spend is unknown names no tokens it didn't count.
       tokens: cost.source === 'unknown' && cost.tokens === 0 ? null : cost.tokens,
       dollars: cost.dollars, floorDollars: cost.floorDollars, premiumRequests: cost.premiumRequests,
-      minutes: cost.minutes > 0 ? cost.minutes : runningMinutes(records, now()), source: cost.source, byRole: cost.byRole,
+      minutes: cost.minutes > 0 ? Math.max(0, Math.round((cost.minutes - asleep) * 100) / 100) : awake, source: cost.source, byRole: cost.byRole,
       ...(cost.kinds ? { kinds: cost.kinds } : {}),
     });
   }

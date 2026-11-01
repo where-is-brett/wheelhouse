@@ -104,7 +104,7 @@ test('plan lists the computer\'s changes and the card\'s answers, and its hash c
     assert.equal(plan.project, 'shop-front');
     assert.deepEqual(plan.lines, [
       `Wheelhouse's guards are registered with Copilot in ${path.join(c.userHome, '.copilot', 'hooks', 'wheelhouse.json')}, for every project on this computer`,
-      `Wheelhouse's helper starts when you sign in to this computer, for you only: ${path.join(c.userHome, 'Library', 'LaunchAgents', 'dev.wheelhouse.helper.plist')}`,
+      `Wheelhouse's helper starts when you sign in to this computer, and again within a minute if it stops, for you only: ${path.join(c.userHome, 'Library', 'LaunchAgents', 'dev.wheelhouse.helper.plist')}`,
       'A signing key for this computer, so what you confirm in Wheelhouse\'s own window is signed',
       `This folder, ${c.folder}, is registered as the Lean project shop-front`,
       `Its git moves into Wheelhouse's own folder, ${storeDir('shop-front')}, and this folder becomes a worktree of it, so only the helper moves the main version`,

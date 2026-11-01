@@ -204,7 +204,7 @@ const costOf = (views, work, runId) => (records(views, 'costs')[work] ?? []).fil
 export function runningLines(views, { now = new Date() } = {}) {
   return runsOf(views).filter((r) => r.latest.data.state !== 'ended').map((r) => runLine({
     title: titleOf(views, r.work), state: r.latest.data.state, step: r.latest.data.step ?? null,
-    minutes: runningMinutes(r.records, now),
+    minutes: runningMinutes(r.records, now, views?.slept),
   }, costOf(views, r.work, r.runId)));
 }
 
@@ -217,7 +217,7 @@ export function buildLines(views, { now = new Date() } = {}) {
   for (const r of runs) {
     const cost = costOf(views, r.work, r.runId);
     const state = r.latest.data;
-    lines.push(runLine({ title: titleOf(views, r.work), state: state.state, outcome: state.outcome, step: state.step ?? null, minutes: state.state === 'ended' ? null : runningMinutes(r.records, now) }, cost));
+    lines.push(runLine({ title: titleOf(views, r.work), state: state.state, outcome: state.outcome, step: state.step ?? null, minutes: state.state === 'ended' ? null : runningMinutes(r.records, now, views?.slept) }, cost));
     const steps = isPlain(cost?.byRole) ? [...new Set(Object.keys(cost.byRole).map(stepWords))] : [];
     if (steps.length > 0) lines.push(`  Steps: ${steps.join('; ')}.`);
   }

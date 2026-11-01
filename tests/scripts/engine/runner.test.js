@@ -2708,3 +2708,42 @@ test('a Send it back the host can\'t answer for yet keeps an approval beside it 
   assert.deepEqual(handed, []);
   t.cleanup();
 });
+
+test('a run asleep six hours passes no cap', async () => {
+  const t = setUp({ recordings: { small: spending(1000) }, settings: { capMinutes: { quick: 20 }, capTokens: { quick: 1000000 } } });
+  try {
+    const { runId } = t.engine.start({ recording: 'small', running: true });
+    withRun(t, runId, [['2026-10-29T06:50:00.000Z', 'started']]);
+    t.views.slept = [{ from: '2026-10-29T07:00:00.000Z', to: '2026-10-29T12:55:00.000Z' }];
+    await t.runner.tick();
+    assert.equal(acts(t.engine).length, 0, 'fifteen minutes awake: under the cap');
+    t.views.slept = [];
+    await t.runner.tick();
+    assert.equal(acts(t.engine).filter((c) => c.action.cancel).length, 1, 'the same run with no sleep on the record is over it');
+  } finally { t.cleanup(); }
+});
+
+test('a sleep in the middle of a tick cancels nothing', async () => {
+  const t = setUp({ recordings: { small: spending(1000) }, settings: { capMinutes: { quick: 20 }, capTokens: { quick: 1000000 } } });
+  try {
+    const { runId } = t.engine.start({ recording: 'small', running: true });
+    withRun(t, runId, [['2026-10-29T12:55:00.000Z', 'started']]);
+    // The tick has read the record and is waiting on the engine when the computer sleeps; the span isn't written yet.
+    const inspect = t.engine.inspect.bind(t.engine);
+    t.engine.inspect = async (id) => { t.world.now = new Date('2026-10-29T19:00:00.000Z'); return inspect(id); };
+    await t.runner.tick();
+    assert.equal(acts(t.engine).length, 0);
+  } finally { t.cleanup(); }
+});
+
+test('a run that slept leaves its cost record awake, so a carry-on is not charged for the night', async () => {
+  const t = setUp({ recordings: { long: [ev({ type: 'step-finished', step: 'implement', role: 'implement', minutes: 370, spend: { tokens: 1000, dollars: 0.3, source: 'reported' } }), ev({ type: 'run-ended', outcome: 'failed' })] } });
+  try {
+    const { runId } = t.engine.start({ recording: 'long' });
+    withRun(t, runId, [['2026-10-29T06:50:00.000Z', 'started'], ['2026-10-29T13:00:00.000Z', 'ended']]);
+    t.views.slept = [{ from: '2026-10-29T07:00:00.000Z', to: '2026-10-29T12:50:00.000Z' }];
+    await t.runner.tick();
+    const cost = t.writes.find((w) => w.kind === 'cost');
+    assert.equal(cost.data.minutes, 20);
+  } finally { t.cleanup(); }
+});

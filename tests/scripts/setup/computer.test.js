@@ -516,7 +516,7 @@ function setSetting(slug, key, value) {
   fs.writeFileSync(file, `${JSON.stringify({ [key]: { key, value } })}\n`);
 }
 
-const LOGIN_LINE = 'Start Wheelhouse\'s helper when you sign in, so the build carries on with no session open';
+const LOGIN_LINE = 'Start Wheelhouse\'s helper when you sign in, and again within a minute if it stops, so the build carries on with no session open';
 
 test('login start is listed when a project uses the new engine', async () => {
   await withProject(async ({ folder, user, config }) => {
@@ -553,7 +553,7 @@ test('a computer with neither condition gets no login start', async () => {
     const step = computerStep({ engine: null, run: fakeRun().run, env: { CLAUDE_CONFIG_DIR: config }, manifest: MANIFEST, port: PORT });
     const planned = await step.plan({ folder, step: 6, now: () => T0, userHome: user, platform: 'darwin', answers: {} });
     assert.equal(planned.changes.some((c) => c.what === 'login'), false);
-    assert.doesNotMatch(composed(planned, 6), /when you sign in, so the build/);
+    assert.doesNotMatch(composed(planned, 6), /when you sign in, and again within a minute/);
     assert.equal(loginStartRecord(), null);
   });
 });

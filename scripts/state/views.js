@@ -498,6 +498,8 @@ function buildLoopViews(sorted, enrolled) {
   return {
     work, features, reports, questions, incidents: { open: [...open.values()] },
     runs: byWork('run'), asks: byWork('ask'), costs: byWork('cost'), previews: byWork('preview'), lessons: byWork('lesson'),
+    // When the computer slept: a run's minutes leave these out (scripts/engine/spend.js).
+    slept: sorted.filter((e) => e.kind === 'slept').map((e) => ({ from: e.data.from, to: e.data.to })),
     // The card router's Logbook lines, the latest last, and how many of its cards wait for another day.
     engineNotes: sorted.filter((e) => e.kind === 'note' && e.data?.about === 'engine' && typeof e.data.words === 'string').slice(-ENGINE_NOTES).map(mark),
     cardsWaiting: cardsWaitingOf(sorted),

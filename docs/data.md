@@ -30,6 +30,8 @@ A project kept on this computer goes nowhere: its history stays in your folder a
 
 For a project on a host, nothing of yours goes to GitHub or GitLab, even if the repository is public. The one thing Wheelhouse keeps there is the `wheelhouse-lock` branch, which stops two computers driving one project at once: it holds only a computer id and a counter.
 
+When the helper finds your computer has been asleep for more than three minutes, it adds the start and end of that sleep to the same record, so a run isn't charged for time it wasn't running.
+
 Each card the build engine raises also gets a seal in that record: a signed line of what Wheelhouse's own checks could tell from the change when the card was written. It stays in the private record. No agent, board or review reads what a seal says, and only a count of them is shown. It changes nothing about a card. Once a card is answered, a further signed line scores what would have been decided against the answer. The scores stay sealed too.
 
 When the First Mate ends a turn on a question with no card, Claude Code's Stop hook adds one line to the same record with the time and none of the words, so those questions can be counted. A pick of Suggest a change… in the chat on a build's question keeps only the card's id, for its score.
@@ -65,7 +67,7 @@ Its usage reporting is always off. Now and then it asks GitHub for its own relea
 
 A GitHub project with no CI has its tests run on your computer, from v0.2.1. Each change's copy, its build output and its own test home sit in `~/.wheelhouse/engine/checks/<project>/`. A change's go when its work has ended, a main-line check's when it is done. Each result is a signed record in the project's private state, and a line of its output may be in that record, after a scan for secrets. GitHub gets only a pass or fail for the commit.
 
-So that the engine's steps keep Wheelhouse's guards, setup also adds the Wheelhouse plugin to Claude Code for your account, not just this project (an older Wheelhouse already there is brought up to date instead), and a sign-in start that starts Wheelhouse's helper when you sign in to the Mac. In the project, setup's commit adds Archon's project settings (`.archon/config.yaml`) and the merge queue's policy (`.archon/sdlc/policy/maintainers.json`). A project set up before v0.2.0 gets these two files by a pull request you approve.
+So that the engine's steps keep Wheelhouse's guards, setup also adds the Wheelhouse plugin to Claude Code for your account, not just this project (an older Wheelhouse already there is brought up to date instead), and a sign-in start that starts Wheelhouse's helper when you sign in to the Mac, and again within a minute if it stops. In the project, setup's commit adds Archon's project settings (`.archon/config.yaml`) and the merge queue's policy (`.archon/sdlc/policy/maintainers.json`). A project set up before v0.2.0 gets these two files by a pull request you approve.
 
 A product on GitLab, and a computer other than a Mac, gets none of this, and keeps Wheelhouse's own Crew for now.
 

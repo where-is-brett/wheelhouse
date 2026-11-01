@@ -795,7 +795,7 @@ test('a survey record carries every part of the survey, each in its own shape', 
     assert.equal(PLAIN_KINDS.includes('survey'), true);
     assert.equal(PROTECTED_KINDS.includes('survey'), false);
     // Only the helper itself records a survey or a column's readiness: no caller writes one.
-    assert.deepEqual(HELPER_ONLY_KINDS, ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'shadow', 'match', 'rule']);
+    assert.deepEqual(HELPER_ONLY_KINDS, ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'shadow', 'match', 'rule', 'slept']);
     assert.deepEqual(makeEvent({ kind: 'survey', data: SURVEY }).data, SURVEY);
     // Taken again (ruling P3), it says so.
     assert.deepEqual(makeEvent({ kind: 'survey', data: { ...SURVEY, again: true } }).data.again, true);
@@ -996,4 +996,15 @@ test('a send-back names the pull request and the head its card names, by its lab
       assert.throws(() => makeEvent({ kind: 'action', data: { ...good, ...bad } }), /action event/, JSON.stringify(bad));
     }
   });
+});
+
+test('a slept record holds two times in order, and only the helper writes one', () => {
+  assert.equal(PLAIN_KINDS.includes('slept'), true);
+  assert.equal(HELPER_ONLY_KINDS.includes('slept'), true);
+  const from = '2026-11-01T01:00:00.000Z';
+  const to = '2026-11-01T07:00:00.000Z';
+  makeEvent({ kind: 'slept', data: { from, to } });
+  assert.throws(() => makeEvent({ kind: 'slept', data: { from: to, to: from } }), /after/);
+  assert.throws(() => makeEvent({ kind: 'slept', data: { from: 'soon', to } }), /time/);
+  assert.throws(() => makeEvent({ kind: 'slept', data: { from, to, why: 'lid' } }));
 });

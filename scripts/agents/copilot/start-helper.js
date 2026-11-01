@@ -172,7 +172,7 @@ export async function planInstall(answers, deps = {}) {
       ? (workComputer
         ? 'No start-up entry, as this is a work computer: the helper runs once you allow its start command, and work that needs it waits while it isn\'t running'
         : 'No start-up entry on this system: the helper runs once you allow its start command')
-      : `Wheelhouse's helper starts when you sign in to this computer, for you only: ${entry.kind === 'launch-agent' ? entry.path : 'a start-up entry named Wheelhouse helper in your account\'s settings'}`,
+      : `Wheelhouse's helper starts when you sign in to this computer${entry.kind === 'launch-agent' ? ', and again within a minute if it stops' : ''}, for you only: ${entry.kind === 'launch-agent' ? entry.path : 'a start-up entry named Wheelhouse helper in your account\'s settings'}`,
     ...(needsKey ? ['A signing key for this computer, so what you confirm in Wheelhouse\'s own window is signed'] : []),
     `This folder, ${folder}, is registered as the Lean project ${project}`,
     `Its git moves into Wheelhouse's own folder, ${store}, and this folder becomes a worktree of it, so only the helper moves the main version`,
