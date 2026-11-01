@@ -697,6 +697,13 @@ export function engineRoutes({
         const run = runOf(runId);
         return run ? { ok: true, order: orderNow(run) } : { ok: false, refused: NO_ORDER };
       }),
+      // The test files a run's order lists as protected, for the protected-tests guard, whose hook has the run's id from
+      // its process and no ticket to show. It tells nothing else of the order and changes nothing; a run the helper
+      // didn't start is refused.
+      '/engine/protected-files': async ({ runId } = {}) => {
+        const run = isRunId(runId) ? runOf(runId) : null;
+        return run ? { ok: true, protectedFiles: [...(run.order.protectedFiles ?? [])] } : { ok: false, refused: NO_ORDER };
+      },
       // A run's areas, for the tool guard, whose hook has the run's id from its process and no ticket to show. It tells
       // nothing else of the order and changes nothing. A run with no order, as the merge queue's, has no areas.
       '/engine/areas': async ({ runId } = {}) => {
