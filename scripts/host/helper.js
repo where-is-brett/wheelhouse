@@ -54,7 +54,7 @@ import { openProjectRecord, openSettings } from '../state/record.js';
 import { importEvents } from '../state/import.js';
 import { takeStartLock } from '../lib/start-lock.js';
 import { tailOf } from '../lib/output-tail.js';
-import { buildViews, latestFor, writeViews } from '../state/views.js';
+import { buildViews, cardOutcomes, latestFor, writeViews } from '../state/views.js';
 import { takeSurvey, shapedSurvey, recordSurvey } from '../survey/take.js';
 import { ReadyRefusal, archiveCommit, carryOn, carryOnPiece, dropRef, fetchInto, folderGit, freeWork, pieceWork, restoreCommit } from '../survey/ready.js';
 import { readyRecordFile, writeReadyRecord } from '../survey/ready-record.js';
@@ -63,6 +63,7 @@ import { directorGitEnv, directorGitlabApi, hostStep, launchedIn, switchOnAsDire
 import { commitAuthor } from '../setup/project-files.js';
 import { readEnrolled, verify, sign, ownKey } from '../state/signing.js';
 import { delegationReview } from '../frontdesk/learning.js';
+import { answersToOffer, offerDue, sittingSince } from '../delegation/offer.js';
 import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/lock.js';
 import { namesOf, readProject, isInsideFolder, projectForFolder, registeredProjects } from '../lib/projects.js';
 import { findCommand, hasTestScript } from '../checks/find-command.js';
@@ -895,7 +896,7 @@ const PLACED_ROUTES = [
   '/desk/read', '/desk/act', '/desk/watch',
   '/lean/status', '/lean/merge', '/lean/undo', '/lean/copy', '/local/undo', '/local/move',
   '/survey/carry-on', '/survey/archive', '/survey/restore', '/premium/card', '/premium/check', '/premium/state', '/premium/failed',
-  '/engine-switch',
+  '/engine-switch', '/rules/offer',
 ];
 
 // A Lean project (ruling P5-9) has no code host and no connection: only these routes serve it, on
@@ -4482,6 +4483,26 @@ export async function startHelper({
         ...(review === true ? { review: delegationReview(events, { now, enrolled: readEnrolled(), views }) } : {}),
       };
     }),
+    // A rule offered after an answer that earns it (delegated decisions design, section 11.1). The helper composes it from
+    // its own record and the piece's own change, so nothing a caller sends shapes it, and proposes it as a `rule` record
+    // that decides nothing. A Lean project has no route here: only a signed confirmation puts a rule in force, so its
+    // Confirm could sign nothing.
+    '/rules/offer': stateRoute(async ({ project }) => {
+      const events = listEvents(stateDir(project), { report: () => {} });
+      const views = await writeViews(project, { now });
+      const outcomes = cardOutcomes(events, readEnrolled());
+      const sitting = sittingSince({ views, outcomes, now });
+      const piece = engineHosts.find((h) => h.project === project)?.factsOfPiece;
+      for (const answer of typeof piece === 'function' ? answersToOffer({ views, outcomes, sitting }) : []) {
+        const rule = offerDue({ events, answer, sitting, now, views, outcomes, facts: await piece(answer.work, views), project });
+        if (rule === null) continue;
+        const event = makeEvent({ kind: 'rule', data: rule, now });
+        await writeEvent({ project, event, now });
+        await freshViews(() => writeViews(project, { now }));
+        return { ok: true, offer: { event, why: answer.why } };
+      }
+      return { ok: true, offer: null };
+    }, { write: true }),
     // The label of a question's verified answer, from the views alone, else null. Read-only, so STOP lets it through.
     '/state/answer': stateRoute(async ({ project, questionId }) => {
       if (typeof questionId !== 'string' || questionId === '') refuse('the question id must be text');
@@ -4735,7 +4756,7 @@ export async function startHelper({
       try { engine = engineFor(project); } catch { engine = null; }
       if (!engine) continue;
       try {
-        const { runner, dispatcher, checks, inStep, seals } = engineDesk(project, engine);
+        const { runner, dispatcher, checks, inStep, seals, factsOfPiece } = engineDesk(project, engine);
         const host = startEngineHost({
           engine, spawn, now, held: stopped, wake: engineHosts.length === 0,
           write: (kind, data) => engineWrite(project, kind, data),
@@ -4745,7 +4766,7 @@ export async function startHelper({
           prOf: (runId) => engineRun.openedBy(project, runId),
         });
         host.onAsk((event) => { runner.onAsk(event).catch(() => {}); });
-        engineHosts.push({ project, engine, host, runner, dispatcher, checks, inStep, seals });
+        engineHosts.push({ project, engine, host, runner, dispatcher, checks, inStep, seals, factsOfPiece });
       } catch {
         // An engine that can't be followed gets no host; the other projects' hosts start all the same.
       }
@@ -5280,7 +5301,12 @@ export async function startHelper({
         }
       };
     })();
-    return { runner, dispatcher, checks, inStep, seals };
+    // A piece's change as its latest run left it, for a rule's scope; a run the engine can't place gives nothing to read.
+    const factsOfPiece = async (work, seen) => {
+      const seenRun = await Promise.resolve().then(() => engine.inspect(seen.runs?.[work]?.at(-1)?.data?.runId)).catch(() => null);
+      return factsOf({ branch: seenRun?.branch, folder: seenRun?.folder });
+    };
+    return { runner, dispatcher, checks, inStep, seals, factsOfPiece };
   }
   // --- safekeeping (spec 8.2): what would be lost with this computer, for every project, engine or none ---
 

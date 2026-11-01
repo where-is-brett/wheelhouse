@@ -131,6 +131,10 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       answer: post('/state/answer'), // { project | cwd, questionId } -> { ok, answer: label | null }: a verified answer only, read-only, answered under STOP
       columnReady: post('/state/column-ready'), // { project, column, pins, records } -> { ok, id, pushed }: a Thoroughness level ready (lean or lightest) or the premium model's pass (premium), recorded only when the helper's own read of the evaluation's records finds the whole bar passed on the project's pins now; refused under STOP
     },
+    // A rule offered after an answer that earns it (scripts/delegation/offer.js); `cwd` may stand for `project`.
+    rules: {
+      offer: post('/rules/offer'), // { project | cwd } -> { ok, offer: { event, why } | null }: the helper composes the rule from its own record and proposes it; a caller gives no part of it; refused under STOP
+    },
     // The premium model's opt-in (design section 14.6, scripts/routing/premium.js); `cwd` may stand for `project`.
     premium: {
       card: post('/premium/card'), //   { project | cwd } -> { ok, offered, line? | why? }: the premium model's card, composed and its offer recorded signed by the helper, at Thorough only and never where the account is known not to have it; refused under STOP

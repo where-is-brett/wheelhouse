@@ -33,9 +33,10 @@ import { effectiveSettings } from '../settings/effective.js';
 import { SETTINGS } from '../settings/catalogue.js';
 import { conceptOf, currentConcept, RENAMED_CONCEPTS } from './glossary.js';
 import { CARD_KINDS, DELEGATE_AFTER, KNOWN_AFTER } from '../lib/front-desk.js';
+import { OFFER_AGAIN_DAYS } from '../delegation/limits.js';
 
 // How long a Not now or a Keep as is on a proposal's card holds the proposal back.
-export const TURNED_DOWN_DAYS = 30;
+export const TURNED_DOWN_DAYS = OFFER_AGAIN_DAYS;
 // Explain more or Why? on this many different cards within this many days proposes plain explanations.
 export const EXPLAINED_CARDS = 3;
 export const EXPLAINED_DAYS = 7;
@@ -82,6 +83,9 @@ function inForceSince(profile, key, enrolled) {
     .map((e) => (countsAtOnce(e) ? e.at : confirmed.get(e.id))).filter((at) => typeof at === 'string').sort().at(-1);
 }
 
+// Whether a card's answers turned its proposal down within TURNED_DOWN_DAYS of now: Not now or Keep as is.
+export const turnedDown = (answers, nowMs) => answers.some((a) => (a.data?.label === 'Not now' || a.data?.label === KEEP_AS_IS) && nowMs - ms(a.at) < TURNED_DOWN_DAYS * DAY_MS);
+
 // Whether a proposal of `kind` (setting or level) setting `key` to `value` is held back: waiting
 // for its confirmation, or turned down within TURNED_DOWN_DAYS of now, by Not now or Keep as is on
 // a card whose confirm line names an event of that kind, key and value. One whose card was decided
@@ -90,15 +94,15 @@ function inForceSince(profile, key, enrolled) {
 function heldBack({ events, unconfirmed, outcomes, nowMs }, kind, key, value) {
   const proposals = new Map(list(events).filter((e) => e?.kind === kind).map((e) => [e.id, e]));
   const kept = new Set();
-  let turnedDown = false;
+  let declined = false;
   for (const { card, answers, decided } of outcomes) {
     const named = /^Confirm ([a-z-]+) (\S+): "/.exec(typeof card.data?.line === 'string' ? card.data.line : '');
     const target = named && named[1] === kind ? proposals.get(named[2]) : undefined;
     if (!target || target.data?.key !== key || !same(target.data?.value, value)) continue;
     if (decided?.label === KEEP_AS_IS) kept.add(target.id);
-    if (answers.some((a) => (a.data?.label === 'Not now' || a.data?.label === KEEP_AS_IS) && nowMs - ms(a.at) < TURNED_DOWN_DAYS * DAY_MS)) turnedDown = true;
+    if (turnedDown(answers, nowMs)) declined = true;
   }
-  return turnedDown || list(unconfirmed).some((u) => u?.kind === kind && !kept.has(u.id) && u.data?.key === key && same(u.data?.value, value));
+  return declined || list(unconfirmed).some((u) => u?.kind === kind && !kept.has(u.id) && u.data?.key === key && same(u.data?.value, value));
 }
 
 // What heldBack needs for the director's profile settings: the project's and the profile's
