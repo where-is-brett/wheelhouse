@@ -438,6 +438,10 @@ for (const [name, stopIt] of [
     assert.equal(w.starts.filter((s) => s.order.work === 'z').length, 0);
     const card = w.cardOf('f');
     assert.match(card.what, /waiting for its files/);
+    await w.tick(2);
+    w.restart();
+    await w.tick(3);
+    assert.equal(w.cards().filter((c) => c.work === 'f' && /nothing left to carry it on/.test(c.what)).length, 1, 'one card, across a restart');
     w.answer('f', 'Stop here');
     await w.tick(3);
     assert.equal(w.reports.f.data.outcome, 'closed');
@@ -580,11 +584,28 @@ test('work whose dependency was closed brings its own card, and Start it anyway 
   const w = await closedDep();
   const card = w.cardOf('d');
   assert.deepEqual(card.options.map((o) => o.label), [START_ANYWAY, 'Stop here']);
-  assert.match(card.what, /won't be added/);
+  assert.match(card.what, /depends on a, which won't be added/);
+  assert.match(card.options[0].says, /without a\. .*may fail or need redoing.*this queueing only/);
+  await w.tick(2);
+  w.restart();
+  await w.tick(2);
+  assert.equal(w.cards().filter((c) => c.work === 'd').length, 1, 'one card, across a restart');
   w.answer('d', START_ANYWAY);
   await w.tick(2);
   assert.equal(w.runsOf('d').length, 1);
   assert.equal(w.cards().filter((c) => c.work === 'd').length, 1, 'asked once');
+});
+
+test('Start it anyway holds for its queueing only', async () => {
+  const w = await closedDep();
+  w.answer('d', START_ANYWAY);
+  w.work.d.work.data.lane = 'off-the-engine';
+  await w.tick(2);
+  w.work.d.work.data.lane = 'quick';
+  w.work.d.work.at = '2026-10-29T12:00:00.000Z';
+  await w.tick(3);
+  assert.equal(w.runsOf('d').length, 0, 'queued again, it waits as before');
+  assert.equal(w.cards().filter((c) => c.work === 'd').length, 2);
 });
 
 test('Stop here on a cut-off piece ends it, and the work behind it is asked in its turn', async () => {
@@ -606,7 +627,7 @@ test('work depending on what isn\'t on the record, or on itself, brings a card',
   w.work.z.work.data.dependsOn = ['y'];
   await w.tick(3);
   assert.match(w.cardOf('x').what, /no-such-work/);
-  assert.match(w.cardOf('y').what, /wait on each other/);
+  assert.match(w.cardOf('y').what, /y and z wait on each other/);
   assert.match(w.cardOf('z').what, /wait on each other/);
 });
 

@@ -49,8 +49,10 @@ const STRANDED_BECAUSE = { clash: 'other work is waiting for its files', depende
 export const restartStrandedWords = (title, why) => `${title} has stopped with nothing left to carry it on, and ${STRANDED_BECAUSE[why] ?? STRANDED_BECAUSE.parked}. Nothing more of it starts until you say.`;
 export const RESTART_UNSURE_AGAIN = 'It checks whether a run began: one on record goes on, and a stray one is ended before it starts again. If that can\'t be done, you get a new card.';
 export const START_ANYWAY = 'Start it anyway';
-export const cutOffWords = (title, by) => `${title} depends on ${by.length < 2 ? by.join('') : `${by.slice(0, -1).join(', ')} and ${by.at(-1)}`}, which won't be added as things stand, so it can't start by itself. It waits until you say.`;
-export const waitsOnItselfWords = (title) => `${title} and the work it depends on wait on each other, so none of it can start by itself. It waits until you say.`;
+const named = (by) => (by.length < 2 ? by.join('') : `${by.slice(0, -1).join(', ')} and ${by.at(-1)}`);
+export const cutOffWords = (title, by) => `${title} depends on ${named(by)}, which won't be added as things stand, so it can't start by itself. It waits until you say.`;
+export const waitsOnItselfWords = (title, by) => `${title} and ${named(by)} wait on each other, so none of them can start by itself. It waits until you say.`;
+export const startAnywayWords = (by) => `It takes its turn without ${named(by)}. What it was to build on isn't there, so it may fail or need redoing. This holds for this queueing only: queued again, it waits as before.`;
 export const prLeftOpenWords = (pr) => `Pull request #${pr} stays open, and nothing of it is added.`;
 export const STOPPED_RESTART_WORDS = (title) => `${title} stays stopped, as you chose; what it has done so far is kept on its branch.`;
 // Said after that line, of a run the engine may have started all the same and Wheelhouse couldn't end.

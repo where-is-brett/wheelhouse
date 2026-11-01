@@ -19,7 +19,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { dispatch, MERGE_WORK } from './dispatcher.js';
-import { reservedUnreadWords, noCardBehindWords, restartRefusedWords, restartCardWords, restartUnsureWords, restartStrandedWords, prLeftOpenWords, wakeLateWords, STOPPED_RESTART_WORDS, ORPHAN_LEFT_WORDS, RESTART_UNSURE_AGAIN, START_ANYWAY, cutOffWords, waitsOnItselfWords } from './words.js';
+import { reservedUnreadWords, noCardBehindWords, restartRefusedWords, restartCardWords, restartUnsureWords, restartStrandedWords, prLeftOpenWords, wakeLateWords, STOPPED_RESTART_WORDS, ORPHAN_LEFT_WORDS, RESTART_UNSURE_AGAIN, START_ANYWAY, cutOffWords, waitsOnItselfWords, startAnywayWords } from './words.js';
 import { workOrder } from './order.js';
 import { limitsFor } from './caps.js';
 import { ENGINE_QUESTIONS } from './router.js';
@@ -1117,12 +1117,13 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       state.cutOffFor[work] = current.at;
       keep();
       const title = titleOf(views, work);
+      const names = (circle ? by : lost).map((dep) => titleOf(views, dep));
       await askDirector('restart', {
         id, work, level: 3,
-        what: circle ? waitsOnItselfWords(title) : cutOffWords(title, lost.map((dep) => titleOf(views, dep))),
+        what: circle ? waitsOnItselfWords(title, names) : cutOffWords(title, names),
         why: 'Whether work goes on without what it was to follow is yours to decide, at level 3.',
         options: [
-          { label: START_ANYWAY, says: 'It takes its turn without waiting for that work, and everything else about it stays the same.' },
+          { label: START_ANYWAY, says: startAnywayWords(names) },
           { label: STOP_HERE, says: 'It ends here and nothing of it starts. Any work that depends on it comes to you next.' },
         ],
         recommendation: STOP_HERE,
