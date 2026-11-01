@@ -374,3 +374,11 @@ test('a blind card has each option turn, none filled, and Suggest a change… an
   assert.deepEqual(buttons.slice(-2), [SUGGEST_BUTTON, WHY_BUTTON]);
   assert.deepEqual(buttons.slice(0, -2), card.options.slice(0, 2).map((label) => ({ label, does: 'turn', shape: 'outlined' })));
 });
+
+test('a parked card\'s Send it back is a button that records, beside Approve', () => {
+  const { card } = composeCard({ ...INPUTS.approval, parked: true, options: [says('Approve'), says('Send it back')] });
+  const { buttons, note } = cardButtons(card);
+  assert.equal(note, null);
+  assert.deepEqual(buttons.slice(0, 2).map((b) => [b.label, b.does]), [['Approve', 'record'], ['Send it back', 'record']]);
+  assert.deepEqual(buttons.map((b) => b.label), ['Approve', 'Send it back', 'Suggest a change…', 'Why?', 'Show me']);
+});

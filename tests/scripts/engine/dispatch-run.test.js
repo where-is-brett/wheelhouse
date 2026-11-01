@@ -864,7 +864,7 @@ test('a piece stopped with nothing to move it on, holding files, brings one card
   await w.tick(3);
   assert.equal(w.stateOf('a'), 'ended');
   w.put('b', { place: 1, files: ['x.js'] });
-  await w.tick();
+  await w.tick(2);
   assert.equal(w.runsOf('b').length, 0, 'its files are still held');
   const card = w.cardOf('a');
   assert.deepEqual(card.options.map((o) => o.label), [TRY_AGAIN, STOP_HERE]);
@@ -1122,4 +1122,43 @@ test('an answer the engine never heard, on work that has since ended, gives the 
   w.reports.a = { at: w.clock.now.toISOString(), data: { work: 'a', outcome: 'closed' } };
   await w.tick(2);
   assert.equal(w.stateOf('a'), 'ended');
+});
+
+test('takeBack says a parked pull request can go back while its work and pull request stand', async () => {
+  const t = queueSetUp({ prState: async () => 'open' });
+  assert.deepEqual(await t.d.takeBack({ pr: 7, work: 'card-7' }), { ok: true });
+  fs.rmSync(t.dir, { recursive: true, force: true });
+});
+
+test('takeBack says gone for work that ended or a pull request closed or merged, and waits when the host can\'t say', async () => {
+  for (const over of [{ reports: { 'card-7': { at: '2026-10-29T09:00:00.000Z', data: { work: 'card-7', outcome: 'closed' } } } }, { prState: async () => 'closed' }, { prState: async () => 'merged' }]) {
+    const t = queueSetUp(over);
+    assert.deepEqual(await t.d.takeBack({ pr: 7, work: 'card-7' }), { ok: false, gone: true }, JSON.stringify(Object.keys(over)));
+    fs.rmSync(t.dir, { recursive: true, force: true });
+  }
+  const t = queueSetUp({ prState: async () => null });
+  assert.deepEqual(await t.d.takeBack({ pr: 7, work: 'card-7' }), { ok: false });
+  fs.rmSync(t.dir, { recursive: true, force: true });
+});
+
+test('takeBack says gone for work the record no longer holds', async () => {
+  const t = queueSetUp({ prState: async () => 'open' });
+  assert.deepEqual(await t.d.takeBack({ pr: 7, work: 'someone-else' }), { ok: false, gone: true });
+  fs.rmSync(t.dir, { recursive: true, force: true });
+});
+
+test('a pull request taken back leaves what the queue is due for, and only a project in git alone reads a change here', async () => {
+  const left = [];
+  const dir = tempFolder('wh-dr-');
+  const ready = { 7: { work: 'card-7', head: 'a'.repeat(40), runId: 'r7' } };
+  const on = (local) => dispatchRun({
+    engine: fakeEngine(), project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'), readViews: () => ({}), readyOf: () => ready, notReady: (pr) => left.push(pr),
+    localQueue: async () => {}, isLocal: () => local, start: async () => ({ ok: false }),
+  });
+  on(false).notReady(7);
+  assert.deepEqual(left, [7]);
+  assert.equal(on(false).localChange(7), null, 'a host\'s pull request has its own queue');
+  assert.deepEqual(on(true).localChange(7), ready[7]);
+  assert.equal(on(true).localChange(8), null);
+  fs.rmSync(dir, { recursive: true, force: true });
 });

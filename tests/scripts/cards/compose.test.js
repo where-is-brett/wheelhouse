@@ -17,7 +17,8 @@ import {
 import { stateDir, stopFile } from '../../../scripts/lib/paths.js';
 import { CARD, CARD_KINDS, PUT_OFF } from '../../../scripts/lib/front-desk.js';
 import { BUILD_QUESTION_OPTIONS } from '../../../scripts/protection/windows-builds.js';
-import { SUGGEST, WHY, SHOW_ME, NOT_NOW, TO_KNOW_MORE, TO_CHANGE_IT, SUGGEST_SAYS, WHAT_CHANGED } from '../../../scripts/lib/calm-words.js';
+import { SUGGEST, WHY, SHOW_ME, NOT_NOW, TO_KNOW_MORE, TO_CHANGE_IT, SUGGEST_SAYS, WHAT_CHANGED, SEND_BACK } from '../../../scripts/lib/calm-words.js';
+import { cardProblems } from '../../../scripts/hooks/card-check.js';
 import { withHome as inOwnHome } from '../../helpers/homes.js';
 
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -923,4 +924,22 @@ test('the answer card after a blind card says what was picked and is marked for 
   assert.equal(card.blind, true);
   assert.equal(card.recommend, 'Tab');
   assert.equal(composeCard(answerInput(asked, 'w')).card.blind, undefined);
+});
+
+test('a parked pull request\'s card offers Send it back beside Approve, and says what each does', () => {
+  const parked = { ...INPUTS.approval, recommend: 'Approve', parked: true, options: [says('Approve'), { label: SEND_BACK, says: 'It goes back to be reworked, and nothing of it is added.' }] };
+  const { question, card } = composeCard(parked);
+  assert.deepEqual(card.options, ['Approve', SEND_BACK, 'Suggest a change…', 'Show me']);
+  assert.equal(question.options.length, 4, 'a chat card shows four at most');
+  assert.ok(question.options.every((o) => typeof o.description === 'string' && o.description !== ''));
+  assert.match(question.options[1].description, /reworked/);
+  assert.equal(card.line, approvalLine(7, FULL), 'it signs by the pull request\'s own line');
+  assert.deepEqual(cardProblems(question), []);
+});
+
+test('Send it back must be described, and belongs to a parked approval only', () => {
+  const parked = { ...INPUTS.approval, recommend: 'Approve', parked: true };
+  assert.throws(() => composeCard(parked), /must describe Send it back/);
+  assert.throws(() => composeCard({ ...INPUTS.approval, recommend: 'Approve', options: [says('Approve'), says(SEND_BACK)] }), /can't describe Send it back/);
+  assert.throws(() => composeCard({ ...INPUTS.confirm, parked: true }), /parked/);
 });

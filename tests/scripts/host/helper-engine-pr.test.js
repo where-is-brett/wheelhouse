@@ -27,7 +27,7 @@ function setup({ visible = false, outputs = {}, stop = false } = {}) {
     outputs: async () => ({ 'open-pr': JSON.stringify({ branch: 'wh/card-1', pr: 14, head: HEAD }), lenses: JSON.stringify({ security: false, design: false, head: HEAD, clean: true }), 'review-standards': clean, 'review-spec': clean, ...outputs }),
     handOver: async (item) => { calls.push({ call: 'handOver', item }); return { ok: true }; },
   };
-  const { routes, readyOf, openedOf } = ticketedRoutes(engineRoutes({
+  const { routes, readyOf, openedOf, notReady } = ticketedRoutes(engineRoutes({
     projects: () => [{ project: 'p', folder: path.join(dir, 'project') }],
     engineFor: () => engine,
     ordersDir: () => path.join(dir, 'orders'),
@@ -45,7 +45,7 @@ function setup({ visible = false, outputs = {}, stop = false } = {}) {
     provenance: async (project, args) => { calls.push({ call: 'provenance', ...args }); },
   }), engine, 'acme/web');
   const order = workOrder({ work: { id: 'card-1', lane: 'quick', goal: 'A goal', done: [{ test: 'x' }], visible } });
-  return { routes, calls, readyOf, openedOf, setStop: (v) => { stopped = v; }, start: () => routes['/engine/start']({ project: 'p', order }) };
+  return { routes, calls, readyOf, openedOf, notReady, setStop: (v) => { stopped = v; }, start: () => routes['/engine/start']({ project: 'p', order }) };
 }
 
 test('the pull request is opened from the worktree, with what built it recorded first', async () => {
@@ -92,4 +92,17 @@ test('work shown first is handed over only once the director approved it', async
   await approved.routes['/engine/review']({ runId: 'run-1', step: 'review-spec' });
   assert.equal((await approved.routes['/engine/ready']({ runId: 'run-1' })).ok, true);
   assert.equal(approved.readyOf('p', 14).showFirst, true);
+});
+
+test('a pull request sent back is no longer marked ready', async () => {
+  const { routes, start, readyOf, notReady } = setup();
+  await start();
+  await routes['/engine/review']({ runId: 'run-1', step: 'review-standards' });
+  await routes['/engine/review']({ runId: 'run-1', step: 'review-spec' });
+  await routes['/engine/ready']({ runId: 'run-1' });
+  assert.equal(readyOf('p', 14).head, HEAD);
+  notReady('p', 14);
+  assert.equal(readyOf('p', 14), null);
+  notReady('p', 14);
+  assert.equal(readyOf('p', 14), null, 'twice is the same as once');
 });

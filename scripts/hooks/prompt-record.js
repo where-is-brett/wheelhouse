@@ -74,7 +74,7 @@ import { keepClick as keepBaselineClick, shownBaseline, dropPending, carriesFigu
 import { localViews } from './session-start.js';
 import { cardOutcomes } from '../state/views.js';
 import { cardProblems } from './card-check.js';
-import { SUGGEST, WHAT_WOULD_YOU_CHANGE } from '../lib/calm-words.js';
+import { SUGGEST, WHAT_WOULD_YOU_CHANGE, SEND_BACK } from '../lib/calm-words.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 import { PUT_OFF } from '../lib/front-desk.js';
 import { settingKey, UNATTENDED_CARD, USE_GUARDED } from '../protection/windows-builds.js';
@@ -145,7 +145,7 @@ function only(pattern, text) {
 // The deciding labels a reply code can answer with. A reply to an answer card may also use any
 // of the question's own options (scripts/mod/reply.js), which earned checks against the question.
 // Turn on (dangerous) and Use Guarded earn a record from a click alone, by design.
-export const SIGNED_LABELS = ['Approve', 'Confirm', 'Lift All stop', 'Lift STOP', 'Do it', 'Push it', 'Change it', 'End it', 'Merge the fix', 'Pair it', 'Unpair it'];
+export const SIGNED_LABELS = ['Approve', SEND_BACK, 'Confirm', 'Lift All stop', 'Lift STOP', 'Do it', 'Push it', 'Change it', 'End it', 'Merge the fix', 'Pair it', 'Unpair it'];
 
 // The events of one kind that the state holds, oldest first.
 function held(project, kind) {
@@ -326,6 +326,16 @@ function premiumNow({ project }) {
   return { from: offeredFrom(view), after: typeof view.failed?.at === 'string' ? view.failed.at : null };
 }
 
+// The open pull request and full head an approval line names, as the host says now: null unless the line is the card's own
+// and the head is still the commit it names.
+async function openHead(match, question, { project, client, left }) {
+  if (!question.includes(approvalLine(match[1], match[2]))) return null;
+  const pr = Number(match[1]);
+  const state = await left(client.prState({ project, number: pr }));
+  const head = state?.result?.headSha;
+  return state?.ok === true && state.result?.state === 'open' && /^[0-9a-f]{40}$/.test(head ?? '') && head.startsWith(match[2]) ? { pr, head } : null;
+}
+
 // Works out the signed record a click earns, if any. May ask the helper for a
 // pull request's head. Returns { made, profile?, lift? }, or null. A Lift STOP earns nothing
 // while STOP is off, so an old card's click or reply code can't stand for a later STOP. A reply
@@ -352,15 +362,14 @@ export async function earned({ project, question, label, card, client, now, left
       const record = approveWorkOf(project, question, works[0]);
       return record ? action(record) : null;
     }
-    const m = prs[0];
-    if (!question.includes(approvalLine(m[1], m[2]))) return null;
-    const pr = Number(m[1]);
-    const state = await left(client.prState({ project, number: pr }));
-    const head = state?.result?.headSha;
-    if (state?.ok === true && state.result?.state === 'open' && /^[0-9a-f]{40}$/.test(head ?? '') && head.startsWith(m[2])) {
-      return { made: { kind: 'approval', data: { pr, commit: head, words: 'Approve', question } } };
-    }
-    return null;
+    const at = await openHead(prs[0], question, { project, client, left });
+    return at && { made: { kind: 'approval', data: { pr: at.pr, commit: at.head, words: 'Approve', question } } };
+  }
+  // Send it back answers the same line as Approve, at the same head, so a card for a commit that moved on sends nothing back.
+  if (label === 'Send it back') {
+    const m = only(APPROVE, question);
+    const at = m && await openHead(m, question, { project, client, left });
+    return at ? action({ action: 'send-back', pr: at.pr, sha: at.head }) : null;
   }
   if (label === 'Confirm' && setLinesOf(question).some((line) => KEEP_CONTROL_LINE.test(line))) {
     const kept = keepControlOf(project, question);

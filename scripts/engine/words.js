@@ -16,19 +16,27 @@ export function mergeQuestionWords(pr, title) {
 }
 
 // The card for a pull request the merge queue has left alone. It stays out of the queue until the director approves its
-// commit: the queue asks about it again only when handed it again, so nothing here promises a question.
+// commit or sends it back: the queue asks about it again only when handed it again, so nothing here promises a question.
 export const parkedWords = (reason) => `${reason} The merge queue has left it and gone on with the others.`;
 export const PARKED_CHANGED = 'The change has moved to a newer commit since the last card, so this is the one to look at.';
 export const PARKED_WHY = 'Only you can say whether this goes in, at level 3.';
 export const PARKED_BECAUSE = 'the merge queue can\'t judge it, so what it does is yours to weigh';
 export const PARKED_MEANWHILE = 'Nothing of it is added until you approve this commit, and other work carries on. A new commit needs your approval again.';
 export const PARKED_APPROVE_SAYS = 'It approves this commit, and the change goes back to the merge queue to be added.';
+export const PARKED_SEND_BACK_SAYS = 'It goes back to be reworked on its own branch, and nothing of it is added. You see it again if it still needs your say.';
+// What a piece sent back is told, in its order, as the director's answer.
+export const SENT_BACK_ANSWER = 'Send it back: not as it stands. Rework it so this no longer stands in its way.';
+export const sentBackWords = (pr, head) => `You sent pull request #${pr} back at ${head.slice(0, 7)}, so it goes back to be reworked and nothing of it is added.`;
+export const sentBackGoneWords = (pr) => `Your Send it back for pull request #${pr} wasn't used: that work has ended, or the pull request has closed.`;
+export const sentBackApprovedWords = (pr) => `Your Send it back for pull request #${pr} wasn't used: your approval had already sent it to the merge queue.`;
+export const sentBackMovedWords = (pr) => `Your Send it back for pull request #${pr} wasn't used: it has moved on since that card.`;
+export const sentBackNoPieceWords = (pr) => `Pull request #${pr} has no work of Wheelhouse's behind it, so there is nothing to go back to. The merge queue leaves it, and you can close it on its host.`;
 
 // The Logbook's line for a held piece with nothing behind it that could move it: a reservation can outlast every card.
 export function noCardBehindWords(title, why, by) {
   const names = by.length < 2 ? by.join('') : `${by.slice(0, -1).join(', ')} and ${by.at(-1)}`;
   const said = why === 'clash' ? `waits for the files ${names} keeps, which nothing lets go by itself` : why === 'dependency' ? `waits on ${names}` : `waits while ${names} stands parked`;
-  return `${title} ${said}, and no card stands behind that. It moves on once that work is added or ended.`;
+  return `${title} ${said}, and no card stands behind that. It moves on once that work is added${why === 'dependency' ? '' : ' or ended'}.`;
 }
 
 // The line for the cards past the day's budget, and the button that shows them.
@@ -45,7 +53,16 @@ export const reservedUnreadWords = (title) => `What ${title} has changed so far 
 export const restartRefusedWords = (title, why) => `${title} couldn't go back to work: ${why}. It keeps its turn, and it is tried again shortly.`;
 export const restartCardWords = (title, why) => `${title} couldn't go back to work, twice: ${why}. Nothing more of it starts until you say.`;
 export const restartUnsureWords = (title) => `Wheelhouse can't tell whether ${title} started again, so it hasn't started it a second time. Nothing more of it starts until you say.`;
-export const restartStrandedWords = (title) => `${title} has stopped with nothing left to carry it on, and other work is waiting for its files. Nothing more of it starts until you say.`;
+const STRANDED_BECAUSE = { clash: 'other work is waiting for its files', dependency: 'other work depends on it', parked: 'other work is waiting on it', place: 'it is still keeping its place in the build' };
+export const restartStrandedWords = (title, why) => `${title} has stopped with nothing left to carry it on, and ${STRANDED_BECAUSE[why] ?? STRANDED_BECAUSE.parked}. Nothing more of it starts until you say.`;
+export const RESTART_UNSURE_AGAIN = 'It checks whether a run began: one on record goes on, and a stray one is ended before it starts again. If that can\'t be done, you get a new card.';
+export const START_ANYWAY = 'Start it anyway';
+export const cutOffStoppedWords = (title) => `${title} stops here, as you chose; none of it had started.`;
+const named = (by) => (by.length < 2 ? by.join('') : `${by.slice(0, -1).join(', ')} and ${by.at(-1)}`);
+export const cutOffWords = (title, by) => `${title} depends on ${named(by)}, which won't be added as things stand, so it can't start by itself. It waits until you say.`;
+export const waitsOnItselfWords = (title, by) => `${title} and ${named(by)} wait on each other, so none of them can start by itself. It waits until you say.`;
+export const startAnywayWords = (by) => `It takes its turn without ${named(by)}. What it was to build on isn't there, so it may fail or need redoing. This holds for this queueing only: queued again, it waits as before.`;
+export const prLeftOpenWords = (pr) => `Pull request #${pr} stays open, and nothing of it is added.`;
 export const STOPPED_RESTART_WORDS = (title) => `${title} stays stopped, as you chose; what it has done so far is kept on its branch.`;
 // Said after that line, of a run the engine may have started all the same and Wheelhouse couldn't end.
 export const ORPHAN_LEFT_WORDS = "A run of it may still be going in the build engine; Wheelhouse couldn't end it.";

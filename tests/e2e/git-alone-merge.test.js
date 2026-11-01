@@ -284,6 +284,26 @@ test('a change that takes the director\'s say raises its card once, and goes in 
   await ticksUntil(helper, () => changeOf(n).state === 'merged', 'the merge');
 }, { check: checks(), askWindow: atWindow('Approve') }));
 
+test('a change the director sends back leaves the local queue for its piece, with no host to close it on', { timeout: 120000 }, () => gitAloneWorld(async (world) => {
+  const { helper, client, home } = world;
+  const main = await headIn(home, 'refs/heads/main');
+  const written = await client.state.write({ project: P, kind: 'work', data: { id: 'card-15', title: 'Prices', lane: 'quick', visible: false, dependsOn: [] } });
+  assert.equal(written.ok, true, JSON.stringify(written));
+  const { n } = await readyChange(world, 'card-15', 'export const price = () => 15;\n', { also: '.archon/settings.yaml' });
+  const card = await ticksUntil(helper, () => cardOf((d) => String(d.question).includes(`#${n}`)), 'the approval card');
+  assert.deepEqual(card.data.options, ['Approve', 'Send it back', 'Suggest a change…', 'Show me']);
+  assert.ok(card.data.descriptions[1].includes('reworked'));
+  const answered = await confirm(client, card);
+  assert.equal(answered.recorded, true, JSON.stringify(answered));
+  assert.equal(answered.choice, 'Send it back');
+  const ready = () => JSON.parse(fs.readFileSync(verdictsFile(), 'utf8')).ready?.[n];
+  await ticksUntil(helper, () => ready() === undefined, 'the change leaving the local queue');
+  await ticks(helper, 2);
+  assert.equal(records('note').filter((e) => String(e.data.words).includes(`You sent pull request #${n} back`)).length, 1);
+  assert.equal(changeOf(n).state, 'open');
+  assert.equal(await headIn(home, 'refs/heads/main'), main, 'nothing of it is added');
+}, { check: checks(), askWindow: atWindow('Send it back') }));
+
 test('the merge route answers to the main line and to a main version moved outside', { timeout: 120000 }, () => gitAloneWorld(async (world) => {
   const { helper, client, home } = world;
   const { n } = await readyChange(world, 'card-12', 'export const price = () => 12;\n');

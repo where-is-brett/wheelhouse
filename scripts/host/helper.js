@@ -89,6 +89,8 @@ import { setupStamp } from '../delegation/stamp.js';
 import { ruleSet } from '../delegation/rules.js';
 import { exclusionsHash } from '../delegation/candidates.js';
 import { dispatchRun, MERGE_WORK } from '../engine/dispatch-run.js';
+import { PARKED_SEND_BACK_SAYS } from '../engine/words.js';
+import { SEND_BACK } from '../lib/calm-words.js';
 import { FIX_LANE, openRedMain, redMainIncident } from '../engine/fix-main.js';
 import { endedBy } from '../foreman/queue.js';
 import { packTreeDigest } from '../engine/pack-build.js';
@@ -2229,6 +2231,8 @@ export async function startHelper({
     // An Ask allowance (ruling P8-8): Allow this time or Allow for this feature on a build question, and only there
     // (allowanceQuestion); an answer to any other question is no step the window confirms.
     answer: 'ask-allowance',
+    // The other answer of a parked pull request's approval card, confirmed as its Approve is.
+    'send-back': 'approval',
   };
   // The steps the window serves while STOP is on: Lift STOP, and a Lean undo, as the runbook's local steps carry on.
   const UNDER_STOP = ['lift-stop', 'undo-merge', 'undo-main'];
@@ -4997,15 +5001,16 @@ export async function startHelper({
           else if (once(`said:${change.n}:${change.head}:${got.reason}`)) await say(`Change ${change.n} wasn't added yet: ${got.reason}. It is tried again shortly.`);
         },
         async raise(change, marked) {
-          const key = `asked:${change.n}:${change.head}`;
+          // By the run that marked it: work sent back and marked ready again at the same head is asked about afresh.
+          const key = `asked:${change.n}:${change.head}:${marked.runId}`;
           if (kept[key] === true) return;
           const level = marked.level === 4 ? 4 : 3;
           const { card } = composeCard({
-            kind: 'approval', level, recommend: 'Approve',
+            kind: 'approval', level, recommend: 'Approve', parked: true,
             what: `Pull request #${change.n} is ${change.title}, ready for you to look at before it is added.`,
             why: `It touches something that takes your say, at level ${level}.`, because: 'its checks passed and its review was clean',
             meanwhile: 'Nothing is added until you approve it.',
-            options: [{ label: 'Approve', says: 'It approves the change, and it is added to the product.' }],
+            options: [{ label: 'Approve', says: 'It approves the change, and it is added to the product.' }, { label: SEND_BACK, says: PARKED_SEND_BACK_SAYS }],
             ...(level === 4 ? { checks: 'It changes no checks: the change is still checked before it is added.' } : {}),
             target: { pr: change.n, sha: change.head },
           });
@@ -5175,6 +5180,7 @@ export async function startHelper({
       orderOf: (runId) => orderStore(path.join(engineDirOf(stateDir(project)), 'orders')).load(runId),
       repoOf: () => mergeRepoOf(readProject(project)),
       repoName: () => readProject(project)?.repo,
+      notReady: (pr) => engineRun.notReady(project, pr),
       openedBy: (runId) => engineRun.openedBy(project, runId),
       queueFolder: () => (queueFolder ?? ownQueueFolder)(project),
       queuePlace: () => queueFolderOf(project),
@@ -5213,6 +5219,9 @@ export async function startHelper({
       startAdmitted: (args) => dispatcher.startAdmitted(args),
       carryOver: (work, kept) => dispatcher.carryOver(work, kept),
       handBack: (args) => dispatcher.handBack(args),
+      takeBack: (args) => dispatcher.takeBack(args),
+      notReady: (pr) => dispatcher.notReady(pr),
+      localChange: (pr) => dispatcher.localChange(pr),
       headOf: (place) => branchHead({ card: place, git: gitRoute({ run }) }),
       commitsSince: (place, head) => commitsAfter({ card: place, git: gitRoute({ run }), head }),
       exclusionsOf: async (place) => repeatExclusions(await factsOf(place)),
@@ -5220,6 +5229,7 @@ export async function startHelper({
     runner.onEnter((args) => dispatcher.enter(args));
     dispatcher.onStarted((runId, carried) => runner.started(runId, carried));
     dispatcher.onWaiting(() => runner.waitingWork());
+    dispatcher.onOwed(() => runner.owedWork());
     dispatcher.onReworks(() => runner.reworkWork());
     dispatcher.onCards(() => runner.openCards());
     dispatcher.onParked(() => runner.parkedHeads());

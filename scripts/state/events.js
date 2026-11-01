@@ -8,11 +8,12 @@ import { scanContent } from './secret-scan.js';
 import { briefProblem, briefWords } from '../delegation/brief.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { git } from './git.js';
-import { keepControlLine, setLineOf, CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, TAKEOVER_LABEL, takeOverLine, APP_ID, pairLine, unpairLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
+import { keepControlLine, approvalLine, setLineOf, CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, TAKEOVER_LABEL, takeOverLine, APP_ID, pairLine, unpairLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
 import { carriesFigures, CARRIES_BASELINE } from '../lib/measures-clicks.js';
 import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH } from '../lib/build-loop.js';
 import { CARD, CARD_KINDS, PUT_OFF } from '../lib/front-desk.js';
 import { SETUP_QUESTION_ID } from '../lib/setup-clicks.js';
+import { SEND_BACK } from '../lib/calm-words.js';
 import { isModelName } from '../gate/guardrails.js';
 
 export const PLAIN_KINDS = [
@@ -59,7 +60,7 @@ export const RED_MAIN_OWN = 'only the helper records a red main line\'s incident
 export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'shadow', 'match', 'rule'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 
-const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main', 'safekeeping'];
+const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main', 'safekeeping', 'send-back'];
 // The fields each action carries beyond the card's question and the label clicked.
 const ACTION_OWN = {
   'lift-stop': [],
@@ -104,6 +105,9 @@ const ACTION_OWN = {
   // The director's Keep it, in the helper's window, on a Lean project's card about a main version moved outside the
   // helper (ruling P5-27 f): the main version the record held and the one the store holds, each in full.
   'keep-main': ['from', 'to'],
+  // The director's Send it back on a pull request left to them (delegated decisions design, section 8.1): its number and
+  // its head in full, as the card's set line names them, which the runner holds to what it parked.
+  'send-back': ['pr', 'sha'],
   // The director's Confirm on the card keeping a feature's files that steer agents as they are
   // (ruling P7-31): the work, and the full hash of the watcher's finding the card's line names.
   'keep-control-files': ['work', 'hash'],
@@ -218,6 +222,11 @@ function checkAction(data) {
     if (typeof data.hash !== 'string' || !/^[0-9a-f]{64}$/.test(data.hash)) bad('needs the full hash of the list its card showed');
     if (data.label !== UNINSTALL_LABEL) bad(`needs the ${UNINSTALL_LABEL} label`);
     if (data.question !== uninstallLine(data.project, data.hash)) bad('carries only uninstall\'s card\'s set line as its question');
+  } else if (data.action === 'send-back') {
+    if (!Number.isInteger(data.pr) || data.pr < 1) bad('needs the pull request number');
+    if (typeof data.sha !== 'string' || !/^[0-9a-f]{40}$/.test(data.sha)) bad('needs the commit in full');
+    if (data.label !== SEND_BACK) bad(`needs the ${SEND_BACK} label`);
+    if (setLineOf(data.question) !== approvalLine(data.pr, data.sha)) bad('carries the approval line for its pull request and commit as its question\'s one set line');
   } else if (data.action === 'keep-main') {
     if (!['from', 'to'].every((k) => typeof data[k] === 'string' && /^[0-9a-f]{40}$/.test(data[k]))) bad('needs the main version\'s commits it keeps, from and to, in full');
     if (data.label !== 'Keep it') bad('needs the Keep it label');
