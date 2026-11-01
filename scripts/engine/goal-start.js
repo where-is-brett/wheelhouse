@@ -8,6 +8,9 @@ import { composeCard, isTooLong } from '../cards/compose.js';
 import { SUGGEST, NOT_NOW } from '../lib/calm-words.js';
 import { limitsFor } from './caps.js';
 import { onNewEngine } from './lanes.js';
+import { cardHash } from '../lib/measures-clicks.js';
+import { START_GOAL_LINE } from '../state/card-lines.js';
+import { demoSlice, readSlices } from './feature.js';
 import { lastEnded, startProblem, unfinishedOf, sheetHash, isWaived } from './goal.js';
 import { FAILED_IN_A_ROW, READING_FRESH_MINUTES, REDS_TO_STOP, SHARE_OF_WHAT_IS_LEFT } from './goal-limits.js';
 
@@ -193,6 +196,83 @@ export function composeSheetCard(args) {
     }
   }
   throw new Error('The sheet is too long for its card: make its check lines and areas shorter');
+}
+
+// What the helper does for the First Mate's sheet, from the facts it hands in, so a route is a line:
+//   views()      the project's views, with `engineOn`; events() its records
+//   health()     the engine's { ok, findings }; config() its checks' settings, with `testCommand`; settings() the project's, for the
+//                lanes' caps; designOf(work) an approved design, { text }, or null
+//   mainGreen(), mainHead(), stopped(), reading(), paid(), sessions(), battery() as `checksBeforeLeaving` takes them
+//   offer(kind, data) keeps a record the helper signs and resolves with its id
+export function sheetDesk({ views, events, health, config, settings, designOf, mainGreen, mainHead, stopped, reading, paid, sessions, battery = onBattery, offer, now, timeZone }) {
+  const designs = (work) => {
+    try {
+      const text = designOf(work)?.text;
+      return typeof text === 'string' ? readSlices(text) : null;
+    } catch {
+      return null;
+    }
+  };
+  const safely = async (ask, otherwise) => {
+    try {
+      return await ask();
+    } catch {
+      return otherwise;
+    }
+  };
+
+  // The pieces a sheet may list, each with its record's hash, and the spend to propose for them.
+  async function draft({ pieces }) {
+    const held = views();
+    const { pieces: lines, left } = draftPieces({ asked: pieces, views: held });
+    const slicesOf = (work) => designs(work)?.slices?.length ?? null;
+    const tokens = lines.reduce((sum, { work }) => sum + pieceTokens(work, { views: held, config: settings() ?? {}, slicesOf }), 0);
+    return { ok: true, pieces: lines, ...(left === null ? {} : { left }), ...(lines.length === 0 ? {} : proposedSpend({ tokens, reading: reading(), now: now() })) };
+  }
+
+  // The latest sheet of `goal`, read against its baseline: the checks' results, then what refuses it or the card itself.
+  async function card({ goal }) {
+    const held = views();
+    const sheet = events().filter((e) => e.kind === 'goal' && e.data?.id === goal).at(-1)?.data.sheet;
+    if (sheet === undefined) return { ok: false, refused: `There is no sheet for the goal ${goal}` };
+    const hash = sheetHash(sheet);
+    const baseline = (held.goalChecks?.[goal] ?? []).filter((c) => c.when === 'before' && c.hash === hash).at(-1);
+    if (baseline === undefined) return { ok: true, offered: false, waiting: true };
+    const results = baseline.said === undefined ? baseline.results : baseline.said;
+    const at = now();
+    const midpoints = sheet.pieces.map((p) => p.work).filter((work) => {
+      const design = held.work?.[work]?.work?.data?.lane === 'feature' ? designs(work) : null;
+      return design !== null && demoSlice(design) !== null;
+    });
+    const { refused, warns } = checksBeforeLeaving({
+      id: goal, sheet, views: held, now: at,
+      health: {
+        engine: await safely(health, { ok: false, findings: [] }), stop: stopped(), midpoints, testCommand: (config() ?? {}).testCommand ?? null,
+        mainGreen: await safely(mainGreen, null), mainHead: await safely(mainHead, null),
+      },
+      power: { battery: battery() }, sessions: sessions(), reading: reading(), paid: paid(),
+    });
+    if (refused.length > 0) return { ok: true, offered: false, refused, results };
+    const others = (held.waiting ?? []).filter((c) => c?.data?.kind === 'start-goal' && START_GOAL_LINE.exec(String(c.data.line))?.[1] === goal);
+    const last = others.at(-1);
+    const args = { id: goal, sheet, views: held, warns, now: at, timeZone };
+    let plain;
+    let revised;
+    try {
+      plain = composeSheetCard(args);
+      revised = last === undefined ? plain : composeSheetCard({ ...args, revises: last.id });
+    } catch (error) {
+      return { ok: true, offered: false, refused: [`${error.message}.`], results };
+    }
+    // The card already waiting, where nothing on it has changed; otherwise a new one in its place.
+    const same = [plain, revised].find((c) => c.question.question === last?.data?.question);
+    const { question } = same ?? revised;
+    const id = same === undefined ? await offer('card', revised.card) : last.id;
+    await offer('goal-card', { goal, sheet: hash, at: at.toISOString(), hash: cardHash(question) });
+    return { ok: true, offered: true, question, id, warns, results };
+  }
+
+  return { draft, card };
 }
 
 // Whether the Mac is on battery, from `pmset -g batt`: true, false, or null where that can't be said.

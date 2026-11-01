@@ -47,7 +47,7 @@
 // step goes ahead only by the director's click on the very card setup showed.
 import fs from 'node:fs';
 import path from 'node:path';
-import { earned, keepEarned, sendKept, SIGNED_LABELS } from '../hooks/prompt-record.js';
+import { earned, keepEarned, sendKept, signsOn } from '../hooks/prompt-record.js';
 import { keep, taken, withinBudget, pendingDir, BUDGET_MS } from '../hooks/pending.js';
 import { helperGrace } from '../lib/helper-grace.js';
 import { helperClient } from '../host/helper-client.js';
@@ -308,7 +308,7 @@ async function signed({ project, card, hash, question, label, what, meanwhile, m
     }
     if (!stopState().on) await writeAnswer(project, api, left, question, label, now);
   }
-  return { made: true, says: kept(SIGNED_LABELS.includes(label) ? decidedToast(label, meanwhile) : `Recorded: ${what}`, sent) };
+  return { made: true, says: kept(signsOn(label, question) ? decidedToast(label, meanwhile) : `Recorded: ${what}`, sent) };
 }
 
 // The waiting card a Why? or Suggest a change… names, when the pane drew it as it is now and

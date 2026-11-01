@@ -33,6 +33,8 @@ import { DEFAULT_GITLAB, parseRemote } from './gitlab-base.js';
 import { prepareQueueFolder } from '../engine/queue-folder.js';
 import { prepareGoalFolder } from '../engine/goal-folder.js';
 import { goalCheckHost } from '../engine/goal-check.js';
+import { awayForGoal, paidUsageOf, sheetDesk } from '../engine/goal-start.js';
+import { sessionsTicking } from '../mod/courier.js';
 import { stayAwake } from '../engine/stay-awake.js';
 import { queueFolderOf, queueProjectOf } from '../engine/queue-place.js';
 import { unreachableRefusal, certificateRefusal, certificateLine, awayLine, outputKind, companyGitEnv, makeAwayLog, gitlabBaseOf, certificateSetting } from './company-ca.js';
@@ -49,7 +51,7 @@ import { HAND_MADE_BRANCH, carriesFolderWork, cleanMerged, dropNextMain, finishM
 import { headReading, localSweep, needsApprovalOf } from './local/queue.js';
 import { protectionStatus } from './protection.js';
 import { cutAccess, INSTALLATIONS_PAGE } from './cut-access.js';
-import { checkRecord, listEvents, makeEvent, writeEvent, eventPath, eventHash, dataHash, PLAIN_KINDS, PROTECTED_KINDS, HELPER_ONLY_KINDS, CONFIRMABLE_KINDS, RED_MAIN_FIELDS, RED_MAIN_OWN } from '../state/events.js';
+import { checkRecord, listEvents, makeEvent, writeEvent, eventPath, eventHash, dataHash, PLAIN_KINDS, PROTECTED_KINDS, HELPER_ONLY_KINDS, CONFIRMABLE_KINDS, RED_MAIN_FIELDS, RED_MAIN_OWN, confirmationFor } from '../state/events.js';
 import { git as stateGit } from '../state/git.js';
 import { directorSignIn, reachFor, safeGitEnv } from '../lib/safe-git.js';
 import { lookAtSettings, lookRefusalLine, LookRefusal } from '../lib/safe-git.js';
@@ -111,7 +113,7 @@ import {
   SIGNED_LEAN_PROOFS, sameCard, approvalCard, mainMovedCard, undoCards,
 } from '../lean/store.js';
 import { CHAT_PROOFS, CONFIRMED_STEPS } from '../agents/chat-clicks.js';
-import { SIGNED_LABELS, earned } from '../hooks/prompt-record.js';
+import { earned, signsOn } from '../hooks/prompt-record.js';
 import { askInWindow, NOT_NOW } from '../confirm/window.js';
 import { composeCard } from '../cards/compose.js';
 import { LIFT_STOP_CARD } from '../frontdesk/cli.js';
@@ -121,7 +123,7 @@ import { checkSetting, definitionOf } from '../settings/catalogue.js';
 import { READY_LEVELS, PREMIUM_LEVEL, barFailures, readiness, samePins } from '../routing/column-ready.js';
 import { PREMIUM_ASK, PREMIUM_DO, checkRefusal, foundPremium, offeredFrom, premiumInput, premiumRefusal, premiumPinOf } from '../routing/premium.js';
 import { levelOf } from '../routing/thoroughness.js';
-import { effectiveSettings } from '../settings/effective.js';
+import { effectiveSettings, settingWords } from '../settings/effective.js';
 import { cardHash } from '../lib/measures-clicks.js';
 import { aliasModel, FRONT_DESK_ALIAS, STRONGEST_ALIAS } from '../setup/best-model.js';
 import { writeProfileViews } from '../profile/store.js';
@@ -906,7 +908,7 @@ const PLACED_ROUTES = [
   '/desk/read', '/desk/act', '/desk/watch',
   '/lean/status', '/lean/merge', '/lean/undo', '/lean/copy', '/local/undo', '/local/move',
   '/survey/carry-on', '/survey/archive', '/survey/restore', '/premium/card', '/premium/check', '/premium/state', '/premium/failed',
-  '/engine-switch', '/rules/offer', '/goal-baseline',
+  '/engine-switch', '/rules/offer', '/goal-baseline', '/goal-card', '/goal-draft',
 ];
 
 // A Lean project (ruling P5-9) has no code host and no connection: only these routes serve it, on
@@ -2203,7 +2205,8 @@ export async function startHelper({
     if (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash)) refuse('the card\'s hash must be its sha256, in lower case');
     if (commit !== undefined && (typeof commit !== 'string' || !/^[0-9a-f]{40}$/.test(commit))) refuse('the commit must be written in full');
     const confirmed = CONFIRMED_STEPS.some((step) => card === step || card.startsWith(`${step}-`));
-    if (confirmed && SIGNED_LABELS.includes(label)) refuse('that step is confirmed outside the chat, never by a click in it');
+    const asked = listEvents(stateDir(project), { report: () => {} }).find((e) => e.kind === 'card' && e.id === card)?.data?.question ?? card;
+    if (confirmed && signsOn(label, asked)) refuse('that step is confirmed outside the chat, never by a click in it');
     // A ruling's confirm card at Lean (rulings P5-52, P5-53): one click in the chat, unsigned, with proof chat-click,
     // on the card named `ruling-<its id>`, when the state holds that card as a ruling's confirm card, the click names
     // its text as the state holds it, the label is one of its options and nothing has answered it yet. Confirm puts the
@@ -2223,7 +2226,7 @@ export async function startHelper({
       return doWrite({ project, kind: 'card-answer', data: { card: held.id, label, hash, proof, tier: 'lean', ...(text === undefined ? {} : { text }) } }, ctx, { own: true });
     }
     const mayDecide = /^merge-/.test(card) || (ctx.lean === true && /^guardrail-/.test(card));
-    if (SIGNED_LABELS.includes(label) && !mayDecide) refuse('a click in the chat can\'t decide that card');
+    if (signsOn(label, asked) && !mayDecide) refuse('a click in the chat can\'t decide that card');
     const data = { question: card, label, hash, ...(commit === undefined ? {} : { commit }), ...(text === undefined ? {} : { text }), proof };
     return doWrite({ project, kind: 'card-answer', data }, ctx, { own: true });
   }
@@ -4312,6 +4315,35 @@ export async function startHelper({
       return null;
     }
   }
+  // The head of the project's main line, as the host says now, or null when it can't be read.
+  async function mainHeadOf(project) {
+    try {
+      const adapter = await (await contextFor(project)).adapter();
+      return await adapter.branchHead(await defaultBranchOf(project, adapter));
+    } catch {
+      return null;
+    }
+  }
+  // Claude Code's own note of the account, which says whether paid usage is on (check 93); null when it can't be read.
+  function claudeAccount() {
+    try {
+      return JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude.json'), 'utf8'));
+    } catch {
+      return null;
+    }
+  }
+  // A goal's start sets Away until its end, as a convenience (section 11): the setting and its confirmation, as a press of
+  // Availability makes them, since the director's Start is the click that asked for it. Do not disturb and an Away in force stand.
+  const awayFor = (until) => oneAtATime('profile', async () => {
+    await openSettings({ run });
+    const presence = effectiveSettings({ profile: (await writeProfileViews({ now })).settings ?? {}, now: now() }).presence;
+    const setting = awayForGoal({ presence, until, now: now() });
+    if (setting === null) return;
+    const event = makeEvent({ kind: 'setting', data: { ...setting, words: settingWords('presence', 'away', until) }, now });
+    await writeEvent({ event, dir: profileDir(), now });
+    await writeEvent({ event: makeEvent({ ...confirmationFor(event), now }), dir: profileDir(), now });
+    await freshViews(() => writeProfileViews({ now }));
+  });
   // The runs All stop cancelled, from its notes in the project's record.
   function stoppedRunsOf(project) {
     try {
@@ -4479,6 +4511,9 @@ export async function startHelper({
     '/engine-switch': (body, ctx) => oneAtATime(`switch:${body.project}`, () => doEngineSwitch(body, ctx)),
     // The First Mate's ask for a goal's baseline (scripts/engine/goal-check.js). Only a baseline: the last check is the helper's own.
     '/goal-baseline': ({ project, goal }) => startGoalCheck({ project, goal, when: 'before' }),
+    // The First Mate's goal sheet (scripts/engine/goal-start.js): the bounds to propose, then the card, signed by this computer.
+    '/goal-draft': ({ project, pieces }) => sheetsOf(project).draft({ pieces: Array.isArray(pieces) ? pieces : [] }),
+    '/goal-card': ({ project, goal }) => sheetsOf(project).card({ goal }),
     '/review/run': async (body, ctx) => {
       try {
         return await doReviewRun(body, ctx);
@@ -4813,7 +4848,7 @@ export async function startHelper({
       try { engine = engineFor(project); } catch { engine = null; }
       if (!engine) continue;
       try {
-        const { runner, dispatcher, checks, inStep, seals, goalChecks, factsOfPiece } = engineDesk(project, engine);
+        const { runner, dispatcher, checks, inStep, seals, goalChecks, factsOfPiece, sheets } = engineDesk(project, engine);
         const host = startEngineHost({
           engine, spawn, now, held: stopped, wake: engineHosts.length === 0,
           write: (kind, data) => engineWrite(project, kind, data),
@@ -4829,7 +4864,7 @@ export async function startHelper({
           prOf: (runId) => engineRun.openedBy(project, runId),
         });
         host.onAsk((event) => { runner.onAsk(event).catch(() => {}); });
-        engineHosts.push({ project, engine, host, runner, dispatcher, checks, inStep, seals, goalChecks, factsOfPiece });
+        engineHosts.push({ project, engine, host, runner, dispatcher, checks, inStep, seals, goalChecks, factsOfPiece, sheets });
       } catch {
         // An engine that can't be followed gets no host; the other projects' hosts start all the same.
       }
@@ -5232,6 +5267,7 @@ export async function startHelper({
         const agent = agentInFolder(folder, { computerId: computerId() });
         return typeof agent === 'string' && agent !== 'claude-code' ? null : weeklyShare({ now: now() });
       },
+      goalStarted: (goal) => awayFor(goal.until),
       mainGreen: () => mainGreen(project),
       stoppedRuns: () => stoppedRunsOf(project),
       goalCheck: (args) => goalChecks.start(args),
@@ -5400,7 +5436,31 @@ export async function startHelper({
       const seenRun = await Promise.resolve().then(() => engine.inspect(seen.runs?.[work]?.at(-1)?.data?.runId)).catch(() => null);
       return factsOf({ branch: seenRun?.branch, folder: seenRun?.folder });
     };
-    return { runner, dispatcher, checks, inStep, seals, goalChecks, factsOfPiece };
+    const onClaude = () => {
+      const agent = agentInFolder(folder, { computerId: computerId() });
+      return !(typeof agent === 'string' && agent !== 'claude-code');
+    };
+    const sheets = sheetDesk({
+      views: () => ({ ...views(), engineOn: engineReady(project) }),
+      events: () => listEvents(stateDir(project), { report: () => {} }),
+      health: () => engine.health(),
+      config: () => engineConfigOf(project, folder),
+      settings,
+      designOf: (work) => (typeof folder === 'string' ? approvedDocument({ checkout: folder, views: views(), work }) : null),
+      mainGreen: () => mainGreen(project),
+      mainHead: () => mainHeadOf(project),
+      stopped,
+      reading: () => (onClaude() ? weeklyShare({ now: now() }) : null),
+      paid: () => (onClaude() ? paidUsageOf(claudeAccount()) : false),
+      sessions: () => sessionsTicking(project, { now }),
+      offer: async (kind, data) => {
+        const event = makeEvent({ kind, data, now });
+        await checkWrite(project, event);
+        return event.id;
+      },
+      now,
+    });
+    return { runner, dispatcher, checks, inStep, seals, goalChecks, factsOfPiece, sheets };
   }
   // --- safekeeping (spec 8.2): what would be lost with this computer, for every project, engine or none ---
 
@@ -5607,6 +5667,13 @@ export async function startHelper({
   const startGoalCheck = ({ project, goal, when, head }) => {
     const found = engineHosts.find((h) => h.project === project);
     return found ? found.goalChecks.start({ goal, when, head }) : Promise.resolve({ ok: false, refused: 'that project doesn\'t use the build engine' });
+  };
+
+  // The First Mate's sheet for a project on the engine, or a refusal for one that isn't.
+  const sheetsOf = (project) => {
+    const found = engineHosts.find((h) => h.project === project);
+    if (!found) refuse('that project doesn\'t use the build engine');
+    return found.sheets;
   };
 
   // The seals' look for every project, never awaited by a tick of the engine: a hang there stops no delivery.

@@ -2,10 +2,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { dataHash } from '../../../scripts/state/events.js';
-import { sheetHash } from '../../../scripts/engine/goal.js';
+import { sheetHash, narrowed } from '../../../scripts/engine/goal.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
-import { checksBeforeLeaving, proposedSpend, pieceTokens, sheetCardInput, composeSheetCard, onBattery, awayForGoal, draftPieces, PAID_USAGE_BILLS, paidUsageOf } from '../../../scripts/engine/goal-start.js';
+import { cardHash } from '../../../scripts/lib/measures-clicks.js';
+import { sheetDesk, checksBeforeLeaving, proposedSpend, pieceTokens, sheetCardInput, composeSheetCard, onBattery, awayForGoal, draftPieces, PAID_USAGE_BILLS, paidUsageOf } from '../../../scripts/engine/goal-start.js';
 
 const NOW = new Date('2026-11-01T01:00:00.000Z');
 const HEAD = 'a'.repeat(40);
@@ -310,4 +311,98 @@ test('an Away or a Do not disturb already over doesn\'t count, and an Away that 
   assert.deepEqual(awayForGoal({ presence: { value: 'dnd', until: '2026-11-01T00:00:00.000Z' }, until, now: NOW }), { key: 'presence', value: 'away', until });
   assert.equal(awayForGoal({ presence: { value: 'away', until: '2026-11-03T00:00:00.000Z' }, until, now: NOW }), null);
   assert.equal(awayForGoal({ presence: { value: 'away' }, until, now: NOW }), null);
+});
+
+// The helper's desk for the sheet.
+const DESIGN = '```wheelhouse-slices\n{"goal":"g","flag":{"name":"f"},"demo":"midpoint","slices":[{"title":"a","goal":"b","done":[{"test":"t"}]},{"title":"c","goal":"d","done":[{"test":"u"}]}]}\n```';
+const desk = ({ given = sheet(), views = viewsFor(given), extra = {} } = {}) => {
+  const kept = [];
+  const records = [{ kind: 'goal', data: { id: 'orders-export', sheet: given } }];
+  return {
+    kept,
+    records,
+    sheets: sheetDesk({
+      views: () => views, events: () => records, health: async () => ({ ok: true, findings: [] }), config: () => ({ testCommand: 'npm test' }), settings: () => ({}),
+      designOf: (work) => (work === 'export-file' ? { text: DESIGN } : null), mainGreen: async () => true, mainHead: async () => HEAD, stopped: () => false,
+      reading: () => reading(), paid: () => false, sessions: () => 1, battery: () => false,
+      offer: async (kind, data) => { kept.push({ kind, data }); return `id-${kept.length}`; }, now: () => NOW, timeZone: 'UTC', ...extra,
+    }),
+  };
+};
+
+test('the draft proposes a third of what\'s left and the sum of the pieces\' caps, a feature\'s slices counted', async () => {
+  const got = await desk().sheets.draft({ pieces: ['export-page', 'export-file'] });
+  assert.deepEqual(got.pieces.map((p) => p.work), ['export-page', 'export-file']);
+  assert.deepEqual(got.spend, { tokens: 34000000, points: 20 });
+});
+
+test('a sheet not yet checked says so, and makes no card', async () => {
+  const given = sheet();
+  const { sheets, kept } = desk({ views: viewsFor(given, { goalChecks: {} }) });
+  assert.deepEqual(await sheets.card({ goal: 'orders-export' }), { ok: true, offered: false, waiting: true });
+  assert.deepEqual(kept, []);
+});
+
+test('the result of the checks comes back with what refuses the sheet, and no card is made', async () => {
+  const given = sheet();
+  const passing = baselineOf(given, { results: given.done.map((check) => ({ check, ok: true })), ok: true });
+  const { sheets, kept } = desk({ views: viewsFor(given, { goalChecks: { 'orders-export': [passing] } }) });
+  const got = await sheets.card({ goal: 'orders-export' });
+  assert.equal(got.offered, false);
+  assert.match(got.refused.join(' '), /already passes/);
+  assert.deepEqual(got.results, passing.results);
+  assert.deepEqual(kept, []);
+});
+
+test('a good sheet gets its card and an offer that names that very card', async () => {
+  const { sheets, kept } = desk();
+  const got = await sheets.card({ goal: 'orders-export' });
+  assert.equal(got.offered, true);
+  assert.equal(got.id, 'id-1');
+  assert.deepEqual(kept.map((k) => k.kind), ['card', 'goal-card']);
+  assert.equal(kept[1].data.hash, cardHash(got.question));
+  assert.equal(kept[1].data.sheet, sheetHash(sheet()));
+  assert.match(got.question.question, /stops half way|Check first/);
+});
+
+test('asked again with nothing changed, the waiting card stands, with a fresh offer', async () => {
+  const given = sheet();
+  const first = desk({ views: viewsFor(given) });
+  const card = await first.sheets.card({ goal: 'orders-export' });
+  const views = viewsFor(given, { waiting: [{ id: 'c1', data: first.kept[0].data }] });
+  const second = desk({ given, views });
+  const got = await second.sheets.card({ goal: 'orders-export' });
+  assert.equal(got.id, 'c1');
+  assert.deepEqual(second.kept.map((k) => k.kind), ['goal-card']);
+  assert.equal(second.kept[0].data.hash, cardHash(card.question));
+});
+
+test('a new sheet revises the card still waiting', async () => {
+  const given = sheet();
+  const first = desk({ views: viewsFor(given) });
+  await first.sheets.card({ goal: 'orders-export' });
+  const changed = sheet({ until: '2026-11-01T05:00:00.000Z' });
+  const views = viewsFor(changed, { waiting: [{ id: 'c1', data: first.kept[0].data }] });
+  const second = desk({ given: changed, views });
+  await second.sheets.card({ goal: 'orders-export' });
+  assert.equal(second.kept[0].data.revises, 'c1');
+});
+
+test('an engine that can\'t be read refuses the sheet, and a sheet too long says what to shorten', async () => {
+  const unwell = await desk({ extra: { health: async () => { throw new Error('no'); } } }).sheets.card({ goal: 'orders-export' });
+  assert.match(unwell.refused.join(' '), /build engine/);
+  const given = sheet({ checksSay: ['x'.repeat(900), 'y'.repeat(900)] });
+  assert.match((await desk({ given }).sheets.card({ goal: 'orders-export' })).refused.join(' '), /shorter/);
+});
+
+test('narrowing needs nothing, widening needs a new sheet', () => {
+  const given = sheet();
+  const earlier = new Date(Date.parse(given.until) - 3600000).toISOString();
+  const later = new Date(Date.parse(given.until) + 3600000).toISOString();
+  assert.equal(narrowed(given, { until: earlier }).until, earlier);
+  assert.equal(narrowed(given, { spend: { tokens: given.spend.tokens / 2 } }).spend.tokens, given.spend.tokens / 2);
+  assert.equal(narrowed(given, { until: later }), null);
+  assert.equal(narrowed(given, { spend: { tokens: given.spend.tokens + 1 } }), null);
+  // A wider sheet is another sheet: its hash differs, so a click on the old card starts nothing.
+  assert.notEqual(sheetHash({ ...given, until: later }), sheetHash(given));
 });

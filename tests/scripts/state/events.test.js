@@ -411,6 +411,21 @@ test('a usage-card record says which card, when, the allowance week, the levels 
   });
 });
 
+test('a goal-card record says which goal, which sheet, when and the hash of the card shown, and only the helper makes one', async () => {
+  await withHome(() => {
+    const { computer, publicKey } = makeSigningKey();
+    enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
+    const data = { goal: 'orders-export', sheet: 'a'.repeat(64), at: '2026-11-01T02:00:00.000Z', hash: 'b'.repeat(64) };
+    assert.equal(PLAIN_KINDS.includes('goal-card'), false);
+    assert.equal(PROTECTED_KINDS.includes('goal-card'), true);
+    assert.equal(HELPER_ONLY_KINDS.includes('goal-card'), true);
+    assert.ok(makeEvent({ kind: 'goal-card', data }).sig);
+    for (const bad of [{ ...data, goal: '' }, { ...data, sheet: 'short' }, { ...data, at: 'soon' }, { ...data, hash: 'short' }, { ...data, extra: 1 }]) {
+      assert.throws(() => makeEvent({ kind: 'goal-card', data: bad }), /goal-card event/, JSON.stringify(bad));
+    }
+  });
+});
+
 test('a premium-card record says when, from which setting, and the hash of the card shown, signed', async () => {
   await withHome(() => {
     const { computer, publicKey } = makeSigningKey();
@@ -800,7 +815,7 @@ test('a survey record carries every part of the survey, each in its own shape', 
     assert.equal(PLAIN_KINDS.includes('survey'), true);
     assert.equal(PROTECTED_KINDS.includes('survey'), false);
     // Only the helper itself records a survey or a column's readiness: no caller writes one.
-    assert.deepEqual(HELPER_ONLY_KINDS, ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'shadow', 'match', 'rule', 'slept', 'goal-end', 'goal-check']);
+    assert.deepEqual(HELPER_ONLY_KINDS, ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'shadow', 'match', 'rule', 'slept', 'goal-end', 'goal-check', 'goal-card']);
     assert.deepEqual(makeEvent({ kind: 'survey', data: SURVEY }).data, SURVEY);
     // Taken again (ruling P3), it says so.
     assert.deepEqual(makeEvent({ kind: 'survey', data: { ...SURVEY, again: true } }).data.again, true);

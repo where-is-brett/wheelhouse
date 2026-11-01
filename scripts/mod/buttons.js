@@ -18,7 +18,7 @@
 // card (ruling R90): Wheelhouse is removed from a project only by the director's click on the card the
 // helper composed for its list, which only the prompt record counts (scripts/lib/setup-clicks.js).
 import { cardProblems } from '../hooks/card-check.js';
-import { SIGNED_LABELS } from '../hooks/prompt-record.js';
+import { signsOn } from '../hooks/prompt-record.js';
 import { CARD_KINDS, KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
 import { SUGGEST, NOT_NOW, SHOW_ME, WHY, SEND_BACK } from '../lib/calm-words.js';
 import { textOf } from '../cards/compose.js';
@@ -170,7 +170,7 @@ function buttonsOf(card, preview) {
   // A blind card's click signs nothing: it goes to the front desk, which asks the answer card next.
   if (kind === 'blind') return { buttons: [...answers('turn'), ...askToSuggest, why], note: null };
 
-  const deciding = offers.find((label) => SIGNED_LABELS.includes(label));
+  const deciding = offers.find((label) => signsOn(label, text));
   return {
     buttons: [
       ...(deciding === undefined ? [] : [button(deciding, 'record', 'filled')]),

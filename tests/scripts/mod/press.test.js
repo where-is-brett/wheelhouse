@@ -19,6 +19,8 @@ import { unattendedCardData } from '../../../scripts/foreman/act.js';
 import { withHome } from '../../helpers/homes.js';
 import { sheetHash } from '../../../scripts/engine/goal.js';
 import { clicksDir } from '../../../scripts/lib/setup-clicks.js';
+import { cardHash } from '../../../scripts/lib/measures-clicks.js';
+import { asQuestion } from '../../../scripts/cards/visit.js';
 
 const P = 'owner__name';
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -788,6 +790,8 @@ test('a refused Start says why and writes nothing', () => withKey(async (home) =
     ...common, kind: 'start-goal', recommend: 'Start', what: 'The goal orders-export is ready to run.', options: [says('Start')],
     target: { goal: 'orders-export', hash: sheetHash(sheet) },
   }).card);
+  // A press has no asked card, so the offer is judged against the card the state keeps.
+  keepEvent(makeEvent({ kind: 'goal-card', data: { goal: 'orders-export', sheet: sheetHash(sheet), at: LATER.toISOString(), hash: cardHash(asQuestion({ data: card.data })) }, now: () => LATER }));
   const client = fake();
   const out = await press(card, client, 'Start');
   assert.equal(out.made, false);

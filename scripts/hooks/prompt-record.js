@@ -54,6 +54,8 @@ import { profileDir, stateDir, computerId } from '../lib/paths.js';
 import { readEnrolled, verify } from '../state/signing.js';
 import { makeEvent, listEvents, confirmationFor, dataHash, CONFIRMABLE_KINDS } from '../state/events.js';
 import { sheetHash, startProblem } from '../engine/goal.js';
+import { SHEET_CARD_MINUTES } from '../engine/goal-limits.js';
+import { asQuestion } from '../cards/visit.js';
 import { scanContent } from '../state/secret-scan.js';
 import {
   approvalLine, confirmLine, LIFT_STOP_LINES, isLiftStopLine, runbookLine, RUNBOOK_TITLES, ciPushLine,
@@ -148,6 +150,10 @@ function only(pattern, text) {
 // Turn on (dangerous) and Use Guarded earn a record from a click alone, by design.
 export const SIGNED_LABELS = ['Approve', SEND_BACK, 'Confirm', 'Lift All stop', 'Lift STOP', 'Do it', 'Push it', 'Change it', 'End it', 'Merge the fix', 'Pair it', 'Unpair it', 'Start'];
 
+// Whether a click on `label` stands to sign something on the card asking `question`. Start signs only on a goal's card, so a
+// plain question that offers an option called Start stays a plain answer.
+export const signsOn = (label, question) => SIGNED_LABELS.includes(label) && (label !== 'Start' || setLinesOf(question).some((line) => START_GOAL_LINE.test(line)));
+
 // The events of one kind that the state holds, oldest first.
 function held(project, kind) {
   return listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === kind);
@@ -175,9 +181,24 @@ function approveWorkOf(project, question, match) {
   return { action: 'approve-work', work, lane, hash, shownFirst };
 }
 
+// The offer that makes this very card a goal's sheet card, as usageOf holds a usage card: a `goal-card` the state holds,
+// signed by this computer's own enrolled key, for this goal, this sheet and this card by its hash. A pane press or the
+// helper's window has no asked card, and shows the card the state keeps, so that is the card it is judged by.
+function goalOfferOf(project, question, shown, { goal, sheet }) {
+  const asked = shown ?? held(project, 'card').filter((e) => e.data?.question === question).map(asQuestion).at(-1);
+  const hash = cardHash(asked);
+  if (hash === null || asked.question !== question) return null;
+  const enrolled = readEnrolled();
+  const own = computerId();
+  return held(project, 'goal-card')
+    .filter((e) => e.data?.goal === goal && e.data?.sheet === sheet && e.data?.hash === hash && e.computer === own && e.sig?.computer === own && verify(e, enrolled))
+    .at(-1) ?? null;
+}
+
 // The record a click on a goal's card earns: the card's goal and twelve characters must name exactly one sheet the state
-// holds for that goal, and the record carries that sheet's whole hash.
-function startGoalOf(project, question, { now, stopState }) {
+// holds for that goal, the card must be the one the helper made from that sheet, not long ago, and the record carries
+// that sheet's whole hash.
+function startGoalOf(project, question, shown, { now, stopState }) {
   const lines = setLinesOf(question);
   const m = lines.length === 1 ? START_GOAL_LINE.exec(lines[0]) : null;
   if (!m) return null;
@@ -187,6 +208,9 @@ function startGoalOf(project, question, { now, stopState }) {
     .filter(([h]) => h.startsWith(m[2])));
   if (sheets.size !== 1) return null;
   const [[hash, sheet]] = [...sheets];
+  const offer = goalOfferOf(project, question, shown, { goal: m[1], sheet: hash });
+  if (offer === null) return { refused: 'This isn\'t the card made from the goal\'s sheet: ask `goal-card` for it' };
+  if (!(now().getTime() - Date.parse(offer.data.at) < SHEET_CARD_MINUTES * 60000)) return { refused: `Its checks before leaving were read over ${SHEET_CARD_MINUTES} minutes ago: ask \`goal-card\` for its card again` };
   // The same rule the desk's act and the goals view ask (scripts/engine/goal.js), asked before the click is signed.
   const views = localViews(project, ['goals', 'work', 'goalChecks']) ?? {};
   const refused = startProblem({ id: m[1], hash, sheet, goals: views.goals ?? {}, work: views.work ?? {}, goalChecks: views.goalChecks ?? {}, stopped: stopState().on === true, now: now() });
@@ -375,7 +399,7 @@ export async function earned({ project, question, label, card, client, now, left
   if (setLinesOf(question).some((line) => TAKEOVER_LINE.test(line))) return takeOverOf(question, label, card);
   if (setLinesOf(question).some((line) => PAIR_LINE.test(line) || UNPAIR_LINE.test(line))) return pairOf(question, label);
   if (label === 'Start' && setLinesOf(question).some((line) => START_GOAL_LINE.test(line))) {
-    const record = startGoalOf(project, question, { now, stopState });
+    const record = startGoalOf(project, question, card, { now, stopState });
     if (record?.refused !== undefined) return { refused: record.refused };
     return record ? action(record) : null;
   }
