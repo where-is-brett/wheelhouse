@@ -8,7 +8,7 @@
 - after the switch-on approval and an answer to the queue's question, the merge queue merged #7;
 - the feature's report says "merged".
 
-Seven defects stopped the run on the way. Each is fixed in its own pull request (#138, #139, #140, #147, #148, #149), and all six are merged. Claude spend was about $6.30 of the $8 ceiling, and no Copilot was used.
+Seven defects stopped the run on the way. Six are fixed in their own pull requests (#138, #139, #140, #147, #148, #149), and all six are merged. The seventh, half of the merge queue's first defect, is mended by #182: the work item's repository shape was mended in commit `cf25acc8`, made after #140 merged, so that commit never reached `main`, and v0.2.0 carries the defect. Claude spend was about $6.30 of the $8 ceiling, and no Copilot was used.
 
 Three things the director meets were asked twice or unclearly:
 - The merge queue asked a level 3 question about #7 after its switch-on was already approved.
@@ -55,7 +55,7 @@ Part 4.4's end-to-end check (Archon design, section 7.2): does one feature of tw
 | Slice 1, plan step: "plan has no tasks" ($0.06) | The run's overlay named the engine's folders through a link (`/tmp`). The sandbox matches by real path, so the run's own artefacts never opened and `order.json` couldn't be read | #138: the overlay lists each sandbox folder by both spellings |
 | Slice 1, task loop: every task used all its rounds | A task's own test, named for Node's runner, never ran alone, so its check never passed | #139: a named test runs alone under Node's own runner |
 | Slice 1, controls step: held every slice | The switch steps couldn't fetch the run's ticket | #139: the switch steps get the run's ticket |
-| Merge queue: failed at once, every time | Archon's merge queue was started with no `repo_host`/`repo_path`, and the work item named its repository in a shape Archon skips | #140 |
+| Merge queue: failed at once, every time | Archon's merge queue was started with no `repo_host`/`repo_path`, and the work item named its repository in a shape Archon skips | #140 for the inputs. The shape's mend, `cf25acc8`, was committed after #140 merged and never reached `main`; #182 mends it |
 | Merge queue: claimed #5, but its gate couldn't reach the helper (about $0.27 a sweep) | Archon runs the gate in its `sweep` AI step's shell, in the project folder, under Standard's settings with the sandbox on. The broker's connection to the helper's socket was refused (EPERM) | #147: the queue runs in Wheelhouse's own checkout of the mirror, under the engine folder, whose settings open only the helper's socket. The project's own settings never change; uninstall and teardown remove the folder |
 | Merge queue in its folder: "project registration failed", then the broker refused "a folder that isn't a registered project's", then the sweep's `gh` was denied | Archon needs `--project mirrors/<slug>` to run in place. The broker didn't place the queue folder as its project's. Standard's `Bash(gh:*)` deny held in the queue folder too | #148: `--project mirrors/<slug>`, and the queue folder placed as its project's, by the broker and by the tool guard. The deny is lifted in the queue folder's settings only, under the conditions below |
 | Slice 2 never started after #5 merged | Archon's run-ended event carries `pr: null`, so no run record named slice 1's pull request and the feature tick never asked whether it had merged | #149: the end record takes its pull request from the helper's own record of what the run opened, and the feature tick reads older records the same way |
