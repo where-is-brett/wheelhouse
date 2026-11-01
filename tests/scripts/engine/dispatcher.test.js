@@ -539,6 +539,13 @@ test('past the bound a goal\'s own pieces hold, and other work stays out', () =>
   assert.deepEqual(got.hold, [{ work: 'in', why: 'goal-ended' }, { work: 'out', why: 'goal' }]);
 });
 
+test('a lane the goal\'s spend can\'t fit holds, and a smaller piece of the goal starts', () => {
+  const work = Object.fromEntries([piece('big', { lane: 'small', approved: true }), piece('little', { approved: true })]);
+  const got = dispatch(base({ work, settings: { engineLanes: ['quick', 'small'] }, goal: { pieces: ['big', 'little'], only: true, startsStopped: false, spendHolds: ['small'] } }));
+  assert.deepEqual(got.start.map((s) => s.work), ['little']);
+  assert.deepEqual(got.hold, [{ work: 'big', why: 'spend' }]);
+});
+
 test('after the end other work starts and the goal\'s own pieces hold', () => {
   const work = Object.fromEntries([piece('left', { approved: true }), piece('other')]);
   const got = dispatch(base({ work, goal: { pieces: ['left'], only: false, startsStopped: true } }));
