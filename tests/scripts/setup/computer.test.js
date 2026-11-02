@@ -587,7 +587,7 @@ test('an older Wheelhouse at user scope is brought up to date under the same Go 
 });
 
 test('on a computer that runs the engine, step 6 adds Wheelhouse at user scope and the login start, on its one card', async () => {
-  const { engineWanted, pluginScopeChanges, applyPluginScope, PLUGIN_SCOPE, PLUGIN_SCOPE_LINE, installedPluginsFile } = await import('../../../scripts/setup/engine-parts.js');
+  const { engineWanted, pluginScopeChanges, applyPluginScope, PLUGIN_SCOPE, PLUGIN_SCOPE_LINE, installedPluginsFile, ownVersion } = await import('../../../scripts/setup/engine-parts.js');
   await withProject(async ({ folder, user, config }) => {
     const fake = fakeRun();
     const engine = { wanted: engineWanted, pluginScope: pluginScopeChanges, applyPlugin: applyPluginScope };
@@ -603,7 +603,7 @@ test('on a computer that runs the engine, step 6 adds Wheelhouse at user scope a
     assert.ok(fake.calls.some((c) => c.join(' ') === 'claude plugin install wheelhouse@wheelhouse --scope user'));
     // Once Claude Code's record has the user-scope entry, nothing more is listed for it.
     fs.mkdirSync(path.dirname(installedPluginsFile(config)), { recursive: true });
-    fs.writeFileSync(installedPluginsFile(config), JSON.stringify({ version: 2, plugins: { 'wheelhouse@wheelhouse': [{ scope: 'user', version: '0.2.0' }] } }));
+    fs.writeFileSync(installedPluginsFile(config), JSON.stringify({ version: 2, plugins: { 'wheelhouse@wheelhouse': [{ scope: 'user', version: ownVersion() }] } }));
     assert.equal((await step.plan(ctx)).settled !== undefined || !(await step.plan(ctx)).changes.some((c) => c.what === 'plugin'), true);
     // On Windows, neither.
     const windows = await step.plan({ ...ctx, platform: 'win32' });
