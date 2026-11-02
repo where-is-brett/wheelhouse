@@ -112,7 +112,7 @@ import {
   mergeApproved, undoMerge, copyNow, keepMain, leanStatus, storeHead, mergeOnMain, windowClick, LeanRefusal, LEAN_APPROVE, MAIN_MOVED_LINE, UNDO_LINE, UNDO_NEEDS_WINDOW,
   SIGNED_LEAN_PROOFS, sameCard, approvalCard, mainMovedCard, undoCards,
 } from '../lean/store.js';
-import { CHAT_PROOFS, CONFIRMED_STEPS, CARD_HASH } from '../agents/chat-clicks.js';
+import { CHAT_PROOFS, CONFIRMED_STEPS, hashRefusal } from '../agents/chat-clicks.js';
 import { earned, signsOn } from '../hooks/prompt-record.js';
 import { askInWindow, NOT_NOW } from '../confirm/window.js';
 import { composeCard } from '../cards/compose.js';
@@ -2226,7 +2226,7 @@ export async function startHelper({
     if (text !== undefined && (typeof text !== 'string' || text.trim() === '' || text.length > CHAT_WORDS_CHARS)) refuse('the director\'s words must be text');
     if (typeof card !== 'string' || card === '' || card.length > CHAT_TEXT_CHARS) refuse('the card must be named');
     if (typeof label !== 'string' || label === '' || label.length > CHAT_TEXT_CHARS) refuse('the click must name the option chosen');
-    if (typeof hash !== 'string' || !CARD_HASH.test(hash)) refuse('the card\'s hash must be its sha256, in lower case');
+    if (hashRefusal(hash) !== null) refuse(hashRefusal(hash));
     if (commit !== undefined && (typeof commit !== 'string' || !/^[0-9a-f]{40}$/.test(commit))) refuse('the commit must be written in full');
     const confirmed = CONFIRMED_STEPS.some((step) => card === step || card.startsWith(`${step}-`));
     const asked = listEvents(stateDir(project), { report: () => {} }).find((e) => e.kind === 'card' && e.id === card)?.data?.question ?? card;

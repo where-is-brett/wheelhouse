@@ -10,3 +10,6 @@ export const CHAT_PROOFS = Object.freeze(C6_PASSED ? ['chat-click', 'hook-click'
 export { CONFIRMED_STEPS };
 // A card's hash in a click: its sha256, in full and in lower case.
 export const CARD_HASH = /^[0-9a-f]{64}$/;
+// The helper's rule for a click's hash, as a pure check: the refusal it gives, or null when the hash is a card's sha256.
+export const HASH_REFUSAL = 'the card\'s hash must be its sha256, in lower case';
+export const hashRefusal = (hash) => (typeof hash === 'string' && CARD_HASH.test(hash) ? null : HASH_REFUSAL);

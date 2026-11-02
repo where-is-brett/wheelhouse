@@ -8,7 +8,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fakeVscode, model, card, require } from './helpers.js';
 import crypto from 'node:crypto';
-import { CARD_HASH, CONFIRMED_STEPS } from '../../scripts/agents/chat-clicks.js';
+import { execFileSync } from 'node:child_process';
+import { CARD_HASH, CONFIRMED_STEPS, hashRefusal } from '../../scripts/agents/chat-clicks.js';
 import { scanText } from '../../scripts/state/secret-scan.js';
 import { checkAddon, readAddon, ALLOWED_TOOLS } from '../../scripts/addon/validate.js';
 
@@ -137,17 +138,17 @@ test('the hash goes through the helper\'s own rule', async () => {
   // The helper\'s doChatClick uses CARD_HASH from scripts/agents/chat-clicks.js; the tools hold the same rule and steps.
   assert.equal(tools.CARD_HASH.source, CARD_HASH.source);
   assert.deepEqual([...tools.CONFIRMED_STEPS], [...CONFIRMED_STEPS]);
-  assert.match(fs.readFileSync(path.join(ROOT, 'scripts/host/helper.js'), 'utf8'), /!CARD_HASH\.test\(hash\)/);
+  assert.match(fs.readFileSync(path.join(ROOT, 'scripts/host/helper.js'), 'utf8'), /hashRefusal\(hash\)/);
   const { calls, client } = recorder();
   const input = (hash) => ({ card: 'c1', hash, label: 'Not now' });
   for (const bad of ['abc123def456', HASH.toUpperCase(), `${HASH}0`, '']) {
     const got = await tools.recordClick({ client, project: 'p', input: input(bad) });
     assert.equal(got.ok, false, bad);
-    assert.equal(CARD_HASH.test(bad), false);
+    assert.notEqual(hashRefusal(bad), null, bad);
   }
   assert.equal(calls.length, 0);
   assert.equal((await tools.recordClick({ client, project: 'p', input: input(HASH) })).ok, true);
-  assert.equal(CARD_HASH.test(calls[0].hash), true);
+  assert.equal(hashRefusal(calls[0].hash), null);
 });
 
 test('cards that could bind are refused by the tool and the inbox', async () => {
@@ -246,4 +247,10 @@ test('the proof refuses a chat tool that reaches past the chat-click route', () 
     assert.ok(checkAddon({ pkg, sources: bad }).length > 0, reach);
   }
   assert.deepEqual(checkAddon({ pkg, sources }), []);
+});
+
+test('a FIFO swapped into the inbox does not block the read', { skip: process.platform === 'win32' }, () => {
+  const fifo = path.join(tmp(), 'swapped.json');
+  execFileSync('mkfifo', [fifo]);
+  assert.equal(tools.readCapped(fifo), null);
 });

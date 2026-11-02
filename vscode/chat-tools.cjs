@@ -4,6 +4,9 @@
 // helper's /cards/chat-click as a non-binding `chat-click`; nothing here signs, presses or lifts anything, and the proof is
 // never taken from the chat (scripts/addon/validate.js holds this file to it, and tests/vscode/chat-tools.test.js).
 //
+// The helper's doChatClick is the authority on what a click may decide; the card-id check here (bindsSomething) is
+// defence in depth, so a mistake in one does not bind anything.
+//
 // Key names, read on 2 November 2026 from https://code.visualstudio.com/api/extension-guides/tools (the tools guide):
 //   contributes.languageModelTools (name, toolReferenceName, displayName, modelDescription, inputSchema, canBeReferencedInPrompt),
 //   vscode.lm.registerTool, vscode.LanguageModelToolResult, vscode.LanguageModelTextPart.
@@ -122,7 +125,7 @@ function registerChatTools({ vscode, client, desk, project, folder, subscription
 
 // The text of a plain file at most FILE_BYTES long, or null: opened without following a link, checked on the open file.
 function readCapped(file) {
-  const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0));
   try {
     const stat = fs.fstatSync(fd);
     if (!stat.isFile() || stat.size > FILE_BYTES) return null;
@@ -194,4 +197,4 @@ function commandFile(file, { scan = () => [] } = {}) {
 // The hook point for All stop to cancel the chat's running request. No way is known (check 72): it does nothing.
 async function cancelChatRequest() {}
 
-module.exports = { CHAT_LOADS, loadRules, RECORD_TOOL, BOARD_TOOL, INBOX, COMMANDS_NAME, RECORD_BYTES, HELD_BACK, CARD_HASH, CONFIRMED_STEPS, REFUSED_BINDING, BAD_HASH, bindsSomething, recordClick, boardText, registerChatTools, drainInbox, watchTerminal, commandFile, cancelChatRequest };
+module.exports = { readCapped, CHAT_LOADS, loadRules, RECORD_TOOL, BOARD_TOOL, INBOX, COMMANDS_NAME, RECORD_BYTES, HELD_BACK, CARD_HASH, CONFIRMED_STEPS, REFUSED_BINDING, BAD_HASH, bindsSomething, recordClick, boardText, registerChatTools, drainInbox, watchTerminal, commandFile, cancelChatRequest };
