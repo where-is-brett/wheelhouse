@@ -33,6 +33,7 @@ import {
   NOT_SENT,
   turnAwayScript,
   turnAwayEntry,
+  premiumBarScript,
 } from '../../../scripts/eval/harness.js';
 import { spawn, spawnSync } from 'node:child_process';
 
@@ -782,4 +783,25 @@ test('a session that did not finish never passes, and is run again when its pass
   // A finished session's pass stands.
   const finished = await trialOf(judgedAs(90, true), { events, exitCode: 0 });
   assert.equal(finished.pass, true);
+});
+
+test('no evaluation session can run a subagent on the premium model: a hook in its own settings refuses an Agent call naming it', async () => {
+  const { settings } = await sawWith({ model: 'opus' });
+  const entry = settings.hooks.PreToolUse.find((e) => /Agent/.test(e.matcher));
+  assert.equal(entry.hooks[0].onFailure, 'block');
+  const file = /^node "([^"]+)"$/.exec(entry.hooks[0].command)[1];
+  const dir = tempFolder('harness-premium-bar-');
+  fs.writeFileSync(path.join(dir, 'hook.js'), premiumBarScript());
+  const ask = (input) => spawnSync(process.execPath, [path.join(dir, 'hook.js')], { input, encoding: 'utf8' });
+  const named = (model) => JSON.stringify({ tool_name: 'Agent', tool_input: { description: 'x', model } });
+  for (const model of ['fable', 'claude-fable-5-1']) assert.match(ask(named(model)).stdout, /"permissionDecision":"deny"/, model);
+  for (const model of ['opus', 'sonnet', 'haiku']) assert.equal(ask(named(model)).stdout, '', model);
+  assert.equal(ask(JSON.stringify({ tool_name: 'Agent', tool_input: { description: 'x' } })).stdout, '');
+  assert.equal(ask('not json').status, 2, 'input it cannot read refuses the call');
+  assert.ok(file.endsWith('premium-bar.js'));
+});
+
+test('a session that is itself on the premium model (the premium pass) is not barred', async () => {
+  const { settings } = await sawWith({ model: 'fable' });
+  assert.equal(settings.hooks, undefined);
 });

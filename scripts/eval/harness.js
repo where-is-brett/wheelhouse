@@ -112,6 +112,34 @@ export function turnAwayEntry(matcher, file) {
   return { matcher, hooks: [{ type: 'command', command: `node "${file}"`, timeout: 10, onFailure: 'block' }] };
 }
 
+// The model the director chooses for themselves, never an evaluation session: the premium model's name.
+const PREMIUM_NAME = /fable/i;
+
+// The script of a PreToolUse hook on Agent calls that refuses one naming the premium model
+// (the director's to choose). It fails closed: input it can't read or parse refuses the call too.
+export const PREMIUM_REFUSAL = 'The premium model is not used in an evaluation run.';
+export function premiumBarScript() {
+  const said = JSON.stringify(PREMIUM_REFUSAL);
+  return `// Refuses an Agent call that names the premium model, in an evaluation run.
+const refuse = () => { process.stderr.write(${said}); process.exit(2); };
+process.on('uncaughtException', refuse);
+process.stdin.on('error', refuse);
+let text = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => { text += chunk; });
+process.stdin.on('end', () => {
+  const input = JSON.parse(text);
+  const model = input?.tool_input?.model;
+  if (${PREMIUM_NAME}.test(typeof model === 'string' ? model : JSON.stringify(model ?? ''))) {
+    process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: ${said} } }));
+  }
+});
+`;
+}
+
+// The session settings' hook entry that runs the script at `file` on every Agent (or Task) call.
+export const premiumBarEntry = (file) => ({ matcher: 'Agent|Task', hooks: [{ type: 'command', command: `node "${file}"`, timeout: 10, onFailure: 'block' }] });
+
 // A socket's spellings: as given, and through the real path of its folder (the temporary folder
 // has two on macOS), so the sandbox knows it whichever way a command names it.
 function socketSpellings(socket) {
@@ -139,7 +167,7 @@ function inRealHome(file) {
 // denied; `unreadable`, more paths a command may not read (the stand-in helper's key folder), added
 // to the sandbox's denied reads and to a Read deny rule; `writable`, paths written outside the project. The sandbox doesn't run on native
 // Windows, where Claude Code runs commands outside it and these settings change nothing.
-export function sessionSettings({ socket = null, readable = [], writable = [], unreadable = [] } = {}) {
+export function sessionSettings({ socket = null, readable = [], writable = [], unreadable = [], premiumBar = null } = {}) {
   if (socket !== null && (typeof socket !== 'string' || socket === '')) throw new Error('A session\'s socket is a path');
   if (socket !== null && inRealHome(socket)) throw new Error(`A session never reaches a socket in the real Wheelhouse home: ${socket}`);
   const { sandbox } = projectSettings({ webDomains: [] });
@@ -148,6 +176,7 @@ export function sessionSettings({ socket = null, readable = [], writable = [], u
   const hidden = [...new Set(unreadable.flatMap((p) => { try { return [p, fs.realpathSync(p)]; } catch { return [p]; } }))];
   return {
     ...own,
+    ...(premiumBar === null ? {} : { hooks: { PreToolUse: [premiumBarEntry(premiumBar)] } }),
     permissions: { ...own.permissions, deny: [...own.permissions.deny, ...EVAL_DENY_COMMANDS, ...hidden.map((p) => `Read(/${p.split(path.sep).join('/')}/**)`)] },
     sandbox: {
       ...sandbox,
@@ -383,14 +412,19 @@ export async function runSession({
   const offer = vettedOffer(offered, dir);
   if (effort !== null && !EFFORTS.includes(effort)) throw new Error(`This isn't a thinking effort a session is started with: ${JSON.stringify(effort)}`);
   if (fallback !== null && !isModelName(fallback)) throw new Error("The fallback model can't be passed to claude");
-  const settings = sessionSettings({ socket, readable, writable, unreadable });
+  // No session uses the premium model for a subagent; only a session that is itself on it (the premium pass) is let be.
+  const barPremium = !(typeof model === 'string' && PREMIUM_NAME.test(model));
+  const guardDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-eval-settings-'));
+  const guardFile = path.join(guardDir, 'premium-bar.js');
+  if (barPremium) fs.writeFileSync(guardFile, premiumBarScript());
+  const settings = sessionSettings({ socket, readable, writable, unreadable, premiumBar: barPremium ? guardFile : null });
   // With the default command, find claude (on Windows, its .exe or .cmd); a command given is used as it is.
   const resolved = command === 'claude' ? resolveClaude({ env: { ...process.env, ...env } }) : { kind: 'direct', file: command };
   const flags = [...NEEDED_FLAGS, ...(model ? ['--model'] : []), ...(effort ? ['--effort'] : []), ...(fallback ? ['--fallback-model'] : []), ...(appendSystemPrompt ? ['--append-system-prompt'] : []), ...(resume ? ['--resume'] : [])];
   await checkFlags({ commandArgs, flags, env, resolved });
   // The session's settings, in a file of its own outside the project (a JSON argument would not
   // pass through claude.cmd on Windows), removed once the session is over.
-  const settingsFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-eval-settings-')), 'settings.json');
+  const settingsFile = path.join(guardDir, 'settings.json');
   fs.writeFileSync(settingsFile, `${JSON.stringify(settings, null, 2)}\n`);
   const args = [
     '--output-format', 'stream-json',

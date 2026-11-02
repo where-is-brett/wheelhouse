@@ -25,6 +25,7 @@ At Lean, where no Wheelhouse command runs, follow wheelhouse-lean's Intake at Le
    - **Matches a rejection:** flag it, with when and why it was turned down; it goes up a level.
 3. **Ask the ten questions in order. The first yes decides the route.**
 4. **Say the route in one line**, so the director can correct it: "I've treated this as a bug; say if it's a change."
+   - **A change also names its lane,** in the lane's own word and no other: "I've treated this as a quick change; say if you'd rather see it first." Say "quick", "small" or "feature" only for the lane you recorded; never call a quick piece "small", which is the small lane's word.
 5. **Do the route.**
 
 | # | Question | Route |

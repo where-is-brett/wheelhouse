@@ -559,6 +559,10 @@ test('scenarios 7 and 8 want the lane said, a preview offered for a visual chang
   assert.equal(judge8({ reply: 'Quick change: I\'ve queued it. You\'ll see it in the briefing.', written: [quick], calls: [], dir }).pass, true);
   assert.match(judge8({ reply: 'A quick change. Want me to show you a preview first?', written: [quick], calls: [], dir }).why, /shown first: its reply offered a look first/);
   assert.match(judge8({ reply: 'Removed.', written: [], calls: callsOf(events(['Edit', { file_path: path.join(dir, 'public/index.html'), old_string: 'a', new_string: '' }])), dir }).why, /it wrote .*index\.html/);
+  // A reply naming the small lane fails, alone or beside "quick change"; "a small removal" names no lane.
+  assert.match(judge8({ reply: 'A quick change, and a small change at that.', written: [quick], calls: [], dir }).why, /also names the small lane/);
+  assert.match(judge8({ reply: 'I\'ve treated this as a quick change, in the small lane.', written: [quick], calls: [], dir }).why, /also names the small lane/);
+  assert.equal(judge8({ reply: 'I\'ve treated this as a quick change, a small removal; say if you\'d rather see it first.', written: [quick], calls: [], dir }).pass, true);
   assert.match(judge8({ reply: 'Queued.', written: [quick], calls: [], dir }).why, /no quick lane said/);
   // What was recorded matches what the director was told (ruling F93): visible work waits for an approval.
   const shown = written('work', { ...quick.data, visible: true });

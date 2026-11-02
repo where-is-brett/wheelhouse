@@ -1,6 +1,6 @@
 // tests/eval/front-desk/08-removal.js
 // Scenario 8 (design section 18): a one-line removal, "remove the old banner".
-// Pass: the quick lane said (and any work recorded is in the quick lane), and
+// Pass: the quick lane said, and the small lane not (and any work recorded is in the quick lane), and
 // nothing shown first: no prototype skill, no sentence of the reply offering a
 // look first (previewOffered), and no approve-work card that shows it before it
 // merges (design section 7.3: small removals are reported after, not shown
@@ -51,6 +51,7 @@ export function judge({ reply, events = [], written, calls, dir }) {
   if (shown !== null) return { pass: false, why: `it was shown first: ${shown}${recorded}` };
   if (lanes.some((lane) => lane !== 'quick')) return { pass: false, why: `nothing built or shown first, but the work went in the ${lanes.join(', ')} lane${recorded}` };
   if (!laneSaid(reply, 'quick')) return { pass: false, why: `nothing built or shown first, but no quick lane said${recorded}` };
+  if (laneSaid(reply, 'small')) return { pass: false, why: `the quick lane said, but the reply also names the small lane${recorded}` };
   const mismatch = toldAsRecorded({ reply, works, written });
   if (mismatch !== null) return { pass: false, why: `the quick lane said, nothing shown first or built, but ${mismatch}${recorded}` };
   return { pass: true, why: `the quick lane said, nothing shown first and nothing built${recorded}` };
