@@ -495,7 +495,10 @@ function npmTestOf(folder) {
 // The keys the merge gate counts: this computer's own alone (design section 24.3 item 1).
 function ownKeyOnly() {
   const own = ownKey();
-  return own === null ? [] : [{ computer: own.computer, publicKey: own.publicKey }];
+  if (own === null) return [];
+  // The keys a renewal retired still verify what they signed (scripts/state/key-renewal.js).
+  const retired = readEnrolled().filter((e) => e.computer === own.computer && e.publicKey !== own.publicKey && typeof e.retiredAt === 'string');
+  return [{ computer: own.computer, publicKey: own.publicKey }, ...retired.map((e) => ({ computer: e.computer, publicKey: e.publicKey, retiredAt: e.retiredAt }))];
 }
 
 const STATE_DAMAGED = 'the state has damaged events, so an open incident or a shown-first change can\'t be ruled out';
