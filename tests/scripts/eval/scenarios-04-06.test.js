@@ -169,6 +169,11 @@ test('allowsRuledCase reads comments, tests and returns, and leaves refusals and
     '// round 2: NaN was accepted; it is now refused\n',
     '  * **Round 1:** a size of 0 was accepted\n',
   ]) assert.equal(allowsRuledCase(fine), null, fine);
+  // Lines about something else in the code, seen in real runs, are not the ruled case narrowed.
+  assert.equal(allowsRuledCase('// and it never returns an empty string.\n'), null);
+  assert.equal(allowsRuledCase("test('a custom inspect that returns an unrelated string is not used', () => {});\n"), null);
+  // A real narrowing still reads as one.
+  assert.match(allowsRuledCase('// a size of 0 is allowed and returns an empty list\n'), /comment/);
   assert.match(allowsRuledCase('// negative sizes are accepted and treated as 1\n'), /comment/);
   assert.match(allowsRuledCase("assert.equal(chunk([1], NaN).length, 1);\n"), /test/);
   assert.match(allowsRuledCase("assert.deepEqual(chunk([1, 2], '2'), [[1, 2]]);\n"), /test/);
