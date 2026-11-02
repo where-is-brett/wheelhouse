@@ -754,3 +754,20 @@ test('a write-back blocked by a record file not committed in the folder changes 
     assert.equal(fs.readFileSync(path.join(record, '2026-10-24.jsonl'), 'utf8'), recordLine({ at: '2026-10-24T00:00:00Z', kind: 'stop' }));
   });
 });
+
+// The add-on's install runs no host tool of its own here: the install is a stand-in.
+nodeTest('addon hands the add-on to the install and says what came of it', async () => {
+  const out = [];
+  const stdout = { write: (t) => out.push(t) };
+  const asked = [];
+  const installAddon = async (options) => { asked.push(options); return { ok: true, line: 'The Wheelhouse add-on is installed in VS Code. Reload VS Code to start it' }; };
+  assert.equal(await main(['addon'], { stdout, deps: { installAddon } }), 0);
+  assert.equal(out.join(''), 'The Wheelhouse add-on is installed in VS Code. Reload VS Code to start it\n');
+  assert.equal(asked.length, 1);
+  out.length = 0;
+  assert.equal(await main(['addon'], { stdout, deps: { installAddon: async () => ({ ok: false, line: 'VS Code didn\'t take the add-on, so it wasn\'t installed' }) } }), 1);
+  assert.match(out.join(''), /didn't take the add-on/);
+  out.length = 0;
+  assert.equal(await main(['addon', 'now'], { stdout, deps: { installAddon } }), 1);
+  assert.match(out.join(''), /^Usage/);
+});

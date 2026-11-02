@@ -63,6 +63,8 @@ import { modDesk, signedRecords } from '../desk/mod-desk.js';
 import { claim, answeredInPending, repliedDir, viewsNow, confirmsBuilds, allowsElsewhere, ALLOWED_ELSEWHERE, CLICK_ONLY_LABELS } from './reply.js';
 
 const NOT_NOW = 'Not now';
+// The proofs a press may name: only the add-on's pane presses with one.
+const PRESS_PROOFS = ['add-on'];
 // Longer than any option a card offers.
 const LABEL_CHARS = 80;
 // The most characters of the director's words a suggestion hands on.
@@ -164,21 +166,23 @@ async function asked(desk, command, args, evidence) {
   }
 }
 
-// pressCard({ project, card, hash, label, client, desk, now, liftStop, stopState, budget })
+// pressCard({ project, card, hash, label, client, desk, now, liftStop, stopState, budget, proof })
 //   -> Promise<{ made, says, submit? }>
 // `card` is the waiting card's id and `hash` what the pane drew it with. Refuses, recording
 // nothing, a card that isn't waiting, one whose text changed, a label it doesn't offer, and one
 // already answered in pending/ or claimed. `desk` is the mod's desk (one over `client` without it).
-// Never throws.
-export async function pressCard({ project, card, hash, label, client, desk, now = () => new Date(), liftStop = defaultLift, stopState = defaultStopState, budget = BUDGET_MS + helperGrace() } = {}) {
+// `proof` is 'add-on' when the add-on's pane pressed it: the signed record names it, and the signature covers it.
+// With none given, every record is as it was. Never throws.
+export async function pressCard({ project, card, hash, label, client, desk, now = () => new Date(), liftStop = defaultLift, stopState = defaultStopState, budget = BUDGET_MS + helperGrace(), proof } = {}) {
   try {
-    return await press({ project, card, hash, label, client, desk, now, liftStop, stopState, budget });
+    if (proof !== undefined && !PRESS_PROOFS.includes(proof)) return no(SAYS.cantSign);
+    return await press({ project, card, hash, label, client, desk, now, liftStop, stopState, budget, proof });
   } catch {
     return no(SAYS.failed);
   }
 }
 
-async function press({ project, card, hash, label, client, desk, now, liftStop, stopState, budget }) {
+async function press({ project, card, hash, label, client, desk, now, liftStop, stopState, budget, proof }) {
   if (typeof card !== 'string' || !MARKER.test(card)) return no(SAYS.answered);
   let views;
   let events;
@@ -216,7 +220,7 @@ async function press({ project, card, hash, label, client, desk, now, liftStop, 
 
   // Not now and Keep as is sign nothing: each writes the plain card answer alone, as a click does.
   if (label !== NOT_NOW && label !== KEEP_AS_IS && button.does === 'record') {
-    return signed({ project, card, hash, question, label, what, meanwhile: data.parts?.meanwhile, markers, shownAt: entry.at, api, desk: mod, left, now, liftStop, stopState });
+    return signed({ project, card, hash, question, label, what, meanwhile: data.parts?.meanwhile, markers, shownAt: entry.at, api, desk: mod, left, now, liftStop, stopState, proof });
   }
 
   const prompt = [promptOf(kindOf(data), label, n, card)];
@@ -246,7 +250,7 @@ async function press({ project, card, hash, label, client, desk, now, liftStop, 
 // which closes the card on its own. Under STOP the plain answer is left out.
 // The card's own time goes to earned as `shownAt`, as a reply's does: the pane drew the card
 // then, so a Lift STOP card from before this STOP began can't lift it.
-async function signed({ project, card, hash, question, label, what, meanwhile, markers, shownAt, api, desk, left, now, liftStop, stopState }) {
+async function signed({ project, card, hash, question, label, what, meanwhile, markers, shownAt, api, desk, left, now, liftStop, stopState, proof }) {
   const held = [];
   for (const id of markers) {
     const file = claim(project, id);
@@ -288,7 +292,7 @@ async function signed({ project, card, hash, question, label, what, meanwhile, m
   let lifting = false;
   let record;
   try {
-    record = keepEarned(project, got, { now, liftStop: () => { lifting = true; liftStop(); } });
+    record = keepEarned(project, got, { now, liftStop: () => { lifting = true; liftStop(); }, ...(proof === undefined ? {} : { proof }) });
   } catch {
     release(held);
     return no(lifting ? SAYS.cantLift : SAYS.cantSign);
