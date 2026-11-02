@@ -132,6 +132,7 @@ export const NOT_COVERED = Object.freeze(['switch', 'own-app-again']);
 // (rulings R125, R132); after a question, that whatever they type there next is taken (R135).
 export const NOT_AN_ANSWER = Object.freeze({
   question: 'What you typed ends with a question mark, so it was taken as a question, not as your answer. Whatever you type on this card next is taken as your answer, so ask any question in the chat.',
+  buttons: 'This card takes one of its buttons, not typed words: pick one of them.',
   handedBack: 'What you typed hands the choice back, so it was not taken as your answer: this choice is yours to make.',
 });
 const APPLY_FIELDS = ['folder', 'step', 'hash'];

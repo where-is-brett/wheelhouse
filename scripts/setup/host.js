@@ -461,6 +461,85 @@ function hostAsk(name) {
   };
 }
 
+// Which GitLab, asked once when GitLab is chosen and the folder's remote does not already name one
+// (spec 8.11): the public service, or the company's own, whose address is typed.
+export const GITLAB_COM = 'gitlab.com';
+export const COMPANY_GITLAB = 'My company\'s GitLab';
+
+// A typed GitLab address as { base, host }: https only, a host name with an optional port, no path.
+// `base` is the address as the tools use it, `host` the entry `gitlabHosts` takes (the port with it).
+// The public service's own address gives { base: DEFAULT_GITLAB }. Anything else gives { why }.
+export function companyAddress(text) {
+  const typed = String(text ?? '').trim();
+  const shown = typed.length > 50 ? `${typed.slice(0, 50)}...` : typed;
+  if (/^http:\/\//i.test(typed)) return { why: `"${shown}" is not https, and a company's GitLab is reached over https only` };
+  const bare = typed.replace(/^https:\/\//i, '').replace(/\/+$/, '');
+  const match = /^([a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*)(?::(\d{1,5}))?$/i.exec(bare);
+  if (match === null) return { why: `"${shown}" is not a GitLab address: it is a host name and a port if it has one, with no path` };
+  const [, name, port] = match;
+  if (!name.includes('.') && name.toLowerCase() !== 'localhost') return { why: `"${shown}" is not a GitLab address: it needs the whole host name, such as gitlab.example.org` };
+  if (port !== undefined && (Number(port) < 1 || Number(port) > 65535)) return { why: `"${shown}" has a port that is not a port` };
+  const url = new URL(`https://${name.toLowerCase()}${port === undefined ? '' : `:${port}`}`);
+  if (url.origin === DEFAULT_GITLAB) return { base: DEFAULT_GITLAB };
+  return { base: url.origin, host: url.host };
+}
+
+function gitlabWhereAsk(name, { id, refused }) {
+  return {
+    id,
+    typed: true,
+    card: {
+      level: 2,
+      what: `${refused === null ? '' : `${refused}. `}Which GitLab should ${name} go on? For your company's, type its address, such as https://gitlab.example.org.`,
+      why: 'A company runs its own GitLab at its own address, and setup needs it to sign in and make the project.',
+      options: [
+        { label: GITLAB_COM, says: 'The public GitLab, on your own account.' },
+        { label: COMPANY_GITLAB, says: 'Type your company\'s address on this card. Setup names it in the project settings.' },
+      ],
+      recommend: GITLAB_COM,
+      because: 'it is the common one; pick the other only if your company runs its own',
+      meanwhile: MEANWHILE,
+    },
+  };
+}
+
+// What the which-GitLab card's answers say: { ask } while it is open, else { base } and, for a company's, { host }.
+// An address that is not one asks again, saying why, under a new id.
+export function gitlabWhere({ answer, name }) {
+  let refused = null;
+  for (let n = 0; ; n += 1) {
+    const id = n === 0 ? 'gitlab-where' : `gitlab-where-${n}`;
+    const got = answer(id);
+    if (got === null) return { ask: gitlabWhereAsk(name, { id, refused }) };
+    if (got.label === GITLAB_COM) return { base: DEFAULT_GITLAB };
+    if (typeof got.text !== 'string' || got.text.trim() === '') {
+      refused = 'Type your company\'s GitLab address on the card';
+      continue;
+    }
+    const found = companyAddress(got.text);
+    if (found.why === undefined) return found;
+    refused = found.why;
+  }
+}
+
+// Names a company's GitLab in the folder's .claude/wheelhouse.json, keeping what the file holds. The
+// change is recorded with the file's text before, so uninstall can put it back.
+export function nameGitlabHost({ folder, entry, record }) {
+  const file = path.join(folder, '.claude', 'wheelhouse.json');
+  const before = readText(file);
+  let config = {};
+  if (before !== null) {
+    config = json(before);
+    if (config === null || typeof config !== 'object' || Array.isArray(config)) throw new Error('.claude/wheelhouse.json is not a configuration Wheelhouse can read, so setup has left it as it was: correct it or remove it, then ask again');
+  }
+  const hosts = Array.isArray(config.gitlabHosts) ? config.gitlabHosts : [];
+  if (hosts.some((h) => String(h).trim().toLowerCase() === entry)) return;
+  const after = `${JSON.stringify({ ...config, gitlabHosts: [...hosts, entry] }, null, 2)}\n`;
+  record({ id: newId('chg'), kind: 'file', target: file, before, after });
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, after);
+}
+
 // The join question (ruling R77), asked first in a folder holding only step 1's install. `missed`
 // is why it is asked again: { name, missed }, where `missed` is 'none', the repositories found
 // when there were several, or 'not-a-name' for typed text that names no repository.
@@ -1452,6 +1531,8 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
       ? `your company's own certificate for ${base}, for that address only (certificate checks stay on)`
       : `your company's own certificate for ${base}, copied from this computer's own certificate store and given to Node.js, glab and git for that address only (certificate checks stay on)`);
   }
+  const naming = changes.find((c) => c.action === 'gitlab-hosts');
+  if (naming) parts.push(bare ? 'your company\'s GitLab named in the project settings' : tight ? `${naming.host} named as your company's GitLab in the project settings` : `${naming.host} named as your company's GitLab in .claude/wheelhouse.json, so every step uses it`);
   const signing = changes.find((c) => c.action === 'sign-in');
   if (signing?.via === 'token') {
     parts.push(tight ? 'sign in with a token pasted into your computer\'s box, never the chat' : `sign in to ${name} with a token pasted into your computer's box, never the chat`);
@@ -1652,6 +1733,12 @@ export function hostStep({
         if (answer('kept').label === PUT_ON_GITHUB) host = 'github';
         if (answer('kept').label === PUT_ON_GITLAB) host = 'gitlab';
       }
+      // GitLab chosen, with no remote naming one: the public service, or the company's own address.
+      let company = null;
+      if (host === 'gitlab' && product.host !== 'gitlab') {
+        company = gitlabWhere({ answer, name: product.name });
+        if (company.ask) return { ask: company.ask };
+      }
       // The main line of a folder with history: asked only where the folder doesn't say.
       const branches = branchesOf(ctx.folder);
       let branch = branches.length === 0 ? headBranch(ctx.folder) ?? 'main' : chooseBranch(branches);
@@ -1701,7 +1788,7 @@ export function hostStep({
       // anything is read from the host.
       if (ctx.choicesOnly === true) return { wait: 0, why: 'every choice of step 3 is made' };
       const mode = way === WAYS.quick ? 'quick' : 'narrow';
-      const base = product.base ?? DEFAULT_GITLAB;
+      const base = product.base ?? company?.base ?? DEFAULT_GITLAB;
       const { signedIn, user } = await signInStatus({ host, run, base });
       const owner = product.isNew ? user : (product.repo === null ? null : product.repo.split('/').slice(0, -1).join('/'));
       const repo = product.isNew ? (user ? `${user}/${product.name}` : null) : product.repo;
@@ -1754,6 +1841,10 @@ export function hostStep({
       // How far this computer is with the app: a later project needs no new code (design section 15).
       const appKeys = typeof app?.clientId === 'string' ? appKeysState(app, owner) : null;
       const changes = [];
+      // A company's GitLab the folder's remote does not name yet: setup names it in the project settings.
+      if (company?.host !== undefined && !product.joining) {
+        changes.push({ kind: 'file', target: path.join(ctx.folder, '.claude', 'wheelhouse.json'), action: 'gitlab-hosts', host: company.host });
+      }
       // A company's GitLab whose certificate this computer does not trust: the company's own is given
       // first, for that address only. With the file made already, the question is whether it covers
       // GitLab's certificate (an authority added since, or glab not having taken it, shows here), and the
@@ -1846,6 +1937,13 @@ export function hostStep({
         const found = await findGit({ platform, run });
         if (!found?.ok || typeof found.path !== 'string') throw new Error('git is not on this computer yet; step 2 installs it');
         return applyLocal({ ctx, changes, run, gitPath: found.path, say, halt, pick, isEmpty: onlyInstall });
+      }
+      // A company's address the remote does not name yet is named in the project settings first, so every
+      // later step reads it as it does for a folder whose remote already names it.
+      const naming = changes.find((c) => c.action === 'gitlab-hosts') ?? null;
+      if (naming !== null) {
+        if (host !== 'gitlab' || typeof naming.host !== 'string' || new URL(base).host !== naming.host) throw new Error('Step 3\'s list names a GitLab address other than the connection\'s, so nothing was done: ask for step 3\'s card again');
+        nameGitlabHost({ folder: ctx.folder, entry: naming.host, record });
       }
       // The company's certificate comes before anything reaches the host. The address is the connection's
       // own, checked before anything is run; the certificate and glab's setting are made, and the git

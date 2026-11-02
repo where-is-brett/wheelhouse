@@ -170,15 +170,17 @@ test('a typed answer counts only where the card allows it, and one holding a pas
     const { card } = (await client.setup.plan({ folder, step: 3 })).ask;
     const { card: typed } = (await client.setup.plan({ folder, step: 4 })).ask;
     // Typed where the card takes only its own options.
+    // It is kept as typed, so the card is asked again saying to pick a button, and it is no answer.
     await choose(folder, card, 'Bitbucket');
-    assert.deepEqual(kept(home), []);
+    assert.equal(kept(home).length, 1);
+    assert.deepEqual(answersFor(findRun(folder).id), {});
     // Typed text that holds a key or a password in an address.
     await choose(folder, typed, `ghp_${'a'.repeat(36)}`);
     await choose(folder, typed, 'postgres://me:hunter2pass@db.example.com/shop');
-    assert.deepEqual(kept(home), []);
+    assert.equal(kept(home).length, 1);
     // Typed where the card takes it: the text is kept, with no label.
     await choose(folder, typed, 'Café Menu for the shop');
-    const [answer] = kept(home);
+    const answer = kept(home).find((a) => a.data.questionId === 'name');
     assert.deepEqual([answer.data.label, answer.data.text, answer.data.questionId, answer.data.step], [null, 'Café Menu for the shop', 'name', 4]);
     assert.deepEqual(answersFor(findRun(folder).id)['4.name'], { label: null, text: 'Café Menu for the shop', at: answer.at });
     // The card's own option is kept as its label.
@@ -479,5 +481,26 @@ test('a "?" refused on one question lets no other question\'s "?" through (rulin
     const again = await client.setup.plan({ folder, step: 4 });
     assert.equal(again.ask?.id, 'about');
     assert.equal(again.unanswered, NOT_AN_ANSWER.question);
+  }, { now: () => clock });
+});
+
+test('words typed on a card of buttons only are not an answer: the card is asked again with one line saying to pick a button', async () => {
+  let clock = T0;
+  await withSetup(async ({ client, home, folder }) => {
+    setWorld(home, { ask: { 3: [HOST] } });
+    const asked = await client.setup.plan({ folder, step: 3 });
+    const run = findRun(folder);
+    clock = new Date(T0.getTime() + MINUTE);
+    await choose(folder, asked.ask.card, 'gitlab', { at: new Date(clock.getTime() - 1000) });
+    assert.deepEqual(answersFor(run.id), {});
+    const again = await client.setup.plan({ folder, step: 3 });
+    assert.equal(again.ask?.id, asked.ask.id);
+    assert.deepEqual(again.ask.card, asked.ask.card, 'the same card, asked again');
+    assert.equal(again.unanswered, NOT_AN_ANSWER.buttons);
+    // Said once; a click then counts.
+    clock = new Date(T0.getTime() + 2 * MINUTE);
+    assert.equal((await client.setup.plan({ folder, step: 3 })).unanswered, undefined);
+    await choose(folder, asked.ask.card, 'GitHub', { at: new Date(clock.getTime() - 1000) });
+    assert.equal(answersFor(run.id)['3.host'].label, 'GitHub');
   }, { now: () => clock });
 });

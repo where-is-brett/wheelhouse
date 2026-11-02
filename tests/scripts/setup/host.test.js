@@ -46,6 +46,7 @@ import { FREE_PLAN_LINE } from '../../../scripts/host/protection.js';
 import { g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { KEEP_HERE, PUT_ON_GITHUB, PUT_ON_GITLAB, remotesOf } from '../../../scripts/setup/local.js';
 import { homeDir } from '../../../scripts/host/local/home.js';
+import { GITLAB_COM, COMPANY_GITLAB, companyAddress, nameGitlabHost } from '../../../scripts/setup/host.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
 
 const NOW = new Date('2026-10-20T03:00:00.000Z');
@@ -228,7 +229,7 @@ const NO_APP = path.join(os.tmpdir(), 'wh-no-such-app.json');
 // ---- The step, driven ----
 
 const ctxFor = (folder, extra = {}) => ({ folder, step: 3, now: () => NOW, platform: 'darwin', userHome: folder, answers: {}, ...extra });
-const said = (label) => ({ label, text: null, at: NOW.toISOString() });
+const said = (label) => (typeof label === 'object' ? { label: null, text: label.text, at: NOW.toISOString() } : { label, text: null, at: NOW.toISOString() });
 
 // Plans the step, answering each question with the label `pick(id, card)` gives, until it lists its
 // changes. Gives the list, the answers and the questions asked, in order.
@@ -248,6 +249,7 @@ const choose = ({ realUsers = REAL_USERS.no, locked = LEVELS.standard, host = HO
   if (id === 'real-users') return realUsers;
   if (id === 'locked') return locked;
   if (id === 'host') return host;
+  if (id === 'gitlab-where') return GITLAB_COM;
   // On the Mac's card a narrow way sits behind Make it stricter.
   if (id.startsWith('connection-')) return card?.options && !card.options.some((o) => o.label === way) && card.options.some((o) => o.label === STRICTER) ? STRICTER : way;
   throw new Error(`asked ${id}`);
@@ -2194,6 +2196,7 @@ const emptyFolder = (name = 'Cafe Menu') => {
 const joining = ({ join = fromOtherComputer('Cafe-Menu'), typed = null, way = WAYS.quick, host = HOST_LABELS.github } = {}) => (id, card) => {
   if (id === 'join' || id.startsWith('join-')) return typed ?? join;
   if (id === 'host') return host;
+  if (id === 'gitlab-where') return GITLAB_COM;
   if (id.startsWith('connection-')) return card?.options && !card.options.some((o) => o.label === way) && card.options.some((o) => o.label === STRICTER) ? STRICTER : way;
   throw new Error(`asked ${id}`);
 };
@@ -2451,7 +2454,7 @@ test('a launched project refuses Quick at apply, before anything is connected or
     // As an earlier attempt checked it out, saying it is launched.
     fs.writeFileSync(path.join(folder, '.claude', 'wheelhouse.json'), '{"v":1,"launched":true}\n');
     const planned = await answerJoin(step, ctxFor(folder), joining({ typed: `${USER}/Cafe-Menu`, host: HOST_LABELS.gitlab }));
-    assert.deepEqual(planned.asked.map((a) => a.id), ['join', 'host']);
+    assert.deepEqual(planned.asked.map((a) => a.id), ['join', 'host', 'gitlab-where']);
     assert.equal(planned.changes.find((c) => c.action === 'connection').mode, 'narrow');
   });
 });
@@ -2639,5 +2642,103 @@ test('a folder whose origin is an ssh address of the same repository is fetched 
     assert.equal(await g(joined, 'rev-parse', 'HEAD'), await g(w.hostUrl({ repo: 'cafe-co/Cafe-Menu' }), 'rev-parse', 'main'));
     assert.equal(fs.readFileSync(path.join(joined, '.claude', 'settings.json'), 'utf8'), COMMITTED);
     assert.deepEqual(gits.filter((a) => a[0] === 'fetch'), [['fetch', '-q', 'https://github.com/cafe-co/Cafe-Menu.git', '+refs/heads/main:refs/remotes/origin/main']]);
+  });
+});
+
+// ---- Which GitLab (spec 8.11) ----
+
+test('GitLab chosen and a company address typed gives a plan whose connection has that base, and names it in the settings', async () => {
+  await withHome(async () => {
+    const w = standIn({ signedIn: { github: true, gitlab: false } });
+    const folder = productFolder('shop');
+    const planned = await answerAll(stepFor(w), ctxFor(folder), (id, card) => {
+      if (id === 'gitlab-where') return { text: 'https://git.example.org:8443/' };
+      return choose({ host: HOST_LABELS.gitlab, way: WAYS.quick })(id, card);
+    });
+    const asked = planned.asked.find((a) => a.id === 'gitlab-where');
+    assert.equal(asked.typed, true);
+    assert.deepEqual(asked.card.options.map((o) => o.label), [GITLAB_COM, COMPANY_GITLAB]);
+    composeCard({ ...asked.card, kind: 'question', suggest: false });
+    const connection = planned.changes.find((c) => c.action === 'connection');
+    assert.equal(connection.target, 'gitlab');
+    assert.equal(connection.base, 'https://git.example.org:8443');
+    const naming = planned.changes.find((c) => c.action === 'gitlab-hosts');
+    assert.equal(naming.host, 'git.example.org:8443');
+    assert.equal(planned.changes.find((c) => c.action === 'sign-in').via, 'token');
+    composeCard({ ...planned.card, target: { step: 3, hash: '0'.repeat(64) } });
+    // Applied, the settings name it (keeping what the file held), so every later reading is the same as for a remote that names it.
+    const recorded = [];
+    nameGitlabHost({ folder, entry: naming.host, record: (c) => recorded.push(c) });
+    const file = path.join(folder, '.claude', 'wheelhouse.json');
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).gitlabHosts, ['git.example.org:8443']);
+    assert.equal(recorded.length, 1);
+    assert.equal(recorded[0].kind, 'file');
+    nameGitlabHost({ folder, entry: naming.host, record: (c) => recorded.push(c) });
+    assert.equal(recorded.length, 1, 'named already: nothing more is written');
+    assert.equal(productOf(folder, { config: JSON.parse(fs.readFileSync(file, 'utf8')) }).isNew, true);
+  });
+});
+
+test('GitLab chosen with gitlab.com picked plans the public service, with no settings change', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    const folder = productFolder('shop');
+    const planned = await answerAll(stepFor(w), ctxFor(folder), choose({ host: HOST_LABELS.gitlab }));
+    assert.ok(planned.asked.some((a) => a.id === 'gitlab-where'));
+    assert.equal(planned.changes.find((c) => c.action === 'connection').base, undefined);
+    assert.equal(planned.changes.some((c) => c.action === 'gitlab-hosts'), false);
+  });
+});
+
+test('a typed GitLab address that is not one asks again under a new id, saying why', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    const folder = productFolder('shop');
+    const texts = ['gitlab', 'http://git.example.org', 'https://git.example.org/group'];
+    const planned = await answerAll(stepFor(w), ctxFor(folder), (id, card) => {
+      if (id.startsWith('gitlab-where')) return { text: texts.length > 0 ? texts.shift() : 'git.example.org' };
+      return choose({ host: HOST_LABELS.gitlab })(id, card);
+    });
+    const again = planned.asked.filter((a) => a.id.startsWith('gitlab-where'));
+    assert.deepEqual(again.map((a) => a.id), ['gitlab-where', 'gitlab-where-1', 'gitlab-where-2', 'gitlab-where-3']);
+    assert.match(again[1].card.what, /"gitlab" is not a GitLab address/);
+    assert.match(again[2].card.what, /not https/);
+    assert.match(again[3].card.what, /no path/);
+    assert.equal(planned.changes.find((c) => c.action === 'connection').base, 'https://git.example.org');
+  });
+  // Clicking the company button with nothing typed asks for the address.
+  await withHome(async () => {
+    const folder = productFolder('shop');
+    const answers = { '3.real-users': said(REAL_USERS.no), '3.host': said(HOST_LABELS.gitlab), '3.gitlab-where': said(COMPANY_GITLAB) };
+    const got = await stepFor(standIn()).plan(ctxFor(folder, { answers }));
+    assert.equal(got.ask.id, 'gitlab-where-1');
+    assert.match(got.ask.card.what, /Type your company's GitLab address/);
+  });
+});
+
+test('companyAddress takes https and a host with an optional port, and nothing else', () => {
+  assert.deepEqual(companyAddress('https://Git.Example.org'), { base: 'https://git.example.org', host: 'git.example.org' });
+  assert.deepEqual(companyAddress('git.example.org:8443'), { base: 'https://git.example.org:8443', host: 'git.example.org:8443' });
+  assert.deepEqual(companyAddress('localhost:8929'), { base: 'https://localhost:8929', host: 'localhost:8929' });
+  assert.deepEqual(companyAddress('gitlab.com'), { base: 'https://gitlab.com' });
+  for (const bad of ['', 'gitlab', 'http://git.example.org', 'https://git.example.org/a', 'git.example.org:99999', 'git example.org', 'user@git.example.org']) {
+    assert.equal(typeof companyAddress(bad).why, 'string', bad);
+  }
+});
+
+test('the kept card\'s Put it on GitLab also asks which GitLab', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    const folder = productFolder('shop');
+    await g(folder, 'init', '-q', '-b', 'main');
+    await g(folder, 'add', 'notes.txt');
+    await g(folder, 'commit', '-q', '-m', 'Begin');
+    const planned = await answerAll(stepFor(w), ctxFor(folder), (id, card) => {
+      if (id === 'kept') return PUT_ON_GITLAB;
+      if (id === 'gitlab-where') return { text: 'git.example.org' };
+      return choose()(id, card);
+    });
+    assert.equal(planned.changes.find((c) => c.action === 'connection').base, 'https://git.example.org');
+    assert.equal(planned.changes.find((c) => c.action === 'gitlab-hosts').host, 'git.example.org');
   });
 });
