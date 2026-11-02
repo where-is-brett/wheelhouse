@@ -250,3 +250,34 @@ test('nothing spawns VS Code\'s own program, the foreman\'s route included', asy
   // Every script it loads is one the pack carries.
   assert.ok(Object.values(LEAN_LOADS).every((rel) => fs.existsSync(new URL(`../../${rel}`, import.meta.url))));
 });
+
+// A helper in VS Code's own process writes and loads no sign-in start: the one it would write runs the program that is
+// VS Code's own as a Node.js. A real helper's start is unchanged.
+for (const inEditor of [true, false]) {
+  test(`a helper ${inEditor ? 'inside VS Code writes no sign-in start and runs no launchctl' : 'outside VS Code renews the sign-in start'}`, async () => {
+    const w = await windows();
+    try {
+      const agents = path.join(w.home, 'Library', 'LaunchAgents');
+      fs.mkdirSync(agents, { recursive: true });
+      const plist = path.join(agents, 'dev.wheelhouse.helper.plist');
+      fs.writeFileSync(plist, 'old agent');
+      fs.writeFileSync(path.join(w.home, 'login-start.json'), JSON.stringify({ kind: 'launch-agent', path: plist, content: 'old agent', at: '2026-11-01T00:00:00.000Z' }));
+      const calls = [];
+      const helper = await startHelper({
+        address: w.address, platform: 'darwin', inEditor,
+        run: async (file, args) => { calls.push(file); return { code: 0, stdout: '', stderr: '' }; },
+        adapterFor: async () => { throw new Error('none'); }, envFor: async () => { throw new Error('none'); },
+      });
+      await helper.close();
+      if (inEditor) {
+        assert.equal(fs.readFileSync(plist, 'utf8'), 'old agent');
+        assert.equal(calls.includes('launchctl'), false);
+      } else {
+        assert.notEqual(fs.readFileSync(plist, 'utf8'), 'old agent');
+        assert.equal(calls.includes('launchctl'), true);
+      }
+    } finally {
+      w.close();
+    }
+  });
+}

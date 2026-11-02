@@ -5928,7 +5928,8 @@ export async function startHelper({
     releaseStart();
   }
   startEngineHosts();
-  const renewing = renewLoginStart();
+  // Not inside VS Code: the entry it would write runs `process.execPath`, which there is VS Code's own program.
+  const renewing = inEditor ? Promise.resolve() : renewLoginStart();
   const safekeepingWatch = setInterval(() => { safekeepingRound().catch(() => {}); moveRound().catch(() => {}); }, dispatchMs);
   safekeepingWatch.unref?.();
 

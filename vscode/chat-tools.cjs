@@ -137,23 +137,32 @@ function readCapped(file) {
   }
 }
 
-// Reads the inbox once: each file is removed as it is read, and is a click only the way a chat tool's is, as a chat-click.
-// An inbox file can't approve: the same fields, the same proof, nothing signed. Files over the size, links and anything but
-// a plain .json file are removed without being read.
+// Whether `target` is a real folder, not a link, and is where it should be under the project's folder.
+function plainFolder(target) {
+  try { return fs.lstatSync(target).isDirectory(); } catch { return false; }
+}
+
+// Reads the inbox once, for a registered project's folder only (`project` is null anywhere else, and nothing is touched).
+// Each plain .json file is read and removed, and is a click only the way a chat tool's is, as a chat-click. An inbox file
+// can't approve: the same fields, the same proof, nothing signed. A link in the way (.wheelhouse or its inbox), a link,
+// a folder or a file of another name inside it is never followed, removed or read; nothing is removed recursively.
 async function drainInbox({ folder, client, project, rules }) {
-  const dir = typeof folder === 'string' ? path.join(folder, INBOX) : null;
   const out = { read: 0, recorded: 0 };
-  if (dir === null) return out;
+  if (typeof folder !== 'string' || typeof project !== 'string' || project === '') return out;
+  const dir = path.join(folder, INBOX);
   let names;
-  try { names = fs.readdirSync(dir); } catch { return out; }
+  try {
+    if (!plainFolder(path.dirname(dir)) || !plainFolder(dir)) return out;
+    if (fs.realpathSync(dir) !== path.join(fs.realpathSync(folder), INBOX)) return out;
+    names = fs.readdirSync(dir);
+  } catch { return out; }
   for (const name of names) {
     const file = path.join(dir, name);
     let body = null;
     try {
-      const stat = fs.lstatSync(file);
-      // Only a plain .json file is opened, never followed through a link, and read up to the size cap from the open file.
-      if (stat.isFile() && name.endsWith('.json')) body = readCapped(file);
-      fs.rmSync(file, { force: true, recursive: stat.isDirectory() });
+      if (!name.endsWith('.json') || !fs.lstatSync(file).isFile()) continue;
+      body = readCapped(file);
+      fs.unlinkSync(file);
     } catch { continue; }
     out.read += 1;
     let input = null;
@@ -176,19 +185,21 @@ function watchTerminal({ vscode, record, now = () => new Date() }) {
   });
 }
 
-// Appends a recorded command to `file` (in Wheelhouse's state folder for the project). A command that looks like it holds
-// a secret (`scan`, the state's own secret scan) is written as a held-back note instead. The file is trimmed to its newest
-// half past RECORD_BYTES. A failure to write is swallowed: it never reaches the terminal.
-function commandFile(file, { scan = () => [] } = {}) {
+// Appends a recorded command to `file` (in Wheelhouse's state folder for the project), which is made private (0600) and
+// whose folder is never made here: with no folder, nothing is written. A command that looks like it holds a secret (`scan`,
+// the state's own secret scan) is written as a held-back note; with no scan, because the rules did not load, nothing is
+// written at all. The file is trimmed to its newest half past RECORD_BYTES. A failure to write is swallowed: it never
+// reaches the terminal.
+function commandFile(file, { scan } = {}) {
   return (line) => {
     try {
-      if (typeof file !== 'string' || file === '') return;
+      if (typeof file !== 'string' || file === '' || typeof scan !== 'function') return;
+      if (!fs.existsSync(path.dirname(file))) return;
       const held = scan(line.command).length > 0;
-      fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.appendFileSync(file, `${JSON.stringify({ at: line.at, command: held ? HELD_BACK : line.command })}\n`);
+      fs.appendFileSync(file, `${JSON.stringify({ at: line.at, command: held ? HELD_BACK : line.command })}\n`, { mode: 0o600 });
       if (fs.statSync(file).size > RECORD_BYTES) {
         const lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
-        fs.writeFileSync(file, `${lines.slice(Math.floor(lines.length / 2)).join('\n')}\n`);
+        fs.writeFileSync(file, `${lines.slice(Math.floor(lines.length / 2)).join('\n')}\n`, { mode: 0o600 });
       }
     } catch { /* A record is not a need. */ }
   };

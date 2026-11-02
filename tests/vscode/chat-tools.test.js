@@ -183,12 +183,15 @@ test('hostile inbox files are not followed, and a big one is not read', async ()
   const { calls, client } = recorder();
   await tools.drainInbox({ folder, client, project: 'p' });
   assert.equal(calls.length, 0);
-  assert.deepEqual(fs.readdirSync(inbox), []);
+  // Only a plain .json file is ever removed; a link, a folder and a file of another name are left as they are.
+  assert.deepEqual(fs.readdirSync(inbox).sort(), ['dir.json', 'link.json', 'note.txt']);
+  assert.ok(fs.existsSync(path.join(inbox, 'dir.json', 'inner.json')));
   assert.ok(fs.existsSync(outside), 'the file a link pointed at is left alone');
 });
 
 test('the terminal record is kept in the state folder, appended, cleaned of secrets and kept small', () => {
   const file = path.join(tmp(), 'state', 'terminal-commands.jsonl');
+  fs.mkdirSync(path.dirname(file));
   const write = tools.commandFile(file, { scan: scanText });
   write({ at: 'a', command: 'npm test' });
   write({ at: 'b', command: 'export T=ghp_' + 'a'.repeat(40) });
@@ -198,6 +201,21 @@ test('the terminal record is kept in the state folder, appended, cleaned of secr
   for (let i = 0; i < 4000; i += 1) write({ at: 'c', command: `echo ${i} ${'y'.repeat(100)}` });
   assert.ok(fs.statSync(file).size <= tools.RECORD_BYTES + 400);
   assert.match(fs.readFileSync(file, 'utf8'), /echo 3999 /);
+});
+
+test('the terminal record makes no folder, is private, and is not written without the secret rules', () => {
+  const base = tmp();
+  const file = path.join(base, 'no-such-folder', 'terminal-commands.jsonl');
+  tools.commandFile(file, { scan: scanText })({ at: 'a', command: 'ls' });
+  assert.ok(!fs.existsSync(path.join(base, 'no-such-folder')));
+  const here = path.join(base, 'terminal-commands.jsonl');
+  tools.commandFile(here, { scan: scanText })({ at: 'a', command: 'ls' });
+  if (process.platform !== 'win32') assert.equal(fs.statSync(here).mode & 0o077, 0);
+  // The rules failed to load: nothing is written, not even a raw command.
+  const never = path.join(base, 'never.jsonl');
+  tools.commandFile(never)({ at: 'a', command: 'echo hello' });
+  tools.commandFile(never, { scan: undefined })({ at: 'a', command: 'echo hello' });
+  assert.ok(!fs.existsSync(never));
 });
 
 test('a terminal record that can\'t be written leaves the terminal alone', () => {
@@ -253,4 +271,56 @@ test('a FIFO swapped into the inbox does not block the read', { skip: process.pl
   const fifo = path.join(tmp(), 'swapped.json');
   execFileSync('mkfifo', [fifo]);
   assert.equal(tools.readCapped(fifo), null);
+});
+
+// A folder with a project's drain and a victim folder with files in it.
+function victim() {
+  const folder = tmp();
+  const target = tmp();
+  fs.writeFileSync(path.join(target, 'keep.json'), JSON.stringify({ card: 'q1', hash: HASH, label: 'Yes' }));
+  fs.writeFileSync(path.join(target, 'keep.txt'), 'mine');
+  return { folder, target };
+}
+const untouched = (target) => assert.deepEqual(fs.readdirSync(target).sort(), ['keep.json', 'keep.txt']);
+
+test('a symlinked inbox deletes nothing', async () => {
+  const { folder, target } = victim();
+  fs.mkdirSync(path.join(folder, '.wheelhouse'));
+  fs.symlinkSync(target, path.join(folder, '.wheelhouse', 'inbox'));
+  const { calls, client } = recorder();
+  await tools.drainInbox({ folder, client, project: 'p' });
+  untouched(target);
+  assert.equal(calls.length, 0);
+});
+
+test('a symlinked .wheelhouse deletes nothing', async () => {
+  const { folder, target } = victim();
+  fs.mkdirSync(path.join(target, 'inbox'));
+  fs.writeFileSync(path.join(target, 'inbox', 'a.json'), JSON.stringify({ card: 'q1', hash: HASH, label: 'Yes' }));
+  fs.symlinkSync(target, path.join(folder, '.wheelhouse'));
+  const { calls, client } = recorder();
+  await tools.drainInbox({ folder, client, project: 'p' });
+  assert.deepEqual(fs.readdirSync(path.join(target, 'inbox')), ['a.json']);
+  assert.equal(calls.length, 0);
+});
+
+test('a folder that is no registered project is not touched', async () => {
+  const folder = tmp();
+  const inbox = path.join(folder, '.wheelhouse', 'inbox');
+  fs.mkdirSync(inbox, { recursive: true });
+  fs.writeFileSync(path.join(inbox, 'a.json'), JSON.stringify({ card: 'q1', hash: HASH, label: 'Yes' }));
+  const { calls, client } = recorder();
+  for (const project of [null, undefined, '']) await tools.drainInbox({ folder, client, project });
+  assert.deepEqual(fs.readdirSync(inbox), ['a.json']);
+  assert.equal(calls.length, 0);
+});
+
+test('files in the inbox that aren\'t .json are left alone', async () => {
+  const folder = tmp();
+  const inbox = path.join(folder, '.wheelhouse', 'inbox');
+  fs.mkdirSync(inbox, { recursive: true });
+  for (const name of ['README.md', 'notes.txt', 'a.json.bak']) fs.writeFileSync(path.join(inbox, name), 'tracked');
+  const { client } = recorder();
+  await tools.drainInbox({ folder, client, project: 'p' });
+  assert.deepEqual(fs.readdirSync(inbox).sort(), ['README.md', 'a.json.bak', 'notes.txt']);
 });
