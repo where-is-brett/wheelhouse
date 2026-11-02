@@ -228,13 +228,13 @@ function liveDataAsk(name, { isNew = false } = {}) {
     card: {
       level: 3,
       what: `Does ${name} hold live data, such as real people's accounts, orders or messages?`,
-      why: 'Agents never work on live data: with it, they are kept to a practice copy or test data.',
+      why: 'Agents never work on live data: with it, they get test data only.',
       options: [
-        { label: LIVE_DATA.yes, says: 'Agents get test data only, since setup can\'t yet make a practice copy.' },
+        { label: LIVE_DATA.yes, says: 'Agents get test data only, never the live data.' },
         { label: LIVE_DATA.no, says: 'Agents work with the product\'s data as it is.' },
       ],
       recommend: isNew ? LIVE_DATA.no : LIVE_DATA.yes,
-      because: isNew ? 'a new product has no live data yet' : 'it keeps live data safe if you are not sure',
+      because: isNew ? 'a new product has no live data yet' : 'that is the safe side if you are not sure',
       meanwhile: MEANWHILE,
     },
   };
