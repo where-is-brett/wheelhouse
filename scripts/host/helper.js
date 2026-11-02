@@ -1017,6 +1017,15 @@ function readBody(req, res) {
   });
 }
 
+// `spawn` with the running program (VS Code's own, inside the editor) refused.
+export const EDITOR_NO_NODE = 'the helper inside VS Code starts no Node.js';
+export function editorSpawn(spawn) {
+  return (file, ...rest) => {
+    if (file === process.execPath) throw new Error(EDITOR_NO_NODE);
+    return spawn(file, ...rest);
+  };
+}
+
 export async function startHelper({
   // `connectHost` and `protectHost` stand in for setup's host steps and protection in the move to a host; tests give their own.
   connectHost, protectHost,
@@ -1038,7 +1047,7 @@ export async function startHelper({
   mirrorAddress = (record) => record.remoteUrl,
   // Setup's steps (a module exporting STEPS), the user's own home, whose Projects folder setup may
   // act in, and how a long step's own process is started (scripts/setup/engine.js).
-  setupSteps = STEPS_MODULE, userHome = os.homedir(), spawn = nodeSpawn,
+  setupSteps = STEPS_MODULE, userHome = os.homedir(), spawn: spawnGiven = nodeSpawn,
   // The evaluations folder whose records a Thoroughness level's readiness is read from (scripts/eval/run.js).
   evalsFolder = path.join(userHome, '.wheelhouse-evals'),
   // What the helper does once the last uninstall on this computer has finished (scripts/setup/
@@ -1088,6 +1097,9 @@ export async function startHelper({
   // foreman's route, which starts one, refuses.
   inEditor = false,
 } = {}) {
+  // Inside VS Code no program is started as Node.js: setup's step runs, the uninstall, the watcher and the engine's wake all
+  // start `process.execPath` through this, and it refuses that one program (the others go on as they were given).
+  const spawn = inEditor ? editorSpawn(spawnGiven) : spawnGiven;
   if (typeof adapterFor !== 'function') throw new Error('The helper needs an adapterFor function');
   if (typeof envFor !== 'function') throw new Error('The helper needs an envFor function');
   const pipe = PIPE.test(address);
@@ -4756,7 +4768,7 @@ export async function startHelper({
     // sooner) waits its turn, then finds what the first did. The key is the foreman's own, so it
     // never waits on the state:, merge:, mirror: or push: queues the child's own calls take.
     '/foreman/run': ({ project, script, argv }) => oneAtATime(`foreman:${project}`, async () => {
-      if (inEditor) refuse('the Bosun\'s commands need Node.js, which does not run inside VS Code');
+      if (inEditor) refuse(EDITOR_NO_NODE);
       const why = foremanRequestRefusal({ script, argv });
       if (why !== null) refuse(why);
       let result;

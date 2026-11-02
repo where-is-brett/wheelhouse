@@ -17,7 +17,8 @@ import { sign, makeSigningKey, enrol } from '../../scripts/state/signing.js';
 import { registerLean, updateLean, leanState } from '../../scripts/lean/project.js';
 import { adoptProject, mergeApproved, LeanRefusal, SIGNED_LEAN_PROOFS, leanSignedProofs, leanApprovalLine } from '../../scripts/lean/store.js';
 import { ADDON_LEAN_READY } from '../../scripts/lib/copilot-numbers.js';
-import { startHelper } from '../../scripts/host/helper.js';
+import { startHelper, editorSpawn, EDITOR_NO_NODE } from '../../scripts/host/helper.js';
+import { writeProject } from '../../scripts/lib/projects.js';
 import { require } from './helpers.js';
 
 const { startLean, guardedRun, LEAN_LOADS } = require('../../vscode/lean.cjs');
@@ -45,6 +46,10 @@ async function computer() {
   fs.writeFileSync(path.join(folder, '.gitignore'), '.wheelhouse/*\n!.wheelhouse/record/\n');
   await git(folder, ['add', '-A']);
   await git(folder, ['commit', '-q', '-m', 'Start']);
+  const copy = path.join(fs.realpathSync.native(shortHome()), 'copy.git');
+  fs.mkdirSync(copy);
+  await git(copy, ['init', '-q', '--bare']);
+  await git(folder, ['remote', 'add', 'wheelhouse-copy', copy]);
   registerLean({ project: PROJECT, folder, now: () => new Date(T0) });
   updateLean(PROJECT, { test: null, identity: { name: 'Wheelhouse helper', email: 'helper@example.com' }, realUsers: true });
   const own = makeSigningKey();
@@ -70,7 +75,7 @@ async function computer() {
   };
   const ask = (proofs) => ({ project: PROJECT, branch: 'feature/login', run, now, approvalProofs: proofs });
   return {
-    home, folder, feature, press, ask, events, now,
+    home, folder, copy, feature, press, ask, events, now,
     main: () => git(folder, ['rev-parse', 'main']).catch(() => git(path.join(home, 'projects', PROJECT, 'git'), ['rev-parse', 'refs/heads/main'])),
     close: () => {
       if (before === undefined) delete process.env.WHEELHOUSE_HOME;
@@ -101,6 +106,9 @@ test('a merge runs only after an add-on press for that commit', async () => {
     const got = await mergeApproved({ ...c.ask(proofs), commit: head });
     assert.equal(c.events().find((e) => e.kind === 'merge').data.proof, 'add-on');
     assert.equal(await c.main(), got.merge);
+    // The copy follows the approval: it holds the merge, and the record says it was pushed.
+    assert.deepEqual(got.copy, { pushed: true, commit: got.merge });
+    assert.equal(await git(c.copy, ['rev-parse', 'refs/heads/main']), got.merge);
   } finally {
     c.close();
   }
@@ -201,7 +209,11 @@ test('nothing spawns VS Code\'s own program, the foreman\'s route included', asy
     await guarded('git', ['status']);
     assert.deepEqual(seen, ['git']);
 
-    const first = await w.go();
+    // A real project on a host, so the request gets to the route itself; the connection stands in as setup's tests do.
+    const folder = fs.realpathSync.native(shortHome());
+    writeProject('o__p', { folder, remoteUrl: 'https://example.test/o/p.git', host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
+    const standIn = { startHelper: (o) => startHelper({ ...o, envFor: async () => ({}), adapterFor: async () => ({}) }) };
+    const first = await w.go({ modules: { numbers: { ADDON_LEAN_READY: true }, helper: standIn } });
     assert.equal(first.mode, 'helper');
     const post = (route, body) => new Promise((resolve, reject) => {
       const data = JSON.stringify(body);
@@ -213,19 +225,26 @@ test('nothing spawns VS Code\'s own program, the foreman\'s route included', asy
       req.on('error', reject);
       req.end(data);
     });
-    const answer = await post('/foreman/run', { folder: w.home, script: 'wake.js', argv: [] });
-    assert.equal(answer.ok, false);
-    assert.ok(typeof answer.refused === 'string' && answer.refused !== '');
+    const answer = await post('/foreman/run', { folder, script: 'wake', argv: ['measures'] });
+    assert.deepEqual(answer, { ok: false, refused: EDITOR_NO_NODE });
     assert.equal(w.log.includes(process.execPath), false);
     await first.stop();
   } finally {
     w.close();
   }
+  // The other starts of a Node.js the helper makes (setup's step runs, the uninstall, the watcher, the engine's wake) go
+  // through its `spawn`: inside the editor that refuses the running program and lets others on.
+  const calls = [];
+  const spawn = editorSpawn((file) => { calls.push(file); return {}; });
+  assert.throws(() => spawn(process.execPath, ['step.js']), new RegExp(EDITOR_NO_NODE));
+  spawn('git', []);
+  assert.deepEqual(calls, ['git']);
   // The window's file names neither a spawn nor the program running it.
   const source = fs.readFileSync(new URL('../../vscode/lean.cjs', import.meta.url), 'utf8').replace(/^\s*\/\/.*$/gm, '');
   assert.equal(/\bspawn\w*\s*\(|\bexec\w*\s*\(|\bfork\s*\(|child_process/.test(source), false);
   // VS Code's own program is named once, to be refused.
   assert.deepEqual(source.match(/process\.execPath/g), ['process.execPath']);
   assert.match(source, /const OWN_PROGRAM = process\.execPath;/);
-  assert.ok(Array.isArray(LEAN_LOADS) || typeof LEAN_LOADS === 'object');
+  // Every script it loads is one the pack carries.
+  assert.ok(Object.values(LEAN_LOADS).every((rel) => fs.existsSync(new URL(`../../${rel}`, import.meta.url))));
 });

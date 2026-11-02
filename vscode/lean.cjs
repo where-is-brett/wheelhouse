@@ -23,7 +23,6 @@ const LEAN_LOADS = Object.freeze({
 const OWN_PROGRAM = process.execPath;
 const NODE_NAMES = /^(?:node|nodejs|electron|code|code-insiders|cursor|codium)(?:\.exe)?$/i;
 const NO_PROGRAM = 'VS Code\'s own program is never run as Node.js, so Wheelhouse started nothing';
-const NO_FOREMAN = 'the helper inside VS Code starts no Node.js';
 
 const load = (root, rel) => import(pathToFileURL(path.join(root, rel)).href);
 
@@ -97,4 +96,4 @@ async function startLean({ address, root, run, isLean, node = null, modules } = 
   }
 }
 
-module.exports = { LEAN_LOADS, NO_PROGRAM, NO_FOREMAN, guardedRun, answers, startLean };
+module.exports = { LEAN_LOADS, NO_PROGRAM, guardedRun, answers, startLean };
