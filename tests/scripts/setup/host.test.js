@@ -44,7 +44,7 @@ import { QUICK_LINE } from '../../../scripts/lib/host-lines.js';
 import { QUICK_LINE as BOARD_QUICK_LINE } from '../../../scripts/board/health.js';
 import { FREE_PLAN_LINE } from '../../../scripts/host/protection.js';
 import { g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
-import { KEEP_HERE, PUT_ON_GITHUB, remotesOf } from '../../../scripts/setup/local.js';
+import { KEEP_HERE, PUT_ON_GITHUB, PUT_ON_GITLAB, remotesOf } from '../../../scripts/setup/local.js';
 import { homeDir } from '../../../scripts/host/local/home.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
 
@@ -1143,6 +1143,20 @@ async function step3KeptAsk(step, ctx) {
   const answers = { '3.real-users': said(REAL_USERS.no) };
   return (await step.plan({ ...ctx, answers })).ask;
 }
+
+test('a folder with a history is offered GitLab as well as GitHub, and Put it on GitLab plans a GitLab project', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    const folder = productFolder('shop');
+    await g(folder, 'init', '-q', '-b', 'main');
+    await g(folder, 'add', 'notes.txt');
+    await g(folder, 'commit', '-q', '-m', 'Begin');
+    const kept = await step3KeptAsk(stepFor(w), ctxFor(folder));
+    assert.deepEqual(kept.card.options.map((o) => o.label), [KEEP_HERE, PUT_ON_GITHUB, PUT_ON_GITLAB]);
+    const planned = await answerAll(stepFor(w), ctxFor(folder), (id, card) => (id === 'kept' ? PUT_ON_GITLAB : choose()(id, card)));
+    assert.equal(planned.changes.find((c) => c.action === 'connection')?.target, 'gitlab');
+  });
+});
 
 test('a folder with a history put on GitHub sends that history to a new private repository, and no home is made', async () => {
   await withHome(async () => {

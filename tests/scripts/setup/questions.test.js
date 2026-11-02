@@ -120,6 +120,9 @@ test('each answer writes its setting or configuration key, checked by the catalo
       assert.equal(live.ask.id, 'live-data');
       assert.deepEqual(live.ask.card.options.map((o) => o.label), [LIVE_DATA.yes, LIVE_DATA.no]);
       assert.match(live.ask.card.options[0].description, /test data only/);
+      // The card and its recommendation say the same thing, with one reason: setup makes no practice copy.
+      assert.ok(!/practice copy/.test(JSON.stringify(live.ask.card)), 'no practice copy is promised or mentioned');
+      assert.ok(!/\bsince\b[^.]*\bbecause\b/.test(live.ask.card.options[0].description), 'one reason, not two run together');
       assert.deepEqual(await answer(live.ask.card, LIVE_DATA.yes), []);
       assert.equal(answersFor(runId)['4.live-data'].label, LIVE_DATA.yes);
 
