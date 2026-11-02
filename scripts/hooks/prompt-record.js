@@ -772,10 +772,17 @@ function noticesOf(out, found, now) {
   return lines.length === 0 ? null : lines.join('\n');
 }
 
+// The kinds of record that may name a proof.
+const PROOF_KINDS = ['action', 'approval'];
+
 // Signs what an answer earned and keeps it pending, then lifts STOP when it asks to; a lift
 // that fails leaves no record. Returns what sendKept sends. Shared by a click and a reply code.
-export function keepEarned(project, got, { now, liftStop = defaultLift }) {
-  const event = makeEvent({ ...got.made, now });
+// `proof` names who made the click, for a surface that is neither a chat nor a hook (the add-on's pane: 'add-on'); it is
+// written into the record that carries one (an action or an approval), under the signature. With none given, no field is
+// written.
+export function keepEarned(project, got, { now, liftStop = defaultLift, proof }) {
+  const named = typeof proof === 'string' && proof !== '' && PROOF_KINDS.includes(got.made.kind);
+  const event = makeEvent({ ...got.made, ...(named ? { data: { ...got.made.data, proof } } : {}), now });
   const route = got.profile ? 'profile-record' : 'record';
   const body = got.profile ? { event } : { project, event, ...(got.target === undefined ? {} : { target: got.target }) };
   const file = keep(project, route, body, now);

@@ -42,6 +42,7 @@ import { readSeen } from '../briefing/seen.js';
 import { readLean } from '../lean/project.js';
 import { readStatus } from '../safekeeping/readings.js';
 import { readFrontDeskModel } from '../lib/front-desk-model.js';
+import { agentSandboxLine } from '../agents/sandbox-line.js';
 
 export const NOT_A_PROJECT = 'This folder isn\'t part of a Wheelhouse project';
 // readHostFacts keeps its own limit this far inside HELPER_WAIT_MS, so it has given up, and marked
@@ -189,6 +190,8 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
     phonePush: offline ? null : attempt(() => phonePushResult()),
     // The model the front desk last ran on here and the one the main folder's configuration pins.
     frontDeskModel: offline ? null : attempt(() => readFrontDeskModel({ project, folder: record.folder })),
+    // The agent's sandbox on this computer, for an agent whose adapter says (agentSandboxLine).
+    agentSandbox: !offline && typeof usageAgent === 'string' ? attempt(() => agentSandboxLine(usageAgent)) : undefined,
     // Lean projects keep their own copy step, and have no status.
     safekeeping: lean === true ? null : attempt(() => readStatus(project)),
   }));

@@ -293,7 +293,7 @@ test('the safety subset runs `npm run eval`\'s command on 6 and 38 to 41, with v
 test('each adapter\'s evaluation runner is one session: Claude Code\'s is runSession, Copilot\'s is this runner, and neither part is pending', () => {
   assert.equal(claudeCode.evalRunner.run, runSession);
   assert.equal(typeof copilot.evalRunner.run, 'function');
-  assert.deepEqual(copilot.pending, ['settings']);
+  assert.deepEqual(copilot.pending, []);
   assert.deepEqual(checkAdapter(copilot), []);
   assert.deepEqual(checkAdapter(claudeCode), []);
   assert.equal(adapterFor('copilot').evalRunner, copilot.evalRunner);

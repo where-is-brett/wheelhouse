@@ -319,3 +319,16 @@ test('missing or malformed flags fail safe and nothing throws', async () => {
     assert.equal(gateDecision(null).allow, false);
   });
 });
+
+// The add-on's button (design for other agents, section 6.3): a signed approval naming the proof add-on counts for a
+// project with real users where that proof is taken, and a signed approval naming none does not.
+test('a signed approval naming the proof add-on counts for a project with real users', () => withHome(() => {
+  const add = makeEvent({ kind: 'approval', data: { pr: 7, commit: SHA, proof: 'add-on' } });
+  const plain = approval();
+  const taken = { approvalRequired: true, realUsers: true, approvalProofs: ['add-on', 'chat-click'] };
+  assert.equal(gateDecision(input({ ...taken, approval: add })).allow, true);
+  assert.equal(gateDecision(input({ ...taken, approval: plain })).allow, false);
+  // A chat click never stands in for it.
+  const click = { kind: 'card-answer', data: { label: 'Approve', commit: SHA, proof: 'chat-click' } };
+  assert.equal(gateDecision(input({ ...taken, approval: click })).allow, false);
+}));

@@ -30,8 +30,10 @@ import identity from '../../../adapters/copilot/identity.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 // The sessions part left the list in Part 8 Task 1 (ruling P8-1): built, and switched off by its own switch. The
-// evaluation runner left it in Part 8 Task 3 (ruling P8-25).
-const PENDING = ['settings'];
+// evaluation runner left it in Part 8 Task 3 (ruling P8-25), and the settings part in Part 9 Task 1.
+const PENDING = [];
+// A part made pending again, to try the contract's rules on a stub.
+const STUBBED = { ...copilot, hooks: pendingPart('hooks', ['registration', 'file']) };
 
 // Stand-ins for gh, glab and copilot come first on the PATH; the last test asserts none ran.
 const stand = standInTools();
@@ -51,8 +53,8 @@ test('the Copilot adapter passes checkAdapter with its pending parts listed', ()
 });
 
 test('a part not built yet throws NOT_BUILT_YET naming the part', () => {
-  for (const part of PENDING) {
-    for (const [member, fn] of Object.entries(copilot[part])) {
+  for (const part of ['hooks']) {
+    for (const [member, fn] of Object.entries(STUBBED[part])) {
       assert.equal(typeof fn, 'function');
       assert.throws(() => fn(), (error) => error.code === NOT_BUILT_YET && error.part === part && error.message.includes(`The ${part} part`) && error.message.includes(member), `${part}.${member}`);
     }
@@ -68,18 +70,24 @@ test('sessionsFor gives the very object the Copilot adapter holds', () => {
   assert.throws(() => sessionsFor('model-x'), /no adapter for the agent "model-x"; the agents are claude-code, copilot/);
 });
 
+test('the adapter lists nothing as pending', () => {
+  assert.deepEqual(copilot.pending, []);
+  assert.equal(isPendingPart(copilot.settings), false);
+});
+
 test('checkAdapter accepts a not-built-yet part only when the adapter lists it as pending', () => {
-  assert.deepEqual(checkAdapter({ ...copilot, pending: PENDING.filter((p) => p !== 'settings') }), ['The settings part is not built yet, and the adapter does not list it as pending']);
-  const { pending, ...unlisted } = copilot;
-  assert.equal(checkAdapter(unlisted).length, PENDING.length);
+  assert.deepEqual(checkAdapter({ ...STUBBED, pending: [] }), ['The hooks part is not built yet, and the adapter does not list it as pending']);
+  assert.deepEqual(checkAdapter({ ...STUBBED, pending: ['hooks'] }), []);
+  const { pending, ...unlisted } = STUBBED;
+  assert.equal(checkAdapter(unlisted).length, 1);
   assert.ok(checkAdapter(unlisted).every((line) => /is not built yet, and the adapter does not list it as pending$/.test(line)));
-  assert.deepEqual(checkAdapter({ ...copilot, pending: [...PENDING, 'model-x'] }), ['The adapter lists "model-x" as pending, and that is not a part']);
+  assert.deepEqual(checkAdapter({ ...copilot, pending: ['model-x'] }), ['The adapter lists "model-x" as pending, and that is not a part']);
   // A pending list that isn't a list lists nothing, so the stubs are reported as well.
-  assert.deepEqual(checkAdapter({ ...copilot, pending: 'hooks' }).slice(0, 1), ["The adapter's pending list must be an array of part names, and it is string"]);
-  assert.equal(checkAdapter({ ...copilot, pending: 'hooks' }).length, 1 + PENDING.length);
+  assert.deepEqual(checkAdapter({ ...STUBBED, pending: 'hooks' }).slice(0, 1), ["The adapter's pending list must be an array of part names, and it is string"]);
+  assert.equal(checkAdapter({ ...STUBBED, pending: 'hooks' }).length, 2);
   // Listing a part that is built is no problem; a stub with the wrong members still is.
   assert.deepEqual(checkAdapter({ ...claudeCode, pending: ['hooks'] }), []);
-  assert.deepEqual(checkAdapter({ ...copilot, settings: pendingPart('settings', ['project']) }), ['The settings part has no local']);
+  assert.deepEqual(checkAdapter({ ...copilot, settings: pendingPart('settings', ['project']), pending: ['settings'] }), ['The settings part has no local']);
   // A look-alike object is not a stub.
   assert.equal(isPendingPart({ project: () => {}, local: () => {} }), false);
   assert.equal(isPendingPart(null), false);

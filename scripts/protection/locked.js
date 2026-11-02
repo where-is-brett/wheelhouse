@@ -87,7 +87,7 @@ function domainsOf(folder) {
 }
 
 // The web domains of every project registered on this computer.
-function registeredDomains() {
+export function registeredDomains() {
   let names = [];
   try {
     names = fs.readdirSync(projectsDir()).sort();
@@ -125,7 +125,7 @@ function failureLine({ code, stderr }) {
 // never do, so a hook firing between two swaps never meets new scripts without their adapters. A
 // failure removes what was copied and exits. The settings file goes in last, and everything is
 // root's and not writable by anyone else.
-function adminShell({ dir, stage, nodeSource }) {
+function adminShell({ dir, stage, nodeSource, agentFiles = [] }) {
   const own = path.join(dir, 'wheelhouse');
   // The swap order: adapters, then the other folders, then bin (which the destructuring below takes last).
   const names = ['adapters', ...LOCKED_FOLDERS.filter((n) => n !== 'adapters'), 'bin'];
@@ -145,17 +145,24 @@ function adminShell({ dir, stage, nodeSource }) {
     `rm -rf ${aside.join(' ')}`,
     `cp ${q(path.join(stage, 'managed-settings.json'))} ${settingsNew}`,
     `mv ${settingsNew} ${q(filePath(dir))}`,
+    ...agentFiles.flatMap((f, i) => [
+      `mkdir -p ${q(path.dirname(f.path))}`,
+      `cp ${q(path.join(stage, 'agent', String(i)))} ${q(`${f.path}.new`)}`,
+      `chown root:wheel ${q(`${f.path}.new`)}`,
+      `chmod ${f.mode} ${q(`${f.path}.new`)}`,
+      `mv ${q(`${f.path}.new`)} ${q(f.path)}`,
+    ]),
     `chown -R root:wheel ${q(own)} ${q(filePath(dir))}`,
     `chmod -R go-w ${q(own)} ${q(filePath(dir))}`,
   ].join(' && ');
   // Anything moved aside is put back first: the live folders must never be missing, or
   // the old settings file would name scripts that are not there.
   const restore = names.map((n, i) => `[ -d ${aside[i]} ] && [ ! -d ${live[i]} ] && mv ${aside[i]} ${live[i]};`).join(' ');
-  return `${chain} || { ${restore} rm -rf ${fresh.join(' ')} ${settingsNew}; exit 1; }`;
+  return `${chain} || { ${restore} rm -rf ${fresh.join(' ')} ${settingsNew} ${agentFiles.map((f) => q(`${f.path}.new`)).join(' ')}; exit 1; }`;
 }
 
 // Stages everything for `list`, asks once, and removes the staging folder.
-async function put({ list, dir, run, now, nodeSource, address, line }) {
+async function put({ list, dir, run, now, nodeSource, address, line, agentFiles = [] }) {
   const home = wheelhouseHome();
   fs.mkdirSync(home, { recursive: true });
   // Under the Wheelhouse home, which the sandbox keeps agents out of; the temporary folder is theirs.
@@ -169,7 +176,9 @@ async function put({ list, dir, run, now, nodeSource, address, line }) {
     fs.writeFileSync(path.join(own, 'installed.json'), `${JSON.stringify({ version, at: now().toISOString(), pluginRoot: fs.realpathSync(PLUGIN_ROOT) }, null, 2)}\n`);
     const settings = managedSettings({ dir, nodePath: path.join(dir, 'wheelhouse', 'bin', 'node'), address, domains: registeredDomains() });
     fs.writeFileSync(path.join(stage, 'managed-settings.json'), `${JSON.stringify(settings, null, 2)}\n`);
-    const result = await administrator(run, adminShell({ dir, stage, nodeSource }));
+    if (agentFiles.length > 0) fs.mkdirSync(path.join(stage, 'agent'), { recursive: true });
+    agentFiles.forEach((f, i) => fs.writeFileSync(path.join(stage, 'agent', String(i)), f.content));
+    const result = await administrator(run, adminShell({ dir, stage, nodeSource, agentFiles }));
     if (result.code !== 0) return { installed: inPlace(dir), line: failureLine(result) };
     if (!inPlace(dir)) return { installed: false, line: 'The administrator step finished, but the files are not in place' };
     return { installed: true, line };
@@ -192,12 +201,24 @@ function setUp({ project, platform = process.platform, dir, nodePath = process.e
 // Adds the project once, however its folder is spelled.
 const withProject = (list, folder) => (list.some((f) => sameFolder(f, folder)) ? list : [...list, folder]);
 
+// `args.agent`, when given, is an agent's part of Locked (scripts/agents/index.js, agentLocked): `prepare({ dir, nodePath,
+// address, domains })` answers `{ refusal }` (a line, when this agent's Locked isn't offered here) or `{ files }`, the
+// computer-wide files `[{ path, content, mode }]` the same password step puts in place, and `removal()` the paths that go
+// when the last project leaves. Nothing else about Locked changes for an agent without one.
+function agentPart(args, s) {
+  if (!args.agent) return { files: [] };
+  const got = args.agent.prepare({ dir: s.dir, nodePath: path.join(s.dir, 'wheelhouse', 'bin', 'node'), address: s.address, domains: registeredDomains() });
+  return got.refusal ? { refusal: { installed: false, line: got.refusal } } : { files: got.files };
+}
+
 async function install(args, line) {
   const s = setUp(args);
   if (s.refusal) return s.refusal;
   if (!ownFile(s.dir)) return { installed: false, line: NOT_OURS };
+  const agent = agentPart(args, s);
+  if (agent.refusal) return agent.refusal;
   const list = withProject(lockedProjects({ dir: s.dir }), s.record.folder);
-  return put({ list, dir: s.dir, run: args.run, now: args.now ?? (() => new Date()), nodeSource: s.nodeSource, address: s.address, line });
+  return put({ list, dir: s.dir, run: args.run, now: args.now ?? (() => new Date()), nodeSource: s.nodeSource, address: s.address, line, agentFiles: agent.files });
 }
 
 export function installLocked(args) {
@@ -208,7 +229,7 @@ export function updateLocked(args) {
   return install(args, `Locked is up to date. ${REGISTERED_LATER}`);
 }
 
-export async function leaveLocked({ project, platform = process.platform, run, now = () => new Date(), dir, nodePath = process.execPath, address = helperAddress() }) {
+export async function leaveLocked({ project, platform = process.platform, run, now = () => new Date(), dir, nodePath = process.execPath, address = helperAddress(), agent }) {
   if (platform === 'win32') return { installed: false, line: MAC_ONLY };
   const record = readProject(project);
   if (!record) return { installed: false, line: 'The project is not set up' };
@@ -220,7 +241,9 @@ export async function leaveLocked({ project, platform = process.platform, run, n
   if (rest.length > 0) {
     return put({ list: rest, dir: where, run, now, nodeSource: nodePath, address, line: 'This project has left Locked' });
   }
-  const shell = `rm -f ${q(filePath(where))} && rm -rf ${q(path.join(where, 'wheelhouse'))}`;
+  // An agent's computer-wide files go with the last project, and only the ones that are Wheelhouse's (removal says which).
+  const gone = (agent?.removal?.() ?? []).map((file) => ` && rm -f ${q(file)}`).join('');
+  const shell = `rm -f ${q(filePath(where))} && rm -rf ${q(path.join(where, 'wheelhouse'))}${gone}`;
   const result = await administrator(run, shell);
   if (result.code !== 0) return { installed: inPlace(where), line: failureLine(result) };
   if (fs.existsSync(filePath(where))) return { installed: true, line: 'The administrator step finished, but the file is still there' };

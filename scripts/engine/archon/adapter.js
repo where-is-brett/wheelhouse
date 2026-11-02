@@ -27,6 +27,7 @@ import { PACK_FORMS, COPILOT_SUFFIX, PROVIDER as COPILOT } from './copilot-pack.
 import { checkRequests as meterCheck, readGitHubFigure, requestsFile as accountFile } from './copilot-meter.js';
 import { readAccountModels, requestRates } from '../../agents/copilot/column.js';
 import { engineHomeProblem } from '../../agents/copilot/engine-home.js';
+import { sandboxNow } from '../../agents/copilot/sandbox-test.js';
 import { copilotCliInstalled, copilotCliPaths } from './copilot-cli.js';
 import { signInOf } from '../../../adapters/copilot/sessions.js';
 import { brokerProblem } from '../parts.js';
@@ -240,6 +241,7 @@ export function archonAdapter({
   cli = archonCli, streamer, run = defaultRun, packDir, configFile, engine = engineDir(), home = archonHome(), worktreeBases = [],
   pins = { archon: ARCHON_SOURCE, bun: BUN_PIN }, now = () => new Date().toISOString(),
   copilotProblem = () => copilotEngineProblem(engine),
+  copilotLevel = () => (sandboxNow().level ? 'sandbox' : null),
 } = {}) {
   const stream = streamer ?? archonStreamer({ cli });
   const answered = new Set();
@@ -420,7 +422,8 @@ export function archonAdapter({
       // Not started in the project (--cwd names it), so Bun reads nothing of the project's own.
       const result = await cli(args, { json: true, timeout: START_MS });
       if (result.json?.ok === true && typeof result.json.runId === 'string') {
-        return { ok: true, runId: result.json.runId, branch: result.json.branch ?? order.branch ?? null };
+        // A Copilot run says the level it ran at, for the helper's `level` record (scripts/audit/report.js reads it).
+        return { ok: true, runId: result.json.runId, branch: result.json.branch ?? order.branch ?? null, ...(chosen.workflow.endsWith(COPILOT_SUFFIX) ? { level: copilotLevel() } : {}) };
       }
       const error = String(result.json?.error ?? result.stderr ?? '').trim().split('\n')[0];
       const said = refusedWith(`The engine didn't start the run${error ? ` (${error})` : ''}`);

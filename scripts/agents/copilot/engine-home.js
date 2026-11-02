@@ -8,6 +8,10 @@
 // Copilot form writes the same copies into the worktree too (scripts/engine/archon/copilot-pack.js); the copies here
 // are for the CLI's own loading, which check 74's fifth item shows when it runs.
 //
+// The sandbox settings (adapters/copilot/sandbox.js) are written only while `sandbox.level` holds: the switch is on and
+// this computer's test passed for this CLI version and these settings. Otherwise they are removed, so the home never
+// keeps a setting no test covered.
+//
 // Kept beside home.js, which builds the Lean kit for a person's own ~/.copilot/.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -16,8 +20,10 @@ import { fileURLToPath } from 'node:url';
 import { copilotHome, file as hookFile, registration, writeRegistration } from '../../../adapters/copilot/hooks.js';
 import { COPILOT_STATE, signInOf } from '../../../adapters/copilot/sessions.js';
 import { copilotCliPaths } from '../../engine/archon/copilot-cli.js';
+import { SETTINGS_FILE } from '../../../adapters/copilot/sandbox.js';
 import { skillCopyNames } from '../../lineage/copies.js';
 import { engineDir } from '../../lib/paths.js';
+import { sandboxNow } from './sandbox-test.js';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
@@ -50,7 +56,7 @@ function copySkill(from, to, name) {
 // Writes the clean home and returns its path. The sign-in is read first, so a computer with none refuses before the
 // home is touched; config.json is written last, so a home is never signed in without its guards. `root` is the
 // plugin's folder the registration and the skills come from; `node` and `platform` are the registration's.
-export function writeEngineHome({ engine = engineDir(), signedInFrom = copilotHome(), node = process.execPath, root = PLUGIN_ROOT, platform = process.platform, skills = skillCopyNames() } = {}) {
+export function writeEngineHome({ engine = engineDir(), signedInFrom = copilotHome(), node = process.execPath, root = PLUGIN_ROOT, platform = process.platform, skills = skillCopyNames(), sandbox = sandboxNow() } = {}) {
   const home = copilotCliPaths(engine).home;
   const signIn = signInOf(signedInFrom);
   refuseLinkedPath(engine, home);
@@ -64,6 +70,7 @@ export function writeEngineHome({ engine = engineDir(), signedInFrom = copilotHo
   }
   writeRegistration({ home, node, root, platform });
   for (const name of skills) copySkill(path.join(root, 'skills', name), path.join(home, 'skills', name), name);
+  if (sandbox?.level === true) fs.writeFileSync(path.join(home, SETTINGS_FILE), `${JSON.stringify(sandbox.settings, null, 2)}\n`, { mode: 0o600 });
   const config = path.join(home, 'config.json');
   const temp = `${config}.${process.pid}.${crypto.randomUUID()}.tmp`;
   try {
@@ -76,8 +83,8 @@ export function writeEngineHome({ engine = engineDir(), signedInFrom = copilotHo
 }
 
 // What is wrong with the clean home, in plain words for the health check, or null: it isn't there, its guards aren't
-// Wheelhouse's registration as it would be written now, or it isn't signed in.
-export function engineHomeProblem({ engine = engineDir(), node = process.execPath, root = PLUGIN_ROOT, platform = process.platform } = {}) {
+// Wheelhouse's registration as it would be written now, it isn't signed in, or its sandbox settings aren't as the sandbox test allows.
+export function engineHomeProblem({ engine = engineDir(), node = process.execPath, root = PLUGIN_ROOT, platform = process.platform, sandbox = sandboxNow() } = {}) {
   const home = copilotCliPaths(engine).home;
   if (!fs.statSync(home, { throwIfNoEntry: false })?.isDirectory()) return 'Copilot\'s clean home for the build engine isn\'t there, so no Copilot step can start';
   let guards = null;
@@ -87,6 +94,14 @@ export function engineHomeProblem({ engine = engineDir(), node = process.execPat
     signInOf(home);
   } catch {
     return 'Copilot isn\'t signed in in its clean home, so no Copilot step can start';
+  }
+  let kept = null;
+  try { kept = JSON.parse(fs.readFileSync(path.join(home, SETTINGS_FILE), 'utf8')); } catch { /* read as missing */ }
+  if (sandbox?.level === true) {
+    // The domains are the computer's current list; a file that differs in anything is a problem.
+    if (JSON.stringify(kept) !== JSON.stringify(sandbox.settings)) return 'Copilot\'s sandbox settings aren\'t in its clean home as they should be, so no Copilot step can start';
+  } else if (fs.existsSync(path.join(home, SETTINGS_FILE))) {
+    return 'Copilot\'s clean home holds sandbox settings that no passing test covers, so no Copilot step can start; setup writes the home again';
   }
   return null;
 }

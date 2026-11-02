@@ -33,7 +33,7 @@
 import claudeTools from '../../../adapters/claude-code/tools.js';
 import copilotTools from '../../../adapters/copilot/tools.js';
 import { toGuardInput, fromGuardAnswer, harnessOf, exitCodeFor, UNKNOWN_TOOL } from '../../../adapters/copilot/translate.js';
-import { readInput, answer, projectOf, registeredByPath, beingSetUp, managedDir } from '../../hooks/kit.js';
+import { readInput, answer, projectOf, registeredByPath, beingSetUp, managedDir, lockedByPath } from '../../hooks/kit.js';
 import { GUARD_DEADLINE_MS, HELPER_PROBE_MS } from '../../lib/copilot-numbers.js';
 import { helperClient } from '../../host/helper-client.js';
 import { startedAsScript } from '../../lib/started-as-script.js';
@@ -167,6 +167,8 @@ async function decideEvent(event, { stdin, env, deps, seen }) {
   const dir = deps.dir ?? managedDir();
   if (typeof raw.cwd !== 'string' || raw.cwd === '') return refusal(event, COULD_NOT_RUN);
   if (!inWheelhouse(raw.cwd, { find: deps.projectOf ?? projectOf, dir })) return undefined;
+  // The policy hook (Locked's) does nothing outside a Locked project: the person's own registration covers the rest.
+  if (deps.policy === true && !(deps.lockedByPath ?? lockedByPath)(raw.cwd, { dir })) return undefined;
   if ((deps.harnessOf ?? harnessOf)(raw, env) !== 'copilot') {
     if (event === 'sessionStart') return answer.context('SessionStart', LOCAL_HARNESS);
     if (event === GUARD_EVENT && !copilotTools.read.includes(raw.toolName)) return answer.deny(LOCAL_HARNESS);
@@ -217,7 +219,8 @@ async function decideEvent(event, { stdin, env, deps, seen }) {
 //   deps.deadlineMs   the deadline over the whole run (GUARD_DEADLINE_MS)
 //   deps.recordCompaction(input)  records a compaction (a /session/mark compaction)
 //   deps.client       the helper's client (helper-client.js), for the probe, the steps and the marks
-//   deps.dir, deps.projectOf, deps.harnessOf  as the hooks take them
+//   deps.policy       true for the policy hook's start (`--policy`): it answers only in a Locked project
+//   deps.dir, deps.projectOf, deps.harnessOf, deps.lockedByPath  as the hooks take them
 export async function runEntry(event, { stdin = process.stdin, env = process.env, deps = {} } = {}) {
   if (!Object.hasOwn(EVENT_NAMES, event)) return { text: '', code: 0 };
   const deadlineMs = deps.deadlineMs ?? GUARD_DEADLINE_MS;
@@ -246,7 +249,7 @@ export async function runEntry(event, { stdin = process.stdin, env = process.env
 }
 
 if (startedAsScript(import.meta.url)) {
-  const { text, code } = await runEntry(process.argv[2], { stdin: process.stdin });
+  const { text, code } = await runEntry(process.argv[2], { stdin: process.stdin, deps: { policy: process.argv.includes('--policy') } });
   // Waits for the write to be taken (a Windows pipe takes it asynchronously), then exits: a guard still running
   // past the deadline, or a timer it left, must not hold the process.
   if (text !== '') await new Promise((resolve) => process.stdout.write(text, () => resolve()));

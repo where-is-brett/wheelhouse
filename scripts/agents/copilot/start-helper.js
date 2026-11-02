@@ -79,7 +79,7 @@ export const STOP_ON = 'All stop is on, so nothing was changed. Lift All stop fi
 // The plan's line, and install's, when the folder's own record leaves STOP on (ruling P5-58).
 export const STOP_CARRIED = 'This folder\'s record says All stop is on, so All stop stays on with the helper: only Lift All stop in Wheelhouse\'s own window lifts it';
 const NOT_LEAN = 'This folder isn\'t a Lean project on this computer, so there is nothing to remove';
-const USAGE = 'Usage: start-helper.js plan|install --work-computer yes|no --real-users yes|no [--test <command>] [--hash <hash>] | start | uninstall-plan --remove-state yes|no | uninstall --hash <hash> --remove-state yes|no';
+const USAGE = 'Usage: start-helper.js plan|install --work-computer yes|no --real-users yes|no [--test <command>] [--hash <hash>] | start | addon | uninstall-plan --remove-state yes|no | uninstall --hash <hash> --remove-state yes|no';
 
 export class StartRefusal extends Error {}
 const refuse = (line) => { throw new StartRefusal(line); };
@@ -430,6 +430,14 @@ export async function main(argv = process.argv.slice(2), { stdout = process.stdo
     if (command === 'start') {
       if (rest.length !== 0) refuse(USAGE);
       const got = await startAll(deps.startOptions ?? {});
+      say([got.line]);
+      return got.ok ? 0 : 1;
+    }
+    // The VS Code add-on, packed and installed on the card's click. Loaded here and not at the top: the packed add-on carries
+    // this file to start the helper, and `start` needs none of the packing.
+    if (command === 'addon') {
+      if (rest.length !== 0) refuse(USAGE);
+      const got = await (deps.installAddon ?? (await import('../../addon/install.js')).installAddon)(deps.addonOptions ?? {});
       say([got.line]);
       return got.ok ? 0 : 1;
     }
