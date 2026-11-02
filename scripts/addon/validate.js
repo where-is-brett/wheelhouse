@@ -18,6 +18,8 @@ export const OPEN_PANE = 'wheelhouse.openPane';
 // The functions that sign or record a binding click, and what reads their records.
 // Also what sets or lifts STOP, and the briefing; and any call to the desk's `act`, below.
 export const PRESS_NAMES = ['pressCard', 'pressSetting', 'signedRecords', 'keepEarned', 'whyCard', 'suggestCard', 'sendKept', 'liftStop', 'setStop', 'digestText'];
+// The two chat tools the add-on may offer. They are held to no press like any tool: a handler that reaches a name above fails.
+export const ALLOWED_TOOLS = Object.freeze(['wheelhouse_record', 'wheelhouse_board']);
 const HANDLER = 'onPaneMessage';
 const REGISTERS = ['registerCommand', 'registerTextEditorCommand', 'registerDiffInformationCommand'];
 
@@ -172,6 +174,9 @@ export function checkAddon({ pkg, sources } = {}) {
     for (const entry of Array.isArray(contributes.keybindings) ? contributes.keybindings : []) wrongId(entry?.command, 'contributes.keybindings');
     for (const [menu, entries] of Object.entries(isRecord(contributes.menus) ? contributes.menus : {})) {
       for (const entry of Array.isArray(entries) ? entries : []) if (entry?.command !== undefined) wrongId(entry.command, `contributes.menus.${menu}`);
+    }
+    for (const entry of Array.isArray(contributes.languageModelTools) ? contributes.languageModelTools : []) {
+      if (!ALLOWED_TOOLS.includes(entry?.name)) problems.push(`contributes.languageModelTools names the tool ${String(entry?.name)}; the add-on offers only ${ALLOWED_TOOLS.join(' and ')}`);
     }
     for (const event of Array.isArray(pkg.activationEvents) ? pkg.activationEvents : []) {
       if (/^onUri/.test(event)) problems.push(`activationEvents has ${event}: the add-on takes no address from outside`);

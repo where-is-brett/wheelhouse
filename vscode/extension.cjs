@@ -12,6 +12,7 @@ const { onPaneMessage } = require('./press.cjs');
 const { writeVersions, watchVersions } = require('./versions.cjs');
 const desks = require('./desk.cjs');
 const leans = require('./lean.cjs');
+const chat = require('./chat-tools.cjs');
 
 const OPEN_PANE = 'wheelhouse.openPane';
 const PANE_ID = 'wheelhouse.pane';
@@ -108,6 +109,7 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
     liftQuestion: deps.liftQuestion ?? real.liftQuestion,
     timeZone: real.timeZone,
     now: () => new Date(),
+    cancelChat: chat.cancelChatRequest,
   });
   const settingsView = async () => (deps.settingsView ?? real.settingsView)?.() ?? { groups: [] };
 
@@ -154,6 +156,24 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
       if (running) context.subscriptions?.push({ dispose() { running.stop?.(); } });
     } catch { /* The pane says the helper isn't running. */ }
   }
+  // The chat's way in (chat-tools.cjs): two tools that bind nothing, the inbox where tools are switched off, and the
+  // terminal commands recorded. The project is read afresh each time, and nothing here can press.
+  try {
+    const projectNow = () => (typeof real.project === 'function' ? real.project() : deps.project ?? null);
+    const clientNow = deps.client ?? real.client;
+    chat.registerChatTools({ vscode, client: clientNow, desk, project: projectNow, folder, subscriptions: context.subscriptions });
+    if (typeof folder === 'string') {
+      const terminal = chat.watchTerminal({ vscode, record: chat.commandFile(folder) });
+      if (terminal) context.subscriptions?.push(terminal);
+      if (clientNow) {
+        const drain = () => chat.drainInbox({ folder, client: clientNow, project: projectNow() }).catch(() => null);
+        drain();
+        const timer = setInterval(drain, 5000);
+        timer.unref?.();
+        context.subscriptions?.push({ dispose() { clearInterval(timer); } });
+      }
+    }
+  } catch { /* The chat's way in is an extra; the pane does not need it. */ }
   await refresh();
 
   // Redraws when the desk says something changed, and looks again every tick when it says nothing.
