@@ -155,6 +155,9 @@ function verdicts(runId) {
       const why = typedVerdict(text, typedSoFar.get(key) ?? []);
       typedSoFar.set(key, [...(typedSoFar.get(key) ?? []), text]);
       list.push({ e, key, counts: why === null, ...(why === null ? {} : { why }) });
+    } else if (label === null && typeof text === 'string' && text !== '') {
+      // Typed on a card of buttons only: never an answer; the card comes back saying to pick one.
+      list.push({ e, key, counts: false, why: 'buttons' });
     }
   }
   return list;
@@ -182,7 +185,7 @@ export function answersFor(runId) {
 // again, saying why (rulings R125, R132).
 export function typedRefused(runId, step, id) {
   const asked = askedRecord(runId, step, id);
-  if (asked === null || asked.typed !== true) return null;
+  if (asked === null) return null;
   const since = verdicts(runId).filter((v) => v.key === `${step}.${id}` && Date.parse(v.e.at) >= Date.parse(asked.at)).at(-1);
   return since?.why ?? null;
 }

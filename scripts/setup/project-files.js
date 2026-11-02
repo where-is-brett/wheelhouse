@@ -1269,7 +1269,9 @@ export function projectFilesStep({
           const value = targets[rel](text);
           return typeof value === 'string' ? value : jsonText(value);
         };
-        const installed = rel === SETTINGS ? [jsonText(withInstall(objectIn(SETTINGS, before), objectIn(SETTINGS, work)))] : [];
+        // Step 3 names a company's GitLab in the configuration (`gitlabHosts`): that alone is not the director's own change.
+        const named = rel === CONFIG && Array.isArray(objectIn(CONFIG, work)?.gitlabHosts) ? [jsonText({ ...(objectIn(CONFIG, before) ?? {}), gitlabHosts: objectIn(CONFIG, work).gitlabHosts })] : [];
+        const installed = rel === SETTINGS ? [jsonText(withInstall(objectIn(SETTINGS, before), objectIn(SETTINGS, work)))] : named;
         const ours = sameContent(rel, work, before) || [before, ...installed].some((from) => sameContent(rel, made(work), made(from)));
         if (!ours) {
           const asked = yoursAsk({ rel, text: work, isNew });

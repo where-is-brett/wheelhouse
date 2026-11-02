@@ -535,7 +535,7 @@ function setupAnswerOf(cwd, { question, label, card, signable, typed }) {
   if (asked === null || asked.card.question !== question) return null;
   const data = { action: 'setup-answer', runId: asked.runId, step: asked.step, questionId: asked.id, question };
   if (signable) return { asked, made: { kind: 'action', data: { ...data, label, text: null } } };
-  if (asked.typed !== true || label.trim() === '' || scanContent(label).length > 0) return null;
+  if (label.trim() === '' || scanContent(label).length > 0) return null;
   return { asked, made: { kind: 'action', data: { ...data, label: null, text: label } } };
 }
 
@@ -558,7 +558,8 @@ function keepSetupClicks(cwd, out, now, project = null) {
       // question) is kept as given, so the card is asked again saying why, but it records nothing
       // and claims nothing: the answer that follows, typed or clicked, is the one (ruling R137).
       const { runId, step, questionId, question, label, text } = answer.made.data;
-      if (label === null && typedVerdict(text, typedBefore({ runId, step, questionId, question })) !== null) {
+      // Text typed on a card of buttons only is kept the same way, so the card is asked again saying to pick one.
+      if (label === null && (answer.asked.typed !== true || typedVerdict(text, typedBefore({ runId, step, questionId, question })) !== null)) {
         keepAnswer(makeEvent({ ...answer.made, now }));
         continue;
       }
