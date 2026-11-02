@@ -1084,6 +1084,9 @@ export async function startHelper({
   // The folder the merge queue runs in, Wheelhouse's own checkout of the project's fetch mirror (queue-folder.js),
   // unless a test whose engine reads no mirror gives its own: (project) -> { ok, folder } or { ok: false, refused }.
   queueFolder = null,
+  // True when the helper runs inside VS Code's own process (vscode/lean.cjs), where no Node.js can be started: the
+  // foreman's route, which starts one, refuses.
+  inEditor = false,
 } = {}) {
   if (typeof adapterFor !== 'function') throw new Error('The helper needs an adapterFor function');
   if (typeof envFor !== 'function') throw new Error('The helper needs an envFor function');
@@ -4753,6 +4756,7 @@ export async function startHelper({
     // sooner) waits its turn, then finds what the first did. The key is the foreman's own, so it
     // never waits on the state:, merge:, mirror: or push: queues the child's own calls take.
     '/foreman/run': ({ project, script, argv }) => oneAtATime(`foreman:${project}`, async () => {
+      if (inEditor) refuse('the Bosun\'s commands need Node.js, which does not run inside VS Code');
       const why = foremanRequestRefusal({ script, argv });
       if (why !== null) refuse(why);
       let result;

@@ -11,6 +11,7 @@ const { makeNonces } = require('./nonce.cjs');
 const { onPaneMessage } = require('./press.cjs');
 const { writeVersions, watchVersions } = require('./versions.cjs');
 const desks = require('./desk.cjs');
+const leans = require('./lean.cjs');
 
 const OPEN_PANE = 'wheelhouse.openPane';
 const PANE_ID = 'wheelhouse.pane';
@@ -144,6 +145,15 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
     }
   } catch { /* The versions file is a record, not a need. */ }
   try { await startHelper(); } catch { /* The pane says the helper isn't running. */ }
+  // Where no Node.js runs, a Lean project's helper runs in this process (switched off until ADDON_LEAN_READY), and stops with it.
+  if (node === null) {
+    try {
+      const running = await (deps.startLean ?? ((o) => leans.startLean({ ...o, root })))({
+        address: deps.address ?? real.address, isLean: deps.isLean ?? real.isLean?.() ?? false, node,
+      });
+      if (running) context.subscriptions?.push({ dispose() { running.stop?.(); } });
+    } catch { /* The pane says the helper isn't running. */ }
+  }
   await refresh();
 
   // Redraws when the desk says something changed, and looks again every tick when it says nothing.

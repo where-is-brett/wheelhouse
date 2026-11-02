@@ -49,3 +49,7 @@ export const COPILOT_SANDBOX_CHECKED = false;
 // Whether check 54 (sitting S1) has shown VS Code's Claude harness loads Wheelhouse's guards, so setup may offer it as
 // a front end (scripts/agents/index.js). It stays false until its own pull request after S1.
 export const CLAUDE_HARNESS_CHECKED = false;
+// Whether the add-on's press merges at Lean, and the add-on runs the helper in VS Code's own process where Node.js can't
+// run (vscode/lean.cjs). It stays false until the sitting that shows both on a real computer, and moves only by a commit
+// of its own. Read by scripts/lean/store.js and vscode/lean.cjs.
+export const ADDON_LEAN_READY = false;

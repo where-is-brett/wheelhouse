@@ -18,6 +18,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { run as realRun } from '../lib/run.js';
+import { ADDON_LEAN_READY } from '../lib/copilot-numbers.js';
 import { safeGit, lookRefusalLine } from '../lib/safe-git.js';
 import { computerId, stateDir } from '../lib/paths.js';
 import { setStop, stopState } from '../lib/stop.js';
@@ -62,8 +63,9 @@ const MAIN = 'refs/heads/main';
 const WHEELHOUSE = { name: 'Wheelhouse', email: 'wheelhouse@invalid' };
 // The proofs a Lean merge takes (the helper passes the chat's own, from scripts/agents/chat-clicks.js): a signed
 // approval naming the window's proof, and, on a project with no real users, a chat click. The add-on's proof joins
-// when the add-on exists (spec section 8.6); until then a project with real users is asked for the window's.
-export const SIGNED_LEAN_PROOFS = Object.freeze(['window']);
+// only with ADDON_LEAN_READY on (spec section 8.6); until then a project with real users is asked for the window's.
+export const leanSignedProofs = (ready) => Object.freeze(ready === true ? ['window', 'add-on'] : ['window']);
+export const SIGNED_LEAN_PROOFS = leanSignedProofs(ADDON_LEAN_READY);
 
 const projectFolder = (project) => path.join(stateDir(project), '..');
 
