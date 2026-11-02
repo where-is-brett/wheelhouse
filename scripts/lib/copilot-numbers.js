@@ -30,6 +30,11 @@ export const COPILOT_VERSION = '1.0.101';
 export const HELPER_PROBE_MS = 2000;
 // Whether check 59 (C6) has shown a hook can see ask_user's answer, so a click a hook saw can be recorded as
 // `hook-click`. Until it has, a chat click is recorded as `chat-click`, the agent's own account (ruling P5-12).
+// PENDING when this turns true (tests/scripts/hooks/policy-click.test.js fails until the first is done):
+//   - register `postToolUse` in the policy hook file (agents/copilot/company.js policyRegistration; adapters/copilot/hooks.js
+//     EVENTS), so the managed copy's entry is started for an ask_user answer;
+//   - check 59's note settles ask_user's real postToolUse input and response shape, and hook-entry.js's policyClick
+//     (which reads `tool_response.answers`) and the translation are made to match it.
 export const C6_PASSED = false;
 // Whether Copilot's signed review, in a clean session the helper starts (check 66's route b), is switched on. It is
 // false until three real runs in a row pass the clean check on COPILOT_VERSION and are recorded in check 66's note

@@ -214,18 +214,27 @@ async function decideEvent(event, { stdin, env, deps, seen }) {
   return runSteps(STEPS[event], inputs, { event, steps: deps.steps, stepDeps, dir });
 }
 
+// Whether this start may sign a chat click at all: check 59 allows it, and this file is the managed copy.
+function mayClick(deps) {
+  return (deps.c6 ?? C6_PASSED) === true && isInside(deps.dir ?? managedDir(), deps.self ?? fileURLToPath(import.meta.url));
+}
+
 // A chat click on Copilot, signed with the proof `policy-hook`, as Claude Code's hook signs an ask_user answer. It
 // signs only when this entry runs as the managed copy (the policy hook's) and check 59 has shown a hook sees the
 // answer (C6_PASSED); the person's own hook copy and the clean home's never sign, and nothing else changes. `input` is
-// postToolUse's translated input. `deps.c6`, `deps.self`, `deps.dir` and `deps.decide` stand in for the constant, this
-// file, the managed folder and the prompt record. A project with real users takes the proof only where the Copilot
-// adapter's list and the gate's real-user list both name it; neither list is changed here.
+// postToolUse's translated input. The answers signed are the ones the tool's own response carries
+// (`tool_response.answers`): `tool_input.answers` is the model's input, which it could fill in itself, so it is never
+// read as a click. A response with no answers signs nothing. `deps.c6`, `deps.self`, `deps.dir` and `deps.decide`
+// stand in for the constant, this file, the managed folder and the prompt record. A project with real users takes the
+// proof only where the Copilot adapter's list and the gate's real-user list both name it; neither list is changed here.
 export async function policyClick(input, deps = {}) {
-  if ((deps.c6 ?? C6_PASSED) !== true) return undefined;
-  if (!isInside(deps.dir ?? managedDir(), deps.self ?? fileURLToPath(import.meta.url))) return undefined;
+  if (!mayClick(deps)) return undefined;
   if (input?.tool_name !== copilotTools.ask) return undefined;
+  const answers = input.tool_response?.answers;
+  if (!isObject(answers) || Object.keys(answers).length === 0) return undefined;
   const decide = deps.decide ?? (await import('../../hooks/prompt-record.js')).decide;
-  return decide({ ...input, tool_name: claudeTools.ask }, { dir: deps.dir, writeVia: 'self', proof: 'policy-hook', ...deps.promptDeps });
+  const given = { ...input, tool_name: claudeTools.ask, tool_input: { ...(isObject(input.tool_input) ? input.tool_input : {}), answers }, tool_response: { answers } };
+  return decide(given, { dir: deps.dir, writeVia: 'self', proof: 'policy-hook', ...deps.promptDeps });
 }
 
 // Runs the entry for `event`: `{ text, code }`, the line to write (or '') and the exit code. Never throws.
@@ -237,7 +246,7 @@ export async function policyClick(input, deps = {}) {
 //   deps.policy       true for the policy hook's start (`--policy`): it answers only in a Locked project
 //   deps.dir, deps.projectOf, deps.harnessOf, deps.lockedByPath  as the hooks take them
 export async function runEntry(event, { stdin = process.stdin, env = process.env, deps = {} } = {}) {
-  if (event === 'postToolUse' && deps.policy === true) return runPolicyClick({ stdin, deps });
+  if (event === 'postToolUse' && deps.policy === true) return runPolicyClick({ stdin, env, deps });
   if (!Object.hasOwn(EVENT_NAMES, event)) return { text: '', code: 0 };
   const deadlineMs = deps.deadlineMs ?? GUARD_DEADLINE_MS;
   let timer;
@@ -264,17 +273,30 @@ export async function runEntry(event, { stdin = process.stdin, env = process.env
   }
 }
 
-// The policy hook's postToolUse: signs a chat click when policyClick allows, and answers nothing in any case.
-async function runPolicyClick({ stdin, deps }) {
-  try {
+// The policy hook's postToolUse: signs a chat click when policyClick allows, and answers nothing in any case. It
+// reads nothing when the click may not be signed; it signs only for the Copilot CLI's harness, and sits under the same
+// deadline as the guard path.
+async function runPolicyClick({ stdin, env, deps }) {
+  const none = { text: '', code: 0 };
+  if (!mayClick(deps)) return none;
+  let timer;
+  const late = new Promise((resolve) => { timer = setTimeout(resolve, deps.deadlineMs ?? GUARD_DEADLINE_MS); });
+  const work = (async () => {
     const raw = await readInput(stdin);
-    if (typeof raw.cwd !== 'string' || raw.cwd === '' || !(deps.lockedByPath ?? lockedByPath)(raw.cwd, { dir: deps.dir ?? managedDir() })) return { text: '', code: 0 };
+    if (typeof raw.cwd !== 'string' || raw.cwd === '' || !(deps.lockedByPath ?? lockedByPath)(raw.cwd, { dir: deps.dir ?? managedDir() })) return;
+    if ((deps.harnessOf ?? harnessOf)(raw, env) !== 'copilot') return;
     const translated = toGuardInput(raw, 'postToolUse');
     if (isObject(translated)) await policyClick(translated, deps);
+  })();
+  try {
+    await Promise.race([work, late]);
   } catch {
     // A click not signed, and nothing else.
+  } finally {
+    clearTimeout(timer);
+    work.catch(() => {});
   }
-  return { text: '', code: 0 };
+  return none;
 }
 
 if (startedAsScript(import.meta.url)) {
