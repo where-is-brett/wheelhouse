@@ -43,3 +43,9 @@ export const REVIEW_SESSION_READY = false;
 // sign-in start makes no watcher for a Copilot project. It moves only by a commit of its own. Read only by
 // adapters/copilot/sessions.js.
 export const BACKGROUND_SESSIONS_READY = false;
+// Whether check 57 (the sandbox test, sitting S3) has shown Copilot's sandbox refuses every try on this computer, so
+// a Copilot step runs in it (adapters/copilot/sandbox.js). It stays false until its own pull request after S3.
+export const COPILOT_SANDBOX_CHECKED = false;
+// Whether check 54 (sitting S1) has shown VS Code's Claude harness loads Wheelhouse's guards, so setup may offer it as
+// a front end (scripts/agents/index.js). It stays false until its own pull request after S1.
+export const CLAUDE_HARNESS_CHECKED = false;

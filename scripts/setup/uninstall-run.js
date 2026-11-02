@@ -123,6 +123,7 @@ import {
 } from './uninstall.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { unlockHomesIn } from '../host/local/move.js';
+import { allAgentsLocked } from '../agents/index.js';
 
 export const TICK_MS = 5 * 1000;
 
@@ -570,7 +571,7 @@ export async function applyUninstall({
         }
         case 'leave-locked': {
           const dir = path.dirname(entry.target);
-          const got = await o.leaveLocked({ project: entry.project, platform, now, dir });
+          const got = await o.leaveLocked({ project: entry.project, platform, now, dir, agent: allAgentsLocked() });
           const kept = readProject(entry.project);
           if (kept === null || lockedProjects({ dir }).some((f) => samePath(f, kept.folder))) halt(`Locked was not left (${got?.line ?? 'it did not say why'}), so nothing else was removed`);
           mark(entry.ids, true);

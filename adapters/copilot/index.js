@@ -1,13 +1,14 @@
 // adapters/copilot/index.js
-// The Copilot adapter (design section 8.1). Every part is here; the parts not built yet are
-// stubs that throw NOT_BUILT_YET (scripts/agents/contract.js), and `pending` lists them, so checkAdapter
-// accepts them and nothing else. It imports nothing that reaches the hook kit, so the kit can import it
-// without a cycle.
-import { pendingPart } from '../../scripts/agents/contract.js';
+// The Copilot adapter (design section 8.1). Every part is here; a part not built would be a stub that throws
+// NOT_BUILT_YET (scripts/agents/contract.js) and be listed in `pending`, which is empty now. It imports nothing that reaches
+// the hook kit, so the kit can import it without a cycle.
+import { sandboxNow } from '../../scripts/agents/copilot/sandbox-test.js';
 import { LEAN_RECORD_DIR } from '../../scripts/lib/copilot-numbers.js';
 import hooks from './hooks.js';
 import identity from './identity.js';
+import { sandboxLine } from './sandbox.js';
 import safetyLine from './safety-line.js';
+import settings from './settings.js';
 import sessions from './sessions.js';
 import tools from './tools.js';
 import toolSheet from './tool-sheet.js';
@@ -19,8 +20,8 @@ export default Object.freeze({
   hooks,
   translate,
   tools,
-  // The part not built yet: the settings writer (Part 9, ruling P7-21).
-  settings: pendingPart('settings', ['project', 'local']),
+  // The sandbox settings (settings.js); the clean home writes them once the sandbox test has passed (sandbox.js).
+  settings,
   // The session starts (sessions.js): built, and the waker keeps a session's output and reads its outcome, id and
   // refusals from it (ruling P8-2), but their checks refuse while BACKGROUND_SESSIONS_READY is false (ruling P8-1).
   sessions,
@@ -33,8 +34,10 @@ export default Object.freeze({
   packaging: Object.freeze({ files: () => ['.gitignore', '.vscode/settings.json', `${LEAN_RECORD_DIR}/.gitkeep`] }),
   toolSheet,
   safetyLine,
+  // The board's line for the sandbox on this computer, { level, text }, from the kept test (sandbox.js); not a contract part (the board reads it through scripts/agents/sandbox-line.js).
+  sandboxLine: () => sandboxLine(sandboxNow().state),
   // One evaluation session through `copilot -p` (eval-runner.js, ruling P8-25), for `npm run eval -- --agent copilot`.
   // Loaded only when a session is asked for, so nothing that loads the adapter loads the evaluation runner.
   evalRunner: Object.freeze({ run: async (options) => (await import('./eval-runner.js')).run(options) }),
-  pending: Object.freeze(['settings']),
+  pending: Object.freeze([]),
 });

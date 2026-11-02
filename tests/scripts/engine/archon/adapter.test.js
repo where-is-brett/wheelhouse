@@ -554,6 +554,19 @@ test('a Copilot run doesn\'t start while Copilot\'s program or its clean home is
   assert.equal((await claude.start({ work: 'card-14', lane: 'quick', branch: 'b' })).ok, true);
 });
 
+test('a Copilot run says the level it ran at: the sandbox only while a test stands', async () => {
+  const cli = fakeCli({ 'workflow run': json('run-detach.json') });
+  const all = { tiers: { small: 'copilot/auto', medium: 'copilot/auto', large: 'copilot/auto' } };
+  const order = { work: 'card-14', lane: 'small', branch: 'b', bindings: all };
+  const held = await adapter(cli, { copilotProblem: () => null, copilotLevel: () => 'sandbox' }).start(order);
+  assert.equal(held.level, 'sandbox');
+  const open = await adapter(cli, { copilotProblem: () => null, copilotLevel: () => null }).start(order);
+  assert.equal(open.level, null);
+  // A Claude run says no level of Copilot's.
+  const claude = await adapter(cli, { copilotLevel: () => assert.fail('not asked for a Claude run') }).start({ work: 'card-14', lane: 'quick', branch: 'b' });
+  assert.equal('level' in claude, false);
+});
+
 test('a Copilot run doesn\'t start on an engine built without the Copilot patch: the SDK\'s own runtime would run, not the pinned program', async () => {
   const { copilotEngineProblem } = await import('../../../../scripts/engine/archon/adapter.js');
   const { CLI_PATCH_MARK } = await import('../../../../scripts/engine/archon/build.js');

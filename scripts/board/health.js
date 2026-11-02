@@ -189,7 +189,7 @@ export function readScreens({ folder, findBrowser = realFindBrowser } = {}) {
 // `screens` is readScreens'; only pages listed and Chrome not found bring its line. `phonePush`
 // is setup's push test as this computer's journal last recorded it, { arrived, at }
 // (scripts/lib/setup-run.js, phonePushResult); only `arrived: false` adds a line.
-export function healthLines({ record, locked, stop, lock, helperUp, facts, renewal, platform = process.platform, realUsers, builds, screens, phonePush, frontDeskModel, safekeeping } = {}) {
+export function healthLines({ record, locked, stop, lock, helperUp, facts, renewal, platform = process.platform, realUsers, builds, screens, phonePush, frontDeskModel, safekeeping, agentSandbox } = {}) {
   const lines = [];
   const add = (level, text) => lines.push({ level, text });
 
@@ -218,6 +218,8 @@ export function healthLines({ record, locked, stop, lock, helperUp, facts, renew
   if (screens?.pages === true && screens.chrome === false) add('ok', NO_CHROME_LINE);
   if (lock && lock.computer !== computerId()) add('watch', 'Another computer holds this project, so this one is read-only');
   if (helperUp === false) add('watch', NO_HELPER);
+  // The agent's sandbox on this computer, { level, text }, from the agent's adapter (sandboxLine); none for an agent without one.
+  if (typeof agentSandbox?.text === 'string' && ['ok', 'watch'].includes(agentSandbox.level)) add(agentSandbox.level, agentSandbox.text);
   if (renewal?.due) {
     const on = dayMonthYear(renewal.on);
     add('watch', on ? `Renew the host key by ${on}` : 'Renew the host key soon');

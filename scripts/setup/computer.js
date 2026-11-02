@@ -53,10 +53,12 @@ import { effectiveSettings } from '../settings/effective.js';
 import { loginEntry, installLoginStart, loginStartRecord, needsLoginStart } from '../lib/login-start.js';
 import { HELPER_START_SCRIPT } from '../agents/index.js';
 import { localViews } from '../hooks/session-start.js';
-import { stateDir } from '../lib/paths.js';
+import { computerId, stateDir } from '../lib/paths.js';
 import { joinedRepo } from '../lib/setup-run.js';
 import { claudeCodeSettings } from '../protection/settings.js';
 import { installLocked, ownFile, MAC_ONLY, NEEDS_NARROW, HAS_MDM, NOT_OURS, MDM_PLIST } from '../protection/locked.js';
+import { agentInFolder } from '../agents/names.js';
+import { agentLocked, claudeHarnessRoute } from '../agents/index.js';
 import { managedDir, lockedProjects } from '../protection/managed.js';
 import { MARKETPLACE, UPSTREAMS, readManifest } from '../lineage/manifest.js';
 import { receiverPort } from '../telemetry/main.js';
@@ -332,20 +334,42 @@ function lockedCard(target, folder) {
   };
 }
 
+const fail = (why) => { throw new Error(why); };
+
+// The agent's part of Locked for the project, or null where the agent's Locked is the core's alone (scripts/agents/index.js).
+// `options` are the part's, for tests.
+function lockedPartOf(record, options) {
+  // An agent that can't be told (this computer's id unreadable) is refused. A folder with no configuration is a Claude Code
+  // project: a project run by another agent always has one, since its `agents` map is what names the agent.
+  let name;
+  try { name = agentInFolder(record.folder, { computerId: computerId() }); } catch { throw new Error('Which coding agent this project runs here can\'t be told, so Locked is not set up; run the step again'); }
+  return typeof name === 'string' ? agentLocked(name, options) : null;
+}
+
+export { claudeHarnessRoute };
+
 // The project record's file, which a joining computer's Locked marks.
 const projectFile = (project) => path.join(stateDir(project), '..', 'project.json');
 
 // Step 8. `run`, `dir` (the managed settings folder), `mdmPlist`, `nodePath` and `address` are
 // installLocked's, for tests.
-export function lockedStep({ run = realRun, dir, mdmPlist, nodePath, address } = {}) {
+export function lockedStep({ run = realRun, dir, mdmPlist, nodePath, address, agentOptions = {} } = {}) {
   // Locked's list for the project, once a change installLocked would refuse is ruled out: a change
   // installLocked would refuse is never offered on a card. `mark`: the record is marked Locked too.
   const lockedList = (found, mark, platform) => {
+    // An agent with a part of its own is held by the organisation route where the company manages it, and by Locked only
+    // once the agent's own conditions are met (a sandbox that has passed its test on this Mac).
+    const part = lockedPartOf(found.record, agentOptions);
+    if (part) {
+      const got = part.route(platform);
+      if (got.route === 'organisation') return { settled: { record: { locked: false, why: got.why } } };
+      if (got.route === 'none') throw new Error(got.why);
+    }
     const where = dir ?? managedDir(platform);
     if (fs.existsSync(mdmPlist ?? MDM_PLIST)) throw new Error(HAS_MDM);
     if (!ownFile(where)) throw new Error(NOT_OURS);
     const target = path.join(where, 'managed-settings.json');
-    const changes = [{ kind: 'locked', target, project: found.project, folder: found.record.folder, ...(mark ? { mark: true } : {}) }];
+    const changes = [{ kind: 'locked', target, project: found.project, folder: found.record.folder, ...(mark ? { mark: true } : {}), ...(part ? { agentPart: true } : {}) }];
     return { changes, card: lockedCard(target, found.record.folder), director: 'Your password, in macOS\'s own window' };
   };
   const needsNarrow = (found) => {
@@ -407,7 +431,7 @@ export function lockedStep({ run = realRun, dir, mdmPlist, nodePath, address } =
           before: { exists, ours: exists && ownFile(where), projects: lockedProjects({ dir: where }) },
           after: { project: c.project, folder: c.folder },
         });
-        const got = await installLocked({ project: c.project, platform, run, now: ctx.now, dir: where, mdmPlist, nodePath, address });
+        const got = await installLocked({ project: c.project, platform, run, now: ctx.now, dir: where, mdmPlist, nodePath, address, ...(c.agentPart ? { agent: lockedPartOf(projectForFolder(c.folder)?.record ?? { folder: c.folder }, agentOptions) ?? fail('The agent\'s part of Locked is gone, so Locked was not installed') } : {}) });
         if (!got.installed) throw new Error(got.line);
         // A joining computer's record, marked Locked once Locked is on, recorded first.
         if (c.mark) {
