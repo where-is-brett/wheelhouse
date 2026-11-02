@@ -334,10 +334,16 @@ function lockedCard(target, folder) {
   };
 }
 
+const fail = (why) => { throw new Error(why); };
+
 // The agent's part of Locked for the project, or null where the agent's Locked is the core's alone (scripts/agents/index.js).
 // `options` are the part's, for tests.
 function lockedPartOf(record, options) {
-  try { return agentLocked(agentInFolder(record.folder, { computerId: computerId() }), options); } catch { return null; }
+  // An agent that can't be told (this computer's id unreadable) is refused. A folder with no configuration is a Claude Code
+  // project: a project run by another agent always has one, since its `agents` map is what names the agent.
+  let name;
+  try { name = agentInFolder(record.folder, { computerId: computerId() }); } catch { throw new Error('Which coding agent this project runs here can\'t be told, so Locked is not set up; run the step again'); }
+  return typeof name === 'string' ? agentLocked(name, options) : null;
 }
 
 export { claudeHarnessRoute };
@@ -425,7 +431,7 @@ export function lockedStep({ run = realRun, dir, mdmPlist, nodePath, address, ag
           before: { exists, ours: exists && ownFile(where), projects: lockedProjects({ dir: where }) },
           after: { project: c.project, folder: c.folder },
         });
-        const got = await installLocked({ project: c.project, platform, run, now: ctx.now, dir: where, mdmPlist, nodePath, address, ...(c.agentPart ? { agent: lockedPartOf(projectForFolder(c.folder)?.record ?? { folder: c.folder }, agentOptions) } : {}) });
+        const got = await installLocked({ project: c.project, platform, run, now: ctx.now, dir: where, mdmPlist, nodePath, address, ...(c.agentPart ? { agent: lockedPartOf(projectForFolder(c.folder)?.record ?? { folder: c.folder }, agentOptions) ?? fail('The agent\'s part of Locked is gone, so Locked was not installed') } : {}) });
         if (!got.installed) throw new Error(got.line);
         // A joining computer's record, marked Locked once Locked is on, recorded first.
         if (c.mark) {

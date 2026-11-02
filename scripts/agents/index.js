@@ -53,3 +53,7 @@ export function adapterFor(name) {
   if (typeof name !== 'string' || !Object.hasOwn(ADAPTERS, name)) throw noAdapter(name);
   return ADAPTERS[name];
 }
+
+// Every agent's part of Locked together, for leaving it: `removal()` is the computer-wide files of all of them that are
+// Wheelhouse's, so an uninstall that doesn't know which agent a project ran still takes them away.
+export const allAgentsLocked = () => ({ removal: () => AGENTS.flatMap((name) => agentLocked(name)?.removal() ?? []) });

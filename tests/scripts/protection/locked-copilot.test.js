@@ -174,3 +174,31 @@ test('Claude Code\'s Locked files are unchanged', async () => {
     assert.ok(!seen[0].copilot.includes('agent'));
   });
 });
+
+test('what Locked forces is the sandbox the test covers', () => {
+  const [managed] = lockedCopilotFiles({ dir: DIR, nodePath: NODE, address: ADDRESS, domains: ['docs.example.org'] });
+  const forced = JSON.parse(managed.content).sandbox;
+  const tested = currentSettings({ domains: ['registry.npmjs.org', 'docs.example.org'], helper: ADDRESS, platform: 'darwin' }).sandbox;
+  assert.deepEqual(forced, tested);
+  assert.equal(settingsDigest({ sandbox: forced }), settingsDigest({ sandbox: tested }));
+  assert.equal(forced.userPolicy.network.allowOutbound, false);
+});
+
+test('leaving the last project takes Copilot\'s files away, and only Wheelhouse\'s', async () => {
+  await withHome(async () => {
+    const project = makeProject('l');
+    const dir = temp('wh-lockedc-dir-');
+    const mine = places();
+    const part = copilotLocked({ places: mine, company: none, sandbox: passing() });
+    // Nothing of ours there yet: nothing to remove.
+    assert.deepEqual(part.removal(), []);
+    for (const f of lockedCopilotFiles({ dir, nodePath: NODE, address: ADDRESS, places: mine })) {
+      fs.mkdirSync(path.dirname(f.path), { recursive: true });
+      fs.writeFileSync(f.path, f.content);
+    }
+    assert.deepEqual(part.removal().sort(), [mine.managed, path.join(mine.policyDir, 'wheelhouse.json')].sort());
+    // A company's managed file is never removed.
+    fs.writeFileSync(mine.managed, JSON.stringify({ sandbox: {} }));
+    assert.deepEqual(part.removal(), []);
+  });
+});

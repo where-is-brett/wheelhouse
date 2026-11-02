@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { cleanDomain } from '../../protection/settings.js';
 import { baselineSettings, companyManages, companyPlaces, OWN_MARK, policyRegistration, readCompanySettings, POLICY_FILE } from './company.js';
+import { sandboxSettings } from '../../../adapters/copilot/sandbox.js';
 import { sandboxNow } from './sandbox-test.js';
 
 const unique = (list) => [...new Set(list)];
@@ -21,8 +22,9 @@ export const NEEDS_SANDBOX = 'Locked for Copilot forces its sandbox on for every
 export function lockedCopilotFiles({ dir, nodePath, address, domains = [], places = companyPlaces('darwin') }) {
   const settings = baselineSettings({ platform: 'darwin' });
   settings.wheelhouse = { ...OWN_MARK };
-  settings.sandbox.userPolicy.filesystem.readwritePaths = [address];
-  settings.sandbox.userPolicy.network.allowedHosts = unique(['registry.npmjs.org', ...domains.map(cleanDomain).filter((d) => d !== null)]);
+  // The sandbox block is the very one the sandbox test covers (adapters/copilot/sandbox.js), so what Locked forces is
+  // what a passing test was run for: only the web list differs, and the digest leaves that out.
+  settings.sandbox = sandboxSettings({ domains: unique(['registry.npmjs.org', ...domains.map(cleanDomain).filter((d) => d !== null)]), helper: address, platform: 'darwin' }).sandbox;
   const hooks = policyRegistration({ node: nodePath, root: path.join(dir, 'wheelhouse'), platform: 'darwin' });
   return [
     { path: places.managed, content: `${JSON.stringify(settings, null, 2)}\n`, mode: '644' },
