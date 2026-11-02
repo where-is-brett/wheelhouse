@@ -138,6 +138,8 @@ import { checkProvenance, removeProvenance, sessionProvenance, engineProvenance 
 import { brokerDecision } from '../engine/broker/rules.js';
 import { hostApprovalReady } from './approval-ready.js';
 import { hostApproved, hostApprovalNeeded } from './host-approval.js';
+import { checkOwnFiles, ownFilesLine } from '../health/own-files.js';
+import { keyRenewalDue, lastKeyRenewal } from '../state/key-renewal.js';
 import { brokerRoutes } from '../engine/broker/routes.js';
 import { lookAtHead, raiseCard, withLocalLock } from '../lib/local-git.js';
 import { queueCall } from '../engine/broker/queue.js';
@@ -5753,12 +5755,35 @@ export async function startHelper({
     return closed;
   }
 
+  // The board's two lines that need the keys folder or a write in the home, which no hook may do: the look at Wheelhouse's own
+  // files and the key renewal. The helper works them out and the board reads them from its health answer; kept ten minutes.
+  let guardKept = null;
+  function guardLines() {
+    const at = now().getTime();
+    if (guardKept !== null && at - guardKept.at < 10 * 60 * 1000) return guardKept.lines;
+    const lines = {};
+    try {
+      const where = { root: pluginRoot, now };
+      const line = ownFilesLine(checkOwnFiles(where).changed, where);
+      if (line !== null) lines.ownFilesLine = line;
+    } catch { /* the look is made again next time */ }
+    try {
+      const enrolled = readEnrolled();
+      const events = registeredProjects().flatMap(({ project }) => listEvents(stateDir(project), { report: () => {} }));
+      const due = keyRenewalDue({ events, now: now(), lastRenewal: lastKeyRenewal(enrolled, computerId()) });
+      if (due.due) lines.keyRenewal = { due: true, why: due.why };
+    } catch { /* as above */ }
+    guardKept = { at, lines };
+    return lines;
+  }
+
   async function handle(req, res) {
     const url = new URL(req.url ?? '/', 'http://helper');
     if (url.pathname === '/health') {
       const away = awayLog.fresh();
       const roomOpen = room?.line() ?? null;
-      return send(res, 200, { ok: true, ...(PLUGIN_VERSION ? { version: PLUGIN_VERSION } : {}), ...(Object.keys(away).length > 0 ? { away } : {}), ...(roomOpen ? { engineRoom: roomOpen } : {}) });
+      const guards = guardLines();
+      return send(res, 200, { ok: true, ...guards, ...(PLUGIN_VERSION ? { version: PLUGIN_VERSION } : {}), ...(Object.keys(away).length > 0 ? { away } : {}), ...(roomOpen ? { engineRoom: roomOpen } : {}) });
     }
     const route = Object.hasOwn(routes, url.pathname) ? routes[url.pathname] : null;
     if (!route) {

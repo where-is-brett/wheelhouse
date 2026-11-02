@@ -17,7 +17,8 @@ const SKIPPED = new Set(['.git', 'node_modules']);
 // The add-on's folder in VS Code's extensions folder is named for the add-on.
 const ADDON = /^wheelhouse[.-]/i;
 
-const stateFile = () => path.join(wheelhouseHome(), 'own-files.json');
+// Kept in Wheelhouse's home; uninstall removes it with the other files the home holds.
+export const ownFilesFile = () => path.join(wheelhouseHome(), 'own-files.json');
 
 // Every file under `dir`, without following a link. A folder or file that isn't there is nothing.
 function filesUnder(dir) {
@@ -97,7 +98,7 @@ const versionOf = (root) => {
 // The kept state { version, at, checkedAt, files, changed }, or null when there is none or it can't be read.
 export function readOwnFilesState() {
   try {
-    const kept = JSON.parse(fs.readFileSync(stateFile(), 'utf8'));
+    const kept = JSON.parse(fs.readFileSync(ownFilesFile(), 'utf8'));
     return kept && typeof kept === 'object' && kept.files && typeof kept.files === 'object' ? kept : null;
   } catch {
     return null;
@@ -105,7 +106,7 @@ export function readOwnFilesState() {
 }
 
 function writeState(state) {
-  const file = stateFile();
+  const file = ownFilesFile();
   const temp = `${file}.${process.pid}.tmp`;
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
