@@ -919,7 +919,10 @@ export function setupRoutes({
     }
   }
 
-  return {
+  const routes = {
     '/setup/plan': plan, '/setup/apply': apply, '/setup/status': status, '/setup/health': healthRoute, '/setup/choices': choicesRoute, '/setup/change': changeRoute,
   };
+  // Whether a setup step is running in this helper now. Not a route, so it is left out of a spread of the routes.
+  Object.defineProperty(routes, 'busy', { value: () => inHelper.size > 0, enumerable: false });
+  return routes;
 }

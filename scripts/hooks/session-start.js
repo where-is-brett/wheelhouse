@@ -49,6 +49,7 @@ import { answer, runAndExit, projectOf, pluginRoots, isInside, managedDir, manag
 import { keep, sendPending, withinBudget } from './pending.js';
 import { startWatcher, watcherRunning } from '../foreman/start.js';
 import { helperClient } from '../host/helper-client.js';
+import { isOlder, stopByProcess } from '../host/retire-helper.js';
 import { caEnv } from '../host/company-ca.js';
 import { stopState, NO_HELPER_STOP } from '../lib/stop.js';
 import { jobFolder, wheelhouseHome, stateDir, computerId } from '../lib/paths.js';
@@ -312,10 +313,25 @@ function markManaged(project, sessionId, { self, dir, now }) {
   } catch { /* the plugin's copy then answers as well, which is safe */ }
 }
 
-// The helper's /health answer once it answers, starting it when it does not; null when it never does.
-async function ensureHelper(client, { spawn, pluginRoot, waitMs, pause, end }) {
+// The helper's /health answer once it answers, starting it when it does not; null when it never does. A helper older than
+// this copy is asked to stop when idle (a helper from before that request existed is ended by its process, if it is plainly
+// the only one) and this copy's started in its place. One still at work stays, and the answer says so (`busy`).
+async function ensureHelper(client, { spawn, pluginRoot, waitMs, pause, end, stopOld = stopByProcess }) {
   const first = await withinBudget(end)(client.health());
-  if (first?.ok === true) return first;
+  if (first?.ok === true) {
+    if (!isOlder(first.version, ownVersion(pluginRoot))) return first;
+    const asked = typeof client.retire === 'function' ? await withinBudget(end)(client.retire()) : null;
+    if (asked?.ok === true && asked.retired === false) return { ...first, busy: true };
+    const stopping = asked?.ok === true && asked.retired === true ? true : (asked?.refused === 'unknown request' ? await stopOld().catch(() => false) : false);
+    if (!stopping) return first;
+    const gone = Math.min(end, Date.now() + waitMs);
+    let answering = true;
+    while (answering && Date.now() < gone) {
+      await pause(100);
+      answering = (await withinBudget(gone)(client.health()))?.ok === true;
+    }
+    if (answering) return first;
+  }
   try {
     // Started in Wheelhouse's own folder, never in the session's.
     const home = wheelhouseHome();
@@ -729,7 +745,7 @@ async function started(input, deps) {
   const {
     dir, projectOf: find = projectOf, client: given, spawn = nodeSpawn,
     platform = process.platform, now = () => new Date(), stopState: stopOf = stopState,
-    self = SELF, pluginRoot = PLUGIN_ROOT, startWaitMs = START_WAIT_MS + helperGrace(), totalMs = TOTAL_MS + helperGrace(), pause = sleep,
+    self = SELF, pluginRoot = PLUGIN_ROOT, startWaitMs = START_WAIT_MS + helperGrace(), stopOld, totalMs = TOTAL_MS + helperGrace(), pause = sleep,
     background = startBackground, lineage: check = checkLineage, lineageRoot, claudeHome, env = process.env,
     guardedSelfTest = selfTest, run = runProgram, lowNodeReady: copyReady = lowNodeReady,
   } = deps;
@@ -780,7 +796,7 @@ async function started(input, deps) {
   const agent = checked ? copiesAgent(found) : null;
   const lineageWith = (copies) => lineageCheck(found, input, version, { check, root: lineageRoot, claudeHome, now, pinsPending, copies });
   let lineage = checked && agent === null ? lineageWith(false) : [];
-  const up = await ensureHelper(given ?? helperClient({ timeout: Math.min(3000 + helperGrace(), totalMs) }), { spawn, pluginRoot, waitMs: startWaitMs, pause, end });
+  const up = await ensureHelper(given ?? helperClient({ timeout: Math.min(3000 + helperGrace(), totalMs) }), { spawn, pluginRoot, waitMs: startWaitMs, pause, end, ...(stopOld ? { stopOld } : {}) });
   if (agent !== null) lineage = lineageWith(Boolean(up) && await branchNames(agent, project, clientNow(), left));
   // Records what this session is for and starts the usage receiver, alongside the import below.
   const usage = Promise.resolve().then(() => background({ pluginRoot, session: input.session_id, cwd: input.cwd, project, spawn, now })).catch(() => null);
@@ -789,7 +805,9 @@ async function started(input, deps) {
   if (!up) notes.push(NO_HELPER);
   else {
     const mine = ownVersion(pluginRoot);
-    if (typeof up.version === 'string' && mine !== null && up.version !== mine) {
+    if (up.busy === true) {
+      notes.push(`An older Wheelhouse helper (version ${oneLine(up.version)}) is still finishing work; Wheelhouse moves to the new one (version ${mine}) when it is done`);
+    } else if (typeof up.version === 'string' && mine !== null && up.version !== mine) {
       notes.push(`The helper running is version ${oneLine(up.version)}; this copy is version ${mine}`);
     }
     await left(sendPending(project, clientNow(), { until: end }));

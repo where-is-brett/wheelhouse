@@ -4548,6 +4548,8 @@ export async function startHelper({
     ...broker,
     // A placeholder so the route exists: /stop/set is handled in `handle`, before the project lookup.
     '/stop/set': () => ({ ok: true }),
+    // A placeholder as well: /helper/retire is handled in `handle`, since the helper closes once its answer has gone.
+    '/helper/retire': () => ({ ok: true }),
     '/runbook/cut-access': signedIn(clicked(2, doCutAccess)),
     '/runbook/restore-main': signedIn((body, ctx) => doRestoreMain(body, ctx)),
     '/runbook/restore-merge': signedIn((body, ctx) => oneAtATime(`merge:${body.project}`, () => doRestoreMerge(body, ctx))),
@@ -5793,6 +5795,22 @@ export async function startHelper({
     return lines;
   }
 
+  // What keeps the helper from stopping now, in a few plain words, or null when it is idle. Doubt counts as busy.
+  function busyWith() {
+    try {
+      if (closing) return null;
+      if (setup.busy()) return 'a setup step is running';
+      if (queues.size > 0) return 'a push or merge is under way';
+      for (const { project, dispatcher } of engineHosts) {
+        if (engineRunsAtWork(project).length > 0) return 'a build run is going';
+        if (dispatcher.goalInForce()) return 'a goal is in force';
+      }
+      return null;
+    } catch {
+      return 'it could not tell whether it is idle';
+    }
+  }
+
   async function handle(req, res) {
     const url = new URL(req.url ?? '/', 'http://helper');
     if (url.pathname === '/health') {
@@ -5820,6 +5838,14 @@ export async function startHelper({
     }
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
       return send(res, 400, { ok: false, refused: 'the request must be a JSON object' });
+    }
+    if (url.pathname === '/helper/retire') {
+      // A session of a newer copy of the plugin asks this helper to make way. It stops only when idle: no setup step, push,
+      // merge, engine run or goal under way. Otherwise it says what keeps it, and goes on.
+      const why = busyWith();
+      if (why !== null) return send(res, 200, { ok: true, retired: false, busy: why });
+      res.once('finish', () => { Promise.resolve().then(() => onStop(close)).catch(() => {}); });
+      return send(res, 200, { ok: true, retired: true });
     }
     if (url.pathname === '/stop/set') {
       // Anyone may set STOP: a false alarm costs only a pause. No route lifts it but /confirm, on the director's click in the helper's own window. `by: 'prompt'` records that

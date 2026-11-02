@@ -166,6 +166,20 @@ test('/health answers with the plugin version, read from the plugin\'s own plugi
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
+test('/helper/retire closes an idle helper once its answer has gone', async () => {
+  const home = shortHome();
+  try {
+    await as(home, async () => {
+      let stops = 0;
+      await withHelper(fakeAdapter(), async (client) => {
+        assert.deepEqual(await client.retire(), { ok: true, retired: true });
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        assert.equal(stops, 1);
+      }, { onStop: () => { stops += 1; } });
+    });
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
 test('the helper answers on a socket, and on a named pipe on Windows', async () => {
   const home = shortHome();
   try {
