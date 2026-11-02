@@ -136,7 +136,10 @@ function checkSource(file, source) {
   for (const m of code.matchAll(word(HANDLER))) {
     const definition = handlers.some((h) => h.nameAt === m.index);
     const exported = /exports/.test(code.slice(code.lastIndexOf(';', m.index) + 1, m.index));
-    if (!definition && !exported && !inside(m.index, received)) add(`${HANDLER} is reached only as the pane's message handler`);
+    // Taken in by a require of its own file, which only names it.
+    const statementEnd = code.indexOf(';', m.index);
+    const imported = /^\s*(?:const|let|var)\s*\{[^}]*\}\s*=\s*require\(\s*['"][^'"]*['"]\s*\)\s*$/.test(code.slice(code.lastIndexOf(';', m.index) + 1, statementEnd === -1 ? code.length : statementEnd));
+    if (!definition && !exported && !imported && !inside(m.index, received)) add(`${HANDLER} is reached only as the pane's message handler`);
   }
 
   for (const h of handlers) {

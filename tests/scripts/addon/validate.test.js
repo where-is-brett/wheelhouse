@@ -150,3 +150,11 @@ test('the add-on lists its one command in its manifest and in its source', () =>
   assert.deepEqual(found.pkg.contributes.commands.map((c) => c.command), ['wheelhouse.openPane']);
   assert.ok(fs.existsSync(path.join(ROOT, 'vscode', found.pkg.contributes.viewsContainers.activitybar[0].icon)));
 });
+
+test('the add-on may take onPaneMessage in from its own file, by name alone', () => {
+  const taken = 'const { onPaneMessage } = require(\'./press.cjs\');\nview.webview.onDidReceiveMessage((msg) => onPaneMessage(msg, deps));';
+  assert.deepEqual(checkAddon({ pkg: PKG, sources: { 'vscode/extension.cjs': taken, 'vscode/press.cjs': GOOD } }), []);
+  // Taking it in by name does not let a tool use it.
+  const tool = `${taken}\nvscode.lm.registerTool('t', { invoke: async (o) => onPaneMessage(o, deps) });`;
+  assert.ok(has(checkAddon({ pkg: PKG, sources: { 'vscode/extension.cjs': tool, 'vscode/press.cjs': GOOD } }), 'onPaneMessage'));
+});

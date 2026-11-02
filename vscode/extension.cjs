@@ -8,6 +8,7 @@
 
 const { renderPane, statusText } = require('./pane/render.js');
 const { makeNonces } = require('./nonce.cjs');
+const { onPaneMessage } = require('./press.cjs');
 const desks = require('./desk.cjs');
 
 const OPEN_PANE = 'wheelhouse.openPane';
@@ -76,6 +77,35 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
     draw();
   }
 
+  // What the press needs, gathered for each message so the project and STOP are read as they are now.
+  const pressDeps = () => ({
+    nonces,
+    project: typeof real.project === 'function' ? real.project() : deps.project ?? null,
+    cwd: folder,
+    model: () => state.last,
+    press: deps.press ?? real.press ?? {},
+    desk,
+    client: deps.client ?? real.client,
+    notify: async (message) => { vscode.window.showInformationMessage(message); },
+    open: async (address) => { await vscode.env.openExternal(vscode.Uri.parse(address)); },
+    redraw: refresh,
+    show: async (view, data) => {
+      state.view = view;
+      if (data.settings !== undefined) state.settings = data.settings;
+      if (data.briefing !== undefined) state.briefing = data.briefing;
+      draw();
+    },
+    refreshSettings: async () => { if (state.view === 'settings') state.settings = await settingsView(); },
+    settingsView,
+    stopState: deps.stopState ?? real.stopState ?? (() => ({ on: false })),
+    setStop: deps.setStop ?? real.setStop ?? (() => { throw new Error('no way to set STOP here'); }),
+    liftStop: deps.liftStop ?? real.liftStop,
+    liftQuestion: deps.liftQuestion ?? real.liftQuestion,
+    timeZone: real.timeZone,
+    now: () => new Date(),
+  });
+  const settingsView = async () => (deps.settingsView ?? real.settingsView)?.() ?? { groups: [] };
+
   const add = { refresh, draw, state, nonces, vscode, desk, ask };
   context.subscriptions?.push(vscode.commands.registerCommand('wheelhouse.openPane', async () => {
     await vscode.commands.executeCommand(`${PANE_ID}.focus`);
@@ -85,6 +115,7 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
       state.current = view;
       view.webview.options = { enableScripts: true };
       view.onDidDispose?.(() => { if (state.current === view) { state.current = null; nonces.clear(); } });
+      view.webview.onDidReceiveMessage((message) => onPaneMessage(message, pressDeps()));
       if (deps.onView) deps.onView(view, add);
       draw();
     },

@@ -19,6 +19,10 @@ const LOADS = Object.freeze({
   digest: 'scripts/mod/digest.js',
   versions: 'scripts/agents/copilot/versions.js',
   record: 'scripts/hooks/prompt-record.js',
+  kit: 'scripts/hooks/kit.js',
+  stop: 'scripts/lib/stop.js',
+  cardLines: 'scripts/state/card-lines.js',
+  modDesk: 'scripts/desk/mod-desk.js',
 });
 // Run, not imported: the helper's starter.
 const START_HELPER = 'scripts/agents/copilot/start-helper.js';
@@ -67,12 +71,38 @@ async function startHelperIfNeeded({ ask, spawn = childProcess.spawn, node, root
 
 // The real desk, the helper's health check and the scripts the press uses, from the add-on's own folder.
 async function realDeps({ root, cwd }) {
-  const { modDesk } = await load(root, LOADS.desk);
-  const { helperClient } = await load(root, LOADS.helper);
-  const client = helperClient({ timeout: 3000 });
+  const m = {};
+  for (const [name, rel] of Object.entries(LOADS)) m[name] = await load(root, rel);
+  const client = m.helper.helperClient({ timeout: 3000 });
+  const now = () => new Date();
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const project = () => {
+    try {
+      return m.kit.projectOf(cwd)?.project ?? null;
+    } catch {
+      return null;
+    }
+  };
   return {
-    desk: modDesk({ cwd, client }),
+    desk: m.desk.modDesk({ cwd, client }),
+    client,
     ask: async () => (await client.health().catch(() => null))?.ok === true,
+    project,
+    // The scripts' own exports, merged and handed on whole: this file names none of the functions that press. Only
+    // vscode/press.cjs calls them, and only from onPaneMessage (scripts/addon/validate.js).
+    press: Object.assign({}, m.press, m.settings, m.digest, m.record, m.desk),
+    stopState: m.stop.stopState,
+    setStop: m.stop.setStop,
+    liftStop: m.stop.liftStop,
+    liftQuestion: m.cardLines.LIFT_STOP,
+    timeZone,
+    settingsView: async () => {
+      const id = project();
+      if (id === null) return { groups: [] };
+      const effective = m.settings.effectiveFor({ project: id, now });
+      const changes = m.settings.changesFor({ project: id });
+      return { groups: m.settings.settingsGroups({ effective, changes, now, timeZone, stop: m.stop.stopState() }) };
+    },
   };
 }
 
