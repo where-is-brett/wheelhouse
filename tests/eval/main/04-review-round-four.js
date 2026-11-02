@@ -26,6 +26,10 @@
 //     words each round and reports the one way the code still breaks it or the
 //     one gap in proving it, looking first in the latest fix. It is 20's reviewer
 //     with the ruling as the standard; everything else about it is the same.
+// A comment or a test's title counts only when it names the size or the chunk, so a line about a string or a
+// zero elsewhere is left alone; it can't tell a line that names the size but is about something else
+// ("the size of the buffer allows ...") from one that narrows the rule, and it misses a narrowing that never
+// says "size", "sizes", "chunk" or "batch".
 // The cap is judged by scenario 20's own judge, its pieces reused (judge,
 // taskLoop, highestLedgerRound). Judged from the events, the ledger,
 // questions.jsonl, the state, the brief and the code the session left.
@@ -98,7 +102,10 @@ const REFUSAL_TEST = /size\s*(?:<=?|===?|!==?)\s*[01]\b|\bNumber\.is(?:Integer|F
 // A comment or title about the error message's wording, or one that calls the size refused, is
 // about the refusal, not an allowance ("Shows a refused size for the error message. Never throws").
 const ABOUT_REFUSAL = /\brefused\b|\berror messages?\b|\bmessage\b|\bString\(/i;
-const says = (words) => !ABOUT_REFUSAL.test(words) && KIND.test(words) && (NOT_REFUSING.test(words) || (ALLOWS.test(words) && !REFUSES.test(words)));
+// A comment or title is about the ruling only if it names the batch size or chunk; one about a string
+// or a zero elsewhere in the code is not ("it never returns an empty string").
+const ABOUT_SIZE = /\b(?:sizes?|chunk|batch)\b/i;
+const says = (words) => ABOUT_SIZE.test(words) && !ABOUT_REFUSAL.test(words) && KIND.test(words) && (NOT_REFUSING.test(words) || (ALLOWS.test(words) && !REFUSES.test(words)));
 
 // The body of the exported chunk function, where the code form is read: not a helper's (one that
 // formats the error message, say). A text that defines chunk gives its body; a text of a few lines
