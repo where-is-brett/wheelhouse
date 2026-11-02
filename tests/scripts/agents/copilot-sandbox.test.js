@@ -20,7 +20,7 @@ import { tempFolder } from '../../helpers/homes.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..', '..', '..');
 const HELPER = '/tmp/wh-helper.sock';
-const make = (extra = {}) => sandboxSettings({ worktreeBases: ['/work/wt'], domains: ['example.com'], helper: HELPER, platform: 'darwin', ...extra });
+const make = (extra = {}) => sandboxSettings({ domains: ['example.com'], helper: HELPER, platform: 'darwin', ...extra });
 const refuseAll = async () => ({ refused: true });
 
 function signedIn(root) {
@@ -48,14 +48,16 @@ test('the keys and the engine\'s private files are denied, and the sandbox fails
   assert.equal(sandbox.allowBypass, false);
   const denied = deniedReads({ platform: 'darwin' });
   for (const p of [keysDir(), path.join(process.env.HOME, '.copilot'), path.join(process.env.HOME, '.agents'), path.join(process.env.HOME, '.ssh'), path.join(archonHome(), 'credential-key'), path.join(archonHome(), 'archon.db'), path.join(archonHome(), '.env'), path.join(archonHome(), 'plugins')]) {
-    assert.ok(sandbox.filesystem.denyRead.includes(p), p);
+    assert.ok(sandbox.userPolicy.filesystem.deniedPaths.includes(p), p);
   }
-  assert.deepEqual(sandbox.filesystem.write, ['/work/wt']);
-  assert.deepEqual(sandbox.network.allowUnixSockets, [HELPER]);
-  assert.equal(sandbox.network.allowLocalNetwork, false);
-  assert.deepEqual(sandbox.network.allowedHosts, ['example.com']);
+  // Writes: the working folder alone, and the helper's socket.
+  assert.equal(sandbox.addCurrentWorkingDirectory, true);
+  assert.deepEqual(sandbox.userPolicy.filesystem.readwritePaths, [HELPER]);
+  assert.equal(sandbox.userPolicy.network.allowOutbound, false);
+  assert.equal(sandbox.userPolicy.network.allowLocalNetwork, false);
+  assert.deepEqual(sandbox.userPolicy.network.allowedHosts, ['example.com']);
   assert.ok(denied.length > 10);
-  assert.throws(() => sandboxSettings({ worktreeBases: [], domains: [] }), /helper/);
+  assert.throws(() => sandboxSettings({ domains: [] }), /helper/);
 });
 
 test('one try let through fails the test', async () => {
@@ -123,7 +125,7 @@ test('a new project\'s domains leave the test standing', () => {
   const before = make({ domains: ['a.example.com'] });
   const after = make({ domains: ['a.example.com', 'b.example.com'] });
   assert.equal(settingsDigest(before), settingsDigest(after));
-  assert.notEqual(settingsDigest(before), settingsDigest(make({ worktreeBases: ['/other'] })));
+  assert.notEqual(settingsDigest(before), settingsDigest(make({ helper: '/tmp/other.sock' })));
   assert.notEqual(settingsDigest(before), settingsDigest(make({ helper: '/tmp/other.sock' })));
   const result = passed(before);
   assert.equal(sandboxLevel({ result, version: COPILOT_VERSION, digest: settingsDigest(after), checked: true }), true);
@@ -140,7 +142,7 @@ test('a result for another version counts as no test', () => {
 
 test('a result for other settings counts as no test', () => {
   const settings = make();
-  const other = make({ worktreeBases: ['/elsewhere'] });
+  const other = make({ helper: '/tmp/elsewhere.sock' });
   assert.equal(sandboxLevel({ result: passed(settings), version: COPILOT_VERSION, digest: settingsDigest(other), checked: true }), false);
   assert.equal(sandboxLevel({ result: { ...passed(settings), passed: false }, version: COPILOT_VERSION, digest: settingsDigest(settings), checked: true }), false);
 });
@@ -206,5 +208,5 @@ test('the adapter lists nothing as pending', () => {
   assert.deepEqual(copilot.pending, []);
   assert.deepEqual(checkAdapter(copilot), []);
   assert.deepEqual(copilot.settings.local(), {});
-  assert.deepEqual(copilot.settings.project({ worktreeBases: [], domains: [], helper: HELPER }), sandboxSettings({ worktreeBases: [], domains: [], helper: HELPER }));
+  assert.deepEqual(copilot.settings.project({ domains: [], helper: HELPER }), sandboxSettings({ domains: [], helper: HELPER }));
 });

@@ -44,7 +44,7 @@ export async function main({ keep = false } = {}) {
   const server = http.createServer((_req, res) => { hit = true; res.end('open'); });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const context = { keys: path.join(os.homedir(), '.wheelhouse', 'keys'), outside, port: server.address().port };
-  const settings = currentSettings({ worktreeBases: [work], domains: [], helper: helperAddress() });
+  const settings = currentSettings({ domains: [], helper: helperAddress() });
   const run = async ({ name, home }) => {
     const result = await runCopilot({ args: ['-p', ASKS[name](context), '--allow-tool=shell', '--allow-tool=write'], cwd: work, home, timeoutMs: 180000 });
     const text = result.stdout + result.stderr;

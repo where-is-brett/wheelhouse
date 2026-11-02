@@ -1,0 +1,101 @@
+{
+  "permissions": {
+    "disableBypassPermissionsMode": "disable",
+    "deny": [
+      "Read(~/.wheelhouse/keys)",
+      "Read(~/.wheelhouse/keys/**)",
+      "Read(~/.copilot)",
+      "Read(~/.copilot/**)",
+      "Read(~/.agents)",
+      "Read(~/.agents/**)",
+      "Read(~/.ssh)",
+      "Read(~/.ssh/**)",
+      "Read(~/.config/gh)",
+      "Read(~/.config/gh/**)",
+      "Read(~/.config/glab-cli)",
+      "Read(~/.config/glab-cli/**)",
+      "Read(~/.npmrc)",
+      "Read(~/.npmrc/**)",
+      "Read(~/.netrc)",
+      "Read(~/.netrc/**)",
+      "Read(~/.aws)",
+      "Read(~/.aws/**)",
+      "Read(~/.config/gcloud)",
+      "Read(~/.config/gcloud/**)",
+      "Read(~/.azure)",
+      "Read(~/.azure/**)",
+      "Read(~/.docker/config.json)",
+      "Read(~/.docker/config.json/**)",
+      "Read(~/.kube)",
+      "Read(~/.kube/**)",
+      "Read(~/.git-credentials)",
+      "Read(~/.git-credentials/**)",
+      "Read(~/.config/git/credentials)",
+      "Read(~/.config/git/credentials/**)",
+      "Read(~/.claude/.credentials.json)",
+      "Read(~/.claude/.credentials.json/**)",
+      "Read(~/.config/stripe)",
+      "Read(~/.config/stripe/**)",
+      "Read(~/.fly)",
+      "Read(~/.fly/**)",
+      "Read(~/.wrangler)",
+      "Read(~/.wrangler/**)",
+      "Read(~/.supabase)",
+      "Read(~/.supabase/**)",
+      "Read(~/.railway)",
+      "Read(~/.railway/**)",
+      "Read(~/.config/neonctl)",
+      "Read(~/.config/neonctl/**)",
+      "Read(~/.netlify)",
+      "Read(~/.netlify/**)",
+      "Read(~/.vercel)",
+      "Read(~/.vercel/**)",
+      "Edit(~/.copilot/**)",
+      "Edit(~/.agents/**)",
+      "Edit(~/.wheelhouse/**)"
+    ]
+  },
+  "forceRemoteSettingsRefresh": true,
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "allowBypass": false,
+    "addCurrentWorkingDirectory": true,
+    "userPolicy": {
+      "filesystem": {
+        "deniedPaths": [
+          "~/.wheelhouse/keys",
+          "~/.copilot",
+          "~/.agents",
+          "~/.ssh",
+          "~/.config/gh",
+          "~/.config/glab-cli",
+          "~/.npmrc",
+          "~/.netrc",
+          "~/.aws",
+          "~/.config/gcloud",
+          "~/.azure",
+          "~/.docker/config.json",
+          "~/.kube",
+          "~/.git-credentials",
+          "~/.config/git/credentials",
+          "~/.claude/.credentials.json",
+          "~/.config/stripe",
+          "~/.fly",
+          "~/.wrangler",
+          "~/.supabase",
+          "~/.railway",
+          "~/.config/neonctl",
+          "~/.netlify",
+          "~/.vercel"
+        ]
+      },
+      "network": {
+        "allowLocalNetwork": false
+      }
+    }
+  },
+  "wheelhouse": {
+    "realUsers": "all"
+  }
+}

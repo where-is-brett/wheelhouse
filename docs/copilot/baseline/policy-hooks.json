@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "command": "\"/path/to/node\" \"/path/to/wheelhouse/scripts/agents/copilot/hook-entry.js\" sessionStart",
+        "bash": "\"/path/to/node\" \"/path/to/wheelhouse/scripts/agents/copilot/hook-entry.js\" sessionStart",
+        "timeoutSec": 120
+      }
+    ],
+    "userPromptSubmitted": [
+      {
+        "type": "command",
+        "command": "\"/path/to/node\" \"/path/to/wheelhouse/scripts/agents/copilot/hook-entry.js\" userPromptSubmitted",
+        "bash": "\"/path/to/node\" \"/path/to/wheelhouse/scripts/agents/copilot/hook-entry.js\" userPromptSubmitted",
+        "timeoutSec": 120
+      }
+    ],
+    "preToolUse": [
+      {
+        "type": "command",
+        "command": "\"/path/to/node\" \"/path/to/wheelhouse/scripts/agents/copilot/hook-entry.js\" preToolUse",
+        "bash": "\"/path/to/node\" \"/path/to/wheelhouse/scripts/agents/copilot/hook-entry.js\" preToolUse",
+        "timeoutSec": 120
+      }
+    ],
+    "preCompact": [
+      {
+        "type": "command",
+        "command": "\"/path/to/node\" \"/path/to/wheelhouse/scripts/agents/copilot/hook-entry.js\" preCompact",
+        "bash": "\"/path/to/node\" \"/path/to/wheelhouse/scripts/agents/copilot/hook-entry.js\" preCompact",
+        "timeoutSec": 120
+      }
+    ]
+  }
+}

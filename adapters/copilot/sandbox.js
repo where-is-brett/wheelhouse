@@ -4,17 +4,22 @@
 // (scripts/agents/copilot/engine-home.js), so one set covers every Copilot step on the computer (plan choice 1).
 //
 // Key names, read on 2 November 2026 from
-// https://docs.github.com/en/enterprise-cloud@latest/copilot/how-tos/cloud-and-local-sandboxes/configuring-local-sandbox-settings and
-// https://docs.github.com/en/copilot/concepts/about-cloud-and-local-sandboxes:
-//   sandbox.enabled               the sandbox on (settings.json in the CLI's config folder)
-//   sandbox.failIfUnavailable     fail closed where the host can't sandbox (named for managed settings)
-//   sandbox.allowBypass           whether Copilot may ask to run a command outside the sandbox
-// The documentation says a sandbox's filesystem paths and its network rules (hosts, the local network) are set
-// through `/sandbox`, and names no key for them. The `filesystem` and `network` members below are therefore
-// Wheelhouse's best reading of the shape, UNTRIED: the sandbox test (scripts/agents/copilot/sandbox-test.js) is what
-// shows whether they hold, and sandboxLevel() refuses until a run has passed on this computer for these settings.
-// Where the CLI keeps a working-folder form, the documentation names none, so writes are held to the engine's
-// worktree folders (`worktreeBases`), which lets one run write to another's worktree; the level's record says so.
+// https://docs.github.com/en/copilot/reference/enterprise-administrators/enterprise-managed-settings and
+// https://docs.github.com/en/enterprise-cloud@latest/copilot/how-tos/cloud-and-local-sandboxes/configuring-local-sandbox-settings
+// (settings.json in the CLI's config folder; the first page lists the same keys for managed settings):
+//   sandbox.enabled                                the sandbox on
+//   sandbox.failIfUnavailable                      fail closed where the host can't sandbox
+//   sandbox.allowBypass                            whether Copilot may ask to run a command outside the sandbox
+//   sandbox.addCurrentWorkingDirectory             the working folder is writable: the CLI's working-folder form (choice 1)
+//   sandbox.userPolicy.filesystem.readwritePaths   / readonlyPaths / deniedPaths
+//   sandbox.userPolicy.network.allowOutbound       / allowLocalNetwork / allowedHosts / blockedHosts / proxy.url
+// What the pages don't say is how these combine: whether `allowedHosts` limits a network that `allowOutbound` leaves
+// closed, and how a unix socket (the helper's) is let through. This module reads them as: outbound off, listed hosts
+// allowed, the local network off, the helper's socket among the read-write paths. UNTRIED: the sandbox test
+// (scripts/agents/copilot/sandbox-test.js) is what shows whether they hold, and sandboxLevel() refuses until a run has
+// passed on this computer for these settings.
+// Writes are held to the step's working folder, which the CLI is started in (the engine's worktree); the level's record
+// says writes are held to the working folder and not to one run's worktree alone.
 import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
@@ -28,7 +33,7 @@ import { cleanDomain } from '../../scripts/protection/settings.js';
 export const SETTINGS_FILE = 'settings.json';
 export const RESULT_FILE = 'copilot-sandbox.json';
 // What a level's record says about where writes are held (plan choice 1).
-export const WRITES_SCOPE = 'engine-worktree-folders';
+export const WRITES_SCOPE = 'working-folder';
 
 const unique = (list) => [...new Set(list)];
 
@@ -45,24 +50,28 @@ export function deniedReads({ platform = process.platform, homedir = os.homedir(
   ]);
 }
 
-// sandboxSettings({ worktreeBases, domains, helper, platform }) -> the settings object. The sandbox is on and fails
-// closed, no command may ask to leave it, writes are held to `worktreeBases`, the network to `domains` and the
-// helper's socket (`helper`, the local network otherwise off), and the paths above can't be read.
-export function sandboxSettings({ worktreeBases = [], domains = [], helper, platform = process.platform, homedir = os.homedir() } = {}) {
+// sandboxSettings({ domains, helper, platform }) -> the settings object. The sandbox is on and fails closed, no command
+// may ask to leave it, writes are held to the working folder, the network to `domains` (the local network off, and the
+// helper's socket the one path let through), and the paths above can't be read. the engine's worktree folders are not needed:
+// the working-folder form holds the step to the folder the CLI starts in.
+export function sandboxSettings({ domains = [], helper, platform = process.platform, homedir = os.homedir() } = {}) {
   if (typeof helper !== 'string' || helper === '') throw new Error('The sandbox settings need the helper\'s address, so the network can be held to it');
   return {
     sandbox: {
       enabled: true,
       failIfUnavailable: true,
       allowBypass: false,
-      filesystem: {
-        write: unique(worktreeBases.filter((b) => typeof b === 'string' && path.isAbsolute(b))),
-        denyRead: deniedReads({ platform, homedir }),
-      },
-      network: {
-        allowedHosts: unique(domains.map((d) => cleanDomain(d)).filter((d) => d !== null)),
-        allowLocalNetwork: false,
-        allowUnixSockets: [helper],
+      addCurrentWorkingDirectory: true,
+      userPolicy: {
+        filesystem: {
+          readwritePaths: [helper],
+          deniedPaths: deniedReads({ platform, homedir }),
+        },
+        network: {
+          allowOutbound: false,
+          allowLocalNetwork: false,
+          allowedHosts: unique(domains.map((d) => cleanDomain(d)).filter((d) => d !== null)),
+        },
       },
     },
   };
@@ -72,7 +81,7 @@ export function sandboxSettings({ worktreeBases = [], domains = [], helper, plat
 // test. Keys are sorted so the digest doesn't depend on how the object was built.
 export function settingsDigest(settings) {
   const copy = JSON.parse(JSON.stringify(settings ?? {}));
-  if (copy.sandbox?.network) delete copy.sandbox.network.allowedHosts;
+  if (copy.sandbox?.userPolicy?.network) delete copy.sandbox.userPolicy.network.allowedHosts;
   const sorted = (v) => (Array.isArray(v) ? v.map(sorted) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sorted(v[k])])) : v);
   return crypto.createHash('sha256').update(JSON.stringify(sorted(copy))).digest('hex');
 }

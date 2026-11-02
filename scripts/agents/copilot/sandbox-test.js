@@ -77,10 +77,10 @@ export function readResult(file = resultFile()) {
   }
 }
 
-// What the sandbox settings for this computer are now, from the engine's worktree folders, the registered Copilot
+// What the sandbox settings for this computer are now, from the registered Copilot
 // projects' domains and the helper's address.
-export function currentSettings({ worktreeBases = [], domains = [], helper = helperAddress(), platform = process.platform } = {}) {
-  return sandboxSettings({ worktreeBases, domains, helper, platform });
+export function currentSettings({ domains = [], helper = helperAddress(), platform = process.platform } = {}) {
+  return sandboxSettings({ domains, helper, platform });
 }
 
 // The sandbox as it stands for this computer: { level, state, settings } where `level` is sandboxLevel's answer for

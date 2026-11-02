@@ -53,10 +53,13 @@ import { effectiveSettings } from '../settings/effective.js';
 import { loginEntry, installLoginStart, loginStartRecord, needsLoginStart } from '../lib/login-start.js';
 import { HELPER_START_SCRIPT } from '../agents/index.js';
 import { localViews } from '../hooks/session-start.js';
-import { stateDir } from '../lib/paths.js';
+import { computerId, stateDir } from '../lib/paths.js';
 import { joinedRepo } from '../lib/setup-run.js';
 import { claudeCodeSettings } from '../protection/settings.js';
-import { installLocked, ownFile, MAC_ONLY, NEEDS_NARROW, HAS_MDM, NOT_OURS, MDM_PLIST } from '../protection/locked.js';
+import { installLocked, ownFile, lockedCopilotReady, MAC_ONLY, NEEDS_NARROW, HAS_MDM, NOT_OURS, MDM_PLIST, ORGANISATION } from '../protection/locked.js';
+import { companyManages, readCompanySettings } from '../agents/copilot/company.js';
+import { agentInFolder } from '../agents/names.js';
+import { claudeHarnessOffered } from '../agents/index.js';
 import { managedDir, lockedProjects } from '../protection/managed.js';
 import { MARKETPLACE, UPSTREAMS, readManifest } from '../lineage/manifest.js';
 import { receiverPort } from '../telemetry/main.js';
@@ -332,20 +335,52 @@ function lockedCard(target, folder) {
   };
 }
 
+// Which way a Copilot project is held on this computer (design section 6.4): `organisation` where the company manages
+// Copilot (its settings win, and its admin applies Wheelhouse's published baseline), `locked` on a Mac whose sandbox has
+// passed its test, and `none` otherwise, with `why` in plain words. `company` is readCompanySettings' arguments and
+// `sandbox` lockedCopilotReady's, for tests.
+export function copilotRoute({ platform = process.platform, company = {}, sandbox = {} } = {}) {
+  if (platform === 'win32') return { route: 'none', why: MAC_ONLY };
+  if (companyManages(readCompanySettings({ platform, ...company }))) return { route: 'organisation', why: ORGANISATION };
+  const ready = lockedCopilotReady(sandbox);
+  return ready.ready ? { route: 'locked', why: null } : { route: 'none', why: ready.why };
+}
+
+// Whether setup offers VS Code's Claude agent beside the Copilot route: only once check 54 has passed (its switch is on),
+// and not where the company manages Copilot, since VS Code then switches its Claude agent off. It is a front end only.
+// `company` is readCompanySettings' arguments, `checked` the switch, for tests.
+export function claudeHarnessRoute({ platform = process.platform, company = {}, checked } = {}) {
+  const managed = companyManages(readCompanySettings({ platform, ...company }));
+  return { offered: claudeHarnessOffered({ ...(checked === undefined ? {} : { checked }), company: managed }) };
+}
+
+// Whether the project runs on Copilot on this computer.
+const runsOnCopilot = (record) => {
+  try { return agentInFolder(record.folder, { computerId: computerId() }) === 'copilot'; } catch { return false; }
+};
+
 // The project record's file, which a joining computer's Locked marks.
 const projectFile = (project) => path.join(stateDir(project), '..', 'project.json');
 
 // Step 8. `run`, `dir` (the managed settings folder), `mdmPlist`, `nodePath` and `address` are
 // installLocked's, for tests.
-export function lockedStep({ run = realRun, dir, mdmPlist, nodePath, address } = {}) {
+export function lockedStep({ run = realRun, dir, mdmPlist, nodePath, address, copilot = {} } = {}) {
   // Locked's list for the project, once a change installLocked would refuse is ruled out: a change
   // installLocked would refuse is never offered on a card. `mark`: the record is marked Locked too.
   const lockedList = (found, mark, platform) => {
+    // A Copilot project is held by the organisation route where the company manages Copilot, and by Locked only once this
+    // Mac's sandbox has passed its test.
+    const forCopilot = runsOnCopilot(found.record);
+    if (forCopilot) {
+      const got = copilotRoute({ platform, ...copilot });
+      if (got.route === 'organisation') return { settled: { record: { locked: false, why: got.why } } };
+      if (got.route === 'none') throw new Error(got.why);
+    }
     const where = dir ?? managedDir(platform);
     if (fs.existsSync(mdmPlist ?? MDM_PLIST)) throw new Error(HAS_MDM);
     if (!ownFile(where)) throw new Error(NOT_OURS);
     const target = path.join(where, 'managed-settings.json');
-    const changes = [{ kind: 'locked', target, project: found.project, folder: found.record.folder, ...(mark ? { mark: true } : {}) }];
+    const changes = [{ kind: 'locked', target, project: found.project, folder: found.record.folder, ...(mark ? { mark: true } : {}), ...(forCopilot ? { copilot: true } : {}) }];
     return { changes, card: lockedCard(target, found.record.folder), director: 'Your password, in macOS\'s own window' };
   };
   const needsNarrow = (found) => {
@@ -407,7 +442,7 @@ export function lockedStep({ run = realRun, dir, mdmPlist, nodePath, address } =
           before: { exists, ours: exists && ownFile(where), projects: lockedProjects({ dir: where }) },
           after: { project: c.project, folder: c.folder },
         });
-        const got = await installLocked({ project: c.project, platform, run, now: ctx.now, dir: where, mdmPlist, nodePath, address });
+        const got = await installLocked({ project: c.project, platform, run, now: ctx.now, dir: where, mdmPlist, nodePath, address, ...(c.copilot ? { copilot: { ...copilot } } : {}) });
         if (!got.installed) throw new Error(got.line);
         // A joining computer's record, marked Locked once Locked is on, recorded first.
         if (c.mark) {
