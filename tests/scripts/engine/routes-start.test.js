@@ -99,3 +99,35 @@ test('a start with no reply in time says so, and a plain refusal doesn\'t', asyn
   engine.start = async () => ({ ok: false, refused: 'no' });
   assert.deepEqual(await routes.start({ project: 'p', order }), { ok: false, refused: 'no' });
 });
+
+function recording(startResult) {
+  const dir = tempFolder('wh-start-level-');
+  const written = [];
+  const engine = { name: 'archon', artefactsOf: (runId) => path.join(dir, 'art', runId), start: async () => ({ ok: true, runId: 'run-1', ...startResult }), act: async () => ({ ok: true }) };
+  const routes = engineRoutes({
+    projects: () => [{ project: 'p', folder: path.join(dir, 'project') }],
+    engineFor: () => engine,
+    ordersDir: () => path.join(dir, 'orders'),
+    filesDir: () => path.join(dir, 'engine'),
+    write: async (project, kind, data) => { written.push({ kind, data }); },
+    refresh: async () => ({ ok: true }),
+  });
+  return { routes, written };
+}
+
+test("a Copilot run's level is recorded on its run record", async () => {
+  for (const level of ['sandbox', null]) {
+    const { routes, written } = recording({ level });
+    assert.equal((await routes.start({ project: 'p', order })).ok, true);
+    const run = written.find((w) => w.kind === 'run').data;
+    assert.equal(run.state, 'started');
+    assert.equal(Object.hasOwn(run, 'level'), true);
+    assert.equal(run.level, level);
+  }
+});
+
+test('a run with no level key records none', async () => {
+  const { routes, written } = recording({});
+  await routes.start({ project: 'p', order });
+  assert.equal(Object.hasOwn(written.find((w) => w.kind === 'run').data, 'level'), false);
+});

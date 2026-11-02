@@ -1098,8 +1098,8 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       const records = runRecords(work, runId);
       if (moved !== 'running') await endAsEngineSays(runId, records, record);
       else {
-        const { lane, engine: name, branch } = records.at(-1).data;
-        await write('run', { work, lane, engine: name, runId, state: 'started', ...(typeof branch === 'string' ? { branch } : {}) });
+        const { lane, engine: name, branch, level } = records.at(-1).data;
+        await write('run', { work, lane, engine: name, runId, state: 'started', ...(typeof branch === 'string' ? { branch } : {}), ...(level !== undefined ? { level } : {}) });
       }
     }
   }
@@ -1312,8 +1312,8 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   async function cameBack(runId, records) {
     const status = (await inspect(runId))?.status;
     if (status !== 'running' && status !== 'paused') return false;
-    const { work, lane, engine: name, branch, resume } = records.at(-1).data;
-    await write('run', { work, lane, engine: name, runId, state: 'started', resume, ...(typeof branch === 'string' ? { branch } : {}) });
+    const { work, lane, engine: name, branch, resume, level } = records.at(-1).data;
+    await write('run', { work, lane, engine: name, runId, state: 'started', resume, ...(typeof branch === 'string' ? { branch } : {}), ...(level !== undefined ? { level } : {}) });
     return true;
   }
   async function endAsEngineSays(runId, records, record) {
