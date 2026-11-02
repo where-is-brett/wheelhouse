@@ -37,6 +37,7 @@ import { HOST_LABELS, LEVELS, NEW_PRODUCT, REAL_USERS, STRICTER, WAYS } from './
 import { LIVE_DATA, PRODUCT, SIGNS_APPS, productName } from './questions.js';
 import { FIRST_CHECK_LINE, KEEP_HERE, KEPT_LINE, STARTED_LINE } from './local.js';
 import { backupNamed } from '../host/local/restore.js';
+import { compactionLine, compactionRules } from '../protection/settings.js';
 
 // The one card's step: none of setup's ten.
 export const ONE_CARD_STEP = 0;
@@ -204,6 +205,10 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
   // The plugin's update is step 6's, so the line names it only while step 6 is still to run.
   if (toRun.includes(2) && engineWanted({ platform, hosts })) lines.push(agentLine ?? engineLine(undefined, { claudeHome: toRun.includes(6) ? claudeHome : null }));
   if (toRun.includes(6)) lines.push('On this computer: usage counted here only, and 30 days of chat history kept (older history is deleted).');
+  if (toRun.includes(7)) {
+    const kept = compactionLine(compactionRules({ claudeHome, projectDir: folder }));
+    if (kept !== null) lines.push(kept);
+  }
   if (toRun.includes(7)) lines.push(keptHere ? 'Wheelhouse\'s settings saved to the project.' : 'Wheelhouse\'s settings saved to the project, then its main line protected.');
   if (toRun.includes(7) && keptHere) lines.push(FIRST_CHECK_LINE);
   // Never a plan with no lines: the health check is named when nothing else is.

@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { FRONT_DESK_INPUT, WORK_REPORTS_RULE } from '../../../scripts/lib/front-desk.js';
-import { projectSettings, localSettings, directorStatusLine, isOwnStatusLine, withoutOwnStatusLine, mergeSettings, writeSettings, sandboxFlag, featureAllowRules, featureFileRules, frontDeskCommand, setupCommand, pluginScriptCommand, claudeCodeSettings, ATTRIBUTION_OFF, SWITCHED_OFF_PLUGINS, KEYCHAINS, HOST_TOKENS, withoutKeychainDenial, archonDenyRules, ownRunRules, readRule, ENGINE_HOME } from '../../../scripts/protection/settings.js';
+import { projectSettings, localSettings, directorStatusLine, isOwnStatusLine, withoutOwnStatusLine, mergeSettings, writeSettings, sandboxFlag, featureAllowRules, featureFileRules, frontDeskCommand, setupCommand, pluginScriptCommand, claudeCodeSettings, ATTRIBUTION_OFF, SWITCHED_OFF_PLUGINS, KEYCHAINS, HOST_TOKENS, withoutKeychainDenial, compactionRules, compactionLine, archonDenyRules, ownRunRules, readRule, ENGINE_HOME } from '../../../scripts/protection/settings.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { credentialPaths } from '../../../scripts/lib/credentials.js';
 import { helperAddress, archonHome } from '../../../scripts/lib/paths.js';
@@ -595,4 +595,28 @@ test('a folder\'s read rule is in the full-path form, a Windows drive as //c/', 
 test('the network list never opens this computer itself, so the engine room\'s port stays shut', () => {
   const s = projectSettings({ ...config, webDomains: ['localhost', 'LOCALHOST', '127.0.0.1', '127.1.2.3', '0.0.0.0', '*.localhost', 'example.com', 'localhost.example.com'] });
   assert.deepEqual(s.sandbox.network.allowedDomains, ['registry.npmjs.org', 'example.com', 'localhost.example.com']);
+});
+
+test('a compaction rule the director already has is found in the project, local and user settings', () => {
+  const folder = tempFolder('wh-compact-');
+  const home = tempFolder('wh-compact-home-');
+  fs.mkdirSync(path.join(folder, '.claude'), { recursive: true });
+  const put = (file, value) => fs.writeFileSync(file, JSON.stringify(value));
+  assert.deepEqual(compactionRules({ claudeHome: home, projectDir: folder }), []);
+  put(path.join(folder, '.claude', 'settings.json'), { env: { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '35' }, autoCompactWindow: 300000 });
+  put(path.join(folder, '.claude', 'settings.local.json'), { autoCompactWindow: 200000 });
+  put(path.join(home, 'settings.json'), { env: { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: 60 } });
+  const found = compactionRules({ claudeHome: home, projectDir: folder });
+  assert.deepEqual(found.map(({ label, kind, value }) => [label, kind, value]), [
+    ['the project\'s settings', 'percentage', '35'],
+    ['this computer\'s settings for the project', 'window', '200000'],
+    ['your own Claude Code settings', 'percentage', '60'],
+  ]);
+  assert.equal(compactionLine(found), 'You already set compacting at 35% in the project\'s settings, a 200,000-token window in this computer\'s settings for the project and compacting at 60% in your own Claude Code settings: I keep it and add no second rule, so compaction never stacks.');
+  assert.equal(compactionLine([]), null);
+});
+
+test('projectSettings leaves its compaction window out where the director has a rule', () => {
+  assert.equal(projectSettings(config).autoCompactWindow, 300000);
+  assert.equal(Object.hasOwn(projectSettings(config, { keepCompaction: true }), 'autoCompactWindow'), false);
 });

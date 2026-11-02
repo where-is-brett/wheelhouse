@@ -2,6 +2,9 @@
 // Setup's one recommended card and its choices (design section 15.1): the card's words, what its
 // Go ahead stands for and records, when a Go ahead holds, and which choices Customise asks next.
 import { test } from 'node:test';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import assert from 'node:assert/strict';
 import {
   oneCard, setupTime, consentHolds, customiseBatch, aboutOf, actedBy, GO_AHEAD, CUSTOMISE, PER_CARD,
@@ -24,6 +27,17 @@ function newProductChoices({ connection = WAYS.quick, live = LIVE_DATA.no } = {}
     c(4, 'live-data', live),
   ];
 }
+
+test('the one card says a compaction rule found is kept, and nothing is said when there is none', () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-card-compact-'));
+  try {
+    fs.mkdirSync(path.join(folder, '.claude'));
+    const ask = () => oneCard({ folder, list: [], product: { isNew: false, host: 'local', repo: null, name: 'tides' }, platform: 'darwin', toRun: [7], count: 1, claudeHome: path.join(folder, 'none') }).card.question;
+    assert.doesNotMatch(ask(), /compact/);
+    fs.writeFileSync(path.join(folder, '.claude', 'settings.json'), JSON.stringify({ env: { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: 35 } }));
+    assert.match(ask(), /- You already set compacting at 35% in the project's settings: I keep it and add no second rule, so compaction never stacks\./);
+  } finally { fs.rmSync(folder, { recursive: true, force: true }); }
+});
 
 test('the one card for a new product on a Mac says the director\'s approved words, a plain line each', () => {
   const { card, choices, writes, id } = oneCard({

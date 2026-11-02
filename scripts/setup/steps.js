@@ -66,7 +66,7 @@
 import { listHash } from '../lib/setup-writes.js';
 import { SETUP_TITLES } from '../state/card-lines.js';
 import {
-  SETUP_DOING, SETUP_DONE, SETUP_GOING, PHONE_TESTED_EARLIER, PHONE_TEST_MISSED, PHONE_SKIPPED, connectingTo, setupStepLine, setupMeanwhile, toolsInstalling,
+  SETUP_DOING, SETUP_DONE, SETUP_GOING, LOCAL_DOING, LOCAL_DONE, LOCAL_GOING, PHONE_TESTED_EARLIER, PHONE_TEST_MISSED, PHONE_SKIPPED, connectingTo, setupStepLine, setupMeanwhile, toolsInstalling,
 } from '../lib/calm-words.js';
 import { PUSH_TEST_STEP, stepsFor } from '../lib/setup-run.js';
 import { installStep } from './install-step.js';
@@ -101,8 +101,8 @@ export const STEP_MINUTES = Object.freeze({
 
 // What has happened, said for step n once it is done. Step 9 says what its test settled on, by its
 // `answer` change: arrived now, arrived in an earlier setup, didn't arrive, or skipped.
-function doneLine(run, n) {
-  if (n !== PUSH_TEST_STEP) return SETUP_DONE[n];
+function doneLine(run, n, host) {
+  if (n !== PUSH_TEST_STEP) return (host === 'local' && LOCAL_DONE[n]) || SETUP_DONE[n];
   const answer = (Array.isArray(run?.changes) ? run.changes : []).filter((c) => c?.step === n && c.kind === 'answer').at(-1)?.after;
   if (answer?.pushSkipped === true) return PHONE_SKIPPED;
   if (answer?.pushArrived === false) return PHONE_TEST_MISSED;
@@ -115,16 +115,16 @@ function doneLine(run, n) {
 // the project's host once it is known.
 export function stepProgress({ n, run, running = () => false, host }) {
   const list = stepsFor(run).map((s) => s.n);
-  const lines = [setupStepLine(Math.max(1, list.indexOf(n) + 1), list.length, STEP_MINUTES[n]), n === 3 ? connectingTo(host) : SETUP_DOING[n]];
+  const lines = [setupStepLine(Math.max(1, list.indexOf(n) + 1), list.length, STEP_MINUTES[n]), n === 3 ? connectingTo(host) : (host === 'local' && LOCAL_DOING[n]) || SETUP_DOING[n]];
   const done = list.filter((m) => m !== n && typeof run?.steps?.[m]?.doneAt === 'string')
     .sort((a, b) => Date.parse(run.steps[b].doneAt) - Date.parse(run.steps[a].doneAt))[0];
-  lines.push(done === undefined ? 'Setup has just started.' : doneLine(run, done));
+  lines.push(done === undefined ? 'Setup has just started.' : doneLine(run, done, host));
   const going = list.find((m) => m !== n && SETUP_GOING[m] !== undefined && running(m));
   if (going !== undefined) {
     const tools = going === 2
       ? [...new Set((run?.changes ?? []).filter((c) => c?.step === 2 && c.kind === 'process' && typeof c.after?.tool === 'string').map((c) => c.after.tool))]
       : [];
-    lines.push(setupMeanwhile(tools.length > 0 ? toolsInstalling(tools) : SETUP_GOING[going]));
+    lines.push(setupMeanwhile(tools.length > 0 ? toolsInstalling(tools) : (host === 'local' && LOCAL_GOING[going]) || SETUP_GOING[going]));
   }
   return lines;
 }

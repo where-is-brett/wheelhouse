@@ -126,7 +126,7 @@ import { sameRemote } from '../state/git.js';
 import { PROFILE_BRANCH } from '../profile/store.js';
 import { readConfig, isModelName } from '../gate/guardrails.js';
 import { aliasModel, FRONT_DESK_ALIAS, MID_SIZED_ALIAS } from './best-model.js';
-import { projectSettings, localSettings, mergeSettings, directorStatusLine, withoutKeychainDenial } from '../protection/settings.js';
+import { projectSettings, localSettings, mergeSettings, directorStatusLine, withoutKeychainDenial, compactionRules } from '../protection/settings.js';
 import { protectionStatus as realProtectionStatus } from '../host/protection.js';
 import { projectPath } from '../host/gitlab-key.js';
 import { DEFAULT_GITLAB, commitEmailOf } from '../host/gitlab-base.js';
@@ -401,10 +401,12 @@ function jsonChanges(file, existing, target) {
 
 // What each of the three files will hold once setup has written it, from what it holds: a function
 // of its text for each, with the configuration the settings are made from.
-function targetsFor({ folder, config, release }) {
+function targetsFor({ folder, config, release, claudeHome = null }) {
   const configNow = objectIn(CONFIG, readText(path.join(folder, ...CONFIG.split('/'))));
   const effective = configFrom(configNow, config);
-  const ours = projectSettings(effective, { release });
+  // A compaction rule the director already has is kept, and Wheelhouse's window is not added beside it.
+  const keepCompaction = compactionRules({ claudeHome, projectDir: folder }).length > 0;
+  const ours = projectSettings(effective, { release, keepCompaction });
   // A merge only adds, so a project that signs apps has the keychain's entries taken out (check 73).
   const keychain = effective.signsApps === true ? withoutKeychainDenial : (merged) => merged;
   return {
@@ -422,7 +424,7 @@ function targetsFor({ folder, config, release }) {
 export function projectFilesChange({ folder, config, release = null, local }) {
   if (!isObject(local)) throw new Error('projectFilesChange needs this computer\'s local settings: { address, node, pluginRoot, platform, claudeHome }');
   const at = (rel) => path.join(folder, ...rel.split('/'));
-  const targets = targetsFor({ folder, config, release });
+  const targets = targetsFor({ folder, config, release, claudeHome: local.claudeHome });
   const settingsText = readText(at(SETTINGS));
   const configText = readText(at(CONFIG));
   const configAfter = targets[CONFIG](configText);
@@ -1252,7 +1254,7 @@ export function projectFilesStep({
       const config = starterConfig({ answers: ctx.answers, frontDesk: pin, midSized: mid, found: await foundAtHead(git) });
       const home = claudeHome();
       const release = wheelhouseRelease({ folder, claudeHome: home });
-      const targets = targetsFor({ folder, config, release });
+      const targets = targetsFor({ folder, config, release, claudeHome: home });
       // Each shared file holds what it held at the last commit, or that with only what setup or
       // step 1's install wrote (the plugin switched on in the project's settings, check 37): setup
       // gives the same file from it as from the commit. Any other change is the director's own, not
@@ -1426,7 +1428,7 @@ export function projectFilesStep({
           }
         } else {
           const now = objectIn(SETTINGS, readText(settingsFile)) ?? {};
-          const wanted = targetsFor({ folder, config: starterConfig({ answers: ctx.answers }), release: wheelhouseRelease({ folder, claudeHome: claudeHome() }) })[SETTINGS](readText(settingsFile));
+          const wanted = targetsFor({ folder, config: starterConfig({ answers: ctx.answers }), release: wheelhouseRelease({ folder, claudeHome: claudeHome() }), claudeHome: claudeHome() })[SETTINGS](readText(settingsFile));
           for (const { key, value } of keyEdits(now, wanted)) ctx.applyJsonKey({ file: settingsFile, key, value, project });
         }
         say(`${listed(pins.map((c) => pinName(c.target)))} ${pins.length === 1 ? 'is' : 'are'} installed for this project`);
