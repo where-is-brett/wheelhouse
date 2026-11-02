@@ -28,12 +28,16 @@ function risks(events) {
   const open = new Map();
   const ordered = events.filter((e) => plain(e) && plain(e.data) && Number.isFinite(timeOf(e.at))).sort((a, b) => timeOf(a.at) - timeOf(b.at));
   for (const e of ordered) {
-    if ((e.kind === 'setting' || e.kind === 'level') && typeof e.data.key === 'string' && e.data.value !== undefined) {
-      const was = open.get(e.data.key);
-      if (e.data.value === 'unattended') {
-        if (was === undefined) open.set(e.data.key, e.at);
+    // A period is a setting or a level with a key and a value, or a level the audit reads (data.level a word, for one pull
+    // request or, with none, for all after it). Only a word counts: a decision level is a number.
+    const key = typeof e.data.key === 'string' ? e.data.key : (typeof e.data.level === 'string' ? `level:${e.data.pr ?? 'all'}` : undefined);
+    const value = e.data.value ?? e.data.level;
+    if ((e.kind === 'setting' || e.kind === 'level') && key !== undefined && typeof value === 'string' && e.data.allowance === undefined) {
+      const was = open.get(key);
+      if (value === 'unattended') {
+        if (was === undefined) open.set(key, e.at);
       } else if (was !== undefined) {
-        open.delete(e.data.key);
+        open.delete(key);
         ended.push(e.at);
       }
     }

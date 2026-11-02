@@ -15,7 +15,7 @@ const DAY = 24 * 60 * 60 * 1000;
 const NOW = new Date('2026-11-09T00:00:00.000Z');
 const ago = (days) => new Date(NOW.getTime() - days * DAY).toISOString();
 const setting = (value, days, key = 'windowsBuildCommands:abcd1234') => ({ kind: 'setting', at: ago(days), data: { key, value } });
-const allowance = (days) => ({ kind: 'level', at: ago(days), data: { key: 'ask', value: 3, allowance: true } });
+const allowance = (days) => ({ kind: 'level', at: ago(days), data: { level: 'ask', pr: 7, allowance: 'npm run build' } });
 
 test('renewal is due after Unattended ends, and not while it lasts or before', () => {
   assert.equal(keyRenewalDue({ events: [], now: NOW, lastRenewal: null }).due, false, 'nothing happened');
@@ -25,6 +25,14 @@ test('renewal is due after Unattended ends, and not while it lasts or before', (
   assert.match(ended.why, /Unattended/);
   assert.equal(keyRenewalDue({ events: [setting('unattended', 5), setting('ask', 2)], now: NOW, lastRenewal: ago(1) }).due, false, 'a key made since');
   assert.equal(keyRenewalDue({ events: [setting('unattended', 5, 'other'), setting('ask', 2, 'another')], now: NOW, lastRenewal: null }).due, false, 'another setting\'s end is no end');
+});
+
+test('a level the audit reads (a word, for a change or for all after it) opens and ends a period too', () => {
+  const level = (value, days, pr) => ({ kind: 'level', at: ago(days), data: { level: value, ...(pr === undefined ? {} : { pr }) } });
+  assert.equal(keyRenewalDue({ events: [level('unattended', 5, 7), level('guarded', 2, 7)], now: NOW }).due, true);
+  assert.equal(keyRenewalDue({ events: [level('unattended', 5)], now: NOW }).due, false);
+  assert.equal(keyRenewalDue({ events: [level('unattended', 5), level('ask', 4)], now: NOW }).due, true);
+  assert.equal(keyRenewalDue({ events: [{ kind: 'level', at: ago(5), data: { level: 3, work: 'w' } }, { kind: 'level', at: ago(4), data: { level: 2, work: 'w' } }], now: NOW }).due, false, 'decision levels are numbers');
 });
 
 test('renewal is due a week after an Ask allowance, and not before', () => {
