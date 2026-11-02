@@ -9,6 +9,7 @@
 const { renderPane, statusText } = require('./pane/render.js');
 const { makeNonces } = require('./nonce.cjs');
 const { onPaneMessage } = require('./press.cjs');
+const { writeVersions, watchVersions } = require('./versions.cjs');
 const desks = require('./desk.cjs');
 
 const OPEN_PANE = 'wheelhouse.openPane';
@@ -129,7 +130,16 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
       ?.then?.((picked) => { if (picked) return vscode.commands.executeCommand(`${PANE_ID}.focus`); return undefined; });
   }
 
-  try { await deps.versions?.({ vscode, add }); } catch { /* The versions file is a record, not a need. */ }
+  // VS Code's versions and its Copilot runtime's, kept in the file the session start reads.
+  try {
+    const file = deps.versionsFile ?? real.versionsFile;
+    if (deps.versions) await deps.versions({ vscode, add });
+    else if (file) {
+      await writeVersions({ vscode, file });
+      const watching = watchVersions({ vscode, file });
+      if (watching) context.subscriptions?.push(watching);
+    }
+  } catch { /* The versions file is a record, not a need. */ }
   try { await startHelper(); } catch { /* The pane says the helper isn't running. */ }
   await refresh();
 

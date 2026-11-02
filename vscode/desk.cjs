@@ -95,6 +95,7 @@ async function realDeps({ root, cwd }) {
     setStop: m.stop.setStop,
     liftStop: m.stop.liftStop,
     liftQuestion: m.cardLines.LIFT_STOP,
+    versionsFile: m.versions.versionsFile(),
     timeZone,
     settingsView: async () => {
       const id = project();
