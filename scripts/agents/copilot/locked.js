@@ -75,6 +75,6 @@ export function copilotLocked(options = {}) {
       if (!ownCopilotFiles(places)) return { refusal: NOT_OURS };
       return { files: lockedCopilotFiles({ dir, nodePath, address, domains, places }) };
     },
-    removal: () => (ownCopilotFiles(places) ? [places.managed, path.join(places.policyDir, POLICY_FILE)] : []),
+    removal: () => (ownCopilotFiles(places) ? [places.managed, path.join(places.policyDir, POLICY_FILE)].filter((f) => fs.existsSync(f)) : []),
   };
 }
