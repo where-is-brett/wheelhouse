@@ -103,3 +103,11 @@ export function renewKeyOnClick({ events, enrolled, now = () => new Date(), last
   if (click === undefined) return { renewed: false };
   return { renewed: true, key: replaceSigningKey({ enrolled, now, click }) };
 }
+
+// When this computer's key was last renewed, as the time its newest retired key was retired, or null for never.
+export function lastKeyRenewal(enrolled, computer) {
+  const times = (Array.isArray(enrolled) ? enrolled : [])
+    .filter((e) => e?.computer === computer && typeof e.retiredAt === 'string' && Number.isFinite(Date.parse(e.retiredAt)))
+    .map((e) => e.retiredAt).sort();
+  return times.at(-1) ?? null;
+}
