@@ -75,6 +75,19 @@ So that the engine's steps keep Wheelhouse's guards, setup also adds the Wheelho
 
 A product on GitLab, and a computer other than a Mac, gets none of this, and keeps Wheelhouse's own Crew for now.
 
+## GitHub Copilot
+
+A product that builds with Copilot keeps the same private record as any other, plus these. Nothing in them is sent anywhere by Wheelhouse.
+
+- `~/.wheelhouse/agents/copilot-sandbox.json`, the result of the sandbox test: kept for this computer rather than for a project, with the Copilot version and a digest of the sandbox settings it was run for. A result for another version or other settings counts as no test.
+- `~/.wheelhouse/own-files.json`, the hashes of Wheelhouse's own files and of Copilot's files that guard them (hook and agent folders, settings, the add-on's folder, the clean home's hook file and settings). A weekly look compares against it and names what changed. Copilot's sign-in file is never opened.
+- In the project's private state, the level a Copilot run ran at (the sandbox, Guarded, Ask or Unattended) is recorded on its run record, with each Ask allowance, and the audit report reads it.
+- Each approval and action names how it was made: `chat-click` (a click in Copilot's chat, not proven), `hook-click` or `policy-hook` (seen by a Copilot hook), `add-on` (a button in the add-on's pane), `window` (the helper's window) or `host` (the person's approval on GitHub). The proof sits under the record's signature.
+- If you use the VS Code add-on: `terminal-commands.jsonl` in the project's state folder lists each command the VS Code window ran (not only Copilot's; the window does not say who typed it), and a command that looks like a secret is replaced by a note. It is cut to its newest half when it grows large. Where a company switches Copilot's tools off, the chat can leave a note in the project's `.wheelhouse/inbox/` folder; Wheelhouse reads each file once, removes it, and treats it as a chat click that approves nothing.
+- A new signing key, made on your click after a risky period, is kept beside the old one; records signed before it still verify.
+
+Uninstall removes the sandbox result, the baseline for the weekly look and Locked's Copilot files, along with the other files in `~/.wheelhouse`. The add-on is removed from VS Code by you; Wheelhouse does not reach into it.
+
 ## Optional channels
 
 ntfy and Telegram stay off unless you switch them on in your settings. They carry a link only, never what a card says, because anyone who guesses a public ntfy topic's name can read it.

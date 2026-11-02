@@ -2,7 +2,7 @@
 
 # Wheelhouse with other coding agents, starting with GitHub Copilot: design
 
-**Status:** approved by the director on 21 October 2026, and ready for a build plan (section 14 gives the order of work). Nothing here is built. The director will test it in real use and may revisit any ruling then. The add-on's look (section 8.6) is the director's ruling of 20 October 2026.
+**Status:** approved by the director on 21 October 2026. Lean, the add-on and the host-independent parts are built; the Middle and Full tiers and GitLab on a company's servers were replaced or lost when Wheelhouse moved onto Archon (`docs/specs/2026-10-29-wheelhouse-on-archon-design.md`), which wins where the two differ. Section 15 records what became of them and the calls the build of 2 November 2026 made. The director will test it in real use and may revisit any ruling then. The add-on's look (section 8.6) is the director's ruling of 20 October 2026.
 
 **What it covers:** how Wheelhouse runs with a coding agent other than Claude Code, starting with GitHub Copilot in VS Code, and how the same seam leaves room for Codex, Cursor and Gemini CLI later, without designing those now.
 
@@ -698,6 +698,8 @@ Each goes to the director as a card, through the main session.
 
 ## 13. The designer's calls (the director may override)
 
+The calls on three tiers (Middle and Full), on GitLab on the company's own servers and on the second person's approval on GitLab were made before Archon. The Archon design replaces Middle and Full (background builders on Copilot) with Archon running Copilot as a provider, and loses GitLab (section 15).
+
 - one shared core with an agent adapter per agent, the adapter's parts, and the core never naming an agent (sections 7 and 8.1);
 - the Copilot harness only, with the Local harness refused at session start (sections 2 and 6.2);
 - Wheelhouse not offered as an MCP server (section 7);
@@ -710,7 +712,7 @@ Each goes to the director as a card, through the main session.
 - the watcher refusing to wake a session whose worktree holds a new or changed agent-control file (section 6.2);
 - the Local harness told apart at session start, and the front desk doing nothing there (section 6.2);
 - the guardrail and write-denied paths growing by every agent's control files, in Claude Code projects too, and the home folder's agent folders denied to agents (section 6.5);
-- Locked on Copilot on macOS first, requiring the sandbox in Locked projects by its policy hook rather than forcing it computer-wide, with managed deny rules on the keys and credentials, and not offered where a company's settings would win (section 6.4);
+- Locked on Copilot on macOS first, forcing the sandbox on for all Copilot work on the computer, once this Mac's sandbox test has passed, with managed deny rules on the keys and credentials, and not offered where a company's settings would win (section 6.4);
 - the add-on for VS Code, with its contributions, and the plugin for Copilot CLI, from one repository with two manifests (section 8.2);
 - hooks registered by setup once per computer in the person's Copilot hook folder, checking for a Wheelhouse project first, never in the plugin's Copilot manifest (section 8.2);
 - VS Code's and the Copilot runtime's versions read by the add-on (section 8.8);
@@ -719,14 +721,14 @@ Each goes to the director as a card, through the main session.
 - setup's first step reading what the computer and company allow (section 8.7);
 - VS Code and its Copilot runtime recorded rather than pinned, with the safety scenarios run on a change (section 8.8);
 - four Copilot scenarios added to the evaluation (section 9);
-- three tiers set by the controls the workplace allows, found by setup from a table of cases, and moved up or down without losing history: Lean, Middle and Full, with Copilot CLI adding background builders rather than setting the tier (section 6.4);
+- (replaced for Middle and Full: section 15) three tiers set by the controls the workplace allows, found by setup from a table of cases, and moved up or down without losing history: Lean, Middle and Full, with Copilot CLI adding background builders rather than setting the tier (section 6.4);
 - at Lean, VS Code with Copilot and nothing added: Wheelhouse's skills, agents and instructions copied with git into the person's own Copilot folder; everything through the chat, with cards as Copilot's clickable questions and the board also as a file; local git with merge commits and a copy pushed to a folder the person picks; approvals in the helper's window where Node.js may run, on the code host's page where there is one, and otherwise as chat clicks recorded as not proven; the helper, where it runs, writing state, keeping the git store outside the project and running the tests on the approved commit; reviews in a separate read-only chat, recorded as chat reviews; VS Code's command prompts and settings named as conveniences, not controls; tested versions published by Wheelhouse; and no Wheelhouse guards without Node.js unless check C16 finds a way (section 6.4);
 - the add-on optional, lifting any tier as the mod does, and doing the helper's jobs inside VS Code where Node.js can't run (sections 6.4 and 8.6);
 - at Middle without Copilot CLI, a real-user project's changes also needing a second person's approval on the code host where the licence gives one (section 6.4);
-- GitLab on the company's own servers: the address and the company's certificate taken everywhere, `glab` only for the sign-in, the typed token where there's no OAuth application, the person's approval on GitLab through the bot-authored merge request on Premium, and merge by Maintainers only on Free (section 8.11);
+- (lost under Archon: section 15) GitLab on the company's own servers: the address and the company's certificate taken everywhere, `glab` only for the sign-in, the typed token where there's no OAuth application, the person's approval on GitLab through the bot-authored merge request on Premium, and merge by Maintainers only on Free (section 8.11);
 - other code hosts each by a new half of the host adapter, designed once the tester's host is known (section 8.10);
 - a click in Copilot's chat as the everyday approval in every tier, what it proves set by check C6, the code host's lock behind it, the approval on the host's page for projects with real users, and the helper's window or the add-on's button confirming the steps that matter most (section 6.4: the chat click is the director's ruling, the rest is the designer's);
-- at Middle and Full, with projects with real users on Middle or Full only (the director's ruling of 21 October 2026): the host's controls first (protection pinned to the host's own CI, the project's secrets kept out of pull requests' CI runs, the person's approval on the host once check C15 gives one, the narrow connection only, the record pushed as it happens), said plainly to hold against agents on the personal route only while nothing reaches the person's sign-in; the strongest level the computer allows, enforced by Copilot's own permission rules from a clean settings folder and environment, and unattended only where the keys are unreadable to builds until C15 passes; Guarded on Copilot keeping the control files at the normal level and removing links out of the worktree; new keys and a renewed connection after Unattended and after weeks with Ask allowances; building in the person's own chat where Copilot CLI can't run; the audit report checked against the host's own history; Unattended only by its own card and never for a project with real users; Locked on Copilot forcing the sandbox for all Copilot work on the computer; the baseline setting `forceRemoteSettingsRefresh` and recommending device management too; IT's approval named up front on a work computer, with no start-up entry (sections 6.4 and 8.5).
+- (replaced under Archon, except the rulings on keys, Locked and IT's approval: section 15) at Middle and Full, with projects with real users on Middle or Full only (the director's ruling of 21 October 2026): the host's controls first (protection pinned to the host's own CI, the project's secrets kept out of pull requests' CI runs, the person's approval on the host once check C15 gives one, the narrow connection only, the record pushed as it happens), said plainly to hold against agents on the personal route only while nothing reaches the person's sign-in; the strongest level the computer allows, enforced by Copilot's own permission rules from a clean settings folder and environment, and unattended only where the keys are unreadable to builds until C15 passes; Guarded on Copilot keeping the control files at the normal level and removing links out of the worktree; new keys and a renewed connection after Unattended and after weeks with Ask allowances; building in the person's own chat where Copilot CLI can't run; the audit report checked against the host's own history; Unattended only by its own card and never for a project with real users; Locked on Copilot forcing the sandbox for all Copilot work on the computer; the baseline setting `forceRemoteSettingsRefresh` and recommending device management too; IT's approval named up front on a work computer, with no start-up entry (sections 6.4 and 8.5).
 
 **Decided by the director on 21 October 2026:** the baseline is VS Code with Copilot and no add-on, and a click in the chat as the everyday approval (section 6.4); projects with real users on Middle or Full only (question 2); and the design approved for a build plan (question 5).
 
@@ -755,6 +757,33 @@ Each goes to the director as a card, through the main session.
 - **C12, C14 and C19:** the phone, the pane's place, and the add-on, later, before the add-on is built.
 
 **Held for the director's testing:** every ruling may be revisited once the director uses it, the tier for real-user projects first among them.
+
+## 15. What became of the design, and the calls made on 2 November 2026
+
+*Designer's call*, recorded after the Archon design (`docs/specs/2026-10-29-wheelhouse-on-archon-design.md`) and the build plan `docs/superpowers/plans/2026-11-02-copilot-remaining-parts.md`. Where this document and the Archon design differ, the Archon design wins.
+
+**Replaced or lost under Archon.**
+
+- **Middle and Full** (sections 6.4 and 8.4): the background builders on Copilot are replaced. Archon runs Copilot as a provider and its workflows do the building; Lean is kept.
+- **GitLab on a company's own servers** (section 8.11) and **the person's approval on GitLab** (sections 6.4 and 8.11): lost. A GitLab project keeps Wheelhouse's own Crew until v0.3.0. The Free-plan ready-branch refusal, Premium's required approvals and the second person's approval for chat reviews are not built.
+- **The host's approval** now counts only on GitHub, as a condition of the broker's permit for a merge (and, until v0.3.0, of the helper's merge gate).
+
+**Built since:** the sandbox level, with a test kept for the computer; the company's baseline and an IT note; Locked on Copilot on a Mac; the host's approval on GitHub; new signing keys after risky periods; a weekly look at Wheelhouse's own files and Copilot's; the add-on's pane, status bar and buttons, packed as a `.vsix`; the add-on running the helper at Lean; the chat's two tools that bind nothing; a click from a policy hook; and a Copilot run's level recorded on its run record. VS Code's Claude harness is a front end only.
+
+**Calls this build makes.**
+
+1. The sandbox settings live in Copilot's clean home, so one set covers every Copilot step on the computer. A step's own worktree is named by the CLI's working-folder form if its documentation has one; otherwise a run can write to another's worktree, and the level's record says so.
+2. The web list is the union of the domains of this computer's Copilot projects, since the home is shared.
+3. The sandbox test runs at setup and when the CLI version or the home's settings change, not for each session. Its result belongs to the computer, carries the version and a digest of the settings (without the web list), and counts as no test when either differs.
+4. The add-on signs with this computer's key and acts through the desk, with the proof `add-on`. It takes no client key; that is for a later app.
+5. The `.vsix` carries the closure of what it imports, found by walking the imports, so it never loads code from a project, a checkout or a plugin folder.
+6. At Lean, the add-on runs the real helper in its own process, with no copy of its checks. It never starts VS Code's program as a Node.js process.
+7. GitHub's route is the person's review of a pull request. The narrow connection's key may act as the person and GitHub refuses a self-review; if the route fails at its sitting, a second route is built.
+8. Every switch starts off, so code built before its sitting refuses rather than trusts.
+9. Locked on Copilot forces the sandbox for all Copilot work on the computer, as section 6.4 says, and is offered only once this Mac's sandbox test has passed. Section 13's older line, "rather than forcing it computer-wide", was stale and is corrected there.
+10. Only the add-on's own pane's buttons can press a binding click. A chat tool, a command, a URI or a message without the pane's nonce records nothing binding.
+
+**Switches, all off until their sitting:** `COPILOT_SANDBOX_CHECKED`, `CLAUDE_HARNESS_CHECKED`, `C6_PASSED` and `ADDON_LEAN_READY` (in `scripts/lib/copilot-numbers.js`) and `HOST_APPROVAL_CHECKED` (in `scripts/host/approval-ready.js`).
 
 ## Appendix A. What the independent review changed
 
