@@ -76,6 +76,7 @@ function host(remote) {
       const number = 8 + opened.length;
       const sha = await g(remote.url, 'rev-parse', `refs/heads/${head}`);
       await g(remote.url, 'update-ref', `refs/pull/${number}/head`, sha);
+      await g(remote.url, 'update-ref', `refs/merge-requests/${number}/head`, sha);
       prs.set(number, { headSha: sha, headRef: head, baseRef: base, state: 'open', mergeable: 'mergeable', body });
       opened.push({ number, head, base, title, body });
       return { number, url: `https://github.com/o/p/pull/${number}` };
@@ -87,6 +88,7 @@ function host(remote) {
       if (pr.state === 'open') {
         pr.headSha = await g(remote.url, 'rev-parse', `refs/heads/${pr.headRef}`);
         await g(remote.url, 'update-ref', `refs/pull/${number}/head`, pr.headSha);
+        await g(remote.url, 'update-ref', `refs/merge-requests/${number}/head`, pr.headSha);
       }
       return { ...pr };
     },
@@ -102,13 +104,13 @@ function host(remote) {
   };
 }
 
-async function working(fn) {
+async function working(fn, kind = 'github') {
   const p = await oldProject();
   const home = shortHome();
   try {
     await as(home, async () => {
       writeProject('o__p', {
-        folder: path.join(home, 'work'), remoteUrl: p.remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' },
+        folder: path.join(home, 'work'), remoteUrl: p.remote.url, host: kind, repo: 'o/p', connection: { host: kind, mode: 'quick', project: 'o/p' },
       });
       const { computer, publicKey } = makeSigningKey();
       enrol({ computer, publicKey, enrolledAt: '2026-10-30T00:00:00.000Z' });
@@ -131,7 +133,7 @@ async function working(fn) {
 
 const gateAsks = () => listEvents(stateDir('o__p'), { report: () => {} }).filter((e) => e.kind === 'gate-asks');
 
-test('a window the director chose reaches the settings file by an approved pull request', async () => {
+for (const kind of ['github', 'gitlab']) test(`a window the director chose reaches the settings file by an approved ${kind === 'github' ? 'pull' : 'merge'} request`, async () => {
   await working(async ({ client, adapter, remote, base }) => {
     assert.deepEqual(await client.compactWindow({ project: 'o__p' }), { ok: true, step: 'off' });
     confirmWindow(320000);
@@ -147,7 +149,7 @@ test('a window the director chose reaches the settings file by an approved pull 
     assert.deepEqual(await client.compactWindow({ project: 'o__p' }), { ok: true, step: 'on' });
     assert.deepEqual(adapter.merges, [{ number: 8, sha: opened.head }]);
     assert.equal(adapter.opened.length, 1);
-  });
+  }, kind);
 });
 
 test('the recogniser refuses any other key, any other file and any other value', () => {
@@ -168,4 +170,36 @@ test('the recogniser refuses any other key, any other file and any other value',
   assert.match(check({ files: files({ headMode: '100755' }) }).why, /plain file/);
   assert.match(check({ files: files({ head: `${JSON.stringify({ ...settings, autoCompactWindow: 320000 })}\n` }) }).why, /isn't the text/);
   assert.match(check({ files: files({ base: null }) }).why, /plain file/);
+});
+
+// A project in git alone: the change goes through the local queue, and the director's signed approval is the click.
+test('a window the director chose reaches a git-alone project through the local queue once they approve it', async () => {
+  const { gitAloneWorld, LOCAL_COMMAND, LOCAL_P } = await import('../../helpers/engine-e2e.js');
+  const { commandDigest } = await import('../../../scripts/checks/record.js');
+  const digest = commandDigest(LOCAL_COMMAND);
+  const check = async ({ commit, main }) => ({ commit, command: digest, result: 'passed', minutes: 0, tail: '', ...(main ? { clean: true } : {}) });
+  const put = (kind, data, ms) => {
+    const event = makeEvent({ kind, data, now: at(ms) });
+    const file = path.join(stateDir(LOCAL_P), eventPath(event));
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${JSON.stringify(event, null, 2)}\n`);
+    return event;
+  };
+  await gitAloneWorld(async ({ helper, client, home, folder }) => {
+    assert.deepEqual(await client.compactWindow({ project: LOCAL_P }), { ok: true, step: 'off' });
+    const setting = put('setting', { key: 'compactWindow', value: 320000 }, 1000);
+    put('confirmation', confirmationFor(setting).data, 2000);
+    const opened = await client.compactWindow({ project: LOCAL_P });
+    assert.equal(opened.step, 'opened', JSON.stringify(opened));
+    assert.deepEqual(JSON.parse(await g(home, 'show', `${opened.head}:${SETTINGS_FILE}`)), { ...SETTINGS, autoCompactWindow: 320000 });
+    // The checks run on this computer: the main version's and the change's.
+    for (let i = 0; i < 4; i += 1) await helper.engine.tick();
+    const waiting = await client.compactWindow({ project: LOCAL_P });
+    assert.equal(waiting.step, 'approve', JSON.stringify(waiting));
+    put('approval', { pr: opened.pr, commit: opened.head }, 3000);
+    const done = await client.compactWindow({ project: LOCAL_P });
+    assert.equal(done.step, 'on', JSON.stringify(done));
+    assert.deepEqual(JSON.parse(await g(home, 'show', `main:${SETTINGS_FILE}`)), { ...SETTINGS, autoCompactWindow: 320000 });
+    assert.ok(folder);
+  }, { check, files: { [SETTINGS_FILE]: `${JSON.stringify(SETTINGS, null, 2)}\n` } });
 });

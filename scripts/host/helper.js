@@ -3776,7 +3776,8 @@ export async function startHelper({
   // Once the director confirmed a `compactWindow` and while the project's settings file holds another, each call takes the
   // next step, as the engine switch does: a pull request changing only `autoCompactWindow`, made here; then that pull
   // request merged through the gate, once the director approved it. The window's own record keeps its pull request:
-  // { pr, head, base, value, closed? }. Only on GitHub, as the switch.
+  // { pr, head, base, value, closed?, merged? }. On GitHub, GitLab and a project in git alone: the adapter is the project's
+  // own, and on git alone the change goes through the local queue, where the director's signed approval is the click.
   const compactFile = (project) => path.join(engineDirOf(stateDir(project)), 'compact-window.json');
   function readCompact(project) {
     try {
@@ -3788,7 +3789,6 @@ export async function startHelper({
   }
   async function doCompactWindow({ project }, ctx) {
     if (stopped()) return STOP_REFUSAL;
-    if (recordOf(project).host !== 'github') return { ok: true, step: 'off' };
     const views = buildViews(listEvents(stateDir(project), { report: () => {} }), ownKeyOnly(), { now });
     const value = chosenWindow(views.settings, { now: now() });
     if (value === null) return { ok: true, step: 'off' };
@@ -3812,7 +3812,10 @@ export async function startHelper({
     if (pr?.state === 'closed' && kept.closed !== true && kept.value === value) return { ok: true, step: 'closed', pr: kept.pr };
     if (open && kept.base === base.head && kept.value === value) {
       const merged = await oneAtATime(`merge:${project}`, () => doMerge({ project, number: kept.pr }, ctx));
-      if (merged?.ok === true && merged.merged === true) return { ok: true, step: 'on' };
+      if (merged?.ok === true && merged.merged === true) {
+        writeWhole(compactFile(project), { ...kept, merged: true });
+        return { ok: true, step: 'on' };
+      }
       const approval = approvalOnly(merged, kept.pr);
       if (approval === null) return { ok: true, step: 'waiting', pr: kept.pr, why: merged?.refused ?? 'the gate gave no answer' };
       const asked = listEvents(stateDir(project), { report: () => {} }).some((e) => e.kind === 'gate-asks' && e.data?.pr === kept.pr
@@ -3834,6 +3837,8 @@ export async function startHelper({
     if (made.refused) return { ok: false, refused: made.refused };
     const opened = await adapter.openPr({ head: branch, base: defaultBranch, title: COMPACT_TITLE, body: compactBody(value) });
     writeWhole(compactFile(project), { pr: opened.number, head: made.commit, base: base.head, value });
+    // Where the project's checks run on this computer, the new head is queued for them, as the found command's is.
+    await engineHosts.find((h) => h.project === project)?.checks.took(made.commit, COMPACT_WORK);
     return { ok: true, step: 'opened', pr: opened.number, head: made.commit };
   }
 
@@ -5529,6 +5534,7 @@ export async function startHelper({
       // A fix's work is its incident's, and no piece of the queue: it has ended when the incident has.
       ended: (work) => {
         if (work === COMMAND_WORK) return readCommand(project)?.merged === true;
+        if (work === COMPACT_WORK) return readCompact(project)?.merged === true;
         const seen = views();
         const entry = seen.work?.[work];
         if (!entry) return work.startsWith(`${FIX_LANE}-`) && openRedMain(seen)?.work !== work;

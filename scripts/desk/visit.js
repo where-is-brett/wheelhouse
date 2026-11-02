@@ -102,7 +102,7 @@ export async function visitLearning({ project, cwd, client, at, boardAsks, platf
   const switching = engineWanted({ platform }) && record?.host === 'github' && attempt(() => engineChosen(views.settings, { now: at }) && !engineReady(project), false);
   if (switching) await tried(() => client.engineSwitch({ cwd }));
   // The compaction window the director chose reaches the project's settings file the same way: each visit asks for the next step.
-  if (record?.host === 'github' && attempt(() => chosenWindow(views.settings, { now: at }) !== null, false)) await tried(() => client.compactWindow({ cwd }));
+  if (attempt(() => chosenWindow(views.settings, { now: at }) !== null, false)) await tried(() => client.compactWindow({ cwd }));
 }
 
 // The survey a second look follows (one taken again after the host was missed), when a briefing or
