@@ -19,9 +19,10 @@ import { adoptProject, mergeApproved, LeanRefusal, SIGNED_LEAN_PROOFS, leanSigne
 import { ADDON_LEAN_READY } from '../../scripts/lib/copilot-numbers.js';
 import { startHelper, editorSpawn, EDITOR_NO_NODE } from '../../scripts/host/helper.js';
 import { writeProject } from '../../scripts/lib/projects.js';
+import { guardedRun } from '../helpers/stood-in.js';
 import { require } from './helpers.js';
 
-const { startLean, guardedRun, LEAN_LOADS } = require('../../vscode/lean.cjs');
+const { startLean, guardedRun: editorGuardedRun, LEAN_LOADS } = require('../../vscode/lean.cjs');
 
 const PROJECT = 'shop';
 const T0 = Date.parse('2026-11-02T01:00:00.000Z');
@@ -181,10 +182,10 @@ test('a real helper taking over leaves one helper', async () => {
     const first = await w.go();
     const base = { address: w.address, adapterFor: async () => { throw new Error('none'); }, envFor: async () => { throw new Error('none'); } };
     // While the window's helper answers, a real one is refused: there is one.
-    await assert.rejects(startHelper(base), /already running/);
+    await assert.rejects(startHelper({ run: guardedRun(run), ...base }), /already running/);
     // Once the window lets go, the real one binds, and a window started after it is its client.
     await first.stop();
-    const real = await startHelper(base);
+    const real = await startHelper({ run: guardedRun(run), ...base });
     try {
       const late = await w.go();
       assert.equal(late.mode, 'client');
@@ -202,7 +203,7 @@ test('nothing spawns VS Code\'s own program, the foreman\'s route included', asy
   const w = await windows();
   try {
     const seen = [];
-    const guarded = guardedRun(async (file) => { seen.push(file); return { code: 0, stdout: '', stderr: '' }; });
+    const guarded = editorGuardedRun(async (file) => { seen.push(file); return { code: 0, stdout: '', stderr: '' }; });
     await assert.rejects(guarded(process.execPath, ['x.js']), /VS Code/);
     await assert.rejects(guarded('/usr/bin/node', ['x.js']), /VS Code/);
     await assert.rejects(guarded('node.exe', ['x.js']), /VS Code/);
@@ -212,7 +213,7 @@ test('nothing spawns VS Code\'s own program, the foreman\'s route included', asy
     // A real project on a host, so the request gets to the route itself; the connection stands in as setup's tests do.
     const folder = fs.realpathSync.native(shortHome());
     writeProject('o__p', { folder, remoteUrl: 'https://example.test/o/p.git', host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
-    const standIn = { startHelper: (o) => startHelper({ ...o, envFor: async () => ({}), adapterFor: async () => ({}) }) };
+    const standIn = { startHelper: (o) => startHelper({ run: guardedRun(run), ...o, envFor: async () => ({}), adapterFor: async () => ({}) }) };
     const first = await w.go({ modules: { numbers: { ADDON_LEAN_READY: true }, helper: standIn } });
     assert.equal(first.mode, 'helper');
     const post = (route, body) => new Promise((resolve, reject) => {
@@ -263,18 +264,19 @@ for (const inEditor of [true, false]) {
       fs.writeFileSync(plist, 'old agent');
       fs.writeFileSync(path.join(w.home, 'login-start.json'), JSON.stringify({ kind: 'launch-agent', path: plist, content: 'old agent', at: '2026-11-01T00:00:00.000Z' }));
       const calls = [];
+      const refused = [];
       const helper = await startHelper({
         address: w.address, platform: 'darwin', inEditor,
-        run: async (file, args) => { calls.push(file); return { code: 0, stdout: '', stderr: '' }; },
+        run: guardedRun(async (file) => { calls.push(file); return { code: 0, stdout: '', stderr: '' }; }, { log: refused }),
         adapterFor: async () => { throw new Error('none'); }, envFor: async () => { throw new Error('none'); },
       });
       await helper.close();
       if (inEditor) {
         assert.equal(fs.readFileSync(plist, 'utf8'), 'old agent');
-        assert.equal(calls.includes('launchctl'), false);
+        assert.equal([...calls, ...refused.map((l) => l.split(' ')[0])].includes('launchctl'), false);
       } else {
         assert.notEqual(fs.readFileSync(plist, 'utf8'), 'old agent');
-        assert.equal(calls.includes('launchctl'), true);
+        assert.equal(refused.some((l) => l.startsWith('launchctl')), true);
       }
     } finally {
       w.close();
