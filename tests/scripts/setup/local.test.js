@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { hostStep, productOf, REAL_USERS, LEVELS, fromOtherComputer } from '../../../scripts/setup/host.js';
 import {
-  CHOOSE_BACKUP, KEEP_HERE, KEPT_LINE, NO_BACKUP, ONLY_HERE_LINE, PUT_ON_GITHUB, FIRST_CHECK_LINE, backupAsk, branchesOf, chooseBranch, chosenHost,
+  CHOOSE_BACKUP, KEEP_HERE, KEPT_LINE, NO_BACKUP, ONLY_HERE_LINE, PUT_ON_GITHUB, PUT_ON_GITLAB, FIRST_CHECK_LINE, backupAsk, branchesOf, chooseBranch, chosenHost,
   localCard, localName, mirrorOf, othersLine, remotesOf, repoOfLocal,
 } from '../../../scripts/setup/local.js';
 import { redoCard } from '../../../scripts/setup/redo.js';
@@ -108,6 +108,7 @@ test('an empty folder offers Keep it on this computer first', async () => {
     assert.equal(ask.card.recommend, KEEP_HERE);
     assert.equal(chosenHost({ '3.join': said(KEEP_HERE) }), 'local');
     assert.equal(chosenHost({ '3.kept': said(PUT_ON_GITHUB) }), 'github');
+    assert.equal(chosenHost({ '3.kept': said(PUT_ON_GITLAB) }), 'gitlab');
   });
 });
 

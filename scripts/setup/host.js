@@ -102,7 +102,7 @@ import { joinedRepo, runClosed, JOIN_STEP } from '../lib/setup-run.js';
 import { readProfileViews, PROFILE_BRANCH } from '../profile/store.js';
 import { toolsStatus, originUrl, applyCompanyCa } from './tools.js';
 import {
-  KEEP_HERE, PUT_ON_GITHUB, applyLocal, backupAnswered, backupChoice, branchAsk, branchesOf, chooseBranch, headBranch, keptAsk, localCard, localName, localSteps, remotesOf,
+  KEEP_HERE, PUT_ON_GITHUB, PUT_ON_GITLAB, applyLocal, backupAnswered, backupChoice, branchAsk, branchesOf, chooseBranch, headBranch, keptAsk, localCard, localName, localSteps, remotesOf,
 } from './local.js';
 import { pickFolder, timeMachine } from '../host/local/backup.js';
 import { backupNamed, projectOfBackup } from '../host/local/restore.js';
@@ -1650,6 +1650,7 @@ export function hostStep({
       if (product.host === 'local' && !product.restoring) {
         if (answer('kept') === null) return { ask: keptAsk(product.name, product.others) };
         if (answer('kept').label === PUT_ON_GITHUB) host = 'github';
+        if (answer('kept').label === PUT_ON_GITLAB) host = 'gitlab';
       }
       // The main line of a folder with history: asked only where the folder doesn't say.
       const branches = branchesOf(ctx.folder);

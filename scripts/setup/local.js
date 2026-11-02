@@ -22,6 +22,7 @@ import { newId } from './journal.js';
 
 export const KEEP_HERE = 'Keep it on this computer';
 export const PUT_ON_GITHUB = 'Put it on GitHub';
+export const PUT_ON_GITLAB = 'Put it on GitLab';
 export const KEPT_LINE = 'Your project stays on this computer. Nothing goes online.';
 export const FIRST_CHECK_LINE = 'Wheelhouse finds your tests and runs them here for the first time.';
 export const STARTED_LINE = (branch) => `Git starts in this folder, with a first commit on ${branch}.`;
@@ -129,11 +130,12 @@ export function keptAsk(name, others) {
     line: line === null ? KEPT_LINE : `${KEPT_LINE} ${line}`,
     card: {
       level: 2,
-      what: `Keep ${name} on this computer, or put it on GitHub too?`,
+      what: `Keep ${name} on this computer, or put it on GitHub or GitLab too?`,
       why: 'It needs no account here, and it can move later in one click.',
       options: [
         { label: KEEP_HERE, says: 'Nothing goes online.' },
         { label: PUT_ON_GITHUB, says: 'Setup makes a private repository on your GitHub account, and sends your project there.' },
+        { label: PUT_ON_GITLAB, says: 'Setup makes a private project on your GitLab account, and sends your project there.' },
       ],
       recommend: KEEP_HERE,
       because: 'it needs no account, and it can move later in one click',
@@ -195,7 +197,7 @@ export function chosenHost(answers = {}) {
   const labels = [answers?.['3.kept'], answers?.['3.host'], ...joins.map((k) => answers[k])].map((a) => a?.label);
   if (labels.includes(KEEP_HERE)) return 'local';
   if (labels.includes(PUT_ON_GITHUB) || labels.includes('GitHub')) return 'github';
-  return labels.includes('GitLab') ? 'gitlab' : null;
+  return labels.includes(PUT_ON_GITLAB) || labels.includes('GitLab') ? 'gitlab' : null;
 }
 
 // The project's name on this computer: the folder's, with a suffix where another project has it.
