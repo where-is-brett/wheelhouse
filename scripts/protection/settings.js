@@ -338,7 +338,7 @@ const LOOPBACK = /^(\*\.)?localhost$|^127(\.\d{1,3}){3}$|^0\.0\.0\.0$/;
 
 // `release` is { ref } when the project follows a Wheelhouse release; without it the
 // marketplace entry carries no ref. Build commands' allow rules are not here: see featureAllowRules.
-export function projectSettings(config, { release = null } = {}) {
+export function projectSettings(config, { release = null, keepCompaction = false } = {}) {
   const credentials = allCredentials();
   const engine = archonDenyRules(ENGINE_HOME);
   const keychainShut = config.signsApps !== true;
@@ -371,11 +371,52 @@ export function projectSettings(config, { release = null } = {}) {
       network: { allowedDomains: unique(['registry.npmjs.org', ...config.webDomains.map(cleanDomain).filter((d) => d !== null && !LOOPBACK.test(d))]) },
     },
     ...pluginSettings(release),
-    autoCompactWindow: 300000,
+    ...(keepCompaction ? {} : { autoCompactWindow: COMPACT_WINDOW }),
     disableAllHooks: false,
     enableAllProjectMcpServers: false,
     ...structuredClone(ATTRIBUTION_OFF),
   };
+}
+
+// The window Wheelhouse sets for compaction, in tokens.
+export const COMPACT_WINDOW = 300000;
+
+// The compaction rules the director already has, from the project's shared settings, this computer's local
+// settings for the project and the director's own user settings: `env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` (a percentage
+// of the window) and an `autoCompactWindow` other than Wheelhouse's own. Claude Code applies the percentage to the
+// window, so Wheelhouse's window beside a percentage compacts far earlier than either says (35% of 300,000 is
+// 105,000 tokens). Each is { file, label, kind: 'percentage' | 'window', value }, project file first. A file that is
+// missing or damaged holds none.
+export function compactionRules({ claudeHome, projectDir }) {
+  const files = [
+    { file: path.join(projectDir, '.claude', 'settings.json'), label: 'the project\'s settings' },
+    { file: path.join(projectDir, '.claude', 'settings.local.json'), label: 'this computer\'s settings for the project' },
+    ...(claudeHome ? [{ file: path.join(claudeHome, 'settings.json'), label: 'your own Claude Code settings' }] : []),
+  ];
+  const found = [];
+  for (const { file, label } of files) {
+    let parsed;
+    try {
+      parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch {
+      continue;
+    }
+    if (!isObject(parsed)) continue;
+    const pct = isObject(parsed.env) ? parsed.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE : undefined;
+    if ((typeof pct === 'string' && pct.trim() !== '') || (typeof pct === 'number' && Number.isFinite(pct))) found.push({ file, label, kind: 'percentage', value: String(pct).trim() });
+    const win = parsed.autoCompactWindow;
+    if (typeof win === 'number' && Number.isFinite(win) && win !== COMPACT_WINDOW) found.push({ file, label, kind: 'window', value: String(win) });
+  }
+  return found;
+}
+
+// What the one card says of the compaction rules found: they are kept, and Wheelhouse sets none beside them.
+export function compactionLine(rules) {
+  if (rules.length === 0) return null;
+  const says = (r) => (r.kind === 'percentage' ? `compacting at ${r.value}%` : `a ${Number(r.value).toLocaleString('en-AU')}-token window`);
+  const found = rules.map((r) => `${says(r)} in ${r.label}`);
+  const list = found.length === 1 ? found[0] : `${found.slice(0, -1).join(', ')} and ${found.at(-1)}`;
+  return `You already set ${list}: I keep it and add no second rule, so compaction never stacks.`;
 }
 
 // The settings with the keychain left open: `settings` (a project's, perhaps merged with the

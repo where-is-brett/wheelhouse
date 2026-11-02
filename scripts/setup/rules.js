@@ -17,7 +17,7 @@ import path from 'node:path';
 import { SETUP_TITLES } from '../state/card-lines.js';
 import { scanContent } from '../state/secret-scan.js';
 import { hide } from '../lib/clean.js';
-import { instructionsOf } from '../survey/look.js';
+import { instructionsOf, isNestedCheckout } from '../survey/look.js';
 import { readJournal } from './journal.js';
 import { connectedProject, waitForProject, readmeOf, readStart, isFile } from './questions.js';
 
@@ -62,7 +62,8 @@ const relative = (folder, file) => path.relative(folder, file).split(path.sep).j
 
 
 
-// The Markdown files under docs/, sorted, at most DOC_FILES, never through a link.
+// The Markdown files under docs/, sorted, at most DOC_FILES, never through a link, and never in a worktree or another
+// checkout, whose files are a copy of the project's own.
 function docsOf(folder) {
   const out = [];
   const walk = (dir) => {
@@ -75,7 +76,7 @@ function docsOf(folder) {
     for (const e of entries) {
       if (out.length >= DOC_FILES) return;
       const full = path.join(dir, e.name);
-      if (e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules') walk(full);
+      if (e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules' && e.name !== 'worktrees' && !isNestedCheckout(full)) walk(full);
       else if (e.isFile() && /\.(?:md|markdown)$/i.test(e.name)) out.push(full);
     }
   };

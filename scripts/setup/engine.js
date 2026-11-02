@@ -111,6 +111,7 @@ import {
 } from './choices.js';
 import { redoCard, choiceList, changeRequests, setUpAgainAsked, stepFourDrift } from './redo.js';
 import { productOf } from './host.js';
+import { chosenHost } from './local.js';
 import { readGitlabHosts } from '../host/gitlab-base.js';
 import { readmeDescription, productName } from './questions.js';
 import { READY_ID } from './notify.js';
@@ -437,8 +438,21 @@ export function setupRoutes({
   };
 
   // The lines that head step n in the chat, from the run as it stands now.
+  // The project's host once it is registered; before that, the director's answer, then what the folder shows: a git-alone
+  // project is local from the start, so no line names a code host or says anything goes online.
+  const hostOf = (run, folder) => {
+    const known = projectForFolder(folder)?.record.host;
+    if (known) return known;
+    const chosen = run ? chosenHost(answersFor(run.id)) : null;
+    if (chosen) return chosen;
+    try {
+      return productOf(folder).host ?? undefined;
+    } catch {
+      return undefined;
+    }
+  };
   const progressOf = (run, n, folder) => stepProgress({
-    n, run: run ? runById(run.id) ?? run : null, running: (m) => (run ? runningIn(run, m) !== null : false), host: projectForFolder(folder)?.record.host,
+    n, run: run ? runById(run.id) ?? run : null, running: (m) => (run ? runningIn(run, m) !== null : false), host: hostOf(run, folder),
   });
 
   async function stepOf(n) {

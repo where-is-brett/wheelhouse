@@ -61,6 +61,17 @@ function realFolder(folder, rel) {
   return true;
 }
 
+// Whether a folder is another checkout of a repository (an agent's worktree, a clone): it holds a `.git` of its own.
+// Its files are a copy of the project's, so they are never counted as the project's.
+export function isNestedCheckout(dir) {
+  try {
+    fs.lstatSync(path.join(dir, '.git'));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // The regular files under `rel`, repository-relative with `/`, sorted, at most `limit`, never
 // through a link.
 function filesUnder(folder, rel, limit) {
@@ -70,8 +81,9 @@ function filesUnder(folder, rel, limit) {
     for (const e of entriesOf(path.join(folder, ...dirRel.split('/')))) {
       if (out.length >= limit) return;
       const child = `${dirRel}/${e.name}`;
-      if (e.isDirectory()) walk(child);
-      else if (e.isFile()) out.push(child);
+      if (e.isDirectory()) {
+        if (!isNestedCheckout(path.join(folder, ...child.split('/')))) walk(child);
+      } else if (e.isFile()) out.push(child);
     }
   };
   walk(rel);
@@ -197,7 +209,7 @@ export function secretFilesOf(folder) {
     folders += 1;
     for (const e of entriesOf(dir)) {
       if (e.isDirectory()) {
-        if (depth < SECRET_DEPTH && !SKIPPED.has(e.name) && folders < SECRET_FOLDERS) walk(path.join(dir, e.name), depth + 1);
+        if (depth < SECRET_DEPTH && !SKIPPED.has(e.name) && folders < SECRET_FOLDERS && !isNestedCheckout(path.join(dir, e.name))) walk(path.join(dir, e.name), depth + 1);
       } else if (SECRET_NAME.test(e.name) && !EXAMPLES.has(e.name)) {
         count += 1;
       }

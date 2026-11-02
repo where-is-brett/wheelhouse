@@ -184,6 +184,10 @@ export const SETUP_DOING = Object.freeze({
 });
 // Step 3 names the host once it is known.
 export const connectingTo = (host) => (host === 'github' ? 'Connecting to GitHub' : host === 'gitlab' ? 'Connecting to GitLab' : host === 'local' ? 'Setting your project up on this computer' : SETUP_DOING[3]);
+// What the steps that talk of a host or of going up say for a project kept on this computer, where nothing goes online.
+export const LOCAL_DOING = Object.freeze({ 3: 'Setting your project up on this computer', 7: 'Adding Wheelhouse\'s files to the project on this computer' });
+export const LOCAL_DONE = Object.freeze({ 3: 'The project is set up on this computer.', 7: 'Wheelhouse\'s files are in the project.' });
+export const LOCAL_GOING = Object.freeze({ 7: 'Wheelhouse\'s files are still going into the project' });
 export const SETUP_DONE = Object.freeze({
   1: 'Wheelhouse is installed.',
   2: 'The tools are in place.',

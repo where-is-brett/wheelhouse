@@ -461,6 +461,18 @@ test('what has happened after step 9 says what the phone test settled on, and a 
   assert.equal(stepProgress({ n: 10, run: later })[2], SETUP_DONE[8]);
 });
 
+test('a project kept on this computer is headed in words that name no host and send nothing online', () => {
+  const run = { steps: { 1: { doneAt: '2026-10-19T03:00:00.000Z' }, 6: { doneAt: '2026-10-19T03:05:00.000Z' }, 7: { clickedAt: '2026-10-19T03:06:00.000Z' } }, changes: [] };
+  assert.equal(stepProgress({ n: 3, host: 'local' })[1], 'Setting your project up on this computer');
+  assert.equal(stepProgress({ n: 7, run, host: 'local' })[1], 'Adding Wheelhouse\'s files to the project on this computer');
+  assert.equal(stepProgress({ n: 8, run: { steps: { 7: { doneAt: '2026-10-19T03:07:00.000Z' } }, changes: [] }, host: 'local' })[2], 'Wheelhouse\'s files are in the project.');
+  assert.match(stepProgress({ n: 6, run, running: (m) => m === 7, host: 'local' }).at(-1), /files are still going into the project/);
+  const all = [3, 4, 5, 6, 7, 8].flatMap((n) => stepProgress({ n, run, running: () => true, host: 'local' })).join('\n');
+  assert.doesNotMatch(all, /code host|going up|files up|uploading|GitHub|GitLab/i);
+  // A hosted project keeps its words.
+  assert.equal(stepProgress({ n: 7, run, host: 'github' })[1], 'Putting the project\'s files up');
+});
+
 test('a step is headed by its place and minutes, what it is, what has happened and what carries on meanwhile', () => {
   assert.deepEqual(stepProgress({ n: 3 }), ['Step 3 of 10 · about 2 minutes', 'Connecting to your code host', 'Setup has just started.']);
   assert.equal(stepProgress({ n: 3, host: 'github' })[1], 'Connecting to GitHub');

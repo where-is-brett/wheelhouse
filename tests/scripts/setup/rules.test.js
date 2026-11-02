@@ -137,6 +137,21 @@ test('the transcripts are read from CLAUDE_CONFIG_DIR, or ~/.claude without it, 
   assert.deepEqual(readTranscripts(folder, { userHome: tempFolder('wh-none-'), env: {} }), []);
 });
 
+test('a worktree or another checkout inside the project is not read for rules', () => {
+  const folder = tempFolder('wh-rules-trees-');
+  lay(folder, {
+    'CLAUDE.md': '- Keep commits small.\n',
+    'docs/own.md': 'Always write dates in full.\n',
+    'docs/worktrees/old/notes.md': 'Never ship on Fridays.\n',
+    'docs/copy/.git': 'gitdir: /elsewhere/.git/worktrees/copy\n',
+    'docs/copy/notes.md': 'Never ship on Saturdays.\n',
+    '.claude/skills/own/SKILL.md': 'Always say what changed.\n',
+    '.claude/skills/nested/.git': 'gitdir: /elsewhere/.git/worktrees/nested\n',
+    '.claude/skills/nested/SKILL.md': 'Never skip the checks.\n',
+  });
+  assert.deepEqual(findRules(folder).map((r) => r.source.file), ['CLAUDE.md', 'docs/own.md', '.claude/skills/own/SKILL.md']);
+});
+
 test('another agent setup\'s instruction files are read for rules, with their source', () => {
   const folder = tempFolder('wh-other-');
   lay(folder, {

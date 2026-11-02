@@ -6,6 +6,7 @@ import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import {
   INSTRUCTION_PATHS, instructionsOf, scheduledOf, secretFilesOf, inFlightOf, surveyOf,
 } from '../../../scripts/survey/look.js';
@@ -200,6 +201,18 @@ test('scheduled jobs are counted: cron lines under on.schedule, and GitLab jobs 
 
 test('secret files are counted, leaving out examples, node_modules and anything deeper than four', () => {
   assert.equal(secretFilesOf(project.dir), 2);
+});
+
+test('secret files and instruction files inside a worktree are not the project\'s', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-look-trees-'));
+  const put = (rel, text) => { fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true }); fs.writeFileSync(path.join(dir, rel), text); };
+  put('.env', 'A=1\n');
+  put('.claude/skills/own/SKILL.md', 'x\n');
+  put('.claude/worktrees/w1/.git', 'gitdir: /elsewhere\n');
+  put('.claude/worktrees/w1/.env', 'A=1\n');
+  put('.claude/worktrees/w1/.claude/skills/copy/SKILL.md', 'x\n');
+  assert.equal(secretFilesOf(dir), 1);
+  assert.deepEqual(instructionsOf(dir).files, ['.claude/skills/own/SKILL.md']);
 });
 
 test('work in flight: on this computer and pushed, leaving out the merged, the requests and Wheelhouse\'s own', async () => {

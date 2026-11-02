@@ -433,6 +433,27 @@ test('adding a missing pin keeps the pins held and the rest of tiers', () => {
   } finally { fs.rmSync(folder, { recursive: true, force: true }); }
 });
 
+test('a compaction percentage already in the project\'s settings is kept and setup adds no window beside it', () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-compact-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-compact-home-'));
+  try {
+    const answers = { '4.live-data': { label: LIVE_DATA.no, text: null } };
+    const starter = starterConfig({ answers, frontDesk: BEST_MODEL, midSized: MID_MODEL });
+    const keys = (local) => projectFilesChange({ folder, config: starter, release: { ref: REF }, local }).filter((c) => c.target.endsWith('settings.json')).map((c) => c.key?.join('.') ?? 'whole');
+    const local = { address: ADDRESS, node: NODE, pluginRoot: PLUGIN_ROOT, platform: 'darwin', claudeHome: home };
+    fs.mkdirSync(path.join(folder, '.claude'));
+    fs.writeFileSync(path.join(folder, '.claude', 'settings.json'), JSON.stringify({ env: { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '35' } }));
+    assert.ok(!keys(local).includes('autoCompactWindow'), 'a percentage in the project file');
+    fs.writeFileSync(path.join(folder, '.claude', 'settings.json'), '{}');
+    assert.ok(keys(local).includes('autoCompactWindow'), 'no rule: the window is added');
+    fs.writeFileSync(path.join(home, 'settings.json'), JSON.stringify({ env: { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '50' } }));
+    assert.ok(!keys(local).includes('autoCompactWindow'), 'a percentage in the user settings');
+  } finally {
+    fs.rmSync(folder, { recursive: true, force: true });
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('a mid-sized alias that can\'t be resolved leaves the pin out and the card says Lean and Lightest wait', async () => {
   await withHome(async () => {
     const w = await world();
