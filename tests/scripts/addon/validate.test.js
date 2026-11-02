@@ -19,7 +19,7 @@ const PKG = {
 const GOOD = `
 const vscode = require('vscode');
 async function onPaneMessage(msg, deps) {
-  if (!deps.nonce.matches(msg?.nonce)) return { made: false };
+  if (!deps.nonces.matches(msg?.nonce)) return { made: false };
   const { pressCard } = deps.press;
   return pressCard({ card: msg.card });
 }
@@ -74,6 +74,33 @@ test('a text editor command is a problem', () => {
   assert.ok(has(check({ source }), 'registerTextEditorCommand'));
 });
 
+test('lifting or setting STOP, the briefing and the desk\'s act are named outside onPaneMessage: problems', () => {
+  for (const [name, line] of [['liftStop', 'real.liftStop();'], ['setStop', 'deps.setStop({});'], ['digestText', 'x.digestText({});'], ['act', 'desk.act(\'lift-all-stop\', {});']]) {
+    assert.ok(has(check({ source: `${GOOD}\nfunction later(deps, desk, real, x) { ${line} }` }), name), name);
+  }
+});
+
+test('touching deps before the nonce check is a problem, even with the word nonce above', () => {
+  const source = GOOD.replace("  if (!deps.nonces.matches(msg?.nonce)) return { made: false };\n", "  const nonce = msg.nonce;\n  deps.stop.liftStop();\n  if (!deps.nonces.matches(msg?.nonce)) return { made: false };\n");
+  assert.ok(has(check({ source }), 'nonce'));
+});
+
+test('a computed reach for the press, the desk or STOP is a problem', () => {
+  assert.ok(has(check({ source: `${GOOD}\nfunction x(deps, msg) { return deps.press[msg.x]({}); }` }), 'computed'));
+});
+
+test('an import of onPaneMessage under another name is a problem', () => {
+  const source = `const { onPaneMessage, onPaneMessage: handle } = require('./press.cjs');\nview.webview.onDidReceiveMessage((m) => onPaneMessage(m, deps));\nvscode.lm.registerTool('t', { invoke: (o) => handle(o, deps) });`;
+  assert.ok(check({ source, more: {} }).length > 0);
+});
+
+test('activate returning what another extension could press with is a problem', () => {
+  const bad = `${GOOD}\nasync function activate(context, { deps }) {\n  const add = { nonces: deps.nonces };\n  return add;\n}`;
+  assert.ok(has(check({ source: bad.replace('function activate(context) {', 'function activateOld(context) {') }), 'activate returns'));
+  const fine = `${GOOD}\nasync function activate(context, { deps }) {\n  const add = {};\n  return deps.expose ? add : undefined;\n}`;
+  assert.deepEqual(check({ source: fine.replace('function activate(context) {', 'function activateOld(context) {') }), []);
+});
+
 test('a press called outside onPaneMessage is a problem, each of the four', () => {
   for (const name of ['pressCard', 'pressSetting', 'signedRecords', 'keepEarned']) {
     const source = `${GOOD}\nfunction later(deps) { return deps.press.${name}({}); }`;
@@ -108,13 +135,13 @@ test('a message handler that is not onPaneMessage is a problem', () => {
 });
 
 test('an onPaneMessage that does not check the nonce first is a problem', () => {
-  const source = GOOD.replace("if (!deps.nonce.matches(msg?.nonce)) return { made: false };\n", '');
+  const source = GOOD.replace("if (!deps.nonces.matches(msg?.nonce)) return { made: false };\n", '');
   assert.ok(has(check({ source }), 'nonce'));
 });
 
 test('an onPaneMessage that presses before it checks the nonce is a problem', () => {
-  const source = GOOD.replace('  if (!deps.nonce.matches(msg?.nonce)) return { made: false };\n  const { pressCard } = deps.press;\n  return pressCard({ card: msg.card });',
-    '  const { pressCard } = deps.press;\n  pressCard({ card: msg.card });\n  if (!deps.nonce.matches(msg?.nonce)) return { made: false };');
+  const source = GOOD.replace('  if (!deps.nonces.matches(msg?.nonce)) return { made: false };\n  const { pressCard } = deps.press;\n  return pressCard({ card: msg.card });',
+    '  const { pressCard } = deps.press;\n  pressCard({ card: msg.card });\n  if (!deps.nonces.matches(msg?.nonce)) return { made: false };');
   assert.ok(has(check({ source }), 'nonce'));
 });
 

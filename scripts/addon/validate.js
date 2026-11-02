@@ -16,7 +16,8 @@ import { startedAsScript } from '../lib/started-as-script.js';
 
 export const OPEN_PANE = 'wheelhouse.openPane';
 // The functions that sign or record a binding click, and what reads their records.
-export const PRESS_NAMES = ['pressCard', 'pressSetting', 'signedRecords', 'keepEarned', 'whyCard', 'suggestCard', 'sendKept'];
+// Also what sets or lifts STOP, and the briefing; and any call to the desk's `act`, below.
+export const PRESS_NAMES = ['pressCard', 'pressSetting', 'signedRecords', 'keepEarned', 'whyCard', 'suggestCard', 'sendKept', 'liftStop', 'setStop', 'digestText'];
 const HANDLER = 'onPaneMessage';
 const REGISTERS = ['registerCommand', 'registerTextEditorCommand', 'registerDiffInformationCommand'];
 
@@ -87,12 +88,12 @@ function callsOf(code, name) {
 }
 
 // The spans of onPaneMessage's definitions: its name through the end of its body.
-function handlerSpans(code) {
+function handlerSpans(code, name = HANDLER) {
   const spans = [];
-  const forms = [new RegExp(`(?:async\\s+)?function\\s+(${HANDLER})\\s*\\(`, 'g'), new RegExp(`(?:const|let|var)\\s+(${HANDLER})\\s*=\\s*(?:async\\s*)?(?:function\\s*)?\\(`, 'g')];
+  const forms = [new RegExp(`(?:async\\s+)?function\\s+(${name})\\s*\\(`, 'g'), new RegExp(`(?:const|let|var)\\s+(${name})\\s*=\\s*(?:async\\s*)?(?:function\\s*)?\\(`, 'g')];
   for (const form of forms) {
     for (const m of code.matchAll(form)) {
-      const nameAt = m.index + m[0].indexOf(HANDLER);
+      const nameAt = m.index + m[0].indexOf(name);
       const paramsOpen = m.index + m[0].length - 1;
       const paramsEnd = closeOf(code, paramsOpen);
       const bodyOpen = paramsEnd === -1 ? -1 : code.indexOf('{', paramsEnd);
@@ -129,6 +130,14 @@ function checkSource(file, source) {
     }
   }
 
+  for (const m of code.matchAll(/\.act\s*\(/g)) {
+    if (!inside(m.index, bodies)) add(`a call to the desk's act is made outside ${HANDLER}, where only the pane's messages reach it`);
+  }
+  if (/(?:\b(?:deps|press|desk|stop)|\.(?:press|desk|stop))\s*\[/.test(code)) add('the press, the desk and STOP are reached by name, never by a computed one');
+  // What activate returns is the extension's public API, readable by every other extension.
+  for (const a of handlerSpans(code, 'activate')) {
+    if (/\breturn\s+(?!undefined\b|;|deps\.expose\b)(?:add|state|nonces|desk|deps|real|press|\{)/.test(code.slice(a.start, a.end))) add('activate returns what another extension could press with');
+  }
   const received = callsOf(code, 'onDidReceiveMessage');
   for (const [start, end] of received) {
     if (!word(HANDLER).test(code.slice(start, end))) add(`onDidReceiveMessage must hand every message to ${HANDLER}`);
@@ -138,15 +147,15 @@ function checkSource(file, source) {
     const exported = /exports/.test(code.slice(code.lastIndexOf(';', m.index) + 1, m.index));
     // Taken in by a require of its own file, which only names it.
     const statementEnd = code.indexOf(';', m.index);
-    const imported = /^\s*(?:const|let|var)\s*\{[^}]*\}\s*=\s*require\(\s*['"][^'"]*['"]\s*\)\s*$/.test(code.slice(code.lastIndexOf(';', m.index) + 1, statementEnd === -1 ? code.length : statementEnd));
+    const imported = /^\s*(?:const|let|var)\s*\{\s*onPaneMessage\s*\}\s*=\s*require\(\s*['"][^'"]*['"]\s*\)\s*$/.test(code.slice(code.lastIndexOf(';', m.index) + 1, statementEnd === -1 ? code.length : statementEnd));
     if (!definition && !exported && !imported && !inside(m.index, received)) add(`${HANDLER} is reached only as the pane's message handler`);
   }
 
   for (const h of handlers) {
     const body = code.slice(h.start, h.end);
-    const nonce = body.search(word('nonce'));
-    const press = Math.min(...PRESS_NAMES.map((n) => { const at = body.search(word(n)); return at === -1 ? Infinity : at; }));
-    if (nonce === -1 || nonce > press) add(`${HANDLER} must check the nonce before it presses anything`);
+    // The first thing after the message is known to be an object is the nonce check; nothing of deps is touched before it.
+    const check = /deps\.nonces\.matches\(\s*msg\??\.nonce\s*\)/.exec(body);
+    if (check === null || /deps\s*[.[]/.test(body.slice(0, check.index))) add(`${HANDLER} must check the nonce, as deps.nonces.matches(msg.nonce), before it touches anything of deps`);
   }
   return problems;
 }

@@ -9,6 +9,8 @@
 // chat never counts, so nothing here reads the chat.
 'use strict';
 
+const fs = require('node:fs');
+
 const OPEN_VIEWS = ['main', 'board', 'settings', 'briefing'];
 const LIFT_LABEL = 'Lift STOP';
 const CHANGED = 'That changed while you were looking: look at the pane again';
@@ -38,7 +40,7 @@ async function onPaneMessage(msg, deps) {
       if (project === null) return say(no(NO_PROJECT));
       const [card, hash, choice] = [words(msg.card), words(msg.hash), words(msg.choice)];
       if (card === '' || hash === '' || choice === '') return no();
-      const out = await deps.press.pressCard({ ...call, card, hash, label: choice, liftStop: deps.liftStop, proof: 'add-on' });
+      const out = await deps.press.pressCard({ ...call, card, hash, label: choice, liftStop: deps.stop.liftStop, proof: 'add-on' });
       await say(out?.made === true && Array.isArray(out.submit) && out.submit.length > 0 ? { ...out, says: `${out.says ?? 'Recorded.'} ${HAND_ON}` } : out);
       await again();
       return { made: out?.made === true, ...(typeof out?.says === 'string' ? { says: out.says } : {}) };
@@ -70,11 +72,11 @@ async function onPaneMessage(msg, deps) {
       // Set here first, then told to the desk: the desk is waited on for a moment at most, so a helper that doesn't answer
       // never holds All stop up. Needs no evidence.
       let here = true;
-      try { deps.setStop({ by: 'mod', now: deps.now }); } catch { here = false; }
+      try { deps.stop.setStop({ by: 'mod', now: deps.now }); } catch { here = false; }
       const told = Promise.resolve().then(() => deps.desk.act('all-stop', { by: 'mod' })).catch(() => null);
       let timer;
       if (here) await Promise.race([told, new Promise((resolve) => { timer = setTimeout(resolve, deps.stopDeskMs ?? 3000); })]);
-      else if ((await told)?.ok !== true) { deps.setStop({ by: 'mod', now: deps.now }); }
+      else if ((await told)?.ok !== true) { deps.stop.setStop({ by: 'mod', now: deps.now }); }
       clearTimeout(timer);
       await deps.notify('All stop is on. Every agent is stopped, and nothing moves until you say.');
       await again();
@@ -92,15 +94,15 @@ async function onPaneMessage(msg, deps) {
       let lifting = false;
       let kept;
       try {
-        kept = deps.press.keepEarned(project, got, { now: deps.now, liftStop: () => { lifting = true; deps.liftStop(); }, proof: 'add-on' });
+        kept = deps.press.keepEarned(project, got, { now: deps.now, liftStop: () => { lifting = true; deps.stop.liftStop(); }, proof: 'add-on' });
       } catch {
         return say(no(lifting ? 'All stop couldn\'t be lifted, so nothing was recorded' : 'Wheelhouse couldn\'t sign that here, so nothing was recorded'));
       }
       const lifted = await deps.desk.act('lift-all-stop', {}, { form: 'signed', records: deps.press.signedRecords(kept) });
       if (lifted?.ok !== true) {
-        try { await deps.press.sendKept(deps.client, deps.left?.(), kept); } catch { /* Kept for the next start to send. */ }
+        try { await deps.press.sendKept(deps.client, (sending) => sending, kept); } catch { /* Kept for the next start to send. */ }
       } else {
-        deps.forget?.(kept.file);
+        fs.rmSync(kept.file, { force: true });
       }
       await deps.notify('All stop is off.');
       await again();
@@ -124,7 +126,7 @@ async function onPaneMessage(msg, deps) {
     if (type === 'open') {
       // The address is the one the pane's card carries in the model the add-on drew, never one the message names.
       const card = (deps.model()?.cards ?? []).find((c) => c?.id === words(msg.card));
-      const href = (Array.isArray(card?.buttons) ? card.buttons : []).find((b) => typeof b?.href === 'string')?.href;
+      const href = (Array.isArray(card?.buttons) ? card.buttons : []).find((b) => b?.shape === 'link' && typeof b.href === 'string')?.href;
       if (typeof href !== 'string' || !/^https?:\/\//i.test(href)) return no();
       await deps.open(href);
       return { made: true };

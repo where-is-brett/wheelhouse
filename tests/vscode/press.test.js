@@ -42,6 +42,7 @@ function stand({ answer = { made: true, says: 'Approved.' } } = {}) {
     redraw: async () => {},
     show: async () => {},
     stopState: () => ({ on: false }),
+    stop: { setStop: () => {}, liftStop: () => {} },
     now: () => NOW,
   };
   return { calls, deps };
@@ -88,6 +89,7 @@ test('a reloaded pane\'s old message records nothing', async () => {
     ask: async () => true, node: '/n', loop: false, startHelper: async () => {}, versions: async () => {},
     press: { pressCard: async (a) => { calls.push(a); return { made: true, says: 'ok' }; } },
     project: P,
+    stop: { setStop: () => {}, liftStop: () => {} },
   };
   const context = { subscriptions: [], extensionPath: '/ext', globalState: { get: () => true, update: async () => {} } };
   await activate(context, { vscode, deps });
@@ -130,7 +132,7 @@ test('STOP is set at once', async () => {
   const { calls, deps } = stand();
   const nonce = deps.nonces.renew();
   const order = [];
-  deps.setStop = () => { order.push('set'); };
+  deps.stop = { setStop: () => { order.push('set'); }, liftStop: () => {} };
   deps.desk.act = async (...a) => { order.push('act'); calls.act.push(a); return { ok: true }; };
   const out = await onPaneMessage({ nonce, type: 'stop' }, deps);
   assert.equal(out.made, true);
@@ -143,7 +145,7 @@ test('STOP is set even when the desk can\'t be reached', async () => {
   const { deps } = stand();
   const nonce = deps.nonces.renew();
   let set = false;
-  deps.setStop = () => { set = true; };
+  deps.stop = { setStop: () => { set = true; }, liftStop: () => {} };
   deps.desk.act = async () => { throw new Error('away'); };
   const out = await onPaneMessage({ nonce, type: 'stop' }, deps);
   assert.equal(set, true);
@@ -156,7 +158,7 @@ test('Lift STOP is a binding press: it signs here, for the STOP the pane drew, w
   deps.stopState = () => ({ on: true, at: '2026-11-02T04:00:00.000Z' });
   deps.liftQuestion = 'Lift All stop and let the agents carry on';
   const kept = [];
-  deps.liftStop = () => {};
+  deps.stop = { setStop: () => {}, liftStop: () => {} };
   deps.press.keepEarned = (project, got, options) => { kept.push({ project, got, options }); return { file: '/f', body: { event: { id: 'e1' } }, route: 'record' }; };
   deps.press.signedRecords = (record) => [{ event: record.body.event }];
   deps.press.sendKept = async () => { throw new Error('the add-on never sends a record on its own path when the desk took it'); };
@@ -273,3 +275,29 @@ test('a press with no proof writes what it wrote before', () => withHome(async (
   const [event] = client.recorded;
   assert.deepEqual(Object.keys(event.data).sort(), ['commit', 'pr', 'question', 'words']);
 }));
+
+test('a nonce that is not hex records nothing and does not throw', async () => {
+  const { deps } = stand();
+  deps.nonces.renew();
+  for (const bad of ['é'.repeat(64), `${'a'.repeat(63)}é`, 'ä'.repeat(32), '../x']) assert.equal((await onPaneMessage(press(bad), deps)).made, false);
+});
+
+test('what activate returns gives another extension nothing to press with', async () => {
+  const { activate } = require('../../vscode/extension.cjs');
+  const vscode = fakeVscode();
+  const deps = { desk: { read: async () => ({ ok: false }), watch: async () => ({ ok: false }), act: async () => ({ ok: true }) }, ask: async () => true, node: '/n', loop: false, startHelper: async () => {}, versions: async () => {} };
+  const out = await activate({ subscriptions: [], extensionPath: '/ext', globalState: { get: () => true, update: async () => {} } }, { vscode, deps });
+  assert.equal(out, undefined);
+});
+
+test('a redraw with nothing changed leaves the page, and its nonce, as they were', async () => {
+  const { activate } = require('../../vscode/extension.cjs');
+  const vscode = fakeVscode();
+  const deps = { desk: { read: async () => ({ ok: true, data: { pane: model({ cards: [card()] }) } }), watch: async () => ({ ok: false }), act: async () => ({ ok: true }) }, ask: async () => true, node: '/n', loop: false, expose: true, startHelper: async () => {}, versions: async () => {} };
+  const add = await activate({ subscriptions: [], extensionPath: '/ext', globalState: { get: () => true, update: async () => {} } }, { vscode, deps });
+  const view = fakeView();
+  await vscode.seen.providers.get('wheelhouse.pane').resolveWebviewView(view);
+  const before = view.html;
+  await add.refresh();
+  assert.equal(view.html, before);
+});

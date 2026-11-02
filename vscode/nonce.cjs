@@ -16,7 +16,7 @@ function makeNonces({ bytes = 32, random = crypto.randomBytes } = {}) {
     },
     // Whether `given` is the latest nonce. Compared without stopping at the first difference.
     matches(given) {
-      if (current === null || typeof given !== 'string' || given.length !== current.length) return false;
+      if (current === null || typeof given !== 'string' || !/^[0-9a-f]+$/.test(given) || given.length !== current.length) return false;
       return crypto.timingSafeEqual(Buffer.from(given), Buffer.from(current));
     },
     clear() {

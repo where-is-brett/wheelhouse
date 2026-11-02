@@ -22,7 +22,7 @@ async function started({ answers = [two], moves = true, state = memory(), more =
     watch: async () => ({ ok: true, cursor: 'k1', changes: [] }),
     act: async () => ({ ok: true }),
   };
-  const add = await activate(context, { vscode, deps: { desk, ask: async () => true, node: '/usr/bin/node', loop: false, startHelper: async () => {}, versions: async () => {}, nonceBytes: 32, ...more } });
+  const add = await activate(context, { vscode, deps: { desk, ask: async () => true, node: '/usr/bin/node', loop: false, expose: true, startHelper: async () => {}, versions: async () => {}, nonceBytes: 32, ...more } });
   return { vscode, context, add, desk, state };
 }
 

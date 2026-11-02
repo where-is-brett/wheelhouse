@@ -47,7 +47,7 @@ function importsOf(text) {
 // import, the entries themselves included, and the files a module names beside itself with new URL('./x', import.meta.url).
 // Files a module reaches by a path built from the Wheelhouse folder at run time (skills, templates, the build's patches) are
 // not found by a walk of the imports and are not carried; they belong to flows the add-on never starts. Throws, naming the file and the import, for a bare import other than `node:`,
-// a computed dynamic import, an import of a file that is not there, and one that leaves `root`.
+// an import of a file that is not there, and one that leaves `root`.
 export function closureOf({ root, entries }) {
   return reportOf({ root, entries }).files;
 }

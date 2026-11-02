@@ -40,9 +40,13 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
   item.show();
 
   // Draws the pane again, with a new nonce: whatever the old page posts after this counts for nothing.
-  function draw() {
+  function draw(force = false) {
     item.text = statusText(state.last);
     if (state.current === null) return;
+    // Nothing drawn again when nothing changed, so what the director is typing or has open stays, and the nonce with it.
+    const key = JSON.stringify([state.last, state.notice, state.view, state.settings, state.briefing]);
+    if (!force && key === state.drawn && !state.offerPending) return;
+    state.drawn = key;
     const offer = state.offerPending;
     state.offerPending = false;
     state.current.webview.html = renderPane(state.last, {
@@ -99,8 +103,7 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
     refreshSettings: async () => { if (state.view === 'settings') state.settings = await settingsView(); },
     settingsView,
     stopState: deps.stopState ?? real.stopState ?? (() => ({ on: false })),
-    setStop: deps.setStop ?? real.setStop ?? (() => { throw new Error('no way to set STOP here'); }),
-    liftStop: deps.liftStop ?? real.liftStop,
+    stop: deps.stop ?? real.stop ?? null,
     liftQuestion: deps.liftQuestion ?? real.liftQuestion,
     timeZone: real.timeZone,
     now: () => new Date(),
@@ -118,7 +121,7 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
       view.onDidDispose?.(() => { if (state.current === view) { state.current = null; nonces.clear(); } });
       view.webview.onDidReceiveMessage((message) => onPaneMessage(message, pressDeps()));
       if (deps.onView) deps.onView(view, add);
-      draw();
+      draw(true);
     },
   }));
 
@@ -161,7 +164,9 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
       }
     })();
   }
-  return add;
+  // What activate returns is the extension's public API, readable by every other extension: nothing of the add-on's inside
+  // it unless a test asks (scripts/addon/validate.js).
+  return deps.expose ? add : undefined;
 }
 
 function deactivate() {}

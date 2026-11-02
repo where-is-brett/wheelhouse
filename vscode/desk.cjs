@@ -92,8 +92,8 @@ async function realDeps({ root, cwd }) {
     // vscode/press.cjs calls them, and only from onPaneMessage (scripts/addon/validate.js).
     press: Object.assign({}, m.press, m.settings, m.digest, m.record, m.desk),
     stopState: m.stop.stopState,
-    setStop: m.stop.setStop,
-    liftStop: m.stop.liftStop,
+    // The scripts' STOP functions, handed on whole: only vscode/press.cjs sets or lifts STOP (scripts/addon/validate.js).
+    stop: m.stop,
     liftQuestion: m.cardLines.LIFT_STOP,
     versionsFile: m.versions.versionsFile(),
     timeZone,
