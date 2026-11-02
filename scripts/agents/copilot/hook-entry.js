@@ -33,8 +33,9 @@
 import claudeTools from '../../../adapters/claude-code/tools.js';
 import copilotTools from '../../../adapters/copilot/tools.js';
 import { toGuardInput, fromGuardAnswer, harnessOf, exitCodeFor, UNKNOWN_TOOL } from '../../../adapters/copilot/translate.js';
-import { readInput, answer, projectOf, registeredByPath, beingSetUp, managedDir, lockedByPath } from '../../hooks/kit.js';
-import { GUARD_DEADLINE_MS, HELPER_PROBE_MS } from '../../lib/copilot-numbers.js';
+import { fileURLToPath } from 'node:url';
+import { readInput, answer, projectOf, registeredByPath, beingSetUp, managedDir, lockedByPath, isInside } from '../../hooks/kit.js';
+import { C6_PASSED, GUARD_DEADLINE_MS, HELPER_PROBE_MS } from '../../lib/copilot-numbers.js';
 import { helperClient } from '../../host/helper-client.js';
 import { startedAsScript } from '../../lib/started-as-script.js';
 
@@ -213,6 +214,20 @@ async function decideEvent(event, { stdin, env, deps, seen }) {
   return runSteps(STEPS[event], inputs, { event, steps: deps.steps, stepDeps, dir });
 }
 
+// A chat click on Copilot, signed with the proof `policy-hook`, as Claude Code's hook signs an ask_user answer. It
+// signs only when this entry runs as the managed copy (the policy hook's) and check 59 has shown a hook sees the
+// answer (C6_PASSED); the person's own hook copy and the clean home's never sign, and nothing else changes. `input` is
+// postToolUse's translated input. `deps.c6`, `deps.self`, `deps.dir` and `deps.decide` stand in for the constant, this
+// file, the managed folder and the prompt record. A project with real users takes the proof only where the Copilot
+// adapter's list and the gate's real-user list both name it; neither list is changed here.
+export async function policyClick(input, deps = {}) {
+  if ((deps.c6 ?? C6_PASSED) !== true) return undefined;
+  if (!isInside(deps.dir ?? managedDir(), deps.self ?? fileURLToPath(import.meta.url))) return undefined;
+  if (input?.tool_name !== copilotTools.ask) return undefined;
+  const decide = deps.decide ?? (await import('../../hooks/prompt-record.js')).decide;
+  return decide({ ...input, tool_name: claudeTools.ask }, { dir: deps.dir, writeVia: 'self', proof: 'policy-hook', ...deps.promptDeps });
+}
+
 // Runs the entry for `event`: `{ text, code }`, the line to write (or '') and the exit code. Never throws.
 //   deps.steps        a step's decide, by name, in place of the hook's own
 //   deps.stepDeps     extra deps for a step, by name
@@ -222,6 +237,7 @@ async function decideEvent(event, { stdin, env, deps, seen }) {
 //   deps.policy       true for the policy hook's start (`--policy`): it answers only in a Locked project
 //   deps.dir, deps.projectOf, deps.harnessOf, deps.lockedByPath  as the hooks take them
 export async function runEntry(event, { stdin = process.stdin, env = process.env, deps = {} } = {}) {
+  if (event === 'postToolUse' && deps.policy === true) return runPolicyClick({ stdin, deps });
   if (!Object.hasOwn(EVENT_NAMES, event)) return { text: '', code: 0 };
   const deadlineMs = deps.deadlineMs ?? GUARD_DEADLINE_MS;
   let timer;
@@ -246,6 +262,19 @@ export async function runEntry(event, { stdin = process.stdin, env = process.env
   } catch {
     return event === GUARD_EVENT ? { text: `${JSON.stringify({ permissionDecision: 'deny', permissionDecisionReason: COULD_NOT_RUN })}\n`, code: 2 } : { text: '', code: 0 };
   }
+}
+
+// The policy hook's postToolUse: signs a chat click when policyClick allows, and answers nothing in any case.
+async function runPolicyClick({ stdin, deps }) {
+  try {
+    const raw = await readInput(stdin);
+    if (typeof raw.cwd !== 'string' || raw.cwd === '' || !(deps.lockedByPath ?? lockedByPath)(raw.cwd, { dir: deps.dir ?? managedDir() })) return { text: '', code: 0 };
+    const translated = toGuardInput(raw, 'postToolUse');
+    if (isObject(translated)) await policyClick(translated, deps);
+  } catch {
+    // A click not signed, and nothing else.
+  }
+  return { text: '', code: 0 };
 }
 
 if (startedAsScript(import.meta.url)) {
