@@ -1168,6 +1168,8 @@ test('a merge that could not reach the host says so, and a stale head says the h
 
 ## Part 9: Full
 
+> **Note, 2 November 2026.** Parts 9 to 11 are carried on by `docs/superpowers/plans/2026-11-02-copilot-remaining-parts.md`, decided from the code as it stands on Archon; its table "What became of each task" says what each task here became. Task 7 (Middle and Full end to end) is retired: Archon runs the build, and a short test of what the new plan adds replaces it. GitLab's lines in this part (Task 5's `setGitlabApproval`, Free's ready-branch refusal, Premium's fixtures and `approvals_required: 2`) are retired too, since GitLab is lost under Archon. Task 3 (Locked) and the rest of this part follow the new plan where they differ.
+
 Needs sitting S3 (check 57, the sandbox) for Task 1's real run and sitting S4 (check 68, the person's own approval) for Task 5's GitHub half. Build both from the documentation and recorded answers first; each stays behind its switch until its check passes.
 
 ### Task 1: The sandbox level and its test

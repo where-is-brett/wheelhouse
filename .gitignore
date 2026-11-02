@@ -7,3 +7,6 @@ node_modules/
 .claude/state/
 
 probes/**/state/
+
+# Wheelhouse's own folder in a project (the chat's inbox)
+.wheelhouse/

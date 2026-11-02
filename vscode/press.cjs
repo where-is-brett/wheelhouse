@@ -80,6 +80,13 @@ async function onPaneMessage(msg, deps) {
       clearTimeout(timer);
       await deps.notify('All stop is on. Every agent is stopped, and nothing moves until you say.');
       await again();
+      // Last, and for a moment at most, so it can never hold STOP up: where a way is found to cancel the chat's running
+      // request (check 72), it is asked here; today it does nothing.
+      let cancelTimer;
+      try {
+        await Promise.race([Promise.resolve().then(() => deps.cancelChat?.()), new Promise((resolve) => { cancelTimer = setTimeout(resolve, deps.cancelChatMs ?? 1000); })]);
+      } catch { /* All stop is on already. */ }
+      clearTimeout(cancelTimer);
       return { made: true };
     }
 

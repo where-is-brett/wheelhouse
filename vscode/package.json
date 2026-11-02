@@ -29,6 +29,52 @@
       "wheelhouse": [
         { "type": "webview", "id": "wheelhouse.pane", "name": "Wheelhouse" }
       ]
-    }
+    },
+    "languageModelTools": [
+      {
+        "name": "wheelhouse_record",
+        "toolReferenceName": "wheelhouseRecord",
+        "displayName": "Record a click on a Wheelhouse card",
+        "canBeReferencedInPrompt": true,
+        "modelDescription": "Records that the director chose a button on a plain question card on Wheelhouse's board, as a click in the chat (a non-binding note). It refuses any card that could bind something (a merge, a guardrail change, a ruling's confirmation, or a step confirmed outside the chat): those are answered only with the buttons in the Wheelhouse pane. Needs the card's id and its full 64-character hash from the board. Use it only when the director has just told you which button they chose.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "card": {
+              "type": "string",
+              "description": "The card's id."
+            },
+            "hash": {
+              "type": "string",
+              "description": "The card's full sha256 hash (64 characters), as the board shows it."
+            },
+            "label": {
+              "type": "string",
+              "description": "The button's label."
+            },
+            "text": {
+              "type": "string",
+              "description": "The director's own words, only for Suggest a change."
+            }
+          },
+          "required": [
+            "card",
+            "hash",
+            "label"
+          ]
+        }
+      },
+      {
+        "name": "wheelhouse_board",
+        "toolReferenceName": "wheelhouseBoard",
+        "displayName": "Read the Wheelhouse board",
+        "canBeReferencedInPrompt": true,
+        "modelDescription": "Reads the cards on Wheelhouse's board: what each is, its id and hash, and its buttons. It changes nothing.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        }
+      }
+    ]
   }
 }

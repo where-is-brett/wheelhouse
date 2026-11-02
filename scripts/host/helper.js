@@ -112,7 +112,7 @@ import {
   mergeApproved, undoMerge, copyNow, keepMain, leanStatus, storeHead, mergeOnMain, windowClick, LeanRefusal, LEAN_APPROVE, MAIN_MOVED_LINE, UNDO_LINE, UNDO_NEEDS_WINDOW,
   SIGNED_LEAN_PROOFS, sameCard, approvalCard, mainMovedCard, undoCards,
 } from '../lean/store.js';
-import { CHAT_PROOFS, CONFIRMED_STEPS } from '../agents/chat-clicks.js';
+import { CHAT_PROOFS, CONFIRMED_STEPS, hashRefusal } from '../agents/chat-clicks.js';
 import { earned, signsOn } from '../hooks/prompt-record.js';
 import { askInWindow, NOT_NOW } from '../confirm/window.js';
 import { composeCard } from '../cards/compose.js';
@@ -1017,6 +1017,15 @@ function readBody(req, res) {
   });
 }
 
+// `spawn` with the running program (VS Code's own, inside the editor) refused.
+export const EDITOR_NO_NODE = 'the helper inside VS Code starts no Node.js';
+export function editorSpawn(spawn) {
+  return (file, ...rest) => {
+    if (file === process.execPath) throw new Error(EDITOR_NO_NODE);
+    return spawn(file, ...rest);
+  };
+}
+
 export async function startHelper({
   // `connectHost` and `protectHost` stand in for setup's host steps and protection in the move to a host; tests give their own.
   connectHost, protectHost,
@@ -1038,7 +1047,7 @@ export async function startHelper({
   mirrorAddress = (record) => record.remoteUrl,
   // Setup's steps (a module exporting STEPS), the user's own home, whose Projects folder setup may
   // act in, and how a long step's own process is started (scripts/setup/engine.js).
-  setupSteps = STEPS_MODULE, userHome = os.homedir(), spawn = nodeSpawn,
+  setupSteps = STEPS_MODULE, userHome = os.homedir(), spawn: spawnGiven = nodeSpawn,
   // The evaluations folder whose records a Thoroughness level's readiness is read from (scripts/eval/run.js).
   evalsFolder = path.join(userHome, '.wheelhouse-evals'),
   // What the helper does once the last uninstall on this computer has finished (scripts/setup/
@@ -1084,7 +1093,13 @@ export async function startHelper({
   // The folder the merge queue runs in, Wheelhouse's own checkout of the project's fetch mirror (queue-folder.js),
   // unless a test whose engine reads no mirror gives its own: (project) -> { ok, folder } or { ok: false, refused }.
   queueFolder = null,
+  // True when the helper runs inside VS Code's own process (vscode/lean.cjs), where no Node.js can be started: the
+  // foreman's route, which starts one, refuses.
+  inEditor = false,
 } = {}) {
+  // Inside VS Code no program is started as Node.js: setup's step runs, the uninstall, the watcher and the engine's wake all
+  // start `process.execPath` through this, and it refuses that one program (the others go on as they were given).
+  const spawn = inEditor ? editorSpawn(spawnGiven) : spawnGiven;
   if (typeof adapterFor !== 'function') throw new Error('The helper needs an adapterFor function');
   if (typeof envFor !== 'function') throw new Error('The helper needs an envFor function');
   const pipe = PIPE.test(address);
@@ -2211,7 +2226,7 @@ export async function startHelper({
     if (text !== undefined && (typeof text !== 'string' || text.trim() === '' || text.length > CHAT_WORDS_CHARS)) refuse('the director\'s words must be text');
     if (typeof card !== 'string' || card === '' || card.length > CHAT_TEXT_CHARS) refuse('the card must be named');
     if (typeof label !== 'string' || label === '' || label.length > CHAT_TEXT_CHARS) refuse('the click must name the option chosen');
-    if (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash)) refuse('the card\'s hash must be its sha256, in lower case');
+    if (hashRefusal(hash) !== null) refuse(hashRefusal(hash));
     if (commit !== undefined && (typeof commit !== 'string' || !/^[0-9a-f]{40}$/.test(commit))) refuse('the commit must be written in full');
     const confirmed = CONFIRMED_STEPS.some((step) => card === step || card.startsWith(`${step}-`));
     const asked = listEvents(stateDir(project), { report: () => {} }).find((e) => e.kind === 'card' && e.id === card)?.data?.question ?? card;
@@ -4753,6 +4768,7 @@ export async function startHelper({
     // sooner) waits its turn, then finds what the first did. The key is the foreman's own, so it
     // never waits on the state:, merge:, mirror: or push: queues the child's own calls take.
     '/foreman/run': ({ project, script, argv }) => oneAtATime(`foreman:${project}`, async () => {
+      if (inEditor) refuse(EDITOR_NO_NODE);
       const why = foremanRequestRefusal({ script, argv });
       if (why !== null) refuse(why);
       let result;
@@ -5912,7 +5928,8 @@ export async function startHelper({
     releaseStart();
   }
   startEngineHosts();
-  const renewing = renewLoginStart();
+  // Not inside VS Code: the entry it would write runs `process.execPath`, which there is VS Code's own program.
+  const renewing = inEditor ? Promise.resolve() : renewLoginStart();
   const safekeepingWatch = setInterval(() => { safekeepingRound().catch(() => {}); moveRound().catch(() => {}); }, dispatchMs);
   safekeepingWatch.unref?.();
 

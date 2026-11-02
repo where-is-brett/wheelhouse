@@ -34,7 +34,7 @@ When the helper finds your computer has been asleep for more than three minutes,
 
 A goal you sign stays in the same private record: its sheet, and later how it ended. Your Start signs the sheet's hash, so a sheet changed after you saw it starts nothing. When you end a goal or narrow it, that is noted there too. The report on a goal is worked out from that private record when it is asked for, kept nowhere else, and never put in a pull request. The record of how a goal ended holds what it spent, when the allowance was read, and how often the main line went red. A note records each slice added, each run that lost its process, and the merge queue's spend after the end.
 
-When a build run fails, the record of its ending says what kind of failure it was, in one word: connection, provider, host, limit or other. When a failed run resumes, the record gets a numbered start of its own and a numbered ending, so its running time and its spend add up once across the whole run. The record of its ending also names the step that failed, and a fresh run on the same work is given those steps and kinds in its order, so it doesn't repeat what failed.
+When a build run fails, the record of its ending says what kind of failure it was, in one word: connection, provider, host, limit or other. When a failed run resumes, the record gets a numbered start of its own and a numbered ending, so its running time and its spend add up once across the whole run. The record of its ending also names the step that failed, and a fresh run on the same work is given those steps and kinds in its order, so it doesn't repeat what failed. A Copilot run's record of its start also says the level it ran at: sandbox, or none when it started outside the sandbox. A Claude run's record carries no level.
 
 Each card the build engine raises also gets a seal in that record: a signed line of what Wheelhouse's own checks could tell from the change when the card was written. It stays in the private record. No agent, board or review reads what a seal says, and only a count of them is shown. It changes nothing about a card. Once a card is answered, a further signed line scores what would have been decided against the answer. The scores stay sealed too.
 
@@ -74,6 +74,19 @@ A GitHub project with no CI has its tests run on your computer, from v0.2.1. Eac
 So that the engine's steps keep Wheelhouse's guards, setup also adds the Wheelhouse plugin to Claude Code for your account, not just this project (an older Wheelhouse already there is brought up to date instead), and a sign-in start that starts Wheelhouse's helper when you sign in to the Mac, and again within a minute if it stops. In the project, setup's commit adds Archon's project settings (`.archon/config.yaml`) and the merge queue's policy (`.archon/sdlc/policy/maintainers.json`). A project set up before v0.2.0 gets these two files by a pull request you approve.
 
 A product on GitLab, and a computer other than a Mac, gets none of this, and keeps Wheelhouse's own Crew for now.
+
+## GitHub Copilot
+
+A product that builds with Copilot keeps the same private record as any other, plus these. Nothing in them is sent anywhere by Wheelhouse.
+
+- `~/.wheelhouse/agents/copilot-sandbox.json`, the result of the sandbox test: kept for this computer rather than for a project, with the Copilot version and a digest of the sandbox settings it was run for. A result for another version or other settings counts as no test.
+- `~/.wheelhouse/own-files.json`, the hashes of Wheelhouse's own files and of Copilot's files that guard them (hook and agent folders, settings, the add-on's folder, the clean home's hook file and settings). A weekly look compares against it and names what changed. Copilot's sign-in file is never opened.
+- In the project's private state, the level a Copilot run ran at (the sandbox, or none) is recorded on its run record, with each Ask allowance, and the audit report reads it.
+- Each approval and action names how it was made: `chat-click` (a click in Copilot's chat, not proven), `hook-click` or `policy-hook` (seen by a Copilot hook), `add-on` (a button in the add-on's pane), `window` (the helper's window) or `host` (the person's approval on GitHub). The proof sits under the record's signature.
+- If you use the VS Code add-on: `~/.wheelhouse/projects/<project>/record/terminal-commands.jsonl` lists each command the VS Code window ran (not only Copilot's; the window does not say who typed it). It sits beside the `events/` folder and is not part of the signed record; it is private to you, a command that looks like a secret is replaced by a note, and it is cut to its newest half when it grows large. Where a company switches Copilot's tools off, the chat can leave a note as a `.json` file in a registered project's own `.wheelhouse/inbox/` folder; the add-on reads each file once and removes it, and records it only as a chat click, which approves nothing. It never follows a link there and leaves anything else in the folder alone.
+- A new signing key, made on your click after a risky period, is kept beside the old one; records signed before it still verify.
+
+Uninstall removes the baseline for the weekly look and Locked's Copilot files, along with the other files in `~/.wheelhouse`. It does not remove the sandbox result (`~/.wheelhouse/agents/copilot-sandbox.json`) or the terminal record; they stay until you delete the folder by hand. The add-on is removed from VS Code by you; Wheelhouse does not reach into it.
 
 ## Optional channels
 

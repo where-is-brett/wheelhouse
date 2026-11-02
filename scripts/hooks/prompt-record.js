@@ -837,7 +837,7 @@ function shownFor(project, input, at, stopState = defaultStopState, carrying = n
 // On an agent whose hooks only read (`writeVia: 'helper'`), nothing here runs: no click is signed, kept or sent,
 // and `earned` is never asked. Such an agent's chat click is recorded by the helper (/cards/chat-click), unsigned
 // and naming its proof (rulings P5-12, P5-17).
-export async function decide(input, { client, now = () => new Date(), projectOf: find = projectOf, dir, budget = BUDGET_MS + helperGrace(), liftStop = defaultLift, stopState, ready, premiumIn, writeVia = 'self' } = {}) {
+export async function decide(input, { client, now = () => new Date(), projectOf: find = projectOf, dir, budget = BUDGET_MS + helperGrace(), liftStop = defaultLift, stopState, ready, premiumIn, writeVia = 'self', proof } = {}) {
   if (writeVia !== 'self') return undefined;
   if (input.tool_name !== tools.ask) return undefined;
   const answered = clicks(input);
@@ -923,7 +923,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
         notices = notices === null ? line : `${notices}\n${line}`;
         refusedQuestions.add(click.question);
       } else if (got) {
-        queued.push(keepEarned(project, got, { now: clock, liftStop }));
+        queued.push(keepEarned(project, got, { now: clock, liftStop, proof }));
         if (got.takeOver) takeOvers.push(queued.at(-1));
       }
     } catch {

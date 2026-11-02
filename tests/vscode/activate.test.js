@@ -105,3 +105,18 @@ test('the add-on records VS Code\'s versions at start, and again when its add-on
   await changed();
   assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).runtime, '0.32.0');
 });
+
+test('where no Node.js runs the Lean helper is asked for once, and stopped when the add-on is', async () => {
+  const asked = [];
+  const stopped = [];
+  const startLean = async (o) => { asked.push(o); return { mode: 'helper', stop: async () => { stopped.push(1); } }; };
+  const { context } = await started({ more: { node: null, startLean, isLean: true, address: '/x/helper.sock' } });
+  assert.equal(asked.length, 1);
+  assert.deepEqual([asked[0].address, asked[0].isLean, asked[0].node], ['/x/helper.sock', true, null]);
+  for (const s of context.subscriptions) s.dispose?.();
+  assert.deepEqual(stopped, [1]);
+  // With a Node.js on the computer the usual start serves, and this is not asked.
+  const withNode = await started({ more: { node: '/usr/bin/node', startLean } });
+  assert.equal(asked.length, 1);
+  assert.equal(withNode.context.subscriptions.length > 0, true);
+});

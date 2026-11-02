@@ -375,7 +375,7 @@ const PLAIN_SHAPES = {
   'premium-rest': { must: ['why', 'at', 'until'], may: ['work'] },
   // The engine's records (design on Archon, sections 4.2 and 10). A run of a work on an engine: its state
   // (`started`, `paused` or `ended`), and when it ended, its branch, pull request and outcome.
-  run: { must: ['work', 'lane', 'engine', 'runId', 'state'], may: ['branch', 'pr', 'outcome', 'resume', 'failure', 'step'] },
+  run: { must: ['work', 'lane', 'engine', 'runId', 'state'], may: ['branch', 'pr', 'outcome', 'resume', 'failure', 'step', 'level'] },
   // A span the computer slept, as the helper measured it (unattended goals design, section 9.1): it doesn't count as running.
   slept: { must: ['from', 'to'], may: [] },
   // A goal's sheet (scripts/engine/goal.js), recorded by anyone and signed by a `start-goal` action that names its hash; and
@@ -546,6 +546,7 @@ function checkPlain(kind, data) {
     for (const k of ['branch', 'outcome', 'failure', 'step']) optionalText(k);
     if (!RUN_STATES.includes(data.state)) bad('needs its state to be started, paused or ended');
     if (data.resume !== undefined && !(Number.isInteger(data.resume) && data.resume >= 1)) bad('needs resume to be a whole number from 1');
+    if (data.level !== undefined && data.level !== null && data.level !== 'sandbox') bad('needs level to be sandbox or null');
     pr();
   } else if (kind === 'ask') {
     slug('work');

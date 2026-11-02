@@ -187,7 +187,7 @@ export function engineRoutes({
       keepVerdicts(project, verdicts);
     }
     const runBranch = started.branch ?? branch;
-    await write(project, 'run', { work: order.work, lane: order.lane, engine: engine.name ?? 'engine', runId: started.runId, state: 'started', ...(runBranch ? { branch: runBranch } : {}) });
+    await write(project, 'run', { work: order.work, lane: order.lane, engine: engine.name ?? 'engine', runId: started.runId, state: 'started', ...(runBranch ? { branch: runBranch } : {}), ...(Object.hasOwn(started, 'level') ? { level: started.level } : {}) });
     return { ok: true, runId: started.runId };
   }
 
