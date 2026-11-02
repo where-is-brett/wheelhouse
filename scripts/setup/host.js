@@ -463,7 +463,7 @@ function hostAsk(name) {
 
 // Which GitLab, asked once when GitLab is chosen and the folder's remote does not already name one
 // (spec 8.11): the public service, or the company's own, whose address is typed.
-export const GITLAB_COM = 'gitlab.com';
+export const GITLAB_COM = new URL(DEFAULT_GITLAB).host;
 export const COMPANY_GITLAB = 'My company\'s GitLab';
 
 // A typed GitLab address as { base, host }: https only, a host name with an optional port, no path.
