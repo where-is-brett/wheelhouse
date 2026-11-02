@@ -107,6 +107,27 @@ test('a transcript it cannot read gives null and the gauge says nothing', async 
   });
 });
 
+test('the gauge takes its prepare point from the project\'s compactPrepare setting', async () => {
+  await withHome(async (home) => {
+    const { base, main } = makeProject();
+    try {
+      const view = path.join(path.dirname(path.dirname(sessionFile(home, 's1'))), 'views', 'settings.json');
+      const at = (n) => writeTranscript(base, [assistant(usage(0, n, 0))]);
+      const say = async (n) => (await gauge({ cwd: main, session_id: 's1', transcript_path: at(n) }, {})).hookSpecificOutput.additionalContext;
+      assert.match(await say(150000), /^Context: about 150k tokens\.$/);
+      fs.mkdirSync(path.dirname(view), { recursive: true });
+      fs.writeFileSync(view, JSON.stringify({ compactPrepare: { value: 150000 } }));
+      assert.match(await say(150000), /save state/);
+      assert.doesNotMatch(await say(149000), /save state/);
+      fs.writeFileSync(view, JSON.stringify({ compactPrepare: { value: 50 } }));
+      assert.doesNotMatch(await say(150000), /save state/);
+      assert.match(await say(200000), /save state/);
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
+
 test('the gauge asks to save state from 200,000 tokens', async () => {
   await withHome(async (home) => {
     const { base, main } = makeProject();

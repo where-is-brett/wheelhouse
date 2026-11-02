@@ -10,8 +10,21 @@ import { projectForFolder } from '../lib/projects.js';
 import { wheelhouseHome } from '../lib/paths.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
+// The fallback; the point follows the project's `compactPrepare` setting when it has one.
 export const SAVE_FROM = 200000;
 export const SAVE_NOTE = 'Finish this step, save state, then carry on.';
+
+// The point to prepare at: the project's `compactPrepare` setting in force (its settings view), else SAVE_FROM.
+export function prepareAt(project) {
+  try {
+    const view = JSON.parse(fs.readFileSync(path.join(wheelhouseHome(), 'projects', project, 'views', 'settings.json'), 'utf8'));
+    const value = view?.compactPrepare?.value;
+    if (Number.isInteger(value) && value >= 100000 && value <= 290000) return value;
+  } catch {
+    // No settings view yet: the default.
+  }
+  return SAVE_FROM;
+}
 
 const count = (v) => (Number.isFinite(v) && v >= 0 ? v : null);
 
@@ -87,7 +100,7 @@ export async function decide(input, { dir, now = () => new Date() } = {}) {
     }
   }
   const text = `Context: about ${Math.floor(tokens / 1000)}k tokens.`;
-  return answer.context('UserPromptSubmit', tokens >= SAVE_FROM ? `${text} ${SAVE_NOTE}` : text);
+  return answer.context('UserPromptSubmit', tokens >= prepareAt(project) ? `${text} ${SAVE_NOTE}` : text);
 }
 
 if (startedAsScript(import.meta.url)) {
