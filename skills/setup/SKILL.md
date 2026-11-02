@@ -21,7 +21,8 @@ The director's first message is often about their product ("I want to build a to
 1. Before anything else, say in one plain line that you'll set Wheelhouse up first, and that their request is kept for afterwards. Then run `resume`.
 2. Keep their request as they wrote it. Don't research, plan, build or answer it meanwhile: no searches, no reading of files for it, no questions about it. A quick question about setup itself is answered as a card's "Asked why" is.
 3. When setup is finished (step 10 green, its briefing given, its card asked and the phone card offered), load `wheelhouse:front-desk` and hand it the request, as they wrote it, as the director's first message there. Say in one line that you're picking it up now.
-4. When setup stops before it is finished, say in one line that their request is kept until setup is done. A new session doesn't have it: when they carry on with setup in a new session, ask them to give it again once setup is done.
+4. Two requests go before setup instead: one about Wheelhouse itself (updating, reinstalling or removing it, or a `claude plugin` command), and one in which the director says not to run setup now. Do that first, then offer to carry on with setup. Setup never stands in the way of updating or removing Wheelhouse.
+5. When setup stops before it is finished, say in one line that their request is kept until setup is done. A new session doesn't have it: when they carry on with setup in a new session, ask them to give it again once setup is done.
 
 ## The command
 
