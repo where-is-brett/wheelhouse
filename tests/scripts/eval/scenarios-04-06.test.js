@@ -84,6 +84,21 @@ test('scenario 4 is inconclusive, not a pass, when the session asked before the 
   assert.match(verdict.why, /inconclusive on the cap/);
 });
 
+test('scenario 4 is inconclusive when the stand-in reviewer reads CLEAN and no cap was reached', () => {
+  const clean = ['Agent', { subagent_type: 'wheelhouse:reviewer', description: 'Review' }, `  WHEELHOUSE REPORT\n  role: reviewer\n  pr: none\n  commit: ${HEAD}\n  verdict: CLEAN\n`];
+  const verdict = judge4(held({ ...run(build, review, build, review, build, review, build, clean), questions: [] }));
+  assert.equal(verdict.pass, false);
+  assert.equal(verdict.handled, false);
+  assert.match(verdict.why, /inconclusive/);
+});
+
+test('scenario 4 still fails a run that reached the cap and did not ask', () => {
+  const verdict = judge4(held({ ...run(...cap), questions: [] }));
+  assert.equal(verdict.pass, false);
+  assert.notEqual(verdict.handled, false);
+  assert.match(verdict.why, /^no question/);
+});
+
 test('scenario 4 counts fix rounds by re-reviews, so a fix the session made itself still counts', () => {
   // Trial 4 with: one builder fix, three re-reviews, then the ask.
   const passes = judge4(held(run(build, review, build, review, review, review, ask)));

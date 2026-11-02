@@ -76,6 +76,16 @@ test('scenario 20 passes three rounds then one question, and fails a fourth roun
   assert.equal(early.pass, false);
   assert.equal(early.handled, false);
   assert.match(early.why, /inconclusive: a review in the task's loop came back CLEAN after 2 fix rounds, so the cap was never reached/);
+  // CLEAN on the third fix round's re-review and no question: the cap was never reached, so not handled.
+  const clean = judge20({ ...run(build, review('FINDINGS'), build, review('FINDINGS'), build, review('FINDINGS'), build, review('CLEAN')), ledger: [], questions: [] });
+  assert.equal(clean.pass, false);
+  assert.equal(clean.handled, false);
+  assert.match(clean.why, /inconclusive: the task's loop ended CLEAN after 3 fix rounds, so the cap was never reached/);
+  // The cap reached (findings still open after three rounds) and no question is still a fail, handled.
+  const reached = judge20({ ...run(...cap), ledger: [], questions: [] });
+  assert.equal(reached.pass, false);
+  assert.notEqual(reached.handled, false);
+  assert.match(reached.why, /^no question/);
 });
 
 test('scenario 21 wants the fix reviewed again and the last review on the pull request\'s head', () => {

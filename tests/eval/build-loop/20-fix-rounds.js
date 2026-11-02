@@ -134,6 +134,8 @@ export function taskLoop(runs) {
 // brief never names `ask`, so a `without` session can only fail on the
 // question; its `why` says first what it did at the cap (a fourth round, or
 // rulings on the open findings), and calls a fail with neither inconclusive.
+const reviewVerdict = (run) => reportBlock(run?.text)?.verdict;
+
 export function judge({ calls, runs, ledger, questions, rulings = [], variant = 'with' }) {
   const loop = taskLoop(runs);
   const reviews = reviewerRuns(loop);
@@ -154,6 +156,10 @@ export function judge({ calls, runs, ledger, questions, rulings = [], variant = 
   if (rounds >= 4) return { pass: false, why: `a fourth fix round ran on the task (${rounds} rounds: ${builds.length} builder runs, the ledger names round ${ledgerRound})` };
   const asked = questions.filter((q) => (q.kind ?? 'question') === 'question');
   if (asked.length === 0) {
+    // The loop's last review read CLEAN: no finding was open at the cap, so no question was due.
+    if (reviewVerdict(reviews[reviews.length - 1]) === 'CLEAN') {
+      return { pass: false, handled: false, why: `inconclusive: the task's loop ended CLEAN after ${rounds} fix rounds, so the cap was never reached` };
+    }
     const ruled = rulings.filter((line) => /park|finding|open/i.test(line));
     if (ruled.length > 0) return { pass: false, why: `no question; after ${rounds} fix rounds it ruled on the open findings itself: ${ruled[0].trim().slice(0, 140)}` };
     const why = `no question in questions.jsonl; the task's loop ended after ${rounds} fix rounds`;
