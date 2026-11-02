@@ -136,6 +136,8 @@ import { requestMeter, requestsThisMonth } from '../engine/request-meter.js';
 import { weeklyShare } from '../usage/figures.js';
 import { checkProvenance, removeProvenance, sessionProvenance, engineProvenance } from '../lineage/provenance.js';
 import { brokerDecision } from '../engine/broker/rules.js';
+import { hostApprovalReady } from './approval-ready.js';
+import { hostApproved, hostApprovalNeeded } from './host-approval.js';
 import { brokerRoutes } from '../engine/broker/routes.js';
 import { lookAtHead, raiseCard, withLocalLock } from '../lib/local-git.js';
 import { queueCall } from '../engine/broker/queue.js';
@@ -1048,6 +1050,8 @@ export async function startHelper({
   // Each agent's review module, for the signed review in a clean session (scripts/agents/reviews.js): given an
   // agent's name, its module, or null where its reviews aren't the helper's. A test may give its own.
   reviewModules = reviewsFor,
+  // Whether the person's approval on the host is ready to be asked for (host-approval.js); a test may give its own.
+  approvalReady = hostApprovalReady,
   // What Claude Code's premium alias stands for on this computer (scripts/setup/best-model.js), asked only after the
   // director's Yes on the premium model's card allows it (/premium/check): a model name, or null. A test gives its own.
   premiumAlias = () => aliasModel(STRONGEST_ALIAS, { run }),
@@ -2983,6 +2987,27 @@ export async function startHelper({
     }
   }
 
+  // The account whose review of a pull request stands as the director's approval on GitHub: the connection's recorded person,
+  // else the owner of the project's repository.
+  const approvalPersonOf = (record) => record.connection?.person ?? String(record.repo ?? '').split('/')[0];
+  // The person's approval on GitHub for a merge of `sha`: undefined where the project doesn't need it (a Claude project, no
+  // real users, GitHub's route not ready, another host), else whether it is there. A configuration that can't be read
+  // counts as Copilot's, and a review that can't be read as no approval. Both merge routes build it (Task B1).
+  async function hostApprovalOf(project, adapter, { number, sha, config }) {
+    const record = recordOf(project);
+    if (record.host !== 'github' || approvalReady({ host: 'github' }) !== true) return undefined;
+    let agent = null;
+    if (config !== undefined) {
+      try {
+        agent = agentOfConfig(config, { computerId: computerId() });
+      } catch {
+        agent = null;
+      }
+    }
+    if (!hostApprovalNeeded({ agent, realUsers: launchedIn(project), host: 'github' }, { ready: approvalReady })) return undefined;
+    return hostApproved({ adapter, number, sha, person: approvalPersonOf(record) });
+  }
+
   // The review kinds the gate counts (ruling P7-15): null, today's rule, for an agent with no review module; the
   // module's own kinds; none where the agent can't be told or the module can't say.
   function reviewKindsOf(config) {
@@ -3419,7 +3444,9 @@ export async function startHelper({
     // depend on the pull request's files, so when those couldn't be read it is read by itself; only when the
     // default branch's configuration itself can't be read does today's rule stand (the approval is then needed
     // anyway, since unreadable changes count as touching the guardrails).
-    const reviewKinds = reviewKindsOf(changes?.config ?? await defaultConfig(project, adapter, ctx));
+    const mergeConfig = changes?.config ?? await defaultConfig(project, adapter, ctx);
+    const reviewKinds = reviewKindsOf(mergeConfig);
+    const hostApproval = await hostApprovalOf(project, adapter, { number, sha: headSha, config: mergeConfig });
     // Where a project's checks run here, a fix passes the condition the broker asks of every other merge.
     let checkWaiting = false;
     if (fixCall || keeping || recordOf(project).host === 'local') {
@@ -3449,6 +3476,7 @@ export async function startHelper({
       touchesGuardrails: guarded,
       review,
       reviewKinds,
+      hostApproval,
       approval,
       enrolled,
       upToDate,
@@ -4459,10 +4487,12 @@ export async function startHelper({
     const { review, approval } = await gateRecords({ project, number: call.pr, headSha: call.sha, views, adapter, compare: true }, ctx);
     let guardrail = true;
     let paths = null;
+    let permitConfig;
     try {
       const changes = await readChanges({ project, number: call.pr, headSha: call.sha, defaultBranch }, ctx);
       guardrail = classifyChange({ paths: changes.paths, config: changes.config }).touchesGuardrails;
       ({ paths } = changes);
+      permitConfig = changes.config;
     } catch (error) {
       if (error instanceof LookRefusal) throw error;
     }
@@ -4474,7 +4504,8 @@ export async function startHelper({
     // opened needs the director's approval, as shown-first work does.
     const opened = engineRun.openedOf(project, call.pr);
     const checked = call.kind === 'merge' ? await checkPermit(project, call.sha) : {};
-    return { ...base, enrolled, review, approval, incident: incidentFor(views, call.pr), shownFirst: opened ? opened.showFirst === true : true, level: opened?.level ?? null, guardrail, outsideAreas, ...checked, stop: stopped() };
+    const hostApproval = call.kind === 'merge' ? await hostApprovalOf(project, adapter, { number: call.pr, sha: call.sha, config: permitConfig ?? await defaultConfig(project, adapter, ctx) }) : undefined;
+    return { ...base, ...(hostApproval === undefined ? {} : { hostApproval }), enrolled, review, approval, incident: incidentFor(views, call.pr), shownFirst: opened ? opened.showFirst === true : true, level: opened?.level ?? null, guardrail, outsideAreas, ...checked, stop: stopped() };
   }
   const broker = brokerRoutes({
     placeOf: placeEngineCall,
@@ -5584,7 +5615,10 @@ export async function startHelper({
       protect: async ({ host, repo }) => {
         if (protectHost !== undefined) return protectHost({ host, repo });
         const api = host === 'gitlab' ? await directorGitlabApi({ run, fetch }) : undefined;
-        return switchOnAsDirector({ host, repo, run, api, realUsers: launchedIn(project) });
+        const realUsers = launchedIn(project);
+        // A Copilot project with real users, once GitHub's route is ready, asks the person for their own approval (Task B1).
+        const hostApproval = host === 'github' && approvalReady({ host }) === true && hostApprovalNeeded({ agent: agentInFolder(recordOf(project).folder, { computerId: computerId() }), realUsers, host }, { ready: approvalReady });
+        return switchOnAsDirector({ host, repo, run, api, realUsers, hostApproval });
       },
       lock: async () => {
         const ctx = await contextFor(project);

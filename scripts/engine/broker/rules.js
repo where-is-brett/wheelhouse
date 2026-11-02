@@ -6,6 +6,7 @@
 // as the merge queue's verdict passes only with a signed CLEAN review of that head. A merge passes only with the permit. Anything not on the list
 // is refused, with a plain reason, and never forwarded.
 import { reviewCounts, approvalCounts, incidentReason, checkCounts } from '../../gate/conditions.js';
+import { NO_HOST_APPROVAL } from '../../host/host-approval.js';
 
 // The merge queue's verdict comment carries this marker (check 76).
 const VERDICT_MARK = '<!-- archon-review-report -->';
@@ -287,7 +288,8 @@ const refuse = (reason) => ({ allow: false, reason: `Wheelhouse's broker refused
 // redMain (whether a red-main incident is open), runBranch (the branch of the run a rerun names, as the host says),
 // checksHere (whether the project's checks run on this computer), check (the signed check of the call's head, or null),
 // digest (the command now on the default branch), notCounting (whether the project's tests aren't counting yet),
-// outsideAreas (whether the change reaches outside its goal's areas, with no Allow this once at this head) }.
+// outsideAreas (whether the change reaches outside its goal's areas, with no Allow this once at this head),
+// hostApproval (undefined where the person's approval on GitHub isn't needed, else whether it is there) }.
 export function brokerDecision(call, ctx = {}) {
   if (!call || call.kind === 'other') {
     const named = Array.isArray(call?.words) && call.words.length > 0 ? ` (gh ${call.words.join(' ')})` : '';
@@ -318,6 +320,7 @@ export function brokerDecision(call, ctx = {}) {
   if (!reviewed) return refuse(`there is no signed CLEAN review of ${head.slice(0, 7)}`);
   const needsApproval = ctx.shownFirst === true || ctx.level === 4 || ctx.guardrail === true;
   if (needsApproval && !approvalCounts(ctx.approval, head, ctx.enrolled)) return refuse(`the director's approval of ${head.slice(0, 7)} isn't signed`);
+  if (ctx.hostApproval !== undefined && ctx.hostApproval !== true) return refuse(NO_HOST_APPROVAL(head.slice(0, 7)));
   // The host's green status gets a change past Archon's gate; on a project with no CI the signed record gets it past here.
   if (ctx.checksHere === true && !checkCounts(ctx.check, head, ctx.digest, ctx.enrolled, { notCounting: ctx.notCounting === true })) return refuse(`there is no passing check on this computer of ${head.slice(0, 7)}`);
   return { allow: true };

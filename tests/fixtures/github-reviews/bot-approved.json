@@ -1,0 +1,4 @@
+{
+  "_note": "Hand-written from the shape GitHub documents for GET /repos/{owner}/{repo}/pulls/{number}/reviews (https://docs.github.com/en/rest/pulls/reviews, read 2 November 2026). Only the fields Wheelhouse reads are kept. Not a recording of a real answer.",
+  "reviews": [{"id":1,"user":{"login":"wheelhouse-helper[bot]","type":"Bot"},"state":"APPROVED","commit_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","submitted_at":"2026-11-02T01:00:00Z"},{"id":2,"user":{"login":"someone-else","type":"User"},"state":"APPROVED","commit_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","submitted_at":"2026-11-02T01:05:00Z"}]
+}

@@ -1401,8 +1401,8 @@ export function protectionPlanLine(host) {
 // be the project's number; `realUsers` is whether the project's phase is launched), then reads it back and says it as it is. On GitLab, `askPipelines`
 // says the project has no pipeline, so "pipelines must succeed" was left off and the director is
 // asked (design section 12.3).
-export async function switchOnAsDirector({ host, repo, run = realRun, api, realUsers = false }) {
-  const made = await switchOnProtection({ host, repo, run, api, env: {}, realUsers });
+export async function switchOnAsDirector({ host, repo, run = realRun, api, realUsers = false, hostApproval = false }) {
+  const made = await switchOnProtection({ host, repo, run, api, env: {}, realUsers, hostApproval });
   const read = await protectionStatus({ host, repo, run, api, env: {}, realUsers, director: true });
   if (host !== 'gitlab') return { available: read.available, on: read.on, line: read.line, ...(made?.required ? { required: made.required } : {}) };
   const project = await api.get(projectPath(repo));
