@@ -231,6 +231,17 @@ test('the README gives the Node.js line and the install commands as they are, at
   assert.match(readme, /\*\*this project\*\*/);
 });
 
+test('the README skips the catalogue line where the catalogue is already added, and the playbook names the project install when the helper is out of reach', () => {
+  assert.match(readme, /marketplace list/);
+  assert.match(readme, /already (?:there|listed|added)/i);
+  const skill = read('skills/setup/SKILL.md');
+  const line = skill.split('\n').find((l) => l.includes('the host helper could not be reached'));
+  assert.ok(line, 'the refusal is covered');
+  assert.match(line, /\.claude\/settings\.json/);
+  assert.match(line, /claude plugin install wheelhouse@wheelhouse --scope project/);
+  assert.match(line, /user scope|for your account|only for you/i);
+});
+
 test('the playbook\'s reading forms run under STOP', async () => {
   await as(shortHome(), async () => {
     setStop({ by: 'prompt' });
