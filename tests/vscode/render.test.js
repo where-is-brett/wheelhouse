@@ -34,7 +34,8 @@ test('the page names the nonce in its policy and allows no other script', () => 
 test('the colours are VS Code\'s theme variables', () => {
   const html = draw(model({ cards: [card()] }));
   assert.ok(html.includes('var(--vscode-'));
-  assert.ok(!/#[0-9a-fA-F]{3,8}\b(?![^<]*<\/style>)/.test(html.replace(/<style[\s\S]*?<\/style>/, '')));
+  // No hex colour anywhere in the page, its stylesheet included.
+  assert.ok(!/(?<![&\w])#[0-9a-fA-F]{3,8}\b/.test(html));
 });
 
 test('the pane holds the name, STOP, the verdict, the cards and the foot', () => {
