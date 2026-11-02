@@ -220,11 +220,13 @@ test('nothing spawns VS Code\'s own program, the foreman\'s route included', asy
       const req = http.request({ socketPath: w.address, path: route, method: 'POST', agent: false, headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(data) } }, (res) => {
         let text = '';
         res.on('data', (d) => { text += d; });
-        res.on('end', () => resolve(JSON.parse(text)));
+        res.on('end', () => { try { resolve(JSON.parse(text)); } catch { reject(new Error(`the helper answered ${res.statusCode} with ${text.slice(0, 200)}`)); } });
       });
       req.on('error', reject);
       req.end(data);
     });
+    // Ready before the request: the route is asked of a helper that answers, never of one still binding.
+    for (let i = 0; i < 50 && !(await health(w.address)); i += 1) await new Promise((r) => { setTimeout(r, 100); });
     const answer = await post('/foreman/run', { folder, script: 'wake', argv: ['measures'] });
     assert.deepEqual(answer, { ok: false, refused: EDITOR_NO_NODE });
     assert.equal(w.log.includes(process.execPath), false);

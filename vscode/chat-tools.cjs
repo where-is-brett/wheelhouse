@@ -10,6 +10,8 @@
 // And from https://code.visualstudio.com/api/references/vscode-api: window.onDidStartTerminalShellExecution, whose event
 // carries `execution.commandLine`; this file reads `commandLine.value` (the page shows the property as a command line
 // object; the name `value` is not confirmed there, so a plain string is accepted too).
+// The terminal record holds every shell execution the window starts, not only the chat's (the event does not say who
+// typed it); it lives in Wheelhouse's state folder for the project, never in the workspace.
 // All stop cancelling the chat's running request: no way to do it has been found (check 72), so cancelChatRequest below is
 // a hook point that does nothing, not a guess at an API.
 'use strict';
@@ -17,13 +19,44 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
+// The scripts this loads, relative to the add-on's `wheelhouse/` folder. The pack walks their imports (scripts/addon/pack.js).
+const CHAT_LOADS = Object.freeze({ rules: 'scripts/agents/chat-clicks.js', secrets: 'scripts/state/secret-scan.js' });
+
+// The rules a click is held to and the secret scan, from the add-on's own copy of the scripts; {} where they can't be loaded.
+async function loadRules(root) {
+  try {
+    const { pathToFileURL } = require('node:url');
+    const [rules, secrets] = await Promise.all(Object.values(CHAT_LOADS).map((rel) => import(pathToFileURL(path.join(root, rel)).href)));
+    return { rules: { hash: rules.CARD_HASH, steps: rules.CONFIRMED_STEPS }, scan: secrets.scanText };
+  } catch {
+    return {};
+  }
+}
+
 const RECORD_TOOL = 'wheelhouse_record';
 const BOARD_TOOL = 'wheelhouse_board';
 const PROOF = 'chat-click';
 const INBOX = path.join('.wheelhouse', 'inbox');
-const COMMANDS_FILE = path.join('.wheelhouse', 'terminal-commands.jsonl');
+const COMMANDS_NAME = 'terminal-commands.jsonl';
 // The most an inbox file or a field may hold.
 const FILE_BYTES = 16384;
+// The terminal record is trimmed to its newest half when it grows past this.
+const RECORD_BYTES = 262144;
+const HELD_BACK = '[held back: it looked like it held a secret]';
+// The rules the helper's /cards/chat-click holds a click to (scripts/host/helper.js doChatClick, scripts/agents/chat-clicks.js):
+// a card's hash is its sha256 in full, and these steps are confirmed outside the chat. desk.cjs passes the scripts' own;
+// these are the same values for where they were not loaded, and a test holds them to the scripts'.
+const CARD_HASH = /^[0-9a-f]{64}$/;
+const CONFIRMED_STEPS = Object.freeze(['lift-stop', 'guardrail-change', 'unattended', 'runbook-step', 'ci-push', 'ask-allowance']);
+// A card a click in the chat could bind (a Lean merge, a guardrail change, a ruling's confirmation, a confirmed step) is
+// never one these tools answer; only a plain question's answer is recorded here.
+const BINDING = /^(?:merge|guardrail|ruling)-/;
+const REFUSED_BINDING = 'That card can bind something, so it is answered only with its button in the Wheelhouse pane, not from the chat.';
+const BAD_HASH = 'Nothing was recorded: the card\'s hash must be its full sha256 as the board shows it.';
+
+function bindsSomething(card, steps = CONFIRMED_STEPS) {
+  return BINDING.test(card) || steps.some((step) => card === step || card.startsWith(`${step}-`));
+}
 const FIELD_CHARS = 4000;
 const COMMAND_CHARS = 500;
 
@@ -31,11 +64,13 @@ const text = (value, max = FIELD_CHARS) => (typeof value === 'string' ? value.sl
 
 // The one place a chat tool or an inbox file becomes a click. Only these fields are passed on; the proof is always
 // chat-click, whatever the input names, and no signature or record travels with it.
-async function recordClick({ client, project, folder, input }) {
+async function recordClick({ client, project, folder, input, rules = {} }) {
   const card = text(input?.card, 200);
   const hash = text(input?.hash, 200);
   const label = text(input?.label, 200);
   if (typeof project !== 'string' || project === '' || card === '' || hash === '' || label === '') return { ok: false, says: 'Nothing was recorded: a click needs a card, its hash and a button.' };
+  if (!(rules.hash ?? CARD_HASH).test(hash)) return { ok: false, says: BAD_HASH };
+  if (bindsSomething(card, rules.steps)) return { ok: false, says: REFUSED_BINDING };
   const commit = text(input?.commit, 200);
   const words = text(input?.text);
   try {
@@ -57,7 +92,7 @@ function boardText(pane) {
 }
 
 // Registers the two chat tools. `client` is the helper's; `desk` reads the board. The tools press nothing.
-function registerChatTools({ vscode, client, desk, project, folder, subscriptions }) {
+function registerChatTools({ vscode, client, desk, project, folder, subscriptions, rules }) {
   if (typeof vscode?.lm?.registerTool !== 'function') return [];
   const result = (message) => {
     const part = vscode.LanguageModelTextPart ? new vscode.LanguageModelTextPart(message) : { value: message };
@@ -67,7 +102,7 @@ function registerChatTools({ vscode, client, desk, project, folder, subscription
   const made = [
     vscode.lm.registerTool(RECORD_TOOL, {
       async invoke(options) {
-        const got = await recordClick({ client, project: projectNow(), folder, input: options?.input });
+        const got = await recordClick({ client, project: projectNow(), folder, input: options?.input, rules });
         return result(got.says);
       },
     }),
@@ -85,10 +120,24 @@ function registerChatTools({ vscode, client, desk, project, folder, subscription
   return made;
 }
 
+// The text of a plain file at most FILE_BYTES long, or null: opened without following a link, checked on the open file.
+function readCapped(file) {
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > FILE_BYTES) return null;
+    const buffer = Buffer.alloc(FILE_BYTES + 1);
+    const got = fs.readSync(fd, buffer, 0, FILE_BYTES + 1, 0);
+    return got > FILE_BYTES ? null : buffer.toString('utf8', 0, got);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 // Reads the inbox once: each file is removed as it is read, and is a click only the way a chat tool's is, as a chat-click.
 // An inbox file can't approve: the same fields, the same proof, nothing signed. Files over the size, links and anything but
 // a plain .json file are removed without being read.
-async function drainInbox({ folder, client, project }) {
+async function drainInbox({ folder, client, project, rules }) {
   const dir = typeof folder === 'string' ? path.join(folder, INBOX) : null;
   const out = { read: 0, recorded: 0 };
   if (dir === null) return out;
@@ -99,14 +148,15 @@ async function drainInbox({ folder, client, project }) {
     let body = null;
     try {
       const stat = fs.lstatSync(file);
-      if (stat.isFile() && stat.size <= FILE_BYTES && name.endsWith('.json')) body = fs.readFileSync(file, 'utf8');
+      // Only a plain .json file is opened, never followed through a link, and read up to the size cap from the open file.
+      if (stat.isFile() && name.endsWith('.json')) body = readCapped(file);
       fs.rmSync(file, { force: true, recursive: stat.isDirectory() });
     } catch { continue; }
     out.read += 1;
     let input = null;
     try { input = body === null ? null : JSON.parse(body); } catch { input = null; }
     if (input === null || typeof input !== 'object') continue;
-    if ((await recordClick({ client, project, folder, input })).ok) out.recorded += 1;
+    if ((await recordClick({ client, project, folder, input, rules })).ok) out.recorded += 1;
   }
   return out;
 }
@@ -123,16 +173,25 @@ function watchTerminal({ vscode, record, now = () => new Date() }) {
   });
 }
 
-// Appends a recorded command to the project's own record file.
-function commandFile(folder) {
+// Appends a recorded command to `file` (in Wheelhouse's state folder for the project). A command that looks like it holds
+// a secret (`scan`, the state's own secret scan) is written as a held-back note instead. The file is trimmed to its newest
+// half past RECORD_BYTES. A failure to write is swallowed: it never reaches the terminal.
+function commandFile(file, { scan = () => [] } = {}) {
   return (line) => {
-    const file = path.join(folder, COMMANDS_FILE);
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.appendFileSync(file, `${JSON.stringify(line)}\n`);
+    try {
+      if (typeof file !== 'string' || file === '') return;
+      const held = scan(line.command).length > 0;
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.appendFileSync(file, `${JSON.stringify({ at: line.at, command: held ? HELD_BACK : line.command })}\n`);
+      if (fs.statSync(file).size > RECORD_BYTES) {
+        const lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
+        fs.writeFileSync(file, `${lines.slice(Math.floor(lines.length / 2)).join('\n')}\n`);
+      }
+    } catch { /* A record is not a need. */ }
   };
 }
 
 // The hook point for All stop to cancel the chat's running request. No way is known (check 72): it does nothing.
 async function cancelChatRequest() {}
 
-module.exports = { RECORD_TOOL, BOARD_TOOL, INBOX, COMMANDS_FILE, recordClick, boardText, registerChatTools, drainInbox, watchTerminal, commandFile, cancelChatRequest };
+module.exports = { CHAT_LOADS, loadRules, RECORD_TOOL, BOARD_TOOL, INBOX, COMMANDS_NAME, RECORD_BYTES, HELD_BACK, CARD_HASH, CONFIRMED_STEPS, REFUSED_BINDING, BAD_HASH, bindsSomething, recordClick, boardText, registerChatTools, drainInbox, watchTerminal, commandFile, cancelChatRequest };

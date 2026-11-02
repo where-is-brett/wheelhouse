@@ -16,11 +16,12 @@ import { startedAsScript } from '../lib/started-as-script.js';
 const require = createRequire(import.meta.url);
 const { LOADS, START_HELPER } = require('../../vscode/desk.cjs');
 const { LEAN_LOADS } = require('../../vscode/lean.cjs');
+const { CHAT_LOADS } = require('../../vscode/chat-tools.cjs');
 
 const HERE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 // What the add-on loads, then runs: the closure of these is carried.
 export const RUN_ONLY = [START_HELPER];
-export const ENTRIES = [...new Set([...Object.values(LOADS), ...Object.values(LEAN_LOADS), ...RUN_ONLY])].sort();
+export const ENTRIES = [...new Set([...Object.values(LOADS), ...Object.values(LEAN_LOADS), ...Object.values(CHAT_LOADS), ...RUN_ONLY])].sort();
 
 export const vsixName = (version) => `wheelhouse-${version}.vsix`;
 

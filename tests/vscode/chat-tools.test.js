@@ -7,12 +7,16 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fakeVscode, model, card, require } from './helpers.js';
+import crypto from 'node:crypto';
+import { CARD_HASH, CONFIRMED_STEPS } from '../../scripts/agents/chat-clicks.js';
+import { scanText } from '../../scripts/state/secret-scan.js';
 import { checkAddon, readAddon, ALLOWED_TOOLS } from '../../scripts/addon/validate.js';
 
 const tools = require('../../vscode/chat-tools.cjs');
 const { activate } = require('../../vscode/extension.cjs');
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
 
+const HASH = crypto.createHash('sha256').update('the card').digest('hex');
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'chat-tools-'));
 
 // A VS Code that also holds the language-model tools and terminal events the add-on uses.
@@ -39,11 +43,11 @@ test('a chat tool\'s write is never binding', async () => {
   const { vscode, registered } = chatVscode();
   const { calls, client } = recorder();
   const folder = tmp();
-  const desk = { read: async () => ({ ok: true, data: { pane: model({ cards: [card()] }) } }) };
+  const desk = { read: async () => ({ ok: true, data: { pane: model({ cards: [card({ hash: HASH })] }) } }) };
   tools.registerChatTools({ vscode, client, desk, project: 'owner__name', folder, subscriptions: [] });
   assert.deepEqual([...registered.keys()].sort(), [...ALLOWED_TOOLS].sort());
   // Whatever the model asks for, the proof is chat-click and nothing else; no signature comes from here.
-  const out = await registered.get('wheelhouse_record').invoke({ input: { card: 'c1', hash: 'abc123def456', label: 'Approve', proof: 'add-on', form: 'signed' } });
+  const out = await registered.get('wheelhouse_record').invoke({ input: { card: 'c1', hash: HASH, label: 'Approve', proof: 'add-on', form: 'signed' } });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].proof, 'chat-click');
   assert.equal(calls[0].project, 'owner__name');
@@ -52,6 +56,7 @@ test('a chat tool\'s write is never binding', async () => {
   // The board tool reads only.
   const board = await registered.get('wheelhouse_board').invoke({ input: {} });
   assert.match(textOf(board), /c1/);
+  assert.ok(textOf(board).includes(HASH), 'the board gives the full hash');
   assert.equal(calls.length, 1);
   // Without a project or a card, nothing is recorded.
   await registered.get('wheelhouse_record').invoke({ input: { label: 'Approve' } });
@@ -62,7 +67,7 @@ test('an inbox file is read once and removed', async () => {
   const folder = tmp();
   const inbox = path.join(folder, '.wheelhouse', 'inbox');
   fs.mkdirSync(inbox, { recursive: true });
-  fs.writeFileSync(path.join(inbox, 'a.json'), JSON.stringify({ card: 'c1', hash: 'h1', label: 'Not now' }));
+  fs.writeFileSync(path.join(inbox, 'a.json'), JSON.stringify({ card: 'c1', hash: HASH, label: 'Not now' }));
   const { calls, client } = recorder();
   const first = await tools.drainInbox({ folder, client, project: 'owner__name' });
   const second = await tools.drainInbox({ folder, client, project: 'owner__name' });
@@ -81,7 +86,7 @@ test('an inbox file can\'t approve', async () => {
   const folder = tmp();
   const inbox = path.join(folder, '.wheelhouse', 'inbox');
   fs.mkdirSync(inbox, { recursive: true });
-  fs.writeFileSync(path.join(inbox, 'a.json'), JSON.stringify({ card: 'c1', hash: 'h1', label: 'Approve', proof: 'add-on', signed: true, records: [{}] }));
+  fs.writeFileSync(path.join(inbox, 'a.json'), JSON.stringify({ card: 'c1', hash: HASH, label: 'Approve', proof: 'add-on', signed: true, records: [{}] }));
   const { calls, client } = recorder();
   await tools.drainInbox({ folder, client, project: 'owner__name' });
   assert.equal(calls.length, 1);
@@ -126,4 +131,119 @@ test('the proof still refuses a tool that reaches a press', () => {
   assert.ok(checkAddon({ pkg, sources: act }).some((p) => p.includes('act')));
   const extra = { ...pkg, contributes: { ...pkg.contributes, languageModelTools: [...pkg.contributes.languageModelTools, { name: 'wheelhouse_press' }] } };
   assert.ok(checkAddon({ pkg: extra, sources }).some((p) => p.includes('wheelhouse_press')));
+});
+
+test('the hash goes through the helper\'s own rule', async () => {
+  // The helper\'s doChatClick uses CARD_HASH from scripts/agents/chat-clicks.js; the tools hold the same rule and steps.
+  assert.equal(tools.CARD_HASH.source, CARD_HASH.source);
+  assert.deepEqual([...tools.CONFIRMED_STEPS], [...CONFIRMED_STEPS]);
+  assert.match(fs.readFileSync(path.join(ROOT, 'scripts/host/helper.js'), 'utf8'), /!CARD_HASH\.test\(hash\)/);
+  const { calls, client } = recorder();
+  const input = (hash) => ({ card: 'c1', hash, label: 'Not now' });
+  for (const bad of ['abc123def456', HASH.toUpperCase(), `${HASH}0`, '']) {
+    const got = await tools.recordClick({ client, project: 'p', input: input(bad) });
+    assert.equal(got.ok, false, bad);
+    assert.equal(CARD_HASH.test(bad), false);
+  }
+  assert.equal(calls.length, 0);
+  assert.equal((await tools.recordClick({ client, project: 'p', input: input(HASH) })).ok, true);
+  assert.equal(CARD_HASH.test(calls[0].hash), true);
+});
+
+test('cards that could bind are refused by the tool and the inbox', async () => {
+  const { calls, client } = recorder();
+  const ids = ['merge-feature-login', 'guardrail-1', 'ruling-abc', ...CONFIRMED_STEPS, ...CONFIRMED_STEPS.map((s) => `${s}-2`)];
+  const folder = tmp();
+  const inbox = path.join(folder, '.wheelhouse', 'inbox');
+  fs.mkdirSync(inbox, { recursive: true });
+  for (const id of ids) {
+    const got = await tools.recordClick({ client, project: 'p', input: { card: id, hash: HASH, label: 'Approve' } });
+    assert.equal(got.ok, false, id);
+    assert.equal(got.says, tools.REFUSED_BINDING, id);
+    fs.writeFileSync(path.join(inbox, `${id}.json`), JSON.stringify({ card: id, hash: HASH, label: 'Approve' }));
+  }
+  await tools.drainInbox({ folder, client, project: 'p' });
+  assert.equal(calls.length, 0);
+  assert.deepEqual(fs.readdirSync(inbox), []);
+  // A plain question is recorded.
+  assert.equal((await tools.recordClick({ client, project: 'p', input: { card: 'question-7', hash: HASH, label: 'Yes' } })).ok, true);
+});
+
+test('hostile inbox files are not followed, and a big one is not read', async () => {
+  const folder = tmp();
+  const outside = path.join(tmp(), 'outside.json');
+  fs.writeFileSync(outside, JSON.stringify({ card: 'q1', hash: HASH, label: 'Yes' }));
+  const inbox = path.join(folder, '.wheelhouse', 'inbox');
+  fs.mkdirSync(path.join(inbox, 'dir.json'), { recursive: true });
+  fs.writeFileSync(path.join(inbox, 'dir.json', 'inner.json'), JSON.stringify({ card: 'q1', hash: HASH, label: 'Yes' }));
+  fs.symlinkSync(outside, path.join(inbox, 'link.json'));
+  fs.writeFileSync(path.join(inbox, 'big.json'), JSON.stringify({ card: 'q1', hash: HASH, label: 'Yes', text: 'x'.repeat(40000) }));
+  fs.writeFileSync(path.join(inbox, 'note.txt'), JSON.stringify({ card: 'q1', hash: HASH, label: 'Yes' }));
+  const { calls, client } = recorder();
+  await tools.drainInbox({ folder, client, project: 'p' });
+  assert.equal(calls.length, 0);
+  assert.deepEqual(fs.readdirSync(inbox), []);
+  assert.ok(fs.existsSync(outside), 'the file a link pointed at is left alone');
+});
+
+test('the terminal record is kept in the state folder, appended, cleaned of secrets and kept small', () => {
+  const file = path.join(tmp(), 'state', 'terminal-commands.jsonl');
+  const write = tools.commandFile(file, { scan: scanText });
+  write({ at: 'a', command: 'npm test' });
+  write({ at: 'b', command: 'export T=ghp_' + 'a'.repeat(40) });
+  const lines = fs.readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.deepEqual(lines.map((l) => l.command), ['npm test', tools.HELD_BACK]);
+  assert.ok(!fs.readFileSync(file, 'utf8').includes('ghp_'));
+  for (let i = 0; i < 4000; i += 1) write({ at: 'c', command: `echo ${i} ${'y'.repeat(100)}` });
+  assert.ok(fs.statSync(file).size <= tools.RECORD_BYTES + 400);
+  assert.match(fs.readFileSync(file, 'utf8'), /echo 3999 /);
+});
+
+test('a terminal record that can\'t be written leaves the terminal alone', () => {
+  const blocked = path.join(tmp(), 'plain-file');
+  fs.writeFileSync(blocked, 'x');
+  const write = tools.commandFile(path.join(blocked, 'inside', 'record.jsonl'));
+  assert.doesNotThrow(() => write({ at: 'a', command: 'ls' }));
+  assert.doesNotThrow(() => tools.commandFile(null)({ at: 'a', command: 'ls' }));
+  const { vscode, terminal } = chatVscode();
+  tools.watchTerminal({ vscode, record: () => { throw new Error('disk full'); } });
+  assert.doesNotThrow(() => terminal[0]({ execution: { commandLine: { value: 'ls' } } }));
+});
+
+test('the add-on keeps the terminal record in the state folder, not the workspace', async () => {
+  const { vscode, terminal } = chatVscode();
+  const { client } = recorder();
+  const state = tmp();
+  const folder = vscode.workspace.workspaceFolders[0].uri.fsPath;
+  await activate({ subscriptions: [], extensionPath: tmp() }, { vscode, deps: { desk: null, ask: async () => true, node: '/x/node', startHelper: async () => {}, loop: false, client, project: 'p', commandsFile: () => path.join(state, 'terminal-commands.jsonl'), scanText } });
+  terminal[0]({ execution: { commandLine: { value: 'ls' } } });
+  assert.ok(fs.existsSync(path.join(state, 'terminal-commands.jsonl')));
+  assert.ok(!fs.existsSync(path.join(folder, '.wheelhouse')));
+});
+
+test('a cancel of the chat that hangs can\'t hold All stop up', async () => {
+  const { onPaneMessage } = require('../../vscode/press.cjs');
+  const order = [];
+  const deps = {
+    nonces: { matches: () => true }, project: 'p', cancelChatMs: 40,
+    stop: { setStop: () => order.push('set') },
+    desk: { act: async () => { order.push('act'); return { ok: true }; } },
+    notify: async () => { order.push('notice'); },
+    redraw: async () => {}, now: () => new Date(),
+    cancelChat: () => { order.push('cancel'); return new Promise(() => {}); },
+  };
+  const began = Date.now();
+  assert.deepEqual(await onPaneMessage({ type: 'stop', nonce: 'n' }, deps), { made: true });
+  assert.ok(Date.now() - began < 2000);
+  assert.deepEqual(order, ['set', 'act', 'notice', 'cancel']);
+});
+
+test('the proof refuses a chat tool that reaches past the chat-click route', () => {
+  const { pkg, sources } = readAddon(ROOT);
+  const base = sources['vscode/chat-tools.cjs'];
+  for (const reach of ['client.lean.merge({})', 'client.confirm({})', 'client.act({})', 'desk.act("x")', 'client.cards.other({})']) {
+    const bad = { ...sources, 'vscode/chat-tools.cjs': `${base}\nasync function more(client, desk) { return ${reach}; }` };
+    assert.ok(checkAddon({ pkg, sources: bad }).length > 0, reach);
+  }
+  assert.deepEqual(checkAddon({ pkg, sources }), []);
 });

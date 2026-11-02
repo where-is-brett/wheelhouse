@@ -126,6 +126,16 @@ function checkSource(file, source) {
   if (word('eval').test(code)) add('eval: the add-on builds no code at run time');
   if (/(?<![\w$])(?:new\s+)?Function\s*\(/.test(code)) add('Function: the add-on builds no code at run time');
 
+  // The chat's tools write only through the helper's chat-click route and read only through the desk's read.
+  if (/(?:^|\/)chat-tools\.cjs$/.test(file)) {
+    for (const m of code.matchAll(/(?<![\w$.])client\s*(?:\?\.|\.|\[)\s*([\w$.?]*)/g)) {
+      if (!/^cards\.chatClick$/.test(m[1])) add(`client.${m[1]}: the chat's tools reach the helper only through client.cards.chatClick`);
+    }
+    for (const m of code.matchAll(/(?<![\w$.])desk\s*(?:\?\.|\.|\[)\s*([\w$]*)/g)) {
+      if (m[1] !== 'read') add(`desk.${m[1]}: the chat's tools reach the desk only through desk.read`);
+    }
+  }
+
   for (const name of PRESS_NAMES) {
     for (const m of code.matchAll(word(name))) {
       if (!inside(m.index, bodies)) add(`${name} is named outside ${HANDLER}, where only the pane's messages reach it`);

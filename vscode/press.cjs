@@ -78,10 +78,15 @@ async function onPaneMessage(msg, deps) {
       if (here) await Promise.race([told, new Promise((resolve) => { timer = setTimeout(resolve, deps.stopDeskMs ?? 3000); })]);
       else if ((await told)?.ok !== true) { deps.stop.setStop({ by: 'mod', now: deps.now }); }
       clearTimeout(timer);
-      // Where a way is found to cancel the chat's running request (check 72), it is asked here; today it does nothing.
-      try { await deps.cancelChat?.(); } catch { /* All stop is on already. */ }
       await deps.notify('All stop is on. Every agent is stopped, and nothing moves until you say.');
       await again();
+      // Last, and for a moment at most, so it can never hold STOP up: where a way is found to cancel the chat's running
+      // request (check 72), it is asked here; today it does nothing.
+      let cancelTimer;
+      try {
+        await Promise.race([Promise.resolve().then(() => deps.cancelChat?.()), new Promise((resolve) => { cancelTimer = setTimeout(resolve, deps.cancelChatMs ?? 1000); })]);
+      } catch { /* All stop is on already. */ }
+      clearTimeout(cancelTimer);
       return { made: true };
     }
 

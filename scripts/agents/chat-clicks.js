@@ -8,3 +8,5 @@ import { C6_PASSED, CONFIRMED_STEPS } from '../lib/copilot-numbers.js';
 export const CHAT_PROOFS = Object.freeze(C6_PASSED ? ['chat-click', 'hook-click'] : ['chat-click']);
 // The steps that need the director's confirmed click outside the chat (the window, Task 4): never a chat click.
 export { CONFIRMED_STEPS };
+// A card's hash in a click: its sha256, in full and in lower case.
+export const CARD_HASH = /^[0-9a-f]{64}$/;

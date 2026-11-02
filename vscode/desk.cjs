@@ -103,6 +103,11 @@ async function realDeps({ root, cwd }) {
     // The scripts' own exports, merged and handed on whole: this file names none of the functions that press. Only
     // vscode/press.cjs calls them, and only from onPaneMessage (scripts/addon/validate.js).
     press: Object.assign({}, m.press, m.settings, m.digest, m.record, m.desk),
+    // Where the terminal record is kept (the project's state folder). The chat's rules and secret scan load in chat-tools.cjs.
+    commandsFile: () => {
+      const id = project();
+      return id === null ? null : path.join(m.paths.stateDir(id), 'terminal-commands.jsonl');
+    },
     stopState: m.stop.stopState,
     // The scripts' STOP functions, handed on whole: only vscode/press.cjs sets or lifts STOP (scripts/addon/validate.js).
     stop: m.stop,

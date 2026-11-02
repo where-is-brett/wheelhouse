@@ -161,12 +161,16 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
   try {
     const projectNow = () => (typeof real.project === 'function' ? real.project() : deps.project ?? null);
     const clientNow = deps.client ?? real.client;
-    chat.registerChatTools({ vscode, client: clientNow, desk, project: projectNow, folder, subscriptions: context.subscriptions });
+    const loaded = deps.chatRules !== undefined ? {} : await chat.loadRules(root);
+    const rules = deps.chatRules ?? loaded.rules;
+    const scan = deps.scanText ?? loaded.scan;
+    chat.registerChatTools({ vscode, client: clientNow, desk, project: projectNow, folder, subscriptions: context.subscriptions, rules });
     if (typeof folder === 'string') {
-      const terminal = chat.watchTerminal({ vscode, record: chat.commandFile(folder) });
+      const file = deps.commandsFile ?? real.commandsFile;
+      const terminal = chat.watchTerminal({ vscode, record: (line) => chat.commandFile(file?.(), { scan })(line) });
       if (terminal) context.subscriptions?.push(terminal);
       if (clientNow) {
-        const drain = () => chat.drainInbox({ folder, client: clientNow, project: projectNow() }).catch(() => null);
+        const drain = () => chat.drainInbox({ folder, client: clientNow, project: projectNow(), rules }).catch(() => null);
         drain();
         const timer = setInterval(drain, 5000);
         timer.unref?.();
