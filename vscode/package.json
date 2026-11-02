@@ -1,0 +1,34 @@
+{
+  "name": "wheelhouse",
+  "displayName": "Wheelhouse",
+  "description": "Wheelhouse's pane and status bar for VS Code: the cards that need you, with buttons only you can press.",
+  "publisher": "wheelhouse",
+  "version": "0.2.0",
+  "license": "Apache-2.0",
+  "engines": { "vscode": "^1.100.0" },
+  "categories": ["Other"],
+  "main": "./extension.cjs",
+  "extensionKind": ["workspace"],
+  "activationEvents": ["onStartupFinished"],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Wheelhouse signs your clicks with this computer's key, so it runs only in a folder you trust."
+    }
+  },
+  "contributes": {
+    "commands": [
+      { "command": "wheelhouse.openPane", "title": "Wheelhouse: Open the pane" }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        { "id": "wheelhouse", "title": "Wheelhouse", "icon": "media/wheel.svg" }
+      ]
+    },
+    "views": {
+      "wheelhouse": [
+        { "type": "webview", "id": "wheelhouse.pane", "name": "Wheelhouse" }
+      ]
+    }
+  }
+}
