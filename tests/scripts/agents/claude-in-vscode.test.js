@@ -4,9 +4,8 @@
 import '../../helpers/homes.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { adapterFor, checkAdapter, claudeHarnessOffered, claudeInVscodeLine, CLAUDE_IN_VSCODE, AGENTS } from '../../../scripts/agents/index.js';
+import { adapterFor, checkAdapter, claudeHarnessOffered, claudeHarnessRoute, claudeInVscodeLine, CLAUDE_IN_VSCODE, AGENTS } from '../../../scripts/agents/index.js';
 import claudeCode from '../../../adapters/claude-code/index.js';
-import { claudeHarnessRoute } from '../../../scripts/setup/computer.js';
 import { companyPlaces } from '../../../scripts/agents/copilot/company.js';
 import { CLAUDE_HARNESS_CHECKED } from '../../../scripts/lib/copilot-numbers.js';
 

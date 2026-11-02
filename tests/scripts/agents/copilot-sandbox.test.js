@@ -6,14 +6,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { sandboxSettings, settingsDigest, sandboxLevel, sandboxState, SETTINGS_FILE, deniedReads } from '../../../adapters/copilot/sandbox.js';
+import { sandboxSettings, settingsDigest, sandboxLevel, sandboxState, sandboxLine, SANDBOX_LINES, SETTINGS_FILE, deniedReads } from '../../../adapters/copilot/sandbox.js';
 import copilot from '../../../adapters/copilot/index.js';
 import { checkAdapter } from '../../../scripts/agents/contract.js';
 import { runSandboxTest, writeResult, readResult, TRIES, sandboxNow } from '../../../scripts/agents/copilot/sandbox-test.js';
 import { writeEngineHome, engineHomeProblem } from '../../../scripts/agents/copilot/engine-home.js';
 import { copilotCliPaths } from '../../../scripts/engine/archon/copilot-cli.js';
 import { levelAllowed } from '../../../adapters/copilot/permissions.js';
-import { healthLines, COPILOT_SANDBOX_LINES } from '../../../scripts/board/health.js';
+import { healthLines } from '../../../scripts/board/health.js';
 import { COPILOT_SANDBOX_CHECKED, COPILOT_VERSION } from '../../../scripts/lib/copilot-numbers.js';
 import { keysDir, archonHome } from '../../../scripts/lib/paths.js';
 import { tempFolder } from '../../helpers/homes.js';
@@ -194,13 +194,16 @@ test('a run\'s level is recorded: the level check takes the test\'s answer', () 
 });
 
 test('the board stops saying the sandbox holds when the test goes stale', () => {
-  const lines = (copilotSandbox) => healthLines({ record: {}, platform: 'darwin', copilotSandbox }).map((l) => l.text);
-  assert.ok(lines('holds').includes(COPILOT_SANDBOX_LINES.holds));
-  assert.ok(lines('stale').includes(COPILOT_SANDBOX_LINES.stale));
-  assert.ok(lines('untested').includes(COPILOT_SANDBOX_LINES.untested));
-  assert.ok(!lines('stale').includes(COPILOT_SANDBOX_LINES.holds));
+  const lines = (state) => healthLines({ record: {}, platform: 'darwin', agentSandbox: sandboxLine(state) }).map((l) => l.text);
+  assert.ok(lines('holds').includes(SANDBOX_LINES.holds.text));
+  assert.ok(lines('stale').includes(SANDBOX_LINES.stale.text));
+  assert.ok(lines('untested').includes(SANDBOX_LINES.untested.text));
+  assert.ok(!lines('stale').includes(SANDBOX_LINES.holds.text));
   assert.deepEqual(lines(undefined).filter((t) => /sandbox/.test(t)), []);
-  // Without a switch on, the state is never 'holds'.
+  assert.equal(sandboxLine('unheard-of'), null);
+  // The adapter hands the core the line for this computer; with the switch off it is never 'holds'.
+  assert.notEqual(copilot.sandboxLine(), SANDBOX_LINES.holds);
+  assert.equal(copilot.sandboxLine().level, 'watch');
   assert.notEqual(sandboxNow().state, 'holds');
 });
 

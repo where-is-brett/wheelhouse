@@ -18,8 +18,6 @@ import { readProject } from '../lib/projects.js';
 import { helperAddress, projectsDir, wheelhouseHome } from '../lib/paths.js';
 import { readConfig } from '../gate/guardrails.js';
 import { copyTree } from '../lib/copy-tree.js';
-import { baselineSettings, companyManages, companyPlaces, OWN_MARK, policyRegistration, readCompanySettings, POLICY_FILE } from '../agents/copilot/company.js';
-import { sandboxNow } from '../agents/copilot/sandbox-test.js';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 // The plugin's folders Locked puts in the managed copy (under <dir>/wheelhouse/), beside Node.js (bin).
@@ -34,9 +32,6 @@ export const NEEDS_NARROW = 'Locked needs the narrow connection';
 export const MDM_PLIST = '/Library/Managed Preferences/com.anthropic.claudecode.plist';
 export const HAS_MDM = 'Locked can\'t be installed while this computer has another managed policy for Claude Code';
 export const NOT_OURS = 'A computer-wide settings file that is not Wheelhouse\'s is already in place, so Wheelhouse will not replace it';
-
-export const ORGANISATION = 'This computer\'s Copilot is managed by the company, whose settings win, so Locked is not offered: the company\'s admin applies Wheelhouse\'s published baseline instead';
-export const NEEDS_SANDBOX = 'Locked for Copilot forces its sandbox on for every Copilot chat on this computer, and the sandbox has not passed its test on this Mac, so Locked is not offered for Copilot';
 
 // Single-quoted for the shell.
 const q = (text) => `'${text.replaceAll("'", "'\\''")}'`;
@@ -80,41 +75,6 @@ export function managedSettings({ dir, nodePath, address, domains, hooksJson }) 
       },
     },
   };
-}
-
-// Locked on Copilot (design section 6.4): two files computer-wide, written by the same password step. The managed settings
-// force the sandbox on for all Copilot work on the computer, since a policy hook that refused unsandboxed commands would
-// let one through when it timed out; the policy hook file runs the managed copy of hook-entry.js, which does nothing
-// outside a Locked project (`--policy`). `nodePath` is the managed copy's Node.js. Returns [{ path, content, mode }].
-export function lockedCopilotFiles({ dir, nodePath, address, domains = [], places = companyPlaces('darwin') }) {
-  const settings = baselineSettings({ platform: 'darwin' });
-  settings.wheelhouse = { ...OWN_MARK };
-  settings.sandbox.userPolicy.filesystem.readwritePaths = [address];
-  settings.sandbox.userPolicy.network.allowedHosts = unique(['registry.npmjs.org', ...domains.map(cleanDomain).filter((d) => d !== null)]);
-  const hooks = policyRegistration({ node: nodePath, root: path.join(dir, 'wheelhouse'), platform: 'darwin' });
-  return [
-    { path: places.managed, content: `${JSON.stringify(settings, null, 2)}\n`, mode: '644' },
-    { path: path.join(places.policyDir, POLICY_FILE), content: `${JSON.stringify(hooks, null, 2)}\n`, mode: '644' },
-  ];
-}
-
-// Whether Locked may be offered for Copilot on this Mac: only once the sandbox test has passed here, since Locked forces
-// the sandbox on and a Mac whose sandbox doesn't work would stop all Copilot work. `result`, `version`, `digest` and
-// `checked` are sandboxLevel's.
-export function lockedCopilotReady(args = {}) {
-  const now = sandboxNow({ ...(args.result === undefined ? {} : { result: args.result }), ...(args.version === undefined ? {} : { version: args.version }), ...(args.checked === undefined ? {} : { checked: args.checked }), settingsArgs: args.settingsArgs });
-  return now.level ? { ready: true, why: null } : { ready: false, why: NEEDS_SANDBOX };
-}
-
-// Whether the two files in `places` are Wheelhouse's to replace: absent, or put there by Locked.
-export function ownCopilotFiles(places = companyPlaces('darwin')) {
-  const read = (file) => { try { return fs.readFileSync(file, 'utf8'); } catch { return null; } };
-  const managed = read(places.managed);
-  if (managed !== null) {
-    try { if (JSON.parse(managed)?.wheelhouse?.owner !== OWN_MARK.owner) return false; } catch { return false; }
-  }
-  const hook = read(path.join(places.policyDir, POLICY_FILE));
-  return hook === null || (/hook-entry\.js/.test(hook) && /--policy/.test(hook));
 }
 
 // The web domains in a project's configuration on disk; none when it cannot be read.
@@ -165,7 +125,7 @@ function failureLine({ code, stderr }) {
 // never do, so a hook firing between two swaps never meets new scripts without their adapters. A
 // failure removes what was copied and exits. The settings file goes in last, and everything is
 // root's and not writable by anyone else.
-function adminShell({ dir, stage, nodeSource, copilotFiles = [] }) {
+function adminShell({ dir, stage, nodeSource, agentFiles = [] }) {
   const own = path.join(dir, 'wheelhouse');
   // The swap order: adapters, then the other folders, then bin (which the destructuring below takes last).
   const names = ['adapters', ...LOCKED_FOLDERS.filter((n) => n !== 'adapters'), 'bin'];
@@ -185,9 +145,9 @@ function adminShell({ dir, stage, nodeSource, copilotFiles = [] }) {
     `rm -rf ${aside.join(' ')}`,
     `cp ${q(path.join(stage, 'managed-settings.json'))} ${settingsNew}`,
     `mv ${settingsNew} ${q(filePath(dir))}`,
-    ...copilotFiles.flatMap((f, i) => [
+    ...agentFiles.flatMap((f, i) => [
       `mkdir -p ${q(path.dirname(f.path))}`,
-      `cp ${q(path.join(stage, 'copilot', String(i)))} ${q(`${f.path}.new`)}`,
+      `cp ${q(path.join(stage, 'agent', String(i)))} ${q(`${f.path}.new`)}`,
       `chown root:wheel ${q(`${f.path}.new`)}`,
       `chmod ${f.mode} ${q(`${f.path}.new`)}`,
       `mv ${q(`${f.path}.new`)} ${q(f.path)}`,
@@ -198,11 +158,11 @@ function adminShell({ dir, stage, nodeSource, copilotFiles = [] }) {
   // Anything moved aside is put back first: the live folders must never be missing, or
   // the old settings file would name scripts that are not there.
   const restore = names.map((n, i) => `[ -d ${aside[i]} ] && [ ! -d ${live[i]} ] && mv ${aside[i]} ${live[i]};`).join(' ');
-  return `${chain} || { ${restore} rm -rf ${fresh.join(' ')} ${settingsNew} ${copilotFiles.map((f) => q(`${f.path}.new`)).join(' ')}; exit 1; }`;
+  return `${chain} || { ${restore} rm -rf ${fresh.join(' ')} ${settingsNew} ${agentFiles.map((f) => q(`${f.path}.new`)).join(' ')}; exit 1; }`;
 }
 
 // Stages everything for `list`, asks once, and removes the staging folder.
-async function put({ list, dir, run, now, nodeSource, address, line, copilotFiles = [] }) {
+async function put({ list, dir, run, now, nodeSource, address, line, agentFiles = [] }) {
   const home = wheelhouseHome();
   fs.mkdirSync(home, { recursive: true });
   // Under the Wheelhouse home, which the sandbox keeps agents out of; the temporary folder is theirs.
@@ -216,9 +176,9 @@ async function put({ list, dir, run, now, nodeSource, address, line, copilotFile
     fs.writeFileSync(path.join(own, 'installed.json'), `${JSON.stringify({ version, at: now().toISOString(), pluginRoot: fs.realpathSync(PLUGIN_ROOT) }, null, 2)}\n`);
     const settings = managedSettings({ dir, nodePath: path.join(dir, 'wheelhouse', 'bin', 'node'), address, domains: registeredDomains() });
     fs.writeFileSync(path.join(stage, 'managed-settings.json'), `${JSON.stringify(settings, null, 2)}\n`);
-    if (copilotFiles.length > 0) fs.mkdirSync(path.join(stage, 'copilot'), { recursive: true });
-    copilotFiles.forEach((f, i) => fs.writeFileSync(path.join(stage, 'copilot', String(i)), f.content));
-    const result = await administrator(run, adminShell({ dir, stage, nodeSource, copilotFiles }));
+    if (agentFiles.length > 0) fs.mkdirSync(path.join(stage, 'agent'), { recursive: true });
+    agentFiles.forEach((f, i) => fs.writeFileSync(path.join(stage, 'agent', String(i)), f.content));
+    const result = await administrator(run, adminShell({ dir, stage, nodeSource, agentFiles }));
     if (result.code !== 0) return { installed: inPlace(dir), line: failureLine(result) };
     if (!inPlace(dir)) return { installed: false, line: 'The administrator step finished, but the files are not in place' };
     return { installed: true, line };
@@ -241,27 +201,24 @@ function setUp({ project, platform = process.platform, dir, nodePath = process.e
 // Adds the project once, however its folder is spelled.
 const withProject = (list, folder) => (list.some((f) => sameFolder(f, folder)) ? list : [...list, folder]);
 
-// `args.copilot`, when given, adds Locked's Copilot files (lockedCopilotFiles): `{ sandbox, places, company }` are for
-// tests (sandbox is lockedCopilotReady's arguments, company is readCompanySettings' arguments). It refuses where the
-// company manages Copilot, where the sandbox hasn't passed its test on this Mac, and where a file there isn't ours.
-function copilotPart(args, s) {
-  if (!args.copilot) return { files: [] };
-  const places = args.copilot.places ?? companyPlaces('darwin');
-  if (companyManages(readCompanySettings({ platform: 'darwin', ...args.copilot.company }))) return { refusal: { installed: false, line: ORGANISATION } };
-  const ready = lockedCopilotReady(args.copilot.sandbox);
-  if (!ready.ready) return { refusal: { installed: false, line: ready.why } };
-  if (!ownCopilotFiles(places)) return { refusal: { installed: false, line: NOT_OURS } };
-  return { files: lockedCopilotFiles({ dir: s.dir, nodePath: path.join(s.dir, 'wheelhouse', 'bin', 'node'), address: s.address, domains: registeredDomains(), places }) };
+// `args.agent`, when given, is an agent's part of Locked (scripts/agents/index.js, agentLocked): `prepare({ dir, nodePath,
+// address, domains })` answers `{ refusal }` (a line, when this agent's Locked isn't offered here) or `{ files }`, the
+// computer-wide files `[{ path, content, mode }]` the same password step puts in place, and `removal()` the paths that go
+// when the last project leaves. Nothing else about Locked changes for an agent without one.
+function agentPart(args, s) {
+  if (!args.agent) return { files: [] };
+  const got = args.agent.prepare({ dir: s.dir, nodePath: path.join(s.dir, 'wheelhouse', 'bin', 'node'), address: s.address, domains: registeredDomains() });
+  return got.refusal ? { refusal: { installed: false, line: got.refusal } } : { files: got.files };
 }
 
 async function install(args, line) {
   const s = setUp(args);
   if (s.refusal) return s.refusal;
   if (!ownFile(s.dir)) return { installed: false, line: NOT_OURS };
-  const copilot = copilotPart(args, s);
-  if (copilot.refusal) return copilot.refusal;
+  const agent = agentPart(args, s);
+  if (agent.refusal) return agent.refusal;
   const list = withProject(lockedProjects({ dir: s.dir }), s.record.folder);
-  return put({ list, dir: s.dir, run: args.run, now: args.now ?? (() => new Date()), nodeSource: s.nodeSource, address: s.address, line, copilotFiles: copilot.files });
+  return put({ list, dir: s.dir, run: args.run, now: args.now ?? (() => new Date()), nodeSource: s.nodeSource, address: s.address, line, agentFiles: agent.files });
 }
 
 export function installLocked(args) {
@@ -272,7 +229,7 @@ export function updateLocked(args) {
   return install(args, `Locked is up to date. ${REGISTERED_LATER}`);
 }
 
-export async function leaveLocked({ project, platform = process.platform, run, now = () => new Date(), dir, nodePath = process.execPath, address = helperAddress(), copilotPlaces = companyPlaces('darwin') }) {
+export async function leaveLocked({ project, platform = process.platform, run, now = () => new Date(), dir, nodePath = process.execPath, address = helperAddress(), agent }) {
   if (platform === 'win32') return { installed: false, line: MAC_ONLY };
   const record = readProject(project);
   if (!record) return { installed: false, line: 'The project is not set up' };
@@ -284,9 +241,9 @@ export async function leaveLocked({ project, platform = process.platform, run, n
   if (rest.length > 0) {
     return put({ list: rest, dir: where, run, now, nodeSource: nodePath, address, line: 'This project has left Locked' });
   }
-  // Locked's Copilot files go with the last project, and only the ones that are Wheelhouse's.
-  const copilotGone = ownCopilotFiles(copilotPlaces) ? ` && rm -f ${q(copilotPlaces.managed)} ${q(path.join(copilotPlaces.policyDir, POLICY_FILE))}` : '';
-  const shell = `rm -f ${q(filePath(where))} && rm -rf ${q(path.join(where, 'wheelhouse'))}${copilotGone}`;
+  // An agent's computer-wide files go with the last project, and only the ones that are Wheelhouse's (removal says which).
+  const gone = (agent?.removal?.() ?? []).map((file) => ` && rm -f ${q(file)}`).join('');
+  const shell = `rm -f ${q(filePath(where))} && rm -rf ${q(path.join(where, 'wheelhouse'))}${gone}`;
   const result = await administrator(run, shell);
   if (result.code !== 0) return { installed: inPlace(where), line: failureLine(result) };
   if (fs.existsSync(filePath(where))) return { installed: true, line: 'The administrator step finished, but the file is still there' };

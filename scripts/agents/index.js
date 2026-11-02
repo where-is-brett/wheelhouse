@@ -4,6 +4,8 @@ import claudeCode from '../../adapters/claude-code/index.js';
 import copilot from '../../adapters/copilot/index.js';
 import { AGENTS, noAdapter } from './project-agent.js';
 import { CLAUDE_HARNESS_CHECKED } from '../lib/copilot-numbers.js';
+import { companyManages, readCompanySettings } from './copilot/company.js';
+import { copilotLocked } from './copilot/locked.js';
 
 export { ADAPTER_PARTS, checkAdapter } from './contract.js';
 export { AGENTS, agentOfConfig, agentOfProject } from './project-agent.js';
@@ -31,6 +33,20 @@ const ADAPTERS = Object.freeze({ 'claude-code': claudeCode, copilot, [CLAUDE_IN_
 // rules, which makes VS Code switch its Claude agent off (design section 6.4).
 export function claudeHarnessOffered({ checked = CLAUDE_HARNESS_CHECKED, company = false } = {}) {
   return checked === true && company !== true;
+}
+
+// setup's question for the front end: `{ offered }`, true only where check 54 passed and the company doesn't manage
+// Copilot. `company` is readCompanySettings' arguments, `checked` the switch, for tests.
+export function claudeHarnessRoute({ platform = process.platform, company = {}, checked } = {}) {
+  const managed = companyManages(readCompanySettings({ platform, ...company }));
+  return { offered: claudeHarnessOffered({ ...(checked === undefined ? {} : { checked }), company: managed }) };
+}
+
+// An agent's part of Locked (scripts/protection/locked.js takes it as `agent`), or null for an agent whose Locked is the
+// core's alone. `{ route(platform) -> { route: 'organisation' | 'locked' | 'none', why }, prepare, removal }`; `options`
+// are for tests.
+export function agentLocked(name, options = {}) {
+  return name === 'copilot' ? copilotLocked(options) : null;
 }
 
 export function adapterFor(name) {

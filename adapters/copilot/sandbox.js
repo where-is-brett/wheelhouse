@@ -98,3 +98,12 @@ export function sandboxState({ result, version, digest, checked = COPILOT_SANDBO
   if (sandboxLevel({ result, version, digest, checked })) return 'holds';
   return result && typeof result === 'object' ? 'stale' : 'untested';
 }
+
+// The board's line for the sandbox, as { level, text } for the health lines (scripts/board/health.js): a test that no
+// longer matches (a Copilot update, or other settings) is no test, so the board stops saying the sandbox holds.
+export const SANDBOX_LINES = Object.freeze({
+  holds: Object.freeze({ level: 'ok', text: 'Copilot\'s steps run inside its sandbox' }),
+  stale: Object.freeze({ level: 'watch', text: 'Copilot\'s steps run outside its sandbox: its test is out of date since Copilot or its settings changed, and runs again at the next sitting' }),
+  untested: Object.freeze({ level: 'watch', text: 'Copilot\'s steps run outside its sandbox: it hasn\'t been tested on this computer yet' }),
+});
+export const sandboxLine = (state) => SANDBOX_LINES[state] ?? null;

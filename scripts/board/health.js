@@ -19,14 +19,6 @@ import { helperClient } from '../host/helper-client.js';
 import { QUICK_LINE } from '../lib/host-lines.js';
 import { frontDeskModelLine } from '../lib/front-desk-model.js';
 
-// The board's lines for Copilot's sandbox. A test that no longer matches (a Copilot update, or other settings) is
-// no test, so the board stops saying the sandbox holds.
-export const COPILOT_SANDBOX_LINES = Object.freeze({
-  holds: 'Copilot\'s steps run inside its sandbox',
-  stale: 'Copilot\'s steps run outside its sandbox: its test is out of date since Copilot or its settings changed, and runs again at the next sitting',
-  untested: 'Copilot\'s steps run outside its sandbox: it hasn\'t been tested on this computer yet',
-});
-
 // The All stop line starts with these words, alone or followed by ", since <date>". A line from
 // before the halt switch was called All stop starts with OLD_STOP_LINE, and counts as its own too.
 export const STOP_LINE = 'All stop is on';
@@ -197,7 +189,7 @@ export function readScreens({ folder, findBrowser = realFindBrowser } = {}) {
 // `screens` is readScreens'; only pages listed and Chrome not found bring its line. `phonePush`
 // is setup's push test as this computer's journal last recorded it, { arrived, at }
 // (scripts/lib/setup-run.js, phonePushResult); only `arrived: false` adds a line.
-export function healthLines({ record, locked, stop, lock, helperUp, facts, renewal, platform = process.platform, realUsers, builds, screens, phonePush, frontDeskModel, safekeeping, copilotSandbox } = {}) {
+export function healthLines({ record, locked, stop, lock, helperUp, facts, renewal, platform = process.platform, realUsers, builds, screens, phonePush, frontDeskModel, safekeeping, agentSandbox } = {}) {
   const lines = [];
   const add = (level, text) => lines.push({ level, text });
 
@@ -226,9 +218,8 @@ export function healthLines({ record, locked, stop, lock, helperUp, facts, renew
   if (screens?.pages === true && screens.chrome === false) add('ok', NO_CHROME_LINE);
   if (lock && lock.computer !== computerId()) add('watch', 'Another computer holds this project, so this one is read-only');
   if (helperUp === false) add('watch', NO_HELPER);
-  // Copilot's sandbox, from sandboxState (adapters/copilot/sandbox.js); nothing for a project that doesn't use Copilot.
-  if (copilotSandbox === 'holds') add('ok', COPILOT_SANDBOX_LINES.holds);
-  else if (copilotSandbox === 'stale' || copilotSandbox === 'untested') add('watch', COPILOT_SANDBOX_LINES[copilotSandbox]);
+  // The agent's sandbox on this computer, { level, text }, from the agent's adapter (sandboxLine); none for an agent without one.
+  if (typeof agentSandbox?.text === 'string' && ['ok', 'watch'].includes(agentSandbox.level)) add(agentSandbox.level, agentSandbox.text);
   if (renewal?.due) {
     const on = dayMonthYear(renewal.on);
     add('watch', on ? `Renew the host key by ${on}` : 'Renew the host key soon');

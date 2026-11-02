@@ -6,7 +6,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { installLocked, lockedCopilotFiles, lockedCopilotReady, NEEDS_SANDBOX, ORGANISATION, NOT_OURS, MAC_ONLY, managedSettings } from '../../../scripts/protection/locked.js';
+import { installLocked, NOT_OURS, MAC_ONLY, managedSettings } from '../../../scripts/protection/locked.js';
+import { lockedCopilotFiles, lockedCopilotReady, copilotLocked, NEEDS_SANDBOX, ORGANISATION } from '../../../scripts/agents/copilot/locked.js';
 import { companyPlaces, OWN_MARK, baselineSettings } from '../../../scripts/agents/copilot/company.js';
 import { currentSettings } from '../../../scripts/agents/copilot/sandbox-test.js';
 import { settingsDigest } from '../../../adapters/copilot/sandbox.js';
@@ -43,7 +44,7 @@ function fakeRun() {
   const run = async (file, args) => {
     const command = args.at(-1);
     const stage = /'([^']*locked-stage-[^'/]*)[/']/.exec(command)?.[1];
-    const staged = stage && fs.existsSync(path.join(stage, 'copilot')) ? fs.readdirSync(path.join(stage, 'copilot')).sort().map((n) => fs.readFileSync(path.join(stage, 'copilot', n), 'utf8')) : [];
+    const staged = stage && fs.existsSync(path.join(stage, 'agent')) ? fs.readdirSync(path.join(stage, 'agent')).sort().map((n) => fs.readFileSync(path.join(stage, 'agent', n), 'utf8')) : [];
     calls.push({ command, staged });
     return { code: 0, stdout: '', stderr: '' };
   };
@@ -99,7 +100,7 @@ test('nothing is offered on Windows', async () => {
   await withHome(async () => {
     const project = makeProject('w');
     const fake = fakeRun();
-    const got = await installLocked({ project, platform: 'win32', run: fake.run, now: NOW, dir: temp('wh-lockedc-dir-'), nodePath: process.execPath, address: ADDRESS, mdmPlist: NO_PLIST, copilot: { sandbox: passing(), places: places(), company: none } });
+    const got = await installLocked({ project, platform: 'win32', run: fake.run, now: NOW, dir: temp('wh-lockedc-dir-'), nodePath: process.execPath, address: ADDRESS, mdmPlist: NO_PLIST, agent: copilotLocked({ sandbox: passing(), places: places(), company: none }) });
     assert.deepEqual(got, { installed: false, line: MAC_ONLY });
     assert.equal(fake.calls.length, 0);
   });
@@ -117,10 +118,10 @@ test('Locked for Copilot refuses until this Mac\'s sandbox test passes', async (
     const project = makeProject('s');
     const dir = temp('wh-lockedc-dir-');
     const fake = fakeRun();
-    const refused = await installLocked({ project, platform: 'darwin', run: fake.run, now: NOW, dir, nodePath: process.execPath, address: ADDRESS, mdmPlist: NO_PLIST, copilot: { sandbox: {}, places: places(), company: none } });
+    const refused = await installLocked({ project, platform: 'darwin', run: fake.run, now: NOW, dir, nodePath: process.execPath, address: ADDRESS, mdmPlist: NO_PLIST, agent: copilotLocked({ sandbox: {}, places: places(), company: none }) });
     assert.deepEqual(refused, { installed: false, line: NEEDS_SANDBOX });
     assert.equal(fake.calls.length, 0, 'no password prompt is asked');
-    const ok = await installLocked({ project, platform: 'darwin', run: fake.run, now: NOW, dir, nodePath: process.execPath, address: ADDRESS, mdmPlist: NO_PLIST, copilot: { sandbox: passing(), places: places(), company: none } });
+    const ok = await installLocked({ project, platform: 'darwin', run: fake.run, now: NOW, dir, nodePath: process.execPath, address: ADDRESS, mdmPlist: NO_PLIST, agent: copilotLocked({ sandbox: passing(), places: places(), company: none }) });
     assert.equal(fake.calls.length, 1);
     assert.equal(ok.installed, false, 'the fake step put nothing in place; the files were still staged and named');
     const p = fake.calls[0];
@@ -140,16 +141,16 @@ test('a company\'s file is never replaced', async () => {
     const fake = fakeRun();
     const args = { project, platform: 'darwin', run: fake.run, now: NOW, dir, nodePath: process.execPath, address: ADDRESS, mdmPlist: NO_PLIST };
     // Read as the company's: the organisation route, not Locked.
-    const org = await installLocked({ ...args, copilot: { sandbox: passing(), places: mine, company: { read: (f) => (f === companyPlaces('darwin').managed ? '{}' : null), list: () => [] } } });
+    const org = await installLocked({ ...args, agent: copilotLocked({ sandbox: passing(), places: mine, company: { read: (f) => (f === companyPlaces('darwin').managed ? '{}' : null), list: () => [] } }) });
     assert.deepEqual(org, { installed: false, line: ORGANISATION });
     // Not marked as ours at the place Locked would write: never replaced.
-    const notOurs = await installLocked({ ...args, copilot: { sandbox: passing(), places: mine, company: none } });
+    const notOurs = await installLocked({ ...args, agent: copilotLocked({ sandbox: passing(), places: mine, company: none }) });
     assert.deepEqual(notOurs, { installed: false, line: NOT_OURS });
     // A policy hook file by our name that isn't ours either.
     fs.rmSync(mine.managed);
     fs.mkdirSync(mine.policyDir, { recursive: true });
     fs.writeFileSync(path.join(mine.policyDir, 'wheelhouse.json'), '{"hooks":{}}');
-    assert.deepEqual(await installLocked({ ...args, copilot: { sandbox: passing(), places: mine, company: none } }), { installed: false, line: NOT_OURS });
+    assert.deepEqual(await installLocked({ ...args, agent: copilotLocked({ sandbox: passing(), places: mine, company: none }) }), { installed: false, line: NOT_OURS });
     assert.equal(fake.calls.length, 0);
     assert.equal(fs.readFileSync(path.join(mine.policyDir, 'wheelhouse.json'), 'utf8'), '{"hooks":{}}');
   });
@@ -170,6 +171,6 @@ test('Claude Code\'s Locked files are unchanged', async () => {
     assert.equal(seen.length, 1);
     assert.deepEqual(seen[0].settings, managedSettings({ dir, nodePath: path.join(dir, 'wheelhouse', 'bin', 'node'), address: ADDRESS, domains: ['docs.example.org'] }));
     assert.ok(!/GitHubCopilot|github-copilot/.test(seen[0].command), 'no Copilot path in a Claude Code project\'s step');
-    assert.ok(!seen[0].copilot.includes('copilot'));
+    assert.ok(!seen[0].copilot.includes('agent'));
   });
 });

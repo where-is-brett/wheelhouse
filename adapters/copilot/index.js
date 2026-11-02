@@ -2,9 +2,11 @@
 // The Copilot adapter (design section 8.1). Every part is here; a part not built would be a stub that throws
 // NOT_BUILT_YET (scripts/agents/contract.js) and be listed in `pending`, which is empty now. It imports nothing that reaches
 // the hook kit, so the kit can import it without a cycle.
+import { sandboxNow } from '../../scripts/agents/copilot/sandbox-test.js';
 import { LEAN_RECORD_DIR } from '../../scripts/lib/copilot-numbers.js';
 import hooks from './hooks.js';
 import identity from './identity.js';
+import { sandboxLine } from './sandbox.js';
 import safetyLine from './safety-line.js';
 import settings from './settings.js';
 import sessions from './sessions.js';
@@ -32,6 +34,8 @@ export default Object.freeze({
   packaging: Object.freeze({ files: () => ['.gitignore', '.vscode/settings.json', `${LEAN_RECORD_DIR}/.gitkeep`] }),
   toolSheet,
   safetyLine,
+  // The board's line for the sandbox on this computer, { level, text }, from the kept test (sandbox.js); not a contract part (the board reads it through scripts/agents/sandbox-line.js).
+  sandboxLine: () => sandboxLine(sandboxNow().state),
   // One evaluation session through `copilot -p` (eval-runner.js, ruling P8-25), for `npm run eval -- --agent copilot`.
   // Loaded only when a session is asked for, so nothing that loads the adapter loads the evaluation runner.
   evalRunner: Object.freeze({ run: async (options) => (await import('./eval-runner.js')).run(options) }),
