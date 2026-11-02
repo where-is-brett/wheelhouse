@@ -153,16 +153,17 @@ export function levelRules({ level, grants = [], runner = null, worktree, domain
 const ASKS = 'so the Crew ask you before each build command';
 
 // Whether `level` may run, as `{ ok, level, why }`: `level` is the one that runs, `why` says in plain words why it
-// isn't the one asked for (null when it is). Ask always runs. The sandbox has no test on this computer until Part 9
-// Task 1, so it runs as Ask. Unattended never runs for a project with real users (`realUsers` must be false), and
+// isn't the one asked for (null when it is). Ask always runs. The sandbox runs only when `sandbox` says its test passed on this
+// computer for this CLI version and these settings, and otherwise as Ask. Unattended never runs for a project with real users (`realUsers` must be false), and
 // only after its own card (`unattendedConfirmed`). Until the host's approval is ready (`hostApproval`, from
 // hostApprovalReady, Part 9 Task 5), Guarded runs only where its self-test showed builds can't read the keys
 // (`keysUnreadable`, the self-test's `keysReadHeld`), and only on Windows, its one system. Anything not plainly so is
 // taken as not so: the answer is Ask.
-export function levelAllowed({ level, realUsers = true, keysUnreadable = false, hostApproval = hostApprovalReady(), unattendedConfirmed = false, platform = process.platform } = {}) {
+export function levelAllowed({ level, realUsers = true, keysUnreadable = false, hostApproval = hostApprovalReady(), unattendedConfirmed = false, platform = process.platform, sandbox = false } = {}) {
   const ask = (why) => ({ ok: false, level: 'ask', why });
   if (!LEVELS.includes(level)) return ask(`That isn't a level Wheelhouse knows, ${ASKS}`);
-  if (level === 'sandbox') return ask(`Copilot's sandbox hasn't been tested on this computer, ${ASKS}`);
+  // `sandbox` is sandboxLevel's answer (adapters/copilot/sandbox.js): the switch is on and this computer's test passed.
+  if (level === 'sandbox' && sandbox !== true) return ask(`Copilot's sandbox hasn't been tested on this computer, ${ASKS}`);
   if (level === 'unattended') {
     if (realUsers !== false) return ask(`Unattended is never used for a project with real users, ${ASKS}`);
     if (unattendedConfirmed !== true) return ask(`Unattended needs your click on its own card, ${ASKS}`);
