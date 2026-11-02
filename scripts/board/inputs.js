@@ -33,6 +33,7 @@ import { computerId, sourcesDir, stateDir, wheelhouseHome } from '../lib/paths.j
 import { buildsShown } from '../protection/windows-builds.js';
 import { guardedReady } from '../windows/low.js';
 import { renewalDue } from '../host/connection.js';
+import { hostApprovalNeeded } from '../host/host-approval.js';
 import { helperClient } from '../host/helper-client.js';
 import { HELPER_WAIT_MS } from '../lib/core-numbers.js';
 import { helperGrace } from '../lib/helper-grace.js';
@@ -112,6 +113,10 @@ async function helperFacts(project, { client, address, now, offline, clockRead, 
     away: typeof health?.away?.[project] === 'string' ? health.away[project] : undefined,
     // The engine room's line while the helper keeps it open (scripts/engine/room.js).
     engineRoom: typeof health?.engineRoom === 'string' ? health.engineRoom : undefined,
+    // The helper's lines for the look at Wheelhouse's own files and the key renewal: they need the keys folder and a write in
+    // the home, which no hook may do, so the helper works them out.
+    ownFilesLine: typeof health?.ownFilesLine === 'string' ? health.ownFilesLine : undefined,
+    keyRenewal: health?.keyRenewal?.due === true && typeof health.keyRenewal.why === 'string' ? { due: true, why: health.keyRenewal.why } : undefined,
     lock: lock !== LATE && lock?.ok === true ? (isRecord(lock.result) ? lock.result : null) : undefined,
     facts,
   };
@@ -172,6 +177,9 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
     facts: known.facts ?? null,
     // Offline, no key file is opened: the glance has no renewal to show.
     renewal: offline ? null : attempt(() => renewalDue(record.connection, clock)),
+    keyRenewal: offline ? null : known.keyRenewal,
+    ownFiles: offline || typeof known.ownFilesLine !== 'string' ? null : { line: known.ownFilesLine },
+    hostApproval: attempt(() => hostApprovalNeeded({ agent: usageAgent, realUsers: settings?.phase?.value === 'launched', host: record.host }), false),
     platform: process.platform,
     realUsers: settings?.phase?.value === 'launched',
     builds,

@@ -147,6 +147,7 @@ import { joinedRepo, runClosed, HEALTH_STEP } from '../lib/setup-run.js';
 import { clicksDir, usedDir, shownDir, askedDir, answersDir, answeredDir, recordsDir, writeWhole } from '../lib/setup-clicks.js';
 import { HOST_TOOLS, toolFolder, toolsDir } from '../lib/host-tools.js';
 import { enrolledFile, signingKeyFile, readEnrolled } from '../state/signing.js';
+import { ownFilesFile } from '../health/own-files.js';
 import { CLICK_FRESH_MS, RETENTION_DAYS, STEP_TIMEOUT_MS } from '../lib/setup-numbers.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { cleanDeep } from '../lib/clean.js';
@@ -973,7 +974,7 @@ export async function uninstallPlan({
   // but the run's own close (uninstall-run.js).
   const asRemove = (put) => (target) => ({ phase: 'last', put, target });
   const closing = last ? [
-    ...[enrolledFile(), computerFile()].filter(exists).map(asRemove('remove')),
+    ...[enrolledFile(), computerFile(), ownFilesFile()].filter(exists).map(asRemove('remove')),
     ...[projectsDir(), toolsDir()].filter(exists).map(asRemove('remove-empty')),
     ...[signingKeyFile()].filter(exists).map(asRemove('remove')),
     ...[keysDir()].filter(exists).map(asRemove('remove-empty')),

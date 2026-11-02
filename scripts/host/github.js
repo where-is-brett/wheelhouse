@@ -40,6 +40,11 @@ function contextOf(node) {
 
 // How many of a commit's deployments, newest first, are looked at for a successful one.
 const MOST_DEPLOYMENTS = 3;
+// How many pages of a pull request's reviews are read.
+const MOST_REVIEW_PAGES = 10;
+
+// One review as GitHub gives it, kept to what Wheelhouse reads.
+export const reviewOf = (r) => ({ login: r?.user?.login ?? null, type: r?.user?.type ?? null, state: r?.state ?? null, commit: r?.commit_id ?? null, at: r?.submitted_at ?? null });
 
 const PR_ADDRESS = /(https:\/\/\S+\/pull\/(\d+))/;
 const ISSUE_ADDRESS = /(https:\/\/\S+\/issues\/(\d+))/;
@@ -206,6 +211,19 @@ export function githubCommands({ call, attempt, json, repo, fromAddress, refusal
       const posted = await ask(['api', '--method', 'POST', `repos/${owner}/${name}/issues/${number}/comments`, '--input', '-'], input);
       if (!Number.isInteger(posted?.id)) throw new Error('GitHub did not say which comment it posted');
       return { id: posted.id };
+    },
+
+    // A pull request's reviews, oldest first, in pages of a hundred: { login, type, state, commit, at }. The person's approval
+    // is read from these (host-approval.js).
+    async reviews(number) {
+      const all = [];
+      for (let page = 1; page <= MOST_REVIEW_PAGES; page += 1) {
+        const got = await ask(['api', `repos/${repo}/pulls/${number}/reviews?per_page=100&page=${page}`]);
+        if (!Array.isArray(got)) throw new Error('GitHub did not list the pull request\'s reviews');
+        all.push(...got);
+        if (got.length < 100) break;
+      }
+      return all.map(reviewOf);
     },
 
     // The login of the account the connection posts as: the one the merge queue's policy names (part 3f).

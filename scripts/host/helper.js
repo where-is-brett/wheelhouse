@@ -136,6 +136,10 @@ import { requestMeter, requestsThisMonth } from '../engine/request-meter.js';
 import { weeklyShare } from '../usage/figures.js';
 import { checkProvenance, removeProvenance, sessionProvenance, engineProvenance } from '../lineage/provenance.js';
 import { brokerDecision } from '../engine/broker/rules.js';
+import { hostApprovalReady } from './approval-ready.js';
+import { hostApproved, hostApprovalNeeded } from './host-approval.js';
+import { checkOwnFiles, ownFilesLine } from '../health/own-files.js';
+import { keyRenewalDue, lastKeyRenewal } from '../state/key-renewal.js';
 import { brokerRoutes } from '../engine/broker/routes.js';
 import { lookAtHead, raiseCard, withLocalLock } from '../lib/local-git.js';
 import { queueCall } from '../engine/broker/queue.js';
@@ -493,7 +497,10 @@ function npmTestOf(folder) {
 // The keys the merge gate counts: this computer's own alone (design section 24.3 item 1).
 function ownKeyOnly() {
   const own = ownKey();
-  return own === null ? [] : [{ computer: own.computer, publicKey: own.publicKey }];
+  if (own === null) return [];
+  // The keys a renewal retired still verify what they signed (scripts/state/key-renewal.js).
+  const retired = readEnrolled().filter((e) => e.computer === own.computer && e.publicKey !== own.publicKey && typeof e.retiredAt === 'string');
+  return [{ computer: own.computer, publicKey: own.publicKey }, ...retired.map((e) => ({ computer: e.computer, publicKey: e.publicKey, retiredAt: e.retiredAt }))];
 }
 
 const STATE_DAMAGED = 'the state has damaged events, so an open incident or a shown-first change can\'t be ruled out';
@@ -1048,6 +1055,8 @@ export async function startHelper({
   // Each agent's review module, for the signed review in a clean session (scripts/agents/reviews.js): given an
   // agent's name, its module, or null where its reviews aren't the helper's. A test may give its own.
   reviewModules = reviewsFor,
+  // Whether the person's approval on the host is ready to be asked for (host-approval.js); a test may give its own.
+  approvalReady = hostApprovalReady,
   // What Claude Code's premium alias stands for on this computer (scripts/setup/best-model.js), asked only after the
   // director's Yes on the premium model's card allows it (/premium/check): a model name, or null. A test gives its own.
   premiumAlias = () => aliasModel(STRONGEST_ALIAS, { run }),
@@ -2983,6 +2992,28 @@ export async function startHelper({
     }
   }
 
+  // The account whose review of a pull request stands as the director's approval on GitHub: the connection's recorded person,
+  // else the owner of the project's repository.
+  const approvalPersonOf = (record) => record.connection?.person ?? String(record.repo ?? '').split('/')[0];
+  // The person's approval on GitHub for a merge of `sha`: undefined where the project doesn't need it (a Claude project, no
+  // real users, GitHub's route not ready, another host), else whether it is there. A configuration that can't be read
+  // needs the approval, and a review that can't be read as no approval. Both merge routes build it (Task B1).
+  async function hostApprovalOf(project, adapter, { number, sha, config }) {
+    const record = recordOf(project);
+    if (record.host !== 'github' || approvalReady({ host: 'github' }) !== true) return undefined;
+    let agent = null;
+    const read = typeof config === 'function' ? await config() : config;
+    if (read !== undefined) {
+      try {
+        agent = agentOfConfig(read, { computerId: computerId() });
+      } catch {
+        agent = null;
+      }
+    }
+    if (!hostApprovalNeeded({ agent, realUsers: launchedIn(project), host: 'github' }, { ready: approvalReady })) return undefined;
+    return hostApproved({ adapter, number, sha, person: approvalPersonOf(record) });
+  }
+
   // The review kinds the gate counts (ruling P7-15): null, today's rule, for an agent with no review module; the
   // module's own kinds; none where the agent can't be told or the module can't say.
   function reviewKindsOf(config) {
@@ -3419,7 +3450,9 @@ export async function startHelper({
     // depend on the pull request's files, so when those couldn't be read it is read by itself; only when the
     // default branch's configuration itself can't be read does today's rule stand (the approval is then needed
     // anyway, since unreadable changes count as touching the guardrails).
-    const reviewKinds = reviewKindsOf(changes?.config ?? await defaultConfig(project, adapter, ctx));
+    const mergeConfig = changes?.config ?? await defaultConfig(project, adapter, ctx);
+    const reviewKinds = reviewKindsOf(mergeConfig);
+    const hostApproval = await hostApprovalOf(project, adapter, { number, sha: headSha, config: mergeConfig });
     // Where a project's checks run here, a fix passes the condition the broker asks of every other merge.
     let checkWaiting = false;
     if (fixCall || keeping || recordOf(project).host === 'local') {
@@ -3449,6 +3482,7 @@ export async function startHelper({
       touchesGuardrails: guarded,
       review,
       reviewKinds,
+      hostApproval,
       approval,
       enrolled,
       upToDate,
@@ -4459,10 +4493,12 @@ export async function startHelper({
     const { review, approval } = await gateRecords({ project, number: call.pr, headSha: call.sha, views, adapter, compare: true }, ctx);
     let guardrail = true;
     let paths = null;
+    let permitConfig;
     try {
       const changes = await readChanges({ project, number: call.pr, headSha: call.sha, defaultBranch }, ctx);
       guardrail = classifyChange({ paths: changes.paths, config: changes.config }).touchesGuardrails;
       ({ paths } = changes);
+      permitConfig = changes.config;
     } catch (error) {
       if (error instanceof LookRefusal) throw error;
     }
@@ -4474,7 +4510,8 @@ export async function startHelper({
     // opened needs the director's approval, as shown-first work does.
     const opened = engineRun.openedOf(project, call.pr);
     const checked = call.kind === 'merge' ? await checkPermit(project, call.sha) : {};
-    return { ...base, enrolled, review, approval, incident: incidentFor(views, call.pr), shownFirst: opened ? opened.showFirst === true : true, level: opened?.level ?? null, guardrail, outsideAreas, ...checked, stop: stopped() };
+    const hostApproval = call.kind === 'merge' ? await hostApprovalOf(project, adapter, { number: call.pr, sha: call.sha, config: () => permitConfig ?? defaultConfig(project, adapter, ctx) }) : undefined;
+    return { ...base, ...(hostApproval === undefined ? {} : { hostApproval }), enrolled, review, approval, incident: incidentFor(views, call.pr), shownFirst: opened ? opened.showFirst === true : true, level: opened?.level ?? null, guardrail, outsideAreas, ...checked, stop: stopped() };
   }
   const broker = brokerRoutes({
     placeOf: placeEngineCall,
@@ -5584,7 +5621,10 @@ export async function startHelper({
       protect: async ({ host, repo }) => {
         if (protectHost !== undefined) return protectHost({ host, repo });
         const api = host === 'gitlab' ? await directorGitlabApi({ run, fetch }) : undefined;
-        return switchOnAsDirector({ host, repo, run, api, realUsers: launchedIn(project) });
+        const realUsers = launchedIn(project);
+        // A project on an agent other than Claude Code with real users, once GitHub's route is ready, asks the person for their own approval (Task B1).
+        const hostApproval = host === 'github' && approvalReady({ host }) === true && hostApprovalNeeded({ agent: agentInFolder(recordOf(project).folder, { computerId: computerId() }), realUsers, host }, { ready: approvalReady });
+        return switchOnAsDirector({ host, repo, run, api, realUsers, hostApproval });
       },
       lock: async () => {
         const ctx = await contextFor(project);
@@ -5715,12 +5755,35 @@ export async function startHelper({
     return closed;
   }
 
+  // The board's two lines that need the keys folder or a write in the home, which no hook may do: the look at Wheelhouse's own
+  // files and the key renewal. The helper works them out and the board reads them from its health answer; kept ten minutes.
+  let guardKept = null;
+  function guardLines() {
+    const at = now().getTime();
+    if (guardKept !== null && at - guardKept.at < 10 * 60 * 1000) return guardKept.lines;
+    const lines = {};
+    try {
+      const where = { root: pluginRoot, now };
+      const line = ownFilesLine(checkOwnFiles(where).changed, where);
+      if (line !== null) lines.ownFilesLine = line;
+    } catch { /* the look is made again next time */ }
+    try {
+      const enrolled = readEnrolled();
+      const events = registeredProjects().flatMap(({ project }) => listEvents(stateDir(project), { report: () => {} }));
+      const due = keyRenewalDue({ events, now: now(), lastRenewal: lastKeyRenewal(enrolled, computerId()) });
+      if (due.due) lines.keyRenewal = { due: true, why: due.why };
+    } catch { /* as above */ }
+    guardKept = { at, lines };
+    return lines;
+  }
+
   async function handle(req, res) {
     const url = new URL(req.url ?? '/', 'http://helper');
     if (url.pathname === '/health') {
       const away = awayLog.fresh();
       const roomOpen = room?.line() ?? null;
-      return send(res, 200, { ok: true, ...(PLUGIN_VERSION ? { version: PLUGIN_VERSION } : {}), ...(Object.keys(away).length > 0 ? { away } : {}), ...(roomOpen ? { engineRoom: roomOpen } : {}) });
+      const guards = guardLines();
+      return send(res, 200, { ok: true, ...guards, ...(PLUGIN_VERSION ? { version: PLUGIN_VERSION } : {}), ...(Object.keys(away).length > 0 ? { away } : {}), ...(roomOpen ? { engineRoom: roomOpen } : {}) });
     }
     const route = Object.hasOwn(routes, url.pathname) ? routes[url.pathname] : null;
     if (!route) {

@@ -63,19 +63,29 @@ export function sign(record) {
   return { ...body, sig: { computer: computerId(), value } };
 }
 
+// Whether an enrolled key may have signed `record`: a current key always; a retired one only for a record whose id it
+// had signed when it was retired (`signedIds`), never for one stamped to look older, since whoever holds a copy of the key
+// also chooses the stamp. A retired key with no such list verifies nothing.
+function keptBefore(entry, record) {
+  if (entry.retiredAt === undefined) return true;
+  return Array.isArray(entry.signedIds) && typeof record?.id === 'string' && entry.signedIds.includes(record.id);
+}
+
 // True only if the record's computer is enrolled and its signature checks. Never throws.
 export function verify(record, enrolled) {
   try {
     const sig = record?.sig;
     if (!sig || typeof sig.computer !== 'string' || typeof sig.value !== 'string') return false;
     if (!Array.isArray(enrolled)) return false;
-    const entry = enrolled.find((e) => e?.computer === sig.computer);
-    if (!entry || typeof entry.publicKey !== 'string') return false;
     if (!/^[A-Za-z0-9+/]+={0,2}$/.test(sig.value)) return false;
-    const key = crypto.createPublicKey({
-      key: Buffer.from(entry.publicKey, 'base64'), format: 'der', type: 'spki',
+    const body = Buffer.from(canonicalJson(withoutSig(record)));
+    const value = Buffer.from(sig.value, 'base64');
+    // A computer may hold several keys: its current one, and the ones retired by a renewal. A retired key counts only for a
+    // record it signed before it was retired, so a copy of it signs nothing new.
+    return enrolled.filter((e) => e?.computer === sig.computer && typeof e.publicKey === 'string' && keptBefore(e, record)).some((entry) => {
+      const key = crypto.createPublicKey({ key: Buffer.from(entry.publicKey, 'base64'), format: 'der', type: 'spki' });
+      return crypto.verify(null, body, key, value);
     });
-    return crypto.verify(null, Buffer.from(canonicalJson(withoutSig(record))), key, Buffer.from(sig.value, 'base64'));
   } catch {
     return false;
   }
@@ -118,8 +128,46 @@ function loadEnrolled() {
 // never overwritten, and the new list is written whole: a temporary file, then a rename.
 export function enrol(entry) {
   if (!isEntry(entry)) throw new Error('An enrolment needs a computer id and a public key');
-  const list = loadEnrolled().filter((e) => e.computer !== entry.computer);
+  // A key a renewal retired stays: it still verifies what it signed.
+  const list = loadEnrolled().filter((e) => e.computer !== entry.computer || e.retiredAt !== undefined);
   list.push({ computer: entry.computer, publicKey: entry.publicKey, enrolledAt: entry.enrolledAt });
+  saveEnrolled(list);
+}
+
+// Replaces this computer's signing key with a new one (a renewal). The old private key is overwritten, so nothing can sign
+// with it again; its public key stays enrolled as retired at `retiredAt`, so what it signed before still verifies. Returns
+// the new enrolment { computer, publicKey }. A key already on this computer is required, and the list must be readable.
+export function renewSigningKey({ retiredAt, signedIds = [] }) {
+  const old = ownKey();
+  if (old === null) throw new Error('This computer has no usable signing key to renew');
+  const list = loadEnrolled();
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+  const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
+  const fresh = { computer: old.computer, publicKey: publicKey.export({ type: 'spki', format: 'der' }).toString('base64') };
+  const added = [...list, { ...fresh, enrolledAt: retiredAt }];
+  const retired = added.map((e) => (e.computer === old.computer && e.retiredAt === undefined && e.publicKey === old.publicKey ? { ...e, retiredAt, signedIds } : e));
+  // Every step leaves a key that works: the new key is written aside, enrolled beside the old, put in place, and only then is
+  // the old one retired. A failure before the last step leaves the old key signing; one at the last leaves both current.
+  const temp = `${keyFile()}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(temp, pem, { flag: 'wx', mode: 0o600 });
+    saveEnrolled(added);
+  } catch (error) {
+    fs.rmSync(temp, { force: true });
+    throw new Error(`The new signing key could not be made (${error.code ?? 'unknown error'})`);
+  }
+  try {
+    fs.renameSync(temp, keyFile());
+  } catch (error) {
+    fs.rmSync(temp, { force: true });
+    saveEnrolled(list);
+    throw new Error(`The new signing key could not be put in place (${error.code ?? 'unknown error'})`);
+  }
+  try { saveEnrolled(retired); } catch { /* both keys stay current: nothing is lost, and the old one is retired next time */ }
+  return fresh;
+}
+
+function saveEnrolled(list) {
   const file = enrolledFile();
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const temp = `${file}.${process.pid}.tmp`;

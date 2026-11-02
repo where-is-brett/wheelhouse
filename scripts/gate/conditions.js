@@ -1,5 +1,6 @@
 // scripts/gate/conditions.js
 import { verify } from '../state/signing.js';
+import { NO_HOST_APPROVAL } from '../host/host-approval.js';
 
 // A review counts only if it verifies and says CLEAN. A plain record must also
 // name the head commit. The carried form, { carried: true, record }, is a review
@@ -119,6 +120,9 @@ export function incidentReason(incident) {
 // card-answer labelled Approve naming the head counts too, unless `realUsers` is true: then only a signed
 // approval naming a 'window', 'add-on' or 'host' proof counts, and the answer's `needs` names which one.
 //
+// `hostApproval` is undefined where the person's approval on GitHub isn't needed, and otherwise passes only when exactly
+// true (a review that couldn't be read is false).
+//
 // `reviewKinds` (ruling P7-15) names the kinds of review that count, null when not given, which is today's rule: any
 // signed CLEAN review of the head counts, whatever its kind. Given a list, a review counts only if its
 // `data.reviewKind` is in it, and a missing one is refused with NO_CLEAN_REVIEW; an empty list counts none.
@@ -147,6 +151,9 @@ export function gateDecision(input) {
   const approved = needApproval ? approvalOf(i, headSha) : { counts: true };
   const approvalMissing = !approved.counts;
   if (approvalMissing) reasons.push(approvalReason(short, approved.needs));
+
+  // The person's approval on the host, where the project needs it: undefined when it isn't needed, else exactly true to pass.
+  if (i.hostApproval !== undefined && i.hostApproval !== true) reasons.push(NO_HOST_APPROVAL(short));
 
   // null: the check could not be made, which refuses as being behind does, with its own reason.
   if (i.upToDate === null) reasons.push('whether the branch is up to date could not be checked');

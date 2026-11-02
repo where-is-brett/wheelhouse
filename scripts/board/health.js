@@ -189,7 +189,7 @@ export function readScreens({ folder, findBrowser = realFindBrowser } = {}) {
 // `screens` is readScreens'; only pages listed and Chrome not found bring its line. `phonePush`
 // is setup's push test as this computer's journal last recorded it, { arrived, at }
 // (scripts/lib/setup-run.js, phonePushResult); only `arrived: false` adds a line.
-export function healthLines({ record, locked, stop, lock, helperUp, facts, renewal, platform = process.platform, realUsers, builds, screens, phonePush, frontDeskModel, safekeeping, agentSandbox } = {}) {
+export function healthLines({ record, locked, stop, lock, helperUp, facts, renewal, keyRenewal, ownFiles, hostApproval, platform = process.platform, realUsers, builds, screens, phonePush, frontDeskModel, safekeeping, agentSandbox } = {}) {
   const lines = [];
   const add = (level, text) => lines.push({ level, text });
 
@@ -224,6 +224,12 @@ export function healthLines({ record, locked, stop, lock, helperUp, facts, renew
     const on = dayMonthYear(renewal.on);
     add('watch', on ? `Renew the host key by ${on}` : 'Renew the host key soon');
   }
+  // A new signing key after a risky period (scripts/state/key-renewal.js): it is made only on the director's click on its card.
+  if (keyRenewal?.due) add('watch', `A new signing key is due: ${keyRenewal.why}`);
+  // The weekly look at Wheelhouse's own files and the guard files of the agent it runs (scripts/health/own-files.js).
+  if (typeof ownFiles?.line === 'string') add('watch', ownFiles.line);
+  // A project that needs your own approval on GitHub to merge (scripts/host/host-approval.js).
+  if (hostApproval === true) add('ok', 'Merging needs your own approval on GitHub');
   if (phonePush?.arrived === false) add('watch', phonePushLine(phonePush.at));
   // The front desk on another model than setup pinned for it (design section 8).
   const model = frontDeskModelLine(frontDeskModel ?? {});

@@ -7,6 +7,7 @@ import { projectPath } from './gitlab-key.js';
 import { scrub } from './adapter.js';
 import { toolPath } from '../lib/host-tools.js';
 import { hostApprovalReady } from './approval-ready.js';
+import { githubApprovalRules } from './host-approval.js';
 import { STATUS_CONTEXT } from '../checks/where.js';
 
 const NO_ONE = 0;
@@ -357,7 +358,9 @@ async function holdsWorkflows(gh, repo, branch) {
   return found.status !== 200 || !Array.isArray(found.body) || found.body.length > 0;
 }
 
-async function switchOnGithub(gh, repo) {
+// `hostApproval`: the project runs on an agent other than Claude Code, has real users and GitHub's route is ready, so the pull-request rule asks
+// for the person's own approval (host-approval.js).
+async function switchOnGithub(gh, repo, { hostApproval = false } = {}) {
   const status = await githubStatus(gh, repo);
   if (!status.available) return { on: false, line: status.line };
   const { defaultBranch } = status;
@@ -365,7 +368,7 @@ async function switchOnGithub(gh, repo) {
   // Nothing reports and nothing is set up to: the checks run on this computer, and report as Wheelhouse's own.
   const contexts = seen.length === 0 && !(await holdsWorkflows(gh, repo, defaultBranch)) ? [STATUS_CONTEXT] : seen;
   const mainRules = [
-    { type: 'pull_request', parameters: {
+    hostApproval === true ? githubApprovalRules() : { type: 'pull_request', parameters: {
       required_approving_review_count: 0,
       dismiss_stale_reviews_on_push: false,
       require_code_owner_review: false,
@@ -512,8 +515,8 @@ export async function protectionStatus({ host, repo, run, api, env, realUsers = 
   throw unknownHost(host);
 }
 
-export async function switchOnProtection({ host, repo, run, api, env, realUsers = false }) {
-  if (host === 'github') return switchOnGithub(ghApiFor(run, env), repo);
+export async function switchOnProtection({ host, repo, run, api, env, realUsers = false, hostApproval = false }) {
+  if (host === 'github') return switchOnGithub(ghApiFor(run, env), repo, { hostApproval });
   if (host === 'gitlab') return switchOnGitlab(api, repo, { realUsers });
   throw unknownHost(host);
 }
