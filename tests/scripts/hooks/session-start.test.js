@@ -1456,6 +1456,8 @@ test('a fresh computer gets a signing key and enrols it once', async () => {
     assert.deepEqual(readEnrolled().map((e) => e.computer), [computerId()]);
     assert.equal(withoutSheet(out), NOT_SET_UP);
     assert.match(NOT_SET_UP, /^This folder isn't set up for Wheelhouse yet. Setup comes first, whatever the director's message asks/);
+    // Setup never stands in the way of updating or removing Wheelhouse, or of the director saying not now.
+    assert.match(NOT_SET_UP, /Two requests go first instead: one about Wheelhouse itself \(updating, reinstalling or removing it, or a claude plugin command\), and one that says not to run setup now/);
     // The first click can be signed and checked.
     const signed = makeEvent({ kind: 'action', data: { action: 'lift-stop', question: 'q', label: 'Lift STOP' } });
     assert.equal(verify(signed, readEnrolled()), true);

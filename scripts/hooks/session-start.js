@@ -109,7 +109,7 @@ export const FRONT_DESK_LINE = 'This is the First Mate. Load wheelhouse:front-de
 // In a folder being set up: where setup stands, and that setup comes before whatever the director's
 // message asks, which is kept for the front desk (SETUP_FIRST). board-context.js says it again with
 // each prompt while setup is unfinished, so a long first message can't win over this line.
-export const SETUP_FIRST = 'Setup comes first, whatever the director\'s message asks: if setup isn\'t already under way in this conversation, say in one plain line that you\'ll set Wheelhouse up first and keep their request for afterwards, then follow wheelhouse:setup. Keep their request as they wrote it, and do no work on it until setup is done.';
+export const SETUP_FIRST = 'Setup comes first, whatever the director\'s message asks: if setup isn\'t already under way in this conversation, say in one plain line that you\'ll set Wheelhouse up first and keep their request for afterwards, then follow wheelhouse:setup. Keep their request as they wrote it, and do no work on it until setup is done. Two requests go first instead: one about Wheelhouse itself (updating, reinstalling or removing it, or a claude plugin command), and one that says not to run setup now. Do that, then offer to carry on with setup.';
 export const NOT_SET_UP = `This folder isn't set up for Wheelhouse yet. ${SETUP_FIRST}`;
 export const partWay = (n, title) => `Setup is part-way through: step ${n}, ${title}, is next. ${SETUP_FIRST}`;
 export const JOURNAL_UNREADABLE = 'Setup\'s journal couldn\'t be read, so where setup stands isn\'t known. Follow wheelhouse:setup.';
