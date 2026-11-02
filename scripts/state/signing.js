@@ -63,12 +63,12 @@ export function sign(record) {
   return { ...body, sig: { computer: computerId(), value } };
 }
 
-// Whether an enrolled key may have signed `record`: a current key always, a retired one only before it was retired.
+// Whether an enrolled key may have signed `record`: a current key always; a retired one only for a record whose id it
+// had signed when it was retired (`signedIds`), never for one stamped to look older, since whoever holds a copy of the key
+// also chooses the stamp. A retired key with no such list verifies nothing.
 function keptBefore(entry, record) {
   if (entry.retiredAt === undefined) return true;
-  const retired = Date.parse(entry.retiredAt);
-  const stamped = Date.parse(record?.at);
-  return !Number.isNaN(retired) && !Number.isNaN(stamped) && stamped <= retired;
+  return Array.isArray(entry.signedIds) && typeof record?.id === 'string' && entry.signedIds.includes(record.id);
 }
 
 // True only if the record's computer is enrolled and its signature checks. Never throws.
@@ -81,7 +81,7 @@ export function verify(record, enrolled) {
     const body = Buffer.from(canonicalJson(withoutSig(record)));
     const value = Buffer.from(sig.value, 'base64');
     // A computer may hold several keys: its current one, and the ones retired by a renewal. A retired key counts only for a
-    // record stamped no later than its retirement, so a copy of it signs nothing new.
+    // record it signed before it was retired, so a copy of it signs nothing new.
     return enrolled.filter((e) => e?.computer === sig.computer && typeof e.publicKey === 'string' && keptBefore(e, record)).some((entry) => {
       const key = crypto.createPublicKey({ key: Buffer.from(entry.publicKey, 'base64'), format: 'der', type: 'spki' });
       return crypto.verify(null, body, key, value);
@@ -137,21 +137,21 @@ export function enrol(entry) {
 // Replaces this computer's signing key with a new one (a renewal). The old private key is overwritten, so nothing can sign
 // with it again; its public key stays enrolled as retired at `retiredAt`, so what it signed before still verifies. Returns
 // the new enrolment { computer, publicKey }. A key already on this computer is required, and the list must be readable.
-export function renewSigningKey({ retiredAt }) {
+export function renewSigningKey({ retiredAt, signedIds = [] }) {
   const old = ownKey();
   if (old === null) throw new Error('This computer has no usable signing key to renew');
   const list = loadEnrolled();
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
   const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
   const fresh = { computer: old.computer, publicKey: publicKey.export({ type: 'spki', format: 'der' }).toString('base64') };
-  const next = list.map((e) => (e.computer === old.computer && e.retiredAt === undefined && e.publicKey === old.publicKey ? { ...e, retiredAt } : e));
-  next.push({ ...fresh, enrolledAt: retiredAt });
-  // The new key is written aside first, then the list, then the key put in place; a failure at the last step puts the list back,
-  // so the old key is never left retired while it is still the one that signs.
+  const added = [...list, { ...fresh, enrolledAt: retiredAt }];
+  const retired = added.map((e) => (e.computer === old.computer && e.retiredAt === undefined && e.publicKey === old.publicKey ? { ...e, retiredAt, signedIds } : e));
+  // Every step leaves a key that works: the new key is written aside, enrolled beside the old, put in place, and only then is
+  // the old one retired. A failure before the last step leaves the old key signing; one at the last leaves both current.
   const temp = `${keyFile()}.${process.pid}.tmp`;
   try {
     fs.writeFileSync(temp, pem, { flag: 'wx', mode: 0o600 });
-    saveEnrolled(next);
+    saveEnrolled(added);
   } catch (error) {
     fs.rmSync(temp, { force: true });
     throw new Error(`The new signing key could not be made (${error.code ?? 'unknown error'})`);
@@ -163,6 +163,7 @@ export function renewSigningKey({ retiredAt }) {
     saveEnrolled(list);
     throw new Error(`The new signing key could not be put in place (${error.code ?? 'unknown error'})`);
   }
+  try { saveEnrolled(retired); } catch { /* both keys stay current: nothing is lost, and the old one is retired next time */ }
   return fresh;
 }
 

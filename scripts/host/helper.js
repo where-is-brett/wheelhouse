@@ -3000,9 +3000,10 @@ export async function startHelper({
     const record = recordOf(project);
     if (record.host !== 'github' || approvalReady({ host: 'github' }) !== true) return undefined;
     let agent = null;
-    if (config !== undefined) {
+    const read = typeof config === 'function' ? await config() : config;
+    if (read !== undefined) {
       try {
-        agent = agentOfConfig(config, { computerId: computerId() });
+        agent = agentOfConfig(read, { computerId: computerId() });
       } catch {
         agent = null;
       }
@@ -4507,7 +4508,7 @@ export async function startHelper({
     // opened needs the director's approval, as shown-first work does.
     const opened = engineRun.openedOf(project, call.pr);
     const checked = call.kind === 'merge' ? await checkPermit(project, call.sha) : {};
-    const hostApproval = call.kind === 'merge' ? await hostApprovalOf(project, adapter, { number: call.pr, sha: call.sha, config: permitConfig ?? await defaultConfig(project, adapter, ctx) }) : undefined;
+    const hostApproval = call.kind === 'merge' ? await hostApprovalOf(project, adapter, { number: call.pr, sha: call.sha, config: () => permitConfig ?? defaultConfig(project, adapter, ctx) }) : undefined;
     return { ...base, ...(hostApproval === undefined ? {} : { hostApproval }), enrolled, review, approval, incident: incidentFor(views, call.pr), shownFirst: opened ? opened.showFirst === true : true, level: opened?.level ?? null, guardrail, outsideAreas, ...checked, stop: stopped() };
   }
   const broker = brokerRoutes({

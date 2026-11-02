@@ -85,7 +85,7 @@ test('records signed before the new key still verify, and the old key signs noth
   await withHome(() => {
     const before = sign(makeEvent({ kind: 'review', data: { pr: 1, commit: 'a'.repeat(40), verdict: 'CLEAN' }, now: () => new Date('2026-11-02T00:00:00.000Z') }));
     const oldKey = ownKey();
-    const made = replaceSigningKey({ enrolled: readEnrolled(), now: () => NOW, click: signedClick() });
+    const made = replaceSigningKey({ enrolled: readEnrolled(), now: () => NOW, click: signedClick(), known: [before.id] });
     assert.notEqual(made.publicKey, oldKey.publicKey);
     assert.equal(ownKey().publicKey, made.publicKey, 'the computer now signs with the new key');
     const list = readEnrolled();
@@ -102,11 +102,12 @@ test('records signed before the new key still verify, and the old key signs noth
 test('a record the retired key signs after its retirement doesn\'t verify', async () => {
   await withHome(() => {
     const oldPem = fs.readFileSync(path.join(process.env.WHEELHOUSE_HOME, 'keys', 'signing.pem'));
-    replaceSigningKey({ enrolled: readEnrolled(), now: () => NOW, click: signedClick() });
+    replaceSigningKey({ enrolled: readEnrolled(), now: () => NOW, click: signedClick(), known: [] });
     const current = fs.readFileSync(path.join(process.env.WHEELHOUSE_HOME, 'keys', 'signing.pem'));
     // Put the old key back for a moment, as a thief with a copy of it would use it.
     fs.writeFileSync(path.join(process.env.WHEELHOUSE_HOME, 'keys', 'signing.pem'), oldPem);
-    const late = sign(makeEvent({ kind: 'review', data: { pr: 1, commit: 'c'.repeat(40), verdict: 'CLEAN' }, now: () => new Date('2026-11-12T00:00:00.000Z') }));
+    // Backdated to before the renewal, as a thief would stamp it: still not a record the old key had signed.
+    const late = sign(makeEvent({ kind: 'review', data: { pr: 1, commit: 'c'.repeat(40), verdict: 'CLEAN' }, now: () => new Date('2026-11-01T00:00:00.000Z') }));
     fs.writeFileSync(path.join(process.env.WHEELHOUSE_HOME, 'keys', 'signing.pem'), current);
     assert.equal(verify(late, readEnrolled()), false);
   });

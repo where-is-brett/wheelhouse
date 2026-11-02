@@ -87,11 +87,12 @@ export function keyRenewalCardInput(why) {
 
 // Makes the new key, enrolled beside the old, which is kept as retired so earlier records still verify. It needs the
 // director's click: a signed card-answer, by an enrolled key, on the renewal card's own label. Returns
-// { computer, publicKey }. `now` gives the time of the renewal.
-export function replaceSigningKey({ enrolled, now = () => new Date(), click } = {}) {
+// { computer, publicKey }. `now` gives the time of the renewal. `known` are the ids of the records the old key has signed,
+// which keep verifying; any record the old key signs later does not (pass every project's records).
+export function replaceSigningKey({ enrolled, now = () => new Date(), click, known = [] } = {}) {
   const clicked = plain(click) && click.kind === 'card-answer' && click.data?.label === KEY_RENEWAL_LABEL && verify(click, enrolled);
   if (!clicked) throw new Error('A new signing key is made only on the director\'s signed click on the renewal card');
-  return renewSigningKey({ retiredAt: new Date(timeOf(typeof now === 'function' ? now() : now)).toISOString() });
+  return renewSigningKey({ retiredAt: new Date(timeOf(typeof now === 'function' ? now() : now)).toISOString(), signedIds: known.filter((id) => typeof id === 'string') });
 }
 
 // Finds the director's click on a renewal card in `events` and makes the key. { renewed: true, key } or { renewed: false }.
@@ -105,7 +106,8 @@ export function renewKeyOnClick({ events, enrolled, now = () => new Date(), last
     .filter((e) => e?.kind === 'card-answer' && cards.has(e.data?.card) && e.data?.label === KEY_RENEWAL_LABEL && timeOf(e.at) > since && verify(e, enrolled))
     .sort((a, b) => timeOf(a.at) - timeOf(b.at)).at(-1);
   if (click === undefined) return { renewed: false };
-  return { renewed: true, key: replaceSigningKey({ enrolled, now, click }) };
+  const known = events.filter((e) => typeof e?.id === 'string' && e.sig && verify(e, enrolled)).map((e) => e.id);
+  return { renewed: true, key: replaceSigningKey({ enrolled, now, click, known }) };
 }
 
 // When this computer's key was last renewed, as the time its newest retired key was retired, or null for never.

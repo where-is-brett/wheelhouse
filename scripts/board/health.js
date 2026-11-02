@@ -223,7 +223,7 @@ export function healthLines({ record, locked, stop, lock, helperUp, facts, renew
     add('watch', on ? `Renew the host key by ${on}` : 'Renew the host key soon');
   }
   // A new signing key after a risky period (scripts/state/key-renewal.js): it is made only on the director's click on its card.
-  if (keyRenewal?.due) add('watch', `A new signing key is due: ${keyRenewal.why}. Your First Mate will ask you`);
+  if (keyRenewal?.due) add('watch', `A new signing key is due: ${keyRenewal.why}`);
   // The weekly look at Wheelhouse's own files and the guard files of the agent it runs (scripts/health/own-files.js).
   if (typeof ownFiles?.line === 'string') add('watch', ownFiles.line);
   // A project that needs your own approval on GitHub to merge (scripts/host/host-approval.js).
