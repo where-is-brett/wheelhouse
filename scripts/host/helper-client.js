@@ -86,6 +86,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     host: {
       facts: post('/host/facts'), // { project } -> { ok, protection: 'on' | 'none' | 'unknown', ci: 'present' | 'none' | 'unknown', plan?, gaps? } (the last two on GitLab)
     },
+    compactWindow: post('/compact-window'), // { project | cwd } -> { ok, step: 'off' | 'on' | 'opened' | 'approve' | 'waiting' | 'closed', pr?, head?, why? }: the next step of the compaction window the director chose
     engineSwitch: post('/engine-switch'), // { project | cwd } -> { ok, step: 'off' | 'on' | 'opened' | 'approve' | 'waiting' | 'closed', pr?, head?, why? }: the switch to the new engine's next step (part 3f)
     local: {
       move: post('/local/move'), // { project | cwd, host } -> { ok, asked }: raises the card that asks; nothing moves before the director's answer

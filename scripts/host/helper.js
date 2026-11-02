@@ -165,6 +165,8 @@ import { orderStore } from '../engine/order.js';
 import { engineRouting } from '../agents/engine-parts.js';
 import { approvedDocument } from '../feature/approved.js';
 import { SWITCH_BRANCH, SWITCH_WORK, engineChosen, engineReady, switchBranch } from '../engine/switch.js';
+import { COMPACT_BRANCH, COMPACT_NAME, COMPACT_TITLE, COMPACT_WORK, chosenWindow, compactBody, compactBranch, compactChange, changedText } from '../settings/compact-window-pr.js';
+import { windowIn } from '../settings/compact-window.js';
 import { SWITCH_TITLE, switchBody, switchChange, switchTexts } from '../engine/switch-pr.js';
 import { COMMAND_BODY, COMMAND_TITLE, COMMAND_WORK, commandBranch, commandChange, commandText } from '../engine/command-pr.js';
 import { ARCHON_CONFIG_FILE, ENGINE_FILES, POLICY_FILE, mirrorRulesFile } from '../engine/parts.js';
@@ -915,7 +917,7 @@ const PLACED_ROUTES = [
   '/desk/read', '/desk/act', '/desk/watch',
   '/lean/status', '/lean/merge', '/lean/undo', '/lean/copy', '/local/undo', '/local/move',
   '/survey/carry-on', '/survey/archive', '/survey/restore', '/premium/card', '/premium/check', '/premium/state', '/premium/failed',
-  '/engine-switch', '/rules/offer', '/goal-baseline', '/goal-card', '/goal-draft',
+  '/engine-switch', '/compact-window', '/rules/offer', '/goal-baseline', '/goal-card', '/goal-draft',
 ];
 
 // A Lean project (ruling P5-9) has no code host and no connection: only these routes serve it, on
@@ -3416,6 +3418,24 @@ export async function startHelper({
         switching = false;
       }
     }
+    // The compaction window's own pull request: every byte is the helper's, a single key of the settings file changed to the
+    // value the director signed, so it has no review and no provenance to check. The file is a guardrail, so the director's
+    // approval stands in for the guardrail condition, as for the switch.
+    let compacting = false;
+    let compactCheck = { matched: false };
+    if (readable && !restore && COMPACT_BRANCH.test(typeof pr.headRef === 'string' ? pr.headRef : '')) {
+      await oneAtATime(`state:${project}`, () => ensureStateClone(project, ctx));
+      const own = buildViews(listEvents(stateDir(project), { report: () => {} }), ownKeyOnly(), { damaged: [], now });
+      const chosen = chosenWindow(own.settings, { now: now() });
+      compactCheck = compactChange({ headRef: pr.headRef, paths: changes.paths, files: changes.files, value: chosen });
+      if (compactCheck.ok === true) {
+        try {
+          compacting = pr.baseRef === await defaultBranchOf(project, adapter);
+        } catch (error) {
+          if (error instanceof LookRefusal) throw error;
+        }
+      }
+    }
     // The helper's own change naming the found command (spec 4.2), which it compares with what the record keeps: every byte
     // is the helper's, so it needs no review, no provenance and no approval. It needs its check like any other.
     const commandCheck = readable && !restore ? commandChange({ headRef: pr.headRef, paths: changes.paths, files: changes.files, found: keptCommand(signedOf(project, 'checks-found').map((e) => e.data)) }) : { matched: false };
@@ -3428,7 +3448,7 @@ export async function startHelper({
       }
     }
     // A restore is a release that passed review before; the director's approval stands in for it.
-    const touchesGuardrails = (!restore && !pinsOnly && !switching && classified.touchesGuardrails) || body.touchesGuardrails === true;
+    const touchesGuardrails = (!restore && !pinsOnly && !switching && !compacting && classified.touchesGuardrails) || body.touchesGuardrails === true;
     const found = { guardrailPaths: classified.guardrailPaths, criticalAreas: classified.criticalAreas };
     const release = pinsOnly ? { release: { kind: 'pins-only', ref: releaseCheck.ref, sha: releaseCheck.sha } } : {};
     const ci = await adapter.ciState(headSha);
@@ -3457,7 +3477,7 @@ export async function startHelper({
     if (outsideReason !== null) stateReasons.push(outsideReason);
     const queueRows = recordOf(project).host === 'local' && !fixCall && !keeping && !restore;
     const queueApproval = queueRows && readable && needsApprovalOf({ paths: changes.paths, config: changes.config });
-    const approvalRequired = body.approvalRequired === true || guarded || restore || switching || shownFirst || queueApproval;
+    const approvalRequired = body.approvalRequired === true || guarded || restore || switching || compacting || shownFirst || queueApproval;
     const holdsLock = await lockHeld(project, ctx);
     const { upToDate, review, approval } = await gateRecords({ project, number, headSha, views, adapter, compare: approvalRequired }, ctx);
     // The kinds of review that count for the agent this computer runs, from the default branch's configuration:
@@ -3492,7 +3512,7 @@ export async function startHelper({
       headSha,
       ci,
       // Every merge needs a review; the caller may only add the approval and guardrail conditions.
-      reviewRequired: !restore && !switching && !keeping,
+      reviewRequired: !restore && !switching && !compacting && !keeping,
       approvalRequired,
       touchesGuardrails: guarded,
       review,
@@ -3505,7 +3525,7 @@ export async function startHelper({
       // What /pr/open recorded built the pull request's branch, from the signed state, against this
       // Wheelhouse's own manifest (a pull request opened before that record names it in its body). A
       // verified restore has none: it puts back a release that merged before (Ruling 105).
-      provenance: restore || switching || keeping ? { ok: true } : checkProvenance({ recorded: views.provenance?.[pr.headRef], body: pr.body, root: pluginRoot }),
+      provenance: restore || switching || compacting || keeping ? { ok: true } : checkProvenance({ recorded: views.provenance?.[pr.headRef], body: pr.body, root: pluginRoot }),
     });
     if (!decision.allow || stateReasons.length > 0) {
       const said = restoreCheck.matched && !restore ? [`restore pull request: ${restoreCheck.why}`] : [];
@@ -3749,6 +3769,71 @@ export async function startHelper({
     if (made.refused) return { ok: false, refused: made.refused };
     const opened = await adapter.openPr({ head: branch, base: defaultBranch, title: SWITCH_TITLE, body: switchBody(login) });
     writeWhole(switchFile(project), { pr: opened.number, head: made.commit, base: base.head });
+    return { ok: true, step: 'opened', pr: opened.number, head: made.commit };
+  }
+
+  // --- the compaction window the director chose ---
+  // Once the director confirmed a `compactWindow` and while the project's settings file holds another, each call takes the
+  // next step, as the engine switch does: a pull request changing only `autoCompactWindow`, made here; then that pull
+  // request merged through the gate, once the director approved it. The window's own record keeps its pull request:
+  // { pr, head, base, value, closed? }. Only on GitHub, as the switch.
+  const compactFile = (project) => path.join(engineDirOf(stateDir(project)), 'compact-window.json');
+  function readCompact(project) {
+    try {
+      const kept = JSON.parse(fs.readFileSync(compactFile(project), 'utf8'));
+      return Number.isInteger(kept?.pr) && kept.pr > 0 && FULL_SHA.test(kept?.head ?? '') && FULL_SHA.test(kept?.base ?? '') ? kept : null;
+    } catch {
+      return null;
+    }
+  }
+  async function doCompactWindow({ project }, ctx) {
+    if (stopped()) return STOP_REFUSAL;
+    if (recordOf(project).host !== 'github') return { ok: true, step: 'off' };
+    const views = buildViews(listEvents(stateDir(project), { report: () => {} }), ownKeyOnly(), { now });
+    const value = chosenWindow(views.settings, { now: now() });
+    if (value === null) return { ok: true, step: 'off' };
+    await lookAtMirror(ctx, project);
+    const adapter = await ctx.adapter();
+    const defaultBranch = await defaultBranchOf(project, adapter);
+    const base = await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ must }) => {
+      const { head } = await defaultHistory(must, defaultBranch);
+      let text = null;
+      try { text = await must(['cat-file', 'blob', `${BASE_REF}:${SETTINGS_FILE}`], 'reading the project\'s settings'); } catch { /* none */ }
+      const dated = (await must(['log', '--no-walk', '--format=%ct', head], 'reading the default branch\'s date')).trim();
+      return { head, text, at: `${dated} +0000` };
+    }));
+    const next = base.text === null ? null : changedText(base.text, value);
+    if (next === null) return { ok: false, refused: `the project's ${SETTINGS_FILE} could not be read as settings, so the window is not changed` };
+    if (next === base.text || windowIn(JSON.parse(base.text)) === value) return { ok: true, step: 'on' };
+    const kept = readCompact(project);
+    const pr = kept ? await adapter.prState(kept.pr) : null;
+    const open = pr?.state === 'open' && COMPACT_BRANCH.test(typeof pr.headRef === 'string' ? pr.headRef : '');
+    // Turned down on the host by the director, for this very value: no other is opened in its place.
+    if (pr?.state === 'closed' && kept.closed !== true && kept.value === value) return { ok: true, step: 'closed', pr: kept.pr };
+    if (open && kept.base === base.head && kept.value === value) {
+      const merged = await oneAtATime(`merge:${project}`, () => doMerge({ project, number: kept.pr }, ctx));
+      if (merged?.ok === true && merged.merged === true) return { ok: true, step: 'on' };
+      const approval = approvalOnly(merged, kept.pr);
+      if (approval === null) return { ok: true, step: 'waiting', pr: kept.pr, why: merged?.refused ?? 'the gate gave no answer' };
+      const asked = listEvents(stateDir(project), { report: () => {} }).some((e) => e.kind === 'gate-asks' && e.data?.pr === kept.pr
+        && e.data.ask === 'approval' && e.data.sha === approval.commit);
+      if (!asked) await engineWrite(project, 'gate-asks', { work: COMPACT_WORK, pr: kept.pr, ask: 'approval', sha: approval.commit });
+      return { ok: true, step: 'approve', pr: kept.pr, head: approval.commit };
+    }
+    // Behind the default branch, or for another value: the helper closes its own pull request and makes it again.
+    if (open) {
+      writeWhole(compactFile(project), { ...kept, closed: true });
+      try {
+        await adapter.closePr(kept.pr);
+      } catch {
+        return { ok: true, step: 'waiting', pr: kept.pr, why: 'the window\'s pull request is out of date and couldn\'t be closed to make it again' };
+      }
+    }
+    const branch = compactBranch(base.head);
+    const made = await ownChange(project, ctx, { branch, base, files: { [SETTINGS_FILE]: next }, title: COMPACT_TITLE, defaultBranch });
+    if (made.refused) return { ok: false, refused: made.refused };
+    const opened = await adapter.openPr({ head: branch, base: defaultBranch, title: COMPACT_TITLE, body: compactBody(value) });
+    writeWhole(compactFile(project), { pr: opened.number, head: made.commit, base: base.head, value });
     return { ok: true, step: 'opened', pr: opened.number, head: made.commit };
   }
 
@@ -4560,6 +4645,7 @@ export async function startHelper({
     '/merge': (body, ctx) => oneAtATime(`merge:${body.project}`, () => doMerge(body, ctx)),
     '/local/undo': (body) => doLocalUndo(body),
     '/local/move': (body) => askMove(body),
+    '/compact-window': (body, ctx) => oneAtATime(`compact:${body.project}`, () => doCompactWindow(body, ctx)),
     '/engine-switch': (body, ctx) => oneAtATime(`switch:${body.project}`, () => doEngineSwitch(body, ctx)),
     // The First Mate's ask for a goal's baseline (scripts/engine/goal-check.js). Only a baseline: the last check is the helper's own.
     '/goal-baseline': ({ project, goal }) => startGoalCheck({ project, goal, when: 'before' }),

@@ -78,6 +78,7 @@ import { confirmWords } from '../state/card-lines.js';
 import { joinersOf } from '../state/joiners.js';
 import { cardsForVisit, existingCard, cardNumbered, asQuestion, importanceOf, IMPORTANCE } from '../cards/visit.js';
 import { controlFileInput, controlFilesDue, controlFilesNamed, gateAsksDue, gateInput, holdInput, holdsDue, premiumFailuresDue, stillWaits, withPutBack } from '../cards/build-loop.js';
+import { COMPACT_NAME, COMPACT_WORK } from '../settings/compact-window-pr.js';
 import { SWITCH_NAME, SWITCH_WORK } from '../engine/switch.js';
 import { failedInput } from '../routing/premium.js';
 import { heldByNotNow, numberedWaiting } from '../board/model.js';
@@ -356,7 +357,7 @@ const blindGivesWay = (id, data, views) => importanceOf({ data: { kind: 'answer'
 function gateCard(entry, views, words) {
   const work = entry.data.work;
   // The switch to the new engine's pull request is no piece of work (scripts/engine/switch.js), so it is named for what it does.
-  const title = work === SWITCH_WORK ? SWITCH_NAME : flat(views.work?.[work]?.work?.data?.title);
+  const title = work === SWITCH_WORK ? SWITCH_NAME : work === COMPACT_WORK ? COMPACT_NAME : flat(views.work?.[work]?.work?.data?.title);
   let refusal = null;
   for (const name of [...new Set([title || work, work, 'this work'])]) {
     try {
