@@ -59,9 +59,13 @@ export const SETTINGS = {
   hours: { label: 'Working hours', group: 'everyday', check: checkHours, default: null, home: 'profile' },
   // Advanced, kept in the project.
   roundCap: { label: 'Review round cap', group: 'advanced', check: wholeBetween(1, 5), default: 3, home: 'project' },
-  // The point where the context gauge says to prepare. The compaction point itself is in the
-  // project's Claude Code settings and changes only by a pull request.
+  // The point where the context gauge says to prepare. The compaction point itself (compactWindow, below) is in
+  // the project's Claude Code settings and changes only by a pull request, because that file is protected.
   compactPrepare: { label: 'Prepare for compaction at (context size)', group: 'advanced', check: wholeBetween(100000, 290000), default: 200000, home: 'project' },
+  // The context size at which Claude Code compacts: `autoCompactWindow`, which Claude Code accepts from 100,000 to
+  // 1,000,000 (scripts/protection/settings.js). Wheelhouse starts at 300,000 and offers 200,000 up. It must stay
+  // above compactPrepare (scripts/settings/compact-window.js).
+  compactWindow: { label: 'Compact the conversation at (context size)', group: 'advanced', check: wholeBetween(200000, 1000000), default: 300000, home: 'project' },
   delegationReviewDays: { label: 'Days between delegation reviews', group: 'advanced', check: wholeBetween(7, 60), default: 14, home: 'project' },
   unusualFactor: { label: 'Unusual-use factor', group: 'advanced', check: (v) => typeof v === 'number' && Number.isFinite(v) && v >= 2 && v <= 10, default: UNUSUAL.factor, home: 'project' },
   // The addresses of the official pages, checked weekly beside the upstream repositories.

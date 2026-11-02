@@ -1034,6 +1034,17 @@ test('a setting made by a usage card\'s pick carries the time of the card\'s off
   });
 });
 
+test('a compaction window at or below the point to prepare at is refused, and a larger one is recorded', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const low = await run(helper, ['record', 'setting'], JSON.stringify({ key: 'compactWindow', value: 200000 }));
+    assert.equal(low.code, 1);
+    assert.match(low.err, /has to be larger than the point to prepare at/);
+    assert.equal((await run(helper, ['record', 'setting'], JSON.stringify({ key: 'compactPrepare', value: 290000 }))).code, 0);
+    assert.equal((await run(helper, ['record', 'setting'], JSON.stringify({ key: 'compactWindow', value: 320000 }))).code, 0);
+  });
+});
+
 test('a Thoroughness level whose column is not ready is refused, in plain words, before it reaches the helper', async () => {
   await inHome(async () => {
     const helper = fakeHelper();

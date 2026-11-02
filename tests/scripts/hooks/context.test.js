@@ -211,6 +211,25 @@ test('the guard gives up two minutes after its first block, and near the limit',
   });
 });
 
+test('the guard\'s near-the-limit point follows the project\'s compaction window', async () => {
+  await withHome(async (home) => {
+    const { base, main } = makeProject();
+    try {
+      const t0 = new Date('2026-10-18T01:00:00.000Z');
+      fs.mkdirSync(path.join(main, '.claude'), { recursive: true });
+      fs.writeFileSync(path.join(main, '.claude', 'settings.json'), JSON.stringify({ autoCompactWindow: 320000 }));
+      unsave(main, 's5');
+      fs.mkdirSync(path.dirname(sessionFile(home, 's5')), { recursive: true });
+      fs.writeFileSync(sessionFile(home, 's5'), JSON.stringify({ tokens: 379999 }));
+      assert.ok(blocked(await guard(compact(main, { session_id: 's5' }), { now: () => t0 })));
+      fs.writeFileSync(sessionFile(home, 's5'), JSON.stringify({ tokens: 380000 }));
+      assert.equal(await guard(compact(main, { session_id: 's5' }), { now: () => t0 }), undefined);
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
+
 test('the guard never blocks a manual compaction', async () => {
   await withHome(async () => {
     const { base, main } = makeProject();
