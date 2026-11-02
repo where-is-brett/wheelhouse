@@ -20,6 +20,7 @@ const ALLOWED_CORE_FILES = {
   'scripts/state/lean-record.js': 'reads Lean\'s record with the Copilot design\'s numbers, named once in copilot-numbers.js',
   'README.md': 'the README\'s section "On GitHub Copilot" gives the one request line that sets Wheelhouse up in VS Code with Copilot',
   'scripts/audit/report.js': 'imports the levels, proofs and review kinds from the design\'s numbers file, copilot-numbers.js, and names no agent otherwise',
+  'scripts/health/own-files.js': 'the weekly look at the files that guard the project names Copilot\'s own folders in the person\'s home, and never reads its sign-in',
   'HANDOVER.md': 'the handover says where the work stands, the Copilot build among it',
   'lineage/manifest.json': 'the manifest records the Copilot CLI version Wheelhouse is pinned to (its `agents`, ruling P8-18), written by buildManifest from scripts/agents/pins.js',
 };

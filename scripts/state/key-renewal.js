@@ -1,7 +1,7 @@
 // scripts/state/key-renewal.js
-// New signing keys after risky periods (Task B2 of docs/superpowers/plans/2026-11-02-copilot-remaining-parts.md). A key
+// New signing keys after risky periods (Task B2 of the build plan of 2 November 2026). A key
 // is due after a period at Unattended has ended, and a week after an Ask allowance; and, behind its own switch, a week
-// after a Copilot step ran outside the sandbox. The name is apart from `renewalDue` in scripts/host/connection.js, which
+// after an agent's step ran outside the sandbox. The name is apart from `renewalDue` in scripts/host/connection.js, which
 // is the host connection's key. Nothing renews without the director's click on the card this file composes.
 import { verify, renewSigningKey } from './signing.js';
 import { ALLOWANCE_LABELS } from '../protection/windows-builds.js';
@@ -11,11 +11,11 @@ export const KEY_RENEWAL_TOPIC = 'signing-key-renewal';
 export const KEY_RENEWAL_LABEL = 'Make a new key';
 const KEEP_LABEL = 'Keep the old key';
 
-// Whether a week with a Copilot step run outside the sandbox makes a new key due. It is the director's call and is not yet
+// Whether a week with an agent's step run outside the sandbox makes a new key due. It is the director's call and is not yet
 // decided, so it is off: with it off, only the other two triggers run. To turn it on, set this to true and give
-// keyRenewalDue the times (as ISO strings) of the Copilot steps that ran outside the sandbox since the last renewal as
+// keyRenewalDue the times (as ISO strings) of the agent's steps that ran outside the sandbox since the last renewal as
 // `outsideSandbox`; the sandbox's own record (Part A) is where those times come from. A test gives `outsideSandboxOn`.
-export const KEY_RENEWAL_ON_UNSANDBOXED_COPILOT = false;
+export const KEY_RENEWAL_ON_UNSANDBOXED_STEPS = false;
 
 const timeOf = (value) => (value instanceof Date ? value.getTime() : Date.parse(value));
 const plain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
@@ -49,7 +49,7 @@ function risks(events) {
 // { due, why }: whether a new key is due, and in a plain sentence why. Each trigger counts only what came after
 // `lastRenewal` (an ISO time, or null for never). Input that can't be read is not due.
 export function keyRenewalDue(input) {
-  const { events, now, lastRenewal = null, outsideSandbox = [], outsideSandboxOn = KEY_RENEWAL_ON_UNSANDBOXED_COPILOT } = plain(input) ? input : {};
+  const { events, now, lastRenewal = null, outsideSandbox = [], outsideSandboxOn = KEY_RENEWAL_ON_UNSANDBOXED_STEPS } = plain(input) ? input : {};
   const at = timeOf(now);
   if (!Array.isArray(events) || !Number.isFinite(at)) return { due: false };
   const since = lastRenewal === null || lastRenewal === undefined ? -Infinity : timeOf(lastRenewal);
@@ -59,7 +59,7 @@ export function keyRenewalDue(input) {
   const week = (list) => after(list).some((t) => at - timeOf(t) >= WEEK_MS);
   if (week(allowed)) return { due: true, why: 'a week has passed since an Ask allowance let commands run' };
   if (outsideSandboxOn === true && Array.isArray(outsideSandbox) && week(outsideSandbox.filter((t) => Number.isFinite(timeOf(t))))) {
-    return { due: true, why: 'a week has passed since a Copilot step ran outside the sandbox' };
+    return { due: true, why: 'a week has passed since an agent\'s step ran outside the sandbox' };
   }
   return { due: false };
 }

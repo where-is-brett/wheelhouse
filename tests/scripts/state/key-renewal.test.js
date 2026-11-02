@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { keyRenewalDue, keyRenewalCardInput, KEY_RENEWAL_TOPIC, KEY_RENEWAL_LABEL, KEY_RENEWAL_ON_UNSANDBOXED_COPILOT, replaceSigningKey, renewKeyOnClick } from '../../../scripts/state/key-renewal.js';
+import { keyRenewalDue, keyRenewalCardInput, KEY_RENEWAL_TOPIC, KEY_RENEWAL_LABEL, KEY_RENEWAL_ON_UNSANDBOXED_STEPS, replaceSigningKey, renewKeyOnClick } from '../../../scripts/state/key-renewal.js';
 import { makeEvent } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, sign, verify, ownKey } from '../../../scripts/state/signing.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
@@ -46,7 +46,7 @@ test('renewal is due a week after an Ask allowance, and not before', () => {
 });
 
 test('a week of Copilot steps outside the sandbox makes it due only with its own switch on', () => {
-  assert.equal(KEY_RENEWAL_ON_UNSANDBOXED_COPILOT, false, 'the switch starts off');
+  assert.equal(KEY_RENEWAL_ON_UNSANDBOXED_STEPS, false, 'the switch starts off');
   const outside = [ago(9)];
   assert.equal(keyRenewalDue({ events: [], now: NOW, lastRenewal: null, outsideSandbox: outside }).due, false, 'off: the old triggers are what runs');
   const on = keyRenewalDue({ events: [], now: NOW, lastRenewal: null, outsideSandbox: outside, outsideSandboxOn: true });

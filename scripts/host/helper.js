@@ -2995,7 +2995,7 @@ export async function startHelper({
   const approvalPersonOf = (record) => record.connection?.person ?? String(record.repo ?? '').split('/')[0];
   // The person's approval on GitHub for a merge of `sha`: undefined where the project doesn't need it (a Claude project, no
   // real users, GitHub's route not ready, another host), else whether it is there. A configuration that can't be read
-  // counts as Copilot's, and a review that can't be read as no approval. Both merge routes build it (Task B1).
+  // needs the approval, and a review that can't be read as no approval. Both merge routes build it (Task B1).
   async function hostApprovalOf(project, adapter, { number, sha, config }) {
     const record = recordOf(project);
     if (record.host !== 'github' || approvalReady({ host: 'github' }) !== true) return undefined;
@@ -5619,7 +5619,7 @@ export async function startHelper({
         if (protectHost !== undefined) return protectHost({ host, repo });
         const api = host === 'gitlab' ? await directorGitlabApi({ run, fetch }) : undefined;
         const realUsers = launchedIn(project);
-        // A Copilot project with real users, once GitHub's route is ready, asks the person for their own approval (Task B1).
+        // A project on an agent other than Claude Code with real users, once GitHub's route is ready, asks the person for their own approval (Task B1).
         const hostApproval = host === 'github' && approvalReady({ host }) === true && hostApprovalNeeded({ agent: agentInFolder(recordOf(project).folder, { computerId: computerId() }), realUsers, host }, { ready: approvalReady });
         return switchOnAsDirector({ host, repo, run, api, realUsers, hostApproval });
       },

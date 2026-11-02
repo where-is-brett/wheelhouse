@@ -358,7 +358,7 @@ async function holdsWorkflows(gh, repo, branch) {
   return found.status !== 200 || !Array.isArray(found.body) || found.body.length > 0;
 }
 
-// `hostApproval`: the project is a Copilot one with real users and GitHub's route is ready, so the pull-request rule asks
+// `hostApproval`: the project runs on an agent other than Claude Code, has real users and GitHub's route is ready, so the pull-request rule asks
 // for the person's own approval (host-approval.js).
 async function switchOnGithub(gh, repo, { hostApproval = false } = {}) {
   const status = await githubStatus(gh, repo);

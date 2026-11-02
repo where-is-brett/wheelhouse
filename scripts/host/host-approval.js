@@ -1,6 +1,6 @@
 // scripts/host/host-approval.js
-// The person's own approval of a pull request on GitHub, which a Copilot project with real users needs before it
-// merges (Task B1 of docs/superpowers/plans/2026-11-02-copilot-remaining-parts.md; Archon design, section 12).
+// The person's own approval of a pull request on GitHub, which a project with real users that runs on an agent other than
+// Claude Code needs before it merges (Task B1 of the build plan of 2 November 2026; Archon design, section 12).
 // It is read from the pull request's reviews, never from the agent or the bot: only the person's latest review counts.
 import { hostApprovalReady } from './approval-ready.js';
 
@@ -42,10 +42,10 @@ export function githubApprovalRules() {
   };
 }
 
-// Whether the project's merges need the person's approval on the host: a Copilot project with real users on GitHub,
-// once the route is ready. An agent that can't be told (null) counts as Copilot, so that a configuration which can't be
+// Whether the project's merges need the person's approval on the host: a project on an agent other than Claude Code, with real
+// users, on GitHub, once the route is ready. An agent that can't be told (null) counts as one, so that a configuration which can't be
 // read never lets a merge round the approval. `ready` is for a test.
 export function hostApprovalNeeded({ agent, realUsers, host = 'github' } = {}, { ready = hostApprovalReady } = {}) {
   if (host !== 'github' || realUsers !== true || !ready({ host })) return false;
-  return agent === null || agent === 'copilot';
+  return agent !== 'claude-code';
 }
