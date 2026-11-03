@@ -20,7 +20,8 @@ import { run as realRun, withoutGitVars } from './run.js';
 import { revocationFallback } from '../host/company-ca.js';
 import path from 'node:path';
 import fs from 'node:fs';
-import os from 'node:os';
+import crypto from 'node:crypto';
+import { wheelhouseHome } from './paths.js';
 import {
   isolated, refuseUnlistedSettings, setupGitEnv, subcommandOf, allowedSetting, unlistedSettingsLine, CONFIG_UNREAD, FENCE, NULL_FILE,
 } from '../setup/git.js';
@@ -361,9 +362,15 @@ export function settingsText(entries) {
   }).join('');
 }
 
+// Where a push's private copy of the computer's settings is made: under the Wheelhouse home, which the tool guard and the
+// sandbox keep agents out of (a temporary folder is theirs to write, and on Windows its permissions can't be narrowed).
+export const SETTINGS_COPIES = 'settings-copies';
+
 // Runs `fn(file)` with a private copy of the entries as a config file, removed afterwards.
 async function withSettingsFile(entries, fn) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-settings-'));
+  const parent = path.join(wheelhouseHome(), SETTINGS_COPIES);
+  fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
+  const dir = fs.mkdtempSync(path.join(parent, 'copy-'));
   try {
     fs.chmodSync(dir, 0o700);
     const file = path.join(dir, 'config');
@@ -468,6 +475,48 @@ function refuseFenceOverride(args) {
   }
 }
 
+// --- The record of the computer's settings ---
+// Where the guard can be bypassed (Windows lets an agent run as the director), the computer's settings could be changed
+// to name a credential helper or a rewrite. So the values a push trusts are fingerprinted when as-is pushing is first used
+// and kept under the Wheelhouse home, and a push whose settings differ is refused until the director confirms the change.
+export const SETTINGS_CHANGED = 'git-settings-changed';
+export class SettingsChanged extends LookRefusal {
+  code = SETTINGS_CHANGED;
+}
+export const SETTINGS_CHANGED_LINE = "The git settings on this computer (your sign-in, proxy, certificate or address rewrites) have changed since setup, so nothing was pushed. The director needs to confirm the change first.";
+
+const RELEVANT = /^(?:credential\.(?:.+\.)?helper|core\.sshcommand|url\..+\.(?:push)?insteadof|http\.(?:.+\.)?(?:proxy|sslcainfo)|include\.path|includeif\..+\.path|remote\..+\.pushurl)$/;
+// The settings a push trusts, in git's order, and a fingerprint of them.
+export function trustedSettings(entries) {
+  return entries.filter(({ key }) => RELEVANT.test(key.toLowerCase())).map(({ key, value }) => [key.toLowerCase(), value]);
+}
+export const settingsFingerprint = (entries) => crypto.createHash('sha256').update(JSON.stringify(trustedSettings(entries))).digest('hex');
+
+// Records the fingerprint the first time; after that, throws SettingsChanged when it differs.
+function checkTrusted(file, entries) {
+  const now = settingsFingerprint(entries);
+  let kept = null;
+  try {
+    kept = JSON.parse(fs.readFileSync(file, 'utf8')).fingerprint;
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw new SettingsChanged(SETTINGS_CHANGED_LINE);
+  }
+  if (kept === null) {
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(file, `${JSON.stringify({ fingerprint: now }, null, 2)}\n`, { mode: 0o600 });
+    return;
+  }
+  if (kept !== now) throw new SettingsChanged(SETTINGS_CHANGED_LINE);
+}
+
+// The director's confirmation of the computer's settings as they are now (a later part's card calls this).
+export async function confirmComputerSettings({ file, run = realRun, gitPath = 'git', cwd }) {
+  const entries = await readComputerSettings({ run, gitPath, cwd });
+  if (entries === null) throw new Error("Git's settings on this computer could not be read");
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(file, `${JSON.stringify({ fingerprint: settingsFingerprint(entries) }, null, 2)}\n`, { mode: 0o600 });
+}
+
 // git in `cwd`: `git(args, options)` gives run's answer. `list` says which allowed list the look uses:
 // 'own' (the default, so a caller that says nothing gets the strict one) for a repository Wheelhouse
 // made, or 'project' for a director's project repository. `look` is 'each' (look at the repository's
@@ -480,7 +529,7 @@ function refuseFenceOverride(args) {
 // LookRefusal worded for that caller (and `what` names the repository); without it, setup's line.
 export function safeGit({
   run = realRun, gitPath = 'git', cwd, env = {}, reach = 'https', look = 'each', list = 'own', workTree = null, timeoutMs = GIT_WAIT_MS,
-  caller = null, what = null, pushTo = null, allowLocal = false,
+  caller = null, what = null, pushTo = null, allowLocal = false, trust = null,
 } = {}) {
   if (!['each', 'once', 'never'].includes(look)) throw new Error(`safeGit: unknown look ${String(look)}`);
   if (!Object.hasOwn(LISTS, list)) throw new Error(`safeGit: unknown list ${String(list)}`);
@@ -526,8 +575,10 @@ export function safeGit({
       // The address a push goes to, as git works it out with these very settings, is the recorded one: a rewrite in the
       // computer's settings (insteadOf, pushInsteadOf, pushurl) would send the director's sign-in to another repository.
       if (pushing && push) {
-        const where = await run(gitPath, ['remote', 'get-url', '--push', pushTo.remote], { timeoutMs, cwd, baseEnv: withoutGitVars(), env: callEnv });
-        if (where.code !== 0 || String(where.stdout ?? '').trim() !== pushTo.url) {
+        // A push goes to every push address (every pushurl, or every url without one): all of them, and only the recorded one.
+        const where = await run(gitPath, ['remote', 'get-url', '--push', '--all', pushTo.remote], { timeoutMs, cwd, baseEnv: withoutGitVars(), env: callEnv });
+        const lines = String(where.stdout ?? '').split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== '');
+        if (where.code !== 0 || lines.length !== 1 || lines[0] !== pushTo.url) {
           throw new LookRefusal("Git's settings on this computer send pushes for this project to another address, so nothing was pushed. Remove the rewrite (insteadOf, pushInsteadOf or pushurl) for it from your git settings, then try again.");
         }
       }
@@ -545,6 +596,8 @@ export function safeGit({
     if (entries === null) throw new LookRefusal(`Git's settings on this computer could not be read. ${caller === null ? 'Try the push again.' : UNREAD_NEXT[caller]}`);
     const why = settingsRefusal(entries);
     if (why !== null) throw new LookRefusal(`Git's settings on this computer ${why}, which Wheelhouse does not allow for a push. Remove that setting, then try again.`);
+    // What the computer's settings were when as-is pushing was first used: a change since is the director's to confirm.
+    if (trust !== null && subcommandOf(args) === 'push') checkTrusted(trust.file, entries);
     const extras = hookNames(entries).map((name) => [`hook.${name}.enabled`, 'false']);
     if (pushTo !== null && /^https?:\/\//i.test(pushTo.url)) extras.push([`http.${pushTo.url}.sslVerify`, 'true']);
     const count = Number.parseInt(given.GIT_CONFIG_COUNT ?? '0', 10) || 0;

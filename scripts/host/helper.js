@@ -1395,7 +1395,7 @@ export async function startHelper({
     // A local path runs the other end's programs unfenced: a project's remote is never one.
     if (reach === 'push-local') refuse('the project\'s repository is a folder on this computer, which the director\'s own git settings are not used for');
     const git = safeGit({
-      run, cwd: mirror, reach, env: GIT_BASE, timeoutMs: HOST_MS, caller: 'helper', what: "the project's mirror repository", pushTo: { remote: REMOTE, url },
+      run, cwd: mirror, reach, env: GIT_BASE, timeoutMs: HOST_MS, caller: 'helper', what: "the project's mirror repository", pushTo: { remote: REMOTE, url }, trust: { file: path.join(wheelhouseHome(), 'host', 'git-settings.json') },
     });
     return (file, args, options = {}) => {
       if (file !== 'git' || subcommandOf(args) !== 'push') throw new Error('the director\'s own git settings are let in for a push and nothing else');
@@ -1555,7 +1555,7 @@ export async function startHelper({
       try {
         pushed = await pusher('git', ['push', '--no-verify', '--porcelain', REMOTE, `${checked.sha}:refs/heads/${keepAs}`], { cwd: mirror });
       } catch (error) {
-        if (error instanceof LookRefusal) return { ok: false, refused: error.message };
+        if (error instanceof LookRefusal) return { ok: false, refused: error.message, ...(error.code ? { code: error.code } : {}) };
         throw error;
       }
       if (pushed.code === 0) {

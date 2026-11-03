@@ -15,7 +15,7 @@ import { writeProject } from '../../../scripts/lib/projects.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { safeGit, safeGitEnv, pushReachFor, sshRemote, PUSH_REACHES, settingsRefusal, settingsText } from '../../../scripts/lib/safe-git.js';
+import { safeGit, safeGitEnv, pushReachFor, sshRemote, PUSH_REACHES, settingsRefusal, settingsText, confirmComputerSettings } from '../../../scripts/lib/safe-git.js';
 import { childEnv } from '../../../scripts/host/connection.js';
 import { as, shortHome, testAddress, tempFolder } from '../../helpers/homes.js';
 import { makeBareRemote, LOOPBACK_HTTP } from '../../helpers/git-fixture.js';
@@ -375,6 +375,8 @@ const REDIRECTS = {
   'a global url.pushInsteadOf': (url) => `[url "http://127.0.0.1:9/elsewhere/"]\n\tpushInsteadOf = ${url}\n`,
   'a global url.insteadOf': (url) => `[url "http://127.0.0.1:9/elsewhere/"]\n\tinsteadOf = ${url}\n`,
   'a global remote.origin.pushurl': () => '[remote "origin"]\n\tpushurl = http://127.0.0.1:9/elsewhere/o/p.git\n',
+  'a second global pushurl after the recorded one': (url) => `[remote "origin"]\n\tpushurl = ${url}\n\tpushurl = http://127.0.0.1:9/elsewhere/o/p.git\n`,
+  'a second global url for the remote': () => '[remote "origin"]\n\turl = http://127.0.0.1:9/elsewhere/o/p.git\n',
   'a global pushInsteadOf to an address that is not this computer\'s': (url) => `[url "https://example.org/o/p.git"]\n\tpushInsteadOf = ${url}\n`,
 };
 for (const [name, config] of Object.entries(REDIRECTS)) {
@@ -443,7 +445,9 @@ test('what was checked is what the push uses: a hook added to the computer\'s fi
   const root = fs.realpathSync.native(tempFolder('wh-late-'));
   const sign = signIn(root);
   const late = marker(root, 'late-hook');
-  const copies = () => fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('wh-settings-')).sort();
+  const copiesDir = path.join(c.home, 'settings-copies');
+  const copies = () => (fs.existsSync(copiesDir) ? fs.readdirSync(copiesDir).sort() : []);
+  const seen = [];
   try {
     await withDirectorsGit(`[credential]\n\thelper = !${sign.file}\n`, async (home) => {
       assert.deepEqual(await c.push({ project: PROJECT, dir: c.dir, refspec: 'feature' }), { ok: true }); // makes the mirror
@@ -451,6 +455,7 @@ test('what was checked is what the push uses: a hook added to the computer\'s fi
       const sneaky = (file, args, options) => {
         // Between the check and the push, the computer's files change.
         if (args[0] === 'remote' && args[1] === 'get-url') {
+          seen.push(options.env.GIT_CONFIG_GLOBAL);
           fs.appendFileSync(path.join(home, '.gitconfig'), `[hook "late"]\n\tevent = pre-push\n\tcommand = ${late.file}\n`);
         }
         return run(file, args, options);
@@ -458,11 +463,59 @@ test('what was checked is what the push uses: a hook added to the computer\'s fi
       const git = safeGit({ run: sneaky, cwd: c.mirror(), reach: 'push-loopback', caller: 'helper', pushTo: { remote: 'origin', url: repo.url } });
       const sha = /^(\w+)\trefs\/heads\/feature$/m.exec(await heads(repo.remote.url))[1];
       await run('git', ['update-ref', 'refs/heads/second', sha], { cwd: c.mirror() });
-      const got = await git(['push', '--no-verify', 'origin', 'refs/heads/second:refs/heads/second']);
+      const got = await as(c.home, () => git(['push', '--no-verify', 'origin', 'refs/heads/second:refs/heads/second']));
       assert.equal(got.code, 0, String(got.stderr));
+      // The copy was made under the Wheelhouse home, which agents can't write, and not in a temporary folder.
+      assert.equal(seen.length, 1);
+      assert.equal(path.dirname(path.dirname(seen[0])), copiesDir);
       assert.equal(late.ran(), false, 'the hook added after the check did not run');
       assert.deepEqual(copies(), before, 'the private copy of the settings is gone');
     });
+  } finally { await c.close(); await repo.cleanup(); }
+});
+
+test('a change to the computer\'s sign-in settings since the first push is refused with a code until the director confirms it', { skip: !unix && 'the credential helper is a shell script' }, async () => {
+  const repo = await privateRepo();
+  const c = await computer(repo);
+  const root = tempFolder('wh-helperbin-');
+  const first = signIn(root);
+  const second = marker(root, 'other-helper', `if [ "$1" = get ]; then\n  echo username=x-access-token\n  echo password=${TOKEN}\nfi\n`);
+  const file = path.join(c.home, 'host', 'git-settings.json');
+  const push = (branch = 'feature') => c.push({ project: PROJECT, dir: c.dir, refspec: branch });
+  try {
+    await withDirectorsGit(`[credential]\n\thelper = !${first.file}\n`, async () => {
+      assert.deepEqual(await push(), { ok: true });
+      assert.equal(fs.existsSync(file), true, 'the first push recorded the settings');
+      assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).fingerprint.length, 64);
+    });
+    // Settings that are not the sign-in, proxy, certificate or rewrites change nothing; the same ones again pass.
+    await withDirectorsGit(`[credential]\n\thelper = !${first.file}\n[user]\n\tname = Someone\n[alias]\n\tst = status\n`, async () => {
+      assert.deepEqual(await push(), { ok: true });
+    });
+    for (const [name, config] of [
+      ['another helper', `[credential]\n\thelper = !${second.file}\n`],
+      ['an added helper', `[credential]\n\thelper = !${first.file}\n\thelper = !${second.file}\n`],
+      ['a proxy', `[credential]\n\thelper = !${first.file}\n[http]\n\tproxy = http://proxy.example.org:8080\n`],
+      ['a sshCommand', `[credential]\n\thelper = !${first.file}\n[core]\n\tsshCommand = ssh -i /x\n`],
+      ['an included file', `[credential]\n\thelper = !${first.file}\n[include]\n\tpath = /nowhere/more.config\n`],
+      ['a rewrite for another address', `[credential]\n\thelper = !${first.file}\n[url "ssh://git@other.example.org/"]\n\tinsteadOf = https://other.example.org/\n`],
+    ]) {
+      await withDirectorsGit(config, async () => {
+        const answer = await push();
+        assert.equal(answer.ok, false, name);
+        assert.equal(answer.code, 'git-settings-changed', name);
+        assert.match(answer.refused, /changed since setup/, name);
+        assert.match(answer.refused, /director needs to confirm/, name);
+      });
+    }
+    first.clear();
+    second.clear();
+    // The director's confirmation records the settings as they are; the push then goes.
+    await withDirectorsGit(`[credential]\n\thelper = !${second.file}\n`, async () => {
+      await as(c.home, () => confirmComputerSettings({ file, cwd: c.mirror() }));
+      assert.deepEqual(await push(), { ok: true });
+    });
+    assert.equal(first.ran(), false, 'the refused pushes never asked the old helper');
   } finally { await c.close(); await repo.cleanup(); }
 });
 

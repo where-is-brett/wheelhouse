@@ -395,12 +395,14 @@ function gitPushes(args) {
 // Whether a git command line (the words after the `git` word) reaches the director's own git settings: `git credential`
 // (which hands a key to every helper, or stores one), `git config` on the global or system file, or on a file that is one
 // of the computer's settings files (`--file`, `-f`). `named` says whether a word names such a file.
-function gitReachesSettings(args, named) {
+function gitReachesSettings(args, named, redirected = false) {
   let sub = null;
   let at = 0;
+  let moved = redirected;
   for (let i = 0; i < args.length; i += 1) {
     const w = args[i];
     if (w.startsWith('-')) {
+      if (/^--git-dir(?:=|$)/.test(w)) moved = true;
       if (GIT_VALUE_OPTIONS.has(w)) i += 1;
     } else {
       sub = w;
@@ -411,6 +413,8 @@ function gitReachesSettings(args, named) {
   if (sub === null) return false;
   if (sub === 'credential' || sub.startsWith('credential-')) return true;
   if (sub !== 'config') return false;
+  // `GIT_DIR`, `GIT_CONFIG_GLOBAL` or `GIT_CONFIG_SYSTEM` given for it, or `--git-dir`, can make any folder the settings file.
+  if (moved) return true;
   const rest = args.slice(at);
   return rest.some((w, i) => ['--global', '--system'].includes(w)
     || (/^(?:--file|-f)$/.test(w) && named(rest[i + 1] ?? ''))
@@ -594,6 +598,9 @@ function bashRefused(command, ctx, depth = 0) {
   let dirs = ctx.dirs === undefined ? (ctx.cwd ? [ctx.cwd] : null) : ctx.dirs;
   const again = (text) => bashRefused(text, inContext(dirs), depth + 1);
   const nameOf = (w) => fold(lastPart(w)).replace(/\.exe$/, '');
+  // A variable that moves git's settings files, given anywhere on the line (`GIT_DIR=x git config`, `env GIT_DIR=x ...`,
+  // `export GIT_DIR=x; ...`, `$env:GIT_DIR = 'x'`).
+  const redirectsGit = segs.some((seg) => seg.some((w) => /^(?:\$env:)?(?:GIT_DIR|GIT_CONFIG_GLOBAL|GIT_CONFIG_SYSTEM|GIT_CONFIG)(?:=|$)/i.test(w)));
   // Whether a word names one of the director's git settings files, by its spelling here, a variable for the home folder
   // or `~`, and every spelling of the place (links). Only words that end in a settings file's name are looked into.
   const namesSettings = (word) => {
@@ -648,7 +655,7 @@ function bashRefused(command, ctx, depth = 0) {
       if (GIT_PUSHERS.has(names[i])) return true;
       if (names[i] === 'git' && gitPushes(seg.slice(i + 1))) return true;
       if (ctx.settings !== undefined) {
-        if (names[i] === 'git' && gitReachesSettings(seg.slice(i + 1), namesSettings)) return true;
+        if (names[i] === 'git' && gitReachesSettings(seg.slice(i + 1), namesSettings, redirectsGit)) return true;
         // A word that names one of the director's git settings files: refused unless it is only read, by a reader
         // command or by a `<` redirect. The file a `>` redirect writes is the first word of its own segment.
         if ([word, value].some((candidate) => namesSettings(candidate))) {
