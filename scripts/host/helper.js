@@ -5798,10 +5798,10 @@ export async function startHelper({
   // What keeps the helper from stopping now, in a few plain words, or null when it is idle. Doubt counts as busy.
   function busyWith() {
     try {
-      if (closing) return null;
       if (setup.busy()) return 'a setup step is running';
       if (queues.size > 0) return 'a push or merge is under way';
-      for (const { project, dispatcher } of engineHosts) {
+      for (const { project, dispatcher, checks } of engineHosts) {
+        if (checks.running()) return 'a check is running';
         if (engineRunsAtWork(project).length > 0) return 'a build run is going';
         if (dispatcher.goalInForce()) return 'a goal is in force';
       }
@@ -5811,8 +5811,15 @@ export async function startHelper({
     }
   }
 
+  // Set from the moment the helper has said it will make way, so nothing new starts between that answer and the close.
+  let retiring = false;
+
   async function handle(req, res) {
     const url = new URL(req.url ?? '/', 'http://helper');
+    if ((closing || retiring) && url.pathname !== '/health') {
+      req.resume();
+      return send(res, 200, { ok: false, refused: 'the helper is making way for a newer one; ask again' });
+    }
     if (url.pathname === '/health') {
       const away = awayLog.fresh();
       const roomOpen = room?.line() ?? null;
@@ -5844,6 +5851,7 @@ export async function startHelper({
       // merge, engine run or goal under way. Otherwise it says what keeps it, and goes on.
       const why = busyWith();
       if (why !== null) return send(res, 200, { ok: true, retired: false, busy: why });
+      retiring = true;
       res.once('finish', () => { Promise.resolve().then(() => onStop(close)).catch(() => {}); });
       return send(res, 200, { ok: true, retired: true });
     }

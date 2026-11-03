@@ -180,6 +180,21 @@ test('/helper/retire closes an idle helper once its answer has gone', async () =
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
+test('once /helper/retire has said it will stop, every other request is refused, so nothing new starts before the close', async () => {
+  const home = shortHome();
+  try {
+    await as(home, async () => {
+      await withHelper(fakeAdapter(), async (client) => {
+        assert.equal((await client.retire()).retired, true);
+        const later = await client.retire();
+        assert.equal(later.ok, false);
+        assert.match(later.refused, /making way for a newer one; ask again/);
+        assert.equal((await client.health()).ok, true, 'health still answers');
+      }, { onStop: () => {} });
+    });
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
 test('the helper answers on a socket, and on a named pipe on Windows', async () => {
   const home = shortHome();
   try {

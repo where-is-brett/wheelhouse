@@ -308,6 +308,19 @@ test('one check at a time: a tick during a run starts nothing', () => withHome(a
   await runner.idle();
 }));
 
+test('running says whether a check is under way, for a helper deciding whether it is idle', () => withHome(async () => {
+  let release;
+  const { w, runner } = world({ hold: () => new Promise((resolve) => { release = resolve; }) });
+  assert.equal(runner.running(), false);
+  await runner.took(HEAD, 'w-1');
+  await runner.tick();
+  await until(() => w.ran.length === 1);
+  assert.equal(runner.running(), true);
+  release();
+  await runner.idle();
+  assert.equal(runner.running(), false);
+}));
+
 test('a stopped check is could-not-run and runs after All stop lifts', () => withHome(async () => {
   const { w, runner } = world({ hold: (signal) => new Promise((resolve) => { signal.addEventListener('abort', resolve, { once: true }); }) });
   await runner.tick();

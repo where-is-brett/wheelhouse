@@ -410,5 +410,7 @@ export function checkRunner({
       await active;
     },
     idle: async () => { await active; },
+    // Whether a check is under way now.
+    running: () => active !== null,
   };
 }
