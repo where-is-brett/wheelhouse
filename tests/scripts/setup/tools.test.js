@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   toolsStatus, startInstaller, fetchHostTool, toolsStep, hostToolsFor, nodeRefusal, openCommand, pickInstaller, notesChecksums,
-  NODE_LINE, INSTALL_COMMANDS, MAC_INSTALLER, GIT_INSTALLER_ARGS, ChecksumError,
+  NODE_LINE, INSTALL_COMMANDS, MAC_INSTALLER, GIT_INSTALLER_ARGS, ChecksumError, stageOf, curlStatus,
 } from '../../../scripts/setup/tools.js';
 import { STEPS, planHash } from '../../../scripts/setup/steps.js';
 import { runApply, setupRoutes } from '../../../scripts/setup/engine.js';
@@ -699,4 +699,63 @@ test('a Mac whose projects are all on GitLab gets no engine in step 2', async ()
     const other = await step.plan(ctxFor(folder));
     assert.ok(other.changes.some((c) => c.action === 'engine'));
   });
+});
+
+// ---- A tool that will not start, a download that is refused, and the system's curl ----
+
+function gitlabFolder() {
+  const folder = fs.realpathSync.native(tempFolder('wh-proj '));
+  fs.mkdirSync(path.join(folder, '.git'));
+  fs.writeFileSync(path.join(folder, '.git', 'config'), '[remote "origin"]\n\turl = https://gitlab.com/team/product.git\n');
+  const file = path.join(folder, '.claude', 'settings.local.json');
+  fs.mkdirSync(path.dirname(file));
+  fs.writeFileSync(file, JSON.stringify({ permissions: { allow: SETUP_RULES } }));
+  return folder;
+}
+
+test('a glab that is found but will not start is blocked: nothing is fetched, no release page is asked, and the step settles', async () => {
+  await withHome(async () => {
+    const folder = gitlabFolder();
+    // glab is on the path, but `glab --version` fails (company policy).
+    const m = machine({ paths: { git: '/usr/bin/git', node: '/usr/local/bin/node', glab: '/opt/blocked/glab' }, versions: { git: '2.39.5', node: '22.3.0' } });
+    const step = toolsStep({ engine: null, run: m.run, fetch: noFetch, pluginRoot: PLUGIN, env: {} });
+    const planned = await step.plan(ctxFor(folder));
+    assert.deepEqual(planned, { settled: { record: { nothing: true, blocked: ['glab'] } } });
+    assert.equal(stageOf({ found: true, ok: false }), 'blocked');
+    assert.equal(stageOf({ found: false, ok: false }), 'missing');
+    assert.equal(stageOf({ found: true, ok: true }), 'works');
+  });
+});
+
+test('a glab that is missing is still offered for fetching', async () => {
+  await withHome(async () => {
+    const folder = gitlabFolder();
+    const m = machine({ paths: { git: '/usr/bin/git', node: '/usr/local/bin/node' }, versions: { git: '2.39.5', node: '22.3.0' } });
+    const step = toolsStep({ engine: null, run: m.run, fetch: noFetch, pluginRoot: PLUGIN, env: {} });
+    const planned = await step.plan(ctxFor(folder));
+    assert.deepEqual(planned.changes.map((c) => [c.action, c.tool]), [['fetch', 'glab']]);
+  });
+});
+
+test('a refused download of the official release settles the project on the host\'s web API: it is said, and the step goes on', async () => {
+  await withHome(async () => {
+    const folder = gitlabFolder();
+    const m = machine({ paths: { git: '/usr/bin/git', node: '/usr/local/bin/node' }, versions: { git: '2.39.5', node: '22.3.0' } });
+    const refused = async () => { throw new Error('the company\'s proxy refused the download'); };
+    const step = toolsStep({ engine: null, run: m.run, fetch: refused, pluginRoot: PLUGIN, env: {} });
+    const planned = await step.plan(ctxFor(folder));
+    const said = [];
+    const done = await step.apply({ ...ctxFor(folder), record: () => {}, applyJsonKey: () => {}, stopped: () => false, say: (line) => said.push(line) }, planned.changes);
+    assert.deepEqual(done, []);
+    assert.deepEqual(said, ['glab could not be fetched on this computer, so Wheelhouse will reach the host without it']);
+    assert.equal(fs.existsSync(toolFolder('glab')), false);
+    assert.ok(!said.join(' ').match(/REST|curl/));
+  });
+});
+
+test('curl is found by full path only, and its absence is said as not found', () => {
+  assert.deepEqual(curlStatus({ platform: 'darwin', exists: (file) => file === '/usr/bin/curl' }), { found: true, path: '/usr/bin/curl' });
+  assert.deepEqual(curlStatus({ platform: 'darwin', exists: () => false }), { found: false, path: null });
+  const found = curlStatus({ platform: 'win32', gitPath: 'C:\\Program Files\\Git\\cmd\\git.exe', exists: (file) => file.endsWith('Git\\cmd\\curl.exe') });
+  assert.equal(found.found, true);
 });

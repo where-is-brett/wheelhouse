@@ -29,6 +29,10 @@ import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { confirmLine } from '../../../scripts/state/card-lines.js';
 import { makeBareRemote } from '../../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress, withHome } from '../../helpers/homes.js';
+import { useFileKeyStore } from '../../helpers/file-key-store.js';
+
+// Keys are kept in key files under the test's home, not in the computer's own store.
+useFileKeyStore();
 
 // No host tool runs for real: the helper's runs go through this, and the log stays empty.
 const hostLog = [];

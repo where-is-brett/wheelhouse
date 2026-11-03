@@ -173,9 +173,13 @@ export async function readSecret(where, platform = process.platform, runner = ru
 }
 
 export async function deleteSecret(where, platform = process.platform, runner = run) {
+  let failed = false;
   try {
-    await runner(deleteSecretCommand(platform, where), readSecretInput(platform, where));
+    const result = await runner(deleteSecretCommand(platform, where), readSecretInput(platform, where));
+    failed = result?.code !== 0;
   } catch {
-    // Nothing to delete, or nothing to delete it with.
+    failed = true;
   }
+  // A secret that was not there is already gone. One that is still readable after a failed delete was not removed.
+  if (failed && (await readSecret(where, platform, runner)) !== null) throw new Error('The secret could not be deleted');
 }

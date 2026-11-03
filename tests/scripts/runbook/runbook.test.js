@@ -29,6 +29,10 @@ import { approvalLine, runbookLine } from '../../../scripts/state/card-lines.js'
 import { listEvents } from '../../../scripts/state/events.js';
 import { makeBareRemote, push as plainPush, g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress } from '../../helpers/homes.js';
+import { useFileKeyStore } from '../../helpers/file-key-store.js';
+
+// Keys are kept in key files under the test's home, not in the computer's own store.
+useFileKeyStore();
 import { matchingBody } from '../../helpers/provenance.js';
 import { makeFakeCurl } from '../../helpers/fake-curl.js';
 

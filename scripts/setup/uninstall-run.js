@@ -69,7 +69,7 @@ import { removeLoginStart } from '../lib/login-start.js';
 import { STEP_TIMEOUT_MS } from '../lib/setup-numbers.js';
 import { profileRemote } from '../profile/store.js';
 import { adapterOf } from '../host/adapter-for.js';
-import { deleteKey } from '../host/keys.js';
+import { removeKey } from '../host/keys.js';
 import { checkBaseUrl, projectPath } from '../host/gitlab-key.js';
 import { GITLAB_URL, appKeys, connectionInstallationPage, installationPages, revokeGitlabKey } from '../host/cut-access.js';
 import { stopForeman, stopWatcher } from '../foreman/start.js';
@@ -698,8 +698,8 @@ export async function applyUninstall({
         case 'delete-key': {
           // On a shared project the installation is the other computers' too: it is left, and no
           // page is given (ruling R124).
-          const urls = entry.shared ? [] : installationPages(appKeys());
-          deleteKey('github-app');
+          const urls = entry.shared ? [] : await installationPages(await appKeys());
+          await removeKey('github-app');
           mark(entry.ids, true);
           say(entry.shared
             ? 'The GitHub app\'s keys are deleted from this computer. The app stays installed on GitHub, as your other computers use it.'
@@ -709,7 +709,7 @@ export async function applyUninstall({
         }
         case 'untick-repository': {
           say(`Another project here still uses the GitHub app, so its keys stay: on its installation page, untick ${entry.repo} under repository access, then Save.`);
-          await page('the app\'s installation page', connectionInstallationPage(record?.connection));
+          await page('the app\'s installation page', await connectionInstallationPage(record?.connection));
           break;
         }
         case 'revoke-key': {
@@ -723,7 +723,7 @@ export async function applyUninstall({
             halt(`GitLab did not revoke the ${entry.pasted ? 'token' : 'project key'}${got.status === null ? ' (it could not be reached)' : ` (HTTP ${got.status})`}, so its file was kept: open ${got.url}, revoke it, then ask for uninstall's plan again`);
           }
           // A key GitLab no longer accepts no longer works anywhere: its file goes too.
-          if (got.status === 401) deleteKey(entry.key);
+          if (got.status === 401) await removeKey(entry.key);
           mark(entry.ids, true, got.found ? undefined : 'no key was kept on this computer');
           say(got.found ? `${entry.line}.` : `No GitLab key was kept on this computer; check ${got.url} for any Wheelhouse made.`);
           break;

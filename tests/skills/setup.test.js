@@ -294,3 +294,12 @@ test('step 10\'s green board: the playbook runs resume at once and asks its card
   assert.ok(playbook.includes('| "The Logbook is green; I\'ll sum it up and move on" | `resume` at once'), 'a red flag for it');
   assert.match(playbook.split(`## Step ${PUSH_TEST_STEP}, `)[1], /opens with the verdict and the first briefing/);
 });
+
+test('the playbook says how step 3 reaches the host: as-is first, the key card, no REST or curl words to the director', () => {
+  const section = playbook.split('## Reaching the host')[1]?.split('\n## ')[0] ?? '';
+  assert.ok(section, 'a section for it');
+  assert.match(section, /\*\*Use my git as it is\*\* is the first card option/);
+  assert.match(section, /replaces that one entry/);
+  assert.match(section, /never use the words "REST" or "curl" to the director/);
+  assert.match(section, /one-off Administration key/);
+});

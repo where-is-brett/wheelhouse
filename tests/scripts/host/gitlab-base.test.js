@@ -17,6 +17,10 @@ import { makeFakeCurl } from '../../helpers/fake-curl.js';
 import { commitAuthor } from '../../../scripts/setup/project-files.js';
 import { hostToolsFor } from '../../../scripts/setup/tools.js';
 import { tempFolder } from '../../helpers/homes.js';
+import { useFileKeyStore } from '../../helpers/file-key-store.js';
+
+// Keys are kept in key files under the test's home, not in the computer's own store.
+useFileKeyStore();
 
 const SCRIPTS = fileURLToPath(new URL('../../../scripts/', import.meta.url));
 const COMPANY = 'https://git.example.org';

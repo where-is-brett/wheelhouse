@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { readKey, writeKey, findKey, saveKey, moveKeysToStore } from '../../../scripts/host/keys.js';
+import { readKey, writeKey, findKey, saveKey, removeKey, moveKeysToStore } from '../../../scripts/host/keys.js';
 import { withHome } from '../../helpers/homes.js';
 import { keysDir } from '../../../scripts/lib/paths.js';
 
@@ -118,5 +118,32 @@ test('a move that fails or reads back differently leaves the file for the next s
 test('moveKeysToStore with no keys folder moves nothing', async () => {
   await withHome(async () => {
     assert.deepEqual(await moveKeysToStore({ store: memoryStore() }), { moved: [], failed: [] });
+  });
+});
+
+test('removeKey clears the store and the key file, and a key that is not there is already gone', async () => {
+  await withHome(async () => {
+    const kept = new Map([['github-app', { accessToken: 'from-store' }]]);
+    const store = { readKey: async (name) => kept.get(name) ?? null, deleteKey: async (name) => { kept.delete(name); } };
+    writeKey('github-app', { accessToken: 'from-file' });
+    await removeKey('github-app', { store });
+    assert.equal(kept.size, 0, 'the store holds none');
+    assert.equal(readKey('github-app'), null, 'the file is gone');
+    assert.equal(await findKey('github-app', { store }), null);
+    await removeKey('github-app', { store });
+    await assert.rejects(removeKey('signing', { store }), /key name/);
+  });
+});
+
+test('removeKey names the key, not its value, when the store cannot delete it', async () => {
+  await withHome(async () => {
+    writeKey('github-app', { accessToken: 'ghu_LEAKED' });
+    const store = { deleteKey: async () => { throw new Error('boom ghu_LEAKED'); } };
+    await assert.rejects(removeKey('github-app', { store }), (error) => {
+      assert.match(error.message, /github-app/);
+      assert.doesNotMatch(error.message, /LEAKED/);
+      return true;
+    });
+    assert.equal(readKey('github-app').accessToken, 'ghu_LEAKED', 'the file stays when the store could not clear');
   });
 });

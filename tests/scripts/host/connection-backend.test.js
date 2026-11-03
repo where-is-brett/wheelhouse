@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { childEnv, renewalDue, backendOf, readEnv } from '../../../scripts/host/connection.js';
-import { findKey, readKey, writeKey } from '../../../scripts/host/keys.js';
+import { findKey, readKey, writeKey, useKeyStore } from '../../../scripts/host/keys.js';
 import { deleteAppKeys } from '../../../scripts/host/cut-access.js';
 import { withHome } from '../../helpers/homes.js';
 
@@ -29,10 +29,14 @@ test('a backend other than cli or rest is refused, and a switch names only the b
   await assert.rejects(childEnv({ ...base, backend: 'rest', switched: 'rest' }), /switched must name the backend it left/);
 });
 
-test('a renewed key is kept in the key file, not the store, so cutting access leaves no key that findKey can see', async () => {
+test('a renewed key is kept in the computer\'s store, and cutting access removes it from there and from the key file', async () => {
   await withHome(async () => {
-    const wrote = [];
-    const store = { readKey: async () => null, storeKey: async (name) => { wrote.push(name); } };
+    const kept = new Map();
+    const store = {
+      readKey: async (name) => kept.get(name) ?? null,
+      storeKey: async (name, value) => { kept.set(name, value); },
+      deleteKey: async (name) => { kept.delete(name); },
+    };
     writeKey('github-app', {
       clientId: 'Iv1.abc', installationId: 99, accessToken: 'ghu_CURRENT', accessExpiresAt: at(MINUTE),
       refreshToken: 'ghr_CURRENT', refreshExpiresAt: at(180 * 24 * 60 * MINUTE),
@@ -43,10 +47,16 @@ test('a renewed key is kept in the key file, not the store, so cutting access le
     });
     const env = await childEnv(GITHUB, { fetch, now, keys: { store } });
     assert.equal(env.GH_TOKEN, 'ghu_RENEWED');
-    assert.deepEqual(wrote, [], 'nothing is written to the store');
-    assert.equal(readKey('github-app').accessToken, 'ghu_RENEWED');
-    deleteAppKeys(GITHUB);
-    assert.equal(await findKey('github-app', { store }), null);
+    assert.equal(kept.get('github-app').accessToken, 'ghu_RENEWED', 'the renewed key is in the store');
+    assert.equal(readKey('github-app').accessToken, 'ghu_CURRENT', 'the old key file is left as it was until the keys move');
+    const restore = useKeyStore(store);
+    try {
+      await deleteAppKeys(GITHUB);
+    } finally {
+      restore();
+    }
+    assert.equal(await findKey('github-app', { store }), null, 'no key is left for findKey to see');
+    assert.equal(readKey('github-app'), null, 'the key file is gone too');
   });
 });
 

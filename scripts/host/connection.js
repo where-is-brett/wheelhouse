@@ -16,6 +16,8 @@
 //     locked?: boolean,     the project's protection level is Locked
 //     installationId?: number,  GitHub narrow: the app's installation on the project's
 //                           account, kept when step 3 connected it
+//     directorSignIn?: 'narrow-key',  GitHub: the director's own tool sign-in was made with a key for this
+//                           project only, which has no Administration, so step 7 asks for the one-off key
 //   }
 //
 // It is kept in the project's settings and holds no secret. Quick uses the
@@ -27,7 +29,7 @@
 import { renewKeys } from './github-app.js';
 import { checkBaseUrl } from './gitlab-key.js';
 import { DEFAULT_GITLAB } from './gitlab-base.js';
-import { findKey, writeKey } from './keys.js';
+import { findKey, saveKey } from './keys.js';
 import { borrowKey } from './store.js';
 
 const RENEW_WITHIN_MS = 10 * 60 * 1000;
@@ -59,6 +61,7 @@ function check(connection) {
   }
   if (connection.backend !== undefined && !BACKENDS.includes(connection.backend)) throw new Error('The connection\'s backend must be cli or rest');
   if (connection.switched !== undefined && connection.switched !== 'cli') throw new Error('The connection\'s switched must name the backend it left');
+  if (connection.directorSignIn !== undefined && connection.directorSignIn !== 'narrow-key') throw new Error('The connection\'s directorSignIn must be narrow-key');
   if (connection.installationId !== undefined && !validId(connection.installationId)) {
     throw new Error('The connection\'s installation must be a number');
   }
@@ -135,8 +138,8 @@ export async function githubAccessKey({ fetch, now, keys: deps }) {
   const renewal = typeof fresh.refreshToken === 'string' && fresh.refreshToken !== ''
     ? { refreshToken: fresh.refreshToken, refreshExpiresAt: fresh.refreshExpiresAt }
     : {};
-  // Kept where setup, cut-access and uninstall still read and delete keys (the file), not the store, until they move.
-  writeKey('github-app', { ...kept, accessToken: fresh.accessToken, accessExpiresAt: fresh.accessExpiresAt, ...renewal });
+  // Kept in the computer's store, where setup, cut-access and uninstall now read and remove keys too.
+  await saveKey('github-app', { ...kept, accessToken: fresh.accessToken, accessExpiresAt: fresh.accessExpiresAt, ...renewal }, deps);
   return fresh.accessToken;
 }
 

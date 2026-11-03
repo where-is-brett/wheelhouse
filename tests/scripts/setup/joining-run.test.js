@@ -23,7 +23,7 @@ import { stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { buildManifest, MARKETPLACE } from '../../../scripts/lineage/manifest.js';
 import { starterConfig } from '../../../scripts/setup/project-files.js';
 import { LIVE_DATA } from '../../../scripts/setup/questions.js';
-import { HOST_LABELS, WAYS, fromOtherComputer } from '../../../scripts/setup/host.js';
+import { HOST_LABELS, WAYS, fromOtherComputer, directorKey } from '../../../scripts/setup/host.js';
 import { READY, ARRIVED, READY_ID, ARRIVED_ID } from '../../../scripts/setup/notify.js';
 import { PUSH_TEST_WAIT_MS } from '../../../scripts/lib/setup-numbers.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
@@ -35,6 +35,12 @@ const hostGuard = guardedRun(realRun, { log: hostLog });
 after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 import { g } from '../../helpers/git-fixture.js';
 import { tempFolder } from '../../helpers/homes.js';
+import { useFileKeyStore } from '../../helpers/file-key-store.js';
+
+// Keys are kept in key files under the test's home, not in the computer's own store.
+useFileKeyStore();
+// The director's own git holds no key here: nothing on the computer running the test is borrowed.
+directorKey.borrow = async () => null;
 import { withProject, T0 } from '../../helpers/setup-answers.js';
 
 const JOIN_STEPS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'helpers', 'setup-join-steps.js');
@@ -103,6 +109,7 @@ test('a second computer runs steps 1, 2, 3, 6, 7 (this computer\'s files only), 
       const name = path.basename(file).replace(/\.(exe|cmd)$/, '');
       if (name === 'gh') {
         calls.push(args);
+        if (args[0] === 'version') return answer('gh version 2.0.0\n');
         if (args[0] === 'auth' && args[1] === 'status') return answer('', 0, 'Logged in');
         if (args[0] === 'api' && args[1] === 'user') return answer(JSON.stringify({ login: USER, id: 4242 }));
         if (args[0] === 'api' && args[1].startsWith('user/memberships/orgs')) return answer('[]');
@@ -181,6 +188,7 @@ test('a second computer runs steps 1, 2, 3, 6, 7 (this computer\'s files only), 
     const asked = [];
     while (three.ask) {
       asked.push(three.ask.id.replace(/-[0-9a-f]{10}$/, ''));
+      assert.ok(asked.length < 6, 'step 3 asks each question once');
       say(three.ask, answers[asked.at(-1)]);
       three = await plan(3);
     }

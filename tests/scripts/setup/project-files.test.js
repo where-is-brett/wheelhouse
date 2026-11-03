@@ -28,7 +28,7 @@ import { FRONT_DESK_ALIAS, MID_SIZED_ALIAS } from '../../../scripts/setup/best-m
 import { readConfig, ROLES, DEFAULT_BUILD_COMMANDS, DEFAULT_HOT_FILES } from '../../../scripts/gate/guardrails.js';
 import { buildManifest, checkInstalled, MARKETPLACE } from '../../../scripts/lineage/manifest.js';
 import { SWITCHED_OFF_PLUGINS, setupCommand, frontDeskCommand, projectSettings, KEYCHAINS } from '../../../scripts/protection/settings.js';
-import { writeProject } from '../../../scripts/lib/projects.js';
+import { writeProject, readProject } from '../../../scripts/lib/projects.js';
 import { stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { caFile, gitCaConfig } from '../../../scripts/host/company-ca.js';
 import { copyTree } from '../../../scripts/lib/copy-tree.js';
@@ -50,6 +50,10 @@ const hostGuard = guardedRun(realRun, { log: hostLog });
 after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 import { g, push as fixturePush, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
+import { useFileKeyStore } from '../../helpers/file-key-store.js';
+
+// Keys are kept in key files under the test's home, not in the computer's own store.
+useFileKeyStore();
 
 const T0 = new Date('2026-10-20T03:00:00.000Z');
 const REPO = 'a-director/Shop';
@@ -207,8 +211,8 @@ async function world({
   };
   // Protection as Task 8's switchOnAsDirector gives it: here it notes what the host held when it
   // was asked, so the order can be read.
-  w.switchOn = async ({ host: on, repo, api, realUsers }) => {
-    w.switched = { realUsers };
+  w.switchOn = async ({ host: on, repo, api, realUsers, env }) => {
+    w.switched = env === undefined ? { realUsers } : { realUsers, env };
     w.protection.push({ host: on, repo, tip: await lsRemote(w.bare, defaultBranch), ...(api ? { api: (await api.get(`/projects/${encodeURIComponent(repo)}`)).status } : {}) });
     return on === 'gitlab'
       ? { available: true, on: true, line: `GitLab blocks direct pushes to ${defaultBranch}.`, askPipelines: true, gaps: w.gaps ?? [] }
@@ -226,9 +230,11 @@ async function world({
   };
   w.via = { run: (...args) => w.curl(...args), curl: '/usr/bin/curl', proxy: null, caFile: null, platform: 'linux' };
   w.status = async () => ({ available: true, on: w.protection.length > 0, line: 'read' });
+  w.adminKey = async () => { throw new Error('no one-off key should be asked for'); };
   w.step = projectFilesStep({
     run: (...args) => w.run(...args), findGit: async () => ({ ok: true, path: 'git' }), claude: () => ({ kind: 'direct', file: 'claude' }),
-    manifest: () => w.manifest, claudeHome: () => w.claudeHome, switchOn: w.switchOn, protectionStatus: w.status,
+    manifest: () => w.manifest, claudeHome: () => w.claudeHome, switchOn: w.switchOn, protectionStatus: (...args) => { w.statusEnv = args[0].env; return w.status(...args); },
+    adminKey: (...args) => w.adminKey(...args),
     gitlab: ({ run, baseUrl: asked }) => { w.asked.push(asked); return directorGitlabApi({ run, via: w.via, baseUrl: asked }); },
     address: () => ADDRESS, node: NODE, pluginRoot: PLUGIN_ROOT,
     best: async (alias) => { w.bestAsked += 1; w.aliases.push(alias); return alias === MID_SIZED_ALIAS ? w.mid : w.best; },
@@ -2112,4 +2118,35 @@ test('a project holding an earlier wording of the section is brought up to the c
     assert.equal(sectionChange().length, 1);
     assert.equal(withCurrentSection(null), null);
   } finally { fs.rmSync(folder, { recursive: true, force: true }); }
+});
+
+// ---- Protection with a sign-in made by a key for one project only ----
+
+test('where the director\'s sign-in was made with a key for this project only, protection asks for the one-off Administration key and uses it for this step alone', async () => {
+  await withHome(async () => {
+    const w = await world();
+    writeProject(SLUG, { folder: w.folder, remoteUrl: w.bare, host: 'github', repo: REPO, connection: { host: 'github', mode: 'narrow', project: REPO, directorSignIn: 'narrow-key' } });
+    const ONE_OFF = 'stand-in-ONEOFFADMIN0001';
+    const asked = [];
+    w.adminKey = async (args) => { asked.push(args); return ONE_OFF; };
+    const planned = await w.plan();
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, true, done.reason);
+    assert.equal(asked.length, 1);
+    assert.deepEqual([asked[0].owner, asked[0].name], [REPO.split('/')[0], REPO.split('/')[1]]);
+    assert.deepEqual(w.switched.env, { GH_TOKEN: ONE_OFF }, 'the key goes to protection in its environment, for this call');
+    assert.deepEqual(w.statusEnv, { GH_TOKEN: ONE_OFF });
+    assert.ok(!JSON.stringify(done.run).includes(ONE_OFF), 'it is never kept in the journal');
+    assert.ok(!JSON.stringify(readProject(SLUG)).includes(ONE_OFF), 'nor in the record');
+  });
+});
+
+test('a director with their own full sign-in is never asked for the one-off key', async () => {
+  await withHome(async () => {
+    const w = await world();
+    const planned = await w.plan();
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, true, done.reason);
+    assert.equal(w.switched.env, undefined);
+  });
 });

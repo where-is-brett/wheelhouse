@@ -12,7 +12,7 @@
 // - A Quick connection uses the director's own sign-in, which only they can revoke: nothing is
 //   changed here, and the page where they can is given.
 // No key is ever in an answer, an argument or a log: it goes only into the request's header.
-import { deleteKey, readKey } from './keys.js';
+import { findKey, removeKey } from './keys.js';
 import { checkBaseUrl, gitlabApi, projectPath } from './gitlab-key.js';
 import { installationOf } from './connection.js';
 import { DEFAULT_GITLAB } from './gitlab-base.js';
@@ -23,22 +23,26 @@ export const GITLAB_URL = DEFAULT_GITLAB;
 // The settings page of one installation of the app, or the list of them when its number isn't known.
 export const installationPage = (id) => (Number.isSafeInteger(id) && id > 0 ? `${INSTALLATIONS_PAGE}/${id}` : INSTALLATIONS_PAGE);
 
-// The app's keys as kept on this computer, or null when there are none or the file is damaged.
-export function appKeys() {
+// The app's keys as kept on this computer (the computer's store, else the old key file), or null when there are none
+// or they are damaged.
+export async function appKeys() {
   try {
-    return readKey('github-app');
+    return await findKey('github-app');
   } catch {
     return null;
   }
 }
 
-// The installation of the app a connection uses (ruling R83), as its settings page.
-export const connectionInstallationPage = (connection, keys = appKeys()) => installationPage(installationOf(connection, keys));
+// The installation of the app a connection uses (ruling R83), as its settings page. `keys` are the app's keys, read when left out.
+export async function connectionInstallationPage(connection, keys) {
+  return installationPage(installationOf(connection, keys === undefined ? await appKeys() : keys));
+}
 
 // The settings page of every installation the key file names (one per account, ruling R83, and the
 // single one kept before installations were kept per account), newest kept first; the list of
 // installations when it names none.
-export function installationPages(keys = appKeys()) {
+export async function installationPages(given) {
+  const keys = given === undefined ? await appKeys() : given;
   const ids = [];
   const kept = keys?.installations;
   if (kept !== null && typeof kept === 'object' && !Array.isArray(kept)) ids.push(...Object.values(kept));
@@ -49,9 +53,9 @@ export function installationPages(keys = appKeys()) {
 
 // Deletes the app's keys from this computer. Gives the installation page of `connection` (the
 // project's own installation), read before the keys go.
-export function deleteAppKeys(connection) {
-  const url = connectionInstallationPage(connection);
-  deleteKey('github-app');
+export async function deleteAppKeys(connection) {
+  const url = await connectionInstallationPage(connection);
+  await removeKey('github-app');
   return { url };
 }
 
@@ -65,7 +69,7 @@ export const gitlabKeyPage = ({ base, repo, pasted }) => (pasted ? `${base}/-/us
 // when no key is kept under that name; `status` GitLab's answer (null when it could not be reached).
 export async function revokeGitlabKey({ name, projectId, base, repo, via = {} }) {
   let key = null;
-  try { key = readKey(name); } catch { /* damaged: treated as none */ }
+  try { key = await findKey(name); } catch { /* damaged: treated as none */ }
   const pasted = key?.kind === 'pasted-token';
   const url = gitlabKeyPage({ base, repo, pasted });
   if (typeof key?.token !== 'string' || key.token === '') return { found: false, pasted, url, revoked: false, status: null };
@@ -77,7 +81,7 @@ export async function revokeGitlabKey({ name, projectId, base, repo, via = {} })
   if (status !== null && !revoked(status) && status !== 401 && Number.isInteger(key.id) && key.id > 0) {
     status = await statusOf(() => api.delete(`${projectPath(projectId)}/access_tokens/${key.id}`));
   }
-  if (revoked(status)) deleteKey(name);
+  if (revoked(status)) await removeKey(name);
   return { found: true, pasted, url, revoked: revoked(status), status };
 }
 
@@ -99,7 +103,7 @@ export async function cutAccess({ record, via = {} }) {
   }
   if (host === 'github') {
     // The project's own installation of the app, on its account (ruling R83).
-    const { url } = deleteAppKeys(connection);
+    const { url } = await deleteAppKeys(connection);
     return plainAnswer('Done on this computer: the Wheelhouse app\'s keys were deleted from it, so nothing here can use them. Still for you: the app is still installed on GitHub, and a copy of its keys would still work until the app is suspended or uninstalled. Open the page below and choose Suspend or Uninstall.', { url });
   }
   const got = await revokeGitlabKey({ name: `gitlab-project-${connection.projectId}`, projectId: connection.projectId, base, repo, via });

@@ -83,9 +83,17 @@ export function deleteKey(name) {
 // The computer's own store (scripts/host/store.js) is where keys live. The
 // functions above read and write the old key files, which stay until a key has
 // moved; these reach the store, with the file as the fallback during migration.
-// `deps` is a seam for tests: { store } holding readKey, storeKey and deleteKey.
+// `deps` is a seam for tests: { store } holding readKey, storeKey and deleteKey. `useKeyStore` sets one for a whole
+// process, for a test of a caller that has no `deps` to pass (setup, cut-access, uninstall); it gives a function that
+// puts the computer's own store back.
+let standIn = null;
+export function useKeyStore(store) {
+  standIn = store ?? null;
+  return () => { standIn = null; };
+}
+
 async function storeOf(deps) {
-  return deps?.store ?? (await import('./store.js'));
+  return deps?.store ?? standIn ?? (await import('./store.js'));
 }
 
 // The key under this name from the store, else from the old key file, else null.
@@ -104,6 +112,19 @@ export async function saveKey(name, value, deps) {
   }
   const store = await storeOf(deps);
   await store.storeKey(name, value);
+}
+
+// Removes the key from the store and deletes the old key file too, so no copy is left. A key that is not there is
+// already gone; a store that cannot delete it, or a file that cannot be removed, is an error naming the key.
+export async function removeKey(name, deps) {
+  fileFor(name);
+  const store = await storeOf(deps);
+  try {
+    await store.deleteKey(name);
+  } catch {
+    throw new Error(`Could not remove the key ${name} from the computer's store`);
+  }
+  deleteKey(name);
 }
 
 // Moves every key file into the store. Each file is deleted only after its key
