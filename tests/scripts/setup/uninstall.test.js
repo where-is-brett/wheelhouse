@@ -46,6 +46,10 @@ import { makeBareRemote, g } from '../../helpers/git-fixture.js';
 import { PROFILE_TARGET } from '../../../scripts/setup/own-app.js';
 import { EXCLUDE_LINE, WHEELHOUSE_LINE } from '../../../scripts/setup/project-files.js';
 import { as, shortHome, tempFolder, testAddress, withHome } from '../../helpers/homes.js';
+import { useFileKeyStore } from '../../helpers/file-key-store.js';
+
+// Keys are kept in key files under the test's home, not in the computer's own store.
+useFileKeyStore();
 import { until } from '../../helpers/until.js';
 import { makeFakeCurl } from '../../helpers/fake-curl.js';
 import { decide as sessionStart } from '../../../scripts/hooks/session-start.js';

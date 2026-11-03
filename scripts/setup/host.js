@@ -92,7 +92,7 @@ import { gitlabApi, makeProjectKey, isKeysSwitchedOff, checkBaseUrl, projectPath
 import { tokenUrl } from '../host/token-url.js';
 import { composeCard, isTooLong } from '../cards/compose.js';
 import { DEFAULT_GITLAB, gitlabBase, readGitlabHosts, parseRemote, hostWords, isDefaultHost } from '../host/gitlab-base.js';
-import { readKey, writeKey } from '../host/keys.js';
+import { findKey, saveKey } from '../host/keys.js';
 import { borrowKey } from '../host/store.js';
 import { switchOnProtection, protectionStatus, readGitlabProtection } from '../host/protection.js';
 import { askSecret as realAskSecret } from '../secrets/secret-box.js';
@@ -1398,9 +1398,9 @@ function keptInstallations(kept) {
 const hasInstallation = (kept) => validId(kept?.installationId) || Object.keys(keptInstallations(kept) ?? {}).length > 0;
 
 // Whether a key file is there, without reading what is in it into anything said.
-function keyKept(name) {
+async function keyKept(name) {
   try {
-    return readKey(name) !== null;
+    return (await findKey(name)) !== null;
   } catch {
     return true;
   }
@@ -1408,10 +1408,10 @@ function keyKept(name) {
 
 // The app's keys this computer keeps, when they are for this app; null otherwise. Nothing of the
 // keys is said.
-function keysFor(app) {
+async function keysFor(app) {
   let kept = null;
   try {
-    kept = readKey('github-app');
+    kept = await findKey('github-app');
   } catch { /* a damaged file is signed in again */ }
   return kept && kept.clientId === app?.clientId && typeof kept.accessToken === 'string' && kept.accessToken !== '' ? kept : null;
 }
@@ -1423,8 +1423,8 @@ function keysFor(app) {
 // kept without an installation (an Install page left unfinished), so the Install page is next, with
 // no new code; or null, a code sign-in first. Keys kept before installations were kept per account
 // read as 'installed' on any account; apply asks GitHub.
-export function appKeysState(app, account = null) {
-  const kept = keysFor(app);
+export async function appKeysState(app, account = null) {
+  const kept = await keysFor(app);
   if (kept === null) return null;
   if (!hasInstallation(kept)) return 'signed-in';
   const map = keptInstallations(kept);
@@ -1434,9 +1434,9 @@ export function appKeysState(app, account = null) {
 
 // The client ID of the app whose keys this computer keeps with an installation (so they serve a
 // project), or null. A damaged keys file serves nothing.
-export function keptAppInstalled() {
+export async function keptAppInstalled() {
   try {
-    const kept = readKey('github-app');
+    const kept = await findKey('github-app');
     return kept && typeof kept.clientId === 'string' && hasInstallation(kept) ? kept.clientId : null;
   } catch {
     return null;
@@ -1451,8 +1451,8 @@ function appWords(clientId, { appFile, views }) {
 }
 
 // The app's keys this computer keeps, with the installation, or null.
-export function keptAppKeys(app) {
-  return appKeysState(app) === 'installed' ? keysFor(app) : null;
+export async function keptAppKeys(app) {
+  return (await appKeysState(app)) === 'installed' ? keysFor(app) : null;
 }
 
 // An access key with more than this left is used for the Install page as it is; one nearer its end
@@ -1482,7 +1482,7 @@ async function connectGithubApp({ app, repos, fetch, say, open, sleep, now, reco
       if (now().getTime() >= until) throw new Error(`${what} after ${INSTALL_WAIT_MS / 60000} minutes; a fresh Go ahead asks again`);
     };
   };
-  const previous = keysFor(app);
+  const previous = await keysFor(app);
   let keys = previous;
   // The app's installations as GitHub lists them now, kept with the keys by account; the first one
   // that serves a project stays `installationId`, which readers of keys written before still use.
@@ -1495,7 +1495,7 @@ async function connectGithubApp({ app, repos, fetch, say, open, sleep, now, reco
     const first = validId(keys.installationId) ? keys.installationId : accounts.map((a) => installations[a]).find(validId);
     if (canonicalJson(installations) !== canonicalJson(kept) || first !== keys.installationId) {
       keys = { ...keys, clientId: app.clientId, ...(first === undefined ? {} : { installationId: first }), installations };
-      writeKey('github-app', keys);
+      await saveKey('github-app', keys);
     }
     return listed;
   };
@@ -1534,13 +1534,13 @@ async function connectGithubApp({ app, repos, fetch, say, open, sleep, now, reco
         sleep: async (seconds) => { halt(); await sleep(seconds * 1000); },
       });
       halt();
-      record({ id: newId('chg'), kind: 'host', target: 'key github-app', before: keyKept('github-app') ? { kept: true } : null, after: { key: 'github-app', clientId: app.clientId, app: app.slug } });
+      record({ id: newId('chg'), kind: 'host', target: 'key github-app', before: (await keyKept('github-app')) ? { kept: true } : null, after: { key: 'github-app', clientId: app.clientId, app: app.slug } });
       // The installations the earlier keys held are the app's still: the new sign-in reaches them.
       const held = previous !== null && hasInstallation(previous)
         ? { ...(validId(previous.installationId) ? { installationId: previous.installationId } : {}), installations: keptInstallations(previous) ?? {} }
         : {};
       keys = { clientId: app.clientId, ...signed, ...held };
-      writeKey('github-app', keys);
+      await saveKey('github-app', keys);
     }
     missing = await reach();
   }
@@ -1584,13 +1584,14 @@ async function connectGithubApp({ app, repos, fetch, say, open, sleep, now, reco
 // A project already holding a key is left as it is.
 async function connectGitlabKeys({ api, projects, owner, platform, say, open, askSecret, now, record, halt = () => {} }) {
   const keyName = (p) => `gitlab-project-${p.id}`;
-  const keep = (p, kind, value) => {
-    record({ id: newId('chg'), kind: 'host', target: `key ${keyName(p)}`, before: keyKept(keyName(p)) ? { kept: true } : null, after: { key: keyName(p), project: p.repo, kind } });
-    writeKey(keyName(p), value);
+  const keep = async (p, kind, value) => {
+    record({ id: newId('chg'), kind: 'host', target: `key ${keyName(p)}`, before: (await keyKept(keyName(p))) ? { kept: true } : null, after: { key: keyName(p), project: p.repo, kind } });
+    await saveKey(keyName(p), value);
   };
   let answered = null;
   const watched = { ...api, post: async (...args) => { answered = null; const got = await api.post(...args); answered = got.status; return got; } };
-  const waiting = projects.filter((p) => !keyKept(keyName(p)));
+  const waiting = [];
+  for (const p of projects) if (!(await keyKept(keyName(p)))) waiting.push(p);
   let refused = false;
   for (const p of [...waiting]) {
     let key;
@@ -1602,7 +1603,7 @@ async function connectGitlabKeys({ api, projects, owner, platform, say, open, as
       refused = true;
       break;
     }
-    keep(p, 'project-key', { kind: 'project-key', token: key.token, expiresAt: key.expiresAt, id: key.id });
+    await keep(p, 'project-key', { kind: 'project-key', token: key.token, expiresAt: key.expiresAt, id: key.id });
     say(reachLine({ kind: 'gitlab-project', repo: p.repo }));
     waiting.shift();
   }
@@ -1618,7 +1619,7 @@ async function connectGitlabKeys({ api, projects, owner, platform, say, open, as
   }
   if (typeof token !== 'string' || token.trim() === '') throw new Error('No GitLab token was given, so the narrow connection is not set up; a fresh Go ahead asks again');
   halt();
-  for (const p of waiting) keep(p, 'pasted-token', { kind: 'pasted-token', token: token.trim(), expiresAt: keyExpiry(PERSONAL_DAYS, now) });
+  for (const p of waiting) await keep(p, 'pasted-token', { kind: 'pasted-token', token: token.trim(), expiresAt: keyExpiry(PERSONAL_DAYS, now) });
 }
 
 // ---- Protection (planned here, switched on at step 7: Task 13) ----
@@ -1792,7 +1793,7 @@ export function hostStep({
       }
       if (typeof app.slug !== 'string') throw new Error(NO_APP_LISTED);
       // One app's keys per computer (ruling R58): never overwrite keys serving another app.
-      const keptId = keptAppInstalled();
+      const keptId = await keptAppInstalled();
       if (keptId !== null && keptId !== app.clientId) {
         throw new Error(oneAppLine({ kept: appWords(keptId, { appFile, views }), using: own ? 'your own app' : 'the Wheelhouse app', where: `${project.repo} on ${NAME[host]}` }));
       }
@@ -1987,7 +1988,7 @@ export function hostStep({
       // One app's keys per computer (ruling R58): a project on another app than the one whose keys
       // serve the earlier projects waits. On the make route the app is looked up by its name, when
       // the director is signed in; one not made yet is another app.
-      const keptId = app === null ? null : keptAppInstalled();
+      const keptId = app === null ? null : await keptAppInstalled();
       if (keptId !== null) {
         let using = app.clientId;
         if (typeof using !== 'string' && signedIn && typeof app.name === 'string') {
@@ -2002,7 +2003,7 @@ export function hostStep({
         }
       }
       // How far this computer is with the app: a later project needs no new code (design section 15).
-      const appKeys = typeof app?.clientId === 'string' ? appKeysState(app, owner) : null;
+      const appKeys = typeof app?.clientId === 'string' ? await appKeysState(app, owner) : null;
       const changes = [];
       // A company's GitLab the folder's remote does not name yet: setup names it in the project settings.
       if (company?.host !== undefined && !product.joining) {

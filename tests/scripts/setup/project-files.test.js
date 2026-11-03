@@ -50,6 +50,10 @@ const hostGuard = guardedRun(realRun, { log: hostLog });
 after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 import { g, push as fixturePush, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
+import { useFileKeyStore } from '../../helpers/file-key-store.js';
+
+// Keys are kept in key files under the test's home, not in the computer's own store.
+useFileKeyStore();
 
 const T0 = new Date('2026-10-20T03:00:00.000Z');
 const REPO = 'a-director/Shop';

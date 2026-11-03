@@ -35,6 +35,10 @@ const hostGuard = guardedRun(realRun, { log: hostLog });
 after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 import { g } from '../../helpers/git-fixture.js';
 import { tempFolder } from '../../helpers/homes.js';
+import { useFileKeyStore } from '../../helpers/file-key-store.js';
+
+// Keys are kept in key files under the test's home, not in the computer's own store.
+useFileKeyStore();
 import { withProject, T0 } from '../../helpers/setup-answers.js';
 
 const JOIN_STEPS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'helpers', 'setup-join-steps.js');

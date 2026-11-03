@@ -49,6 +49,10 @@ import { KEEP_HERE, PUT_ON_GITHUB, PUT_ON_GITLAB, remotesOf } from '../../../scr
 import { homeDir } from '../../../scripts/host/local/home.js';
 import { GITLAB_COM, COMPANY_GITLAB, companyAddress, nameGitlabHost } from '../../../scripts/setup/host.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
+import { useFileKeyStore } from '../../helpers/file-key-store.js';
+
+// Keys are kept in key files under the test's home, not in the computer's own store.
+useFileKeyStore();
 
 // No test asks the computer's own store for a key.
 directorKey.borrow = async () => null;

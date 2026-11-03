@@ -27,7 +27,7 @@
 import { renewKeys } from './github-app.js';
 import { checkBaseUrl } from './gitlab-key.js';
 import { DEFAULT_GITLAB } from './gitlab-base.js';
-import { findKey, writeKey } from './keys.js';
+import { findKey, saveKey } from './keys.js';
 import { borrowKey } from './store.js';
 
 const RENEW_WITHIN_MS = 10 * 60 * 1000;
@@ -135,8 +135,8 @@ async function githubAccessKey({ fetch, now, keys: deps }) {
   const renewal = typeof fresh.refreshToken === 'string' && fresh.refreshToken !== ''
     ? { refreshToken: fresh.refreshToken, refreshExpiresAt: fresh.refreshExpiresAt }
     : {};
-  // Kept where setup, cut-access and uninstall still read and delete keys (the file), not the store, until they move.
-  writeKey('github-app', { ...kept, accessToken: fresh.accessToken, accessExpiresAt: fresh.accessExpiresAt, ...renewal });
+  // Kept in the computer's store, where setup, cut-access and uninstall now read and remove keys too.
+  await saveKey('github-app', { ...kept, accessToken: fresh.accessToken, accessExpiresAt: fresh.accessExpiresAt, ...renewal }, deps);
   return fresh.accessToken;
 }
 
