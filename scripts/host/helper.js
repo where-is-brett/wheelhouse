@@ -3804,16 +3804,23 @@ export async function startHelper({
     }));
     const next = base.text === null ? null : changedText(base.text, value);
     if (next === null) return { ok: false, refused: `the project's ${SETTINGS_FILE} could not be read as settings, so the window is not changed` };
-    if (next === base.text || windowIn(JSON.parse(base.text)) === value) return { ok: true, step: 'on' };
     const kept = readCompact(project);
+    // The file on the main line holds the window: the change has landed. Only now is the work counted ended, and only for
+    // the value the director signed.
+    if (next === base.text || windowIn(JSON.parse(base.text)) === value) {
+      if (kept !== null && kept.value === value && kept.merged !== true) writeWhole(compactFile(project), { ...kept, merged: true });
+      return { ok: true, step: 'on' };
+    }
+    if (kept?.merged === true) writeWhole(compactFile(project), { ...kept, merged: false });
     const pr = kept ? await adapter.prState(kept.pr) : null;
     const open = pr?.state === 'open' && COMPACT_BRANCH.test(typeof pr.headRef === 'string' ? pr.headRef : '');
     // Turned down on the host by the director, for this very value: no other is opened in its place.
     if (pr?.state === 'closed' && kept.closed !== true && kept.value === value) return { ok: true, step: 'closed', pr: kept.pr };
+    // The gate holds a branch that is behind the main line, and an approval is of one commit, so the pull request stands only
+    // while the main line is the commit it was made on; a main line that moved on has it made again, and asked for anew.
     if (open && kept.base === base.head && kept.value === value) {
       const merged = await oneAtATime(`merge:${project}`, () => doMerge({ project, number: kept.pr }, ctx));
       if (merged?.ok === true && merged.merged === true) {
-        writeWhole(compactFile(project), { ...kept, merged: true });
         return { ok: true, step: 'on' };
       }
       const approval = approvalOnly(merged, kept.pr);
@@ -3836,6 +3843,7 @@ export async function startHelper({
     const made = await ownChange(project, ctx, { branch, base, files: { [SETTINGS_FILE]: next }, title: COMPACT_TITLE, defaultBranch });
     if (made.refused) return { ok: false, refused: made.refused };
     const opened = await adapter.openPr({ head: branch, base: defaultBranch, title: COMPACT_TITLE, body: compactBody(value) });
+    // A new record: nothing of an earlier pull request's merge carries over.
     writeWhole(compactFile(project), { pr: opened.number, head: made.commit, base: base.head, value });
     // Where the project's checks run on this computer, the new head is queued for them, as the found command's is.
     await engineHosts.find((h) => h.project === project)?.checks.took(made.commit, COMPACT_WORK);
@@ -5534,7 +5542,10 @@ export async function startHelper({
       // A fix's work is its incident's, and no piece of the queue: it has ended when the incident has.
       ended: (work) => {
         if (work === COMMAND_WORK) return readCommand(project)?.merged === true;
-        if (work === COMPACT_WORK) return readCompact(project)?.merged === true;
+        if (work === COMPACT_WORK) {
+          const kept = readCompact(project);
+          return kept?.merged === true && kept.value === chosenWindow(views().settings, { now: now() });
+        }
         const seen = views();
         const entry = seen.work?.[work];
         if (!entry) return work.startsWith(`${FIX_LANE}-`) && openRedMain(seen)?.work !== work;

@@ -7,7 +7,7 @@
 // file is a guardrail, so the director's approval is still asked for, and the pull request still needs its checks.
 import { effectiveSettings } from './effective.js';
 import { SETTINGS } from './catalogue.js';
-import { SETTINGS_FILE, windowIn } from './compact-window.js';
+import { SETTINGS_FILE, windowIn, windowRefusal } from './compact-window.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 
@@ -28,7 +28,10 @@ export const compactBody = (value) => [
 export function chosenWindow(settingsView, { now = new Date() } = {}) {
   if (!isPlain(settingsView) || !Object.hasOwn(settingsView, 'compactWindow')) return null;
   const value = effectiveSettings({ project: settingsView, now }).compactWindow?.value;
-  return SETTINGS.compactWindow.check(value) ? value : null;
+  if (!SETTINGS.compactWindow.check(value)) return null;
+  // The window stays above the point to prepare at, whichever way either was set.
+  const prepare = effectiveSettings({ project: settingsView, now }).compactPrepare?.value;
+  return windowRefusal({ window: value, prepare }) === null ? value : null;
 }
 
 // The text of the settings file with only `autoCompactWindow` set to `value`, or null when `before` isn't a JSON object.

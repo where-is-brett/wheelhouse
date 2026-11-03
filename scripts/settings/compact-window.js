@@ -26,10 +26,10 @@ export function windowRefusal({ window = COMPACT_WINDOW, prepare = SETTINGS.comp
   return null;
 }
 
-// The window in a settings object: a whole number of tokens, else null.
+// The window in a settings object: a whole number of tokens within the catalogue's bounds, else null.
 export function windowIn(settings) {
   const value = isObject(settings) ? settings.autoCompactWindow : undefined;
-  return Number.isInteger(value) && value > 0 ? value : null;
+  return SETTINGS.compactWindow.check(value) ? value : null;
 }
 
 // The window the project's Claude Code settings name now (the shared file, then this computer's), or null.

@@ -41,9 +41,9 @@ function record(kind, data, ms = 1000) {
 }
 const SETTINGS = { model: 'x', permissions: { deny: ['Bash(gh:*)'] }, autoCompactWindow: 300000 };
 // The director's signed choice of a window.
-function confirmWindow(value = 320000) {
-  const setting = record('setting', { key: 'compactWindow', value });
-  record('confirmation', confirmationFor(setting).data, 2000);
+function confirmWindow(value = 320000, ms = 1000) {
+  const setting = record('setting', { key: 'compactWindow', value }, ms);
+  record('confirmation', confirmationFor(setting).data, ms + 1000);
 }
 
 // The project's remote: main with one commit, set up before v0.2.0, so no .archon/ in it.
@@ -202,4 +202,26 @@ test('a window the director chose reaches a git-alone project through the local 
     assert.deepEqual(JSON.parse(await g(home, 'show', `main:${SETTINGS_FILE}`)), { ...SETTINGS, autoCompactWindow: 320000 });
     assert.ok(folder);
   }, { check, files: { [SETTINGS_FILE]: `${JSON.stringify(SETTINGS, null, 2)}\n` } });
+});
+
+test('the work counts as ended only once main holds the signed value, and a new pull request clears the flag', async () => {
+  await working(async ({ client, adapter }) => {
+    const kept = () => JSON.parse(fs.readFileSync(path.join(path.dirname(stateDir('o__p')), 'engine', 'compact-window.json'), 'utf8'));
+    confirmWindow(320000);
+    const opened = await client.compactWindow({ project: 'o__p' });
+    assert.equal(opened.step, 'opened');
+    await client.compactWindow({ project: 'o__p' });
+    record('approval', { pr: 8, commit: opened.head }, 3000);
+    // Merged by the gate: the next look finds the value on main, and only then is it kept as merged.
+    assert.deepEqual(await client.compactWindow({ project: 'o__p' }), { ok: true, step: 'on' });
+    assert.equal(kept().merged, undefined);
+    assert.deepEqual(await client.compactWindow({ project: 'o__p' }), { ok: true, step: 'on' });
+    assert.deepEqual([kept().merged, kept().value], [true, 320000]);
+    // Another window chosen: main does not hold it, so the flag goes and a new pull request is opened without it.
+    confirmWindow(330000, 20000);
+    const again = await client.compactWindow({ project: 'o__p' });
+    assert.equal(again.step, 'opened', JSON.stringify(again));
+    assert.deepEqual([kept().merged, kept().value, kept().pr], [undefined, 330000, 9]);
+    assert.equal(adapter.opened.length, 2);
+  });
 });

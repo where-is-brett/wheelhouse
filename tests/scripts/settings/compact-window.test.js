@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { chosenWindow } from '../../../scripts/settings/compact-window-pr.js';
 import { windowRefusal, windowIn, windowOf, nearLimit, withWindow, windowChange, SETTINGS_FILE } from '../../../scripts/settings/compact-window.js';
 
 test('a window at or below the prepare point is refused in plain words', () => {
@@ -41,4 +42,33 @@ test('the window and the near-limit point are read from the project\'s settings'
   } finally {
     fs.rmSync(folder, { recursive: true, force: true });
   }
+});
+
+test('a window outside the catalogue\'s bounds counts as none, so the guard falls back', () => {
+  assert.equal(windowIn({ autoCompactWindow: 150000 }), null);
+  assert.equal(windowIn({ autoCompactWindow: 1000001 }), null);
+  assert.equal(windowIn({ autoCompactWindow: 200000 }), 200000);
+  assert.equal(windowIn({ autoCompactWindow: 1000000 }), 1000000);
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-window-'));
+  try {
+    fs.mkdirSync(path.join(folder, '.claude'));
+    fs.writeFileSync(path.join(folder, '.claude', 'settings.json'), JSON.stringify({ autoCompactWindow: 150000 }));
+    assert.equal(nearLimit(folder, 360000), 360000);
+  } finally {
+    fs.rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test('the window the director chose must stay above the point to prepare at', () => {
+  const view = (window, prepare) => ({
+    compactWindow: { key: 'compactWindow', id: 'w', at: '2026-11-01T00:00:00.000Z', value: window, before: null },
+    ...(prepare === undefined ? {} : { compactPrepare: { key: 'compactPrepare', id: 'p', at: '2026-11-01T00:00:00.000Z', value: prepare, before: null } }),
+  });
+  const now = new Date('2026-11-02T00:00:00.000Z');
+  assert.equal(chosenWindow(view(320000), { now }), 320000);
+  assert.equal(chosenWindow(view(210000, 250000), { now }), null);
+  assert.equal(chosenWindow(view(250000, 250000), { now }), null);
+  assert.equal(chosenWindow(view(250000, 200000), { now }), 250000);
+  assert.equal(chosenWindow(view(200000, 200000), { now }), null);
+  assert.equal(chosenWindow({}, { now }), null);
 });
