@@ -210,19 +210,18 @@ test('a typed answer the engine refuses records nothing and claims nothing, so t
   });
 });
 
-test('a real-users answer given again asks the first question again, so the phase it records follows it', async () => {
+test('a real-users answer given again keeps the description, and the phase it records follows the answer', async () => {
   await withProject(async ({ folder, plan, answer }) => {
-    answerStep3(folder, { realUsers: REAL_USERS.yes });
+    answerStep3(folder, { realUsers: REAL_USERS.no });
     const first = await plan(4);
-    const launched = await answer(first.ask.card, PRODUCT.later);
-    assert.equal(launched[0].body.target.data.value, 'launched');
-    // Step 3's question answered again, the other way, a minute later.
-    answerStep3(folder, { realUsers: REAL_USERS.no, at: new Date(T0.getTime() + 60 * 1000) });
-    const again = await plan(4);
-    assert.ok(again.ask, 'asked again');
-    assert.notEqual(again.ask.id, first.ask.id);
-    const before = await answer(again.ask.card, PRODUCT.later);
-    assert.equal(before[0].body.target.data.value, 'before-launch');
+    assert.equal(first.ask.id, 'product-before-launch');
+    await answer(first.ask.card, PRODUCT.later);
+    // Step 3's question answered again, the other way, a minute later: the description stands and no card asks it again.
+    answerStep3(folder, { realUsers: REAL_USERS.yes, at: new Date(T0.getTime() + 60 * 1000) });
+    const next = await plan(4);
+    assert.equal(next.ask.id, 'live-data');
+    assert.equal(findRun(folder).id !== undefined, true);
+    assert.equal(answersFor(findRun(folder).id)['4.product-launched'], undefined);
   });
 });
 
