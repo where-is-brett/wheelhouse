@@ -10,17 +10,15 @@
 
 export const PROXY_HAS_PASSWORD = 'Your git settings keep your proxy password in plain text. Wheelhouse won\'t copy it. Ask IT whether your proxy accepts your Windows sign-in instead; it usually does.';
 
-const READ_MS = 15 * 1000;
-
 // The sign-in method git names, as the option `curl` is given: 'ntlm', 'negotiate' or 'anyauth'.
 export function authFor(method) {
   const named = String(method ?? '').trim().toLowerCase();
   return named === 'ntlm' || named === 'negotiate' ? named : 'anyauth';
 }
 
-async function gitSetting(run, gitPath, name, address) {
+async function gitSetting(ask, name, address) {
   try {
-    const got = await run(gitPath, ['config', '--get-urlmatch', name, address], { timeoutMs: READ_MS });
+    const got = await ask(['config', '--get-urlmatch', name, address]);
     if (got.code !== 0) return null;
     // Asked for one name, git prints the value alone; the name is stripped if it is there.
     return String(got.stdout ?? '').split('\n')[0].replace(new RegExp(`^${name.replace('.', '\\.')}\\s`, 'i'), '').trim();
@@ -40,7 +38,7 @@ const fromEnvironment = (env, names) => {
 // matches the name and its subdomains), or `*`.
 function noProxyNames(list, host) {
   return String(list ?? '').split(',').map((item) => item.trim().toLowerCase().replace(/^\*?\./, '')).filter(Boolean)
-    .some((item) => item === '*' || host === item || host.endsWith(`.${item}`));
+    .some((item) => item === '*' || host.split('.').some((_, i, labels) => labels.slice(i).join('.') === item));
 }
 
 // The proxy address as a URL, with a scheme (git reads `host:port` as http), or null when it is not one.
@@ -56,8 +54,10 @@ function parse(value) {
 //   { proxy, auth: 'ntlm' | 'negotiate' | 'anyauth', user: ':' | null, noProxy, source: 'git' | 'environment' }
 // `user` is ':' when the proxy address names no user, so `curl` signs in as the computer's user.
 // Throws an error with code PROXY_HAS_PASSWORD when the address holds a password.
-// `run` runs git (`gitPath`, by default the one on the path); `env` is the environment to read.
-export async function readProxy({ address, run, env = process.env, gitPath = 'git' } = {}) {
+// `ask(args)` runs the director's own git, with their global and system settings in force (the fenced route
+// shuts those out, so the caller gives a runner that is a listed exception) and gives { code, stdout };
+// `env` is the environment to read.
+export async function readProxy({ address, ask, env = process.env } = {}) {
   let host;
   try {
     host = new URL(address).hostname.toLowerCase();
@@ -65,7 +65,7 @@ export async function readProxy({ address, run, env = process.env, gitPath = 'gi
     return null;
   }
   const noProxy = fromEnvironment(env, ['NO_PROXY']);
-  let value = await gitSetting(run, gitPath, 'http.proxy', address);
+  let value = await gitSetting(ask, 'http.proxy', address);
   let source = 'git';
   if (value === '') return null; // git is told to use no proxy at all
   let method = null;
@@ -74,7 +74,7 @@ export async function readProxy({ address, run, env = process.env, gitPath = 'gi
     source = 'environment';
     if (value === null) return null;
   } else {
-    method = await gitSetting(run, gitPath, 'http.proxyAuthMethod', address);
+    method = await gitSetting(ask, 'http.proxyAuthMethod', address);
   }
   if (noProxyNames(noProxy, host)) return null;
   const url = parse(value);
