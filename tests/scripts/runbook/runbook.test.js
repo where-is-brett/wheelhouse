@@ -30,6 +30,8 @@ import { listEvents } from '../../../scripts/state/events.js';
 import { makeBareRemote, push as plainPush, g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress } from '../../helpers/homes.js';
 import { matchingBody } from '../../helpers/provenance.js';
+import { hostCurl } from '../../../scripts/host/gitlab-key.js';
+import { makeFakeCurl } from '../../helpers/fake-curl.js';
 
 // No host tool runs for real: the helper's runs go through this, and the log stays empty.
 const hostLog = [];
@@ -224,17 +226,17 @@ test('cut-access on the narrow GitHub connection deletes the key file and names 
   } finally { s.cleanup(); }
 });
 
+// The helper builds its GitLab client where a test cannot hand it a stand-in curl, so it is set in hostCurl.
+const pairOf = (call, name) => call.pairs.find(([key]) => key === name)?.[1];
+const clearCurl = () => { for (const name of Object.keys(hostCurl)) delete hostCurl[name]; };
+
 test('cut-access on the narrow GitLab connection revokes the project key through GitLab, then deletes its file', async () => {
   const s = await scenario({ host: 'gitlab', connection: { host: 'gitlab', mode: 'narrow', project: 'o/p', projectId: 5, baseUrl: 'https://gitlab.example.com' } });
   const token = 'glpat-abcdefghijklmnopqrst1234';
   const file = () => path.join(s.home, 'keys', 'gitlab-project-5.json');
-  const calls = [];
-  const answers = [204, 500];
-  const fetch = async (url, options) => {
-    calls.push({ url, method: options.method, header: options.headers['PRIVATE-TOKEN'] });
-    const status = answers.shift();
-    return { status, text: async () => '' };
-  };
+  const fake = makeFakeCurl([{ status: 204 }, { status: 500 }]);
+  Object.assign(hostCurl, { run: fake.run, curl: '/usr/bin/curl', proxy: null, caFile: null, platform: 'linux' });
+  const seen = () => fake.calls.map((c) => ({ url: pairOf(c, 'url'), method: pairOf(c, 'request'), header: /PRIVATE-TOKEN: ([^\s"]+)/.exec(c.config)?.[1] }));
   try {
     await as(s.home, async () => {
       writeKey('gitlab-project-5', { kind: 'project-key', token, expiresAt: '2027-01-01' });
@@ -243,7 +245,7 @@ test('cut-access on the narrow GitLab connection revokes the project key through
     await viaHelper(s, fakeAdapter(), async (client) => {
       const done = await client.runbook.cutAccess({ project: 'o__p' });
       assert.equal(done.ok, true, JSON.stringify(done));
-      assert.deepEqual(calls, [{ url: 'https://gitlab.example.com/api/v4/personal_access_tokens/self', method: 'DELETE', header: token }]);
+      assert.deepEqual(seen(), [{ url: 'https://gitlab.example.com/api/v4/personal_access_tokens/self', method: 'DELETE', header: token }]);
       assert.equal(fs.existsSync(file()), false, 'the file goes after the host call succeeded');
       assert.doesNotMatch(JSON.stringify(done), /glpat/);
 
@@ -254,8 +256,8 @@ test('cut-access on the narrow GitLab connection revokes the project key through
       assert.equal(failed.url, 'https://gitlab.example.com/o/p/-/settings/access_tokens');
       assert.equal(fs.existsSync(file()), true);
       assert.doesNotMatch(JSON.stringify(failed), /glpat/);
-    }, { fetch });
-  } finally { s.cleanup(); }
+    });
+  } finally { clearCurl(); s.cleanup(); }
 });
 
 test('cut-access on the quick connection changes nothing and names the page where only the director can revoke', async () => {
@@ -752,37 +754,38 @@ test('GitLab cut-access: only a 2xx deletes the file; a 401 says the key no long
   const s = await scenario({ host: 'gitlab', connection: { host: 'gitlab', mode: 'narrow', project: 'o/p', projectId: 5, baseUrl: 'https://gitlab.example.com' } });
   const token = 'glpat-abcdefghijklmnopqrst1234';
   const file = path.join(s.home, 'keys', 'gitlab-project-5.json');
-  const calls = [];
-  let statuses = [];
-  const fetch = async (url, options) => { calls.push(`${options.method} ${new URL(url).pathname}`); return { status: statuses.shift(), text: async () => '' }; };
+  const fake = makeFakeCurl([]);
+  Object.assign(hostCurl, { run: fake.run, curl: '/usr/bin/curl', proxy: null, caFile: null, platform: 'linux' });
+  const sent = () => fake.calls.map((c) => `${pairOf(c, 'request')} ${new URL(pairOf(c, 'url')).pathname}`);
+  const answers = (...codes) => { fake.queue.push(...codes.map((status) => ({ status }))); };
   const keyed = (extra = {}) => writeKey('gitlab-project-5', { kind: 'project-key', token, expiresAt: '2027-01-01', ...extra });
   try {
     await viaHelper(s, fakeAdapter(), async (client) => {
       const base = { project: 'o__p' };
       await as(s.home, async () => { keyed(); click(2); });
-      statuses = [401];
+      answers(401);
       const dead = await client.runbook.cutAccess(base);
       assert.equal(fs.existsSync(file), true, 'a 401 deletes nothing');
       assert.match(dead.message, /no longer works/);
       assert.doesNotMatch(dead.message, /nothing is left/i);
       assert.equal(dead.url, 'https://gitlab.example.com/o/p/-/settings/access_tokens');
 
-      calls.length = 0;
+      fake.calls.length = 0;
       await as(s.home, async () => { keyed({ id: 99 }); click(2); });
-      statuses = [403, 204];
+      answers(403, 204);
       const second = await client.runbook.cutAccess(base);
       assert.equal(second.ok, true, JSON.stringify(second));
-      assert.deepEqual(calls, ['DELETE /api/v4/personal_access_tokens/self', 'DELETE /api/v4/projects/5/access_tokens/99']);
+      assert.deepEqual(sent(), ['DELETE /api/v4/personal_access_tokens/self', 'DELETE /api/v4/projects/5/access_tokens/99']);
       assert.equal(fs.existsSync(file), false);
 
       await as(s.home, async () => { keyed({ kind: 'pasted-token' }); click(2); });
-      statuses = [204];
+      answers(204);
       const pasted = await client.runbook.cutAccess(base);
       assert.equal(pasted.ok, true);
       assert.match(pasted.message, /your own token/);
       assert.equal(pasted.url, 'https://gitlab.example.com/-/user_settings/personal_access_tokens');
-    }, { fetch });
-  } finally { s.cleanup(); }
+    });
+  } finally { clearCurl(); s.cleanup(); }
 });
 
 test('the quick GitLab answer names the applications page and the personal access tokens page', async () => {

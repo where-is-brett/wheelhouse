@@ -255,7 +255,7 @@ function archiveSays(view) {
 
 // The real host work, with the director's own sign-in: git in a scratch repository, the host's tool
 // through the adapter, and GitLab's API for a merge request's search.
-function hostWork({ platform, run, fetch }) {
+function hostWork({ platform, run, via }) {
   const adapterFor = ({ host, repo, base, folder }) => adapterOf({ host, repo, folder, connection: { baseUrl: base } }, { run });
   return {
     findGit: async () => (await toolsStatus({ platform, run, tools: ['git'] })).git,
@@ -273,7 +273,7 @@ function hostWork({ platform, run, fetch }) {
         const found = JSON.parse(String(got.stdout || '[]'))[0];
         return found ? { number: found.number, url: found.url } : null;
       }
-      const api = await directorGitlabApi({ run, fetch, baseUrl });
+      const api = await directorGitlabApi({ run, via, baseUrl });
       const got = await api.get(`${projectPath(repo)}/merge_requests?state=opened&source_branch=${encodeURIComponent(branch)}`);
       if (got.status !== 200 || !Array.isArray(got.body)) throw new Halt(`GitLab could not list ${repo}'s merge requests with your sign-in (HTTP ${got.status})`);
       const found = got.body[0];
@@ -289,7 +289,7 @@ function hostWork({ platform, run, fetch }) {
 // which halts it between two changes. Gives { ok, lines, pages, helperStops? }, or, when it stopped
 // part-way, { ok: false, refused, lines, pages }.
 export async function applyUninstall({
-  folder, plan, now = () => new Date(), userHome = os.homedir(), platform = process.platform, run = realRun, fetch = globalThis.fetch,
+  folder, plan, now = () => new Date(), userHome = os.homedir(), platform = process.platform, run = realRun, via = {},
   stopped = () => false, ops = {},
 }) {
   const o = {
@@ -301,8 +301,8 @@ export async function applyUninstall({
     removePluginScope: (change) => removePluginScope(change, run),
     leaveLocked: (args) => leaveLocked({ ...args, run }),
     putBackOwnApp: (change) => putBackOwnApp(change, ops.profile === undefined ? {} : { profile: ops.profile }),
-    revokeGitlabKey: (args) => revokeGitlabKey({ ...args, fetch }),
-    ...hostWork({ platform, run, fetch }),
+    revokeGitlabKey: (args) => revokeGitlabKey({ ...args, via }),
+    ...hostWork({ platform, run, via }),
     ...ops,
   };
   const lines = [];
@@ -770,9 +770,9 @@ export async function applyUninstall({
 }
 
 // The process's own work: `argv` as above. `deps` replace parts for tests: `now`, `exit`, `tickMs`,
-// and applyUninstall's `platform`, `run`, `fetch` and `ops`. Gives the exit code.
+// and applyUninstall's `platform`, `run`, `via` and `ops`. Gives the exit code.
 export async function runUninstall([folder, hash, clickedAt, deadlineText, userHome], {
-  now = () => new Date(), exit = (code) => process.exit(code), tickMs = TICK_MS, platform = process.platform, run = realRun, fetch = globalThis.fetch, ops = {},
+  now = () => new Date(), exit = (code) => process.exit(code), tickMs = TICK_MS, platform = process.platform, run = realRun, via = {}, ops = {},
 } = {}) {
   const clicked = Date.parse(clickedAt);
   const deadline = Date.parse(deadlineText);
@@ -805,7 +805,7 @@ export async function runUninstall([folder, hash, clickedAt, deadlineText, userH
     if (stopState().on) return stop('Uninstall stopped: All stop is on, so nothing was changed. Lift All stop first, then ask for uninstall\'s plan again.');
     const plan = await uninstallPlan({ folder, userHome, platform, run });
     if (plan.hash !== hash) return stop(`Uninstall stopped: ${UNINSTALL_CHANGED}. Nothing was changed.`);
-    const done = await applyUninstall({ folder, plan, now, userHome, platform, run, fetch, ops, stopped: () => stopState().on || expired });
+    const done = await applyUninstall({ folder, plan, now, userHome, platform, run, via, ops, stopped: () => stopState().on || expired });
     if (expired) return 1;
     finish(done);
     return done.ok ? 0 : 1;

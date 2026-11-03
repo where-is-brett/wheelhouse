@@ -13,6 +13,7 @@ import { gitlabKeyPage, cutAccess, revokeGitlabKey } from '../../../scripts/host
 import { gitlabApi, makeProjectKey, isKeysSwitchedOff } from '../../../scripts/host/gitlab-key.js';
 import { detectHost } from '../../../scripts/host/adapter.js';
 import { signIn, signInStatus, signUpUrl, SIGN_UP, httpsRemote } from '../../../scripts/setup/host.js';
+import { makeFakeCurl } from '../../helpers/fake-curl.js';
 import { commitAuthor } from '../../../scripts/setup/project-files.js';
 import { hostToolsFor } from '../../../scripts/setup/tools.js';
 import { tempFolder } from '../../helpers/homes.js';
@@ -80,18 +81,18 @@ test('the token page, sign-up link and key page use the company\'s address', asy
   // The key page, and the director's page for revoking a sign-in.
   assert.equal(gitlabKeyPage({ base: COMPANY, repo: 'team/product', pasted: false }), `${COMPANY}/team/product/-/settings/access_tokens`);
   assert.equal(gitlabKeyPage({ base: COMPANY, repo: 'team/product', pasted: true }), `${COMPANY}/-/user_settings/personal_access_tokens`);
-  const answer = await cutAccess({ record: { host: 'gitlab', repo: 'team/product', connection: { mode: 'quick', baseUrl: COMPANY } }, fetch: async () => { throw new Error('no network'); } });
+  const answer = await cutAccess({ record: { host: 'gitlab', repo: 'team/product', connection: { mode: 'quick', baseUrl: COMPANY } }, via: NO_ROAD });
   assert.ok(answer.url.startsWith(COMPANY), answer.url);
   assert.match(answer.message, /git\.example\.org/);
   assert.doesNotMatch(answer.message, /gitlab\.com/);
   // A connection with no address of its own is the default's, from the one place.
-  const none = await cutAccess({ record: { host: 'gitlab', repo: 'team/product', connection: { mode: 'quick' } }, fetch: async () => { throw new Error('no network'); } });
+  const none = await cutAccess({ record: { host: 'gitlab', repo: 'team/product', connection: { mode: 'quick' } }, via: NO_ROAD });
   assert.ok(none.url.startsWith(DEFAULT_GITLAB), none.url);
   // The API's default is the same.
-  const sent = [];
-  await gitlabApi({ token: 't', fetch: async (url) => { sent.push(url); return { status: 200, text: async () => '{}' }; } }).get('/user');
-  assert.deepEqual(sent, [`${DEFAULT_GITLAB}/api/v4/user`]);
-  await revokeGitlabKey({ name: 'gitlab-project-1', projectId: 1, base: COMPANY, repo: 'team/product', fetch: async () => { throw new Error('no network'); } });
+  const fake = makeFakeCurl([{ body: '{}' }]);
+  await gitlabApi({ token: 't', run: fake.run, curl: '/usr/bin/curl', proxy: null, caFile: null, platform: 'linux' }).get('/user');
+  assert.deepEqual(fake.calls.map((c) => c.pairs.find(([k]) => k === 'url')[1]), [`${DEFAULT_GITLAB}/api/v4/user`]);
+  await revokeGitlabKey({ name: 'gitlab-project-1', projectId: 1, base: COMPANY, repo: 'team/product', via: NO_ROAD });
 });
 
 test('glab is told the company\'s host, with its port, through GITLAB_HOST', async () => {
@@ -137,11 +138,16 @@ test('the commit email comes from the person\'s profile', async () => {
   await assert.rejects(commitEmail({ api: api({}, 401) }), /who is signed in/);
   await assert.rejects(commitEmail({ api: api({ name: 'No id' }) }), /who is signed in/);
   // Setup's commit author takes the instance from the project's address.
-  const run = async () => ({ code: 0, stdout: JSON.stringify({ id: 7, username: 'sam', name: 'Sam' }), stderr: '' });
-  assert.deepEqual(await commitAuthor({ host: 'gitlab', run, base: COMPANY }), { name: 'Sam', email: '7-sam@users.noreply.git.example.org' });
-  assert.deepEqual(await commitAuthor({ host: 'gitlab', run }), { name: 'Sam', email: '7-sam@users.noreply.gitlab.com' });
-  const own = async () => ({ code: 0, stdout: JSON.stringify({ id: 7, username: 'sam', commit_email: 'sam@work.example' }), stderr: '' });
-  assert.deepEqual(await commitAuthor({ host: 'gitlab', run: own, base: COMPANY }), { name: 'sam', email: 'sam@work.example' });
+  const as = (user, status = 200) => async ({ baseUrl }) => ({ get: async (p) => { assert.equal(p, '/user'); assert.ok(baseUrl); return { status, body: user }; } });
+  const gitlab = as({ id: 7, username: 'sam', name: 'Sam' });
+  assert.deepEqual(await commitAuthor({ host: 'gitlab', base: COMPANY, gitlab }), { name: 'Sam', email: '7-sam@users.noreply.git.example.org' });
+  assert.deepEqual(await commitAuthor({ host: 'gitlab', gitlab }), { name: 'Sam', email: '7-sam@users.noreply.gitlab.com' });
+  const own = as({ id: 7, username: 'sam', commit_email: 'sam@work.example' });
+  assert.deepEqual(await commitAuthor({ host: 'gitlab', base: COMPANY, gitlab: own }), { name: 'sam', email: 'sam@work.example' });
+  await assert.rejects(commitAuthor({ host: 'gitlab', gitlab: as({}, 401) }), /who is signed in/);
+  await assert.rejects(commitAuthor({ host: 'gitlab', gitlab: async () => { throw new Error('glab is not signed in'); } }), /who is signed in/);
+  // A shut road keeps its own plain line.
+  await assert.rejects(commitAuthor({ host: 'gitlab', gitlab: async () => { throw Object.assign(new Error('proxy line'), { code: 'PROXY_REFUSED' }); } }), /proxy line/);
 });
 
 test('a remote with a port keeps the port and a gitlabHosts entry may carry one', () => {
@@ -219,3 +225,6 @@ test('the project\'s gitlabHosts is read from its committed configuration, and s
   write('{}');
   assert.deepEqual(hostToolsFor(folder), [], 'a remote that is neither host leaves the project on this computer');
 });
+
+// A road to GitLab that is never used: a stand-in curl that fails the test when it is run.
+const NO_ROAD = { run: async () => assert.fail('GitLab was reached'), curl: '/usr/bin/curl', proxy: null, caFile: null, platform: 'linux' };

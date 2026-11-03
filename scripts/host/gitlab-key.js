@@ -6,8 +6,12 @@
 // protected to "no one") not push to the default branch. No function here
 // returns, logs or throws a message holding a key, and errors never repeat
 // GitLab's own message text.
+import fs from 'node:fs';
+import { wheelhouseHome } from '../lib/paths.js';
 import { DEFAULT_GITLAB } from './gitlab-base.js';
-import { causeCode, failureKind, CERTIFICATE_NOT_TRUSTED } from './company-ca.js';
+import { caFile } from './company-ca.js';
+import { request, curlPath } from './curl.js';
+import { directorProxy } from './director-git.js';
 
 const DEVELOPER = 30;
 const MAINTAINER = 40;
@@ -31,37 +35,49 @@ export function checkBaseUrl(baseUrl) {
   return url.origin + url.pathname.replace(/\/+$/, '');
 }
 
+// What the calls run through, set by tests that cannot hand it to the code that builds the client:
+// { run, curl, proxy, caFile, platform } as `gitlabApi` takes them. Empty in real use.
+export const hostCurl = {};
+
+// The company's certificate file setup made, or null when there is none.
+function companyFile() {
+  try {
+    const file = caFile(wheelhouseHome());
+    return fs.existsSync(file) ? file : null;
+  } catch {
+    return null;
+  }
+}
+
 // `bearer: true` sends the token as "Authorization: Bearer", which is how an
 // OAuth sign-in token is sent; a personal or project access token uses the
 // PRIVATE-TOKEN header.
 // `baseUrl` on the client is the GitLab address itself (for pages such as the token page), not the API's.
-export function gitlabApi({ baseUrl = DEFAULT_GITLAB, token, bearer = false, fetch = globalThis.fetch }) {
+// The calls go through the system's `curl` (curl.js), by the proxy the director's git names (proxy.js) and with
+// the computer's own certificates, plus the company's file where setup made one. `run`, `curl`, `proxy`
+// (readProxy's answer, null for none), `caFile` and `platform` are for tests; left out, they are found.
+// A failed request throws the plain line and code curl.js gives, never GitLab's or curl's own text.
+export function gitlabApi({ baseUrl = DEFAULT_GITLAB, token, bearer = false, run, curl, proxy, caFile: given, platform, maxSeconds } = {}) {
   if (typeof token !== 'string' || token === '') throw new Error('The sign-in is missing');
   const address = checkBaseUrl(baseUrl);
   const root = `${address}/api/v4`;
   const auth = bearer ? { Authorization: `Bearer ${token}` } : { 'PRIVATE-TOKEN': token };
+  const use = { ...hostCurl, ...Object.fromEntries(Object.entries({ run, curl, proxy, caFile: given, platform }).filter(([, v]) => v !== undefined)) };
+  let proxied;
 
   async function send(method, path, body) {
-    let response;
-    try {
-      response = await fetch(`${root}${path}`, {
-        method,
-        headers: { Accept: 'application/json', ...auth, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
-        body: body === undefined ? undefined : JSON.stringify(body),
-      });
-    } catch (error) {
-      // The underlying error can quote the request, so its text is not passed on: only its code is
-      // kept, so a certificate this computer does not trust reads differently from a server that is
-      // not there (company-ca.js).
-      const code = causeCode(error);
-      const failure = new Error(failureKind({ code }) === 'certificate' ? CERTIFICATE_NOT_TRUSTED(address) : 'Could not reach GitLab');
-      if (code !== null) failure.code = code;
-      throw failure;
-    }
-    const text = await response.text();
+    proxied ??= use.proxy !== undefined ? Promise.resolve(use.proxy) : directorProxy(root);
+    const here = use.platform ?? process.platform;
+    const answer = await request({
+      run: use.run, curl: use.curl ?? curlPath({ platform: here }), url: `${root}${path}`, method,
+      headers: { Accept: 'application/json', ...auth, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      proxy: await proxied, caFile: use.caFile !== undefined ? use.caFile : companyFile(), platform: here, base: address,
+      ...(maxSeconds === undefined ? {} : { maxSeconds }),
+    });
     let parsed = null;
-    try { parsed = text ? JSON.parse(text) : null; } catch { /* not JSON */ }
-    return { status: response.status, body: parsed };
+    try { parsed = answer.body ? JSON.parse(answer.body) : null; } catch { /* not JSON */ }
+    return { status: answer.status, body: parsed };
   }
 
   return {

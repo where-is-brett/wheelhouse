@@ -34,6 +34,8 @@ import { tempFolder } from '../../helpers/homes.js';
 import { stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { caFile, gitCaConfig } from '../../../scripts/host/company-ca.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
+import { hostCurl } from '../../../scripts/host/gitlab-key.js';
+import { makeFakeCurl, parseConfig } from '../../helpers/fake-curl.js';
 import { withProject, lay, transcript, typed, T0, REPO, SLUG } from '../../helpers/setup-answers.js';
 
 // The session's seven trial lines, every one as expected.
@@ -230,8 +232,14 @@ test('step 10 on a company GitLab uses the company address for the adapter, git\
       return { code: 1, stdout: '', stderr: 'not run in this test' };
     };
     const asked = [];
-    const fetched = globalThis.fetch;
-    globalThis.fetch = async (url) => { asked.push(String(url)); return new Response('{}', { status: 404 }); };
+    // The protection read builds its own GitLab client, so curl's stand-in is set where it finds it.
+    Object.assign(hostCurl, {
+      run: async (file, args, options) => {
+        asked.push(parseConfig(options.input).find(([key]) => key === 'url')[1]);
+        return makeFakeCurl([{ status: 404, body: '{}' }]).run(file, args, options);
+      },
+      curl: '/usr/bin/curl', proxy: null, caFile: null, platform: 'linux',
+    });
     try {
       const step = healthStep({
         run, adapterFor: ({ base }) => { bases.push(base); return adapter; }, client: merges(REFUSED).client, findGit: GIT,
@@ -241,7 +249,7 @@ test('step 10 on a company GitLab uses the company address for the adapter, git\
       const { ctx } = ctxFor(folder, remote);
       await step.apply(ctx, changes).catch(() => null);
     } finally {
-      globalThis.fetch = fetched;
+      for (const name of Object.keys(hostCurl)) delete hostCurl[name];
     }
     // The adapter is made for the company's address (here and for the leftover trial's closing).
     assert.ok(bases.length >= 1 && bases.every((b) => b === COMPANY), JSON.stringify(bases));

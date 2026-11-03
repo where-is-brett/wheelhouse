@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   hostStep, cardFor, signIn, makeRepos, connectionCard, stricterCard, stricterWay, STRICTER, appFor, wheelhouseApp, wheelhouseAppOffered, narrowOffered, switchOnAsDirector,
-  directorGitlabApi, directorGitEnv, productOf, repoName, slugFor, REAL_USERS, LEVELS, HOST_LABELS, WAYS, NO_APP_LISTED, OWN_APP_WAIT_MS, SIGN_UP,
+  directorGitlabApi, directorKey, signInStatus, directorGitEnv, productOf, repoName, slugFor, REAL_USERS, LEVELS, HOST_LABELS, WAYS, NO_APP_LISTED, OWN_APP_WAIT_MS, SIGN_UP,
   APP_FILE, KEY_NAME, INSTALL_WAIT_MS, STOPPED, NEW_PRODUCT, fromOtherComputer, quickLaunched, repoNamed, ORGS_UNREAD, launchedIn,
   checkOutJoined, findInstallation, CERTIFICATE_GIVEN,
 } from '../../../scripts/setup/host.js';
@@ -32,6 +32,7 @@ import { readProject } from '../../../scripts/lib/projects.js';
 import { stateDir, profileDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
 import { guardedRun } from '../../helpers/host-stand-ins.js';
+import { makeFakeCurl } from '../../helpers/fake-curl.js';
 
 // Setup's own runs: git and what the test fakes; any other host tool is refused and noted here.
 const hostLog = [];
@@ -48,6 +49,9 @@ import { KEEP_HERE, PUT_ON_GITHUB, PUT_ON_GITLAB, remotesOf } from '../../../scr
 import { homeDir } from '../../../scripts/host/local/home.js';
 import { GITLAB_COM, COMPANY_GITLAB, companyAddress, nameGitlabHost } from '../../../scripts/setup/host.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
+
+// No test asks the computer's own store for a key.
+directorKey.borrow = async () => null;
 
 const NOW = new Date('2026-10-20T03:00:00.000Z');
 const USER = 'a-director';
@@ -841,23 +845,47 @@ test('a refused GitLab project key falls back to the system\'s box, never the ch
 test('the director\'s GitLab sign-in is read by the helper alone and sent only in a request\'s header', async () => {
   await withHome(async () => {
     const w = standIn();
-    const sent = [];
-    const fetch = async (url, init) => {
-      sent.push({ url, init });
-      return { status: 200, text: async () => '{"id":1}' };
-    };
-    const api = await directorGitlabApi({ run: w.run, fetch });
+    const fake = makeFakeCurl([{ body: '{"id":1}' }]);
+    const via = { run: fake.run, curl: '/usr/bin/curl', proxy: null, caFile: null, platform: 'linux' };
+    const api = await directorGitlabApi({ run: w.run, via });
     await api.get('/projects/1');
-    assert.equal(sent[0].init.headers.Authorization, `Bearer ${DIRECTOR_GITLAB}`);
+    assert.ok(fake.calls[0].config.includes(`Authorization: Bearer ${DIRECTOR_GITLAB}`));
     assert.deepEqual(w.calls.at(-1).args, ['auth', 'status', '--hostname', 'gitlab.com', '--show-token']);
     assert.ok(w.calls.every((c) => !(c.args ?? []).join(' ').includes(DIRECTOR_GITLAB)), 'never in an argument');
+    assert.ok(fake.calls.every((c) => !c.args.join(' ').includes(DIRECTOR_GITLAB)), 'nor in curl\'s');
     const out = standIn({ signedIn: { gitlab: false } });
-    await assert.rejects(directorGitlabApi({ run: out.run, fetch }), /glab is not signed in/);
+    await assert.rejects(directorGitlabApi({ run: out.run, via }), /glab is not signed in/);
     // git's environment: the director's tool as its credential helper, never a key.
     const env = directorGitEnv({ host: 'gitlab', gitPath: '/usr/bin/git', env: { PATH: '/bin' }, platform: 'darwin' });
     assert.equal(env.GIT_CONFIG_VALUE_1, '!"glab" auth git-credential');
     assert.equal(env.PATH, '/usr/bin:/bin');
     assert.equal(directorGitEnv({ host: 'github', gitPath: 'C:\\Program Files\\Git\\cmd\\git.exe', env: { Path: 'C:\\Windows' }, platform: 'win32' }).Path, 'C:\\Program Files\\Git\\cmd;C:\\Windows');
+  });
+});
+
+test('with no glab sign-in, the key the director\'s own git holds is used: the API, who is signed in, and the commit author', async () => {
+  await withHome(async () => {
+    const out = standIn({ signedIn: { gitlab: false } });
+    const asked = [];
+    const kept = directorKey.borrow;
+    directorKey.borrow = async (args) => { asked.push(args); return { username: 'oauth2', key: 'glpat-borrowed-key-0001' }; };
+    try {
+      const fake = makeFakeCurl([{ body: '{"id":1}' }, { body: JSON.stringify({ id: 9, username: 'dir' }) }, { status: 401 }]);
+      const via = { run: fake.run, curl: '/usr/bin/curl', proxy: null, caFile: null, platform: 'linux' };
+      const api = await directorGitlabApi({ run: out.run, baseUrl: COMPANY_ORIGIN, via });
+      await api.get('/user');
+      assert.deepEqual(asked[0], { host: 'git.example.org:8443', base: COMPANY_ORIGIN });
+      assert.ok(fake.calls[0].config.includes('Authorization: Bearer glpat-borrowed-key-0001'));
+      assert.deepEqual(await signInStatus({ host: 'gitlab', run: out.run, base: COMPANY_ORIGIN, via }), { signedIn: true, user: 'dir' });
+      // A key GitLab does not accept is not a sign-in.
+      assert.deepEqual(await signInStatus({ host: 'gitlab', run: out.run, base: COMPANY_ORIGIN, via }), { signedIn: false, user: null });
+    } finally {
+      directorKey.borrow = kept;
+    }
+    // No key from git either: not signed in, and no call is made.
+    const fake = makeFakeCurl([]);
+    assert.deepEqual(await signInStatus({ host: 'gitlab', run: out.run, base: COMPANY_ORIGIN, via: { run: fake.run, curl: '/usr/bin/curl', proxy: null } }), { signedIn: false, user: null });
+    assert.equal(fake.calls.length, 0);
   });
 });
 
@@ -1539,26 +1567,29 @@ test('a staged certificate file that GitLab still does not trust is thrown away 
   });
 });
 
-test('the probe uses the company\'s file when it is there, and the certificates Node.js trusts otherwise', async () => {
+test('the probe asks through curl, and gives the company\'s file only where it is there', async () => {
   await withHome(async () => {
     const home = wheelhouseHome();
-    const asked = [];
-    const get = async ({ ca }) => { asked.push(ca); };
-    const fetch = async () => { asked.push('fetch'); return { status: 401 }; };
-    assert.equal(await probeCertificate({ base: COMPANY_ORIGIN, home, fetch, get }), 'ok');
+    const via = (fake, more = {}) => ({ run: fake.run, curl: '/usr/bin/curl', proxy: null, platform: 'darwin', ...more });
+    const plain = makeFakeCurl([{ status: 401 }]);
+    assert.equal(await probeCertificate({ base: COMPANY_ORIGIN, home, ...via(plain) }), 'ok', 'whatever GitLab then answers');
+    assert.equal(plain.calls[0].pairs.find(([k]) => k === 'url')[1], `${COMPANY_ORIGIN}/api/v4/version`);
+    assert.equal(plain.calls[0].pairs.some(([k]) => k === 'cacert'), false);
+    // The Mac's own store is tried first; the company's file is given once it does not cover the certificate.
     fs.mkdirSync(path.dirname(caFile(home)), { recursive: true });
     fs.writeFileSync(caFile(home), authorityFixture());
-    assert.equal(await probeCertificate({ base: COMPANY_ORIGIN, home, fetch, get }), 'ok');
-    assert.deepEqual(asked, ['fetch', authorityFixture()]);
-    const refuses = async () => { throw Object.assign(new Error('unable to verify'), { code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' }); };
-    assert.equal(await probeCertificate({ base: COMPANY_ORIGIN, home, fetch, get: refuses }), 'certificate');
-    // A named file is tried on its own, whether or not the company's file is in place.
+    const covered = makeFakeCurl([{ exit: 60 }, { status: 200 }]);
+    assert.equal(await probeCertificate({ base: COMPANY_ORIGIN, home, ...via(covered) }), 'ok');
+    assert.equal(covered.calls[1].pairs.find(([k]) => k === 'cacert')[1], caFile(home));
+    const refused = makeFakeCurl([{ exit: 60 }, { exit: 60 }]);
+    assert.equal(await probeCertificate({ base: COMPANY_ORIGIN, home, ...via(refused) }), 'certificate');
+    // A named file is tried instead of the company's, whether or not the company's is in place.
     const only = path.join(home, 'staged.pem');
     fs.writeFileSync(only, 'STAGED');
-    asked.length = 0;
-    assert.equal(await probeCertificate({ base: COMPANY_ORIGIN, home, file: only, fetch, get }), 'ok');
-    assert.deepEqual(asked, ['STAGED']);
-    assert.equal(await probeCertificate({ base: COMPANY_ORIGIN, file: only, fetch, get: refuses }), 'certificate');
+    const named = makeFakeCurl([{ exit: 60 }, { status: 200 }]);
+    assert.equal(await probeCertificate({ base: COMPANY_ORIGIN, home, file: only, ...via(named) }), 'ok');
+    assert.equal(named.calls[1].pairs.find(([k]) => k === 'cacert')[1], only);
+    assert.equal(await probeCertificate({ base: COMPANY_ORIGIN, file: only, ...via(makeFakeCurl([{ exit: 60 }, { exit: 60 }])) }), 'certificate');
   });
 });
 
@@ -1576,12 +1607,14 @@ test('no certificate step is listed when GitLab\'s certificate is trusted, the a
       assert.ok(planned.changes.every((c) => c.action !== 'certificate'), `${answer} ${origin}`);
     });
   }
-  // The probe itself: a trusted certificate is 'ok' whatever GitLab then answers; the codes decide the rest.
-  const failing = (code) => async () => { throw Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('x'), { code }) }); };
-  assert.equal(await probeCertificate({ base: COMPANY_ORIGIN, fetch: async () => ({ status: 401, body: null }) }), 'ok');
-  assert.equal(await probeCertificate({ base: COMPANY_ORIGIN, fetch: failing('UNABLE_TO_VERIFY_LEAF_SIGNATURE') }), 'certificate');
-  assert.equal(await probeCertificate({ base: COMPANY_ORIGIN, fetch: failing('ECONNREFUSED') }), 'unreachable');
-  assert.equal(await probeCertificate({ base: COMPANY_ORIGIN, fetch: failing('EWHATEVER') }), 'other');
+  // The probe itself: a trusted certificate is 'ok' whatever GitLab then answers; curl's exit codes decide the rest.
+  const asked = (answer) => probeCertificate({ base: COMPANY_ORIGIN, run: makeFakeCurl([answer]).run, curl: '/usr/bin/curl', proxy: null, platform: 'linux' });
+  assert.equal(await asked({ status: 401 }), 'ok');
+  assert.equal(await asked({ exit: 60 }), 'certificate');
+  assert.equal(await asked({ exit: 7 }), 'unreachable');
+  assert.equal(await asked({ exit: 56, connect: 407 }), 'proxy', 'a proxy that refuses the computer\'s sign-in is not a certificate');
+  assert.equal(await asked({ exit: 2 }), 'other');
+  assert.equal(await probeCertificate({ base: COMPANY_ORIGIN, run: async () => assert.fail('no curl, nothing run'), curl: null, proxy: null }), 'other');
 });
 
 test('setup\'s git carries the company\'s certificate for that address once the file is made, and only then', async () => {

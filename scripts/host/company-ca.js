@@ -16,10 +16,11 @@
 // and from the tools' wording, and neither card repeats the request or the server's own text.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import https from 'node:https';
 import path from 'node:path';
 import { wheelhouseHome } from '../lib/paths.js';
 import { DEFAULT_GITLAB } from './gitlab-base.js';
+import { request, curlPath } from './curl.js';
+import { directorProxy } from './director-git.js';
 
 // ---- The file ----
 
@@ -243,9 +244,12 @@ export function causeCode(error) {
   return null;
 }
 
-// 'certificate', 'unreachable' or 'other' for an error that carries a code.
+// 'certificate', 'unreachable', 'proxy' or 'other' for an error that carries a code. A proxy that refuses the
+// computer's sign-in is its own kind: GitLab is out of reach for now, as when it is not there, but the fix is the
+// proxy's (PROXY_REFUSED says so), so it keeps its own line and is never read as a certificate problem.
 export function failureKind(error) {
   const code = causeCode(error);
+  if (code === 'PROXY_REFUSED') return 'proxy';
   if (code === 'CERTIFICATE_NOT_TRUSTED' || CERTIFICATE_CODES.has(code)) return 'certificate';
   if (code === 'HOST_UNREACHABLE' || UNREACHABLE_CODES.has(code)) return 'unreachable';
   return 'other';
@@ -359,37 +363,24 @@ export function makeAwayLog({ now = () => new Date(), keepMs = 15 * 60 * 1000 } 
 
 // Whether GitLab's certificate is trusted from here, asked without signing in: 'ok' when a TLS
 // connection is made (whatever GitLab then answers), 'certificate' when the certificate is not
-// trusted, 'unreachable' when the server is not there, else 'other'.
-// With the company's file made (`home` holds `ca/company.pem`) the question is whether that file
-// covers GitLab's certificate, so an authority added after the file was made, or a file that did not
-// take, is found out; without it, whether the certificates Node.js already trusts do.
-// `file` names the certificates to trust instead (setup tries a file it has staged before keeping it).
-export async function probeCertificate({ fetch = globalThis.fetch, base, home, file: given, get = httpsGet, timeoutMs = 8000 } = {}) {
+// trusted, 'unreachable' when the server is not there, 'proxy' when the company's proxy refuses the computer's
+// sign-in, else 'other'. The question goes through `curl`, by the director's proxy, so it sees what the
+// other calls see.
+// With the company's file made (`home` holds `ca/company.pem`) it is given to `curl` on the Mac, where the
+// computer's own store is tried first (curl.js); `file` names the certificates to try instead (setup tries a
+// file it has staged before keeping it). `run`, `curl` and `proxy` are for tests.
+export async function probeCertificate({ base, home, file: given, run, curl, proxy, platform, timeoutMs = 8000 } = {}) {
   try {
     const address = addressOf(base);
     const url = `${address}/api/v4/version`;
     const file = given ?? (home === undefined ? null : caFile(home));
-    if (file !== null && address.startsWith('https:') && fs.existsSync(file)) {
-      await get({ url, ca: fs.readFileSync(file, 'utf8'), timeoutMs });
-      return 'ok';
-    }
-    const answer = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(timeoutMs) });
-    try { await answer?.body?.cancel?.(); } catch { /* nothing to read */ }
+    await request({
+      run, curl: curl ?? curlPath({ platform }), url, proxy: proxy !== undefined ? proxy : await directorProxy(url),
+      caFile: file !== null && fs.existsSync(file) ? file : null, maxSeconds: Math.max(1, Math.ceil(timeoutMs / 1000)),
+      ...(platform === undefined ? {} : { platform }), base: address,
+    });
     return 'ok';
   } catch (error) {
     return failureKind(error);
   }
-}
-
-// One request to an https address, trusting exactly the certificates in `ca`; resolves when a TLS
-// connection is made and GitLab answers (whatever it says), rejects with the connection's error.
-function httpsGet({ url, ca, timeoutMs }) {
-  return new Promise((resolve, reject) => {
-    const request = https.get(url, { ca, timeout: timeoutMs }, (response) => {
-      response.resume();
-      resolve();
-    });
-    request.on('timeout', () => request.destroy(Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' })));
-    request.on('error', reject);
-  });
 }
