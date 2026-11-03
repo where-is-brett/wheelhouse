@@ -37,6 +37,9 @@
 //                   prints `recordHash`, the hash of its record as written, which a goal's sheet names a piece by;
 //                   a goal prints `hash`, the hash of its sheet, which the goal's card and the director's Start name;
 //                   an amendment needs its read-back, and prints the route line and the read-back to say
+//   note            asks the host helper to write this session's note, up to 1,200 characters on standard input (four lines: the task, what
+//                   is done, what is next, the decisions open), to <wheelhouse home>/projects/<project>/sessions/<session id>.md,
+//                   beside the context gauge's reading; the session is named by CLAUDE_CODE_SESSION_ID
 //   similar [words] the open work, ideas and rejections that share words with a request: its
 //                   words as the arguments, or its text on standard input
 //   views <name>    one view as short lines: rulebook, waiting, ideas, glossary, settings, levels or
@@ -102,6 +105,7 @@ export { surveyLines, workLines };
 import { SUGGEST, WHY, suggestedAt } from '../lib/calm-words.js';
 import { keep, taken } from '../hooks/pending.js';
 import { projectOf } from '../hooks/kit.js';
+import { noteProblem } from '../lib/session-note.js';
 import { ALWAYS_READY, columnsReadyOf } from '../routing/in-force.js';
 
 // An error whose message is said to the session as it is.
@@ -114,7 +118,7 @@ export const RECORD_KINDS = Object.freeze([
   'work', 'amendment', 'incident', 'note', 'brief', 'goal',
 ]);
 export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey', 'evidence', 'brief']);
-const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'record', 'similar', 'views', 'explain', 'review', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'end-goal', 'narrow-goal', 'goal-baseline', 'goal-draft', 'goal-card'];
+const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'record', 'similar', 'views', 'explain', 'review', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'end-goal', 'narrow-goal', 'goal-baseline', 'goal-draft', 'goal-card', 'note'];
 // How long `confirm` waits for the helper: one window at a time on the computer, so it may wait for another's.
 const CONFIRM_WAIT_MS = 3 * WINDOW_MS;
 export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
@@ -1292,6 +1296,19 @@ async function ready(ask, body, what) {
   return made;
 }
 
+// --- The session note ---
+
+// Asks the host helper to keep the session's note for the project `cwd` is in (the sandbox cannot write under the
+// Wheelhouse home); returns where it is kept. The limit is checked here too, so a note too long is refused at once.
+export async function writeNote({ client, cwd, sessionId, text }) {
+  const problem = noteProblem(text);
+  if (problem !== null) throw new CliError(problem);
+  if (typeof sessionId !== 'string' || sessionId === '') throw new CliError('This session has no id to name its note by');
+  const got = await client.session.note({ cwd, session: sessionId, text });
+  if (got?.ok !== true) throw new CliError(`The note wasn't kept: ${said(got, 'the host helper did not answer')}`);
+  return got.file;
+}
+
 // --- The command line ---
 
 // Standard input as text. A terminal is refused at once, never waited on: the command is run with
@@ -1342,7 +1359,7 @@ export function inChatWords(value, whole = null) {
 }
 
 export async function main(argv, {
-  cwd = process.cwd(), client, input, now = () => new Date(), makeId, columnsReady,
+  cwd = process.cwd(), env = process.env, client, input, now = () => new Date(), makeId, columnsReady,
   out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t),
 } = {}) {
   try {
@@ -1354,6 +1371,11 @@ export async function main(argv, {
     const json = (value) => out(`${JSON.stringify(inChatWords(value), null, 2)}\n`);
     const lines = (list) => out(`${list.map((l) => l.replace(BREAKS, ' ')).join('\n')}\n`);
 
+    if (command === 'note') {
+      only(rest, 0, 'note takes no arguments: give the note on standard input');
+      lines([`Note kept at ${await writeNote({ client: helper, cwd: here, sessionId: env.CLAUDE_CODE_SESSION_ID, text: await stdin() })}`]);
+      return 0;
+    }
     if (command === 'pull-cards') {
       only(rest, 0, 'pull-cards takes no arguments');
       json(await pullCards({ client: helper, cwd: here, now }));

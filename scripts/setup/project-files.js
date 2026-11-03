@@ -217,10 +217,40 @@ When this conversation is summarised, keep:
 - the work in hand: the step being done, what is finished and what is not;
 - each card shown to the director, and whether it was answered;
 - whether All stop is on;
-- the pull requests and branches in play, by number and name.
+- the pull requests and branches in play, by number and name;
+- the ids of the cards, runs and goal pieces in play;
+- the session note's path, if one was written.
 
 Leave out file contents and command output that can be read again. Wheelhouse's records hold the rulebook, the levels, the waiting list and the status, and the session start after a compaction gives them back.
 `;
+// The section's earlier wordings, by the hash of their text (SHA-256, trimmed, line ends as \n). A project whose
+// section still matches one exactly is brought up to COMPACT_SECTION; an edited section is left as the director has it.
+export const EARLIER_COMPACT_HASHES = Object.freeze([
+  '262378b54935486b0e2f24f9a918d44828968d95b292865301353b1c4c1bc800',
+  '8a1fbab63343f98a17e20d403038890133a4aa1f432c78d337ad8bb3fbaa7119',
+]);
+export const sectionHash = (text) => crypto.createHash('sha256').update(text.replace(/\r\n/g, '\n').trim()).digest('hex');
+// The section in a file: from its heading to the next heading or the end.
+function sectionIn(text) {
+  const lines = text.split(/(?<=\n)/);
+  const start = lines.findIndex((l) => /^##?\s*Compact instructions\s*$/i.test(l.replace(/\r?\n$/, '')));
+  if (start === -1) return null;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i += 1) {
+    if (/^#{1,6}\s/.test(lines[i])) {
+      end = i;
+      break;
+    }
+  }
+  return { before: lines.slice(0, start).join(''), body: lines.slice(start, end).join(''), after: lines.slice(end).join('') };
+}
+// The file's text with an earlier wording of the section swapped for the current one; null when there is none to swap.
+export function withCurrentSection(text) {
+  if (text === null) return null;
+  const found = sectionIn(text);
+  if (found === null || !EARLIER_COMPACT_HASHES.includes(sectionHash(found.body))) return null;
+  return `${found.before}${COMPACT_SECTION}${found.after === '' ? '' : `\n${found.after}`}`;
+}
 // How long the step waits, when asked before step 3 has registered the project or step 4 has its answer.
 export const PROJECT_WAIT_MS = 30 * 1000;
 
@@ -412,7 +442,7 @@ function targetsFor({ folder, config, release, claudeHome = null }) {
   return {
     [SETTINGS]: (text) => keychain(mergeSettings(objectIn(SETTINGS, text) ?? {}, ours)),
     [CONFIG]: (text) => configFrom(objectIn(CONFIG, text), config),
-    [CLAUDE]: (text) => (hasSection(text) ? text : withSection(text)),
+    [CLAUDE]: (text) => (hasSection(text) ? (withCurrentSection(text) ?? text) : withSection(text)),
   };
 }
 
@@ -433,7 +463,8 @@ export function projectFilesChange({ folder, config, release = null, local }) {
     ...jsonChanges(at(CONFIG), objectIn(CONFIG, configText), configAfter),
     ...localFilesChange({ folder, local: { ...local, model: frontDeskPin(configAfter) } }),
   ];
-  if (!hasSection(readText(at(CLAUDE)))) changes.push({ kind: 'file', target: at(CLAUDE), section: 'Compact instructions' });
+  const claudeText = readText(at(CLAUDE));
+  if (!hasSection(claudeText) || withCurrentSection(claudeText) !== null) changes.push({ kind: 'file', target: at(CLAUDE), section: 'Compact instructions' });
   return changes;
 }
 
@@ -1378,8 +1409,9 @@ export function projectFilesStep({
           ctx.applyJsonKey({ file: c.target, key: c.key, value: c.after, project });
         } else if (c.kind === 'file' && c.section) {
           const before = readText(c.target);
-          if (hasSection(before)) continue;
-          writeRecorded(ctx, { target: c.target, before, after: withSection(before), project });
+          const after = hasSection(before) ? withCurrentSection(before) : withSection(before);
+          if (after === null) continue;
+          writeRecorded(ctx, { target: c.target, before, after, project });
         } else if (c.kind === 'file' && c.line !== undefined) {
           const before = readText(c.target);
           // A restated line is held when the file already ends with it; any other when it holds it anywhere.

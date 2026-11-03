@@ -10,8 +10,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { refreshLocalSettings, refreshed, staleRule, keyEdits } from '../../../scripts/setup/local-refresh.js';
+import { refreshLocalSettings, refreshCompactSection, refreshed, staleRule, keyEdits } from '../../../scripts/setup/local-refresh.js';
 import { startRun, markStep, addChanges, applyJsonKey, reverseChange, readJournal, closeRun } from '../../../scripts/setup/journal.js';
+import { COMPACT_SECTION } from '../../../scripts/setup/project-files.js';
 import { localSettings, mergeSettings, frontDeskCommand, setupCommand, statusLineCommand } from '../../../scripts/protection/settings.js';
 import { WORK_REPORTS_RULE, FRONT_DESK_INPUT } from '../../../scripts/lib/front-desk.js';
 
@@ -135,4 +136,42 @@ test('only the exact rules Wheelhouse writes for its commands, under another fol
   const ours = localSettings({ address: ADDRESS, pluginRoot: NEW, platform: 'darwin' });
   assert.deepEqual(refreshed({}, ours).permissions.allow, ours.permissions.allow);
   assert.deepEqual(refreshed({ permissions: { allow: 'x' } }, ours).permissions.allow, ours.permissions.allow);
+});
+
+// The section as Wheelhouse wrote it before the ids and the note were named.
+const EARLIER_SECTION = COMPACT_SECTION.replace(";\n- the ids of the cards, runs and goal pieces in play;\n- the session note's path, if one was written.", '.');
+
+test('the Compact instructions section is brought up to date where it still holds an earlier wording, and an edited one is left alone', () => {
+  const p = project();
+  try {
+    const file = path.join(p.folder, 'CLAUDE.md');
+    const mine = '# Shop\n\n- Keep commits small.\n\n';
+    fs.writeFileSync(file, `${mine}${EARLIER_SECTION}`);
+    const recorded = changesOf(p.run).length;
+    assert.equal(refreshCompactSection({ folder: p.folder, project: 'o__p' }), true);
+    assert.equal(fs.readFileSync(file, 'utf8'), `${mine}${COMPACT_SECTION}`);
+    assert.deepEqual(fs.readdirSync(p.folder).filter((n) => n.endsWith('.tmp')), []);
+    const change = changesOf(p.run).at(-1);
+    assert.equal(changesOf(p.run).length, recorded + 1);
+    assert.deepEqual([change.kind, change.step, change.target, change.before, change.after], ['file', 7, file, `${mine}${EARLIER_SECTION}`, `${mine}${COMPACT_SECTION}`]);
+    // Now current: nothing more to do.
+    assert.equal(refreshCompactSection({ folder: p.folder }), false);
+    // Edited by the director: left as it is. So is a file with no section or none at all.
+    const edited = `${mine}${EARLIER_SECTION.replace('summarised', 'summed up')}`;
+    fs.writeFileSync(file, edited);
+    assert.equal(refreshCompactSection({ folder: p.folder }), false);
+    assert.equal(fs.readFileSync(file, 'utf8'), edited);
+    fs.rmSync(file);
+    assert.equal(refreshCompactSection({ folder: p.folder }), false);
+  } finally { fs.rmSync(p.folder, { recursive: true, force: true }); }
+});
+
+test('with no setup run that has done step 7, the section is left as it is', () => {
+  const p = project({ stepDone: false });
+  try {
+    const file = path.join(p.folder, 'CLAUDE.md');
+    fs.writeFileSync(file, EARLIER_SECTION);
+    assert.equal(refreshCompactSection({ folder: p.folder }), false);
+    assert.equal(fs.readFileSync(file, 'utf8'), EARLIER_SECTION);
+  } finally { fs.rmSync(p.folder, { recursive: true, force: true }); }
 });

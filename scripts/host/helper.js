@@ -35,6 +35,7 @@ import { prepareGoalFolder } from '../engine/goal-folder.js';
 import { goalCheckHost } from '../engine/goal-check.js';
 import { awayForGoal, paidUsageOf, sheetDesk } from '../engine/goal-start.js';
 import { sessionsTicking } from '../mod/courier.js';
+import { noteFile, noteProblem, writeNoteFile } from '../lib/session-note.js';
 import { stayAwake } from '../engine/stay-awake.js';
 import { queueFolderOf, queueProjectOf } from '../engine/queue-place.js';
 import { unreachableRefusal, certificateRefusal, certificateLine, awayLine, outputKind, companyGitEnv, makeAwayLog, gitlabBaseOf, certificateSetting } from './company-ca.js';
@@ -913,7 +914,7 @@ const FALL_BACK_ROUTES = ['/pr/state', '/state/record', '/foreman/run'];
 // ~/.wheelhouse cannot be read: like the runbook's, each may give `cwd`, a full path, and the
 // helper places the project from it.
 const PLACED_ROUTES = [
-  '/state/views', '/state/write', '/pr/state', '/pr/preview', '/session/mark', '/cards/chat-click', '/confirm',
+  '/state/views', '/state/write', '/pr/state', '/pr/preview', '/session/mark', '/session/note', '/cards/chat-click', '/confirm',
   '/desk/read', '/desk/act', '/desk/watch',
   '/lean/status', '/lean/merge', '/lean/undo', '/lean/copy', '/local/undo', '/local/move',
   '/survey/carry-on', '/survey/archive', '/survey/restore', '/premium/card', '/premium/check', '/premium/state', '/premium/failed',
@@ -923,7 +924,7 @@ const PLACED_ROUTES = [
 // A Lean project (ruling P5-9) has no code host and no connection: only these routes serve it, on
 // its local state repository, before any connection is made. Every other route refuses it.
 const LEAN_ROUTES = [
-  '/state/write', '/state/views', '/state/answer', '/state/record', '/state/sync', '/state/import', '/session/mark', '/cards/chat-click', '/confirm',
+  '/state/write', '/state/views', '/state/answer', '/state/record', '/state/sync', '/state/import', '/session/mark', '/session/note', '/cards/chat-click', '/confirm',
   '/lean/status', '/lean/merge', '/lean/undo', '/lean/copy',
   // A Lean project has a desk too.
   '/desk/read', '/desk/act', '/desk/watch',
@@ -2216,6 +2217,15 @@ export async function startHelper({
     const fields = SESSION_MARKS[mark];
     if (Object.keys(data).some((k) => !Object.hasOwn(fields, k)) || Object.entries(fields).some(([k, ok]) => !ok(data[k]))) refuse('the mark\'s data is not what that mark carries');
     return doWrite({ project, kind: 'note', data: { mark, ...data } }, ctx);
+  }
+
+  // A session's note, from the front desk, whose sandbox cannot write under the Wheelhouse home: the text, up to the
+  // limit, written beside the session's gauge reading. Not a record, so nothing reaches the state or any repository.
+  async function doSessionNote({ project, session, text }) {
+    if (noteFile(project, session) === null) refuse('this session has no id to name its note by');
+    const problem = noteProblem(text);
+    if (problem !== null) refuse(problem);
+    return { ok: true, file: writeNoteFile(project, session, text) };
   }
 
   // A click in the chat (ruling P5-17): an unsigned card-answer naming its proof, never signed. A label that
@@ -4679,6 +4689,7 @@ export async function startHelper({
     '/state/clone': stateRoute(async () => ({ ok: true })),
     '/state/write': stateRoute(doWrite, { write: true }),
     '/session/mark': stateRoute(doSessionMark, { write: true }),
+    '/session/note': stateRoute(doSessionNote, { clone: false, write: true }),
     '/cards/chat-click': stateRoute(doChatClick, { write: true }),
     // One window at a time on this computer: a second request waits for the first window to close.
     '/confirm': (body, ctx) => oneAtATime('window', () => doConfirm(body, ctx)),

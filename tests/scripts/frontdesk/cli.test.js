@@ -153,11 +153,11 @@ function fakeHelper({ events = [], stop = false, head = FULL, pr, profile = {}, 
 async function run(helper, argv, input, opts) {
   return runWith(helper, argv, input, opts);
 }
-async function runWith(helper, argv, input, { cwd = CWD, ready } = {}) {
+async function runWith(helper, argv, input, { cwd = CWD, ready, env } = {}) {
   let out = '';
   let err = '';
   const code = await main(argv, {
-    cwd, client: helper.client, input, ...(ready ? { columnsReady: ready } : {}), now: () => NOW, out: (t) => { out += t; }, err: (t) => { err += t; },
+    cwd, client: helper.client, input, ...(env ? { env } : {}), ...(ready ? { columnsReady: ready } : {}), now: () => NOW, out: (t) => { out += t; }, err: (t) => { err += t; },
   });
   let json;
   try { json = JSON.parse(out); } catch { json = undefined; }
@@ -1990,7 +1990,7 @@ test('an unknown command, or a helper that can\'t be reached, is one line on sta
     const helper = fakeHelper();
     const unknown = await run(helper, ['show', '7']);
     assert.equal(unknown.code, 1);
-    assert.match(unknown.err, /^Commands: cards, pull-cards, card, again, why, suggest, record, similar, views, explain, review, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, end-goal, narrow-goal, goal-baseline, goal-draft, goal-card\n$/);
+    assert.match(unknown.err, /^Commands: cards, pull-cards, card, again, why, suggest, record, similar, views, explain, review, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, end-goal, narrow-goal, goal-baseline, goal-draft, goal-card, note\n$/);
     const away = { client: { desk: { read: async () => ({ ok: false, refused: 'the host helper could not be reached: is it running?' }) } } };
     const out = await run(away, ['cards']);
     assert.equal(out.code, 1);
@@ -2050,7 +2050,7 @@ test('through the real helper, the command places the project from its folder an
 test('run as a script, an unknown command is refused with the list of commands', async () => {
   const done = spawnSync(process.execPath, [SCRIPT, 'nonsense'], { encoding: 'utf8' });
   assert.equal(done.status, 1);
-  assert.equal(done.stderr, 'Commands: cards, pull-cards, card, again, why, suggest, record, similar, views, explain, review, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, end-goal, narrow-goal, goal-baseline, goal-draft, goal-card\n');
+  assert.equal(done.stderr, 'Commands: cards, pull-cards, card, again, why, suggest, record, similar, views, explain, review, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, end-goal, narrow-goal, goal-baseline, goal-draft, goal-card, note\n');
   assert.equal(done.stdout, '');
 });
 
@@ -2559,4 +2559,33 @@ test('narrow-goal takes the change as JSON, and refuses one that widens', async 
     assert.equal(wider.code, 1);
     assert.match(wider.err, /widens a goal needs a new sheet/);
   });
+});
+
+test('note asks the helper to keep the session note, and refuses what the helper would', async () => {
+  const sent = [];
+  const keeper = (answer) => ({ client: { session: { note: async (body) => { sent.push(body); return answer; } } } });
+  const env = { CLAUDE_CODE_SESSION_ID: 'abc-123' };
+  const text = 'Task: the export\nDone: the parser\nNext: the tests\nOpen: none\n';
+  const done = await run(keeper({ ok: true, file: '/home/projects/o__p/sessions/abc-123.md' }), ['note'], text, { cwd: CWD, env });
+  assert.equal(done.code, 0, done.err);
+  assert.match(done.out, /abc-123\.md/);
+  assert.deepEqual(sent, [{ cwd: CWD, session: 'abc-123', text }]);
+  sent.length = 0;
+  // Refused here, before the helper is asked: over 1,200 characters, empty, no session id, arguments.
+  for (const [argv, input, opts, pattern] of [
+    [['note'], 'x'.repeat(1201), { env }, /1201 characters; keep it to 1200/],
+    [['note'], '  \n', { env }, /empty/],
+    [['note'], 'a note', { env: {} }, /no id/],
+    [['note', 'extra'], 'a note', { env }, /takes no arguments/],
+  ]) {
+    const refused = await run(keeper({ ok: true, file: 'x' }), argv, input, { cwd: CWD, ...opts });
+    assert.equal(refused.code, 1);
+    assert.match(refused.err, pattern);
+  }
+  assert.deepEqual(sent, []);
+  // 1,200 characters pass; the helper's refusal is said as it is.
+  assert.equal((await run(keeper({ ok: true, file: 'x' }), ['note'], 'x'.repeat(1200), { cwd: CWD, env })).code, 0);
+  const stopped = await run(keeper({ ok: false, refused: 'STOP is on' }), ['note'], 'a note', { cwd: CWD, env });
+  assert.equal(stopped.code, 1);
+  assert.match(stopped.err, /STOP is on/);
 });

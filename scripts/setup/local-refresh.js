@@ -32,7 +32,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { localSettings, mergeSettings, directorStatusLine, NO_SYSTEM_CA } from '../protection/settings.js';
 import { canonicalJson } from '../lib/canonical.js';
-import { readJournal, addChanges, applyJsonKey } from './journal.js';
+import { readJournal, addChanges, applyJsonKey, newId } from './journal.js';
+import { withCurrentSection } from './project-files.js';
 import { helperAddress } from '../lib/paths.js';
 import { projectForFolder } from '../lib/projects.js';
 import { claudeHome as defaultClaudeHome } from '../lineage/manifest.js';
@@ -114,6 +115,33 @@ export function refreshLocalSettings({ folder, address, node, pluginRoot, platfo
   return edits.length;
 }
 
+// Brings the "Compact instructions" section of the project's CLAUDE.md up to the current wording, only where it
+// still holds an earlier Wheelhouse wording exactly (compared by hash); an edited section, or none, is left alone.
+// Written whole to a temporary name and renamed, and recorded in the setup run's journal like step 7's own edits.
+// Returns whether it wrote.
+export function refreshCompactSection({ folder, project, journal = readJournal }) {
+  const file = path.join(folder, 'CLAUDE.md');
+  let before;
+  try {
+    before = fs.readFileSync(file, 'utf8');
+  } catch {
+    return false;
+  }
+  const after = withCurrentSection(before);
+  if (after === null) return false;
+  const run = runFor(folder, journal());
+  if (run === null) return false;
+  addChanges(run.id, [{ id: newId('chg'), step: STEP, kind: 'file', target: file, before, after, ...(project === undefined ? {} : { project }) }]);
+  const temp = `${file}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(temp, after);
+    fs.renameSync(temp, file);
+  } finally {
+    fs.rmSync(temp, { force: true });
+  }
+  return true;
+}
+
 // The script's own form: `folder`, a registered project's main folder. Returns the keys it wrote, or
 // null when the folder is not one.
 export function main([folder] = [], { platform = process.platform, self = SELF, pluginRoot = PLUGIN_ROOT, dir } = {}) {
@@ -125,9 +153,13 @@ export function main([folder] = [], { platform = process.platform, self = SELF, 
     return null;
   }
   if (found?.record?.folder !== folder || found.lean === true) return null;
-  return refreshLocalSettings({
+  const wrote = refreshLocalSettings({
     folder, address: helperAddress({ platform }), node: process.execPath, pluginRoot: pluginRoots(dir, self, pluginRoot).at(-1), platform, claudeHome: defaultClaudeHome(),
   });
+  try {
+    refreshCompactSection({ folder, project: found.project });
+  } catch { /* it informs: the file stays as it was */ }
+  return wrote;
 }
 
 if (startedAsScript(import.meta.url)) {

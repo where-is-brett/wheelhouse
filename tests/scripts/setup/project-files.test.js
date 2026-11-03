@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  projectFilesStep, yoursAsk, NEGATED_LINE, starterConfig, foundAtHead, projectFilesChange, projectFilesCard, commitAuthor, COMMIT_MESSAGE, SETUP_FILES, COMPACT_HEADING,
+  projectFilesStep, yoursAsk, NEGATED_LINE, starterConfig, foundAtHead, projectFilesChange, projectFilesCard, commitAuthor, COMMIT_MESSAGE, SETUP_FILES, COMPACT_HEADING, COMPACT_SECTION, EARLIER_COMPACT_HASHES, sectionHash, withCurrentSection,
   EXCLUDE_LINE, WHEELHOUSE_LINE, putYoursIn, LEAVE_YOURS, leftYoursLine,
 } from '../../../scripts/setup/project-files.js';
 import { STEPS, planHash } from '../../../scripts/setup/steps.js';
@@ -2056,4 +2056,51 @@ test('the finder reads what is committed in the folder, never what is only in it
   assert.deepEqual((await foundAtHead(git)).testCommand, 'npm test');
   assert.equal(await foundAtHead({ raw: async () => '', out: async () => null }), null);
   assert.equal(await foundAtHead({ raw: async () => null, out: async () => null }), null, 'a folder with no commit has nothing to find');
+});
+
+// The section as Wheelhouse wrote it before, word for word: with "STOP", then with "All stop".
+const EARLIER_BODY = (stop) => `${COMPACT_HEADING}
+
+When this conversation is summarised, keep:
+- what the director asked for and decided, in their own words where they gave them;
+- the work in hand: the step being done, what is finished and what is not;
+- each card shown to the director, and whether it was answered;
+- whether ${stop} is on;
+- the pull requests and branches in play, by number and name.
+
+Leave out file contents and command output that can be read again. Wheelhouse's records hold the rulebook, the levels, the waiting list and the status, and the session start after a compaction gives them back.
+`;
+
+test('the section names the ids in play and the session note, and its earlier wordings are held by hash', () => {
+  assert.match(COMPACT_SECTION, /- the ids of the cards, runs and goal pieces in play;\n- the session note's path, if one was written\.\n/);
+  assert.deepEqual(EARLIER_COMPACT_HASHES, [sectionHash(EARLIER_BODY('STOP')), sectionHash(EARLIER_BODY('All stop'))]);
+});
+
+test('a project holding an earlier wording of the section is brought up to the current one, and an edited section is left alone', () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-compact-'));
+  try {
+    fs.mkdirSync(path.join(folder, '.claude'));
+    const file = path.join(folder, 'CLAUDE.md');
+    const starter = starterConfig({ answers: { '4.live-data': { label: LIVE_DATA.no, text: null } }, frontDesk: BEST_MODEL, midSized: MID_MODEL });
+    const sectionChange = () => projectFilesChange({ folder, config: starter, release: { ref: REF }, local: { address: ADDRESS, node: NODE, pluginRoot: PLUGIN_ROOT, platform: 'darwin' } })
+      .filter((c) => c.target === file && c.section);
+    for (const stop of ['STOP', 'All stop']) {
+      // After the director's lines and before a later heading, with Windows line ends too.
+      const before = `# Shop\n\n- Keep commits small.\n\n${EARLIER_BODY(stop)}\n## Other\n\nMore.\n`;
+      assert.equal(withCurrentSection(before), `# Shop\n\n- Keep commits small.\n\n${COMPACT_SECTION}\n## Other\n\nMore.\n`);
+      assert.notEqual(withCurrentSection(before.replace(/\n/g, '\r\n')), null);
+      assert.equal(withCurrentSection(`${EARLIER_BODY(stop)}`), COMPACT_SECTION);
+      fs.writeFileSync(file, before);
+      assert.equal(sectionChange().length, 1, 'the refresh is a change setup applies');
+    }
+    // Current wording, an edited one, and none: nothing to swap (none is added by the existing path).
+    for (const same of [COMPACT_SECTION, EARLIER_BODY('STOP').replace('summarised', 'summed up'), EARLIER_BODY('STOP').replace('- the pull', '- the director\'s own line;\n- the pull')]) {
+      assert.equal(withCurrentSection(`# Shop\n\n${same}`), null);
+      fs.writeFileSync(file, `# Shop\n\n${same}`);
+      assert.equal(sectionChange().length, 0);
+    }
+    fs.writeFileSync(file, '# Shop\n');
+    assert.equal(sectionChange().length, 1);
+    assert.equal(withCurrentSection(null), null);
+  } finally { fs.rmSync(folder, { recursive: true, force: true }); }
 });
