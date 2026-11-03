@@ -90,7 +90,7 @@ import { installationCovers } from '../host/connection.js';
 import { gitlabApi, makeProjectKey, isKeysSwitchedOff, checkBaseUrl, projectPath } from '../host/gitlab-key.js';
 import { tokenUrl } from '../host/token-url.js';
 import { composeCard, isTooLong } from '../cards/compose.js';
-import { DEFAULT_GITLAB, gitlabBase, readGitlabHosts } from '../host/gitlab-base.js';
+import { DEFAULT_GITLAB, gitlabBase, readGitlabHosts, parseRemote, hostWords, isDefaultHost } from '../host/gitlab-base.js';
 import { readKey, writeKey } from '../host/keys.js';
 import { switchOnProtection, protectionStatus, readGitlabProtection } from '../host/protection.js';
 import { askSecret as realAskSecret } from '../secrets/secret-box.js';
@@ -484,39 +484,93 @@ export function companyAddress(text) {
   return { base: url.origin, host: url.host };
 }
 
-function gitlabWhereAsk(name, { id, refused }) {
+// The host a folder's remotes already send work to that is neither GitHub nor the public GitLab, as the
+// address it goes by ('git.example.org:8443'), or null.
+export function remoteHost(others = []) {
+  for (const url of others) {
+    let parts;
+    try {
+      parts = parseRemote(url);
+    } catch {
+      continue;
+    }
+    if (parts.hostname === 'github.com' || isDefaultHost(parts)) continue;
+    const address = hostWords(parts);
+    if (companyAddress(address).host !== undefined) return address;
+  }
+  return null;
+}
+
+export const GO_BACK = 'Go back';
+
+function gitlabWhereAsk(name, { id, refused, remote }) {
+  const options = [];
+  if (remote !== null) options.push({ label: remote, says: 'Where this folder already sends its work. Setup names it in the project settings.' });
+  options.push({ label: GITLAB_COM, says: 'The public GitLab, on your own account.' });
+  options.push({ label: COMPANY_GITLAB, says: 'Setup asks for the address next. Setup names it in the project settings.' });
   return {
     id,
     typed: true,
     card: {
       level: 2,
-      what: `${refused === null ? '' : `${refused}. `}Which GitLab should ${name} go on? For your company's, type its address, such as https://gitlab.example.org.`,
+      what: `${refused === null ? '' : `${refused}. `}Which GitLab should ${name} go on? To type your company's address now, choose Other below and type it, such as https://gitlab.example.org.`,
       why: 'A company runs its own GitLab at its own address, and setup needs it to sign in and make the project.',
-      options: [
-        { label: GITLAB_COM, says: 'The public GitLab, on your own account.' },
-        { label: COMPANY_GITLAB, says: 'Type your company\'s address on this card. Setup names it in the project settings.' },
-      ],
-      recommend: GITLAB_COM,
-      because: 'it is the common one; pick the other only if your company runs its own',
+      options,
+      recommend: remote ?? GITLAB_COM,
+      because: remote === null ? 'it is the common one; pick the other only if your company runs its own' : 'this folder already sends its work there',
       meanwhile: MEANWHILE,
     },
   };
 }
 
-// What the which-GitLab card's answers say: { ask } while it is open, else { base } and, for a company's, { host }.
-// An address that is not one asks again, saying why, under a new id.
-export function gitlabWhere({ answer, name }) {
+function gitlabAddressAsk(name, { id, refused }) {
+  return {
+    id,
+    typed: true,
+    card: {
+      level: 2,
+      what: `${refused === null ? '' : `${refused}. `}What is your company's GitLab address? Choose Other below and type it, such as https://gitlab.example.org.`,
+      why: `Setup needs it to sign in and make ${name} there, and names it in the project settings.`,
+      options: [
+        { label: GITLAB_COM, says: 'Use the public GitLab instead.' },
+        { label: GO_BACK, says: 'Back to the question of which GitLab.' },
+      ],
+      recommend: GITLAB_COM,
+      because: 'pick it only if your company has no GitLab of its own',
+      meanwhile: MEANWHILE,
+    },
+  };
+}
+
+// What the which-GitLab cards' answers say: { ask } while one is open, else { base } and, for a company's, { host }.
+// The first card offers the host the folder's remotes already name, the public service, or the company's own
+// (which asks a second card for the address); an address typed on either is taken directly. One that is
+// not an address asks again under a new id, saying why.
+export function gitlabWhere({ answer, name, others = [] }) {
+  const remote = remoteHost(others);
+  let state = 'where';
   let refused = null;
   for (let n = 0; ; n += 1) {
-    const id = n === 0 ? 'gitlab-where' : `gitlab-where-${n}`;
+    const id = state === 'where' ? (n === 0 ? 'gitlab-where' : `gitlab-where-${n}`) : `gitlab-address-${n}`;
     const got = answer(id);
-    if (got === null) return { ask: gitlabWhereAsk(name, { id, refused }) };
+    if (got === null) return { ask: state === 'where' ? gitlabWhereAsk(name, { id, refused, remote }) : gitlabAddressAsk(name, { id, refused }) };
     if (got.label === GITLAB_COM) return { base: DEFAULT_GITLAB };
-    if (typeof got.text !== 'string' || got.text.trim() === '') {
-      refused = 'Type your company\'s GitLab address on the card';
+    if (state === 'where' && got.label === COMPANY_GITLAB) {
+      state = 'address';
+      refused = null;
       continue;
     }
-    const found = companyAddress(got.text);
+    if (state === 'address' && got.label === GO_BACK) {
+      state = 'where';
+      refused = null;
+      continue;
+    }
+    const typed = got.label === remote && remote !== null ? remote : got.text;
+    if (typeof typed !== 'string' || typed.trim() === '') {
+      refused = 'Choose one of the buttons, or Other and type your company\'s GitLab address';
+      continue;
+    }
+    const found = companyAddress(typed);
     if (found.why === undefined) return found;
     refused = found.why;
   }
@@ -1736,7 +1790,7 @@ export function hostStep({
       // GitLab chosen, with no remote naming one: the public service, or the company's own address.
       let company = null;
       if (host === 'gitlab' && product.host !== 'gitlab') {
-        company = gitlabWhere({ answer, name: product.name });
+        company = gitlabWhere({ answer, name: product.name, others: product.others ?? remotesOf(ctx.folder) });
         if (company.ask) return { ask: company.ask };
       }
       // The main line of a folder with history: asked only where the folder doesn't say.
