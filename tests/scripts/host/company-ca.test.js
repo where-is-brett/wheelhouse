@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import {
   caFile, exportSystemRoots, writeCaFile, caEnv, glabCaArgs, gitCaConfig, withGitConfig, HOST_UNREACHABLE,
   CERTIFICATE_NOT_TRUSTED, failureKind, unreachableRefusal, outputKind, companyGitEnv, makeAwayLog, stageCaFile, certificateRefusal, awayLine,
-  revocationFallback,
+  revocationFallback, curlKind, curlFailure, PROXY_REFUSED, lineFor, revocationBlocked,
 } from '../../../scripts/host/company-ca.js';
 import { safeGit, directorSignIn } from '../../../scripts/lib/safe-git.js';
 import { setupGit, setupGitEnv, FENCE } from '../../../scripts/setup/git.js';
@@ -613,4 +613,44 @@ test('safeGit tries a call once more with the certificate file when Windows\' st
   } finally {
     if (before === undefined) delete process.env.WHEELHOUSE_HOME; else process.env.WHEELHOUSE_HOME = before;
   }
+});
+
+// ---- curl's exit codes (host-access part 1) ----
+
+test('curlKind: unreachable for 5, 6, 7, 28, 52 and 56; certificate for 60, 77 and 35 with a certificate message', () => {
+  for (const exit of [5, 6, 7, 28, 52, 56]) assert.equal(curlKind(exit), 'unreachable', String(exit));
+  for (const exit of [60, 77]) assert.equal(curlKind(exit), 'certificate', String(exit));
+  assert.equal(curlKind(35, { stderr: 'schannel: SEC_E_UNTRUSTED_ROOT (0x80090325)' }), 'certificate');
+  assert.equal(curlKind(35, { stderr: 'schannel: CRYPT_E_NO_REVOCATION_CHECK (0x80092012)' }), 'certificate');
+  assert.equal(curlKind(35, { stderr: 'schannel: failed to receive handshake' }), null);
+  assert.equal(curlKind(0), null);
+  assert.equal(curlKind(22), null);
+});
+
+test('curlKind: a 407 from the proxy outranks the exit code', () => {
+  for (const exit of [0, 56, 97]) assert.equal(curlKind(exit, { connect: 407 }), 'proxy', String(exit));
+  assert.equal(curlKind(56, { connect: 200 }), 'unreachable');
+});
+
+test('curlFailure: the line and the code for each kind, and a timeout is marked', () => {
+  const base = 'https://gitlab.example.org';
+  assert.equal(curlFailure(7, { base }).code, 'HOST_UNREACHABLE');
+  assert.equal(curlFailure(7, { base }).message, HOST_UNREACHABLE(base));
+  assert.equal(curlFailure(60, { base }).message, CERTIFICATE_NOT_TRUSTED(base));
+  assert.equal(curlFailure(56, { connect: 407, base }).code, 'PROXY_REFUSED');
+  assert.equal(curlFailure(56, { connect: 407, base }).message, PROXY_REFUSED);
+  assert.equal(curlFailure(28, { base }).timedOut, true);
+  assert.equal(curlFailure(7, { base }).timedOut, false);
+  assert.equal(curlFailure(22, { base }), null);
+});
+
+test('PROXY_REFUSED says what happened and that work carries on, without naming a tool', () => {
+  assert.equal(PROXY_REFUSED, "Your company's proxy didn't accept this computer's sign-in, so GitLab couldn't be reached. Work carries on here and is sent when it can be.");
+  assert.equal(lineFor('proxy', 'https://gitlab.example.org'), PROXY_REFUSED);
+  assert.doesNotMatch(PROXY_REFUSED, /curl|NTLM|407/);
+});
+
+test('revocationBlocked reads the Windows wording only', () => {
+  assert.equal(revocationBlocked('schannel: CRYPT_E_NO_REVOCATION_CHECK (0x80092012)'), true);
+  assert.equal(revocationBlocked('SSL certificate problem: unable to get local issuer certificate'), false);
 });

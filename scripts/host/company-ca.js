@@ -225,6 +225,9 @@ export const HOST_UNREACHABLE = (base) => (isPublic(base)
 // Said when the certificates this computer's store holds do not cover the company's GitLab, so the file setup
 // would keep is of no use: someone who looks after the computers adds the company's authority to the store.
 export const CERTIFICATE_NOT_IN_STORE = `Your company's certificate isn't in this computer's system store, so Wheelhouse can't use it yet. Ask whoever looks after your computers to add it to the System keychain (Mac) or the Local Machine store (Windows), then ask for step 3's card again.`;
+// Said when the company's proxy answers 407 to the sign-in `curl` offers (the computer's own user, by SSPI on
+// Windows or a Kerberos ticket on the Mac).
+export const PROXY_REFUSED = 'Your company\'s proxy didn\'t accept this computer\'s sign-in, so GitLab couldn\'t be reached. Work carries on here and is sent when it can be.';
 export const CERTIFICATE_NOT_TRUSTED = (base) => (isPublic(base)
   ? `The certificate GitLab (${new URL(DEFAULT_GITLAB).host}) shows isn't one this computer trusts, which a network filter or security software can cause. Wheelhouse never switches certificate checks off: ask whoever looks after this computer or its network.`
   : `The certificate GitLab, ${base}, shows isn't one this computer trusts. Wheelhouse never switches certificate checks off; it can add your company's own certificate for that address instead.`);
@@ -263,8 +266,31 @@ export function outputKind(output) {
 export const timedOut = (output) => /i\/o timeout|context deadline exceeded|timed out/i.test(String(output ?? ''));
 
 // The line for a kind, and the code it carries.
-export const lineFor = (kind, base) => (kind === 'certificate' ? CERTIFICATE_NOT_TRUSTED(base) : HOST_UNREACHABLE(base));
-const CODES = { certificate: 'CERTIFICATE_NOT_TRUSTED', unreachable: 'HOST_UNREACHABLE' };
+export const lineFor = (kind, base) => {
+  if (kind === 'certificate') return CERTIFICATE_NOT_TRUSTED(base);
+  return kind === 'proxy' ? PROXY_REFUSED : HOST_UNREACHABLE(base);
+};
+const CODES = { certificate: 'CERTIFICATE_NOT_TRUSTED', unreachable: 'HOST_UNREACHABLE', proxy: 'PROXY_REFUSED' };
+
+// Whether `curl` said a certificate's revocation could not be checked (a company network that blocks the check).
+export const revocationBlocked = (stderr) => REVOCATION_BLOCKED.test(String(stderr ?? ''));
+
+// The kind of failure for `curl`'s exit code, from `curl.exe`'s own codes and what it said: 'proxy' when the
+// proxy answered the tunnel with 407 (%{http_connect}), 'certificate' for 60 and 77 and for 35 with a certificate
+// message, 'unreachable' for 5, 6, 7, 28, 52 and 56 (28 is a timeout), else null. Only the code and the kind of
+// message are read; curl's own text is never repeated.
+export function curlKind(exit, { connect = 0, stderr = '' } = {}) {
+  if (Number(connect) === 407) return 'proxy';
+  if (exit === 60 || exit === 77) return 'certificate';
+  if (exit === 35) return outputKind(stderr) === 'certificate' || REVOCATION_BLOCKED.test(String(stderr ?? '')) ? 'certificate' : null;
+  return [5, 6, 7, 28, 52, 56].includes(exit) ? 'unreachable' : null;
+}
+
+// A failure of `curl` as an error of ours (the plain line and its code), or null when the exit code says neither.
+export function curlFailure(exit, { connect = 0, stderr = '', base = DEFAULT_GITLAB } = {}) {
+  const kind = curlKind(exit, { connect, stderr });
+  return kind === null ? null : Object.assign(new Error(lineFor(kind, base)), { code: CODES[kind], timedOut: exit === 28 });
+}
 
 // A tool's output read as an error of ours (the plain line, with its code), or null when the output
 // says neither.
