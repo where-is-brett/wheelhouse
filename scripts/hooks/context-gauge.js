@@ -1,6 +1,6 @@
 // scripts/hooks/context-gauge.js
 // Tells the model how full its context is, each turn, and keeps the reading for
-// the PreCompact guard. The transcript's format is Claude Code's own and may
+// later turns. The transcript's format is Claude Code's own and may
 // change, so anything unexpected gives no reading and the hook says nothing.
 import fs from 'node:fs';
 import path from 'node:path';
