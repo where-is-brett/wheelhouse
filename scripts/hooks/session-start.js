@@ -328,7 +328,9 @@ async function ensureHelper(client, { spawn, pluginRoot, waitMs, pause, end }) {
     let answering = true;
     while (answering && Date.now() < gone) {
       await pause(100);
-      answering = (await withinBudget(gone)(client.health()))?.ok === true;
+      const seen = await withinBudget(gone)(client.health());
+      // No answer because the wait ran out is not the helper having closed: it may still be answering.
+      answering = seen === null && Date.now() >= gone ? true : seen?.ok === true;
     }
     if (answering) return { ...first, slow: true };
   }
