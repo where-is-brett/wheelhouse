@@ -13,7 +13,7 @@
 // stamp are kept in .wheelhouse/feature/checked.json: status.json is rewritten
 // only on a change, so its own time can't say when the hook last looked.
 //
-// It informs: it prints nothing, and a failure anywhere is passed over. Every
+// It informs: on PostToolUse it may add the prepare warning from context-gauge.js, and otherwise prints nothing; a failure anywhere is passed over. Every
 // write refuses a symlink. It never runs git; the root is found with fs.
 import path from 'node:path';
 import { runAndExit, worktreeRoot } from './kit.js';
@@ -22,6 +22,7 @@ import { featurePaths, readStatus, writeStatus } from '../feature/files.js';
 import {
   buildStatus, captureRulings, findLedger, loadFeature, planIn, readBrief, readCapped, safeFeatureFolder, writeWhole, SMALL_BYTES,
 } from '../feature/status.js';
+import { prepareOnToolUse } from './context-gauge.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
 export const THROTTLE_MS = 5000;
@@ -80,7 +81,15 @@ export function sameStatus(a, b) {
   return JSON.stringify(restA) === JSON.stringify(restB);
 }
 
-export async function decide(input, { now = () => new Date(), answered, slice } = {}) {
+// The prepare warning rides on this PostToolUse hook, so a tool call costs one process; the rest is the
+// feature status, which does its own work in a feature worktree only.
+export async function decide(input, options = {}) {
+  const warning = input.hook_event_name === 'PostToolUse' ? prepareOnToolUse(input, { dir: options.dir, now: options.now }) : undefined;
+  await keepStatus(input, options);
+  return warning;
+}
+
+async function keepStatus(input, { now = () => new Date(), answered, slice } = {}) {
   const found = featureWorktree(input.cwd);
   if (found === null) return undefined;
   const { root, brief } = found;
