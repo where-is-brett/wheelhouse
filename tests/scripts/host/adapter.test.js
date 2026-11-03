@@ -756,3 +756,11 @@ test('the scrub hides extra secrets that are in no environment', async () => {
   assert.equal(scrub('bad borrowed-key-9876 here', {}, ['borrowed-key-9876']), 'bad [hidden] here');
   assert.equal(scrub('bad short here', {}, ['short', '', undefined]), 'bad short here');
 });
+
+test('GitHub approves and counts approvals, which the adapter no longer calls unavailable', async () => {
+  const { a, calls } = adapter('github', { stdout: JSON.stringify({ headRefOid: SHA }) }, { stdout: '{}' });
+  assert.deepEqual(await a.approve({ number: 3, sha: SHA }), { approved: true });
+  assert.equal(calls.length, 2);
+  const none = adapter('github', { stdout: JSON.stringify({ baseRefName: 'main', headRefOid: SHA }) }, { stdout: '[]' }, { stdout: '[]' });
+  assert.equal(await none.a.approvalsNeeded(3), 0);
+});

@@ -108,7 +108,7 @@ export function installationOf(connection, keys) {
 
 // The GitHub access key, renewed first when it has less than ten minutes
 // left, with the new keys saved. A key with no expiry is used as it is.
-async function githubAccessKey({ fetch, now, keys: deps }) {
+export async function githubAccessKey({ fetch, now, keys: deps }) {
   const keys = await githubKeys(deps);
   if (keys.accessExpiresAt == null) return keys.accessToken;
   const left = Date.parse(keys.accessExpiresAt) - timeOf(now);

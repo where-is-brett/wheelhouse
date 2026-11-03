@@ -3,18 +3,21 @@
 //
 // A hosted project's record names its backend (`connection.backend`, design section 8.2): the host's tool
 // ('cli', the default, also for a record kept before backends were chosen) or the host's web API through
-// `curl` ('rest'). GitHub has no web API backend yet, so it keeps its tool.
+// `curl` ('rest'), for GitHub and GitLab alike.
 //
-// A tool that will not start (not found, not allowed to run, or a policy message) moves a GitLab project to
+// A tool that will not start (not found, not allowed to run, or a policy message) moves a project to
 // the web API by itself: the call that met the failure is answered there, `onSwitch` is told so the helper can
 // record it, and the tool is not tried again for this adapter. A tool that started and said no (signed out, a
-// refusal) is not a switch. For GitHub the same failure is said plainly, with a code, and nothing moves.
+// refusal) is not a switch.
 //
-// The web API's key is not held here: it is lent for each request, from the project's own key in the computer's
-// store for a narrow connection, else borrowed from the director's own git (scripts/host/store.js).
+// The web API's key is not held here: it is lent for each request, from the project's own key for a narrow
+// connection (GitLab's in the computer's store, GitHub's access key renewed when it is near its end), else
+// borrowed from the director's own git (scripts/host/store.js).
 import { makeAdapter } from './adapter.js';
 import { makeLocalAdapter } from './local/adapter.js';
 import { makeGitlabRestAdapter } from './gitlab-rest.js';
+import { makeGithubRestAdapter, GITHUB_API } from './github-rest.js';
+import { githubAccessKey } from './connection.js';
 import { DEFAULT_GITLAB } from './gitlab-base.js';
 import { findKey } from './keys.js';
 import { borrowKey } from './store.js';
@@ -26,13 +29,12 @@ import { startFailure } from '../lib/host-tools.js';
 export const TOOL_WONT_START = 'TOOL_WONT_START';
 const SYNC_METHODS = new Set(['pullRef', 'pushTarget']);
 
+const GITHUB_ORIGIN = 'https://github.com';
 const NAMES = { github: { name: 'GitHub', tool: 'gh' }, gitlab: { name: 'GitLab', tool: 'glab' } };
 
 function wontStart(host) {
   const { name, tool } = NAMES[host];
-  const error = new Error(host === 'github'
-    ? `${name}'s tool (${tool}) is not installed or will not start on this computer, and the web API is not available for GitHub yet: install ${tool}, or ask whoever looks after this computer to allow it`
-    : `${name}'s tool (${tool}) is not installed or will not start on this computer`);
+  const error = new Error(`${name}'s tool (${tool}) is not installed or will not start on this computer`);
   error.code = TOOL_WONT_START;
   return error;
 }
@@ -66,7 +68,33 @@ function keyLender({ record, base, borrow, keys }) {
   };
 }
 
+// The same for GitHub: the narrow connection's access key (renewed when it is near its end), else the director's own,
+// lent by their git.
+function githubKeyLender({ record, borrow, keys, via }) {
+  const narrow = record.connection?.mode === 'narrow';
+  return async () => {
+    if (narrow) return githubAccessKey({ fetch: via.fetch ?? globalThis.fetch, now: via.now ?? (() => new Date()), keys });
+    const lent = await borrow({ host: 'github.com', base: GITHUB_ORIGIN, repoPath: record.repo });
+    return lent?.key ?? '';
+  };
+}
+
+function githubRestAdapter(record, { run, via = {}, borrow = borrowKey, keys }) {
+  const platform = via.platform ?? process.platform;
+  return makeGithubRestAdapter({
+    repo: record.repo,
+    key: githubKeyLender({ record, borrow, keys, via }),
+    run: via.run ?? run,
+    curl: via.curl ?? curlPath({ platform }),
+    proxy: via.proxy !== undefined ? via.proxy : () => directorProxy(GITHUB_API),
+    caFile: via.caFile !== undefined ? via.caFile : companyFile(),
+    platform,
+    ...(via.baseEnv === undefined ? {} : { baseEnv: via.baseEnv }),
+  });
+}
+
 function restAdapter(record, { run, via = {}, borrow = borrowKey, keys }) {
+  if (record.host === 'github') return githubRestAdapter(record, { run, via, borrow, keys });
   const base = (record.connection?.baseUrl ?? DEFAULT_GITLAB).replace(/\/+$/, '');
   const platform = via.platform ?? process.platform;
   return makeGitlabRestAdapter({
@@ -120,12 +148,11 @@ function switching({ first, second, onSwitch }) {
 
 // `write` keeps a local change's signed event the caller's own way; a hosted project has none to keep.
 // `via` ({ run, curl, proxy, caFile, platform, baseEnv }), `borrow` and `keys` are seams for tests of the web API;
-// `onSwitch({ from, to })` is called once, when a GitLab project moves to the web API.
+// `onSwitch({ from, to })` is called once, when a project moves to the web API.
 export function adapterOf(record, { run, env = {}, write, via, borrow, keys, onSwitch } = {}) {
   if (record.host === 'local') return makeLocalAdapter({ project: record.repo.slice('local/'.length), run, write, folder: record.folder });
   const base = record.connection?.baseUrl;
-  if (record.host === 'gitlab' && record.connection?.backend === 'rest') return restAdapter(record, { run, via, borrow, keys });
+  if (record.connection?.backend === 'rest') return restAdapter(record, { run, via, borrow, keys });
   const tool = makeAdapter({ host: record.host, repo: record.repo, run: typeof run === 'function' ? watched(run, record.host) : run, env, base });
-  if (record.host !== 'gitlab') return tool;
   return switching({ first: tool, second: () => restAdapter(record, { run, via, borrow, keys }), onSwitch });
 }

@@ -53,12 +53,12 @@ export function engineForProject({ adapter = () => packedArchon(), now = () => n
   };
 }
 
-// Records that a GitLab project's tool stopped starting and the helper moved it to the web API by itself
+// Records that a GitHub or GitLab project's tool stopped starting and the helper moved it to the web API by itself
 // (scripts/host/adapter-for.js): the record keeps `backend: 'rest'` and `switched: 'cli'`, which the board says in one
 // calm line. It holds no secret. Nothing moves it back by itself: the next setup run checks again.
 export function recordSwitch(project, { read = readProject, write = writeProject } = {}) {
   const record = read(project);
-  if (!record || record.host !== 'gitlab') return false;
+  if (!record || (record.host !== 'gitlab' && record.host !== 'github')) return false;
   if (backendOf(record.connection) === 'rest' && record.connection.switched === 'cli') return false;
   write(project, { ...record, connection: { ...record.connection, backend: 'rest', switched: 'cli' } });
   return true;
