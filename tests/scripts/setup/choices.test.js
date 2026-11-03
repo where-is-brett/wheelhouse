@@ -12,6 +12,7 @@ import {
 import { stepFourDrift, choiceList } from '../../../scripts/setup/redo.js';
 import { NEW_PRODUCT, HOST_LABELS, WAYS, REAL_USERS, STRICTER } from '../../../scripts/setup/host.js';
 import { LIVE_DATA, PRODUCT } from '../../../scripts/setup/questions.js';
+import { PUT_ON_GITLAB } from '../../../scripts/setup/local.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
 
 const phase = (value) => [{ kind: 'setting', data: { key: 'phase', value } }];
@@ -113,6 +114,20 @@ test('the one card is never the same card twice: its id names the choices and ho
   assert.equal(at(0), at(0));
   assert.notEqual(at(0), at(1));
   assert.notEqual(at(0), at(0, newProductChoices({ live: LIVE_DATA.yes })));
+});
+
+test('the plan names GitLab for a folder whose own remote is on GitLab, and for a kept folder put on GitLab', () => {
+  const c = (id, label) => ({ step: 3, id, key: `3.${id}`, card: { recommend: label, options: [] }, typed: false, writes: undefined, chosen: null, label, text: null });
+  const ask = (product, list) => oneCard({ folder: '/x/h', list, product, platform: 'win32', toRun: [3], count: 0 }).card.question;
+  const gitlab = ask({ isNew: false, host: 'gitlab', repo: 'team/harbour', name: 'harbour' }, [c('connection-0123456789', WAYS.narrow)]);
+  assert.match(gitlab, /- harbour on GitLab, as it is\./);
+  assert.match(gitlab, /- A GitLab key for this project only\./);
+  assert.doesNotMatch(gitlab, /GitHub/);
+  const github = ask({ isNew: false, host: 'github', repo: 'a/harbour', name: 'harbour' }, [c('connection-0123456789', WAYS.own)]);
+  assert.match(github, /- A key for this project only, made on GitHub/);
+  const put = ask({ isNew: false, host: 'local', repo: null, name: 'harbour' }, [c('kept', PUT_ON_GITLAB), c('connection-0123456789', WAYS.narrow)]);
+  assert.match(put, /- Put on GitLab: a private project on your account/);
+  assert.match(put, /- A GitLab key for this project only\./);
 });
 
 test('a Go ahead holds until one of its choices gets a newer, different answer of the director\'s', () => {
