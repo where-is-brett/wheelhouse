@@ -52,6 +52,7 @@ import { agentOfProject } from '../agents/names.js';
 import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
 import { setupCommand, allowRule } from '../protection/settings.js';
 import { detectHost } from '../host/adapter.js';
+import { curlPath } from '../host/curl.js';
 import { branchesOf, chosenHost, remotesOf } from './local.js';
 import { readGitlabHosts } from '../host/gitlab-base.js';
 import { caFile, exportSystemRoots, stageCaFile, caEnv, glabCaArgs, gitCaConfig, addressOf, failureKind, CERTIFICATE_NOT_IN_STORE } from '../host/company-ca.js';
@@ -585,6 +586,22 @@ export async function toolsStatus({ platform = process.platform, run = realRun, 
   return status;
 }
 
+// The system's curl, by full path (scripts/host/curl.js): { found, path }. It is not installed by setup; Wheelhouse
+// reaches the host's web API through it when the host's tool is not here.
+export function curlStatus({ platform = process.platform, gitPath, exists } = {}) {
+  const file = curlPath({ platform, gitPath, ...(exists === undefined ? {} : { exists }) });
+  return { found: file !== null, path: file };
+}
+
+// How a host tool stands on this computer, in the stages of design section 8.2: 'works' (it starts), 'missing' (not
+// found, so it may be fetched) or 'blocked' (found but it will not start: not allowed, a policy message, or no answer).
+// A blocked tool is not fetched: the project settles on the host's web API with no second question. `status` is
+// toolsStatus's answer for the tool.
+export function stageOf(status) {
+  if (status?.ok) return 'works';
+  return status?.found ? 'blocked' : 'missing';
+}
+
 // Why setup stops for this computer's Node.js: the README's line, and what was found.
 export function nodeRefusal(node) {
   const found = node?.found ? `this computer's Node.js is ${node.version ?? 'one whose version could not be read'}` : 'Node.js was not found on this computer';
@@ -881,8 +898,11 @@ export function toolsStep({
           ? { kind: 'process', target: 'git', action: 'wait' }
           : { kind: 'process', target: 'git', action: 'install', waitsFor: WAITS_FOR[platform] });
       }
+      // A host tool that is found but will not start is blocked here: it is not fetched, and the project settles on the
+      // host's web API (design section 8.2).
+      const blocked = hostTools.filter((tool) => stageOf(status[tool]) === 'blocked');
       for (const tool of hostTools) {
-        if (status[tool].ok) continue;
+        if (status[tool].ok || blocked.includes(tool)) continue;
         const change = { kind: 'folder', target: toolFolder(tool), action: 'fetch', tool };
         // Where the project's glabFrom names the company's own list, glab comes from there; what the list
         // says (its version, whether it gives a checksum) goes on the card before anything is fetched.
@@ -904,7 +924,7 @@ export function toolsStep({
       // The build engine and its broker, where this computer runs it (scripts/setup/engine-parts.js).
       if (engine?.wanted({ platform, hosts: projectHosts({ folder: ctx.folder, answers: ctx.answers }) })) changes.push(...engine.changes({ agent: agentOfProject(ctx.folder, { computerId: computerId() }) }));
       // Nothing to do settles the step, with no Go ahead (ruling R75).
-      if (changes.length === 0) return { settled: { record: { nothing: true } } };
+      if (changes.length === 0) return { settled: { record: { nothing: true, ...(blocked.length > 0 ? { blocked } : {}) } } };
       return { changes, card: cardFor(changes, status, platform), director: directorFor(changes, platform) };
     },
     // Starts every installer at once, first, and fetches the host tools meanwhile; writes the rule
@@ -923,7 +943,13 @@ export function toolsStep({
         if (!started.started) throw new Error(`the ${c.target} installer did not start${started.why ? `: ${started.why}` : ''}`);
         record({ id: newId('chg'), kind: 'process', target: started.image, before: null, after: { tool: c.target, pid: started.pid, startedAt: now().toISOString(), image: started.image } });
       });
-      const fetches = changes.filter((c) => c.action === 'fetch').map((c) => (c.from === 'company'
+      // A fetch of the official release that cannot be done (a refused download, a checksum the company's proxy rewrote, a
+      // copy that will not run) settles the project on the host's web API with no second question: it is said, and the
+      // step goes on. A copy from the company's own list the director chose is not settled quietly: its failure stops the step.
+      const settle = (c) => (fetched) => (c.from === 'company' ? fetched : fetched.catch(() => {
+        if (typeof ctx.say === 'function') ctx.say(`${c.tool} could not be fetched on this computer, so Wheelhouse will reach the host without it`);
+      }));
+      const fetches = changes.filter((c) => c.action === 'fetch').map((c) => settle(c)(c.from === 'company'
         // What the card said: the list it named, the version it gave, and whether it gave a checksum.
         ? fetchHostTool({ tool: c.tool, platform, arch, fetch, run, record, source: glabSource({ setting: `company ${c.source}` }), folder: ctx.folder, expectVersion: c.version, ...(c.checksum === 'none' ? { pin: c.pin } : {}) })
         : fetchHostTool({ tool: c.tool, platform, arch, fetch, run, record })));

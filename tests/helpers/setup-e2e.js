@@ -59,6 +59,12 @@ import { g } from './git-fixture.js';
 import { shortHome, tempFolder, testAddress } from './homes.js';
 import { standInTools } from './host-stand-ins.js';
 import { removeFolder } from './remove.js';
+import { directorKey } from '../../scripts/setup/host.js';
+import { useFileKeyStore } from './file-key-store.js';
+
+// Nothing on the computer running the test is borrowed from the director's own git, and keys stay in key files.
+directorKey.borrow = async () => null;
+useFileKeyStore();
 
 // Where the computers' worlds are kept for the steps module the helper loads (setup-e2e-steps.js):
 // globalThis[WORLDS], a Map from each computer's Wheelhouse home to its world.
@@ -312,6 +318,7 @@ export function makeComputer(host, clock, { name = 'Café Menu' } = {}) {
     return answer('', 1, `${tool} is not run in this test`);
   };
   async function gh(args) {
+    if (args[0] === 'version') return answer('gh version 2.102.0 (2026-09-30)\n');
     if (args[0] === 'auth' && args[1] === 'status') return answer('', 0, 'Logged in to github.com');
     if (args[0] === 'api' && args[1] === 'user') return answer(JSON.stringify(GH_USER));
     if (args[0] === 'api' && args[1].startsWith('user/memberships/orgs')) return answer('[]');

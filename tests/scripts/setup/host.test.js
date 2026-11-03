@@ -32,7 +32,7 @@ import { readProject } from '../../../scripts/lib/projects.js';
 import { stateDir, profileDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
 import { guardedRun } from '../../helpers/host-stand-ins.js';
-import { makeFakeCurl } from '../../helpers/fake-curl.js';
+import { makeFakeCurl, makeRoutedCurl } from '../../helpers/fake-curl.js';
 
 // Setup's own runs: git and what the test fakes; any other host tool is refused and noted here.
 const hostLog = [];
@@ -99,8 +99,15 @@ function standIn(state = {}) {
   w.run = async (file, args = [], options = {}) => {
     const name = path.basename(file).replace(/\.exe$/, '');
     if (name === 'git' && w.gitFails?.(args)) return answer('', 1, 'refused by the test');
+    // The director's own git settings and a look at a remote through it: stand-ins, so no test reads the developer's own
+    // git settings or reaches a real host.
+    if (name === 'git' && args[0] === 'config' && args[1] === '--get-urlmatch') return w.directorConfig?.(args) ?? answer('', 1);
+    if (name === 'git' && args[0] === 'ls-remote' && args.at(-1) === 'HEAD') return w.lsRemote?.(args) ?? answer('', 128);
     if (name !== 'gh' && name !== 'glab') return hostGuard(file, args, options);
     const host = name === 'gh' ? 'github' : 'gitlab';
+    // The tool starts here (step 2's check of a tool makes no request of the host, so it is not among the calls).
+    if (args[0] === 'version' && !w.blockedTool) return answer(`${name} version 1.0.0\n`);
+    if (args[0] === 'version') return answer('', 1, 'This program is blocked by group policy.');
     w.calls.push({ tool: name, args: [...args], env: options.env });
     if (args[0] === 'auth' && args[1] === 'status') {
       if (!w.signedIn[host]) return answer('', 1, 'You are not logged into any hosts');
@@ -324,7 +331,7 @@ test('the plan asks about real users, then Locked on a Mac only, then the host, 
     // the connection is not asked.
     assert.deepEqual(mac.asked.map((a) => a.id.replace(/-[0-9a-f]{10}$/, '')), ['real-users', 'locked', 'host']);
     assert.match(mac.asked[0].card.what, /Does Zoe-app have real users/);
-    assert.deepEqual(mac.changes.find((c) => c.action === 'connection'), { kind: 'host', target: 'github', action: 'connection', mode: 'narrow', locked: true, app: { account: USER, name: `Wheelhouse ${USER}`, own: true } });
+    assert.deepEqual(mac.changes.find((c) => c.action === 'connection'), { kind: 'host', target: 'github', action: 'connection', mode: 'narrow', locked: true, backend: 'cli', app: { account: USER, name: `Wheelhouse ${USER}`, own: true } });
     assert.equal(mac.answers['3.real-users'].label, REAL_USERS.yes, 'step 4 reads this answer');
     assert.equal(mac.answers['3.locked'].label, LEVELS.locked, 'step 4 reads this answer');
     // Each question composes as a question card, as the engine composes it, with no set line.
@@ -419,7 +426,7 @@ test('on GitHub the card offers the Wheelhouse app, their own app and Quick, and
     const w = standIn();
     const planned = await answerAll(stepFor(w), ctxFor(folder), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.locked }));
     assert.deepEqual(planned.asked.map((a) => a.id), ['real-users', 'locked']);
-    assert.deepEqual(planned.changes.find((c) => c.action === 'connection'), { kind: 'host', target: 'gitlab', action: 'connection', mode: 'narrow', locked: true });
+    assert.deepEqual(planned.changes.find((c) => c.action === 'connection'), { kind: 'host', target: 'gitlab', action: 'connection', mode: 'narrow', locked: true, backend: 'cli' });
   });
 });
 
@@ -554,7 +561,7 @@ test('a new product gets a private repository; an existing one gets none', async
     assert.match(await g(folder, 'status', '--porcelain'), /\?\? notes\.txt/);
     // Its record, then its private record on this computer.
     const slug = slugFor(`${USER}/Shop`);
-    assert.deepEqual(readProject(slug), { folder, remoteUrl: remote, host: 'github', repo: `${USER}/Shop`, connection: { host: 'github', mode: 'quick', project: `${USER}/Shop` } });
+    assert.deepEqual(readProject(slug), { folder, remoteUrl: remote, host: 'github', repo: `${USER}/Shop`, connection: { host: 'github', mode: 'quick', backend: 'cli', project: `${USER}/Shop` } });
     assert.ok(fs.existsSync(path.join(stateDir(slug), '.git')));
     // Each change in the journal, in the order made.
     assert.deepEqual(run.changes.map((c) => [c.kind, c.target.replace(wheelhouseHome(), '~').replace(folder, '<folder>')]), [
@@ -696,9 +703,12 @@ test('a hook declared in the product folder\'s git config stops step 3, named, b
     await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }), /setup doesn't allow \(hook\.planted\.event, hook\.planted\.command\)/);
     assert.equal(fs.existsSync(mark), false);
     assert.equal((await realRun('git', ['config', '--get', 'remote.origin.url'], { cwd: folder })).code !== 0, true, 'nothing was done in the folder');
-    // Every git call step 3 made shut out git's global and system config, with hooks off.
-    assert.ok(gits.length > 0);
-    for (const c of gits) {
+    // Every git call step 3 made shut out git's global and system config, with hooks off. The one exception is the plan's
+    // read of the director's own settings (the credential helper and proxy for the host's address), which is the
+    // director's git as it is and writes nothing.
+    const fenced = gits.filter((c) => !(c.args[0] === 'config' && c.args[1] === '--get-urlmatch'));
+    assert.ok(fenced.length > 0);
+    for (const c of fenced) {
       assert.equal(c.env.GIT_CONFIG_NOSYSTEM, '1', c.args.join(' '));
       assert.equal(c.env.GIT_CONFIG_GLOBAL, '/dev/null');
     }
@@ -778,7 +788,7 @@ test('narrow on GitHub: the code and the Install page are said, the installation
     assert.equal(keys.installationId, 77, 'the reach check needs the installation');
     assert.equal(keys.accessToken, ACCESS);
     const record = readProject(slugFor(`${USER}/shop`));
-    assert.deepEqual(record.connection, { host: 'github', mode: 'narrow', project: `${USER}/shop`, installationId: 77 });
+    assert.deepEqual(record.connection, { host: 'github', mode: 'narrow', project: `${USER}/shop`, backend: 'cli', installationId: 77 });
     // No key in the journal or anything said.
     const kept = JSON.stringify(run) + lines.join('\n');
     assert.ok(!kept.includes(ACCESS) && !kept.includes('ghr_'), 'no key is kept in the journal or said');
@@ -1948,7 +1958,7 @@ test('their own app on an organisation is made there only by an owner, and reach
     const { lines } = await applyStep(step, folder, planned.changes, { answers: planned.answers });
     assert.ok(opened.some((u) => u.startsWith('https://github.com/organizations/acme/settings/apps/new?')));
     assert.match(lines.find((l) => l.includes('Install page')), /tick acme\/app on GitHub \(not All repositories\)/);
-    assert.deepEqual(readProject(slugFor('acme/app')).connection, { host: 'github', mode: 'narrow', project: 'acme/app', installationId: 77 });
+    assert.deepEqual(readProject(slugFor('acme/app')).connection, { host: 'github', mode: 'narrow', project: 'acme/app', backend: 'cli', installationId: 77 });
     assert.deepEqual(profile.writes.map((x) => x.data.value), [{ clientId: acme.clientId, slug: acme.slug, owner: 'acme' }]);
   });
 });
@@ -2102,7 +2112,7 @@ test('a later project on GitHub opens the app\'s page and reads the tick back', 
     assert.deepEqual(opened, ['https://github.com/settings/installations/77'], 'the installation\'s settings page, never the Install page');
     assert.match(lines[0], /^The app can't reach a-director\/next on GitHub yet: tick it on the page that opens, then click Save$/);
     assert.match(lines.at(-2), /^The app can reach a-director\/next on GitHub, and nothing else/);
-    assert.deepEqual(readProject(slugFor(`${USER}/next`)).connection, { host: 'github', mode: 'narrow', project: `${USER}/next`, installationId: 77 });
+    assert.deepEqual(readProject(slugFor(`${USER}/next`)).connection, { host: 'github', mode: 'narrow', project: `${USER}/next`, backend: 'cli', installationId: 77 });
     assert.deepEqual(readKey('github-app').installations, { [USER]: 77 });
   });
 });
@@ -2375,7 +2385,7 @@ test('a second computer joins from an empty folder: the project found on an orga
       { kind: 'folder', target: folder, action: 'checkout' },
     ]);
     assert.ok(!planned.changes.some((c) => c.action === 'repository'), 'nothing is made for the product');
-    assert.deepEqual(planned.changes.find((c) => c.action === 'connection'), { kind: 'host', target: 'github', action: 'connection', mode: 'quick', locked: false });
+    assert.deepEqual(planned.changes.find((c) => c.action === 'connection'), { kind: 'host', target: 'github', action: 'connection', mode: 'quick', locked: false, backend: 'cli' });
     assert.equal(planned.asked.at(-1).card.recommend, STRICTER, 'a narrow way until the phase is known, never Quick');
     const text = composeCard({ ...planned.card, target: { step: 3, hash: planHash(planned.changes) } }).question.question;
     assert.match(text, /Cafe-Menu found on your GitHub account or organisations, the one set up with Wheelhouse, and checked out into this folder/);
@@ -2409,7 +2419,7 @@ test('a second computer joins from an empty folder: the project found on an orga
     assert.deepEqual(w.calls.filter((c) => c.args?.[0] === 'repo'), []);
     // The project's record and its own private record, empty: the first computer's stays there.
     const slug = slugFor('cafe-co/Cafe-Menu');
-    assert.deepEqual(readProject(slug), { folder, remoteUrl: remote, host: 'github', repo: 'cafe-co/Cafe-Menu', connection: { host: 'github', mode: 'quick', project: 'cafe-co/Cafe-Menu' } });
+    assert.deepEqual(readProject(slug), { folder, remoteUrl: remote, host: 'github', repo: 'cafe-co/Cafe-Menu', connection: { host: 'github', mode: 'quick', backend: 'cli', project: 'cafe-co/Cafe-Menu' } });
     assert.ok(fs.existsSync(path.join(stateDir(slug), '.git')));
     assert.equal(await g(stateDir(slug), 'remote'), '');
     assert.deepEqual(fs.readdirSync(stateDir(slug)).filter((n) => n !== '.git'), ['README.md']);
@@ -2889,5 +2899,253 @@ test('the chosen company host being the folder\'s own remote\'s host plans that 
     assert.equal(planned.changes.some((c) => c.action === 'repository'), false);
     assert.equal(planned.changes.find((c) => c.action === 'project').repo, 'group/sub/shop');
     assert.equal(planned.changes.find((c) => c.action === 'connection').base, 'https://git.example.org');
+  });
+});
+
+// ---- "Use my git as it is": what step 3 finds, what it asks, what it keeps (design sections 4, 6 and 12) ----
+
+const GIT_KEY = 'stand-in-GITKEY0001';
+const PUSH_KEY = 'stand-in-PUSHONLY0001';
+const FRESH_KEY = 'stand-in-PASTEDKEY0003';
+
+// The system's curl, answering GET /user from a table of what each key is.
+function asIsCurl(keys) {
+  return makeRoutedCurl(({ url, headers }) => {
+    const auth = headers.find((h) => /^(?:authorization|private-token):/i.test(h)) ?? '';
+    const key = auth.replace(/^[^:]+:\s*(?:Bearer\s+)?/i, '');
+    if (!/\/api\/v4\/user$/.test(url)) return { status: 404, body: {} };
+    const known = keys[key];
+    if (known === undefined) return { status: 401, body: { message: '401 Unauthorized' } };
+    return known === 'push-only' ? { status: 403, body: { message: '403 Forbidden' } } : { status: 200, body: { username: known } };
+  });
+}
+const asIsVia = (curl) => ({ run: curl.run, curl: '/usr/bin/curl', proxy: null, caFile: null, platform: 'darwin' });
+
+// The key the director's own sign-in store holds for the host, and what is stored when the key card replaces it.
+function holdsKey(first) {
+  const state = { current: first, stored: [] };
+  const was = [directorKey.borrow, directorKey.store];
+  directorKey.borrow = async () => state.current;
+  directorKey.store = async (entry) => { state.stored.push(entry); state.current = { username: entry.username, key: entry.key }; };
+  state.restore = () => { [directorKey.borrow, directorKey.store] = was; };
+  return state;
+}
+
+const gitlabProject = async (w) => {
+  await w.add(`${USER}/shop`);
+  const folder = productFolder('shop');
+  await withOrigin(folder, `https://gitlab.com/${USER}/shop.git`);
+  return folder;
+};
+
+test('where the key the director\'s store holds passes GET /user, "Use my git as it is" is the default, nothing is asked, and the record keeps the web API as its backend', async () => {
+  await withHome(async () => {
+    const w = standIn({ signedIn: { gitlab: false }, blockedTool: true });
+    const folder = await gitlabProject(w);
+    const curl = asIsCurl({ [GIT_KEY]: USER });
+    const held = holdsKey({ username: 'oauth2', key: GIT_KEY });
+    try {
+      const step = stepFor(w, { via: asIsVia(curl), askSecret: async () => { throw new Error('no box should open'); } });
+      const planned = await answerAll(step, ctxFor(folder), choose({ way: WAYS.asIs }));
+      const card = planned.asked.at(-1).card;
+      assert.deepEqual(card.options.map((o) => o.label), [WAYS.asIs, STRICTER], 'it takes Quick\'s place');
+      assert.equal(card.recommend, WAYS.asIs);
+      assert.ok(!planned.changes.some((c) => c.action === 'sign-in' || c.action === 'key-card'), 'nothing is asked');
+      assert.deepEqual(planned.changes.find((c) => c.action === 'connection'), { kind: 'host', target: 'gitlab', action: 'connection', mode: 'as-is', locked: false, backend: 'rest' });
+      assert.match(planned.card.what, /your own git as it is/);
+      assert.match(planned.card.what, /GitLab's web API, with the same key/);
+      assert.match(planned.card.what, /same key your git already uses\. It can reach everything your account can on GitLab\./);
+      assert.doesNotMatch(JSON.stringify(planned.card), /\bREST\b|\bcurl\b/i);
+      assert.equal(planned.director, 'One click');
+      const { lines } = await applyStep(step, folder, planned.changes, { answers: planned.answers });
+      assert.deepEqual(readProject(slugFor(`${USER}/shop`)).connection, { host: 'gitlab', mode: 'as-is', project: `${USER}/shop`, baseUrl: 'https://gitlab.com', backend: 'rest' });
+      assert.deepEqual(held.stored, [], 'the director\'s key is not stored again');
+      assert.ok(lines.some((l) => /your own git as it is/.test(l)), lines.join('\n'));
+      // The settings a push trusts were recorded once the director had seen the card that names them.
+      assert.ok(fs.existsSync(path.join(wheelhouseHome(), 'host', 'git-settings.json')));
+    } finally {
+      held.restore();
+    }
+  });
+});
+
+test('a key that can only push brings the key card: the new key is stored with approve, replacing that one entry', async () => {
+  await withHome(async () => {
+    const w = standIn({ signedIn: { gitlab: false }, blockedTool: true });
+    const folder = await gitlabProject(w);
+    const curl = asIsCurl({ [PUSH_KEY]: 'push-only', [FRESH_KEY]: USER });
+    const held = holdsKey({ username: 'oauth2', key: PUSH_KEY });
+    try {
+      const opened = [];
+      const box = [];
+      const step = stepFor(w, { via: asIsVia(curl), open: async (url) => { opened.push(url); }, askSecret: async (ask) => { box.push(ask); return `${FRESH_KEY}\n`; } });
+      const planned = await answerAll(step, ctxFor(folder), choose({ way: WAYS.asIs }));
+      assert.deepEqual(planned.changes.find((c) => c.action === 'key-card'), { kind: 'host', target: 'gitlab', action: 'key-card', state: 'push-only' });
+      assert.match(planned.card.what, /replacing the one your git holds/);
+      assert.match(planned.director, /pasted into your computer's box/);
+      assert.doesNotMatch(JSON.stringify(planned.card), /\bREST\b|\bcurl\b/i);
+      const { lines, run } = await applyStep(step, folder, planned.changes, { answers: planned.answers });
+      const page = new URL(opened[0]);
+      assert.equal(page.pathname, '/-/user_settings/personal_access_tokens');
+      assert.equal(page.searchParams.get('scopes'), 'api,write_repository');
+      assert.equal(box.length, 1);
+      assert.deepEqual(held.stored, [{ host: 'gitlab.com', username: 'oauth2', key: FRESH_KEY }], 'only the director\'s own entry for the host, under its own user name');
+      assert.ok(lines.includes('This replaces the key your git uses for gitlab.com with the new one, so your pushes keep working.'), lines.join('\n'));
+      assert.ok(!lines.join('\n').includes(FRESH_KEY), 'the key is never said');
+      assert.ok(!JSON.stringify(run).includes(FRESH_KEY), 'nor kept in the journal');
+      assert.equal(readProject(slugFor(`${USER}/shop`)).connection.mode, 'as-is');
+    } finally {
+      held.restore();
+    }
+  });
+});
+
+test('a key the host refuses (a 401) or none at all, with the tool blocked, brings the same card; a key the host will not accept stops the step', async () => {
+  await withHome(async () => {
+    for (const [first, state] of [[{ username: 'oauth2', key: 'stand-in-EXPIRED' }, 'refused'], [null, 'none']]) {
+      const w = standIn({ signedIn: { gitlab: false }, blockedTool: true });
+      const folder = await gitlabProject(w);
+      const curl = asIsCurl({ [FRESH_KEY]: USER });
+      const held = holdsKey(first);
+      try {
+        const step = stepFor(w, { via: asIsVia(curl), askSecret: async () => FRESH_KEY });
+        const planned = await answerAll(step, ctxFor(folder), choose({ way: WAYS.asIs }));
+        assert.equal(planned.changes.find((c) => c.action === 'key-card')?.state, state);
+        await applyStep(step, folder, planned.changes, { answers: planned.answers });
+        assert.equal(held.stored[0].key, FRESH_KEY);
+        assert.equal(held.stored[0].username, first?.username ?? USER, 'the entry git held, else the host\'s own user name');
+      } finally {
+        held.restore();
+      }
+    }
+    const w = standIn({ signedIn: { gitlab: false }, blockedTool: true });
+    const folder = await gitlabProject(w);
+    const held = holdsKey(null);
+    try {
+      const step = stepFor(w, { via: asIsVia(asIsCurl({})), askSecret: async () => 'stand-in-NOT-ACCEPTED' });
+      const planned = await answerAll(step, ctxFor(folder), choose({ way: WAYS.asIs }));
+      await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }), /did not accept the key/);
+      assert.deepEqual(held.stored, [], 'nothing was stored');
+    } finally {
+      held.restore();
+    }
+  });
+});
+
+test('a tool that starts and is signed in carries the project on its own backend; an SSH remote that works is enough to offer the director\'s own git', async () => {
+  await withHome(async () => {
+    const w = standIn({ signedIn: { gitlab: true } });
+    w.lsRemote = () => ({ code: 0, stdout: 'abc\tHEAD\n', stderr: '' });
+    await w.add(`${USER}/shop`);
+    const folder = productFolder('shop');
+    await withOrigin(folder, `git@gitlab.com:${USER}/shop.git`);
+    const held = holdsKey(null);
+    try {
+      const step = stepFor(w, { askSecret: async () => { throw new Error('no box should open'); } });
+      const planned = await answerAll(step, ctxFor(folder), choose({ way: WAYS.asIs }));
+      assert.deepEqual(planned.asked.at(-1).card.options.map((o) => o.label), [WAYS.asIs, STRICTER]);
+      assert.equal(planned.changes.find((c) => c.action === 'connection').backend, 'cli');
+      assert.ok(!planned.changes.some((c) => c.action === 'key-card'));
+      assert.doesNotMatch(planned.card.what, /web API/);
+      assert.match(planned.card.what, /GitLab's own tool, signed in already/);
+    } finally {
+      held.restore();
+    }
+  });
+});
+
+test('with a tool signed in and no key held, Quick stays on the card and "Use my git as it is" is not offered', async () => {
+  await withHome(async () => {
+    const w = standIn({ signedIn: { gitlab: true } });
+    const folder = await gitlabProject(w);
+    const held = holdsKey(null);
+    try {
+      const planned = await answerAll(stepFor(w), ctxFor(folder), choose());
+      assert.deepEqual(planned.asked.at(-1).card.options.map((o) => o.label), [WAYS.quick, STRICTER]);
+      assert.equal(planned.changes.find((c) => c.action === 'connection').backend, 'cli');
+    } finally {
+      held.restore();
+    }
+  });
+});
+
+test('a Locked or launched project is never offered the director\'s own git, only the narrow key', () => {
+  for (const host of ['github', 'gitlab']) {
+    for (const extra of [{ locked: true }, { launched: true }]) {
+      const card = connectionCard({ host, platform: 'win32', asIs: true, appFile: APP_FILE, ...extra });
+      assert.ok(!card.options.some((o) => o.label === WAYS.asIs || o.label === WAYS.quick), JSON.stringify(card.options.map((o) => o.label)));
+    }
+  }
+  const mac = connectionCard({ host: 'gitlab', platform: 'darwin', asIs: true });
+  assert.deepEqual(mac.options.map((o) => o.label), [WAYS.asIs, STRICTER]);
+  const windows = connectionCard({ host: 'gitlab', platform: 'win32', asIs: true });
+  assert.equal(windows.options[0].label, WAYS.asIs);
+  assert.equal(windows.recommend, WAYS.asIs);
+  assert.match(windows.options[0].says, /Any agent's command could ask git for that key/);
+  assert.equal(connectionCard({ host: 'gitlab', platform: 'win32', asIs: true, realUsers: true }).recommend, WAYS.narrow, 'real users keep the narrow key recommended');
+});
+
+test('a computer with no tool that starts and no curl is told so, as a wait; a proxy password in git\'s settings is told too, and never repeated', async () => {
+  await withHome(async () => {
+    const w = standIn({ signedIn: { gitlab: false }, blockedTool: true });
+    const folder = await gitlabProject(w);
+    const held = holdsKey(null);
+    try {
+      const noCurl = await stepFor(w).plan({ ...ctxFor(folder, { platform: 'win32' }), answers: { '3.real-users': said(REAL_USERS.no) } });
+      assert.equal(noCurl.why, 'This computer has no curl Wheelhouse can use, so it can only reach GitLab through GitLab\'s own tool. Ask IT for either.');
+      w.directorConfig = (args) => (args[2] === 'http.proxy' ? { code: 0, stdout: 'http://dir:hunter2@proxy.example.org:8080\n', stderr: '' } : { code: 1, stdout: '', stderr: '' });
+      const planned = await stepFor(w).plan({ ...ctxFor(folder), answers: { '3.real-users': said(REAL_USERS.no) } });
+      assert.ok(planned.ask, 'the connection card is still asked first');
+      const answers = { '3.real-users': said(REAL_USERS.no), [`3.${planned.ask.id}`]: said(WAYS.asIs) };
+      const after = await stepFor(w, { via: asIsVia(asIsCurl({})) }).plan({ ...ctxFor(folder), answers });
+      assert.match(after.why, /Your git settings keep your proxy password in plain text/);
+      assert.ok(!JSON.stringify(after).includes('hunter2'));
+    } finally {
+      held.restore();
+    }
+  });
+});
+
+test('a narrow GitHub connection to a repository that exists signs the tool in with a key for that repository only, and the record says so for step 7', async () => {
+  await withHome(async () => {
+    const TOKEN = 'github_pat_stand_in_for_the_box_0002';
+    const w = standIn({ signedIn: { github: false } });
+    await w.add(`${USER}/shop`);
+    const folder = productFolder('shop');
+    await withOrigin(folder, `https://github.com/${USER}/shop.git`);
+    const gh = github({ reach: [`${USER}/shop`] });
+    const opened = [];
+    const step = stepFor(w, { appFile: appFile(tempFolder('wh-app-')), fetch: gh.fetch, open: async (url) => { opened.push(url); }, askSecret: async () => `${TOKEN}\n` });
+    const planned = await answerAll(step, ctxFor(folder), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.standard, way: WAYS.wheelhouse }));
+    assert.deepEqual(planned.changes.find((c) => c.action === 'sign-in'), { kind: 'host', target: 'github', action: 'sign-in', via: 'narrow-key' });
+    assert.match(planned.card.what, /sign in to GitHub with a key for this project only/);
+    assert.match(planned.director, /a key made on GitHub's page and pasted into your computer's box/);
+    assert.doesNotMatch(JSON.stringify(planned.card), /\bREST\b|\bcurl\b/i);
+    const { lines, run } = await applyStep(step, folder, planned.changes, { answers: planned.answers });
+    assert.ok(w.calls.some((c) => c.args[0] === 'auth' && c.args[1] === 'login' && c.args.includes('--with-token')), 'gh is signed in with the key, on standard input');
+    assert.ok(!w.calls.some((c) => c.args.includes('--web')), 'not through the browser');
+    const page = new URL(opened[0]);
+    assert.equal(page.pathname, '/settings/personal-access-tokens/new');
+    assert.equal(page.searchParams.get('administration'), null, 'no Administration in the kept key');
+    assert.equal(readProject(slugFor(`${USER}/shop`)).connection.directorSignIn, 'narrow-key');
+    assert.ok(!(lines.join('\n') + JSON.stringify(run)).includes(TOKEN));
+  });
+});
+
+test('a narrow GitHub connection for a new product, or one signed in already, keeps the browser sign-in and no mark in the record', async () => {
+  await withHome(async () => {
+    const w = standIn({ signedIn: { github: true } });
+    await w.add(`${USER}/shop`);
+    const folder = productFolder('shop');
+    await withOrigin(folder, `https://github.com/${USER}/shop.git`);
+    const gh = github({ reach: [`${USER}/shop`] });
+    const step = stepFor(w, { appFile: appFile(tempFolder('wh-app-')), fetch: gh.fetch, askSecret: async () => { throw new Error('no box should open'); } });
+    const planned = await answerAll(step, ctxFor(folder), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.standard, way: WAYS.wheelhouse }));
+    await applyStep(step, folder, planned.changes, { answers: planned.answers });
+    assert.equal(readProject(slugFor(`${USER}/shop`)).connection.directorSignIn, undefined);
+    const fresh = standIn({ signedIn: { github: false } });
+    const empty = productFolder('Fresh');
+    const newPlan = await answerAll(stepFor(fresh, { appFile: appFile(tempFolder('wh-app-')), fetch: gh.fetch }), ctxFor(empty), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.standard, way: WAYS.wheelhouse }));
+    assert.equal(newPlan.changes.find((c) => c.action === 'sign-in')?.via, undefined, 'a repository still to be made needs the account, so the browser');
   });
 });

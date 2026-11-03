@@ -20,7 +20,7 @@ export function tokenUrl({ host, kind, owner, repos = [], name, days, base = DEF
     if (kind === 'administration') {
       url.searchParams.set('name', 'Wheelhouse setup (one use)');
       url.searchParams.set('description', `Used once, to protect the main branch of ${where}. Delete it afterwards.`);
-      url.searchParams.set('target_name', owner);
+      if (owner) url.searchParams.set('target_name', owner);
       url.searchParams.set('expires_in', '1');
       url.searchParams.set('administration', 'write');
       url.searchParams.set('metadata', 'read');
@@ -28,8 +28,8 @@ export function tokenUrl({ host, kind, owner, repos = [], name, days, base = DEF
     }
     if (!Number.isInteger(days) || days < 1 || days > 366) throw new Error('GitHub accepts an expiry of 1 to 366 days');
     url.searchParams.set('name', name.slice(0, 40));
-    url.searchParams.set('description', `Wheelhouse agents: code, pull requests and issues in ${where} only.`);
-    url.searchParams.set('target_name', owner);
+    url.searchParams.set('description', where ? `Wheelhouse agents: code, pull requests and issues in ${where} only.` : 'Wheelhouse agents: code, pull requests and issues.');
+    if (owner) url.searchParams.set('target_name', owner);
     url.searchParams.set('expires_in', String(days));
     for (const [permission, level] of Object.entries(KEPT)) url.searchParams.set(permission, level);
     if (localChecks) url.searchParams.set('statuses', 'write');

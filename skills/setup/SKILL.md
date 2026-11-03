@@ -131,6 +131,15 @@ A narrow key's card says in one plain line what the key reaches; setup says it, 
 - **GitLab:** setup makes a project key itself (Developer, `api` and `write_repository`), with no page and no pasting. Only where the company's group has switched project keys off does setup open the personal-key page (`api` and `write_repository`, filled in) and say plainly that this key reaches every project the account can. GitLab's page cannot be given an expiry, so tell the director to set it to 30 days. Any other refusal from GitLab stops the step; do not offer the personal key for it.
 - **Signing in:** `gh` and `glab` can be signed in with a key made on those narrow pages (`gh auth login --with-token`, `glab auth login --stdin`) instead of the browser. The key goes into the computer's box, never the chat.
 
+## Reaching the host
+
+Step 2 finds the tools and says which of them work; step 3 chooses how the agents reach the host. Say what setup says, in its words, and never use the words "REST" or "curl" to the director.
+
+- **Use my git as it is** is the first card option and the usual recommendation: pushes keep using the director's own git and credential helper. A Locked project, or one that is launched, is offered only the narrow key.
+- **The key card:** where the key git holds has no use on the host's API, was refused (401) or can only push (403), setup shows the key card: a page opens, the director pastes the new key into the box, setup checks it, and the credential helper stores it over that one entry. The card says it replaces that one entry. Raise the same card whenever the host answers 401 later: re-run step 3 ("check my GitLab connection").
+- **Narrow GitHub sign-in:** where the director has only a key for one repository, step 7 asks a one-off Administration key for protection and does not keep it.
+- Nothing needs `glab` or `gh` to be fetched where the computer will not run them; setup goes on by the host's web API and says so in one line.
+
 ## Lines the session start gives
 
 - **"Wheelhouse moved your settings to this computer"**: tell the director that in one plain line, with what it says was left out. Nothing was deleted; offer nothing to do about the old copies.

@@ -136,7 +136,8 @@ import { gitRoute, homeBranch, homeDir } from '../host/local/home.js';
 import { FOLDER_REMOTE } from '../host/local/folder.js';
 import { identityOf, keepSeenMain } from '../host/local/merge.js';
 import { startedBySetup } from './local.js';
-import { switchOnAsDirector, directorGitEnv, directorGitlabApi, madeBySetup, STOPPED, launchedIn, REAL_USERS } from './host.js';
+import { askSecret as realAskSecret } from '../secrets/secret-box.js';
+import { switchOnAsDirector, directorGitEnv, directorGitlabApi, madeBySetup, STOPPED, launchedIn, REAL_USERS, askAdministrationKey, openPage } from './host.js';
 import { isolated, refuseUnlistedSettings, reaching } from './git.js';
 import { toolsStatus, PLUGIN_ROOT } from './tools.js';
 import { LIVE_DATA, SIGNS_APPS } from './questions.js';
@@ -1136,6 +1137,9 @@ export function projectFilesStep({
   gitlab = ({ run: r, baseUrl }) => directorGitlabApi({ run: r, baseUrl }), claude = () => resolveClaude(),
   manifest = () => readManifest(), claudeHome = () => defaultClaudeHome(), locate = locateInstalled,
   switchOn = switchOnAsDirector, protectionStatus = realProtectionStatus,
+  // Protection on GitHub needs Administration, which a key for one project never holds: where the director's sign-in was made
+  // with one, the one-off key is asked for on its own page (askAdministrationKey), used for this step only and never kept.
+  adminKey = askAdministrationKey, open = null, askSecret = realAskSecret,
   address = () => helperAddress(), node = process.execPath, pluginRoot = PLUGIN_ROOT,
   best = (alias) => aliasModel(alias, { run, claude }),
   // The build engine in force for a project, and the login the helper posts as on GitHub.
@@ -1573,15 +1577,21 @@ export function projectFilesStep({
         // Real users: the project's phase says launched (step 4), or step 3 was told so.
         const realUsers = launchedIn(project) || ctx.answers?.['3.real-users']?.label === REAL_USERS.yes;
         const api = host === 'gitlab' ? await gitlab({ run, baseUrl: record.connection?.baseUrl }) : undefined;
+        let env = {};
+        if (host === 'github' && record.connection?.directorSignIn === 'narrow-key') {
+          const [owner, name] = [repo.split('/')[0], repo.split('/').at(-1)];
+          env = { GH_TOKEN: await adminKey({ owner, name, say, open: open ?? ((url) => openPage(url, { platform, run })), askSecret, platform }) };
+          halt();
+        }
         let before = null;
         try {
-          before = await protectionStatus({ host, repo, run, api, env: {}, realUsers });
+          before = await protectionStatus({ host, repo, run, api, env, realUsers });
         } catch { /* recorded as not known */ }
         ctx.record({
           id: newId('chg'), kind: 'host', target: protect.target, before: { on: before?.on ?? null, available: before?.available ?? null },
           after: { action: 'protect', branch: protect.branch, on: true }, project,
         });
-        const got = await switchOn({ host, repo, run, api, realUsers });
+        const got = await switchOn({ host, repo, run, api, realUsers, ...(Object.keys(env).length > 0 ? { env } : {}) });
         // What the rules ask for, so a helper that later can't read them still knows whether they name its own check.
         if (Array.isArray(got.required)) keepQueue(project, { ...readQueue(project), required: got.required });
         // What a step says is its latest line, so protection's read-back, what the real users

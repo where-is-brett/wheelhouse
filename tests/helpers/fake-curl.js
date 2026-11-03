@@ -35,3 +35,26 @@ export function makeFakeCurl(queue = []) {
   }
   return { run, calls, queue: answers };
 }
+
+// A stand-in for `curl` that answers each call from a function of the call: handler({ url, method, headers }) gives
+// { status, body, exit, connect, stderr } (a body that is not a string is sent as JSON). It records the calls as
+// makeFakeCurl does, so a test can read what was sent to it, and what was not.
+export function makeRoutedCurl(handler) {
+  const calls = [];
+  async function run(file, args = [], options = {}) {
+    const config = String(options.input ?? '');
+    const pairs = parseConfig(config);
+    const field = (name) => pairs.find(([key]) => key === name)?.[1];
+    const call = {
+      file, args: [...args], config, pairs, baseEnv: options.baseEnv ?? null,
+      url: field('url'), method: field('request') ?? 'GET', headers: pairs.filter(([key]) => key === 'header').map(([, value]) => value),
+    };
+    calls.push(call);
+    const answer = { ...ANSWER, ...(handler(call) ?? {}) };
+    const body = typeof answer.body === 'string' ? answer.body : JSON.stringify(answer.body);
+    const format = args[args.indexOf('--write-out') + 1] ?? '';
+    const tail = format.replace('%{http_code}', String(answer.exit !== 0 ? 0 : answer.status)).replace('%{http_connect}', String(answer.connect)).replace(/\\n/g, '\n');
+    return { code: answer.exit, stdout: answer.exit !== 0 ? tail : `${body}${tail}`, stderr: answer.stderr };
+  }
+  return { run, calls };
+}
