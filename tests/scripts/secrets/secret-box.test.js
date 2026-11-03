@@ -1,7 +1,7 @@
 // tests/scripts/secrets/secret-box.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { askSecretCommand, storeSecretCommand, storeSecretInput, readSecretCommand, deleteSecretCommand } from '../../../scripts/secrets/secret-box.js';
+import { askSecretCommand, storeSecretCommand, storeSecretInput, readSecretCommand, readSecretInput, deleteSecretCommand, storeSecret, readSecret, deleteSecret } from '../../../scripts/secrets/secret-box.js';
 
 const box = { title: 'Wheelhouse', prompt: 'Paste the token' };
 const where = { service: 'wheelhouse-probe', account: 'host-token' };
@@ -52,4 +52,36 @@ test('readSecretCommand and deleteSecretCommand name the service and account', (
 
 test('an unsupported system is refused', () => {
   assert.throws(() => askSecretCommand('linux', box), /macOS and Windows/);
+  assert.throws(() => storeSecretCommand('freebsd', where), /macOS and Windows/);
+});
+
+test('on Linux a secret goes through the credential helper under Wheelhouse\'s own protocol, on standard input', async () => {
+  const calls = [];
+  const runner = async (command, input) => {
+    calls.push({ command, input });
+    return { code: 0, out: command.args[1] === 'fill' ? 'protocol=wheelhouse\nhost=wheelhouse-probe\nusername=host-token\npassword=S3CRET-probe\n' : '' };
+  };
+  await storeSecret({ ...where, secret: 'S3CRET-probe' }, 'linux', runner);
+  assert.equal(await readSecret(where, 'linux', runner), 'S3CRET-probe');
+  await deleteSecret(where, 'linux', runner);
+  assert.deepEqual(calls.map((c) => c.command.args[1]), ['approve', 'fill', 'reject']);
+  for (const call of calls) {
+    assert.ok(!call.command.args.some((arg) => arg.includes('S3CRET')));
+    assert.match(call.input, /^protocol=wheelhouse\nhost=wheelhouse-probe\nusername=host-token\n/);
+  }
+  assert.equal(readSecretInput('darwin', where), '');
+});
+
+test('a read gives null when the system has nothing or no helper', async () => {
+  assert.equal(await readSecret(where, 'linux', async () => ({ code: 128, out: '' })), null);
+  assert.equal(await readSecret(where, 'linux', async () => { throw new Error('spawn git ENOENT'); }), null);
+  assert.equal(await readSecret(where, 'darwin', async () => ({ code: 44, out: '' })), null);
+  assert.equal(await readSecret(where, 'darwin', async () => ({ code: 0, out: 'abc\n' })), 'abc');
+  await deleteSecret(where, 'linux', async () => { throw new Error('spawn git ENOENT'); });
+});
+
+test('a store that fails or cannot run says so without the secret', async () => {
+  await assert.rejects(storeSecret({ ...where, secret: 'S3CRET-probe' }, 'darwin', async () => ({ code: 1, out: '' })), (e) => !e.message.includes('S3CRET'));
+  await assert.rejects(storeSecret({ ...where, secret: 'S3CRET-probe' }, 'darwin', async () => { throw new Error('S3CRET-probe'); }), (e) => !e.message.includes('S3CRET'));
+  assert.throws(() => storeSecretInput('linux', where, 'a\nb'), /span lines/);
 });

@@ -750,3 +750,9 @@ test('GitLab has no merge-queue verdict comment', async () => {
   const { a } = adapter('gitlab');
   await assert.rejects(a.verdictComment({ number: 1, body: 'x' }), /GitHub only/);
 });
+
+test('the scrub hides extra secrets that are in no environment', async () => {
+  const { scrub } = await import('../../../scripts/host/adapter.js');
+  assert.equal(scrub('bad borrowed-key-9876 here', {}, ['borrowed-key-9876']), 'bad [hidden] here');
+  assert.equal(scrub('bad short here', {}, ['short', '', undefined]), 'bad short here');
+});
