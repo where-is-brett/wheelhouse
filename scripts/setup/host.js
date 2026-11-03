@@ -77,6 +77,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { withoutBom } from '../gate/guardrails.js';
 import { fileURLToPath } from 'node:url';
 import { run as realRun } from '../lib/run.js';
 import { wheelhouseHome, stateDir, projectSlug } from '../lib/paths.js';
@@ -208,7 +209,7 @@ async function quietly(run, file, args, options) {
 
 function json(text) {
   try {
-    return JSON.parse(text);
+    return JSON.parse(withoutBom(text));
   } catch {
     return null;
   }

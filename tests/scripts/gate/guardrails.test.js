@@ -275,3 +275,10 @@ test('readConfig: checks and safekeeping take their own keys, and any other shap
     assert.throws(() => readConfig(JSON.stringify({ ...base, safekeeping: given })), { message }, JSON.stringify(given));
   }
 });
+
+test('a configuration with a leading byte-order mark is read as any other', () => {
+  const text = JSON.stringify({ v: 1, criticalAreas: [], ciFiles: [], mcpServers: ['figma'], webDomains: [] });
+  assert.deepEqual(readConfig('﻿' + text), readConfig(text));
+  assert.deepEqual(readConfig('﻿' + text).mcpServers, ['figma']);
+  assert.throws(() => readConfig('﻿not json'));
+});

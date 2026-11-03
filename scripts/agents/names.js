@@ -4,6 +4,7 @@
 // without loading any adapter.
 import fs from 'node:fs';
 import path from 'node:path';
+import { withoutBom } from '../gate/guardrails.js';
 
 export const AGENTS = Object.freeze(['claude-code', 'copilot']);
 // The agents whose steps read Wheelhouse's own skill copies rather than the kits, so a project's hold goes by those
@@ -28,7 +29,7 @@ export function agentOfConfig(config, { computerId: id } = {}) {
 // be read.
 function folderConfig(folder) {
   try {
-    return JSON.parse(fs.readFileSync(path.join(folder, '.claude', 'wheelhouse.json'), 'utf8'));
+    return JSON.parse(withoutBom(fs.readFileSync(path.join(folder, '.claude', 'wheelhouse.json'), 'utf8')));
   } catch {
     return null;
   }
