@@ -134,6 +134,22 @@ export function shownCard(card) {
   return { question: card.question, header: text(card.header), options: card.options.map((o) => ({ label: o.label, description: text(o.description) })) };
 }
 
+// A card's words as the director reads them, whatever way the session wrote them out to the question tool: line
+// breaks as \n (Windows sends \r\n), one Unicode form, curly quotes and apostrophes as straight ones, an ellipsis as
+// three dots, a no-break space as a space, and no spaces at the ends of lines. Two texts that read the same match.
+export function sameWords(text) {
+  if (typeof text !== 'string') return text;
+  return text.normalize('NFC').replace(/\r\n?/g, '\n').replace(/[‘’‚‛′]/g, '\'').replace(/[“”„‟″]/g, '"')
+    .replace(/…/g, '...').replace(/[  ]/g, ' ').replace(/[ \t]+$/gm, '');
+}
+
+// One key for a card, read as sameWords reads its words; null when it isn't a card.
+export function cardKey(card) {
+  const shown = shownCard(card);
+  if (shown === null) return null;
+  return JSON.stringify({ question: sameWords(shown.question), header: sameWords(shown.header), options: shown.options.map((o) => ({ label: sameWords(o.label), description: sameWords(o.description) })) });
+}
+
 // A shown record kept in setup/shown/, or null when the file isn't one.
 export function readShown(file) {
   try {
@@ -146,7 +162,7 @@ export function readShown(file) {
 }
 
 // The card shown for `step` in a folder holding `cwd` whose list's hash starts with `h12`, on a
-// card the director saw exactly as shown (`card`, the question AskUserQuestion was given):
+// card the director saw as shown, read as sameWords reads it (`card`, the question AskUserQuestion was given):
 // { runId, hash }, the run it was shown for and the list's full hash. Null when there is none, or
 // two different lists. When several runs showed that very card (every list that changes nothing
 // has one hash), the run of the nearest folder holding `cwd` is taken, as the helper places a
@@ -154,7 +170,7 @@ export function readShown(file) {
 export function shownHash({ cwd, step, h12, card }) {
   const asked = shownCard(card);
   if (typeof cwd !== 'string' || !/^[0-9a-f]{12}$/.test(String(h12)) || asked === null) return null;
-  const same = JSON.stringify(asked);
+  const same = cardKey(card);
   let names;
   try {
     names = fs.readdirSync(shownDir()).filter((n) => n.endsWith('.json'));
@@ -162,7 +178,7 @@ export function shownHash({ cwd, step, h12, card }) {
     return null;
   }
   const found = names.map((n) => readShown(path.join(shownDir(), n)))
-    .filter((r) => r !== null && r.step === step && r.hash.startsWith(h12) && JSON.stringify(shownCard(r.card)) === same && holds(r.folder, cwd));
+    .filter((r) => r !== null && r.step === step && r.hash.startsWith(h12) && cardKey(r.card) === same && holds(r.folder, cwd));
   if (new Set(found.map((r) => r.hash)).size !== 1) return null;
   const depth = (r) => keyOf(realPath(r.folder) ?? '').length;
   const nearest = Math.max(...found.map(depth));
@@ -181,15 +197,15 @@ export function readAsked(file) {
   }
 }
 
-// The question a setup step asked, in a folder holding `cwd`, on exactly the card the director
-// was shown (`card`, the question AskUserQuestion was given: its text, header and each option's
+// The question a setup step asked, in a folder holding `cwd`, on the card the director was shown,
+// read as sameWords reads it (`card`, the question AskUserQuestion was given: its text, header and each option's
 // label and description): the asked record { runId, folder, step, id, card, typed, at }, or null.
 // When several were asked on that very card, the one of the nearest folder holding `cwd` is
 // taken, as the helper places a folder, and of those the one asked last.
 export function askedFor({ cwd, card }) {
   const asked = shownCard(card);
   if (typeof cwd !== 'string' || asked === null) return null;
-  const same = JSON.stringify(asked);
+  const same = cardKey(card);
   let names;
   try {
     names = fs.readdirSync(askedDir()).filter((n) => n.endsWith('.json'));
@@ -197,7 +213,7 @@ export function askedFor({ cwd, card }) {
     return null;
   }
   const found = names.map((n) => readAsked(path.join(askedDir(), n)))
-    .filter((r) => r !== null && JSON.stringify(shownCard(r.card)) === same && holds(r.folder, cwd));
+    .filter((r) => r !== null && cardKey(r.card) === same && holds(r.folder, cwd));
   if (found.length === 0) return null;
   const depth = (r) => keyOf(realPath(r.folder) ?? '').length;
   const nearest = Math.max(...found.map(depth));
@@ -240,13 +256,13 @@ export function keepUninstallClick(event) {
 }
 
 // Uninstall's card shown for a folder holding `cwd`, naming `project`, whose list's hash starts with
-// `h12`, on a card the director saw exactly as shown (`card`, the question AskUserQuestion was given):
+// `h12`, on a card the director saw as shown, read as sameWords reads it (`card`, the question AskUserQuestion was given):
 // { project, folder, hash }. Null when there is none, or two different lists. Of several, the
 // nearest folder's is taken, as the helper places a folder.
 export function shownUninstall({ cwd, project, h12, card }) {
   const asked = shownCard(card);
   if (typeof cwd !== 'string' || !isLineName(project) || !/^[0-9a-f]{12}$/.test(String(h12)) || asked === null) return null;
-  const same = JSON.stringify(asked);
+  const same = cardKey(card);
   let names;
   try {
     names = fs.readdirSync(shownDir()).filter((n) => UNINSTALL_SHOWN.test(n));
@@ -254,7 +270,7 @@ export function shownUninstall({ cwd, project, h12, card }) {
     return null;
   }
   const found = names.map((n) => readUninstallShown(path.join(shownDir(), n)))
-    .filter((r) => r !== null && r.project === project && r.hash.startsWith(h12) && JSON.stringify(shownCard(r.card)) === same && holds(r.folder, cwd));
+    .filter((r) => r !== null && r.project === project && r.hash.startsWith(h12) && cardKey(r.card) === same && holds(r.folder, cwd));
   if (new Set(found.map((r) => r.hash)).size !== 1) return null;
   const depth = (r) => keyOf(realPath(r.folder) ?? '').length;
   const nearest = Math.max(...found.map(depth));
