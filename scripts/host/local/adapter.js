@@ -134,6 +134,9 @@ function localCommands({ project, git, run, write, now, folder }) {
       const subjects = await home().must(['log', '--reverse', '--format=%s', `refs/heads/${base}..${head}`], 'unread');
       return { files, commits: subjects === '' ? [] : subjects.split('\n') };
     },
+    // A project kept in git alone has no host to approve on, and wants no approvals.
+    approve: async () => ({ approved: false, reason: 'This project is kept in git alone, so there is no host to approve on' }),
+    approvalsNeeded: async () => 0,
     pullRef: (number) => `refs/pull/${number}/head`,
     // The local queue reads the signed review itself, so there is no comment to keep: the number given back is only a place.
     verdictComment: async ({ number, id }) => ({ id: id ?? number }),
@@ -149,5 +152,5 @@ function localCommands({ project, git, run, write, now, folder }) {
 // `run` is how git runs; `write` keeps a signed event ({ event }), the helper's own way when it is the one asking; `folder` the
 // project's folder.
 export function makeLocalAdapter({ project, run = realRun, git = gitRoute({ run }), write, now = () => new Date(), folder = null }) {
-  return adapterFrom(localCommands({ project, git, run, write, now, folder }));
+  return { ...adapterFrom(localCommands({ project, git, run, write, now, folder })), backend: 'local' };
 }
