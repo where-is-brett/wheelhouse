@@ -196,8 +196,17 @@ test('the backup question waits for where the project is kept, and comes once a 
   const open = (id, chosen = null) => ({ id, chosen });
   const said = { label: 'x', at: '2026-10-02T00:00:00.000Z' };
   const ids = (list) => customiseBatch(list, since).map((c) => c.id);
-  assert.deepEqual(ids([open('join'), open('real-users'), open('backup'), open('product-before-launch')]), ['join', 'real-users', 'product-before-launch']);
+  assert.deepEqual(ids([open('join'), open('real-users'), open('backup'), open('product-before-launch')]), ['join', 'real-users']);
   assert.deepEqual(ids([open('kept'), open('backup')]), ['kept']);
   assert.deepEqual(ids([open('join', said), open('real-users', said), open('backup'), open('product-before-launch', said)]), ['backup']);
   assert.deepEqual(ids([open('real-users'), open('connection')]), ['real-users', 'connection'], 'a hosted project\'s list is as it was');
+});
+
+test('the description waits for the real-users answer, so it is not asked under a phase the answer then changes', () => {
+  const since = '2026-10-01T00:00:00.000Z';
+  const open = (id, chosen = null) => ({ id, chosen });
+  const said = { label: 'x', at: '2026-10-02T00:00:00.000Z' };
+  const ids = (list) => customiseBatch(list, since).map((c) => c.id);
+  assert.deepEqual(ids([open('real-users'), open('product-before-launch'), open('live-data')]), ['real-users', 'live-data']);
+  assert.deepEqual(ids([open('real-users', said), open('product-launched'), open('live-data')]), ['product-launched', 'live-data']);
 });
