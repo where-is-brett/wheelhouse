@@ -200,11 +200,14 @@ function shapeOk(c) {
 
 // `null` (no file) is the empty configuration. Anything else must parse and fit
 // the shape, or this throws. Either way the build loop's keys are filled in.
+// A leading byte-order mark is not part of the text: Windows PowerShell 5.1 and Notepad write one.
+export const withoutBom = (text) => (typeof text === 'string' ? text.replace(/^\uFEFF/, '') : text);
+
 export function readConfig(text) {
   if (text === null) return emptyConfig();
   let parsed;
   try {
-    parsed = JSON.parse(text);
+    parsed = JSON.parse(withoutBom(text));
   } catch {
     throw new Error(UNREADABLE);
   }

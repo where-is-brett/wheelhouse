@@ -42,6 +42,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { withoutBom } from '../gate/guardrails.js';
 import { fileURLToPath } from 'node:url';
 import { run as realRun } from '../lib/run.js';
 import { NODE_FLOOR } from '../lib/setup-numbers.js';
@@ -228,7 +229,7 @@ export function glabSource({ setting } = {}) {
 // of the file; undefined when there is none.
 export function readGlabFrom(folder) {
   try {
-    const value = JSON.parse(fs.readFileSync(path.join(folder, '.claude', 'wheelhouse.json'), 'utf8'))?.glabFrom;
+    const value = JSON.parse(withoutBom(fs.readFileSync(path.join(folder, '.claude', 'wheelhouse.json'), 'utf8')))?.glabFrom;
     return typeof value === 'string' ? value : undefined;
   } catch {
     return undefined;

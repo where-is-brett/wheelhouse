@@ -6,6 +6,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { withoutBom } from '../gate/guardrails.js';
 
 export const DEFAULT_GITLAB = 'https://gitlab.com';
 
@@ -51,7 +52,7 @@ export const isDefaultHost = (parts) => parts.hostname === DEFAULT_HOST;
 // is missing, unreadable or names none. A folder with no configuration yet is the public service's.
 export function readGitlabHosts(folder) {
   try {
-    const hosts = JSON.parse(fs.readFileSync(path.join(folder, '.claude', 'wheelhouse.json'), 'utf8'))?.gitlabHosts;
+    const hosts = JSON.parse(withoutBom(fs.readFileSync(path.join(folder, '.claude', 'wheelhouse.json'), 'utf8')))?.gitlabHosts;
     return Array.isArray(hosts) && hosts.every((h) => typeof h === 'string') ? { gitlabHosts: hosts } : {};
   } catch {
     return {};

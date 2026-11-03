@@ -1502,3 +1502,16 @@ test('in a review step the shell may only read: a write is refused, a read passe
     assert.ok(denied(out));
   });
 });
+
+test('a byte-order mark at the start of the configuration or .mcp.json does not refuse the app\'s own tools', async () => {
+  await withHome(async (home) => {
+    const plain = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: ['figma'], webDomains: [] };
+    const bom = makeProject('﻿' + JSON.stringify(plain));
+    try {
+      assert.equal(await desk(bom.base, home, call(bom.main, 'mcp__ccd_turn__wrap_up')), undefined);
+      assert.equal(await run(bom.base, home, call(bom.main, 'mcp__figma__get_design')), undefined);
+      fs.writeFileSync(path.join(bom.main, '.mcp.json'), '﻿' + JSON.stringify({ mcpServers: { figma: { command: 'node' } } }));
+      assert.equal(await desk(bom.base, home, call(bom.main, 'mcp__ccd_turn__wrap_up')), undefined);
+    } finally { fs.rmSync(bom.base, { recursive: true, force: true }); }
+  });
+});
