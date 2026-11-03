@@ -45,8 +45,13 @@ function fromAddress(stdout, pattern) {
 
 // Removes anything key-like, and every value of the adapter's environment, from
 // a CLI's output before it goes into an error or a refusal.
-export function scrub(text, env = {}) {
+// `extra` lists more values to hide, such as a key borrowed from the computer's
+// store, which is in no environment.
+export function scrub(text, env = {}, extra = []) {
   let out = String(text ?? '');
+  for (const value of extra ?? []) {
+    if (typeof value === 'string' && value.length >= SHORTEST_SECRET) out = out.split(value).join('[hidden]');
+  }
   for (const [name, value] of Object.entries(env ?? {})) {
     if (typeof value === 'string' && value.length >= SHORTEST_SECRET && !NOT_SECRET.test(name)) out = out.split(value).join('[hidden]');
   }

@@ -79,3 +79,59 @@ export function deleteKey(name) {
     throw new Error(`Could not remove the key file ${name}.json`);
   }
 }
+
+// The computer's own store (scripts/host/store.js) is where keys live. The
+// functions above read and write the old key files, which stay until a key has
+// moved; these reach the store, with the file as the fallback during migration.
+// `deps` is a seam for tests: { store } holding readKey, storeKey and deleteKey.
+async function storeOf(deps) {
+  return deps?.store ?? (await import('./store.js'));
+}
+
+// The key under this name from the store, else from the old key file, else null.
+export async function findKey(name, deps) {
+  fileFor(name);
+  const store = await storeOf(deps);
+  const kept = await store.readKey(name);
+  return kept ?? readKey(name);
+}
+
+// Keeps the key in the store, where renewed keys are rewritten from now on.
+export async function saveKey(name, value, deps) {
+  fileFor(name);
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('A key must be kept as an object');
+  }
+  const store = await storeOf(deps);
+  await store.storeKey(name, value);
+}
+
+// Moves every key file into the store. Each file is deleted only after its key
+// has been read back from the store and found equal; a move that fails leaves
+// the file, and the next call tries again. Returns { moved, failed } by name.
+export async function moveKeysToStore(deps) {
+  const store = await storeOf(deps);
+  const moved = [];
+  const failed = [];
+  let files;
+  try {
+    files = fs.readdirSync(keysDir());
+  } catch {
+    return { moved, failed };
+  }
+  for (const file of files.sort()) {
+    const name = file.replace(/\.json$/, '');
+    if (!file.endsWith('.json') || !NAME.test(name)) continue;
+    try {
+      const value = readKey(name);
+      await store.storeKey(name, value);
+      const back = await store.readKey(name);
+      if (JSON.stringify(back) !== JSON.stringify(value)) throw new Error('read back differs');
+      deleteKey(name);
+      moved.push(name);
+    } catch {
+      failed.push(name);
+    }
+  }
+  return { moved, failed };
+}
