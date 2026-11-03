@@ -504,3 +504,25 @@ test('words typed on a card of buttons only are not an answer: the card is asked
     assert.equal(answersFor(run.id)['3.host'].label, 'GitHub');
   }, { now: () => clock });
 });
+
+test('a click on a card that takes typed words counts when the session wrote the card out with Windows line breaks and straight quotes', async () => {
+  await withSetup(async ({ client, home, folder }) => {
+    const readme = 'The README’s words';
+    setWorld(home, { ask: { 4: [{ id: 'product-launched', options: [readme, 'Not yet'], typed: true, what: 'In a sentence, what is it? Choose the README’s words, or type your own as your answer.' }] } });
+    const { card } = (await client.setup.plan({ folder, step: 4 })).ask;
+    const run = findRun(folder);
+    // The card as a session on Windows hands it to the question tool: \r\n between its lines, straight quote marks.
+    const plain = (s) => (typeof s === 'string' ? s.replaceAll('’', '\'').replaceAll('\n', '\r\n') : s);
+    const sent = { ...card, question: plain(card.question), options: card.options.map((o) => ({ label: plain(o.label), description: plain(o.description) })) };
+    assert.notEqual(sent.question, card.question);
+    await choose(folder, sent, 'The README\'s words');
+    const [answer, ...rest] = kept(home);
+    assert.deepEqual(rest, []);
+    // Kept in the words the helper asked, so the step reads it as answered and does not ask again.
+    assert.deepEqual([answer.data.question, answer.data.label, answer.data.text], [card.question, readme, null]);
+    assert.deepEqual(answersFor(run.id)['4.product-launched'], { label: readme, text: null, at: answer.at });
+    // A card with other words, however its quotes are written, still earns nothing.
+    await choose(folder, { ...sent, question: sent.question.replace('what is it', 'who is it for') }, 'The README\'s words');
+    assert.equal(kept(home).length, 1);
+  });
+});
