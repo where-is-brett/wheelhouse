@@ -175,7 +175,8 @@ async function undo(dir, port) {
 
 // An API client for `baseUrl` that trusts the throwaway authority, with the token read from a file.
 export function apiFor({ baseUrl, caFile, tokenFile }) {
-  return gitlabApi({ baseUrl, token: readSecret(tokenFile), fetch: fetchTrusting(caFile) });
+  // curl tries the computer's own store first, then the throwaway authority's file (the Mac's route, whatever the computer); no proxy.
+  return gitlabApi({ baseUrl, token: readSecret(tokenFile), proxy: null, caFile, platform: 'darwin' });
 }
 
 // Makes an instance runner (through the API), registers it with the shell executor and starts it
