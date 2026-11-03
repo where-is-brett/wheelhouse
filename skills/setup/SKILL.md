@@ -123,6 +123,14 @@ Ask step 7's card about changes not yet committed; never commit, stash or edit t
 
 A GitLab token, a password or a key goes only into the box the director's computer shows, never into the chat. If the director pastes one into the chat: don't repeat it, keep it or pass it to anything. Tell them it must go into the box, and since this one has been in the chat, to make a fresh one and paste that into the box.
 
+## Narrow keys
+
+A narrow key's card says in one plain line what the key reaches; setup says it, so repeat it as it is and add nothing.
+
+- **GitHub:** a fine-grained key for the one repository: code, pull requests and issues at write; commit statuses and checks at read (statuses at write only where checks run on the computer); metadata at read. It has no Administration. The page opens filled in, but GitHub cannot preselect the repository: tell the director to choose "Only select repositories", then the project. Protection at step 7 uses the director's own sign-in; a director with only the narrow key is asked for a second key, with Administration and a one-day life, used once and not kept.
+- **GitLab:** setup makes a project key itself (Developer, `api` and `write_repository`), with no page and no pasting. Only where the company's group has switched project keys off does setup open the personal-key page (`api` and `write_repository`, filled in) and say plainly that this key reaches every project the account can. GitLab's page cannot be given an expiry, so tell the director to set it to 30 days. Any other refusal from GitLab stops the step; do not offer the personal key for it.
+- **Signing in:** `gh` and `glab` can be signed in with a key made on those narrow pages (`gh auth login --with-token`, `glab auth login --stdin`) instead of the browser. The key goes into the computer's box, never the chat.
+
 ## Lines the session start gives
 
 - **"Wheelhouse moved your settings to this computer"**: tell the director that in one plain line, with what it says was left out. Nothing was deleted; offer nothing to do about the old copies.

@@ -16,6 +16,11 @@ import { directorProxy } from './director-git.js';
 const DEVELOPER = 30;
 const MAINTAINER = 40;
 const SCOPES = ['api', 'write_repository'];
+// The scopes of every GitLab key Wheelhouse asks for, the project key and the personal fallback alike.
+export const KEY_SCOPES = SCOPES;
+// The personal key's life where the company has switched project keys off. GitLab's token page has no
+// documented expiry parameter, so the director is told to set it.
+export const PERSONAL_DAYS = 30;
 const MOST_DAYS = 365;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -94,6 +99,9 @@ export const projectPath = (projectId) => `/projects/${encodeURIComponent(String
 function expiryDate(now, days) {
   return new Date(now().getTime() + days * DAY_MS).toISOString().slice(0, 10);
 }
+
+// The date (year-month-day) a key made now, lasting some days, ends.
+export const keyExpiry = (days, now = () => new Date()) => expiryDate(now, days);
 
 // What GitLab says when the group has switched project keys off ("Allow group and project access
 // tokens", check 71). The setting cannot be read through the API, so this refusal is the only signal.
