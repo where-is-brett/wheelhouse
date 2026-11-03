@@ -127,7 +127,7 @@ export async function removeKey(name, deps) {
   deleteKey(name);
 }
 
-// Moves every key file into the store. Each file is deleted only after its key
+// Moves every key file into the store. A key the store already holds is kept as it is and only its file goes. Each file is deleted only after its key
 // has been read back from the store and found equal; a move that fails leaves
 // the file, and the next call tries again. Returns { moved, failed } by name.
 export async function moveKeysToStore(deps) {
@@ -145,6 +145,15 @@ export async function moveKeysToStore(deps) {
     if (!file.endsWith('.json') || !NAME.test(name)) continue;
     try {
       const value = readKey(name);
+      // A file another helper has just moved is gone: nothing to store, and a null or empty value is never stored.
+      if (value === null || Object.keys(value).length === 0) continue;
+      // The store may hold a newer key than the file (a renewal, or a key made again, writes the store and leaves the
+      // file): the store's value stands and only the file goes.
+      if ((await store.readKey(name)) != null) {
+        deleteKey(name);
+        moved.push(name);
+        continue;
+      }
       await store.storeKey(name, value);
       const back = await store.readKey(name);
       if (JSON.stringify(back) !== JSON.stringify(value)) throw new Error('read back differs');

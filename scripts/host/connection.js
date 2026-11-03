@@ -26,6 +26,7 @@
 // Wheelhouse GitHub App's keys or a GitLab project's key, which reach the
 // tools only through their environment, never an argument. No function here
 // returns a key other than in that environment, or logs or throws one.
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { wheelhouseHome } from '../lib/paths.js';
@@ -262,24 +263,30 @@ async function selfExpiry({ token, root, via }) {
   }
 }
 
-// GitLab's answers for the director's own key, kept for a day in the Wheelhouse folder (a date only, never a key).
+// GitLab's answers for a key, kept in the Wheelhouse folder (a date and a short fingerprint of the key, never a key): a
+// day for an answer, fifteen minutes for a call that failed, so a GitLab that is down is not asked on every board load.
+// A refusal (401) is never kept.
 const EXPIRY_FILE = 'host-key-expiry.json';
 const EXPIRY_KEPT_MS = 24 * 60 * 60 * 1000;
+const FAILURE_KEPT_MS = 15 * 60 * 1000;
 const expiryFile = () => path.join(wheelhouseHome(), EXPIRY_FILE);
-function keptExpiry(name, at) {
+const printOf = (token) => (typeof token === 'string' ? crypto.createHash('sha256').update(token).digest('hex').slice(0, 12) : null);
+function keptExpiry(name, at, print) {
   try {
     const entry = JSON.parse(fs.readFileSync(expiryFile(), 'utf8'))?.[name];
-    if (typeof entry?.at === 'number' && at - entry.at >= 0 && at - entry.at < EXPIRY_KEPT_MS && (entry.expiresAt === null || typeof entry.expiresAt === 'string')) {
-      return { expiresAt: entry.expiresAt };
-    }
+    if (typeof entry?.at !== 'number' || (entry.print ?? null) !== print) return null;
+    const age = at - entry.at;
+    if (age < 0) return null;
+    if (entry.failed === true) return age < FAILURE_KEPT_MS ? { failed: true } : null;
+    if (age < EXPIRY_KEPT_MS && (entry.expiresAt === null || typeof entry.expiresAt === 'string')) return { expiresAt: entry.expiresAt };
   } catch { /* nothing kept */ }
   return null;
 }
-function keepExpiry(name, at, expiresAt) {
+function keepExpiry(name, at, print, entry) {
   try {
     let all = {};
     try { all = JSON.parse(fs.readFileSync(expiryFile(), 'utf8')) ?? {}; } catch { /* a first one */ }
-    if (expiresAt === undefined) delete all[name]; else all[name] = { at, expiresAt };
+    if (entry === undefined) delete all[name]; else all[name] = { at, print, ...entry };
     fs.mkdirSync(wheelhouseHome(), { recursive: true });
     fs.writeFileSync(expiryFile(), `${JSON.stringify(all)}\n`, { mode: 0o600 });
   } catch { /* an answer that could not be kept is asked again */ }
@@ -293,34 +300,40 @@ const dueOn = (expiresAt, at) => {
 };
 
 // A GitLab connection's renewal. A narrow key's expiry is kept with it; one with none kept (a pasted token) is
-// asked of GitLab. The director's own key (as-is) is borrowed and asked of GitLab, the answer kept for a day.
-// A key GitLab refuses (401) is `key: 'refused'` at once; none to use is `key: 'missing'`.
+// asked of GitLab. The director's own key (as-is) is borrowed and asked of GitLab. Answers and failures are kept
+// (above). A key GitLab refuses (401) is `key: 'refused'` at once; none to use is `key: 'missing'`.
 async function gitlabRenewal(connection, { now, keys, via }) {
   const at = timeOf(now);
   const root = checkBaseUrl(connection.baseUrl ?? DEFAULT_GITLAB);
   const narrow = connection.mode === 'narrow';
+  const name = `${narrow ? 'narrow' : 'as-is'}|${new URL(root).host}|${connection.project}`;
   let token;
-  let name;
+  let print = null;
   if (narrow) {
     const kept = await findKey(`gitlab-project-${connection.projectId}`, keys);
     if (!kept || typeof kept.token !== 'string' || kept.token === '') return { due: false, key: 'missing' };
     if (typeof kept.expiresAt === 'string') return dueOn(kept.expiresAt, at);
     token = kept.token;
+    print = printOf(token);
+    const known = keptExpiry(name, at, print);
+    if (known !== null) return known.failed ? { due: false } : dueOn(known.expiresAt, at);
   } else {
-    name = `${new URL(root).host}|${connection.project}`;
-    const known = keptExpiry(name, at);
-    if (known !== null) return dueOn(known.expiresAt, at);
+    const known = keptExpiry(name, at, null);
+    if (known !== null) return known.failed ? { due: false } : dueOn(known.expiresAt, at);
     const lent = await (via.borrow ?? borrowKey)({ host: new URL(root).host, base: root, repoPath: connection.project }).catch(() => null);
     if (typeof lent?.key !== 'string' || lent.key === '') return backendOf(connection) === 'rest' ? { due: false, key: 'missing' } : { due: false };
     token = lent.key;
   }
   const said = await selfExpiry({ token, root, via });
-  if (said === null) return { due: false };
+  if (said === null) {
+    keepExpiry(name, at, print, { failed: true });
+    return { due: false };
+  }
   if (said.refused) {
-    if (name !== undefined) keepExpiry(name, at, undefined);
+    keepExpiry(name, at, print, undefined);
     return { due: false, key: 'refused' };
   }
-  if (name !== undefined) keepExpiry(name, at, said.expiresAt);
+  keepExpiry(name, at, print, { expiresAt: said.expiresAt });
   return dueOn(said.expiresAt, at);
 }
 

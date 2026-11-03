@@ -169,7 +169,9 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
     ? attempt(() => buildsShown({ views, computer: computerId(), locked, guardedReady: guardedReady({ home: wheelhouseHome(), now: clock, platform: process.platform }) }))
     : null;
   // Offline, no key file is opened: the glance has no renewal to show.
-  const renewal = offline ? null : await renewalDue(record.connection, clock, undefined, renewalVia).catch(() => null);
+  // It may ask the host, so it gets the same limit as the helper's calls; one that is late is no line.
+  const renewalRead = offline ? null : await within(() => renewalDue(record.connection, clock, undefined, renewalVia), waitMs);
+  const renewal = renewalRead === LATE ? null : renewalRead;
   const lines = attempt(() => healthLines({
     record,
     locked,

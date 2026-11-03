@@ -94,8 +94,8 @@ export async function startRealHelper({
   onStop = (close) => close().then(() => process.exit(0), () => process.exit(1)),
   run = realRun, via, keyDeps, borrow = borrowKey, moveKeys = false, recordBackend = false,
 } = {}) {
-  if (recordBackend) recordBackends();
-  const moved = moveKeys ? moveKeysToStore(keyDeps).catch(() => null) : null;
+  // The key move starts once the helper is listening, so a second helper that cannot bind moves nothing.
+  let moved = null;
   const envFor = envForConnection((project) => recordOf(project).connection, { fetch, now, keys: keyDeps, borrow });
   const helper = await startHelper({
     address,
@@ -106,9 +106,11 @@ export async function startRealHelper({
     keyDeps,
     borrow,
     adapterFor: (project, { env, write }) => adapterOf(recordOf(project), { run, env, write, via, borrow, keys: keyDeps, onSwitch: () => recordSwitch(project) }),
-    envFor: moved === null ? envFor : async (project) => { await moved; return envFor(project); },
+    envFor: async (project) => { await moved; return envFor(project); },
     engineFor: engineForProject({ now }),
   });
+  if (recordBackend) recordBackends();
+  if (moveKeys) moved = moveKeysToStore(keyDeps).catch(() => null);
   return { ...helper, firstStart: moved ?? Promise.resolve(null) };
 }
 

@@ -118,6 +118,42 @@ test('a GitLab that cannot be reached, or answers oddly, is not a renewal', asyn
   });
 });
 
+test('a narrow key with no expiry is asked of GitLab once a day, not on every load', async () => {
+  await withHome(async () => {
+    const s = stands(() => ({ status: 200, body: { expires_at: '2026-11-12' } }));
+    const keys = storeWith({ kind: 'pasted-token', token: 'stand-in-PASTED', expiresAt: null });
+    await renewalDue(NARROW, () => NOW, keys, s.via());
+    assert.deepEqual(await renewalDue(NARROW, clockAt(3600 * 1000), keys, s.via()), { due: true, on: '2026-11-12' });
+    assert.equal(s.curl.calls.length, 1);
+    // A new token is not judged by the old one's answer.
+    const other = storeWith({ kind: 'pasted-token', token: 'stand-in-NEWTOKEN', expiresAt: null });
+    await renewalDue(NARROW, clockAt(3600 * 1000), other, s.via());
+    assert.equal(s.curl.calls.length, 2);
+  });
+});
+
+test('a call that failed is not repeated for fifteen minutes, and a refusal is never kept', async () => {
+  await withHome(async () => {
+    const down = stands(() => ({ exit: 7 }));
+    const keys = storeWith({ kind: 'pasted-token', token: 'stand-in-PASTED', expiresAt: null });
+    assert.deepEqual(await renewalDue(NARROW, () => NOW, keys, down.via()), { due: false });
+    assert.deepEqual(await renewalDue(NARROW, clockAt(10 * 60 * 1000), keys, down.via()), { due: false });
+    assert.equal(down.curl.calls.length, 1);
+    await renewalDue(NARROW, clockAt(16 * 60 * 1000), keys, down.via());
+    assert.equal(down.curl.calls.length, 2);
+    const odd = stands(() => ({ status: 200, body: 'not json' }));
+    await renewalDue(ASIS, () => NOW, undefined, odd.via());
+    await renewalDue(ASIS, clockAt(60 * 1000), undefined, odd.via());
+    assert.equal(odd.curl.calls.length, 1);
+    const refused = stands(() => ({ status: 401, body: {} }));
+    const other = { ...NARROW, projectId: 4243, project: 'team/other' };
+    const otherKeys = { store: { readKey: async () => ({ token: 'stand-in-Z', expiresAt: null }) } };
+    assert.equal((await renewalDue(other, () => NOW, otherKeys, refused.via())).key, 'refused');
+    assert.equal((await renewalDue(other, clockAt(1000), otherKeys, refused.via())).key, 'refused');
+    assert.equal(refused.curl.calls.length, 2);
+  });
+});
+
 test('GitHub as-is and quick connections have nothing to renew', async () => {
   await withHome(async () => {
     const s = stands(() => ({ status: 500 }));
