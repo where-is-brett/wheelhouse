@@ -88,6 +88,7 @@ import { startedAsScript } from '../lib/started-as-script.js';
 import { helperGrace } from '../lib/helper-grace.js';
 import { MAIN_MOVED } from '../lean/store.js';
 import { keepRunningModel, modelOfInput } from '../lib/front-desk-model.js';
+import { whereDigest, resetEpisode } from './where.js';
 
 const SELF = fileURLToPath(import.meta.url);
 // The script that brings this computer's settings for a project up to date, run detached.
@@ -486,7 +487,7 @@ const isBuildsProposal = (u) => u?.kind === 'setting' && [u.key, u.data?.key].so
 // Unattended line after that while it is on. All come before the lists, so the cut at MAX_CHARS
 // never takes them. `sheet` (toolSheetLines) comes after the front desk's line and before the notes and the lists, so
 // a cut takes the briefing and never the tool sheet.
-export function reload({ views, stop, lineage = [], notes, feature, stateRoot, windows, builds, frontDesk = false, sheet = [] }) {
+export function reload({ views, stop, lineage = [], notes, feature, stateRoot, windows, builds, frontDesk = false, sheet = [], where = '' }) {
   const lines = [];
   if (stop?.on) lines.push(`All stop is on (set by ${oneLine(stop.by ?? 'unknown')} at ${oneLine(stop.at ?? 'an unknown time')})`);
   lines.push(...lineage);
@@ -499,6 +500,8 @@ export function reload({ views, stop, lineage = [], notes, feature, stateRoot, w
   if (frontDesk) lines.push(FRONT_DESK_LINE);
   lines.push(...sheet);
   lines.push(...notes);
+  // After a compaction: where the session was (scripts/hooks/where.js), before the lists so a cut takes them first.
+  if (where !== '') lines.push(where);
   const title = (d) => show(d?.title ?? d?.question ?? d?.words ?? d?.value ?? '');
   // A proposal kept as is on its card here is no longer waiting for the director (ruling F49).
   const kept = new Set(Array.isArray(views?.keptAsIs) ? views.keptAsIs : []);
@@ -894,8 +897,16 @@ async function started(input, deps) {
       keepRunningModel(project, model, { now });
     } catch { /* it informs */ }
   }
+  // After a compaction: where the session was, and a new episode for the context gauge.
+  let where = '';
+  if (input.source === 'compact') {
+    try {
+      where = await whereDigest({ project, input, views, feature: featureSlug(input.cwd), stateRoot, env });
+    } catch { /* the reload goes without it */ }
+    resetEpisode(project, input.session_id);
+  }
   const text = reload({
-    views, stop: stopOf(), lineage, notes, feature: featureSlug(input.cwd), stateRoot, windows, builds, frontDesk,
+    views, stop: stopOf(), lineage, notes, feature: featureSlug(input.cwd), stateRoot, windows, builds, frontDesk, where,
     sheet: toolSheetLines(agentOfInput(input) ?? 'claude-code', { pluginRoot: commandRoot({ dir, self }, pluginRoot), platform }),
   });
   return text === '' ? undefined : answer.context('SessionStart', text);
