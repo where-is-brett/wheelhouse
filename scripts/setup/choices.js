@@ -301,15 +301,11 @@ export function answersWithConsent(runId, { read = answersFor } = {}) {
 
 // The choices Customise asks now: those open and not answered since Customise was clicked, the first
 // PER_CARD of them; empty once every one has been. The dry run takes the recommended Keep it here until the director says where
-// the project is kept, and the backup question is only a local project's, so it waits for that answer; the description waits for the real-users answer, whose phase it records.
+// the project is kept, and the backup question is only a local project's, so it waits for that answer.
 export function customiseBatch(list, since) {
   const open = list.filter((c) => !(c.chosen && newer(c.chosen.at, since)));
   const unsaid = open.some((c) => KEPT_ID.test(c.id));
-  // The description card's id names the phase, which the real-users answer decides, so the card
-  // waits for that answer: asked alongside it, it would be asked under the recommended phase and
-  // asked again under the answered one.
-  const phaseUnsaid = open.some((c) => c.id === 'real-users');
-  return open.filter((c) => !(unsaid && BACKUP_ID.test(c.id)) && !(phaseUnsaid && c.id.startsWith('product-'))).slice(0, PER_CARD);
+  return open.filter((c) => !(unsaid && BACKUP_ID.test(c.id))).slice(0, PER_CARD);
 }
 
 // Whether an id is one of step 0's redo cards.
