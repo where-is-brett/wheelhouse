@@ -122,18 +122,55 @@ test('a failure to record the switch does not undo it', async () => {
   assert.equal(adapter.backend, 'rest');
 });
 
-test('GitHub keeps its tool, and says plainly when gh is missing or will not start', async () => {
-  const glab = fakeGlab(spawnError('ENOENT'));
+const github = (connection = {}) => ({ host: 'github', repo: 'a-director/product', connection: { mode: 'as-is', project: 'a-director/product', ...connection } });
+const repoJson = JSON.stringify({ default_branch: 'main' });
+
+test('a GitHub record with backend rest gets the web API: curl runs, gh does not, and the director\'s key is lent for each request', async () => {
+  const gh = fakeGlab();
+  const r = rest([{ status: 200, body: repoJson }, { status: 200, body: repoJson }]);
+  const lendings = [];
+  const borrow = async (what) => { lendings.push(what); return { username: 'x', key: KEY }; };
+  const adapter = adapterOf(github({ backend: 'rest' }), { run: gh.run, via: r.via, borrow });
+  assert.equal(adapter.backend, 'rest');
+  assert.equal(await adapter.defaultBranch(), 'main');
+  await adapter.defaultBranch();
+  assert.equal(lendings.length, 2);
+  assert.deepEqual(lendings[0], { host: 'github.com', base: 'https://github.com', repoPath: 'a-director/product' });
+  assert.equal(gh.calls.length, 0);
+  assert.match(r.curl.calls[0].config, /Authorization: Bearer stand-in-BORROWED/);
+  assert.ok(!r.curl.calls[0].args.join(' ').includes(KEY));
+  assert.match(r.curl.calls[0].config, /https:\/\/api\.github\.com\/repos\/a-director\/product/);
+});
+
+test('a narrow GitHub connection on the web API uses the app\'s access key', async () => {
+  const r = rest([{ status: 200, body: repoJson }]);
+  const keys = { store: { readKey: async (name) => (name === 'github-app' ? { accessToken: 'stand-in-APPACCESS0123456789' } : null) } };
+  const adapter = adapterOf(github({ mode: 'narrow', backend: 'rest' }), { run: fakeGlab().run, via: r.via, borrow: async () => { throw new Error('not borrowed'); }, keys });
+  await adapter.defaultBranch();
+  assert.match(r.curl.calls[0].config, /Authorization: Bearer stand-in-APPACCESS/);
+});
+
+test('a GitHub tool that will not start moves the project to the web API, once, and the call is answered', async () => {
+  const gh = fakeGlab(spawnError('ENOENT'));
+  const r = rest([{ status: 200, body: repoJson }, { status: 200, body: repoJson }]);
   const switches = [];
-  const adapter = adapterOf({ host: 'github', repo: 'a-director/product', connection: { mode: 'quick', project: 'a-director/product', backend: 'rest' } }, { run: glab.run, onSwitch: async (s) => { switches.push(s); } });
+  const adapter = adapterOf(github({ backend: 'cli' }), { run: gh.run, via: r.via, borrow: r.borrow, onSwitch: async (s) => { switches.push(s); } });
   assert.equal(adapter.backend, 'cli');
-  await assert.rejects(adapter.defaultBranch(), (error) => {
-    assert.match(error.message, /GitHub's tool \(gh\) is not installed or will not start on this computer/);
-    assert.match(error.message, /web API is not available for GitHub yet/);
-    assert.equal(error.code, 'TOOL_WONT_START');
-    return true;
-  });
+  assert.equal(await adapter.defaultBranch(), 'main');
+  assert.deepEqual(switches, [{ from: 'cli', to: 'rest' }]);
+  assert.equal(adapter.backend, 'rest');
+  assert.equal(await adapter.defaultBranch(), 'main');
+  assert.equal(gh.calls.length, 1, 'gh is not tried again');
+});
+
+test('a signed-out gh is not a switch on GitHub either', async () => {
+  const gh = fakeGlab({ code: 1, stderr: 'gh: To get started with GitHub CLI, please run: gh auth login' });
+  const r = rest();
+  const switches = [];
+  const adapter = adapterOf(github(), { run: gh.run, via: r.via, borrow: r.borrow, onSwitch: async (s) => { switches.push(s); } });
+  await assert.rejects(adapter.defaultBranch(), /auth login/);
   assert.deepEqual(switches, []);
+  assert.equal(r.curl.calls.length, 0);
 });
 
 test('a local project\'s adapter is unchanged', () => {

@@ -109,8 +109,9 @@ test('a signed-out tool is a sign-in failure said as before, not a switch', asyn
   });
 });
 
-test('GitHub with no gh says so plainly and moves nowhere', async () => {
-  const s = stands({ tool: async () => { throw Object.assign(new Error('spawn gh ENOENT'), { code: 'ENOENT' }); } });
+test('GitHub with no gh moves to the web API, records it, and the board says so', async () => {
+  const pull = JSON.stringify({ number: 4, state: 'open', merged: false, mergeable: true, head: { sha: 'a'.repeat(40), ref: 'x' }, base: { ref: 'main' } });
+  const s = stands({ tool: async () => { throw Object.assign(new Error('spawn gh ENOENT'), { code: 'ENOENT' }); }, curlAnswers: [{ status: 200, body: pull }, { status: 200, body: pull }] });
   const home = shortHome();
   await as(home, async () => {
     writeProject('a__b', {
@@ -120,9 +121,13 @@ test('GitHub with no gh says so plainly and moves nowhere', async () => {
     const helper = await startRealHelper({ address: testAddress(home), onStop: () => {}, run: s.run, via: s.via, borrow: s.borrow });
     try {
       const got = await helperClient({ address: helper.address }).prState({ project: 'a__b', number: 4 });
-      assert.equal(got.ok, false);
-      assert.match(JSON.stringify(got), /GitHub's tool \(gh\) is not installed or will not start/);
-      assert.equal(readProject('a__b').connection.backend, undefined);
+      assert.equal(got.ok, true, JSON.stringify(got));
+      assert.equal(s.curl.calls.length, 1);
+      assert.match(s.curl.calls[0].config, /Authorization: Bearer stand-in-LENT/);
+      const kept = readProject('a__b');
+      assert.equal(kept.connection.backend, 'rest');
+      assert.equal(kept.connection.switched, 'cli');
+      assert.ok(!JSON.stringify(kept).includes(KEY));
     } finally { await helper.close(); }
   });
 });

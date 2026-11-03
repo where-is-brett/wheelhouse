@@ -7,23 +7,23 @@ import { STATUS_CONTEXT } from '../checks/where.js';
 // GitHub's `mergeable`: MERGEABLE is yes, CONFLICTING is no, and UNKNOWN (GitHub
 // is still working it out, or the pull request is no longer open) or anything
 // new is unknown, never yes.
-const MERGEABLE = { MERGEABLE: 'yes', CONFLICTING: 'no' };
+export const MERGEABLE = { MERGEABLE: 'yes', CONFLICTING: 'no' };
 
-const STATE = { OPEN: 'open', MERGED: 'merged', CLOSED: 'closed' };
+export const STATE = { OPEN: 'open', MERGED: 'merged', CLOSED: 'closed' };
 
 // The commit's status check rollup covers both check runs and commit statuses.
 // No rollup (no checks at all) or a commit GitHub does not have is 'none'.
-const ROLLUP = { SUCCESS: 'success', PENDING: 'pending', EXPECTED: 'pending', FAILURE: 'failure', ERROR: 'failure' };
+export const ROLLUP = { SUCCESS: 'success', PENDING: 'pending', EXPECTED: 'pending', FAILURE: 'failure', ERROR: 'failure' };
 
-const CI_QUERY = 'query($owner:String!,$name:String!,$sha:GitObjectID!){repository(owner:$owner,name:$name){object(oid:$sha){... on Commit{oid statusCheckRollup{state}}}}}';
+export const CI_QUERY = 'query($owner:String!,$name:String!,$sha:GitObjectID!){repository(owner:$owner,name:$name){object(oid:$sha){... on Commit{oid statusCheckRollup{state}}}}}';
 
-const CONTEXTS_QUERY = 'query($owner:String!,$name:String!,$sha:GitObjectID!){repository(owner:$owner,name:$name){object(oid:$sha){... on Commit{statusCheckRollup{contexts(first:100){nodes{__typename ... on CheckRun{name status conclusion startedAt completedAt checkSuite{app{slug}}} ... on StatusContext{context state createdAt creator{login}}}}}}}}}';
+export const CONTEXTS_QUERY = 'query($owner:String!,$name:String!,$sha:GitObjectID!){repository(owner:$owner,name:$name){object(oid:$sha){... on Commit{statusCheckRollup{contexts(first:100){nodes{__typename ... on CheckRun{name status conclusion startedAt completedAt checkSuite{app{slug}}} ... on StatusContext{context state createdAt creator{login}}}}}}}}}';
 // A check run's words, and a status's. A run that started and ended in the same moment, or that couldn't start, ran no job.
 const RUNNING = { QUEUED: 'queued', WAITING: 'queued', PENDING: 'queued', REQUESTED: 'queued', IN_PROGRESS: 'running' };
 const PASSED = ['SUCCESS', 'NEUTRAL', 'SKIPPED'];
 const STATUS_WORD = { SUCCESS: 'success', PENDING: 'pending', EXPECTED: 'pending', FAILURE: 'failure', ERROR: 'failure' };
 
-function contextOf(node) {
+export function contextOf(node) {
   if (node?.__typename === 'StatusContext') {
     const state = STATUS_WORD[node.state] ?? 'pending';
     // A status that has an answer came from something that ran, whichever answer it is.
@@ -39,15 +39,73 @@ function contextOf(node) {
 }
 
 // How many of a commit's deployments, newest first, are looked at for a successful one.
-const MOST_DEPLOYMENTS = 3;
+export const MOST_DEPLOYMENTS = 3;
 // How many pages of a pull request's reviews are read.
-const MOST_REVIEW_PAGES = 10;
+export const MOST_REVIEW_PAGES = 10;
 
 // One review as GitHub gives it, kept to what Wheelhouse reads.
 export const reviewOf = (r) => ({ login: r?.user?.login ?? null, type: r?.user?.type ?? null, state: r?.state ?? null, commit: r?.commit_id ?? null, at: r?.submitted_at ?? null });
 
-const PR_ADDRESS = /(https:\/\/\S+\/pull\/(\d+))/;
-const ISSUE_ADDRESS = /(https:\/\/\S+\/issues\/(\d+))/;
+// ---- What both GitHub backends read the same way (this file over `gh`, github-rest.js over the web API) ----
+
+// A GraphQL answer can carry errors with a 200; that is not the absence of checks.
+function checksAnswer(answer) {
+  if ((Array.isArray(answer?.errors) && answer.errors.length > 0) || answer?.data === null || typeof answer?.data !== 'object') throw new Error('GitHub could not read the commit\'s checks');
+  return answer.data;
+}
+
+// The commit's rollup state from the CI_QUERY answer. No rollup, or a commit GitHub does not have, is 'none'.
+export function rollupOf(answer, sha) {
+  const rollup = checksAnswer(answer)?.repository?.object?.statusCheckRollup;
+  return { sha, state: rollup ? (ROLLUP[rollup.state] ?? 'pending') : 'none' };
+}
+
+// Everything that reports on the commit, from the CONTEXTS_QUERY answer.
+export function contextsOf(answer) {
+  const nodes = checksAnswer(answer)?.repository?.object?.statusCheckRollup?.contexts?.nodes;
+  return (Array.isArray(nodes) ? nodes : []).map(contextOf).filter((c) => typeof c.name === 'string' && c.name !== '');
+}
+
+// A plan that has no rules at all says so in these words.
+export const NO_RULES_PLAN = /upgrade to github pro/i;
+
+// The names of the checks a branch's rules require, from the rules answer, or null when it is not a list.
+export function requiredChecksOf(rules) {
+  return Array.isArray(rules) ? rules.filter((r) => r?.type === 'required_status_checks').flatMap((r) => r.parameters?.required_status_checks ?? []).map((c) => c?.context) : null;
+}
+
+// The approvals still wanted on a pull request: what its branch's rules require, less the people whose newest
+// review (an approval, a change request or a dismissal; a comment changes nothing) approves the head it has now.
+export function approvalsLeftOf({ rules, reviews, head }) {
+  if (!Array.isArray(rules) || !Array.isArray(reviews)) throw new Error('GitHub did not say how many approvals the pull request still needs');
+  const wanted = Math.max(0, ...rules.filter((r) => r?.type === 'pull_request').map((r) => Number(r.parameters?.required_approving_review_count) || 0));
+  const newest = new Map();
+  for (const r of reviews) {
+    if (['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'].includes(r?.state) && typeof r.login === 'string') newest.set(r.login, r);
+  }
+  const given = [...newest.values()].filter((r) => r.state === 'APPROVED' && r.commit === head).length;
+  return Math.max(0, wanted - given);
+}
+
+// ---- Approving ----
+
+export const SELF_APPROVAL = 'GitHub doesn\'t let the author approve their own pull request here. Ask a colleague to approve it, or choose a project-only key, so that Wheelhouse opens requests and you approve them.';
+export const APPROVE_HEAD_MOVED = 'the head of the pull request has moved since it was checked';
+export const APPROVE_KEY_REFUSED = 'GitHub did not accept the key, so the pull request was not approved';
+export const APPROVE_NOT_ALLOWED = 'GitHub did not approve the pull request';
+
+// What a refused approval says, from the HTTP status (when there is one) and the host's words, which are
+// read to tell the kinds apart and never repeated.
+export function approvalRefusal(status, output) {
+  const text = String(output ?? '').replace(/\s+/g, ' ');
+  if (/own pull request/i.test(text)) return { approved: false, selfApproval: true, reason: SELF_APPROVAL };
+  if (status === 401) return { approved: false, keyRefused: true, reason: APPROVE_KEY_REFUSED };
+  if (status === 409 || /head.*(?:moved|modified)/i.test(text)) return { approved: false, reason: APPROVE_HEAD_MOVED };
+  return { approved: false, reason: APPROVE_NOT_ALLOWED };
+}
+
+export const PR_ADDRESS = /(https:\/\/\S+\/pull\/(\d+))/;
+export const ISSUE_ADDRESS = /(https:\/\/\S+\/issues\/(\d+))/;
 
 export function githubCommands({ call, attempt, json, repo, fromAddress, refusal, settle, httpsOnly }) {
   const [owner, name] = repo.split('/');
@@ -56,10 +114,19 @@ export function githubCommands({ call, attempt, json, repo, fromAddress, refusal
 
   async function ciRead(sha) {
     const answer = await ask(['api', 'graphql', '-f', `query=${CI_QUERY}`, '-f', `owner=${owner}`, '-f', `name=${name}`, '-f', `sha=${sha}`]);
-    // A GraphQL answer can carry errors with a 200; that is not the absence of checks.
-    if ((Array.isArray(answer?.errors) && answer.errors.length > 0) || answer?.data === null || typeof answer?.data !== 'object') throw new Error('GitHub could not read the commit\'s checks');
-    const rollup = answer?.data?.repository?.object?.statusCheckRollup;
-    return { sha, state: rollup ? (ROLLUP[rollup.state] ?? 'pending') : 'none' };
+    return rollupOf(answer, sha);
+  }
+
+  // The rules on a branch, as a list; [] on a plan with no rules and null when they can't be read.
+  async function rulesOf(branch) {
+    const { code, stdout, stderr } = await attempt(['api', `repos/${repo}/rules/branches/${encodeURIComponent(branch)}?per_page=100`]);
+    if (code !== 0) return NO_RULES_PLAN.test(`${stderr}\n${stdout}`) ? [] : null;
+    try {
+      const rules = JSON.parse(stdout);
+      return Array.isArray(rules) ? rules : null;
+    } catch {
+      return null;
+    }
   }
 
   return {
@@ -106,22 +173,13 @@ export function githubCommands({ call, attempt, json, repo, fromAddress, refusal
     // really ran. Read apart from ciState, whose rollup can't tell Wheelhouse's own status from anything else.
     async checkContexts(sha) {
       const answer = await ask(['api', 'graphql', '-f', `query=${CONTEXTS_QUERY}`, '-f', `owner=${owner}`, '-f', `name=${name}`, '-f', `sha=${sha}`]);
-      if ((Array.isArray(answer?.errors) && answer.errors.length > 0) || answer?.data === null || typeof answer?.data !== 'object') throw new Error('GitHub could not read the commit\'s checks');
-      const nodes = answer?.data?.repository?.object?.statusCheckRollup?.contexts?.nodes;
-      return (Array.isArray(nodes) ? nodes : []).map(contextOf).filter((c) => typeof c.name === 'string' && c.name !== '');
+      return contextsOf(answer);
     },
 
     // The checks the rules on a branch require, by name, from what a connection with no administration may read. Empty on a
     // plan with no rules, and null when they can't be read.
     async requiredChecks(branch) {
-      const { code, stdout, stderr } = await attempt(['api', `repos/${repo}/rules/branches/${encodeURIComponent(branch)}?per_page=100`]);
-      if (code !== 0) return /upgrade to github pro/i.test(`${stderr}\n${stdout}`) ? [] : null;
-      try {
-        const rules = JSON.parse(stdout);
-        return Array.isArray(rules) ? rules.filter((r) => r?.type === 'required_status_checks').flatMap((r) => r.parameters?.required_status_checks ?? []).map((c) => c?.context) : null;
-      } catch {
-        return null;
-      }
+      return requiredChecksOf(await rulesOf(branch));
     },
 
     // Reports a check on the commit (check 84). Each post adds an entry and the rollup takes the newest, so one repeated
@@ -175,6 +233,26 @@ export function githubCommands({ call, attempt, json, repo, fromAddress, refusal
         open: 'OPEN',
         takeBack: () => call(['pr', 'merge', String(number), ...R, '--disable-auto']),
       });
+    },
+
+    // Approves at the head the card names. GitHub accepts a review of any commit in the pull request, so the head is
+    // read first and a moved one is refused here; the review then names that commit. A refusal is an answer, not an error.
+    async approve({ number, sha }) {
+      const pr = await ask(['pr', 'view', String(number), ...R, '--json', 'headRefOid']);
+      if (pr?.headRefOid !== sha) return { approved: false, reason: APPROVE_HEAD_MOVED };
+      const got = await attempt(['api', '--method', 'POST', `repos/${repo}/pulls/${number}/reviews`, '--input', '-'], JSON.stringify({ event: 'APPROVE', commit_id: sha }));
+      if (got.code === 0) return { approved: true };
+      const said = `${got.stderr}\n${got.stdout}`;
+      const named = /\(HTTP (\d{3})\)/.exec(said);
+      return approvalRefusal(named ? Number(named[1]) : null, said);
+    },
+
+    // How many more approvals the rules want on the pull request before it can merge (0 when none).
+    async approvalsNeeded(number) {
+      const pr = await ask(['pr', 'view', String(number), ...R, '--json', 'baseRefName,headRefOid']);
+      const rules = await rulesOf(pr.baseRefName);
+      if (rules === null) throw new Error('GitHub did not say how many approvals the pull request still needs');
+      return approvalsLeftOf({ rules, reviews: await this.reviews(number), head: pr.headRefOid });
     },
 
     // Open pull requests, up to 100, as the adapter's request values.
