@@ -144,7 +144,7 @@ import { LEAN_FOLDER, registeredLeanProjects } from '../lean/project.js';
 import { loginStartRecord } from '../lib/login-start.js';
 import { listHash } from '../lib/setup-writes.js';
 import { joinedRepo, runClosed, HEALTH_STEP } from '../lib/setup-run.js';
-import { clicksDir, usedDir, shownDir, askedDir, answersDir, answeredDir, recordsDir, writeWhole } from '../lib/setup-clicks.js';
+import { clicksDir, usedDir, shownDir, askedDir, answersDir, answeredDir, recordsDir, droppedFile, writeWhole } from '../lib/setup-clicks.js';
 import { HOST_TOOLS, toolFolder, toolsDir } from '../lib/host-tools.js';
 import { enrolledFile, signingKeyFile, readEnrolled } from '../state/signing.js';
 import { ownFilesFile } from '../health/own-files.js';
@@ -988,7 +988,7 @@ export async function uninstallPlan({
     // and clicking it write them, and the list must be the same before and after.
     // The trust clicks and the record of the profile's enrolments last fetched (the session start's)
     // too, Wheelhouse's own (ruling R86).
-    for (const p of [clicksDir(), usedDir(), shownDir(), askedDir(), answersDir(), answeredDir(), recordsDir(), trustDir(), seenFile()]) remove(p, 'last');
+    for (const p of [clicksDir(), usedDir(), shownDir(), askedDir(), answersDir(), answeredDir(), recordsDir(), droppedFile(), trustDir(), seenFile()]) remove(p, 'last');
   } else {
     // The project's own fetch mirror, merge queue folder and reader's folder in the engine folder (the helper makes them
     // before a run starts), which nothing else reads once the project is gone; the engine and the other projects' stay.

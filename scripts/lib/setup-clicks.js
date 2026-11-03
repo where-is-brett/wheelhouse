@@ -5,7 +5,8 @@
 // that a click was on. Uninstall's click (ruling R90) is kept the same way: its card's shown record
 // in setup/shown/, one per folder, and the director's Remove it in setup/clicks/. It lives apart from scripts/setup/ so the prompt record, which the mod's
 // bridge imports, reaches nothing there (scripts/mod/validate.js, bridgeImports). It writes only
-// the click and answer files; it never writes Claude Code's settings or setup's journal.
+// the click and answer files, and setup/dropped.log, which says why an answer on a card setup asked
+// was not kept; it never writes Claude Code's settings or setup's journal.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -108,21 +109,120 @@ export function keepAnswer(event) {
 // and words, made exclusively. Gives the marker's path, which `releaseAnswer` removes when what the
 // answer earns could not be kept, or null when the question was answered already, so the same card
 // clicked again, in another session, records nothing twice.
-export function claimAnswer({ runId, step, questionId, question }) {
+// A claim whose answer was never kept is left by a hook cut short between the two (Claude Code ends
+// a hook at its time limit). Once older than this, far past any hook's time limit, it holds nothing.
+export const CLAIM_STALE_MS = 2 * 60 * 1000;
+
+function claimFile({ runId, step, questionId, question }) {
   const words = crypto.createHash('sha256').update(String(question)).digest('hex').slice(0, 16);
   if (!RUN_ID.test(String(runId)) || !Number.isInteger(step) || !SETUP_QUESTION_ID.test(String(questionId))) throw new Error('An answer to claim needs its run, step and question');
-  const file = path.join(answeredDir(), `${runId}-${step}-${questionId}-${words}`);
+  return path.join(answeredDir(), `${runId}-${step}-${questionId}-${words}`);
+}
+
+// A claim whose answer this computer never kept, made more than CLAIM_STALE_MS ago, is taken back,
+// with the records it says it kept, so the question asked again can be answered and records nothing
+// twice. A claim with its answer kept, or made a moment ago (another hook may be keeping it now), stands.
+function retakeStale(file, { runId, step, questionId, question }, now) {
+  let lines;
   try {
-    writeWhole(file, `${new Date().toISOString()}\n`, { exclusive: true });
-    return file;
-  } catch (error) {
-    if (error.code === 'EEXIST') return null;
-    throw error;
+    lines = fs.readFileSync(file, 'utf8').split('\n').filter((l) => l !== '');
+  } catch {
+    return false;
   }
+  const at = Date.parse(lines[0] ?? '');
+  if (Number.isFinite(at) && now().getTime() - at < CLAIM_STALE_MS) return false;
+  const kept = keptAnswers(runId).some((e) => e.data.step === step && e.data.questionId === questionId && e.data.question === question);
+  if (kept) return false;
+  for (const record of lines.slice(1)) {
+    // Only a file in Wheelhouse's own folder: setup/records/, or a project's pending/.
+    if (path.isAbsolute(record) && record.startsWith(path.resolve(wheelhouseHome()) + path.sep)) fs.rmSync(record, { force: true });
+  }
+  fs.rmSync(file, { force: true });
+  return true;
+}
+
+// Claims the answer to one asked question, once (Task 9's review): a marker for its run, step, id
+// and words, made exclusively. Gives the marker's path, which `releaseAnswer` removes when what the
+// answer earns could not be kept, or null when the question was answered already, so the same card
+// clicked again, in another session, records nothing twice. A claim left behind by a hook cut short,
+// with no answer kept, is taken back once it is stale (retakeStale).
+export function claimAnswer(answer, now = () => new Date()) {
+  const file = claimFile(answer);
+  for (let tries = 0; tries < 2; tries += 1) {
+    try {
+      writeWhole(file, `${now().toISOString()}\n`, { exclusive: true });
+      return file;
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+      if (tries > 0 || !retakeStale(file, answer, now)) return null;
+    }
+  }
+  return null;
+}
+
+// When a claim was made, or null when there is none.
+export function claimedAt(answer) {
+  try {
+    const at = fs.readFileSync(claimFile(answer), 'utf8').split('\n')[0];
+    return Number.isFinite(Date.parse(at)) ? at : null;
+  } catch {
+    return null;
+  }
+}
+
+// Notes on a claim the files its records were kept in, so a stale claim taken back takes them too.
+export function noteClaimed(file, records) {
+  if (typeof file !== 'string' || records.length === 0) return;
+  fs.appendFileSync(file, records.map((r) => `${r}\n`).join(''));
 }
 
 export function releaseAnswer(file) {
   if (typeof file === 'string') fs.rmSync(file, { force: true });
+}
+
+// ---- Why an answer on a card setup asked was not kept ----
+
+export const droppedFile = () => path.join(wheelhouseHome(), 'setup', 'dropped.log');
+const DROPPED_MOST_BYTES = 64 * 1024;
+
+// One line in setup/dropped.log for an answer on a card setup asked that the prompt record did not
+// keep: when, the run, step and question it was asked for, the folder the session was in, and why.
+// Never the words typed. The log keeps its newer half once it grows past DROPPED_MOST_BYTES. Never
+// throws: the log only helps find out why a card is asked again.
+export function noteDropped({ asked, cwd, why, now = () => new Date() }) {
+  try {
+    const of = asked ? `${asked.runId} step ${asked.step} ${asked.id} (asked for ${asked.folder})` : 'a card setup asked';
+    const line = `${now().toISOString()} ${of}: not kept from a session in ${typeof cwd === 'string' ? cwd : 'no folder'}: ${why}\n`;
+    const file = droppedFile();
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    let size = 0;
+    try {
+      size = fs.statSync(file).size;
+    } catch { /* no log yet */ }
+    if (size > DROPPED_MOST_BYTES) {
+      const text = fs.readFileSync(file, 'utf8');
+      writeWhole(file, text.slice(text.indexOf('\n', text.length / 2) + 1));
+    }
+    fs.appendFileSync(file, line, { mode: 0o600 });
+  } catch { /* the log is a help only */ }
+}
+
+// The asked records whose card reads as `card` does, in whatever folder, the one asked last first:
+// what a dropped answer's line names when the card was not placed in the session's folder. A
+// `card` with no options (an answer to a question the hook was not shown) is matched by its question.
+export function askedAnywhere(card) {
+  const byQuestion = typeof card?.question === 'string' && !Array.isArray(card?.options);
+  const same = byQuestion ? null : cardKey(card);
+  if (same === null && !byQuestion) return [];
+  const matches = (r) => (byQuestion ? sameWords(r.card.question) === sameWords(card.question) : cardKey(r.card) === same);
+  let names;
+  try {
+    names = fs.readdirSync(askedDir()).filter((n) => n.endsWith('.json'));
+  } catch {
+    return [];
+  }
+  return names.map((n) => readAsked(path.join(askedDir(), n))).filter((r) => r !== null && matches(r))
+    .sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
 }
 
 // What a card shows the director, in one form: its text, header, and each option's label and

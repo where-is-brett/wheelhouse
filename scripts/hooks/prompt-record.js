@@ -66,7 +66,8 @@ import {
   TRUST_LINE, TAKEOVER_LABEL, TAKEOVER_LINE, PAIR_LINE, UNPAIR_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine, KEEP_CONTROL_LINE, keepControlLine, USAGE_LINE, PREMIUM_LINE, START_GOAL_LINE,
 } from '../state/card-lines.js';
 import {
-  keepClick, shownHash, keepAnswer, askedFor, claimAnswer, releaseAnswer, keepUninstallClick, shownUninstall, typedVerdict, typedBefore, keepSetupRecords, sameWords,
+  keepClick, shownHash, keepAnswer, askedFor, claimAnswer, claimedAt, noteClaimed, releaseAnswer, keepUninstallClick, shownUninstall, typedVerdict, typedBefore, keepSetupRecords, sameWords,
+  noteDropped, askedAnywhere,
 } from '../lib/setup-clicks.js';
 import { setupRecordsOf } from '../lib/setup-writes.js';
 import { settingWords } from '../settings/effective.js';
@@ -530,26 +531,31 @@ function setupClickOf(cwd, { question, label, card }) {
 // secret is found. The record names the run and step the question was asked for, and its id.
 // The card is matched as it reads (sameWords: the session may write it out with other line breaks or
 // quote marks), and the record carries the asked card's own question and label, which the helper matches exactly.
-// Gives { made, asked }: the record to sign and the asked record it answers.
-function setupAnswerOf(cwd, { question, label, card, signable, typed }) {
-  if (PUT_OFF.includes(label) || !(signable || typed)) return null;
+// Gives { made, asked }: the record to sign and the asked record it answers; or { why }, why the
+// answer earns nothing (null for Explain more or Not now, which are meant to earn nothing).
+function setupAnswerOf(cwd, { question, label, card, signable, typed, why }) {
+  if (PUT_OFF.includes(label)) return { why: null };
+  if (!(signable || typed)) return { why: why ?? 'the answer was neither a click on one of the card\'s buttons nor text typed on it' };
   const asked = askedFor({ cwd, card });
-  if (asked === null || sameWords(asked.card.question) !== sameWords(question)) return null;
+  if (asked === null) return { why: 'no card setup asked for a folder holding this session\'s folder reads as this one' };
+  if (sameWords(asked.card.question) !== sameWords(question)) return { why: 'the answer names another question than the card\'s' };
   const data = { action: 'setup-answer', runId: asked.runId, step: asked.step, questionId: asked.id, question: asked.card.question };
   if (signable) {
     const own = asked.card.options.find((o) => sameWords(o.label) === sameWords(label));
-    if (own === undefined || PUT_OFF.includes(own.label)) return null;
+    if (own === undefined || PUT_OFF.includes(own.label)) return { why: own === undefined ? 'the button clicked is not one of the card\'s own' : null };
     return { asked, made: { kind: 'action', data: { ...data, label: own.label, text: null } } };
   }
-  if (label.trim() === '' || scanContent(label).length > 0) return null;
+  if (label.trim() === '') return { why: 'the text typed was empty' };
+  if (scanContent(label).length > 0) return { why: 'the text typed holds what looks like a secret' };
   return { asked, made: { kind: 'action', data: { ...data, label: null, text: label } } };
 }
 
 // Signs each setup click and answer and keeps it in setup/clicks/ or setup/answers/. One failing
 // does not stop the rest. An answer that records something in the project's state has those
 // records kept pending in `project` first; they are given back, as keepEarned gives them, to be
-// sent. With no project, such an answer is not kept.
-function keepSetupClicks(cwd, out, now, project = null) {
+// sent. With no project, such an answer is not kept. `dropped` gets, for each question whose
+// answer was not kept, why (noteSetupDrops writes it down when the card is one setup asked).
+function keepSetupClicks(cwd, out, now, project = null, dropped = new Map()) {
   const queued = [];
   for (const click of out) {
     try {
@@ -559,7 +565,10 @@ function keepSetupClicks(cwd, out, now, project = null) {
         continue;
       }
       const answer = setupAnswerOf(cwd, click);
-      if (!answer) continue;
+      if (!answer.made) {
+        if (answer.why !== null) dropped.set(click.question, answer.why);
+        continue;
+      }
       // A typed answer the engine won't take (the choice handed back, or a first question on its
       // question) is kept as given, so the card is asked again saying why, but it records nothing
       // and claims nothing: the answer that follows, typed or clicked, is the one (ruling R137).
@@ -576,9 +585,13 @@ function keepSetupClicks(cwd, out, now, project = null) {
       }
       // An answer that records something is taken once, and its records are kept only with it: a
       // second click on the same card records nothing, and records whose answer could not be kept
-      // are taken back, so the question asked again can't record them twice.
-      const claim = claimAnswer(answer.made.data);
-      if (claim === null) continue;
+      // are taken back, so the question asked again can't record them twice. A claim a hook cut
+      // short left behind, with no answer kept, is taken back once stale (claimAnswer).
+      const claim = claimAnswer(answer.made.data, now);
+      if (claim === null) {
+        dropped.set(click.question, `the question was answered already (claimed at ${claimedAt(answer.made.data) ?? 'an unknown time'})`);
+        continue;
+      }
       const kept = [];
       try {
         // In a folder with no project yet (the one card, asked before step 3: design section 15.1),
@@ -590,6 +603,7 @@ function keepSetupClicks(cwd, out, now, project = null) {
             kept.push({ file: keep(project, route, full, now), body: full, route });
           }
         }
+        noteClaimed(claim, kept.map((k) => k.file));
         keepAnswer(makeEvent({ ...answer.made, now }));
       } catch (error) {
         for (const { file } of kept) fs.rmSync(file, { force: true });
@@ -597,9 +611,35 @@ function keepSetupClicks(cwd, out, now, project = null) {
         throw error;
       }
       queued.push(...kept.filter((k) => !k.later));
-    } catch (e) { if (process.env.SETUP_E2E_DEBUG) process.stderr.write(`KEEP ${e.stack}\n`); /* not kept: the helper then refuses the step for want of a click, or asks the question again */ }
+    } catch (e) {
+      // Not kept: the helper then refuses the step for want of a click, or asks the question again.
+      dropped.set(click.question, `it could not be kept: ${e?.message ?? e}`);
+      if (process.env.SETUP_E2E_DEBUG) process.stderr.write(`KEEP ${e.stack}\n`);
+    }
   }
   return queued;
+}
+
+// Writes down, in setup/dropped.log, each question of the card shown that setup asked (in any
+// folder) whose answer this hook did not keep, and why: `dropped` from keepSetupClicks, or that no
+// answer to it reached the hook, or `whyNone` when no setup clicks were looked at. The answer's
+// words are never written. Only a card setup asked costs anything here: a look in setup/asked/.
+function noteSetupDrops(input, out, { dropped = new Map(), whyNone = null, now }) {
+  const shown = Array.isArray(input.tool_input?.questions) ? input.tool_input.questions.filter((q) => typeof q?.question === 'string') : [];
+  // And the answers to questions the hook was not shown, matched by their question alone.
+  const unshown = out.filter((c) => !shown.some((q) => q.question === c.question)).map((c) => ({ question: c.question }));
+  for (const q of [...shown, ...unshown]) {
+    const asked = askedAnywhere(q);
+    if (asked.length === 0) continue;
+    const click = out.find((c) => c.question === q.question || sameWords(c.question) === sameWords(q.question));
+    const answered = click !== undefined;
+    if (answered && PUT_OFF.includes(click.label)) continue;
+    let why = whyNone ?? (answered ? dropped.get(click.question) : 'no answer to it reached the hook: neither the tool input nor the tool response held one');
+    if (why === undefined) continue;
+    const here = askedFor({ cwd: input.cwd, card: q });
+    if (here === null && whyNone === null && answered) why = `${why}; setup asked it for ${asked.map((a) => a.folder).filter((f, i, all) => all.indexOf(f) === i).join(', ')}`;
+    noteDropped({ asked: here ?? asked[0], cwd: input.cwd, why, now });
+  }
 }
 
 // Acts on each click on the baseline card, in whatever folder: the card carries one set line, the
@@ -655,15 +695,35 @@ function keepUninstallClicks(cwd, out, now) {
   }
 }
 
+const isRecord = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+
+// The question tool's output as Claude Code hands it to the hook: an object, or the same as JSON
+// text; null when it is neither.
+function responseOf(input) {
+  const r = input.tool_response;
+  if (isRecord(r)) return r;
+  if (typeof r !== 'string') return null;
+  try {
+    const parsed = JSON.parse(r);
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 // What was answered, and which answers came from a click on a button the card offered
-// (`signable`) or were typed on a single-choice card (`typed`, AskUserQuestion's Other).
+// (`signable`) or were typed on a single-choice card (`typed`, AskUserQuestion's Other); for one
+// that is neither, `why`. The answers are the tool input's, where Claude Code puts the director's
+// answers, or, when the input holds none, the tool's output's, which Claude Code makes from the same
+// answers and the session can't write either.
 function clicks(input) {
   const ti = input.tool_input ?? {};
-  const answers = ti.answers;
-  if (!answers || typeof answers !== 'object' || Array.isArray(answers)) return [];
+  const response = responseOf(input);
+  const answers = isRecord(ti.answers) ? ti.answers : isRecord(response?.answers) ? response.answers : null;
+  if (answers === null) return [];
   const asked = new Map((Array.isArray(ti.questions) ? ti.questions : []).map((q) => [q?.question, q]));
-  const echoed = input.tool_response?.answers;
-  const echo = echoed && typeof echoed === 'object' && !Array.isArray(echoed) ? echoed : null;
+  const echoed = response?.answers;
+  const echo = isRecord(echoed) ? echoed : null;
   const out = [];
   for (const [question, raw] of Object.entries(answers)) {
     const many = Array.isArray(raw);
@@ -673,12 +733,17 @@ function clicks(input) {
     const offered = Array.isArray(q?.options) && !many && q.options.some((o) => o?.label === raw);
     const agrees = echo === null || (Object.hasOwn(echo, question) && JSON.stringify(echo[question]) === JSON.stringify(raw));
     const single = Array.isArray(q?.options) && !many && q.multiSelect !== true && agrees;
+    const why = single ? undefined
+      : !Array.isArray(q?.options) ? 'the answer names a question that is not among the questions asked'
+        : !agrees ? 'the tool response gives another answer to the question than the tool input'
+          : 'the answer is to a question taking several answers';
     out.push({
       question,
       label: many ? raw.join(', ') : raw,
       signable: offered && single,
       typed: !offered && single,
       card: q,
+      ...(why === undefined ? {} : { why }),
     });
   }
   return out;
@@ -864,7 +929,10 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   keepUninstallClicks(input.cwd, out, () => at);
   const found = find(input.cwd, { dir });
   if (!found) {
-    if (beingSetUp(input.cwd) !== null) keepSetupClicks(input.cwd, out, () => at);
+    const dropped = new Map();
+    const setUp = beingSetUp(input.cwd) !== null;
+    if (setUp) keepSetupClicks(input.cwd, out, () => at, null, dropped);
+    noteSetupDrops(input, out, { dropped, whyNone: setUp ? null : 'the session\'s folder is neither a registered project nor one being set up', now: () => at });
     return undefined;
   }
   const project = found.project;
@@ -903,7 +971,9 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   const refusedQuestions = new Set();
   const clock = () => at;
   const shownAt = new Date(at.getTime() - 1);
-  queued.push(...keepSetupClicks(input.cwd, out, clock, project));
+  const dropped = new Map();
+  queued.push(...keepSetupClicks(input.cwd, out, clock, project, dropped));
+  noteSetupDrops(input, out, { dropped, now: clock });
   // An answer on a card a setup step asked goes only to setup/answers/, or nowhere when it was
   // refused (ruling R53): it earns no record in the state and is not sent as a card-answer.
   const setupAsked = new Set(out.filter((c) => askedFor({ cwd: input.cwd, card: c.card }) !== null).map((c) => c.question));
