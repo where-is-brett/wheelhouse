@@ -27,6 +27,9 @@ function fakeFetch(...answers) {
 
 const noFetch = async () => { throw new Error('nothing should be fetched'); };
 
+// The computer's store stood in for by the old key files, so no test reaches the real keychain.
+const FILES = { store: { readKey: async () => null, storeKey: async (name, value) => writeKey(name, value) } };
+
 const GITHUB = { host: 'github', mode: 'narrow', project: 'a-director/product' };
 const GITLAB = { host: 'gitlab', mode: 'narrow', project: 'a-director/product', projectId: 4242 };
 const b64 = (s) => Buffer.from(s, 'utf8').toString('base64');
@@ -56,7 +59,7 @@ const renewed = {
 test('quick gives the tools nothing, so they use the existing sign-in', async () => {
   await withHome(async () => {
     for (const host of ['github', 'gitlab']) {
-      assert.deepEqual(await childEnv({ host, mode: 'quick', project: 'a-director/product' }, { fetch: noFetch, now }), {});
+      assert.deepEqual(await childEnv({ host, mode: 'quick', project: 'a-director/product' }, { fetch: noFetch, now, keys: FILES }), {});
     }
   });
 });
@@ -64,7 +67,7 @@ test('quick gives the tools nothing, so they use the existing sign-in', async ()
 test('a Locked project refuses quick', async () => {
   await withHome(async () => {
     await assert.rejects(
-      childEnv({ host: 'github', mode: 'quick', project: 'a-director/product', locked: true }, { fetch: noFetch, now }),
+      childEnv({ host: 'github', mode: 'quick', project: 'a-director/product', locked: true }, { fetch: noFetch, now, keys: FILES }),
       /Locked needs the narrow connection/,
     );
   });
@@ -73,7 +76,7 @@ test('a Locked project refuses quick', async () => {
 test('narrow on GitHub uses a current access key as it is', async () => {
   await withHome(async () => {
     writeKey('github-app', githubKeys());
-    const env = await childEnv({ ...GITHUB, locked: true }, { fetch: noFetch, now });
+    const env = await childEnv({ ...GITHUB, locked: true }, { fetch: noFetch, now, keys: FILES });
     assert.deepEqual(env, {
       GH_TOKEN: 'ghu_CURRENT',
       GIT_CONFIG_COUNT: '1',
@@ -87,7 +90,7 @@ test('narrow on GitHub renews an access key with under ten minutes left, and sav
   await withHome(async () => {
     writeKey('github-app', githubKeys({ accessExpiresAt: at(10 * MINUTE - 1) }));
     const { fetch, calls } = fakeFetch({ body: renewed });
-    const env = await childEnv(GITHUB, { fetch, now });
+    const env = await childEnv(GITHUB, { fetch, now, keys: FILES });
     assert.equal(calls.length, 1);
     assert.equal(calls[0].url, 'https://github.com/login/oauth/access_token');
     assert.equal(env.GH_TOKEN, 'ghu_RENEWED');
@@ -104,7 +107,7 @@ test('narrow on GitHub renews an access key with under ten minutes left, and sav
 test('an access key with ten minutes or more left is not renewed', async () => {
   await withHome(async () => {
     writeKey('github-app', githubKeys({ accessExpiresAt: at(10 * MINUTE) }));
-    const env = await childEnv(GITHUB, { fetch: noFetch, now });
+    const env = await childEnv(GITHUB, { fetch: noFetch, now, keys: FILES });
     assert.equal(env.GH_TOKEN, 'ghu_CURRENT');
   });
 });
@@ -113,7 +116,7 @@ test('renewing sends the client ID and no client secret', async () => {
   await withHome(async () => {
     writeKey('github-app', githubKeys({ accessExpiresAt: at(-MINUTE), clientSecret: 'shh' }));
     const { fetch, calls } = fakeFetch({ body: renewed });
-    await childEnv(GITHUB, { fetch, now });
+    await childEnv(GITHUB, { fetch, now, keys: FILES });
     assert.deepEqual(calls[0].form, { client_id: 'Iv1.abc', grant_type: 'refresh_token', refresh_token: 'ghr_CURRENT' });
     assert.ok(!('client_secret' in calls[0].form));
     assert.doesNotMatch(calls[0].body, /secret|shh/);
@@ -123,7 +126,7 @@ test('renewing sends the client ID and no client secret', async () => {
 test('an access key with no expiry is used as it is, and never renewed', async () => {
   await withHome(async () => {
     writeKey('github-app', githubKeys({ accessExpiresAt: null, refreshToken: null, refreshExpiresAt: null }));
-    const env = await childEnv(GITHUB, { fetch: noFetch, now });
+    const env = await childEnv(GITHUB, { fetch: noFetch, now, keys: FILES });
     assert.equal(env.GH_TOKEN, 'ghu_CURRENT');
   });
 });
@@ -137,7 +140,7 @@ test('a failed renewal throws a plain error with no key in it', async () => {
       async () => { throw new Error('socket closed holding ghr_CURRENT'); },
     ];
     for (const fetch of failures) {
-      await assert.rejects(childEnv(GITHUB, { fetch, now }), (error) => {
+      await assert.rejects(childEnv(GITHUB, { fetch, now, keys: FILES }), (error) => {
         assert.match(error.message, /renew/);
         assert.doesNotMatch(error.message, /LEAKED|CURRENT/);
         return true;
@@ -149,8 +152,8 @@ test('a failed renewal throws a plain error with no key in it', async () => {
 
 test('narrow with no keys says so plainly', async () => {
   await withHome(async () => {
-    await assert.rejects(childEnv(GITHUB, { fetch: noFetch, now }), /no keys|sign in/i);
-    await assert.rejects(childEnv(GITLAB, { fetch: noFetch, now }), /no key|GitLab/i);
+    await assert.rejects(childEnv(GITHUB, { fetch: noFetch, now, keys: FILES }), /no keys|sign in/i);
+    await assert.rejects(childEnv(GITLAB, { fetch: noFetch, now, keys: FILES }), /no key|GitLab/i);
   });
 });
 
@@ -164,19 +167,19 @@ test('narrow on GitLab gives a pasted token the same environment as a project ke
       GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${b64(`oauth2:${key}`)}`,
     });
     writeKey('gitlab-project-4242', { kind: 'project-key', token: 'glpat-PROJECTKEY', expiresAt: '2027-10-01' });
-    assert.deepEqual(await childEnv(GITLAB, { fetch: noFetch, now }), expected('glpat-PROJECTKEY'));
+    assert.deepEqual(await childEnv(GITLAB, { fetch: noFetch, now, keys: FILES }), expected('glpat-PROJECTKEY'));
     writeKey('gitlab-project-4242', { kind: 'pasted-token', token: 'glpat-PASTED', expiresAt: null });
-    assert.deepEqual(await childEnv(GITLAB, { fetch: noFetch, now }), expected('glpat-PASTED'));
+    assert.deepEqual(await childEnv(GITLAB, { fetch: noFetch, now, keys: FILES }), expected('glpat-PASTED'));
   });
 });
 
 test('narrow on a self-managed GitLab names its host and its own header', async () => {
   await withHome(async () => {
     writeKey('gitlab-project-4242', { kind: 'project-key', token: 'glpat-PROJECTKEY', expiresAt: '2027-10-01' });
-    const env = await childEnv({ ...GITLAB, baseUrl: 'https://git.example.org:8443/' }, { fetch: noFetch, now });
+    const env = await childEnv({ ...GITLAB, baseUrl: 'https://git.example.org:8443/' }, { fetch: noFetch, now, keys: FILES });
     assert.equal(env.GITLAB_HOST, 'git.example.org:8443');
     assert.equal(env.GIT_CONFIG_KEY_0, 'http.https://git.example.org:8443/.extraheader');
-    await assert.rejects(childEnv({ ...GITLAB, baseUrl: 'http://git.example.org' }, { fetch: noFetch, now }), /https/);
+    await assert.rejects(childEnv({ ...GITLAB, baseUrl: 'http://git.example.org' }, { fetch: noFetch, now, keys: FILES }), /https/);
   });
 });
 
@@ -185,7 +188,7 @@ test('the key reaches git through the environment, never an argument', async () 
     writeKey('github-app', githubKeys());
     writeKey('gitlab-project-4242', { kind: 'project-key', token: 'glpat-PROJECTKEY', expiresAt: '2027-10-01' });
     for (const connection of [GITHUB, GITLAB]) {
-      const env = await childEnv(connection, { fetch: noFetch, now });
+      const env = await childEnv(connection, { fetch: noFetch, now, keys: FILES });
       const key = connection.host === 'github' ? 'ghu_CURRENT' : 'glpat-PROJECTKEY';
       // The returned object is plain strings, and is the only thing carrying the key.
       for (const value of Object.values(env)) assert.equal(typeof value, 'string');
@@ -220,7 +223,7 @@ test('childEnv refuses a connection it does not understand', async () => {
       { host: 'gitlab', mode: 'narrow', project: 'a/b' }, // no projectId
       null,
     ];
-    for (const connection of bad) await assert.rejects(childEnv(connection, { fetch: noFetch, now }));
+    for (const connection of bad) await assert.rejects(childEnv(connection, { fetch: noFetch, now, keys: FILES }));
   });
 });
 
@@ -234,7 +237,7 @@ test('installationCovers returns the settings page when the project is not in th
   await withHome(async () => {
     writeKey('github-app', githubKeys());
     const { fetch, calls } = fakeFetch({ body: repos(['a-director/profile']) });
-    const result = await installationCovers(GITHUB, { fetch, now });
+    const result = await installationCovers(GITHUB, { fetch, now, keys: FILES });
     assert.deepEqual(result, { covered: false, settingsUrl: 'https://github.com/settings/installations/99' });
     assert.equal(calls.length, 1);
     assert.equal(calls[0].method, 'GET');
@@ -248,7 +251,7 @@ test('installationCovers follows the pages, and matches the project whatever its
     writeKey('github-app', githubKeys());
     const first = Array.from({ length: 100 }, (_, i) => `a-director/repo-${i}`);
     const { fetch, calls } = fakeFetch({ body: repos(first) }, { body: repos(['A-Director/Product']) });
-    assert.deepEqual(await installationCovers(GITHUB, { fetch, now }), { covered: true });
+    assert.deepEqual(await installationCovers(GITHUB, { fetch, now, keys: FILES }), { covered: true });
     assert.equal(calls.length, 2);
     assert.match(calls[1].url, /page=2$/);
     for (const call of calls) assert.equal(call.method, 'GET', 'it never tries to add the repository');
@@ -258,10 +261,10 @@ test('installationCovers follows the pages, and matches the project whatever its
 test('installationCovers is for GitHub narrow only, and its errors hold no key', async () => {
   await withHome(async () => {
     writeKey('github-app', githubKeys());
-    await assert.rejects(installationCovers({ ...GITHUB, mode: 'quick' }, { fetch: noFetch, now }), /narrow/);
-    await assert.rejects(installationCovers(GITLAB, { fetch: noFetch, now }), /GitHub/);
+    await assert.rejects(installationCovers({ ...GITHUB, mode: 'quick' }, { fetch: noFetch, now, keys: FILES }), /narrow/);
+    await assert.rejects(installationCovers(GITLAB, { fetch: noFetch, now, keys: FILES }), /GitHub/);
     const { fetch } = fakeFetch({ status: 401, body: { message: 'ghu_LEAKED' } });
-    await assert.rejects(installationCovers(GITHUB, { fetch, now }), (error) => {
+    await assert.rejects(installationCovers(GITHUB, { fetch, now, keys: FILES }), (error) => {
       assert.doesNotMatch(error.message, /LEAKED|CURRENT/);
       return true;
     });
@@ -273,15 +276,15 @@ test('installationCovers reads the project\'s own installation: its record\'s, e
     writeKey('github-app', githubKeys({ installations: { 'a-director': 99, acme: 88 } }));
     const asked = async (connection) => {
       const { fetch, calls } = fakeFetch({ body: repos([]) });
-      const result = await installationCovers(connection, { fetch, now });
+      const result = await installationCovers(connection, { fetch, now, keys: FILES });
       return [calls[0].url.match(/installations\/(\d+)\//)[1], result.settingsUrl];
     };
     assert.deepEqual(await asked({ ...GITHUB, project: 'acme/app', installationId: 66 }), ['66', 'https://github.com/settings/installations/66']);
     assert.deepEqual(await asked({ ...GITHUB, project: 'ACME/app' }), ['88', 'https://github.com/settings/installations/88']);
     assert.deepEqual(await asked(GITHUB), ['99', 'https://github.com/settings/installations/99']);
     // An account the keys keep no installation for is never read against another account's.
-    await assert.rejects(installationCovers({ ...GITHUB, project: 'globex/app' }, { fetch: noFetch, now }), /does not know its installation/);
-    await assert.rejects(installationCovers({ ...GITHUB, installationId: 'x' }, { fetch: noFetch, now }), /installation must be a number/);
+    await assert.rejects(installationCovers({ ...GITHUB, project: 'globex/app' }, { fetch: noFetch, now, keys: FILES }), /does not know its installation/);
+    await assert.rejects(installationCovers({ ...GITHUB, installationId: 'x' }, { fetch: noFetch, now, keys: FILES }), /installation must be a number/);
   });
   // Keys written before installations were kept per account: their one installation serves their project.
   assert.equal(installationOf(GITHUB, { installationId: 99 }), 99);
@@ -295,30 +298,30 @@ test('installationCovers reads the project\'s own installation: its record\'s, e
 test('renewalDue is true fourteen days before the renewal key expires', async () => {
   await withHome(async () => {
     writeKey('github-app', githubKeys({ refreshExpiresAt: at(14 * DAY) }));
-    assert.deepEqual(renewalDue(GITHUB, now), { due: true, on: '2026-11-01' });
+    assert.deepEqual(await renewalDue(GITHUB, now, FILES), { due: true, on: '2026-11-01' });
     writeKey('github-app', githubKeys({ refreshExpiresAt: at(14 * DAY + 1) }));
-    assert.deepEqual(renewalDue(GITHUB, now), { due: false });
+    assert.deepEqual(await renewalDue(GITHUB, now, FILES), { due: false });
     writeKey('github-app', githubKeys({ refreshExpiresAt: null, refreshToken: null }));
-    assert.deepEqual(renewalDue(GITHUB, now), { due: false });
+    assert.deepEqual(await renewalDue(GITHUB, now, FILES), { due: false });
   });
 });
 
 test('renewalDue uses the GitLab project key or pasted token expiry', async () => {
   await withHome(async () => {
     writeKey('gitlab-project-4242', { kind: 'project-key', token: 'glpat-X', expiresAt: '2026-10-30' });
-    assert.deepEqual(renewalDue(GITLAB, now), { due: true, on: '2026-10-30' });
+    assert.deepEqual(await renewalDue(GITLAB, now, FILES), { due: true, on: '2026-10-30' });
     writeKey('gitlab-project-4242', { kind: 'project-key', token: 'glpat-X', expiresAt: '2027-10-01' });
-    assert.deepEqual(renewalDue(GITLAB, now), { due: false });
+    assert.deepEqual(await renewalDue(GITLAB, now, FILES), { due: false });
     writeKey('gitlab-project-4242', { kind: 'pasted-token', token: 'glpat-X', expiresAt: '2026-10-25' });
-    assert.deepEqual(renewalDue(GITLAB, NOW), { due: true, on: '2026-10-25' });
+    assert.deepEqual(await renewalDue(GITLAB, NOW, FILES), { due: true, on: '2026-10-25' });
     writeKey('gitlab-project-4242', { kind: 'pasted-token', token: 'glpat-X', expiresAt: null });
-    assert.deepEqual(renewalDue(GITLAB, now), { due: false });
+    assert.deepEqual(await renewalDue(GITLAB, now, FILES), { due: false });
   });
 });
 
 test('renewalDue is false for quick', async () => {
   await withHome(async () => {
-    assert.deepEqual(renewalDue({ host: 'github', mode: 'quick', project: 'a/b' }, now), { due: false });
+    assert.deepEqual(await renewalDue({ host: 'github', mode: 'quick', project: 'a/b' }, now, FILES), { due: false });
   });
 });
 
@@ -327,12 +330,12 @@ test('renewalDue is false for quick', async () => {
 test('a null renewal key or expiry is handled: the connection asks for a sign-in again', async () => {
   await withHome(async () => {
     writeKey('github-app', githubKeys({ accessExpiresAt: at(-MINUTE), refreshToken: null, refreshExpiresAt: null }));
-    await assert.rejects(childEnv(GITHUB, { fetch: noFetch, now }), /sign in to the Wheelhouse app again/);
+    await assert.rejects(childEnv(GITHUB, { fetch: noFetch, now, keys: FILES }), /sign in to the Wheelhouse app again/);
     writeKey('github-app', githubKeys({ accessExpiresAt: null, refreshToken: null, refreshExpiresAt: null }));
-    assert.equal((await childEnv(GITHUB, { fetch: noFetch, now })).GH_TOKEN, 'ghu_CURRENT');
-    assert.deepEqual(renewalDue(GITHUB, now), { due: false });
+    assert.equal((await childEnv(GITHUB, { fetch: noFetch, now, keys: FILES })).GH_TOKEN, 'ghu_CURRENT');
+    assert.deepEqual(await renewalDue(GITHUB, now, FILES), { due: false });
     writeKey('github-app', githubKeys({ refreshExpiresAt: null }));
-    assert.deepEqual(renewalDue(GITHUB, now), { due: false });
+    assert.deepEqual(await renewalDue(GITHUB, now, FILES), { due: false });
   });
 });
 
@@ -341,12 +344,12 @@ test('a renewal reply without a new renewal key keeps the old one and raises the
     const expiry = at(10 * DAY);
     writeKey('github-app', githubKeys({ accessExpiresAt: at(-MINUTE), refreshExpiresAt: expiry }));
     const { fetch } = fakeFetch({ body: { access_token: 'ghu_RENEWED', expires_in: 28800, token_type: 'bearer' } });
-    const env = await childEnv(GITHUB, { fetch, now });
+    const env = await childEnv(GITHUB, { fetch, now, keys: FILES });
     assert.equal(env.GH_TOKEN, 'ghu_RENEWED');
     const saved = readKey('github-app');
     assert.equal(saved.refreshToken, 'ghr_CURRENT');
     assert.equal(saved.refreshExpiresAt, expiry);
-    assert.equal(renewalDue(GITHUB, now).due, true, 'the board still raises the renewal card');
+    assert.equal((await renewalDue(GITHUB, now, FILES)).due, true, 'the board still raises the renewal card');
   });
 });
 
@@ -355,16 +358,16 @@ test('a malformed access-key expiry renews once, not every call', async () => {
     for (const bad of ['soon', '', 12, {}]) {
       writeKey('github-app', githubKeys({ accessExpiresAt: bad }));
       const { fetch, calls } = fakeFetch({ body: renewed });
-      assert.equal((await childEnv(GITHUB, { fetch, now })).GH_TOKEN, 'ghu_RENEWED');
-      assert.equal((await childEnv(GITHUB, { fetch: noFetch, now })).GH_TOKEN, 'ghu_RENEWED');
+      assert.equal((await childEnv(GITHUB, { fetch, now, keys: FILES })).GH_TOKEN, 'ghu_RENEWED');
+      assert.equal((await childEnv(GITHUB, { fetch: noFetch, now, keys: FILES })).GH_TOKEN, 'ghu_RENEWED');
       assert.equal(calls.length, 1, String(bad));
     }
     // A reply that gives no expiry would leave the key as it is, with nothing malformed kept.
     writeKey('github-app', githubKeys({ accessExpiresAt: 'soon' }));
     const { fetch } = fakeFetch({ body: { access_token: 'ghu_RENEWED', token_type: 'bearer' } });
-    await childEnv(GITHUB, { fetch, now });
+    await childEnv(GITHUB, { fetch, now, keys: FILES });
     assert.equal(readKey('github-app').accessExpiresAt, null);
-    assert.equal((await childEnv(GITHUB, { fetch: noFetch, now })).GH_TOKEN, 'ghu_RENEWED');
+    assert.equal((await childEnv(GITHUB, { fetch: noFetch, now, keys: FILES })).GH_TOKEN, 'ghu_RENEWED');
   });
 });
 
@@ -372,7 +375,7 @@ test('the refusal code from GitHub reaches the answer', async () => {
   await withHome(async () => {
     writeKey('github-app', githubKeys({ accessExpiresAt: at(-MINUTE) }));
     const { fetch } = fakeFetch({ body: { error: 'bad_refresh_token', error_description: 'ghr_LEAKED' } });
-    await assert.rejects(childEnv(GITHUB, { fetch, now }), (error) => {
+    await assert.rejects(childEnv(GITHUB, { fetch, now, keys: FILES }), (error) => {
       assert.match(error.message, /renew/);
       assert.match(error.message, /bad_refresh_token/);
       assert.doesNotMatch(error.message, /LEAKED|CURRENT/);
@@ -384,10 +387,10 @@ test('the refusal code from GitHub reaches the answer', async () => {
 test('GITLAB_HOST keeps a GitLab served under a path', async () => {
   await withHome(async () => {
     writeKey('gitlab-project-4242', { kind: 'project-key', token: 'glpat-PROJECTKEY', expiresAt: '2027-10-01' });
-    const env = await childEnv({ ...GITLAB, baseUrl: 'https://example.org:8443/gitlab/' }, { fetch: noFetch, now });
+    const env = await childEnv({ ...GITLAB, baseUrl: 'https://example.org:8443/gitlab/' }, { fetch: noFetch, now, keys: FILES });
     assert.equal(env.GITLAB_HOST, 'example.org:8443/gitlab');
     assert.equal(env.GIT_CONFIG_KEY_0, 'http.https://example.org:8443/gitlab/.extraheader');
-    const plain = await childEnv({ ...GITLAB, baseUrl: 'https://gitlab.com' }, { fetch: noFetch, now });
+    const plain = await childEnv({ ...GITLAB, baseUrl: 'https://gitlab.com' }, { fetch: noFetch, now, keys: FILES });
     assert.equal(plain.GITLAB_HOST, 'gitlab.com');
   });
 });

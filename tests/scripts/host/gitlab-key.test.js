@@ -1,7 +1,7 @@
 // tests/scripts/host/gitlab-key.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { makeProjectKey, gitlabApi, hostCurl } from '../../../scripts/host/gitlab-key.js';
+import { makeProjectKey, gitlabApi } from '../../../scripts/host/gitlab-key.js';
 import { makeFakeCurl } from '../../helpers/fake-curl.js';
 
 const NOW = new Date('2026-10-18T01:00:00.000Z');
@@ -130,17 +130,6 @@ test('gitlabApi gives curl the proxy it is given', async () => {
   await gitlabApi({ token: 't', ...via(fake, { proxy }) }).get('/user');
   assert.equal(configOf(fake.calls[0], 'proxy'), 'http://proxy.example.org:8080');
   assert.ok(fake.calls[0].pairs.some(([name]) => name === 'proxy-ntlm'));
-});
-
-test('a client made where tests cannot hand it a stand-in takes the stand-in from hostCurl', async () => {
-  const fake = makeFakeCurl([{ body: '{"ok":true}' }]);
-  Object.assign(hostCurl, via(fake));
-  try {
-    assert.deepEqual(await gitlabApi({ token: 't' }).get('/user'), { status: 200, body: { ok: true } });
-  } finally {
-    for (const name of Object.keys(hostCurl)) delete hostCurl[name];
-  }
-  assert.equal(fake.calls.length, 1);
 });
 
 test('gitlabApi never puts the key in a thrown message, and says why GitLab was not reached', async () => {

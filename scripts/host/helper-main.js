@@ -5,10 +5,13 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { helperAddress, engineDir } from '../lib/paths.js';
-import { readProject } from '../lib/projects.js';
-import { run } from '../lib/run.js';
+import { readProject, writeProject } from '../lib/projects.js';
+import { run as realRun } from '../lib/run.js';
 import { adapterOf } from './adapter-for.js';
 import { startHelper, envForConnection } from './helper.js';
+import { backendOf } from './connection.js';
+import { moveKeysToStore } from './keys.js';
+import { borrowKey } from './store.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { archonAdapter, ENGINE_PACK_FORMS } from '../engine/archon/adapter.js';
 import { buildPack } from '../engine/pack-build.js';
@@ -50,18 +53,40 @@ export function engineForProject({ adapter = () => packedArchon(), now = () => n
   };
 }
 
+// Records that a GitLab project's tool stopped starting and the helper moved it to the web API by itself
+// (scripts/host/adapter-for.js): the record keeps `backend: 'rest'` and `switched: 'cli'`, which the board says in one
+// calm line. It holds no secret. Nothing moves it back by itself: the next setup run checks again.
+export function recordSwitch(project, { read = readProject, write = writeProject } = {}) {
+  const record = read(project);
+  if (!record || record.host !== 'gitlab') return false;
+  if (backendOf(record.connection) === 'rest' && record.connection.switched === 'cli') return false;
+  write(project, { ...record, connection: { ...record.connection, backend: 'rest', switched: 'cli' } });
+  return true;
+}
+
 // `onStop` is what the helper does once the last uninstall's answer, saying it stops, has been sent
-// (by default it closes and this process exits).
+// (by default it closes and this process exits). `run`, `via` (how its GitLab calls are made: run, curl, proxy and
+// caFile), `keyDeps` (the computer's store, keys.js's seam) and `borrow` (the lender of the director's own key) are
+// for tests; left out, the real ones are used. `moveKeys` moves the old key files into the computer's store once,
+// before the first request; it is off until every reader of those files reads the store too (scripts/setup/host.js
+// and scripts/setup/uninstall-run.js still read the files).
 export function startRealHelper({
   address = helperAddress(), fetch = globalThis.fetch, now = () => new Date(),
   onStop = (close) => close().then(() => process.exit(0), () => process.exit(1)),
+  run = realRun, via, keyDeps, borrow = borrowKey, moveKeys = false,
 } = {}) {
+  const moved = moveKeys ? moveKeysToStore(keyDeps).catch(() => null) : null;
+  const envFor = envForConnection((project) => recordOf(project).connection, { fetch, now, keys: keyDeps, borrow });
   return startHelper({
     address,
     now,
     onStop,
-    adapterFor: (project, { env, write }) => adapterOf(recordOf(project), { run, env, write }),
-    envFor: envForConnection((project) => recordOf(project).connection, { fetch, now }),
+    run,
+    via,
+    keyDeps,
+    borrow,
+    adapterFor: (project, { env, write }) => adapterOf(recordOf(project), { run, env, write, via, borrow, keys: keyDeps, onSwitch: () => recordSwitch(project) }),
+    envFor: moved === null ? envFor : async (project) => { await moved; return envFor(project); },
     engineFor: engineForProject({ now }),
   });
 }

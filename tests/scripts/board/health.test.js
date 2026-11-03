@@ -101,6 +101,10 @@ test('the lines come only in their own case', () => {
   // The records stay on this computer (design section 24): no line asks for the profile's repository.
   assert.deepEqual(texts({ profile: null }), ['Protection: Standard']);
   assert.deepEqual(texts({ stop: { on: true } }), ['All stop is on', 'Protection: Standard']);
+  // The host's tool stopped starting and the project moved to the web API by itself: one calm line.
+  const moved = { host: 'gitlab', connection: { mode: 'as-is', backend: 'rest', switched: 'cli' } };
+  assert.deepEqual(texts({ record: moved }), ['Protection: Standard', "GitLab's tool stopped working on this computer, so Wheelhouse is using GitLab's web API instead."]);
+  assert.deepEqual(texts({ record: { ...moved, connection: { mode: 'as-is', backend: 'rest' } } }), ['Protection: Standard']);
 });
 
 test('with pages listed and no Chrome found, one line says an approval asks again after an update (F74)', () => {
