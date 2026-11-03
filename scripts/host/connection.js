@@ -27,7 +27,7 @@
 import { renewKeys } from './github-app.js';
 import { checkBaseUrl } from './gitlab-key.js';
 import { DEFAULT_GITLAB } from './gitlab-base.js';
-import { findKey, saveKey } from './keys.js';
+import { findKey, writeKey } from './keys.js';
 import { borrowKey } from './store.js';
 
 const RENEW_WITHIN_MS = 10 * 60 * 1000;
@@ -135,7 +135,8 @@ async function githubAccessKey({ fetch, now, keys: deps }) {
   const renewal = typeof fresh.refreshToken === 'string' && fresh.refreshToken !== ''
     ? { refreshToken: fresh.refreshToken, refreshExpiresAt: fresh.refreshExpiresAt }
     : {};
-  await saveKey('github-app', { ...kept, accessToken: fresh.accessToken, accessExpiresAt: fresh.accessExpiresAt, ...renewal }, deps);
+  // Kept where setup, cut-access and uninstall still read and delete keys (the file), not the store, until they move.
+  writeKey('github-app', { ...kept, accessToken: fresh.accessToken, accessExpiresAt: fresh.accessExpiresAt, ...renewal });
   return fresh.accessToken;
 }
 
@@ -178,7 +179,7 @@ export async function readEnv(connection, { borrow = borrowKey } = {}) {
   if (typeof lent?.key !== 'string' || lent.key === '') return {};
   return connection.host === 'github'
     ? gitHeader(GITHUB_HEADER, 'x-access-token', lent.key)
-    : gitHeader(`http.${root}/.extraheader`, 'oauth2', lent.key);
+    : gitHeader(`http.${root}/.extraheader`, lent.username || 'oauth2', lent.key);
 }
 
 async function listPage(url, key, fetch) {

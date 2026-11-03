@@ -3,6 +3,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { childEnv, renewalDue, backendOf, readEnv } from '../../../scripts/host/connection.js';
+import { findKey, readKey, writeKey } from '../../../scripts/host/keys.js';
+import { deleteAppKeys } from '../../../scripts/host/cut-access.js';
+import { withHome } from '../../helpers/homes.js';
 
 const NOW = new Date('2026-10-18T01:00:00.000Z');
 const now = () => NOW;
@@ -26,25 +29,30 @@ test('a backend other than cli or rest is refused, and a switch names only the b
   await assert.rejects(childEnv({ ...base, backend: 'rest', switched: 'rest' }), /switched must name the backend it left/);
 });
 
-test('keys are read from the computer\'s store first, and a renewed key is saved to it', async () => {
-  const kept = new Map();
-  const store = {
-    readKey: async (name) => kept.get(name) ?? null,
-    storeKey: async (name, value) => { kept.set(name, structuredClone(value)); },
-  };
-  kept.set('github-app', {
-    clientId: 'Iv1.abc', installationId: 99, accessToken: 'ghu_CURRENT', accessExpiresAt: at(MINUTE),
-    refreshToken: 'ghr_CURRENT', refreshExpiresAt: at(180 * 24 * 60 * MINUTE),
+test('a renewed key is kept in the key file, not the store, so cutting access leaves no key that findKey can see', async () => {
+  await withHome(async () => {
+    const wrote = [];
+    const store = { readKey: async () => null, storeKey: async (name) => { wrote.push(name); } };
+    writeKey('github-app', {
+      clientId: 'Iv1.abc', installationId: 99, accessToken: 'ghu_CURRENT', accessExpiresAt: at(MINUTE),
+      refreshToken: 'ghr_CURRENT', refreshExpiresAt: at(180 * 24 * 60 * MINUTE),
+    });
+    const fetch = async () => ({
+      ok: true, status: 200,
+      json: async () => ({ access_token: 'ghu_RENEWED', expires_in: 28800, refresh_token: 'ghr_RENEWED', refresh_token_expires_in: 15811200, token_type: 'bearer' }),
+    });
+    const env = await childEnv(GITHUB, { fetch, now, keys: { store } });
+    assert.equal(env.GH_TOKEN, 'ghu_RENEWED');
+    assert.deepEqual(wrote, [], 'nothing is written to the store');
+    assert.equal(readKey('github-app').accessToken, 'ghu_RENEWED');
+    deleteAppKeys(GITHUB);
+    assert.equal(await findKey('github-app', { store }), null);
   });
-  const fetch = async () => ({
-    ok: true, status: 200,
-    json: async () => ({ access_token: 'ghu_RENEWED', expires_in: 28800, refresh_token: 'ghr_RENEWED', refresh_token_expires_in: 15811200, token_type: 'bearer' }),
-  });
-  const env = await childEnv(GITHUB, { fetch, now, keys: { store } });
-  assert.equal(env.GH_TOKEN, 'ghu_RENEWED');
-  assert.equal(kept.get('github-app').accessToken, 'ghu_RENEWED');
-  assert.equal((await renewalDue(GITHUB, now, { store })).due, false);
-  kept.set('gitlab-project-4242', { kind: 'project-key', token: 'stand-in-X', expiresAt: '2026-10-30' });
+});
+
+test('keys are read from the computer\'s store first', async () => {
+  const kept = new Map([['gitlab-project-4242', { kind: 'project-key', token: 'stand-in-X', expiresAt: '2026-10-30' }]]);
+  const store = { readKey: async (name) => kept.get(name) ?? null };
   assert.deepEqual(await renewalDue(GITLAB, now, { store }), { due: true, on: '2026-10-30' });
 });
 
@@ -70,4 +78,13 @@ test('reads need no key from the web API on any other connection, or when git ha
   assert.deepEqual(await readEnv({ host: 'gitlab', mode: 'as-is', project: 'a/b', backend: 'cli' }, { borrow: never }), {});
   assert.deepEqual(await readEnv({ host: 'gitlab', mode: 'quick', project: 'a/b', backend: 'rest' }, { borrow: never }), {});
   assert.deepEqual(await readEnv({ host: 'gitlab', mode: 'as-is', project: 'a/b', backend: 'rest' }, { borrow: async () => null }), {});
+});
+
+test('git\'s reads use the user name the store returned with the key, and oauth2 only when it gave none', async () => {
+  const connection = { host: 'gitlab', mode: 'as-is', project: 'team/product', baseUrl: 'https://gitlab.example.org', backend: 'rest' };
+  const header = async (username) => (await readEnv(connection, { borrow: async () => ({ username, key: 'stand-in-LENT0123' }) })).GIT_CONFIG_VALUE_0;
+  const basic = (user) => `AUTHORIZATION: basic ${Buffer.from(`${user}:stand-in-LENT0123`).toString('base64')}`;
+  assert.equal(await header('alex'), basic('alex'));
+  assert.equal(await header(''), basic('oauth2'));
+  assert.equal(await header(undefined), basic('oauth2'));
 });
