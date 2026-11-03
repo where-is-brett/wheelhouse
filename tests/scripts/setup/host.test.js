@@ -2989,7 +2989,7 @@ test('a key that can only push brings the key card: the new key is stored with a
       assert.equal(page.pathname, '/-/user_settings/personal_access_tokens');
       assert.equal(page.searchParams.get('scopes'), 'api,write_repository');
       assert.equal(box.length, 1);
-      assert.deepEqual(held.stored, [{ host: 'gitlab.com', username: 'oauth2', key: FRESH_KEY }], 'only the director\'s own entry for the host, under its own user name');
+      assert.deepEqual(held.stored, [{ host: 'gitlab.com', base: 'https://gitlab.com', repoPath: `${USER}/shop`, username: 'oauth2', key: FRESH_KEY }], 'only the director\'s own entry for the host, under its own user name');
       assert.ok(lines.includes('This replaces the key your git uses for gitlab.com with the new one, so your pushes keep working.'), lines.join('\n'));
       assert.ok(!lines.join('\n').includes(FRESH_KEY), 'the key is never said');
       assert.ok(!JSON.stringify(run).includes(FRESH_KEY), 'nor kept in the journal');

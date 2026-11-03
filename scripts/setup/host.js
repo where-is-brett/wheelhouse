@@ -1072,7 +1072,7 @@ async function asIsIdentity({ host, base, run, via, say, open, askSecret, platfo
   record({ id: newId('chg'), kind: 'answer', target: `step 3: the key your git holds for ${address}`, before: null, after: { replaced: lent !== null, host: address } });
   const got = await runKeyCard({
     host, base, owner: repo === null ? null : repo.split('/')[0], name: repo === null ? name : repo.split('/').at(-1), state: keyCard.state,
-    existing: lent?.username || null, say, open, askSecret, platform, halt, via, store: (args) => directorKey.store(args),
+    existing: lent?.username || null, say, open, askSecret, platform, halt, via, store: (args) => directorKey.store(args), borrow: (args) => directorKey.borrow(args),
   });
   return { user: got.user };
 }
@@ -1903,7 +1903,18 @@ export function hostStep({
     const repo = product.isNew || product.joining || typeof product.repo !== 'string' ? null : product.repo;
     // A look at the choices alone reads nothing from the host: no remote is tried.
     const remoteUrl = ctx.choicesOnly === true ? null : originUrl(ctx.folder) ?? (repo === null ? null : hostUrl({ host, repo, base }));
-    const found = await findAccess({ host, base, repo, remoteUrl, run, gitPath, borrow: directorKey.borrow, via });
+    // A look at the choices makes no request of the host: it only asks whether git holds a key, which is all the card's
+    // wording depends on, so the question keeps the same id as in the real plan.
+    let found;
+    if (ctx.choicesOnly === true) {
+      let held = null;
+      try {
+        held = await directorKey.borrow({ host: new URL(hostAddress(host, base)).host, base: hostAddress(host, base), repoPath: repo ?? undefined });
+      } catch { /* none to lend */ }
+      found = { transport: null, helper: null, gitReaches: null, key: typeof held?.key === 'string' && held.key !== '' ? 'unchecked' : 'none', user: null, username: null };
+    } else {
+      found = await findAccess({ host, base, repo, remoteUrl, run, gitPath, borrow: directorKey.borrow, via });
+    }
     const curl = curlStatus({ platform, gitPath }).found;
     let proxy = null;
     let proxyPassword = false;
@@ -2251,6 +2262,9 @@ export function hostStep({
       if (!git?.ok || typeof git.path !== 'string') throw new Error('git is not on this computer yet; step 2 installs it');
       const gitEnv = directorGitEnv({ host, gitPath: git.path, platform, base });
       const keyCard = changes.find((c) => c.action === 'key-card') ?? null;
+      // A tool already signed in is used as it is, so the narrow sign-in is recorded only when it actually runs.
+      const narrowPlanned = connection.mode !== 'as-is' && changes.find((c) => c.action === 'sign-in')?.via === 'narrow-key';
+      const signedBefore = narrowPlanned ? (await signInStatus({ host, run, base, via })).signedIn : false;
       const { user } = connection.mode === 'as-is'
         ? await asIsIdentity({
           host, base, run, via, say, open: opener, askSecret, platform, halt, keyCard, record,
@@ -2261,7 +2275,7 @@ export function hostStep({
           ...(changes.find((c) => c.action === 'sign-in')?.via === 'narrow-key' && recorded?.repo ? { narrow: { owner: recorded.repo.split('/')[0], name: recorded.repo.split('/').at(-1) } } : {}),
         });
       // The sign-in made with a key for this repository only has no Administration, so step 7 asks for the one-off key.
-      const signedWithKey = changes.find((c) => c.action === 'sign-in')?.via === 'narrow-key';
+      const signedWithKey = narrowPlanned && !signedBefore;
       for (const c of changes.filter((x) => x.action === 'repository' && typeof x.repo === 'string')) {
         if (c.repo.split('/')[0] !== user) throw new Error(`You are signed in to ${NAME[host]} as ${user}, not the account the card named; ask for step 3's card again`);
       }

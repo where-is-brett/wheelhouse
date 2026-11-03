@@ -168,7 +168,7 @@ test('a computer with no glab and a key that can only push: step 2 settles with 
       // The key card said what it does; the key went to the credential helper over its one entry, never into a line or the journal.
       assert.ok(lines.includes('This replaces the key your git uses for git.example.org with the new one, so your pushes keep working.'), lines.join('\n'));
       assert.ok(lines.some((l) => /A page will open on git\.example\.org/.test(l)));
-      assert.deepEqual(w.stored, [{ host: 'git.example.org', username: 'oauth2', key: PASTED }]);
+      assert.deepEqual(w.stored, [{ host: 'git.example.org', base: COMPANY, repoPath: REPO, username: 'oauth2', key: PASTED }]);
       assert.ok(!(lines.join('\n') + JSON.stringify(run)).includes(PASTED));
       for (const line of lines) assert.doesNotMatch(line, /\bREST\b|\bcurl\b/i);
       // Every host call after the key went by the web API, with the new key in a header on standard input, never an argument.

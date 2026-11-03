@@ -114,7 +114,9 @@ function cardWorld({ typed = NEW_KEY, keys = { [NEW_KEY]: 'a-director' } } = {})
   const curl = curlFor(keys);
   const args = {
     host: 'gitlab', base: GITLAB, owner: 'team', name: 'product', state: 'none', say: (line) => lines.push(line), open: async (url) => { opened.push(url); },
-    askSecret: async () => typed, platform: 'darwin', store: async (entry) => { stored.push(entry); }, via: viaOf(curl),
+    askSecret: async () => typed, platform: 'darwin', via: viaOf(curl),
+    store: async (entry) => { stored.push(entry); },
+    borrow: async () => (stored.length > 0 ? { username: stored.at(-1).username, key: stored.at(-1).key } : null),
   };
   return { args, lines, opened, stored, curl };
 }
@@ -128,7 +130,7 @@ test('the key card opens the host\'s page filled in, takes the key from the box,
   assert.equal(page.searchParams.get('scopes'), 'api,write_repository');
   // Checked with GET /user, then stored with the entry git already holds for the host replaced, nothing else.
   assert.equal(w.curl.calls[0].url, `${GITLAB}/api/v4/user`);
-  assert.deepEqual(w.stored, [{ host: 'gitlab.example.org', username: 'oauth2', key: NEW_KEY }]);
+  assert.deepEqual(w.stored, [{ host: 'gitlab.example.org', base: GITLAB, repoPath: 'team/product', username: 'oauth2', key: NEW_KEY }]);
   assert.ok(w.lines.includes(replacesLine('gitlab.example.org')), 'it says it replaces the one entry');
   assert.ok(w.lines.includes(asIsReachLine('gitlab')));
   assert.ok(w.lines.some((l) => /never into the chat/.test(l)));
@@ -140,6 +142,44 @@ test('a key with no entry yet is stored under the user name the host gives', asy
   const got = await runKeyCard(w.args);
   assert.equal(got.username, 'a-director');
   assert.ok(!w.lines.includes(replacesLine('gitlab.example.org')), 'nothing is replaced when git held no key');
+});
+
+test('if git still gives the old key after the new one is stored, the card says so plainly instead of connecting', async () => {
+  const w = cardWorld();
+  w.args.borrow = async () => ({ username: 'oauth2', key: 'stand-in-OLD' });
+  await assert.rejects(runKeyCard({ ...w.args, state: 'refused', existing: 'oauth2' }), /still gives an older one for gitlab\.example\.org/);
+});
+
+test('on GitHub the key card says plainly what the replaced entry loses, and asks for every repository the pushes need', async () => {
+  const lines = [];
+  const stored = [];
+  const curl = curlFor({ [NEW_KEY]: 'a-director' });
+  const args = {
+    host: 'github', owner: 'a-director', name: 'shop', state: 'push-only', existing: 'a-director', say: (l) => lines.push(l), open: async () => {},
+    askSecret: async () => NEW_KEY, platform: 'darwin', via: viaOf(curl), store: async (e) => { stored.push(e); },
+    borrow: async () => ({ username: 'a-director', key: NEW_KEY }),
+  };
+  try { await runKeyCard(args); } catch { /* the check below is on the words */ }
+  const said = lines.join('\n');
+  assert.doesNotMatch(said, /so your pushes keep working/);
+  assert.match(said, /Pushes to any repository the new key does not include would be refused, so include every repository you push to from this computer/);
+  assert.match(said, /then shop and every other repository you push to from this computer/);
+  assert.doesNotMatch(said, /\bREST\b|\bcurl\b/i);
+});
+
+test('a key a director\'s git holds by path is stored with the same path a borrow sends', async () => {
+  const { storeDirectorKey } = await import('../../../scripts/host/store.js');
+  const sent = [];
+  const run = async ({ args, input }) => {
+    if (args[0] === 'config') return { code: 0, stdout: 'true\n', stderr: '' };
+    sent.push(input);
+    return { code: 0, stdout: '', stderr: '' };
+  };
+  await storeDirectorKey({ host: 'gitlab.example.org', base: GITLAB, repoPath: 'team/product', username: 'oauth2', key: NEW_KEY, run });
+  assert.match(sent[0], /^protocol=https\nhost=gitlab\.example\.org\npath=team\/product\.git\nusername=oauth2\n/);
+  const plain = [];
+  await storeDirectorKey({ host: 'gitlab.example.org', base: GITLAB, repoPath: 'team/product', username: 'oauth2', key: NEW_KEY, run: async ({ args, input }) => { if (args[0] === 'config') return { code: 1, stdout: '', stderr: '' }; plain.push(input); return { code: 0, stdout: '', stderr: '' }; } });
+  assert.doesNotMatch(plain[0], /path=/);
 });
 
 test('a key the host does not accept, or that cannot be checked, is not stored', async () => {

@@ -89,8 +89,10 @@ export async function borrowKey({ host, base, repoPath, run = defaultRun }) {
 
 // Stores the director's key for the host and their user name, replacing only
 // that entry, so pushes and the API share it.
-export async function storeDirectorKey({ host, username, key, run = defaultRun }) {
-  const input = `protocol=https\nhost=${oneLine(host, 'host')}\nusername=${oneLine(username, 'user name')}\npassword=${oneLine(key, 'key')}\n\n`;
+export async function storeDirectorKey({ host, base, repoPath, username, key, run = defaultRun }) {
+  // Where the director's git sets credential.useHttpPath, the entry carries the path a borrow sends, or the old one still wins.
+  const path = repoPath && (await usesHttpPath(addressOf(host, base), run)) ? `path=${oneLine(repoPath, 'path').replace(/\.git$/, '')}.git\n` : '';
+  const input = `protocol=https\nhost=${oneLine(host, 'host')}\n${path}username=${oneLine(username, 'user name')}\npassword=${oneLine(key, 'key')}\n\n`;
   let result;
   try {
     result = await run({ file: 'git', args: ['credential', 'approve'], input, env: quietEnv() });

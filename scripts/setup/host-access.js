@@ -130,7 +130,9 @@ export function backendFor({ mode, tool, signedByTool }) {
 // ---- The words ----
 
 export const asIsReachLine = (host) => `Wheelhouse uses the same key your git already uses. It can reach everything your account can on ${NAME[host]}.`;
-export const replacesLine = (address) => `This replaces the key your git uses for ${address} with the new one, so your pushes keep working.`;
+export const replacesLine = (address, host = 'gitlab') => (host === 'github'
+  ? `This replaces the key your git uses for ${address} with the new one. Pushes to any repository the new key does not include would be refused, so include every repository you push to from this computer.`
+  : `This replaces the key your git uses for ${address} with the new one, so your pushes keep working.`);
 
 // The key card's opening line, for a key that is missing, refused (401), or accepted for pushes only (403). Never
 // the words REST or curl.
@@ -160,15 +162,15 @@ export const noRoadLine = (host) => NO_CURL.replace(/GitLab/g, NAME[host]);
 // is said, thrown or stored beyond the key itself.
 export async function runKeyCard({
   host, base = DEFAULT_GITLAB, owner, name, state, existing = null, say, open, askSecret, platform = process.platform, halt = () => {},
-  store, via = {}, days = KEY_DAYS_ASKED, keyName = 'Wheelhouse',
+  store, borrow = null, via = {}, days = KEY_DAYS_ASKED, keyName = 'Wheelhouse',
 }) {
   const address = hostAddress(host, base);
   say(keyCardLine({ host, address: new URL(address).host, state }));
-  if (state !== 'none') say(replacesLine(new URL(address).host));
+  if (state !== 'none') say(replacesLine(new URL(address).host, host));
   say(asIsReachLine(host));
   // A product with no repository yet has none to pick, so its key is made for all repositories.
   const repos = host === 'github' && owner && name ? [name] : [];
-  if (host === 'github') say(repos.length > 0 ? `On the page, choose "Only select repositories", then ${name}, and click Generate token` : 'On the page, choose "All repositories" (the new project does not exist yet), then click Generate token');
+  if (host === 'github') say(repos.length > 0 ? `On the page, choose "Only select repositories", then ${name}${state === 'none' ? '' : ' and every other repository you push to from this computer'}, and click Generate token` : 'On the page, choose "All repositories" (the new project does not exist yet), then click Generate token');
   else say(`The page asks for api and write_repository only; set its expiry to ${days} days`);
   await open(host === 'github'
     ? tokenUrl({ host: 'github', owner: owner ?? '', repos, name: keyName, days })
@@ -186,6 +188,13 @@ export async function runKeyCard({
   if (checked.state === 'unreachable') throw new Error(`${NAME[host]} could not be reached to check the key, so it was not stored; a fresh Go ahead asks again`);
   if (checked.state !== 'works') throw new Error(`${NAME[host]} did not accept the key. Make a new one with the permissions the page filled in, and a fresh Go ahead asks again`);
   const username = existing ?? checked.user ?? 'oauth2';
-  await store({ host: new URL(address).host, username, key });
+  const repoPath = owner && name ? `${owner}/${name}` : undefined;
+  await store({ host: new URL(address).host, base: address, repoPath, username, key });
+  // Git must give the new key back for this repository, or the old entry still wins for pushes and the API.
+  if (borrow !== null) {
+    let back = null;
+    try { back = await borrow({ host: new URL(address).host, base: address, repoPath }); } catch { /* none */ }
+    if (back?.key !== key) throw new Error(`The key was stored, but your git still gives an older one for ${new URL(address).host}, so Wheelhouse did not use it. Check your git's credential settings for that address, and a fresh Go ahead asks again`);
+  }
   return { user: checked.user, username };
 }

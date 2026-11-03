@@ -80,6 +80,14 @@ test('a read gives null when the system has nothing or no helper', async () => {
   await deleteSecret(where, 'linux', async () => { throw new Error('spawn git ENOENT'); });
 });
 
+test('a delete that fails while the secret is still there is an error; one that finds nothing is not', async () => {
+  const locked = async (command) => (command.args[0] === 'delete-generic-password' ? { code: 1, out: '' } : { code: 0, out: 'abc\n' });
+  await assert.rejects(deleteSecret(where, 'darwin', locked), /could not be deleted/);
+  const absent = async (command) => (command.args[0] === 'delete-generic-password' ? { code: 44, out: '' } : { code: 44, out: '' });
+  await deleteSecret(where, 'darwin', absent);
+  await assert.rejects(deleteSecret(where, 'darwin', async (command) => { if (command.args[0] === 'delete-generic-password') throw new Error('denied'); return { code: 0, out: 'abc\n' }; }), /could not be deleted/);
+});
+
 test('a store that fails or cannot run says so without the secret', async () => {
   await assert.rejects(storeSecret({ ...where, secret: 'S3CRET-probe' }, 'darwin', async () => ({ code: 1, out: '' })), (e) => !e.message.includes('S3CRET'));
   await assert.rejects(storeSecret({ ...where, secret: 'S3CRET-probe' }, 'darwin', async () => { throw new Error('S3CRET-probe'); }), (e) => !e.message.includes('S3CRET'));
