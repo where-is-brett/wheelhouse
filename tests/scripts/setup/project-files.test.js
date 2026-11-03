@@ -448,6 +448,9 @@ test('a compaction percentage already in the project\'s settings is kept and set
     assert.ok(keys(local).includes('autoCompactWindow'), 'no rule: the window is added');
     fs.writeFileSync(path.join(home, 'settings.json'), JSON.stringify({ env: { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '50' } }));
     assert.ok(!keys(local).includes('autoCompactWindow'), 'a percentage in the user settings');
+    fs.rmSync(path.join(home, 'settings.json'));
+    fs.writeFileSync(path.join(folder, '.claude', 'settings.json'), JSON.stringify({ autoCompactWindow: 320000 }));
+    assert.ok(!keys(local).includes('autoCompactWindow'), 'a window the director set is kept');
   } finally {
     fs.rmSync(folder, { recursive: true, force: true });
     fs.rmSync(home, { recursive: true, force: true });

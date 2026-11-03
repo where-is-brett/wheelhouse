@@ -107,6 +107,27 @@ test('a transcript it cannot read gives null and the gauge says nothing', async 
   });
 });
 
+test('the gauge takes its prepare point from the project\'s compactPrepare setting', async () => {
+  await withHome(async (home) => {
+    const { base, main } = makeProject();
+    try {
+      const view = path.join(path.dirname(path.dirname(sessionFile(home, 's1'))), 'views', 'settings.json');
+      const at = (n) => writeTranscript(base, [assistant(usage(0, n, 0))]);
+      const say = async (n) => (await gauge({ cwd: main, session_id: 's1', transcript_path: at(n) }, {})).hookSpecificOutput.additionalContext;
+      assert.match(await say(150000), /^Context: about 150k tokens\.$/);
+      fs.mkdirSync(path.dirname(view), { recursive: true });
+      fs.writeFileSync(view, JSON.stringify({ compactPrepare: { value: 150000 } }));
+      assert.match(await say(150000), /save state/);
+      assert.doesNotMatch(await say(149000), /save state/);
+      fs.writeFileSync(view, JSON.stringify({ compactPrepare: { value: 50 } }));
+      assert.doesNotMatch(await say(150000), /save state/);
+      assert.match(await say(200000), /save state/);
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
+
 test('the gauge asks to save state from 200,000 tokens', async () => {
   await withHome(async (home) => {
     const { base, main } = makeProject();
@@ -205,6 +226,25 @@ test('the guard gives up two minutes after its first block, and near the limit',
       const kept = JSON.parse(fs.readFileSync(file, 'utf8'));
       assert.equal(kept.tokens, 359999);
       assert.ok(kept.firstBlockAt);
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
+
+test('the guard\'s near-the-limit point follows the project\'s compaction window', async () => {
+  await withHome(async (home) => {
+    const { base, main } = makeProject();
+    try {
+      const t0 = new Date('2026-10-18T01:00:00.000Z');
+      fs.mkdirSync(path.join(main, '.claude'), { recursive: true });
+      fs.writeFileSync(path.join(main, '.claude', 'settings.json'), JSON.stringify({ autoCompactWindow: 320000 }));
+      unsave(main, 's5');
+      fs.mkdirSync(path.dirname(sessionFile(home, 's5')), { recursive: true });
+      fs.writeFileSync(sessionFile(home, 's5'), JSON.stringify({ tokens: 379999 }));
+      assert.ok(blocked(await guard(compact(main, { session_id: 's5' }), { now: () => t0 })));
+      fs.writeFileSync(sessionFile(home, 's5'), JSON.stringify({ tokens: 380000 }));
+      assert.equal(await guard(compact(main, { session_id: 's5' }), { now: () => t0 }), undefined);
     } finally {
       fs.rmSync(base, { recursive: true, force: true });
     }

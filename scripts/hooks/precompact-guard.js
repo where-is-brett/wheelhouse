@@ -6,8 +6,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { answer, runAndExit, worktreeRoot } from './kit.js';
 import { projectNameOf, sessionFile, readSession, updateSession } from './context-gauge.js';
+import { nearLimit } from '../settings/compact-window.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
+// The fallback; the limit follows the project's compaction window (settings/compact-window.js) when it names one.
 export const NEAR_LIMIT = 360000;
 export const GIVE_UP_MS = 2 * 60 * 1000;
 export const REASON = 'There is unsaved work. Save state now; the compaction will go ahead on the next try.';
@@ -36,7 +38,7 @@ export async function decide(input, { dir, now = () => new Date() } = {}) {
   };
   const root = worktreeRoot(input.cwd);
   if (root === null || !exists(path.join(root, '.claude', 'state', `unsaved-${input.session_id}`))) return letThrough();
-  if (Number.isFinite(session.tokens) && session.tokens >= NEAR_LIMIT) return letThrough();
+  if (Number.isFinite(session.tokens) && session.tokens >= nearLimit(root, NEAR_LIMIT)) return letThrough();
   const at = now();
   const first = Date.parse(session.firstBlockAt);
   if (Number.isFinite(first)) {
