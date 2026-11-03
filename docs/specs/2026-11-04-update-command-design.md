@@ -123,8 +123,8 @@ Plugins are shared across the computer, so the install waits until no feature is
 ### 6.4 Installing on this computer
 
 1. **Back up** `~/.claude/settings.json`, `~/.claude/plugins/known_marketplaces.json`, `installed_plugins.json` and the project's `.claude/settings.local.json` into the journal's folder.
-2. **Account settings.** Where `~/.claude/settings.json` names Wheelhouse's catalogue (check 37), its `ref` moves to the new tag, but only when every other project registered on this computer has its own project-scope install, so none of them follows the account's. Otherwise the account's `ref` and user-scope install stay, and the last line says which projects keep them. Nothing else in the file changes.
-3. **Move the computer's copy of the catalogue** to the tag. Which route does this without uninstalling anything is the first check (section 17, check U1): changing the recorded source and running `claude plugin marketplace update`; adding the catalogue again by its git address; or fetching the tag into Claude Code's own clone with the fenced git. The route is chosen by the check, and `reinstall`'s test (the clone's HEAD is the tag's commit) confirms it.
+2. **Account settings.** Where `~/.claude/settings.json` names Wheelhouse's catalogue (check 37), its `ref` moves to the new tag (by step 3's command, not a hand edit), but only when every other project registered on this computer has its own project-scope install, so none of them follows the account's. Otherwise the account's `ref` and user-scope install stay, and the last line says which projects keep them. Nothing else in the file changes.
+3. **Move the computer's copy of the catalogue** to the tag (check 94, U1): `claude plugin marketplace add https://github.com/where-is-brett/wheelhouse.git#<tag> --scope user` where step 2 moves the account's `ref` (the command writes it), otherwise `--scope local` (the declaration goes in this computer's `.claude/settings.local.json`). Never `--scope project`: that rewrites the committed file. Claude Code answers that the catalogue "now points at" the new tag and that installed plugins update from it; nothing is uninstalled. If the add is refused, the fallback is setting the `ref` in `known_marketplaces.json` and running `claude plugin marketplace update wheelhouse`. Either way, `reinstall`'s test (the clone's HEAD is the tag's commit) confirms it. Whether the address form that was first added (`where-is-brett/wheelhouse#vX`, a `github` source) and this one count as the same catalogue is the first thing the rehearsal settles; the job uses the form `known_marketplaces.json` records.
 4. **Update every install.** From `installed_plugins.json`, every install of each plugin the release's catalogue lists (Wheelhouse, Superpowers, Matt Pocock's skills), at each scope it is installed: user (under step 2's condition), and project for this project's folder. `claude plugin update <plugin>@wheelhouse --scope <scope>`, then uninstall and install where the update leaves another commit, as `reinstall` does. Installs at project scope for other projects are left alone (section 10.3).
 5. **Check.** Each install's `gitCommitSha` is the release's pin. A project settings file Claude Code rewrote on the way is put back as merged, as `reinstall` does.
 
@@ -181,14 +181,14 @@ Nothing is ever ended by its name alone, and nothing is ended without the card.
 
 Three changes to `scripts/health/own-files.js`.
 
-1. **Claude Code's bookkeeping is not Wheelhouse's files.** `.in_use/` and `.orphaned_at` at the top of a plugin folder are skipped, by those exact names. A test plants both and expects no line.
+1. **Claude Code's bookkeeping is not Wheelhouse's files.** `.in_use/` and `.orphaned_at` at the top of a plugin folder are skipped, by those exact names: check 94 (U3) found them the only files Claude Code adds, the rest matching the tag's tree exactly. A test plants both and expects no line.
 2. **The look follows the folders in use, not the helper's own.** Today there is one baseline and the helper walks its own `pluginRoot`. Instead the baseline keeps one entry per Wheelhouse folder that `installed_plugins.json` lists for a registered project or for the account, each with its own version; a folder no install lists any more drops out (it is Claude Code's to delete). An old helper looking at its own left-behind folder was the second half of the false warning, and two projects on different releases each keep their own entry. The board's line for a project names only the folder that project uses.
 3. **A version move is accepted only when it can be explained.** Today any move of the version silently makes a fresh baseline, so swapping in a different folder that claims a new version hides itself. Instead:
    - **After `/wheelhouse:update`:** the update's record (section 6.6) names the version and the files the update wrote. The plugin folder is checked against the release's own files: each file's git blob hash against the tag's tree in the mirror the update fetched. Matches make the new baseline, and the board's calm line says the update happened, with the director's approval. A file that doesn't match the tag is named in a watch line, update or not.
    - **A version move with no update record** (someone ran `claude plugin update` by hand): the same check against the tag's tree. A match is accepted with a calm line, "Wheelhouse moved to v0.2.7 outside the update command"; a mismatch is a watch line.
    - **Copilot's and the add-on's files** an update wrote are accepted only at the hashes the update recorded writing. Any other change to them is still a watch line.
 
-Whether Claude Code adds or changes any other file when it copies a plugin into its cache is check U3 (section 17); anything it does goes in the skip list by name, never by pattern.
+Anything else a later Claude Code adds goes in the skip list by name, never by pattern.
 
 ## 9. Failures and putting back
 
@@ -291,7 +291,11 @@ The hand steps stay in the README for anyone who can't run the paste.
 - The same rehearsal on Windows by hand, without administrator rights, recorded in `docs/checks/`.
 - A test that the new helper answers the previous release's clients (section 7.1).
 
-## 17. Checks to make before building
+## 17. Checks made before building
+
+All five were made on 4 November 2026 on the Mac (`docs/checks/94-update-routes.md`): U1, U3 and U4 passed; U2 passed on macOS with `lsof -t <socket path>`; U5 holds by what U1 showed, and the rehearsal runs it end to end. Windows, and a `github` source against the real GitHub, are left to the rehearsals (section 16).
+
+The questions were:
 
 - **U1.** The route that moves Claude Code's copy of the catalogue to a new tag without uninstalling anything, on macOS and Windows (section 6.4, step 3).
 - **U2.** Finding the process at the helper's address: `lsof` on the socket on macOS; the named pipe's server process on Windows without administrator rights (section 7.3).
