@@ -2,7 +2,7 @@
 
 # Updating Wheelhouse with one command: `/wheelhouse:update` (4 November 2026)
 
-Status: draft for the director's approval. Nothing is built from it until they approve it; the build plan follows.
+Status: approved by the director on 4 November 2026, with their answers to the open decisions folded in (section 20.1). The build plan is `docs/superpowers/plans/2026-11-04-update-command.md`.
 
 ## 1. The problem in plain words
 
@@ -85,7 +85,7 @@ When there is nothing newer: "You have the latest Wheelhouse, v0.2.6." No card.
 - **Pre-releases.** Tags `vX.Y.Z-<label>` (for example `v0.3.0-rc.1`) are never "latest" and never shown on the board; they install only when named. Version comparison follows semantic versioning precedence, so `0.3.0-rc.1` is older than `0.3.0`. `versionParts` and `isOlder` in `scripts/host/retire-helper.js` cut pre-release labels off today, which would leave an `rc` helper in place when the final release comes; they move to a full comparison (section 7.1).
 - **What's new.** Each release carries two or three plain lines for the card in `lineage/release.json` (a new `says` field beside `kind`), read from the fetched tag. A release with none shows "No summary was given for this release."
 - **Pinning.** A project is already pinned: its committed settings name a tag, and auto-update is off. Nothing moves unless the director runs the command and clicks **Update**. **Not now** records the release it declined (in the project's folder under the Wheelhouse home), so nothing asks about that release again.
-- **The board's line.** Once a week the helper looks for a newer release (one `ls-remote`, no download). When there is one the director hasn't declined, the board's version line adds: "v0.2.7 is out; type /wheelhouse:update when you want it." No card, no notification. *Designer's call.*
+- **The board's line.** Once a week the helper looks for a newer release (one `ls-remote`, no download). When there is one the director hasn't declined, the board's version line adds: "v0.2.7 is out; type /wheelhouse:update when you want it." No card, no notification (the director's decision, D5).
 
 ## 6. The update, step by step
 
@@ -109,7 +109,7 @@ The job has two halves.
 
 The committed `.claude/settings.json` names the release in `extraKnownMarketplaces.wheelhouse.source.ref`. The update never writes that file in the director's main checkout. It opens the change the way the build loop does (build-loop design, section 14.4):
 
-- **Hosted project:** a pull request on `wheelhouse-release-<commit>`, changing only that `ref` (`releaseChange`), opened through the helper's `/pr/open`. A pins-only release needs Wheelhouse's review and no approval. Any other release changes a guardrail (`.claude/settings.json`, which can bring new hooks), so it needs the director's confirmed approval, not a click in the chat: today a chat click is only the agent's own account of it (`scripts/agents/chat-clicks.js`), and guardrail changes need a click confirmed in the helper's window (`CONFIRMED_STEPS`). **Recommended:** the **Update** card's click starts the update, and when the reviewed change is ready the helper's window asks for the usual confirmation, naming the release and its commit; the gate takes that confirmation as the approval for that pull request only (a new gate rule beside the pins-only one). The trust rules don't change. *Open decision D3.* Merging follows the project's usual gate; nothing skips CI.
+- **Hosted project:** a pull request on `wheelhouse-release-<commit>`, changing only that `ref` (`releaseChange`), opened through the helper's `/pr/open`. A pins-only release needs Wheelhouse's review and no approval. Any other release changes a guardrail (`.claude/settings.json`, which can bring new hooks), so it needs the director's confirmed approval, not a click in the chat: today a chat click is only the agent's own account of it (`scripts/agents/chat-clicks.js`), and guardrail changes need a click confirmed in the helper's window (`CONFIRMED_STEPS`). **The director's decision (D3):** the **Update** card's click starts the update, and when the reviewed change is ready the helper's window asks for the usual confirmation, naming the release and its commit; the gate takes that confirmation as the approval for that pull request only (a new gate rule beside the pins-only one). The trust rules don't change. The pull request records its provenance as Wheelhouse's update (the release and its commit; no session, no model), a new kind the gate accepts only on a release or undo branch. Merging follows the project's usual gate; nothing skips CI.
 - **Project kept on the computer:** the same change on the local queue (local checks design), with the same rule.
 - **Before setup's step 7:** the project's settings don't name the catalogue yet; there is nothing to change, and the update moves only this computer.
 - **Already merged** (another computer updated the project first, section 10.2): skipped.
@@ -172,7 +172,7 @@ The project's watcher runs the old version's code. Once the new helper answers, 
 A helper from 0.2.4 or earlier answers `/helper/retire` with "unknown request". A helper from 0.2.5 or 0.2.6 knows `/helper/retire` but not `forUpdate`: it refuses while busy, so the update asks again every ten seconds within the two minutes, then offers a card to wait longer (recommended) or to stop it by the unrecorded path below; it keeps no record either. A helper of any version may also hang.
 
 - **Recorded helper (0.2.7 and later).** Wheelhouse can prove it started it: `helper.json`'s pid is alive, its start time matches to the second, and `/health` at the address gives the same pid. Only then, and after a card asking the director ("The old helper isn't answering. Stop it? Work it was doing is picked up again by the new one." [Stop it] (recommended) [Leave it]), it is sent the polite stop (`SIGTERM` on macOS, which the helper already handles; on Windows the process is ended, which needs no administrator rights for one's own process). Then step 3 above.
-- **Unrecorded helper (0.2.6 or earlier).** There is no record. **Recommended:** find it by its address, not its name: the process holding the helper's socket (`~/.wheelhouse/helper.sock`) on macOS, or the server end of its named pipe on Windows. Stop it only when every one of these holds: it belongs to this user; its command runs `scripts/host/helper-main.js` from a folder of Wheelhouse's in Claude Code's plugin cache; that folder's version is the one `/health` reported; and exactly one process matches. Then the same card. Where the computer won't say who holds the address (a laptop that blocks the lookup), it is left running and the line says it is replaced when the computer restarts or the director signs out and in. *Open decision D2.*
+- **Unrecorded helper (0.2.6 or earlier).** There is no record. **The director's decision (D2):** find it by its address, not its name: the process holding the helper's socket (`~/.wheelhouse/helper.sock`) on macOS, or the server end of its named pipe on Windows. Stop it only when every one of these holds: it belongs to this user; its command runs `scripts/host/helper-main.js` from a folder of Wheelhouse's in Claude Code's plugin cache; that folder's version is the one `/health` reported; and exactly one process matches. Then the same card. Where the computer won't say who holds the address (a laptop that blocks the lookup), it is left running and the line says it is replaced when the computer restarts or the director signs out and in.
 - **Nothing found, or a check fails:** nothing is stopped; the update still finishes, the new helper starts when the old one goes, and the board says why the old one is still answering, as today.
 
 Nothing is ever ended by its name alone, and nothing is ended without the card.
@@ -206,7 +206,7 @@ Whether Claude Code adds or changes any other file when it copies a plugin into 
 
 ### 9.2 Order chosen so a failure leaves something that works
 
-Nothing on the computer moves before the project's change is merged, and the old helper is not touched until the new release is installed and checked. So the only half-states are: the project names a release this computer doesn't have yet (which the board says, and an update fixes), or the new release is installed with a refresh left (which works, with a line).
+Nothing on the computer moves before the project's change is merged (bootstrap from v0.2.6 is the one exception, section 13), and the old helper is not touched until the new release is installed and checked. So the only half-states are: the project names a release this computer doesn't have yet (which the board says, and an update fixes), or the new release is installed with a refresh left (which works, with a line).
 
 ### 9.3 Putting back on purpose
 
@@ -248,7 +248,7 @@ Lean installs nothing and may have no Node.js, so it can't use the helper's job.
 5. Keep the previous tag's folder until the next update, so putting back is copying it again.
 6. Tell the director to reload VS Code's window.
 
-*Open decision D4.*
+**The director's decision (D4, 4 November 2026).**
 
 ### 12.2 Beyond Lean
 
@@ -260,11 +260,14 @@ Installed by hand, so the update doesn't install it. When the release carries a 
 
 ## 13. Updating from v0.2.6 or earlier
 
-The command first ships in the next release, so a computer on v0.2.6 or earlier has no command and a helper without the job. It needs one last update by another route. *Open decision D1.*
+The command first ships in the next release, so a computer on v0.2.6 or earlier has no command and a helper without the job. It needs one last update by another route. **The director's decision (D1, 4 November 2026): one paste in Terminal** (PowerShell on Windows).
 
-- **Recommended: one paste in a session that is not on a Wheelhouse project** (for example, a new Claude Desktop session on the home folder, which has no sandbox from Wheelhouse). The README gives the message: it clones the new release into a temporary folder with git, checked as in section 5, and runs `node <that folder>/scripts/update/cli.js bootstrap <project folder>`. Bootstrap runs the same journalled job directly rather than through the old helper's job (which it doesn't have), and asks the same cards. It still uses the running helper for everything that needs the host: the reviewed change goes through its `/pr/open`, which v0.2.6 has, so bootstrap holds no keys and has no host code of its own. It then uses section 7.3's paths for the old helper. Afterwards every update is `/wheelhouse:update`.
-- **Alternative:** the same command pasted into Terminal (or PowerShell), answering the cards as typed choices.
-- **Alternative:** the hand steps, written out in the README once more.
+- **The paste.** The README gives one line per system. It clones the new release into a temporary folder under the Wheelhouse home with git, and runs `node <that folder>/scripts/update/cli.js bootstrap <project folder>` from it. Bootstrap checks the tag as in section 5 before anything else, so a clone that doesn't check out stops with nothing changed.
+- **The cards in Terminal.** Bootstrap shows the same card as plain text and takes a typed choice (1 for Update, 2 for Not now); the stop card of section 7.3 the same way. Nothing else is asked in Terminal. Where the release needs the director's approval (D3), the helper's window asks for it, as in a session.
+- **No host access of its own.** The old helper can't open the reviewed change for it: v0.2.6's `/pr/open` needs a session's recorded provenance and a branch already pushed. So bootstrap turns the order round, once: it installs on this computer first (section 6.4, journalled and put back on failure as usual), hands over to the new helper (section 7, using section 7.3's paths for the old one), and then the new helper's job opens the reviewed change (section 6.2). Until it merges, the board says "This computer has v0.2.7; the change naming it for your project is waiting to be merged." If the change is refused or closed, the job puts the computer back to the earlier release by `reinstall` at its tag and says so. This is the only time anything on the computer moves before the change merges. *Designer's call.*
+- **Afterwards** every update is `/wheelhouse:update`.
+
+The hand steps stay in the README for anyone who can't run the paste.
 
 ## 14. What the board and setup say afterwards
 
@@ -299,7 +302,7 @@ The command first ships in the next release, so a computer on v0.2.6 or earlier 
 ## 18. Rulings to add to the main design
 
 - Updating Wheelhouse is one command, `/wheelhouse:update`, run by the director; the helper does the work as a journalled job, and the new version's code finishes it.
-- The project's release changes only through the usual reviewed change; where the director's approval is needed, it is confirmed in the helper's window as for any change to the safety rules (subject to D3).
+- The project's release changes only through the usual reviewed change; where the director's approval is needed, it is confirmed in the helper's window as for any change to the safety rules (D3).
 - A helper keeps a running record and answers the previous release's sessions. Only a provably Wheelhouse-started process is ever stopped, and only after the director's click.
 - The own-files look skips Claude Code's own bookkeeping by name, follows the installed version, and accepts a version move only when the files match the release's tag.
 
@@ -312,13 +315,15 @@ The command first ships in the next release, so a computer on v0.2.6 or earlier 
 
 ## 20. Decisions
 
-### 20.1 Open, for the director (each with a recommendation)
+### 20.1 Decided by the director, 4 November 2026
 
-- **D1. Getting from v0.2.6 to the first release with the command.** (a, recommended) One message pasted into a session on the home folder, which runs the new release's update; (b) the same in Terminal; (c) the hand steps once more.
-- **D2. An old helper (v0.2.6 or earlier) that can't be asked, or stays busy.** (a, recommended) Find it by its address, check it is Wheelhouse's own beyond doubt, ask, then stop it; fall back to "it goes when you restart" where the computer won't say; (b) never stop it: always "it goes when you restart".
-- **D3. The approval for a release that isn't pins-only.** (a, recommended) The **Update** card in the chat, then the helper's window confirming the change when it is ready, as for any change to the safety rules today; (b) the chat click alone counts as the approval, which loosens today's rule that a chat click is only the agent's own account.
-- **D4. Lean's update.** (a, recommended) A Lean skill the chat follows, as setup does; (b) Lean updates by pasting the setup line again with the new tag.
-- **D5. The board's line when a release is out.** (a, recommended) One quiet line, weekly look, no card; (b) nothing until the director runs the command; (c) a card in the briefing.
+- **D1. Getting from v0.2.6 to the first release with the command:** one paste in Terminal (PowerShell on Windows), chosen over the recommended paste in a chat session (section 13).
+- **D2. An old helper (v0.2.6 or earlier) that can't be asked, or stays busy:** find it by its address, check it is Wheelhouse's own beyond doubt, ask with a card, then stop it; where the computer won't say who holds the address, it goes when the computer restarts (section 7.3).
+- **D3. The approval for a release that isn't pins-only:** the **Update** card in the chat, then the helper's window confirming the change when it is ready (section 6.2).
+- **D4. Lean's update:** a `wheelhouse-update` skill the chat follows, as setup does (section 12.1).
+- **D5. When a release is out:** one quiet board line from a weekly look; no card, no notification (section 5).
+
+The designer's calls below stand (the director, 4 November 2026).
 
 ### 20.2 The designer's calls (the director may override)
 
@@ -330,3 +335,4 @@ The command first ships in the next release, so a computer on v0.2.6 or earlier 
 - Other projects on the computer are not updated with this one; the account-wide install moves only when no other project follows it.
 - Locked follows the newest release on the computer.
 - The own-files look keeps one entry per Wheelhouse folder in use.
+- Bootstrap from v0.2.6 installs on the computer before its reviewed change, once, because the old helper cannot open that change for it.
