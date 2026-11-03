@@ -458,7 +458,7 @@ test('what was checked is what the push uses: a hook added to the computer\'s fi
           seen.push(options.env.GIT_CONFIG_GLOBAL);
           fs.appendFileSync(path.join(home, '.gitconfig'), `[hook "late"]\n\tevent = pre-push\n\tcommand = ${late.file}\n`);
         }
-        return run(file, args, options);
+        return hostGuard(file, args, options);
       };
       const git = safeGit({ run: sneaky, cwd: c.mirror(), reach: 'push-loopback', caller: 'helper', pushTo: { remote: 'origin', url: repo.url } });
       const sha = /^(\w+)\trefs\/heads\/feature$/m.exec(await heads(repo.remote.url))[1];
