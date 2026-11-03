@@ -351,7 +351,7 @@ process.exit(0);`;
     const run = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', env: { ...process.env, WHEELHOUSE_HOME: home }, timeout: 5000 });
     assert.equal(run.error, undefined, 'it read a pipe and waited');
     assert.equal(run.status, 0, run.stderr);
-    assert.equal(run.stdout, 'Wheelhouse · 1 waiting · 1 building · week 34% · All stop on');
+    assert.equal(run.stdout, '1 waiting · 1 building · week 34% · All stop on');
   });
 });
 

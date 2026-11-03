@@ -2104,7 +2104,7 @@ The look is the director's choice of 31 October 2026, direction A, Inset (`docs/
 
 **Top to bottom:**
 
-1. **The glance** is the pane's title and the status line: "Wheelhouse · 2 waiting · 3 building · launch 3 of 5 · week 34%", plus "· STOP on" while it is on. Launch progress joins while a project has launch blockers. It stays at most 80 characters. Where the title is narrower, the week's share drops first, since the pane shows it below.
+1. **The glance** is the pane's title and the status line: "2 waiting · 3 building · launch 3 of 5 · week 34%", plus "· STOP on" while it is on. Launch progress joins while a project has launch blockers. It stays at most 80 characters. Where the title is narrower, the week's share drops first, since the pane shows it below.
 2. **STOP,** outlined with a red label, with "Halts every builder at once." beside it. Under STOP, the "STOP is on" group replaces it: since when, what still carries on, the filled Lift STOP, and "Only you can lift it."
 3. **The verdict,** as a title, with one line under it: "Nothing is broken. Since you were last here at 09:10."
 4. **The card,** one at a time (below). Under it, the next card's subject ("Next: how exported files are named · optional · 3 min") and small Back and Next buttons.

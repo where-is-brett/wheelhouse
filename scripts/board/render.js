@@ -279,14 +279,15 @@ export function renderBoard(model, { tab = 'director', limit = CONTEXT_CHARS } =
   }
 }
 
-// glanceLine(model): "Wheelhouse · 2 waiting · 3 building · launch 3 of 5 · week 34% · All stop on", each
+// glanceLine(model): "2 waiting · 3 building · launch 3 of 5 · week 34% · All stop on", each
 // part only when it has something to say; "launch r of t" while the project has blockers open. At
 // most GLANCE_CHARS: where it would pass, the week's share drops first, then the launch part,
-// before any cut with "…". All stop on is never dropped.
+// before any cut with "…". All stop on is never dropped. The name "Wheelhouse" stands alone, and only when
+// there is no other part.
 export function glanceLine(model) {
   try {
     if (!isRecord(model)) return 'Wheelhouse';
-    const head = ['Wheelhouse'];
+    const head = [];
     if (list(model.missing).includes(NO_STATE)) head.push('no state yet');
     const waiting = records(model.director?.waiting).length;
     if (waiting > 0) head.push(`${waiting} waiting`);
@@ -301,7 +302,9 @@ export function glanceLine(model) {
     const join = (parts) => parts.join(' · ');
     const tail = stop ? [stop] : [];
     for (const optional of [[launch, week], [launch], []]) {
-      const line = join([...head, ...optional.filter(Boolean), ...tail]);
+      const parts = [...head, ...optional.filter(Boolean), ...tail];
+      if (parts.length === 0) return 'Wheelhouse';
+      const line = join(parts);
       if (line.length <= GLANCE_CHARS) return line;
     }
     // Still too long: the front is cut with "…" and All stop on stays.
