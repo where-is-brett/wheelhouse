@@ -1,7 +1,10 @@
 // probes/03-precompact/run-b.js
 // Probe 03b: does a held compaction come back on a timer, or only with the
-// next request, and does the model see the reason? Haiku, scratch project only,
+// next request, and does the model see the reason? Scratch project only,
 // the Wheelhouse plugin switched off in the scratch project's settings.
+// The model is never written into the repository: pass it as --model <name> or
+// set WHEELHOUSE_PROBE_MODEL.
+// Usage: node probes/03-precompact/run-b.js --model <name>
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -25,7 +28,12 @@ const project = await makeScratchProject({
 
 const dir = probeLogDir('03-precompact');
 for (const f of ['guard-b.jsonl', 'allow']) fs.rmSync(path.join(dir, f), { force: true });
-const base = ['--model', 'haiku', '--output-format', 'json', '--allowedTools', 'Read,Bash'];
+const at = process.argv.indexOf('--model');
+const model = (at > 0 ? process.argv[at + 1] : '') || process.env.WHEELHOUSE_PROBE_MODEL || '';
+if (!model || model.startsWith('-') || !/^[\w.[\]:-]+$/.test(model)) {
+  throw new Error('Name the model: --model <name>, or set WHEELHOUSE_PROBE_MODEL. It is not written into the repository.');
+}
+const base = ['--model', model, '--output-format', 'json', '--allowedTools', 'Read,Bash'];
 const claude = (args) => spawnSync('claude', ['-p', ...args, ...base], { cwd: project.dir, encoding: 'utf8', shell: process.platform === 'win32' });
 const mark = (label) => ({ label, atMs: Date.now() });
 const marks = [];

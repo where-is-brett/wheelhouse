@@ -35,7 +35,7 @@ No.
 
 **Answer: outcome A.** A held compaction is re-tried once per model request, not on a timer, and the model is not told why.
 
-**Tested on:** macOS, Claude Code 2.1.302, headless, a scratch project in a temporary folder with the Wheelhouse plugin switched off in that project's settings, `--model haiku`. Scripts: `probes/03-precompact/run-b.js` and `guard-b.js`. `autoCompactWindow` was 100,000 and the `PreCompact` `auto` hook blocked every call, with a reason on stderr, until turn 3.
+**Tested on:** macOS, Claude Code 2.1.302, headless, a scratch project in a temporary folder with the Wheelhouse plugin switched off in that project's settings, the smallest model (named on the command line, not recorded here). Scripts: `probes/03-precompact/run-b.js` and `guard-b.js`. `autoCompactWindow` was 100,000 and the `PreCompact` `auto` hook blocked every call, with a reason on stderr, until turn 3.
 
 **Method:** turn 1 read a large filler file; turn 2 (resumed) ran a 40-second wait three times, one at a time, giving four requests 40 seconds apart; turn 3 switched the hook to allow. Times below are seconds from the start of turn 1.
 
@@ -48,4 +48,4 @@ No.
 
 **What it means for the design:** the hold is skipped and re-tried on each request, and the model sees nothing. Remove it, as section 6 of the compaction design says for outcome A.
 
-Tokens: two short Haiku sessions, about a dozen requests each, mostly cached input.
+Tokens: two short sessions on the smallest model, about a dozen requests each, mostly cached input.
