@@ -497,3 +497,40 @@ test('the intake\'s feature route shows the slices block, and its example is rea
   const design = readSlices(intake);
   assert.ok(design.slices.length >= 2);
 });
+
+// Host access design section 10: the connector card is offered once, with Not now recommended for a product with real users,
+// and a yes changes the connector list only as a reviewed change the director approves.
+test('the playbook offers a GitLab or GitHub connector once, recommends Not now for real users, and lists it only by an approved change', async () => {
+  const start = playbook.indexOf('## A GitLab or GitHub connector the project doesn\'t list');
+  assert.ok(start >= 0, 'the section is there');
+  const section = playbook.slice(start, playbook.indexOf('\n## ', start + 1));
+  assert.match(section, /offer it to the director once/);
+  assert.match(section, /`views levels`/);
+  assert.match(section, /`agent-reading-connector` \(on earlier cards\)/);
+  assert.match(section, /`question` card/);
+  assert.match(section, /real users, recommend \*\*Not for now\*\*/);
+  assert.match(section, /`mcpServers` in `\.claude\/wheelhouse\.json`/);
+  assert.match(section, /no agent edits it directly/);
+  assert.match(section, /reviewed pull request with the director's approval/);
+  assert.match(section, /`approve-work` card/);
+  assert.match(section, /write tools come with it/);
+  assert.match(section, /I never depend on it/);
+  assert.ok(CARD_KINDS.includes('question'));
+  // The card it describes is accepted as a question card on that topic.
+  const input = JSON.stringify({
+    kind: 'question', level: 3, topic: 'agent-reading-connector',
+    what: 'Let agents read GitLab through your connector?',
+    why: 'Claude has a connector to your host. It reads with your whole account, and its write tools come with it.',
+    options: [
+      { label: 'Yes, let them read through it', says: 'The project lists it, as a change that waits for your approval, and agents may use it.' },
+      { label: 'Not for now', says: 'Nothing changes; I won\'t ask again.' },
+    ],
+    recommend: 'Not for now', because: 'it reads with your whole account, and I already read what I need myself',
+    meanwhile: 'Nothing changes; I use the host my own way.',
+  });
+  const h = helper();
+  let err = '';
+  const code = await main(['card'], { cwd: '/projects/shop', client: h.client, input, out: () => {}, err: (t) => { err += t; } });
+  assert.equal(code, 0, err);
+  assert.equal(h.writes.filter((w) => w.kind === 'card').length, 1);
+});
