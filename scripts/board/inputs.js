@@ -137,7 +137,7 @@ export async function loadBoardInputs(options = {}) {
   }
 }
 
-async function gather({ cwd, client, address, now = () => new Date(), offline = false, waitMs: asked, findBrowser }) {
+async function gather({ cwd, client, address, now = () => new Date(), offline = false, waitMs: asked, findBrowser, renewalVia }) {
   // A wait too short to leave readHostFacts its margin is no wait at all, so it gives the usual one.
   const most = HELPER_WAIT_MS + helperGrace();
   const waitMs = Number.isInteger(asked) && asked > FACTS_MARGIN_MS && asked <= most ? asked : most;
@@ -169,7 +169,7 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
     ? attempt(() => buildsShown({ views, computer: computerId(), locked, guardedReady: guardedReady({ home: wheelhouseHome(), now: clock, platform: process.platform }) }))
     : null;
   // Offline, no key file is opened: the glance has no renewal to show.
-  const renewal = offline ? null : await renewalDue(record.connection, clock).catch(() => null);
+  const renewal = offline ? null : await renewalDue(record.connection, clock, undefined, renewalVia).catch(() => null);
   const lines = attempt(() => healthLines({
     record,
     locked,

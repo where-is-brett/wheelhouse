@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { childEnv, installationCovers, installationOf, renewalDue } from '../../../scripts/host/connection.js';
 import { readKey, writeKey } from '../../../scripts/host/keys.js';
 import { withHome } from '../../helpers/homes.js';
+import { makeRoutedCurl } from '../../helpers/fake-curl.js';
 import { makeAdapter } from '../../../scripts/host/adapter.js';
 
 const NOW = new Date('2026-10-18T01:00:00.000Z');
@@ -314,8 +315,12 @@ test('renewalDue uses the GitLab project key or pasted token expiry', async () =
     assert.deepEqual(await renewalDue(GITLAB, now, FILES), { due: false });
     writeKey('gitlab-project-4242', { kind: 'pasted-token', token: 'glpat-X', expiresAt: '2026-10-25' });
     assert.deepEqual(await renewalDue(GITLAB, NOW, FILES), { due: true, on: '2026-10-25' });
-    writeKey('gitlab-project-4242', { kind: 'pasted-token', token: 'glpat-X', expiresAt: null });
-    assert.deepEqual(await renewalDue(GITLAB, now, FILES), { due: false });
+    // A token with no expiry kept is asked of GitLab (a stand-in curl here): one that never expires is not due.
+    const curl = makeRoutedCurl(() => ({ status: 200, body: { expires_at: null } }));
+    const via = { run: curl.run, curl: '/usr/bin/curl', proxy: null, caFile: null, platform: 'linux', baseEnv: {} };
+    writeKey('gitlab-project-4242', { kind: 'pasted-token', token: 'stand-in-X', expiresAt: null });
+    assert.deepEqual(await renewalDue(GITLAB, now, FILES, via), { due: false });
+    assert.equal(curl.calls.length, 1);
   });
 });
 

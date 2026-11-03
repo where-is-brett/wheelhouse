@@ -34,6 +34,7 @@ macOS, Claude Code 2.1.278 (headless sessions), 17 October 2026. On Windows ther
 
 - Section 11 stands for the route: agents reach the host only through the helper, on a socket file the sandbox allows by name.
 - Sections 11 and 12.6 change: the helper's keys (the host token and the signing key) are kept in a file under `~/.wheelhouse/`, not the keychain. The sandbox denies agents' commands that folder, and permission rules deny Claude's own file tools it, since those tools run outside the sandbox (check 10).
+- **Overturned on 3 November 2026.** The rule above, that the keys are kept in a file and not the keychain, no longer holds. Check 73 showed the sandbox can deny agents the keychain files, and the director's Windows work laptop needs the key where git and the company's tools already keep it. Wheelhouse's host keys now live in the computer's own store (Credential Manager, the Keychain, or git's credential helper), and keys held in files move there at the first helper start (`docs/specs/2026-11-03-host-access-design.md`, sections 5 and 14; main design, section 12.2). The measurement itself, that a sandboxed agent can read a keychain item, stands.
 - Section 12.2: the sandbox settings must deny `~/.wheelhouse/` to reads as well as writes.
 
 ## Needs the director

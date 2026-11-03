@@ -16,7 +16,7 @@ import { HELPER_WAIT_MS, HOST_FACTS_MAX_AGE_MS } from '../lib/core-numbers.js';
 import { FREE_PLAN_LINE, fakedTestsGap } from '../host/protection.js';
 import { NO_HELPER } from '../hooks/session-start.js';
 import { helperClient } from '../host/helper-client.js';
-import { QUICK_LINE, switchedLine } from '../lib/host-lines.js';
+import { QUICK_LINE, switchedLine, keyRefusedLine, keyMissingLine } from '../lib/host-lines.js';
 import { frontDeskModelLine } from '../lib/front-desk-model.js';
 
 // The All stop line starts with these words, alone or followed by ", since <date>". A line from
@@ -222,6 +222,9 @@ export function healthLines({ record, locked, stop, lock, helperUp, facts, renew
   if (helperUp === false) add('watch', NO_HELPER);
   // The agent's sandbox on this computer, { level, text }, from the agent's adapter (sandboxLine); none for an agent without one.
   if (typeof agentSandbox?.text === 'string' && ['ok', 'watch'].includes(agentSandbox.level)) add(agentSandbox.level, agentSandbox.text);
+  // The host refused the key (401), or there is none: setup's step 3 raises the key card.
+  if (renewal?.key === 'refused') add('watch', keyRefusedLine(record?.host));
+  else if (renewal?.key === 'missing') add('watch', keyMissingLine(record?.host));
   if (renewal?.due) {
     const on = dayMonthYear(renewal.on);
     add('watch', on ? `Renew the host key by ${on}` : 'Renew the host key soon');
