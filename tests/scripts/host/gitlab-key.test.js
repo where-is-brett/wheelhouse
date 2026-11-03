@@ -175,3 +175,14 @@ test('gitlabApi says so when no key is given', () => {
     assert.throws(() => gitlabApi({ token }), /sign-in is missing/);
   }
 });
+
+test('the personal fallback is 30 days with the two scopes the project key has', async () => {
+  const { PERSONAL_DAYS, KEY_SCOPES } = await import('../../../scripts/host/gitlab-key.js');
+  assert.equal(PERSONAL_DAYS, 30);
+  assert.deepEqual(KEY_SCOPES, ['api', 'write_repository']);
+});
+
+test('keyExpiry gives the date a key made today for some days ends', async () => {
+  const { keyExpiry } = await import('../../../scripts/host/gitlab-key.js');
+  assert.equal(keyExpiry(30, () => new Date('2026-11-03T10:00:00Z')), '2026-12-03');
+});

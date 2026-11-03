@@ -14,7 +14,7 @@ import {
   hostStep, cardFor, signIn, makeRepos, connectionCard, stricterCard, stricterWay, STRICTER, appFor, wheelhouseApp, wheelhouseAppOffered, narrowOffered, switchOnAsDirector,
   directorGitlabApi, directorKey, signInStatus, directorGitEnv, productOf, repoName, slugFor, REAL_USERS, LEVELS, HOST_LABELS, WAYS, NO_APP_LISTED, OWN_APP_WAIT_MS, SIGN_UP,
   APP_FILE, KEY_NAME, INSTALL_WAIT_MS, STOPPED, NEW_PRODUCT, fromOtherComputer, quickLaunched, repoNamed, ORGS_UNREAD, launchedIn,
-  checkOutJoined, findInstallation, CERTIFICATE_GIVEN,
+  checkOutJoined, findInstallation, CERTIFICATE_GIVEN, reachLine, askAdministrationKey,
 } from '../../../scripts/setup/host.js';
 import { installationCovers } from '../../../scripts/host/connection.js';
 import { caFile, probeCertificate, CERTIFICATE_NOT_IN_STORE } from '../../../scripts/host/company-ca.js';
@@ -801,34 +801,84 @@ test('narrow on GitHub: the code and the Install page are said, the installation
   });
 });
 
-test('a refused GitLab project key falls back to the system\'s box, never the chat', async () => {
+test('a GitLab that refuses the sign-in for a project key stops the step plainly; the personal key is not offered', async () => {
   await withHome(async () => {
     const w = standIn({ refuseKeys: true });
     await w.add(`${USER}/shop`);
     const folder = productFolder('shop');
     await withOrigin(folder, `https://gitlab.com/${USER}/shop.git`);
     const opened = [];
-    const boxes = [];
-    const step = stepFor(w, {
-      open: async (url) => { opened.push(url); },
-      askSecret: async (box, platform) => { boxes.push({ box, platform }); return `${PASTED}\n`; },
-    });
+    const step = stepFor(w, { open: async (url) => { opened.push(url); }, askSecret: async () => { throw new Error('no box should open'); } });
     const planned = await answerAll(step, ctxFor(folder), choose({ way: WAYS.narrow }));
-    assert.match(planned.card.what, /a Developer project key for the project, or where GitLab refuses/);
-    assert.match(planned.card.what, /"pipelines must succeed" only where there is a pipeline/);
-    const { lines, run } = await applyStep(step, folder, planned.changes, { answers: planned.answers });
-    const project = w.repos[`${USER}/shop`].id;
-    assert.deepEqual(readKey(`gitlab-project-${project}`), { kind: 'pasted-token', token: PASTED, expiresAt: null });
-    assert.equal(boxes.length, 1, 'one box');
-    assert.equal(boxes[0].platform, 'darwin');
-    assert.match(boxes[0].box.prompt, /never the chat/);
-    assert.ok(opened[0].startsWith('https://gitlab.com/-/user_settings/personal_access_tokens'), opened[0]);
-    assert.ok(lines.some((l) => /paste it into the box your computer shows: never into the chat/.test(l)));
-    const kept = JSON.stringify(run) + lines.join('\n') + JSON.stringify(w.calls);
-    assert.ok(!kept.includes(PASTED) && !kept.includes(DIRECTOR_GITLAB), 'no token is kept, said or passed in an argument');
-    assert.deepEqual(readProject(slugFor(`${USER}/shop`)).connection, { host: 'gitlab', mode: 'narrow', project: `${USER}/shop`, baseUrl: 'https://gitlab.com', projectId: project });
+    await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }), /may not make a project key/);
+    assert.deepEqual(opened, []);
   });
-  // Where GitLab makes it: a Developer's key for each, with nothing for the director to do.
+});
+
+test('a made project key says what it reaches, word for word', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    await w.add(`${USER}/shop`);
+    const folder = productFolder('shop');
+    await withOrigin(folder, `https://gitlab.com/${USER}/shop.git`);
+    const step = stepFor(w);
+    const planned = await answerAll(step, ctxFor(folder), choose({ way: WAYS.narrow }));
+    const { lines } = await applyStep(step, folder, planned.changes, { answers: planned.answers });
+    assert.ok(lines.includes(`This key reaches only ${USER}/shop: its code, merge requests and settings API. It can't change the project's protection.`), lines.join('\n'));
+  });
+});
+
+test('reach lines match the design word for word', () => {
+  assert.equal(reachLine({ kind: 'github', repo: 'jo/shop' }), "This key reaches only jo/shop: its code, pull requests and issues. Not your other repositories, and not the repository's settings.");
+  assert.equal(reachLine({ kind: 'gitlab-project', repo: 'grp/shop' }), "This key reaches only grp/shop: its code, merge requests and settings API. It can't change the project's protection.");
+  assert.equal(reachLine({ kind: 'gitlab-personal' }), "GitLab won't make a key for one project here, so this is a personal key. It reaches every project your account can, until it expires in 30 days.");
+  assert.throws(() => reachLine({ kind: 'other' }));
+});
+
+test('a narrow GitHub token signs gh in on standard input, and its card says what it reaches', async () => {
+  await withHome(async () => {
+    const TOKEN = 'github_pat_typed_into_the_box_0001';
+    const out = standIn({ signedIn: { github: false } });
+    const calls = [];
+    const run = async (file, args = [], options = {}) => {
+      if (args[0] === 'auth' && args[1] === 'login') calls.push({ args, input: options.input });
+      return out.run(file, args, options);
+    };
+    const opened = [];
+    const lines = [];
+    await signIn({
+      host: 'github', run, say: (l) => lines.push(l), narrow: { owner: USER, name: 'shop' },
+      open: async (url) => { opened.push(url); }, askSecret: async () => `${TOKEN}\n`,
+    });
+    assert.deepEqual(calls[0].args, ['auth', 'login', '--hostname', 'github.com', '--git-protocol', 'https', '--with-token']);
+    assert.equal(calls[0].input, `${TOKEN}\n`);
+    const url = new URL(opened[0]);
+    assert.equal(url.pathname, '/settings/personal-access-tokens/new');
+    assert.equal(url.searchParams.get('contents'), 'write');
+    assert.equal(url.searchParams.get('administration'), null);
+    assert.ok(lines.includes(`This key reaches only ${USER}/shop: its code, pull requests and issues. Not your other repositories, and not the repository's settings.`), lines.join('\n'));
+    assert.ok(lines.some((l) => /Only select repositories/.test(l) && l.includes('shop')));
+    assert.ok(!lines.join('\n').includes(TOKEN));
+  });
+});
+
+test('the one-off Administration key is asked for on a short-lived page and never kept', async () => {
+  const TOKEN = 'github_pat_administration_0001';
+  const opened = [];
+  const lines = [];
+  const got = await askAdministrationKey({
+    owner: 'jo', name: 'shop', say: (l) => lines.push(l), open: async (url) => { opened.push(url); }, askSecret: async () => ` ${TOKEN}\n`, platform: 'darwin',
+  });
+  assert.equal(got, TOKEN);
+  const url = new URL(opened[0]);
+  assert.equal(url.searchParams.get('administration'), 'write');
+  assert.equal(url.searchParams.get('expires_in'), '1');
+  assert.ok(lines.some((l) => /used once and not kept/.test(l)));
+  assert.ok(!lines.join('\n').includes(TOKEN));
+  await assert.rejects(askAdministrationKey({ owner: 'jo', name: 'shop', say() {}, open: async () => {}, askSecret: async () => '  ', platform: 'darwin' }), /No GitHub key was given/);
+});
+
+test('where GitLab makes a Developer key for the project, nothing is left for the director to do', async () => {
   await withHome(async () => {
     const keyed = standIn();
     await keyed.add(`${USER}/shop`);
@@ -1153,7 +1203,11 @@ test('a group that has switched project keys off also falls back to the system\'
     await applyStep(step, folder, planned.changes, { answers: planned.answers });
     assert.equal(boxes.length, 1);
     assert.ok(opened[0].startsWith('https://gitlab.com/-/user_settings/personal_access_tokens'), opened[0]);
-    assert.deepEqual(readKey(`gitlab-project-${w.repos[`${USER}/shop`].id}`), { kind: 'pasted-token', token: PASTED, expiresAt: null });
+    assert.equal(new URL(opened[0]).searchParams.get('scopes'), 'api,write_repository');
+    const kept = readKey(`gitlab-project-${w.repos[`${USER}/shop`].id}`);
+    assert.equal(kept.kind, 'pasted-token');
+    assert.equal(kept.token, PASTED);
+    assert.match(kept.expiresAt, /^\d{4}-\d{2}-\d{2}$/);
   });
   await withHome(async () => {
     const w = standIn({ keyAnswer: 400, keyBody: { message: '400 Bad request - something else' } });

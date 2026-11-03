@@ -88,7 +88,7 @@ import { QUICK_LINE } from '../lib/host-lines.js';
 import { detectHost } from '../host/adapter.js';
 import { startDeviceSignIn, waitForSignIn, installUrl } from '../host/github-app.js';
 import { installationCovers } from '../host/connection.js';
-import { gitlabApi, makeProjectKey, isKeysSwitchedOff, checkBaseUrl, projectPath } from '../host/gitlab-key.js';
+import { gitlabApi, makeProjectKey, isKeysSwitchedOff, checkBaseUrl, projectPath, PERSONAL_DAYS, keyExpiry } from '../host/gitlab-key.js';
 import { tokenUrl } from '../host/token-url.js';
 import { composeCard, isTooLong } from '../cards/compose.js';
 import { DEFAULT_GITLAB, gitlabBase, readGitlabHosts, parseRemote, hostWords, isDefaultHost } from '../host/gitlab-base.js';
@@ -792,6 +792,36 @@ export function stricterCard({ where, appFile } = {}) {
   return { ...card, what: `Which key should Wheelhouse's helper hold for ${where ?? 'the project on GitHub'}?`, because: 'agents then reach only this project, not your whole account' };
 }
 
+// ---- Narrow keys: what each reaches ----
+
+// The one plain line a key's card says of what it reaches (design section 7). `repo` is owner/name.
+export function reachLine({ kind, repo }) {
+  if (kind === 'github') return `This key reaches only ${repo}: its code, pull requests and issues. Not your other repositories, and not the repository's settings.`;
+  if (kind === 'gitlab-project') return `This key reaches only ${repo}: its code, merge requests and settings API. It can't change the project's protection.`;
+  if (kind === 'gitlab-personal') return `GitLab won't make a key for one project here, so this is a personal key. It reaches every project your account can, until it expires in ${PERSONAL_DAYS} days.`;
+  throw new Error('No reach line for that kind of key');
+}
+
+// What the director does on GitHub's page, which cannot preselect the repository.
+const pickRepository = (name) => `On the page, choose "Only select repositories", then ${name}, and click Generate token`;
+
+const NO_GITHUB_KEY = 'No GitHub key was given, so setup could not go on; a fresh Go ahead asks again';
+
+// A GitHub key with Administration, for protecting the main branch at step 7 when the director has no other
+// sign-in. It lasts a day, is used once and is never kept: the token is returned for that one call.
+export async function askAdministrationKey({ owner, name, say, open, askSecret, platform }) {
+  say(`To protect the main branch, GitHub needs a key that is used once and not kept: make it on the page that opens. ${pickRepository(name)}. Delete it on GitHub afterwards`);
+  await open(tokenUrl({ host: 'github', kind: 'administration', owner, repos: [name] }));
+  let token;
+  try {
+    token = await askSecret({ title: 'Wheelhouse: one-use GitHub key', prompt: 'Paste the GitHub key you just made. It is used once, to protect the main branch, and never goes in the chat.' }, platform);
+  } catch {
+    throw new Error(NO_GITHUB_KEY);
+  }
+  if (typeof token !== 'string' || token.trim() === '') throw new Error(NO_GITHUB_KEY);
+  return token.trim();
+}
+
 // ---- Signing in ----
 
 // `glab` is told a company's GitLab through GITLAB_HOST, which takes a port; `--hostname` refuses one
@@ -854,6 +884,7 @@ async function signInWithToken({ run, base, say, stopped, open, askSecret, platf
   const address = addressOf('gitlab', base);
   say(`Your company's GitLab, ${address}, has no sign-in through the browser set up, so make a token on the page that opens, then paste it into the box your computer shows: never into the chat`);
   say(`For your company's GitLab admin, if the browser sign-in is wanted instead: register an application for Wheelhouse with the permissions api, read_user, write_repository, openid and profile, then give its id to glab on this computer (glab config set client_id <id> -g --host ${address}). Registering it alone changes nothing here: setup uses the browser only once glab on this computer holds that id. That is the company's job, not setup's`);
+  say(`The key is a personal one: it reaches every project your account can, and the page asks for api and write_repository only. Set its expiry to ${PERSONAL_DAYS} days`);
   await open(tokenUrl({ host: 'gitlab', owner: '', repos: [], name: SIGN_IN_TOKEN_NAME, base }));
   let token;
   try {
@@ -872,13 +903,38 @@ async function signInWithToken({ run, base, say, stopped, open, askSecret, platf
   return after;
 }
 
+// GitHub's narrow route: a fine-grained key for the one repository, made on the prefilled page and pasted into
+// the computer's hidden box, then given to `gh auth login --with-token` on standard input (never an argument,
+// the environment, a line said or an error). `gh` keeps it where its default keeps it.
+async function signInWithGithubKey({ run, narrow, say, stopped, open, askSecret, platform }) {
+  const repo = `${narrow.owner}/${narrow.name}`;
+  say(reachLine({ kind: 'github', repo }));
+  say(`Make the key on the page that opens, then paste it into the box your computer shows: never into the chat. ${pickRepository(narrow.name)}`);
+  await open(tokenUrl({ host: 'github', owner: narrow.owner, repos: [narrow.name], name: KEY_NAME, days: 366 }));
+  let token;
+  try {
+    token = await askSecret({ title: 'Wheelhouse: GitHub key', prompt: 'Paste the GitHub key you just made. It goes straight to your computer\'s own sign-in for GitHub, never the chat.' }, platform);
+  } catch {
+    throw new Error(NO_GITHUB_KEY);
+  }
+  if (typeof token !== 'string' || token.trim() === '') throw new Error(NO_GITHUB_KEY);
+  if (stopped()) throw new Error(STOPPED);
+  await quietly(run, toolPath('gh'), ['auth', 'login', '--hostname', ADDRESS.github, '--git-protocol', 'https', '--with-token'], {
+    input: `${token.trim()}\n`, timeoutMs: SIGN_IN_TOKEN_WAIT_MS,
+  });
+  if (stopped()) throw new Error(STOPPED);
+  const after = await signInStatus({ host: 'github', run });
+  if (!after.signedIn) throw new Error('Setup could not sign in to GitHub: GitHub did not accept the key. Make a new one with the permissions the page filled in, and a fresh Go ahead asks again');
+  return after;
+}
+
 // The existing sign-in, with no browser step; otherwise the tool's own browser sign-in, run with the
 // director's environment, whose one-time code is said as it is shown, or on a company's GitLab with no
 // OAuth application a typed token (`signInRoute`). STOP coming on while it waits (`stopped`) ends it,
 // and the step stops.
 export async function signIn({
   host, run = realRun, say = () => {}, stopped = () => false, base = DEFAULT_GITLAB,
-  open = (url) => openPage(url, { run }), askSecret = realAskSecret, platform = process.platform,
+  open = (url) => openPage(url, { run }), askSecret = realAskSecret, platform = process.platform, narrow = null,
 }) {
   // glab defaults to ssh for git; a company's GitLab is set to https, as setup's git uses (check 71).
   const withHttps = async (found) => {
@@ -890,6 +946,8 @@ export async function signIn({
   if (host === 'gitlab' && await signInRoute({ run, base }) === 'token') {
     return withHttps(await signInWithToken({ run, base, say, stopped, open, askSecret, platform }));
   }
+  // A director who prefers a narrow key to the browser sign-in: `narrow` is the one repository ({ owner, name }).
+  if (host === 'github' && narrow) return signInWithGithubKey({ run, narrow, say, stopped, open, askSecret, platform });
   say(`Sign in to ${NAME[host]} in the browser page that opens. No account yet? Make one first at ${signUpUrl(host, base)}`);
   let said = false;
   const onOutput = (text) => {
@@ -1520,8 +1578,7 @@ async function connectGithubApp({ app, repos, fetch, say, open, sleep, now, reco
 }
 
 // Narrow on GitLab: a project key at Developer level for each project, made with the director's own
-// sign-in. Where GitLab refuses one (it answers 401 or 403: the sign-in or the plan may not make
-// project keys; or the company's group has switched project keys off, makeProjectKey's code), its token page is opened and the token typed into the system's own box, straight to
+// sign-in. Where the company's group has switched project keys off (makeProjectKey's code), a personal key's token page is opened and the token typed into the system's own box, straight to
 // the keys file for every project still without a key: never the chat, an argument or a log. Any
 // other failure (GitLab not reached, the project not found, a server error) stops the step plainly.
 // A project already holding a key is left as it is.
@@ -1540,16 +1597,19 @@ async function connectGitlabKeys({ api, projects, owner, platform, say, open, as
     try {
       key = await makeProjectKey({ api: watched, projectId: p.id, name: KEY_NAME, days: KEY_DAYS, now });
     } catch (error) {
-      if (answered !== 401 && answered !== 403 && !isKeysSwitchedOff(error)) throw error;
+      // The personal key is only for a company that has switched project keys off; any other refusal stops here.
+      if (!isKeysSwitchedOff(error)) throw error;
       refused = true;
       break;
     }
     keep(p, 'project-key', { kind: 'project-key', token: key.token, expiresAt: key.expiresAt, id: key.id });
+    say(reachLine({ kind: 'gitlab-project', repo: p.repo }));
     waiting.shift();
   }
   if (!refused || waiting.length === 0) return;
-  say('GitLab would not make a project key, so make a token on the page that opens, then paste it into the box your computer shows: never into the chat');
-  await open(tokenUrl({ host: 'gitlab', owner, repos: waiting.map((p) => p.repo), name: KEY_NAME, days: KEY_DAYS, base: api.baseUrl }));
+  say(reachLine({ kind: 'gitlab-personal' }));
+  say(`Make the key on the page that opens (it asks for api and write_repository only; set its expiry to ${PERSONAL_DAYS} days), then paste it into the box your computer shows: never into the chat`);
+  await open(tokenUrl({ host: 'gitlab', owner, repos: waiting.map((p) => p.repo), name: KEY_NAME, base: api.baseUrl }));
   let token;
   try {
     token = await askSecret({ title: 'Wheelhouse: GitLab token', prompt: 'Paste the GitLab token you just made. It goes straight to Wheelhouse\'s keys, never the chat.' }, platform);
@@ -1558,7 +1618,7 @@ async function connectGitlabKeys({ api, projects, owner, platform, say, open, as
   }
   if (typeof token !== 'string' || token.trim() === '') throw new Error('No GitLab token was given, so the narrow connection is not set up; a fresh Go ahead asks again');
   halt();
-  for (const p of waiting) keep(p, 'pasted-token', { kind: 'pasted-token', token: token.trim(), expiresAt: null });
+  for (const p of waiting) keep(p, 'pasted-token', { kind: 'pasted-token', token: token.trim(), expiresAt: keyExpiry(PERSONAL_DAYS, now) });
 }
 
 // ---- Protection (planned here, switched on at step 7: Task 13) ----
