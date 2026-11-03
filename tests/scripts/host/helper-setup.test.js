@@ -393,6 +393,23 @@ test('a click on one folder\'s card is not used for another folder\'s run, thoug
   });
 });
 
+test('a helper with a short step working says it is busy, and an idle one does not', async () => {
+  await withSetup(async ({ home, user, folder }) => {
+    setWorld(home, { 1: [KEY(1)], hold: [1] });
+    const routes = setupRoutes({ now: () => T0, stepsModule: STEPS_MODULE, userHome: user });
+    assert.equal(routes.busy(), false);
+    assert.equal(Object.keys(routes).includes('busy'), false, 'it is not a route');
+    const card = await routes['/setup/plan']({ folder, step: 1 });
+    click(1, card.hash);
+    const first = routes['/setup/apply']({ folder, step: 1, hash: card.hash });
+    await until(() => runOf(folder).steps[1]?.clickedAt, { what: 'the click in the journal' });
+    assert.equal(routes.busy(), true);
+    fs.writeFileSync(path.join(home, 'release-1'), '');
+    await first;
+    assert.equal(routes.busy(), false);
+  });
+});
+
 test('a short step still working in the helper past its time is not started again, nor its card shown again', async () => {
   await withSetup(async ({ home, user, folder }) => {
     setWorld(home, { 1: [KEY(1)], hold: [1] });

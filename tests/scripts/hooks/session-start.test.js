@@ -706,6 +706,86 @@ test('a Claude Code older than 2.1.299, read from the transcript\'s last entry, 
   });
 });
 
+// A helper that answers with `version` until `retire` stops it; `retire` gives the answer to the request.
+function helperOf(version, retire) {
+  const f = fake();
+  const calls = { retire: 0 };
+  let alive = true;
+  let started = false;
+  f.client.health = async () => (alive ? { ok: true, version } : { ok: started, version: '0.2.4' });
+  f.client.retire = async () => { calls.retire += 1; const answer = retire(); if (answer.retired === true) alive = false; return answer; };
+  const spawn = f.spawn;
+  f.spawn = (...args) => { started = true; return spawn(...args); };
+  f.retireCalls = calls;
+  return f;
+}
+const ownRoot = (home, version = '0.2.4') => {
+  const root = path.join(home, 'plugin');
+  fs.mkdirSync(path.join(root, '.claude-plugin'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'wheelhouse', version }));
+  return root;
+};
+const helperStarts = (f) => f.calls.spawn.filter((c) => c.args[0].endsWith('helper-main.js')).length;
+
+test('an older idle helper is retired and this copy\'s helper started, with no version note', async () => {
+  await withHome(async (home) => {
+    const f = helperOf('0.2.3', () => ({ ok: true, retired: true }));
+    const out = text(await run(f, { pluginRoot: ownRoot(home) }));
+    assert.equal(f.retireCalls.retire, 1);
+    assert.equal(helperStarts(f), 1);
+    assert.doesNotMatch(out, /The helper running is version|still finishing work/);
+  });
+});
+
+test('versions are compared as numbers: 0.2.10 is not older than 0.2.9', async () => {
+  await withHome(async (home) => {
+    const f = helperOf('0.2.10', () => ({ ok: true, retired: true }));
+    await run(f, { pluginRoot: ownRoot(home, '0.2.9') });
+    assert.equal(f.retireCalls.retire, 0);
+  });
+});
+
+test('an older helper still at work is kept, with a plain note, and nothing is started or stopped', async () => {
+  await withHome(async (home) => {
+    const f = helperOf('0.2.3', () => ({ ok: true, retired: false, busy: 'a setup step is running' }));
+    const out = text(await run(f, { pluginRoot: ownRoot(home) }));
+    assert.equal(f.retireCalls.retire, 1);
+    assert.equal(helperStarts(f), 0);
+    assert.match(out, /older Wheelhouse helper \(version 0\.2\.3\) is still finishing work; Wheelhouse moves to the new one/);
+  });
+});
+
+test('a helper of the same or a newer version is left alone', async () => {
+  await withHome(async (home) => {
+    for (const version of ['0.2.4', '0.3.0']) {
+      const f = helperOf(version, () => ({ ok: true, retired: true }));
+      await run(f, { pluginRoot: ownRoot(home) });
+      assert.equal(f.retireCalls.retire, 0, version);
+      assert.equal(helperStarts(f), 0, version);
+    }
+  });
+});
+
+test('an older helper without the retire request gets a plain note, and nothing is stopped or started', async () => {
+  await withHome(async (home) => {
+    const f = helperOf('0.2.3', () => ({ ok: false, refused: 'unknown request' }));
+    const out = text(await run(f, { pluginRoot: ownRoot(home) }));
+    assert.equal(helperStarts(f), 0);
+    assert.match(out, /older Wheelhouse helper \(version 0\.2\.3\) is still running and can't be asked to stop. It is replaced when the computer restarts/);
+    assert.match(out, /Activity Monitor on a Mac or Task Manager on Windows/);
+  });
+});
+
+test('an older helper that is slow to close and still answers gives the restarting note', async () => {
+  await withHome(async (home) => {
+    const f = helperOf('0.2.3', () => ({ ok: true, retired: true }));
+    f.client.health = async () => ({ ok: true, version: '0.2.3' });
+    const out = text(await run(f, { pluginRoot: ownRoot(home) }));
+    assert.equal(helperStarts(f), 0);
+    assert.match(out, /older Wheelhouse helper \(version 0\.2\.3\) is restarting/);
+  });
+});
+
 test('a helper of another version than this copy is named in the reload', async () => {
   await withHome(async (home) => {
     const root = path.join(home, 'plugin');

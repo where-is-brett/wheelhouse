@@ -49,6 +49,7 @@ import { answer, runAndExit, projectOf, pluginRoots, isInside, managedDir, manag
 import { keep, sendPending, withinBudget } from './pending.js';
 import { startWatcher, watcherRunning } from '../foreman/start.js';
 import { helperClient } from '../host/helper-client.js';
+import { isOlder } from '../host/retire-helper.js';
 import { caEnv } from '../host/company-ca.js';
 import { stopState, NO_HELPER_STOP } from '../lib/stop.js';
 import { jobFolder, wheelhouseHome, stateDir, computerId } from '../lib/paths.js';
@@ -312,10 +313,24 @@ function markManaged(project, sessionId, { self, dir, now }) {
   } catch { /* the plugin's copy then answers as well, which is safe */ }
 }
 
-// The helper's /health answer once it answers, starting it when it does not; null when it never does.
+// The helper's /health answer once it answers, starting it when it does not; null when it never does. A helper older than
+// this copy is asked to stop when idle and this copy's started in its place. The answer says why an older one stays:
+// `busy` (at work), `noRoute` (from before the request existed; nothing here ends it) or `slow` (closing, still answering).
 async function ensureHelper(client, { spawn, pluginRoot, waitMs, pause, end }) {
   const first = await withinBudget(end)(client.health());
-  if (first?.ok === true) return first;
+  if (first?.ok === true) {
+    if (!isOlder(first.version, ownVersion(pluginRoot))) return first;
+    const asked = typeof client.retire === 'function' ? await withinBudget(end)(client.retire()) : null;
+    if (asked?.ok === true && asked.retired === false) return { ...first, busy: true };
+    if (asked?.ok !== true || asked.retired !== true) return asked?.refused === 'unknown request' ? { ...first, noRoute: true } : first;
+    const gone = Math.min(end, Date.now() + waitMs);
+    let answering = true;
+    while (answering && Date.now() < gone) {
+      await pause(100);
+      answering = (await withinBudget(gone)(client.health()))?.ok === true;
+    }
+    if (answering) return { ...first, slow: true };
+  }
   try {
     // Started in Wheelhouse's own folder, never in the session's.
     const home = wheelhouseHome();
@@ -789,7 +804,13 @@ async function started(input, deps) {
   if (!up) notes.push(NO_HELPER);
   else {
     const mine = ownVersion(pluginRoot);
-    if (typeof up.version === 'string' && mine !== null && up.version !== mine) {
+    if (up.busy === true) {
+      notes.push(`An older Wheelhouse helper (version ${oneLine(up.version)}) is still finishing work; Wheelhouse moves to the new one (version ${mine}) when it is done`);
+    } else if (up.noRoute === true) {
+      notes.push(`An older Wheelhouse helper (version ${oneLine(up.version)}) is still running and can't be asked to stop. It is replaced when the computer restarts. To replace it sooner, ask this session to end the Node process running Wheelhouse's helper (helper-main.js), or end it yourself in Activity Monitor on a Mac or Task Manager on Windows`);
+    } else if (up.slow === true) {
+      notes.push(`The older Wheelhouse helper (version ${oneLine(up.version)}) is restarting; the new one starts at the next session, or ask again in a moment`);
+    } else if (typeof up.version === 'string' && mine !== null && up.version !== mine) {
       notes.push(`The helper running is version ${oneLine(up.version)}; this copy is version ${mine}`);
     }
     await left(sendPending(project, clientNow(), { until: end }));
