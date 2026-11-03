@@ -26,8 +26,14 @@
 // Wheelhouse GitHub App's keys or a GitLab project's key, which reach the
 // tools only through their environment, never an argument. No function here
 // returns a key other than in that environment, or logs or throws one.
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { wheelhouseHome } from '../lib/paths.js';
 import { renewKeys } from './github-app.js';
-import { checkBaseUrl } from './gitlab-key.js';
+import { checkBaseUrl, companyFile } from './gitlab-key.js';
+import { request, curlPath } from './curl.js';
+import { directorProxy } from './director-git.js';
 import { DEFAULT_GITLAB } from './gitlab-base.js';
 import { findKey, saveKey } from './keys.js';
 import { borrowKey } from './store.js';
@@ -232,17 +238,116 @@ export async function installationCovers(connection, { fetch = globalThis.fetch,
   return { covered: false, settingsUrl: `https://github.com/settings/installations/${installationId}` };
 }
 
-// Whether the board should raise the connection's renewal: within 14 days of
-// the GitHub renewal key's expiry, or the GitLab key's or pasted token's.
-export async function renewalDue(connection, now = () => new Date(), keys) {
-  check(connection);
-  if (connection.mode !== 'narrow') return { due: false };
-  const kept = connection.host === 'github'
-    ? (await findKey('github-app', keys))?.refreshExpiresAt
-    : (await findKey(`gitlab-project-${connection.projectId}`, keys))?.expiresAt;
-  if (typeof kept !== 'string') return { due: false };
-  const expiry = Date.parse(kept);
-  if (Number.isNaN(expiry)) return { due: false };
-  if (expiry - timeOf(now) > NOTICE_MS) return { due: false };
+// What GitLab says of the key it is given (GET /personal_access_tokens/self through curl): { expiresAt } (a date, or
+// null for a key that never expires), { refused: true } when GitLab does not accept it, or null when nothing can be
+// said (GitLab unreachable, or an answer that is not that). The key travels in a header on curl's standard input.
+async function selfExpiry({ token, root, via }) {
+  const platform = via.platform ?? process.platform;
+  const api = `${root.replace(/\/+$/, '')}/api/v4`;
+  try {
+    const answer = await request({
+      run: via.run, curl: via.curl !== undefined ? via.curl : curlPath({ platform }),
+      url: `${api}/personal_access_tokens/self`,
+      headers: { 'PRIVATE-TOKEN': token, Accept: 'application/json' },
+      proxy: typeof via.proxy === 'function' ? await via.proxy() : via.proxy !== undefined ? via.proxy : await directorProxy(api),
+      caFile: via.caFile !== undefined ? via.caFile : companyFile(),
+      platform, ...(via.baseEnv === undefined ? {} : { baseEnv: via.baseEnv }),
+    });
+    if (answer.status === 401) return { refused: true };
+    if (answer.status !== 200) return null;
+    const expires = JSON.parse(answer.body)?.expires_at;
+    if (expires === null) return { expiresAt: null };
+    return typeof expires === 'string' && !Number.isNaN(Date.parse(expires)) ? { expiresAt: expires } : null;
+  } catch {
+    return null;
+  }
+}
+
+// GitLab's answers for a key, kept in the Wheelhouse folder (a date and a short fingerprint of the key, never a key): a
+// day for an answer, fifteen minutes for a call that failed, so a GitLab that is down is not asked on every board load.
+// A refusal (401) is never kept.
+const EXPIRY_FILE = 'host-key-expiry.json';
+const EXPIRY_KEPT_MS = 24 * 60 * 60 * 1000;
+const FAILURE_KEPT_MS = 15 * 60 * 1000;
+const expiryFile = () => path.join(wheelhouseHome(), EXPIRY_FILE);
+const printOf = (token) => (typeof token === 'string' ? crypto.createHash('sha256').update(token).digest('hex').slice(0, 12) : null);
+function keptExpiry(name, at, print) {
+  try {
+    const entry = JSON.parse(fs.readFileSync(expiryFile(), 'utf8'))?.[name];
+    if (typeof entry?.at !== 'number' || (entry.print ?? null) !== print) return null;
+    const age = at - entry.at;
+    if (age < 0) return null;
+    if (entry.failed === true) return age < FAILURE_KEPT_MS ? { failed: true } : null;
+    if (age < EXPIRY_KEPT_MS && (entry.expiresAt === null || typeof entry.expiresAt === 'string')) return { expiresAt: entry.expiresAt };
+  } catch { /* nothing kept */ }
+  return null;
+}
+function keepExpiry(name, at, print, entry) {
+  try {
+    let all = {};
+    try { all = JSON.parse(fs.readFileSync(expiryFile(), 'utf8')) ?? {}; } catch { /* a first one */ }
+    if (entry === undefined) delete all[name]; else all[name] = { at, print, ...entry };
+    fs.mkdirSync(wheelhouseHome(), { recursive: true });
+    fs.writeFileSync(expiryFile(), `${JSON.stringify(all)}\n`, { mode: 0o600 });
+  } catch { /* an answer that could not be kept is asked again */ }
+}
+
+const dueOn = (expiresAt, at) => {
+  if (typeof expiresAt !== 'string') return { due: false };
+  const expiry = Date.parse(expiresAt);
+  if (Number.isNaN(expiry) || expiry - at > NOTICE_MS) return { due: false };
   return { due: true, on: new Date(expiry).toISOString().slice(0, 10) };
+};
+
+// A GitLab connection's renewal. A narrow key's expiry is kept with it; one with none kept (a pasted token) is
+// asked of GitLab. The director's own key (as-is) is borrowed and asked of GitLab. Answers and failures are kept
+// (above). A key GitLab refuses (401) is `key: 'refused'` at once; none to use is `key: 'missing'`.
+async function gitlabRenewal(connection, { now, keys, via }) {
+  const at = timeOf(now);
+  const root = checkBaseUrl(connection.baseUrl ?? DEFAULT_GITLAB);
+  const narrow = connection.mode === 'narrow';
+  const name = `${narrow ? 'narrow' : 'as-is'}|${new URL(root).host}|${connection.project}`;
+  let token;
+  let print = null;
+  if (narrow) {
+    const kept = await findKey(`gitlab-project-${connection.projectId}`, keys);
+    if (!kept || typeof kept.token !== 'string' || kept.token === '') return { due: false, key: 'missing' };
+    if (typeof kept.expiresAt === 'string') return dueOn(kept.expiresAt, at);
+    token = kept.token;
+    print = printOf(token);
+    const known = keptExpiry(name, at, print);
+    if (known !== null) return known.failed ? { due: false } : dueOn(known.expiresAt, at);
+  } else {
+    const known = keptExpiry(name, at, null);
+    if (known !== null) return known.failed ? { due: false } : dueOn(known.expiresAt, at);
+    const lent = await (via.borrow ?? borrowKey)({ host: new URL(root).host, base: root, repoPath: connection.project }).catch(() => null);
+    if (typeof lent?.key !== 'string' || lent.key === '') return backendOf(connection) === 'rest' ? { due: false, key: 'missing' } : { due: false };
+    token = lent.key;
+  }
+  const said = await selfExpiry({ token, root, via });
+  if (said === null) {
+    keepExpiry(name, at, print, { failed: true });
+    return { due: false };
+  }
+  if (said.refused) {
+    keepExpiry(name, at, print, undefined);
+    return { due: false, key: 'refused' };
+  }
+  keepExpiry(name, at, print, { expiresAt: said.expiresAt });
+  return dueOn(said.expiresAt, at);
+}
+
+// Whether the board should raise the connection's renewal: within 14 days of the GitHub renewal key's expiry, or a
+// GitLab key's (kept with it, or from GitLab's own answer). `{ due: false, key: 'refused' | 'missing' }` says the key
+// was refused or there is none, which the board points to setup's step 3 for. `keys` is keys.js's seam and `via`
+// ({ run, curl, proxy, caFile, platform, baseEnv, borrow }) the web API's, both for tests.
+export async function renewalDue(connection, now = () => new Date(), keys, via = {}) {
+  check(connection);
+  if (connection.host === 'gitlab' && (connection.mode === 'narrow' || connection.mode === 'as-is')) {
+    return gitlabRenewal(connection, { now, keys, via });
+  }
+  if (connection.mode !== 'narrow') return { due: false };
+  const app = await findKey('github-app', keys);
+  if (!app) return { due: false, key: 'missing' };
+  return dueOn(app.refreshExpiresAt, timeOf(now));
 }

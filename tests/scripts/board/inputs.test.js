@@ -81,6 +81,24 @@ test('the board says GitLab can\'t be reached when the helper says so for this p
   });
 });
 
+test('a renewal reading that does not answer in time is no line, and does not hold the board', async () => {
+  const home = shortHome();
+  await as(home, async () => {
+    const repo = register(home);
+    writeProject(P, {
+      folder: repo, remoteUrl: 'https://gitlab.example.org/owner/name.git', host: 'gitlab', repo: 'owner/name',
+      connection: { host: 'gitlab', mode: 'as-is', project: 'owner/name', baseUrl: 'https://gitlab.example.org', backend: 'rest' },
+    });
+    const started = Date.now();
+    const inputs = await loadBoardInputs({
+      cwd: repo, client: fakeClient(), address: testAddress(home), now: () => NOW, waitMs: 400,
+      renewalVia: { borrow: () => new Promise(() => {}) },
+    });
+    assert.ok(Date.now() - started < 3000, 'the board came back at its limit');
+    assert.ok(!texts(inputs).some((t) => /key/i.test(t)), 'no key line');
+  });
+});
+
 test('the board says the project\'s tests could be faked, and names each secret, from the plan and gaps kept for GitLab', async () => {
   const FAKED = "the project's tests on the host could be faked with Wheelhouse's key";
   const gap = "DEPLOY_KEY is a project secret that a pipeline on Wheelhouse's own state branch could read";

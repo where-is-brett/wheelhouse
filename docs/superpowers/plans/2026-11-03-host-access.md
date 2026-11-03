@@ -169,8 +169,8 @@
 - Modify: `scripts/host/helper.js` (`backend: 'cli'` at the first start; keys moved from `~/.wheelhouse/keys/` into the store, read back, then the file deleted), `scripts/host/connection.js` (`renewalDue` from the store and from `GET /personal_access_tokens/self`), the board's health lines, `docs/specs/2026-10-17-wheelhouse-design.md` (sections 11, 12.2 and 22 with spec section 15's text), `docs/checks/11-host-helper.md` (a note that the keychain rule is overturned).
 - Tests: `tests/scripts/host/connection.test.js`, `tests/scripts/host/keys.test.js`, the board's health tests.
 
-- [ ] A failed move leaves the file in place and tries again at the next start.
-- [ ] A project set up before this work keeps `gh` or `glab`, with no card.
+- [x] A failed move leaves the file in place and tries again at the next start.
+- [x] A project set up before this work keeps `gh` or `glab`, with no card.
 
 ## Part 10: GitHub REST backend and approve
 

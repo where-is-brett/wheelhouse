@@ -107,6 +107,27 @@ test('the lines come only in their own case', () => {
   assert.deepEqual(texts({ record: { ...moved, connection: { mode: 'as-is', backend: 'rest' } } }), ['Protection: Standard']);
 });
 
+test('a refused or missing host key is said in plain words, pointing to setup\'s step 3', () => {
+  const gitlab = { host: 'gitlab', connection: { mode: 'as-is' } };
+  const github = { host: 'github', connection: { mode: 'as-is' } };
+  assert.deepEqual(healthLines({ ...calm, record: gitlab, renewal: { due: false, key: 'refused' } }).map((l) => [l.level, l.text]), [
+    ['ok', 'Protection: Standard'],
+    ['watch', 'GitLab no longer accepts your key. Ask for step 3 of setup ("check my GitLab connection") and a page will open to make a new one.'],
+  ]);
+  assert.deepEqual(texts({ record: github, renewal: { due: false, key: 'missing' } }), [
+    'Protection: Standard',
+    'There is no GitHub key on this computer. Ask for step 3 of setup ("check my GitHub connection") and a page will open to make one.',
+  ]);
+  // Nothing in either line names the way the web is reached.
+  for (const key of ['refused', 'missing']) {
+    for (const record of [gitlab, github]) {
+      assert.doesNotMatch(texts({ record, renewal: { due: false, key } }).join(' '), /REST|curl/i);
+    }
+  }
+  // A key due for renewal and not refused says the date, as before.
+  assert.deepEqual(texts({ record: gitlab, renewal: { due: true, on: '2026-12-25' } }), ['Protection: Standard', 'Renew the host key by 25 December 2026']);
+});
+
 test('with pages listed and no Chrome found, one line says an approval asks again after an update (F74)', () => {
   const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
   const EDGE = '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge';
