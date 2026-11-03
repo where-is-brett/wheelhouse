@@ -17,7 +17,7 @@ export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal
   const project = `projects/${encodeURIComponent(repo)}`;
   const ask = async (args, input) => json(args, await call(args, input));
 
-  const mergedResults = (sha, { strict = false } = {}) => mergedResultsOf({ get: (path) => ask(['api', path]), project, sha, strict });
+  const mergedResults = (sha, { strict = false } = {}) => mergedResultsOf({ get: (path) => ask(['api', `${project}${path.slice(project.length)}`]), project, sha, strict });
 
   return {
     // The read-only calls of the audit report (gitlab-history.js).
