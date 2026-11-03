@@ -786,6 +786,17 @@ test('an older helper that is slow to close and still answers gives the restarti
   });
 });
 
+test('an older helper whose answer is still pending when the wait ends is not taken for closed', async () => {
+  await withHome(async (home) => {
+    const f = helperOf('0.2.3', () => ({ ok: true, retired: true }));
+    let asked = 0;
+    f.client.health = () => (asked++ === 0 ? Promise.resolve({ ok: true, version: '0.2.3' }) : new Promise(() => {}));
+    const out = text(await run(f, { pluginRoot: ownRoot(home), startWaitMs: 30 }));
+    assert.equal(helperStarts(f), 0);
+    assert.match(out, /older Wheelhouse helper \(version 0\.2\.3\) is restarting/);
+  });
+});
+
 test('a helper of another version than this copy is named in the reload', async () => {
   await withHome(async (home) => {
     const root = path.join(home, 'plugin');
@@ -2105,5 +2116,42 @@ test('a folder being set up is titled Setup', async () => {
     startRun({ folder });
     assert.equal(sessionTitle({ cwd: folder, source: 'startup' }, { projectOf: () => null }), TITLES.setup);
     assert.equal(sessionTitle({ cwd: folder, source: 'startup' }, { projectOf: () => ({ project: P }) }), TITLES.setup, 'a project setup is still finishing');
+  });
+});
+
+test('a compaction\'s start adds the where-you-were digest and clears the gauge\'s episode; a start does not', async () => {
+  await withHome(async (home) => {
+    const dir = path.join(home, 'projects', P, 'sessions');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 's1.md'), 'task: the thing\nnext: the test\n');
+    fs.writeFileSync(path.join(dir, 's1.json'), JSON.stringify({ tokens: 9, preparedAt: '2026-11-03T00:00:00.000Z' }));
+    const views = { ...VIEWS, waiting: [{ id: 'c9', data: { title: 'A card', session_id: 's1' } }] };
+    const started = text(await run(fake({ views }), {}, { source: 'startup' }));
+    assert.doesNotMatch(started, /Where you were/);
+    assert.ok(JSON.parse(fs.readFileSync(path.join(dir, 's1.json'), 'utf8')).preparedAt, 'a start leaves the episode');
+    const out = text(await run(fake({ views }), {}, { source: 'compact' }));
+    assert.match(out, /Where you were, before the compaction \(role: /);
+    assert.match(out, /Your open cards: c9: A card/);
+    assert.match(out, /Your session note \(s1\.md, written .*\):\ntask: the thing\nnext: the test/);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 's1.json'), 'utf8')), { tokens: 9 });
+  });
+});
+
+test('the digest sits inside the reload\'s cap and the lists give way first', async () => {
+  await withHome(async (home) => {
+    const dir = path.join(home, 'projects', P, 'sessions');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 's1.md'), 'note');
+    const waiting = Array.from({ length: 30 }, (_, i) => ({ id: `c${i}`, data: { title: 'x'.repeat(300) } }));
+    const out = text(await run(fake({ views: { ...VIEWS, waiting } }), {}, { source: 'compact' }));
+    assert.ok(out.length <= 9000);
+    assert.match(out, /Your session note/);
+  });
+});
+
+test('a compaction with nothing to say about the session adds no digest, and a failing digest leaves the reload', async () => {
+  await withHome(async () => {
+    const out = text(await run(fake(), {}, { source: 'compact', cwd: 'relative', session_id: '../x' }));
+    assert.doesNotMatch(out, /Where you were/);
   });
 });

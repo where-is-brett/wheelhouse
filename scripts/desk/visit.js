@@ -19,6 +19,7 @@ import { profileDir, stateDir } from '../lib/paths.js';
 import { BRIEFING_GAP_HOURS } from '../lib/core-numbers.js';
 import { wordsOf } from './context.js';
 import { readProject } from '../lib/projects.js';
+import { chosenWindow } from '../settings/compact-window-pr.js';
 import { switchDue, engineChosen, engineReady, SWITCH_SETTING } from '../engine/switch.js';
 import { engineWanted } from '../engine/parts.js';
 
@@ -100,6 +101,8 @@ export async function visitLearning({ project, cwd, client, at, boardAsks, platf
   // Off the Mac the engine never runs, so the switch's steps are left to a Mac.
   const switching = engineWanted({ platform }) && record?.host === 'github' && attempt(() => engineChosen(views.settings, { now: at }) && !engineReady(project), false);
   if (switching) await tried(() => client.engineSwitch({ cwd }));
+  // The compaction window the director chose reaches the project's settings file the same way: each visit asks for the next step.
+  if (attempt(() => chosenWindow(views.settings, { now: at }) !== null, false)) await tried(() => client.compactWindow({ cwd }));
 }
 
 // The survey a second look follows (one taken again after the host was missed), when a briefing or

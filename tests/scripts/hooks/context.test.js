@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { contextSize, decide as gauge, updateSession } from '../../../scripts/hooks/context-gauge.js';
-import { decide as guard } from '../../../scripts/hooks/precompact-guard.js';
+import { decide as onTool } from '../../../scripts/hooks/feature-status.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 
 const temp = (prefix) => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
@@ -107,6 +107,27 @@ test('a transcript it cannot read gives null and the gauge says nothing', async 
   });
 });
 
+test('the gauge takes its prepare point from the project\'s compactPrepare setting', async () => {
+  await withHome(async (home) => {
+    const { base, main } = makeProject();
+    try {
+      const view = path.join(path.dirname(path.dirname(sessionFile(home, 's1'))), 'views', 'settings.json');
+      const at = (n) => writeTranscript(base, [assistant(usage(0, n, 0))]);
+      const say = async (n) => (await gauge({ cwd: main, session_id: 's1', transcript_path: at(n) }, {})).hookSpecificOutput.additionalContext;
+      assert.match(await say(150000), /^Context: about 150k tokens\.$/);
+      fs.mkdirSync(path.dirname(view), { recursive: true });
+      fs.writeFileSync(view, JSON.stringify({ compactPrepare: { value: 150000 } }));
+      assert.match(await say(150000), /save state/);
+      assert.doesNotMatch(await say(149000), /save state/);
+      fs.writeFileSync(view, JSON.stringify({ compactPrepare: { value: 50 } }));
+      assert.doesNotMatch(await say(150000), /save state/);
+      assert.match(await say(200000), /save state/);
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
+
 test('the gauge asks to save state from 200,000 tokens', async () => {
   await withHome(async (home) => {
     const { base, main } = makeProject();
@@ -141,128 +162,58 @@ test('the gauge asks to save state from 200,000 tokens', async () => {
   });
 });
 
-const marker = (main, id) => path.join(main, '.claude', 'state', `unsaved-${id}`);
-const unsave = (main, id) => {
-  fs.mkdirSync(path.dirname(marker(main, id)), { recursive: true });
-  fs.writeFileSync(marker(main, id), '');
-};
-const compact = (main, extra = {}) => ({ cwd: main, session_id: 's1', trigger: 'auto', ...extra });
-const blocked = (out) => out?.decision === 'block';
+const toolCall = (main, file, id = 's1') => ({ hook_event_name: 'PostToolUse', cwd: main, session_id: id, transcript_path: file });
 
-test('the guard blocks an automatic compaction while work is unsaved', async () => {
-  await withHome(async () => {
-    const { base, main } = makeProject();
-    try {
-      const t0 = new Date('2026-10-18T01:00:00.000Z');
-      assert.equal(await guard(compact(main), { now: () => t0 }), undefined);
-      unsave(main, 's1');
-      const out = await guard(compact(main), { now: () => t0 });
-      assert.ok(blocked(out));
-      assert.equal(typeof out.reason, 'string');
-      // Another session's marker does not count.
-      assert.equal(await guard(compact(main, { session_id: 's2' }), { now: () => t0 }), undefined);
-      // A marker that is a symlink, even a dangling one, still counts.
-      fs.rmSync(marker(main, 's1'));
-      fs.symlinkSync(path.join(base, 'nowhere'), marker(main, 's1'));
-      assert.ok(blocked(await guard(compact(main), { now: () => new Date(t0.getTime() + 1000) })));
-      // Not in a Wheelhouse project: nothing.
-      assert.equal(await guard(compact(base), { now: () => t0 }), undefined);
-    } finally {
-      fs.rmSync(base, { recursive: true, force: true });
-    }
-  });
-});
-
-test('the guard gives up two minutes after its first block, and near the limit', async () => {
+test('a tool call speaks once per episode, at the prepare point, and records preparedAt', async () => {
   await withHome(async (home) => {
     const { base, main } = makeProject();
     try {
-      const t0 = new Date('2026-10-18T01:00:00.000Z');
-      const at = (ms) => ({ now: () => new Date(t0.getTime() + ms) });
-      unsave(main, 's1');
-      assert.ok(blocked(await guard(compact(main), at(0))));
-      assert.ok(JSON.parse(fs.readFileSync(sessionFile(home, 's1'), 'utf8')).firstBlockAt);
-      assert.ok(blocked(await guard(compact(main), at(119999))));
-      assert.equal(await guard(compact(main), at(120000)), undefined);
-
-      // Near the limit lets it through at once, and a lower reading does not.
-      unsave(main, 's2');
-      const file = sessionFile(home, 's2');
-      fs.writeFileSync(file, JSON.stringify({ tokens: 359999 }));
-      assert.ok(blocked(await guard(compact(main, { session_id: 's2' }), at(0))));
-      assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).tokens, 359999);
-      unsave(main, 's3');
-      fs.mkdirSync(path.dirname(sessionFile(home, 's3')), { recursive: true });
-      fs.writeFileSync(sessionFile(home, 's3'), JSON.stringify({ tokens: 360000 }));
-      assert.equal(await guard(compact(main, { session_id: 's3' }), at(0)), undefined);
-
-      // No reading: no near-the-limit escape, but the two-minute one applies.
-      unsave(main, 's4');
-      assert.ok(blocked(await guard(compact(main, { session_id: 's4' }), at(0))));
-      assert.equal(await guard(compact(main, { session_id: 's4' }), at(130000)), undefined);
-
-      // A reading and the first-block time live in the same file.
-      const kept = JSON.parse(fs.readFileSync(file, 'utf8'));
-      assert.equal(kept.tokens, 359999);
-      assert.ok(kept.firstBlockAt);
+      let ms = Date.parse('2026-11-03T00:00:00Z');
+      const now = () => new Date(ms);
+      const low = writeTranscript(base, [assistant(usage(0, 150000, 0))]);
+      assert.equal(await onTool(toolCall(main, low), { now }), undefined);
+      assert.equal(JSON.parse(fs.readFileSync(sessionFile(home, 's1'), 'utf8')).preparedAt, undefined);
+      const high = writeTranscript(base, [assistant(usage(0, 230000, 0))]);
+      // Read within five seconds: the transcript is not read again.
+      ms += 4000;
+      assert.equal(await onTool(toolCall(main, high), { now }), undefined);
+      ms += 2000;
+      const out = await onTool(toolCall(main, high), { now });
+      assert.equal(out.hookSpecificOutput.hookEventName, 'PostToolUse');
+      assert.equal(out.hookSpecificOutput.additionalContext, 'Context is about 230k tokens. Finish this step, commit, write your session note, then carry on.');
+      const stored = JSON.parse(fs.readFileSync(sessionFile(home, 's1'), 'utf8'));
+      assert.equal(stored.tokens, 230000);
+      assert.ok(stored.preparedAt);
+      ms += 60000;
+      assert.equal(await onTool(toolCall(main, high), { now }), undefined);
+      // A reset (part 3 clears preparedAt on compaction) lets it speak again.
+      updateSession(sessionFile(home, 's1'), { preparedAt: undefined });
+      assert.ok(await onTool(toolCall(main, high), { now }));
     } finally {
       fs.rmSync(base, { recursive: true, force: true });
     }
   });
 });
 
-test('the guard never blocks a manual compaction', async () => {
+test('a tool call says nothing without a reading, a project or a usable session id, and UserPromptSubmit is unchanged', async () => {
   await withHome(async () => {
     const { base, main } = makeProject();
     try {
-      unsave(main, 's1');
-      assert.equal(await guard(compact(main, { trigger: 'manual' }), {}), undefined);
-      assert.equal(await guard(compact(main, { trigger: undefined }), {}), undefined);
-    } finally {
-      fs.rmSync(base, { recursive: true, force: true });
-    }
-  });
-});
-
-test('a later compaction in the same session is blocked again', async () => {
-  await withHome(async (home) => {
-    const { base, main } = makeProject();
-    try {
-      const t0 = new Date('2026-10-18T01:00:00.000Z');
-      const at = (ms) => ({ now: () => new Date(t0.getTime() + ms) });
-      unsave(main, 's1');
-      assert.ok(blocked(await guard(compact(main), at(0))));
-      assert.equal(await guard(compact(main), at(125000)), undefined);
-      assert.equal(JSON.parse(fs.readFileSync(sessionFile(home, 's1'), 'utf8')).firstBlockAt, undefined);
-      assert.ok(blocked(await guard(compact(main), at(3 * 3600000))));
-      // Letting one through because nothing is unsaved clears it too.
-      fs.rmSync(marker(main, 's1'));
-      assert.equal(await guard(compact(main), at(3 * 3600000 + 1000)), undefined);
-      assert.equal(JSON.parse(fs.readFileSync(sessionFile(home, 's1'), 'utf8')).firstBlockAt, undefined);
-      // And so does the near-the-limit escape.
-      unsave(main, 's1');
-      assert.ok(blocked(await guard(compact(main), at(6 * 3600000))));
-      updateSession(sessionFile(home, 's1'), { tokens: 370000 });
-      assert.equal(await guard(compact(main), at(6 * 3600000 + 1000)), undefined);
-      assert.equal(JSON.parse(fs.readFileSync(sessionFile(home, 's1'), 'utf8')).firstBlockAt, undefined);
-    } finally {
-      fs.rmSync(base, { recursive: true, force: true });
-    }
-  });
-});
-
-test('the marker is looked for at the root of the worktree holding cwd', async () => {
-  await withHome(async () => {
-    const { base, main } = makeProject();
-    try {
-      const sub = path.join(main, 'src', 'deep');
-      fs.mkdirSync(sub, { recursive: true });
-      unsave(main, 's1');
-      assert.ok(blocked(await guard(compact(sub), { now: () => new Date() })));
-      // A marker only in the subfolder does not count.
-      fs.rmSync(marker(main, 's1'));
-      unsave(sub, 's1');
-      assert.equal(await guard(compact(sub), { now: () => new Date() }), undefined);
+      const high = writeTranscript(base, [assistant(usage(0, 230000, 0))]);
+      assert.equal(await onTool(toolCall(main, path.join(base, 'missing.jsonl')), {}), undefined);
+      assert.equal(await onTool(toolCall(main, high, '../evil'), {}), undefined);
+      assert.equal(await onTool({ hook_event_name: 'PostToolUse', cwd: 5 }, {}), undefined);
+      const other = temp('wh-ctx-other-');
+      try {
+        assert.equal(await onTool(toolCall(other, high), {}), undefined);
+      } finally {
+        fs.rmSync(other, { recursive: true, force: true });
+      }
+      // Other events never prepare through the feature-status hook.
+      assert.equal(await onTool({ ...toolCall(main, high), hook_event_name: 'Stop' }, {}), undefined);
+      const out = await gauge({ cwd: main, session_id: 's1', transcript_path: high }, {});
+      assert.equal(out.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
+      assert.match(out.hookSpecificOutput.additionalContext, /save state/);
     } finally {
       fs.rmSync(base, { recursive: true, force: true });
     }

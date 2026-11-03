@@ -66,7 +66,7 @@ import {
   TRUST_LINE, TAKEOVER_LABEL, TAKEOVER_LINE, PAIR_LINE, UNPAIR_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine, KEEP_CONTROL_LINE, keepControlLine, USAGE_LINE, PREMIUM_LINE, START_GOAL_LINE,
 } from '../state/card-lines.js';
 import {
-  keepClick, shownHash, keepAnswer, askedFor, claimAnswer, releaseAnswer, keepUninstallClick, shownUninstall, typedVerdict, typedBefore, keepSetupRecords,
+  keepClick, shownHash, keepAnswer, askedFor, claimAnswer, releaseAnswer, keepUninstallClick, shownUninstall, typedVerdict, typedBefore, keepSetupRecords, sameWords,
 } from '../lib/setup-clicks.js';
 import { setupRecordsOf } from '../lib/setup-writes.js';
 import { settingWords } from '../settings/effective.js';
@@ -528,13 +528,19 @@ function setupClickOf(cwd, { question, label, card }) {
 // one setup asked, for a folder holding this session's folder, and the answer is one of its own
 // options, never Explain more or Not now, or, on a card that takes one, typed text in which no
 // secret is found. The record names the run and step the question was asked for, and its id.
+// The card is matched as it reads (sameWords: the session may write it out with other line breaks or
+// quote marks), and the record carries the asked card's own question and label, which the helper matches exactly.
 // Gives { made, asked }: the record to sign and the asked record it answers.
 function setupAnswerOf(cwd, { question, label, card, signable, typed }) {
   if (PUT_OFF.includes(label) || !(signable || typed)) return null;
   const asked = askedFor({ cwd, card });
-  if (asked === null || asked.card.question !== question) return null;
-  const data = { action: 'setup-answer', runId: asked.runId, step: asked.step, questionId: asked.id, question };
-  if (signable) return { asked, made: { kind: 'action', data: { ...data, label, text: null } } };
+  if (asked === null || sameWords(asked.card.question) !== sameWords(question)) return null;
+  const data = { action: 'setup-answer', runId: asked.runId, step: asked.step, questionId: asked.id, question: asked.card.question };
+  if (signable) {
+    const own = asked.card.options.find((o) => sameWords(o.label) === sameWords(label));
+    if (own === undefined || PUT_OFF.includes(own.label)) return null;
+    return { asked, made: { kind: 'action', data: { ...data, label: own.label, text: null } } };
+  }
   if (label.trim() === '' || scanContent(label).length > 0) return null;
   return { asked, made: { kind: 'action', data: { ...data, label: null, text: label } } };
 }

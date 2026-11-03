@@ -278,7 +278,10 @@ export function questionsStep() {
       // The new engine builds on GitHub only (Archon design, section 16): a GitLab project stays on the old engine.
       const onGitlab = project?.record?.host === 'gitlab' || chosenHost(answers) === 'gitlab';
       const asked = productAsk(name, { described: readmeDescription(ctx.folder), realUsers, engine: !onGitlab && engineWanted({ platform: ctx.platform ?? process.platform }) });
-      const product = answers[`4.${asked.id}`];
+      // The description doesn't depend on the phase: an answer given under the other phase's id
+      // (the card was asked before the real-users answer settled) stands, and the phase recorded follows real-users.
+      const other = `product-${realUsers ? PHASE.before : PHASE.launched}`;
+      const product = answers[`4.${asked.id}`] ?? answers[`4.${other}`];
       if (!product) return { ask: asked };
       const live = answers['4.live-data'];
       if (!live) return { ask: liveDataAsk(name, { isNew: newProduct(ctx, project) }) };

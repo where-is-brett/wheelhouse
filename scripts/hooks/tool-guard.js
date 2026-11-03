@@ -26,7 +26,7 @@ import { wheelhouseHome, archonHome } from '../lib/paths.js';
 import { projectForFolder, registeredProjects } from '../lib/projects.js';
 import { queueFolderOf, queueProjectOf } from '../engine/queue-place.js';
 import { matchGlob } from '../gate/glob.js';
-import { readConfig } from '../gate/guardrails.js';
+import { readConfig, withoutBom } from '../gate/guardrails.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { NESTED_PACKAGES, NESTED_REFUSED } from '../agents/programs.js';
 import { ARCHON_PROGRAMS, ENGINE_ROOM_PORT, ownRun, placeInHome } from '../protection/archon.js';
@@ -884,7 +884,7 @@ function mcpJsonNamesAppServer(file) {
     return !['ENOENT', 'ENOTDIR'].includes(error?.code);
   }
   try {
-    const servers = JSON.parse(text)?.mcpServers;
+    const servers = JSON.parse(withoutBom(text))?.mcpServers;
     if (servers === undefined) return false;
     if (servers === null || typeof servers !== 'object' || Array.isArray(servers)) return true;
     return namesAppServer(Object.keys(servers));

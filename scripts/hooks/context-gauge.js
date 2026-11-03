@@ -1,6 +1,6 @@
 // scripts/hooks/context-gauge.js
 // Tells the model how full its context is, each turn, and keeps the reading for
-// the PreCompact guard. The transcript's format is Claude Code's own and may
+// later turns. The transcript's format is Claude Code's own and may
 // change, so anything unexpected gives no reading and the hook says nothing.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -10,8 +10,21 @@ import { projectForFolder } from '../lib/projects.js';
 import { wheelhouseHome } from '../lib/paths.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
+// The fallback; the point follows the project's `compactPrepare` setting when it has one.
 export const SAVE_FROM = 200000;
 export const SAVE_NOTE = 'Finish this step, save state, then carry on.';
+
+// The point to prepare at: the project's `compactPrepare` setting in force (its settings view), else SAVE_FROM.
+export function prepareAt(project) {
+  try {
+    const view = JSON.parse(fs.readFileSync(path.join(wheelhouseHome(), 'projects', project, 'views', 'settings.json'), 'utf8'));
+    const value = view?.compactPrepare?.value;
+    if (Number.isInteger(value) && value >= 100000 && value <= 290000) return value;
+  } catch {
+    // No settings view yet: the default.
+  }
+  return SAVE_FROM;
+}
 
 const count = (v) => (Number.isFinite(v) && v >= 0 ? v : null);
 
@@ -87,7 +100,36 @@ export async function decide(input, { dir, now = () => new Date() } = {}) {
     }
   }
   const text = `Context: about ${Math.floor(tokens / 1000)}k tokens.`;
-  return answer.context('UserPromptSubmit', tokens >= SAVE_FROM ? `${text} ${SAVE_NOTE}` : text);
+  return answer.context('UserPromptSubmit', tokens >= prepareAt(project) ? `${text} ${SAVE_NOTE}` : text);
+}
+
+// Read at most once every five seconds per session on a tool call.
+export const TOOL_READ_MS = 5000;
+
+// PostToolUse: speaks once per episode, the first time the context is at or past the prepare point,
+// and records `preparedAt` in the session file (a compaction resets it). Cheap when it has nothing to say:
+// a session already prepared, or read within the last five seconds, costs one small file read.
+export function prepareOnToolUse(input, { dir, now = () => new Date() } = {}) {
+  try {
+    if (typeof input?.cwd !== 'string') return undefined;
+    const project = projectNameOf(input.cwd, dir);
+    if (project === null) return undefined;
+    const file = sessionFile(project, input.session_id);
+    if (file === null) return undefined;
+    const session = readSession(file);
+    if (session.preparedAt !== undefined) return undefined;
+    const nowMs = now().getTime();
+    const last = Date.parse(session.at);
+    if (Number.isFinite(last) && nowMs >= last && nowMs - last < TOOL_READ_MS) return undefined;
+    const tokens = contextSize(input.transcript_path);
+    if (tokens === null) return undefined;
+    const due = tokens >= prepareAt(project);
+    updateSession(file, { tokens, at: now().toISOString(), ...(due ? { preparedAt: now().toISOString() } : {}) });
+    if (!due) return undefined;
+    return answer.context('PostToolUse', `Context is about ${Math.floor(tokens / 1000)}k tokens. Finish this step, commit, write your session note, then carry on.`);
+  } catch {
+    return undefined;
+  }
 }
 
 if (startedAsScript(import.meta.url)) {

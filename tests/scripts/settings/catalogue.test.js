@@ -26,6 +26,7 @@ test('every setting in design section 14 is in the catalogue, with its default',
     hours: ['profile', null],
     roundCap: ['project', 3],
     compactPrepare: ['project', 200000],
+    compactWindow: ['project', 300000],
     delegationReviewDays: ['project', 14],
     unusualFactor: ['project', UNUSUAL.factor],
     sources: ['project', DEFAULT_SOURCES.map((source) => source.url)],
@@ -68,6 +69,10 @@ test('a level outside a setting\'s list is refused in plain words', () => {
   assert.throws(() => checkSetting('roundCap', 6), /roundCap can't be 6/);
   assert.throws(() => checkSetting('compactPrepare', 99999), /can't be 99999/);
   assert.throws(() => checkSetting('compactPrepare', 290001), /can't be 290001/);
+  assert.throws(() => checkSetting('compactWindow', 199999), /can't be 199999/);
+  assert.throws(() => checkSetting('compactWindow', 1000001), /can't be 1000001/);
+  assert.throws(() => checkSetting('compactWindow', 320000.5), /can't be 320000.5/);
+  assert.doesNotThrow(() => checkSetting('compactWindow', 320000));
   assert.throws(() => checkSetting('delegationReviewDays', 6), /can't be 6/);
   assert.throws(() => checkSetting('unusualFactor', 11), /can't be 11/);
   assert.throws(() => checkSetting('unusualFactor', 1), /can't be 1/);

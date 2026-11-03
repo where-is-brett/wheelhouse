@@ -17,6 +17,7 @@
 //   weekly.lock   held while the job runs, so two sessions starting together run it once
 import fs from 'node:fs';
 import path from 'node:path';
+import { withoutBom } from '../gate/guardrails.js';
 import { jobsDir, projectsDir } from '../lib/paths.js';
 import { WEEK_MS } from '../lib/core-numbers.js';
 import { registeredProjects } from '../lib/projects.js';
@@ -131,7 +132,7 @@ function readConfig(folder) {
     const file = path.join(dir, 'wheelhouse.json');
     if (!fs.lstatSync(dir).isDirectory() || fs.lstatSync(file).isSymbolicLink()) return undefined;
     const text = readSmallText(file, CONFIG_MAX_BYTES);
-    return text === null ? undefined : JSON.parse(text);
+    return text === null ? undefined : JSON.parse(withoutBom(text));
   } catch {
     return undefined;
   }

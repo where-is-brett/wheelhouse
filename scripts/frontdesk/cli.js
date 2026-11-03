@@ -81,10 +81,12 @@ import { confirmWords } from '../state/card-lines.js';
 import { joinersOf } from '../state/joiners.js';
 import { cardsForVisit, existingCard, cardNumbered, asQuestion, importanceOf, IMPORTANCE } from '../cards/visit.js';
 import { controlFileInput, controlFilesDue, controlFilesNamed, gateAsksDue, gateInput, holdInput, holdsDue, premiumFailuresDue, stillWaits, withPutBack } from '../cards/build-loop.js';
+import { COMPACT_NAME, COMPACT_WORK } from '../settings/compact-window-pr.js';
 import { SWITCH_NAME, SWITCH_WORK } from '../engine/switch.js';
 import { failedInput } from '../routing/premium.js';
 import { heldByNotNow, numberedWaiting } from '../board/model.js';
 import { glossaryOf, knownConcepts, plainWords, termPattern } from './glossary.js';
+import { windowRefusal } from '../settings/compact-window.js';
 import { checkSetting, definitionOf, KNOWN, SETTINGS, WINDOWS_BUILD_COMMANDS, OWN_GITHUB_APP_KEY } from '../settings/catalogue.js';
 import { CARD, OFFER_ASK } from '../lib/front-desk.js';
 import { effectiveSettings, levelWords, settingsText, settingWords } from '../settings/effective.js';
@@ -359,7 +361,7 @@ const blindGivesWay = (id, data, views) => importanceOf({ data: { kind: 'answer'
 function gateCard(entry, views, words) {
   const work = entry.data.work;
   // The switch to the new engine's pull request is no piece of work (scripts/engine/switch.js), so it is named for what it does.
-  const title = work === SWITCH_WORK ? SWITCH_NAME : flat(views.work?.[work]?.work?.data?.title);
+  const title = work === SWITCH_WORK ? SWITCH_NAME : work === COMPACT_WORK ? COMPACT_NAME : flat(views.work?.[work]?.work?.data?.title);
   let refusal = null;
   for (const name of [...new Set([title || work, work, 'this work'])]) {
     try {
@@ -990,6 +992,15 @@ export async function record({ client, cwd, kind, input, now, ready, makeId = ()
       checkSetting(input.key, input.value, input.until);
     } catch (error) {
       throw new CliError(error.message);
+    }
+    // The compaction window and the point to prepare at must fit: the window stays the larger.
+    if (input.key === 'compactWindow' || input.key === 'compactPrepare') {
+      const seen = (await viewsOf(client, cwd)).views.settings;
+      const project = isPlain(seen) ? seen : {};
+      const window = input.key === 'compactWindow' ? input.value : project.compactWindow?.value ?? SETTINGS.compactWindow.default;
+      const prepare = input.key === 'compactPrepare' ? input.value : project.compactPrepare?.value ?? SETTINGS.compactPrepare.default;
+      const refusal = windowRefusal({ window, prepare });
+      if (refusal !== null) throw new CliError(refusal);
     }
     // Only what the setting is: its words are made from it, and a reason marks a learnt one.
     const data = { key: input.key, value: input.value, ...(input.until === undefined ? {} : { until: input.until }),
