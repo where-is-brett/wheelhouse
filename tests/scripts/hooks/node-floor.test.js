@@ -114,3 +114,101 @@ test('a hook that fails to load fails as it would started directly', () => {
   const none = spawnSync(process.execPath, [FLOOR], { input: '{}', encoding: 'utf8' });
   assert.equal(none.status, 1);
 });
+
+// A fake `node`: a shell script that answers --version with the given version and otherwise
+// prints what it was given (its arguments, the marker variable, its input) and exits 7.
+function fakeNode(file, version) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, [
+    '#!/bin/sh',
+    `if [ "$1" = "--version" ]; then echo ${version}; exit 0; fi`,
+    'printf "ran:%s|rerun=%s|extra=%s|input=%s" "$*" "$WHEELHOUSE_NODE_FLOOR_RERUN" "$EXTRA" "$(cat)"',
+    'exit 7',
+  ].join('\n'), { mode: 0o755 });
+  return file;
+}
+
+const posix = process.platform !== 'win32';
+const PRETEND_OLD = "Object.defineProperty(process, 'versions', { value: { node: '16.20.0' }, configurable: true });";
+
+function withHome(body) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'node-floor-home-'));
+  try {
+    body(home);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+
+test('an installed Node.js of 22 or later is found in the common places, the newest first', { skip: !posix }, () => {
+  withHome((home) => {
+    const nvm = path.join(home, '.nvm', 'versions', 'node');
+    fakeNode(path.join(nvm, 'v16.20.0', 'bin', 'node'), 'v16.20.0');
+    fakeNode(path.join(nvm, 'v22.4.0', 'bin', 'node'), 'v22.4.0');
+    const newest = fakeNode(path.join(nvm, 'v99.1.0', 'bin', 'node'), 'v99.1.0');
+    fakeNode(path.join(home, '.volta', 'bin', 'node'), 'v22.9.0');
+    assert.equal(floor.findFittingNode({ env: {}, platform: 'linux', home, system: [] }), newest);
+    assert.equal(floor.findFittingNode({ env: { NVM_DIR: path.join(home, '.nvm') }, platform: 'darwin', home: path.join(home, 'none'), system: [] }), newest);
+  });
+});
+
+test('a Node.js older than 22 is never chosen, and nothing found gives null', { skip: !posix }, () => {
+  withHome((home) => {
+    fakeNode(path.join(home, '.nvm', 'versions', 'node', 'v20.9.0', 'bin', 'node'), 'v20.9.0');
+    fakeNode(path.join(home, '.volta', 'bin', 'node'), 'v18.1.0');
+    assert.equal(floor.findFittingNode({ env: {}, platform: 'darwin', home, system: [] }), null);
+    assert.equal(floor.findFittingNode({ env: {}, platform: 'linux', home: path.join(home, 'empty'), system: [] }), null);
+  });
+});
+
+test('the fnm and asdf folders are looked in', { skip: !posix }, () => {
+  withHome((home) => {
+    const fnm = fakeNode(path.join(home, '.local', 'share', 'fnm', 'node-versions', 'v23.0.0', 'installation', 'bin', 'node'), 'v23.0.0');
+    assert.equal(floor.findFittingNode({ env: {}, platform: 'linux', home, system: [] }), fnm);
+    fs.rmSync(path.join(home, '.local'), { recursive: true });
+    const asdf = fakeNode(path.join(home, '.asdf', 'installs', 'nodejs', '22.1.0', 'bin', 'node'), 'v22.1.0');
+    assert.equal(floor.findFittingNode({ env: {}, platform: 'linux', home, system: [] }), asdf);
+  });
+});
+
+test('on Windows the folders are NVM_HOME, the program folders and Volta', () => {
+  const places = floor.candidates({
+    env: { NVM_HOME: 'C:\\nvm', APPDATA: 'C:\\Users\\d\\AppData\\Roaming', ProgramFiles: 'C:\\Program Files', LOCALAPPDATA: 'C:\\Users\\d\\AppData\\Local' },
+    platform: 'win32',
+    home: 'C:\\Users\\d',
+    list: () => [],
+  }).map((c) => c.file.replace(/\\/g, '/'));
+  for (const wanted of ['Program Files/nodejs/node.exe', 'AppData/Local/Programs/nodejs/node.exe', 'AppData/Local/Volta/bin/node.exe']) {
+    assert.ok(places.some((p) => p.endsWith(wanted)), wanted);
+  }
+});
+
+test('too old a Node.js re-runs the check with a fitting one: arguments, input, environment and exit code', { skip: !posix }, () => {
+  withHome((home) => {
+    fakeNode(path.join(home, '.nvm', 'versions', 'node', 'v99.5.0', 'bin', 'node'), 'v99.5.0');
+    const old = path.join(home, 'old.cjs');
+    fs.writeFileSync(old, PRETEND_OLD);
+    const ran = spawnSync(process.execPath, ['--require', old, FLOOR, '/some/hook.js'], {
+      input: '{"hook_event_name":"PreToolUse"}',
+      encoding: 'utf8',
+      env: { PATH: process.env.PATH, HOME: home, EXTRA: 'kept' },
+    });
+    assert.equal(ran.status, 7, ran.stderr);
+    assert.equal(ran.stdout, `ran:${FLOOR} /some/hook.js|rerun=1|extra=kept|input={"hook_event_name":"PreToolUse"}`);
+  });
+});
+
+test('a marked re-run does not search again, and with nothing fitting the refusal stands', { skip: !posix }, () => {
+  withHome((home) => {
+    fakeNode(path.join(home, '.nvm', 'versions', 'node', 'v99.5.0', 'bin', 'node'), 'v99.5.0');
+    const old = path.join(home, 'old.cjs');
+    fs.writeFileSync(old, PRETEND_OLD);
+    const input = '{"hook_event_name":"PreToolUse"}';
+    const marked = spawnSync(process.execPath, ['--require', old, FLOOR, '/some/hook.js'], {
+      input, encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home, WHEELHOUSE_NODE_FLOOR_RERUN: '1' },
+    });
+    assert.equal(marked.status, 2);
+    assert.match(marked.stderr, /this computer has version 16\.20\.0/);
+    assert.equal(floor.findFittingNode({ env: {}, platform: 'linux', home: path.join(home, 'empty'), system: [] }), null);
+  });
+});
