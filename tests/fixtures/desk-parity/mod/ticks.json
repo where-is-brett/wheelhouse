@@ -7,7 +7,7 @@
       "v": 1,
       "project": "owner__name",
       "at": "2026-10-29T12:00:00.000Z",
-      "glance": "Wheelhouse · 1 waiting",
+      "glance": "1 waiting",
       "stop": {
         "on": false,
         "since": null
@@ -117,8 +117,8 @@
         "The build loop isn't running yet"
       ]
     },
-    "glance": "Wheelhouse · 1 waiting",
-    "status": "Wheelhouse · 1 waiting"
+    "glance": "1 waiting",
+    "status": "1 waiting"
   },
   "added": {
     "ok": true,
@@ -128,7 +128,7 @@
       "v": 1,
       "project": "owner__name",
       "at": "2026-10-29T12:00:15.000Z",
-      "glance": "Wheelhouse · 2 waiting",
+      "glance": "2 waiting",
       "stop": {
         "on": false,
         "since": null
@@ -267,8 +267,8 @@
         "The build loop isn't running yet"
       ]
     },
-    "glance": "Wheelhouse · 2 waiting",
-    "status": "Wheelhouse · 2 waiting",
+    "glance": "2 waiting",
+    "status": "2 waiting",
     "submit": [
       "Wheelhouse: 1 waiting on you: card 2."
     ],
@@ -285,7 +285,7 @@
       "v": 1,
       "project": "owner__name",
       "at": "2026-10-29T12:00:30.000Z",
-      "glance": "Wheelhouse · 2 waiting · All stop on",
+      "glance": "2 waiting · All stop on",
       "stop": {
         "on": true,
         "since": "2026-10-29T12:00:30.000Z"
@@ -430,8 +430,8 @@
         "The build loop isn't running yet"
       ]
     },
-    "glance": "Wheelhouse · 2 waiting · All stop on",
-    "status": "Wheelhouse · 2 waiting · All stop on",
+    "glance": "2 waiting · All stop on",
+    "status": "2 waiting · All stop on",
     "submit": [
       "Wheelhouse: All stop is on."
     ],
@@ -448,7 +448,7 @@
       "v": 1,
       "project": "owner__name",
       "at": "2026-10-29T12:00:45.000Z",
-      "glance": "Wheelhouse · 1 waiting",
+      "glance": "1 waiting",
       "stop": {
         "on": false,
         "since": null
@@ -558,7 +558,7 @@
         "The build loop isn't running yet"
       ]
     },
-    "glance": "Wheelhouse · 1 waiting",
-    "status": "Wheelhouse · 1 waiting"
+    "glance": "1 waiting",
+    "status": "1 waiting"
   }
 }

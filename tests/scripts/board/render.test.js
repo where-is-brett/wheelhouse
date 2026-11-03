@@ -197,7 +197,7 @@ test('text from events never becomes a link or a heading on the board', () => {
 });
 
 test('the glance line keeps to 80 characters and leaves out parts with nothing to say', () => {
-  assert.equal(glanceLine(fullModel()), 'Wheelhouse · 2 waiting · 3 building · launch 1 of 3 · week 34% · All stop on');
+  assert.equal(glanceLine(fullModel()), '2 waiting · 3 building · launch 1 of 3 · week 34% · All stop on');
   const calm = fullModel();
   calm.director.waiting = [];
   calm.director.health = [{ level: 'stop', text: 'Incident i1 is open, so nothing merges: x' }];
@@ -208,8 +208,25 @@ test('the glance line keeps to 80 characters and leaves out parts with nothing t
   const many = fullModel();
   many.director.waiting = Array.from({ length: 789 }, (_, i) => ({ n: i + 1, what: 'x', since: null }));
   many.director.budget.share = 99.6;
-  assert.equal(glanceLine(many), 'Wheelhouse · 789 waiting · 3 building · launch 1 of 3 · week 100% · All stop on');
+  assert.equal(glanceLine(many), '789 waiting · 3 building · launch 1 of 3 · week 100% · All stop on');
   for (const m of [fullModel(), calm, many]) assert.ok(glanceLine(m).length <= 80);
+});
+
+test('the glance leaves out the name whenever another part is there', () => {
+  const only = fullModel();
+  only.director.waiting = [];
+  only.director.health = [];
+  only.build.features = [];
+  only.director.launch = { phase: null, resolved: 0, total: 0, blockers: [], next: [] };
+  only.director.budget.share = 47.2;
+  assert.equal(glanceLine(only), 'week 47%');
+  only.director.waiting = [{ n: 1, what: 'x', since: null }, { n: 2, what: 'y', since: null }];
+  assert.equal(glanceLine(only), '2 waiting · week 47%');
+  only.director.waiting = [];
+  only.director.health = [{ level: 'stop', text: 'All stop is on, since 18 October 2026' }];
+  only.director.budget.share = null;
+  assert.equal(glanceLine(only), 'All stop on');
+  assert.ok(!/^Wheelhouse/.test(glanceLine(fullModel())));
 });
 
 test('the glance carries launch progress while blockers are open', () => {
@@ -226,16 +243,16 @@ test('the glance drops the week\'s share first, then launch, to stay within 80 c
   const m = fullModel();
   m.director.waiting = Array.from({ length: 12345 }, (_, i) => ({ n: i + 1, what: 'x', since: null }));
   m.director.launch = { phase: 'before-launch', resolved: 1, total: 3, blockers: [], next: [] };
-  const full = 'Wheelhouse · 12345 waiting · 3 building · launch 1 of 3 · week 34% · All stop on';
+  const full = '12345 waiting · 3 building · launch 1 of 3 · week 34% · All stop on';
   assert.equal(glanceLine(m), full);
-  m.director.launch.resolved = 10;
-  m.director.launch.total = 99999;
-  const noWeek = 'Wheelhouse · 12345 waiting · 3 building · launch 10 of 99999 · All stop on';
+  m.director.launch.resolved = 10000000;
+  m.director.launch.total = 999999999999;
+  const noWeek = '12345 waiting · 3 building · launch 10000000 of 999999999999 · All stop on';
   assert.equal(glanceLine(m), noWeek);
   m.build.features = Array.from({ length: 123456 }, () => ({ step: 'building' }));
-  m.director.launch.total = 9999999;
-  m.director.launch.resolved = 1234567;
-  assert.equal(glanceLine(m), 'Wheelhouse · 12345 waiting · 123456 building · All stop on');
+  m.director.launch.total = 999999999999;
+  m.director.launch.resolved = 123456789012;
+  assert.equal(glanceLine(m), '12345 waiting · 123456 building · All stop on');
   m.director.waiting = Array.from({ length: 5 }, (_, i) => ({ n: i + 1, what: 'x', since: null }));
   m.director.launch = { phase: 'before-launch', resolved: 1, total: 3, blockers: [], next: [] };
   m.director.budget.share = 99.6;
@@ -253,7 +270,7 @@ test('with every input missing, the board and the glance still come out and name
   assert.match(text, /There is no state for this project on this computer yet/);
   assert.match(text, /Usage counts aren't on yet/);
   assert.match(text, /^Wheelhouse's Logbook\. The time of this reading couldn't be read\.$/m);
-  assert.equal(glanceLine(m), 'Wheelhouse · no state yet');
+  assert.equal(glanceLine(m), 'no state yet');
   // Nothing at all, or the wrong shape, still gives a board and a line.
   for (const bad of [undefined, null, 'x', [], { director: 5, build: 'x', missing: 'y' }]) {
     assert.equal(typeof renderBoard(bad), 'string');

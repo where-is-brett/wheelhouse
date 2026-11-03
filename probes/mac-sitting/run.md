@@ -13,7 +13,7 @@ S=/private/tmp/wheelhouse-sitting-3        # any folder that does not exist yet
 node probes/mac-sitting/copy.mjs "$S" && cd "$S"
 node prepare.mjs            # plugin copy at the checkout's HEAD, helper, project, cards
 node ready.mjs              # helper answering, host facts, plugin copy
-node check.mjs tick         # six cards, glance "Wheelhouse · 6 waiting · launch 3 of 5"
+node check.mjs tick         # six cards, glance "6 waiting · launch 3 of 5"
 node check.mjs real-home    # nothing under "added"
 node brief.mjs <your own local_ id>   # writes scratch-brief.txt, prints card 5's reply code
 ```
