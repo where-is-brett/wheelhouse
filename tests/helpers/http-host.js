@@ -50,7 +50,8 @@ function cgi(program, env, body) {
   });
 }
 
-export async function startHttpHost({ root, token }) {
+// With `openReads`, a fetch or clone (git-upload-pack) needs no key, and a push still does.
+export async function startHttpHost({ root, token, openReads = false }) {
   const program = await backendProgram();
   const wanted = `Basic ${Buffer.from(`x-access-token:${token}`, 'utf8').toString('base64')}`;
   let refused = 0;
@@ -60,7 +61,8 @@ export async function startHttpHost({ root, token }) {
     req.on('data', (c) => chunks.push(c));
     req.on('end', async () => {
       // The scheme is case-insensitive: the connection writes "basic".
-      if (String(req.headers.authorization ?? '').replace(/^basic /i, 'Basic ') !== wanted) {
+      const reading = openReads && /git-upload-pack/.test(req.url ?? '');
+      if (!reading && String(req.headers.authorization ?? '').replace(/^basic /i, 'Basic ') !== wanted) {
         refused += 1;
         res.writeHead(401, { 'www-authenticate': 'Basic realm="host"', 'content-length': 0 });
         res.end();

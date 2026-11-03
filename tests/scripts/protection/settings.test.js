@@ -49,6 +49,14 @@ test('the project settings keep agents out of their own settings and hooks', () 
   }
 });
 
+test('the project settings keep agents out of the director\'s git settings files', () => {
+  const s = projectSettings(config);
+  for (const rule of ['Edit(~/.gitconfig)', 'Edit(~/.config/git/config)', 'Edit(//etc/gitconfig)']) assert.ok(s.permissions.deny.includes(rule), rule);
+  for (const p of ['~/.gitconfig', '~/.config/git/config', '/etc/gitconfig', '/usr/local/etc/gitconfig', '/opt/homebrew/etc/gitconfig']) {
+    assert.ok(s.sandbox.filesystem.denyWrite.includes(p), p);
+  }
+});
+
 test('the project settings switch off commit and pull request attribution', () => {
   const s = projectSettings(config);
   assert.deepEqual(s.attribution, { commit: '', pr: '', sessionUrl: false });
