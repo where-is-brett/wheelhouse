@@ -46,7 +46,7 @@ Nothing visible. `compactPrepare` and `compactWindow` (#236) keep their meaning;
 **The documents agree with check 3.** The hooks page says a planned compaction that is blocked is "skipped and the conversation continues uncompacted". Check 3 (Claude Code 2.1.278) saw the blocks come back 11 to 17 seconds apart within one turn. The likely reading: compaction is re-checked before each API request while the context is over the window. If so, a held compaction comes back only while the model keeps making requests.
 
 **Test (probe 03b, re-using `probes/03-precompact/` and its scratch project; about 10 minutes):**
-1. Settings in a scratch project only: `autoCompactWindow: 100000`, and a PreCompact `auto` hook that logs each call (time and input) and always blocks. Use `--model haiku` to keep the cost low.
+1. Settings in a scratch project only: `autoCompactWindow: 100000`, and a PreCompact `auto` hook that logs each call (time and input) and always blocks. Use the smallest model to keep the cost low.
 2. Turn 1: read the filler files up to about 110,000 tokens.
 3. Turn 2, resumed: "Run `sleep 40` three times, one at a time, then reply 'done'." This makes four requests with 40-second gaps.
 4. Compare the hook's call times with the times of the assistant entries in the transcript. Then check whether the model's replies mention the block, or the transcript holds its reason.
@@ -57,7 +57,7 @@ Nothing visible. `compactPrepare` and `compactWindow` (#236) keep their meaning;
 - **B. Calls come on a timer, during the sleeps:** it is retried, but the model still isn't told. The 3.4 warning, at least 100,000 tokens earlier, does the same job without the recovery risk. Remove it.
 - **C. The model sees the reason:** a real marker would then work. Make it real: PostToolUse writes `unsaved-<session>` after an edit or commit, and `note` clears it. Keep the two-minute give-up.
 
-Cost: a few hundred thousand cached Haiku input tokens.
+Cost: a few hundred thousand cached input tokens on the smallest model.
 ## 7. Risks and out of scope
 - **Risks:** the PostToolUse gauge adds a hook on every tool call. The 5-second throttle and a tail-only reading keep it cheap; if it shows up in timing, fold it into `feature-status.js`. A note not yet written falls back to the digest and the summary, no worse than today. Removing the guard overlaps #236 ("window + 60,000"), so part 1 waits for #236 to merge.
 - **Out of scope:** the window itself (#236), subagent windows, storing summaries, Copilot.
