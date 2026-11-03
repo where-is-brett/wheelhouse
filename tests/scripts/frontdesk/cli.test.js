@@ -153,11 +153,11 @@ function fakeHelper({ events = [], stop = false, head = FULL, pr, profile = {}, 
 async function run(helper, argv, input, opts) {
   return runWith(helper, argv, input, opts);
 }
-async function runWith(helper, argv, input, { cwd = CWD, ready } = {}) {
+async function runWith(helper, argv, input, { cwd = CWD, ready, env } = {}) {
   let out = '';
   let err = '';
   const code = await main(argv, {
-    cwd, client: helper.client, input, ...(ready ? { columnsReady: ready } : {}), now: () => NOW, out: (t) => { out += t; }, err: (t) => { err += t; },
+    cwd, client: helper.client, input, ...(env ? { env } : {}), ...(ready ? { columnsReady: ready } : {}), now: () => NOW, out: (t) => { out += t; }, err: (t) => { err += t; },
   });
   let json;
   try { json = JSON.parse(out); } catch { json = undefined; }
@@ -1979,7 +1979,7 @@ test('an unknown command, or a helper that can\'t be reached, is one line on sta
     const helper = fakeHelper();
     const unknown = await run(helper, ['show', '7']);
     assert.equal(unknown.code, 1);
-    assert.match(unknown.err, /^Commands: cards, pull-cards, card, again, why, suggest, record, similar, views, explain, review, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, end-goal, narrow-goal, goal-baseline, goal-draft, goal-card\n$/);
+    assert.match(unknown.err, /^Commands: cards, pull-cards, card, again, why, suggest, record, similar, views, explain, review, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, end-goal, narrow-goal, goal-baseline, goal-draft, goal-card, note\n$/);
     const away = { client: { desk: { read: async () => ({ ok: false, refused: 'the host helper could not be reached: is it running?' }) } } };
     const out = await run(away, ['cards']);
     assert.equal(out.code, 1);
@@ -2039,7 +2039,7 @@ test('through the real helper, the command places the project from its folder an
 test('run as a script, an unknown command is refused with the list of commands', async () => {
   const done = spawnSync(process.execPath, [SCRIPT, 'nonsense'], { encoding: 'utf8' });
   assert.equal(done.status, 1);
-  assert.equal(done.stderr, 'Commands: cards, pull-cards, card, again, why, suggest, record, similar, views, explain, review, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, end-goal, narrow-goal, goal-baseline, goal-draft, goal-card\n');
+  assert.equal(done.stderr, 'Commands: cards, pull-cards, card, again, why, suggest, record, similar, views, explain, review, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, end-goal, narrow-goal, goal-baseline, goal-draft, goal-card, note\n');
   assert.equal(done.stdout, '');
 });
 
@@ -2547,5 +2547,39 @@ test('narrow-goal takes the change as JSON, and refuses one that widens', async 
     const wider = await run(helper, ['narrow-goal'], JSON.stringify({ until: '2026-10-19T23:00:00.000Z' }));
     assert.equal(wider.code, 1);
     assert.match(wider.err, /widens a goal needs a new sheet/);
+  });
+});
+
+test('note writes the session note beside the gauge reading, whole and renamed', async () => {
+  await inHome(async () => {
+    const folder = path.join(tempFolder('wh-note-'), 'shop');
+    fs.mkdirSync(path.join(folder, '.git'), { recursive: true });
+    writeProject('o__p', { folder, remoteUrl: 'https://example.test/o/p.git', host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
+    const env = { CLAUDE_CODE_SESSION_ID: 'abc-123' };
+    const dir = path.join(process.env.WHEELHOUSE_HOME, 'projects', 'o__p', 'sessions');
+    const text = 'Task: the export\nDone: the parser\nNext: the tests\nOpen: none';
+    const done = await run({ client: {} }, ['note'], `${text}\n`, { cwd: folder, env });
+    assert.equal(done.code, 0, done.err);
+    assert.match(done.out, /abc-123\.md/);
+    assert.equal(fs.readFileSync(path.join(dir, 'abc-123.md'), 'utf8'), `${text}\n`);
+    assert.deepEqual(fs.readdirSync(dir), ['abc-123.md'], 'no temporary file left');
+    // Written again, it replaces the note; exactly 1,200 characters pass.
+    const full = 'x'.repeat(1200);
+    assert.equal((await run({ client: {} }, ['note'], full, { cwd: folder, env })).code, 0);
+    assert.equal(fs.readFileSync(path.join(dir, 'abc-123.md'), 'utf8'), `${full}\n`);
+    // Over the limit, empty, with no session id or an unsafe one, in a folder that is no project, or with arguments: refused, the note kept.
+    for (const [input, opts, pattern] of [
+      ['x'.repeat(1201), { cwd: folder, env }, /1201 characters; keep it to 1200/],
+      ['  \n', { cwd: folder, env }, /empty/],
+      ['a note', { cwd: folder, env: {} }, /no id/],
+      ['a note', { cwd: folder, env: { CLAUDE_CODE_SESSION_ID: '../x' } }, /no id/],
+      ['a note', { cwd: CWD, env }, /not a Wheelhouse project/],
+    ]) {
+      const refused = await run({ client: {} }, ['note'], input, opts);
+      assert.equal(refused.code, 1);
+      assert.match(refused.err, pattern);
+    }
+    assert.equal((await run({ client: {} }, ['note', 'extra'], 'a note', { cwd: folder, env })).code, 1);
+    assert.equal(fs.readFileSync(path.join(dir, 'abc-123.md'), 'utf8'), `${full}\n`);
   });
 });
