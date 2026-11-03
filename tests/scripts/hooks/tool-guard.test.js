@@ -8,7 +8,7 @@ import { execFileSync } from 'node:child_process';
 import { decide } from '../../../scripts/hooks/tool-guard.js';
 import { CREDENTIALS } from '../../../scripts/lib/credentials.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
-import { CONTROL_FILE, homeControlFolders } from '../../../scripts/lib/agent-control.js';
+import { CONTROL_FILE, homeControlFolders, gitSettingsFiles } from '../../../scripts/lib/agent-control.js';
 
 const temp = (prefix) => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 const CASE_BLIND = process.platform === 'darwin' || process.platform === 'win32';
@@ -1500,6 +1500,91 @@ test('in a review step the shell may only read: a write is refused, a read passe
     // Outside a project too: the step, not the folder, is what reads only.
     const out = await decide(call(os.tmpdir(), 'Bash', { command: 'touch a.txt' }), { dir: path.join(ctx.base, 'managed'), home: ctx.home, platform: 'darwin', pluginRoot: PLUGIN, env: node('review-design'), projectDir: os.tmpdir() });
     assert.ok(denied(out));
+  });
+});
+
+// The director's own git settings: a push runs with them, so an agent may not write them or reach them through git.
+test('the file tools refuse a write to the home folder\'s git settings, the XDG one and the system one; a read is let through', async () => {
+  await withHome(async (home) => {
+    const { base, main } = makeProject();
+    const xdg = path.join(home, 'xdgconf');
+    try {
+      const files = [path.join(home, '.gitconfig'), path.join(home, '.config', 'git', 'config'), path.join(xdg, 'git', 'config'), '/etc/gitconfig'];
+      for (const file of files) {
+        for (const tool of ['Edit', 'Write', 'MultiEdit']) {
+          const out = await decide(call(main, tool, { file_path: file }), { dir: path.join(base, 'managed'), home, platform: process.platform, pluginRoot: PLUGIN, env: { XDG_CONFIG_HOME: xdg } });
+          assert.ok(denied(out), `${tool} ${file}`);
+          assert.match(out.hookSpecificOutput.permissionDecisionReason, /git settings/);
+        }
+      }
+      assert.equal(await run(base, home, call(main, 'Read', { file_path: path.join(home, '.gitconfig') })), undefined);
+      assert.equal(await run(base, home, call(main, 'Write', { file_path: path.join(home, '.gitconfig-notes') })), undefined);
+    } finally { fs.rmSync(base, { recursive: true, force: true }); }
+  });
+});
+
+test('on Windows the settings files include %PROGRAMDATA%\\Git\\config and Git for Windows\' own system file', async () => {
+  const files = gitSettingsFiles({ home: 'C:\\Users\\d', platform: 'win32', env: { PROGRAMDATA: 'C:\\ProgramData', ProgramFiles: 'C:\\Program Files', XDG_CONFIG_HOME: 'D:\\conf' } });
+  for (const file of ['C:\\Users\\d\\.gitconfig', 'C:\\Users\\d\\.config\\git\\config', 'D:\\conf\\git\\config', 'C:\\ProgramData\\Git\\config', 'C:\\Program Files\\Git\\etc\\gitconfig', 'C:\\Program Files\\Git\\mingw64\\etc\\gitconfig']) {
+    assert.ok(files.includes(file), file);
+  }
+  // Without the variables, the usual places.
+  assert.ok(gitSettingsFiles({ home: 'C:\\Users\\d', platform: 'win32', env: {} }).includes('C:\\ProgramData\\Git\\config'));
+  // The file tools refuse them where the tests run on Windows itself.
+  if (process.platform !== 'win32') return;
+  await withHome(async (home) => {
+    const { base, main } = makeProject();
+    try {
+      const env = { PROGRAMDATA: 'C:\\ProgramData', ProgramFiles: 'C:\\Program Files' };
+      for (const file of ['C:\\ProgramData\\Git\\config', 'C:\\Program Files\\Git\\etc\\gitconfig']) {
+        assert.ok(denied(await decide(call(main, 'Write', { file_path: file }), { dir: path.join(base, 'managed'), home, platform: 'win32', pluginRoot: PLUGIN, env })), file);
+      }
+    } finally { fs.rmSync(base, { recursive: true, force: true }); }
+  });
+});
+
+test('the shell may not write the git settings files, run git config on the global or system file, or run git credential', async () => {
+  await withHome(async (home) => {
+    const { base, main } = makeProject();
+    try {
+      const refusedLines = [
+        'echo "[credential]" >> ~/.gitconfig',
+        `echo x > ${home}/.gitconfig`,
+        'echo x > "$HOME/.config/git/config"',
+        'printf x | tee -a ~/.gitconfig',
+        'cp /tmp/x ~/.gitconfig',
+        'sed -i s/a/b/ ~/.gitconfig',
+        'git config --global credential.helper "!cmd"',
+        'git config --system credential.helper store',
+        'git -C . config --global user.name x',
+        `git config --file ${home}/.gitconfig credential.helper store`,
+        `git config -f ~/.config/git/config credential.helper store`,
+        'git config --file=~/.gitconfig a.b c',
+        'git credential fill',
+        'git credential approve',
+        'git credential-store store',
+        'echo x > /etc/gitconfig',
+      ];
+      for (const line of refusedLines) {
+        assert.ok(denied(await run(base, home, call(main, 'Bash', { command: line }))), line);
+      }
+      // Reading is let through, and so is git config on the project's own file.
+      for (const line of ['cat ~/.gitconfig', 'grep helper ~/.gitconfig', 'git config user.name', 'git config --local a.b c', 'git config --file .git/config a.b c', 'git status']) {
+        assert.equal(await run(base, home, call(main, 'Bash', { command: line })), undefined, line);
+      }
+    } finally { fs.rmSync(base, { recursive: true, force: true }); }
+  });
+});
+
+test('a PowerShell write to the settings files is refused', async () => {
+  await withHome(async (home) => {
+    const { base, main } = makeProject();
+    try {
+      const sep = path.sep;
+      for (const line of [`Add-Content $env:USERPROFILE${sep}.gitconfig "[credential]"`, `Set-Content ${home}${sep}.gitconfig x`, 'git config --global credential.helper "!cmd"']) {
+        assert.ok(denied(await decide(call(main, 'PowerShell', { command: line }), { dir: path.join(base, 'managed'), home, platform: process.platform, pluginRoot: PLUGIN, env: { USERPROFILE: home } })), line);
+      }
+    } finally { fs.rmSync(base, { recursive: true, force: true }); }
   });
 });
 

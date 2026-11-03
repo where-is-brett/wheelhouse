@@ -53,7 +53,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DEFAULT_BUILD_COMMANDS, isBuildCommand } from '../gate/guardrails.js';
-import { AGENT_CONTROL, controlWritePaths, homeControlPaths } from '../lib/agent-control.js';
+import { AGENT_CONTROL, controlWritePaths, homeControlPaths, homeGitSettingsPaths, systemGitSettingsPaths } from '../lib/agent-control.js';
 import { credentialPaths } from '../lib/credentials.js';
 import { FRONT_DESK_INPUT, WORK_REPORTS_RULE } from '../lib/front-desk.js';
 import { WINDOWS_LINE } from '../lib/platform-lines.js';
@@ -91,6 +91,9 @@ function controlRules() {
   return [
     ...AGENT_CONTROL.map((p) => (p.startsWith('**/') ? `Edit(${p})` : `Edit(/${p})`)),
     ...homeControlPaths().map((f) => `Edit(~/${f}/**)`),
+    // The director's own git settings: a push runs with them (agent-control.js, gitSettingsFiles).
+    ...homeGitSettingsPaths().map((f) => `Edit(~/${f})`),
+    ...systemGitSettingsPaths().map((f) => `Edit(/${f})`),
   ];
 }
 
@@ -361,7 +364,7 @@ export function projectSettings(config, { release = null, keepCompaction = false
       allowUnsandboxedCommands: false,
       filesystem: {
         denyRead: unique(['~/.wheelhouse', ...credentials.map((c) => `~/${c}`), ...engine.denyRead]),
-        denyWrite: unique(['~/.wheelhouse', '~/.claude', ...OWN_FILES.map((f) => `./${f}`), './.claude/hooks', ...controlWritePaths(), ...homeControlPaths().map((f) => `~/${f}`), ...engine.denyWrite]),
+        denyWrite: unique(['~/.wheelhouse', '~/.claude', ...OWN_FILES.map((f) => `./${f}`), './.claude/hooks', ...controlWritePaths(), ...homeControlPaths().map((f) => `~/${f}`), ...homeGitSettingsPaths().map((f) => `~/${f}`), ...systemGitSettingsPaths(), ...engine.denyWrite]),
       },
       credentials: {
         // Always a list, empty when open, so a setup run on a project that has lifted it writes the empty list.

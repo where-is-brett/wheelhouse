@@ -1391,8 +1391,11 @@ export async function startHelper({
   // own settings are looked at before every call. Wheelhouse never sees the key.
   async function asIsPusher(project, ctx, mirror) {
     const url = String((await pushTargetOf(project, ctx)) ?? '').trim();
+    const reach = pushReachFor(url);
+    // A local path runs the other end's programs unfenced: a project's remote is never one.
+    if (reach === 'push-local') refuse('the project\'s repository is a folder on this computer, which the director\'s own git settings are not used for');
     const git = safeGit({
-      run, cwd: mirror, reach: pushReachFor(url), env: GIT_BASE, timeoutMs: HOST_MS, caller: 'helper', what: "the project's mirror repository",
+      run, cwd: mirror, reach, env: GIT_BASE, timeoutMs: HOST_MS, caller: 'helper', what: "the project's mirror repository", pushTo: { remote: REMOTE, url },
     });
     return (file, args, options = {}) => {
       if (file !== 'git' || subcommandOf(args) !== 'push') throw new Error('the director\'s own git settings are let in for a push and nothing else');

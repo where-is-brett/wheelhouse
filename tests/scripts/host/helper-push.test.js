@@ -13,7 +13,9 @@ import { helperClient } from '../../../scripts/host/helper-client.js';
 import { run } from '../../../scripts/lib/run.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
-import { safeGit, safeGitEnv, pushReachFor, sshRemote, PUSH_REACHES } from '../../../scripts/lib/safe-git.js';
+import os from 'node:os';
+import { spawnSync } from 'node:child_process';
+import { safeGit, safeGitEnv, pushReachFor, sshRemote, PUSH_REACHES, settingsRefusal, settingsText } from '../../../scripts/lib/safe-git.js';
 import { childEnv } from '../../../scripts/host/connection.js';
 import { as, shortHome, testAddress, tempFolder } from '../../helpers/homes.js';
 import { makeBareRemote, LOOPBACK_HTTP } from '../../helpers/git-fixture.js';
@@ -335,18 +337,14 @@ test('a hostile global config does not undo the fence: hooks, signing and certif
   } finally { await c.close(); await repo.cleanup(); }
 });
 
-test('the computer\'s own url rewriting and credential helper reach a push, and no other call', { skip: !unix && 'the credential helper is a shell script' }, async () => {
+test('the computer\'s own credential helper reaches a push, and no other call', { skip: !unix && 'the credential helper is a shell script' }, async () => {
   const root = fs.realpathSync.native(tempFolder('wh-rewrite-'));
   const sign = signIn(root);
   const dir = path.join(root, 'repo');
   fs.mkdirSync(dir);
   await run('git', ['init', '-q', '-b', 'main', dir]);
   await run('git', ['remote', 'add', 'origin', 'http://127.0.0.1:1/o/p.git'], { cwd: dir });
-  await withDirectorsGit(`[credential]\n\thelper = !${sign.file}\n[url "http://127.0.0.1:2/"]\n\tinsteadOf = http://127.0.0.1:1/\n`, async () => {
-    const pushUrl = async (reach) => (await safeGit({ cwd: dir, reach })(['remote', 'get-url', '--push', 'origin'])).stdout.trim();
-    // The director's own rewrite applies to a push (they wrote it), and to no other call.
-    assert.equal(await pushUrl('push-loopback'), 'http://127.0.0.1:2/o/p.git');
-    assert.equal(await pushUrl('loopback'), 'http://127.0.0.1:1/o/p.git');
+  await withDirectorsGit(`[credential]\n\thelper = !${sign.file}\n`, async () => {
     const helpers = async (reach) => (await safeGit({ cwd: dir, reach })(['config', '--get-all', 'credential.helper'])).stdout;
     assert.match(await helpers('push-loopback'), /director-helper/);
     assert.doesNotMatch(await helpers('loopback'), /director-helper/);
@@ -363,12 +361,132 @@ test('the computer\'s own protocol settings cannot widen a push to another trans
   await g(dir, 'commit', '-q', '--allow-empty', '-m', 'One');
   try {
     await withDirectorsGit('[protocol "file"]\n\tallow = always\n[protocol]\n\tallow = always\n', async () => {
-      const git = safeGit({ cwd: dir, reach: 'push' });
-      const got = await git(['push', '--no-verify', target.url, 'main:refs/heads/x']);
+      await run('git', ['remote', 'add', 'origin', target.url], { cwd: dir });
+      const git = safeGit({ cwd: dir, reach: 'push', pushTo: { remote: 'origin', url: target.url } });
+      const got = await git(['push', '--no-verify', 'origin', 'main:refs/heads/x']);
       assert.notEqual(got.code, 0, 'a local path is not an https remote');
       assert.equal((await heads(target.url)).trim(), '');
     });
   } finally { target.cleanup(); }
+});
+
+// A push whose address the director's settings change goes nowhere: the sign-in would reach another repository.
+const REDIRECTS = {
+  'a global url.pushInsteadOf': (url) => `[url "http://127.0.0.1:9/elsewhere/"]\n\tpushInsteadOf = ${url}\n`,
+  'a global url.insteadOf': (url) => `[url "http://127.0.0.1:9/elsewhere/"]\n\tinsteadOf = ${url}\n`,
+  'a global remote.origin.pushurl': () => '[remote "origin"]\n\tpushurl = http://127.0.0.1:9/elsewhere/o/p.git\n',
+  'a global pushInsteadOf to an address that is not this computer\'s': (url) => `[url "https://example.org/o/p.git"]\n\tpushInsteadOf = ${url}\n`,
+};
+for (const [name, config] of Object.entries(REDIRECTS)) {
+  test(`${name} that changes the recorded address stops the push, and the sign-in is never asked`, { skip: !unix && 'the credential helper is a shell script' }, async () => {
+    const repo = await privateRepo();
+    const c = await computer(repo);
+    const root = tempFolder('wh-helperbin-');
+    const helperProgram = signIn(root);
+    try {
+      await withDirectorsGit(`[credential]\n\thelper = !${helperProgram.file}\n${config(repo.url)}`, async () => {
+        const answer = await c.push({ project: PROJECT, dir: c.dir, refspec: 'feature' });
+        assert.equal(answer.ok, false);
+        assert.match(answer.refused, /send pushes for this project to another address/);
+      });
+      assert.equal(helperProgram.ran(), false, 'the director\'s helper was never asked');
+      assert.doesNotMatch(await heads(repo.remote.url), /refs\/heads\/feature/);
+    } finally { await c.close(); await repo.cleanup(); }
+  });
+}
+
+test('a rewrite that does not touch the recorded address does not stop a push', { skip: !unix && 'the credential helper is a shell script' }, async () => {
+  const repo = await privateRepo();
+  const c = await computer(repo);
+  const root = tempFolder('wh-helperbin-');
+  const helperProgram = signIn(root);
+  try {
+    await withDirectorsGit(`[credential]\n\thelper = !${helperProgram.file}\n[url "ssh://git@other.example.org/"]\n\tinsteadOf = https://other.example.org/\n`, async () => {
+      assert.deepEqual(await c.push({ project: PROJECT, dir: c.dir, refspec: 'feature' }), { ok: true });
+    });
+  } finally { await c.close(); await repo.cleanup(); }
+});
+
+test('a URL-scoped http.sslVerify=false, or a resolver override, in the computer\'s settings stops a push; its company certificate and proxy are let in', { skip: !unix && 'a shell script' }, async () => {
+  const repo = await privateRepo();
+  const c = await computer(repo);
+  const root = tempFolder('wh-helperbin-');
+  const helperProgram = signIn(root);
+  try {
+    for (const [name, config] of [
+      ['the recorded address', `[http "${repo.url}"]\n\tsslVerify = false\n`],
+      ['the host', `[http "${repo.host.url}/"]\n\tsslVerify = off\n`],
+      ['a resolver override', '[http]\n\tcurloptResolve = gitlab.example.org:443:127.0.0.1\n'],
+    ]) {
+      await withDirectorsGit(`[credential]\n\thelper = !${helperProgram.file}\n${config}`, async () => {
+        const answer = await c.push({ project: PROJECT, dir: c.dir, refspec: 'feature' });
+        assert.equal(answer.ok, false, name);
+        assert.match(answer.refused, /does not allow for a push/, name);
+      });
+    }
+    assert.equal(helperProgram.ran(), false);
+    // The company's certificate and proxy are the director's own, and pass.
+    assert.equal(settingsRefusal([{ key: 'http.sslcainfo', value: '/c/ca.pem' }, { key: 'http.proxy', value: 'http://proxy.example.org:8080' }, { key: 'http.https://gitlab.example.org/.sslverify', value: 'true' }]), null);
+    // With a setting for a wider address, the recorded address's own check is on all the same.
+    await withDirectorsGit('[http "https://gitlab.example.org/"]\n\tsslCAInfo = /c/ca.pem\n', async () => {
+      const mirror = c.mirror();
+      const git = safeGit({ cwd: mirror, reach: 'push', caller: 'helper', pushTo: { remote: 'origin', url: 'https://gitlab.example.org/o/p.git' } });
+      const got = await git(['config', '--get-urlmatch', 'http.sslVerify', 'https://gitlab.example.org/o/p.git']);
+      assert.equal(got.stdout.trim(), 'true');
+    });
+  } finally { await c.close(); await repo.cleanup(); }
+});
+
+test('what was checked is what the push uses: a hook added to the computer\'s files after the check does not run, and the copy is removed', { skip: !unix && 'the programs are shell scripts' }, async () => {
+  const repo = await privateRepo();
+  const c = await computer(repo);
+  const root = fs.realpathSync.native(tempFolder('wh-late-'));
+  const sign = signIn(root);
+  const late = marker(root, 'late-hook');
+  const copies = () => fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('wh-settings-')).sort();
+  try {
+    await withDirectorsGit(`[credential]\n\thelper = !${sign.file}\n`, async (home) => {
+      assert.deepEqual(await c.push({ project: PROJECT, dir: c.dir, refspec: 'feature' }), { ok: true }); // makes the mirror
+      const before = copies();
+      const sneaky = (file, args, options) => {
+        // Between the check and the push, the computer's files change.
+        if (args[0] === 'remote' && args[1] === 'get-url') {
+          fs.appendFileSync(path.join(home, '.gitconfig'), `[hook "late"]\n\tevent = pre-push\n\tcommand = ${late.file}\n`);
+        }
+        return run(file, args, options);
+      };
+      const git = safeGit({ run: sneaky, cwd: c.mirror(), reach: 'push-loopback', caller: 'helper', pushTo: { remote: 'origin', url: repo.url } });
+      const sha = /^(\w+)\trefs\/heads\/feature$/m.exec(await heads(repo.remote.url))[1];
+      await run('git', ['update-ref', 'refs/heads/second', sha], { cwd: c.mirror() });
+      const got = await git(['push', '--no-verify', 'origin', 'refs/heads/second:refs/heads/second']);
+      assert.equal(got.code, 0, String(got.stderr));
+      assert.equal(late.ran(), false, 'the hook added after the check did not run');
+      assert.deepEqual(copies(), before, 'the private copy of the settings is gone');
+    });
+  } finally { await c.close(); await repo.cleanup(); }
+});
+
+test('a push to a local path is refused outside the tests of a stand-in host', () => {
+  const cwd = tempFolder('wh-pa-');
+  assert.throws(() => safeGit({ cwd, reach: 'push-local' }), /local path is refused/);
+  assert.doesNotThrow(() => safeGit({ cwd, reach: 'push-local', allowLocal: true }));
+});
+
+test('a push names the address it goes to', async () => {
+  const git = safeGit({ cwd: tempFolder('wh-pa-'), reach: 'push', run: async () => ({ code: 0, stdout: '', stderr: '' }) });
+  await assert.rejects(git(['push', 'origin', 'x']), /names the remote and the address/);
+});
+
+test('the settings copy keeps every key, value and subsection as written', () => {
+  const entries = [
+    { key: 'credential.helper', value: '' }, { key: 'credential.helper', value: '!f() { echo "a\\b"; }; f' },
+    { key: 'url.https://a.example.org/x y/.insteadof', value: 'https://b/' }, { key: 'alias.q', value: null }, { key: 'core.note', value: 'two\nlines\tand tab' },
+  ];
+  const file = path.join(tempFolder('wh-copy-'), 'config');
+  fs.writeFileSync(file, settingsText(entries));
+  const read = spawnSync('git', ['config', '--file', file, '--list', '-z'], { encoding: 'utf8' }).stdout.split('\0').filter(Boolean)
+    .map((r) => { const i = r.indexOf('\n'); return { key: i < 0 ? r : r.slice(0, i), value: i < 0 ? null : r.slice(i + 1) }; });
+  assert.deepEqual(read, entries);
 });
 
 test('the repository\'s own config is still checked before a push: an unlisted setting stops it, and the helper never runs', { skip: !unix && 'the credential helper is a shell script' }, async () => {
