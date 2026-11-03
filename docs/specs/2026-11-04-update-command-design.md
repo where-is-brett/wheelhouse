@@ -70,7 +70,7 @@ The update is mostly a sequence of parts Wheelhouse already has. A builder shoul
    > Meanwhile: nothing stops; sessions open now keep v0.2.6 until you start a new one.
    > [ Update ] (recommended) [ Not now ]
 
-   When the project's rules need the director's approval for the change (any release that isn't pins-only, section 6.2), the card says so: once the change is ready, the helper's window asks them to confirm it, as for any change to the safety rules.
+   When the project's rules need the director's approval for the change (any release that isn't pins-only, section 6.2), the card says so: once the change is ready, they approve it as they approve any change to the safety rules (an approval card in Claude Code; the helper's window with another agent).
 4. Progress lines, one per step, from `status`, as uninstall does.
 5. Only if needed, one more card: a password window for Locked, or stopping an old helper that can't be asked (section 7.3).
 6. The last line: "Wheelhouse v0.2.7 is installed. Start a new session on this folder to use it." The next session's board says once: "Wheelhouse v0.2.7 is running (updated today, approved by you)."
@@ -109,7 +109,7 @@ The job has two halves.
 
 The committed `.claude/settings.json` names the release in `extraKnownMarketplaces.wheelhouse.source.ref`. The update never writes that file in the director's main checkout. It opens the change the way the build loop does (build-loop design, section 14.4):
 
-- **Hosted project:** a pull request on `wheelhouse-release-<commit>`, changing only that `ref` (`releaseChange`), opened through the helper's `/pr/open`. A pins-only release needs Wheelhouse's review and no approval. Any other release changes a guardrail (`.claude/settings.json`, which can bring new hooks), so it needs the director's confirmed approval, not a click in the chat: today a chat click is only the agent's own account of it (`scripts/agents/chat-clicks.js`), and guardrail changes need a click confirmed in the helper's window (`CONFIRMED_STEPS`). **The director's decision (D3):** the **Update** card's click starts the update, and when the reviewed change is ready the helper's window asks for the usual confirmation, naming the release and its commit; the gate takes that confirmation as the approval for that pull request only (a new gate rule beside the pins-only one). The trust rules don't change. The pull request records its provenance as Wheelhouse's update (the release and its commit; no session, no model), a new kind the gate accepts only on a release or undo branch. Merging follows the project's usual gate; nothing skips CI.
+- **Hosted project:** a pull request on `wheelhouse-release-<commit>`, changing only that `ref` (`releaseChange`), opened through the helper's `/pr/open`. A pins-only release needs Wheelhouse's review and no approval. Any other release changes a guardrail (`.claude/settings.json`, which can bring new hooks), so it needs the director's approval of that pull request, given the way the project approves any guardrail change today. **The director's decision (D3):** the **Update** card's click starts the update. When the reviewed change is ready, the usual approval follows, naming the release and its commit. In Claude Code that is the signed approval card the gate already waits for: a card click recorded by the prompt-record hook is signed. With another agent, where a click in the chat is only the agent's own account of it (`scripts/agents/chat-clicks.js`), it is the helper's window, as for every step in `CONFIRMED_STEPS`. The **Update** click itself never counts as that approval. The trust rules don't change. The pull request records its provenance as Wheelhouse's update (the release and its commit; no session, no model), a new kind the gate accepts only on a release or undo branch. Merging follows the project's usual gate; nothing skips CI.
 - **Project kept on the computer:** the same change on the local queue (local checks design), with the same rule.
 - **Before setup's step 7:** the project's settings don't name the catalogue yet; there is nothing to change, and the update moves only this computer.
 - **Already merged** (another computer updated the project first, section 10.2): skipped.
@@ -263,7 +263,7 @@ Installed by hand, so the update doesn't install it. When the release carries a 
 The command first ships in the next release, so a computer on v0.2.6 or earlier has no command and a helper without the job. It needs one last update by another route. **The director's decision (D1, 4 November 2026): one paste in Terminal** (PowerShell on Windows).
 
 - **The paste.** The README gives one line per system. It clones the new release into a temporary folder under the Wheelhouse home with git, and runs `node <that folder>/scripts/update/cli.js bootstrap <project folder>` from it. Bootstrap checks the tag as in section 5 before anything else, so a clone that doesn't check out stops with nothing changed.
-- **The cards in Terminal.** Bootstrap shows the same card as plain text and takes a typed choice (1 for Update, 2 for Not now); the stop card of section 7.3 the same way. Nothing else is asked in Terminal. Where the release needs the director's approval (D3), the helper's window asks for it, as in a session.
+- **The cards in Terminal.** Bootstrap shows the same card as plain text and takes a typed choice (1 for Update, 2 for Not now); the stop card of section 7.3 the same way. Nothing else is asked in Terminal. Where the release needs the director's approval (D3), it is asked in the director's next session as the usual approval card, once the new helper has opened the change.
 - **No host access of its own.** The old helper can't open the reviewed change for it: v0.2.6's `/pr/open` needs a session's recorded provenance and a branch already pushed. So bootstrap turns the order round, once: it installs on this computer first (section 6.4, journalled and put back on failure as usual), hands over to the new helper (section 7, using section 7.3's paths for the old one), and then the new helper's job opens the reviewed change (section 6.2). Until it merges, the board says "This computer has v0.2.7; the change naming it for your project is waiting to be merged." If the change is refused or closed, the job puts the computer back to the earlier release by `reinstall` at its tag and says so. This is the only time anything on the computer moves before the change merges. *Designer's call.*
 - **Afterwards** every update is `/wheelhouse:update`.
 
@@ -306,7 +306,7 @@ The questions were:
 ## 18. Rulings to add to the main design
 
 - Updating Wheelhouse is one command, `/wheelhouse:update`, run by the director; the helper does the work as a journalled job, and the new version's code finishes it.
-- The project's release changes only through the usual reviewed change; where the director's approval is needed, it is confirmed in the helper's window as for any change to the safety rules (D3).
+- The project's release changes only through the usual reviewed change; where the director's approval is needed, it is given as for any change to the safety rules, never by the Update click (D3).
 - A helper keeps a running record and answers the previous release's sessions. Only a provably Wheelhouse-started process is ever stopped, and only after the director's click.
 - The own-files look skips Claude Code's own bookkeeping by name, follows the installed version, and accepts a version move only when the files match the release's tag.
 
@@ -323,7 +323,7 @@ The questions were:
 
 - **D1. Getting from v0.2.6 to the first release with the command:** one paste in Terminal (PowerShell on Windows), chosen over the recommended paste in a chat session (section 13).
 - **D2. An old helper (v0.2.6 or earlier) that can't be asked, or stays busy:** find it by its address, check it is Wheelhouse's own beyond doubt, ask with a card, then stop it; where the computer won't say who holds the address, it goes when the computer restarts (section 7.3).
-- **D3. The approval for a release that isn't pins-only:** the **Update** card in the chat, then the helper's window confirming the change when it is ready (section 6.2).
+- **D3. The approval for a release that isn't pins-only:** the **Update** card in the chat, then the usual confirmed approval when the change is ready: the signed approval card in Claude Code, the helper's window with another agent (section 6.2).
 - **D4. Lean's update:** a `wheelhouse-update` skill the chat follows, as setup does (section 12.1).
 - **D5. When a release is out:** one quiet board line from a weekly look; no card, no notification (section 5).
 
