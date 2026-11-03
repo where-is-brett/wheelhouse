@@ -27,11 +27,7 @@ macOS, Claude Code 2.1.278, a headless session, 17 October 2026.
 - Section 10, step 5 stands: a block holds the compaction off, and it is tried again within seconds. A guard that blocks while state is unsaved delays the compaction only until the save is done.
 - Section 10, step 5: because the retry comes so quickly, the "gives up after five blocks" escape is reached within about a minute. The guard should give up after a time instead, for example two minutes, rather than after a count.
 
-## Needs the director
-
-No.
-
-## Addendum: probe 03b, what drives the retry (3 November 2026)
+### Later run: probe 03b, what drives the retry (3 November 2026)
 
 **Answer: outcome A.** A held compaction is re-tried once per model request, not on a timer, and the model is not told why.
 
@@ -49,3 +45,7 @@ No.
 **What it means for the design:** the hold is skipped and re-tried on each request, and the model sees nothing. Remove it, as section 6 of the compaction design says for outcome A.
 
 Tokens: two short sessions on the smallest model, about a dozen requests each, mostly cached input.
+
+## Needs the director
+
+No.
