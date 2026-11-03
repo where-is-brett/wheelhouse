@@ -1831,7 +1831,9 @@ export async function startHelper({
     return fn(body, ctx);
   });
   // The lock clone is shared with the merge gate's lock check: the same queue.
-  const lockRoute = (fn, { write = false } = {}) => (body, ctx) => oneAtATime(`lock:${body.project}`, async () => {
+  // A project in git alone has no lock branch (spec 7.3): its routes answer plainly with `local`, never reaching for a lock repository.
+  const lockRoute = (fn, { write = false, local } = {}) => (body, ctx) => oneAtATime(`lock:${body.project}`, async () => {
+    if (readProject(body.project)?.host === 'local') return { ok: true, result: local };
     if (write && stopped()) return STOP_REFUSAL;
     await lookAtLock(ctx, body.project);
     if (write && stopped()) return STOP_REFUSAL;
@@ -4814,7 +4816,7 @@ export async function startHelper({
     '/profile/import': profileRoute(doProfileImport, { write: true }),
     '/lock/take': lockRoute(async ({ project }, ctx) => ({
       ok: true, result: await takeLock({ project, push: pushFor(project, ctx), now, env: ctx.gitEnv }),
-    }), { write: true }),
+    }), { write: true, local: { taken: true, local: true } }),
     '/lock/take-over': lockRoute(async ({ project }, ctx) => {
       const click = takeOverClick(project);
       if (click === null) {
@@ -4823,11 +4825,11 @@ export async function startHelper({
         return { ok: true, result: current === null || current.computer === computerId() ? { taken: false } : { taken: false, holder: current.computer, since: current.lastWriteAt } };
       }
       return { ok: true, result: await takeLock({ project, push: pushFor(project, ctx), now, env: ctx.gitEnv, over: click }) };
-    }, { write: true }),
+    }, { write: true, local: { taken: true, local: true } }),
     '/lock/touch': lockRoute(async ({ project }, ctx) => ({
       ok: true, result: await touchLock({ project, push: pushFor(project, ctx), now, env: ctx.gitEnv }),
-    }), { write: true }),
-    '/lock/read': lockRoute(async ({ project }, ctx) => ({ ok: true, result: await readLock({ project, env: ctx.gitEnv }) })),
+    }), { write: true, local: { touched: true, local: true } }),
+    '/lock/read': lockRoute(async ({ project }, ctx) => ({ ok: true, result: await readLock({ project, env: ctx.gitEnv }) }), { local: null }),
     '/ci-push/line': (body) => {
       if (stopped()) return STOP_REFUSAL;
       if (!plainBranch(body.branch)) refuse('the branch name is not valid');

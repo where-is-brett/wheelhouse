@@ -163,6 +163,17 @@ test('the session start keeps the lock this computer holds, and takes it when it
   });
 });
 
+test('a project in git alone has no lock branch: the session start asks for no lock and says nothing of one', async () => {
+  await withHome(async () => {
+    writeProject(P, { folder: '/x', remoteUrl: null, host: 'local', repo: `local/${P}`, connection: { mode: 'none' } });
+    const f = fake();
+    const asked = withLock(f, { touch: { ok: false, refused: 'x' }, take: { ok: false, refused: 'The project has no repository recorded to find the lock on' } });
+    const out = await run(f);
+    assert.deepEqual(asked, []);
+    assert.ok(!text(out).includes(NO_LOCK));
+  });
+});
+
 test('a lock another computer holds, or one that can\'t be reached, is said in one line', async () => {
   await withHome(async () => {
     const elsewhere = fake();
