@@ -156,10 +156,19 @@ test('in flight: behind, local changes, open pull requests and worktrees', async
   assert.deepEqual(asked[0].slice(0, 2), ['pr', 'list']);
   assert.ok(!asked.flat().some((a) => /merge|close|create|edit/.test(a)), 'only reads the pull requests');
 
-  // On GitLab the merge requests come from glab.
-  const gitlab = withHosts({ glab: (args) => { assert.deepEqual(args.slice(0, 2), ['mr', 'list']); return { code: 0, stdout: JSON.stringify([{ iid: 3, source_branch: 'feature/till' }]), stderr: '' }; } });
-  const onGitlab = await surveyProject({ folder, manifest: MANIFEST, run: gitlab, upstreams: { 'kit-a': upstream }, host: 'gitlab', claudeHome: tempFolder('wh-claude-') });
+  // On GitLab the merge requests come from GitLab's API, with the director's own key; glab is not run.
+  const sent = [];
+  const api = async ({ baseUrl }) => ({ get: async (path) => { sent.push({ baseUrl, path }); return { status: 200, body: [{ iid: 3, source_branch: 'feature/till' }, { iid: 'x' }] }; } });
+  const onGitlab = await surveyProject({ folder, manifest: MANIFEST, run: withHosts({}), gitlab: api, upstreams: { 'kit-a': upstream }, host: 'gitlab', claudeHome: tempFolder('wh-claude-') });
   assert.deepEqual(onGitlab.inFlight.prs, [{ number: 3, branch: 'feature/till' }]);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].path, /^\/projects\/[^/]+%2Fremote\/merge_requests\?state=opened&per_page=100$/);
+  assert.equal(sent[0].baseUrl, 'https://gitlab.com');
+  // A refusal or a missing sign-in is said in words, and the survey carries on without the list.
+  const refused = async () => ({ get: async () => ({ status: 401, body: null }) });
+  await assert.rejects(surveyProject({ folder, manifest: MANIFEST, run: withHosts({}), gitlab: refused, upstreams: { 'kit-a': upstream }, host: 'gitlab', claudeHome: tempFolder('wh-claude-') }), /HTTP 401/);
+  const signedOut = async () => { throw new Error('glab is not signed in to GitLab'); };
+  await assert.rejects(surveyProject({ folder, manifest: MANIFEST, run: withHosts({}), gitlab: signedOut, upstreams: { 'kit-a': upstream }, host: 'gitlab', claudeHome: tempFolder('wh-claude-') }), /no GitLab sign-in/);
 });
 
 test('scheduled tasks, plugins and personal skills are read for the brief', async () => {
@@ -323,7 +332,8 @@ async function surveyWithOrigin(url, { sshEnv = {}, host = 'github' } = {}) {
     if (file === 'glab') return { code: 0, stdout: '[]', stderr: '' };
     return noPrs(file, args, options);
   };
-  await surveyProject({ folder, manifest: { upstreams: [] }, run: recording, upstreams: {}, host, claudeHome: tempFolder('wh-claude-'), sshEnv });
+  const gitlab = async () => ({ get: async () => ({ status: 200, body: [] }) });
+  await surveyProject({ folder, manifest: { upstreams: [] }, run: recording, gitlab, upstreams: {}, host, claudeHome: tempFolder('wh-claude-'), sshEnv });
   return calls.find((c) => c.args.includes('fetch'));
 }
 

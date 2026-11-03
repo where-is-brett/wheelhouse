@@ -557,13 +557,25 @@ async function defaultBranchOf({ host, repo, run, gitlab, base, project }) {
   return branch;
 }
 
+const ROAD_CODES = new Set(['HOST_UNREACHABLE', 'CERTIFICATE_NOT_TRUSTED', 'PROXY_REFUSED', 'PROXY_HAS_PASSWORD', 'NO_CURL']);
+
 // The setup commit's author: the signed-in account, with its no-reply address, read with the
-// director's own sign-in (`gh api user`, `glab api user`). On GitLab, the account's own commit or
-// public address when it has one.
-export async function commitAuthor({ host, run = realRun, base = DEFAULT_GITLAB }) {
-  // A company's GitLab is named to glab through GITLAB_HOST, which takes a port (check 71).
-  const got = await quietly(run, toolPath(host === 'gitlab' ? 'glab' : 'gh'), ['api', 'user'], host === 'gitlab' && base !== DEFAULT_GITLAB ? { env: { GITLAB_HOST: new URL(base).host } } : {});
-  const user = got.code === 0 ? parsed(got.stdout) : null;
+// director's own sign-in (`gh api user` on GitHub; on GitLab `GET /user` with their key, `gitlab` giving
+// the client). On GitLab, the account's own commit or public address when it has one.
+export async function commitAuthor({ host, run = realRun, base = DEFAULT_GITLAB, gitlab = ({ run: r, baseUrl }) => directorGitlabApi({ run: r, baseUrl }) }) {
+  let user = null;
+  if (host === 'gitlab') {
+    try {
+      const got = await (await gitlab({ run, baseUrl: base })).get('/user');
+      user = got.status >= 200 && got.status < 300 ? got.body : null;
+    } catch (error) {
+      // A road that is shut says so in its own plain line; a missing sign-in is the line below.
+      if (ROAD_CODES.has(error?.code)) throw error;
+    }
+  } else {
+    const got = await quietly(run, toolPath('gh'), ['api', 'user']);
+    user = got.code === 0 ? parsed(got.stdout) : null;
+  }
   const id = user?.id;
   if (host === 'gitlab') {
     const login = user?.username;
@@ -1392,7 +1404,7 @@ export function projectFilesStep({
       const folder = ctx.folder;
       const at = (rel) => path.join(folder, ...rel.split('/'));
       const remoteUrl = local ? homeDir(project) : record.remoteUrl;
-      const authorOf = () => (local ? localAuthor({ folder, run }) : commitAuthor({ host, run, base: record.connection?.baseUrl }));
+      const authorOf = () => (local ? localAuthor({ folder, run }) : commitAuthor({ host, run, base: record.connection?.baseUrl, gitlab }));
 
       // 0. A folder on a line of work: the switch alone, then the step is planned again on main.
       const switching = changes.find((c) => c.kind === 'host' && c.action === 'switch');

@@ -16,6 +16,7 @@ import { safeGit, directorSignIn } from '../../../scripts/lib/safe-git.js';
 import { setupGit, setupGitEnv, FENCE } from '../../../scripts/setup/git.js';
 import { makeAdapter } from '../../../scripts/host/adapter.js';
 import { gitlabApi } from '../../../scripts/host/gitlab-key.js';
+import { makeFakeCurl } from '../../helpers/fake-curl.js';
 import { applyCompanyCa } from '../../../scripts/setup/tools.js';
 import { boardModel } from '../../../scripts/board/model.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
@@ -274,41 +275,44 @@ test('the Windows form uses the system store for that address', () => {
 });
 
 test('a certificate failure and an unreachable server are different cards', async () => {
-  const failing = (code, text) => async () => {
-    throw Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error(text), { code }) });
-  };
-  const asked = async (fetch) => {
-    const api = gitlabApi({ baseUrl: BASE, token: TOKEN, fetch });
+  const asked = async (answer, url = BASE) => {
+    const api = gitlabApi({ baseUrl: url, token: TOKEN, run: makeFakeCurl([answer]).run, curl: '/usr/bin/curl', proxy: null, caFile: null, platform: 'linux' });
     try { await api.get('/user'); } catch (error) { return error; }
     return assert.fail('GitLab was reached');
   };
 
   const cert = [];
-  for (const code of ['UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'SELF_SIGNED_CERT_IN_CHAIN', 'DEPTH_ZERO_SELF_SIGNED_CERT']) {
-    const error = await asked(failing(code, `unable to verify, ${TOKEN}, https://git.example.org:8443/api/v4/user`));
-    assert.equal(error.code, code);
+  for (const exit of [60, 77]) {
+    const error = await asked({ exit, stderr: `unable to verify, ${TOKEN}, https://git.example.org:8443/api/v4/user` });
+    assert.equal(error.code, 'CERTIFICATE_NOT_TRUSTED');
     assert.equal(failureKind(error), 'certificate');
     cert.push(error.message);
   }
   const away = [];
-  for (const code of ['ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT']) {
-    const error = await asked(failing(code, `connect ${code} 10.0.0.5:8443, ${TOKEN}`));
-    assert.equal(error.code, code);
+  for (const exit of [6, 7, 28]) {
+    const error = await asked({ exit, stderr: `connect 10.0.0.5:8443, ${TOKEN}` });
+    assert.equal(error.code, 'HOST_UNREACHABLE');
     assert.equal(failureKind(error), 'unreachable');
     away.push(error.message);
   }
+  // A proxy that refuses the computer's sign-in is a third card, and its line says the proxy.
+  const proxy = await asked({ exit: 56, connect: 407, stderr: 'CONNECT tunnel failed' });
+  assert.equal(proxy.code, 'PROXY_REFUSED');
+  assert.equal(failureKind(proxy), 'proxy');
+  assert.equal(proxy.message, PROXY_REFUSED);
+  assert.notEqual(proxy.message, away[0]);
   // Different words, and neither repeats the request, the cause's text or a key.
   assert.ok(cert.every((m) => m === cert[0]));
   assert.ok(away.every((m) => m === away[0]));
   assert.notEqual(cert[0], away[0]);
-  assert.equal(away[0], 'Could not reach GitLab');
+  assert.equal(away[0], HOST_UNREACHABLE(BASE));
   assert.equal(cert[0], CERTIFICATE_NOT_TRUSTED(BASE));
-  for (const message of [...cert, ...away]) assert.doesNotMatch(message, /glpat|api\/v4|unable to verify|10\.0\.0\.5/);
+  for (const message of [...cert, ...away, proxy.message]) assert.doesNotMatch(message, /glpat|api\/v4|unable to verify|10\.0\.0\.5/);
   // An error with no code stays as it was.
-  const plain = await asked(async () => { throw new Error('something else'); });
-  assert.equal(plain.message, 'Could not reach GitLab');
-  assert.equal(plain.code, undefined);
+  const plain = await asked({ exit: 2, stderr: 'something else' });
+  assert.equal(plain.code, 'HOST_REQUEST_FAILED');
   assert.equal(failureKind(plain), 'other');
+  assert.equal(failureKind(new Error('x')), 'other');
 
   // glab says the same two things in its own words, and the adapter tells them apart too.
   const { adapter: certAdapter } = gitlabAdapter(() => ({ code: 1, stdout: '', stderr: GLAB_CERTIFICATE }));
@@ -360,7 +364,7 @@ test('the lines for gitlab.com carry no company wording, and a company address k
   await assert.rejects(publicAdapter.defaultBranch(), (error) => error.message === HOST_UNREACHABLE(PUBLIC) && error.code === 'HOST_UNREACHABLE');
   const publicCertificate = makeAdapter({ host: 'gitlab', repo: 'o/p', run: glabRun(() => ({ code: 1, stdout: '', stderr: GLAB_CERTIFICATE })), env: {}, base: PUBLIC });
   await assert.rejects(publicCertificate.defaultBranch(), (error) => error.message === CERTIFICATE_NOT_TRUSTED(PUBLIC) && !NO_COMPANY.test(error.message));
-  const api = gitlabApi({ baseUrl: PUBLIC, token: TOKEN, fetch: async () => { throw Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('x'), { code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' }) }); } });
+  const api = gitlabApi({ baseUrl: PUBLIC, token: TOKEN, run: makeFakeCurl([{ exit: 60 }]).run, curl: '/usr/bin/curl', proxy: null, caFile: null, platform: 'linux' });
   await assert.rejects(api.get('/user'), (error) => error.message === CERTIFICATE_NOT_TRUSTED(PUBLIC));
   const board = boardModel({ project: 'demo', hostUnreachable: PUBLIC, now: () => new Date('2026-10-22T00:00:00.000Z') });
   assert.ok(JSON.stringify(board).includes("GitLab (gitlab.com) can't be reached from here"));

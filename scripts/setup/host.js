@@ -93,6 +93,7 @@ import { tokenUrl } from '../host/token-url.js';
 import { composeCard, isTooLong } from '../cards/compose.js';
 import { DEFAULT_GITLAB, gitlabBase, readGitlabHosts, parseRemote, hostWords, isDefaultHost } from '../host/gitlab-base.js';
 import { readKey, writeKey } from '../host/keys.js';
+import { borrowKey } from '../host/store.js';
 import { switchOnProtection, protectionStatus, readGitlabProtection } from '../host/protection.js';
 import { askSecret as realAskSecret } from '../secrets/secret-box.js';
 import { projectForFolder, writeProject, readProject } from '../lib/projects.js';
@@ -797,10 +798,22 @@ export function stricterCard({ where, appFile } = {}) {
 // on `glab api` (check 71). The public service needs no telling.
 const ask = (run, host, args, base = DEFAULT_GITLAB) => quietly(run, toolPath(TOOL[host]), args, host === 'gitlab' && base !== DEFAULT_GITLAB ? { env: { GITLAB_HOST: addressOf(host, base) } } : {});
 
+// Who the director's own key for GitLab says they are, or null: the key their git holds, read through
+// GitLab's API (`GET /user`), for a computer with no `glab` or one `glab` is not signed in on.
+async function userByKey({ run, base, via }) {
+  try {
+    const answer = await (await directorGitlabApi({ run, baseUrl: base, via })).get('/user');
+    const user = answer.status === 200 ? answer.body?.username : null;
+    return typeof user === 'string' && user !== '' ? user : null;
+  } catch {
+    return null;
+  }
+}
+
 // Who the host's tool is signed in as, or null.
-async function whoAmI({ host, run, base }) {
+async function whoAmI({ host, run, base, via }) {
   const got = await ask(run, host, ['api', 'user'], base);
-  if (got.code !== 0) return null;
+  if (got.code !== 0) return host === 'gitlab' ? userByKey({ run, base, via }) : null;
   const body = json(got.stdout);
   const user = host === 'github' ? body?.login : body?.username;
   return typeof user === 'string' && user !== '' ? user : null;
@@ -808,10 +821,13 @@ async function whoAmI({ host, run, base }) {
 
 // Whether `gh` or `glab` is signed in to the host, and as whom. Reads only; never fails: a tool not
 // there yet is not signed in.
-export async function signInStatus({ host, run = realRun, base = DEFAULT_GITLAB }) {
+export async function signInStatus({ host, run = realRun, base = DEFAULT_GITLAB, via }) {
   const status = await ask(run, host, ['auth', 'status', '--hostname', addressOf(host, base)], base);
-  if (status.code !== 0) return { signedIn: false, user: null };
-  const user = await whoAmI({ host, run, base });
+  if (status.code !== 0) {
+    const user = host === 'gitlab' ? await userByKey({ run, base, via }) : null;
+    return { signedIn: user !== null, user };
+  }
+  const user = await whoAmI({ host, run, base, via });
   return { signedIn: user !== null, user };
 }
 
@@ -912,20 +928,34 @@ export async function openPage(url, { platform = process.platform, run = realRun
 // The director's GitLab sign-in, as glab holds it, read as check 22's trial read it: the token on
 // the "Token found:" line of `glab auth status --show-token`, or a glpat- value there. Held in
 // memory only; null when glab has none.
-async function directorGitlabToken({ run, host = ADDRESS.gitlab, base = DEFAULT_GITLAB }) {
+async function glabToken({ run, host = ADDRESS.gitlab, base = DEFAULT_GITLAB }) {
   const got = await quietly(run, toolPath('glab'), ['auth', 'status', '--hostname', host, '--show-token'], base !== DEFAULT_GITLAB ? { env: { GITLAB_HOST: host } } : {});
   const text = `${got.stdout ?? ''}\n${got.stderr ?? ''}`;
   const shown = /^[ \t]*\S*[ \t]*Token found\b[^:\n]*:[ \t]*(\S+)/im.exec(text)?.[1];
   return (shown && !/^\*+$/.test(shown) ? shown : null) ?? /\bglpat-[\w-]+/.exec(text)?.[0] ?? null;
 }
 
+// Where the director's own key is borrowed from when `glab` has none: the key their git holds for the host.
+// Replaced in tests, so no test asks the computer's own store.
+export const directorKey = { borrow: borrowKey };
+
+// The director's GitLab token: `glab`'s, else the key their own git holds for the host (a Bearer token
+// works for a personal token as for a sign-in one). Null when there is neither.
+async function directorGitlabToken({ run, host = ADDRESS.gitlab, base = DEFAULT_GITLAB }) {
+  const shown = await glabToken({ run, host, base });
+  if (shown !== null) return shown;
+  const borrowed = await directorKey.borrow({ host, base });
+  return typeof borrowed?.key === 'string' && borrowed.key !== '' ? borrowed.key : null;
+}
+
 // GitLab's API with the director's own sign-in, for making repositories and project keys, and for
-// protection (Task 13). The token goes only into the request's header.
-export async function directorGitlabApi({ run = realRun, fetch = globalThis.fetch, baseUrl = DEFAULT_GITLAB } = {}) {
+// protection (Task 13). The token goes only into the request's header. `via` is how the calls are made
+// (gitlabApi's run, curl, proxy and caFile), for tests.
+export async function directorGitlabApi({ run = realRun, baseUrl = DEFAULT_GITLAB, via = {} } = {}) {
   const root = checkBaseUrl(baseUrl);
   const token = await directorGitlabToken({ run, host: new URL(root).host, base: root });
   if (token === null) throw new Error('glab is not signed in to GitLab, so setup cannot use your GitLab sign-in');
-  return gitlabApi({ baseUrl: root, token, bearer: true, fetch });
+  return gitlabApi({ baseUrl: root, token, bearer: true, ...via });
 }
 
 // The environment setup's git runs with: the director's own sign-in, through their host tool as
@@ -1669,7 +1699,7 @@ function directorFor({ signedIn, way, host, app, appKeys, joining = false, via =
 export function hostStep({
   run = realRun, fetch = globalThis.fetch, sleep = pause, open, askSecret = realAskSecret, appFile = APP_FILE,
   hostUrl = httpsRemote, findGit = async ({ platform }) => (await toolsStatus({ platform, run, tools: ['git'] })).git,
-  gitlab = ({ run: r, fetch: f, baseUrl }) => directorGitlabApi({ run: r, fetch: f, baseUrl }),
+  gitlab = ({ run: r, baseUrl }) => directorGitlabApi({ run: r, baseUrl }),
   profileRoutes = null, views = readProfileViews,
   // Whether GitLab's certificate is trusted from here, and how the company's is given to the tools
   // (company-ca.js, tools.js): stand-ins in tests.
@@ -1743,7 +1773,7 @@ export function hostStep({
       if (!git?.ok || typeof git.path !== 'string') throw new Error('git is not on this computer yet');
       const { user } = await signIn({ host, run, say, stopped, base, open: opener, askSecret, platform });
       halt();
-      const api = host === 'gitlab' ? await gitlab({ run, fetch, baseUrl: base }) : null;
+      const api = host === 'gitlab' ? await gitlab({ run, baseUrl: base }) : null;
       const name = repoName(folder);
       const repo = `${user}/${name}`;
       let project = await repoInfo({ host, repo, run, api });
@@ -1922,7 +1952,7 @@ export function hostStep({
       // first, for that address only. With the file made already, the question is whether it covers
       // GitLab's certificate (an authority added since, or glab not having taken it, shows here), and the
       // certificates are read again from the computer's store.
-      if (host === 'gitlab' && base !== DEFAULT_GITLAB && await certificateProbe({ fetch, base, home: wheelhouseHome() }) === 'certificate') {
+      if (host === 'gitlab' && base !== DEFAULT_GITLAB && await certificateProbe({ base, home: wheelhouseHome() }) === 'certificate') {
         changes.push({ kind: 'host', target: host, action: 'certificate', base, ...(fs.existsSync(caFile(wheelhouseHome())) ? { refresh: true } : {}) });
       }
       // A company's GitLab with no OAuth application registered has no browser sign-in: the change says
@@ -2027,7 +2057,7 @@ export function hostStep({
         const given = await trustCertificate({
           base, platform, run, refresh: certificate.refresh === true,
           // The staged certificates alone, tried against GitLab before they are kept (company-ca.js).
-          verify: ({ file }) => certificateProbe({ fetch, base, file }),
+          verify: ({ file }) => certificateProbe({ base, file }),
         });
         record({
           id: newId('chg'), kind: 'answer', target: `step 3: the company's certificate`, before: null,
@@ -2044,7 +2074,7 @@ export function hostStep({
         if (c.repo.split('/')[0] !== user) throw new Error(`You are signed in to ${NAME[host]} as ${user}, not the account the card named; ask for step 3's card again`);
       }
       halt();
-      const api = host === 'gitlab' ? await gitlab({ run, fetch, baseUrl: base }) : null;
+      const api = host === 'gitlab' ? await gitlab({ run, baseUrl: base }) : null;
       // The product a joining computer's answer names: exactly one repository set up with Wheelhouse,
       // or a refusal saying to type owner/name, recorded so the question asks again.
       let joined = null;

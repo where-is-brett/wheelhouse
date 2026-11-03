@@ -36,8 +36,12 @@ import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { makeEvent, writeEvent } from '../../../scripts/state/events.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
-import { directorGitlabApi, REAL_USERS } from '../../../scripts/setup/host.js';
+import { directorGitlabApi, directorKey, REAL_USERS } from '../../../scripts/setup/host.js';
+
+// No test asks the computer's own store for a key.
+directorKey.borrow = async () => null;
 import { run as realRun } from '../../../scripts/lib/run.js';
+import { makeFakeCurl, parseConfig } from '../../helpers/fake-curl.js';
 import { guardedRun } from '../../helpers/host-stand-ins.js';
 
 // Setup's own runs: git and what the test fakes; any other host tool is refused and noted here.
@@ -211,16 +215,21 @@ async function world({
       : { available: true, on: true, line: `GitHub blocks direct pushes to ${defaultBranch}.` };
   };
   // GitLab's API, reached as directorGitlabApi reaches it with glab's sign-in: the token only in the header.
-  w.fetch = async (url, init = {}) => {
-    w.api.push({ url, auth: init.headers?.Authorization ?? null });
-    const body = url.endsWith(`/projects/${encodeURIComponent(REPO)}`) ? { id: 41, path_with_namespace: REPO, default_branch: defaultBranch, visibility: 'private' } : null;
-    return { status: body ? 200 : 404, text: async () => JSON.stringify(body) };
+  // It is curl's stand-in: each call is read from the config on standard input and answered at once.
+  w.curl = async (file, args, options = {}) => {
+    const pairs = parseConfig(options.input);
+    const url = pairs.find(([key]) => key === 'url')[1];
+    w.api.push({ url, auth: /Authorization: (.*)/.exec(options.input)?.[1].replace(/"$/, '') ?? null });
+    const body = url.endsWith(`/projects/${encodeURIComponent(REPO)}`) ? { id: 41, path_with_namespace: REPO, default_branch: defaultBranch, visibility: 'private' }
+      : url.endsWith('/api/v4/user') ? GITLAB_USER : null;
+    return makeFakeCurl([{ status: body ? 200 : 404, body: JSON.stringify(body) }]).run(file, args, options);
   };
+  w.via = { run: (...args) => w.curl(...args), curl: '/usr/bin/curl', proxy: null, caFile: null, platform: 'linux' };
   w.status = async () => ({ available: true, on: w.protection.length > 0, line: 'read' });
   w.step = projectFilesStep({
     run: (...args) => w.run(...args), findGit: async () => ({ ok: true, path: 'git' }), claude: () => ({ kind: 'direct', file: 'claude' }),
     manifest: () => w.manifest, claudeHome: () => w.claudeHome, switchOn: w.switchOn, protectionStatus: w.status,
-    gitlab: ({ run, baseUrl: asked }) => { w.asked.push(asked); return directorGitlabApi({ run, fetch: w.fetch, baseUrl: asked }); },
+    gitlab: ({ run, baseUrl: asked }) => { w.asked.push(asked); return directorGitlabApi({ run, via: w.via, baseUrl: asked }); },
     address: () => ADDRESS, node: NODE, pluginRoot: PLUGIN_ROOT,
     best: async (alias) => { w.bestAsked += 1; w.aliases.push(alias); return alias === MID_SIZED_ALIAS ? w.mid : w.best; },
     engineOf: () => engine, loginOf: async () => 'ann-oneil',
@@ -1030,8 +1039,8 @@ test('on GitLab: the default branch and protection through glab\'s sign-in, the 
     assert.match(done.run.steps[7].say.line, /Pipelines must succeed/);
   });
   // An account's own commit address is used where it has one.
-  const run = async () => ({ code: 0, stdout: JSON.stringify({ ...GITLAB_USER, commit_email: 'me@example.invalid' }), stderr: '' });
-  assert.deepEqual(await commitAuthor({ host: 'gitlab', run }), { name: GITLAB_USER.name, email: 'me@example.invalid' });
+  const gitlab = async () => ({ get: async () => ({ status: 200, body: { ...GITLAB_USER, commit_email: 'me@example.invalid' } }) });
+  assert.deepEqual(await commitAuthor({ host: 'gitlab', gitlab }),{ name: GITLAB_USER.name, email: 'me@example.invalid' });
 });
 
 test('on GitLab, a project with real users is switched on as one, and the gaps found are said in one line', async () => {
@@ -1076,8 +1085,8 @@ test('on a company GitLab, step 7 reads and protects through the company address
     assert.ok(Array.isArray(planned.changes), planned.why);
     const done = await w.apply(planned.changes);
     assert.equal(done.ok, true, done.reason);
-    // The API is asked at the company's address (the default branch, then protection), never gitlab.com.
-    assert.deepEqual(w.asked, [COMPANY, COMPANY]);
+    // The API is asked at the company's address (the default branch, protection, then who is signed in for the commit author), never gitlab.com.
+    assert.deepEqual(w.asked, [COMPANY, COMPANY, COMPANY]);
     assert.ok(w.api.length > 0 && w.api.every((a) => a.url.startsWith(`${COMPANY}/api/v4/`)), JSON.stringify(w.api));
     // glab is named the company's host wherever it is asked, and the author is read from it.
     const glab = w.calls.filter((c) => c.tool === 'glab');
@@ -1096,7 +1105,7 @@ test('on a company GitLab, step 7 reads and protects through the company address
     const w = await world({ host: 'gitlab' });
     const done = await w.apply((await w.plan()).changes);
     assert.equal(done.ok, true, done.reason);
-    assert.deepEqual(w.asked, [undefined, undefined]);
+    assert.deepEqual(w.asked, [undefined, 'https://gitlab.com', undefined]);
     assert.ok(w.api.every((a) => a.url.startsWith('https://gitlab.com/api/v4/')));
     assert.ok(w.gitCalls.every((c) => !/sslCAInfo|sslBackend/.test(JSON.stringify(c.env))));
   });

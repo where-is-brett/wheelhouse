@@ -61,15 +61,15 @@ export const gitlabKeyPage = ({ base, repo, pasted }) => (pasted ? `${base}/-/us
 
 // Revokes the GitLab key kept as `name` (gitlab-project-<projectId>) through GitLab's API at `base`:
 // as the key revoking itself, then, if GitLab won't, by its own number on the project. Its file is
-// deleted once GitLab has revoked it. Gives { found, pasted, url, revoked, status }: `found` false
+// deleted once GitLab has revoked it. `via` is how the calls are made (gitlabApi's run, curl, proxy and caFile), for tests. Gives { found, pasted, url, revoked, status }: `found` false
 // when no key is kept under that name; `status` GitLab's answer (null when it could not be reached).
-export async function revokeGitlabKey({ name, projectId, base, repo, fetch }) {
+export async function revokeGitlabKey({ name, projectId, base, repo, via = {} }) {
   let key = null;
   try { key = readKey(name); } catch { /* damaged: treated as none */ }
   const pasted = key?.kind === 'pasted-token';
   const url = gitlabKeyPage({ base, repo, pasted });
   if (typeof key?.token !== 'string' || key.token === '') return { found: false, pasted, url, revoked: false, status: null };
-  const api = gitlabApi({ baseUrl: base, token: key.token, fetch });
+  const api = gitlabApi({ baseUrl: base, token: key.token, ...via });
   const statusOf = async (call) => { try { return (await call()).status; } catch { return null; } };
   const revoked = (status) => status !== null && status >= 200 && status < 300;
   let status = await statusOf(() => api.delete('/personal_access_tokens/self'));
@@ -85,7 +85,7 @@ const plainAnswer = (text, rest = {}) => ({ ok: true, message: text, ...rest });
 export const NO_ACCESS_TO_CUT = 'Nothing to cut: this project stays on this computer, so the agents have no outside access to it.';
 
 // The runbook's step 2 for a project's record: { ok, message, url? }, or { ok: false, refused, url }.
-export async function cutAccess({ record, fetch }) {
+export async function cutAccess({ record, via = {} }) {
   const { connection, host, repo } = record;
   if (host === 'local') return plainAnswer(NO_ACCESS_TO_CUT);
   const base = host === 'gitlab' ? checkBaseUrl(connection.baseUrl ?? GITLAB_URL) : null;
@@ -102,7 +102,7 @@ export async function cutAccess({ record, fetch }) {
     const { url } = deleteAppKeys(connection);
     return plainAnswer('Done on this computer: the Wheelhouse app\'s keys were deleted from it, so nothing here can use them. Still for you: the app is still installed on GitHub, and a copy of its keys would still work until the app is suspended or uninstalled. Open the page below and choose Suspend or Uninstall.', { url });
   }
-  const got = await revokeGitlabKey({ name: `gitlab-project-${connection.projectId}`, projectId: connection.projectId, base, repo, fetch });
+  const got = await revokeGitlabKey({ name: `gitlab-project-${connection.projectId}`, projectId: connection.projectId, base, repo, via });
   const { pasted, url, status } = got;
   if (!got.found) {
     return plainAnswer('No project key was found on this computer, so there was nothing to revoke from here. Still for you: check the page below for any key that Wheelhouse made, and revoke it.', { url });

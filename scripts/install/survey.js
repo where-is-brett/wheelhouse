@@ -344,7 +344,7 @@ function originOf(url) {
   }
 }
 
-async function readInFlight({ folder, host, git, run, sshEnv }) {
+async function readInFlight({ folder, host, git, run, sshEnv, gitlab }) {
   const remotes = (await git(['remote'])).split('\n').map((r) => r.trim()).filter(Boolean);
   let behind = 0;
   let onDefault = false;
@@ -369,7 +369,7 @@ async function readInFlight({ folder, host, git, run, sshEnv }) {
       const branch = (await git(['symbolic-ref', '--quiet', 'HEAD'], folder, { allowFail: true })).trim();
       onDefault = branch !== '' && branch === `refs/heads/${ref.slice('refs/remotes/origin/'.length)}`;
     }
-    prs = await openRequests({ originUrl, host, run });
+    prs = await openRequests({ originUrl, host, run, gitlab });
   }
   const dirty = (await git(['status', '--porcelain', '--ignore-submodules=dirty'])).trim() !== '';
   const worktrees = [];
@@ -416,13 +416,29 @@ export const repositoryOf = (originUrl, host) => originRepository(originUrl, hos
 const TOKEN_VARIABLES = ['GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GH_HOST', 'GITLAB_TOKEN', 'GITLAB_ACCESS_TOKEN', 'OAUTH_TOKEN', 'GITLAB_HOST'];
 const withoutTokens = () => ({ ...Object.fromEntries(TOKEN_VARIABLES.map((n) => [n, undefined])), GH_PROMPT_DISABLED: '1', NO_COLOR: '1' });
 
-async function openRequests({ originUrl, host, run }) {
+// GitLab's open merge requests, by the director's own key through GitLab's API (`gitlab` gives the client:
+// ({ run, baseUrl }) -> a client with `get`; by default the setup client, found when it is needed).
+async function openMergeRequests({ originUrl, named, run, gitlab }) {
+  const base = named.hostname === null ? DEFAULT_GITLAB : (originOf(originUrl) ?? `https://${named.hostname}`);
+  const path = named.hostname === null ? named.repo : named.repo.slice(named.hostname.length + 1);
+  const open = gitlab ?? (async (args) => (await import('../setup/host.js')).directorGitlabApi(args));
+  let answer;
+  try {
+    answer = await (await open({ run, baseUrl: base })).get(`/projects/${encodeURIComponent(path)}/merge_requests?state=opened&per_page=100`);
+  } catch (error) {
+    if (typeof error?.code === 'string') throw new Error(`GitLab could not be reached with the director's own sign-in, so the open merge requests were not listed: ${error.message}`);
+    throw new Error(`there is no GitLab sign-in on ${new URL(base).host}, so the open merge requests were not listed`);
+  }
+  if (answer.status !== 200 || !Array.isArray(answer.body)) throw new Error(`GitLab could not list the open merge requests (HTTP ${answer.status})`);
+  return answer.body.map((r) => ({ number: r?.iid, branch: r?.source_branch })).filter((r) => Number.isInteger(r.number) && typeof r.branch === 'string');
+}
+
+async function openRequests({ originUrl, host, run, gitlab }) {
   const named = originRepository(originUrl, host);
   if (named === null) throw new Error('the origin address does not name a repository, so its open requests could not be listed');
-  const tool = host === 'gitlab' ? 'glab' : 'gh';
-  const [file, args] = host === 'gitlab'
-    ? [tool, ['mr', 'list', `--repo=${named.repo}`, '--output', 'json', '--per-page', '100']]
-    : [tool, ['pr', 'list', `--repo=${named.repo}`, '--state', 'open', '--json', 'number,headRefName', '--limit', '200']];
+  if (host === 'gitlab') return openMergeRequests({ originUrl, named, run, gitlab });
+  const tool = 'gh';
+  const [file, args] = [tool, ['pr', 'list', `--repo=${named.repo}`, '--state', 'open', '--json', 'number,headRefName', '--limit', '200']];
   // Run outside the project: gh and glab run git themselves, and would read the project's own config.
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-survey-'));
   let result;
@@ -433,17 +449,17 @@ async function openRequests({ originUrl, host, run }) {
     const env = named.hostname === null ? { GH_PROMPT_DISABLED: '1', NO_COLOR: '1' } : withoutTokens();
     if (named.hostname !== null) {
       const auth = await run(tool, ['auth', 'status', `--hostname=${named.hostname}`], { cwd: outside, env, timeoutMs: GIT_WAIT_MS });
-      if (auth.code !== 0) throw new Error(`${tool} is not signed in to ${named.hostname}, so the open ${host === 'gitlab' ? 'merge' : 'pull'} requests were not listed`);
+      if (auth.code !== 0) throw new Error(`${tool} is not signed in to ${named.hostname}, so the open pull requests were not listed`);
     }
     result = await run(file, args, { cwd: outside, env, timeoutMs: GIT_WAIT_MS });
   } finally {
     fs.rmSync(outside, { recursive: true, force: true });
   }
-  if (result.code !== 0) throw new Error(`${file} could not list the open ${host === 'gitlab' ? 'merge' : 'pull'} requests: ${String(result.stderr).trim().split('\n').pop()}`);
+  if (result.code !== 0) throw new Error(`${file} could not list the open pull requests: ${String(result.stderr).trim().split('\n').pop()}`);
   let listed;
   try { listed = JSON.parse(result.stdout); } catch { throw new Error(`${file} did not answer with a list`); }
   if (!Array.isArray(listed)) throw new Error(`${file} did not answer with a list`);
-  return listed.map((r) => (host === 'gitlab' ? { number: r?.iid, branch: r?.source_branch } : { number: r?.number, branch: r?.headRefName }))
+  return listed.map((r) => ({ number: r?.number, branch: r?.headRefName }))
     .filter((r) => Number.isInteger(r.number) && typeof r.branch === 'string');
 }
 
@@ -504,14 +520,14 @@ function readPersonalSkills(claudeHome) {
 // Claude's scheduled tasks as `{ name, folder, path? }`, or null when no list was given (the
 // survey's `scheduled` is then null too); `claudeHome` is the director's Claude folder; `sshEnv`
 // is where an existing GIT_SSH_COMMAND is read from.
-export async function surveyProject({ folder, manifest, run = defaultRun, upstreams = {}, host = null, scheduled = null, claudeHome = defaultClaudeHome(), sshEnv = process.env }) {
+export async function surveyProject({ folder, manifest, run = defaultRun, upstreams = {}, host = null, scheduled = null, claudeHome = defaultClaudeHome(), sshEnv = process.env, gitlab = null }) {
   if (typeof folder !== 'string' || !fs.statSync(folder, { throwIfNoEntry: false })?.isDirectory()) throw new Error('The project folder is not there');
   if (scheduled !== null && !Array.isArray(scheduled)) throw new Error('The scheduled tasks are not a list');
   const project = path.resolve(folder);
-  return surveyIn({ project, manifest, run, upstreams, host, scheduled, claudeHome, sshEnv });
+  return surveyIn({ project, manifest, run, upstreams, host, scheduled, claudeHome, sshEnv, gitlab });
 }
 
-async function surveyIn({ project, manifest, run, upstreams, host, scheduled, claudeHome, sshEnv }) {
+async function surveyIn({ project, manifest, run, upstreams, host, scheduled, claudeHome, sshEnv, gitlab }) {
   // One fenced git for each folder, kind of look and reach. A refusal by the look is thrown as it
   // comes, naming the settings, whatever allowFail says.
   const routes = new Map();
@@ -547,7 +563,7 @@ async function surveyIn({ project, manifest, run, upstreams, host, scheduled, cl
       .map((t) => (typeof t.path === 'string' ? { name: t.name, path: t.path } : { name: t.name })),
     copies,
     keep,
-    inFlight: await readInFlight({ folder: project, host: hostName, git, run, sshEnv }),
+    inFlight: await readInFlight({ folder: project, host: hostName, git, run, sshEnv, gitlab }),
     commandsNamed,
     deniedAfterSwitchBack: deniedByStandard(commandsNamed),
     plugins: readPlugins({ claudeHome, manifest }),

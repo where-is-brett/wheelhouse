@@ -47,6 +47,7 @@ import { PROFILE_TARGET } from '../../../scripts/setup/own-app.js';
 import { EXCLUDE_LINE, WHEELHOUSE_LINE } from '../../../scripts/setup/project-files.js';
 import { as, shortHome, tempFolder, testAddress, withHome } from '../../helpers/homes.js';
 import { until } from '../../helpers/until.js';
+import { makeFakeCurl } from '../../helpers/fake-curl.js';
 import { decide as sessionStart } from '../../../scripts/hooks/session-start.js';
 
 // No host tool runs for real: the helper's runs go through this, and the log stays empty.
@@ -1784,20 +1785,19 @@ test('a GitLab key is revoked through the API, then deleted; one GitLab won\'t r
     return run;
   };
   const answering = (statuses) => {
-    const asked = [];
-    const fetch = async (url, init) => {
-      asked.push({ url, method: init.method, token: init.headers['PRIVATE-TOKEN'] });
-      return { status: statuses.shift(), text: async () => '' };
-    };
-    return { asked, fetch };
+    const fake = makeFakeCurl(statuses.map((status) => ({ status })));
+    const asked = { get length() { return fake.calls.length; }, map: (fn) => fake.calls.map((c) => fn({ url: c.pairs.find(([k]) => k === 'url')[1] })) };
+    const seen = () => fake.calls.map((c) => ({ url: c.pairs.find(([k]) => k === 'url')[1], method: c.pairs.find(([k]) => k === 'request')[1], token: /PRIVATE-TOKEN: (\S+?)"?$/m.exec(c.config)?.[1] }));
+    const via = { run: fake.run, curl: '/usr/bin/curl', proxy: null, caFile: null, platform: 'linux' };
+    return { asked, seen, via };
   };
   await withHome(async () => {
     setUp('pasted-token');
     const f = fakes(world.w);
     const api = answering([204]);
-    const { done } = await applyPlan(world.w, f, { fetch: api.fetch });
+    const { done } = await applyPlan(world.w, f, { via: api.via });
     assert.equal(done.ok, true, done.refused);
-    assert.deepEqual(api.asked, [{ url: 'https://gitlab.com/api/v4/personal_access_tokens/self', method: 'DELETE', token: 'glpat-secret0123456789' }]);
+    assert.deepEqual(api.seen(), [{ url: 'https://gitlab.com/api/v4/personal_access_tokens/self', method: 'DELETE', token: 'glpat-secret0123456789' }]);
     assert.equal(readKey('gitlab-project-5'), null);
     assert.ok(done.lines.includes('The GitLab token you pasted is revoked, which stops it everywhere it is used.'));
     assert.equal(JSON.stringify(done).includes('glpat-secret'), false);
@@ -1807,7 +1807,7 @@ test('a GitLab key is revoked through the API, then deleted; one GitLab won\'t r
     const run = setUp('project-key');
     const f = fakes(world.w);
     const api = answering([403, 500]);
-    const { done } = await applyPlan(world.w, f, { fetch: api.fetch });
+    const { done } = await applyPlan(world.w, f, { via: api.via });
     assert.equal(done.ok, false);
     assert.match(done.refused, /GitLab did not revoke the project key \(HTTP 500\), so its file was kept: open https:\/\/gitlab\.com\/o\/Cafe-Menu\/-\/settings\/access_tokens/);
     assert.deepEqual(api.asked.map((a) => a.url), ['https://gitlab.com/api/v4/personal_access_tokens/self', 'https://gitlab.com/api/v4/projects/5/access_tokens/9']);
@@ -1816,7 +1816,7 @@ test('a GitLab key is revoked through the API, then deleted; one GitLab won\'t r
     assert.equal(JSON.stringify(done).includes('glpat-secret'), false);
     // GitLab no longer accepting it means it works nowhere: its file goes, and uninstall finishes.
     const again = answering([401]);
-    const next = await applyPlan(world.w, f, { fetch: again.fetch });
+    const next = await applyPlan(world.w, f, { via: again.via });
     assert.equal(next.done.ok, true, next.done.refused);
     assert.equal(readKey('gitlab-project-5'), null);
   });
