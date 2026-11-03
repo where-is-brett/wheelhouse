@@ -1,0 +1,13 @@
+{
+  "iid": 4,
+  "changes": [
+    {
+      "new_path": "src/a.js",
+      "diff": "@@ -1,2 +1,3 @@\n-old\n+new\n+newer\n same"
+    },
+    {
+      "new_path": "README.md",
+      "diff": "@@ -1 +1 @@\n-a\n+b"
+    }
+  ]
+}
