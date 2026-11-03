@@ -786,6 +786,17 @@ test('an older helper that is slow to close and still answers gives the restarti
   });
 });
 
+test('an older helper whose answer is still pending when the wait ends is not taken for closed', async () => {
+  await withHome(async (home) => {
+    const f = helperOf('0.2.3', () => ({ ok: true, retired: true }));
+    let asked = 0;
+    f.client.health = () => (asked++ === 0 ? Promise.resolve({ ok: true, version: '0.2.3' }) : new Promise(() => {}));
+    const out = text(await run(f, { pluginRoot: ownRoot(home), startWaitMs: 30 }));
+    assert.equal(helperStarts(f), 0);
+    assert.match(out, /older Wheelhouse helper \(version 0\.2\.3\) is restarting/);
+  });
+});
+
 test('a helper of another version than this copy is named in the reload', async () => {
   await withHome(async (home) => {
     const root = path.join(home, 'plugin');
