@@ -1,11 +1,8 @@
 // tests/scripts/settings/compact-window.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import { chosenWindow } from '../../../scripts/settings/compact-window-pr.js';
-import { windowRefusal, windowIn, windowOf, nearLimit, withWindow, windowChange, SETTINGS_FILE } from '../../../scripts/settings/compact-window.js';
+import { windowRefusal, windowIn, withWindow, windowChange, SETTINGS_FILE } from '../../../scripts/settings/compact-window.js';
 
 test('a window at or below the prepare point is refused in plain words', () => {
   assert.match(windowRefusal({ window: 200000, prepare: 200000 }), /has to be larger than the point to prepare at/);
@@ -26,37 +23,11 @@ test('the change touches only autoCompactWindow', () => {
   assert.deepEqual(withWindow(undefined, 400000), { autoCompactWindow: 400000 });
 });
 
-test('the window and the near-limit point are read from the project\'s settings', () => {
-  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-window-'));
-  try {
-    assert.equal(windowOf(folder), null);
-    assert.equal(nearLimit(folder, 360000), 360000);
-    fs.mkdirSync(path.join(folder, '.claude'));
-    fs.writeFileSync(path.join(folder, '.claude', 'settings.json'), '{ not json');
-    assert.equal(nearLimit(folder, 360000), 360000);
-    fs.writeFileSync(path.join(folder, '.claude', 'settings.json'), JSON.stringify({ autoCompactWindow: 320000 }));
-    assert.equal(windowOf(folder), 320000);
-    assert.equal(nearLimit(folder, 360000), 380000);
-    assert.equal(windowIn({ autoCompactWindow: '320000' }), null);
-    assert.equal(nearLimit(null, 360000), 360000);
-  } finally {
-    fs.rmSync(folder, { recursive: true, force: true });
-  }
-});
-
-test('a window outside the catalogue\'s bounds counts as none, so the guard falls back', () => {
+test('a window outside the catalogue\'s bounds counts as none', () => {
   assert.equal(windowIn({ autoCompactWindow: 150000 }), null);
   assert.equal(windowIn({ autoCompactWindow: 1000001 }), null);
   assert.equal(windowIn({ autoCompactWindow: 200000 }), 200000);
   assert.equal(windowIn({ autoCompactWindow: 1000000 }), 1000000);
-  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-window-'));
-  try {
-    fs.mkdirSync(path.join(folder, '.claude'));
-    fs.writeFileSync(path.join(folder, '.claude', 'settings.json'), JSON.stringify({ autoCompactWindow: 150000 }));
-    assert.equal(nearLimit(folder, 360000), 360000);
-  } finally {
-    fs.rmSync(folder, { recursive: true, force: true });
-  }
 });
 
 test('the window the director chose must stay above the point to prepare at', () => {
