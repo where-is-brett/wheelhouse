@@ -496,8 +496,8 @@ function checkPinsNow({ folder }) {
 
 // The host's protection, read back with the director's own sign-in: 'on', 'off', or 'not offered'
 // on a plan without it.
-async function readProtectionNow({ host, repo, run, realUsers = false, base }) {
-  const api = host === 'gitlab' ? await directorGitlabApi({ run, baseUrl: base }) : undefined;
+async function readProtectionNow({ host, repo, run, realUsers = false, base, via = {} }) {
+  const api = host === 'gitlab' ? await directorGitlabApi({ run, baseUrl: base, via }) : undefined;
   const read = await protectionStatus({ host, repo, run, api, env: {}, realUsers, director: true });
   if (read.on === true) return 'on';
   return read.available === false ? 'not offered' : 'off';
@@ -509,7 +509,7 @@ const applied = (run) => typeof run?.steps?.[HEALTH_STEP]?.doneAt === 'string';
 // Step 10. `run` runs git and the host's tools; `adapterFor({ host, repo, base })` the adapter, with the
 // director's own sign-in; `client` the helper's client the merge is asked through; `findGit` the
 // git step 2 found; `gitEnvFor({ host, gitPath, platform, base })` git's environment; `trySTOP`,
-// `checkPins({ folder })` and `readProtection({ host, repo, realUsers, base })` the other checks. All for tests.
+// `checkPins({ folder })` and `readProtection({ host, repo, realUsers, base })` the other checks; `via` is how the protection read's GitLab calls are made (gitlabApi's run, curl, proxy and caFile). All for tests.
 export function healthStep({
   run = realRun,
   adapterFor = ({ host, repo, base, folder }) => adapterOf({ host, repo, folder, connection: { baseUrl: base } }, { run }),
@@ -518,9 +518,10 @@ export function healthStep({
   gitEnvFor = directorGitEnv,
   trySTOP = () => stopTrial({ run }),
   checkPins = checkPinsNow,
-  readProtection = ({ host, repo, realUsers, base }) => readProtectionNow({ host, repo, run, realUsers, base }),
+  readProtection = ({ host, repo, realUsers, base }) => readProtectionNow({ host, repo, run, realUsers, base, via }),
   engineChecks = engineChecksNow,
   lookHome = lookAtHome,
+  via = {},
 } = {}) {
   return {
     n: HEALTH_STEP,

@@ -27,7 +27,6 @@ import { as, shortHome, testAddress, tempFolder } from '../../helpers/homes.js';
 import { prOnHost } from '../../helpers/pr-on-host.js';
 import { matchingBody, writeSessionProvenance } from '../../helpers/provenance.js';
 import { until } from '../../helpers/until.js';
-import { hostCurl } from '../../../scripts/host/gitlab-key.js';
 import { makeFakeCurl, parseConfig } from '../../helpers/fake-curl.js';
 
 // No host tool runs for real: the helper's runs go through this, and the log stays empty.
@@ -1177,7 +1176,6 @@ test('/host/facts on GitLab carries the plan and the gaps the key could read', a
       const seen = [];
       // The company's GitLab as the project key sees it: Free (the approval rules are refused) and
       // no right to list the variables.
-      // The helper builds its GitLab client where a test cannot hand it a stand-in curl, so it is set in hostCurl.
       const curl = async (file, args, options) => {
         const path = new URL(parseConfig(options.input).find(([key]) => key === 'url')[1]).pathname.replace('/api/v4', '');
         seen.push(path);
@@ -1189,14 +1187,10 @@ test('/host/facts on GitLab carries the plan and the gaps the key could read', a
         if (path.includes('/variables')) return body(403, { message: '403 Forbidden' });
         return body(404, {});
       };
-      Object.assign(hostCurl, { run: curl, curl: '/usr/bin/curl', proxy: null, caFile: null, platform: 'linux' });
-      try {
-        await withHelper(fakeAdapter({ hasCi: async () => true }), async (client) => {
-          assert.deepEqual(await client.host.facts({ project: 'o__p' }), { ok: true, protection: 'on', ci: 'present', plan: 'free', gaps: [] });
-        }, { envFor: async () => ({ GITLAB_TOKEN: 'a-stand-in-key' }) });
-      } finally {
-        for (const name of Object.keys(hostCurl)) delete hostCurl[name];
-      }
+      const via = { run: curl, curl: '/usr/bin/curl', proxy: null, caFile: null, platform: 'linux' };
+      await withHelper(fakeAdapter({ hasCi: async () => true }), async (client) => {
+      assert.deepEqual(await client.host.facts({ project: 'o__p' }), { ok: true, protection: 'on', ci: 'present', plan: 'free', gaps: [] });
+      }, { envFor: async () => ({ GITLAB_TOKEN: 'a-stand-in-key' }), via });
       assert.ok(seen.some((s) => s.endsWith('/approval_rules')), 'the plan was asked');
     });
   } finally { p.cleanup(); }

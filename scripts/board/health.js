@@ -16,7 +16,7 @@ import { HELPER_WAIT_MS, HOST_FACTS_MAX_AGE_MS } from '../lib/core-numbers.js';
 import { FREE_PLAN_LINE, fakedTestsGap } from '../host/protection.js';
 import { NO_HELPER } from '../hooks/session-start.js';
 import { helperClient } from '../host/helper-client.js';
-import { QUICK_LINE } from '../lib/host-lines.js';
+import { QUICK_LINE, switchedLine } from '../lib/host-lines.js';
 import { frontDeskModelLine } from '../lib/front-desk-model.js';
 
 // The All stop line starts with these words, alone or followed by ", since <date>". A line from
@@ -202,6 +202,8 @@ export function healthLines({ record, locked, stop, lock, helperUp, facts, renew
   // Quick is the Mac's default, since the sandbox denies its sign-in files and the keychain (check 73),
   // so it brings no line there; on Windows, where nothing does, it is a calm note (design section 22).
   if (record?.connection?.mode === 'quick' && platform !== 'darwin') add('ok', QUICK_LINE);
+  // The host's tool stopped starting and the helper moved the project to the host's web API by itself (adapter-for.js).
+  if (record?.connection?.backend === 'rest' && record.connection.switched === 'cli') add('watch', switchedLine(record.host));
   if (platform === 'win32') {
     add('watch', WINDOWS_LINE);
     if (builds?.level === 'unattended') add('watch', UNATTENDED_LINE);

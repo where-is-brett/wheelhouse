@@ -27,7 +27,8 @@ import { approvalCounts, checkCounts, gateDecision, reviewCounts } from '../gate
 import { classifyChange, readConfig, isModelName, CI_FILES, PLUGIN_MANIFEST } from '../gate/guardrails.js';
 import { scrub } from './adapter.js';
 import { hide, cleanDeep } from '../lib/clean.js';
-import { readKey } from './keys.js';
+import { findKey } from './keys.js';
+import { borrowKey } from './store.js';
 import { checkBaseUrl, gitlabApi } from './gitlab-key.js';
 import { DEFAULT_GITLAB, parseRemote } from './gitlab-base.js';
 import { prepareQueueFolder } from '../engine/queue-folder.js';
@@ -39,7 +40,7 @@ import { noteFile, noteProblem, writeNoteFile } from '../lib/session-note.js';
 import { stayAwake } from '../engine/stay-awake.js';
 import { queueFolderOf, queueProjectOf } from '../engine/queue-place.js';
 import { unreachableRefusal, certificateRefusal, certificateLine, awayLine, outputKind, companyGitEnv, makeAwayLog, gitlabBaseOf, certificateSetting } from './company-ca.js';
-import { childEnv } from './connection.js';
+import { childEnv, readEnv, backendOf } from './connection.js';
 import { localChanges } from './local/changes.js';
 import { FOLDER_REMOTE, bringFolderUp, folderWatch } from './local/folder.js';
 import { backUp, backupDue, chooseBackupFolder, noteBackupFolderRefused, pickFolder } from './local/backup.js';
@@ -831,10 +832,13 @@ export function serialisePerProject(fn) {
 }
 
 // envFor for the real helper: the connection's mode, and its environment from childEnv.
-export function envForConnection(connectionFor, { fetch, now } = {}) {
+export function envForConnection(connectionFor, { fetch, now, keys, borrow } = {}) {
   return async (project) => {
     const connection = await connectionFor(project);
-    return { mode: connection?.mode, env: await childEnv(connection, { fetch, now }) };
+    // The as-is connection with no tool (backend rest) reads with the director's own key, lent for this request.
+    const env = await childEnv(connection, { fetch, now, keys });
+    if (connection?.mode === 'as-is') Object.assign(env, await readEnv(connection, { borrow }));
+    return { mode: connection?.mode, env };
   };
 }
 
@@ -1034,6 +1038,9 @@ export async function startHelper({
   // `connectHost` and `protectHost` stand in for setup's host steps and protection in the move to a host; tests give their own.
   connectHost, protectHost,
   address = helperAddress(), adapterFor, envFor, now = () => new Date(), run = realRun, onArrive = () => {}, fetch = globalThis.fetch, startWaitMs = 30 * 1000,
+  // How the helper's own calls to GitLab are made (gitlabApi's run, curl, proxy and caFile; left out, the real ones), the
+  // computer's store for keys (keys.js's seam) and the lender of the director's own key. All for tests.
+  via = {}, keyDeps, borrow = borrowKey,
   // Whether the preview's screenshots of the configuration's pages are the same at two commits,
   // for an approval to carry over an update (design section 12.3): given { project, before, after,
   // pages }, true only when every page looks the same at every size. By default the helper's own
@@ -1143,11 +1150,11 @@ export async function startHelper({
   // environment to the adapter.
   // The narrow connection's key is gone (the runbook's step 2 deletes it): the runbook's own
   // routes, and FALL_BACK_ROUTES, carry on with the director's sign-in, as the quick connection does.
-  function narrowKeyMissing(project) {
+  async function narrowKeyMissing(project) {
     const connection = readProject(project)?.connection;
     if (connection?.mode !== 'narrow') return false;
     try {
-      const key = readKey(connection.host === 'github' ? 'github-app' : `gitlab-project-${connection.projectId}`);
+      const key = await findKey(connection.host === 'github' ? 'github-app' : `gitlab-project-${connection.projectId}`, keyDeps);
       const token = connection.host === 'github' ? key?.accessToken : key?.token;
       return typeof token !== 'string' || token === '';
     } catch {
@@ -1162,7 +1169,7 @@ export async function startHelper({
     try {
       found = connectionOf(await sharedEnv(project));
     } catch (error) {
-      if (!fallBack || !narrowKeyMissing(project)) throw error;
+      if (!fallBack || !(await narrowKeyMissing(project))) throw error;
       signedOut = true;
       found = { mode: 'quick', env: {} };
     }
@@ -1797,7 +1804,7 @@ export async function startHelper({
   const signInHost = (project) => hostOf(readProject(project)?.host);
   // An unknown host maps to null: quick then has no credential helper at all and fails closed.
   const hostOf = (host) => (host === 'github' || host === 'gitlab' ? host : null);
-  const gitEnvOf = (mode, env, host, remoteUrl) => ({ ...(host === 'local' ? {} : mode === 'narrow' ? env : directorSignIn(hostOf(host))), ...reachEnv(remoteUrl) });
+  const gitEnvOf = (mode, env, host, remoteUrl) => ({ ...(host === 'local' ? {} : mode === 'narrow' || (mode === 'as-is' && env?.GIT_CONFIG_COUNT !== undefined) ? env : directorSignIn(hostOf(host))), ...reachEnv(remoteUrl) });
 
   // The project's private record (design section 24.1), opened, never cloned: its events are
   // committed and never pushed, for every project as for a Lean one.
@@ -4006,7 +4013,7 @@ export async function startHelper({
 
   // Step 2: the agents' keys taken away from this computer (scripts/host/cut-access.js, shared with
   // uninstall, ruling R88).
-  const doCutAccess = ({ project }) => cutAccess({ record: recordOf(project), fetch });
+  const doCutAccess = ({ project }) => cutAccess({ record: recordOf(project), via });
 
   // Step 3, the first half: a pull request that puts the product back to an earlier release.
   async function doRestoreMain({ project, sha }, ctx) {
@@ -4230,8 +4237,11 @@ export async function startHelper({
     let more = {};
     const protection = async () => {
       try {
-        const token = ctx.env?.GITLAB_TOKEN;
-        const api = host === 'gitlab' ? gitlabApi({ baseUrl: checkBaseUrl(connection.baseUrl ?? DEFAULT_GITLAB), token, fetch }) : undefined;
+        // The narrow key, else (on the web API backend) the director's own, lent for this one read.
+        const base = checkBaseUrl(connection.baseUrl ?? DEFAULT_GITLAB);
+        let token = ctx.env?.GITLAB_TOKEN;
+        if (host === 'gitlab' && token === undefined && backendOf(connection) === 'rest') token = (await borrow({ host: new URL(base).host, base, repoPath: repo }))?.key;
+        const api = host === 'gitlab' ? gitlabApi({ baseUrl: base, token, ...via }) : undefined;
         const status = await protectionStatus({ host, repo, run, api, env: ctx.env });
         if (host === 'gitlab') more = { plan: status.plan, gaps: status.gaps };
         return status.on ? 'on' : (status.available ? 'unknown' : 'none');
@@ -5783,7 +5793,7 @@ export async function startHelper({
       files: (target) => doMoveFiles(project, target),
       protect: async ({ host, repo }) => {
         if (protectHost !== undefined) return protectHost({ host, repo });
-        const api = host === 'gitlab' ? await directorGitlabApi({ run, fetch }) : undefined;
+        const api = host === 'gitlab' ? await directorGitlabApi({ run, via }) : undefined;
         const realUsers = launchedIn(project);
         // A project on an agent other than Claude Code with real users, once GitHub's route is ready, asks the person for their own approval (Task B1).
         const hostApproval = host === 'github' && approvalReady({ host }) === true && hostApprovalNeeded({ agent: agentInFolder(recordOf(project).folder, { computerId: computerId() }), realUsers, host }, { ready: approvalReady });

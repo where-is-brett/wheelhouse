@@ -30,7 +30,6 @@ import { listEvents } from '../../../scripts/state/events.js';
 import { makeBareRemote, push as plainPush, g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress } from '../../helpers/homes.js';
 import { matchingBody } from '../../helpers/provenance.js';
-import { hostCurl } from '../../../scripts/host/gitlab-key.js';
 import { makeFakeCurl } from '../../helpers/fake-curl.js';
 
 // No host tool runs for real: the helper's runs go through this, and the log stays empty.
@@ -226,16 +225,16 @@ test('cut-access on the narrow GitHub connection deletes the key file and names 
   } finally { s.cleanup(); }
 });
 
-// The helper builds its GitLab client where a test cannot hand it a stand-in curl, so it is set in hostCurl.
+// The helper's GitLab calls go through curl's stand-in, given to it as `via`.
 const pairOf = (call, name) => call.pairs.find(([key]) => key === name)?.[1];
-const clearCurl = () => { for (const name of Object.keys(hostCurl)) delete hostCurl[name]; };
+const viaOf = (fake) => ({ run: fake.run, curl: '/usr/bin/curl', proxy: null, caFile: null, platform: 'linux' });
 
 test('cut-access on the narrow GitLab connection revokes the project key through GitLab, then deletes its file', async () => {
   const s = await scenario({ host: 'gitlab', connection: { host: 'gitlab', mode: 'narrow', project: 'o/p', projectId: 5, baseUrl: 'https://gitlab.example.com' } });
   const token = 'glpat-abcdefghijklmnopqrst1234';
   const file = () => path.join(s.home, 'keys', 'gitlab-project-5.json');
   const fake = makeFakeCurl([{ status: 204 }, { status: 500 }]);
-  Object.assign(hostCurl, { run: fake.run, curl: '/usr/bin/curl', proxy: null, caFile: null, platform: 'linux' });
+  const via = viaOf(fake);
   const seen = () => fake.calls.map((c) => ({ url: pairOf(c, 'url'), method: pairOf(c, 'request'), header: /PRIVATE-TOKEN: ([^\s"]+)/.exec(c.config)?.[1] }));
   try {
     await as(s.home, async () => {
@@ -256,8 +255,8 @@ test('cut-access on the narrow GitLab connection revokes the project key through
       assert.equal(failed.url, 'https://gitlab.example.com/o/p/-/settings/access_tokens');
       assert.equal(fs.existsSync(file()), true);
       assert.doesNotMatch(JSON.stringify(failed), /glpat/);
-    });
-  } finally { clearCurl(); s.cleanup(); }
+    }, { via });
+  } finally { s.cleanup(); }
 });
 
 test('cut-access on the quick connection changes nothing and names the page where only the director can revoke', async () => {
@@ -755,7 +754,7 @@ test('GitLab cut-access: only a 2xx deletes the file; a 401 says the key no long
   const token = 'glpat-abcdefghijklmnopqrst1234';
   const file = path.join(s.home, 'keys', 'gitlab-project-5.json');
   const fake = makeFakeCurl([]);
-  Object.assign(hostCurl, { run: fake.run, curl: '/usr/bin/curl', proxy: null, caFile: null, platform: 'linux' });
+  const via = viaOf(fake);
   const sent = () => fake.calls.map((c) => `${pairOf(c, 'request')} ${new URL(pairOf(c, 'url')).pathname}`);
   const answers = (...codes) => { fake.queue.push(...codes.map((status) => ({ status }))); };
   const keyed = (extra = {}) => writeKey('gitlab-project-5', { kind: 'project-key', token, expiresAt: '2027-01-01', ...extra });
@@ -784,8 +783,8 @@ test('GitLab cut-access: only a 2xx deletes the file; a 401 says the key no long
       assert.equal(pasted.ok, true);
       assert.match(pasted.message, /your own token/);
       assert.equal(pasted.url, 'https://gitlab.example.com/-/user_settings/personal_access_tokens');
-    });
-  } finally { clearCurl(); s.cleanup(); }
+    }, { via });
+  } finally { s.cleanup(); }
 });
 
 test('the quick GitLab answer names the applications page and the personal access tokens page', async () => {

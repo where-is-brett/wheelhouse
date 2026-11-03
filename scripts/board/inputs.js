@@ -168,6 +168,8 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
   const builds = process.platform === 'win32'
     ? attempt(() => buildsShown({ views, computer: computerId(), locked, guardedReady: guardedReady({ home: wheelhouseHome(), now: clock, platform: process.platform }) }))
     : null;
+  // Offline, no key file is opened: the glance has no renewal to show.
+  const renewal = offline ? null : await renewalDue(record.connection, clock).catch(() => null);
   const lines = attempt(() => healthLines({
     record,
     locked,
@@ -175,8 +177,7 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
     lock: known.lock,
     helperUp: known.helperUp,
     facts: known.facts ?? null,
-    // Offline, no key file is opened: the glance has no renewal to show.
-    renewal: offline ? null : attempt(() => renewalDue(record.connection, clock)),
+    renewal,
     keyRenewal: offline ? null : known.keyRenewal,
     ownFiles: offline || typeof known.ownFilesLine !== 'string' ? null : { line: known.ownFilesLine },
     hostApproval: attempt(() => hostApprovalNeeded({ agent: usageAgent, realUsers: settings?.phase?.value === 'launched', host: record.host }), false),

@@ -240,8 +240,8 @@ export function gitlabRestCommands({ send, repo }) {
 }
 
 // The adapter over GitLab's web API. `key` is a function giving the token for one request (a string or a
-// promise of one); `curl` is curl.js's curlPath answer; `proxy`, `caFile` and `platform` go to curl.js as they
-// are; `run` is a stand-in in tests. Backend selection is the caller's: this only builds the adapter.
+// promise of one); `curl` is curl.js's curlPath answer; `proxy` (readProxy's answer, or a function giving it, read
+// at the first request), `caFile` and `platform` go to curl.js; `run` is a stand-in in tests. Backend selection is the caller's: this only builds the adapter.
 export function makeGitlabRestAdapter({
   repo, base = DEFAULT_GITLAB, key, run = realRun, curl, proxy = null, caFile = null,
   platform = process.platform, baseEnv = process.env,
@@ -260,7 +260,7 @@ export function makeGitlabRestAdapter({
       return await request({
         run, curl, url: `${origin}${API}${path}`, method, headers,
         body: payload === undefined ? undefined : JSON.stringify(payload),
-        proxy, caFile, maxSeconds, platform, baseEnv, base: origin,
+        proxy: typeof proxy === 'function' ? await proxy() : proxy, caFile, maxSeconds, platform, baseEnv, base: origin,
       });
     } catch (error) {
       // Whatever went wrong, the key is not in what leaves.

@@ -40,12 +40,8 @@ export function checkBaseUrl(baseUrl) {
   return url.origin + url.pathname.replace(/\/+$/, '');
 }
 
-// What the calls run through, set by tests that cannot hand it to the code that builds the client:
-// { run, curl, proxy, caFile, platform } as `gitlabApi` takes them. Empty in real use.
-export const hostCurl = {};
-
 // The company's certificate file setup made, or null when there is none.
-function companyFile() {
+export function companyFile() {
   try {
     const file = caFile(wheelhouseHome());
     return fs.existsSync(file) ? file : null;
@@ -67,7 +63,7 @@ export function gitlabApi({ baseUrl = DEFAULT_GITLAB, token, bearer = false, run
   const address = checkBaseUrl(baseUrl);
   const root = `${address}/api/v4`;
   const auth = bearer ? { Authorization: `Bearer ${token}` } : { 'PRIVATE-TOKEN': token };
-  const use = { ...hostCurl, ...Object.fromEntries(Object.entries({ run, curl, proxy, caFile: given, platform }).filter(([, v]) => v !== undefined)) };
+  const use = { run, curl, proxy, caFile: given, platform };
   let proxied;
 
   async function send(method, path, body) {
