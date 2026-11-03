@@ -901,7 +901,7 @@ async function started(input, deps) {
   let where = '';
   if (input.source === 'compact') {
     try {
-      where = whereDigest({ project, input, views, feature: featureSlug(input.cwd), stateRoot, env });
+      where = await whereDigest({ project, input, views, feature: featureSlug(input.cwd), stateRoot, env });
     } catch { /* the reload goes without it */ }
     resetEpisode(project, input.session_id);
   }

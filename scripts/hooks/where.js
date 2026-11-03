@@ -7,7 +7,7 @@
 // note (part 4 writes it) with its age. A piece that can't be read is left out, and nothing here throws.
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { safeGit } from '../lib/safe-git.js';
 import { sessionRole } from '../lib/role.js';
 import { goalInForce } from '../engine/goal.js';
 import { sessionFile, readSession, updateSession } from './context-gauge.js';
@@ -22,24 +22,24 @@ const oneLine = (value, max = 160) => {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 };
 
-// One git question for `cwd`, without a shell and within `ms`; null when it fails or runs out of time.
-function git(cwd, args, ms, run) {
-  if (!(ms > 0)) return null;
-  try {
-    const got = run('git', ['-C', cwd, ...args], { encoding: 'utf8', timeout: ms, windowsHide: true, shell: false, stdio: ['ignore', 'pipe', 'ignore'] });
-    return got?.status === 0 && typeof got.stdout === 'string' ? got.stdout : null;
-  } catch {
-    return null;
-  }
-}
-
-// The branch, the last commit's subject and the count of uncommitted files, in one second together.
-export function gitLine(cwd, { run = spawnSync, now = Date.now } = {}) {
+// The branch, the last commit's subject and the count of uncommitted files, in one second together,
+// by the repository's git route (scripts/lib/safe-git.js): the fence alone, as these calls only read.
+export async function gitLine(cwd, { run, now = Date.now } = {}) {
   if (typeof cwd !== 'string' || !path.isAbsolute(cwd)) return null;
   const end = now() + GIT_MS;
-  const branch = git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'], end - now(), run)?.trim();
-  const subject = git(cwd, ['log', '-1', '--format=%s'], end - now(), run)?.trim();
-  const status = git(cwd, ['status', '--porcelain'], end - now(), run);
+  const ask = async (args) => {
+    const ms = end - now();
+    if (!(ms > 0)) return null;
+    try {
+      const got = await safeGit({ ...(run ? { run } : {}), cwd, list: 'project', look: 'never', timeoutMs: ms })(args);
+      return got?.code === 0 && typeof got.stdout === 'string' ? got.stdout : null;
+    } catch {
+      return null;
+    }
+  };
+  const branch = (await ask(['rev-parse', '--abbrev-ref', 'HEAD']))?.trim();
+  const subject = (await ask(['log', '-1', '--format=%s']))?.trim();
+  const status = await ask(['status', '--porcelain']);
   const parts = [];
   if (branch) parts.push(`branch ${oneLine(branch, 80)}`);
   if (subject) parts.push(`last commit "${oneLine(subject, 80)}"`);
@@ -98,24 +98,24 @@ function cardLine(views, sessionId) {
 
 // The digest as text; '' when nothing could be read. `feature` is the feature's slug, `stateRoot` the
 // project's record folder. Every piece is read apart, so one failing leaves only itself out.
-export function whereDigest({ project, input = {}, views, feature = null, stateRoot, env = process.env, now = () => new Date(), run = spawnSync } = {}) {
+export async function whereDigest({ project, input = {}, views, feature = null, stateRoot, env = process.env, now = () => new Date(), run } = {}) {
   const lines = [];
-  const piece = (fn) => {
+  const piece = async (fn) => {
     try {
-      const got = fn();
+      const got = await fn();
       if (typeof got === 'string' && got !== '') lines.push(got);
       else if (Array.isArray(got)) lines.push(...got);
     } catch { /* left out */ }
   };
-  piece(() => `Where you were, before the compaction (role: ${sessionRole({ sessionId: input.session_id, env, cwd: input.cwd })}):`);
-  piece(() => gitLine(input.cwd, { run }));
-  piece(() => (feature && stateRoot ? `Feature ledger: ${path.join(stateRoot, 'features', feature, 'ledger.md')}` : null));
-  piece(() => {
+  await piece(() => `Where you were, before the compaction (role: ${sessionRole({ sessionId: input.session_id, env, cwd: input.cwd })}):`);
+  await piece(() => gitLine(input.cwd, { run }));
+  await piece(() => (feature && stateRoot ? `Feature ledger: ${path.join(stateRoot, 'features', feature, 'ledger.md')}` : null));
+  await piece(() => {
     const goal = goalInForce(views);
     return goal === null ? null : `Goal running: ${oneLine(goal.id, 60)}${goal.sheet?.title ? ` (${oneLine(goal.sheet.title, 60)})` : ''}; its report is in the Logbook`;
   });
-  piece(() => cardLine(views, input.session_id));
-  piece(() => noteLines(project, input.session_id, now));
+  await piece(() => cardLine(views, input.session_id));
+  await piece(() => noteLines(project, input.session_id, now));
   if (lines.length <= 1) return '';
   const text = lines.join('\n');
   return text.length > WHERE_CHARS ? `${text.slice(0, WHERE_CHARS - 1)}…` : text;
