@@ -2711,8 +2711,37 @@ test('a typed GitLab address that is not one asks again under a new id, saying w
     const folder = productFolder('shop');
     const answers = { '3.real-users': said(REAL_USERS.no), '3.host': said(HOST_LABELS.gitlab), '3.gitlab-where': said(COMPANY_GITLAB) };
     const got = await stepFor(standIn()).plan(ctxFor(folder, { answers }));
-    assert.equal(got.ask.id, 'gitlab-where-1');
-    assert.match(got.ask.card.what, /Type your company's GitLab address/);
+    assert.equal(got.ask.id, 'gitlab-address-1');
+    assert.match(got.ask.card.what, /What is your company's GitLab address\? Choose Other below and type it/);
+    composeCard({ ...got.ask.card, kind: 'question', suggest: false });
+    // An address typed there is taken directly; a bad one asks again, saying why; Go back returns to the first card.
+    const typed = (text) => ({ label: null, text, at: NOW.toISOString() });
+    const next = await stepFor(standIn()).plan(ctxFor(folder, { answers: { ...answers, '3.gitlab-address-1': typed('git.example.org/x') } }));
+    assert.equal(next.ask.id, 'gitlab-address-2');
+    assert.match(next.ask.card.what, /no path/);
+    const back = await stepFor(standIn()).plan(ctxFor(folder, { answers: { ...answers, '3.gitlab-address-1': said('Go back') } }));
+    assert.equal(back.ask.id, 'gitlab-where-2');
+    const planned = await answerAll(stepFor(standIn()), ctxFor(folder), (id, card) => (id === 'gitlab-where' ? COMPANY_GITLAB : id.startsWith('gitlab-address') ? { text: 'https://git.example.org' } : choose({ host: HOST_LABELS.gitlab })(id, card)));
+    assert.equal(planned.changes.find((c) => c.action === 'connection').base, 'https://git.example.org');
+  });
+});
+
+test('a remote at a host that is not GitHub or the public GitLab is offered on the which-GitLab card, recommended, and chosen it is that company address', async () => {
+  await withHome(async () => {
+    const w = standIn({ signedIn: { github: true, gitlab: false } });
+    const folder = productFolder('shop');
+    await g(folder, 'init', '-q', '-b', 'main');
+    await g(folder, 'add', 'notes.txt');
+    await g(folder, 'commit', '-q', '-m', 'Begin');
+    await withOrigin(folder, `https://git.example.org:8443/${USER}/shop.git`);
+    const planned = await answerAll(stepFor(w), ctxFor(folder), (id, card) => (id === 'kept' ? PUT_ON_GITLAB : id === 'gitlab-where' ? 'git.example.org:8443' : choose()(id, card)));
+    const asked = planned.asked.find((a) => a.id === 'gitlab-where');
+    assert.deepEqual(asked.card.options.map((o) => o.label), ['git.example.org:8443', GITLAB_COM, COMPANY_GITLAB]);
+    assert.match(asked.card.options[0].description ?? asked.card.options[0].says, /already sends its work/);
+    assert.equal(asked.card.recommend ?? asked.card.options.find((o) => o.recommended)?.label, 'git.example.org:8443');
+    composeCard({ ...asked.card, kind: 'question', suggest: false });
+    assert.equal(planned.changes.find((c) => c.action === 'connection').base, 'https://git.example.org:8443');
+    assert.equal(planned.changes.find((c) => c.action === 'gitlab-hosts').host, 'git.example.org:8443');
   });
 });
 
@@ -2740,5 +2769,34 @@ test('the kept card\'s Put it on GitLab also asks which GitLab', async () => {
     });
     assert.equal(planned.changes.find((c) => c.action === 'connection').base, 'https://git.example.org');
     assert.equal(planned.changes.find((c) => c.action === 'gitlab-hosts').host, 'git.example.org');
+  });
+});
+
+test('a project\'s full address typed as the company address is that host and that existing project, never a new one', async () => {
+  assert.deepEqual(companyAddress('https://git.example.org/group/sub/shop.git'), { base: 'https://git.example.org', host: 'git.example.org', repo: 'group/sub/shop' });
+  assert.equal(typeof companyAddress('https://git.example.org/group').why, 'string');
+  await withHome(async () => {
+    const w = standIn({ signedIn: { github: true, gitlab: false } });
+    const folder = productFolder('shop');
+    const planned = await answerAll(stepFor(w), ctxFor(folder), (id, card) => (id === 'gitlab-where' ? { text: 'https://git.example.org/group/sub/shop' } : choose({ host: HOST_LABELS.gitlab })(id, card)));
+    assert.equal(planned.changes.some((c) => c.action === 'repository'), false);
+    assert.equal(planned.changes.find((c) => c.action === 'connection').base, 'https://git.example.org');
+    assert.equal(planned.changes.find((c) => c.action === 'project').repo, 'group/sub/shop');
+    assert.equal(planned.changes.find((c) => c.action === 'gitlab-hosts').host, 'git.example.org');
+  });
+});
+
+test('the chosen company host being the folder\'s own remote\'s host plans that remote\'s existing project, with no repository made', async () => {
+  await withHome(async () => {
+    const w = standIn({ signedIn: { github: true, gitlab: false } });
+    const folder = productFolder('shop');
+    await g(folder, 'init', '-q', '-b', 'main');
+    await g(folder, 'add', 'notes.txt');
+    await g(folder, 'commit', '-q', '-m', 'Begin');
+    await withOrigin(folder, 'https://git.example.org/group/sub/shop.git');
+    const planned = await answerAll(stepFor(w), ctxFor(folder), (id, card) => (id === 'kept' ? PUT_ON_GITLAB : id === 'gitlab-where' ? 'git.example.org' : choose()(id, card)));
+    assert.equal(planned.changes.some((c) => c.action === 'repository'), false);
+    assert.equal(planned.changes.find((c) => c.action === 'project').repo, 'group/sub/shop');
+    assert.equal(planned.changes.find((c) => c.action === 'connection').base, 'https://git.example.org');
   });
 });
