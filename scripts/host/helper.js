@@ -54,7 +54,7 @@ import { protectionStatus } from './protection.js';
 import { cutAccess, INSTALLATIONS_PAGE } from './cut-access.js';
 import { checkRecord, listEvents, makeEvent, writeEvent, eventPath, eventHash, dataHash, PLAIN_KINDS, PROTECTED_KINDS, HELPER_ONLY_KINDS, CONFIRMABLE_KINDS, RED_MAIN_FIELDS, RED_MAIN_OWN, confirmationFor } from '../state/events.js';
 import { git as stateGit } from '../state/git.js';
-import { directorSignIn, reachFor, safeGitEnv } from '../lib/safe-git.js';
+import { directorSignIn, reachFor, safeGitEnv, safeGit, pushReachFor } from '../lib/safe-git.js';
 import { lookAtSettings, lookRefusalLine, LookRefusal } from '../lib/safe-git.js';
 import { openProjectRecord, openSettings } from '../state/record.js';
 import { importEvents } from '../state/import.js';
@@ -66,7 +66,7 @@ import { buildViews, cardOutcomes, latestFor, writeViews } from '../state/views.
 import { takeSurvey, shapedSurvey, recordSurvey } from '../survey/take.js';
 import { ReadyRefusal, archiveCommit, carryOn, carryOnPiece, dropRef, fetchInto, folderGit, freeWork, pieceWork, restoreCommit } from '../survey/ready.js';
 import { readyRecordFile, writeReadyRecord } from '../survey/ready-record.js';
-import { reaching } from '../setup/git.js';
+import { reaching, subcommandOf } from '../setup/git.js';
 import { directorGitEnv, directorGitlabApi, hostStep, launchedIn, switchOnAsDirector } from '../setup/host.js';
 import { commitAuthor } from '../setup/project-files.js';
 import { readEnrolled, verify, sign, ownKey } from '../state/signing.js';
@@ -646,6 +646,7 @@ export const PUSH_REFUSALS = {
   unchecked: 'the commits being pushed could not be checked',
   ciFile: 'the branch changes a CI file, so it needs the director\'s click on its card',
   ciSignIn: 'sign in to GitHub (or GitLab) on this computer to push the CI change',
+  asIsSignIn: 'your git needs a sign-in to push here, and Wheelhouse does not open one: sign in with your git on this computer, then try again',
   outsideProject: 'the folder to push from is not inside the project',
   ownHistory: 'the branch holds the history of Wheelhouse\'s own records, so nothing is sent',
   gitOutside: 'the folder\'s git directory is not inside the project, or links outside it, so nothing is read from it',
@@ -840,7 +841,7 @@ export function envForConnection(connectionFor, { fetch, now } = {}) {
 // envFor may answer `{ mode, env }` or a bare environment. A bare one is quick
 // when it carries no key, narrow when it does.
 export function connectionOf(answer) {
-  if (answer && typeof answer === 'object' && (answer.mode === 'quick' || answer.mode === 'narrow')
+  if (answer && typeof answer === 'object' && (answer.mode === 'quick' || answer.mode === 'narrow' || answer.mode === 'as-is')
     && answer.env && typeof answer.env === 'object') {
     return { mode: answer.mode, env: answer.env };
   }
@@ -1384,6 +1385,22 @@ export async function startHelper({
     });
   }
 
+  // The as-is push (design section 4.1): git runs in the mirror with the director's own global and
+  // system settings (credential helper, proxy, certificate, SSH keys) and the rest of the fence in force
+  // (scripts/lib/safe-git.js, the push reaches). It runs `git push` and nothing else, and the mirror's
+  // own settings are looked at before every call. Wheelhouse never sees the key.
+  async function asIsPusher(project, ctx, mirror) {
+    const url = String((await pushTargetOf(project, ctx)) ?? '').trim();
+    const git = safeGit({
+      run, cwd: mirror, reach: pushReachFor(url), env: GIT_BASE, timeoutMs: HOST_MS, caller: 'helper', what: "the project's mirror repository",
+    });
+    return (file, args, options = {}) => {
+      if (file !== 'git' || subcommandOf(args) !== 'push') throw new Error('the director\'s own git settings are let in for a push and nothing else');
+      const { cwd: _cwd, ...rest } = options;
+      return git(args, rest);
+    };
+  }
+
   // Copies the branch in from `source`, checks it, and pushes it with the
   // connection's key. `source` is a folder the helper trusts: a code push's
   // folder (read for objects only), or one of the helper's own clones.
@@ -1525,10 +1542,19 @@ export async function startHelper({
           pusher = directorGit();
         }
       }
+      // The as-is connection pushes with the director's own git settings, whichever route above chose
+      // the sign-in: the gate's checks have all run by here, and are the same.
+      if (ctx.mode === 'as-is') pusher = await asIsPusher(project, ctx, mirror);
       const asDirector = pusher !== keyed;
 
       if (stopped() && !allowStop) return STOP_REFUSAL;
-      const pushed = await pusher('git', ['push', '--no-verify', '--porcelain', REMOTE, `${checked.sha}:refs/heads/${keepAs}`], { cwd: mirror });
+      let pushed;
+      try {
+        pushed = await pusher('git', ['push', '--no-verify', '--porcelain', REMOTE, `${checked.sha}:refs/heads/${keepAs}`], { cwd: mirror });
+      } catch (error) {
+        if (error instanceof LookRefusal) return { ok: false, refused: error.message };
+        throw error;
+      }
       if (pushed.code === 0) {
         awayLog.clear(project);
         return { ok: true, sha: checked.sha };
@@ -1547,7 +1573,9 @@ export async function startHelper({
       // Another computer's push can land between ours: the host then declines to move the branch
       // ("failed to update ref", "incorrect old value provided"), which is the same as the branch having moved on.
       if (refused && /\((?:non-fast-forward|fetch first|failed to update ref|incorrect old value provided)\)/.test(refused)) return { ok: false, rejected: 'non-fast-forward' };
-      if (asDirector && /authentication|could not read username|permission denied|\b40[13]\b/i.test(pushed.stderr)) return { ok: false, refused: PUSH_REFUSALS.ciSignIn };
+      if (asDirector && /authentication|could not read username|permission denied|\b40[13]\b/i.test(pushed.stderr)) {
+        return { ok: false, refused: ctx.mode === 'as-is' ? PUSH_REFUSALS.asIsSignIn : PUSH_REFUSALS.ciSignIn };
+      }
       const detail = clean(pushed.stderr, ctx.secrets);
       return { ok: false, refused: `git could not push the branch${detail ? `: ${detail}` : ''}` };
     })();

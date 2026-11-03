@@ -5,7 +5,7 @@
 //
 //   Connection = {
 //     host: 'github' | 'gitlab',
-//     mode: 'quick' | 'narrow',
+//     mode: 'quick' | 'narrow' | 'as-is',   as-is: pushes with the director's own git as it is
 //     project: 'owner/name',
 //     projectId?: number,   GitLab narrow: the project's number, naming its key
 //     baseUrl?: string,     GitLab: the GitLab address (default: the public service's)
@@ -15,7 +15,8 @@
 //   }
 //
 // It is kept in the project's settings and holds no secret. Quick uses the
-// director's own sign-in, so the tools are given nothing. Narrow uses the
+// director's own sign-in, so the tools are given nothing. As-is pushes with the director's own git
+// settings (scripts/lib/safe-git.js, the push reaches) and holds no key either. Narrow uses the
 // Wheelhouse GitHub App's keys or a GitLab project's key, which reach the
 // tools only through their environment, never an argument. No function here
 // returns a key other than in that environment, or logs or throws one.
@@ -39,7 +40,7 @@ function check(connection) {
   const { host, mode, project, projectId } = connection;
   if (mode === 'none') return connection;
   if (host !== 'github' && host !== 'gitlab') throw new Error('The connection\'s host must be github or gitlab');
-  if (mode !== 'quick' && mode !== 'narrow') throw new Error('The connection must be quick or narrow');
+  if (mode !== 'quick' && mode !== 'narrow' && mode !== 'as-is') throw new Error('The connection must be quick, narrow or as-is');
   if (typeof project !== 'string' || !project.includes('/')) throw new Error('The connection\'s project must be written owner/name');
   if (host === 'gitlab' && mode === 'narrow' && !(Number.isInteger(projectId) && projectId > 0)) {
     throw new Error('The GitLab connection needs the project\'s number');
@@ -127,7 +128,7 @@ async function githubAccessKey({ fetch, now }) {
 export async function childEnv(connection, { fetch = globalThis.fetch, now = () => new Date() } = {}) {
   check(connection);
   if (connection.mode === 'none') return {};
-  if (connection.mode === 'quick') {
+  if (connection.mode === 'quick' || connection.mode === 'as-is') {
     if (connection.locked) throw new Error('Locked needs the narrow connection');
     return {};
   }
