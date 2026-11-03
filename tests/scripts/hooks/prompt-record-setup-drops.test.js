@@ -165,3 +165,64 @@ test('a card answered and kept is not taken again by a second click, stale or no
     assert.equal(listOf(home, 'records').length, 2);
   });
 });
+
+// --- A claim does not outlive its card asked again (Customise asks every choice again, the
+// description among them), and an answer under one phase's id takes back the other's records.
+
+const at = (ms) => new Date(NOW.getTime() + ms);
+const recordsKept = (home) => listOf(home, 'records').map((n) => JSON.parse(fs.readFileSync(path.join(home, 'setup', 'records', n), 'utf8')).body);
+const phasesKept = (home) => recordsKept(home).filter((b) => b.target?.kind === 'setting').map((b) => b.target.data.value);
+const askAgain = (folder, r, when, { id = 'product-launched', card = CARD, writes = WRITES } = {}) => noteAsked({ runId: r.id, folder, step: 4, id, card, typed: true, writes, now: () => when });
+const clickAt = (input, when) => decide(input, { now: () => when, projectOf: () => null, client: {} });
+
+test('a card asked again after its answer was claimed takes the new answer, and the old answer\'s records not yet sent are taken back', async () => {
+  await inSetup(async ({ home, folder, run: r }) => {
+    await clickAt(click(folder), at(1000));
+    assert.equal(listOf(home, 'records').length, 2);
+    askAgain(folder, r, at(60 * 1000));
+    await clickAt(click(folder, { label: 'Describe it later' }), at(61 * 1000));
+    assert.deepEqual(keptLabels(home).sort(), ['Describe it later', README].sort());
+    // Only the new answer's record is left to send: its phase, and no glossary entry.
+    assert.deepEqual(recordsKept(home).filter((b) => b.kind === 'glossary'), []);
+    assert.deepEqual(phasesKept(home), ['launched']);
+  });
+});
+
+test('a claim made before records were listed on it takes back the records its click kept, by their time, once its card is asked again', async () => {
+  await inSetup(async ({ home, folder, run: r }) => {
+    await clickAt(click(folder), at(1000));
+    // As an earlier Wheelhouse left it: the claim's time alone, a moment after its records were named.
+    const claim = path.join(home, 'setup', 'answered', listOf(home, 'answered')[0]);
+    fs.writeFileSync(claim, `${at(1019).toISOString()}\n`);
+    askAgain(folder, r, at(60 * 60 * 1000));
+    await clickAt(click(folder), at(60 * 60 * 1000 + 1000));
+    assert.equal(keptLabels(home).length, 2);
+    assert.equal(listOf(home, 'records').length, 2);
+    assert.ok(listOf(home, 'records').every((n) => n.includes('T01-00-01')), listOf(home, 'records').join(' '));
+  });
+});
+
+test('a card not asked again since its claim stays answered: a second click keeps nothing', async () => {
+  await inSetup(async ({ home, folder }) => {
+    await clickAt(click(folder), at(1000));
+    await clickAt(click(folder), at(5000));
+    assert.deepEqual(keptLabels(home), [README]);
+    assert.equal(listOf(home, 'records').length, 2);
+  });
+});
+
+test('an answer to the description under one phase\'s id takes back the records the other phase\'s answer has not sent', async () => {
+  await inSetup(async ({ home, folder, run: r }) => {
+    const before = { ...CARD, question: CARD.question.replace('recorded as launched', 'recorded as before launch') };
+    const beforeWrites = JSON.parse(JSON.stringify(WRITES).replaceAll('"launched"', '"before-launch"'));
+    askAgain(folder, r, at(0), { id: 'product-before-launch', card: before, writes: beforeWrites });
+    const shownBefore = { ...before, multiSelect: false };
+    const answers = { [before.question]: README };
+    await clickAt({ ...click(folder), tool_input: { questions: [shownBefore], answers }, tool_response: { answers } }, at(1000));
+    assert.deepEqual(phasesKept(home), ['before-launch']);
+    askAgain(folder, r, at(90 * 1000));
+    await clickAt(click(folder), at(91 * 1000));
+    assert.deepEqual(phasesKept(home), ['launched']);
+    assert.equal(recordsKept(home).filter((b) => b.kind === 'glossary').length, 1);
+  });
+});

@@ -587,7 +587,7 @@ function keepSetupClicks(cwd, out, now, project = null, dropped = new Map()) {
       // second click on the same card records nothing, and records whose answer could not be kept
       // are taken back, so the question asked again can't record them twice. A claim a hook cut
       // short left behind, with no answer kept, is taken back once stale (claimAnswer).
-      const claim = claimAnswer(answer.made.data, now);
+      const claim = claimAnswer(answer.made.data, now, { askedAt: answer.asked.at });
       if (claim === null) {
         dropped.set(click.question, `the question was answered already (claimed at ${claimedAt(answer.made.data) ?? 'an unknown time'})`);
         continue;
