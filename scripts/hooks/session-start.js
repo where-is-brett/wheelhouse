@@ -314,6 +314,9 @@ function markManaged(project, sessionId, { self, dir, now }) {
   } catch { /* the plugin's copy then answers as well, which is safe */ }
 }
 
+// What a wait for the older helper to close gives when it runs out before the helper answers.
+const WAIT_RAN_OUT = Symbol('wait ran out');
+
 // The helper's /health answer once it answers, starting it when it does not; null when it never does. A helper older than
 // this copy is asked to stop when idle and this copy's started in its place. The answer says why an older one stays:
 // `busy` (at work), `noRoute` (from before the request existed; nothing here ends it) or `slow` (closing, still answering).
@@ -328,9 +331,15 @@ async function ensureHelper(client, { spawn, pluginRoot, waitMs, pause, end }) {
     let answering = true;
     while (answering && Date.now() < gone) {
       await pause(100);
-      const seen = await withinBudget(gone)(client.health());
-      // No answer because the wait ran out is not the helper having closed: it may still be answering.
-      answering = seen === null && Date.now() >= gone ? true : seen?.ok === true;
+      // No answer because the wait ran out is not the helper having closed: it may still be answering. Only an answer
+      // that isn't ok, or a call that fails, counts as closed.
+      let timer;
+      const seen = await Promise.race([
+        Promise.resolve().then(() => client.health()).catch(() => null),
+        new Promise((resolve) => { timer = setTimeout(() => resolve(WAIT_RAN_OUT), Math.max(0, gone - Date.now())); }),
+      ]);
+      clearTimeout(timer);
+      answering = seen === WAIT_RAN_OUT || seen?.ok === true;
     }
     if (answering) return { ...first, slow: true };
   }
