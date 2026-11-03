@@ -2771,3 +2771,32 @@ test('the kept card\'s Put it on GitLab also asks which GitLab', async () => {
     assert.equal(planned.changes.find((c) => c.action === 'gitlab-hosts').host, 'git.example.org');
   });
 });
+
+test('a project\'s full address typed as the company address is that host and that existing project, never a new one', async () => {
+  assert.deepEqual(companyAddress('https://git.example.org/group/sub/shop.git'), { base: 'https://git.example.org', host: 'git.example.org', repo: 'group/sub/shop' });
+  assert.equal(typeof companyAddress('https://git.example.org/group').why, 'string');
+  await withHome(async () => {
+    const w = standIn({ signedIn: { github: true, gitlab: false } });
+    const folder = productFolder('shop');
+    const planned = await answerAll(stepFor(w), ctxFor(folder), (id, card) => (id === 'gitlab-where' ? { text: 'https://git.example.org/group/sub/shop' } : choose({ host: HOST_LABELS.gitlab })(id, card)));
+    assert.equal(planned.changes.some((c) => c.action === 'repository'), false);
+    assert.equal(planned.changes.find((c) => c.action === 'connection').base, 'https://git.example.org');
+    assert.equal(planned.changes.find((c) => c.action === 'project').repo, 'group/sub/shop');
+    assert.equal(planned.changes.find((c) => c.action === 'gitlab-hosts').host, 'git.example.org');
+  });
+});
+
+test('the chosen company host being the folder\'s own remote\'s host plans that remote\'s existing project, with no repository made', async () => {
+  await withHome(async () => {
+    const w = standIn({ signedIn: { github: true, gitlab: false } });
+    const folder = productFolder('shop');
+    await g(folder, 'init', '-q', '-b', 'main');
+    await g(folder, 'add', 'notes.txt');
+    await g(folder, 'commit', '-q', '-m', 'Begin');
+    await withOrigin(folder, 'https://git.example.org/group/sub/shop.git');
+    const planned = await answerAll(stepFor(w), ctxFor(folder), (id, card) => (id === 'kept' ? PUT_ON_GITLAB : id === 'gitlab-where' ? 'git.example.org' : choose()(id, card)));
+    assert.equal(planned.changes.some((c) => c.action === 'repository'), false);
+    assert.equal(planned.changes.find((c) => c.action === 'project').repo, 'group/sub/shop');
+    assert.equal(planned.changes.find((c) => c.action === 'connection').base, 'https://git.example.org');
+  });
+});

@@ -473,15 +473,25 @@ export function companyAddress(text) {
   const typed = String(text ?? '').trim();
   const shown = typed.length > 50 ? `${typed.slice(0, 50)}...` : typed;
   if (/^http:\/\//i.test(typed)) return { why: `"${shown}" is not https, and a company's GitLab is reached over https only` };
-  const bare = typed.replace(/^https:\/\//i, '').replace(/\/+$/, '');
+  // A project's full address is taken too: its host is the GitLab, and its path names the project.
+  const [hostPart, ...rest] = typed.replace(/^https:\/\//i, '').split('/');
+  const bare = hostPart;
+  let repo;
+  const segments = rest.join('/').replace(/[?#].*$/, '').split('/-/')[0].replace(/\.git$/i, '').split('/').filter(Boolean);
+  if (segments.length > 0) {
+    if (segments.length < 2 || !segments.every((part) => /^[A-Za-z0-9_.][A-Za-z0-9_.-]*$/.test(part) && !/^\.+$/.test(part))) {
+      return { why: `"${shown}" is not a GitLab address: it is a host name and a port if it has one, with no path; or a project's whole address, the host then group/project` };
+    }
+    repo = segments.join('/');
+  }
   const match = /^([a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*)(?::(\d{1,5}))?$/i.exec(bare);
   if (match === null) return { why: `"${shown}" is not a GitLab address: it is a host name and a port if it has one, with no path` };
   const [, name, port] = match;
   if (!name.includes('.') && name.toLowerCase() !== 'localhost') return { why: `"${shown}" is not a GitLab address: it needs the whole host name, such as gitlab.example.org` };
   if (port !== undefined && (Number(port) < 1 || Number(port) > 65535)) return { why: `"${shown}" has a port that is not a port` };
   const url = new URL(`https://${name.toLowerCase()}${port === undefined ? '' : `:${port}`}`);
-  if (url.origin === DEFAULT_GITLAB) return { base: DEFAULT_GITLAB };
-  return { base: url.origin, host: url.host };
+  if (url.origin === DEFAULT_GITLAB) return { base: DEFAULT_GITLAB, ...(repo === undefined ? {} : { repo }) };
+  return { base: url.origin, host: url.host, ...(repo === undefined ? {} : { repo }) };
 }
 
 // The host a folder's remotes already send work to that is neither GitHub nor the public GitLab, as the
@@ -1792,6 +1802,14 @@ export function hostStep({
       if (host === 'gitlab' && product.host !== 'gitlab') {
         company = gitlabWhere({ answer, name: product.name, others: product.others ?? remotesOf(ctx.folder) });
         if (company.ask) return { ask: company.ask };
+        // The chosen host is the one the folder's own remote names: that remote's project is the product, never a new one.
+        // A project named by its whole address typed is the product too.
+        if (!product.joining) {
+          const named = company.host === undefined ? [] : [...(readGitlabHosts(ctx.folder).gitlabHosts ?? []), company.host];
+          const there = productOf(ctx.folder, { config: { gitlabHosts: named } });
+          if (there.host === 'gitlab' && there.repo !== null && there.base === company.base) product = there;
+          else if (typeof company.repo === 'string') product = { isNew: false, host: 'gitlab', repo: company.repo, name: company.repo.split('/').at(-1), ...(company.base === DEFAULT_GITLAB ? {} : { base: company.base }) };
+        }
       }
       // The main line of a folder with history: asked only where the folder doesn't say.
       const branches = branchesOf(ctx.folder);
