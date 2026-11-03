@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { contextSize, decide as gauge, updateSession } from '../../../scripts/hooks/context-gauge.js';
+import { decide as onTool } from '../../../scripts/hooks/feature-status.js';
 import { decide as guard } from '../../../scripts/hooks/precompact-guard.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 
@@ -156,6 +157,64 @@ test('the gauge asks to save state from 200,000 tokens', async () => {
       } finally {
         fs.rmSync(other, { recursive: true, force: true });
       }
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
+
+const toolCall = (main, file, id = 's1') => ({ hook_event_name: 'PostToolUse', cwd: main, session_id: id, transcript_path: file });
+
+test('a tool call speaks once per episode, at the prepare point, and records preparedAt', async () => {
+  await withHome(async (home) => {
+    const { base, main } = makeProject();
+    try {
+      let ms = Date.parse('2026-11-03T00:00:00Z');
+      const now = () => new Date(ms);
+      const low = writeTranscript(base, [assistant(usage(0, 150000, 0))]);
+      assert.equal(await onTool(toolCall(main, low), { now }), undefined);
+      assert.equal(JSON.parse(fs.readFileSync(sessionFile(home, 's1'), 'utf8')).preparedAt, undefined);
+      const high = writeTranscript(base, [assistant(usage(0, 230000, 0))]);
+      // Read within five seconds: the transcript is not read again.
+      ms += 4000;
+      assert.equal(await onTool(toolCall(main, high), { now }), undefined);
+      ms += 2000;
+      const out = await onTool(toolCall(main, high), { now });
+      assert.equal(out.hookSpecificOutput.hookEventName, 'PostToolUse');
+      assert.equal(out.hookSpecificOutput.additionalContext, 'Context is about 230k tokens. Finish this step, commit, write your session note, then carry on.');
+      const stored = JSON.parse(fs.readFileSync(sessionFile(home, 's1'), 'utf8'));
+      assert.equal(stored.tokens, 230000);
+      assert.ok(stored.preparedAt);
+      ms += 60000;
+      assert.equal(await onTool(toolCall(main, high), { now }), undefined);
+      // A reset (part 3 clears preparedAt on compaction) lets it speak again.
+      updateSession(sessionFile(home, 's1'), { preparedAt: undefined });
+      assert.ok(await onTool(toolCall(main, high), { now }));
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
+
+test('a tool call says nothing without a reading, a project or a usable session id, and UserPromptSubmit is unchanged', async () => {
+  await withHome(async () => {
+    const { base, main } = makeProject();
+    try {
+      const high = writeTranscript(base, [assistant(usage(0, 230000, 0))]);
+      assert.equal(await onTool(toolCall(main, path.join(base, 'missing.jsonl')), {}), undefined);
+      assert.equal(await onTool(toolCall(main, high, '../evil'), {}), undefined);
+      assert.equal(await onTool({ hook_event_name: 'PostToolUse', cwd: 5 }, {}), undefined);
+      const other = temp('wh-ctx-other-');
+      try {
+        assert.equal(await onTool(toolCall(other, high), {}), undefined);
+      } finally {
+        fs.rmSync(other, { recursive: true, force: true });
+      }
+      // Other events never prepare through the feature-status hook.
+      assert.equal(await onTool({ ...toolCall(main, high), hook_event_name: 'Stop' }, {}), undefined);
+      const out = await gauge({ cwd: main, session_id: 's1', transcript_path: high }, {});
+      assert.equal(out.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
+      assert.match(out.hookSpecificOutput.additionalContext, /save state/);
     } finally {
       fs.rmSync(base, { recursive: true, force: true });
     }
