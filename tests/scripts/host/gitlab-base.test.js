@@ -68,7 +68,7 @@ test('the token page, sign-up link and key page use the company\'s address', asy
   const page = new URL(tokenUrl({ ...request, base: COMPANY }));
   assert.equal(page.origin, COMPANY);
   assert.equal(page.pathname, '/-/user_settings/personal_access_tokens');
-  assert.equal(page.searchParams.get('scopes'), 'api');
+  assert.equal(page.searchParams.get('scopes'), 'api,write_repository');
   assert.equal(new URL(tokenUrl({ ...request, base: 'https://localhost:8929' })).origin, 'https://localhost:8929');
   assert.equal(new URL(tokenUrl(request)).origin, DEFAULT_GITLAB, 'no base gives the default');
   // The sign-up link and the repository address.
