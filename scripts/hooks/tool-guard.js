@@ -20,7 +20,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { answer, runAndExit, projectOf, registeredByPath, beingSetUp, worktreeRoot } from './kit.js';
 import { segmentsWithOperators } from './shell-words.js';
-import { AGENT_CONTROL, CONTROL_FILE, homeControlFolders } from '../lib/agent-control.js';
+import { AGENT_CONTROL, CONTROL_FILE, GIT_SETTINGS, gitSettingsFiles, homeControlFolders } from '../lib/agent-control.js';
 import { credentialPaths } from '../lib/credentials.js';
 import { wheelhouseHome, archonHome } from '../lib/paths.js';
 import { projectForFolder, registeredProjects } from '../lib/projects.js';
@@ -235,6 +235,10 @@ function fileRefusal(input, { home, platform, pluginRoot, env, roots, engine }) 
     // a Lean project's folder has into its store) or anything under a `.git` folder, by every spelling, so an edit
     // tool can't move a branch, add a hook or change git's settings.
     if (spellings(given, input.cwd).some((candidate) => fold(candidate).split(/[\\/]/).includes('.git'))) return answer.deny(CONTROL_FILE);
+    // The director's own git settings (agent-control.js, gitSettingsFiles): a push runs with them, so a credential
+    // helper or a rewrite put there would be handed the key, or send a push elsewhere.
+    const settings = [home, homeReal].flatMap((h) => gitSettingsFiles({ home: h, platform, env })).flatMap((f) => spellings(f, home));
+    if (spellings(given, input.cwd).some((candidate) => settings.some((f) => inside(fold, f, candidate)))) return answer.deny(GIT_SETTINGS);
     // The files that steer an agent (agent-control.js), whichever agent reads them. The home
     // folders are looked at by their real paths too, and a project's by each root's.
     const folders = [home, homeReal].flatMap((h) => homeControlFolders({ home: h, platform, env }));
@@ -387,6 +391,38 @@ function gitPushes(args) {
   }
   return false;
 }
+
+// Whether a git command line (the words after the `git` word) reaches the director's own git settings: `git credential`
+// (which hands a key to every helper, or stores one), `git config` on the global or system file, or on a file that is one
+// of the computer's settings files (`--file`, `-f`). `named` says whether a word names such a file.
+function gitReachesSettings(args, named, redirected = false) {
+  let sub = null;
+  let at = 0;
+  let moved = redirected;
+  for (let i = 0; i < args.length; i += 1) {
+    const w = args[i];
+    if (w.startsWith('-')) {
+      if (/^--git-dir(?:=|$)/.test(w)) moved = true;
+      if (GIT_VALUE_OPTIONS.has(w)) i += 1;
+    } else {
+      sub = w;
+      at = i + 1;
+      break;
+    }
+  }
+  if (sub === null) return false;
+  if (sub === 'credential' || sub.startsWith('credential-')) return true;
+  if (sub !== 'config') return false;
+  // `GIT_DIR`, `GIT_CONFIG_GLOBAL` or `GIT_CONFIG_SYSTEM` given for it, or `--git-dir`, can make any folder the settings file.
+  if (moved) return true;
+  const rest = args.slice(at);
+  return rest.some((w, i) => ['--global', '--system'].includes(w)
+    || (/^(?:--file|-f)$/.test(w) && named(rest[i + 1] ?? ''))
+    || (/^--file=/.test(w) && named(w.slice(7))));
+}
+
+// Commands that only read the file they are given.
+const READERS = new Set(['cat', 'less', 'more', 'head', 'tail', 'grep', 'egrep', 'fgrep', 'rg', 'ls', 'stat', 'wc', 'file', 'diff', 'type', 'get-content', 'select-string', 'gc']);
 
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const DURATION = /^\d+(\.\d+)?[smhd]?$/;
@@ -562,6 +598,18 @@ function bashRefused(command, ctx, depth = 0) {
   let dirs = ctx.dirs === undefined ? (ctx.cwd ? [ctx.cwd] : null) : ctx.dirs;
   const again = (text) => bashRefused(text, inContext(dirs), depth + 1);
   const nameOf = (w) => fold(lastPart(w)).replace(/\.exe$/, '');
+  // A variable that moves git's settings files, given anywhere on the line (`GIT_DIR=x git config`, `env GIT_DIR=x ...`,
+  // `export GIT_DIR=x; ...`, `$env:GIT_DIR = 'x'`).
+  const redirectsGit = segs.some((seg) => seg.some((w) => /^(?:\$env:)?(?:GIT_DIR|GIT_CONFIG_GLOBAL|GIT_CONFIG_SYSTEM|GIT_CONFIG)(?:=|$)/i.test(w)));
+  // Whether a word names one of the director's git settings files, by its spelling here, a variable for the home folder
+  // or `~`, and every spelling of the place (links). Only words that end in a settings file's name are looked into.
+  const namesSettings = (word) => {
+    if (ctx.settings === undefined || typeof word !== 'string') return false;
+    const given = word.replace(/\$\{?(?:HOME|USERPROFILE)\}?|%USERPROFILE%|\$env:(?:USERPROFILE|HOME)/gi, ctx.home);
+    if (!['.gitconfig', 'gitconfig', 'config'].includes(lastPart(given).toLowerCase())) return false;
+    const resolved = path.resolve(ctx.cwd ?? '.', expandHome(given, ctx.home, windows));
+    return spellings(resolved, ctx.cwd ?? '.').some((c) => ctx.settings.includes(fold(c)));
+  };
   // The words of a command that are scripts it runs, as [index, run by its path].
   // A runner's is the command it starts, its first plain word, when that has a slash.
   const scriptsRun = (seg, names, k) => {
@@ -606,6 +654,16 @@ function bashRefused(command, ctx, depth = 0) {
       if (/^(?:gh|glab)\$/.test(names[i]) || /^(?:gh|glab)\$/.test(nameOf(value))) return true; // a host tool named with a variable
       if (GIT_PUSHERS.has(names[i])) return true;
       if (names[i] === 'git' && gitPushes(seg.slice(i + 1))) return true;
+      if (ctx.settings !== undefined) {
+        if (names[i] === 'git' && gitReachesSettings(seg.slice(i + 1), namesSettings, redirectsGit)) return true;
+        // A word that names one of the director's git settings files: refused unless it is only read, by a reader
+        // command or by a `<` redirect. The file a `>` redirect writes is the first word of its own segment.
+        if ([word, value].some((candidate) => namesSettings(candidate))) {
+          const k = commandAt(seg, names, ctx);
+          const reads = operators[index] === '<' || (operators[index] !== '>' && k < seg.length && READERS.has(names[k]) && k !== i);
+          if (!reads) return true;
+        }
+      }
       for (const candidate of [word, value]) {
         // A '<rev>:' prefix, as in HEAD:.env, is a path boundary too; on Windows
         // `.env:stream` and `.env::$DATA` name the file, so the name before the
@@ -990,7 +1048,9 @@ export async function decide(input, { dir, projectOf: find = projectOf, home = o
     if (readsPlugin(text, { windows, fold, home, pluginRoots: [path.resolve(pluginRoot), resolveReal(pluginRoot, pluginRoot)] })) return answer.deny(PLUGIN_READ);
     if (reachesEngineRoom(text, windows)) return answer.deny(ENGINE);
     if (readsEngine(text, { windows, fold, home, cwd, engine: engineOf({ engineHome, env, projectDir, cwd }) })) return answer.deny(ENGINE_FILES);
-    if (!bashRefused(text, { windows, fold, cwd, home, root, state, queue: queue !== null })) return undefined;
+    const homeReal = resolveReal(home, home);
+    const settings = [home, homeReal].flatMap((h) => gitSettingsFiles({ home: h, platform, env })).flatMap((f) => spellings(f, home)).map(fold);
+    if (!bashRefused(text, { windows, fold, cwd, home, root, state, queue: queue !== null, settings })) return undefined;
     if (state.keychain) return answer.deny(KEYCHAIN);
     if (state.engine) return answer.deny(ENGINE);
     if (state.nested) return answer.deny(NESTED);
