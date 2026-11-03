@@ -2550,36 +2550,31 @@ test('narrow-goal takes the change as JSON, and refuses one that widens', async 
   });
 });
 
-test('note writes the session note beside the gauge reading, whole and renamed', async () => {
-  await inHome(async () => {
-    const folder = path.join(tempFolder('wh-note-'), 'shop');
-    fs.mkdirSync(path.join(folder, '.git'), { recursive: true });
-    writeProject('o__p', { folder, remoteUrl: 'https://example.test/o/p.git', host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
-    const env = { CLAUDE_CODE_SESSION_ID: 'abc-123' };
-    const dir = path.join(process.env.WHEELHOUSE_HOME, 'projects', 'o__p', 'sessions');
-    const text = 'Task: the export\nDone: the parser\nNext: the tests\nOpen: none';
-    const done = await run({ client: {} }, ['note'], `${text}\n`, { cwd: folder, env });
-    assert.equal(done.code, 0, done.err);
-    assert.match(done.out, /abc-123\.md/);
-    assert.equal(fs.readFileSync(path.join(dir, 'abc-123.md'), 'utf8'), `${text}\n`);
-    assert.deepEqual(fs.readdirSync(dir), ['abc-123.md'], 'no temporary file left');
-    // Written again, it replaces the note; exactly 1,200 characters pass.
-    const full = 'x'.repeat(1200);
-    assert.equal((await run({ client: {} }, ['note'], full, { cwd: folder, env })).code, 0);
-    assert.equal(fs.readFileSync(path.join(dir, 'abc-123.md'), 'utf8'), `${full}\n`);
-    // Over the limit, empty, with no session id or an unsafe one, in a folder that is no project, or with arguments: refused, the note kept.
-    for (const [input, opts, pattern] of [
-      ['x'.repeat(1201), { cwd: folder, env }, /1201 characters; keep it to 1200/],
-      ['  \n', { cwd: folder, env }, /empty/],
-      ['a note', { cwd: folder, env: {} }, /no id/],
-      ['a note', { cwd: folder, env: { CLAUDE_CODE_SESSION_ID: '../x' } }, /no id/],
-      ['a note', { cwd: CWD, env }, /not a Wheelhouse project/],
-    ]) {
-      const refused = await run({ client: {} }, ['note'], input, opts);
-      assert.equal(refused.code, 1);
-      assert.match(refused.err, pattern);
-    }
-    assert.equal((await run({ client: {} }, ['note', 'extra'], 'a note', { cwd: folder, env })).code, 1);
-    assert.equal(fs.readFileSync(path.join(dir, 'abc-123.md'), 'utf8'), `${full}\n`);
-  });
+test('note asks the helper to keep the session note, and refuses what the helper would', async () => {
+  const sent = [];
+  const keeper = (answer) => ({ client: { session: { note: async (body) => { sent.push(body); return answer; } } } });
+  const env = { CLAUDE_CODE_SESSION_ID: 'abc-123' };
+  const text = 'Task: the export\nDone: the parser\nNext: the tests\nOpen: none\n';
+  const done = await run(keeper({ ok: true, file: '/home/projects/o__p/sessions/abc-123.md' }), ['note'], text, { cwd: CWD, env });
+  assert.equal(done.code, 0, done.err);
+  assert.match(done.out, /abc-123\.md/);
+  assert.deepEqual(sent, [{ cwd: CWD, session: 'abc-123', text }]);
+  sent.length = 0;
+  // Refused here, before the helper is asked: over 1,200 characters, empty, no session id, arguments.
+  for (const [argv, input, opts, pattern] of [
+    [['note'], 'x'.repeat(1201), { env }, /1201 characters; keep it to 1200/],
+    [['note'], '  \n', { env }, /empty/],
+    [['note'], 'a note', { env: {} }, /no id/],
+    [['note', 'extra'], 'a note', { env }, /takes no arguments/],
+  ]) {
+    const refused = await run(keeper({ ok: true, file: 'x' }), argv, input, { cwd: CWD, ...opts });
+    assert.equal(refused.code, 1);
+    assert.match(refused.err, pattern);
+  }
+  assert.deepEqual(sent, []);
+  // 1,200 characters pass; the helper's refusal is said as it is.
+  assert.equal((await run(keeper({ ok: true, file: 'x' }), ['note'], 'x'.repeat(1200), { cwd: CWD, env })).code, 0);
+  const stopped = await run(keeper({ ok: false, refused: 'STOP is on' }), ['note'], 'a note', { cwd: CWD, env });
+  assert.equal(stopped.code, 1);
+  assert.match(stopped.err, /STOP is on/);
 });

@@ -48,6 +48,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     stop: post('/stop/set'), //      { by?, wait? } -> { ok, engine? }: turns STOP on, then the engine's runs are cancelled; nothing here lifts it. `by: 'prompt'` records that the director's word set it, `by: 'runbook'` the runbook; `wait: true` waits for the engine and gives what it cancelled
     session: {
       mark: post('/session/mark'), // { project | cwd, mark, data } -> { ok, id }: a session's mark, as a plain note: 'unknown-tool' ({ name }), 'compaction' ({ trigger }) or 'deadline' ({ event })
+      note: post('/session/note'), // { project | cwd, session, text } -> { ok, file }: the session's note, up to 1,200 characters, written beside its gauge reading; refused under STOP
     },
     cards: {
       chatClick: post('/cards/chat-click'), // { project | cwd, card, hash, label, proof, commit?, text? } -> { ok, id }: a click in the chat, as an unsigned card-answer naming its proof; never signed. `text`, the director's words, only with Suggest a change…

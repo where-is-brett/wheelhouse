@@ -37,7 +37,7 @@
 //                   prints `recordHash`, the hash of its record as written, which a goal's sheet names a piece by;
 //                   a goal prints `hash`, the hash of its sheet, which the goal's card and the director's Start name;
 //                   an amendment needs its read-back, and prints the route line and the read-back to say
-//   note            writes this session's note, up to NOTE_CHARS characters on standard input (four lines: the task, what
+//   note            asks the host helper to write this session's note, up to 1,200 characters on standard input (four lines: the task, what
 //                   is done, what is next, the decisions open), to <wheelhouse home>/projects/<project>/sessions/<session id>.md,
 //                   beside the context gauge's reading; the session is named by CLAUDE_CODE_SESSION_ID
 //   similar [words] the open work, ideas and rejections that share words with a request: its
@@ -103,7 +103,7 @@ export { surveyLines, workLines };
 import { SUGGEST, WHY, suggestedAt } from '../lib/calm-words.js';
 import { keep, taken } from '../hooks/pending.js';
 import { projectOf } from '../hooks/kit.js';
-import { sessionFile } from '../hooks/context-gauge.js';
+import { noteProblem } from '../lib/session-note.js';
 import { ALWAYS_READY, columnsReadyOf } from '../routing/in-force.js';
 
 // An error whose message is said to the session as it is.
@@ -1287,28 +1287,15 @@ async function ready(ask, body, what) {
 
 // --- The session note ---
 
-// The note's limit, in characters: a note is a few lines about where the session has got to, read back after a compaction.
-export const NOTE_CHARS = 1200;
-
-// Writes the session's note for the project `cwd` is in, whole to a temporary name and then renamed; returns its path.
-export function writeNote({ cwd, sessionId, text }) {
-  const found = projectOf(cwd);
-  if (found === null) throw new CliError('This folder is not a Wheelhouse project, so there is nowhere to keep a note');
-  const gauge = sessionFile(found.project, sessionId);
-  if (gauge === null) throw new CliError('This session has no id to name its note by');
-  const body = text.replace(/\r\n/g, '\n').trim();
-  if (body === '') throw new CliError('The note was empty: give it on standard input, four lines (the task, what is done, what is next, the decisions open)');
-  if (body.length > NOTE_CHARS) throw new CliError(`The note is ${body.length} characters; keep it to ${NOTE_CHARS}`);
-  const file = gauge.replace(/\.json$/, '.md');
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const temp = `${file}.${crypto.randomUUID().slice(0, 12)}.tmp`;
-  try {
-    fs.writeFileSync(temp, `${body}\n`, { flag: 'wx' });
-    fs.renameSync(temp, file);
-  } finally {
-    fs.rmSync(temp, { force: true });
-  }
-  return file;
+// Asks the host helper to keep the session's note for the project `cwd` is in (the sandbox cannot write under the
+// Wheelhouse home); returns where it is kept. The limit is checked here too, so a note too long is refused at once.
+export async function writeNote({ client, cwd, sessionId, text }) {
+  const problem = noteProblem(text);
+  if (problem !== null) throw new CliError(problem);
+  if (typeof sessionId !== 'string' || sessionId === '') throw new CliError('This session has no id to name its note by');
+  const got = await client.session.note({ cwd, session: sessionId, text });
+  if (got?.ok !== true) throw new CliError(`The note wasn't kept: ${said(got, 'the host helper did not answer')}`);
+  return got.file;
 }
 
 // --- The command line ---
@@ -1375,7 +1362,7 @@ export async function main(argv, {
 
     if (command === 'note') {
       only(rest, 0, 'note takes no arguments: give the note on standard input');
-      lines([`Note kept at ${writeNote({ cwd: here, sessionId: env.CLAUDE_CODE_SESSION_ID, text: await stdin() })}`]);
+      lines([`Note kept at ${await writeNote({ client: helper, cwd: here, sessionId: env.CLAUDE_CODE_SESSION_ID, text: await stdin() })}`]);
       return 0;
     }
     if (command === 'pull-cards') {
