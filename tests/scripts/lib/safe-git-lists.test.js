@@ -801,12 +801,12 @@ test('survey: the open-request list names its repository with --repo= and runs o
   assert.equal(fs.existsSync(calls[0].cwd), false, 'the scratch folder is removed');
 });
 
-async function surveyWith(origin, host, ghLike, env = {}) {
+async function surveyWith(origin, host, ghLike, env = {}, gitlab = null) {
   const { dir } = await projectWithOrigin();
   await must(['remote', 'set-url', 'origin', origin], dir);
   const calls = [];
   const survey = () => surveyProject({
-    folder: dir, manifest: { upstreams: [] }, host, claudeHome: tempFolder('wh-claude-'),
+    folder: dir, manifest: { upstreams: [] }, host, claudeHome: tempFolder('wh-claude-'), ...(gitlab === null ? {} : { gitlab }),
     run: async (file, args, options) => {
       if (file === 'gh' || file === 'glab') { calls.push({ file, args, env: options.env, cwd: options.cwd }); return ghLike(file, args); }
       // The fetch from a made-up address cannot succeed; the survey only needs the remote to read.
@@ -834,11 +834,17 @@ test('survey: a planted foreign host is named only when the director is signed i
     }
     assert.equal(call.cwd.startsWith(signed.dir), false);
   }
-  // glab likewise.
-  const lab = await surveyWith('git@git.corp.example:g/s/p.git', 'gitlab', () => ({ code: 0, stdout: '[]', stderr: '' }));
+  // GitLab goes through its API with the director's own key for that host: the key is asked for that host alone,
+  // glab is not run, and a host the director has no key for is not listed.
+  const asked = [];
+  const keyed = async (args) => { asked.push(args); return { get: async (path) => { asked.push(path); return { status: 200, body: [] }; } }; };
+  const lab = await surveyWith('git@git.corp.example:g/s/p.git', 'gitlab', () => ({ code: 0, stdout: '[]', stderr: '' }), {}, keyed);
   await lab.survey();
-  assert.deepEqual(lab.calls.map((c) => c.args[0]), ['auth', 'mr']);
-  assert.ok(lab.calls[1].args.includes('--repo=git.corp.example/g/s/p'));
+  assert.deepEqual(lab.calls, []);
+  assert.equal(asked[0].baseUrl, 'https://git.corp.example');
+  assert.equal(asked[1], '/projects/g%2Fs%2Fp/merge_requests?state=opened&per_page=100');
+  const keyless = await surveyWith('git@evil.example:g/p.git', 'gitlab', () => ({ code: 0, stdout: '[]', stderr: '' }), {}, async () => { throw new Error('glab is not signed in'); });
+  await assert.rejects(keyless.survey(), /no GitLab sign-in on evil\.example/);
   // The tool's own host needs no auth check.
   const own = await surveyWith('https://github.com/o/p.git', 'github', () => ({ code: 0, stdout: '[]', stderr: '' }));
   await own.survey();
