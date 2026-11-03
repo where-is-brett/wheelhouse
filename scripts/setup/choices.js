@@ -35,7 +35,7 @@ import { HEALTH_STEP, onRunList, stepDone } from '../lib/setup-run.js';
 import { askedRecord, answersFor } from './clicks.js';
 import { HOST_LABELS, LEVELS, NEW_PRODUCT, REAL_USERS, STRICTER, WAYS } from './host.js';
 import { LIVE_DATA, PRODUCT, SIGNS_APPS, productName } from './questions.js';
-import { FIRST_CHECK_LINE, KEEP_HERE, KEPT_LINE, STARTED_LINE } from './local.js';
+import { FIRST_CHECK_LINE, KEEP_HERE, KEPT_LINE, PUT_ON_GITLAB, STARTED_LINE } from './local.js';
 import { backupNamed } from '../host/local/restore.js';
 import { compactionLine, compactionRules } from '../protection/settings.js';
 
@@ -121,12 +121,19 @@ const NOT_JOINING = [NEW_PRODUCT, KEEP_HERE, HOST_LABELS.github, HOST_LABELS.git
 // answered with anything but a new product).
 const joining = (taken) => Object.entries(taken).some(([key, a]) => /^3\.join(?:-|$)/.test(key) && !NOT_JOINING.includes(a.label) && backupNamed(a.text) === null);
 
+// The host the plan names, as step 3 will use it: the one the folder's own remote names, else
+// the one the kept card or the host or join card chose; GitHub when none says GitLab.
+function hostOf(product, choices) {
+  if (product && product.isNew === false && (product.host === 'gitlab' || product.host === 'github')) return product.host === 'gitlab' ? 'GitLab' : 'GitHub';
+  const chose = choices.some((c) => (c.id === 'kept' && c.label === PUT_ON_GITLAB) || ((c.id === 'host' || c.id === 'join' || c.id.startsWith('join-')) && c.label === HOST_LABELS.gitlab));
+  return chose ? 'GitLab' : 'GitHub';
+}
+
 // The plain line a choice adds to the one card, or null when it adds none. `name` is the product's,
-// `platform` the computer's.
-function lineOf({ id, label, text, line }, { name, platform, choices }) {
+// `platform` the computer's, `host` the host the plan names.
+function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
   if (id === 'backup' || id.startsWith('backup-')) return line;
-  const host = choices.some((c) => (c.id === 'host' || c.id === 'join' || c.id.startsWith('join-')) && c.label === HOST_LABELS.gitlab) ? 'GitLab' : 'GitHub';
-  if (id === 'kept') return label === KEEP_HERE ? line : `Put on GitHub: a private repository on your account, with your project's history sent to it.`;
+  if (id === 'kept') return label === KEEP_HERE ? line : `Put on ${host}: a private ${host === 'GitLab' ? 'project' : 'repository'} on your account, with your project's history sent to it.`;
   if (id.startsWith('branch-')) return `Finished work goes on ${label}, the main version.`;
   if (label === KEEP_HERE && (id === 'host' || id === 'join' || id.startsWith('join-'))) return KEPT_LINE;
   if (label === HOST_LABELS.github || label === HOST_LABELS.gitlab) {
@@ -198,7 +205,7 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
     .findIndex((p) => id === p || id.startsWith(p.endsWith('-') ? p : `${p}-`));
   for (const c of [...list].sort((x, y) => rank(x) - rank(y))) {
     const readme = describedBy(c);
-    const line = readme === null ? lineOf(c, { name, platform, choices: list }) : `Described as: ${readme}`;
+    const line = readme === null ? lineOf(c, { name, platform, choices: list, host: hostOf(product, list) }) : `Described as: ${readme}`;
     if (line !== null) lines.push(line);
   }
   if (keptHere && toRun.includes(3) && !fs.existsSync(path.join(folder, '.git'))) lines.push(STARTED_LINE('main'));
