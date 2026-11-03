@@ -83,3 +83,41 @@ export function controlWritePaths() {
   return AGENT_CONTROL.map((p) => (p.endsWith('/**') ? p.slice(0, -3) : p.startsWith('**/') ? p.slice(3) : p))
     .filter((p) => !/[*?[\]]/.test(p)).map((p) => `./${p}`);
 }
+
+// The director's own git settings files (their sign-in, proxy and certificate). A push runs with them
+// (scripts/lib/safe-git.js, the push reaches), so an agent that could write one could name a credential helper
+// that is handed the key, or a rewrite that sends a push elsewhere. They are protected as the files above are.
+export const GIT_SETTINGS = 'That file holds the director\'s own git settings (their sign-in, proxy and certificate), so changing it is not done from here: ask the director';
+const HOME_GIT_SETTINGS = Object.freeze(['.gitconfig', '.config/git/config']);
+const SYSTEM_GIT_SETTINGS = Object.freeze([
+  '/etc/gitconfig', '/usr/local/etc/gitconfig', '/opt/homebrew/etc/gitconfig',
+  '/Library/Developer/CommandLineTools/usr/share/git-core/gitconfig', '/Applications/Xcode.app/Contents/Developer/usr/share/git-core/gitconfig',
+]);
+
+// The home folder's git settings files, from the home folder, with forward slashes, for the project's settings file.
+export function homeGitSettingsPaths() {
+  return [...HOME_GIT_SETTINGS];
+}
+// The system's git settings files on the systems that have them in a fixed place (absolute), for the sandbox's write list.
+export function systemGitSettingsPaths() {
+  return [...SYSTEM_GIT_SETTINGS];
+}
+
+// Every git settings file of this computer, as full paths for `platform`: the home folder's two, the one under
+// XDG_CONFIG_HOME, the system's, and on Windows %PROGRAMDATA%\Git\config and Git for Windows' own.
+export function gitSettingsFiles({ home, platform = process.platform, env = {} } = {}) {
+  if (typeof home !== 'string' || home === '') throw new Error('The home folder is needed');
+  const windows = platform === 'win32';
+  const join = windows ? path.win32.join : path.posix.join;
+  const get = (name) => {
+    const key = Object.keys(env ?? {}).find((k) => (windows ? k.toLowerCase() === name.toLowerCase() : k === name));
+    return key !== undefined && typeof env[key] === 'string' && env[key] !== '' ? env[key] : null;
+  };
+  const files = HOME_GIT_SETTINGS.map((p) => join(home, ...p.split('/')));
+  const xdg = get('XDG_CONFIG_HOME');
+  if (xdg !== null) files.push(join(xdg, 'git', 'config'));
+  if (!windows) return [...files, ...SYSTEM_GIT_SETTINGS];
+  const programData = get('PROGRAMDATA') ?? 'C:\\ProgramData';
+  const programFiles = [get('ProgramFiles') ?? 'C:\\Program Files', get('ProgramFiles(x86)')].filter((p) => p !== null);
+  return [...files, join(programData, 'Git', 'config'), ...programFiles.flatMap((p) => [join(p, 'Git', 'etc', 'gitconfig'), join(p, 'Git', 'mingw64', 'etc', 'gitconfig')])];
+}

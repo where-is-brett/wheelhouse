@@ -69,7 +69,7 @@ export function scrub(text, env = {}, extra = []) {
 
 // What a refused merge says, in the adapter's own words: the host's text is read
 // to tell the kinds apart and is never repeated.
-function refusalOf(output, fallback) {
+export function refusalOf(output, fallback) {
   // glab wraps its error over lines, so a phrase can break between words ("SHA does not\n  match HEAD").
   const text = String(output ?? '').replace(/\s+/g, ' ');
   if (/head branch was modified|sha does not match|match-head-commit|head commit/i.test(text)) return 'the head of the pull request has moved since it was checked';
@@ -95,6 +95,22 @@ const STATUS_STATES = ['pending', 'success', 'failure'];
 const MOST_COMMITS = 50;
 
 const QUEUE_LINE = 'This project\'s host queues merges; Wheelhouse merges only directly for now';
+
+// After a merge command that exited 0: the state is read back. Merged is merged; open means
+// the host queued the merge instead of making it, so it is taken back out of the queue and
+// refused; anything else, or a state that cannot be read, is unknown and refused.
+export async function settle({ state, merged, open, takeBack }) {
+  let seen = null;
+  try { seen = await state(); } catch { /* unknown */ }
+  if (seen === merged) return { merged: true };
+  if (seen !== open) return { merged: false, reason: 'the host did not confirm that the pull request was merged, so it is treated as not merged: could not confirm' };
+  try {
+    await takeBack();
+  } catch {
+    return { merged: false, queued: true, reason: `${QUEUE_LINE}, and it could not be taken back out of the queue: take it out on the host` };
+  }
+  return { merged: false, queued: true, reason: QUEUE_LINE };
+}
 
 // 'github' for github.com; 'gitlab' for the public GitLab service, or for another address when
 // the project setting `gitlabHosts` names it (a host name, with its port when it has one); 'local'
@@ -190,6 +206,18 @@ export function adapterFrom(c) {
     // of it, or null when there is none or its address is not https. A failed read is thrown.
     previewUrl: async (sha) => c.previewUrl(commit(sha)),
     merge: async ({ number, sha } = {}) => c.merge({ number: wholeNumber(number), sha: commit(sha) }),
+    // Approves a request at the head the card names (the host refuses if the head has moved). Only the director's own
+    // card calls it, with the director's own key. A refusal is an answer, never thrown: { approved: true }, or
+    // { approved: false, reason } (with `selfApproval` or `keyRefused` when that is why, and a host fault's own flag).
+    approve: async ({ number, sha } = {}) => {
+      if (typeof c.approve !== 'function') throw new Error('Approving is not available on this host yet');
+      return c.approve({ number: wholeNumber(number), sha: commit(sha) });
+    },
+    // How many more approvals the host wants on the request before it can merge (0 when none).
+    approvalsNeeded: async (number) => {
+      if (typeof c.approvalsNeeded !== 'function') throw new Error('Reading approvals is not available on this host yet');
+      return c.approvalsNeeded(wholeNumber(number));
+    },
     // The history calls of the audit report. They only read. The host's own history is the second
     // record the report checks the computer's against (scripts/audit/report.js).
     mergedRequests: async ({ since } = {}) => history('mergedRequests', { since: when(since, 'time to read from') }),
@@ -266,21 +294,6 @@ export function makeAdapter({ host, repo, run, env: given, base = DEFAULT_GITLAB
       throw new Error(`${file} ${args.slice(0, 2).join(' ')} did not answer in JSON`);
     }
   }
-  // After a merge command that exited 0: the state is read back. Merged is merged; open means
-  // the host queued the merge instead of making it, so it is taken back out of the queue and
-  // refused; anything else, or a state that cannot be read, is unknown and refused.
-  async function settle({ state, merged, open, takeBack }) {
-    let seen = null;
-    try { seen = await state(); } catch { /* unknown */ }
-    if (seen === merged) return { merged: true };
-    if (seen !== open) return { merged: false, reason: 'the host did not confirm that the pull request was merged, so it is treated as not merged: could not confirm' };
-    try {
-      await takeBack();
-    } catch {
-      return { merged: false, queued: true, reason: `${QUEUE_LINE}, and it could not be taken back out of the queue: take it out on the host` };
-    }
-    return { merged: false, queued: true, reason: QUEUE_LINE };
-  }
   // What a failed command says about reaching the host: null, or { kind, line } for a server that is
   // not there or a certificate not trusted, which a merge reports apart from a refusal (`timedOut`:
   // the command waited and gave up, so whether it took effect is not known).
@@ -303,5 +316,5 @@ export function makeAdapter({ host, repo, run, env: given, base = DEFAULT_GITLAB
     throw new Error(`${file} ${args.slice(0, 2).join(' ')} failed${said ? `: ${said}` : ''}`);
   }
   const tools = { call, settle, attempt, json, repo, fromAddress, refusal: refusalOf, httpsOnly, hostFault, read };
-  return adapterFrom(commands(tools));
+  return { ...adapterFrom(commands(tools)), backend: 'cli' };
 }

@@ -19,6 +19,9 @@
 import { run as realRun, withoutGitVars } from './run.js';
 import { revocationFallback } from '../host/company-ca.js';
 import path from 'node:path';
+import fs from 'node:fs';
+import crypto from 'node:crypto';
+import { wheelhouseHome } from './paths.js';
 import {
   isolated, refuseUnlistedSettings, setupGitEnv, subcommandOf, allowedSetting, unlistedSettingsLine, CONFIG_UNREAD, FENCE, NULL_FILE,
 } from '../setup/git.js';
@@ -38,7 +41,31 @@ const ALLOWED_VARS = new Set([
   'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_AUTHOR_DATE', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL',
   'GIT_COMMITTER_DATE', 'GIT_ATTR_NOSYSTEM', 'GIT_NO_LAZY_FETCH',
 ]);
-const TRANSPORT = { https: 'https', local: 'https:file', ssh: 'https:ssh', loopback: 'https:http' };
+const TRANSPORT = {
+  https: 'https', local: 'https:file', ssh: 'https:ssh', loopback: 'https:http',
+  // A push with the director's own git as it is (design section 4.1): the same transports, by the remote's kind.
+  push: 'https', 'push-ssh': 'https:ssh', 'push-local': 'https:file', 'push-loopback': 'https:http',
+};
+// The push reaches. Only these let the computer's own (the director's) git settings in; every other
+// reach shuts them out. The helper's push route is the one caller (scripts/host/helper.js, pushToHost).
+export const PUSH_REACHES = Object.freeze(['push', 'push-ssh', 'push-local', 'push-loopback']);
+export const isPushReach = (reach) => PUSH_REACHES.includes(reach);
+
+// Whether a remote's address is an SSH one: `ssh://` or the scp form (`user@host:owner/name.git`).
+export function sshRemote(url) {
+  if (typeof url !== 'string') return false;
+  if (/^ssh:\/\//i.test(url)) return true;
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(url) || url.includes('::')) return false;
+  // The scp form: a name with no `/` before its `:`, and more than a Windows drive letter.
+  return /^[^/\\:]{2,}:/.test(url);
+}
+
+// The reach a push to `url` takes: the push kind of the transport its address needs.
+export function pushReachFor(url, { platform = process.platform } = {}) {
+  if (sshRemote(url)) return 'push-ssh';
+  const reach = reachFor(url, { platform });
+  return reach === 'https' ? 'push' : `push-${reach}`;
+}
 
 // How a remote's address is reached: 'local' for a path on this computer (absolute, relative, a
 // drive letter or a share on Windows) or a file:// address; 'loopback' for an http:// address on
@@ -189,9 +216,17 @@ export function allowedProjectSetting(name) {
 const LISTS = { own: allowedSetting, project: allowedProjectSetting };
 
 // `env` with the whole fence, and the transport `reach` names in place of any given. Safe to apply twice.
-export function safeGitEnv(env = {}, { reach = 'https' } = {}) {
+//
+// A push reach (PUSH_REACHES) is the one exception to the shutting out of the global and system
+// settings: the director's own files come in, with their credential helper, proxy, certificate and the
+// rest, and the fence's settings still outrank them (they are in the call's environment). So the
+// call drops GIT_CONFIG_GLOBAL and GIT_CONFIG_NOSYSTEM, does not clear the credential helpers, never
+// prompts or opens a window, and for an SSH remote leaves the director's own core.sshCommand (and
+// GIT_SSH_COMMAND, from `directorEnv`) in place. A caller may not give a push a credential helper.
+export function safeGitEnv(env = {}, { reach = 'https', directorEnv = process.env, settingsFile = null } = {}) {
   const transport = TRANSPORT[reach];
   if (transport === undefined) throw new Error(`safeGitEnv: unknown reach ${String(reach)}`);
+  const pushing = isPushReach(reach);
   // Any GIT_ variable off the allowed list is dropped, whatever the caller gave.
   const kept = {};
   for (const [name, value] of Object.entries(env ?? {})) {
@@ -212,19 +247,138 @@ export function safeGitEnv(env = {}, { reach = 'https' } = {}) {
     const value = kept[`GIT_CONFIG_VALUE_${i}`];
     // A caller's own clearing of the credential helpers is dropped: the reset below does it, once.
     if (String(key).toLowerCase() === 'credential.helper' && value === '') continue;
+    if (pushing && CREDENTIAL_HELPER.test(String(key))) throw new Error('safeGitEnv: a push takes the director\'s own credential helper, and no other');
     if (!fenceKeys.has(String(key).toLowerCase())) own.push([key, value]);
   }
   // The call's own pairs begin with a clearing of every credential helper the repository (or a URL
   // in it) lists, so none runs; the director's sign-in, which comes after it among the caller's
   // pairs, is then the only helper. Nothing after it names credential.helper: the fence does not.
-  own.unshift(['credential.helper', '']);
+  if (!pushing) own.unshift(['credential.helper', '']);
   for (const name of Object.keys(kept)) if (/^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(name)) delete kept[name];
   own.forEach(([key, value], i) => {
     kept[`GIT_CONFIG_KEY_${i}`] = key;
     kept[`GIT_CONFIG_VALUE_${i}`] = value;
   });
   kept.GIT_CONFIG_COUNT = String(own.length);
-  return { ...isolated({ ...kept, GIT_ALLOW_PROTOCOL: TRANSPORT.https }), GIT_ALLOW_PROTOCOL: transport };
+  const fenced = { ...isolated({ ...kept, GIT_ALLOW_PROTOCOL: TRANSPORT.https }), GIT_ALLOW_PROTOCOL: transport };
+  return pushing ? withDirectorsGit(fenced, { reach, directorEnv, settingsFile }) : fenced;
+}
+
+// A push call's environment from the fenced one: the two settings that shut out the director's own
+// files are dropped, and nothing opens a window. For an SSH remote the fence's `core.sshCommand` (a
+// command that does nothing) is lifted, so the director's own stands, and the director's own
+// GIT_SSH_COMMAND or GIT_SSH is passed on.
+function withDirectorsGit(fenced, { reach, directorEnv, settingsFile }) {
+  const out = { ...fenced };
+  // With a checked copy of the computer's settings (a push's own, settingsFile), git reads that file as the global one
+  // and no system one, so nothing changed on disk after the check reaches the push.
+  if (settingsFile === null) {
+    delete out.GIT_CONFIG_NOSYSTEM;
+    delete out.GIT_CONFIG_GLOBAL;
+  } else {
+    out.GIT_CONFIG_NOSYSTEM = '1';
+    out.GIT_CONFIG_GLOBAL = settingsFile;
+  }
+  out.GIT_TERMINAL_PROMPT = '0';
+  out.GCM_INTERACTIVE = 'never';
+  if (reach !== 'push-ssh') return out;
+  out.SSH_ASKPASS_REQUIRE = 'never';
+  for (const name of ['GIT_SSH_COMMAND', 'GIT_SSH']) {
+    const value = Object.entries(directorEnv ?? {}).find(([k]) => k.toUpperCase() === name)?.[1];
+    if (typeof value === 'string' && value !== '') out[name] = value;
+  }
+  const pairs = [];
+  for (let i = 0; i < Number(out.GIT_CONFIG_COUNT); i += 1) {
+    pairs.push([out[`GIT_CONFIG_KEY_${i}`], out[`GIT_CONFIG_VALUE_${i}`]]);
+    delete out[`GIT_CONFIG_KEY_${i}`];
+    delete out[`GIT_CONFIG_VALUE_${i}`];
+  }
+  const kept = pairs.filter(([key]) => String(key).toLowerCase() !== 'core.sshcommand');
+  out.GIT_CONFIG_COUNT = String(kept.length);
+  kept.forEach(([key, value], i) => {
+    out[`GIT_CONFIG_KEY_${i}`] = key;
+    out[`GIT_CONFIG_VALUE_${i}`] = value;
+  });
+  return out;
+}
+
+// The computer's own settings (system, then global, includes resolved as they apply in `cwd`'s repository, in
+// git's own order) as [{ key, value }], `value` null for a key with no value. Null when git could not say.
+export async function readComputerSettings({ run = realRun, gitPath = 'git', cwd }) {
+  let got;
+  try {
+    got = await run(gitPath, ['config', '--list', '--includes', '--show-scope', '-z'], { cwd, env: { GIT_TERMINAL_PROMPT: '0' }, baseEnv: withoutGitVars(), timeoutMs: GIT_WAIT_MS });
+  } catch {
+    return null;
+  }
+  if (got.code !== 0) return null;
+  const entries = [];
+  // With -z and --show-scope each entry is `scope NUL key NL value NUL`. The computer's are all but the repository's own
+  // (local, worktree) and the command line's; git names a system file it can't place `unknown`.
+  const parts = String(got.stdout ?? '').split('\0');
+  for (let i = 0; i + 1 < parts.length; i += 2) {
+    const scope = parts[i];
+    if (['local', 'worktree', 'command'].includes(scope)) continue;
+    const rest = parts[i + 1];
+    const nl = rest.indexOf('\n');
+    entries.push({ key: nl < 0 ? rest : rest.slice(0, nl), value: nl < 0 ? null : rest.slice(nl + 1) });
+  }
+  return entries;
+}
+
+const OFF = /^(false|no|off|0)$/i;
+// Why the computer's settings may not go into a push, in words, or null. A web address's own certificate setting set
+// to off beats the fence's plain one, and a resolver override sends a name to another address.
+export function settingsRefusal(entries) {
+  for (const { key, value } of entries) {
+    const lower = key.toLowerCase();
+    if (/^http\..+\.sslverify$/.test(lower) && typeof value === 'string' && OFF.test(value.trim())) return 'turn certificate checks off for a web address';
+    if (/^http\.(?:.+\.)?curloptresolve$/.test(lower)) return 'send a host name to another address';
+  }
+  return null;
+}
+
+// The hooks the settings name (`hook.<name>.command`, config-defined hooks), which `core.hooksPath` does not stop.
+export function hookNames(entries) {
+  const names = new Set();
+  for (const { key } of entries) {
+    const first = key.indexOf('.');
+    const last = key.lastIndexOf('.');
+    if (first > 0 && last > first && key.slice(0, first).toLowerCase() === 'hook') names.add(key.slice(first + 1, last));
+  }
+  return [...names];
+}
+
+const quoted = (text) => `"${String(text).replaceAll('\\', '\\\\').replaceAll('"', '\\"').replaceAll('\n', '\\n').replaceAll('\t', '\\t')}"`;
+// The entries as a config file: every one on its own line under its own section header.
+export function settingsText(entries) {
+  return entries.map(({ key, value }) => {
+    const first = key.indexOf('.');
+    const last = key.lastIndexOf('.');
+    const section = key.slice(0, first);
+    const sub = last > first ? key.slice(first + 1, last) : null;
+    const name = key.slice(last + 1);
+    return `[${section}${sub === null ? '' : ` ${quoted(sub)}`}]\n\t${name}${value === null ? '' : ` = ${quoted(value)}`}\n`;
+  }).join('');
+}
+
+// Where a push's private copy of the computer's settings is made: under the Wheelhouse home, which the tool guard and the
+// sandbox keep agents out of (a temporary folder is theirs to write, and on Windows its permissions can't be narrowed).
+export const SETTINGS_COPIES = 'settings-copies';
+
+// Runs `fn(file)` with a private copy of the entries as a config file, removed afterwards.
+async function withSettingsFile(entries, fn) {
+  const parent = path.join(wheelhouseHome(), SETTINGS_COPIES);
+  fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
+  const dir = fs.mkdtempSync(path.join(parent, 'copy-'));
+  try {
+    fs.chmodSync(dir, 0o700);
+    const file = path.join(dir, 'config');
+    fs.writeFileSync(file, settingsText(entries), { mode: 0o600 });
+    return await fn(file);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 // The settings the repository in `cwd` holds that are off the allowed list (`list`: 'own', the default,
@@ -321,6 +475,48 @@ function refuseFenceOverride(args) {
   }
 }
 
+// --- The record of the computer's settings ---
+// Where the guard can be bypassed (Windows lets an agent run as the director), the computer's settings could be changed
+// to name a credential helper or a rewrite. So the values a push trusts are fingerprinted when as-is pushing is first used
+// and kept under the Wheelhouse home, and a push whose settings differ is refused until the director confirms the change.
+export const SETTINGS_CHANGED = 'git-settings-changed';
+export class SettingsChanged extends LookRefusal {
+  code = SETTINGS_CHANGED;
+}
+export const SETTINGS_CHANGED_LINE = "The git settings on this computer (your sign-in, proxy, certificate or address rewrites) have changed since setup, so nothing was pushed. The director needs to confirm the change first.";
+
+const RELEVANT = /^(?:credential\.(?:.+\.)?helper|core\.sshcommand|url\..+\.(?:push)?insteadof|http\.(?:.+\.)?(?:proxy|sslcainfo)|include\.path|includeif\..+\.path|remote\..+\.pushurl)$/;
+// The settings a push trusts, in git's order, and a fingerprint of them.
+export function trustedSettings(entries) {
+  return entries.filter(({ key }) => RELEVANT.test(key.toLowerCase())).map(({ key, value }) => [key.toLowerCase(), value]);
+}
+export const settingsFingerprint = (entries) => crypto.createHash('sha256').update(JSON.stringify(trustedSettings(entries))).digest('hex');
+
+// Records the fingerprint the first time; after that, throws SettingsChanged when it differs.
+function checkTrusted(file, entries) {
+  const now = settingsFingerprint(entries);
+  let kept = null;
+  try {
+    kept = JSON.parse(fs.readFileSync(file, 'utf8')).fingerprint;
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw new SettingsChanged(SETTINGS_CHANGED_LINE);
+  }
+  if (kept === null) {
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(file, `${JSON.stringify({ fingerprint: now }, null, 2)}\n`, { mode: 0o600 });
+    return;
+  }
+  if (kept !== now) throw new SettingsChanged(SETTINGS_CHANGED_LINE);
+}
+
+// The director's confirmation of the computer's settings as they are now (a later part's card calls this).
+export async function confirmComputerSettings({ file, run = realRun, gitPath = 'git', cwd }) {
+  const entries = await readComputerSettings({ run, gitPath, cwd });
+  if (entries === null) throw new Error("Git's settings on this computer could not be read");
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(file, `${JSON.stringify({ fingerprint: settingsFingerprint(entries) }, null, 2)}\n`, { mode: 0o600 });
+}
+
 // git in `cwd`: `git(args, options)` gives run's answer. `list` says which allowed list the look uses:
 // 'own' (the default, so a caller that says nothing gets the strict one) for a repository Wheelhouse
 // made, or 'project' for a director's project repository. `look` is 'each' (look at the repository's
@@ -333,11 +529,19 @@ function refuseFenceOverride(args) {
 // LookRefusal worded for that caller (and `what` names the repository); without it, setup's line.
 export function safeGit({
   run = realRun, gitPath = 'git', cwd, env = {}, reach = 'https', look = 'each', list = 'own', workTree = null, timeoutMs = GIT_WAIT_MS,
-  caller = null, what = null,
+  caller = null, what = null, pushTo = null, allowLocal = false, trust = null,
 } = {}) {
   if (!['each', 'once', 'never'].includes(look)) throw new Error(`safeGit: unknown look ${String(look)}`);
   if (!Object.hasOwn(LISTS, list)) throw new Error(`safeGit: unknown list ${String(list)}`);
   if (caller !== null && !(caller in NEXT)) throw new Error(`safeGit: unknown caller ${String(caller)}`);
+  if (!Object.hasOwn(TRANSPORT, reach)) throw new Error(`safeGit: unknown reach ${String(reach)}`);
+  const pushing = isPushReach(reach);
+  // A push lets the director's own settings in, so the repository's own are always looked at first,
+  // by the own list.
+  if (pushing && look === 'never') throw new Error('safeGit: a push always looks at the repository\'s settings');
+  if (pushing && list !== 'own') throw new Error('safeGit: a push looks at the repository by the own list');
+  // A local path is a transport that runs the other end's programs unfenced: for tests of a stand-in host only.
+  if (reach === 'push-local' && allowLocal !== true) throw new Error('safeGit: a push to a local path is refused');
   let looked = null;
   const lookNow = caller === null
     ? (list === 'own' ? () => refuseUnlistedSettings({ run, gitPath, cwd }) : async () => {
@@ -360,13 +564,49 @@ export function safeGit({
     // The factory's folder and base environment stand: a call cannot give its own.
     if (options && ('cwd' in options || 'baseEnv' in options)) throw new Error('safeGit: cwd and baseEnv are given once, to safeGit, not to a call');
     const { env: extra, ...rest } = options ?? {};
-    const fenced = safeGitEnv({ ...env, ...extra }, { reach });
-    const callEnv = workTree === null || subcommandOf(args) === 'init' ? fenced : { ...fenced, GIT_WORK_TREE: workTree };
-    const got = await run(gitPath, args, { timeoutMs, ...rest, cwd, baseEnv: withoutGitVars(), env: callEnv });
-    // On Windows, a company's certificate through Windows' store, refused because the network blocks the
-    // revocation check, is tried once more with the certificate file (company-ca.js, revocationFallback).
-    const fallback = got?.code !== 0 ? revocationFallback(callEnv, got?.stderr) : null;
-    return fallback === null ? got : run(gitPath, args, { timeoutMs, ...rest, cwd, baseEnv: withoutGitVars(), env: fallback });
+    const given = { ...env, ...extra };
+    const push = subcommandOf(args) === 'push';
+    if (pushing && push && (pushTo === null || typeof pushTo.remote !== 'string' || typeof pushTo.url !== 'string')) {
+      throw new Error('safeGit: a push names the remote and the address it goes to');
+    }
+    const execute = async (settingsFile) => {
+      const fenced = safeGitEnv(given, { reach, settingsFile });
+      const callEnv = workTree === null || subcommandOf(args) === 'init' ? fenced : { ...fenced, GIT_WORK_TREE: workTree };
+      // The address a push goes to, as git works it out with these very settings, is the recorded one: a rewrite in the
+      // computer's settings (insteadOf, pushInsteadOf, pushurl) would send the director's sign-in to another repository.
+      if (pushing && push) {
+        // A push goes to every push address (every pushurl, or every url without one): all of them, and only the recorded one.
+        const where = await run(gitPath, ['remote', 'get-url', '--push', '--all', pushTo.remote], { timeoutMs, cwd, baseEnv: withoutGitVars(), env: callEnv });
+        const lines = String(where.stdout ?? '').split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== '');
+        if (where.code !== 0 || lines.length !== 1 || lines[0] !== pushTo.url) {
+          throw new LookRefusal("Git's settings on this computer send pushes for this project to another address, so nothing was pushed. Remove the rewrite (insteadOf, pushInsteadOf or pushurl) for it from your git settings, then try again.");
+        }
+      }
+      const got = await run(gitPath, args, { timeoutMs, ...rest, cwd, baseEnv: withoutGitVars(), env: callEnv });
+      // On Windows, a company's certificate through Windows' store, refused because the network blocks the
+      // revocation check, is tried once more with the certificate file (company-ca.js, revocationFallback).
+      const fallback = got?.code !== 0 ? revocationFallback(callEnv, got?.stderr) : null;
+      return fallback === null ? got : run(gitPath, args, { timeoutMs, ...rest, cwd, baseEnv: withoutGitVars(), env: fallback });
+    };
+    if (!pushing) return execute(null);
+    // The computer's own settings are read once, checked, and copied to a private file the push reads in their place, so
+    // what was checked is what git uses. Config-defined hooks in them are switched off one by one, and the certificate
+    // check is set on for the recorded address, the most specific match, which beats a setting for a shorter address.
+    const entries = await readComputerSettings({ run, gitPath, cwd });
+    if (entries === null) throw new LookRefusal(`Git's settings on this computer could not be read. ${caller === null ? 'Try the push again.' : UNREAD_NEXT[caller]}`);
+    const why = settingsRefusal(entries);
+    if (why !== null) throw new LookRefusal(`Git's settings on this computer ${why}, which Wheelhouse does not allow for a push. Remove that setting, then try again.`);
+    // What the computer's settings were when as-is pushing was first used: a change since is the director's to confirm.
+    if (trust !== null && subcommandOf(args) === 'push') checkTrusted(trust.file, entries);
+    const extras = hookNames(entries).map((name) => [`hook.${name}.enabled`, 'false']);
+    if (pushTo !== null && /^https?:\/\//i.test(pushTo.url)) extras.push([`http.${pushTo.url}.sslVerify`, 'true']);
+    const count = Number.parseInt(given.GIT_CONFIG_COUNT ?? '0', 10) || 0;
+    extras.forEach(([key, value], i) => {
+      given[`GIT_CONFIG_KEY_${count + i}`] = key;
+      given[`GIT_CONFIG_VALUE_${count + i}`] = value;
+    });
+    given.GIT_CONFIG_COUNT = String(count + extras.length);
+    return withSettingsFile(entries, execute);
   };
 }
 
