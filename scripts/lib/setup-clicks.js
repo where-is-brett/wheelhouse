@@ -105,59 +105,111 @@ export function keepAnswer(event) {
   return file;
 }
 
-// Claims the answer to one asked question, once (Task 9's review): a marker for its run, step, id
-// and words, made exclusively. Gives the marker's path, which `releaseAnswer` removes when what the
-// answer earns could not be kept, or null when the question was answered already, so the same card
-// clicked again, in another session, records nothing twice.
 // A claim whose answer was never kept is left by a hook cut short between the two (Claude Code ends
 // a hook at its time limit). Once older than this, far past any hook's time limit, it holds nothing.
 export const CLAIM_STALE_MS = 2 * 60 * 1000;
+// How long before its claim's time a click's records may be named (by the hook's clock as it
+// started), for a claim an earlier Wheelhouse made without listing them: past any hook's time limit.
+const LEGACY_RECORDS_MS = 15 * 1000;
+
+const wordsOf = (question) => crypto.createHash('sha256').update(String(question)).digest('hex').slice(0, 16);
+const claimPrefix = (runId, step) => `${runId}-${step}-`;
 
 function claimFile({ runId, step, questionId, question }) {
-  const words = crypto.createHash('sha256').update(String(question)).digest('hex').slice(0, 16);
   if (!RUN_ID.test(String(runId)) || !Number.isInteger(step) || !SETUP_QUESTION_ID.test(String(questionId))) throw new Error('An answer to claim needs its run, step and question');
-  return path.join(answeredDir(), `${runId}-${step}-${questionId}-${words}`);
+  return path.join(answeredDir(), `${claimPrefix(runId, step)}${questionId}-${wordsOf(question)}`);
 }
 
-// A claim whose answer this computer never kept, made more than CLAIM_STALE_MS ago, is taken back,
-// with the records it says it kept, so the question asked again can be answered and records nothing
-// twice. A claim with its answer kept, or made a moment ago (another hook may be keeping it now), stands.
-function retakeStale(file, { runId, step, questionId, question }, now) {
-  let lines;
+// A claim's time and the record files it lists; null when it can't be read.
+function readClaim(file) {
   try {
-    lines = fs.readFileSync(file, 'utf8').split('\n').filter((l) => l !== '');
+    const lines = fs.readFileSync(file, 'utf8').split('\n').filter((l) => l !== '');
+    const at = Date.parse(lines[0] ?? '');
+    return { at: Number.isFinite(at) ? at : null, records: lines.slice(1) };
   } catch {
-    return false;
+    return null;
   }
-  const at = Date.parse(lines[0] ?? '');
-  if (Number.isFinite(at) && now().getTime() - at < CLAIM_STALE_MS) return false;
-  const kept = keptAnswers(runId).some((e) => e.data.step === step && e.data.questionId === questionId && e.data.question === question);
-  if (kept) return false;
-  for (const record of lines.slice(1)) {
-    // Only a file in Wheelhouse's own folder: setup/records/, or a project's pending/.
-    if (path.isAbsolute(record) && record.startsWith(path.resolve(wheelhouseHome()) + path.sep)) fs.rmSync(record, { force: true });
+}
+
+// Takes a claim back with the records its click kept that are not sent yet: the files it lists (sent
+// ones are gone already: the helper removes each record it takes), or, for a claim an earlier
+// Wheelhouse made without listing them, the run's records in setup/records/ named in the moments
+// before the claim. The answer it kept stays: the newest answer to a question is the one that counts.
+function takeBack(file, runId, claim) {
+  const home = path.resolve(wheelhouseHome()) + path.sep;
+  const listed = claim.records.filter((r) => path.isAbsolute(r) && r.startsWith(home));
+  if (listed.length > 0) {
+    for (const record of listed) fs.rmSync(record, { force: true });
+  } else if (claim.at !== null) {
+    let names = [];
+    try {
+      names = fs.readdirSync(recordsDir());
+    } catch { /* no records kept */ }
+    for (const name of names) {
+      const m = name.startsWith(`${runId}_`) ? /^(\d{4}-\d\d-\d\dT\d\d)-(\d\d)-(\d\d\.\d{3}Z)_/.exec(name.slice(runId.length + 1)) : null;
+      const named = m ? Date.parse(`${m[1]}:${m[2]}:${m[3]}`) : NaN;
+      if (Number.isFinite(named) && named <= claim.at + 1000 && named >= claim.at - LEGACY_RECORDS_MS) fs.rmSync(path.join(recordsDir(), name), { force: true });
+    }
   }
   fs.rmSync(file, { force: true });
-  return true;
 }
+
+// Whether a claim holds nothing any more, so it is taken back: its card was asked again since it was
+// made (Customise asks every choice again, and a choice changed is asked again), or it is older than
+// CLAIM_STALE_MS with no answer kept on this computer (a hook cut short). A claim with its answer
+// kept and its card not asked since, or one made a moment ago (another hook may be keeping it now), stands.
+function void_(claim, { runId, step, questionId, question }, { now, askedAt }) {
+  if (claim.at === null) return true;
+  if (Number.isFinite(Date.parse(askedAt)) && Date.parse(askedAt) > claim.at) return true;
+  if (now().getTime() - claim.at < CLAIM_STALE_MS) return false;
+  return !keptAnswers(runId).some((e) => e.data.step === step && e.data.questionId === questionId && e.data.question === question);
+}
+
+// The description is asked under its phase's id (product-launched, product-before-launch), and
+// step 4 takes an answer under either (scripts/setup/questions.js). Its records name the phase, so an
+// answer under one takes back what one under the other has not sent yet: one glossary entry and one
+// phase reach the state.
+const sameChoice = (a, b) => a !== b && a.startsWith('product-') && b.startsWith('product-');
 
 // Claims the answer to one asked question, once (Task 9's review): a marker for its run, step, id
 // and words, made exclusively. Gives the marker's path, which `releaseAnswer` removes when what the
 // answer earns could not be kept, or null when the question was answered already, so the same card
-// clicked again, in another session, records nothing twice. A claim left behind by a hook cut short,
-// with no answer kept, is taken back once it is stale (retakeStale).
-export function claimAnswer(answer, now = () => new Date()) {
+// clicked again, in another session, records nothing twice. A claim that holds nothing any more
+// (void_) is taken back first. `askedAt` is when the card answered was last asked. Claiming one
+// phase's description takes back the other's claim (sameChoice).
+export function claimAnswer(answer, now = () => new Date(), { askedAt } = {}) {
   const file = claimFile(answer);
   for (let tries = 0; tries < 2; tries += 1) {
     try {
       writeWhole(file, `${now().toISOString()}\n`, { exclusive: true });
-      return file;
     } catch (error) {
       if (error.code !== 'EEXIST') throw error;
-      if (tries > 0 || !retakeStale(file, answer, now)) return null;
+      const claim = readClaim(file);
+      if (tries > 0 || claim === null || !void_(claim, answer, { now, askedAt })) return null;
+      takeBack(file, answer.runId, claim);
+      continue;
     }
+    try {
+      takeBackOthers(answer);
+    } catch { /* what the other phase's answer kept is sent as well */ }
+    return file;
   }
   return null;
+}
+
+function takeBackOthers({ runId, step, questionId }) {
+  const prefix = claimPrefix(runId, step);
+  let names = [];
+  try {
+    names = fs.readdirSync(answeredDir()).filter((n) => n.startsWith(prefix));
+  } catch { /* none */ }
+  for (const name of names) {
+    const id = name.slice(prefix.length, -17);
+    if (!sameChoice(questionId, id)) continue;
+    const file = path.join(answeredDir(), name);
+    const claim = readClaim(file);
+    if (claim !== null) takeBack(file, runId, claim);
+  }
 }
 
 // When a claim was made, or null when there is none.
