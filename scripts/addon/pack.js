@@ -217,7 +217,8 @@ export function pack({ root = HERE, out } = {}) {
   files.set('extension/package.json', Buffer.from(`${JSON.stringify(pkg, null, 2)}\n`));
   for (const full of filesUnder(folder).sort()) {
     const rel = path.relative(folder, full).split(path.sep).join('/');
-    if (rel === 'package.json') continue;
+    // The recorded hash of the pack is not part of it (scripts/addon/hash.js).
+    if (rel === 'package.json' || rel === 'vsix.sha256') continue;
     files.set(`extension/${rel}`, fs.readFileSync(full));
   }
   files.set('extension/wheelhouse/package.json', Buffer.from(`${JSON.stringify({ type: 'module' })}\n`));
