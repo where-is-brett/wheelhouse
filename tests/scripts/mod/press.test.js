@@ -131,7 +131,7 @@ test('Approve on an approval card signs the approval a click earns, then writes 
   assert.deepEqual(client.calls.order, ['prState', 'record', 'write']);
   assert.deepEqual(signed(client), [{ kind: 'approval', data: { pr: 14, commit: FULL, words: 'Approve', question: other.data.question } }]);
   assert.equal(verify(client.calls.record[0].event, readEnrolled()), true);
-  assert.deepEqual(client.calls.write, [{ project: P, kind: 'card-answer', data: { question: other.data.question, label: 'Approve' } }]);
+  assert.deepEqual(client.calls.write, [{ project: P, kind: 'card-answer', data: { question: other.data.question, label: 'Approve', where: 'panel' } }]);
   assert.equal(waitingIds().includes(other.id), false);
   // The card's copy in the chat, clicked afterwards, is stale: it signs and records nothing, and the front desk is
   // told the press counted.
@@ -163,7 +163,7 @@ test('Not now writes the card answer alone, and the card stays waiting', () => w
   const client = fake();
   assert.deepEqual(await press(card, client, 'Not now'), { made: true, says: 'Recorded: Not now on card 1' });
   assert.deepEqual(client.calls.order, ['write']);
-  assert.deepEqual(client.calls.write, [{ project: P, kind: 'card-answer', data: { question: card.data.question, label: 'Not now' } }]);
+  assert.deepEqual(client.calls.write, [{ project: P, kind: 'card-answer', data: { question: card.data.question, label: 'Not now', where: 'panel' } }]);
   assert.deepEqual(waitingIds(), [card.id]);
   // It can still be answered.
   assert.equal((await press(card, fake(), 'Approve')).made, true);
@@ -185,7 +185,7 @@ test('Show me writes the card answer and gives one prompt naming the card', () =
       made: true, says: `Recorded: ${label} on card 2`, submit: [`Wheelhouse pane: the director pressed ${label} on card 2 (${second.id}).`],
     });
     assert.deepEqual(client.calls.order, ['write']);
-    assert.deepEqual(client.calls.write[0].data, { question: second.data.question, label });
+    assert.deepEqual(client.calls.write[0].data, { question: second.data.question, label, where: 'panel' });
   }
   assert.deepEqual(waitingIds(), [first.id, second.id]);
 
@@ -195,7 +195,7 @@ test('Show me writes the card answer and gives one prompt naming the card', () =
   assert.deepEqual(await press(asking, client, 'Comma'), {
     made: true, says: 'Recorded: Comma on card 3', submit: [`Wheelhouse pane: the director chose "Comma" on card 3 (${asking.id}).`],
   });
-  assert.deepEqual(client.calls.write[0].data, { question: asking.data.question, label: 'Comma' });
+  assert.deepEqual(client.calls.write[0].data, { question: asking.data.question, label: 'Comma', where: 'panel' });
 }));
 
 test('Keep as is signs nothing: it writes the plain card answer, which decides the card, and gives one prompt', () => withKey(async () => {
@@ -208,7 +208,7 @@ test('Keep as is signs nothing: it writes the plain card answer, which decides t
     made: true, says: 'Recorded: Keep as is on card 1', submit: [`Wheelhouse pane: the director pressed Keep as is on card 1 (${kept.id}).`],
   });
   assert.deepEqual(client.calls.order, ['write']);
-  assert.deepEqual(client.calls.write, [{ project: P, kind: 'card-answer', data: { question: kept.data.question, label: 'Keep as is' } }]);
+  assert.deepEqual(client.calls.write, [{ project: P, kind: 'card-answer', data: { question: kept.data.question, label: 'Keep as is', where: 'panel' } }]);
   assert.deepEqual(signed(client), []);
 }));
 
@@ -611,7 +611,7 @@ test('why notes a Why? answer quietly and hands no prompt', () => withKey(async 
   assert.equal(out.submit, undefined);
   assert.equal(out.says, undefined);
   assert.deepEqual(client.calls.order, ['write']);
-  assert.deepEqual(client.calls.write, [{ project: P, kind: 'card-answer', data: { question: card.data.question, label: 'Why?' } }]);
+  assert.deepEqual(client.calls.write, [{ project: P, kind: 'card-answer', data: { question: card.data.question, label: 'Why?', where: 'panel' } }]);
   assert.deepEqual(waitingIds(), [card.id]);
 
   // The helper not taking it: kept in pending/.
@@ -656,7 +656,7 @@ test('suggest never stores the words: neither the answer nor pending/ holds them
   const card = putCard(approvalCard());
   const client = fake();
   await suggest(card, client, 'secret wording of the change');
-  assert.deepEqual(client.calls.write, [{ project: P, kind: 'card-answer', data: { question: card.data.question, label: 'Suggest a change…' } }]);
+  assert.deepEqual(client.calls.write, [{ project: P, kind: 'card-answer', data: { question: card.data.question, label: 'Suggest a change…', where: 'panel' } }]);
   const down = fake({ refuse: true });
   await suggest(card, down, 'secret wording of the change');
   assert.deepEqual(kept().map((k) => [k.route, k.body.data.label]), [['write', 'Suggest a change…']]);

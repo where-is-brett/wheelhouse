@@ -115,7 +115,7 @@ export function answeredInPending(project, question) {
 // Writes the plain answer the click would have written beside its record, keeping it in pending/
 // when the helper doesn't take it, as the prompt record does. Never throws.
 async function writeAnswer(api, left, project, question, label, now) {
-  const body = { project, kind: 'card-answer', data: { question, label } };
+  const body = { project, kind: 'card-answer', data: { question, label, where: 'reply' } };
   try {
     const result = await left(api.state.write(body));
     if (!taken(result)) keep(project, 'write', body, now);

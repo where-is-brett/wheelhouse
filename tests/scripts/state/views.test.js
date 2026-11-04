@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildViews, writeViews, latestFor, readyColumns } from '../../../scripts/state/views.js';
+import { buildViews, writeViews, latestFor, readyColumns, cardOutcomes } from '../../../scripts/state/views.js';
 import { listEvents, makeEvent, confirmationFor, eventHash, dataHash, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, sign } from '../../../scripts/state/signing.js';
 import { approvalLine, ciPushLine, confirmLine, startGoalLine } from '../../../scripts/state/card-lines.js';
@@ -388,6 +388,23 @@ test('a card-answer with no card id closes the card whose question it quotes', a
     const v = build([...base(), asked, titled, other, ...answers]);
     assert.deepEqual(v.waiting.map((c) => c.id), [other.id]);
     assert.equal(v.status.waitingCount, 1);
+  });
+});
+
+test('cardOutcomes: decided carries where the deciding answer was given', async () => {
+  await withHome(() => {
+    const question = 'Approve pull request #7 at commit abcdef123456?';
+    const card = ev('card', 1, cardData(question));
+    const outcomeOf = (events) => cardOutcomes(events, readEnrolled()).find((o) => o.card.id === card.id).decided;
+    assert.equal(outcomeOf([card, ev('card-answer', 5, { question, label: 'Approve', where: 'panel' })]).where, 'panel');
+    assert.equal(outcomeOf([card, ev('card-answer', 5, { question, label: 'Approve', where: 'chat' })]).where, 'chat');
+    // A signed approval, then the plain answer written beside it.
+    const approval = ev('approval', 4, { pr: 7, commit: 'abcdef123456', words: 'Approve', question });
+    assert.equal(outcomeOf([card, approval, ev('card-answer', 5, { question, label: 'Approve', where: 'panel' })]).where, 'panel');
+    // An answer recorded before `where` existed.
+    assert.equal(outcomeOf([card, ev('card-answer', 5, { question, label: 'Approve' })]).where, null);
+    assert.equal(outcomeOf([card, approval]).where, null);
+    assert.equal(outcomeOf([card]), null);
   });
 });
 

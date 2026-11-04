@@ -638,6 +638,15 @@ test('each new action needs its own fields and refuses others', async () => {
 
 // --- cards and reversals ---
 
+test('a card-answer accepts where, and refuses a place the cards do not know', async () => {
+  await withHome(() => {
+    const make = (data) => makeEvent({ kind: 'card-answer', data, now: at(1) });
+    for (const where of ['panel', 'chat', 'reply']) assert.equal(make({ question: 'Which?', label: 'Round', where }).data.where, where);
+    assert.equal(make({ question: 'Which?', label: 'Round' }).data.where, undefined);
+    assert.throws(() => make({ question: 'Which?', label: 'Round', where: 'elsewhere' }), /card-answer event.*where/);
+  });
+});
+
 const CARD_DATA = {
   question: 'What this is: a pull request.', header: 'Approve', options: ['Approve', 'Not now', 'Explain more', 'Show me'],
   kind: 'approval', line: 'Approve pull request #7 at commit abcdef123456', code: 'K7M2', level: 3, importance: 5,
