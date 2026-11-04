@@ -841,3 +841,33 @@ test('a press that is not a counted deciding press answers neither notice nor no
   assert.equal(again.notice, undefined);
   assert.equal(again.note, undefined);
 }));
+
+// The card the `cards` flow makes of a build question (the composer's answerInput), pressed in the pane.
+const madeOf = () => composeCard(answerInput({ ...QUESTION, options: QUESTION.options }, 'export-csv')).card;
+const answerOf = () => buildViews(listEvents(stateDir(P), { report: () => {} }), readEnrolled(), { now: () => LATER }).questions?.[QUESTION.id]?.answer ?? null;
+
+test('a build question\'s own card is answered in the pane by the signed answer, and the question closes', () => withKey(async () => {
+  keepEvent(makeEvent({ kind: 'question', data: QUESTION, now: () => NOW }));
+  const card = putCard(madeOf());
+  const client = fake();
+  assert.deepEqual(plain(await press(card, client, 'Tab')), { made: true, says: 'Recorded: Tab on card 1' });
+  assert.deepEqual(signed(client).map((r) => [r.kind, r.data.action, r.data.questionId, r.data.label]), [['action', 'answer', QUESTION.id, 'Tab']]);
+  assert.equal(verify(client.calls.record[0].event, readEnrolled()), true);
+  assert.equal(answerOf()?.label, 'Tab');
+  assert.deepEqual(waitingIds(), []);
+  // The same press again, or another option, records nothing more.
+  const again = fake();
+  assert.deepEqual((await press(card, again, 'Comma')).made, false);
+  assert.equal(untouched(again), 0);
+}));
+
+test('a forged press on a build question\'s card records nothing', () => withKey(async () => {
+  keepEvent(makeEvent({ kind: 'question', data: QUESTION, now: () => NOW }));
+  const card = putCard(madeOf());
+  const client = fake();
+  assert.equal((await press({ ...card, hash: hashOf(`${card.data.question} `) }, client, 'Tab')).made, false);
+  assert.equal((await press(card, client, 'Semicolon')).made, false);
+  assert.equal((await press({ ...card, id: 'q:q-export-csv-1' }, client, 'Tab')).made, false);
+  assert.equal(untouched(client), 0);
+  assert.equal(answerOf(), null);
+}));
