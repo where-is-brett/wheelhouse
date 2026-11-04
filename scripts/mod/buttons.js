@@ -22,7 +22,7 @@ import { signsOn } from '../hooks/prompt-record.js';
 import { CARD_KINDS, KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
 import { SUGGEST, NOT_NOW, SHOW_ME, WHY, SEND_BACK } from '../lib/calm-words.js';
 import { textOf } from '../cards/compose.js';
-import { setLinesOf, TRUST_LINE, TAKEOVER_LINE, PAIR_LINE, UNINSTALL_LINE, RELEASE_LINE, UPDATE_HELPER_LINE, UPDATE_LINE } from '../state/card-lines.js';
+import { setLinesOf, TRUST_LINE, TAKEOVER_LINE, PAIR_LINE, UNINSTALL_LINE, RELEASE_LINE, RELEASE_LABEL, UPDATE_HELPER_LINE, UPDATE_LINE, UPDATE_LABEL } from '../state/card-lines.js';
 import { baselineWording } from '../lib/measures-clicks.js';
 import { UNATTENDED_CARD } from '../protection/windows-builds.js';
 import { heldBackWords, SHOW_THEM } from '../engine/words.js';
@@ -91,14 +91,19 @@ export function isSetupCard(card) {
   return card?.kind === 'setup' || card?.kind === 'confirm-all' || setLinesOf(text).some((line) => SETUP_LINE.test(line));
 }
 
-// Whether a card is a trust card, a take-over card, the card that pairs an app, or one of the update's cards (the Update card,
-// the release's approval, the old helper's): of that kind, or carrying its set line. Each is answered only by the click on the
-// card itself.
+// Whether a card is a trust card, a take-over card or the card that pairs an app: of that kind, or carrying its set line. Each
+// is answered only by the click on the card itself.
 export function isTrustCard(card) {
   const text = typeof card?.question === 'string' ? card.question : '';
-  return ['trust', 'take-over', 'pair', 'update', 'release', 'update-helper'].includes(card?.kind)
-    || setLinesOf(text).some((line) => TRUST_LINE.test(line) || TAKEOVER_LINE.test(line) || PAIR_LINE.test(line) || UPDATE_LINE.test(line) || RELEASE_LINE.test(line) || UPDATE_HELPER_LINE.test(line));
+  return ['trust', 'take-over', 'pair'].includes(card?.kind)
+    || setLinesOf(text).some((line) => TRUST_LINE.test(line) || TAKEOVER_LINE.test(line) || PAIR_LINE.test(line));
 }
+
+// The update's cards (the Update card, the release's approval, the old helper's), each with the set line its kind must carry.
+// A click on one is signed by the same press as any deciding card, but only from the card as the state holds it: the signing
+// (scripts/hooks/prompt-record.js's earned) checks it against the update's own records, which only Wheelhouse's processes write.
+const UPDATE_KINDS = Object.freeze({ update: UPDATE_LINE, release: RELEASE_LINE, 'update-helper': UPDATE_HELPER_LINE });
+export const isUpdateCard = (card) => Object.hasOwn(UPDATE_KINDS, card?.kind);
 
 // Whether a card is uninstall's: of kind uninstall, or carrying uninstall's set line.
 export function isUninstallCard(card) {
@@ -161,13 +166,24 @@ function buttonsOf(card, preview) {
   // and must be built by its parts.
   const line = lines.length === 1 ? lines[0] : null;
   const problems = cardProblems(questionOf(card, text));
-  if (line === null || problems.length > 0 || (kind === 'answer') !== ANSWER_LINE.test(line) || kind === 'question' || !partsBuild(card, text)) {
+  if (line === null || problems.length > 0 || (kind === 'answer') !== ANSWER_LINE.test(line) || kind === 'question' || !partsBuild(card, text)
+    || (isUpdateCard(card) && !UPDATE_KINDS[kind].test(line))) {
     return { buttons: [button(WHY, 'turn', 'small')], note: CANT_ANSWER };
   }
 
   const notNow = offered(NOT_NOW) ? [button(NOT_NOW, 'record', 'small', { corner: true })] : [];
   const askToSuggest = offered(SUGGEST) ? [suggest] : [];
 
+  // The Update card: Update starts the update, and Not now declines the release; each is signed, for the plan the card names.
+  if (kind === 'update') {
+    return { buttons: [...(offered(UPDATE_LABEL) ? [button(UPDATE_LABEL, 'record', 'filled')] : []), ...notNow, why], note: null };
+  }
+  // The release's approval: Approve is signed for the move and commit the card names; Not now signs nothing.
+  if (kind === 'release') {
+    return { buttons: [...(offered(RELEASE_LABEL) ? [button(RELEASE_LABEL, 'record', 'filled')] : []), ...notNow, why], note: null };
+  }
+  // The old helper's card: every option decides, and each is signed as the director's answer to that card.
+  if (kind === 'update-helper') return { buttons: [...answers('record'), why], note: null };
   if (kind === 'answer') return { buttons: [...answers('record'), ...askToSuggest, why, ...notNow], note: null };
   // A blind card's click signs nothing: it goes to the front desk, which asks the answer card next.
   if (kind === 'blind') return { buttons: [...answers('turn'), ...askToSuggest, why], note: null };
