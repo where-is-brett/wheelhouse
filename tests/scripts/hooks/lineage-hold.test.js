@@ -239,6 +239,30 @@ test('while held, the front desk\'s reading commands run, as under STOP; its wri
   });
 });
 
+test('while held, the update command\'s four forms run, and no other form, flag, root or chained command does', async () => {
+  await withHome(async (home) => {
+    const main = makeProject();
+    hold();
+    const cli = `node "${PLUGIN}/scripts/update/cli.js"`;
+    const hash = 'a1'.repeat(32);
+    for (const command of [
+      `${cli} plan`, `${cli} plan v0.2.8`, `${cli} plan v0.3.0-rc.1`, `${cli} apply ${hash}`, `${cli} status`, `${cli} status 2>/dev/null`,
+      `${cli} answer ${hash} "Not now"`, `${cli} answer update-helper-4242-x "Stop it"`, `${cli} answer release-${'b'.repeat(40)} Approve`,
+      `node --no-use-system-ca "${PLUGIN}/scripts/update/cli.js" status`,
+    ]) {
+      assert.equal(await decide(bash(main, command), deps(home)), undefined, command);
+    }
+    for (const command of [
+      `${cli}`, `${cli} plan latest`, `${cli} plan v0.2.8 extra`, `${cli} plan --force`, `${cli} apply`, `${cli} apply abc`, `${cli} apply ${hash} now`,
+      `${cli} status all`, `${cli} answer ${hash}`, `${cli} answer ${hash} "Delete it"`, `${cli} answer ../x Approve`, `${cli} bootstrap`,
+      `${cli} status && rm -rf x`, `${cli} status > out.txt`, `${cli} apply ${hash} | tee x`, `node /other/root/scripts/update/cli.js status`,
+      `node "${PLUGIN}/scripts/update/run.js" p1 /x`, `node "${PLUGIN}/scripts/update/finish.js" p1`,
+    ]) {
+      assert.ok(denied(await decide(bash(main, command), deps(home))), command);
+    }
+  });
+});
+
 test('the check script runs on its own, names what is missing, and writes nothing', async () => {
   await withHome(async (home) => {
     const main = makeProject();

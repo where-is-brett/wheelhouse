@@ -167,6 +167,10 @@ export const RELEASE_LABEL = 'Approve';
 export function releaseLine(from, tag, commit) {
   return `Move this project from Wheelhouse ${from} to ${tag}, commit ${commit}`;
 }
+// The line on the card about an old helper that did not make way for an update (update design, section 7.3): the card's id,
+// which names the process it asks about, so a click stands for that helper's card and no other.
+export const updateHelperLine = (card) => `Answer the old helper's question ${card}`;
+export const UPDATE_HELPER_LINE = /^Answer the old helper's question (update-helper-[A-Za-z0-9.-]{1,80})$/;
 export const RELEASE_TAG = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 export const RELEASE_LINE = /^Move this project from Wheelhouse ([A-Za-z0-9][A-Za-z0-9._-]{0,99}) to ([A-Za-z0-9][A-Za-z0-9._-]{0,99}), commit ([0-9a-f]{40})$/;
 
@@ -317,6 +321,7 @@ export const SET_LINES = [
   new RegExp(TRUST_LINE.source, 'm'),
   new RegExp(TAKEOVER_LINE.source, 'm'),
   new RegExp(RELEASE_LINE.source, 'm'),
+  new RegExp(UPDATE_HELPER_LINE.source, 'm'),
   new RegExp(PAIR_LINE.source, 'm'),
   new RegExp(UNPAIR_LINE.source, 'm'),
   new RegExp(UNINSTALL_LINE.source, 'm'),

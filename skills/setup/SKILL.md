@@ -152,6 +152,10 @@ Step 2 finds the tools and says which of them work; step 3 chooses how the agent
 
 When the director asks to remove Wheelhouse from the project, or types `/wheelhouse:uninstall`: read `uninstall.md` in this skill's folder, and follow it with the command above.
 
+## Updating Wheelhouse
+
+When the director asks to update Wheelhouse, in any words, or types `/wheelhouse:update`: tell them the command is `/wheelhouse:update`, in one line. Don't run an update from setup, and don't offer a card of your own for it.
+
 ## Red flags
 
 | The thought | The rule |

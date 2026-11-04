@@ -11,7 +11,7 @@ import { makeEvent, eventPath, dataHash } from '../../../scripts/state/events.js
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
-  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, takeOverLine, pairLine, uninstallLine, keepControlLine, usageLine, premiumLine, replyCode, replyCodeLine, setLineOf,
+  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, takeOverLine, pairLine, uninstallLine, keepControlLine, usageLine, premiumLine, releaseLine, updateHelperLine, replyCode, replyCodeLine, setLineOf,
   blindLine, startGoalLine,
 } from '../../../scripts/state/card-lines.js';
 import { stateDir, stopFile } from '../../../scripts/lib/paths.js';
@@ -95,6 +95,14 @@ const INPUTS = {
     options: [{ label: 'Allow it within my plan', says: 'It is used within your plan.' }, { label: 'Allow it, paid credits too', says: 'It may be paid from your usage credits.' }, { label: 'Not now', says: 'Nothing changes.' }],
     target: { at: USAGE_AT },
   },
+  release: {
+    ...common, level: 4, checks: 'The change is reviewed first.', recommend: 'Approve', kind: 'release', what: 'Move this project from Wheelhouse v0.2.6 to v0.2.7.',
+    options: [says('Approve')], target: { previous: 'v0.2.6', release: 'v0.2.7', commit: FULL },
+  },
+  'update-helper': {
+    ...common, level: 2, recommend: 'Stop it', kind: 'update-helper', what: 'The old helper is still running.',
+    options: [{ label: 'Stop it', says: 'The old helper is stopped.' }, { label: 'Leave it', says: 'It keeps running.' }], target: { card: 'update-helper-4242-x' },
+  },
   'start-goal': {
     ...common, recommend: 'Start', kind: 'start-goal', what: 'The goal tidy-up has 2 pieces of work and a check that proves each is done.',
     options: [says('Start')], target: { goal: 'tidy-up', hash: FULL },
@@ -123,6 +131,8 @@ const LINES = {
   'keep-control-files': keepControlLine('export-csv', DOC),
   usage: usageLine('lean', USAGE_AT),
   premium: premiumLine(USAGE_AT),
+  release: releaseLine('v0.2.6', 'v0.2.7', FULL),
+  'update-helper': updateHelperLine('update-helper-4242-x'),
   'start-goal': startGoalLine('tidy-up', FULL),
 };
 const input = (kind, over = {}) => ({ ...INPUTS[kind], ...over });
@@ -155,7 +165,7 @@ test("each kind's card carries its plain lines in Calm's order, then its set lin
       assert.equal(setLineOf(question.question), LINES[kind]);
       assert.equal(card.line, LINES[kind]);
       assert.equal(card.code, null);
-      assert.deepEqual(NO_REPLY_CODE, ['setup', 'confirm-all', 'trust', 'take-over', 'uninstall', 'keep-control-files', 'usage', 'premium', 'pair', 'blind', 'start-goal']);
+      assert.deepEqual(NO_REPLY_CODE, ['setup', 'confirm-all', 'trust', 'take-over', 'uninstall', 'keep-control-files', 'usage', 'premium', 'pair', 'blind', 'start-goal', 'release', 'update-helper']);
     } else {
       assert.deepEqual(after, [LINES[kind], replyCodeLine(replyCode(LINES[kind]))]);
       assert.equal(setLineOf(question.question), LINES[kind]);
@@ -224,6 +234,8 @@ test('the default ask for each kind is one line ending in a question mark, or th
     'take-over': 'Move the First Mate to this computer?',
     pair: 'Pair this app?',
     'start-goal': 'Start this goal?',
+    release: 'Move this project to Wheelhouse v0.2.7?',
+    'update-helper': 'What should the update do about the old helper?',
   };
   for (const kind of CARD_KINDS) {
     const { card } = composeCard(input(kind));

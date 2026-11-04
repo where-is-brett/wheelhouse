@@ -63,7 +63,7 @@ import {
 } from '../state/card-lines.js';
 import {
   chatCopy, setLineOf, setLinesOf, replyCode, replyCodeLine, setupLine, SETUP_LABEL, SETUP_TITLES, BASELINE_LABEL, BASELINE_WORDS, baselineLine,
-  RELEASE_LABEL, RELEASE_LINE, TRUST_LINE, TAKEOVER_LABEL, TAKEOVER_LINE, PAIR_LINE, UNPAIR_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine, KEEP_CONTROL_LINE, keepControlLine, USAGE_LINE, PREMIUM_LINE, START_GOAL_LINE,
+  RELEASE_LABEL, RELEASE_LINE, UPDATE_HELPER_LINE, TRUST_LINE, TAKEOVER_LABEL, TAKEOVER_LINE, PAIR_LINE, UNPAIR_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine, KEEP_CONTROL_LINE, keepControlLine, USAGE_LINE, PREMIUM_LINE, START_GOAL_LINE,
 } from '../state/card-lines.js';
 import {
   keepClick, shownHash, keepAnswer, askedFor, claimAnswer, claimedAt, noteClaimed, releaseAnswer, keepUninstallClick, shownUninstall, typedVerdict, typedBefore, keepSetupRecords, sameWords,
@@ -434,6 +434,20 @@ export async function earned({ project, question, label, card, client, now, left
     const card = raised.newer ? undefined : raised.steps?.change?.data?.card;
     if (!card || card.previous !== m[1] || card.release !== m[2] || card.commit !== m[3]) return null;
     return action({ action: 'approve-release', previous: m[1], release: m[2], commit: m[3] });
+  }
+  // The card about an old helper that did not make way for an update (update design, section 7.3): its one set line names the
+  // helper card's id, and a click on one of its options earns the director's answer to that card. Earned only from the card
+  // the update's finish raised and is waiting on: its record in the update's folder names the id and the options.
+  if (setLinesOf(question).some((line) => UPDATE_HELPER_LINE.test(line))) {
+    const lines = setLinesOf(question);
+    const m = lines.length === 1 ? UPDATE_HELPER_LINE.exec(lines[0]) : null;
+    if (!m) return null;
+    let waiting = null;
+    try {
+      waiting = JSON.parse(fs.readFileSync(path.join(openJournal(project).folder, 'finish.json'), 'utf8'))?.handover?.waiting?.card;
+    } catch { /* nothing was raised */ }
+    if (!waiting || waiting.id !== m[1] || !Array.isArray(waiting.options) || !waiting.options.includes(label)) return null;
+    return action({ action: 'update-helper-answer', card: m[1] });
   }
   if (label === 'Approve') {
     const prs =[...question.matchAll(APPROVE)];

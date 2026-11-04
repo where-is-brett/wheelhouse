@@ -626,6 +626,12 @@ export function engineRoutes({
     },
     // Every pull request the helper marked ready for the project: { [pr]: { head, runId, showFirst, work } }.
     readyAll: (project) => readVerdicts(project).ready ?? {},
+    // The update's own reviewed change in a project kept on this computer (update design, section 6.2): the helper marks it ready
+    // for the local queue's sweep, which weighs it as it weighs any change, by the update's rule.
+    markReady: (project, pr, { head, runId, work }) => {
+      const verdicts = readVerdicts(project);
+      keepVerdicts(project, { ...verdicts, ready: { ...verdicts.ready, [pr]: { head, runId, showFirst: false, work } } });
+    },
     // A pull request the director sent back: nothing marks it ready until its rework does.
     notReady: (project, pr) => {
       const verdicts = readVerdicts(project);

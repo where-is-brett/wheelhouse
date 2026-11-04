@@ -528,6 +528,13 @@ export function setupCommand(pluginRoot, { platform = process.platform, noSystem
   return pluginScriptCommand(pluginRoot, 'scripts/setup/cli.js', { platform, noSystemCa });
 }
 
+// The update command's script (scripts/update/cli.js), as pluginScriptCommand gives it. The allow rule covers this one script and
+// no other of the update's (run.js and finish.js are started by the helper, never by a session), so the session's `plan`,
+// `apply`, `status` and `answer` are not asked about each time.
+export function updateCommand(pluginRoot, { platform = process.platform, noSystemCa = false } = {}) {
+  return pluginScriptCommand(pluginRoot, 'scripts/update/cli.js', { platform, noSystemCa });
+}
+
 // The allow rule for one of these commands, in this file's `Bash(x:*)` form, the same as
 // `Bash(x *)`; null for a command that has none.
 export function allowRule(command) {
@@ -561,9 +568,12 @@ export function localSettings({ address, node, pluginRoot, ownStatusLine = null,
   // name setup's command from that line, so each command is allowed in both forms.
   const frontDeskFlagged = pluginRoot ? allowRule(frontDeskCommand(pluginRoot, { platform, noSystemCa: true })) : null;
   const setupFlagged = pluginRoot ? allowRule(setupCommand(pluginRoot, { platform, noSystemCa: true })) : null;
+  const update = pluginRoot ? allowRule(updateCommand(pluginRoot, { platform })) : null;
+  const updateFlagged = pluginRoot ? allowRule(updateCommand(pluginRoot, { platform, noSystemCa: true })) : null;
   const allow = [
     ...(frontDesk === null ? [] : [frontDesk, frontDeskFlagged, `Edit(/${FRONT_DESK_INPUT})`, WORK_REPORTS_RULE]),
     ...(setup === null ? [] : [setup, setupFlagged]),
+    ...(update === null ? [] : [update, updateFlagged]),
   ];
   if (allow.length > 0) settings.permissions = { allow };
   return settings;
