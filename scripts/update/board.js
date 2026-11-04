@@ -48,7 +48,9 @@ export function projectRef(folder) {
 }
 
 // This copy of Wheelhouse's version, v-prefixed, from the plugin.json beside these scripts; null when unreadable.
+// The test suite sets WHEELHOUSE_RUNNING_VERSION, so a board read in a test doesn't change with each release.
 export function runningVersion() {
+  if (process.env.WHEELHOUSE_RUNNING_VERSION) return withV(process.env.WHEELHOUSE_RUNNING_VERSION);
   try {
     return withV(JSON.parse(fs.readFileSync(new URL('../../.claude-plugin/plugin.json', import.meta.url), 'utf8'))?.version);
   } catch {

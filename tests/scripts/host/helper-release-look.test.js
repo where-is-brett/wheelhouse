@@ -1,6 +1,8 @@
 // tests/scripts/host/helper-release-look.test.js
 // The helper's weekly look for a newer Wheelhouse release: made in the background, kept, and never in the board's way.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
+import { run as realRun } from '../../../scripts/lib/run.js';
 import assert from 'node:assert/strict';
 import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
@@ -8,12 +10,17 @@ import { readLatest } from '../../../scripts/update/board.js';
 import { as, shortHome, testAddress } from '../../helpers/homes.js';
 import { until } from '../../helpers/until.js';
 
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(realRun, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
+
 const NOW = new Date('2026-11-10T12:00:00.000Z');
 
 async function withHelper(releaseList, fn) {
   const home = shortHome();
   await as(home, async () => {
-    const helper = await startHelper({ address: testAddress(home), adapterFor: async () => ({}), envFor: async () => ({}), now: () => NOW, releaseList });
+    const helper = await startHelper({ run: hostGuard, address: testAddress(home), adapterFor: async () => ({}), envFor: async () => ({}), now: () => NOW, releaseList });
     try {
       await fn(helperClient({ address: helper.address }));
     } finally {
