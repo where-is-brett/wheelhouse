@@ -17,7 +17,7 @@ import { stateDir } from '../../../scripts/lib/paths.js';
 import { listEvents, makeEvent } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { lookRefusalLine } from '../../../scripts/lib/safe-git.js';
-import { registerLean, readLean, registeredLeanProjects, LEAN_NO_HOST, LEAN_FOLDER } from '../../../scripts/lean/project.js';
+import { registerLean, readLean, registeredLeanProjects, registerSetUpLean, isLeanProject, LEAN_NO_HOST, LEAN_FOLDER } from '../../../scripts/lean/project.js';
 
 // No real gh, glab, copilot or curl runs: the PATH finds the stand-ins first, and the helper's own
 // runs go through a guard whose log stays empty.
@@ -321,6 +321,42 @@ test('a refused look at a Lean project\'s state is worded for Lean, and nothing 
   } finally {
     await h.close();
   }
+});
+
+// Lean's chat setup runs with git alone and writes no Wheelhouse record of its own; the add-on registers the folder it
+// left (registerSetUpLean), so the add-on's isLean is true there (check 72).
+test('registerSetUpLean registers a folder Lean\'s setup left, and only that', async () => {
+  const c = computer();
+  const marked = (folder) => {
+    fs.mkdirSync(path.join(folder, '.git'), { recursive: true });
+    fs.mkdirSync(path.join(folder, '.wheelhouse', 'record'), { recursive: true });
+    fs.writeFileSync(path.join(folder, '.wheelhouse', 'record', '.gitkeep'), '');
+  };
+  await c.as(() => {
+    // No marks of setup: nothing is registered.
+    assert.equal(registerSetUpLean({ folder: c.folder, now: () => T0 }), null);
+    fs.mkdirSync(path.join(c.folder, '.git'));
+    assert.equal(registerSetUpLean({ folder: c.folder, now: () => T0 }), null);
+    marked(c.folder);
+    assert.equal(registerSetUpLean({ folder: path.join(c.folder, 'src'), now: () => T0 }), null, 'a folder inside it is not the project\'s root');
+    const found = registerSetUpLean({ folder: c.folder, now: () => T0 });
+    assert.equal(found.project, 'shop');
+    assert.equal(found.record.folder, fs.realpathSync(c.folder));
+    assert.equal(isLeanProject('shop'), true);
+    assert.equal(projectForFolder(c.folder)?.lean, true);
+    // Again: the record is as it was.
+    assert.deepEqual(registerSetUpLean({ folder: c.folder, now: () => new Date(T0.getTime() + 5000) }), found);
+    // Another folder of the same name gets its own name.
+    const other = path.join(c.home, 'elsewhere', 'shop');
+    marked(other);
+    assert.equal(registerSetUpLean({ folder: other, now: () => T0 }).project, 'shop-2');
+    // A folder registered with a code host is left alone.
+    const hosted = path.join(c.home, 'hosted');
+    marked(hosted);
+    writeProject('hosted', { folder: hosted, remoteUrl: 'https://github.com/o/hosted.git', host: 'github', repo: 'o/hosted', connection: { host: 'github', mode: 'quick', project: 'o/hosted' } });
+    assert.equal(registerSetUpLean({ folder: hosted, now: () => T0 }), null);
+  });
+  fs.rmSync(c.home, { recursive: true, force: true });
 });
 
 test('a Claude Code project\'s record and routes are unchanged', async () => {

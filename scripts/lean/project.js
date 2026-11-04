@@ -177,6 +177,41 @@ export function registerLean({ project, folder, now = () => new Date() }) {
   });
 }
 
+// The name a Lean project gets for `folder`: the folder's own name made safe, with a number added while that name is
+// another project's.
+export function leanNameFor(folder) {
+  const base = path.basename(folder).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '').slice(0, 60) || 'project';
+  for (let n = 1; ; n += 1) {
+    const name = n === 1 ? base : `${base}-${n}`;
+    const held = readLean(name);
+    if (readProject(name) === null && (held === null || realOrNull(held.folder) === folder)) return name;
+  }
+}
+
+// Lean's chat setup runs with git alone, so it can write no record of its own (design for other agents, section 8.2:
+// registration is never an agent's). What it leaves in the project's own folder is a git folder with the tracked
+// `.wheelhouse/record/.gitkeep` (the `setup-lean` skill, Step 4). The add-on, which has these scripts, registers a
+// folder that bears both marks and is the project's root, so the project is a Lean one here (`isLean`). Registering
+// only places the folder, so the guards and STOP read it; it grants nothing. Gives { project, record }, or null for a
+// folder without the marks, one inside a project's root, or one that has a code host's record. Never throws.
+export function registerSetUpLean({ folder, now } = {}) {
+  try {
+    const real = typeof folder === 'string' && fullPath(folder) ? realOrNull(folder) : null;
+    if (real === null) return null;
+    const found = projectForFolder(real);
+    if (found !== null) {
+      if (found.lean !== true) return null;
+      const record = readLean(found.project);
+      return record !== null && realOrNull(record.folder) === real ? { project: found.project, record } : null;
+    }
+    if (!fs.existsSync(path.join(real, '.git')) || !fs.existsSync(path.join(real, '.wheelhouse', 'record', '.gitkeep'))) return null;
+    const project = leanNameFor(real);
+    return { project, record: registerLean({ project, folder: real, now }) };
+  } catch {
+    return null;
+  }
+}
+
 // The Lean project's private record, made when the folder is absent or empty, as every project's is
 // (scripts/state/record.js): no remote, so nothing is ever pushed from it. Gives the folder.
 export function leanState(project, { run } = {}) {

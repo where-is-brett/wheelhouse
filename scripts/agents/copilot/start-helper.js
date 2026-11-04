@@ -49,7 +49,7 @@ import { stopState } from '../../lib/stop.js';
 import { projectForFolder, readProject, registeredProjects } from '../../lib/projects.js';
 import { loginEntry, installLoginStart, removeLoginStart, loginStartRecord } from '../../lib/login-start.js';
 import { startedAsScript } from '../../lib/started-as-script.js';
-import { readLean, registerLean, registeredLeanProjects, unregisterLean, updateLean } from '../../lean/project.js';
+import { readLean, leanNameFor, registerLean, registeredLeanProjects, unregisterLean, updateLean } from '../../lean/project.js';
 import { releaseProject, writeBackLines, writeBackCount } from '../../lean/release.js';
 import { LeanRefusal, adoptProject, checkAdoptable, storeDir, withLocalLock } from '../../lean/store.js';
 import { ownKey, makeSigningKey, enrol } from '../../state/signing.js';
@@ -104,12 +104,7 @@ function projectNameFor(folder) {
   const found = projectForFolder(folder);
   if (found?.lean === true) return found.project;
   if (found) refuse('This folder is set up with a code host, so it isn\'t installed at Lean');
-  const base = path.basename(folder).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '').slice(0, 60) || 'project';
-  for (let n = 1; ; n += 1) {
-    const name = n === 1 ? base : `${base}-${n}`;
-    const held = readLean(name);
-    if (readProject(name) === null && (held === null || realOrNull(held.folder) === folder)) return name;
-  }
+  return leanNameFor(folder);
 }
 
 // The answers the change card gives, checked.

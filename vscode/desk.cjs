@@ -100,7 +100,10 @@ async function realDeps({ root, cwd }) {
     address: m.paths.helperAddress(),
     isLean: () => {
       try {
-        const id = project();
+        // Lean's chat setup writes no record (git alone), so on a computer with no Node.js, where the helper's install
+        // can't register it, the folder setup left is registered here. With Node.js the helper's install does it, and
+        // its uninstall is not undone.
+        const id = project() ?? (findNode() === null ? m.lean.registerSetUpLean({ folder: cwd, now })?.project : null) ?? null;
         return id !== null && m.lean.readLean(id) !== null;
       } catch {
         return false;
