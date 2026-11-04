@@ -134,7 +134,7 @@ function decidedInPending(project, data, question) {
 // The plain card answer, as the click writes it: kept in pending/ when the helper doesn't take
 // it. 'sent' when the helper took it, 'kept' when it is kept, and null when it is neither.
 async function writeAnswer(project, api, left, question, label, now) {
-  const body = { project, kind: 'card-answer', data: { question, label } };
+  const body = { project, kind: 'card-answer', data: { question, label, where: 'panel' } };
   try {
     if (taken(await left(api.state.write(body)))) return 'sent';
   } catch {

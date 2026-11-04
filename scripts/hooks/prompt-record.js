@@ -81,6 +81,7 @@ import { cardProblems } from './card-check.js';
 import { SUGGEST, WHAT_WOULD_YOU_CHANGE, SEND_BACK } from '../lib/calm-words.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 import { PUT_OFF } from '../lib/front-desk.js';
+import { whenSaid, askOf, countedOf } from '../cards/answered.js';
 import { settingKey, UNATTENDED_CARD, USE_GUARDED } from '../protection/windows-builds.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
@@ -792,20 +793,6 @@ function withStoredText(project, input) {
 
 // --- What the front desk is told about the answers ---
 
-const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-const two = (n) => String(n).padStart(2, '0');
-// A time as the director reads it, on this computer's clock: "at 14:05", or "on 28 October at 14:05" on another day.
-function whenSaid(iso, now) {
-  const at = new Date(iso);
-  if (Number.isNaN(at.getTime())) return 'earlier';
-  const clock = `at ${two(at.getHours())}:${two(at.getMinutes())}`;
-  return at.toDateString() === now.toDateString() ? clock : `on ${at.getDate()} ${MONTH_NAMES[at.getMonth()]} ${clock}`;
-}
-const askOf = (card) => String(card.data?.question ?? '').split('\n')[0];
-// The answer that decided a card, in the director's words: its label, or for a signed record that carries none, the
-// option it stands for.
-const countedOf = ({ card, decided }) => decided.label ?? ({ approval: 'Approve', confirm: 'Confirm', 'ci-push': 'Push it' }[card.data?.kind] ?? 'an answer');
-
 // How the cards the clicks are on stand, from `outcomes` (cardOutcomes): for each click, the card it answers (by the
 // state's text, or by its chat copy when that is all the click names) and, when every such card was decided before
 // it, `stale`, the latest of them. A click on no card the state holds is left out.
@@ -1016,7 +1003,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   // Then the plain answers. What cannot be sent in time is kept.
   for (const { question, label } of out) {
     if (setupAsked.has(question) || refusedQuestions.has(question)) continue;
-    const body = { project, kind: 'card-answer', data: { question, label } };
+    const body = { project, kind: 'card-answer', data: { question, label, where: 'chat' } };
     try {
       const result = await left(api.state.write(body));
       if (!taken(result)) keep(project, 'write', body, now);
