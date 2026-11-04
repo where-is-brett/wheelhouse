@@ -1,7 +1,7 @@
 // scripts/lib/vscode-pane.js
 // The small files that say a VS Code panel is open beside a project: vscode-<project>.json (the panel's tick and
 // when it was last seen) and vscode-<project>.here.json (cards the director wants asked in the chat), both in
-// <wheelhouseHome()>/panes/. Only Copilot's card commands and the board tool read them. Everything in a file is
+// <wheelhouseHome()>/panes/. Only the card commands of a project run from VS Code, and the board tool, read them. Everything in a file is
 // untrusted: every reader treats a missing, unreadable or half-written file as absent and never throws; every
 // writer is atomic and returns false rather than throw. A project id that stateDir refuses names no file.
 import crypto from 'node:crypto';
