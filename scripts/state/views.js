@@ -16,6 +16,8 @@ import { SUGGEST, WHY } from '../lib/calm-words.js';
 import { premiumState } from '../routing/premium.js';
 import { goalsView } from '../engine/goal.js';
 
+// The places a plain card answer can say it was given (the state keeps clear of the card words, so it has its own copy).
+const WHERE_PLACES = ['panel', 'chat', 'reply'];
 const byOrder = (a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 const isPlainKey = (k) => typeof k === 'string' && k !== '';
 // The computer whose key signed a verified record, when that is the computer the record names;
@@ -289,8 +291,9 @@ export function confirmationTimes(events, enrolled) {
 // whose label is one of its options other than Not now, Explain more, Show me, Why? and Suggest a
 // change… (Keep as is decides, signing nothing), or by a verified signed record after it that
 // carries its question or confirms the event its confirm line names, which is what a reply code
-// earns. `decided` is the first of these, { at, label }: a signed record's label is the one it
-// carries (an answer's), or null when it carries none (an approval, a confirmation). It is null
+// earns. `decided` is the first of these, { at, label, where }: a signed record's label is the one it
+// carries (an answer's), or null when it carries none (an approval, a confirmation). `where` is
+// where the plain answer was given (panel, chat or reply), or null for an answer recorded without it. It is null
 // while the card waits. A card written before cards carried options has none to check, so any label
 // but those five decides it. `answers` are all its answers, in order; `explained` the times of its
 // Explain more and Why? answers; `steered` the time of its latest Suggest a change… answer
@@ -321,7 +324,11 @@ function outcomesOf(sorted, { confirmations, answeredBy, lean = false }) {
     const signed = signedFor(card);
     const first = [answered, signed].filter(Boolean).sort(byOrder)[0];
     const label = typeof first?.data?.label === 'string' ? first.data.label : null;
-    const decided = first === undefined ? null : { at: first.at, label };
+    // Where it was given: the deciding plain answer's, or for a signed record the nearest plain answer after it (the
+    // click writes the plain answer beside its record). Null for an answer recorded before `where` existed.
+    const placed = first === undefined || first === answered ? answered : mine.filter((a) => byOrder(first, a) <= 0 && WHERE_PLACES.includes(a.data?.where)).sort(byOrder)[0];
+    const where = WHERE_PLACES.includes(placed?.data?.where) ? placed.data.where : null;
+    const decided = first === undefined ? null : { at: first.at, label, where };
     const explained = mine.filter((a) => a.data?.label === 'Explain more' || a.data?.label === WHY).map((a) => a.at);
     return { card, answers: mine, decided, explained, steered: mine.filter((a) => a.data?.label === SUGGEST && byOrder(card, a) < 0).at(-1)?.at ?? null };
   });

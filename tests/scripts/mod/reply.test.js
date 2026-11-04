@@ -18,6 +18,8 @@ const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
 const NOW = new Date('2026-10-18T05:00:00.000Z');
 const LATER = new Date('2026-10-18T06:00:00.000Z');
 const DAY = 24 * 60 * 60 * 1000;
+// A click's plain answer says it was given in the panel; the reply's says by reply code. Otherwise they are the same record.
+const sameWhere = (w) => (w.data?.where === undefined ? w : { ...w, data: { ...w.data, where: 'reply' } });
 
 async function withHome(fn) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-reply-'));
@@ -184,8 +186,8 @@ test('a reply earns exactly the record the click would have', async () => {
       assert.equal(reply.calls.record[0].event.at, LATER.toISOString());
       // Nothing else but the plain answer the click writes too, in the card's own spelling of the
       // option: the typed text is written nowhere.
-      assert.deepEqual(reply.calls.write, click.calls.write, label);
-      assert.deepEqual(reply.calls.write, [{ project: P, kind: 'card-answer', data: { question, label } }], label);
+      assert.deepEqual(reply.calls.write, click.calls.write.map(sameWhere), label);
+      assert.deepEqual(reply.calls.write, [{ project: P, kind: 'card-answer', data: { question, label, where: 'reply' } }], label);
       assert.equal(lifted, label === 'Lift STOP' ? 1 : 0);
     }
 
@@ -202,7 +204,7 @@ test('a reply earns exactly the record the click would have', async () => {
     const record = kept.filter((k) => k.route === 'record');
     assert.deepEqual(record.map((k) => [k.body.event.data.action, k.body.event.data.step]), [['runbook', 2]]);
     assert.deepEqual(record[0].body.event.data, { action: 'runbook', step: 2, question: cardOf(line), label: 'Do it' });
-    assert.deepEqual(kept.filter((k) => k.route === 'write').map((k) => k.body), [{ project: P, kind: 'card-answer', data: { question: cardOf(line), label: 'Do it' } }]);
+    assert.deepEqual(kept.filter((k) => k.route === 'write').map((k) => k.body), [{ project: P, kind: 'card-answer', data: { question: cardOf(line), label: 'Do it', where: 'reply' } }]);
     assert.equal(kept.length, 2);
   });
 });
@@ -266,7 +268,7 @@ test('a reply code lifts All stop from a card in the new words or the earlier ST
       assert.equal(lifted, 1, typed);
       assert.deepEqual(signed(c), [{ kind: 'action', data: { action: 'lift-stop', question, label } }], typed);
       // The plain answer is in the card's own spelling of the option.
-      assert.deepEqual(c.calls.write, [{ project: P, kind: 'card-answer', data: { question, label } }], typed);
+      assert.deepEqual(c.calls.write, [{ project: P, kind: 'card-answer', data: { question, label, where: 'reply' } }], typed);
     });
   }
 });
@@ -426,7 +428,7 @@ test('a reply earns the record the click would have on each of the build loop\'s
       assert.equal(signed(click).length, 1, label);
       assert.deepEqual(signed(reply), signed(click), label);
       assert.ok(reply.calls.record[0].event.sig);
-      assert.deepEqual(reply.calls.write, click.calls.write, label);
+      assert.deepEqual(reply.calls.write, click.calls.write.map(sameWhere), label);
       assert.equal(reply.calls.prState.length, 0);
       // A code is good once.
       const again = fake();
@@ -594,7 +596,7 @@ test('a reply-code Confirm on a profile setting\'s card closes the card in the p
     const out = await replyRecord({ project: P, text: `${replyCode(line)} confirm`, client: c, now: () => LATER });
     assert.deepEqual(out, { made: true, says: 'Recorded: Confirm the setting' });
     assert.deepEqual(c.calls.profileRecord.map((r) => r.event.data.confirms), [setting.id]);
-    assert.deepEqual(c.calls.write, [{ project: P, kind: 'card-answer', data: { question, label: 'Confirm' } }]);
+    assert.deepEqual(c.calls.write, [{ project: P, kind: 'card-answer', data: { question, label: 'Confirm', where: 'reply' } }]);
     assert.deepEqual((await writeViews(P, { now: () => LATER })).waiting, []);
   });
 });

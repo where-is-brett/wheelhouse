@@ -14,6 +14,7 @@ import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH } from '.
 import { CARD, CARD_KINDS, PUT_OFF } from '../lib/front-desk.js';
 import { SETUP_QUESTION_ID } from '../lib/setup-clicks.js';
 import { SEND_BACK } from '../lib/calm-words.js';
+import { WHERE } from '../cards/answered.js';
 import { isModelName } from '../gate/guardrails.js';
 import { GOAL_ENDINGS, GOAL_WORK } from '../engine/goal-limits.js';
 
@@ -312,7 +313,8 @@ const PLAIN_SHAPES = {
   // `proof`; a Lean record's line moved up (lean-record.js) names its tier, proof, who and whether it was a click.
   // `label` must be there but may be null: a Lean line with no choice has none. Every writer gives one.
   // Suggest a change… at Lean (ruling P5-27 k) carries the director's own words as `text`.
-  'card-answer': { must: ['label'], may: ['question', 'card', 'hash', 'commit', 'proof', 'tier', 'by', 'clicked', 'source', 'text'] },
+  // `where`: the place a plain answer was given: the panel, the chat or a reply code (scripts/cards/answered.js).
+  'card-answer': { must: ['label'], may: ['question', 'card', 'hash', 'commit', 'proof', 'tier', 'by', 'clicked', 'source', 'text', 'where'] },
   // The director undid something decided at level 2.
   reversal: { must: ['topic', 'what'], may: ['of'] },
   // The cards a visit handed out, by their card events' ids, so a card shown and dismissed is not offered again.
@@ -663,6 +665,8 @@ function checkPlain(kind, data) {
       bad('has parts that are not a question, what, why, meanwhile and options');
     }
     if (data.concepts !== undefined && !(Array.isArray(data.concepts) && data.concepts.every(isText))) bad('has concepts that are not a list of text');
+  } else if (kind === 'card-answer') {
+    if (data.where !== undefined && !WHERE.includes(data.where)) bad(`needs where to be one of ${WHERE.join(', ')}`);
   } else if (kind === 'reversal') {
     text('topic');
     text('what');

@@ -122,6 +122,20 @@ test('the board says the project\'s tests could be faked, and names each secret,
   });
 });
 
+test('a watcher whose wakes keep failing reaches the board as a broken thing', async () => {
+  const home = shortHome();
+  await as(home, async () => {
+    const repo = register(home);
+    put(path.join(wheelhouseHome(), 'projects', P, 'watcher', 'health.json'), {
+      pid: 1, at: NOW.toISOString(), shape: 1, lastError: { at: new Date(NOW.getTime() - 60000).toISOString(), message: 'A wake for the Bosun has failed 101 times: spawn claude ENOENT' },
+    });
+    for (const offline of [false, true]) {
+      const inputs = await loadBoardInputs({ cwd: repo, client: fakeClient(), address: testAddress(home), now: () => NOW, offline });
+      assert.match(JSON.stringify(inputs.model), /"level":"stop","text":"Work can't start/, `offline ${offline}`);
+    }
+  });
+});
+
 test('outside a Wheelhouse project the inputs say so', async () => {
   const home = shortHome();
   await as(home, async () => {

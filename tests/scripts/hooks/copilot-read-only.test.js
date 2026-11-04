@@ -307,7 +307,7 @@ test('Claude Code hooks still sign and write as before', async () => {
     assert.deepEqual([approval.data.pr, approval.data.commit], [7, head]);
     assert.ok(approval.sig, 'signed');
     assert.equal(verify(approval, readEnrolled()), true, 'and it verifies against this computer\'s enrolled key');
-    assert.deepEqual(sent.write.map((w) => [w.kind, w.data]), [['card-answer', { question, label: 'Approve' }]]);
+    assert.deepEqual(sent.write.map((w) => [w.kind, w.data]), [['card-answer', { question, label: 'Approve', where: 'chat' }]]);
     // STOP on, a Claude Code write is refused in STOP's words, never the helper's.
     setStop({ by: 'helper' });
     try {

@@ -47,7 +47,7 @@ test('start starts the watcher once', () => withHome(async (home) => {
   const { client } = fakeClient({ cfg: config() });
   const fake = fakeSpawn();
   const env = { PATH: '/bin', WHEELHOUSE_ROLE: 'foreman', Wheelhouse_Role: 'x', CLAUDECODE: '1' };
-  const first = await start([P], { client, spawn: fake.spawn, pluginRoot: ROOT, env });
+  const first = await start([P], { client, spawn: fake.spawn, pluginRoot: ROOT, env, exists: () => false });
   assert.equal(first.code, 0, first.err);
   assert.equal(fake.calls.length, 1);
   const [call] = fake.calls;
@@ -98,6 +98,21 @@ test('the watcher counts as running by a live, fresh lock or health record, and 
   const fake = fakeSpawn({ running: false });
   assert.deepEqual(startWatcher(P, { spawn: fake.spawn, pluginRoot: ROOT, now }), { started: true });
   assert.equal(fake.calls.length, 1);
+}));
+
+test('startWatcher starts the watcher with the folder of claude on its PATH when the PATH lacks it', () => withHome(() => {
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-claude-bin-'));
+  try {
+    fs.writeFileSync(path.join(bin, 'claude'), '');
+    const fake = fakeSpawn({ running: false });
+    const home = process.env.WHEELHOUSE_HOME;
+    fs.mkdirSync(home, { recursive: true });
+    fs.writeFileSync(path.join(home, 'claude-path.json'), JSON.stringify({ path: path.join(bin, 'claude') }));
+    startWatcher(P, { spawn: fake.spawn, pluginRoot: ROOT, env: { PATH: '/usr/bin', HOME: '/nowhere', WHEELHOUSE_HOME: home } });
+    assert.equal(fake.calls[0].opts.env.PATH.split(':')[0], bin);
+  } finally {
+    fs.rmSync(bin, { recursive: true, force: true });
+  }
 }));
 
 test('Shape 2: the foreman\'s long session compacts at 100,000, runs as the foreman, and is told it is the foreman', () => withHome(async () => {
