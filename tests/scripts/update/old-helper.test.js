@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
-  RESTART_LINE, defaultCacheRoot, findByAddress, isOwnHelperCommand, pidAlive, proveRecorded, startSeconds, stopProved, waitForQuiet,
+  RESTART_LINE, defaultCacheRoot, findByAddress, reprove, isOwnHelperCommand, pidAlive, proveRecorded, startSeconds, stopProved, waitForQuiet,
 } from '../../../scripts/update/old-helper.js';
 
 const CACHE = '/Users/dir/.claude/plugins/cache';
@@ -14,8 +14,11 @@ const SOCK = '/Users/dir/.wheelhouse/helper.sock';
 const COMMAND = `/usr/local/bin/node ${CACHE}/wheelhouse/wheelhouse/0.2.6/scripts/host/helper-main.js`;
 const LSTART = 'Tue Nov  4 10:00:01 2026';
 
+const OWN_COMMAND = `/usr/local/bin/node ${CACHE}/wheelhouse/wheelhouse/0.2.7/scripts/host/helper-main.js`;
 const record = (extra = {}) => ({ pid: 4242, startTime: LSTART, version: '0.2.7', root: '/x', address: SOCK, ...extra });
 const recorded = (over = {}) => ({
+  address: SOCK, platform: 'darwin', user: 'dir', cacheRoot: CACHE,
+  ...fakeRun({ lsof: { code: 0, stdout: '4242\n' }, ps: ps('dir', OWN_COMMAND) }),
   client: { health: async () => ({ ok: true, pid: 4242, version: '0.2.7' }) },
   read: () => record(),
   startTime: async () => LSTART,
@@ -34,7 +37,9 @@ function fakeRun(answers) {
   };
   return { run, calls };
 }
-const ps = (user, command, lstart = LSTART) => ({ code: 0, stdout: `${user} ${lstart} ${command}\n` });
+// ps answers the row (user, start, command) and, asked for comm, the executable's own path.
+const ps = (user, command, lstart = LSTART, comm = command.split(' ')[0]) => (args) => (args.includes('comm=') ? { code: 0, stdout: `${comm}\n` } : { code: 0, stdout: `${user} ${lstart} ${command}\n` });
+const raw = (stdout) => () => ({ code: 0, stdout });
 const mac = (answers, extra = {}) => findByAddress({ address: SOCK, platform: 'darwin', user: 'dir', version: '0.2.6', cacheRoot: CACHE, ...fakeRun(answers), ...extra });
 
 test('startSeconds reads the two shapes and nothing else', () => {
@@ -47,14 +52,15 @@ test('startSeconds reads the two shapes and nothing else', () => {
 });
 
 test('old helper: a record, a start time and /health that agree give the pid', async () => {
-  assert.deepEqual(await proveRecorded(recorded()), { pid: 4242 });
+  const proof = await proveRecorded(recorded());
+  assert.deepEqual(proof, { pid: 4242, startTime: LSTART, command: OWN_COMMAND });
 });
 
 test('old helper: the start time to the second, not the millisecond', async () => {
   const out = await proveRecorded(recorded({
-    read: () => record({ startTime: '2026-11-04T10:00:01.100Z' }), startTime: async () => '2026-11-04T10:00:01.900Z',
+    read: () => record(), startTime: async () => new Date(startSeconds(LSTART) * 1000 + 900).toISOString(),
   }));
-  assert.deepEqual(out, { pid: 4242 });
+  assert.equal(out.pid, 4242);
 });
 
 test('old helper: a reused pid stops nothing', async () => {
@@ -101,7 +107,7 @@ test('old helper: a recorded pid names itself only when the whole proof holds', 
 test('old helper: the one process at the address, ours, in the cache, at the reported version is found', async () => {
   const { run, calls } = fakeRun({ lsof: { code: 0, stdout: '4242\n' }, ps: ps('dir', COMMAND) });
   const out = await findByAddress({ address: SOCK, platform: 'darwin', user: 'dir', version: '0.2.6', cacheRoot: CACHE, run });
-  assert.deepEqual(out, { pid: 4242 });
+  assert.deepEqual(out, { pid: 4242, startTime: LSTART, command: COMMAND });
   assert.deepEqual(calls[0], ['lsof', '-t', '--', SOCK]);
   assert.deepEqual(calls[1], ['ps', '-o', 'user=,lstart=,command=', '-p', '4242']);
 });
@@ -117,7 +123,7 @@ test('old helper: two processes at the address stop nothing', async () => {
   assert.equal(out.pid, undefined);
   assert.match(out.why, /more than one/);
   // the same process listed twice is still one process
-  assert.deepEqual(await mac({ lsof: { code: 0, stdout: '4242\n4242\n' }, ps: ps('dir', COMMAND) }), { pid: 4242 });
+  assert.equal((await mac({ lsof: { code: 0, stdout: '4242\n4242\n' }, ps: ps('dir', COMMAND) })).pid, 4242);
 });
 
 test('old helper: a command outside the plugin cache stops nothing', async () => {
@@ -149,7 +155,7 @@ test('old helper: a version other than the one reported stops nothing', async ()
 test('old helper: a home folder with spaces still reads as the cache', () => {
   const cacheRoot = '/Users/Jo Smith/.claude/plugins/cache';
   const command = `/opt/homebrew/bin/node ${cacheRoot}/wheelhouse/wheelhouse/0.2.6/scripts/host/helper-main.js`;
-  assert.equal(isOwnHelperCommand(command, { cacheRoot, version: '0.2.6', platform: 'darwin' }), true);
+  assert.equal(isOwnHelperCommand(command, { cacheRoot, version: '0.2.6', platform: 'darwin', exe: '/opt/homebrew/bin/node' }), true);
 });
 
 test('old helper: odd lsof and ps output stops nothing', async () => {
@@ -163,8 +169,7 @@ test('old helper: odd lsof and ps output stops nothing', async () => {
     assert.ok(out.why);
   }
   for (const shown of [
-    { code: 0, stdout: '' }, { code: 0, stdout: 'dir\n' }, { code: 0, stdout: `dir yesterday ${COMMAND}\n` },
-    { code: 0, stdout: `${good.stdout}${good.stdout}` },
+    raw(''), raw('dir\n'), raw(`dir yesterday ${COMMAND}\n`), raw(`dir ${LSTART} ${COMMAND}\ndir ${LSTART} ${COMMAND}\n`),
   ]) {
     const out = await mac({ lsof: { code: 0, stdout: '4242\n' }, ps: shown });
     assert.equal(out.pid, undefined, JSON.stringify(shown));
@@ -183,13 +188,15 @@ test('old helper: a hostile address is never passed to a program', async () => {
 });
 
 const WIN_CACHE = 'C:\\Users\\dir\\.claude\\plugins\\cache';
-const WIN_COMMAND = `"C:\\Program Files\\nodejs\\node.exe" ${WIN_CACHE}\\wheelhouse\\wheelhouse\\0.2.6\\scripts\\host\\helper-main.js`;
+const WIN_START = '2026-11-04T10:00:01.000Z';
+const WIN_EXE = 'C:\\Program Files\\nodejs\\node.exe';
+const WIN_COMMAND = `"${WIN_EXE}" ${WIN_CACHE}\\wheelhouse\\wheelhouse\\0.2.6\\scripts\\host\\helper-main.js`;
 const winFind = (answers) => findByAddress({ address: '\\\\.\\pipe\\wheelhouse-dir-helper', platform: 'win32', user: 'dir', version: '0.2.6', cacheRoot: WIN_CACHE, ...fakeRun(answers) });
 
 test('old helper: Windows finds the pipe server and checks its owner and command', async () => {
-  const answers = { 'powershell.exe': (args) => (args.at(-1).includes('GetNamedPipeServerProcessId') ? { code: 0, stdout: '5150\r\n' } : { code: 0, stdout: `PC\\Dir\t${WIN_COMMAND}\r\n` }) };
-  assert.deepEqual(await winFind(answers), { pid: 5150 });
-  const other = { 'powershell.exe': (args) => (args.at(-1).includes('GetNamedPipeServerProcessId') ? { code: 0, stdout: '5150\n' } : { code: 0, stdout: `PC\\Someone\t${WIN_COMMAND}\n` }) };
+  const answers = { 'powershell.exe': (args) => (args.at(-1).includes('GetNamedPipeServerProcessId') ? { code: 0, stdout: '5150\r\n' } : { code: 0, stdout: `PC\\Dir\t${WIN_START}\t${WIN_EXE}\t${WIN_COMMAND}\r\n` }) };
+  assert.deepEqual(await winFind(answers), { pid: 5150, startTime: WIN_START, command: WIN_COMMAND });
+  const other = { 'powershell.exe': (args) => (args.at(-1).includes('GetNamedPipeServerProcessId') ? { code: 0, stdout: '5150\n' } : { code: 0, stdout: `PC\\Someone\t${WIN_START}\t${WIN_EXE}\t${WIN_COMMAND}\n` }) };
   assert.match((await winFind(other)).why, /another user/);
 });
 
@@ -207,40 +214,43 @@ test('old helper: Windows not told gives the restart line', async () => {
 
 test('old helper: a Windows command outside the cache stops nothing', async () => {
   const bad = WIN_COMMAND.replace('.claude', 'elsewhere');
-  const answers = { 'powershell.exe': (args) => (args.at(-1).includes('GetNamedPipeServerProcessId') ? { code: 0, stdout: '5150\n' } : { code: 0, stdout: `PC\\dir\t${bad}\n` }) };
+  const answers = { 'powershell.exe': (args) => (args.at(-1).includes('GetNamedPipeServerProcessId') ? { code: 0, stdout: '5150\n' } : { code: 0, stdout: `PC\\dir\t${WIN_START}\t${WIN_EXE}\t${bad}\n` }) };
   assert.equal((await winFind(answers)).pid, undefined);
 });
 
+const proofOf = (pid) => ({ pid, startTime: LSTART, command: COMMAND });
+const same = async (proof) => ({ ...proof });
+
 test('old helper: stopProved sends the polite stop on macOS and waits for quiet', async () => {
   const sent = [];
-  const out = await stopProved({ pid: 4242, platform: 'darwin', kill: (p, s) => sent.push([p, s]), wait: async () => true });
+  const out = await stopProved({ proof: proofOf(4242), reprove: same, platform: 'darwin', kill: (p, s) => sent.push([p, s]), wait: async () => true });
   assert.deepEqual(out, { stopped: true });
   assert.deepEqual(sent, [[4242, 'SIGTERM']]);
 });
 
 test('old helper: stopProved ends the process by number on Windows', async () => {
   const sent = [];
-  await stopProved({ pid: 5150, platform: 'win32', kill: (...a) => sent.push(a), wait: async () => true });
+  await stopProved({ proof: proofOf(5150), reprove: same, platform: 'win32', kill: (...a) => sent.push(a), wait: async () => true });
   assert.deepEqual(sent, [[5150]]);
 });
 
 test('old helper: a stop that leaves the address answering says so', async () => {
-  const out = await stopProved({ pid: 4242, platform: 'darwin', kill: () => {}, wait: async () => false });
+  const out = await stopProved({ proof: proofOf(4242), reprove: same, platform: 'darwin', kill: () => {}, wait: async () => false });
   assert.ok(out.why);
   assert.equal(out.stopped, undefined);
 });
 
 test('old helper: a refused stop is a why, a process already gone is not', async () => {
   const refused = Object.assign(new Error('x'), { code: 'EPERM' });
-  assert.ok((await stopProved({ pid: 4242, platform: 'darwin', kill: () => { throw refused; }, wait: async () => true })).why);
+  assert.ok((await stopProved({ proof: proofOf(4242), reprove: same, platform: 'darwin', kill: () => { throw refused; }, wait: async () => true })).why);
   const gone = Object.assign(new Error('x'), { code: 'ESRCH' });
-  assert.deepEqual(await stopProved({ pid: 4242, platform: 'darwin', kill: () => { throw gone; }, wait: async () => true }), { stopped: true });
+  assert.deepEqual(await stopProved({ proof: proofOf(4242), reprove: same, platform: 'darwin', kill: () => { throw gone; }, wait: async () => true }), { stopped: true });
 });
 
 test('old helper: stopProved never ends this process, pid 0, 1 or a non-number', async () => {
   for (const pid of [process.pid, 0, 1, -1, 2.5, '4242', null, undefined, NaN]) {
     let called = false;
-    const out = await stopProved({ pid, platform: 'darwin', kill: () => { called = true; }, wait: async () => true });
+    const out = await stopProved({ proof: proofOf(pid), reprove: same, platform: 'darwin', kill: () => { called = true; }, wait: async () => true });
     assert.ok(out.why, String(pid));
     assert.equal(called, false, String(pid));
   }
@@ -277,4 +287,62 @@ test('old helper: the file never ends a process by name', () => {
   for (const banned of [/pkill/i, /killall/i, /taskkill\s+\/IM/i, /pgrep/i, /Stop-Process\s+-Name/i, /-IM\b/]) {
     assert.doesNotMatch(source, banned);
   }
+});
+
+test('old helper: a pid reused while the card waits stops nothing', async () => {
+  let called = false;
+  const kill = () => { called = true; };
+  for (const now of [
+    { pid: 4242, startTime: 'Tue Nov  4 12:00:00 2026', command: COMMAND },
+    { pid: 4242, startTime: LSTART, command: '/usr/bin/vim /tmp/x' },
+    { why: 'nothing at the address' },
+    null,
+  ]) {
+    const out = await stopProved({ proof: proofOf(4242), reprove: async () => now, platform: 'darwin', kill, wait: async () => true });
+    assert.ok(out.why, JSON.stringify(now));
+  }
+  const thrown = await stopProved({ proof: proofOf(4242), reprove: async () => { throw new Error('x'); }, platform: 'darwin', kill, wait: async () => true });
+  assert.ok(thrown.why);
+  assert.equal(called, false);
+});
+
+test('old helper: a planted record and a fake /health stop nothing', async () => {
+  // The record and /health agree on pid 4242, but the operating system says the process at the address is another.
+  for (const lsof of [{ code: 0, stdout: '777\n' }, { code: 0, stdout: '' }, { code: 0, stdout: '4242\n777\n' }]) {
+    const out = await proveRecorded(recorded({ run: fakeRun({ lsof, ps: ps('dir', OWN_COMMAND) }).run }));
+    assert.equal(out.pid, undefined, JSON.stringify(lsof));
+    assert.ok(out.why);
+  }
+  // The address is held by the recorded pid, but it is not Wheelhouse's helper, or not this user's, or another version.
+  for (const row of [ps('dir', '/usr/bin/vim /tmp/node x'), ps('root', OWN_COMMAND), ps('dir', OWN_COMMAND.replace('0.2.7', '0.2.6'))]) {
+    const out = await proveRecorded(recorded({ run: fakeRun({ lsof: { code: 0, stdout: '4242\n' }, ps: row }).run }));
+    assert.equal(out.pid, undefined);
+  }
+  // The same on Windows, where the pipe's server is asked for.
+  const win = (pipePid) => recorded({
+    platform: 'win32', address: '\\\\.\\pipe\\wheelhouse-dir-helper', cacheRoot: WIN_CACHE,
+    run: fakeRun({ 'powershell.exe': (args) => (args.at(-1).includes('GetNamedPipeServerProcessId') ? { code: 0, stdout: `${pipePid}\n` } : { code: 0, stdout: `PC\\dir\t2026-11-04T10:00:01.000Z\t${WIN_EXE}\t"${WIN_EXE}" ${WIN_CACHE}\\wheelhouse\\wheelhouse\\0.2.7\\scripts\\host\\helper-main.js\n` }) }).run,
+    read: () => record({ startTime: '2026-11-04T10:00:01.000Z' }), startTime: async () => '2026-11-04T10:00:01.000Z',
+  });
+  assert.equal((await proveRecorded(win(777))).pid, undefined);
+  assert.equal((await proveRecorded(win(4242))).pid, 4242);
+});
+
+test('old helper: the command is parsed as the node program and the helper script, nothing else', () => {
+  const ok = { cacheRoot: CACHE, version: '0.2.6', platform: 'darwin' };
+  const script = `${CACHE}/wheelhouse/wheelhouse/0.2.6/scripts/host/helper-main.js`;
+  assert.equal(isOwnHelperCommand(`/usr/local/bin/node ${script}`, { ...ok, exe: '/usr/local/bin/node' }), true);
+  assert.equal(isOwnHelperCommand(`/usr/bin/vim /tmp/node ${script}`, { ...ok, exe: '/usr/bin/vim' }), false);
+  assert.equal(isOwnHelperCommand(`vim /tmp/node ${script}`, { ...ok, exe: 'vim' }), false);
+  assert.equal(isOwnHelperCommand(`/usr/local/bin/node ${script}`, { ...ok, exe: '/usr/bin/vim' }), false);
+  const w = { cacheRoot: WIN_CACHE, version: '0.2.6', platform: 'win32' };
+  const wscript = `${WIN_CACHE}\\wheelhouse\\wheelhouse\\0.2.6\\scripts\\host\\helper-main.js`;
+  assert.equal(isOwnHelperCommand(`"C:\\a\\node.exe" ${wscript}`, { ...w, exe: 'C:\\a\\node.exe' }), true);
+  assert.equal(isOwnHelperCommand(`X.exe C:\\a\\node.exe ${wscript}`, { ...w, exe: 'X.exe' }), false);
+  assert.equal(isOwnHelperCommand(`"X.exe" C:\\a\\node.exe ${wscript}`, { ...w, exe: 'X.exe' }), false);
+});
+
+test('old helper: reprove looks at the address again', async () => {
+  const same = await reprove({ address: SOCK, platform: 'darwin', user: 'dir', version: '0.2.6', cacheRoot: CACHE, ...fakeRun({ lsof: { code: 0, stdout: '4242\n' }, ps: ps('dir', COMMAND) }) });
+  assert.deepEqual(same, { pid: 4242, startTime: LSTART, command: COMMAND });
 });
