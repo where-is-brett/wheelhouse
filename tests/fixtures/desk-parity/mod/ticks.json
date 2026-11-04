@@ -6,6 +6,7 @@
     "pane": {
       "v": 1,
       "project": "owner__name",
+      "projectName": "name",
       "at": "2026-10-29T12:00:00.000Z",
       "glance": "1 waiting",
       "stop": {
@@ -128,6 +129,7 @@
     "pane": {
       "v": 1,
       "project": "owner__name",
+      "projectName": "name",
       "at": "2026-10-29T12:00:15.000Z",
       "glance": "2 waiting",
       "stop": {
@@ -287,6 +289,7 @@
     "pane": {
       "v": 1,
       "project": "owner__name",
+      "projectName": "name",
       "at": "2026-10-29T12:00:30.000Z",
       "glance": "2 waiting · All stop on",
       "stop": {
@@ -452,6 +455,7 @@
     "pane": {
       "v": 1,
       "project": "owner__name",
+      "projectName": "name",
       "at": "2026-10-29T12:00:45.000Z",
       "glance": "1 waiting",
       "stop": {

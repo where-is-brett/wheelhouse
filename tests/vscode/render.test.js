@@ -232,3 +232,13 @@ test('high contrast has borders and no fills', () => {
   assert.match(CSS, /body\.vscode-high-contrast[^{]*\.band[^{]*\{[^}]*background: transparent/);
   assert.ok(CSS.includes('--vscode-contrastBorder'));
 });
+
+test('the header shows the project\'s name in the quiet style, as text', () => {
+  const html = draw(model({ over: { projectName: 'Acme' } }));
+  assert.ok(html.includes('<h1>Wheelhouse</h1><span class="project">Acme</span>'));
+  const bad = draw(model({ over: { projectName: '<img src=x onerror=y>' } }));
+  assert.ok(!bad.includes('<img src=x'));
+  assert.ok(bad.includes('&lt;img src=x onerror=y&gt;'));
+  assert.ok(!draw(model({ over: { projectName: null } })).includes('class="project"'));
+  assert.ok(!draw(model()).includes('class="project"'));
+});

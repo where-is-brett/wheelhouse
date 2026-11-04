@@ -184,6 +184,18 @@ test('a tick carries null for drawn before the pane has drawn, and the draw time
   await ui.unmount()
 })
 
+test('the project\'s name is the pane\'s first line, and a model without one draws none', async ($, on) => {
+  const named = () => { const given = frontDesk('2 cards wait'); return { ...given, pane: { ...given.pane, projectName: 'Acme' } } }
+  const { start } = world(on, named)
+  await start($, SURFACES[0])
+  const ui = await mount($, SURFACES[0])
+  expect((await texts(ui))[0]).toBe('Acme')
+  const bare = world(on, () => frontDesk('2 cards wait'))
+  await bare.start($, SURFACES[0])
+  const plain = await mount($, SURFACES[0])
+  expect(await texts(plain)).not.toContain('Acme')
+})
+
 test('a held card isn\'t drawn, and its line shows how many wait, one press from being shown', async ($, on) => {
   const held = () => {
     const given = frontDesk('2 cards wait')

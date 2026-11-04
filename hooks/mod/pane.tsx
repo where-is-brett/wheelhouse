@@ -551,10 +551,12 @@ export async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
   const healthPart = healthRows.length > 0 && group(t, healthRows, 'Health and this week')
 
   const updated = text(model.updated)
+  const projectName = text(model.projectName)
   const footPart = ends(t, live && small(t, 'settings', 'Settings', () => showSettings($)), updated !== null && footnote(t, `Updated ${updated}`))
 
   return (
     <Box flexDirection="column" gap="lg">
+      {projectName !== null && footnote(t, projectName)}
       {staleNode}
       {stopPart}
       <Box flexDirection="column">
