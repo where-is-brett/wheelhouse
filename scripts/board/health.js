@@ -16,7 +16,7 @@ import { HELPER_WAIT_MS, HOST_FACTS_MAX_AGE_MS } from '../lib/core-numbers.js';
 import { FREE_PLAN_LINE, fakedTestsGap } from '../host/protection.js';
 import { NO_HELPER } from '../hooks/session-start.js';
 import { helperClient } from '../host/helper-client.js';
-import { QUICK_LINE, switchedLine, keyRefusedLine, keyMissingLine } from '../lib/host-lines.js';
+import { QUICK_LINE, switchedLine, keyRefusedLine, keyMissingLine, wakeFailureLine } from '../lib/host-lines.js';
 import { frontDeskModelLine } from '../lib/front-desk-model.js';
 
 // The All stop line starts with these words, alone or followed by ", since <date>". A line from
@@ -189,7 +189,7 @@ export function readScreens({ folder, findBrowser = realFindBrowser } = {}) {
 // `screens` is readScreens'; only pages listed and Chrome not found bring its line. `phonePush`
 // is setup's push test as this computer's journal last recorded it, { arrived, at }
 // (scripts/lib/setup-run.js, phonePushResult); only `arrived: false` adds a line.
-export function healthLines({ record, locked, stop, lock, helperUp, facts, renewal, keyRenewal, ownFiles, hostApproval, platform = process.platform, realUsers, builds, screens, phonePush, frontDeskModel, safekeeping, agentSandbox } = {}) {
+export function healthLines({ record, locked, stop, lock, helperUp, facts, renewal, keyRenewal, ownFiles, hostApproval, platform = process.platform, realUsers, builds, screens, phonePush, frontDeskModel, safekeeping, agentSandbox, watcher, now = new Date() } = {}) {
   const lines = [];
   const add = (level, text) => lines.push({ level, text });
 
@@ -220,6 +220,9 @@ export function healthLines({ record, locked, stop, lock, helperUp, facts, renew
   if (screens?.pages === true && screens.chrome === false) add('ok', NO_CHROME_LINE);
   if (lock && lock.computer !== computerId()) add('watch', 'Another computer holds this project, so this one is read-only');
   if (helperUp === false) add('watch', NO_HELPER);
+  // Wakes that keep failing leave approved work waiting, so it is a broken thing, not a quiet one.
+  const wakes = wakeFailureLine(watcher, now);
+  if (wakes !== null) add('stop', wakes);
   // The agent's sandbox on this computer, { level, text }, from the agent's adapter (sandboxLine); none for an agent without one.
   if (typeof agentSandbox?.text === 'string' && ['ok', 'watch'].includes(agentSandbox.level)) add(agentSandbox.level, agentSandbox.text);
   // The host refused the key (401), or there is none: setup's step 3 raises the key card.
