@@ -31,12 +31,13 @@ export const HOOKS = [
 // line saying what is shown is old. $.prompt.submit hands the front desk the prompts a press's
 // answer holds, and the settings view's Ask the front desk, and hands on the prompts a tick's
 // answer holds: the courier's wake in the front desk, the watcher's lines in a Shape 2 foreman.
-// $.session.surfaces reads the surfaces the session has attached, so the pane opens only once there is
+// $.session.append shows a counted press in the chat at once, as a notice row and a line only the front desk
+// reads, and starts no turn. $.session.surfaces reads the surfaces the session has attached, so the pane opens only once there is
 // one. $.ui.invalidate draws the pane again while a tick hangs, so the line saying what is shown is
 // old comes without a tick's answer; it only draws. $.clock.after draws the settings view again when
 // a change's minute of Undo is up, so Undo leaves then.
 export const CALLS = [
-  '$.clock.after', '$.clock.every', '$.clock.now', '$.command.register', '$.process.run', '$.prompt.submit', '$.session.id', '$.session.root',
+  '$.clock.after', '$.clock.every', '$.clock.now', '$.command.register', '$.process.run', '$.prompt.submit', '$.session.append', '$.session.id', '$.session.root',
   '$.session.surfaces', '$.session.usage', '$.state.get', '$.state.set', '$.ui.close', '$.ui.invalidate', '$.ui.open', '$.ui.panes', '$.ui.resolve',
   '$.ui.status', '$.ui.toast',
 ];
@@ -48,7 +49,7 @@ const VALUES = ['$.plugin.root'];
 // What the mod must never hook or call, even if HOOKS or CALLS were to name it. A `*` stands
 // for any rest of the name: `classic.*` is every classic hook, `$.fs.*` every call on `$.fs`.
 export const FORBIDDEN_HOOKS = ['tool.check', 'tool.call', 'tool.describe', 'config.set', 'agent.offer', 'plugin.register', 'classic.*'];
-export const FORBIDDEN_CALLS = ['$.tool.*', '$.agent.*', '$.fs.*', '$.settings.*', '$.http.*', '$.model.*', '$.command.run', '$.prompt.fill', '$.session.append', '$.process.spawn', '$.env.set'];
+export const FORBIDDEN_CALLS = ['$.tool.*', '$.agent.*', '$.fs.*', '$.settings.*', '$.http.*', '$.model.*', '$.command.run', '$.prompt.fill', '$.process.spawn', '$.env.set'];
 
 // Whether a hook or call, as the validator or the source spells it, is one the patterns name.
 // A hook may carry a matcher after its name (`tool.check{tool=Bash}`). A name that is itself

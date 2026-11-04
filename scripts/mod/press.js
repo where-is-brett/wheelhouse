@@ -55,6 +55,7 @@ import { liftStop as defaultLift, stopState as defaultStopState } from '../lib/s
 import { KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
 import { LEADS } from '../lib/mod-numbers.js';
 import { SUGGEST, WHY, SENT_TO_FRONT_DESK, CHANGED_WHILE_READING, WRITE_FIRST, decidedToast } from '../lib/calm-words.js';
+import { answeredWords, subjectOf, NOTE_LEAD } from '../cards/answered.js';
 import { numberedWaiting } from '../board/model.js';
 import { setLineOf, replyCode } from '../state/card-lines.js';
 import { cardButtons, kindOf, isSetupCard } from './buttons.js';
@@ -63,6 +64,9 @@ import { modDesk, signedRecords } from '../desk/mod-desk.js';
 import { claim, answeredInPending, repliedDir, viewsNow, confirmsBuilds, allowsElsewhere, ALLOWED_ELSEWHERE, CLICK_ONLY_LABELS } from './reply.js';
 
 const NOT_NOW = 'Not now';
+// What the First Mate's hidden line starts with, so a later prompt can tell it was already said.
+export { NOTE_LEAD };
+const PANEL_WORDS = ' in the panel';
 // The proofs a press may name: only the add-on's pane presses with one.
 const PRESS_PROOFS = ['add-on'];
 // Longer than any option a card offers.
@@ -148,6 +152,22 @@ async function writeAnswer(project, api, left, question, label, now) {
   }
 }
 
+// The two lines a counted deciding press shows in the chat at once: `notice` for the director ("You approved
+// the Doubt plan in the panel at 10:34.") and `note` for the First Mate, who is told not to repeat it or ask
+// the card again.
+function chatLines(data, card, label, at) {
+  const words = answeredWords({ card: { data }, decided: { label, where: 'panel', at: at.toISOString() } }, at);
+  const cut = words.indexOf(PANEL_WORDS);
+  const head = words.slice(0, cut);
+  const tail = words.slice(cut + 1);
+  const subject = subjectOf({ data });
+  const said = head.startsWith('answered ') ? `${head} on ${subject}` : `${head} ${subject}`;
+  return {
+    notice: `You ${said} ${tail}.`,
+    note: `${NOTE_LEAD}${words} on ${subject} (card ${card}). The chat already shows this to them: don't repeat it, and never ask that card again.`,
+  };
+}
+
 // The one prompt a turn hands the front desk: the card's number, its id and its own label,
 // nothing else.
 function promptOf(kind, label, n, id) {
@@ -220,7 +240,7 @@ async function press({ project, card, hash, label, client, desk, now, liftStop, 
 
   // Not now and Keep as is sign nothing: each writes the plain card answer alone, as a click does.
   if (label !== NOT_NOW && label !== KEEP_AS_IS && button.does === 'record') {
-    return signed({ project, card, hash, question, label, what, meanwhile: data.parts?.meanwhile, markers, shownAt: entry.at, api, desk: mod, left, now, liftStop, stopState, proof });
+    return signed({ project, card, hash, data, question, label, what, meanwhile: data.parts?.meanwhile, markers, shownAt: entry.at, api, desk: mod, left, now, liftStop, stopState, proof });
   }
 
   const prompt = [promptOf(kindOf(data), label, n, card)];
@@ -250,7 +270,7 @@ async function press({ project, card, hash, label, client, desk, now, liftStop, 
 // which closes the card on its own. Under STOP the plain answer is left out.
 // The card's own time goes to earned as `shownAt`, as a reply's does: the pane drew the card
 // then, so a Lift STOP card from before this STOP began can't lift it.
-async function signed({ project, card, hash, question, label, what, meanwhile, markers, shownAt, api, desk, left, now, liftStop, stopState, proof }) {
+async function signed({ project, card, hash, data, question, label, what, meanwhile, markers, shownAt, api, desk, left, now, liftStop, stopState, proof }) {
   const held = [];
   for (const id of markers) {
     const file = claim(project, id);
@@ -312,7 +332,8 @@ async function signed({ project, card, hash, question, label, what, meanwhile, m
     }
     if (!stopState().on) await writeAnswer(project, api, left, question, label, now);
   }
-  return { made: true, says: kept(signsOn(label, question) ? decidedToast(label, meanwhile) : `Recorded: ${what}`, sent) };
+  const says = kept(signsOn(label, question) ? decidedToast(label, meanwhile) : `Recorded: ${what}`, sent);
+  return { made: true, says, ...chatLines(data, card, label, now()) };
 }
 
 // The waiting card a Why? or Suggest a change… names, when the pane drew it as it is now and
