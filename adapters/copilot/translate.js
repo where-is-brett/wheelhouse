@@ -92,13 +92,19 @@ const TOOL_EVENTS = Object.freeze(['PreToolUse', 'PostToolUse', 'PostToolUseFail
 const snake = (key) => key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
-// Which harness ran the hook (ruling P5-6). Copilot's CLI sets COPILOT_CLI_BINARY_VERSION in the hook's own
-// environment and its input carries no harness field (check 58). Everything else is 'unknown', which the hook
-// entry refuses as it does the Local harness, letting only reading through, until sittings S1 and S2 name
-// VS Code's sign. No recorded input is 'local' yet.
+// Which harness ran the hook (ruling P5-6). No input field names it (check 58), so the environment does:
+//   - Copilot's CLI sets COPILOT_CLI_BINARY_VERSION (check 58).
+//   - VS Code's Copilot session target sets COPILOT_CLI=1 and COPILOT_HOOK_DIR but no version (check 72, as the
+//     Copilot SDK's runtime in check 74), and its input is Copilot's camelCase. VS Code's Local harness writes
+//     Claude Code's snake_case (`hook_event_name`, `session_id`, check 59), so camelCase input is asked for too.
+// Everything else is 'unknown', which the hook entry refuses as it does the Local harness, letting only reading
+// through. No recorded input is 'local' yet.
+const filled = (value) => typeof value === 'string' && value !== '';
+const camelInput = (raw) => isObject(raw) && filled(raw.sessionId) && !('hook_event_name' in raw) && !('session_id' in raw);
 export function harnessOf(raw, env = process.env) {
-  const version = env?.COPILOT_CLI_BINARY_VERSION;
-  return typeof version === 'string' && version !== '' ? 'copilot' : 'unknown';
+  if (filled(env?.COPILOT_CLI_BINARY_VERSION)) return 'copilot';
+  if (env?.COPILOT_CLI === '1' && filled(env?.COPILOT_HOOK_DIR) && camelInput(raw)) return 'copilot';
+  return 'unknown';
 }
 
 // A patch's header lines (check 58's patch shape): `*** ` and a word, read with any spaces before them, so a
