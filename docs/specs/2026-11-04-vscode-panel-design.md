@@ -165,7 +165,19 @@ The chat asks cards with Copilot's question tool, and whether Wheelhouse's hooks
 
 ### 6.3 Answers in the panel reaching the chat
 
-VS Code has no documented way for an extension to add a line to Copilot's chat without starting a turn, unlike the mod's `session.append`. So:
+VS Code has no way for an extension to add a line to Copilot's chat without starting a turn, unlike the mod's `session.append`. The director asked on 4 November 2026 whether the add-on could do what the mod does. It was checked again that day against VS Code's extension docs (pages dated 28 October 2026):
+
+| Way in | What it can do | Why it doesn't fit |
+|---|---|---|
+| Chat participants (`vscode.chat.createChatParticipant`) | Answer when the person sends `@participant …` | "Chat participants are deprecated and are not supported in the Copilot harness", which is the default (AI extensibility overview, Chat participant guide). They also answer only a request the person sends |
+| The `vscode.chat` and `vscode.lm` APIs | `createChatParticipant`; `registerTool`, `invokeTool`, `selectChatModels` and the providers | None adds a line to a chat. `invokeTool` shows in a chat only inside a request (VS Code API reference) |
+| Language model tools | Run when the model calls them during a turn | "Automatically invoked based on the user's chat prompt": only inside a turn (Language model tools guide) |
+| MCP Apps | Draw buttons and forms in chat as a tool's result | Shown only as a tool call's result, in a turn. Their `sendMessage` "fills chat input box; does not auto-send", and `updateModelContext` adds an attachment for a later turn, not a visible line (MCP developer guide) |
+| `workbench.action.chat.open` with `{ query, isPartialQuery: true }` | Puts words in the chat box without sending them | Not in VS Code's command reference: it is known only from extensions' code and a VS Code discussion. It fills the box rather than adding a line. A line sent from it is a turn, which spends a request |
+| Copilot's hooks (`sessionStart`, `postToolUse`, `notification`) | Add context for the model | The person never sees it, and `userPromptSubmitted` can't add context in Copilot's harness |
+| Agent plugins (the participants' replacement) | Carry skills, agents and MCP servers | They add no way to write into the chat |
+
+So:
 
 1. **In the panel, at once.** The card shows "You approved the Doubt plan at 10:34" in place of its buttons, and VS Code shows the same line as a notification.
 2. **In the chat, the next time the director writes.** In Claude Code that line comes from a hook (`scripts/hooks/board-context.js`), and Copilot's `userPromptSubmitted` hook can't add context. So it is new work here: `views waiting` and `wheelhouse_board` gain a "since" field, the answers recorded since the front desk last read them, with the one-card design's words ("Since your last turn: the Doubt plan was approved in the panel at 10:34."). Copilot's front-desk skill reads one of them at the start of each turn, says each answer in one line before anything else, and never asks that card again. Like the hold at Lean, it rests on the skill until a hook can carry it; the firm part is that a decided card can't be answered twice.
@@ -217,7 +229,7 @@ Copilot use: the hold and the next-turn line need two or three chat turns. The S
 ## 9. What VS Code doesn't allow, and what follows
 
 - **No view in the secondary side bar from an extension.** Views may be contributed to the activity bar or the panel only. The add-on keeps the activity bar and the first-run picture of the drag; check 67 says whether a command can move it for the director.
-- **No silent line in Copilot's chat.** Hence section 6.3.
+- **No line in Copilot's chat without a turn.** No documented API, command or hook adds a visible line to Copilot's chat without spending a request (section 6.3's table). Hence the panel, a notification, and the next message.
 - **No signature check on a `.vsix` from a file.** Hence the hash check in section 3.2, and the Marketplace later.
 - **A webview costs memory.** One view, redrawn only when the model changes (as today), with no retained context.
 
