@@ -65,7 +65,7 @@ const oldStandIn = ({ proof = PROOF } = {}) => ({
   reprove: async () => proof,
 });
 
-const quietRefresh = () => ({ local: async () => null, locked: async () => null, copilot: async () => null, engine: async () => null });
+const quietRefresh = () => ({ local: async () => null, locked: async () => null, agent: async () => null, engine: async () => null });
 
 // The job's state when it runs finish: the checks done and the finish step running.
 function setUp(name = 'proj') {
@@ -143,7 +143,7 @@ test('finish: the director\'s own local entries are kept', () => withHome(async 
     options.refresh = {
       ...realRefreshes({ project: 'proj', folder: p.folder, newRoot: options.newRoot, claudeHome: p.claudeHome, platform: 'darwin', address: '/h/new.sock' }),
       locked: async () => null,
-      copilot: async () => null,
+      agent: async () => null,
       engine: async () => null,
     };
     const got = await finish({ ...options, journal });
@@ -195,14 +195,14 @@ test('finish: a refresh that fails is left, the others stand, and a second run d
   const refresh = {
     local: async () => { ran.push('local'); return { ok: true, wrote: [] }; },
     locked: async () => { ran.push('locked'); return ran.filter((r) => r === 'locked').length === 1 ? { ok: false, line: 'Locked\'s password was refused.' } : { ok: true, wrote: [] }; },
-    copilot: async () => { ran.push('copilot'); return null; },
+    agent: async () => { ran.push('agent'); return null; },
     engine: async () => { ran.push('engine'); return null; },
   };
   const { options } = deps(h, { refresh });
   const first = await finish({ ...options, journal });
   assert.equal(first.ok, false);
   assert.match(first.line, /password was refused/);
-  assert.deepEqual(ran, ['local', 'locked', 'copilot', 'engine']);
+  assert.deepEqual(ran, ['local', 'locked', 'agent', 'engine']);
   const second = await finish({ ...options, journal });
   assert.equal(second.ok, true, second.line);
   assert.deepEqual(ran.slice(4), ['locked'], 'only the refresh left ran again');
@@ -474,7 +474,7 @@ test('finish: the files written in Copilot\'s clean home are recorded with their
     const journal = setUp();
     const h = helper({ version: '0.2.7' });
     const { options } = deps(h, { folder });
-    options.refresh = { ...quietRefresh(), copilot: realRefreshes({ project: 'proj', folder, newRoot: options.newRoot, claudeHome: options.claudeHome, platform: 'darwin', writeHome }).copilot };
+    options.refresh = { ...quietRefresh(), agent: realRefreshes({ project: 'proj', folder, newRoot: options.newRoot, claudeHome: options.claudeHome, platform: 'darwin', writeHome }).agent };
     const got = await finish({ ...options, journal });
     assert.equal(got.ok, true, got.line);
     const record = readOwnFilesState().updates.at(-1);

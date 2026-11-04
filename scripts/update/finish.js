@@ -21,6 +21,7 @@ import { fileHash, recordUpdate } from '../health/own-files.js';
 import {
   RESTART_LINE, defaultCacheRoot, findByAddress, pidAlive, proveRecorded, reprove, stopProved, waitForQuiet,
 } from './old-helper.js';
+import { refreshAgentHome } from '../agents/refresh-home.js';
 import { openJournal, updateLockHeld } from './journal.js';
 import { verify, readEnrolled } from '../state/signing.js';
 import { listEvents } from '../state/events.js';
@@ -124,22 +125,6 @@ export function helperCard({ kind, version, canStop, id }) {
   };
 }
 
-// Every regular file under a folder, links skipped.
-function filesUnder(dir) {
-  const found = [];
-  const walk = (at) => {
-    let entries = [];
-    try { entries = fs.readdirSync(at, { withFileTypes: true }); } catch { return; }
-    for (const entry of entries) {
-      const full = path.join(at, entry.name);
-      if (entry.isSymbolicLink()) continue;
-      if (entry.isDirectory()) walk(full); else if (entry.isFile()) found.push(full);
-    }
-  };
-  if (typeof dir === 'string') walk(dir);
-  return found.sort();
-}
-
 // The refreshes of section 6.5, as the seams a real run uses. Each gives null when it does not apply here, { ok: true,
 // wrote: [files] } when it made them, or { ok: false, line } for what is left.
 export function realRefreshes({ project, folder, newRoot, claudeHome, platform, lockedDir, run = defaultRun, address = helperAddress({ platform }), writeHome }) {
@@ -170,16 +155,8 @@ export function realRefreshes({ project, folder, newRoot, claudeHome, platform, 
       const got = await updateLocked({ project: named.project, platform, run, dir, address });
       return /^Locked is up to date/.test(String(got?.line)) ? { ok: true, wrote: [] } : { ok: false, line: `Locked was not brought up to date: ${got?.line ?? 'no reason given'}.` };
     },
-    async copilot() {
-      const { agentOfProject } = await import('../agents/names.js');
-      const { engineHomeProblem, writeEngineHome } = await import('../agents/copilot/engine-home.js');
-      if (typeof folder !== 'string' || agentOfProject(folder, { computerId: computerId() }) !== 'copilot') return null;
-      if (!fs.existsSync(engineDir())) return null;
-      if (engineHomeProblem({ engine: engineDir(), root: newRoot }) === null) return { ok: true, wrote: [] };
-      // The files written in the engine's clean home are recorded, so the weekly look knows them. The sign-in is only read from
-      // the director's own Copilot folder, never written there.
-      const home = (writeHome ?? writeEngineHome)({ engine: engineDir(), root: newRoot });
-      return { ok: true, wrote: filesUnder(home) };
+    async agent() {
+      return refreshAgentHome({ folder, newRoot, writeHome });
     },
     async engine() {
       const { engineChanges, applyEngine } = await import('../setup/engine-parts.js');
@@ -297,7 +274,7 @@ export async function finish({
 
     // 1. The refreshes of section 6.5.
     const fresh = [];
-    for (const name of ['local', 'locked', 'copilot', 'engine']) {
+    for (const name of ['local', 'locked', 'agent', 'engine']) {
       if (progress.refreshed[name] === 'done') continue;
       let got;
       try { got = await refreshes[name](); } catch (error) { got = { ok: false, line: String(error?.message ?? error).replace(/\s+/g, ' ') }; }
