@@ -534,3 +534,15 @@ test('the playbook offers a GitLab or GitHub connector once, recommends Not now 
   assert.equal(code, 0, err);
   assert.equal(h.writes.filter((w) => w.kind === 'card').length, 1);
 });
+
+test('the playbook teaches the one-card words the hooks and the board use, and setup says a stopped question is no answer', async () => {
+  const { DECIDED_LEAD, PANE_LEAD } = await import('../../scripts/hooks/card-check.js');
+  const { SINCE_LEAD, STOPPED_LEAD } = await import('../../scripts/hooks/board-context.js');
+  const { RECENT_LEAD } = await import('../../scripts/desk/views.js');
+  for (const lead of [DECIDED_LEAD, PANE_LEAD, SINCE_LEAD, RECENT_LEAD]) assert.ok(playbook.includes(`"${lead}`) || playbook.includes(`"${lead.replace(/:$/, '')}`), `the playbook quotes: ${lead}`);
+  assert.ok(playbook.includes(STOPPED_LEAD.slice(0, STOPPED_LEAD.indexOf(','))), 'the playbook quotes the stopped lead');
+  for (const flag of ['cards --here', 'again <n> --here', 'pull-cards --here']) assert.ok(playbook.includes(flag), flag);
+  assert.match(playbook, /Already <the answer>; nothing to ask/);
+  assert.match(playbook, /Esc stops the First Mate/);
+  assert.match(read('skills/setup/SKILL.md'), /A stopped question is no answer[^\n]*`plan <n>`/);
+});
