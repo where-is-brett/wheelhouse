@@ -76,7 +76,7 @@ A sixth thing is outside this design. The approved work then sat "queued, not st
 
 **When a live pane is beside the session, cards are answered in the pane, and the chat doesn't ask them.** The chat says in one line where they are, for example "Two cards are waiting in the panel. Say if you'd rather answer them here." When no live pane is there (in the terminal, on Copilot, in a session the mod doesn't draw for, or when the pane has gone stale), the chat asks them as it does today.
 
-This is decision D1 (section 10). The rest of this design assumes the recommended answer. Sections 4.4 and 5 hold whichever answer is chosen.
+The director chose this on 4 November 2026 (D1, section 10).
 
 ### 4.2 Knowing the pane is live
 
@@ -94,7 +94,9 @@ This is decision D1 (section 10). The rest of this design assumes the recommende
 
 ### 4.4 Answers in the pane reaching the chat
 
-A deciding press in the pane hands the First Mate no turn, as today. The next time the director writes, `scripts/hooks/board-context.js` adds one context line naming the cards decided since the First Mate's last turn and how: "Since your last turn: card 2 was approved in the panel at 10:34." It uses the card's subject, not its id, and only the First Mate reads it. The front-desk skill says to treat that line as the record and never guess. This is decision D2 (section 10).
+A deciding press in the pane hands the First Mate no turn, as today. The next time the director writes, `scripts/hooks/board-context.js` adds one context line naming the cards decided since the First Mate's last turn and how: "Since your last turn: card 2 was approved in the panel at 10:34." It uses the card's subject, not its id, and only the First Mate reads it. The front-desk skill says to treat that line as the record and never guess. The director chose this on 4 November 2026 (D2, section 10).
+
+**The chat reflects the panel's answer.** The director asked for this with D1: when the chat has spoken of a card, the panel's answer shows in the chat. So the First Mate's next words, before anything else, state each answer that line names, in one plain line: "You approved the Doubt plan in the panel at 10:34." It never asks that card again, and it never calls a card waiting once that line or `views waiting` says it was decided. The skill names this as a rule, beside the briefing's rule that comes first.
 
 ## 5. One answer
 
@@ -124,7 +126,7 @@ The pane rule makes this rare, but it can still happen. The pane might become li
 ## 7. Setup's cards and Copilot
 
 - **Setup's cards** have no pane buttons, so the pane rule never holds them back. They stay chat-only, and the pane keeps its line saying they're answered in the chat. Esc on a setup card records nothing (no PostToolUse). `claimAnswer` takes back a stale claim, and the setup step asks again through `plan <n>`, as today. Setup's skill gains the same rule as the front desk's: a stopped question is no answer. No other change.
-- **Copilot** has no pane, so its cards are always asked in its chat. The decided-card check (section 5) applies where Copilot's hooks reach its question tool (`adapters/copilot/hooks.js`). Where they don't, `card`'s refusal and `views waiting`'s recent answers still keep it from asking a decided card. The builder checks which applies and says so in the build report.
+- **Copilot** has no panel, so its cards are always asked in its chat, as today. Nothing there is shown twice. The decided-card check keeps a card that was already answered (by a reply code, say) from being asked again. The decided-card check (section 5) applies where Copilot's hooks reach its question tool (`adapters/copilot/hooks.js`). Where they don't, `card`'s refusal and `views waiting`'s recent answers still keep it from asking a decided card. The builder checks which applies and says so in the build report.
 
 ## 8. The repeated board line
 
@@ -146,22 +148,15 @@ Each of these is checked at the Mac sitting, before the part that leans on it is
 - **The deny doesn't behave (item 1).** The live-pane deny sits behind one constant and is shipped off. The design then falls back to D1's second option: both places, kept in step by section 6.1. That's why section 6.1 is built whatever D1's answer is: it's the safety net for the race, and the fallback if the deny can't be used.
 - **No draw signal (item 3).** Liveness goes by the tick alone. The chat's line always ends by saying the director can have the cards here instead, so a closed pane is never a dead end.
 
-## 10. Decisions for the director
+## 10. Decided by the director (4 November 2026)
 
-**D1. Where should cards be answered while the panel is open?**
+**D1. Where cards are answered while the panel is open: in the panel only.** In the director's words: "Chat shows in panel. Also text asks here in chat but the answer from panel should reflect here in chat right?" So cards go to the panel, and the chat says in one line that they're there. When the chat speaks of a card, the panel's answer shows in the chat: the First Mate's next words state it, and it never asks again (section 4.4).
 
-- **In the panel only (recommended).** The chat says in one line that cards wait in the panel, and "ask me here" brings them into the chat. Every card has one place to answer, nothing is left open, and Esc is never needed.
-- **In both, kept in step.** As today, plus the pane's "Also open in the chat" note and the toast about the chat's copy. The chat's copy is still left open after a panel answer, which is what the director called bad.
-- **In the chat while it asks.** The pane shows a card asked in the chat with no buttons, reading "Answer it in the chat", until the question ends. One place at a time, but the pane's buttons are often unusable, and the card still shows twice.
+**D2. When the chat hears of a panel answer: the next time the director writes.** No extra turn per press.
 
-Meanwhile, nothing changes: v0.2.6 asks in both places, and every answer still counts once.
+**Copilot,** which the director asked about: with no panel, cards stay in the chat, and the decided-card check stops a repeat (section 7).
 
-**D2. When the director answers in the panel, when should the chat hear of it?**
-
-- **The next time you write (recommended).** No extra turn, so no extra usage, and the First Mate always knows before it speaks.
-- **At once, in one line.** Each deciding press starts a short First Mate turn ("Approved: the Doubt plan joins the queue."). That costs a turn per press, and it adds a line to the chat that the panel already shows.
-
-Meanwhile, the pane's answers count but the First Mate learns of them only by looking.
+The alternatives set aside were both places kept in step (the chat's copy is left open after a panel answer), the chat alone while it asks, and a First Mate turn at once for each press. Section 6.1 is still built, as the safety net for the race and the fallback in section 9.1.
 
 ## 11. Out of scope
 
@@ -183,7 +178,7 @@ Meanwhile, the pane's answers count but the First Mate learns of them only by lo
 | `skills/front-desk/SKILL.md` | The panel line. "Ask me here". A stopped question is no answer. The pane-press lines that end in "call your clickable-question tool" (Why?, Show me) are asked only when no live pane is there, and otherwise end on the one line |
 | `skills/setup/SKILL.md` | A stopped question is no answer |
 | `adapters/copilot/hooks.js` | The decided-card check, as a conditional task: only if its PreToolUse reaches `ask_user` today. Its PostToolUse still waits on a sitting. Otherwise nothing changes there (section 7) |
-| `docs/specs/2026-10-17-wheelhouse-design.md` | Sections 23.3 and 23.4 gain the one-place rule, and section 22 gains the director's rulings on D1 and D2 |
+| `docs/specs/2026-10-17-wheelhouse-design.md` | Sections 23.3 and 23.4 gain the one-place rule, and section 22 gains the director's rulings of 4 November 2026 (section 10) |
 
 **Tests**, beside each: a live and a stale `pane.json`; the deny for a pane card, a setup card going through, and a mixed call; `here.json` letting cards through once; the decided-card deny naming the answer; `card`'s refusal at the same hash; `views waiting`'s recent answers; the stopped-question line from a transcript tail holding the 4 November tool result; no record on a stopped question; the safekeeping line once. Run the test files touched, and leave the whole suite to CI.
 
