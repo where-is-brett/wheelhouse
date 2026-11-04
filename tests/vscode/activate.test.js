@@ -52,6 +52,14 @@ test('the first-run offer shows once', async () => {
   assert.equal(second.vscode.seen.info.length, 0);
 });
 
+test('the first-run offer\'s button moves the pane beside the chat', async () => {
+  const { vscode } = await started({ setup: (v) => { v.window.showInformationMessage = async (...args) => { v.seen.info.push(args); return args[1]; }; } });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(vscode.seen.info[0][1], 'Put Wheelhouse on the right');
+  assert.deepEqual(vscode.seen.executed[0], ['vscode.moveViews', { viewIds: ['wheelhouse.pane'], destinationId: 'workbench.panel.chat' }]);
+  assert.deepEqual(vscode.seen.executed[1], ['wheelhouse.pane.focus']);
+});
+
 test('the helper is started when it doesn\'t answer', async () => {
   const spawned = [];
   await startHelperIfNeeded({ ask: async () => false, node: '/usr/bin/node', root: '/ext/wheelhouse', spawn: (...args) => { spawned.push(args); return { unref() {} }; } });
