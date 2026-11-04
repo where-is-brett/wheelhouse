@@ -174,7 +174,9 @@ test('out of date shows the warning and no figures', () => {
   const html = drawFixture('out-of-date');
   for (const line of f.missing) assert.ok(html.includes(line.replace(/'/g, '&#39;')), line);
   assert.match(html, /class="band[^"]*"[^>]*role="status"/);
-  assert.ok(!/\d/.test(html.match(/<p class="verdict">(.*?)<\/p>/)[1].replace(/<[^>]+>/g, '')));
+  // No digit in the verdict's text: look only between tags, so no markup is stripped.
+  const verdict = html.match(/<p class="verdict">(.*?)<\/p>/)[1];
+  assert.ok(!/(^|>)[^<]*\d/.test(verdict));
 });
 
 test('first reading draws the mod\'s line', () => {
