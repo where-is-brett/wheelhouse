@@ -66,6 +66,9 @@ const UNHANDED = { plugin: 'wheelhouse', key: 'unhanded' } as const
 let timer: { every: number, cancel: () => void } | null = null
 let running = false
 let again = false
+// When ui.render last drew the pane, or null. Kept here and not in the state, since drawing is pure
+// and may not write it. Each tick sends it, and the bridge marks the pane live from it.
+let drawnAt: number | null = null
 const waiting: Received[] = []
 const MAX_WAITING = 50
 // The ticks' prompts being handed on. A prompt waits behind a running turn, so they are handed
@@ -196,7 +199,7 @@ async function runTick($: EngineInterface, received?: Received | Received[]) {
   let every: number | undefined
   try {
     const [session, cwd, busy, surface] = await Promise.all([$.session.id(), $.session.root(), $.state.get(BUSY), $.state.get(SURFACE)])
-    const answer = await ask($, { cmd: 'tick', session, cwd, idle: busy.value !== true, surface: surface.value ?? null, ...(received === undefined ? {} : { received }) }, { timeoutMs: TICK_ASK_MS })
+    const answer = await ask($, { cmd: 'tick', session, cwd, idle: busy.value !== true, surface: surface.value ?? null, drawn: drawnAt, ...(received === undefined ? {} : { received }) }, { timeoutMs: TICK_ASK_MS })
     const now = await $.clock.now()
     if (answer === null || !answer.ok) {
       await $.state.set(TICK, { at: now, failed: true })
@@ -285,6 +288,7 @@ export async function tick($: EngineInterface, queued = false, received?: Receiv
 export async function startPane($: EngineInterface, e: SessionStartInput) {
   stopTimer()
   again = false
+  drawnAt = null
   waiting.length = 0
   try {
     await $.state.set(SURFACE, e.surface)
@@ -386,6 +390,8 @@ export async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
   const t = tableOf($, e)
   const { Box } = t
   const [pane, last, shown, now, view, pressing] = await Promise.all([$.state.get(PANE), $.state.get(TICK), $.state.get(CARD), $.clock.now(), $.state.get(VIEW), pressingNow($)])
+  // A draw shows the pane is open and in view, so the bridge's live mark follows it.
+  drawnAt = now
   // Busy is read only while it holds the buttons back, so a turn's start and end redraw nothing else.
   const live = !HIDE_WHILE_BUSY || (await $.state.get(BUSY)).value !== true
   const after = () => tick($, true)

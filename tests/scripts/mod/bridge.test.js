@@ -10,7 +10,7 @@ import { handle, runBridge, lineOf, limitFor, BRIDGE_MS, MAX_REQUEST_BYTES, HELP
 import { readPaneStatus, hashOf } from '../../../scripts/mod/status.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { makeEvent, eventPath } from '../../../scripts/state/events.js';
-import { recordRole } from '../../../scripts/lib/role.js';
+import { recordRole, roleFile } from '../../../scripts/lib/role.js';
 import { NO_HELPER } from '../../../scripts/hooks/session-start.js';
 import { COURIER_GAP_MS, FOREMAN_TICK_MS, TICK_MS, WATCH_BRIDGE_MS } from '../../../scripts/lib/mod-numbers.js';
 import { makeSigningKey, enrol, verify, readEnrolled } from '../../../scripts/state/signing.js';
@@ -1203,4 +1203,21 @@ test('a Safekeeping press comes from the pane alone, signed for the action it na
   assert.equal(acts.length, 1);
   assert.equal(acts[0].command, 'safekeeping');
   assert.deepEqual(acts[0].evidence.records[0].event.data, { action: 'safekeeping', press: 'back-up-now', question: 'Safekeeping', label: 'back-up-now' });
+}));
+
+test('a tick marks the pane live in the session folder, with the mod\'s draw time', () => withHome(async (home) => {
+  const repo = registered(home);
+  await handle(tickOf(repo, { drawn: 1000 }), live());
+  const file = path.join(path.dirname(roleFile('sess-1')), 'pane.json');
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { at: NOW.getTime(), drawn: 1000, surface: 'desktop' });
+  // Before any draw the mod sends none: the mark holds null.
+  await handle(tickOf(repo), live());
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).drawn, null);
+}));
+
+test('a failed pane mark never fails the tick', () => withHome(async (home) => {
+  const repo = registered(home);
+  const answer = await handle(tickOf(repo, { drawn: 1000 }), live({ markPane: () => { throw new Error('disk full'); } }));
+  assert.equal(answer.ok, true);
+  assert.equal(answer.every, TICK_MS);
 }));
