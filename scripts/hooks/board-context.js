@@ -48,7 +48,7 @@
 // /wheelhouse:settings and /wheelhouse:sources. The short forms (/board) are left to whoever owns them.
 import { answer, runAndExit, projectOf, beingSetUp, readTailEntries } from './kit.js';
 import { stoppedQuestion } from './stopped-question.js';
-import { answeredWords, subjectOf } from '../cards/answered.js';
+import { answeredWords, subjectOf, NOTE_LEAD } from '../cards/answered.js';
 import { chatCopy } from '../state/card-lines.js';
 import { readOpen, clearOpen } from '../lib/session-files.js';
 import { featureSlug, SETUP_FIRST } from './session-start.js';
@@ -190,7 +190,11 @@ async function cardNotes({ project, input, since, at, desk, open }) {
     ...events.filter((e) => numbers.has(e.id) && !decided.some((o) => o.card.id === e.id)).map((card) => ({ card, decided: null })),
   ];
   const firstLine = (text) => String(text ?? '').split('\n')[0];
-  const questions = stoppedQuestion(readTailEntries(input.transcript_path), { prompt: input.prompt });
+  const tail = readTailEntries(input.transcript_path);
+  const questions = stoppedQuestion(tail, { prompt: input.prompt });
+  // The cards whose hidden line the mod appended is already in the transcript's tail: the chat said them.
+  const tailText = Array.isArray(tail) ? JSON.stringify(tail) : '';
+  const noted = (id) => tailText.includes(NOTE_LEAD) && tailText.includes(`(card ${id})`);
   const named = new Map();
   if (questions !== null) {
     for (const text of questions) {
@@ -214,7 +218,7 @@ async function cardNotes({ project, input, since, at, desk, open }) {
     stopped = `${STOPPED_LEAD}${parts.join('; ')}. ${STOPPED_TAIL}`;
   }
   const fresh = Number.isFinite(from)
-    ? outcomes.filter((o) => o.decided !== null && o.decided.where !== 'chat' && Date.parse(o.decided.at) > from && !named.has(o.card.id))
+    ? outcomes.filter((o) => o.decided !== null && o.decided.where !== 'chat' && Date.parse(o.decided.at) > from && !named.has(o.card.id) && !noted(o.card.id))
       .sort((a, b) => Date.parse(a.decided.at) - Date.parse(b.decided.at)).slice(0, NOTE_CARDS)
     : [];
   const told = fresh.length === 0 ? null : `${SINCE_LEAD}${fresh.map((o) => `${subjectOf(o.card)}: ${answeredWords(o, at)}`).join('; ')}. ${SINCE_TAIL}`;

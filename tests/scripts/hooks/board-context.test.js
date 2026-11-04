@@ -6,6 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { loadBoardInputs } from '../../../scripts/board/inputs.js';
+import { NOTE_LEAD } from '../../../scripts/mod/press.js';
 import { decide, HEADINGS, WAIT_MS, LEARN_WAIT_MS, briefingIn, cardsDue, cardsLine, FOREMAN_LINE, SINCE_LEAD, STOPPED_LEAD } from '../../../scripts/hooks/board-context.js';
 import { FOREMAN_PROMPT_LEAD } from '../../../scripts/foreman/start.js';
 import { roleFile } from '../../../scripts/lib/role.js';
@@ -1183,6 +1184,37 @@ test('since the last turn: a panel answer is named and a chat answer is left out
     assert.doesNotMatch(text, /opening hours/);
     assert.match(text, /tell them in one plain line what they answered and where, as a fact\. Never ask these cards again\./);
     assert.doesNotMatch(text, /[0-9a-f]{12,}/, 'no card id');
+  });
+});
+
+// A transcript tail holding the hidden line the mod appended after a panel press.
+function notedTranscript(home, ...ids) {
+  const lines = ids.map((id) => ({
+    type: 'user', isMeta: true, message: { role: 'user', content: [{ type: 'text', text: `${NOTE_LEAD}approved in the panel at 10:34 on the footer wording (card ${id}). The chat already shows this to them: don't repeat it, and never ask that card again.` }] },
+  }));
+  const file = path.join(home, 'transcript.jsonl');
+  put(file, `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+  return file;
+}
+
+test('a panel answer whose note is in the transcript tail is left out of the since line; one whose note is not there is named', async () => {
+  await withProject(async ({ home, repo }) => {
+    seenAt();
+    const first = askedCard(QUESTION_A, '30');
+    const second = askedCard(QUESTION_B, '30');
+    store(stateDir(P), [first, second, answeredCard(QUESTION_A, '34', 'panel'), answeredCard(QUESTION_B, '35', 'panel')]);
+    const said = contextOf(await hook(withTranscript(repo, 'Done?', notedTranscript(home, first.id))));
+    assert.ok(said.startsWith(SINCE_LEAD), said);
+    assert.doesNotMatch(said, /footer wording/);
+    assert.match(said, /the new opening hours\?: approved in the panel at \d\d:35/);
+    // Both noted: no since line at all.
+    seenAt();
+    assert.equal(await hook(withTranscript(repo, 'Done?', notedTranscript(home, first.id, second.id))), undefined);
+    // Neither noted: both named.
+    seenAt();
+    const both = contextOf(await hook(withTranscript(repo, 'Done?', notedTranscript(home, 'someone-else'))));
+    assert.match(both, /footer wording/);
+    assert.match(both, /opening hours/);
   });
 });
 

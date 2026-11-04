@@ -987,6 +987,18 @@ test('a tick holds the watcher back while setup\'s journal can\'t be read, at th
   assert.deepEqual(asked, ['front-desk', 'foreman', 'front-desk']);
 }));
 
+test('a press answer passes on its notice and note, and the line carries them only as text', () => withHome(async () => {
+  enrolKey();
+  const pressCard = async () => ({ made: true, says: 'Approved.', notice: 'You approved the plan in the panel at 10:34.', note: 'Wheelhouse pane: the director approved it.' });
+  const answer = await handle({ cmd: 'press', cwd: '/work', card: 'card-1', hash: 'abcdef123456', label: 'Approve', origin: 'pane' }, deps({ pressCard, client: fakeClient() }));
+  assert.equal(answer.notice, 'You approved the plan in the panel at 10:34.');
+  assert.equal(answer.note, 'Wheelhouse pane: the director approved it.');
+  const line = JSON.parse(lineOf(answer));
+  assert.equal(line.notice, answer.notice);
+  assert.equal(line.note, answer.note);
+  assert.deepEqual(JSON.parse(lineOf({ ok: true, notice: 1, note: [] })), { ok: true });
+}));
+
 test('the answer line carries only its own fields', () => {
   const full = {
     ok: true, says: 'x', role: 'front-desk', every: 15000, pane: { v: 1 }, glance: 'g', status: 's', submit: ['one', 'two'], woken: ['stop:s'], wokeAt: '2026-10-20T09:12:55.000Z', rows: [{ key: 'k' }], text: 'digest',
