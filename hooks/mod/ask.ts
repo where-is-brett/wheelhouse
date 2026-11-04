@@ -1,6 +1,9 @@
 // hooks/mod/ask.ts
-// The mod's one call out: the plugin's bridge, `node <plugin root>/scripts/mod/bridge.js`,
-// run through the engine's process call with one JSON request on standard input. The bridge
+// The mod's one call out: the plugin's bridge, `node <plugin root>/scripts/hooks/node-floor.cjs
+// <plugin root>/scripts/mod/bridge.js`, run through the engine's process call with one JSON request
+// on standard input. The Node.js on the PATH can be an older one than another on the computer, so
+// the bridge is started through the same version check as the hooks, which runs it again under a
+// fitting Node.js when the first one is too old. The bridge
 // answers one JSON line. Those commands run outside the session's sandbox, so the bridge can
 // sign (check 32). scripts/mod/validate.js checks that this is the mod's only such call and that
 // it runs nothing but the bridge.
@@ -65,7 +68,7 @@ function answerOf(line: unknown): Answer | null {
 // something that isn't its one line.
 export async function ask($: EngineInterface, request: Record<string, unknown>, { timeoutMs = ASK_MS }: { timeoutMs?: number } = {}): Promise<Answer | null> {
   try {
-    const run = await $.process.run(['node', `${$.plugin.root}/scripts/mod/bridge.js`], {
+    const run = await $.process.run(['node', `${$.plugin.root}/scripts/hooks/node-floor.cjs`, `${$.plugin.root}/scripts/mod/bridge.js`], {
       stdin: JSON.stringify(request),
       timeoutMs,
     })

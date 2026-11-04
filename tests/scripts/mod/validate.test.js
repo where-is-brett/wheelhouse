@@ -20,7 +20,7 @@ import { FOREMAN_PROMPT_LEAD } from '../../../scripts/foreman/start.js';
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 // The mod's hooks as the validator lists them.
 const LISTED = HOOKS.join(', ');
-const ARGV = "['node', `${$.plugin.root}/scripts/mod/bridge.js`]";
+const ARGV = "['node', `${$.plugin.root}/scripts/hooks/node-floor.cjs`, `${$.plugin.root}/scripts/mod/bridge.js`]";
 // The module's source as it stands: the bridge's one call in hooks/mod/ask.ts.
 const SOURCES = {
   'hooks/register.ts': 'export const register = (on) => { on("session.start", async ($, e, next) => { await ask($, {}); return next(e) }) }',
@@ -221,6 +221,9 @@ test('a second $.process.run, or one running anything but the bridge, fails', ()
   const other = bridgeArgv({ ...SOURCES, 'hooks/mod/ask.ts': "const r = $.process.run(['node', `${$.plugin.root}/scripts/other.js`])" });
   assert.equal(other.ok, false);
   assert.match(other.why, /bridge\.js/);
+  // The bridge started by `node` alone, past the Node.js version check, is not the mod's call.
+  const bare = bridgeArgv({ ...SOURCES, 'hooks/mod/ask.ts': "const r = $.process.run(['node', `${$.plugin.root}/scripts/mod/bridge.js`])" });
+  assert.equal(bare.ok, false);
   const shell = bridgeArgv({ ...SOURCES, 'hooks/mod/ask.ts': "const r = $.process.run(['sh', '-c', 'node x'])" });
   assert.equal(shell.ok, false);
   const aliased = bridgeArgv({ ...SOURCES, 'hooks/mod/ask.ts': `const run = $.process.run; run(${ARGV})` });
