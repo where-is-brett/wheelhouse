@@ -52,6 +52,11 @@ h2 { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacin
 .suggest-box textarea { width: 100%; min-height: 4.5em; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-widget-border, var(--vscode-panel-border))); border-radius: 4px; padding: 4px 6px; font: inherit; }
 .suggest-box .row { display: flex; gap: 6px; margin-top: 6px; }
 .hidden { display: none; }
+.ask { font-weight: 600; }
+.plain { padding: 5px 12px; color: var(--vscode-disabledForeground, var(--vscode-descriptionForeground)); }
+.recording { padding: 5px 12px; font-weight: 600; }
+.nav { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin: 0 0 12px; }
+.nav .row { display: flex; gap: 6px; margin-left: auto; }
 
 .item { display: flex; gap: 8px; align-items: baseline; margin: 0 0 6px; }
 .dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--vscode-editorWarning-foreground); }

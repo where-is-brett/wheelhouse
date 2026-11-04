@@ -7,7 +7,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
-const { renderPane, statusText } = require('./pane/render.js');
+const { renderPane, statusText, waitingCards } = require('./pane/render.js');
 const { makeNonces } = require('./nonce.cjs');
 const { onPaneMessage } = require('./press.cjs');
 const { writeVersions, watchVersions } = require('./versions.cjs');
@@ -35,7 +35,7 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
   const startHelper = deps.startHelper ?? (() => desks.startHelperIfNeeded({ ask, node, root }));
 
   const nonces = makeNonces({ bytes: deps.nonceBytes ?? 32 });
-  const state = { last: null, notice: null, view: 'main', settings: null, briefing: '', offerPending: false, current: null, startedAt: 0, stopped: false, visibleAt: null, window: crypto.randomBytes(16).toString('hex') };
+  const state = { last: null, notice: null, view: 'main', at: 0, pressing: null, answered: null, settings: null, briefing: '', offerPending: false, current: null, startedAt: 0, stopped: false, visibleAt: null, window: crypto.randomBytes(16).toString('hex') };
 
   const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   item.command = OPEN_PANE;
@@ -48,13 +48,13 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
     // A hidden pane is not drawn: showing it again draws it, with a new nonce.
     if (state.current === null || state.current.visible === false) return;
     // Nothing drawn again when nothing changed, so what the director is typing or has open stays, and the nonce with it.
-    const key = JSON.stringify([state.last, state.notice, state.view, state.settings, state.briefing]);
+    const key = JSON.stringify([state.last, state.notice, state.view, state.settings, state.briefing, state.at, state.pressing, state.answered]);
     if (!force && key === state.drawn && !state.offerPending) return;
     state.drawn = key;
     const offer = state.offerPending;
     state.offerPending = false;
     state.current.webview.html = renderPane(state.last, {
-      nonce: nonces.renew(), view: state.view, settings: state.settings, briefing: state.briefing, notice: state.notice, offer,
+      nonce: nonces.renew(), view: state.view, settings: state.settings, briefing: state.briefing, notice: state.notice, offer, at: state.at, recording: state.pressing, answered: state.answered,
       trusted: trusted(),
     });
   }
@@ -97,6 +97,8 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
       got = null;
     }
     if (got?.ok === true && got.data?.pane !== null && typeof got.data?.pane === 'object') {
+      // The line saying a press was counted stays until the model changes.
+      if (JSON.stringify(got.data.pane) !== JSON.stringify(state.last)) state.answered = null;
       state.last = got.data.pane;
       state.notice = null;
     } else {
@@ -118,6 +120,17 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
     notify: async (message) => { vscode.window.showInformationMessage(message); },
     open: async (address) => { await vscode.env.openExternal(vscode.Uri.parse(address)); },
     redraw: refresh,
+    marking: async (id) => { state.pressing = typeof id === 'string' ? id : null; draw(); },
+    step: async (by) => {
+      const last = Math.max(0, waitingCards(state.last).length - 1);
+      state.at = Math.min(last, Math.max(0, Math.min(state.at, last) + by));
+      draw();
+    },
+    answered: async (notice) => {
+      vscode.window.showInformationMessage(notice);
+      state.answered = notice;
+      draw();
+    },
     show: async (view, data) => {
       state.view = view;
       if (data.settings !== undefined) state.settings = data.settings;

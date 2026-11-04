@@ -301,3 +301,75 @@ test('a redraw with nothing changed leaves the page, and its nonce, as they were
   await add.refresh();
   assert.equal(view.html, before);
 });
+
+test('next and back press nothing and change only the card shown', async () => {
+  const { calls, deps } = stand();
+  const steps = [];
+  deps.step = async (by) => { steps.push(by); };
+  const nonce = deps.nonces.renew();
+  assert.equal((await onPaneMessage({ nonce, type: 'next' }, deps)).made, true);
+  assert.equal((await onPaneMessage({ nonce, type: 'back' }, deps)).made, true);
+  assert.deepEqual(steps, [1, -1]);
+  assert.deepEqual([calls.pressCard.length, calls.whyCard.length, calls.suggestCard.length, calls.act.length], [0, 0, 0, 0]);
+  // With a stale nonce, nothing moves.
+  await onPaneMessage({ nonce: 'f'.repeat(64), type: 'next' }, deps);
+  assert.deepEqual(steps, [1, -1]);
+});
+
+test('a press marks recording, then clears it, also when the press throws', async () => {
+  const { deps } = stand();
+  const marks = [];
+  deps.marking = async (id) => { marks.push(id); };
+  const nonce = deps.nonces.renew();
+  await onPaneMessage(press(nonce), deps);
+  assert.deepEqual(marks, ['c1', null]);
+  marks.length = 0;
+  deps.press.pressCard = async () => { throw new Error('boom'); };
+  const out = await onPaneMessage(press(nonce), deps);
+  assert.equal(out.made, false);
+  assert.deepEqual(marks, ['c1', null]);
+});
+
+test('an answered notice reaches deps.answered, and none comes for Not now or a stale press', async () => {
+  const { deps } = stand({ answer: { made: true, says: 'Approved.', notice: 'You approved the sign-in wording at 10:34.' } });
+  const told = [];
+  deps.answered = async (notice) => { told.push(notice); };
+  const nonce = deps.nonces.renew();
+  await onPaneMessage(press(nonce), deps);
+  assert.deepEqual(told, ['You approved the sign-in wording at 10:34.']);
+  deps.press.pressCard = async () => ({ made: true, says: 'Left waiting.' });
+  await onPaneMessage(press(nonce, { choice: 'Not now' }), deps);
+  deps.press.pressCard = async () => ({ made: false });
+  await onPaneMessage(press(nonce), deps);
+  assert.equal(told.length, 1);
+});
+
+test('the pane steps through the cards, shows Recording… while a press runs and keeps the answered line until the model changes', async () => {
+  const { activate } = require('../../vscode/extension.cjs');
+  const vscode = fakeVscode();
+  let pane = model({ cards: [card(), card({ id: 'c2', n: 2, hash: 'ff00ff00ff00' })] });
+  let seen = null;
+  const view = fakeView();
+  const pressing = { pressCard: async () => { seen = view.html; return { made: true, says: 'Approved.', notice: 'You approved it at 10:34.' }; } };
+  const deps = { desk: { read: async () => ({ ok: true, data: { pane } }), watch: async () => ({ ok: false }), act: async () => ({ ok: true }) }, ask: async () => true, node: '/n', loop: false, expose: true, startHelper: async () => {}, versions: async () => {}, press: pressing, stop: { setStop() {}, liftStop() {} }, project: P };
+  const add = await activate({ subscriptions: [], extensionPath: '/ext', globalState: { get: () => true, update: async () => {} } }, { vscode, deps });
+  await vscode.seen.providers.get('wheelhouse.pane').resolveWebviewView(view);
+  const nonceOf = () => view.html.match(/data-nonce="([0-9a-f]+)"/)[1];
+  assert.ok(view.html.includes('data-card="c1"') && !view.html.includes('data-card="c2"'));
+  await view.send({ nonce: nonceOf(), type: 'next' });
+  assert.ok(view.html.includes('data-card="c2"') && !view.html.includes('data-card="c1"'));
+  await view.send({ nonce: nonceOf(), type: 'next' });
+  assert.ok(view.html.includes('data-card="c2"'));
+  await view.send({ nonce: nonceOf(), type: 'back' });
+  assert.ok(view.html.includes('data-card="c1"'));
+  await view.send({ nonce: nonceOf(), type: 'press', card: 'c1', hash: 'abc123def456', choice: 'Approve' });
+  assert.ok(seen.includes('Recording…'));
+  assert.ok(!view.html.includes('Recording…'));
+  assert.ok(view.html.includes('You approved it at 10:34.'));
+  assert.deepEqual(vscode.seen.info.at(-1), ['You approved it at 10:34.']);
+  await add.refresh();
+  assert.ok(view.html.includes('You approved it at 10:34.'), 'an unchanged model keeps the line');
+  pane = model({ cards: [card({ id: 'c2', n: 2, hash: 'ff00ff00ff00' })] });
+  await add.refresh();
+  assert.ok(!view.html.includes('You approved it at 10:34.'));
+});

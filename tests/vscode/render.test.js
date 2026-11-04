@@ -74,9 +74,41 @@ test('a card the pane can\'t answer shows its note and no buttons', () => {
   assert.ok(!html.includes('data-act="press"'));
 });
 
-test('the smaller items carry an amber dot', () => {
-  const html = draw(model({ cards: [card(), card({ id: 'c2', n: 2, blocking: false, text: 'Pick a colour for the footer.', parts: null })] }));
-  assert.match(html, /class="item"[^>]*>[\s\S]*class="dot"[\s\S]*Pick a colour for the footer\./);
+test('a card that does not block is a full card, shown one at a time', () => {
+  const html = draw(model({ cards: [card(), card({ id: 'c2', n: 2, blocking: false, hash: 'ff00ff00ff00', text: 'Pick a colour for the footer.', parts: { ask: 'Which footer colour?', what: 'Pick one.', optional: 3 } })] }));
+  assert.ok(!html.includes('Smaller things'));
+  assert.ok(html.includes('data-card="c1"') && !html.includes('data-card="c2"'));
+  assert.ok(html.includes('Next: Which footer colour? · optional · 3 min'));
+  const second = draw(model({ cards: [card(), card({ id: 'c2', n: 2, blocking: false, hash: 'ff00ff00ff00', parts: null, text: 'Pick a colour for the footer.' })] }), { at: 1 });
+  assert.ok(second.includes('data-card="c2"') && !second.includes('data-card="c1"'));
+  assert.ok(second.includes('data-act="back"') && !second.includes('data-act="next"'));
+  assert.ok(second.includes('Card 2 of 2'));
+  const past = draw(model({ cards: [card(), card({ id: 'c2', n: 2, hash: 'ff00ff00ff00' })] }), { at: 9 });
+  assert.ok(past.includes('data-card="c2"'));
+});
+
+test('a press in progress turns the filled button into Recording… and the others into plain words', () => {
+  const html = draw(model({ cards: [card()] }), { recording: 'c1' });
+  assert.ok(html.includes('Recording…'));
+  assert.ok(!html.includes('data-act="press"') && !html.includes('data-act="why-toggle"') && !html.includes('data-act="suggest-open"'));
+  assert.ok(html.includes('data-act="stop"'));
+  // Another card's press holds this card's buttons too, with no Recording… of its own.
+  const other = draw(model({ cards: [card()] }), { recording: 'c9' });
+  assert.ok(!other.includes('Recording…') && !other.includes('data-act="press"'));
+});
+
+test('a revised card names it, shows what changed and a steered card says when', () => {
+  const html = draw(model({ cards: [card({ revised: true, steered: '14:10', parts: { what: 'It changes the wording.', changed: 'The date moved.' } })] }));
+  assert.ok(html.includes('Approval · revised'));
+  assert.ok(html.includes('What changed: The date moved.'));
+  assert.ok(html.includes('You suggested a change at 14:10.'));
+  assert.ok(!draw(model({ cards: [card({ revised: false, parts: { what: 'x', changed: 'The date moved.' } })] })).includes('What changed:'));
+});
+
+test('words from a record are escaped in every part of a card', () => {
+  const bad = '<img src=x onerror=alert(1)>';
+  const html = draw(model({ cards: [card({ steered: bad, revised: true, note: bad, waited: bad, parts: { header: bad, ask: bad, what: bad, small: bad, recommendation: bad, changed: bad, why: bad, meanwhile: bad, options: [{ label: bad, says: bad }] } })] }), { answered: bad });
+  assert.ok(!html.includes('<img'));
 });
 
 test('the status text counts needs-you items', () => {
@@ -177,6 +209,15 @@ test('out of date shows the warning and no figures', () => {
   // No digit in the verdict's text: look only between tags, so no markup is stripped.
   const verdict = html.match(/<p class="verdict">(.*?)<\/p>/)[1];
   assert.ok(!/(^|>)[^<]*\d/.test(verdict));
+});
+
+test('out of date does not claim that nothing is broken', () => {
+  const stale = drawFixture('out-of-date');
+  assert.ok(!stale.includes('Nothing is broken'));
+  assert.ok(stale.includes('One thing needs you.'));
+  assert.ok(!stale.includes('class="ok"'));
+  assert.ok(draw(model({ cards: [card()], verdict: 'One thing needs you. Nothing is broken.' })).includes('Nothing is broken.'));
+  assert.ok(draw(model({ missing: ['Old.'], verdict: 'One thing needs you. The shop page is down.' })).includes('The shop page is down.'));
 });
 
 test('first reading draws the mod\'s line', () => {
