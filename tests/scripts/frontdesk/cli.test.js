@@ -26,7 +26,10 @@ import { openTestRecord } from '../../helpers/record-fixture.js';
 import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
-import { stateDir } from '../../../scripts/lib/paths.js';
+import { stateDir, computerId } from '../../../scripts/lib/paths.js';
+import { markVscodePane } from '../../../scripts/lib/vscode-pane.js';
+import { paneLine, SINCE_LEAD } from '../../../scripts/cards/panel-words.js';
+import { heldForVscode } from '../../../scripts/frontdesk/cli.js';
 import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
 import { sheetHash, pieceCovered } from '../../../scripts/engine/goal.js';
@@ -2701,4 +2704,117 @@ test('note asks the helper to keep the session note, and refuses what the helper
   const stopped = await run(keeper({ ok: false, refused: 'STOP is on' }), ['note'], 'a note', { cwd: CWD, env });
   assert.equal(stopped.code, 1);
   assert.match(stopped.err, /STOP is on/);
+});
+
+// --- a live VS Code panel holds the cards of a project that runs the editor's agent back ---
+
+// A registered project in a folder whose configuration names `agent` for this computer, and its panel's mark.
+function vscodeProject(agent, { markAgeMs } = {}) {
+  const folder = path.join(tempFolder('wh-vscode-'), 'shop');
+  fs.mkdirSync(path.join(folder, '.git'), { recursive: true });
+  fs.mkdirSync(path.join(folder, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(folder, '.claude', 'wheelhouse.json'), JSON.stringify({ agents: { [computerId()]: agent } }));
+  writeProject('o__p', { folder, remoteUrl: 'https://example.test/o/p.git', host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
+  if (markAgeMs !== undefined) markVscodePane('o__p', { at: NOW.getTime() - markAgeMs, visible: NOW.getTime() - markAgeMs, window: 'w' });
+  return folder;
+}
+const AGENT = 'copilot';
+
+test('a live VS Code panel holds Copilot\'s cards', async () => {
+  await inHome(async () => {
+    const folder = vscodeProject(AGENT, { markAgeMs: 1000 });
+    const one = cardEvent(PRODUCT(1), 1);
+    const two = cardEvent(PRODUCT(2), 2);
+    const helper = fakeHelper({ events: [one, two] });
+    const held = await run(helper, ['cards'], undefined, { cwd: folder });
+    assert.equal(held.code, 0, held.err);
+    assert.equal(held.json.questions, undefined);
+    assert.equal(held.json.panel, paneLine(2));
+    assert.deepEqual(helper.writes().filter((w) => w.kind === 'asked').map((w) => w.data.cards), [[one.id, two.id]], 'the cards are marked asked');
+    assert.ok(!held.out.includes(one.id), 'no card id is given');
+  });
+});
+
+test('a Claude Code project\'s cards are never held by a VS Code panel', async () => {
+  await inHome(async () => {
+    const folder = vscodeProject('claude-code', { markAgeMs: 1000 });
+    const out = await run(fakeHelper({ events: [cardEvent(PRODUCT(1), 1)] }), ['cards'], undefined, { cwd: folder });
+    assert.equal(out.json.panel, undefined);
+    assert.equal(out.json.questions.length, 1);
+  });
+});
+
+test('a project with no named agent is asked in the chat whatever its mark says', async () => {
+  await inHome(async () => {
+    const folder = vscodeProject('claude-code', { markAgeMs: 1000 });
+    fs.rmSync(path.join(folder, '.claude', 'wheelhouse.json'));
+    const out = await run(fakeHelper({ events: [cardEvent(PRODUCT(1), 1)] }), ['cards'], undefined, { cwd: folder });
+    assert.equal(out.json.questions.length, 1);
+  });
+});
+
+test('a stale mark holds nothing', async () => {
+  await inHome(async () => {
+    const folder = vscodeProject(AGENT, { markAgeMs: 46000 });
+    const out = await run(fakeHelper({ events: [cardEvent(PRODUCT(1), 1)] }), ['cards'], undefined, { cwd: folder });
+    assert.equal(out.json.panel, undefined);
+    assert.equal(out.json.questions.length, 1);
+  });
+});
+
+test('--here lets them through once on a held project', async () => {
+  await inHome(async () => {
+    const folder = vscodeProject(AGENT, { markAgeMs: 1000 });
+    const helper = fakeHelper({ events: [cardEvent(PRODUCT(1), 1)] });
+    const first = await run(helper, ['cards', '--here'], undefined, { cwd: folder, env: {} });
+    assert.equal(first.code, 0, first.err);
+    assert.equal(first.json.questions.length, 1, 'asked in the chat, as the director wanted');
+    const next = await run(helper, ['again', '1'], undefined, { cwd: folder });
+    assert.equal(next.json.questions.length, 1, 'let through once');
+    const after = await run(helper, ['again', '1'], undefined, { cwd: folder });
+    assert.equal(after.json.questions, undefined);
+    assert.equal(after.json.panel, paneLine(1));
+  });
+});
+
+test('again and pull-cards are held too, and --here still needs a session on Claude Code', async () => {
+  await inHome(async () => {
+    const folder = vscodeProject(AGENT, { markAgeMs: 1000 });
+    const helper = fakeHelper({ events: [cardEvent(PRODUCT(1), 1)] });
+    const asked = await run(helper, ['again', '1'], undefined, { cwd: folder });
+    assert.equal(asked.json.panel, paneLine(1));
+    assert.equal(asked.json.questions, undefined);
+    helper.held.push(cardEvent(PRODUCT(2), 2));
+    const pulled = await run(helper, ['pull-cards'], undefined, { cwd: folder });
+    assert.equal(pulled.json.questions, undefined);
+    assert.equal(pulled.json.panel, paneLine(1));
+    const claude = vscodeProject('claude-code', { markAgeMs: 1000 });
+    const none = await run(fakeHelper({ events: [cardEvent(PRODUCT(1), 1)] }), ['cards', '--here'], undefined, { cwd: claude, env: {} });
+    assert.equal(none.err, 'The session isn\'t known, so the cards can\'t be asked here.\n');
+  });
+});
+
+test('a failure reading the panel mark asks the cards in the chat', () => {
+  assert.equal(heldForVscode(null, NOW.getTime()), false);
+  assert.equal(heldForVscode({ project: '../x', record: { folder: 7 } }, NOW.getTime()), false);
+});
+
+test('views waiting --since names panel answers only', async () => {
+  await inHome(async () => {
+    const one = cardEvent(PRODUCT(1), 1);
+    const two = cardEvent(PRODUCT(2), 2);
+    const helper = fakeHelper({ events: [one, two, answerAt(one, 'Plain', 10 * MINUTE, 'panel'), answerAt(two, 'Playful', 8 * MINUTE, 'chat')] });
+    const since = new Date(NOW.getTime() - 20 * MINUTE).toISOString();
+    const out = await run(helper, ['views', 'waiting', '--since', since]);
+    assert.equal(out.code, 0, out.err);
+    const lead = out.out.split('\n').filter((l) => l.startsWith(SINCE_LEAD));
+    assert.equal(lead.length, 1);
+    assert.match(lead[0], /Plain/);
+    assert.doesNotMatch(lead[0], /Playful/);
+    assert.ok(out.out.indexOf(RECENT_LEAD) < out.out.indexOf(SINCE_LEAD), 'after the recent block');
+    const plain = await run(helper, ['views', 'waiting']);
+    assert.ok(!plain.out.includes(SINCE_LEAD), 'without --since nothing changes');
+    const bad = await run(helper, ['views', 'waiting', '--since', 'soon']);
+    assert.equal(bad.code, 1);
+  });
 });

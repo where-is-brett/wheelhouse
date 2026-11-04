@@ -36,6 +36,7 @@ import { listEvents } from '../state/events.js';
 import { readEnrolled } from '../state/signing.js';
 import { stateDir } from '../lib/paths.js';
 import { subjectOf, answeredWords } from '../cards/answered.js';
+import { PANE_LEAD, paneLine } from '../cards/panel-words.js';
 import { paneLive, takeHere, markOpen, HOLD_FOR_PANE } from '../lib/session-files.js';
 import { sessionRole } from '../lib/role.js';
 import { cardButtons } from '../mod/buttons.js';
@@ -158,7 +159,7 @@ function baselineFaults(questions, now, { figures = true } = {}) {
 }
 
 export const DECIDED_LEAD = 'The director has already answered: ';
-export const PANE_LEAD = 'These cards are in the panel beside the chat: ';
+export { PANE_LEAD };
 
 // The cards the questions are, as `standing` matches them: for each question, { card } while it waits or
 // { card, stale } once decided; a question matching no card is left out. Throws when the state can't be read.
@@ -190,7 +191,7 @@ function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere:
     && live(session, at.getTime()) && !take(session, held.map((f) => f.card.id), at.getTime())) {
     const n = held.length;
     const others = found.filter((f) => f === null || !held.includes(f)).length > 0;
-    return { deny: `${PANE_LEAD}${n}. Say in one line, before anything else, that ${n} ${plural(n, 'card waits', 'cards wait')} in the panel and that you can ask ${plural(n, 'it', 'them')} here instead. Give no card's words, number or id.${others ? ' Ask only the others.' : ''}` };
+    return { deny: paneLine(n, { others }) };
   }
   return { open: waiting.map((f) => f.card.id) };
 }

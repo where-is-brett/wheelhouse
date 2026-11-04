@@ -49,6 +49,7 @@
 import { answer, runAndExit, projectOf, beingSetUp, readTailEntries } from './kit.js';
 import { stoppedQuestion } from './stopped-question.js';
 import { answeredWords, subjectOf, NOTE_LEAD } from '../cards/answered.js';
+import { SINCE_LEAD, SINCE_TAIL } from '../cards/panel-words.js';
 import { chatCopy } from '../state/card-lines.js';
 import { readOpen, clearOpen } from '../lib/session-files.js';
 import { featureSlug, SETUP_FIRST } from './session-start.js';
@@ -164,9 +165,8 @@ export function cardsDue(views, at) {
 
 // What the director answered since the First Mate's last turn, and how the cards of a question that was stopped stand now.
 // Neither names a card's id: a card goes by its subject.
-export const SINCE_LEAD = 'Since your last turn, the director answered: ';
+export { SINCE_LEAD };
 export const STOPPED_LEAD = 'The last card question was stopped, which records nothing and is no answer. As each card stands now: ';
-const SINCE_TAIL = 'Before anything else, tell them in one plain line what they answered and where, as a fact. Never ask these cards again.';
 const STOPPED_TAIL = 'Never say a card was closed without an answer.';
 // The most cards one line names; the rest are on the board.
 const NOTE_CARDS = 6;
