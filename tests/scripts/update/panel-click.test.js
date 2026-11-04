@@ -241,6 +241,7 @@ test('the helper\'s window signs the Update card\'s click for the plan the helpe
     const got = await w.confirm();
     assert.deepEqual([got.ok, got.recorded, got.kind, got.step, got.choice], [true, true, 'action', 'update', 'Update']);
     assert.deepEqual(w.shown[0].options, ['Update']);
+    assert.equal(w.shown[0].noDefault, true, 'Return chooses nothing on the Update card');
     const click = w.c.events().find((e) => e.kind === 'action');
     assert.deepEqual([click.data.action, click.data.hash, click.data.proof], ['update-click', HASH, 'window']);
     assert.equal(clickWasMade({ events: w.c.events(), enrolled: readEnrolled(), stored: w.at, label: 'Update' }), true);
@@ -254,6 +255,7 @@ test('Not now in the helper\'s window is a signed decline for the same plan, ear
   try {
     const got = await w.confirm();
     assert.deepEqual([got.ok, got.recorded, got.choice], [true, true, 'Not now']);
+    assert.equal(w.shown[0].noDefault, true);
     const decline = w.c.events().find((e) => e.kind === 'action');
     assert.deepEqual([decline.data.action, decline.data.hash, decline.data.from, decline.data.to, decline.data.put, decline.data.label, decline.data.proof], ['update-click', HASH, 'v0.2.6', 'v0.2.7', 'release', 'Not now', 'window']);
     assert.equal(verify(decline, readEnrolled()), true);

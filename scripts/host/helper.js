@@ -2347,6 +2347,8 @@ export async function startHelper({
     'update-click': 'update',
   };
   // The steps the window serves while STOP is on: Lift STOP, and a Lean undo, as the runbook's local steps carry on.
+  // The update's steps: their window names no default button, so a stray Return or Enter chooses nothing.
+  const NO_DEFAULT_STEPS = ['update', 'release-approval', 'update-helper'];
   const UNDER_STOP = ['lift-stop', 'undo-merge', 'undo-main'];
   // The labels of Lean's cards a project in git alone answers the same way, on its home. Its approval is a pull request's, as any.
   const HOME_ANSWERS = ['Keep it', 'Undo it', 'Undo'];
@@ -2502,7 +2504,7 @@ export async function startHelper({
     const allowance = shown.deciding.find((d) => d.step === ACTION_STEPS.answer);
     if (allowance) lines.push(...allowanceWindowLines(allowanceQuestion(project, allowance.made.data, shown.event.at)?.commands));
     const header = typeof shown.event.data.header === 'string' && shown.event.data.header !== '' ? shown.event.data.header : null;
-    const { choice } = await askWindow({ title: header === null ? 'Wheelhouse' : `Wheelhouse: ${header}`, lines, options: shown.deciding.map((d) => d.label).filter((label) => label !== NOT_NOW) });
+    const { choice } = await askWindow({ title: header === null ? 'Wheelhouse' : `Wheelhouse: ${header}`, lines, options: shown.deciding.map((d) => d.label).filter((label) => label !== NOT_NOW), ...(shown.deciding.some((d) => NO_DEFAULT_STEPS.includes(d.step)) ? { noDefault: true } : {}) });
     const picked = shown.deciding.find((d) => d.label === choice);
     if (!picked) return { ok: true, choice: choice === NOT_NOW ? NOT_NOW : null, recorded: false };
     const answer = await stateRoute(async () => {
