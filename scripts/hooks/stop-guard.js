@@ -133,7 +133,7 @@ function isSetupRead(command, pluginRoots, platform) {
   return (args.length === 1 && ['status', 'resume', 'choices'].includes(args[0])) || (args.length === 2 && ['plan', 'wait'].includes(args[0]) && SETUP_STEP.test(args[1]));
 }
 
-// The update command's four forms (scripts/update/cli.js), by their exact words: `plan`, `plan <tag>`, `apply <hash>` (the plan's
+// The update command's forms (scripts/update/cli.js), by their exact words: `bootstrap <folder>` (which refuses without a real terminal), `plan`, `plan <tag>`, `apply <hash>` (the plan's
 // full SHA-256), `status` and `answer <card> <label>` (a card the update named and one of the labels its cards have). The lineage
 // hold lets exactly these through, since an update is often the way out of a broken install (update design, section 15). Under
 // STOP the helper refuses `apply`, and this guard lets none of them through.
@@ -147,6 +147,8 @@ export function isUpdateCommand(command, pluginRoots, platform) {
   if (form === 'plan') return rest.length === 0 || (rest.length === 1 && UPDATE_TAG.test(rest[0]));
   if (form === 'apply') return rest.length === 1 && /^[0-9a-f]{64}$/.test(rest[0]);
   if (form === 'status') return rest.length === 0;
+  // bootstrap names one folder, never a flag. It reads the director's answer from a real terminal and refuses without one.
+  if (form === 'bootstrap') return rest.length === 1 && rest[0] !== '' && !rest[0].startsWith('-');
   if (form === 'answer') return rest.length === 2 && UPDATE_CARD.test(rest[0]) && UPDATE_ANSWERS.includes(rest[1]);
   return false;
 }

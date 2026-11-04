@@ -15,14 +15,18 @@
 //                           approval of a release, the old helper's), the director's click was signed by the prompt record
 //                           or the helper's window; this tells the update to look again at once, and the helper refuses it
 //                           when no signed answer is there.
+//   bootstrap <folder>      the one update a computer on v0.2.6 or earlier makes, by the director's own hand in Terminal
+//                           (bootstrap.js): it takes the director's typed 1 or 2 from a real terminal, and refuses without one.
+//                           It is the only form that changes anything itself, through the update job.
 // Errors are one line on standard error.
 import path from 'node:path';
 import { helperClient } from '../host/helper-client.js';
 import { startedAsScript } from '../lib/started-as-script.js';
+import { NO_TERMINAL, bootstrap, terminalAsk } from './bootstrap.js';
 
 export class CliError extends Error {}
 
-export const USAGE = 'Commands: plan [<tag>], apply <hash>, status, answer <card> <label>';
+export const USAGE = 'Commands: plan [<tag>], apply <hash>, status, answer <card> <label>, bootstrap <project folder>';
 const HASH = /^[0-9a-f]{64}$/;
 const TAG = /^v\d+\.\d+\.\d+(?:-[A-Za-z0-9][A-Za-z0-9.-]{0,40})?$/;
 const CARD = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
@@ -45,7 +49,7 @@ async function ask(route, body) {
 const unreached = (got) => got?.ok === false && /could not be reached|did not answer in time/.test(String(got.refused));
 
 export async function main(argv, {
-  cwd = process.cwd(), client, out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t),
+  cwd = process.cwd(), client, stdin = process.stdin, typedAnswer, bootstrapDeps = {}, out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t),
 } = {}) {
   try {
     const [form, ...rest] = argv;
@@ -79,6 +83,20 @@ export async function main(argv, {
       if (!ANSWERS.includes(rest[1])) throw new CliError(`Give the label of one of the card's options: ${ANSWERS.join(', ')}`);
       const { ok, ...answer } = await ask(helper.update.answer, { folder, card: rest[0], label: rest[1] }); // eslint-disable-line no-unused-vars
       json(answer);
+    } else if (form === 'bootstrap' && rest.length === 1) {
+      // A typed answer at a real terminal stands in for the click (bootstrap.js). Without one, nothing is read or changed.
+      const typed = typedAnswer ?? terminalAsk({ stdin });
+      if (typeof typed !== 'function' || (typedAnswer === undefined && stdin?.isTTY !== true)) throw new CliError(NO_TERMINAL);
+      let got;
+      try {
+        got = await bootstrap({
+          projectDir: path.resolve(cwd, rest[0]), ask: typed, say: (text) => out(`${text}\n`), client, ...bootstrapDeps,
+        });
+      } finally {
+        typed.close?.();
+      }
+      out(`${got.line}\n`);
+      return got.ok || got.declined === true ? 0 : 1;
     } else {
       throw new CliError(USAGE);
     }
