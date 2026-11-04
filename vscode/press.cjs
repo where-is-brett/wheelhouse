@@ -33,6 +33,7 @@ async function onPaneMessage(msg, deps) {
     return out;
   };
   const again = async () => { try { await deps.redraw(); } catch { /* The next tick draws it. */ } };
+  const mark = async (id) => { try { await deps.marking?.(id); } catch { /* The mark is a courtesy. */ } };
   const call = { project, client: deps.client, desk: deps.desk, now: deps.now, stopState: deps.stopState };
 
   try {
@@ -40,10 +41,27 @@ async function onPaneMessage(msg, deps) {
       if (project === null) return say(no(NO_PROJECT));
       const [card, hash, choice] = [words(msg.card), words(msg.hash), words(msg.choice)];
       if (card === '' || hash === '' || choice === '') return no();
-      const out = await deps.press.pressCard({ ...call, card, hash, label: choice, liftStop: deps.stop.liftStop, proof: 'add-on' });
+      // The pane shows Recording… from here until the press answers, however it ends.
+      let out;
+      try {
+        await mark(card);
+        out = await deps.press.pressCard({ ...call, card, hash, label: choice, liftStop: deps.stop.liftStop, proof: 'add-on' });
+      } finally {
+        await mark(null);
+      }
       await say(out?.made === true && Array.isArray(out.submit) && out.submit.length > 0 ? { ...out, says: `${out.says ?? 'Recorded.'} ${HAND_ON}` } : out);
       await again();
+      // A counted deciding press says so (the mod's `notice`); Not now and a stale press have none.
+      if (out?.made === true && typeof out.notice === 'string' && out.notice !== '') {
+        try { await deps.answered?.(out.notice); } catch { /* The line is a courtesy. */ }
+      }
       return { made: out?.made === true, ...(typeof out?.says === 'string' ? { says: out.says } : {}) };
+    }
+
+    // Next and Back change the card shown and nothing else: no press, no record.
+    if (type === 'next' || type === 'back') {
+      await deps.step?.(type === 'next' ? 1 : -1);
+      return { made: true };
     }
 
     if (type === 'why') {

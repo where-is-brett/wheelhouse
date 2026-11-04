@@ -59,6 +59,7 @@ const SCRIPT = `
     if (act === 'why-toggle') {
       const box = card && card.querySelector('.why-box');
       if (box) box.classList.toggle('hidden');
+      if (el.dataset.alt) { const was = el.textContent; el.textContent = el.dataset.alt; el.dataset.alt = was; }
       if (box && !box.classList.contains('hidden') && el.dataset.noted !== '1') {
         el.dataset.noted = '1';
         send({ type: 'why', card: el.dataset.card, hash: el.dataset.hash });
@@ -145,54 +146,102 @@ function cardWords(card) {
   return what !== '' ? what : text(card.text);
 }
 
-function drawCard(card) {
+// The words the mod's cards use for what it adds to a card (hooks/mod/numbers.ts).
+const RECORDING = 'Recording…';
+const HIDE_WHY = 'Hide why';
+const WHAT_CHANGED = 'What changed:';
+const OPEN_IN_CHAT = 'Also open in the chat.';
+const SHOW_ME = 'Show me';
+const suggestedAt = (hhmm) => `You suggested a change at ${hhmm}. A new proposal is on its way, and nothing goes live meanwhile.`;
+
+// A button that can't be pressed just now (another press is being recorded): its word, as plain text.
+const plain = (label) => `<span class="plain">${esc(label)}</span>`;
+
+// One card, part by part in the mod's order (hooks/mod/cards.tsx): its kind and place with the corner button, the ask,
+// what it is, the small line, the recommendation, what changed, the reasons when Why? is open, the suggestion's
+// confirmation, the note, the answers, the suggestion box, then the links. `o.recording` is the id of the card whose press
+// is being recorded: its filled button reads "Recording…" and every other button is plain text until it answers.
+function drawCard(card, o = {}) {
   const buttons = list(card.buttons).filter(isRecord);
   const id = text(card.id);
   const hash = text(card.hash);
   const own = { card: id, hash };
   const parts = isRecord(card.parts) ? card.parts : null;
+  const recording = typeof o.recording === 'string' && o.recording !== '' ? o.recording : null;
+  const open = o.open === 'why' || o.open === 'suggest' ? o.open : null;
   const corner = buttons.find((b) => b.corner === true);
+  const filled = buttons.find((b) => b !== corner && b.shape === 'filled' && text(b.label) !== '') ?? buttons.find((b) => b !== corner && text(b.label) !== '' && !(b.shape === 'link' && typeof b.href === 'string'));
+  const draw = (b, make) => {
+    const label = text(b.label);
+    if (recording === null || (b.shape === 'link' && typeof b.href === 'string')) return make(label);
+    return recording === id && b === filled ? `<span class="recording" role="status">${esc(RECORDING)}</span>` : plain(label);
+  };
   const top = [];
   const links = [];
   const actions = [];
-  let suggest = '';
   for (const b of buttons) {
     const label = text(b.label);
     if (label === '') continue;
-    if (b === corner) top.push(button(label, 'quiet', { act: 'press', ...own, choice: label }));
-    else if (b.does === 'why') links.push(button(label, 'link', { act: 'why-toggle', ...own }));
-    else if (b.does === 'suggest') actions.push(button(label, 'outlined', { act: 'suggest-open', ...own }));
-    else if (b.shape === 'link' && typeof b.href === 'string') links.push(button(`${label} ↗`, 'link', { act: 'open', card: id }));
-    else if (b.shape === 'small') links.push(button(label, 'link', { act: b.does === 'pull' ? 'pull' : 'press', ...own, choice: label }));
-    else actions.push(button(label, b.shape === 'filled' ? 'filled' : 'outlined', { act: 'press', ...own, choice: label }));
+    if (b === corner) top.push(draw(b, () => button(label, 'quiet', { act: 'press', ...own, choice: label })));
+    else if (b.does === 'why') links.push(draw(b, () => button(open === 'why' ? HIDE_WHY : label, 'link', { act: 'why-toggle', ...own, alt: open === 'why' ? label : HIDE_WHY })));
+    else if (b.does === 'suggest') actions.push(draw(b, () => button(label, b.shape === 'filled' ? 'filled' : 'outlined', { act: 'suggest-open', ...own })));
+    else if (b.shape === 'link' && typeof b.href === 'string') links.push(draw(b, () => button(`${label} ↗`, 'link', { act: 'open', card: id })));
+    else if (b.shape === 'small') links.push(draw(b, () => button(label, 'link', { act: b.does === 'pull' ? 'pull' : 'press', ...own, choice: label })));
+    else actions.push(draw(b, () => button(label, b.shape === 'filled' ? 'filled' : 'outlined', { act: 'press', ...own, choice: label })));
   }
-  if (buttons.some((b) => b.does === 'suggest')) {
-    suggest = `<div class="suggest-box hidden"><textarea rows="3" aria-label="What would you change?"></textarea><div class="row">${button('Send', 'filled', { act: 'suggest', ...own })}</div></div>`;
-  }
-  const why = parts && (text(parts.why) || text(parts.meanwhile))
-    ? `<div class="why-box hidden">${[parts.why, parts.meanwhile].filter((p) => text(p)).map((p) => `<p>${esc(p)}</p>`).join('')}</div>`
+  const suggest = buttons.some((b) => b.does === 'suggest') && recording === null
+    ? `<div class="suggest-box${open === 'suggest' ? '' : ' hidden'}"><p class="note">What would you change?</p><textarea rows="3" aria-label="What would you change?"></textarea><div class="row">${button('Send', 'filled', { act: 'suggest', ...own })}${button('Cancel', 'outlined', { act: 'suggest-open', ...own })}</div></div>`
     : '';
+  const options = parts ? list(parts.options).filter(isRecord).filter((x) => text(x.label)).map((x) => `${x.label}: ${text(x.says)}`.replace(/: $/, '')) : [];
+  const reasons = parts ? [text(parts.why), ...options, text(parts.meanwhile)].filter(Boolean) : [];
+  const why = reasons.length > 0 ? `<div class="why-box${open === 'why' ? '' : ' hidden'}">${reasons.map((p) => `<p>${esc(p)}</p>`).join('')}</div>` : '';
+  const header = (parts && text(parts.header)) || text(card.header);
+  const where = card.revised === true ? 'revised' : text(o.place);
+  const minutes = parts && typeof parts.optional === 'number' && parts.optional > 0 ? `optional · ${parts.optional} min` : '';
+  const small = parts ? [text(parts.small), text(card.waited), minutes, card.openInChat === true ? OPEN_IN_CHAT : ''].filter(Boolean).join(' · ') : '';
+  const ask = parts ? text(parts.ask) : '';
+  const what = parts ? text(parts.what) : '';
+  const changed = parts ? text(parts.changed) : '';
+  const words = parts && (ask || what) ? '' : `<p class="text">${esc(cardWords(card))}</p>`;
   return `<section class="card panel" data-card-box="1">`
-    + `<div class="card-top"><span class="kind">${esc(card.header)}</span>${top.join('')}</div>`
-    + `<p class="text">${esc(cardWords(card))}</p>`
-    + (text(card.note) ? `<p class="note">${esc(card.note)}</p>` : '')
-    + (links.length > 0 ? `<div class="links">${links.join('')}</div>` : '')
+    + `<div class="card-top"><span class="kind">${esc([header, where].filter(Boolean).join(' · '))}</span>${top.join('')}</div>`
+    + (ask ? `<p class="text ask">${esc(ask)}</p>` : '')
+    + (what && what !== ask ? `<p class="text">${esc(what)}</p>` : '')
+    + words
+    + (small ? `<p class="note">${esc(small)}</p>` : '')
+    + (parts && text(parts.recommendation) ? `<p class="band">${esc(parts.recommendation)}</p>` : '')
+    + (card.revised === true && changed ? `<p class="text">${esc(`${WHAT_CHANGED} ${changed}`)}</p>` : '')
     + why
+    + (text(card.steered) ? `<p class="note">${esc(suggestedAt(card.steered))}</p>` : '')
+    + (text(card.note) ? `<p class="note">${esc(card.note)}</p>` : '')
     + (actions.length > 0 ? `<div class="actions">${actions.join('')}</div>` : '')
     + suggest
+    + (links.length > 0 ? `<div class="links">${links.join('')}</div>` : '')
     + `</section>`;
 }
 
-function drawItem(card) {
-  return `<p class="item"><span class="dot" aria-hidden="true"></span><span>${esc(cardWords(card))} <span class="small">· optional</span></span></p>`;
+// "Next: how files are named · optional · 3 min": the next card's subject.
+function nextLine(card) {
+  const parts = isRecord(card.parts) ? card.parts : {};
+  const minutes = typeof parts.optional === 'number' && parts.optional > 0 ? ` · optional · ${parts.optional} min` : '';
+  return `Next: ${text(parts.ask) || text(card.header) || text(card.text).split('\n')[0]}${minutes}`;
 }
 
-function drawCards(model) {
-  const waiting = waitingCards(model);
-  const big = waiting.filter((c) => c.blocking !== false);
-  const small = waiting.filter((c) => c.blocking === false);
-  return big.map(drawCard).join('')
-    + (small.length > 0 ? `<h2>Smaller things</h2>${small.map(drawItem).join('')}` : '')
+// One card at a time, as the mod shows them: the one at `at` (the last when `at` is past the end), the next card's subject,
+// and Back and Next. A card with no parts says its place above it.
+function drawCards(model, { at = 0, recording = null, open = null } = {}) {
+  const waiting = waitingCards(model).filter((c) => typeof c.text === 'string' || isRecord(c.parts));
+  const index = Math.min(Math.max(0, Number.isInteger(at) ? at : 0), waiting.length - 1);
+  const card = waiting[index];
+  let shown = '';
+  if (card !== undefined) {
+    const place = `${index + 1} of ${waiting.length}`;
+    const nav = waiting.length > 1
+      ? `<div class="nav">${index + 1 < waiting.length ? `<p class="note">${esc(nextLine(waiting[index + 1]))}</p>` : '<span></span>'}<span class="row">${index > 0 ? button('Back', 'link', { act: 'back' }) : ''}${index + 1 < waiting.length ? button('Next', 'link', { act: 'next' }) : ''}</span></div>`
+      : '';
+    shown = (isRecord(card.parts) ? '' : `<p class="note">Card ${esc(place)}</p>`) + drawCard(card, { place, recording, open }) + nav;
+  }
+  return shown
     + (isRecord(model?.held) && text(model.held.line) ? `<p class="note">${esc(model.held.line)} ${button(text(model.held.button?.label) || 'Show them', 'link', { act: 'pull' })}</p>` : '');
 }
 
@@ -252,22 +301,24 @@ function drawBriefing(briefing) {
   return `<h2>Briefing</h2><p class="briefing">${esc(briefing)}</p><footer>${button(labels.done, 'filled', { act: 'view', view: 'main' })}</footer>`;
 }
 
-// renderPane(model, { nonce, view, settings, briefing, notice, offer }) -> string
+// renderPane(model, { nonce, view, settings, briefing, notice, offer, at, recording, open, answered }) -> string
 // `model` is the desk's pane model (or the last one read, or null); `view` is 'main' (the default), 'board',
 // 'settings' or 'briefing'; `notice` is a line to put above the cards, such as that the helper isn't running; `offer`
 // is whether to show the first-run offer to put the pane on the right; `trusted` false (an untrusted folder) draws
-// STOP and the reason and no cards. Never throws.
-function renderPane(model, { nonce, view = 'main', settings, briefing, notice, offer = false, trusted = true } = {}) {
+// STOP and the reason and no cards. `at` is the index of the card shown, `recording` the id of a card whose press is being
+// recorded, `open` whether the shown card's Why? ('why') or Suggest a change… ('suggest') box is open, and `answered` the line
+// that says a press was counted. Never throws.
+function renderPane(model, { nonce, view = 'main', settings, briefing, notice, offer = false, trusted = true, at = 0, recording = null, open = null, answered } = {}) {
   let body;
   try {
     const m = isRecord(model) ? model : null;
-    const alert = text(notice) ? `<p class="notice" role="status">${esc(notice)}</p>` : '';
+    const alert = (text(notice) ? `<p class="notice" role="status">${esc(notice)}</p>` : '') + (text(answered) ? `<p class="band" role="status">${esc(answered)}</p>` : '');
     // An untrusted folder gets no cards: STOP and the reason, nothing that could press.
     if (trusted === false) body = drawHeader(null) + `<p class="notice" role="status">${esc(UNTRUSTED)}</p>`;
     else if (view === 'settings') body = drawHeader(m) + alert + drawSettings(settings);
     else if (view === 'briefing') body = drawHeader(m) + alert + drawBriefing(text(briefing));
     else if (view === 'board') body = drawHeader(m) + alert + drawBoard(m);
-    else body = drawHeader(m) + alert + drawOffer(offer) + (m && m.at !== null ? drawMissing(m) + drawVerdict(m) + drawCards(m) + drawQuiet(m) : `<p class="note">${esc(FIRST_READING)}</p>`) + drawFoot(m);
+    else body = drawHeader(m) + alert + drawOffer(offer) + (m && m.at !== null ? drawMissing(m) + drawVerdict(m) + drawCards(m, { at, recording, open }) + drawQuiet(m) : `<p class="note">${esc(FIRST_READING)}</p>`) + drawFoot(m);
   } catch {
     body = '<header><h1>Wheelhouse</h1></header><p class="notice">The pane couldn\'t be drawn just now.</p>';
   }
