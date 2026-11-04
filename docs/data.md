@@ -88,6 +88,20 @@ A product that builds with Copilot keeps the same private record as any other, p
 
 Uninstall removes the baseline for the weekly look and Locked's Copilot files, along with the other files in `~/.wheelhouse`. It does not remove the sandbox result (`~/.wheelhouse/agents/copilot-sandbox.json`) or the terminal record; they stay until you delete the folder by hand. The add-on is removed from VS Code by you; Wheelhouse does not reach into it.
 
+## Updating Wheelhouse
+
+Typing `/wheelhouse:update` moves Wheelhouse to a newer release. Nothing in what it keeps is sent anywhere, and none of it holds a key or a password. It keeps these on your computer:
+
+- `~/.wheelhouse/update/<project>/`, one folder for each update in progress or last made for a project: `journal.json`, which step the update has reached and the one line the board shows; `plan.json`, the plan your card showed (release, commit and what it will do); `backup/`, copies of the settings files the install may change (Claude Code's `settings.json`, its list of added catalogues and installed plugins, and the project's local settings), so a failed update can put them back; and `install.json`, which release the computer ran before and which installs the update moved. The folder is kept until the next update for that project replaces it.
+- `~/.wheelhouse/update/lock`, which says an update is running and which process runs it. It is removed when the update ends.
+- `~/.wheelhouse/update/mirror`, a bare copy of Wheelhouse's public release history, fetched from GitHub, that the update checks the release against (its tags, its version and the files it should contain). It holds only what is already public.
+- `~/.wheelhouse/update/latest.json`, the newest release the weekly look saw, for the board's one line. If you answer **Not now** to a release, the project's private state keeps `declined.json` with its tag, so nothing asks about that release again.
+- `~/.wheelhouse/update/bootstrap/<tag>/`, a copy of a release's folder that the one-off Terminal update from v0.2.6 or earlier fetches and runs. Pasting the line again replaces it.
+- `~/.wheelhouse/helper.json`, written by the helper (from v0.2.7) once it is listening and removed when it closes: its process number, when it started, its version, its plugin folder and its address. An update reads it to prove which process is the helper before it stops anything, and never stops a process by its name alone.
+- In `~/.wheelhouse/own-files.json`, a record of each update (the release, the day, and the hashes of the files outside the plugin folders that it wrote), so the weekly look accepts them and still names any other change.
+
+The project itself changes only through the usual reviewed change, which you merge. These are Wheelhouse's own folders and files in `~/.wheelhouse`, so the uninstall of the last project on the computer removes them with the rest (below).
+
 ## Optional channels
 
 ntfy and Telegram stay off unless you switch them on in your settings. They carry a link only, never what a card says, because anyone who guesses a public ntfy topic's name can read it.
