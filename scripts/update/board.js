@@ -10,7 +10,7 @@ import { wheelhouseHome } from '../lib/paths.js';
 import { compareVersions } from '../lib/versions.js';
 import { WHEELHOUSE_REPO } from '../lineage/manifest.js';
 import { declined } from './declined.js';
-import { openJournal } from './journal.js';
+import { openJournal, updateLockHeld } from './journal.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const LOOK_EVERY_MS = 7 * DAY_MS;
@@ -119,7 +119,7 @@ function journalFacts(project) {
     const read = journal.read();
     if (read.newer) return null;
     const tag = withV(read.steps.checks?.data?.tag);
-    return { steps: read.steps, tag: tag !== null && PLAIN_TAG.test(tag) ? tag : null, held: journal.held() };
+    return { steps: read.steps, tag: tag !== null && PLAIN_TAG.test(tag) ? tag : null, held: updateLockHeld() };
   } catch {
     return null;
   }

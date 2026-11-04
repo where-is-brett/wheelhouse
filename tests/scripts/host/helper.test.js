@@ -162,7 +162,7 @@ test('/health answers with the plugin version, read from the plugin\'s own plugi
   const home = shortHome();
   try {
     await as(home, () => withHelper(fakeAdapter(), async (client) => {
-      assert.deepEqual(await client.health(), { ok: true, version: PLUGIN_VERSION });
+      assert.deepEqual(await client.health(), { ok: true, pid: process.pid, version: PLUGIN_VERSION });
     }));
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });

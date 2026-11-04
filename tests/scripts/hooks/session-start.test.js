@@ -749,6 +749,16 @@ test('an older idle helper is retired and this copy\'s helper started, with no v
   });
 });
 
+test('a helper from a release candidate is retired when the final release is installed', async () => {
+  await withHome(async (home) => {
+    const f = helperOf('0.2.4-rc.1', () => ({ ok: true, retired: true }));
+    const out = text(await run(f, { pluginRoot: ownRoot(home, '0.2.4') }));
+    assert.equal(f.retireCalls.retire, 1);
+    assert.equal(helperStarts(f), 1);
+    assert.doesNotMatch(out, /The helper running is version|still finishing work/);
+  });
+});
+
 test('versions are compared as numbers: 0.2.10 is not older than 0.2.9', async () => {
   await withHome(async (home) => {
     const f = helperOf('0.2.10', () => ({ ok: true, retired: true }));

@@ -79,11 +79,14 @@ function takeLock(project) {
   return null;
 }
 
-// Whether a live process holds the update's lock. A lock file that can't be read counts as held.
-export function lockHeld() {
-  let seen;
-  try { seen = fs.readFileSync(path.join(updateDir(), 'lock'), 'utf8'); } catch { return false; }
-  try { return alive(JSON.parse(seen)?.pid); } catch { return true; }
+// Whether an update job holds the update lock now: the lock file names a process that is alive. Reads only; takes nothing.
+export function updateLockHeld() {
+  try {
+    const held = JSON.parse(fs.readFileSync(path.join(updateDir(), 'lock'), 'utf8'));
+    return alive(held?.pid);
+  } catch {
+    return false;
+  }
 }
 
 export function openJournal(project) {
@@ -117,7 +120,7 @@ export function openJournal(project) {
     return entry;
   }
 
-  return { read, mark, lock: () => takeLock(project), held: lockHeld, folder };
+  return { read, mark, lock: () => takeLock(project), folder };
 }
 
 // Copies the files into <journal folder>/backup/, and notes which were not there. A path already
