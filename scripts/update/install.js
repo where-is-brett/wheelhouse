@@ -12,7 +12,7 @@ import { LookRefusal, safeGit } from '../lib/safe-git.js';
 import { registeredProjects } from '../lib/projects.js';
 import { MARKETPLACE, MARKETPLACE_PATH, claudeHome as defaultClaudeHome } from '../lineage/manifest.js';
 import { SETTINGS_FILE, claudeIn, reinstall } from '../lineage/release.js';
-import { accountCatalogue, moveAccountRef } from './account-settings.js';
+import { accountCatalogue, moveAccountRef, restoreAccountRef } from './account-settings.js';
 import { backup, restore } from './journal.js';
 
 const FULL_SHA = /^[0-9a-f]{40}$/;
@@ -156,15 +156,22 @@ const folderOf = (project, projectDir) => projectDir ?? (registeredProjects().fi
 // Without such a declaration the add is at 'local' scope. Safe to run again after a stop.
 export async function installRelease({
   project, target, journal, run = defaultRun, resolved = resolveClaude(), projectDir, claudeHome = defaultClaudeHome(),
-  marketplace = MARKETPLACE, projects,
+  marketplace = MARKETPLACE, projects, accountNamed,
 }) {
   const dir = folderOf(project, projectDir);
   if (typeof dir !== 'string' || dir === '') return { ok: false, line: "The project's folder is not known, so nothing was installed." };
   const { tag, sha } = target ?? {};
   if (!NAMED_TAG.test(String(tag)) || !FULL_SHA.test(sha ?? '')) return { ok: false, line: 'The release must be named by a tag and its full commit, so nothing was installed.' };
 
+  // The account's settings are kept whole in the journal for reference only; a put-back sets back just the one ref.
+  try {
+    const kept = path.join(journal.folder, 'account-settings.json');
+    if (!fs.existsSync(kept) && fs.existsSync(path.join(claudeHome, 'settings.json'))) {
+      fs.mkdirSync(journal.folder, { recursive: true });
+      fs.copyFileSync(path.join(claudeHome, 'settings.json'), kept);
+    }
+  } catch { /* a reference copy only */ }
   backup(journal, [
-    path.join(claudeHome, 'settings.json'),
     pluginsFile(claudeHome, 'known_marketplaces.json'),
     pluginsFile(claudeHome, 'installed_plugins.json'),
     path.join(dir, ...LOCAL_SETTINGS.split('/')),
@@ -176,12 +183,17 @@ export async function installRelease({
   // Refused before anything moves: the account's file is not the Wheelhouse repository's, or can't be read.
   const declared = accountCatalogue({ claudeHome, marketplace });
   if (declared?.refused) return { ok: false, line: `${declared.refused} Nothing was installed.` };
+  // The card named the account's ref it would change; a different one now means the settings changed since, so nothing is touched.
+  if (accountNamed !== undefined && typeof declared?.ref === 'string' && declared.ref !== tag && declared.ref !== (accountNamed?.from ?? null)) {
+    return { ok: false, line: 'Your account settings changed since the card; type /wheelhouse:update again. Nothing was installed.' };
+  }
   const accountMoves = declared !== null && followers.length === 0;
   const scopeFlag = declared !== null ? 'user' : 'local';
   const scopes = accountMoves ? ['project', 'user'] : ['project'];
 
   const note = readNote(journal);
   if (!note.previous) note.previous = currentRelease({ claudeHome, projectDir: dir, marketplace });
+  if (declared !== null && declared.ref !== tag && !note.accountRef) note.accountRef = { from: declared.ref, to: tag };
   note.scopes = scopes;
   note.projectDir = dir;
   writeJson(noteFile(journal), note);
@@ -215,15 +227,17 @@ export async function putBack({
 }) {
   const note = readNote(journal);
   const kept = restore(journal);
+  const account = note.accountRef ? restoreAccountRef({ claudeHome, from: note.accountRef.from, to: note.accountRef.to, marketplace }) : { ok: true };
+  const aside = account.line ? ` ${account.line}` : '';
   const dir = projectDir ?? note.projectDir;
   const was = previous ?? note.previous;
   if (!was || !NAMED_TAG.test(String(was.ref)) || !FULL_SHA.test(was.sha ?? '')) {
-    return { ok: false, line: kept > 0 ? "Your settings were put back, but the earlier release isn't known, so it was not installed again." : 'Nothing was put back.' };
+    return { ok: false, line: `${kept > 0 ? "Your settings were put back, but the earlier release isn't known, so it was not installed again." : 'Nothing was put back.'}${aside}` };
   }
   const reinstalled = await reinstall({
     projectDir: dir, release: was, run, marketplace, claudeHome, resolved, scopes: scopes ?? note.scopes ?? ['project'],
   });
   return reinstalled.ok
-    ? { ok: true, line: `This computer was put back to ${was.ref}.` }
-    : { ok: false, line: `This computer could not be put back to ${was.ref}: ${reinstalled.line}` };
+    ? { ok: true, line: `This computer was put back to ${was.ref}.${aside}` }
+    : { ok: false, line: `This computer could not be put back to ${was.ref}: ${reinstalled.line}${aside}` };
 }

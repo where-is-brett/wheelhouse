@@ -147,7 +147,7 @@ export function updateSteps({
       name: 'installs',
       async run({ journal }) {
         if (stopped()) return { ok: false, waiting: true, line: STOPPED_LINE };
-        const got = await install({ project, target, journal, projectDir: folder, claudeHome });
+        const got = await install({ project, target, journal, projectDir: folder, claudeHome, accountNamed: plan.account ?? null });
         return got.ok ? { data: { line: got.line } } : { ok: false, line: got.line };
       },
     },

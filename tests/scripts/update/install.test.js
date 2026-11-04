@@ -330,3 +330,41 @@ test('putBack: restores the backups and says so when the earlier release is unkn
   assert.equal(out.ok, false);
   assert.match(out.line, /Nothing was put back/);
 });
+
+test('install: a put-back keeps later edits to the account file and leaves another person\'s ref', async () => {
+  const later = computer();
+  later.state.failUpdates = true;
+  const real = later.run;
+  const edits = async (...a) => {
+    if (a[1][1] === 'update') { const t = later.readJson(later.accountFile); t.model = 'edited'; fs.writeFileSync(later.accountFile, JSON.stringify(t, null, 2)); }
+    return real(...a);
+  };
+  const failed = await installRelease({ ...common(later), run: edits, target: target('v1.1.0'), projects: [later.projectDir] });
+  assert.equal(failed.ok, false);
+  const now = later.readJson(later.accountFile);
+  assert.equal(now.model, 'edited');
+  assert.equal(now.extraKnownMarketplaces.wheelhouse.source.ref, 'v1.0.0');
+  const third = computer();
+  third.state.failUpdates = true;
+  const realRun = third.run;
+  const changes = async (...a) => {
+    if (a[1][1] === 'update') { const t = third.readJson(third.accountFile); t.extraKnownMarketplaces.wheelhouse.source.ref = 'v1.5.0'; fs.writeFileSync(third.accountFile, JSON.stringify(t)); }
+    return realRun(...a);
+  };
+  const out = await installRelease({ ...common(third), run: changes, target: target('v1.1.0'), projects: [third.projectDir] });
+  assert.equal(out.ok, false);
+  assert.match(out.line, /changed since the update wrote v1\.1\.0/);
+  assert.equal(third.readJson(third.accountFile).extraKnownMarketplaces.wheelhouse.source.ref, 'v1.5.0');
+});
+
+test('install: a card that did not name the account ref the file now holds stops with nothing changed', async () => {
+  const pc = computer();
+  const before = fs.readFileSync(pc.accountFile, 'utf8');
+  const stopped = await installRelease({ ...common(pc), target: target('v1.1.0'), projects: [pc.projectDir], accountNamed: null });
+  assert.equal(stopped.ok, false);
+  assert.match(stopped.line, /Your account settings changed since the card; type \/wheelhouse:update again/);
+  assert.equal(fs.readFileSync(pc.accountFile, 'utf8'), before);
+  assert.equal(claudeCalls(pc).length, 0);
+  const named = await installRelease({ ...common(pc), target: target('v1.1.0'), projects: [pc.projectDir], accountNamed: { from: 'v1.0.0', to: 'v1.1.0' } });
+  assert.equal(named.ok, true, named.line);
+});

@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { accountCatalogue, moveAccountRef } from '../../../scripts/update/account-settings.js';
+import { accountCatalogue, moveAccountRef, restoreAccountRef } from '../../../scripts/update/account-settings.js';
 import { tempFolder } from '../../helpers/homes.js';
 
 const github = (ref) => ({ source: { source: 'github', repo: 'where-is-brett/wheelhouse', ...(ref ? { ref } : {}) } });
@@ -58,4 +58,30 @@ test('moveAccountRef: nothing to do changes nothing, and a refusal changes nothi
   assert.equal(broken.read(), '{ nope');
   assert.equal(moveAccountRef({ claudeHome: same.dir, tag: 'main' }).ok, false, 'only a release tag');
   assert.deepEqual(moveAccountRef({ claudeHome: home(null).dir, tag: 'v1.1.0' }), { ok: true, changed: false });
+});
+
+test('moveAccountRef: a symlinked settings file stays a link, and the mode stays', () => {
+  const h = home(null);
+  const real = path.join(tempFolder('wh-acct-real-'), 'shared.json');
+  fs.writeFileSync(real, JSON.stringify({ extraKnownMarketplaces: { wheelhouse: github('v1.0.0') } }));
+  fs.chmodSync(real, 0o600);
+  fs.symlinkSync(real, h.file);
+  assert.equal(moveAccountRef({ claudeHome: h.dir, tag: 'v1.1.0' }).ok, true);
+  assert.equal(fs.lstatSync(h.file).isSymbolicLink(), true);
+  assert.equal(JSON.parse(fs.readFileSync(real, 'utf8')).extraKnownMarketplaces.wheelhouse.source.ref, 'v1.1.0');
+  assert.equal(fs.statSync(real).mode & 0o777, 0o600);
+  assert.deepEqual(fs.readdirSync(path.dirname(real)), ['shared.json'], 'no temporary file is left');
+});
+
+test('restoreAccountRef: sets back only the ref, keeps later edits, leaves another person\'s ref alone', () => {
+  const h = home('{\n  "model": "a",\n  "extraKnownMarketplaces": { "wheelhouse": { "source": { "source": "github", "repo": "where-is-brett/wheelhouse", "ref": "v1.1.0" } } }\n}\n');
+  fs.writeFileSync(h.file, h.read().replace('"a"', '"b"'));
+  assert.deepEqual(restoreAccountRef({ claudeHome: h.dir, from: 'v1.0.0', to: 'v1.1.0' }), { ok: true });
+  assert.match(h.read(), /"model": "b"/);
+  assert.equal(accountCatalogue({ claudeHome: h.dir }).ref, 'v1.0.0');
+  const other = home(JSON.stringify({ extraKnownMarketplaces: { wheelhouse: github('v1.5.0') } }));
+  const kept = other.read();
+  const got = restoreAccountRef({ claudeHome: other.dir, from: 'v1.0.0', to: 'v1.1.0' });
+  assert.match(got.line, /changed since the update wrote v1\.1\.0/);
+  assert.equal(other.read(), kept);
 });
