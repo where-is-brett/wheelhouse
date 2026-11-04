@@ -104,7 +104,7 @@ test('installPlugin refuses a call it cannot trace to a release, and reports a f
 // What Claude Code loads, as Part 8 left it: the sha256 of each file's text with line endings evened to LF. A
 // deliberate change to either file updates its hash here, in the same commit.
 const CLAUDE_CODE_FILES = Object.freeze({
-  '.claude-plugin/plugin.json': '61a9778bc814f3e8e81728f4532b7c19a7fd396a037439f296c17c3416d28ac9',
+  '.claude-plugin/plugin.json': '14ef8caface2c2fd2230bc78d91aac71b99e6d701fe2480ffc4c5c00f4d7df5e',
   'hooks/hooks.json': '43e6c8f04505d917de02489955d3a7ba4e529435e02edbe91a1ec4c6e01afda6',
 });
 
