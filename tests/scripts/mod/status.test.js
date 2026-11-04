@@ -131,6 +131,17 @@ test('the board\'s waiting items carry ids, and the pane numbers them as the boa
   assert.equal(cardNumbered(views, 2), null);
 }));
 
+test('the pane carries the project\'s name: the repository\'s last part, cut to 24 characters', () => withHome(async (home) => {
+  const repo = register(home);
+  keepWaiting();
+  assert.equal((await paneModel({ project: P, cwd: repo, now: () => NOW })).projectName, 'name');
+  writeProject(P, { folder: repo, remoteUrl: 'https://example.com/owner/a-very-long-project-name-indeed.git', host: 'github', repo: 'owner/a-very-long-project-name-indeed', connection: {} });
+  const cut = (await paneModel({ project: P, cwd: repo, now: () => NOW })).projectName;
+  assert.equal(cut, 'a-very-long-project-nam\u2026');
+  assert.equal([...cut].length, 24);
+  assert.equal((await paneModel({ project: 'nobody__here', cwd: repo, now: () => NOW })).projectName, null);
+}));
+
 test('each card says whether it blocks, by the front desk\'s order, and the open incidents are listed', () => withHome(async (home) => {
   const repo = register(home);
   const plain = { kind: 'question', header: 'Question', options: ['Yes'], question: 'Plain?', level: 3 };

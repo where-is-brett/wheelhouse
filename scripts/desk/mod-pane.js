@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { stateDir } from '../lib/paths.js';
+import { nameShown } from '../lib/projects.js';
 import { checksStanding } from '../checks/standing.js';
 import { CHECKING_WORDS, REPORT_WAITS_WORDS } from '../engine/words.js';
 import { goalInForce } from '../engine/goal.js';
@@ -329,6 +330,7 @@ export async function paneModel({
   return {
     v: PANE_VERSION,
     project,
+    projectName: attempt(() => nameShown(project), null),
     at: clock === null ? null : clock.toISOString(),
     glance: model === null ? 'Wheelhouse' : glanceLine(model),
     stop: { on: stop.on === true, since: typeof stop.at === 'string' ? stop.at : null },

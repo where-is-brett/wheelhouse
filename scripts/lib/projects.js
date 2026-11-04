@@ -105,6 +105,16 @@ export function namesOf(project) {
   return [...new Set(names)];
 }
 
+// The project's name as the panes show it at the top: its repository's own name, cut to 24 characters with an
+// ellipsis. null when no record reads. It stays on this computer; no card or pull request text takes it.
+export const NAME_SHOWN_CHARS = 24;
+export function nameShown(project) {
+  const name = namesOf(project)[0];
+  if (typeof name !== 'string') return null;
+  const chars = [...name];
+  return chars.length <= NAME_SHOWN_CHARS ? name : `${chars.slice(0, NAME_SHOWN_CHARS - 1).join('')}\u2026`;
+}
+
 // The projects registered on this computer, by folder name in order: each folder under projects/
 // with a record that reads, { project, record }.
 export function registeredProjects() {

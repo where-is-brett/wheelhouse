@@ -250,7 +250,7 @@ function drawCards(model, { at = 0, recording = null, open = null } = {}) {
 
 function drawHeader(model) {
   const on = model?.stop?.on === true;
-  const head = `<header><h1>Wheelhouse</h1>${on ? '' : button(labels.stop, 'stop', { act: 'stop' })}</header>`;
+  const head = `<header><h1>Wheelhouse</h1>${text(model?.projectName) ? `<span class="project">${esc(model.projectName)}</span>` : ''}${on ? '' : button(labels.stop, 'stop', { act: 'stop' })}</header>`;
   if (!on) return head;
   const since = text(model.stop.since);
   return `${head}<div class="halted"><p>All stop is on. Every agent is stopped, and nothing moves until you say.</p>${button(labels.lift, 'lift', { act: 'lift', since })}</div>`;
