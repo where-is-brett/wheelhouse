@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { adapterOf } from '../../scripts/host/adapter-for.js';
 import { startHelper } from '../../scripts/host/helper.js';
+import { engineForProject } from '../../scripts/host/helper-main.js';
 import { helperClient } from '../../scripts/host/helper-client.js';
 import { addFolderRemote } from '../../scripts/host/local/folder.js';
 import { homeDir, makeHome } from '../../scripts/host/local/home.js';
@@ -64,8 +65,8 @@ const recordings = { 'quick-lane': loadRecordings(path.join(import.meta.dirname,
 
 // A project with no host: a real folder and home, the real helper and adapter, and the fake engine. No host tool runs: `fn`
 // is given the calls that tried in `tools`. `check` stands in for a check, and `askWindow` for the director at the window;
-// `files` adds to the folder, `onHost(record)` is the adapter once the project is on a host, and `helperOptions` go to the helper.
-export async function gitAloneWorld(fn, { check, askWindow, files = {}, onHost = null, helperOptions = {} } = {}) {
+// `files` adds to the folder, `realEngineFor` uses the real engine choice (engineForProject) in place of a stub that hands the engine over, `onHost(record)` is the adapter once the project is on a host, and `helperOptions` go to the helper.
+export async function gitAloneWorld(fn, { check, askWindow, files = {}, onHost = null, helperOptions = {}, realEngineFor = false } = {}) {
   const folder = fs.realpathSync.native(tempFolder('wh-shop-'));
   await g(folder, 'init', '-q', '-b', 'main');
   writeFiles(folder, { 'README.md': 'The product.\n', 'src/price.js': 'export const price = (c) => c / 100;\n', '.gitignore': '.wheelhouse/\n', '.claude/wheelhouse.json': CONFIG, ...files });
@@ -91,7 +92,9 @@ export async function gitAloneWorld(fn, { check, askWindow, files = {}, onHost =
       buildPack({ out: path.join(frozen, 'project') });
       const helper = await startHelper({
         run: hostGuard, address: testAddress(home), adapterFor, envFor: async () => ({}), spawn: stubSpawn(),
-        engineFor: (project) => (project === LOCAL_P ? engine : null), ...(check ? { check } : {}), ...(askWindow ? { askWindow } : {}), ...helperOptions,
+        engineFor: realEngineFor
+          ? engineForProject({ adapter: () => engine, views: () => ({ project: { engine: { key: 'engine', value: 'archon' } }, profile: {} }), platform: 'darwin' })
+          : (project) => (project === LOCAL_P ? engine : null), ...(check ? { check } : {}), ...(askWindow ? { askWindow } : {}), ...helperOptions,
       });
       const client = helperClient({ address: helper.address });
       await client.state.clone({ project: LOCAL_P });
