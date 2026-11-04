@@ -119,7 +119,7 @@ test('the card says what it is, recommends adding, and can be put off', () => {
   const card = handMadeCard();
   assert.equal(card.work, HAND_MADE_WORK);
   assert.equal(card.level, 3);
-  assert.deepEqual(card.options.map((o) => o.label), [CHECK_AND_ADD, LEAVE_THEM_OUT, 'Not now']);
+  assert.deepEqual(card.options.map((o) => o.label), [CHECK_AND_ADD, LEAVE_THEM_OUT]);
   assert.equal(card.recommendation, CHECK_AND_ADD);
   assert.match(card.what, /made by hand in your project folder/);
   assert.doesNotMatch(JSON.stringify(card), /remote|commit|bare|pull request/i);
@@ -162,12 +162,11 @@ test('Leave them out leaves the folder and asks no more for that tip', () => lev
   assert.equal(await git(folder, ['rev-parse', 'HEAD']), tip);
 }));
 
-test('Not now keeps the question open and adds nothing', () => level(async (folder) => {
+test('an unanswered question adds nothing', () => level(async (folder) => {
   await commitIn(folder, 'by-hand.txt');
   const answers = {};
   const { watch, cards, added } = watching(folder, { answers });
   await watch.tick();
-  answers[cards[0].id] = 'Not now';
   await watch.tick();
   assert.deepEqual(added, []);
   answers[cards[0].id] = CHECK_AND_ADD;
@@ -197,4 +196,72 @@ test('the folder gains one remote, and leaves one of that name that points elsew
   assert.equal(await git(folder, ['config', '--get', 'remote.wheelhouse.url']), '/engine/mirrors/shop.git');
   assert.equal(await git(folder, ['config', '--get-all', 'remote.wheelhouse.fetch']), '+refs/heads/*:refs/remotes/wheelhouse/*');
   await assert.rejects(addFolderRemote({ folder, mirror: '/elsewhere.git' }), /left as it is/);
+}));
+
+// Wheelhouse's own section of CLAUDE.md, as an earlier release wrote it and as this one does.
+const EARLIER = `## Compact instructions
+
+When this conversation is summarised, keep:
+- what the director asked for and decided, in their own words where they gave them;
+- the work in hand: the step being done, what is finished and what is not;
+- each card shown to the director, and whether it was answered;
+- whether All stop is on;
+- the pull requests and branches in play, by number and name.
+
+Leave out file contents and command output that can be read again. Wheelhouse's records hold the rulebook, the levels, the waiting list and the status, and the session start after a compaction gives them back.
+`;
+const MINE = '# The project\n\nMy own notes.\n\n';
+const ownText = async (text) => (await import('../../../../scripts/setup/project-files.js')).withOwnSection(text);
+
+// A folder and home that both hold an earlier wording of the section.
+async function levelWithEarlier(fn) {
+  await level(async (folder) => {
+    await commitIn(folder, 'CLAUDE.md', `${MINE}${EARLIER}`);
+    await git(folder, ['push', '-q', homeDir(P), 'HEAD:refs/heads/main', '--force']);
+    await fn(folder);
+  });
+}
+
+test('a folder commit that is exactly Wheelhouse\'s own section raises no question and goes by the add route', () => levelWithEarlier(async (folder) => {
+  const tip = await commitIn(folder, 'CLAUDE.md', await ownText(`${MINE}${EARLIER}`));
+  const { watch, cards, added } = watching(folder);
+  await watch.tick();
+  await watch.tick();
+  assert.deepEqual(cards, []);
+  assert.deepEqual(added.map((a) => a.tip), [tip]);
+}));
+
+test('a hand edit beside the section still raises the question', () => levelWithEarlier(async (folder) => {
+  await commitIn(folder, 'CLAUDE.md', `${await ownText(`${MINE}${EARLIER}`)}\nMy own rule.\n`);
+  const { watch, cards, added } = watching(folder);
+  await watch.tick();
+  assert.equal(cards.length, 1);
+  assert.deepEqual(added, []);
+}));
+
+test('a hand edit inside the section still raises the question', () => levelWithEarlier(async (folder) => {
+  const edited = (await ownText(`${MINE}${EARLIER}`)).replace('whether it was answered', 'whether it was answered or not');
+  await commitIn(folder, 'CLAUDE.md', edited.replace('in play, by number and name', 'in play, by number, name and colour'));
+  const { watch, cards } = watching(folder);
+  await watch.tick();
+  assert.equal(cards.length, 1);
+}));
+
+test('the section changed in the working tree alone is committed as Wheelhouse\'s own and goes by the add route', () => levelWithEarlier(async (folder) => {
+  fs.writeFileSync(path.join(folder, 'CLAUDE.md'), await ownText(`${MINE}${EARLIER}`));
+  const { watch, cards, added } = watching(folder);
+  await watch.tick();
+  assert.deepEqual(cards, []);
+  assert.equal(added.length, 1);
+  assert.equal(await git(folder, ['status', '--porcelain', '--untracked-files=no']), '');
+}));
+
+test('a working tree with another change beside the section is left as it is', () => levelWithEarlier(async (folder) => {
+  fs.writeFileSync(path.join(folder, 'CLAUDE.md'), await ownText(`${MINE}${EARLIER}`));
+  fs.writeFileSync(path.join(folder, 'a.txt'), 'changed\n');
+  const before = await git(folder, ['rev-parse', 'HEAD']);
+  const { watch, added } = watching(folder);
+  await watch.tick();
+  assert.equal(await git(folder, ['rev-parse', 'HEAD']), before);
+  assert.deepEqual(added, []);
 }));

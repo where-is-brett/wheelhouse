@@ -18,7 +18,7 @@ import { glanceLine } from '../board/render.js';
 import { NO_HELPER, localViews } from '../hooks/session-start.js';
 import { sayTime } from '../settings/effective.js';
 import { briefingModel } from '../briefing/model.js';
-import { HEADERS } from '../cards/compose.js';
+import { HEADERS, questionProblem } from '../cards/compose.js';
 import { heldBackRow } from '../mod/buttons.js';
 import { glossaryOf, plainWords } from '../frontdesk/glossary.js';
 import { stopState } from '../lib/stop.js';
@@ -36,6 +36,8 @@ import { SHOW_ME, verdict, sinceLine, askedSince } from '../lib/calm-words.js';
 
 export const PANE_VERSION = 1;
 export const QUESTION_WAITS = 'A question from the build waits; the First Mate will ask it';
+// A question from the build that no card can be made of: the composer's reason follows, in one line.
+export const QUESTION_STUCK = 'A question from the build can\'t be shown as a card, so it waits: ';
 export const CARD_TO_MAKE = 'A card from the build waits; the First Mate will make it and ask it';
 // The views the pane reads: the glance's, the reports and glossary, the open incidents, and the
 // build's records the front desk makes cards from.
@@ -202,8 +204,16 @@ export async function paneModel({
     // A question from the build no card asks yet: the front desk asks it when it makes its card,
     // so it is never asked, and it ranks as that card will.
     if (item.card === undefined) {
+      // A question the composer refuses never becomes a card, so it is said as a problem and not as one that is coming.
+      const asked = views?.questions?.[item.question]?.question?.data;
+      const problem = isRecord(asked) ? questionProblem(asked) : null;
+      const labels = isRecord(asked) && Array.isArray(asked.options) ? asked.options.map((o) => oneLine(o?.label)).filter(Boolean) : [];
+      const words = isRecord(asked) ? oneLine(asked.what) : '';
+      // The question's own words and choices are shown while its card is made, so the director can read it here.
+      const own = `${words === '' ? '' : ` ${words}`}${labels.length === 0 ? '' : ` Choices: ${labels.join(', ')}.`}`;
+      const said = problem === null ? `${QUESTION_WAITS}.${own}` : `${QUESTION_STUCK}${oneLine(problem)}`;
       return [{
-        id: item.id, n: item.n, header: HEADERS.question, kind: 'question', text: QUESTION_WAITS, hash: hashOf(QUESTION_WAITS), buttons: [], note: null, blocking: blocks(answerCardFor(item.question, views), views), asked: false, heldBack: item.heldBack === true,
+        id: item.id, n: item.n, header: HEADERS.question, kind: 'question', text: said, hash: hashOf(said), buttons: [], note: null, blocking: blocks(answerCardFor(item.question, views), views), asked: false, heldBack: item.heldBack === true,
         parts: null, steered: null, waited: null, revised: false, openInChat: false,
       }];
     }

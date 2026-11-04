@@ -70,7 +70,8 @@ import { digestText as defaultDigest } from './digest.js';
 import { localWords } from '../lib/host-lines.js';
 import { readProject } from '../lib/projects.js';
 import { columnsReadyOf, premiumViewOf } from '../routing/in-force.js';
-import { paneModel, writePaneStatus as defaultWritePaneStatus } from './status.js';
+import { paneModel, writePaneStatus as defaultWritePaneStatus, QUESTION_WAITS } from './status.js';
+import { cards as defaultMakeCards } from '../frontdesk/cli.js';
 import { needsYou, courierWake as defaultCourierWake, courierUnsent as defaultCourierUnsent, courierCursor, LOCK_WAIT_MS } from './courier.js';
 import { modDesk, signedRecords } from '../desk/mod-desk.js';
 import { watchTick as defaultWatchTick } from './watch.js';
@@ -137,6 +138,7 @@ const DEFAULTS = {
   featureSlug: defaultFeatureSlug,
   replyRecord: defaultReply,
   pressCard: defaultPress,
+  makeCards: defaultMakeCards,
   whyCard: defaultWhy,
   suggestCard: defaultSuggest,
   settingsRows: defaultRows,
@@ -571,7 +573,16 @@ async function tick(req, d) {
   const lifting = liftingHold(found.project, req.cwd, d);
   const changes = deskWatch(found.project, req.cwd, d);
   // The pane says whether the helper is up, so it asks it, to say so when it isn't.
-  const pane = await paneOf(found.project, req.cwd, await helperAnswers(d), d);
+  const up = await helperAnswers(d);
+  let pane = await paneOf(found.project, req.cwd, up, d);
+  // A question from the build no card asks yet gets its answer card made now, by the same `cards` the First Mate runs, so it
+  // is pressable here with the signed press every card has. The pane holds it, so the chat does not ask it too.
+  if (up && !d.stopState().on && (pane.cards ?? []).some((c) => c?.kind === 'question' && String(c.id).startsWith('q:') && String(c.text).startsWith(QUESTION_WAITS))) {
+    try {
+      await d.makeCards({ client: clientOf(d), cwd: req.cwd, now: d.now, hold: async () => true });
+      pane = await paneOf(found.project, req.cwd, up, d);
+    } catch { /* the placeholder stays; the First Mate makes the card when it next runs `cards` */ }
+  }
   noteOpenInChat(pane, req, d);
   const watcher = (await watched)?.watcher;
   pane.watcher = typeof watcher === 'string' ? watcher : null;

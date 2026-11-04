@@ -9,7 +9,7 @@ import { tempFolder } from '../../../helpers/homes.js';
 import { addFolderRemote, FOLDER_REMOTE } from '../../../../scripts/host/local/folder.js';
 import { gitRoute, homeDir, makeHome, projectFolder } from '../../../../scripts/host/local/home.js';
 import { localChanges } from '../../../../scripts/host/local/changes.js';
-import { HOME_DAYS, KEEP_HOME, MOVE_NOW, NOT_NOW, REMOVE_HOME, holdsWork, moveToHost, moveWatch, readMove, unlockHome, unlockHomesIn } from '../../../../scripts/host/local/move.js';
+import { HOME_DAYS, KEEP_HOME, MOVE_NOW, LEAVE_IT, REMOVE_HOME, holdsWork, moveToHost, moveWatch, readMove, unlockHome, unlockHomesIn } from '../../../../scripts/host/local/move.js';
 import { engineDir, stateDir } from '../../../../scripts/lib/paths.js';
 import { readProject, writeProject } from '../../../../scripts/lib/projects.js';
 import { run } from '../../../../scripts/lib/run.js';
@@ -297,7 +297,7 @@ test('a pull request\'s old number is handed on once, with every change', async 
   });
 });
 
-test('after a failure past the record, Not now keeps work held and asks again the next day', async () => {
+test('after a failure past the record, Leave it keeps work held and asks again the next day', async () => {
   await kept(async (world) => {
     let fail = true;
     let today = new Date('2026-11-01T00:00:00Z');
@@ -305,7 +305,7 @@ test('after a failure past the record, Not now keeps work held and asks again th
     await watch.ask('github');
     answers[cards[0].id] = MOVE_NOW;
     await watch.tick();
-    answers[cards[1].id] = NOT_NOW;
+    answers[cards[1].id] = LEAVE_IT;
     await watch.tick();
     assert.equal(holdsWork(P), true);
     assert.equal(cards.length, 2);
@@ -382,7 +382,7 @@ function watchOf(world, overrides = {}, { at = () => new Date('2026-11-01T00:00:
   return { watch, cards, notes, answers, calls };
 }
 
-test('the card names what will happen and that the code goes online, and nothing moves on Not now', async () => {
+test('the card names what will happen and that the code goes online, and nothing moves on Leave it', async () => {
   await kept(async (world) => {
     const { watch, cards, answers, calls } = watchOf(world);
     await watch.ask('github');
@@ -391,7 +391,7 @@ test('the card names what will happen and that the code goes online, and nothing
     assert.match(cards[0].what, /GitHub/);
     assert.equal(cards[0].recommendation, MOVE_NOW);
     assert.equal(holdsWork(P), false);
-    answers[cards[0].id] = NOT_NOW;
+    answers[cards[0].id] = LEAVE_IT;
     await watch.tick();
     assert.equal(calls.connect, 0);
     assert.equal(readMove(P), null);
@@ -437,7 +437,7 @@ test('a move that fails asks once, keeps holding, and Try again carries on', asy
   });
 });
 
-test('Not now after a failure lets work go on, and a later move sends the newest again', async () => {
+test('Leave it after a failure lets work go on, and a later move sends the newest again', async () => {
   await kept(async (world) => {
     await changeOn(world.folder, 'feature/one');
     let fail = true;
@@ -445,7 +445,7 @@ test('Not now after a failure lets work go on, and a later move sends the newest
     await watch.ask('github');
     answers[cards[0].id] = MOVE_NOW;
     await watch.tick();
-    answers[cards[1].id] = NOT_NOW;
+    answers[cards[1].id] = LEAVE_IT;
     await watch.tick();
     assert.equal(holdsWork(P), false);
     assert.equal(readProject(P).host, 'local');

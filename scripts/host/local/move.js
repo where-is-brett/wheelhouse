@@ -16,7 +16,7 @@ import { gitRoute, homeBranch, homeDir, projectFolder } from './home.js';
 
 export const HOME_DAYS = 30;
 export const MOVE_NOW = 'Move it';
-export const NOT_NOW = 'Not now';
+export const LEAVE_IT = 'Leave it';
 export const TRY_AGAIN = 'Try again';
 export const KEEP_HOME = 'Keep it';
 export const REMOVE_HOME = 'Remove it';
@@ -215,13 +215,13 @@ export function moveCard(host) {
     why: 'Your code leaving this computer is yours to decide. Your private record stays here.',
     options: [
       { label: MOVE_NOW, says: `The project moves to ${name}. You may be asked to sign in.` },
-      { label: NOT_NOW, says: 'Nothing changes, and the project stays on this computer.' },
+      { label: LEAVE_IT, says: 'Nothing changes, and the project stays on this computer.' },
     ],
     recommendation: MOVE_NOW,
   };
 }
 
-function failedCard(host, line, recorded) {
+export function failedCard(host, line, recorded) {
   const name = HOSTS[host];
   return {
     work: MOVE_WORK,
@@ -230,7 +230,7 @@ function failedCard(host, line, recorded) {
     why: 'New work stays held until the move is finished or set aside, and which it is is yours to decide.',
     options: [
       { label: TRY_AGAIN, says: 'The move carries on from where it stopped.' },
-      { label: NOT_NOW, says: recorded ? 'Work stays held, and you are asked again tomorrow, as the project has already moved.' : 'Work goes on here, and nothing moved. A later move starts from there.' },
+      { label: LEAVE_IT, says: recorded ? 'Work stays held, and you are asked again tomorrow, as the project has already moved.' : 'Work goes on here, and nothing moved. A later move starts from there.' },
     ],
     recommendation: TRY_AGAIN,
   };
@@ -308,17 +308,17 @@ export function moveWatch({ project, ways, card, answerOf, note, now = () => new
     }
     if (kept.state === 'asked') {
       const label = answerOf(kept.card);
-      if (label === NOT_NOW) keep(project, { ...kept, state: Object.keys(kept.done).length > 0 ? 'paused' : 'none' });
+      if (label === LEAVE_IT) keep(project, { ...kept, state: Object.keys(kept.done).length > 0 ? 'paused' : 'none' });
       if (label === MOVE_NOW && !stopped()) await step(kept);
       return;
     }
     if (kept.state === 'failed') {
       const label = answerOf(kept.card);
       if (label === TRY_AGAIN && !stopped()) await step(kept);
-      if (label === NOT_NOW && kept.done.record === true) {
+      if (label === LEAVE_IT && kept.done.record === true) {
         if (kept.retryAt === undefined) keep(project, { ...kept, retryAt: new Date(Date.parse(now()) + DAY_MS).toISOString() });
         else if (Date.parse(now()) >= Date.parse(kept.retryAt)) keep(project, { ...(await raise(kept, failedCard(kept.host, kept.line, true))), retryAt: undefined });
-      } else if (label === NOT_NOW) {
+      } else if (label === LEAVE_IT) {
         // Work goes on here, so what was sent is sent again by a later move. The repository stays the one made.
         keep(project, { ...kept, state: 'paused', done: kept.done.host === true ? { host: true } : {} });
       }
