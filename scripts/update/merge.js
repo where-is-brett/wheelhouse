@@ -74,7 +74,11 @@ export function decideMerge({ stored, clicked, journal, number, put, release, co
 // Resolves null when the branch holds one commit that changes only the Wheelhouse marketplace's ref in the settings file, else the
 // refusal.
 export const RELEASE_PUSH_REFUSAL = 'A release\'s branch is written by the update alone, and this is not its commit.';
-export async function releasePushRefusal({ git, branch }) {
+export const EXISTING_BRANCH_LINE = 'A branch of that name is already on the host and the update did not put it there, so it was left alone and nothing was changed. Ask who made it, or remove it, and run the update again.';
+export async function releasePushRefusal({ git, branch, plan }) {
+  // Only the move the plan on record names: the branch's own commit, the tag, and whether it is a release or an undo.
+  const named = /^wheelhouse-(release|undo)-([0-9a-f]{40})$/.exec(branch);
+  if (!named || !plan || plan.sha !== named[2] || (plan.put === 'undo' ? 'undo' : 'release') !== named[1]) return RELEASE_PUSH_REFUSAL;
   const out = async (args) => {
     const got = await git.call(args);
     return got.code === 0 ? String(got.stdout) : null;
@@ -88,5 +92,5 @@ export async function releasePushRefusal({ git, branch }) {
   const before = await out(['show', `${parents[0]}:${SETTINGS_FILE}`]);
   const after = await out(['show', `${commit}:${SETTINGS_FILE}`]);
   if (tree === null || before === null || after === null || !tree.startsWith('100644 blob ')) return RELEASE_PUSH_REFUSAL;
-  return pinsOnlyChange([SETTINGS_FILE], { base: before, head: after, headMode: '100644' }) === null ? RELEASE_PUSH_REFUSAL : null;
+  return pinsOnlyChange([SETTINGS_FILE], { base: before, head: after, headMode: '100644' })?.ref === plan.to ? null : RELEASE_PUSH_REFUSAL;
 }

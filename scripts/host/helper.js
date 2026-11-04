@@ -144,7 +144,7 @@ import { checkOwnFiles, ownFilesLine } from '../health/own-files.js';
 import { listReleases } from '../update/release.js';
 import { lookForLatest, readLatest } from '../update/board.js';
 import { openJournal, updateLockHeld } from '../update/journal.js';
-import { RELEASE_PUSH_REFUSAL, decideMerge, releasePushRefusal } from '../update/merge.js';
+import { EXISTING_BRANCH_LINE, RELEASE_PUSH_REFUSAL, decideMerge, releasePushRefusal } from '../update/merge.js';
 import { clickedByDefault, updateRoutes } from '../update/routes.js';
 import { keyRenewalDue, lastKeyRenewal } from '../state/key-renewal.js';
 import { brokerRoutes } from '../engine/broker/routes.js';
@@ -1649,7 +1649,9 @@ export async function startHelper({
     // keeps a session's commands to their own branch, but holds no hostile agent.
     if (byFolder && branchOf(dir) !== branch) return { ok: false, refused: PUSH_REFUSALS.notOwn };
     if (RELEASE_BRANCH.test(branch)) {
-      const why = await releasePushRefusal({ git: gitRoute({ run })(dir, { reach: 'local', what: 'the project\'s folder' }), branch }).catch(() => RELEASE_PUSH_REFUSAL);
+      let plan = null;
+      try { plan = JSON.parse(fs.readFileSync(path.join(openJournal(project).folder, 'plan.json'), 'utf8'))?.plan ?? null; } catch { /* none */ }
+      const why = await releasePushRefusal({ git: gitRoute({ run })(dir, { reach: 'local', what: 'the project\'s folder' }), branch, plan }).catch(() => RELEASE_PUSH_REFUSAL);
       if (why !== null) return { ok: false, refused: why };
     }
     try {
@@ -1659,7 +1661,7 @@ export async function startHelper({
     }
     if (!(await lockHeld(project, ctx))) return { ok: false, refused: LOCK_REASON };
     const answer = await pushFrom({ project, branch, source: dir, root: recordOf(project).folder, refspec, defaultBranch, ciGuard: true }, ctx);
-    if (answer.rejected === 'non-fast-forward') return { ...answer, refused: PUSH_REFUSALS.movedOn };
+    if (answer.rejected === 'non-fast-forward') return { ...answer, refused: RELEASE_BRANCH.test(branch) ? EXISTING_BRANCH_LINE : PUSH_REFUSALS.movedOn };
     return answer.ok ? { ok: true } : answer;
   }
 

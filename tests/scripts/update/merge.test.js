@@ -325,12 +325,18 @@ test('only the update\'s own commit can be pushed to a release\'s branch', async
   const p = localProject();
   try {
     const branch = releaseBranch(OLD);
-    const check = () => releasePushRefusal({ git: gitRoute()(p.folder, { reach: 'local', what: 'the project\'s folder' }), branch });
+    const plan = { from: 'v0.2.6', to: 'v0.2.7', sha: OLD, put: 'release' };
+    const check = (over = {}) => releasePushRefusal({ git: gitRoute()(p.folder, { reach: 'local', what: 'the project\'s folder' }), branch, plan, ...over });
     // The update\'s commit: one commit on main changing the ref and nothing else.
     git(p.folder, 'checkout', '-q', '-b', branch);
     fs.writeFileSync(path.join(p.folder, SETTINGS_FILE), goodHead);
     git(p.folder, 'commit', '-q', '-am', 'Move');
     assert.equal(await check(), null);
+    // Not the move the plan on record names: another tag, another commit, or an undo's name for a release.
+    assert.match(await check({ plan: { ...plan, to: 'v0.2.9' } }), /written by the update alone/);
+    assert.match(await check({ plan: { ...plan, sha: NEW } }), /written by the update alone/);
+    assert.match(await check({ plan: { ...plan, put: 'undo' } }), /written by the update alone/);
+    assert.match(await check({ plan: null }), /written by the update alone/);
     // An agent\'s: a second commit, another file beside it, a different edit, or a merge.
     git(p.folder, 'commit', '-q', '--allow-empty', '-m', 'Extra');
     assert.match(await check(), /written by the update alone/);
