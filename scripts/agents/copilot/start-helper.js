@@ -79,7 +79,7 @@ export const STOP_ON = 'All stop is on, so nothing was changed. Lift All stop fi
 // The plan's line, and install's, when the folder's own record leaves STOP on (ruling P5-58).
 export const STOP_CARRIED = 'This folder\'s record says All stop is on, so All stop stays on with the helper: only Lift All stop in Wheelhouse\'s own window lifts it';
 const NOT_LEAN = 'This folder isn\'t a Lean project on this computer, so there is nothing to remove';
-const USAGE = 'Usage: start-helper.js plan|install --work-computer yes|no --real-users yes|no [--test <command>] [--hash <hash>] | start | addon | uninstall-plan --remove-state yes|no | uninstall --hash <hash> --remove-state yes|no';
+const USAGE = 'Usage: start-helper.js plan|install --work-computer yes|no --real-users yes|no [--test <command>] [--hash <hash>] | start | addon | addon-check | uninstall-plan --remove-state yes|no | uninstall --hash <hash> --remove-state yes|no';
 
 export class StartRefusal extends Error {}
 const refuse = (line) => { throw new StartRefusal(line); };
@@ -423,6 +423,29 @@ function parseFlags(rest, allowed) {
 }
 const INSTALL_FLAGS = ['--work-computer', '--real-users', '--test'];
 
+export const NOT_ALLOWED_LINE = 'Your company\'s VS Code settings don\'t allow the Wheelhouse add-on, so it isn\'t offered. Wheelhouse works in the chat as it does now, and your IT can allow wheelhouse.wheelhouse if you\'d like the panel.';
+export const INSTALLED_LINE = 'The Wheelhouse add-on is already in VS Code, so it isn\'t offered.';
+export const NO_NODE_LINE = 'The add-on needs Node.js here to run Wheelhouse\'s helper, so it isn\'t offered. Wheelhouse works in the chat as it does now.';
+const OFFER_LINE = 'The Wheelhouse add-on can be offered.';
+
+// Whether the VS Code add-on is offered: not when it is already installed, not when the company's allow list leaves it out
+// (only an allow list that was read and left it out; "can't tell" still offers), and not at Lean with no Node.js to run the
+// helper while the add-on's own helper is switched off. Never throws.
+export async function addonCheck({ folder }, deps = {}) {
+  try {
+    const numbers = deps.numbers ?? (await import('../../lib/copilot-numbers.js'));
+    const addon = deps.addonInstalled ?? (await import('../../addon/install.js')).addonInstalled;
+    if ((await addon(deps.addonOptions ?? {})) === true) return { offer: false, line: INSTALLED_LINE };
+    const allowed = deps.addonAllowed ?? (await import('../../addon/allowed.js')).addonAllowed;
+    if ((await allowed(deps.allowedOptions ?? {}))?.allowed === false) return { offer: false, line: NOT_ALLOWED_LINE };
+    const major = deps.nodeMajor ?? Number(process.versions.node.split('.')[0]);
+    if (numbers.ADDON_LEAN_READY !== true && projectForFolder(folder)?.lean === true && !(major >= 22)) return { offer: false, line: NO_NODE_LINE };
+    return { offer: true, line: OFFER_LINE };
+  } catch {
+    return { offer: true, line: OFFER_LINE };
+  }
+}
+
 export async function main(argv = process.argv.slice(2), { stdout = process.stdout, cwd = process.cwd(), deps = {} } = {}) {
   const say = (lines) => stdout.write(`${lines.join('\n')}\n`);
   try {
@@ -440,6 +463,12 @@ export async function main(argv = process.argv.slice(2), { stdout = process.stdo
       const got = await (deps.installAddon ?? (await import('../../addon/install.js')).installAddon)(deps.addonOptions ?? {});
       say([got.line]);
       return got.ok ? 0 : 1;
+    }
+    // Whether to offer the add-on: one JSON object, { offer, line }.
+    if (command === 'addon-check') {
+      if (rest.length !== 0) refuse(USAGE);
+      stdout.write(`${JSON.stringify(await addonCheck({ folder: cwd }, deps))}\n`);
+      return 0;
     }
     if (command === 'uninstall-plan') {
       const { removeState } = parseFlags(rest, ['--remove-state']);

@@ -19,6 +19,16 @@ it. It is one page; the design behind it is in `docs/specs/`.
   host and to programs on the same computer, over a local socket.
 - **An optional VS Code add-on**, installed by hand from a file, never from a marketplace, with no update of its own.
 
+## The optional VS Code add-on
+
+The add-on's id is `wheelhouse.wheelhouse`. It is offered once, after Lean is working, and never installed without the
+person's yes. It is a `.vsix` file attached to each Wheelhouse release, checked against a recorded checksum before it is
+installed, and it takes no updates of its own. Like any extension it runs with VS Code's own permissions. It draws the
+board and the cards in a panel, signs the person's own button clicks with the computer's key, and starts no Copilot turn
+and spends no Copilot request. Nothing in it lets Copilot's chat press an approval. To allow it where extensions are
+limited, add `wheelhouse.wheelhouse` to the `AllowedExtensions` policy (or the `extensions.allowed` setting). Where a list
+is in force and leaves it out, Wheelhouse reads that and does not offer it.
+
 ## What it changes
 
 - A hook registration in Copilot's hook folder, so Wheelhouse's guards run before each tool call.

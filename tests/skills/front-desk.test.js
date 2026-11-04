@@ -546,3 +546,18 @@ test('the playbook teaches the one-card words the hooks and the board use, and s
   assert.match(playbook, /Esc stops the First Mate/);
   assert.match(read('skills/setup/SKILL.md'), /A stopped question is no answer[^\n]*`plan <n>`/);
 });
+
+test('the playbook says what to do with a panel line, the since answers and the panel offer, in neutral words', () => {
+  assert.match(playbook, /Where a card command prints `panel`[^\n]*Say its one line and nothing of the cards[^\n]*`--here`/);
+  assert.match(playbook, /`views waiting --since <the time of your last turn[^\n]*Since your last turn, the director answered: [^\n]*never ask that card again/);
+  const offer = playbook.match(/\*\*The panel offer\*\*[^\n]*/)[0];
+  assert.match(offer, /topic `vscode-panel`/);
+  assert.match(offer, /addon-check/);
+  assert.match(offer, /Would you like Wheelhouse's panel beside the chat\?/);
+  assert.match(offer, /\*\*Yes, add it\*\* \("Wheelhouse adds its VS Code add-on; VS Code may ask you to allow it\."\)/);
+  assert.match(offer, /\*\*Not now\*\* \("Nothing changes; cards stay in the chat\."\)/);
+  assert.match(offer, /after the first feature finishes in a project with no code host, or at the end of setup in one with a host/);
+  assert.doesNotMatch(playbook, /Smaller things/);
+  assert.doesNotMatch(playbook, /Copilot/);
+  assert.match(read('skills/setup/SKILL.md'), /The panel offer, last\./);
+});

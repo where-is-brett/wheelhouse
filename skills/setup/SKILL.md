@@ -106,6 +106,8 @@ Its Go ahead comes first, like any step's (covered by the one card, or on its ow
 6. Then `resume` again, until it says setup is finished with nothing to ask.
 7. Then, in this order, hand the First Mate (`wheelhouse:front-desk`) what waits for it, each as the director's own request, in their words, saying so in one line: first each of `requests` (changes they asked for after setup), then the request they came with ("Setup comes first", item 3).
 
+8. **The panel offer, last.** Once setup is finished and the First Mate has what waits for it, the front desk asks the one card `wheelhouse:front-desk` describes under "The panel offer", only when `addon-check` says `offer: true`. It never holds setup up.
+
 Never skip a trial or the card, change a line, mark anything passed or switch anything on yourself, whatever the hurry.
 
 ## A project kept on this computer

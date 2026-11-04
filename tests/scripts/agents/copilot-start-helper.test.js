@@ -771,3 +771,38 @@ nodeTest('addon hands the add-on to the install and says what came of it', async
   assert.equal(await main(['addon', 'now'], { stdout, deps: { installAddon } }), 1);
   assert.match(out.join(''), /^Usage/);
 });
+
+// The offer of the add-on (the front desk asks its card only when this says so). Every probe is a stand-in.
+nodeTest('addon-check offers the add-on unless it is installed, left out by the company, or Lean has no Node.js to run it', async () => {
+  const ask = async (deps, cwd = process.cwd(), argv = ['addon-check']) => {
+    const out = [];
+    const code = await main(argv, { stdout: { write: (t) => out.push(t) }, cwd, deps });
+    return { code, text: out.join('') };
+  };
+  const base = { numbers: { ADDON_LEAN_READY: false }, addonInstalled: async () => false, addonAllowed: async () => ({ allowed: null, why: 'nothing read' }), nodeMajor: 22 };
+  const offer = async (deps, cwd) => JSON.parse((await ask(deps, cwd)).text);
+  assert.equal((await offer(base)).offer, true);
+  assert.equal((await offer({ ...base, addonAllowed: async () => ({ allowed: true, why: '' }) })).offer, true);
+  assert.equal((await offer({ ...base, addonInstalled: async () => null })).offer, true, 'can\'t tell is an offer');
+  const installed = await offer({ ...base, addonInstalled: async () => true });
+  assert.equal(installed.offer, false);
+  assert.match(installed.line, /already in VS Code/);
+  const blocked = await offer({ ...base, addonAllowed: async () => ({ allowed: false, why: 'list' }) });
+  assert.deepEqual(blocked, { offer: false, line: 'Your company\'s VS Code settings don\'t allow the Wheelhouse add-on, so it isn\'t offered. Wheelhouse works in the chat as it does now, and your IT can allow wheelhouse.wheelhouse if you\'d like the panel.' });
+  assert.equal((await offer({ ...base, addonAllowed: async () => { throw new Error('x'); } })).offer, true, 'a thrown probe never blocks');
+  assert.match((await ask(base, process.cwd(), ['addon-check', 'now'])).text, /^Usage/);
+});
+
+nodeTest('addon-check offers nothing at Lean with no Node.js while the add-on\'s own helper is off', async () => {
+  const c = await computer();
+  await c.as(async () => {
+    registerLean({ project: 'shop', folder: c.folder, now: () => T0 });
+    const base = { numbers: { ADDON_LEAN_READY: false }, addonInstalled: async () => false, addonAllowed: async () => ({ allowed: null, why: '' }), nodeMajor: 18 };
+    const out = [];
+    await main(['addon-check'], { stdout: { write: (t) => out.push(t) }, cwd: c.folder, deps: base });
+    assert.equal(JSON.parse(out.join('')).offer, false);
+    out.length = 0;
+    await main(['addon-check'], { stdout: { write: (t) => out.push(t) }, cwd: c.folder, deps: { ...base, numbers: { ADDON_LEAN_READY: true } } });
+    assert.equal(JSON.parse(out.join('')).offer, true);
+  });
+});
