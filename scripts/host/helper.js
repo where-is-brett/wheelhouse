@@ -144,6 +144,7 @@ import { checkOwnFiles, ownFilesLine } from '../health/own-files.js';
 import { listReleases } from '../update/release.js';
 import { lookForLatest, readLatest } from '../update/board.js';
 import { updateLockHeld } from '../update/journal.js';
+import { updateRoutes } from '../update/routes.js';
 import { keyRenewalDue, lastKeyRenewal } from '../state/key-renewal.js';
 import { brokerRoutes } from '../engine/broker/routes.js';
 import { lookAtHead, raiseCard, withLocalLock } from '../lib/local-git.js';
@@ -1058,6 +1059,8 @@ export async function startHelper({
   // Whether an update job holds the update lock (scripts/update/journal.js): an update's retire is accepted only then. And
   // how long the helper makes way for an update before it serves normally again. Both are for tests.
   updateHeld = updateLockHeld, updateBoundMs = 3 * 60 * 1000,
+  // The outside the update's routes look at (scripts/update/routes.js): its tags, its checks, the signed answers. For tests.
+  updateSeams = {},
   // The installed Wheelhouse, whose lineage/manifest.json the gate checks a pull request's provenance against.
   pluginRoot = OWN_ROOT,
   // Wheelhouse's own repository, whose release tags the gate reads (ruling R132).
@@ -2336,6 +2339,9 @@ export async function startHelper({
     // The card for a Wheelhouse release that is not pins-only (update design, section 6.2): confirmed in the window, as the
     // card named `release-<commit>`, and counted only by the release's own reviewed change.
     'approve-release': 'release-approval',
+    // The answer to the card about an old helper that did not make way for an update (update design, section 7.3): confirmed in the
+    // window as the prompt record signs it, by the card's id, and read by the update's own finish.
+    'update-helper-answer': 'update-helper',
   };
   // The steps the window serves while STOP is on: Lift STOP, and a Lean undo, as the runbook's local steps carry on.
   const UNDER_STOP = ['lift-stop', 'undo-merge', 'undo-main'];
@@ -4347,6 +4353,10 @@ export async function startHelper({
   // it stops once the apply has finished: after the status answer that says so, or, when no one
   // asks, a while after.
   const uninstall = uninstallRoutes({ now, stopped, userHome, run, spawn, stopHelper: () => { Promise.resolve().then(() => onStop(close)).catch(() => {}); } });
+  // Updating Wheelhouse (scripts/update/routes.js): plan, apply, status and answer for `scripts/update/cli.js`. Plan and status
+  // answer under STOP with a line; apply is refused there, from a feature session, and for a plan that was not the last one shown.
+  // The job starts in a process of its own, as uninstall's does. A test gives `updateSeams` for the outside it would reach.
+  const update = updateRoutes({ now, stopped, userHome, run, spawn, updateHeld, ...updateSeams });
   // --- the desk (scripts/desk/, spec 5): every front end reads and changes Wheelhouse through these three ---
   // The acts that are answered under STOP, beside a signed record, which /state/record takes under STOP too.
   // Ending or narrowing a goal only makes less happen, and stopping must always be easy, so both are answered under STOP.
@@ -4760,6 +4770,7 @@ export async function startHelper({
     ...setup,
     ...measures,
     ...uninstall,
+    ...update,
     ...engineRun.routes,
     ...broker,
     // A placeholder so the route exists: /stop/set is handled in `handle`, before the project lookup.
@@ -4956,7 +4967,15 @@ export async function startHelper({
       }
       if (stopped()) return STOP_REFUSAL;
       const text = typeof body.body === 'string' ? removeProvenance(body.body) : body.body;
-      return { ok: true, result: await adapter.openPr({ head: spelled.branch, base: defaultBranch, title: body.title, body: text }) };
+      const result = await adapter.openPr({ head: spelled.branch, base: defaultBranch, title: body.title, body: text });
+      // A project kept on this computer has no host to merge on: the local queue's sweep takes the change once it is marked ready.
+      if (recordOf(body.project).host === 'local' && Number.isInteger(result?.number)) {
+        try {
+          const opened = await adapter.prState(result.number);
+          if (typeof opened?.headSha === 'string') engineRun.markReady(body.project, result.number, { head: opened.headSha, runId: `update-${commit.slice(0, 12)}`, work: 'update' });
+        } catch { /* the change stays open; the next update asks again */ }
+      }
+      return { ok: true, result };
     },
     // Only from a session on this computer, as /pr/open; a new body has any block of its own taken out, and a
     // title alone leaves the body as it is.
@@ -6138,7 +6157,7 @@ export async function startHelper({
   }
 
   // What still goes through while the helper makes way for an update: All stop, and lifting it.
-  const UPDATE_THROUGH = ['/stop/set', '/confirm'];
+  const UPDATE_THROUGH = ['/stop/set', '/confirm', '/update/status', '/update/answer'];
 
   async function handle(req, res) {
     const url = new URL(req.url ?? '/', 'http://helper');
@@ -6233,7 +6252,7 @@ export async function startHelper({
         return send(res, 200, { ok: false, refused: clean(error instanceof Error ? error.message : '', []) || 'the request failed' });
       }
     }
-    if (url.pathname.startsWith('/setup/') || url.pathname.startsWith('/measures/')) {
+    if (url.pathname.startsWith('/setup/') || url.pathname.startsWith('/measures/') || url.pathname.startsWith('/update/')) {
       // Setup's routes and the baseline's have no project, so no project's secrets: their answers
       // are cleaned as the other routes' are, without them. A refusal, and each line status gives
       // (a step that did not finish says why, in an installer's own words), get the key-like scrub

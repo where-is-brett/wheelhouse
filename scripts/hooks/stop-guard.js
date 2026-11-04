@@ -133,6 +133,24 @@ function isSetupRead(command, pluginRoots, platform) {
   return (args.length === 1 && ['status', 'resume', 'choices'].includes(args[0])) || (args.length === 2 && ['plan', 'wait'].includes(args[0]) && SETUP_STEP.test(args[1]));
 }
 
+// The update command's four forms (scripts/update/cli.js), by their exact words: `plan`, `plan <tag>`, `apply <hash>` (the plan's
+// full SHA-256), `status` and `answer <card> <label>` (a card the update named and one of the labels its cards have). The lineage
+// hold lets exactly these through, since an update is often the way out of a broken install (update design, section 15). Under
+// STOP the helper refuses `apply`, and this guard lets none of them through.
+const UPDATE_TAG = /^v\d+\.\d+\.\d+(?:-[A-Za-z0-9][A-Za-z0-9.-]{0,40})?$/;
+const UPDATE_CARD = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+export const UPDATE_ANSWERS = Object.freeze(['Not now', 'Approve', 'Stop it', 'Leave it', 'Wait longer']);
+export function isUpdateCommand(command, pluginRoots, platform) {
+  const args = scriptArguments(command, pluginRoots, platform, 'scripts/update/cli.js');
+  if (args === null) return false;
+  const [form, ...rest] = args;
+  if (form === 'plan') return rest.length === 0 || (rest.length === 1 && UPDATE_TAG.test(rest[0]));
+  if (form === 'apply') return rest.length === 1 && /^[0-9a-f]{64}$/.test(rest[0]);
+  if (form === 'status') return rest.length === 0;
+  if (form === 'answer') return rest.length === 2 && UPDATE_CARD.test(rest[0]) && UPDATE_ANSWERS.includes(rest[1]);
+  return false;
+}
+
 // A wake file as the foreman is told it: one word naming a .json file, never a flag.
 const WAKE_FILE = /^[^-].*\.json$/;
 

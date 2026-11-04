@@ -13,7 +13,7 @@
 // It merges localSettings in key by key, as step 7 does (mergeSettings: the director's own entries
 // first and kept), and takes out only the rules Wheelhouse itself writes for its commands that name
 // another folder of Wheelhouse's (staleRule): exactly the form pluginScriptCommand gives, for
-// scripts/frontdesk/cli.js or scripts/setup/cli.js, under a folder whose path names Wheelhouse.
+// scripts/frontdesk/cli.js, scripts/setup/cli.js or scripts/update/cli.js, under a folder whose path names Wheelhouse.
 // Nothing else is ever taken out. The front desk's model pin is step 7's and is left as it is.
 // Each key that differs is written by the journal's key edit and recorded on the folder's setup run as
 // step 7's, as step 7's own were, so uninstall's chain for the key (ruling R85) runs from what the
@@ -44,7 +44,7 @@ const SELF = fileURLToPath(import.meta.url);
 const PLUGIN_ROOT = path.resolve(path.dirname(SELF), '..', '..');
 
 const LOCAL = path.join('.claude', 'settings.local.json');
-const COMMANDS = ['scripts/frontdesk/cli.js', 'scripts/setup/cli.js'];
+const COMMANDS = ['scripts/frontdesk/cli.js', 'scripts/setup/cli.js', 'scripts/update/cli.js'];
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const escaped = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
