@@ -66,8 +66,9 @@ const submit = ($: any, text: string, kind: string, extra: object = {}) =>
   $.prompt.submit({ text, origin: { kind }, wait: false, ...extra })
 
 const bridgeCall = (run: any) => {
-  expect(run.argv).toHaveLength(2)
+  expect(run.argv).toHaveLength(3)
   expect(run.argv[0]).toBe('node')
+  expect(run.argv[1]).toEndWith('/scripts/hooks/node-floor.cjs')
   expect(run.argv[2]).toEndWith('/scripts/mod/bridge.js')
   expect(run.timeoutMs).toBe(6500)
   return run.request
