@@ -4,7 +4,8 @@
 // `--check`, and the install and the release job refuse a .vsix that differs. The recorded file is not itself packed, or the
 // hash would have to contain itself.
 //
-// `node scripts/addon/hash.js --write` records the hash of a fresh pack; `--check` exits 1 with a line when it differs.
+// `node scripts/addon/hash.js --write` records the hash of a fresh pack; `--check [file]` exits 1 with a line when a fresh
+// pack, or the file named, differs.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -44,7 +45,7 @@ export function recordedHash({ root = HERE } = {}) {
 // checkHash({ root, file }) -> { ok, line }: the hash of `file` (a pack already made) or of a fresh pack, against the recorded one.
 export function checkHash({ root = HERE, file } = {}) {
   const recorded = recordedHash({ root });
-  if (!recorded) return { ok: false, line: `There is no recorded hash for the add-on (${HASH_FILE}). Run node scripts/addon/hash.js --write.` };
+  if (!recorded) return { ok: false, missing: true, line: `There is no recorded hash for the add-on (${HASH_FILE}). Run node scripts/addon/hash.js --write.` };
   let got;
   try {
     got = file ? { hash: sha256Of(file), name: path.basename(file) } : vsixHash({ root });
@@ -71,7 +72,9 @@ if (startedAsScript(import.meta.url)) {
       const got = writeHash({ root: HERE });
       process.stdout.write(`${got.hash}  ${got.name}\n`);
     } else if (flag === '--check') {
-      const got = checkHash({ root: HERE });
+      // With a file named, that file (the one to be attached or installed) is checked, not a fresh pack.
+      const named = process.argv[3];
+      const got = checkHash({ root: HERE, file: named ? path.resolve(named) : undefined });
       process.stdout.write(`${got.line}\n`);
       if (!got.ok) process.exitCode = 1;
     } else {

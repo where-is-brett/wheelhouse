@@ -7,7 +7,8 @@ import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { closureOf, reportOf, pack, ENTRIES, RUN_ONLY, vsixName } from '../../../scripts/addon/pack.js';
-import { installAddon, MISMATCH, REFUSED } from '../../../scripts/addon/install.js';
+import { installAddon, MISMATCH, UNRELEASED, REFUSED } from '../../../scripts/addon/install.js';
+import { checkHash } from '../../../scripts/addon/hash.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { require } from '../../vscode/helpers.js';
 
@@ -217,7 +218,7 @@ test('a refusal by VS Code names IT', async () => {
   assert.match(refused.line, /Your company may allow only some extensions; your IT can allow wheelhouse\.wheelhouse\.$/);
 });
 
-test('install refuses a mismatch on a tag, and installs nothing', async () => {
+test('install refuses a mismatch, and installs nothing', async () => {
   const calls = [];
   const out = await installAddon({
     root: ROOT,
@@ -225,7 +226,6 @@ test('install refuses a mismatch on a tag, and installs nothing', async () => {
     run: async (file, args) => { calls.push([file, args]); return { code: 0, stdout: '', stderr: '' }; },
     platform: 'darwin',
     env: {},
-    tagged: async () => true,
     check: () => ({ ok: false, line: 'internal detail' }),
   });
   assert.equal(out.ok, false);
@@ -237,36 +237,49 @@ test('install refuses a mismatch on a tag, and installs nothing', async () => {
 test('the mismatch words are plain and say nothing was installed', () => {
   assert.match(MISMATCH, /nothing was installed/i);
   assert.doesNotMatch(MISMATCH, /sha|hash|checksum/i);
+  assert.doesNotMatch(UNRELEASED, /sha|hash|checksum/i);
 });
 
-test('install on a tag passes when the pack matches the recorded hash', async () => {
+test('install with no recorded hash says the add-on is not released in this version, and installs nothing', async () => {
   const calls = [];
+  const out = await installAddon({
+    root: ROOT, tmp: tempFolder('wh-install-'),
+    run: async (file, args) => { calls.push([file, args]); return { code: 0, stdout: '', stderr: '' }; },
+    platform: 'darwin', env: {},
+    check: () => ({ ok: false, missing: true, line: 'internal detail' }),
+  });
+  assert.equal(out.ok, false);
+  assert.equal(out.line, UNRELEASED);
+  assert.match(UNRELEASED, /isn't released in this version/);
+  assert.match(UNRELEASED, /nothing was installed/);
+  assert.equal(calls.length, 0);
+});
+
+test('the check always runs, with no .git anywhere, on the file that would be installed', async () => {
+  const calls = [];
+  const checks = [];
   const out = await installAddon({
     root: ROOT,
     tmp: tempFolder('wh-install-'),
     run: async (file, args) => { calls.push([file, args]); return { code: 0, stdout: '', stderr: '' }; },
     platform: 'darwin',
     env: {},
-    tagged: async () => true,
+    check: (arg) => { checks.push(arg); return checkHash(arg); },
   });
   assert.equal(out.ok, true, out.line);
-  assert.equal(calls.length, 1);
+  assert.equal(checks.length, 1);
+  assert.equal(checks[0].file, calls[0][1][1]);
+  // The real check refuses a file that isn't the recorded one.
+  const changed = path.join(tempFolder('wh-install-'), 'x.vsix');
+  fs.writeFileSync(changed, 'changed');
+  assert.equal(checkHash({ root: ROOT, file: changed }).ok, false);
 });
 
-test('between tags the pack is not checked', async () => {
-  let checked = false;
-  const out = await installAddon({
-    root: ROOT, tmp: tempFolder('wh-install-'), run: async () => ({ code: 0, stdout: '', stderr: '' }), platform: 'darwin', env: {},
-    tagged: async () => false, check: () => { checked = true; return { ok: false, line: 'x' }; },
+test('install asks nothing of the source-control tool', async () => {
+  const asked = [];
+  await installAddon({
+    root: ROOT, tmp: tempFolder('wh-install-'), platform: 'darwin', env: {},
+    run: async (file) => { asked.push(file); return { code: 0, stdout: '', stderr: '' }; },
   });
-  assert.equal(out.ok, true);
-  assert.equal(checked, false);
-});
-
-test('a tag that cannot be read is treated as no tag', async () => {
-  const out = await installAddon({
-    root: ROOT, tmp: tempFolder('wh-install-'), run: async () => ({ code: 0, stdout: '', stderr: '' }), platform: 'darwin', env: {},
-    tagged: async () => { throw new Error('no git'); },
-  });
-  assert.equal(out.ok, true);
+  assert.deepEqual(asked, ['code']);
 });

@@ -7,7 +7,16 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import nodeFs from 'node:fs';
 import { run as realRun } from '../lib/run.js';
+
+const HERE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+// The version this add-on is: the plugin's own. Null when it can't be read.
+function pluginVersion() {
+  try { return JSON.parse(nodeFs.readFileSync(path.join(HERE, '.claude-plugin', 'plugin.json'), 'utf8')).version ?? null; } catch { return null; }
+}
 
 export const ADDON_ID = 'wheelhouse.wheelhouse';
 const PUBLISHER = 'wheelhouse';
@@ -39,13 +48,20 @@ function parseSettings(text) {
 }
 
 // What a list says about the add-on: true, false, or null when a value can't be understood.
-function verdictOf(list) {
+function verdictOf(list, version) {
   if (list === null || typeof list !== 'object' || Array.isArray(list)) return null;
   const byName = new Map(Object.entries(list).map(([k, v]) => [k.toLowerCase(), v]));
   const valueOf = (v) => {
+    // "stable" allows every stable version; this add-on is never a pre-release.
     if (v === true || v === 'stable') return true;
     if (v === false) return false;
-    if (Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === 'string')) return true;
+    if (Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === 'string')) {
+      // A version list allows only the versions it names (no ranges). Without this version known, or with it named only
+      // for a platform ("0.2.6@win32-x64"), whether it is let in can't be told.
+      if (typeof version !== 'string' || version === '') return undefined;
+      if (v.includes(version)) return true;
+      return v.some((x) => x.startsWith(`${version}@`)) ? undefined : false;
+    }
     return undefined;
   };
   // The most specific entry decides: the id, then the publisher, then everything.
@@ -69,6 +85,7 @@ export async function addonAllowed({
   readFile = (file) => fs.readFile(file, 'utf8'),
   env = process.env,
   home = os.homedir(),
+  version = pluginVersion(),
 } = {}) {
   try {
     // 1. The policy.
@@ -88,11 +105,20 @@ export async function addonAllowed({
         const got = await run('defaults', ['read', MAC_DOMAIN, 'AllowedExtensions'], { env, input: '', timeoutMs: READ_WAIT_MS });
         if (got?.code === 0 && String(got.stdout).trim() !== '') policy = String(got.stdout).trim();
       } catch { /* no preference tool to ask: nothing read */ }
+    } else {
+      // Linux: VS Code's policy file. Its path and shape are not in VS Code's published enterprise documentation, only in its
+      // source, so this read is a best effort: a file that isn't there or can't be read is "nothing read", never "blocked".
+      try {
+        const value = JSON.parse(String(await readFile('/etc/vscode/policy.json')))?.AllowedExtensions;
+        if (value !== undefined) policy = typeof value === 'string' ? value : JSON.stringify(value);
+      } catch (error) {
+        if (error instanceof SyntaxError) return CANT_TELL('The company policy file for VS Code is there, but it couldn\'t be read.');
+      }
     }
     if (policy !== null) {
       let list;
       try { list = JSON.parse(policy); } catch { return CANT_TELL('The company policy for extensions is there, but it couldn\'t be read.'); }
-      const verdict = verdictOf(list);
+      const verdict = verdictOf(list, version);
       if (verdict === null) return CANT_TELL('The company policy for extensions is there, but it couldn\'t be understood.');
       return { allowed: verdict, why: verdict ? 'The company policy for extensions allows the Wheelhouse add-on.' : 'The company policy for extensions doesn\'t name the Wheelhouse add-on.' };
     }
@@ -109,7 +135,7 @@ export async function addonAllowed({
     const list = settings?.['extensions.allowed'];
     // No list in the settings: the policy may still hold one that couldn't be read here, so this is "can't tell", not "free".
     if (list === undefined) return CANT_TELL('No allow list was found in VS Code\'s settings.');
-    const verdict = verdictOf(list);
+    const verdict = verdictOf(list, version);
     if (verdict === null) return CANT_TELL('VS Code\'s allow list couldn\'t be understood.');
     return { allowed: verdict, why: verdict ? 'VS Code\'s settings allow the Wheelhouse add-on.' : 'VS Code\'s settings allow only other extensions.' };
   } catch {

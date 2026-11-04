@@ -33,8 +33,10 @@ jobs:
           fi
       - name: Pack the add-on
         run: node scripts/addon/pack.js
-      - name: Check it against the recorded hash
-        run: node scripts/addon/hash.js --check
+      - name: Check the packed file against the recorded hash
+        run: |
+          VSIX=$(ls wheelhouse-*.vsix)
+          node scripts/addon/hash.js --check "$VSIX"
       - name: Attach it to the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

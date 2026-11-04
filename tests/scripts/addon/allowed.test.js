@@ -30,8 +30,8 @@ function world({ reg = {}, defaults = null, files = {}, throws = false } = {}) {
 }
 const MAC_SETTINGS = '/Users/p/Library/Application Support/Code/User/settings.json';
 const WIN_SETTINGS = 'C:\\Users\\p\\AppData\\Roaming\\Code\\User\\settings.json';
-const mac = (w) => addonAllowed({ platform: 'darwin', run: w.run, readFile: w.readFile, env: {}, home: '/Users/p' });
-const win = (w) => addonAllowed({ platform: 'win32', run: w.run, readFile: w.readFile, env: { APPDATA: 'C:\\Users\\p\\AppData\\Roaming' }, home: 'C:\\Users\\p' });
+const mac = (w) => addonAllowed({ platform: 'darwin', run: w.run, readFile: w.readFile, env: {}, home: '/Users/p', version: '0.2.6' });
+const win = (w) => addonAllowed({ platform: 'win32', run: w.run, readFile: w.readFile, env: { APPDATA: 'C:\\Users\\p\\AppData\\Roaming' }, home: 'C:\\Users\\p', version: '0.2.6' });
 
 test('no policy and no setting is "can\'t tell"', async () => {
   assert.equal((await mac(world())).allowed, null);
@@ -47,7 +47,7 @@ test('a policy naming the add-on allows it, one naming others blocks it', async 
 test('the publisher alone, "stable" and a version list allow it', async () => {
   assert.equal((await mac(world({ defaults: '{"wheelhouse": "stable"}' }))).allowed, true);
   assert.equal((await mac(world({ defaults: '{"wheelhouse": true}' }))).allowed, true);
-  assert.equal((await mac(world({ defaults: '{"wheelhouse.wheelhouse": ["0.2.0"]}' }))).allowed, true);
+  assert.equal((await mac(world({ defaults: '{"wheelhouse.wheelhouse": ["0.2.6"]}' }))).allowed, true);
   assert.equal((await mac(world({ defaults: '{"*": true}' }))).allowed, true);
 });
 
@@ -115,4 +115,36 @@ test('a run or a read that throws is "can\'t tell", and nothing throws', async (
   assert.equal((await win(world({ throws: true }))).allowed, null);
   const got = await mac(world({ throws: true }));
   assert.equal(typeof got.why, 'string');
+});
+
+const ver = (w, version, platform = 'darwin') => addonAllowed({ platform, run: w.run, readFile: w.readFile, env: {}, home: '/Users/p', version });
+
+test('a version list that leaves out this version reads as blocked, as VS Code treats it', async () => {
+  assert.equal((await ver(world({ defaults: '{"wheelhouse.wheelhouse": ["0.1.0"]}' }), '0.2.6')).allowed, false);
+  assert.equal((await ver(world({ defaults: '{"wheelhouse.wheelhouse": ["0.1.0", "0.2.6"]}' }), '0.2.6')).allowed, true);
+  assert.equal((await ver(world({ defaults: '{"wheelhouse": ["0.1.0"]}' }), '0.2.6')).allowed, false);
+});
+
+test('a version list that names this version only for a platform is "can\'t tell"', async () => {
+  assert.equal((await ver(world({ defaults: '{"wheelhouse.wheelhouse": ["0.2.6@win32-x64"]}' }), '0.2.6')).allowed, null);
+});
+
+test('a version list when this version is not known is "can\'t tell"', async () => {
+  assert.equal((await ver(world({ defaults: '{"wheelhouse.wheelhouse": ["0.1.0"]}' }), null)).allowed, null);
+});
+
+test('Linux reads /etc/vscode/policy.json, then the user setting', async () => {
+  const policy = (value) => ({ '/etc/vscode/policy.json': JSON.stringify({ AllowedExtensions: value }) });
+  assert.equal((await ver(world({ files: policy({ other: true }) }), '0.2.6', 'linux')).allowed, false);
+  assert.equal((await ver(world({ files: policy({ wheelhouse: true }) }), '0.2.6', 'linux')).allowed, true);
+  // The value may be the JSON as text.
+  assert.equal((await ver(world({ files: policy('{"wheelhouse": true}') }), '0.2.6', 'linux')).allowed, true);
+  // A policy beats the setting.
+  const files = { ...policy({ other: true }), '/Users/p/.config/Code/User/settings.json': '{"extensions.allowed": {"wheelhouse": true}}' };
+  assert.equal((await ver(world({ files }), '0.2.6', 'linux')).allowed, false);
+  // A policy file that isn't JSON is "can't tell".
+  assert.equal((await ver(world({ files: { '/etc/vscode/policy.json': '{oops' } }), '0.2.6', 'linux')).allowed, null);
+  // A policy file with no AllowedExtensions leaves the setting to decide.
+  const other = { '/etc/vscode/policy.json': '{"UpdateMode": "none"}', '/Users/p/.config/Code/User/settings.json': '{"extensions.allowed": {"wheelhouse": true}}' };
+  assert.equal((await ver(world({ files: other }), '0.2.6', 'linux')).allowed, true);
 });

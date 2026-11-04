@@ -78,6 +78,24 @@ test('check fails, in words, when no hash is recorded', () => {
   const got = checkHash({ root });
   assert.equal(got.ok, false);
   assert.match(got.line, /no recorded hash/i);
+  assert.equal(got.missing, true);
+});
+
+test('--check <file> checks that file, not a fresh pack', () => {
+  const root = copyOfRoot(['scripts/addon/hash.js']);
+  fs.copyFileSync(path.join(ROOT, 'package.json'), path.join(root, 'package.json'));
+  const script = path.join(root, 'scripts', 'addon', 'hash.js');
+  assert.equal(spawnSync(process.execPath, [script, '--write'], { encoding: 'utf8' }).status, 0);
+  const other = path.join(tempFolder('wh-hash-'), 'other.vsix');
+  fs.writeFileSync(other, 'not the add-on');
+  // A fresh pack matches, but the file named does not.
+  assert.equal(spawnSync(process.execPath, [script, '--check'], { encoding: 'utf8' }).status, 0);
+  assert.equal(spawnSync(process.execPath, [script, '--check', other], { encoding: 'utf8' }).status, 1);
+});
+
+test('the release workflow checks the packed file it attaches', () => {
+  const text = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'release.yml'), 'utf8');
+  assert.match(text, /hash\.js --check "\$VSIX"/);
 });
 
 test('check can be given the file that will be installed', () => {
