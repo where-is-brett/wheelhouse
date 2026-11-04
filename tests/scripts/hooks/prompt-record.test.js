@@ -87,7 +87,7 @@ test('Approve on a card naming the pull request and its current head records a s
     const c = fake();
     const q = `${approvalLine(7, FULL)}? It changes the sign-in.`;
     await decide(input({ [q]: 'Approve' }), deps(c));
-    assert.deepEqual(c.calls.write.map((w) => [w.kind, w.data]), [['card-answer', { question: q, label: 'Approve' }]]);
+    assert.deepEqual(c.calls.write.map((w) => [w.kind, w.data]), [['card-answer', { question: q, label: 'Approve', where: 'chat' }]]);
     assert.deepEqual(c.calls.prState, [{ project: P, number: 7 }]);
     const [rec] = c.calls.record;
     assert.equal(rec.event.kind, 'approval');
@@ -114,7 +114,7 @@ test('Approve on a card asked in the chat\'s words is signed as a click on the c
     const c = fake();
     await decide(copyClick(shown, 'Approve'), deps(c));
     // The answer is recorded on the card's whole text, so the views close it as before.
-    assert.deepEqual(c.calls.write.map((w) => [w.kind, w.data]), [['card-answer', { question: composed.card.question, label: 'Approve' }]]);
+    assert.deepEqual(c.calls.write.map((w) => [w.kind, w.data]), [['card-answer', { question: composed.card.question, label: 'Approve', where: 'chat' }]]);
     const rec = c.calls.record.find((r) => r.event.kind === 'approval');
     assert.deepEqual(rec.event.data, { pr: 7, commit: FULL, words: 'Approve', question: composed.card.question });
     // Words that match no kept card are signed as nothing.
@@ -343,7 +343,7 @@ test('Keep as is on a proposal\'s confirm card records only the answer, and sign
     await decide(input({ [confirmLine(setting)]: 'Keep as is' }, { options }), deps(c));
     assert.equal(c.calls.record.length, 0);
     assert.equal(c.calls.profileRecord.length, 0);
-    assert.deepEqual(c.calls.write.map((w) => w.data), [{ question: confirmLine(setting), label: 'Keep as is' }]);
+    assert.deepEqual(c.calls.write.map((w) => w.data), [{ question: confirmLine(setting), label: 'Keep as is', where: 'chat' }]);
   });
 });
 
@@ -1559,7 +1559,7 @@ test('the switch option on a usage card records the setting with its signed conf
     assert.deepEqual(event.data, confirmationFor(target).data);
     assert.deepEqual(event.data, { confirms: target.id, confirmsHash: eventHash(target) });
     assert.ok(verify(event, readEnrolled()), 'signed by this computer\'s own key');
-    assert.deepEqual(c.calls.write.map((w) => [w.kind, w.data]), [['card-answer', { question: q.question, label: got.switchLabel }]]);
+    assert.deepEqual(c.calls.write.map((w) => [w.kind, w.data]), [['card-answer', { question: q.question, label: got.switchLabel, where: 'chat' }]]);
 
     // In force at once, carrying the offer's time, so the return card after the reset is for this switch.
     keepEvent(target);
@@ -1593,7 +1593,7 @@ test('the stay option on a usage card changes nothing and is kept as the card\'s
     const c = fake();
     await decide(usageClick(q, 'Stay on Balanced'), usageDeps(c));
     assert.deepEqual(c.calls.record, []);
-    assert.deepEqual(c.calls.write.map((w) => [w.kind, w.data]), [['card-answer', { question: q.question, label: 'Stay on Balanced' }]]);
+    assert.deepEqual(c.calls.write.map((w) => [w.kind, w.data]), [['card-answer', { question: q.question, label: 'Stay on Balanced', where: 'chat' }]]);
   });
 });
 
