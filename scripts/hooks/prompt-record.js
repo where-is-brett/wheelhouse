@@ -63,7 +63,7 @@ import {
 } from '../state/card-lines.js';
 import {
   chatCopy, setLineOf, setLinesOf, replyCode, replyCodeLine, setupLine, SETUP_LABEL, SETUP_TITLES, BASELINE_LABEL, BASELINE_WORDS, baselineLine,
-  TRUST_LINE, TAKEOVER_LABEL, TAKEOVER_LINE, PAIR_LINE, UNPAIR_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine, KEEP_CONTROL_LINE, keepControlLine, USAGE_LINE, PREMIUM_LINE, START_GOAL_LINE,
+  RELEASE_LABEL, RELEASE_LINE, TRUST_LINE, TAKEOVER_LABEL, TAKEOVER_LINE, PAIR_LINE, UNPAIR_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine, KEEP_CONTROL_LINE, keepControlLine, USAGE_LINE, PREMIUM_LINE, START_GOAL_LINE,
 } from '../state/card-lines.js';
 import {
   keepClick, shownHash, keepAnswer, askedFor, claimAnswer, claimedAt, noteClaimed, releaseAnswer, keepUninstallClick, shownUninstall, typedVerdict, typedBefore, keepSetupRecords, sameWords,
@@ -418,8 +418,15 @@ export async function earned({ project, question, label, card, client, now, left
     const stops = await stopsAtStart(client, project, record);
     return stops === null ? action(record) : { refused: stops };
   }
+  // The card for a Wheelhouse release that is not pins-only (update design, section 6.2): its one set line names the tag and
+  // the commit in full, and the click earns an action naming both, which only the release's reviewed change counts.
+  if (label === RELEASE_LABEL && setLinesOf(question).some((line) => RELEASE_LINE.test(line))) {
+    const lines = setLinesOf(question);
+    const m = lines.length === 1 ? RELEASE_LINE.exec(lines[0]) : null;
+    return m ? action({ action: 'approve-release', release: m[1], commit: m[2] }) : null;
+  }
   if (label === 'Approve') {
-    const prs = [...question.matchAll(APPROVE)];
+    const prs =[...question.matchAll(APPROVE)];
     const works = [...question.matchAll(APPROVE_WORK)];
     if (prs.length + works.length !== 1) return null;
     if (works.length === 1) {

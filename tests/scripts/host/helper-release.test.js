@@ -20,6 +20,7 @@ import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { takeLock } from '../../../scripts/state/lock.js';
 import { projectSettings } from '../../../scripts/protection/settings.js';
 import { readConfig } from '../../../scripts/gate/guardrails.js';
+import { releaseLine } from '../../../scripts/state/card-lines.js';
 import { RELEASE_WHY, briefingLine, releaseBranch, releaseChange, settingsText, undoBranch } from '../../../scripts/lineage/release.js';
 import { makeBareRemote, push as plainPush, g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
@@ -217,5 +218,100 @@ test('a release PR changing anything else under .claude/ needs the director\'s a
       assert.deepEqual(answer.reasons, [`no approval of ${pr.head.slice(0, 7)}`]);
       assert.equal(answer.releaseApproval, why(RELEASE_WHY.fetch));
     } finally { pr.cleanup(); }
+  } finally { repo.cleanup(); }
+});
+
+// --- The update's own reviewed change (update design, section 6.2) ---
+
+test('the update opens its change through its own route, which records only that the update opened it', async () => {
+  const repo = await wheelhouseRepo();
+  const sha = repo.shas['v1.2.0'];
+  const pr = await remoteWithPr({ files: released('v1.2.0') });
+  const home = shortHome();
+  const openedPrs = [];
+  try {
+    await as(home, async () => {
+      writeProject('o__p', {
+        folder: path.join(home, 'work'), remoteUrl: pr.remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' },
+      });
+      const { computer, publicKey } = makeSigningKey();
+      enrol({ computer, publicKey, enrolledAt: '2026-10-19T00:00:00.000Z' });
+      await openTestRecord({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: pr.remote.url });
+      const adapter = { defaultBranch: async () => 'main', openPr: async (args) => { openedPrs.push(args); return { number: 7 }; } };
+      const helper = await startHelper({ run: hostGuard, address: testAddress(home), adapterFor: async () => adapter, envFor: async () => ({}), wheelhouseRepo: repo.url });
+      try {
+        const client = helperClient({ address: helper.address });
+        const ask = (over) => client.openReleasePr({ project: 'o__p', release: 'v1.2.0', commit: sha, head: releaseBranch(sha), title: 'Move', body: 'Body', ...over });
+        // Only the release's or the undo's branch for that very commit.
+        assert.equal((await ask({ head: 'feature/sign-in' })).ok, false);
+        assert.equal((await ask({ head: releaseBranch(repo.shas['v1.1.0']) })).ok, false);
+        assert.equal((await ask({ release: '../x' })).ok, false);
+        assert.equal((await ask({ commit: 'abc' })).ok, false);
+        assert.deepEqual(openedPrs, []);
+        const got = await ask({});
+        assert.equal(got.ok, true, JSON.stringify(got));
+        assert.deepEqual(openedPrs, [{ head: releaseBranch(sha), base: 'main', title: 'Move', body: 'Body' }]);
+        assert.equal((await ask({ head: undoBranch(sha) })).ok, true);
+      } finally { await helper.close(); }
+    });
+  } finally { fs.rmSync(home, { recursive: true, force: true }); pr.cleanup(); repo.cleanup(); }
+});
+
+const opened = (release, commit, branch = releaseBranch(commit)) => record('provenance', { branch, provenance: { update: { release, commit } } });
+const answered = (release, commit) => record('action', { action: 'approve-release', release, commit, label: 'Approve', question: `Words.\n${releaseLine(release, commit)}` });
+const headApproved = (head) => record('approval', { pr: 7, commit: head, words: 'Approve', question: 'Approve pull request #7' });
+
+test('the update\'s change: a pins-only release merges on review alone, with no card', async () => {
+  const repo = await wheelhouseRepo();
+  const sha = repo.shas['v1.1.0'];
+  const pr = await remoteWithPr({ files: released('v1.1.0') });
+  try {
+    const { answer, merges } = await mergeRelease({ pr, headRef: releaseBranch(sha), repo, before: (head) => { opened('v1.1.0', sha); reviewed(head); } });
+    assert.equal(answer.ok, true, JSON.stringify(answer));
+    assert.deepEqual(merges, [{ number: 7, sha: pr.head }]);
+  } finally { pr.cleanup(); repo.cleanup(); }
+});
+
+test('the update\'s change: a release that is not pins-only merges only with the signed card answer for that commit', async () => {
+  const repo = await wheelhouseRepo();
+  const sha = repo.shas['v1.2.0'];
+  const other = repo.shas['v1.1.0'];
+  const reason = `no approval of release v1.2.0 (${sha.slice(0, 7)}) from the director's card for it`;
+  const tryMerge = async ({ setup = () => {}, files = released('v1.2.0'), commit = sha, tag = 'v1.2.0' }) => {
+    const pr = await remoteWithPr({ files });
+    try {
+      return await mergeRelease({ pr, headRef: releaseBranch(commit), repo, before: (head) => { opened(tag, commit); reviewed(head); setup(head); } });
+    } finally { pr.cleanup(); }
+  };
+  try {
+    // No card answer: refused, and the foreman is told what would meet it.
+    const none = await tryMerge({});
+    assert.equal(none.answer.ok, false);
+    assert.ok(none.answer.reasons.includes(reason), JSON.stringify(none.answer));
+    assert.deepEqual(none.answer.needs, { releaseApproval: { release: 'v1.2.0', commit: sha } });
+    assert.deepEqual(none.merges, []);
+    // An approval of the pull request's head is not the release's card.
+    const head = await tryMerge({ setup: headApproved });
+    assert.equal(head.answer.ok, false);
+    assert.ok(head.answer.reasons.includes(reason));
+    assert.deepEqual(head.merges, []);
+    // An answer for another commit, or for another tag at this commit, doesn't count.
+    const wrong = await tryMerge({ setup: () => answered('v1.1.0', other) });
+    assert.equal(wrong.answer.ok, false);
+    assert.deepEqual(wrong.merges, []);
+    const tag = await tryMerge({ setup: () => answered('v1.2.1', sha) });
+    assert.equal(tag.answer.ok, false);
+    // The answer for this release at this commit merges it.
+    const merged = await tryMerge({ setup: () => answered('v1.2.0', sha) });
+    assert.equal(merged.answer.ok, true, JSON.stringify(merged.answer));
+    assert.equal(merged.merges.length, 1);
+    // The answer lowers the approval only: a change of more than the ref is refused, and so is a tag that isn't at the commit.
+    const more = await tryMerge({ setup: () => answered('v1.2.0', sha), files: { [SETTINGS]: settingsText({ ...releaseChange(settingsAt('v1.0.0'), { ref: 'v1.2.0', sha }), autoCompactWindow: 100000 }) } });
+    assert.equal(more.answer.ok, false);
+    assert.match(more.answer.refused, /changes more than the Wheelhouse marketplace's ref, to v1\.2\.0/);
+    assert.deepEqual(more.merges, []);
+    const moved = await tryMerge({ setup: () => answered('v1.2.0', other), files: released('v1.2.0'), commit: other, tag: 'v1.2.0' });
+    assert.equal(moved.answer.ok, false);
+    assert.deepEqual(moved.merges, []);
   } finally { repo.cleanup(); }
 });
