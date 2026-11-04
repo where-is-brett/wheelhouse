@@ -239,7 +239,7 @@ test('while held, the front desk\'s reading commands run, as under STOP; its wri
   });
 });
 
-test('while held, the update command\'s forms run, and no other form, flag, root or chained command does', async () => {
+test('while held, the update command\'s four forms run, and bootstrap does not, and no other form, flag, root or chained command does', async () => {
   await withHome(async (home) => {
     const main = makeProject();
     hold();
@@ -248,13 +248,13 @@ test('while held, the update command\'s forms run, and no other form, flag, root
     for (const command of [
       `${cli} plan`, `${cli} plan v0.2.8`, `${cli} plan v0.3.0-rc.1`, `${cli} apply ${hash}`, `${cli} status`, `${cli} status 2>/dev/null`,
       `${cli} answer ${hash} "Not now"`, `${cli} answer update-helper-4242-x "Stop it"`, `${cli} answer release-${'b'.repeat(40)} Approve`,
-      `node --no-use-system-ca "${PLUGIN}/scripts/update/cli.js" status`, `${cli} bootstrap "$PWD"`, `${cli} bootstrap /Users/me/my-project`,
+      `node --no-use-system-ca "${PLUGIN}/scripts/update/cli.js" status`,
     ]) {
       assert.equal(await decide(bash(main, command), deps(home)), undefined, command);
     }
     for (const command of [
       `${cli}`, `${cli} plan latest`, `${cli} plan v0.2.8 extra`, `${cli} plan --force`, `${cli} apply`, `${cli} apply abc`, `${cli} apply ${hash} now`,
-      `${cli} status all`, `${cli} answer ${hash}`, `${cli} answer ${hash} "Delete it"`, `${cli} answer ../x Approve`, `${cli} bootstrap`, `${cli} bootstrap --force`, `${cli} bootstrap a b`, `${cli} bootstrap ""`, `${cli} bootstrap . && rm -rf x`,
+      `${cli} status all`, `${cli} answer ${hash}`, `${cli} answer ${hash} "Delete it"`, `${cli} answer ../x Approve`, `${cli} bootstrap`, `${cli} bootstrap "$PWD"`, `${cli} bootstrap /Users/me/my-project`, `script -q /dev/null ${cli} bootstrap "$PWD"`, `script -q /dev/null node "${PLUGIN}/scripts/update/cli.js" bootstrap /p`, `${cli} bootstrap --force`, `${cli} bootstrap a b`, `${cli} bootstrap ""`, `${cli} bootstrap . && rm -rf x`,
       `${cli} status && rm -rf x`, `${cli} status > out.txt`, `${cli} apply ${hash} | tee x`, `node /other/root/scripts/update/cli.js status`,
       `node "${PLUGIN}/scripts/update/run.js" p1 /x`, `node "${PLUGIN}/scripts/update/finish.js" p1`,
     ]) {

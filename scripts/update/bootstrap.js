@@ -12,6 +12,10 @@
 // input piped or closed, never a terminal of the director's, so it can neither type the answer nor pipe it in; with no
 // terminal this refuses before it reads or changes anything.
 //
+// Second line of defence: it also refuses when the environment shows a Claude Code or Wheelhouse session (SESSION_MARKERS). The hooks
+// refuse `cli.js bootstrap` in an agent session too, but none of this is a full guarantee: a process that strips its own
+// environment and fakes a terminal could still type the answer. The real protection is that the director pastes this themselves.
+//
 // The install and the hand-over go through the same job (runJob) as any update, under the update lock, so finish.js's own
 // conditions hold: the journal's finish step is running under a live lock, and it runs from the cache folder of the tag.
 import fs from 'node:fs';
@@ -32,6 +36,9 @@ import { checkTarget, fetchTag } from './release.js';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const ASK_TRIES = 5;
+export const SESSION_MARKERS = Object.freeze(['CLAUDECODE', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_PROJECT_DIR', 'WHEELHOUSE_SESSION', 'WHEELHOUSE_AGENT']);
+export const IN_SESSION = 'Bootstrap is for you to run yourself in Terminal, outside Claude Code, so it will not run inside a session.';
+export const inSession = (env) => SESSION_MARKERS.some((name) => typeof env?.[name] === 'string' && env[name] !== '');
 
 export const NO_TERMINAL = 'Bootstrap asks you to type 1 or 2, so it has to be run by you in Terminal (PowerShell on Windows), not by an agent.';
 export const NOT_A_PROJECT = 'That folder is not a Wheelhouse project on this computer. Run this in your project\'s folder.';
@@ -69,9 +76,10 @@ export function terminalAsk({ stdin = process.stdin, stdout = process.stdout } =
 // Resolves { ok, line }. The seams are those of updateSteps (through `steps`), so a test touches no real computer.
 export async function bootstrap({
   projectDir, ask, say = () => {}, root = PLUGIN_ROOT, run = defaultRun, claudeHome = defaultClaudeHome(), mirror = updateMirror(),
-  client, project, from = null, journal, steps: over = {}, putBackRun = putBack,
+  client, project, from = null, journal, steps: over = {}, putBackRun = putBack, env = process.env,
 }) {
   const stop = (line) => ({ ok: false, line });
+  if (inSession(env)) return stop(IN_SESSION);
   if (typeof ask !== 'function') return stop(NO_TERMINAL);
   const placed = project ?? projectForFolder(projectDir)?.project;
   if (typeof placed !== 'string') return stop(NOT_A_PROJECT);

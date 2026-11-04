@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Readable } from 'node:stream';
-import { bootstrap, NO_TERMINAL, terminalAsk } from '../../../scripts/update/bootstrap.js';
+import { bootstrap, IN_SESSION, NO_TERMINAL, terminalAsk } from '../../../scripts/update/bootstrap.js';
 import { main } from '../../../scripts/update/cli.js';
 import { openJournal, updateLockHeld } from '../../../scripts/update/journal.js';
 import { rootIsCacheFor } from '../../../scripts/update/finish.js';
@@ -80,7 +80,7 @@ async function world(over = {}) {
   const asked = [];
   const ask = async (prompt) => { asked.push(prompt); return typed.length > 0 ? typed.shift() : null; };
   const call = () => bootstrap({
-    projectDir: dir, project: 'p1', root: clone, ask, say: (t) => said.push(t), client, claudeHome, mirror: tempFolder('wh-mirror-'), from: 'v0.2.6', steps, putBackRun,
+    projectDir: dir, project: 'p1', root: clone, ask, say: (t) => said.push(t), client, claudeHome, mirror: tempFolder('wh-mirror-'), from: 'v0.2.6', steps, putBackRun, env: {},
   });
   return { call, log, seen, said, asked, dir, claudeHome };
 }
@@ -172,9 +172,9 @@ test('bootstrap: a change still open is left waiting, with the board\'s words, a
 
 test('bootstrap: a folder that is not a project, or no way to ask, changes nothing', () => withHome(async () => {
   const w = await world();
-  const none = await bootstrap({ projectDir: w.dir, root: w.dir, ask: null });
+  const none = await bootstrap({ projectDir: w.dir, root: w.dir, ask: null, env: {} });
   assert.equal(none.line, NO_TERMINAL);
-  const stranger = await bootstrap({ projectDir: tempFolder('wh-none-'), ask: async () => '1' });
+  const stranger = await bootstrap({ projectDir: tempFolder('wh-none-'), ask: async () => '1', env: {} });
   assert.match(stranger.line, /not a Wheelhouse project/);
 }));
 
@@ -192,3 +192,12 @@ test('cli bootstrap: takes exactly one folder', async () => {
   assert.equal(await main(['bootstrap'], { err: (t) => errors.push(t), out: () => {}, client: {} }), 1);
   assert.match(errors.join(''), /bootstrap <project folder>/);
 });
+
+test('bootstrap: refuses inside a Claude Code or Wheelhouse session, before anything is read or changed', () => withHome(async () => {
+  for (const name of ['CLAUDECODE', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_PROJECT_DIR']) {
+    let asked = false;
+    const out = await bootstrap({ projectDir: '/x', ask: async () => { asked = true; return '1'; }, env: { [name]: 'x' } });
+    assert.equal(out.line, IN_SESSION, name);
+    assert.equal(asked, false);
+  }
+}));
