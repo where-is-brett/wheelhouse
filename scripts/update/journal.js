@@ -79,6 +79,16 @@ function takeLock(project) {
   return null;
 }
 
+// Whether an update job holds the update lock now: the lock file names a process that is alive. Reads only; takes nothing.
+export function updateLockHeld() {
+  try {
+    const held = JSON.parse(fs.readFileSync(path.join(updateDir(), 'lock'), 'utf8'));
+    return alive(held?.pid);
+  } catch {
+    return false;
+  }
+}
+
 export function openJournal(project) {
   if (typeof project !== 'string' || !SAFE_PART.test(project) || /^\.+$/.test(project)) {
     throw new Error('A project folder name may use only letters, digits, dots, hyphens and underscores');

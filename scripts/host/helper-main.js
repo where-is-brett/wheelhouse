@@ -2,6 +2,7 @@
 // The real helper: each project's host, repository and connection come from
 // its record (~/.wheelhouse/projects/<project>/project.json). Run as a script,
 // it starts the helper at the usual address and stays up.
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { helperAddress, engineDir } from '../lib/paths.js';
@@ -19,6 +20,20 @@ import { settingsViews } from '../desk/mod-records.js';
 import { effectiveSettings } from '../settings/effective.js';
 import { engineReady } from '../engine/switch.js';
 import { engineWanted } from '../engine/parts.js';
+import { processStartTime } from '../watcher/waker.js';
+import { writeHelperRecord, removeHelperRecord } from './helper-record.js';
+
+const OWN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+// The version in a plugin folder's .claude-plugin/plugin.json, or null.
+function versionOf(root) {
+  try {
+    const version = JSON.parse(fs.readFileSync(path.join(root, '.claude-plugin', 'plugin.json'), 'utf8'))?.version;
+    return typeof version === 'string' && version !== '' ? version : null;
+  } catch {
+    return null;
+  }
+}
 
 function recordOf(project) {
   const record = readProject(project);
@@ -93,6 +108,9 @@ export async function startRealHelper({
   address = helperAddress(), fetch = globalThis.fetch, now = () => new Date(),
   onStop = (close) => close().then(() => process.exit(0), () => process.exit(1)),
   run = realRun, via, keyDeps, borrow = borrowKey, moveKeys = false, recordBackend = false,
+  // `keepRecord` keeps the helper's running record (helper-record.js) while it runs: written once it is listening, removed
+  // when it closes. Off unless asked, like the two above; the script below asks. `startTime` and `root` are for tests.
+  keepRecord = false, startTime = processStartTime, root = OWN_ROOT,
 } = {}) {
   // The key move starts once the helper is listening, so a second helper that cannot bind moves nothing.
   let moved = null;
@@ -100,7 +118,8 @@ export async function startRealHelper({
   const helper = await startHelper({
     address,
     now,
-    onStop,
+    // The helper's own close, whatever ends it (an uninstall, a retire), takes its record away.
+    onStop: keepRecord ? (close) => onStop(() => close().finally(() => removeHelperRecord(process.pid))) : onStop,
     run,
     via,
     keyDeps,
@@ -111,13 +130,23 @@ export async function startRealHelper({
   });
   if (recordBackend) recordBackends();
   if (moveKeys) moved = moveKeysToStore(keyDeps).catch(() => null);
-  return { ...helper, firstStart: moved ?? Promise.resolve(null) };
+  let close = helper.close;
+  if (keepRecord) {
+    // A record that cannot be written leaves the helper running without one: an update then treats it as unrecorded.
+    try {
+      writeHelperRecord({ pid: process.pid, startTime: await startTime(process.pid), version: versionOf(root), root, address: helper.address });
+    } catch { /* unrecorded */ }
+    close = async () => {
+      try { await helper.close(); } finally { removeHelperRecord(process.pid); }
+    };
+  }
+  return { ...helper, close, firstStart: moved ?? Promise.resolve(null) };
 }
 
 const isScript = startedAsScript(import.meta.url);
 if (isScript) {
   try {
-    const helper = await startRealHelper({ moveKeys: true, recordBackend: true });
+    const helper = await startRealHelper({ moveKeys: true, recordBackend: true, keepRecord: true });
     process.stdout.write(`The Wheelhouse helper is running at ${helper.address}\n`);
     const stop = () => { helper.close().then(() => process.exit(0), () => process.exit(1)); };
     process.on('SIGTERM', stop);

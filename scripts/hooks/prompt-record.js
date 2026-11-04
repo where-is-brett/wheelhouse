@@ -77,6 +77,7 @@ import { offeredFrom, premiumValueOf, PREMIUM_CARD_MS } from '../routing/premium
 import { keepClick as keepBaselineClick, shownBaseline, dropPending, carriesFigures, cardText, sweepStale, cardHash } from '../lib/measures-clicks.js';
 import { localViews } from './session-start.js';
 import { cardOutcomes } from '../state/views.js';
+import { clearOpen } from '../lib/session-files.js';
 import { cardProblems } from './card-check.js';
 import { SUGGEST, WHAT_WOULD_YOU_CHANGE, SEND_BACK } from '../lib/calm-words.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
@@ -900,6 +901,8 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   if (writeVia !== 'self') return undefined;
   if (input.tool_name !== tools.ask) return undefined;
   const answered = clicks(input);
+  // The chat question this session had open is answered: nothing is left open for the next prompt to tell.
+  if (answered.length > 0 && typeof input.session_id === 'string') clearOpen(input.session_id);
   const at = now();
   // Which questions and answers carry the private note's figures is settled first, before a Not now
   // on the baseline card clears the figures waiting, which the test reads.
