@@ -149,7 +149,9 @@ import { brokerRoutes } from '../engine/broker/routes.js';
 import { lookAtHead, raiseCard, withLocalLock } from '../lib/local-git.js';
 import { queueCall } from '../engine/broker/queue.js';
 import { toolPath } from '../lib/host-tools.js';
-import { RELEASE_BRANCH, SETTINGS_FILE, briefingLine, checkRelease, pinsOnlyChange } from '../lineage/release.js';
+import { RELEASE_BRANCH, RELEASE_WHY, SETTINGS_FILE, briefingLine, checkRelease, fetchTag, pinsOnlyChange, releaseBranch, undoBranch } from '../lineage/release.js';
+import { baseRefOf, releaseApproved, updateProvenance } from '../gate/release-approval.js';
+import { RELEASE_TAG } from '../state/card-lines.js';
 import { WHEELHOUSE_URL } from '../lineage/manifest.js';
 import { SCREEN_SIZES, PUT_OFF } from '../lib/front-desk.js';
 import { CLICK_MS, HELPER_WAIT_MS } from '../lib/core-numbers.js';
@@ -2331,6 +2333,9 @@ export async function startHelper({
     answer: 'ask-allowance',
     // The other answer of a parked pull request's approval card, confirmed as its Approve is.
     'send-back': 'approval',
+    // The card for a Wheelhouse release that is not pins-only (update design, section 6.2): confirmed in the window, as the
+    // card named `release-<commit>`, and counted only by the release's own reviewed change.
+    'approve-release': 'release-approval',
   };
   // The steps the window serves while STOP is on: Lift STOP, and a Lean undo, as the runbook's local steps carry on.
   const UNDER_STOP = ['lift-stop', 'undo-merge', 'undo-main'];
@@ -2715,6 +2720,40 @@ export async function startHelper({
       });
     });
     return checked.ok ? { matched: true, ok: true, ref: change.ref, sha } : { matched: true, ok: false, why: checked.why };
+  }
+
+  // Whether a pull request is the reviewed change of Wheelhouse's own update (update design, section 6.2): the state records
+  // it as opened by the update, for a release and a commit, on the release's or the undo's branch; its only change is the
+  // Wheelhouse marketplace's `ref`, to that release; and Wheelhouse's repository, read by the helper itself, has that tag at
+  // that commit, on its default branch. Then, unless the release is pins-only (`pinsOnly`, which the review alone
+  // admits), it is approved only by the director's signed answer to the card for that release at that commit.
+  // Resolves { matched: false } for any other pull request, else { matched: true, ok, release, commit, approved, why? }.
+  async function isUpdateChange({ project, headRef, changes, pinsOnly, views, enrolled }, ctx) {
+    const found = updateProvenance({ recorded: views.provenance?.[headRef], headRef });
+    if (!found.matched || !found.ok) return found;
+    const change = changes === null ? null : pinsOnlyChange(changes.paths, changes.files?.[SETTINGS_FILE]);
+    if (change === null || change.ref !== found.release) {
+      return { ...found, ok: false, approved: false, why: `it changes more than the Wheelhouse marketplace's ref, to ${found.release}, in ${SETTINGS_FILE}` };
+    }
+    const mirror = path.join(wheelhouseHome(), 'lineage', 'wheelhouse.git');
+    let fetched;
+    try {
+      fetched = await oneAtATime('wheelhouse-release', async () => {
+        await lookOnce(ctx, mirror, 'HEAD', "Wheelhouse's release mirror");
+        return fetchTag({ ref: found.release, run, mirror, url: wheelhouseRepo });
+      });
+    } catch (error) {
+      if (error instanceof LookRefusal) throw error;
+      fetched = { ok: false, why: RELEASE_WHY.fetch };
+    }
+    if (!fetched.ok) return { ...found, ok: false, approved: false, why: fetched.why };
+    if (fetched.sha !== found.commit) return { ...found, ok: false, approved: false, why: RELEASE_WHY.commit };
+    // The release the project is on is the one the change's base names; the answer must stand for that move.
+    const previous = baseRefOf(changes.files?.[SETTINGS_FILE]?.base);
+    const approved = pinsOnly || (previous !== null && releaseApproved({
+      events: listEvents(stateDir(project), { report: () => {} }), previous, release: found.release, commit: found.commit, branch: headRef, enrolled,
+    }));
+    return { ...found, previous, approved };
   }
 
   // Whether the configuration git reads when the fenced runner `fenced` runs in `mirror` sets any
@@ -3537,6 +3576,19 @@ export async function startHelper({
     const queueRows = recordOf(project).host === 'local' && !fixCall && !keeping && !restore;
     const queueApproval = queueRows && readable && needsApprovalOf({ paths: changes.paths, config: changes.config });
     const approvalRequired = body.approvalRequired === true || guarded || restore || switching || compacting || shownFirst || queueApproval;
+    // The update's own reviewed change (update design, section 6.2): found here from the state and Wheelhouse's repository,
+    // never from the caller. Its provenance is the update's, not a session's; and a release that is not pins-only is
+    // approved by the director's card for that release at that commit alone, which no approval of the head stands in for.
+    let updateCheck = { matched: false };
+    if (readable && !restore) {
+      try {
+        updateCheck = await isUpdateChange({ project, headRef: pr.headRef, changes, pinsOnly, views, enrolled }, ctx);
+      } catch (error) {
+        if (error instanceof LookRefusal) throw error;
+        updateCheck = { matched: true, ok: false, why: 'it could not be checked' };
+      }
+    }
+    const byRelease = updateCheck.matched && updateCheck.ok && !pinsOnly;
     const holdsLock = await lockHeld(project, ctx);
     const { upToDate, review, approval } = await gateRecords({ project, number, headSha, views, adapter, compare: approvalRequired }, ctx);
     // The kinds of review that count for the agent this computer runs, from the default branch's configuration:
@@ -3578,13 +3630,16 @@ export async function startHelper({
       reviewKinds,
       hostApproval,
       approval,
+      ...(byRelease ? { release: { previous: updateCheck.previous, release: updateCheck.release, commit: updateCheck.commit, approved: updateCheck.approved === true } } : {}),
       enrolled,
       upToDate,
       incident: incidentFor(views, number, { fix: fixCall ? fixOfRun({ views, opened: engineRun.openedOf(project, number), call: fixCall, headSha }) : null }),
       // What /pr/open recorded built the pull request's branch, from the signed state, against this
       // Wheelhouse's own manifest (a pull request opened before that record names it in its body). A
       // verified restore has none: it puts back a release that merged before (Ruling 105).
-      provenance: restore || switching || compacting || keeping ? { ok: true } : checkProvenance({ recorded: views.provenance?.[pr.headRef], body: pr.body, root: pluginRoot }),
+      provenance: restore || switching || compacting || keeping ? { ok: true }
+        : updateCheck.matched ? (updateCheck.ok ? { ok: true } : { ok: false, why: updateCheck.why })
+          : checkProvenance({ recorded: views.provenance?.[pr.headRef], body: pr.body, root: pluginRoot }),
     });
     if (!decision.allow || stateReasons.length > 0) {
       const said = restoreCheck.matched && !restore ? [`restore pull request: ${restoreCheck.why}`] : [];
@@ -3595,7 +3650,8 @@ export async function startHelper({
       const releaseLine = releaseCheck.matched && !pinsOnly ? `release pull request, so it needs the director's approval: ${releaseCheck.why}` : null;
       // What the director's click can supply, by name, so the foreman can wait for that click
       // rather than ask (ruling R117). The reasons still list every condition that failed.
-      const needs = decision.approvalMissing === true ? { needs: { approval: { pr: number, commit: headSha } } } : {};
+      const needs = decision.approvalMissing !== true ? {}
+        : byRelease ? { needs: { releaseApproval: { previous: updateCheck.previous, release: updateCheck.release, commit: updateCheck.commit } } } : { needs: { approval: { pr: number, commit: headSha } } };
       return {
         ok: false,
         refused: [...(releaseLine === null ? [] : [releaseLine]), ...reasons].join('; '),
@@ -4874,6 +4930,34 @@ export async function startHelper({
       const text = typeof body.body === 'string' ? removeProvenance(body.body) : body.body;
       return { ok: true, result: await adapter.openPr({ head: spelled.branch, base, title: body.title, body: text }) };
     },
+    // The reviewed change of Wheelhouse's own update (update design, section 6.2): { project, release, commit, head, title,
+    // body }. The branch must be the release's (or the undo's) for that very commit, which is all it records: that the
+    // update opened it, for that release and commit, with no session and no model. What that record admits at the gate is
+    // the gate's to say (isUpdateChange): only the marketplace's `ref` to that tag at that commit, and a release that is
+    // not pins-only only on the director's card for it.
+    '/pr/open-release': async (body, ctx) => {
+      if (stopped()) return STOP_REFUSAL;
+      const { release, commit } = body;
+      if (typeof commit !== 'string' || !/^[0-9a-f]{40}$/.test(commit)) refuse('the release\'s commit must be written in full');
+      if (typeof release !== 'string' || !RELEASE_TAG.test(release)) refuse('the release must be named by a plain tag');
+      if (body.head !== releaseBranch(commit) && body.head !== undoBranch(commit)) return { ok: false, refused: 'the branch must be the release\'s or the undo\'s for that commit' };
+      const adapter = await ctx.adapter();
+      const defaultBranch = await defaultBranchOf(body.project, adapter);
+      const spelled = checkRefspec(body.head, defaultBranch);
+      if (!spelled.allowed) return { ok: false, refused: spelled.refused };
+      try {
+        await oneAtATime(`state:${body.project}`, async () => {
+          await ensureStateClone(body.project, ctx);
+          await writeEvent({ project: body.project, event: makeEvent({ kind: 'provenance', data: { branch: spelled.branch, provenance: { update: { release, commit } } }, now }), now });
+          await freshViews(() => writeViews(body.project, { now }));
+        });
+      } catch {
+        return { ok: false, refused: PROVENANCE_UNWRITTEN };
+      }
+      if (stopped()) return STOP_REFUSAL;
+      const text = typeof body.body === 'string' ? removeProvenance(body.body) : body.body;
+      return { ok: true, result: await adapter.openPr({ head: spelled.branch, base: defaultBranch, title: body.title, body: text }) };
+    },
     // Only from a session on this computer, as /pr/open; a new body has any block of its own taken out, and a
     // title alone leaves the body as it is.
     '/pr/update': (request, ctx) => {
@@ -5279,15 +5363,27 @@ export async function startHelper({
           const permit = await brokerPermit(project, call);
           const skipped = [];
           listEvents(stateDir(project), { report: () => {}, skipped });
-          const decided = skipped.length > 0 ? { allow: false, reason: STATE_DAMAGED } : brokerDecision(call, permit);
           let needsApproval = true;
+          let release;
           try {
             const changes = await readChanges({ project, number: change.n, headSha: change.head, defaultBranch: change.base }, ctx);
             needsApproval = needsApprovalOf({ permit, paths: changes.paths, config: changes.config });
+            // The update's own reviewed change takes the update's rule, found as the merge gate finds it (isUpdateChange).
+            const enrolled = ownKeyOnly();
+            const damaged = [];
+            const views = buildViews(listEvents(stateDir(project), { report: () => {}, skipped: damaged }), enrolled, { damaged, now });
+            const pins = await isPinsOnlyRelease({ pr: { headRef: change.branch }, changes }, ctx);
+            const update = await isUpdateChange({ project, headRef: change.branch, changes, pinsOnly: pins.ok === true, views, enrolled }, ctx);
+            if (update.matched) release = { ok: update.ok === true, pinsOnly: pins.ok === true, approved: update.approved === true };
           } catch (error) {
             if (error instanceof LookRefusal) throw error;
           }
+          // The broker still asks for every other condition; only the head's signed approval is replaced, and only for the
+          // update's own change whose release answer (or pins-only review) is in.
+          const decided = skipped.length > 0 ? { allow: false, reason: STATE_DAMAGED }
+            : brokerDecision(call, release?.ok === true && release.approved === true ? { ...permit, releaseApproved: true } : permit);
           return {
+            ...(release === undefined ? {} : { release }),
             incident: permit.incident,
             check: headReading({ records: signedChecks(project).map((e) => e.data), head: change.head, digest: permit.digest, notCounting: permit.notCounting === true }),
             review: reviewCounts(permit.review, change.head, permit.enrolled),
@@ -5309,6 +5405,8 @@ export async function startHelper({
           else if (once(`said:${change.n}:${change.head}:${got.reason}`)) await say(`Change ${change.n} wasn't added yet: ${got.reason}. It is tried again shortly.`);
         },
         async raise(change, marked) {
+          // The update's own change is asked about on the update's card, raised by the update's job, not on this one.
+          if (marked.release === true) return;
           // By the run that marked it: work sent back and marked ready again at the same head is asked about afresh.
           const key = `asked:${change.n}:${change.head}:${marked.runId}`;
           if (kept[key] === true) return;
