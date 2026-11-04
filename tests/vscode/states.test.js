@@ -13,11 +13,7 @@ const { renderPane, setLabels, LABEL_KEYS } = require('../../vscode/pane/render.
 
 const NONCE = 'b'.repeat(64);
 const esc = (value) => String(value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\'': '&#39;' })[c]);
-const draw = (fixture) => renderPane(fixture, { nonce: NONCE, view: fixture.view, settings: fixture.settings, briefing: 'Since you were last here, one pull request merged.' });
-
-// A state the add-on doesn't yet draw as the mod does: the part that will, so CI stays green until it does. Today a card that
-// doesn't block is drawn as a line under "Smaller things" with no buttons; the mod draws it as a card, one at a time (Part 3).
-const TODO = Object.fromEntries(['card-of-parts', 'why-open', 'feature-question', 'suggest-open', 'steered', 'revised', 'recording', 'several-cards', 'all-stop', 'out-of-date'].map((name) => [name, 'Part 3']));
+const draw = (fixture, over = {}) => renderPane(fixture, { nonce: NONCE, view: fixture.view, settings: fixture.settings, open: fixture.open, recording: fixture.recording, briefing: 'Since you were last here, one pull request merged.', ...over });
 
 test('there are sixteen states, each with a fixture', () => {
   assert.equal(STATES.length, 16);
@@ -37,20 +33,102 @@ test('there are sixteen states, each with a fixture', () => {
 setLabels(PANE_LABELS);
 
 for (const name of STATES) {
-  test(`every state draws: ${name}`, TODO[name] ? { todo: TODO[name] } : {}, () => {
+  test(`every state draws: ${name}`, () => {
     const fixture = loadState(name);
     const html = draw(fixture);
     assert.ok(!html.includes('couldn\'t be drawn'), 'the pane drew its failure notice');
     if (fixture.view !== 'main') return;
-    const waiting = fixture.cards.filter((c) => c.heldBack !== true);
-    for (const card of waiting) {
-      for (const button of card.buttons) {
-        const label = esc(button.label);
-        assert.ok(new RegExp(`<button[^>]*>${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?: ↗)?</button>`).test(html), `${name}: ${card.id} lacks its ${button.label} button`);
-      }
+    // One card is shown at a time, so only the first waiting card's buttons are drawn.
+    const shown = fixture.cards.filter((c) => c.heldBack !== true)[0];
+    if (shown === undefined) return;
+    if (fixture.recording === shown.id) {
+      assert.ok(html.includes('Recording…'), `${name}: no Recording…`);
+      return;
     }
+    for (const button of shown.buttons) {
+      const label = esc(button.does === 'why' && fixture.open === 'why' ? 'Hide why' : button.label);
+      assert.ok(new RegExp(`<button[^>]*>${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?: ↗)?</button>`).test(html), `${name}: ${shown.id} lacks its ${button.label} button`);
+    }
+    if (shown.buttons.length === 0) assert.ok(!html.includes('data-act="press"'), `${name}: a card with no buttons drew one`);
   });
 }
+
+test('card of parts: ask, what, small line and recommendation, in the mod\'s order', () => {
+  const html = draw(loadState('card-of-parts'));
+  const at = (words) => html.indexOf(esc(words));
+  const order = ['Approval', 'Put pull request #13 live?', 'Pull request #13 changes the wording', 'asked 16 hours ago', 'Approve, because the checks passed'].map(at);
+  assert.ok(order.every((i) => i > -1), String(order));
+  assert.deepEqual([...order].sort((x, y) => x - y), order);
+  assert.ok(!html.includes('Reply code'));
+  assert.match(html, /class="band">Approve, because/);
+});
+
+test('why open: the reasons show, and the button reads Hide why', () => {
+  const html = draw(loadState('why-open'));
+  assert.ok(!/class="why-box hidden"/.test(html));
+  assert.ok(html.includes('Nothing is released and the agents carry on with other work.'));
+  assert.match(html, /data-act="why-toggle"[^>]*>Hide why</);
+  assert.match(draw(loadState('card-of-parts')), /class="why-box hidden"/);
+});
+
+test('feature question: its own options are its buttons', () => {
+  const html = draw(loadState('feature-question'));
+  for (const label of ['Comma', 'Tab']) assert.match(html, new RegExp(`data-choice="${label}"`));
+  assert.ok(html.includes('Comma, because the checks passed'));
+});
+
+test('suggest open: the box shows, with Send and Cancel', () => {
+  const html = draw(loadState('suggest-open'));
+  assert.ok(!/class="suggest-box hidden"/.test(html));
+  assert.ok(html.includes('<textarea'));
+  assert.match(html, /data-act="suggest"/);
+  assert.match(draw(loadState('card-of-parts')), /class="suggest-box hidden"/);
+});
+
+test('steered and revised', () => {
+  assert.ok(draw(loadState('steered')).includes('You suggested a change at 21:00. A new proposal is on its way, and nothing goes live meanwhile.'));
+  assert.ok(draw(loadState('revised')).includes('Approval · revised'));
+});
+
+test('recording: Recording… in place of the button, and nothing else to press', () => {
+  const html = draw(loadState('recording'));
+  assert.ok(html.includes('Recording…'));
+  assert.ok(!html.includes('data-act="press"'));
+  assert.ok(!html.includes('data-act="suggest-open"'));
+  assert.ok(!html.includes('>Approve</button>'));
+  assert.match(html, /data-act="stop"/);
+});
+
+test('several cards: the first card, the next one\'s subject, and Next', () => {
+  const fixture = loadState('several-cards');
+  const html = draw(fixture);
+  assert.ok(html.includes('data-act="next"'));
+  assert.ok(!html.includes('data-act="back"'));
+  assert.ok(html.includes('Next: The export needs to know which separator to use.'));
+  assert.ok(!html.includes('data-choice="Comma"'));
+  const second = draw(fixture, { at: 1 });
+  assert.ok(second.includes('data-choice="Comma"') && second.includes('data-act="back"'));
+});
+
+test('all stop: the halted panel and the card under it', () => {
+  const html = draw(loadState('all-stop'));
+  assert.match(html, /data-act="lift"/);
+  assert.match(html, /data-choice="Approve"/);
+});
+
+test('out of date: the warning lines and the card', () => {
+  const fixture = loadState('out-of-date');
+  const html = draw(fixture);
+  assert.match(html, /class="band warn"/);
+  assert.match(html, /data-choice="Approve"/);
+});
+
+test('answered elsewhere: the model\'s note, no buttons', () => {
+  const html = draw(loadState('answered-elsewhere'));
+  assert.ok(html.includes('Approved in the chat at 10:34'));
+  const card = html.slice(html.indexOf('data-card-box'), html.indexOf('</section>'));
+  assert.ok(!card.includes('<button'));
+});
 
 test('the labels are the shared ones', () => {
   const html = renderPane(loadState('calm'), { nonce: NONCE });
