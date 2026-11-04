@@ -456,7 +456,7 @@ test('the mod reads a reply code from the code alphabet', () => {
 test('the mod\'s numbers are the scripts\' numbers, named once in hooks/mod/numbers.ts', () => {
   const source = fs.readFileSync(path.join(ROOT, 'hooks', 'mod', 'numbers.ts'), 'utf8');
   const written = Object.fromEntries([...source.matchAll(/^export const ([A-Z_]+) = (.*)$/gm)].map((m) => [m[1], m[2]]));
-  assert.deepEqual(Object.keys(written).sort(), ['ASK_MS', 'BRIDGE_MS', 'FOREMAN_LEAD', 'HIDE_WHY', 'MESSAGE_LEAD', 'NODE_MISSING', 'NOTHING_NEEDS_YOU', 'NOT_HANDED', 'NOT_HERE', 'NOT_RECORDED', 'ONLY_YOU_LIFT', 'PANE_ID', 'PANE_LEAD', 'RECORDING', 'SENT_TO_FRONT_DESK', 'SETTING_UP', 'SHOW_ME', 'STALE_TICKS', 'STOP_HALTS', 'SUGGEST', 'TICK_ASK_MS', 'TICK_MS', 'UNDO_MS', 'WATCH_BRIDGE_MS', 'WHAT_CHANGED', 'WHAT_WOULD_YOU_CHANGE', 'WHY']);
+  assert.deepEqual(Object.keys(written).sort(), ['ASK_MS', 'BRIDGE_MS', 'FOREMAN_LEAD', 'HIDE_WHY', 'MESSAGE_LEAD', 'NODE_MISSING', 'NOTHING_NEEDS_YOU', 'NOT_HANDED', 'NOT_HERE', 'NOT_RECORDED', 'ONLY_YOU_LIFT', 'OPEN_IN_CHAT', 'OPEN_IN_CHAT_TOAST', 'PANE_ID', 'PANE_LEAD', 'RECORDING', 'SENT_TO_FRONT_DESK', 'SETTING_UP', 'SHOW_ME', 'STALE_TICKS', 'STOP_HALTS', 'SUGGEST', 'TICK_ASK_MS', 'TICK_MS', 'UNDO_MS', 'WATCH_BRIDGE_MS', 'WHAT_CHANGED', 'WHAT_WOULD_YOU_CHANGE', 'WHY']);
   const value = (name) => JSON.parse(written[name].replaceAll("'", '"'));
   assert.equal(value('PANE_ID'), PANE_ID);
   assert.equal(value('TICK_MS'), TICK_MS);
@@ -470,7 +470,7 @@ test('the mod\'s numbers are the scripts\' numbers, named once in hooks/mod/numb
   // The Calm set words are scripts/lib/calm-words.js's, written as the mod says them (a quoted
   // string may hold an escaped apostrophe, so each is read as the string it is).
   const word = (name) => new Function(`return ${written[name]}`)();
-  for (const name of ['STOP_HALTS', 'ONLY_YOU_LIFT', 'NOTHING_NEEDS_YOU', 'RECORDING', 'NOT_HERE', 'SETTING_UP', 'WHY', 'HIDE_WHY', 'SHOW_ME', 'WHAT_CHANGED', 'NOT_HANDED', 'NOT_RECORDED', 'SUGGEST', 'WHAT_WOULD_YOU_CHANGE', 'SENT_TO_FRONT_DESK']) {
+  for (const name of ['STOP_HALTS', 'ONLY_YOU_LIFT', 'NOTHING_NEEDS_YOU', 'RECORDING', 'NOT_HERE', 'SETTING_UP', 'WHY', 'HIDE_WHY', 'SHOW_ME', 'WHAT_CHANGED', 'NOT_HANDED', 'NOT_RECORDED', 'SUGGEST', 'WHAT_WOULD_YOU_CHANGE', 'SENT_TO_FRONT_DESK', 'OPEN_IN_CHAT', 'OPEN_IN_CHAT_TOAST']) {
     assert.equal(word(name), calmWords[name], name);
   }
   // The words for no Node.js are the hooks' check's (scripts/hooks/node-floor.cjs).

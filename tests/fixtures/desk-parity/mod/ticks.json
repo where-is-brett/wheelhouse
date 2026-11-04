@@ -88,7 +88,8 @@
           },
           "steered": null,
           "waited": "asked 3 hours ago",
-          "revised": false
+          "revised": false,
+          "openInChat": false
         }
       ],
       "held": null,
@@ -209,7 +210,8 @@
           },
           "steered": null,
           "waited": "asked 3 hours ago",
-          "revised": false
+          "revised": false,
+          "openInChat": false
         },
         {
           "id": "c2",
@@ -238,7 +240,8 @@
           "parts": null,
           "steered": null,
           "waited": "asked 1 hour ago",
-          "revised": false
+          "revised": false,
+          "openInChat": false
         }
       ],
       "held": null,
@@ -366,7 +369,8 @@
           },
           "steered": null,
           "waited": "asked 3 hours ago",
-          "revised": false
+          "revised": false,
+          "openInChat": false
         },
         {
           "id": "c2",
@@ -395,7 +399,8 @@
           "parts": null,
           "steered": null,
           "waited": "asked 1 hour ago",
-          "revised": false
+          "revised": false,
+          "openInChat": false
         }
       ],
       "held": null,
@@ -529,7 +534,8 @@
           },
           "steered": null,
           "waited": "asked 3 hours ago",
-          "revised": false
+          "revised": false,
+          "openInChat": false
         }
       ],
       "held": null,

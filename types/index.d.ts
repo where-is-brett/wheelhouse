@@ -52,6 +52,8 @@ export type WheelhousePaneCard = {
   waited?: string | null;
   // Whether it is a revised proposal, replacing a card.
   revised?: boolean;
+  // Whether a question in the chat has it open as well, while the session is busy.
+  openInChat?: boolean;
 };
 
 // A piece of work being built, and when the director will see it (null for the line "and 2 more").

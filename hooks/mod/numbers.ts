@@ -37,6 +37,8 @@ export const WHAT_CHANGED = 'What changed:'
 export const SUGGEST = 'Suggest a change…'
 export const WHAT_WOULD_YOU_CHANGE = 'What would you change?'
 export const SENT_TO_FRONT_DESK = 'Sent to the First Mate. A new proposal will follow.'
+export const OPEN_IN_CHAT = 'Also open in the chat.'
+export const OPEN_IN_CHAT_TOAST = 'Counted. The copy in the chat now changes nothing: pick anything or press Skip.'
 export const NOT_HANDED = 'That didn\'t reach the First Mate. Type it in the chat instead.'
 export const NOT_HERE = 'This pane lives in the First Mate\'s chat. Type /wheelhouse there.'
 // The toast at a session's start on a computer with no Node.js, where no hook can run (check 35):
