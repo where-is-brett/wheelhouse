@@ -4,8 +4,9 @@
 // Wheelhouse project only, runs every Wheelhouse hook for that event in this one process, in order:
 //
 //   preToolUse           the harness check, the STOP guard, the lineage hold, then the tool guard and the areas guard
-//                        once for each input the translation gives (one per path of an apply_patch); the first
-//                        refusal wins
+//                        once for each input the translation gives (one per path of an apply_patch), then, for the
+//                        question tool, the repeat guard (a card the director has already decided isn't asked
+//                        again); the first refusal wins
 //   userPromptSubmitted  the STOP word, then the board context
 //   sessionStart         the session start
 //   preCompact           records the compaction and answers nothing: Copilot compacts whatever a hook answers
@@ -59,6 +60,7 @@ const STEP_MODULES = Object.freeze({
   lineageHold: () => import('../../hooks/lineage-hold.js'),
   toolGuard: () => import('../../hooks/tool-guard.js'),
   areas: () => import('../../hooks/areas.js'),
+  cardGuard: async () => ({ decide: (await import('../../hooks/card-check.js')).decideRepeat }),
   stopWord: () => import('../../hooks/stop-word.js'),
   boardContext: () => import('../../hooks/board-context.js'),
   sessionStart: () => import('../../hooks/session-start.js'),
@@ -118,8 +120,14 @@ async function runSteps(names, inputs, { event, steps, stepDeps, dir }) {
 
 const first = (inputs) => inputs.slice(0, 1);
 const each = (inputs) => inputs;
+// The question tool's input as the repeat guard reads it (check 59: `toolArgs.message` holds the card, and the answer
+// comes back only as text). Nothing for any other tool, or a call with no message.
+const cardOf = (input) => (input?.tool_name === copilotTools.ask && typeof input.tool_input?.message === 'string'
+  ? [{ ...input, tool_name: claudeTools.ask, tool_input: { questions: [{ question: input.tool_input.message }] } }]
+  : []);
+const cards = (inputs) => inputs.slice(0, 1).flatMap(cardOf);
 const STEPS = Object.freeze({
-  preToolUse: [['stopGuard', first], ['lineageHold', first], ['toolGuard', each], ['areas', each]],
+  preToolUse: [['stopGuard', first], ['lineageHold', first], ['toolGuard', each], ['areas', each], ['cardGuard', cards]],
   userPromptSubmitted: [['stopWord', first], ['boardContext', first]],
   sessionStart: [['sessionStart', first]],
 });
