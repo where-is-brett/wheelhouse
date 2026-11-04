@@ -2,7 +2,7 @@
 
 # Check 59: clickable questions in VS Code's Copilot chat, and whose answer it is
 
-**Answer:** Partly, on the Mac. A hook sees the person's answer: VS Code's chat runs a `postToolUse` hook after its question tool, `vscode_askQuestions`, and the hook's input carries the option the person picked. In what was tried, the agent could not make the tool come back with an option picked. It could tick one in advance, but nothing came back until a person pressed **Submit**. Closing the card came back as skipped. A workspace setting that tells VS Code to answer questions itself did not take effect. The CLI form, `ask_user`, was tried later the same day through VS Code's Copilot session target (VS Code's Copilot CLI harness): its hook sees the answer only as text, "User responded: Approve". `chat.autoReply` in the person's own settings answers it with no click. Two things stay open, so `C6_PASSED` stays false: a policy hook was not tried, and an agent can run a hook's command itself with input it writes. The shape the hook sees is not the one `policyClick` reads today (see below).
+**Answer:** Partly, on the Mac. A hook sees the person's answer: VS Code's chat runs a `postToolUse` hook after its question tool, `vscode_askQuestions`, and the hook's input carries the option the person picked. In what was tried, the agent could not make the tool come back with an option picked. It could tick one in advance, but nothing came back until a person pressed **Submit**. Closing the card came back as skipped. A workspace setting that tells VS Code to answer questions itself did not take effect. The CLI form, `ask_user`, was tried later the same day through VS Code's Copilot session target (VS Code's Copilot CLI harness): its hook sees the answer only as text, "User responded: Approve". `chat.autoReply` in the person's own settings answers it with no click. A hook in the person's Copilot hooks folder (`~/.copilot/hooks/`) sees the same answer. `C6_PASSED` stays false: a company's managed hook was not tried, and an agent can run a hook's command itself with input it writes (check 72 did, and it was taken). The shape the hook sees is not the one `policyClick` reads today (see below).
 
 ## Question
 
@@ -44,11 +44,13 @@ Whether a hook can see the answer to a clickable question in Copilot's chat, and
 - **What an auto-answer would look like.** VS Code's code shows that with `chat.autoReply` on, or in Autopilot mode, the tool answers every question with `selected: []`, `skipped: false` and the `freeText` "The user is not available to respond and will review your work later. Work autonomously and make good decisions." It never picks an option. So an answer with an option in `selected` came from the card, and an auto-answer can be told apart by its empty `selected`.
 - **A typed answer can look like a click.** If a question allows typed answers (`allowFreeformInput`) and the person types an option's exact label, VS Code records it in `selected`, the same as a click on that option. The questions in this check did not allow typed answers.
 
+- **The person's hooks folder.** With the logger also in `~/.copilot/hooks/` (the director copied it there), a question in VS Code's Copilot session target came to both hooks, and both saw `postToolUse` with "User responded: Approve". Their environments differ only in `COPILOT_HOOK_DIR`. A one-off `copilot -p` run in the same folder ran only the person's hooks, not the project's.
+
 ### What was not tested
 
-- **A policy hook.** Only the workspace hook folder was tried. Whether a company's policy hook (or one in the person's Copilot hook folder, `~/.copilot/hooks/`) sees the same `postToolUse` was not tried.
+- **A company's managed hook.** Copilot's log speaks of "managed hooks" under managed settings; none was set up.
 - **The standalone CLI.** Copilot CLI's `ask_user` outside VS Code (`copilot -p`) was not run. The pinned CLI under `~/.wheelhouse-probes/` is not signed in.
-- **A forged hook input.** An agent that can run commands can start a hook's own command with input it writes, which a hook can't tell from VS Code's call. Wheelhouse's design answers this by having the hook write only through the helper. That defence was not tried here.
+- **A forged click.** An agent that can run commands can start a hook's own command with input it writes. Check 72 did this for STOP, and the helper took it. A forged click through the same route was not tried.
 - **A reload after the workspace setting, and Autopilot mode.** `chat.autoReply` in the person's own settings was tried in the Copilot session target only.
 - **Other models, and Windows.**
 
@@ -62,5 +64,5 @@ Whether a hook can see the answer to a clickable question in Copilot's chat, and
 
 ## Needs the director
 
-- One command, to put a test hook in Copilot's own hooks folder (`~/.copilot/hooks/`), so the agent can see whether a hook there sees the same answer. The agent takes it out afterwards.
+- A managed hook, on the work laptop if the company sets one.
 - Signing the pinned CLI in, for the standalone CLI form.
