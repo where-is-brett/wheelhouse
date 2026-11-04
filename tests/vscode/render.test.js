@@ -2,8 +2,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { require, model, card } from './helpers.js';
+import { PANE_LABELS } from '../../scripts/desk/pane-labels.js';
 
-const { renderPane, statusText, needsYou, PANE_MOVES } = require('../../vscode/pane/render.js');
+const { renderPane, statusText, needsYou, PANE_MOVES, setLabels } = require('../../vscode/pane/render.js');
+
+setLabels(PANE_LABELS);
 
 const NONCE = 'a'.repeat(64);
 const draw = (m, over = {}) => renderPane(m, { nonce: NONCE, ...over });
@@ -38,9 +41,9 @@ test('the colours are VS Code\'s theme variables', () => {
   assert.ok(!/(?<![&\w])#[0-9a-fA-F]{3,8}\b/.test(html));
 });
 
-test('the pane holds the name, STOP, the verdict, the cards and the foot', () => {
+test('the pane holds the name, All stop, the verdict, the cards and the foot', () => {
   const html = draw(model({ cards: [card()], verdict: 'One thing needs you. Nothing is broken.' }));
-  for (const text of ['Wheelhouse', 'STOP', 'One thing needs you.', 'Nothing is broken.', 'Approve', 'Not now', 'Why?', 'Suggest a change…', 'Show me', 'Board', 'Settings', 'Briefing']) {
+  for (const text of ['Wheelhouse', PANE_LABELS.stop, 'One thing needs you.', 'Nothing is broken.', 'Approve', 'Not now', 'Why?', 'Suggest a change…', 'Show me', PANE_LABELS.board, PANE_LABELS.settings, PANE_LABELS.briefing]) {
     assert.ok(html.includes(text), text);
   }
   assert.ok(html.includes('data-act="stop"'));
@@ -57,7 +60,7 @@ test('a preview link is shown by the card, and the page holds no address of its 
   assert.ok(!html.includes('preview.example.test'));
 });
 
-test('all stop leads the pane and offers Lift STOP with the stop it drew', () => {
+test('all stop leads the pane and offers Lift All stop with the stop it drew', () => {
   const html = draw(model({ stop: true }));
   assert.match(html, /data-act="lift"[^>]*data-since="2026-11-02T04:00:00.000Z"/);
   assert.ok(!html.includes('data-act="stop"'));

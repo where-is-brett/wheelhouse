@@ -1,0 +1,50 @@
+# .github/workflows/release.yml
+# When a release tag is pushed, packs the VS Code add-on, checks it against vscode/vsix.sha256 (recorded in the tagged commit)
+# and attaches the .vsix to that tag's release, as a draft release when there is none. It never creates or moves a tag, and it
+# attaches nothing whose hash differs from the recorded one. Nothing is published to a marketplace.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  vsix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: The tag names the version the add-on carries
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          VERSION=$(node -p "require('./.claude-plugin/plugin.json').version")
+          if [ "$TAG" != "v$VERSION" ]; then
+            echo "The tag $TAG doesn't match the plugin's version $VERSION, so no add-on is attached."
+            exit 1
+          fi
+      - name: Pack the add-on
+        run: node scripts/addon/pack.js
+      - name: Check the packed file against the recorded hash
+        run: |
+          VSIX=$(ls wheelhouse-*.vsix)
+          node scripts/addon/hash.js --check "$VSIX"
+      - name: Attach it to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          VSIX=$(ls wheelhouse-*.vsix)
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            gh release create "$TAG" --draft --title "$TAG" --notes ""
+          fi
+          cp vscode/vsix.sha256 "$VSIX.sha256"
+          gh release upload "$TAG" "$VSIX" "$VSIX.sha256" --clobber

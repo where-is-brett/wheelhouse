@@ -15,10 +15,26 @@ const path = require('node:path');
 // says so the first-run offer shows the picture of the drag, once.
 const PANE_MOVES = false;
 const OFFER = 'Put Wheelhouse on the right';
+const UNTRUSTED = 'Wheelhouse runs only in a folder you trust, since it signs your clicks with this computer\'s key.';
 const DRAG_PICTURE = '<svg viewBox="0 0 260 90" role="img" aria-label="Drag the Wheelhouse wheel to the right-hand side of the window" fill="none" stroke="currentColor" stroke-width="1.5">'
   + '<rect x="4" y="4" width="252" height="82" rx="6"/><line x1="30" y1="4" x2="30" y2="86"/><line x1="190" y1="4" x2="190" y2="86"/>'
   + '<circle cx="17" cy="22" r="6"/><path d="M28 30 L178 30 M170 24 L178 30 L170 36" stroke-linecap="round"/>'
   + '<rect x="198" y="12" width="48" height="10" rx="2"/><rect x="198" y="30" width="48" height="10" rx="2"/></svg>';
+
+// The words of the pane's own controls (All stop, Lift All stop, Board, Settings, Briefing, Done) come from scripts/desk/pane-labels.js,
+// which the mod's words are held equal to (tests/mod/pane.test.ts). The add-on hands them over with setLabels once it has loaded
+// the scripts; until then, and if they can't be loaded, the pane draws the plain fallback words below and still works.
+const LABEL_KEYS = ['stop', 'lift', 'board', 'settings', 'briefing', 'done'];
+const capital = (words) => words.charAt(0).toUpperCase() + words.slice(1);
+const FALLBACK_LABELS = Object.freeze(Object.fromEntries(LABEL_KEYS.map((key) => [key, capital(key === 'lift' ? 'lift stop' : key)])));
+let labels = FALLBACK_LABELS;
+
+// setLabels(given) -> void: uses the labels given when every key is a non-empty string; otherwise keeps the words in use.
+function setLabels(given) {
+  if (given === null || typeof given !== 'object') return;
+  if (!LABEL_KEYS.every((key) => typeof given[key] === 'string' && given[key] !== '')) return;
+  labels = Object.freeze(Object.fromEntries(LABEL_KEYS.map((key) => [key, given[key]])));
+}
 
 const STYLE = (() => {
   try {
@@ -157,10 +173,10 @@ function drawCards(model) {
 
 function drawHeader(model) {
   const on = model?.stop?.on === true;
-  const head = `<header><h1>Wheelhouse</h1>${on ? '' : button('STOP', 'stop', { act: 'stop' })}</header>`;
+  const head = `<header><h1>Wheelhouse</h1>${on ? '' : button(labels.stop, 'stop', { act: 'stop' })}</header>`;
   if (!on) return head;
   const since = text(model.stop.since);
-  return `${head}<div class="halted"><p>All stop is on. Every agent is stopped, and nothing moves until you say.</p>${button('Lift STOP', 'lift', { act: 'lift', since })}</div>`;
+  return `${head}<div class="halted"><p>All stop is on. Every agent is stopped, and nothing moves until you say.</p>${button(labels.lift, 'lift', { act: 'lift', since })}</div>`;
 }
 
 function drawOffer(offer) {
@@ -169,7 +185,7 @@ function drawOffer(offer) {
 }
 
 function drawFoot(model) {
-  const views = ['Board', 'Settings', 'Briefing'].map((v) => button(v, 'link', { act: 'view', view: v.toLowerCase() })).join('');
+  const views = [['board', labels.board], ['settings', labels.settings], ['briefing', labels.briefing]].map(([view, label]) => button(label, 'link', { act: 'view', view })).join('');
   return `<footer>${views}${text(model?.updated) ? `<span class="updated">Updated ${esc(model.updated)}</span>` : ''}</footer>`;
 }
 
@@ -183,7 +199,7 @@ function drawBoard(model) {
   if (isRecord(model?.safekeeping) && text(model.safekeeping.line)) add('Safekeeping', [text(model.safekeeping.line)]);
   if (text(model?.usage)) add('This week', [model.usage]);
   if (lines.length === 0) lines.push('<p class="note">Nothing to show on the board yet.</p>');
-  return `${lines.join('')}<footer>${button('Done', 'filled', { act: 'view', view: 'main' })}</footer>`;
+  return `${lines.join('')}<footer>${button(labels.done, 'filled', { act: 'view', view: 'main' })}</footer>`;
 }
 
 function drawSettings(settings) {
@@ -200,23 +216,26 @@ function drawSettings(settings) {
   const body = groups.length === 0
     ? '<p class="note">The settings can\'t be read just now.</p>'
     : groups.map((g) => `<div class="group"><h2>${esc(g.title)}</h2>${text(g.note) ? `<p class="about">${esc(g.note)}</p>` : ''}${rows(g)}</div>`).join('');
-  return `${body}<footer>${button('Done', 'filled', { act: 'view', view: 'main' })}</footer>`;
+  return `${body}<footer>${button(labels.done, 'filled', { act: 'view', view: 'main' })}</footer>`;
 }
 
 function drawBriefing(briefing) {
-  return `<h2>Briefing</h2><p class="briefing">${esc(briefing)}</p><footer>${button('Done', 'filled', { act: 'view', view: 'main' })}</footer>`;
+  return `<h2>Briefing</h2><p class="briefing">${esc(briefing)}</p><footer>${button(labels.done, 'filled', { act: 'view', view: 'main' })}</footer>`;
 }
 
 // renderPane(model, { nonce, view, settings, briefing, notice, offer }) -> string
 // `model` is the desk's pane model (or the last one read, or null); `view` is 'main' (the default), 'board',
 // 'settings' or 'briefing'; `notice` is a line to put above the cards, such as that the helper isn't running; `offer`
-// is whether to show the first-run offer to put the pane on the right. Never throws.
-function renderPane(model, { nonce, view = 'main', settings, briefing, notice, offer = false } = {}) {
+// is whether to show the first-run offer to put the pane on the right; `trusted` false (an untrusted folder) draws
+// STOP and the reason and no cards. Never throws.
+function renderPane(model, { nonce, view = 'main', settings, briefing, notice, offer = false, trusted = true } = {}) {
   let body;
   try {
     const m = isRecord(model) ? model : null;
     const alert = text(notice) ? `<p class="notice" role="status">${esc(notice)}</p>` : '';
-    if (view === 'settings') body = drawHeader(m) + alert + drawSettings(settings);
+    // An untrusted folder gets no cards: STOP and the reason, nothing that could press.
+    if (trusted === false) body = drawHeader(null) + `<p class="notice" role="status">${esc(UNTRUSTED)}</p>`;
+    else if (view === 'settings') body = drawHeader(m) + alert + drawSettings(settings);
     else if (view === 'briefing') body = drawHeader(m) + alert + drawBriefing(text(briefing));
     else if (view === 'board') body = drawHeader(m) + alert + drawBoard(m);
     else body = drawHeader(m) + alert + drawOffer(offer) + (m ? drawVerdict(m) + drawCards(m) : '<p class="note">Nothing to show yet.</p>') + drawFoot(m);
@@ -230,4 +249,4 @@ function renderPane(model, { nonce, view = 'main', settings, briefing, notice, o
     + `<body data-nonce="${n}">${body}<script nonce="${n}">${SCRIPT}</script></body></html>`;
 }
 
-module.exports = { renderPane, statusText, needsYou, waitingCards, PANE_MOVES, OFFER, esc };
+module.exports = { renderPane, setLabels, LABEL_KEYS, statusText, needsYou, waitingCards, PANE_MOVES, OFFER, esc };

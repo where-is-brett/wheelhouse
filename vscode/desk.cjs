@@ -25,6 +25,8 @@ const LOADS = Object.freeze({
   modDesk: 'scripts/desk/mod-desk.js',
   paths: 'scripts/lib/paths.js',
   lean: 'scripts/lean/project.js',
+  labels: 'scripts/desk/pane-labels.js',
+  vscodePane: 'scripts/lib/vscode-pane.js',
 });
 // Run, not imported: the helper's starter.
 const START_HELPER = 'scripts/agents/copilot/start-helper.js';
@@ -75,6 +77,8 @@ async function startHelperIfNeeded({ ask, spawn = childProcess.spawn, node, root
 async function realDeps({ root, cwd }) {
   const m = {};
   for (const [name, rel] of Object.entries(LOADS)) m[name] = await load(root, rel);
+  // The six words of the pane's own controls, shared with the mod; the pane draws without them if this fails.
+  try { require('./pane/render.js').setLabels(m.labels.PANE_LABELS); } catch { /* the pane's own fallback words stand */ }
   const client = m.helper.helperClient({ timeout: 3000 });
   const now = () => new Date();
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -87,6 +91,8 @@ async function realDeps({ root, cwd }) {
   };
   return {
     desk: m.desk.modDesk({ cwd, client }),
+    // The panel's live mark (scripts/lib/vscode-pane.js).
+    vscodePane: m.vscodePane,
     client,
     ask: async () => (await client.health().catch(() => null))?.ok === true,
     project,
