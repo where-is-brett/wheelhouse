@@ -177,15 +177,19 @@ const plural = (n, one, many) => (n === 1 ? one : many);
 
 // The deny for cards the director has decided already, or for cards the live pane answers, or undefined; and the
 // ids a call that goes through is open on. Hooks inform and fail open: any failure here lets the questions through.
+function decidedDeny(found, at) {
+  const decided = found.filter((f) => f?.stale);
+  if (decided.length === 0) return undefined;
+  const lines = decided.map((f) => `${subjectOf(f.stale.card)}: ${answeredWords(f.stale, at)}`);
+  return `${DECIDED_LEAD}${lines.join('; ')}. Ask none of them again, and say so in one plain line. Ask the cards still waiting with \`again <n>\`.`;
+}
+
 function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere: take, holdForPane, role }) {
   const questions = input.tool_input.questions;
   const at = now();
   const found = cardsOf(questions, project, outcomes);
-  const decided = found.filter((f) => f?.stale);
-  if (decided.length > 0) {
-    const lines = decided.map((f) => `${subjectOf(f.stale.card)}: ${answeredWords(f.stale, at)}`);
-    return { deny: `${DECIDED_LEAD}${lines.join('; ')}. Ask none of them again, and say so in one plain line. Ask the cards still waiting with \`again <n>\`.` };
-  }
+  const decided = decidedDeny(found, at);
+  if (decided !== undefined) return { deny: decided };
   const waiting = found.filter(Boolean);
   const session = input.session_id;
   const pane = (f) => cardButtons(f.card.data).buttons.some((b) => b.does === 'record' || b.does === 'turn');
@@ -197,6 +201,23 @@ function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere:
     return { deny: paneLine(n, { others }) };
   }
   return { open: waiting.map((f) => f.card.id) };
+}
+
+// Only the repeat refusal, for an agent whose question tool the form check and the pane hold don't apply to: a
+// question whose card the director has already decided (in the chat, the panel or anywhere else) is refused with what
+// counted and where. It signs nothing and fails open.
+export async function decideRepeat(input, { projectOf: find = projectOf, dir, now = () => new Date(), outcomes } = {}) {
+  if (input.tool_name !== tools.ask) return undefined;
+  const questions = input.tool_input?.questions;
+  if (!Array.isArray(questions)) return undefined;
+  try {
+    const placed = find(input.cwd, { dir });
+    if (!placed) return undefined;
+    const deny = decidedDeny(cardsOf(questions, placed.project, outcomes), now());
+    return deny === undefined ? undefined : answer.deny(deny);
+  } catch {
+    return undefined;
+  }
 }
 
 export async function decide(input, {
