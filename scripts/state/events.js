@@ -8,7 +8,7 @@ import { scanContent } from './secret-scan.js';
 import { briefProblem, briefWords } from '../delegation/brief.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { git } from './git.js';
-import { keepControlLine, approvalLine, startGoalLine, setLineOf, CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, TAKEOVER_LABEL, takeOverLine, APP_ID, pairLine, unpairLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
+import { RELEASE_LABEL, RELEASE_TAG, releaseLine, keepControlLine, approvalLine, startGoalLine, setLineOf, CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, TAKEOVER_LABEL, takeOverLine, APP_ID, pairLine, unpairLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
 import { carriesFigures, CARRIES_BASELINE } from '../lib/measures-clicks.js';
 import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH } from '../lib/build-loop.js';
 import { CARD, CARD_KINDS, PUT_OFF } from '../lib/front-desk.js';
@@ -68,7 +68,7 @@ export const RED_MAIN_OWN = 'only the helper records a red main line\'s incident
 export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'shadow', 'match', 'rule', 'slept', 'goal-end', 'goal-check', 'goal-card'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 
-const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main', 'safekeeping', 'send-back', 'start-goal'];
+const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main', 'safekeeping', 'send-back', 'start-goal', 'approve-release'];
 // The fields each action carries beyond the card's question and the label clicked.
 const ACTION_OWN = {
   'lift-stop': [],
@@ -118,6 +118,9 @@ const ACTION_OWN = {
   // The director's Send it back on a pull request left to them (delegated decisions design, section 8.1): its number and
   // its head in full, as the card's set line names them, which the runner holds to what it parked.
   'send-back': ['pr', 'sha'],
+  // The director's Approve on the card for a Wheelhouse release that is not pins-only (update design, section 6.2): the
+  // release's tag and its commit in full, as the card's set line names them. Only the release's reviewed change counts it.
+  'approve-release': ['previous', 'release', 'commit'],
   // The director's Confirm on the card keeping a feature's files that steer agents as they are
   // (ruling P7-31): the work, and the full hash of the watcher's finding the card's line names.
   'keep-control-files': ['work', 'hash'],
@@ -242,6 +245,12 @@ function checkAction(data) {
     if (typeof data.sha !== 'string' || !/^[0-9a-f]{40}$/.test(data.sha)) bad('needs the commit in full');
     if (data.label !== SEND_BACK) bad(`needs the ${SEND_BACK} label`);
     if (setLineOf(data.question) !== approvalLine(data.pr, data.sha)) bad('carries the approval line for its pull request and commit as its question\'s one set line');
+  } else if (data.action === 'approve-release') {
+    if (typeof data.release !== 'string' || !RELEASE_TAG.test(data.release)) bad('needs the release, named by a plain tag');
+    if (typeof data.previous !== 'string' || !RELEASE_TAG.test(data.previous)) bad('needs the release the project is on, named by a plain tag');
+    if (typeof data.commit !== 'string' || !/^[0-9a-f]{40}$/.test(data.commit)) bad('needs the release\'s commit in full');
+    if (data.label !== RELEASE_LABEL) bad(`needs the ${RELEASE_LABEL} label`);
+    if (setLineOf(data.question) !== releaseLine(data.previous, data.release, data.commit)) bad('carries the release line for its tags and commit as its question\'s one set line');
   } else if (data.action === 'keep-main') {
     if (!['from', 'to'].every((k) => typeof data[k] === 'string' && /^[0-9a-f]{40}$/.test(data[k]))) bad('needs the main version\'s commits it keeps, from and to, in full');
     if (data.label !== 'Keep it') bad('needs the Keep it label');
@@ -809,6 +818,16 @@ function checkProvenance(data) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) bad('needs data');
   if (typeof data.branch !== 'string' || !/^[A-Za-z0-9._/-]{1,200}$/.test(data.branch)) bad('needs the branch');
   if (!data.provenance || typeof data.provenance !== 'object' || Array.isArray(data.provenance)) bad('needs what built it');
+  // Wheelhouse's own update (update design, section 6.2): the release and its commit, no session and no model, and only on
+  // the release's or the undo's branch, which names that same commit.
+  if (Object.hasOwn(data.provenance, 'update')) {
+    const u = data.provenance.update;
+    if (Object.keys(data.provenance).length !== 1) bad('from an update carries nothing else');
+    if (!isPlain(u) || Object.keys(u).sort().join() !== 'commit,release') bad('from an update needs its release and its commit');
+    if (typeof u.commit !== 'string' || !/^[0-9a-f]{40}$/.test(u.commit)) bad('from an update needs the commit in full');
+    if (typeof u.release !== 'string' || !RELEASE_TAG.test(u.release)) bad('from an update needs the release, named by a plain tag');
+    if (data.branch !== `wheelhouse-release-${u.commit}` && data.branch !== `wheelhouse-undo-${u.commit}`) bad('from an update belongs to the release\'s or the undo\'s branch');
+  }
 }
 
 // The words a check ends in, and what it must carry: the whole commit, its command's digest (none where the project has

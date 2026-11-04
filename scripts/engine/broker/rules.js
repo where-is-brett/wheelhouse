@@ -319,7 +319,9 @@ export function brokerDecision(call, ctx = {}) {
   if (ctx.outsideAreas === true) return refuse(`the change at ${head.slice(0, 7)} reaches outside its goal's areas`);
   if (!reviewed) return refuse(`there is no signed CLEAN review of ${head.slice(0, 7)}`);
   const needsApproval = ctx.shownFirst === true || ctx.level === 4 || ctx.guardrail === true;
-  if (needsApproval && !approvalCounts(ctx.approval, head, ctx.enrolled)) return refuse(`the director's approval of ${head.slice(0, 7)} isn't signed`);
+  // `releaseApproved` is the helper's finding that this is the update's own reviewed change and that the director's signed
+  // answer to its card (or the review alone, for a pins-only release) stands for it: that answer takes the head's place.
+  if (needsApproval && ctx.releaseApproved !== true && !approvalCounts(ctx.approval, head, ctx.enrolled)) return refuse(`the director's approval of ${head.slice(0, 7)} isn't signed`);
   if (ctx.hostApproval !== undefined && ctx.hostApproval !== true) return refuse(NO_HOST_APPROVAL(head.slice(0, 7)));
   // The host's green status gets a change past Archon's gate; on a project with no CI the signed record gets it past here.
   if (ctx.checksHere === true && !checkCounts(ctx.check, head, ctx.digest, ctx.enrolled, { notCounting: ctx.notCounting === true })) return refuse(`there is no passing check on this computer of ${head.slice(0, 7)}`);

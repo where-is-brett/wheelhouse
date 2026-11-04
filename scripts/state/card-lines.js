@@ -158,6 +158,18 @@ export function takeOverLine(holder, counter) {
 }
 export const TAKEOVER_LINE = /^Take over the lock from computer ([0-9a-f]{8}), counter ([1-9][0-9]*)$/;
 
+// The line on the card that asks the director to approve the project's move to a Wheelhouse release that is not pins-only
+// (update design, section 6.2): the release's tag and its commit in full, so a click stands for that release at that commit
+// and no other. The card is named `release-<commit>`.
+export const RELEASE_LABEL = 'Approve';
+// It also names the release the project is on now (`from`), so an answer stands for that one move and a later move back
+// to an earlier release is not covered by it.
+export function releaseLine(from, tag, commit) {
+  return `Move this project from Wheelhouse ${from} to ${tag}, commit ${commit}`;
+}
+export const RELEASE_TAG = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+export const RELEASE_LINE = /^Move this project from Wheelhouse ([A-Za-z0-9][A-Za-z0-9._-]{0,99}) to ([A-Za-z0-9][A-Za-z0-9._-]{0,99}), commit ([0-9a-f]{40})$/;
+
 // The label on the card that pairs a later app with the desk (spec 5.3), and the line naming the app by its id and its
 // key's fingerprint (the first twelve hex characters of the SHA-256 of its public key), so a click stands for that
 // app's key and no other. Unpairing signs its own line.
@@ -304,6 +316,7 @@ export const SET_LINES = [
   new RegExp(`^${literal(BASELINE_WORDS)}, [0-9a-f]{12}$`, 'm'),
   new RegExp(TRUST_LINE.source, 'm'),
   new RegExp(TAKEOVER_LINE.source, 'm'),
+  new RegExp(RELEASE_LINE.source, 'm'),
   new RegExp(PAIR_LINE.source, 'm'),
   new RegExp(UNPAIR_LINE.source, 'm'),
   new RegExp(UNINSTALL_LINE.source, 'm'),
