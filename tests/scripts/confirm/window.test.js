@@ -23,7 +23,7 @@ import { dataHash, listEvents, makeEvent } from '../../../scripts/state/events.j
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
 import { approvalLine, confirmLine, runbookLine, LIFT_STOP } from '../../../scripts/state/card-lines.js';
 import {
-  askInWindow, CARD_VARIABLE, MAC_OSASCRIPT, MAC_SCRIPT, NOT_NOW, WINDOWS_SCRIPT, WINDOW_MS, windowsShell,
+  askInWindow, CARD_VARIABLE, MAC_OSASCRIPT, MAC_SCRIPT, MAC_SCRIPT_NO_DEFAULT, NOT_NOW, WINDOWS_SCRIPT, WINDOW_MS, windowsShell,
 } from '../../../scripts/confirm/window.js';
 
 // No real gh, glab, copilot or curl runs (P5-44): the PATH finds the stand-ins first, and the helper's own runs go
@@ -98,6 +98,38 @@ test('a title with quotes, backslashes and new lines reaches osascript only as a
   const failed = standInWindow(() => ({ code: 1, stdout: 'Do it\n', stderr: 'execution error' }));
   assert.deepEqual(await askInWindow({ title, lines, options: ['Do it'], platform: 'darwin', run: failed.run }), { choice: null });
   await assert.rejects(askInWindow({ title, lines, options: ['Do it', NOT_NOW], platform: 'darwin', run: failed.run }), /without Not now/);
+});
+
+test('a window asked with no default button has none on macOS or Windows, so Return and Enter choose nothing', async () => {
+  const title = 'Wheelhouse: Update';
+  const lines = ['Update Wheelhouse'];
+  // macOS: its own constant script, with no default button and no item selected; the text still travels as argv alone.
+  const mac = standInWindow(() => ({ code: 0, stdout: '\n', stderr: '' }));
+  assert.deepEqual(await askInWindow({ title, lines, options: ['Update'], noDefault: true, platform: 'darwin', run: mac.run }), { choice: null });
+  assert.deepEqual(scriptOf(mac.calls[0].args), MAC_SCRIPT_NO_DEFAULT);
+  const text = MAC_SCRIPT_NO_DEFAULT.join('\n');
+  assert.doesNotMatch(text, /default button/);
+  assert.match(text, /default items \{\}/);
+  assert.match(text, /with empty selection allowed/);
+  assert.deepEqual(argvOf(mac.calls[0].args), [title, lines.join('\n'), String(WINDOW_MS / 1000), 'Update']);
+  // A click still counts, and an empty selection is no choice.
+  const clicked = standInWindow(() => ({ code: 0, stdout: 'Update\n', stderr: '' }));
+  assert.deepEqual(await askInWindow({ title, lines, options: ['Update'], noDefault: true, platform: 'darwin', run: clicked.run }), { choice: 'Update' });
+  // The other cards keep the constant script they had.
+  const plain = standInWindow(() => ({ code: 0, stdout: 'Update\n', stderr: '' }));
+  await askInWindow({ title, lines, options: ['Update'], platform: 'darwin', run: plain.run });
+  assert.deepEqual(scriptOf(plain.calls[0].args), MAC_SCRIPT);
+  assert.match(MAC_SCRIPT.join('\n'), /default button 1/);
+  // Windows: the card says so, and the constant script gives focus to no button then, and no button can be tabbed to.
+  const env = { SystemRoot: 'C:\\Windows' };
+  const win = standInWindow(() => ({ code: 0, stdout: '-1', stderr: '' }));
+  await askInWindow({ title, lines, options: ['Update'], noDefault: true, platform: 'win32', run: win.run, env });
+  assert.equal(JSON.parse(Buffer.from(win.calls[0].options.env[CARD_VARIABLE], 'base64').toString('utf8')).noDefault, true);
+  assert.match(WINDOWS_SCRIPT, /if \(-not \$card\.noDefault\) \{ \$form\.ActiveControl = \$last \}/);
+  assert.match(WINDOWS_SCRIPT, /if \(\$card\.noDefault\) \{ \$button\.TabStop = \$false \}/);
+  const other = standInWindow(() => ({ code: 0, stdout: '-1', stderr: '' }));
+  await askInWindow({ title, lines, options: ['Update'], platform: 'win32', run: other.run, env });
+  assert.equal(Object.hasOwn(JSON.parse(Buffer.from(other.calls[0].options.env[CARD_VARIABLE], 'base64').toString('utf8')), 'noDefault'), false);
 });
 
 test('the Windows script is constant and the text travels base64 in the environment', async () => {

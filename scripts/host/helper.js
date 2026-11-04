@@ -115,7 +115,7 @@ import {
   SIGNED_LEAN_PROOFS, sameCard, approvalCard, mainMovedCard, undoCards,
 } from '../lean/store.js';
 import { CHAT_PROOFS, CONFIRMED_STEPS, hashRefusal } from '../agents/chat-clicks.js';
-import { earned, signsOn } from '../hooks/prompt-record.js';
+import { earned, signsOn, askedUpdateCard } from '../hooks/prompt-record.js';
 import { askInWindow, NOT_NOW } from '../confirm/window.js';
 import { composeCard } from '../cards/compose.js';
 import { LIFT_STOP_CARD } from '../frontdesk/cli.js';
@@ -2342,8 +2342,13 @@ export async function startHelper({
     // The answer to the card about an old helper that did not make way for an update (update design, section 7.3): confirmed in the
     // window as the prompt record signs it, by the card's id, and read by the update's own finish.
     'update-helper-answer': 'update-helper',
+    // The click on the Update card (update design, section 4): confirmed in the window for the plan the card names, and counted
+    // only by the update's apply. Its Not now is signed the same way (windowEarned).
+    'update-click': 'update',
   };
   // The steps the window serves while STOP is on: Lift STOP, and a Lean undo, as the runbook's local steps carry on.
+  // The update's steps: their window names no default button, so a stray Return or Enter chooses nothing.
+  const NO_DEFAULT_STEPS = ['update', 'release-approval', 'update-helper'];
   const UNDER_STOP = ['lift-stop', 'undo-merge', 'undo-main'];
   // The labels of Lean's cards a project in git alone answers the same way, on its home. Its approval is a pull request's, as any.
   const HOME_ANSWERS = ['Keep it', 'Undo it', 'Undo'];
@@ -2376,7 +2381,9 @@ export async function startHelper({
   // step the window confirms; else null. A pull request's head is read through this helper's own route.
   async function windowEarned(project, card, label, ctx) {
     const question = card.data?.question;
-    if (typeof question !== 'string' || PUT_OFF.includes(label)) return null;
+    // The Update card's Not now is the one put-off the window signs: a decline of that plan, earned as the panel's press earns it.
+    const declines = label === NOT_NOW && askedUpdateCard(question, card.data) !== undefined;
+    if (typeof question !== 'string' || (PUT_OFF.includes(label) && !declines)) return null;
     if (ctx.lean || (readProject(project)?.host === 'local' && HOME_ANSWERS.includes(label))) {
       const lean = await leanEarned(project, card.data, label);
       if (lean !== undefined) return lean;
@@ -2384,7 +2391,7 @@ export async function startHelper({
     const client = { prState: ({ number }) => routes['/pr/state']({ project, number }, ctx), goalRecheck: (args) => routes['/goal-recheck'](args, ctx) };
     let got;
     try {
-      got = await earned({ project, question, label, client, now, left: (p) => p, shownAt: card.at });
+      got = await earned({ project, question, label, card: askedUpdateCard(question, card.data), client, now, left: (p) => p, shownAt: card.at });
     } catch {
       return null;
     }
@@ -2497,7 +2504,7 @@ export async function startHelper({
     const allowance = shown.deciding.find((d) => d.step === ACTION_STEPS.answer);
     if (allowance) lines.push(...allowanceWindowLines(allowanceQuestion(project, allowance.made.data, shown.event.at)?.commands));
     const header = typeof shown.event.data.header === 'string' && shown.event.data.header !== '' ? shown.event.data.header : null;
-    const { choice } = await askWindow({ title: header === null ? 'Wheelhouse' : `Wheelhouse: ${header}`, lines, options: shown.deciding.map((d) => d.label) });
+    const { choice } = await askWindow({ title: header === null ? 'Wheelhouse' : `Wheelhouse: ${header}`, lines, options: shown.deciding.map((d) => d.label).filter((label) => label !== NOT_NOW), ...(shown.deciding.some((d) => NO_DEFAULT_STEPS.includes(d.step)) ? { noDefault: true } : {}) });
     const picked = shown.deciding.find((d) => d.label === choice);
     if (!picked) return { ok: true, choice: choice === NOT_NOW ? NOT_NOW : null, recorded: false };
     const answer = await stateRoute(async () => {
