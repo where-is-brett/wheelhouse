@@ -46,7 +46,15 @@
 // A command is matched as typed, in any case, with white space around it ignored:
 // /wheelhouse:logbook or /wheelhouse:board (optionally "build" or "director"), /wheelhouse:briefing,
 // /wheelhouse:settings and /wheelhouse:sources. The short forms (/board) are left to whoever owns them.
-import { answer, runAndExit, projectOf, beingSetUp } from './kit.js';
+import { answer, runAndExit, projectOf, beingSetUp, readTailEntries } from './kit.js';
+import { stoppedQuestion } from './stopped-question.js';
+import { answeredWords, subjectOf } from '../cards/answered.js';
+import { cardOutcomes } from '../state/views.js';
+import { listEvents } from '../state/events.js';
+import { readEnrolled } from '../state/signing.js';
+import { chatCopy } from '../state/card-lines.js';
+import { stateDir } from '../lib/paths.js';
+import { readOpen, clearOpen } from '../lib/session-files.js';
 import { featureSlug, SETUP_FIRST } from './session-start.js';
 import { briefingModel as realBriefingModel } from '../briefing/model.js';
 import { heldBackLine } from '../board/model.js';
@@ -156,6 +164,56 @@ export function cardsDue(views, at) {
   for (const due of gate) if (due.again !== undefined) fresh.add(due.again);
   const made = gate.filter((due) => due.make).length + holdsDue(views).length + controlFilesDue(views).length + premiumFailuresDue(views).length;
   return Math.min(CARD.questions, fresh.size + questions + made);
+}
+
+// What the director answered since the First Mate's last turn, and how the cards of a question that was stopped stand now.
+// Neither names a card's id: a card goes by its subject.
+export const SINCE_LEAD = 'Since your last turn, the director answered: ';
+export const STOPPED_LEAD = 'The last card question was stopped, which records nothing and is no answer. As each card stands now: ';
+const SINCE_TAIL = 'Before anything else, tell them in one plain line what they answered and where, as a fact. Never ask these cards again.';
+const STOPPED_TAIL = 'Never say a card was closed without an answer.';
+// The most cards one line names; the rest are on the board.
+const NOTE_CARDS = 6;
+
+// The two lines, in the order they go into the context: [since, stopped], each a string or null. `since` is when the
+// First Mate's last turn began (the prompt before this one); `open` is what the session's open.json held. A card the
+// stopped line names is left out of the since line.
+async function cardNotes({ project, input, since, at, desk, open }) {
+  const outcomes = cardOutcomes(listEvents(stateDir(project), { report: () => {} }), readEnrolled());
+  const questions = stoppedQuestion(readTailEntries(input.transcript_path), { prompt: input.prompt });
+  const named = new Map();
+  if (questions !== null) {
+    for (const text of questions) {
+      const mine = outcomes.filter((o) => typeof o.card.data?.question === 'string' && (o.card.data.question === text || chatCopy(o.card.data.question) === text));
+      const found = mine.filter((o) => o.decided === null).at(-1) ?? mine.at(-1);
+      if (found !== undefined) named.set(found.card.id, found);
+    }
+    for (const id of open?.cards ?? []) {
+      const found = outcomes.find((o) => o.card.id === id);
+      if (found !== undefined) named.set(id, found);
+    }
+  }
+  let stopped = null;
+  if (named.size > 0) {
+    const numbers = new Map();
+    if ([...named.values()].some((o) => o.decided === null)) {
+      const got = await desk.read('waiting');
+      for (const item of Array.isArray(got?.data?.numbered) ? got.data.numbered : []) if (typeof item.card === 'string') numbers.set(item.card, item.n);
+    }
+    const parts = [...named.values()].slice(0, NOTE_CARDS).map((o) => {
+      if (o.decided !== null) return `${subjectOf(o.card)}: ${answeredWords(o, at)}`;
+      const n = numbers.get(o.card.id);
+      return `${subjectOf(o.card)}: still waiting${n === undefined ? '' : `, card ${n}`}`;
+    });
+    stopped = `${STOPPED_LEAD}${parts.join('; ')}. ${STOPPED_TAIL}`;
+  }
+  const from = Date.parse(since);
+  const fresh = Number.isFinite(from)
+    ? outcomes.filter((o) => o.decided !== null && o.decided.where !== 'chat' && Date.parse(o.decided.at) > from && !named.has(o.card.id))
+      .sort((a, b) => Date.parse(a.decided.at) - Date.parse(b.decided.at)).slice(0, NOTE_CARDS)
+    : [];
+  const told = fresh.length === 0 ? null : `${SINCE_LEAD}${fresh.map((o) => `${subjectOf(o.card)}: ${answeredWords(o, at)}`).join('; ')}. ${SINCE_TAIL}`;
+  return [told, stopped];
 }
 
 // What `start` gives within `ms`, or null when it throws or is late.
@@ -296,7 +354,13 @@ export async function decide(input, deps = {}) {
     const cards = count > 0
       ? (attempt(() => cardsLineFor(agent, { count, lean: found.lean === true, stop: stopState().on })) ?? cardsLine(count))
       : null;
-    const reserve = cards === null ? 0 : cards.length + 2;
+    // What the cards just answered or left open say, ahead of the cards line. A session's open.json is read once and
+    // cleared by this prompt, whatever comes of the lines.
+    const sessionId = typeof input.session_id === 'string' ? input.session_id : null;
+    const open = sessionId === null ? null : attempt(() => readOpen(sessionId), null);
+    if (writes && sessionId !== null) attempt(() => clearOpen(sessionId));
+    const notes = ((await within(() => cardNotes({ project, input, since: seen.promptAt, at, desk, open }), waitMs)) ?? []).filter((line) => typeof line === 'string');
+    const reserve = (cards === null ? 0 : cards.length + 2) + notes.reduce((sum, line) => sum + line.length + 2, 0);
     // A survey not worked out in time is left to the briefing view, which takes the record's latest.
     const survey = want === 'briefing' ? (await within(() => surveyOf({ project, client, desk }), learnWaitMs)) ?? undefined : null;
     // Offered once more, the survey's line about work in flight is said again, alone.
@@ -316,7 +380,7 @@ export async function decide(input, deps = {}) {
       attempt(() => markSeenHere(project, { briefedAt: at, ...(built.weeklyShown ? { weeklyAt: at } : {}), ...(built.surveyShown ? { surveyAt: built.surveyShown } : {}), ...(again && built.surveyShown ? { surveyAgainAt: at } : {}), ...(built.safekeeping ? { safekeepingLevel: built.safekeeping, safekeepingAt: at } : {}) }));
       if (built.raise.length > 0 && Number.isFinite(at.getTime())) attempt(() => markRaised(built.raise, { now: at }));
     }
-    const text = [cards, built?.text].filter((part) => typeof part === 'string').join('\n\n');
+    const text = [...notes, cards, built?.text].filter((part) => typeof part === 'string').join('\n\n');
     return text === '' ? undefined : answer.context('UserPromptSubmit', text);
   } catch {
     return undefined;

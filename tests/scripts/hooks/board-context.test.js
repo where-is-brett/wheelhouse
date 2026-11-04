@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { loadBoardInputs } from '../../../scripts/board/inputs.js';
-import { decide, HEADINGS, WAIT_MS, LEARN_WAIT_MS, briefingIn, cardsDue, cardsLine, FOREMAN_LINE } from '../../../scripts/hooks/board-context.js';
+import { decide, HEADINGS, WAIT_MS, LEARN_WAIT_MS, briefingIn, cardsDue, cardsLine, FOREMAN_LINE, SINCE_LEAD, STOPPED_LEAD } from '../../../scripts/hooks/board-context.js';
 import { FOREMAN_PROMPT_LEAD } from '../../../scripts/foreman/start.js';
 import { roleFile } from '../../../scripts/lib/role.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
@@ -29,6 +29,7 @@ import { NOT_SET_UP, SETUP_FIRST } from '../../../scripts/hooks/session-start.js
 import { deskCore } from '../../../scripts/desk/core.js';
 import { fileSource } from '../../../scripts/desk/file-source.js';
 import { as, shortHome, tempFolder } from '../../helpers/homes.js';
+import { markOpen, readOpen } from '../../../scripts/lib/session-files.js';
 
 const P = 'owner__name';
 const HOOK = fileURLToPath(new URL('../../../scripts/hooks/board-context.js', import.meta.url));
@@ -1122,4 +1123,147 @@ test('a blind card asked and left is due no more than its question is: nothing m
   const now = new Date('2026-10-18T10:00:00.000Z');
   assert.equal(cardsDue({ waiting: [{ ...blind, asked: null }], questions }, now), 1);
   assert.equal(cardsDue({ waiting: [{ ...blind, asked: { at: '2026-10-18T09:30:00.000Z', label: null } }], questions }, now), 0);
+});
+
+// --- One card: what the First Mate is told next (design sections 4.4 and 6) ---
+
+const SESSION = 's1';
+const QUESTION_A = 'Approve the footer wording on the contact page?';
+const QUESTION_B = 'Approve the new opening hours?';
+const askedCard = (question, minute) => makeEvent({
+  kind: 'card', data: { question, header: 'Wording', options: ['Approve', 'Not now'], kind: 'confirm', level: 2, line: `test:${question.length}` }, now: () => new Date(`2026-10-19T10:${minute}:00.000Z`),
+});
+const answeredCard = (question, minute, where = 'panel', label = 'Approve') => makeEvent({
+  kind: 'card-answer', data: { question, label, ...(where === null ? {} : { where }) }, now: () => new Date(`2026-10-19T10:${minute}:00.000Z`),
+});
+
+// The transcript tail of the 4 November sequence: a card question stopped, and Claude Code's own note after it.
+function stoppedTranscript(home, ...questions) {
+  const lines = [
+    { type: 'user', message: { content: 'Anything to ask me?' } },
+    { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'toolu_1', name: 'AskUserQuestion', input: { questions: questions.map((question) => ({ question })) } }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_1', is_error: true, content: 'The user doesn\'t want to proceed with this tool use.' }] } },
+    { type: 'user', message: { content: [{ type: 'text', text: '[Request interrupted by user for tool use]' }] } },
+  ];
+  const file = path.join(home, 'transcript.jsonl');
+  put(file, `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+  return file;
+}
+const withTranscript = (repo, text, file) => ({ ...prompt(repo, text, SESSION), transcript_path: file });
+const lastPrompt = '2026-10-19T10:32:00.000Z';
+const sessionNow = '2026-10-19T10:40:00.000Z';
+const seenAt = () => markSeen(P, { promptAt: new Date(lastPrompt), briefedAt: new Date(lastPrompt) });
+const hook = (input, extra = {}) => decide(input, { now: at(sessionNow), env: {}, client, ...extra });
+
+test('the 4 November sequence: a stopped question whose cards the panel approved is told as approved in the panel', async () => {
+  await withProject(async ({ home, repo }) => {
+    seenAt();
+    store(stateDir(P), [askedCard(QUESTION_A, '30'), askedCard(QUESTION_B, '30'), answeredCard(QUESTION_A, '34'), answeredCard(QUESTION_B, '34')]);
+    const transcript = stoppedTranscript(home, QUESTION_A, QUESTION_B);
+    const text = contextOf(await hook(withTranscript(repo, 'What happened there?', transcript)));
+    assert.ok(text.includes(STOPPED_LEAD), text);
+    const stopped = text.slice(text.indexOf(STOPPED_LEAD));
+    assert.match(stopped, /the footer wording on the contact page\?: approved in the panel at \d\d:34/);
+    assert.match(stopped, /the new opening hours\?: approved in the panel at \d\d:34/);
+    assert.match(stopped, /Never say a card was closed without an answer\./);
+    assert.ok(!text.includes(SINCE_LEAD), 'the same cards are not told twice');
+  });
+});
+
+test('since the last turn: a panel answer is named and a chat answer is left out', async () => {
+  await withProject(async ({ repo }) => {
+    seenAt();
+    store(stateDir(P), [
+      askedCard(QUESTION_A, '30'), askedCard(QUESTION_B, '30'),
+      answeredCard(QUESTION_A, '34', 'panel'), answeredCard(QUESTION_B, '35', 'chat'),
+    ]);
+    const text = contextOf(await hook(prompt(repo, 'Done?', SESSION)));
+    assert.ok(text.startsWith(SINCE_LEAD), text);
+    assert.match(text, /the footer wording on the contact page\?: approved in the panel at \d\d:34/);
+    assert.doesNotMatch(text, /opening hours/);
+    assert.match(text, /tell them in one plain line what they answered and where, as a fact\. Never ask these cards again\./);
+    assert.doesNotMatch(text, /[0-9a-f]{12,}/, 'no card id');
+  });
+});
+
+test('nothing answered since the last turn adds no since line', async () => {
+  await withProject(async ({ repo }) => {
+    seenAt();
+    store(stateDir(P), [askedCard(QUESTION_A, '30'), answeredCard(QUESTION_A, '31', 'panel')]);
+    assert.equal(await hook(prompt(repo, 'Done?', SESSION)), undefined);
+  });
+});
+
+test('a stopped question with a card still waiting names its number', async () => {
+  await withProject(async ({ home, repo }) => {
+    seenAt();
+    const waiting = askedCard(QUESTION_B, '30');
+    store(stateDir(P), [askedCard(QUESTION_A, '30'), waiting, answeredCard(QUESTION_A, '34')]);
+    // The board numbers the card as it waits, oldest first: after the sign-in page card the view already holds.
+    put(path.join(wheelhouseHome(), 'projects', P, 'views', 'waiting.json'), [
+      { id: 'c1', at: '2026-10-18T09:00:00.000Z', data: { title: 'Approve the sign-in page' }, asked: ASKED },
+      { id: waiting.id, at: waiting.at, data: waiting.data, asked: ASKED },
+    ]);
+    const transcript = stoppedTranscript(home, QUESTION_A, QUESTION_B);
+    const text = contextOf(await hook(withTranscript(repo, 'Well?', transcript)));
+    assert.match(text, /still waiting, card 2\./);
+    assert.match(text, /the footer wording on the contact page\?: approved in the panel at \d\d:34/);
+    assert.match(text, /the new opening hours\?: still waiting, card \d+/);
+    assert.doesNotMatch(text, /[0-9a-f]{12,}/, 'no card id');
+  });
+});
+
+test('a stopped question is not told once the director has written since', async () => {
+  await withProject(async ({ home, repo }) => {
+    seenAt();
+    store(stateDir(P), [askedCard(QUESTION_A, '30'), answeredCard(QUESTION_A, '34', 'chat')]);
+    const transcript = stoppedTranscript(home, QUESTION_A);
+    fs.appendFileSync(transcript, `${JSON.stringify({ type: 'user', message: { content: 'Earlier thing' } })}\n`);
+    const text = contextOf(await hook(withTranscript(repo, 'Next', transcript))) ?? '';
+    assert.ok(!text.includes(STOPPED_LEAD), text);
+  });
+});
+
+test('open.json is cleared on the next prompt, and names a card the transcript cannot match', async () => {
+  await withProject(async ({ home, repo }) => {
+    seenAt();
+    const card = askedCard(QUESTION_A, '30');
+    store(stateDir(P), [card, answeredCard(QUESTION_A, '34')]);
+    markOpen(SESSION, [card.id], Date.parse('2026-10-19T10:31:00.000Z'));
+    const transcript = stoppedTranscript(home, 'A different wording of the question?');
+    const text = contextOf(await hook(withTranscript(repo, 'Well?', transcript)));
+    assert.match(text, /approved in the panel at \d\d:34/);
+    assert.equal(readOpen(SESSION), null);
+  });
+});
+
+test('open.json is cleared on a prompt that has no stopped question', async () => {
+  await withProject(async ({ repo }) => {
+    seenAt();
+    markOpen(SESSION, ['c9'], Date.parse('2026-10-19T10:31:00.000Z'));
+    await hook(prompt(repo, 'Hello', SESSION));
+    assert.equal(readOpen(SESSION), null);
+  });
+});
+
+test('no record is written for a stopped question', async () => {
+  await withProject(async ({ home, repo }) => {
+    seenAt();
+    store(stateDir(P), [askedCard(QUESTION_A, '30'), askedCard(QUESTION_B, '30')]);
+    const before = fs.readdirSync(stateDir(P), { recursive: true }).sort();
+    const calls = [];
+    const spy = { ...client, state: { write: async (b) => { calls.push(b); return { ok: true }; }, record: async (b) => { calls.push(b); return { ok: true }; } } };
+    const transcript = stoppedTranscript(home, QUESTION_A, QUESTION_B);
+    const text = contextOf(await hook(withTranscript(repo, 'Well?', transcript), { client: spy }));
+    assert.match(text, /still waiting/);
+    assert.deepEqual(calls, []);
+    assert.deepEqual(fs.readdirSync(stateDir(P), { recursive: true }).sort(), before);
+  });
+});
+
+test('an unreadable transcript adds nothing and lets the prompt through', async () => {
+  await withProject(async ({ repo }) => {
+    seenAt();
+    assert.equal(await hook(withTranscript(repo, 'Hi', '/nowhere/transcript.jsonl')), undefined);
+  });
 });
