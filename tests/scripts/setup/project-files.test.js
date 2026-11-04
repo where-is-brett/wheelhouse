@@ -27,7 +27,7 @@ import { LIVE_DATA, SIGNS_APPS } from '../../../scripts/setup/questions.js';
 import { FRONT_DESK_ALIAS, MID_SIZED_ALIAS } from '../../../scripts/setup/best-model.js';
 import { readConfig, ROLES, DEFAULT_BUILD_COMMANDS, DEFAULT_HOT_FILES } from '../../../scripts/gate/guardrails.js';
 import { buildManifest, checkInstalled, MARKETPLACE } from '../../../scripts/lineage/manifest.js';
-import { SWITCHED_OFF_PLUGINS, setupCommand, frontDeskCommand, projectSettings, KEYCHAINS } from '../../../scripts/protection/settings.js';
+import { SWITCHED_OFF_PLUGINS, setupCommand, frontDeskCommand, updateCommand, projectSettings, KEYCHAINS } from '../../../scripts/protection/settings.js';
 import { writeProject, readProject } from '../../../scripts/lib/projects.js';
 import { stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { caFile, gitCaConfig } from '../../../scripts/host/company-ca.js';
@@ -296,6 +296,8 @@ test('the project settings keep the director\'s own keys and add Wheelhouse\'s',
       'Edit(/.wheelhouse/front-desk.json)',
       'Edit(/.wheelhouse/work/*.md)',
       `Bash(${setupCommand(PLUGIN_ROOT, { platform: 'darwin', noSystemCa: true })}:*)`,
+      `Bash(${updateCommand(PLUGIN_ROOT, { platform: 'darwin' })}:*)`,
+      `Bash(${updateCommand(PLUGIN_ROOT, { platform: 'darwin', noSystemCa: true })}:*)`,
     ]);
     assert.deepEqual(local.sandbox.network.allowUnixSockets, [ADDRESS]);
     assert.match(local.statusLine.command, /statusline\.js/);

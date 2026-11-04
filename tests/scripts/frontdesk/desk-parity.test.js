@@ -15,6 +15,8 @@ import { helperClient } from '../../../scripts/host/helper-client.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { main, VIEW_NAMES } from '../../../scripts/frontdesk/cli.js';
 import { shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
+import { deskClient } from '../../../scripts/desk/client.js';
+import { SINCE_LEAD } from '../../../scripts/cards/panel-words.js';
 
 const FIXTURES = fileURLToPath(new URL('../../fixtures/desk-parity/frontdesk/', import.meta.url));
 const WRITE = process.env.WHEELHOUSE_WRITE_PARITY === '1';
@@ -100,3 +102,24 @@ for (const [name, argv, input] of RUNS) {
     assert.equal(got, fs.readFileSync(file, 'utf8'));
   });
 }
+
+// The desk's waiting view and the front desk's `views waiting --since` say the same lines about what was answered since.
+test('the desk\'s waiting view names the answers since a time as the front desk does', async () => {
+  const answered = [...SEED, event(8, 'card-answer', { card: idOf(4), label: 'Plain', where: 'panel' }), event(9, 'card-answer', { card: idOf(3), label: 'Approve', where: 'chat' })];
+  const since = new Date(Date.UTC(2026, 9, 28, 0, 59, 0)).toISOString();
+  const helper = await startStandInHelper({ address: testAddress(shortHome()), state: { events: structuredClone(answered), pullRequests: { 7: FULL } } });
+  try {
+    const client = helperClient({ address: helper.address });
+    let out = '';
+    const code = await main(['views', 'waiting', '--since', since], { cwd: tempFolder('wh-parity-'), client, now: () => NOW, out: (t) => { out += t; }, err: () => {} });
+    assert.equal(code, 0);
+    const told = out.split('\n').filter((l) => l.startsWith(SINCE_LEAD));
+    assert.equal(told.length, 1, out);
+    assert.match(told[0], /Plain/);
+    assert.doesNotMatch(told[0], /Approve/);
+    const got = await deskClient({ cwd: tempFolder('wh-parity-'), client, local: 'never' }).read('waiting', { since });
+    assert.deepEqual(got.lines.filter((l) => l.startsWith(SINCE_LEAD)), told);
+  } finally {
+    await helper.close();
+  }
+});
