@@ -67,7 +67,7 @@ const textOf = (kind) => cardOf(kind).question;
 const call = (...questions) => ({
   cwd: '/x', hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_input: { questions },
 });
-const inProject = { projectOf: () => ({ project: 'owner__name' }) };
+const inProject = { projectOf: () => ({ project: 'owner__name' }), stop: () => ({ on: true }) };
 const reason = (out) => {
   assert.equal(out?.hookSpecificOutput?.permissionDecision, 'deny');
   return out.hookSpecificOutput.permissionDecisionReason;
@@ -560,4 +560,50 @@ test('a state that cannot be read lets the call through', () => withHome(async (
 test('a card with a form fault is still refused when no card matches', () => withHome(async () => {
   const bad = { ...separator.question, question: 'Short' };
   assert.match(reason(await run(withSession([bad]), { outcomes: () => [] })), /not in the form/);
+}));
+
+// --- The Lift All stop question: refused when STOP is off, held for a live pane ---
+
+const LIFT = cardOf('lift-stop');
+const STOP_ON = () => ({ on: true });
+const STOP_OFF = () => ({ on: false });
+
+test('a Lift All stop question is refused when STOP is already off', () => withHome(async () => {
+  const out = reason(await run(withSession([LIFT]), { outcomes: () => [], stop: STOP_OFF }));
+  assert.match(out, /All stop is already lifted/);
+  assert.match(out, /one plain line/);
+  // The earlier wording of the same card is read the same way.
+  const earlier = { ...LIFT, question: LIFT.question.replace(LIFT_STOP, LIFT_STOP_EARLIER) };
+  assert.match(reason(await run(withSession([earlier]), { outcomes: () => [], stop: STOP_OFF })), /already lifted/);
+  // It is refused with a live pane too, and says to ask only the others when others are in the call.
+  live();
+  assert.match(reason(await run(withSession([LIFT, colour.question]), { outcomes: () => [COLOUR], stop: STOP_OFF })), /Ask only the others\./);
+}));
+
+test('a Lift All stop question goes through while STOP is on and no pane is live', () => withHome(async () => {
+  assert.equal(await run(withSession([LIFT]), { outcomes: () => [], stop: STOP_ON }), undefined);
+}));
+
+test('a live pane holds back the Lift All stop question, and here lets it through once', () => withHome(async () => {
+  live();
+  const out = reason(await run(withSession([LIFT]), { outcomes: () => [], stop: STOP_ON }));
+  assert.ok(out.startsWith(PANE_LEAD));
+  assert.match(out, /1 card waits in the panel/);
+  assert.ok(!out.includes('Lift All stop'));
+  markHere(SID, ['lift-stop'], T0);
+  assert.equal(await run(withSession([LIFT]), { outcomes: () => [], stop: STOP_ON }), undefined);
+  assert.ok(reason(await run(withSession([LIFT]), { outcomes: () => [], stop: STOP_ON })).startsWith(PANE_LEAD));
+}));
+
+test('a held Lift All stop question counts beside a held card and names the others', () => withHome(async () => {
+  live();
+  const out = reason(await run(withSession([LIFT, separator.question, PLAIN]), { outcomes: () => [SEPARATOR], stop: STOP_ON }));
+  assert.match(out, /2 cards wait in the panel/);
+  assert.match(out, /Ask only the others\./);
+}));
+
+test('the Lift All stop question is not held for a feature session or with HOLD_FOR_PANE off', () => withHome(async () => {
+  live();
+  assert.equal(await run(withSession([LIFT]), { outcomes: () => [], stop: STOP_ON, role: () => 'feature' }), undefined);
+  assert.equal(await run(withSession([LIFT]), { outcomes: () => [], stop: STOP_ON, holdForPane: false }), undefined);
 }));

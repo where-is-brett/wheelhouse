@@ -28,12 +28,13 @@ import { whatProblem, NO_REPLY_CODE } from '../cards/compose.js';
 import { TO_KNOW_MORE, TO_CHANGE_IT } from '../lib/calm-words.js';
 import { CARD } from '../lib/front-desk.js';
 import {
-  setLinesOf, replyCode, replyCodeLine, runbookLine, isLiftStopLine, BLIND_LINE, RUNBOOK_TITLES, SETUP_TITLES, ID, LANES, TRUST_LINE, TAKEOVER_LINE, PAIR_LINE, UNINSTALL_LINE, KEEP_CONTROL_LINE, USAGE_LINE, PREMIUM_LINE, START_GOAL_LINE, RELEASE_LINE, UPDATE_HELPER_LINE, UPDATE_LINE,
+  setLinesOf, setLineOf, replyCode, replyCodeLine, runbookLine, isLiftStopLine, BLIND_LINE, RUNBOOK_TITLES, SETUP_TITLES, ID, LANES, TRUST_LINE, TAKEOVER_LINE, PAIR_LINE, UNINSTALL_LINE, KEEP_CONTROL_LINE, USAGE_LINE, PREMIUM_LINE, START_GOAL_LINE, RELEASE_LINE, UPDATE_HELPER_LINE, UPDATE_LINE,
 } from '../state/card-lines.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { cardOutcomes } from '../state/views.js';
 import { listEvents } from '../state/events.js';
 import { readEnrolled } from '../state/signing.js';
+import { stopState } from '../lib/stop.js';
 import { stateDir } from '../lib/paths.js';
 import { subjectOf, answeredWords } from '../cards/answered.js';
 import { PANE_LEAD, paneLine } from '../cards/panel-words.js';
@@ -184,21 +185,32 @@ function decidedDeny(found, at) {
   return `${DECIDED_LEAD}${lines.join('; ')}. Ask none of them again, and say so in one plain line. Ask the cards still waiting with \`again <n>\`.`;
 }
 
-function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere: take, holdForPane, role }) {
+// The id the Lift All stop question goes by in the hold, since it is not a card in the state.
+const LIFT_ID = 'lift-stop';
+const isLiftQuestion = (q) => typeof q?.question === 'string' && isLiftStopLine(setLineOf(q.question));
+
+function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere: take, holdForPane, role, stop }) {
   const questions = input.tool_input.questions;
   const at = now();
   const found = cardsOf(questions, project, outcomes);
   const decided = decidedDeny(found, at);
   if (decided !== undefined) return { deny: decided };
+  // The Lift All stop question is composed on each visit and never recorded as a card, so the state can't say it is
+  // decided: STOP being off is what says so.
+  const lifts = questions.map(isLiftQuestion);
+  if (lifts.includes(true) && !stop().on) {
+    const others = lifts.includes(false);
+    return { deny: `All stop is already lifted, so that question is not asked. Say so in one plain line, and ask nothing about it again.${others ? ' Ask only the others.' : ''}` };
+  }
   const waiting = found.filter(Boolean);
   const session = input.session_id;
   const pane = (f) => cardButtons(f.card.data).buttons.some((b) => b.does === 'record' || b.does === 'turn');
-  const held = waiting.filter(pane);
+  // Each question the live pane answers with its own buttons: a card with buttons, and Lift All stop (the pane's Lift STOP).
+  const heldAt = questions.map((_, i) => lifts[i] || (found[i] ? pane(found[i]) : false));
+  const held = [...waiting.filter(pane).map((f) => f.card.id), ...(lifts.includes(true) ? [LIFT_ID] : [])];
   if (held.length > 0 && holdForPane && role({ sessionId: session, cwd: input.cwd }) === 'front-desk'
-    && live(session, at.getTime()) && !take(session, held.map((f) => f.card.id), at.getTime())) {
-    const n = held.length;
-    const others = found.filter((f) => f === null || !held.includes(f)).length > 0;
-    return { deny: paneLine(n, { others }) };
+    && live(session, at.getTime()) && !take(session, held, at.getTime())) {
+    return { deny: paneLine(held.length, { others: heldAt.includes(false) }) };
   }
   return { open: waiting.map((f) => f.card.id) };
 }
@@ -222,7 +234,7 @@ export async function decideRepeat(input, { projectOf: find = projectOf, dir, no
 
 export async function decide(input, {
   projectOf: find = projectOf, dir, now = () => new Date(), outcomes, paneLive: live = paneLive, takeHere: take = takeHere,
-  markOpen: open = markOpen, holdForPane = HOLD_FOR_PANE, role = sessionRole,
+  markOpen: open = markOpen, holdForPane = HOLD_FOR_PANE, role = sessionRole, stop = stopState,
 } = {}) {
   if (input.tool_name !== tools.ask) return undefined;
   const questions = input.tool_input?.questions;
@@ -234,7 +246,7 @@ export async function decide(input, {
   if (!inProject) return undefined;
   let open_ = null;
   try {
-    const checked = oneCardCheck(input, find(input.cwd, { dir }).project, { now, outcomes, paneLive: live, takeHere: take, holdForPane, role });
+    const checked = oneCardCheck(input, find(input.cwd, { dir }).project, { now, outcomes, paneLive: live, takeHere: take, holdForPane, role, stop });
     if (checked.deny !== undefined) return answer.deny(checked.deny);
     open_ = checked.open;
   } catch {
