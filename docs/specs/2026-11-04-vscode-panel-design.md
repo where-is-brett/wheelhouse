@@ -2,7 +2,7 @@
 
 # The Wheelhouse panel in VS Code: design (4 November 2026)
 
-**Status:** draft for decisions. The open decisions are in section 11, each with a recommendation. Nothing here is built yet.
+**Status:** approved. The director took every recommendation on 4 November 2026 (section 11). Nothing here is built yet; it is built after the one-card build lands (D5).
 
 ## 1. Why this, and why now
 
@@ -66,7 +66,7 @@ This design covers those four. It is a design for finishing the add-on, not a ne
 
 ### 3.2 The route
 
-**A `.vsix` attached to each Wheelhouse release, installed with Install from VSIX, is the route now; the Marketplace follows once the add-on has passed its sitting.** *Recommended; open decision D1.*
+**A `.vsix` attached to each Wheelhouse release, installed with Install from VSIX, is the route now; the Marketplace follows once the add-on has passed its sitting.** *The director's decision D1, 4 November 2026.*
 
 - **CI packs it.** A new release job (CI has none today: `.github/workflows/ci.yml` only) runs `scripts/addon/pack.js` (already Node.js only, no npm tools) on a pushed tag and attaches `wheelhouse-<version>.vsix` to the GitHub release. It never makes a tag.
 - **The hash is in the tagged commit.** `pack.js` already packs byte for byte the same each time (sorted names, a fixed time), so the expected hash can be known before the tag. The commit that sets a release's version also writes `vscode/vsix.sha256`, packed from that commit; CI's validate job fails when the file doesn't match a fresh pack. The release job packs again on the tag and refuses to attach a `.vsix` whose hash differs. A release with no `.vsix` is one the add-on isn't offered for.
@@ -86,13 +86,13 @@ This design covers those four. It is a design for finishing the add-on, not a ne
 
 ### 3.4 Lean's promise
 
-The promise in `README.md` stays true: Lean needs VS Code with Copilot, and git, and installs nothing. The panel is offered only after Lean is working, as an extra. The README's Lean paragraph gains one sentence, for example: "If you'd like the panel beside the chat, Wheelhouse can offer its optional VS Code add-on later; it installs nothing else, and you never need it." *Open decision D6, for the wording.*
+The promise in `README.md` stays true: Lean needs VS Code with Copilot, and git, and installs nothing. The panel is offered only after Lean is working, as an extra. The README's Lean paragraph gains one sentence, for example: "If you'd like the panel beside the chat, Wheelhouse can offer its optional VS Code add-on later; it installs nothing else, and you never need it." *The director's decision D6, 4 November 2026.*
 
 ## 4. Who gets it, and when
 
 - **Where a helper runs** (Node.js 22 or later, at Lean with the helper or on the build engine): the panel works fully today, once installed.
-- **At Lean with no Node.js:** the panel needs the helper that runs inside VS Code's process, which stays off until S6 passes (`ADDON_LEAN_READY`). Until then the add-on isn't offered there. *Recommended; open decision D3.* The other route, a read-only panel drawn from Lean's files with "answer in the chat" in place of buttons, would show something sooner but is a second drawing path for a few weeks.
-- **The offer** is one card, once, after the director's first feature is done at Lean, or at the end of setup elsewhere: "Would you like Wheelhouse's panel beside the chat?" with **Yes, add it**, **Not now** and **Why?**. *Recommended; open decision D2.* Not during setup, which already asks enough, and not only on request, since a director who doesn't know it exists won't ask.
+- **At Lean with no Node.js:** the panel needs the helper that runs inside VS Code's process, which stays off until S6 passes (`ADDON_LEAN_READY`). Until then the add-on isn't offered there. *The director's decision D3, 4 November 2026.* The other route, a read-only panel drawn from Lean's files with "answer in the chat" in place of buttons, would show something sooner but is a second drawing path for a few weeks.
+- **The offer** is one card, once, after the director's first feature is done at Lean, or at the end of setup elsewhere: "Would you like Wheelhouse's panel beside the chat?" with **Yes, add it**, **Not now** and **Why?**. *The director's decision D2, 4 November 2026.* Not during setup, which already asks enough, and not only on request, since a director who doesn't know it exists won't ask.
 
 ## 5. The look: Inset, in VS Code
 
@@ -170,7 +170,7 @@ VS Code has no documented way for an extension to add a line to Copilot's chat w
 1. **In the panel, at once.** The card shows "You approved the Doubt plan at 10:34" in place of its buttons, and VS Code shows the same line as a notification.
 2. **In the chat, the next time the director writes.** In Claude Code that line comes from a hook (`scripts/hooks/board-context.js`), and Copilot's `userPromptSubmitted` hook can't add context. So it is new work here: `views waiting` and `wheelhouse_board` gain a "since" field, the answers recorded since the front desk last read them, with the one-card design's words ("Since your last turn: the Doubt plan was approved in the panel at 10:34."). Copilot's front-desk skill reads one of them at the start of each turn, says each answer in one line before anything else, and never asks that card again. Like the hold at Lean, it rests on the skill until a hook can carry it; the firm part is that a decided card can't be answered twice.
 
-*Recommended; open decision D4.* The other route would prefill Copilot's chat box with a line ("I approved the Doubt plan in the panel") for the director to send, which shows it sooner but costs a Copilot request when sent and rests on `workbench.action.chat.open`'s arguments, which VS Code doesn't document.
+*The director's decision D4, 4 November 2026.* The other route would prefill Copilot's chat box with a line ("I approved the Doubt plan in the panel") for the director to send, which shows it sooner but costs a Copilot request when sent and rests on `workbench.action.chat.open`'s arguments, which VS Code doesn't document.
 
 ### 6.4 Answered in the chat first
 
@@ -241,11 +241,11 @@ Copilot use: the hold and the next-turn line need two or three chat turns. The S
 
 Kept out: the mod, the card and question hooks, and `scripts/update/`, which other work owns. The one-card build owns the shared pieces this reuses; this build adds the VS Code half after it.
 
-## 11. Open decisions
+## 11. Decided by the director (4 November 2026)
 
-Each goes to the director as a card, through the main session, with the recommendation first.
+The director took every recommendation. The other options are kept for the record.
 
-| | Decision | Recommended | Other options |
+| | Decision | Decided | Other options, not taken |
 |---|---|---|---|
 | D1 | How the add-on is installed | **A `.vsix` on each release, fetched and hash-checked by the front desk, installed with Install from VSIX; the Marketplace after S6** | Marketplace now (needs a publisher account in the project's name, before the add-on has run for real); the `.vsix` committed into Lean's kit (no download, but a binary in every release's history) |
 | D2 | When it is offered | **One card after the first feature at Lean, or at the end of setup elsewhere** | During setup; only when the director asks |
