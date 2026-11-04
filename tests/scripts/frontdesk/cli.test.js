@@ -10,7 +10,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { main, readInput, goalCard, RECORD_KINDS, MEANWHILE, CHECKS_UNSAID, STILL_CHECKING } from '../../../scripts/frontdesk/cli.js';
+import { main, readInput, goalCard, RECORD_KINDS, MEANWHILE, CHECKS_UNSAID, STILL_CHECKING, RECENT_MS, RECENT_LEAD } from '../../../scripts/frontdesk/cli.js';
 import { cardsDue } from '../../../scripts/hooks/board-context.js';
 import { numberedWaiting } from '../../../scripts/board/model.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
@@ -44,6 +44,8 @@ import { BUILD_QUESTION_LABELS, BUILD_QUESTION_OPTIONS } from '../../../scripts/
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 import { pendingDir } from '../../../scripts/hooks/pending.js';
 import { SUGGEST, WHY, suggestedAt } from '../../../scripts/lib/calm-words.js';
+import { answeredWords, subjectOf } from '../../../scripts/cards/answered.js';
+import { takeHere } from '../../../scripts/lib/session-files.js';
 
 // No host tool runs for real: the helper's runs go through this, and the log stays empty.
 const hostLog = [];
@@ -1595,6 +1597,117 @@ test('views waiting shows a steered card\'s time', async () => {
     const line = (card) => lines.find((l) => l.includes(`(card ${card.id})`));
     assert.ok(line(steered).endsWith(` ${suggestedAt(`${two(at.getHours())}:${two(at.getMinutes())}`)}`), line(steered));
     assert.ok(line(plain).endsWith(`(card ${plain.id})`), line(plain));
+  });
+});
+
+// --- one card, one answer: ask here, a decided card, the hour's answers ---
+
+const SESSION = 'session-one';
+const answerAt = (card, label, ms, where = 'panel') => makeEvent({ kind: 'card-answer', data: { card: card.id, label, where }, now: ago(ms) });
+
+test('cards --here marks the handed-out ids, and the output is the same', async () => {
+  await inHome(async () => {
+    const one = cardEvent(PRODUCT(1), 1);
+    const two = cardEvent(PRODUCT(2), 2);
+    const plain = await run(fakeHelper({ events: [one, two] }), ['cards']);
+    const helper = fakeHelper({ events: [one, two] });
+    const here = await run(helper, ['cards', '--here'], undefined, { env: { CLAUDE_CODE_SESSION_ID: SESSION } });
+    assert.equal(here.code, 0, here.err);
+    assert.deepEqual(here.json, plain.json);
+    assert.equal(takeHere(SESSION, [one.id, two.id], NOW.getTime()), true);
+    assert.equal(takeHere(SESSION, [one.id], NOW.getTime()), false, 'taken once');
+  });
+});
+
+test('again <n> --here and pull-cards --here mark the ids they hand out', async () => {
+  await inHome(async () => {
+    const one = cardEvent(PRODUCT(1), 1);
+    const helper = fakeHelper({ events: [one] });
+    const env = { CLAUDE_CODE_SESSION_ID: SESSION };
+    const asked = await run(helper, ['again', '1', '--here'], undefined, { env });
+    assert.equal(asked.code, 0, asked.err);
+    assert.equal(asked.json.id, one.id);
+    assert.equal(takeHere(SESSION, [one.id], NOW.getTime()), true);
+    const two = cardEvent(PRODUCT(2), 2);
+    helper.held.push(two);
+    const pulled = await run(helper, ['pull-cards', '--here'], undefined, { env });
+    assert.equal(pulled.code, 0, pulled.err);
+    assert.equal(takeHere(SESSION, [two.id], NOW.getTime()), true);
+  });
+});
+
+test('--here refuses with no session, and other arguments are still refused', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper({ events: [cardEvent(PRODUCT(1), 1)] });
+    const none = await run(helper, ['cards', '--here'], undefined, { env: {} });
+    assert.equal(none.code, 1);
+    assert.equal(none.err, 'The session isn\'t known, so the cards can\'t be asked here.\n');
+    assert.deepEqual(helper.writes(), [], 'nothing was marked asked');
+    const word = await run(helper, ['cards', 'here'], undefined, { env: { CLAUDE_CODE_SESSION_ID: SESSION } });
+    assert.equal(word.err, 'cards takes no arguments\n');
+  });
+});
+
+test('card refuses an approval already approved at the same commit', async () => {
+  await inHome(async () => {
+    const input = { ...APPROVAL, target: { pr: 7, sha: FULL } };
+    const old = cardEvent(input, 1);
+    const helper = fakeHelper({ events: [old, answerAt(old, 'Approve', 10 * MINUTE)] });
+    const out = await run(helper, ['card'], JSON.stringify(input));
+    assert.equal(out.code, 1);
+    assert.match(out.err, /^Already approved in the panel (on \d+ \w+ )?at \d\d:\d\d; nothing to ask\.\n$/);
+    assert.doesNotMatch(out.err, new RegExp(old.id));
+    assert.deepEqual(helper.writes(), []);
+  });
+});
+
+test('card lets an approval through when the earlier one at that commit was only put off', async () => {
+  await inHome(async () => {
+    const input = { ...APPROVAL, target: { pr: 7, sha: FULL } };
+    const old = cardEvent(input, 1);
+    const helper = fakeHelper({ events: [old, answerAt(old, 'Not now', 10 * MINUTE)] });
+    const out = await run(helper, ['card'], JSON.stringify(input));
+    assert.equal(out.code, 0, out.err);
+  });
+});
+
+test('card refuses another kind\'s set line decided within the hour, and lets it through just after', async () => {
+  await inHome(async () => {
+    const input = {
+      kind: 'runbook', level: 3, what: 'Turn STOP on: nothing new will start until it is lifted.', why: 'The agents should pause.',
+      options: [says('Do it')], recommend: 'Do it', because: 'it is the safest first step', meanwhile: 'Nothing changes.', target: { step: 1 },
+    };
+    const old = cardEvent(input, 1);
+    const within = fakeHelper({ events: [old, answerAt(old, 'Do it', RECENT_MS, 'chat')] });
+    const refused = await run(within, ['card'], JSON.stringify(input));
+    assert.equal(refused.code, 1, refused.err);
+    assert.match(refused.err, /^Already answered Do it in the chat (on \d+ \w+ )?at \d\d:\d\d; nothing to ask\.\n$/);
+    assert.deepEqual(within.writes(), []);
+    const later = fakeHelper({ events: [old, answerAt(old, 'Do it', RECENT_MS + 1, 'chat')] });
+    const made = await run(later, ['card'], JSON.stringify(input));
+    assert.equal(made.code, 0, made.err);
+    assert.deepEqual(later.writes().map((w) => w.kind), ['card', 'asked']);
+  });
+});
+
+test('views waiting lists the last hour\'s answers, and leaves the lead out when there are none', async () => {
+  await inHome(async () => {
+    const done = cardEvent(PRODUCT(1), 1);
+    const decided = answerAt(done, 'Plain', 10 * MINUTE);
+    const helper = fakeHelper({ events: [done, decided] });
+    const out = await run(helper, ['views', 'waiting']);
+    assert.equal(out.code, 0, out.err);
+    const words = answeredWords({ card: done, decided: { at: decided.at, label: 'Plain', where: 'panel' } }, NOW);
+    assert.deepEqual(out.out.trim().split('\n'), ['Nothing is waiting for the director.', RECENT_LEAD, `- ${subjectOf(done)}: ${words}`]);
+    assert.doesNotMatch(out.out, new RegExp(done.id));
+    // With a card waiting, the recent answers follow the list.
+    const waiting = cardEvent(PRODUCT(2), 2);
+    const both = (await run(fakeHelper({ events: [done, decided, waiting] }), ['views', 'waiting'])).out.trim().split('\n');
+    assert.match(both[0], /^1\. Which name suits page 2\?/);
+    assert.deepEqual(both.slice(1), [RECENT_LEAD, `- ${subjectOf(done)}: ${words}`]);
+    // Older than the hour: nothing to list.
+    const old = fakeHelper({ events: [done, answerAt(done, 'Plain', RECENT_MS + 60000)] });
+    assert.equal((await run(old, ['views', 'waiting'])).out.trim(), 'Nothing is waiting for the director.');
   });
 });
 

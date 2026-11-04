@@ -11,6 +11,8 @@ import { endedBy, since, NO_PLAN, STARTS_UNAPPROVED } from '../foreman/queue.js'
 import { cardTextOf, hashOf } from '../mod/status.js';
 import { cardButtons } from '../mod/buttons.js';
 import { dataHash } from '../state/events.js';
+import { cardOutcomes } from '../state/views.js';
+import { answeredWords, askOf, subjectOf } from '../cards/answered.js';
 import { contextText } from './context.js';
 import { readStatus } from '../safekeeping/readings.js';
 import { paneFrom } from './mod-pane.js';
@@ -22,6 +24,34 @@ const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const flat = (x) => (typeof x === 'string' ? x.replace(/\s+/g, ' ').trim() : x);
 const LABELS = [...Object.values(SETTINGS), KNOWN].map((setting) => setting.label);
 export const NO_RECORD = 'This project has no record to show yet';
+
+// How far back "Decided in the last hour:" looks, its lead, and the most lines it lists.
+export const RECENT_MS = 3600000;
+export const RECENT_LEAD = 'Decided in the last hour:';
+const RECENT_MOST = 10;
+const SIGNED_KINDS = ['approval', 'ci-push'];
+
+// The cards decided since `since` (a Date), and every approval or CI push card decided at any time, each slimmed to what
+// the card words need: { card: { id, data: { kind, line, question, parts: { what } } }, decided }. An approval's
+// refusal in `card` looks back past the hour, because the same commit stays signed.
+export function decidedOutcomes(events, enrolled, since) {
+  return cardOutcomes(events, enrolled)
+    .filter(({ card, decided }) => decided !== null && (SIGNED_KINDS.includes(card.data?.kind) || new Date(decided.at) >= since))
+    .map(({ card, decided }) => ({
+      card: { id: card.id, data: { kind: card.data?.kind, line: card.data?.line, question: askOf(card), ...(typeof card.data?.parts?.what === 'string' ? { parts: { what: card.data.parts.what.split('\n')[0] } } : {}) } },
+      decided,
+    }));
+}
+
+// "- <subject>: <answeredWords>" for each card decided within the hour before `now`, oldest first, under the lead; none
+// when nothing was decided in that time.
+export function recentLines(decided, now) {
+  const recent = decided
+    .filter((d) => now.getTime() - new Date(d.decided.at).getTime() <= RECENT_MS && new Date(d.decided.at) <= now)
+    .sort((a, b) => new Date(a.decided.at) - new Date(b.decided.at))
+    .slice(-RECENT_MOST);
+  return recent.length === 0 ? [] : [RECENT_LEAD, ...recent.map((d) => `- ${subjectOf(d.card)}: ${answeredWords(d, now)}`)];
+}
 
 // Whether `id` names open work, as the queue reads it: no report has ended it, and its feature
 // hasn't closed since it was queued (scripts/foreman/queue.js).
@@ -287,12 +317,17 @@ const VIEWS = {
 
   // `cards`, `answers` and `review` ask for what the helper's views give with them. The record's
   // other views come with it, for the front desk's own lists (the rulebook, ideas, glossary, levels).
-  async waiting(args, source) {
+  // With `outcomes: { since }` the decided cards come too (decidedOutcomes), for the front desk's `card` and `views`.
+  async waiting(args, source, { now } = {}) {
     const got = await recordOf(source, { cards: true, answers: args.answers === true, review: args.review === true });
     if (got.refused) return { ok: false, refused: got.refused };
     const numbered = numberedWaiting(got.views, got.cards ?? []);
-    const lines = numbered.length === 0 ? ['Nothing is waiting for the director.'] : numbered.map((item) => `${item.n}. ${item.what}`);
-    return { ok: true, data: { ...got, numbered }, lines };
+    const at = typeof now === 'function' ? now() : new Date();
+    const decided = typeof source.events === 'function' ? decidedOutcomes(source.events(), source.enrolled?.() ?? [], new Date(at.getTime() - RECENT_MS)) : [];
+    const lines = [...(numbered.length === 0 ? ['Nothing is waiting for the director.'] : numbered.map((item) => `${item.n}. ${item.what}`)), ...recentLines(decided, at)];
+    const given = isPlain(args.outcomes) && typeof args.outcomes.since === 'string' && typeof source.events === 'function'
+      ? { outcomes: decidedOutcomes(source.events(), source.enrolled?.() ?? [], new Date(args.outcomes.since)) } : {};
+    return { ok: true, data: { ...got, numbered, ...given }, lines };
   },
 
   async card(args, source) {
