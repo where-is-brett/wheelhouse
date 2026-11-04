@@ -14,6 +14,10 @@ import { startRun, markStep, addChanges, applyJsonKey } from '../../../scripts/s
 import { keyEdits } from '../../../scripts/setup/local-refresh.js';
 import { localSettings, mergeSettings } from '../../../scripts/protection/settings.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
+import { computerId } from '../../../scripts/lib/paths.js';
+import { makeEvent } from '../../../scripts/state/events.js';
+import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
+import { as, shortHome } from '../../helpers/homes.js';
 
 const temp = (prefix) => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 const T0 = Date.parse('2026-11-04T10:00:00Z');
@@ -63,22 +67,33 @@ const oldStandIn = ({ proof = PROOF } = {}) => ({
 
 const quietRefresh = () => ({ local: async () => null, locked: async () => null, copilot: async () => null, engine: async () => null });
 
+// The job's state when it runs finish: the checks done and the finish step running.
 function setUp(name = 'proj') {
   const journal = openJournal(name);
   journal.mark('checks', 'done', { tag: 'v0.2.7' });
+  journal.mark('finish', 'running');
   return journal;
+}
+
+// The new release's folder in the plugin cache under a Claude folder of the test's own.
+function cacheRoot(claudeHome, version = '0.2.7') {
+  const root = path.join(claudeHome, 'plugins', 'cache', 'wheelhouse', 'wheelhouse', version);
+  fs.mkdirSync(root, { recursive: true });
+  return root;
 }
 
 function deps(h, extra = {}) {
   const c = clock();
   const watcherCalls = [];
+  const claudeHome = path.join(process.env.WHEELHOUSE_HOME, 'claude');
   return {
     c,
     watcherCalls,
     options: {
       project: 'proj',
       folder: '/nowhere/proj',
-      newRoot: '/cache/wheelhouse/0.2.7',
+      claudeHome,
+      newRoot: cacheRoot(claudeHome),
       to: 'v0.2.7',
       from: 'v0.2.6',
       platform: 'darwin',
@@ -91,7 +106,7 @@ function deps(h, extra = {}) {
       user: 'someone',
       cacheRoot: '/cache',
       old: oldStandIn(),
-      heldNow: () => false,
+      heldNow: () => true,
       shape: async () => 1,
       watcher: {
         stopWatcher: async (project) => { watcherCalls.push(['stop', project]); return { stopped: false, why: 'not running' }; },
@@ -124,9 +139,9 @@ test('finish: the director\'s own local entries are kept', () => withHome(async 
   try {
     const journal = setUp();
     const h = helper({ version: '0.2.7' });
-    const { options } = deps(h, { folder: p.folder, claudeHome: p.claudeHome });
+    const { options } = deps(h, { folder: p.folder, claudeHome: p.claudeHome, newRoot: cacheRoot(p.claudeHome) });
     options.refresh = {
-      ...realRefreshes({ project: 'proj', folder: p.folder, newRoot: '/cache/wheelhouse/0.2.7', claudeHome: p.claudeHome, platform: 'darwin', address: '/h/new.sock' }),
+      ...realRefreshes({ project: 'proj', folder: p.folder, newRoot: options.newRoot, claudeHome: p.claudeHome, platform: 'darwin', address: '/h/new.sock' }),
       locked: async () => null,
       copilot: async () => null,
       engine: async () => null,
@@ -138,7 +153,7 @@ test('finish: the director\'s own local entries are kept', () => withHome(async 
     assert.ok(after.permissions.allow.includes('Bash(ls:*)'));
     assert.deepEqual(after.env, { MINE: '1' });
     assert.deepEqual(after.statusLine, { type: 'command', command: 'my-line' });
-    assert.ok(after.permissions.allow.some((r) => r.includes('/cache/wheelhouse/0.2.7')), 'the new folder is named');
+    assert.ok(after.permissions.allow.some((r) => r.includes(options.newRoot)), 'the new folder is named');
     assert.ok(!after.permissions.allow.some((r) => r.includes('/0.2.6')), 'the old folder is not');
     // What the update wrote is recorded with its hash.
     const record = readOwnFilesState().updates.at(-1);
@@ -201,7 +216,7 @@ test('finish: a current helper is not asked to retire, and the watcher is restar
   assert.equal(got.ok, true);
   assert.equal(h.state.asked, 0);
   assert.match(got.line, /v0\.2\.7 is installed/);
-  assert.deepEqual(watcherCalls, [['stop', 'proj'], ['start', 'proj', '/cache/wheelhouse/0.2.7']]);
+  assert.deepEqual(watcherCalls, [['stop', 'proj'], ['start', 'proj', options.newRoot]]);
 }));
 
 test('finish: an old helper that makes way is replaced by the new one without a card', () => withHome(async () => {
@@ -332,7 +347,7 @@ test('finish: the watcher is stopped only through stopWatcher, and started only 
   const { options } = deps(h, { watcher, kill: (...a) => killed.push(a) });
   const got = await finish({ ...options, journal });
   assert.equal(got.ok, true);
-  assert.deepEqual(order, ['stop proj', 'start proj /cache/wheelhouse/0.2.7']);
+  assert.deepEqual(order, ['stop proj', `start proj ${options.newRoot}`]);
   assert.deepEqual(killed, [], 'finish itself ends no process');
 }));
 
@@ -345,17 +360,90 @@ test('finish: the last line adds the add-on and the Shape 2 foreman when they ap
   assert.match(got.line, /Restart the foreman/);
 }));
 
-test('finish: refuses to run while another update holds the lock and this one has none', () => withHome(async () => {
+test('finish: refuses to run unless the job holds the lock and has its finish step running, and never takes the lock', () => withHome(async () => {
+  const h = helper({ version: '0.2.7' });
   const journal = setUp();
-  const other = openJournal('other').lock();
-  try {
-    const h = helper({ version: '0.2.7' });
-    const { options } = deps(h);
-    const got = await finish({ ...options, journal, heldNow: () => false });
-    assert.equal(got.ok, false);
-    assert.match(got.line, /already under way/);
-  } finally { other(); }
+  const { options } = deps(h);
+  const none = await finish({ ...options, journal, heldNow: () => false });
+  assert.equal(none.ok, false);
+  assert.equal(openJournal('other').lock() !== null, true, 'the lock was not taken by finish');
+  const idle = openJournal('quiet');
+  idle.mark('checks', 'done', { tag: 'v0.2.7' });
+  const notRunning = await finish({ ...options, journal: idle });
+  assert.equal(notRunning.ok, false);
+  assert.deepEqual(h.state.killed, []);
 }));
+
+test('finish: refuses to run from any folder but the plugin cache folder of the journal\'s tag', () => withHome(async () => {
+  const h = helper({ version: '0.2.7' });
+  const journal = setUp();
+  const { options } = deps(h);
+  const elsewhere = temp('wh-finish-elsewhere-');
+  const wrongVersion = cacheRoot(options.claudeHome, '0.2.9');
+  try {
+    for (const newRoot of [elsewhere, wrongVersion, path.join(options.claudeHome, 'missing')]) {
+      const got = await finish({ ...options, journal, newRoot });
+      assert.equal(got.ok, false, newRoot);
+      assert.match(got.line, /plugin cache/);
+    }
+    assert.equal(h.state.asked, 0);
+    // A link to the right folder is the right folder, by real paths.
+    const link = path.join(elsewhere, 'link');
+    fs.symlinkSync(options.newRoot, link);
+    assert.equal((await finish({ ...options, journal, newRoot: link })).ok, true);
+  } finally { fs.rmSync(elsewhere, { recursive: true, force: true }); }
+}));
+
+// A computer with a signing key, and a signed answer to a card.
+async function withKey(fn) {
+  const home = shortHome();
+  try {
+    return await as(home, async () => {
+      const { computer, publicKey } = makeSigningKey();
+      enrol({ computer, publicKey, enrolledAt: '2026-11-04T00:00:00.000Z' });
+      return fn({ enrolled: readEnrolled() });
+    });
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+}
+const signedClick = (card, label) => makeEvent({ kind: 'action', data: { action: 'update-helper-answer', card, label, question: `Stop the old helper?\n${card}` }, now: () => new Date('2026-11-04T10:05:00Z') });
+
+test('finish: only a signed answer for the waiting card\'s own id stops the helper', () => withKey(async ({ enrolled }) => {
+  {
+    {
+      const journal = setUp();
+      const h = helper({ version: '0.2.2' });
+      const { options } = deps(h);
+      delete options.answer;
+      const first = await finish({ ...options, journal, enrolled, events: [] });
+      const card = first.asks[0];
+      assert.match(card.id, /^update-helper-4242-2026-11-04T09-00-00\.000Z$/);
+      const good = signedClick(card.id, STOP_IT);
+      const forged = { ...good, sig: undefined };
+      delete forged.sig;
+      const other = signedClick('update-helper-9999-other', STOP_IT);
+      const altered = { ...good, data: { ...good.data, label: LEAVE_IT } };
+      const wrongKind = { ...signedClick(card.id, STOP_IT), kind: 'card-answer' };
+      for (const events of [[forged], [other], [altered], [wrongKind], []]) {
+        const got = await finish({ ...options, journal, enrolled, events });
+        assert.equal(got.ok, false);
+        assert.deepEqual(h.state.killed, [], 'nothing is stopped');
+      }
+      // A signed answer for the card counts; its signature is checked against the enrolled keys.
+      const unenrolled = await finish({ ...options, journal, enrolled: [], events: [good] });
+      assert.equal(unenrolled.ok, false);
+      assert.deepEqual(h.state.killed, []);
+      const done = await finish({ ...options, journal, enrolled, events: [good] });
+      assert.equal(done.ok, true, done.line);
+      assert.deepEqual(h.state.killed, [[PROOF.pid, 'SIGTERM']]);
+    }
+  }
+}));
+
+test('finish: the command takes no answer on its line', async () => {
+  const errs = [];
+  assert.equal(await main(['p', '--answer', 'Stop it'], { err: (t) => errs.push(t) }), 1);
+  assert.equal(errs.length, 1);
+});
 
 test('helperCard: plain data with the options and a recommendation', () => {
   const card = helperCard({ kind: 'unknown', version: '0.2.2', canStop: true });
@@ -370,3 +458,27 @@ test('main: refuses bad arguments', async () => {
   assert.equal(await main(['p', '--answer'], { err: (t) => errs.push(t) }), 1);
   assert.equal(errs.length, 2);
 });
+
+test('finish: the files written in Copilot\'s clean home are recorded with their hashes', () => withHome(async (home) => {
+  const folder = temp('wh-finish-copilot-');
+  try {
+    fs.mkdirSync(path.join(folder, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(folder, '.claude', 'wheelhouse.json'), JSON.stringify({ v: 1, agents: { [computerId()]: 'copilot' } }));
+    fs.mkdirSync(path.join(home, 'engine'), { recursive: true });
+    const clean = path.join(home, 'engine', 'copilot-home');
+    const written = [path.join(clean, 'config.json'), path.join(clean, 'hooks', 'wheelhouse.json')];
+    const writeHome = () => {
+      for (const f of written) { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, `{"at":"${f}"}\n`); }
+      return clean;
+    };
+    const journal = setUp();
+    const h = helper({ version: '0.2.7' });
+    const { options } = deps(h, { folder });
+    options.refresh = { ...quietRefresh(), copilot: realRefreshes({ project: 'proj', folder, newRoot: options.newRoot, claudeHome: options.claudeHome, platform: 'darwin', writeHome }).copilot };
+    const got = await finish({ ...options, journal });
+    assert.equal(got.ok, true, got.line);
+    const record = readOwnFilesState().updates.at(-1);
+    assert.deepEqual(record.wrote.map((w) => w.file).sort(), [...written].sort());
+    assert.ok(record.wrote.every((w) => typeof w.hash === 'string' && w.hash !== ''));
+  } finally { fs.rmSync(folder, { recursive: true, force: true }); }
+}));

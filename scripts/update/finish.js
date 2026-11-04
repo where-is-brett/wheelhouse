@@ -1,6 +1,6 @@
 // scripts/update/finish.js
 // The second half of an update, run from the new version's own code:
-//   node <new folder>/scripts/update/finish.js <project> [--answer "<label>"]
+//   node <new folder>/scripts/update/finish.js <project>
 // (design 2026-11-04-update-command-design.md, sections 6.5 to 6.9 and 7). In order: the refreshes the new release
 // brings, the own-files record, the helper hand-over, the watcher, and the last line. Every process, helper, clock and
 // refresh is a seam, so a test never touches a real one. Nothing is ended by its name; an old helper is stopped only
@@ -11,10 +11,10 @@ import { fileURLToPath } from 'node:url';
 import { caEnv } from '../host/company-ca.js';
 import { helperClient } from '../host/helper-client.js';
 import { readHelperRecord } from '../host/helper-record.js';
-import { claudeHome as defaultClaudeHome } from '../lineage/manifest.js';
+import { MARKETPLACE, claudeHome as defaultClaudeHome } from '../lineage/manifest.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { compareVersions } from '../lib/versions.js';
-import { computerId, engineDir, helperAddress, jobFolder, wheelhouseHome } from '../lib/paths.js';
+import { computerId, engineDir, helperAddress, jobFolder, stateDir, wheelhouseHome } from '../lib/paths.js';
 import { registeredProjects } from '../lib/projects.js';
 import { run as defaultRun } from '../lib/run.js';
 import { fileHash, recordUpdate } from '../health/own-files.js';
@@ -22,6 +22,8 @@ import {
   RESTART_LINE, defaultCacheRoot, findByAddress, pidAlive, proveRecorded, reprove, stopProved, waitForQuiet,
 } from './old-helper.js';
 import { openJournal, updateLockHeld } from './journal.js';
+import { verify, readEnrolled } from '../state/signing.js';
+import { listEvents } from '../state/events.js';
 import { startWatcher, stopWatcher, watcherRunning } from '../foreman/start.js';
 import { processStartTime } from '../watcher/waker.js';
 import { projectConfig } from '../watcher/main.js';
@@ -62,6 +64,18 @@ const readProgress = (journal) => {
   return isObject(found) ? { refreshed: {}, wrote: [], ...found } : { refreshed: {}, wrote: [] };
 };
 
+// Whether `newRoot` is the plugin cache folder of the release `tag`, by real paths.
+export function rootIsCacheFor({ newRoot, claudeHome, tag }) {
+  try {
+    const version = String(tag).replace(/^v/, '');
+    if (!/^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/.test(version)) return false;
+    const expected = fs.realpathSync(path.join(claudeHome, 'plugins', 'cache', MARKETPLACE, 'wheelhouse', version));
+    return fs.realpathSync(newRoot) === expected;
+  } catch {
+    return false;
+  }
+}
+
 export function versionOf(root) {
   const found = readJson(path.join(root, '.claude-plugin', 'plugin.json'));
   return typeof found?.version === 'string' ? found.version : null;
@@ -70,12 +84,28 @@ export function versionOf(root) {
 // The card that asks about an old helper that did not make way. Plain card data: part 9 raises it. `kind` is 'busy' (a
 // v0.2.5 or v0.2.6 helper still busy after two minutes), 'unknown' (one that does not know the request) or 'hung' (one that
 // was asked and has not closed). `canStop` is whether the helper was proved to be Wheelhouse's own.
-export function helperCard({ kind, version, canStop }) {
+export function helperCardId({ pid, startTime, version, round = 0 }) {
+  return `update-helper-${pid}-${String(startTime ?? version ?? 'unknown').replace(/[^A-Za-z0-9.-]+/g, '-')}${round > 0 ? `-${round}` : ''}`;
+}
+
+// The director's answer to the helper card `card`: the label of a signed action of this computer's own key, naming this card's
+// id (unique to the process it asks about, so an old answer never counts for a new helper). A record that is not signed, or
+// names another card, is no answer. Part 9 writes the action into the state when the director clicks. `events` are the
+// project's state events; `enrolled` the computers whose signatures count.
+export function signedAnswer({ events, enrolled, card, options }) {
+  if (typeof card !== 'string' || !Array.isArray(events)) return null;
+  const found = events
+    .filter((e) => e?.kind === 'action' && e.data?.action === 'update-helper-answer' && e.data.card === card && options.includes(e.data.label) && verify(e, enrolled))
+    .sort((a, b) => String(a.at).localeCompare(String(b.at)));
+  return found.length === 0 ? null : found.at(-1).data.label;
+}
+
+export function helperCard({ kind, version, canStop, id }) {
   const options = kind === 'busy'
     ? [WAIT_LONGER, ...(canStop ? [STOP_IT] : []), LEAVE_IT]
     : [STOP_IT, LEAVE_IT];
   return {
-    id: 'update-helper',
+    id: id ?? 'update-helper',
     kind,
     version: version ?? null,
     options,
@@ -94,9 +124,25 @@ export function helperCard({ kind, version, canStop }) {
   };
 }
 
+// Every regular file under a folder, links skipped.
+function filesUnder(dir) {
+  const found = [];
+  const walk = (at) => {
+    let entries = [];
+    try { entries = fs.readdirSync(at, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      const full = path.join(at, entry.name);
+      if (entry.isSymbolicLink()) continue;
+      if (entry.isDirectory()) walk(full); else if (entry.isFile()) found.push(full);
+    }
+  };
+  if (typeof dir === 'string') walk(dir);
+  return found.sort();
+}
+
 // The refreshes of section 6.5, as the seams a real run uses. Each gives null when it does not apply here, { ok: true,
 // wrote: [files] } when it made them, or { ok: false, line } for what is left.
-export function realRefreshes({ project, folder, newRoot, claudeHome, platform, lockedDir, run = defaultRun, address = helperAddress({ platform }) }) {
+export function realRefreshes({ project, folder, newRoot, claudeHome, platform, lockedDir, run = defaultRun, address = helperAddress({ platform }), writeHome }) {
   return {
     async local() {
       if (typeof folder !== 'string') return null;
@@ -130,8 +176,10 @@ export function realRefreshes({ project, folder, newRoot, claudeHome, platform, 
       if (typeof folder !== 'string' || agentOfProject(folder, { computerId: computerId() }) !== 'copilot') return null;
       if (!fs.existsSync(engineDir())) return null;
       if (engineHomeProblem({ engine: engineDir(), root: newRoot }) === null) return { ok: true, wrote: [] };
-      writeEngineHome({ engine: engineDir(), root: newRoot });
-      return { ok: true, wrote: [] };
+      // The files written in the engine's clean home are recorded, so the weekly look knows them. The sign-in is only read from
+      // the director's own Copilot folder, never written there.
+      const home = (writeHome ?? writeEngineHome)({ engine: engineDir(), root: newRoot });
+      return { ok: true, wrote: filesUnder(home) };
     },
     async engine() {
       const { engineChanges, applyEngine } = await import('../setup/engine-parts.js');
@@ -141,7 +189,7 @@ export function realRefreshes({ project, folder, newRoot, claudeHome, platform, 
       const changes = engineChanges({ node: process.execPath, root: newRoot, agent }).filter((c) => c.action !== 'agent-engine' || c.part === 'cli');
       if (changes.length === 0) return null;
       await applyEngine(changes, { record: () => {}, run: defaultRun, node: process.execPath, root: newRoot, platform });
-      return { ok: true, wrote: [] };
+      return { ok: true, wrote: changes.filter((c) => c.kind === 'file').map((c) => c.target) };
     },
   };
 }
@@ -171,7 +219,7 @@ async function askToRetire({ client, old, say, now, sleep }) {
 // The hand-over of section 7.2 and 7.3. Resolves { done: true, line? } | { asks: [card], line } | { left: line }.
 async function handOver(ctx) {
   const {
-    client, to, old, say, now, sleep, answer, progress, startHelper, save, proofOptions, stopOptions,
+    client, to, old, say, now, sleep, readAnswer, progress, startHelper, save, proofOptions, stopOptions,
   } = ctx;
   const health = await client.health();
   const answering = health?.ok === true;
@@ -180,7 +228,7 @@ async function handOver(ctx) {
   let closed = !answering;
   if (answering) {
     const waiting = progress.handover?.waiting ?? null;
-    const reply = [STOP_IT, LEAVE_IT, WAIT_LONGER].includes(answer) ? answer : null;
+    const reply = waiting ? await readAnswer(waiting.card) : null;
     if (waiting && reply === LEAVE_IT) return { done: true, line: RESTART_LINE, stays: true };
     if (waiting && reply === STOP_IT) {
       const stopped = await stopProved({ ...stopOptions, proof: waiting.proof, reprove: (p) => old.reprove({ ...proofOptions, version: waiting.version ?? health.version, proof: p }) });
@@ -189,6 +237,7 @@ async function handOver(ctx) {
     } else if (waiting && reply === null) {
       return { asks: [waiting.card], line: ASKING_LINE };
     } else {
+      if (waiting && reply === WAIT_LONGER) progress.round = (progress.round ?? 0) + 1; // the next card is a new one, so this answer is used once
       const got = await askToRetire({ client, old, say, now, sleep });
       if (got.result === 'closed') closed = true;
       else if (got.result === 'refused') return { done: true, line: `The old helper could not be asked to make way (${got.why}). It is replaced when the computer restarts, or when you sign out and in.`, stays: true };
@@ -200,7 +249,7 @@ async function handOver(ctx) {
           return { done: true, line: proof.why === 'not told' ? RESTART_LINE : `The old helper was left running (${proof.why}). It is replaced when the computer restarts, or when you sign out and in.`, stays: true };
         }
         const canStop = !proof.why;
-        const card = helperCard({ kind: got.result, version: health.version, canStop });
+        const card = helperCard({ kind: got.result, version: health.version, canStop, id: helperCardId({ pid: health.pid, startTime: proof.startTime, version: health.version, round: progress.round ?? 0 }) });
         progress.handover = { waiting: { card, proof: canStop ? proof : null, version: health.version, kind: got.result } };
         save();
         return { asks: [card], line: ASKING_LINE };
@@ -223,14 +272,18 @@ async function handOver(ctx) {
 // answer to a card this raised before, by its label. Resolves { ok, line, asks? }. Safe to run again: done refreshes and a
 // done hand-over are not repeated, and a waiting card is returned until it is answered.
 export async function finish({
-  project, journal, answer = null, newRoot = PLUGIN_ROOT, folder, claudeHome = defaultClaudeHome(), platform = process.platform,
+  project, journal, answer = null, events, enrolled, newRoot = PLUGIN_ROOT, folder, claudeHome = defaultClaudeHome(), platform = process.platform,
   to, from, client = helperClient(), refresh, old, say = () => {}, now = Date.now, sleep = pause, startHelper, hash = fileHash, record = recordUpdate,
   readRecord = readHelperRecord, startTimeOf = processStartTime, alive = pidAlive, address = helperAddress({ platform }), run = defaultRun,
   user, cacheRoot = defaultCacheRoot(), kill, watcher, shape, addonNewer, heldNow = updateLockHeld,
 }) {
-  const held = heldNow() ? null : journal.lock();
-  if (!heldNow() && held === null) return { ok: false, line: 'An update is already under way on this computer.' };
-  try {
+  // Only the job's own step runs this: the update lock is held and the journal has the finish step running. It never takes
+  // the lock itself, and it runs only from the plugin cache folder of the tag the journal names.
+  const state = journal.read();
+  const named = to ?? state.steps?.checks?.data?.tag;
+  if (heldNow() !== true || state.steps?.finish?.state !== 'running') return { ok: false, line: 'The second half of an update runs only from an update that is under way.' };
+  if (!rootIsCacheFor({ newRoot, claudeHome, tag: named })) return { ok: false, line: 'The second half of an update runs only from the new release\'s folder in the plugin cache.' };
+  {
     const dir = folder ?? registeredProjects().find((p) => p.project === project)?.record?.folder;
     const version = to ?? journal.read().steps?.checks?.data?.tag ?? `v${versionOf(newRoot)}`;
     const previous = from ?? readJson(path.join(journal.folder, 'install.json'))?.previous?.ref ?? null;
@@ -276,7 +329,10 @@ export async function finish({
       say,
       now,
       sleep,
-      answer,
+      readAnswer: async (card) => {
+        if (answer !== null && answer !== undefined) return [STOP_IT, LEAVE_IT, WAIT_LONGER].includes(answer) ? answer : null; // a seam for tests; the command passes none
+        return signedAnswer({ events: events ?? listEvents(stateDir(project), { report: () => {} }), enrolled: enrolled ?? readEnrolled(), card: card?.id, options: card?.options ?? [] });
+      },
       progress,
       save,
       startHelper: startHelper ?? (() => realStartHelper(newRoot)),
@@ -315,8 +371,6 @@ export async function finish({
     try { two = (await (shape ? shape() : defaultShape(project, client))) === 2; } catch { two = false; }
     if (two) lines.push(FOREMAN_LINE);
     return { ok: true, line: lines.join(' ') };
-  } finally {
-    held?.();
   }
 }
 
@@ -338,13 +392,13 @@ async function realStartHelper(root) {
 }
 
 export async function main(argv, { out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t), ...deps } = {}) {
-  const [project, flag, label, ...rest] = argv;
-  if (typeof project !== 'string' || (flag !== undefined && (flag !== '--answer' || typeof label !== 'string')) || rest.length > 0) {
-    err('Give the project: finish.js <project> [--answer "<label>"]\n');
+  const [project, ...rest] = argv;
+  if (typeof project !== 'string' || rest.length > 0) {
+    err('Give the project: finish.js <project>\n');
     return 1;
   }
   try {
-    const result = await finish({ project, journal: openJournal(project), answer: label ?? null, ...deps });
+    const result = await finish({ project, journal: openJournal(project), ...deps });
     out(`${JSON.stringify(result)}\n`);
     return result.ok ? 0 : 1;
   } catch (error) {
