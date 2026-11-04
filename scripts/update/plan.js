@@ -31,9 +31,9 @@ export function partWay(journal) {
 }
 
 // Works out the plan. Resolves { lines } when there is nothing to ask, or { lines: [], plan } with the plan's facts
-// (project-free: the route adds the project) and the Update card. Never throws for a thing that can be said in a line.
+// (project-free: the route adds the project; `account` is { from, to } when the account's settings name the catalogue at an old release, or null) and the Update card. Never throws for a thing that can be said in a line.
 export async function makePlan({
-  tag = null, from, journal = null, held = false, list, fetch, check, kind, requirements = () => null, locked = () => ({ locked: false, others: [] }),
+  tag = null, from, journal = null, held = false, list, fetch, check, kind, requirements = () => null, account = () => null, locked = () => ({ locked: false, others: [] }),
 }) {
   const said = (...lines) => ({ lines });
   if (typeof from !== 'string') return said('Wheelhouse can not tell which release this computer runs, so it can not offer an update.');
@@ -73,10 +73,14 @@ export async function makePlan({
   const wanting = requirements({ nodeFloor: looked.nodeFloor, claudeFloor: looked.claudeFloor });
   if (wanting) return said(wanting);
 
+  const named = account({ to: target.tag });
+  if (named?.refused) return said(named.refused);
+
   const approval = (await kind(target.tag)) === 'pins-only' ? 'review' : 'card';
   const here = await locked({ to: target.tag });
   const plan = {
     from, to: target.tag, sha: target.sha, put, approval, says: looked.says ?? null, locked: here.locked === true, others: here.others ?? [], carryOn: false,
+    account: typeof named?.ref === 'string' && named.ref !== target.tag ? { from: named.ref, to: target.tag } : null,
   };
   return { lines: [], plan };
 }

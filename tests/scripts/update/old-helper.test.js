@@ -279,7 +279,9 @@ test('old helper: pidAlive treats a signal that is refused for permission as ali
 });
 
 test('old helper: the cache folder sits under the home folder', () => {
-  assert.equal(defaultCacheRoot({ home: '/h' }), '/h/.claude/plugins/cache');
+  assert.equal(defaultCacheRoot({ home: '/h', env: {} }), '/h/.claude/plugins/cache');
+  assert.equal(defaultCacheRoot({ home: '/h', env: { CLAUDE_CONFIG_DIR: '/elsewhere/claude' } }), '/elsewhere/claude/plugins/cache', 'CLAUDE_CONFIG_DIR is honoured');
+  assert.equal(defaultCacheRoot({ home: '/h', env: { CLAUDE_CONFIG_DIR: '' } }), '/h/.claude/plugins/cache');
 });
 
 test('old helper: the file never ends a process by name', () => {
