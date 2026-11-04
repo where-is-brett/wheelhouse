@@ -18,7 +18,11 @@ Spec `docs/specs/2026-11-04-update-command-design.md`, section 17:
 
 4 November 2026, macOS, Claude Code 2.1.302, Node.js 22. U1 and U4 ran against a scratch catalogue and a scratch Claude Code home (`CLAUDE_CONFIG_DIR` pointed at a temporary folder), so none of the director's own files was read or written. U2 and U3 only read the maintainer's live helper and plugin cache.
 
-## Method and evidence
+## Method
+
+U1 and U4: a scratch catalogue served over HTTP on 127.0.0.1 and a scratch Claude Code home, with the routes below each tried from the same starting state. U2 and U3: read-only looks at the maintainer's live helper socket and plugin cache, compared with the release tags in this repository. U5: from what U1 showed.
+
+## Evidence
 
 ### U1: moving the catalogue
 
@@ -63,7 +67,9 @@ U1 showed that the new version's cached folder exists as soon as `claude plugin 
 - **Section 7.3:** on macOS the lookup by address is `lsof -t <socket path>`, then `ps -o user=,lstart=,command= -p <pid>`.
 - **Section 5:** pre-releases need nothing special from Claude Code.
 
-## Not tried
+## Needs the director
+
+Nothing on the Mac. These were not tried and go to the director's Windows sitting and the plan's rehearsals:
 
 - Windows: the named pipe's server process without administrator rights (U2), line endings in the cache (U3), and every route above. All go to the Windows rehearsal by hand, and the design's fallbacks stand until then.
 - A `github` source and the real GitHub, which the plan's Mac rehearsal covers.
