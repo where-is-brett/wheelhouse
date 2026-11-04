@@ -754,7 +754,7 @@ export async function why({ client, cwd, n }) {
   if (stop) return [`All stop is on, so nothing was noted about card ${n}.`];
   const question = found.data?.question;
   if (typeof question !== 'string' || question === '') throw new CliError(`Card ${n} has no question to note a why against`);
-  const body = { kind: 'card-answer', data: { question, label: WHY } };
+  const body = { kind: 'card-answer', data: { question, label: WHY, where: 'chat' } };
   let got;
   try {
     got = await client.state.write({ cwd, ...body });
@@ -789,7 +789,7 @@ export async function suggest({ client, cwd, card: cardId, work: workId, change 
   }
   const data = { ...views.work[workId].work.data, title: words };
   const got = await write(client, cwd, 'work', data);
-  await write(client, cwd, 'card-answer', { question: pressed.data.question, label: SUGGEST });
+  await write(client, cwd, 'card-answer', { question: pressed.data.question, label: SUGGEST, where: 'chat' });
   return { id: got.id, pushed: got.pushed === true, say: SUGGESTED };
 }
 

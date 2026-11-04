@@ -1356,7 +1356,7 @@ test('why n notes a Why? answer for card n and says the one sentence to put befo
     assert.equal(how, `Say one sentence and nothing else, then card ${n} from \`again ${n}\` in your clickable-question tool, in the same message:`);
     assert.equal(sentence, `It's like <an everyday comparison>: <what card ${n} decides, in plain words>.`);
     // The answer names the card's question as it was shown, as the pane's own answers do.
-    assert.deepEqual(helper.writes(), [{ cwd: CWD, kind: 'card-answer', data: { question: two.data.question, label: WHY } }]);
+    assert.deepEqual(helper.writes(), [{ cwd: CWD, kind: 'card-answer', data: { question: two.data.question, label: WHY, where: 'chat' } }]);
     // It never gives the card again, and a Why? decides nothing: the card still waits.
     assert.deepEqual(helper.views().waiting.map((c) => [c.id, c.asked?.label]).sort(), [[one.id, undefined], [two.id, WHY]].sort());
     for (const bad of [['why', '9'], ['why', '0'], ['why', 'x'], ['why'], ['why', '1', '2']]) {
@@ -1391,7 +1391,7 @@ test('suggest hands a suggested change on an approval card to the build as one w
     // so the pane says a new proposal is on its way only once the change is handed on: nothing else is written.
     assert.deepEqual(helper.writes(), [
       { cwd: CWD, kind: 'work', data: { ...work.data, title: 'The sign-in page says Welcome back instead of Sign in' } },
-      { cwd: CWD, kind: 'card-answer', data: { question: approval.data.question, label: SUGGEST } },
+      { cwd: CWD, kind: 'card-answer', data: { question: approval.data.question, label: SUGGEST, where: 'chat' } },
     ]);
     assert.equal(typeof helper.views().waiting.find((c) => c.id === approval.id).steered, 'string');
 
@@ -1431,7 +1431,7 @@ test('why n keeps its answer in pending/ when the helper doesn\'t take it, and s
     const files = fs.readdirSync(pendingDir('o__p')).filter((name) => name.endsWith('.json'));
     assert.equal(files.length, 1);
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(pendingDir('o__p'), files[0]), 'utf8')),
-      { route: 'write', body: { project: 'o__p', kind: 'card-answer', data: { question: waiting.data.question, label: WHY } } });
+      { route: 'write', body: { project: 'o__p', kind: 'card-answer', data: { question: waiting.data.question, label: WHY, where: 'chat' } } });
   });
 });
 

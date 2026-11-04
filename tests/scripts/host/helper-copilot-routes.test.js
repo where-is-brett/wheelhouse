@@ -109,7 +109,7 @@ test('a chat click is recorded unsigned with its proof', async () => {
     assert.equal(got.ok, true, got.refused);
     const answer = c.events().find((e) => e.id === got.id);
     assert.equal(answer.kind, 'card-answer');
-    assert.deepEqual(answer.data, { question: 'merge-login', label: 'Approve', hash: HASH, commit: HEAD, proof: 'chat-click' });
+    assert.deepEqual(answer.data, { question: 'merge-login', label: 'Approve', hash: HASH, commit: HEAD, proof: 'chat-click', where: 'chat' });
     assert.equal(answer.sig, undefined, 'never signed');
     // Placed from the folder, as the chat's command sends it; a plain label on any card; a guardrail card at Lean.
     assert.equal((await c.client.cards.chatClick({ cwd: c.folder, card: 'pick-colour', hash: HASH, label: 'Blue', proof: 'chat-click' })).ok, true);

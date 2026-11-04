@@ -2313,11 +2313,11 @@ export async function startHelper({
       if (!shown.includes(hash)) refuse('the click must name the card\'s text as the state holds it, or as the chat showed it');
       if (!Array.isArray(held.data.options) || !held.data.options.includes(label)) refuse('that label isn\'t one of the card\'s options');
       if (events.some((e) => e.kind === 'card-answer' && e.data?.card === held.id)) refuse('that ruling\'s card has been answered already');
-      return doWrite({ project, kind: 'card-answer', data: { card: held.id, label, hash, proof, tier: 'lean', ...(text === undefined ? {} : { text }) } }, ctx, { own: true });
+      return doWrite({ project, kind: 'card-answer', data: { card: held.id, label, hash, proof, tier: 'lean', where: 'chat', ...(text === undefined ? {} : { text }) } }, ctx, { own: true });
     }
     const mayDecide = /^merge-/.test(card) || (ctx.lean === true && /^guardrail-/.test(card));
     if (signsOn(label, asked) && !mayDecide) refuse('a click in the chat can\'t decide that card');
-    const data = { question: card, label, hash, ...(commit === undefined ? {} : { commit }), ...(text === undefined ? {} : { text }), proof };
+    const data = { question: card, label, hash, ...(commit === undefined ? {} : { commit }), ...(text === undefined ? {} : { text }), proof, where: 'chat' };
     return doWrite({ project, kind: 'card-answer', data }, ctx, { own: true });
   }
 
@@ -2521,7 +2521,7 @@ export async function startHelper({
       const event = makeEvent({ kind: still.made.kind, data: { ...still.made.data, proof: 'window' }, now });
       const result = await writeEvent({ project, event, now });
       await freshViews(() => writeViews(project, { now }));
-      if (card !== LIFT_STOP_NAME) await doWrite({ project, kind: 'card-answer', data: { card, question: again.event.data.question, label: still.label } }, ctx);
+      if (card !== LIFT_STOP_NAME) await doWrite({ project, kind: 'card-answer', data: { card, question: again.event.data.question, label: still.label, where: 'panel' } }, ctx);
       if (still.lift) liftStop();
       if (event.kind === 'approval' && !ctx.lean) photographApproved(project, event.data?.commit, ctx);
       const action = event.kind === 'action' ? event.data?.action : null;

@@ -330,6 +330,8 @@ test('a deciding choice is signed by the helper with proof window', async () => 
     assert.deepEqual(record.data, { action: 'runbook', step: 1, question: runbookCard().question, label: 'Do it', proof: 'window' });
     assert.ok(record.sig, 'the helper signed it');
     assert.ok(verify(record, readEnrolled()), 'the signature verifies');
+    // The plain answer beside the signed record says where it was given.
+    assert.equal(c.events().find((e) => e.kind === 'card-answer' && e.data.card === shown.card)?.data.where, 'panel');
     // The signed record decides the card, so it is no longer offered.
     assert.match((await c.client.confirm({ project: PROJECT, ...shown })).refused, /no longer waits/);
 
@@ -481,7 +483,7 @@ test('a window-signed approval takes its card out of waiting, with the plain ans
     assert.deepEqual(approval.data, { pr: 7, commit: HEAD, words: 'Approve', question: card.question, proof: 'window' });
     assert.ok(verify(approval, readEnrolled()));
     const answers = c.events().filter((e) => e.kind === 'card-answer');
-    assert.deepEqual(answers.map((e) => e.data), [{ card: shown.card, question: card.question, label: 'Approve' }]);
+    assert.deepEqual(answers.map((e) => e.data), [{ card: shown.card, question: card.question, label: 'Approve', where: 'panel' }]);
     assert.ok(!answers[0].sig, 'the answer beside it is plain');
     const { views } = await c.client.state.views({ project: c.project });
     assert.ok(!views.waiting.some((w) => w.id === shown.card), 'the card no longer waits');

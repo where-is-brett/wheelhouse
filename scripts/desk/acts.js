@@ -67,7 +67,7 @@ async function onCard(command, args, checked, { source, recorder }) {
   const stop = await source.stop?.();
   // Under STOP the signed record closes the card on its own; a plain answer waits.
   if (stop?.on === true) return records.length > 0 ? { ok: true, changed: ['record'] } : no('All stop is on');
-  const data = { question: live.question, label, ...(checked.client ? { proof: 'client', by: checked.client } : {}) };
+  const data = { question: live.question, label, where: 'panel', ...(checked.client ? { proof: 'client', by: checked.client } : {}) };
   const got = await recorder.write({ kind: 'card-answer', data });
   if (got?.ok !== true) return no(got?.refused ?? 'The answer wasn\'t written');
   return { ok: true, changed: [...records.map(() => 'record'), 'card-answer'], ...(command === 'suggest' ? { words: args.words } : {}) };
