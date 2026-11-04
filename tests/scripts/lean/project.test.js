@@ -17,7 +17,7 @@ import { stateDir } from '../../../scripts/lib/paths.js';
 import { listEvents, makeEvent } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { lookRefusalLine } from '../../../scripts/lib/safe-git.js';
-import { registerLean, readLean, registeredLeanProjects, registerSetUpLean, isLeanProject, LEAN_NO_HOST, LEAN_FOLDER } from '../../../scripts/lean/project.js';
+import { registerLean, readLean, registeredLeanProjects, leanOffer, useLeanFolder, declineLean, unregisterLean, isLeanProject, LEAN_NO_HOST, LEAN_FOLDER } from '../../../scripts/lean/project.js';
 
 // No real gh, glab, copilot or curl runs: the PATH finds the stand-ins first, and the helper's own
 // runs go through a guard whose log stays empty.
@@ -323,38 +323,111 @@ test('a refused look at a Lean project\'s state is worded for Lean, and nothing 
   }
 });
 
-// Lean's chat setup runs with git alone and writes no Wheelhouse record of its own; the add-on registers the folder it
-// left (registerSetUpLean), so the add-on's isLean is true there (check 72).
-test('registerSetUpLean registers a folder Lean\'s setup left, and only that', async () => {
+// Lean's chat setup runs with git alone and writes no Wheelhouse record. The add-on offers, in its pane, to register the
+// folder setup left, and registers it only on the director's Yes (leanOffer, useLeanFolder; check 72).
+const committed = async (folder, { track = true } = {}) => {
+  fs.mkdirSync(path.join(folder, '.wheelhouse', 'record'), { recursive: true });
+  fs.writeFileSync(path.join(folder, '.wheelhouse', 'record', '.gitkeep'), '');
+  await git(folder, ['init', '-q']);
+  if (track) {
+    await git(folder, ['add', '.wheelhouse/record/.gitkeep']);
+    await git(folder, ['-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '-m', 'Set up Wheelhouse at Lean']);
+  }
+};
+
+test('leanOffer offers a folder setup left, with the folder named, and only under ADDON_LEAN_READY', async () => {
   const c = computer();
-  const marked = (folder) => {
-    fs.mkdirSync(path.join(folder, '.git'), { recursive: true });
-    fs.mkdirSync(path.join(folder, '.wheelhouse', 'record'), { recursive: true });
-    fs.writeFileSync(path.join(folder, '.wheelhouse', 'record', '.gitkeep'), '');
-  };
-  await c.as(() => {
-    // No marks of setup: nothing is registered.
-    assert.equal(registerSetUpLean({ folder: c.folder, now: () => T0 }), null);
-    fs.mkdirSync(path.join(c.folder, '.git'));
-    assert.equal(registerSetUpLean({ folder: c.folder, now: () => T0 }), null);
-    marked(c.folder);
-    assert.equal(registerSetUpLean({ folder: path.join(c.folder, 'src'), now: () => T0 }), null, 'a folder inside it is not the project\'s root');
-    const found = registerSetUpLean({ folder: c.folder, now: () => T0 });
-    assert.equal(found.project, 'shop');
-    assert.equal(found.record.folder, fs.realpathSync(c.folder));
+  await committed(c.folder);
+  await c.as(async () => {
+    const real = fs.realpathSync(c.folder);
+    const given = { folder: c.folder, nodeState: 'none', run, ready: true };
+    // Dormant until the switch is on: nothing is read, nothing offered.
+    assert.equal(await leanOffer({ ...given, ready: false }), null);
+    assert.equal(await leanOffer({ folder: c.folder, nodeState: 'none', run }), null, 'the shipped switch is off');
+    const offer = await leanOffer(given);
+    assert.equal(offer.folder, real);
+    assert.match(offer.line, /^Use this folder as your Lean project\? /);
+    assert.ok(offer.line.includes(real));
+    assert.match(offer.line, /can't see a Node\.js/);
+    assert.match((await leanOffer({ ...given, nodeState: 'old' })).line, /older than version 22/);
+    // Reading it registers nothing.
+    assert.equal(readLean('shop'), null);
+    assert.equal(isLeanProject('shop'), false);
+    // A Node.js 22 runs, or its state is not known: the install card serves, nothing is offered.
+    assert.equal(await leanOffer({ ...given, nodeState: 'ok' }), null);
+    assert.equal(await leanOffer({ ...given, nodeState: undefined }), null);
+  });
+  fs.rmSync(c.home, { recursive: true, force: true });
+});
+
+test('leanOffer needs the record folder tracked by git, a git root, and no sign of Claude Code setup', async () => {
+  const c = computer();
+  await c.as(async () => {
+    const given = { folder: c.folder, nodeState: 'none', run, ready: true };
+    // Not a git folder: even with the file there.
+    fs.mkdirSync(path.join(c.folder, '.wheelhouse', 'record'), { recursive: true });
+    fs.writeFileSync(path.join(c.folder, '.wheelhouse', 'record', '.gitkeep'), '');
+    assert.equal(await leanOffer(given), null);
+    // Written but not tracked: an agent can write a file.
+    await committed(c.folder, { track: false });
+    assert.equal(await leanOffer(given), null);
+    await git(c.folder, ['add', '.wheelhouse/record/.gitkeep']);
+    assert.notEqual(await leanOffer(given), null);
+    // A folder inside the root is not the project's root.
+    assert.equal(await leanOffer({ ...given, folder: path.join(c.folder, 'src') }), null);
+    // Claude Code setup might want this folder: left to the install card.
+    fs.mkdirSync(path.join(c.folder, '.claude'));
+    assert.equal(await leanOffer(given), null);
+    fs.rmdirSync(path.join(c.folder, '.claude'));
+    assert.notEqual(await leanOffer(given), null);
+    fs.writeFileSync(path.join(c.folder, 'CLAUDE.md'), '# x\n');
+    assert.equal(await leanOffer(given), null);
+  });
+  fs.rmSync(c.home, { recursive: true, force: true });
+});
+
+test('useLeanFolder registers on Yes, under the helper\'s name, and declineLean stops the offer', async () => {
+  const c = computer();
+  await committed(c.folder);
+  await c.as(async () => {
+    const given = { folder: c.folder, nodeState: 'none', run, ready: true, now: () => T0 };
+    assert.equal(await useLeanFolder({ ...given, ready: false }), null, 'the switch is off');
+    assert.equal(await useLeanFolder({ ...given, nodeState: 'ok' }), null);
+    const made = await useLeanFolder(given);
+    assert.equal(made.project, 'shop');
+    assert.equal(made.record.folder, fs.realpathSync(c.folder));
     assert.equal(isLeanProject('shop'), true);
     assert.equal(projectForFolder(c.folder)?.lean, true);
-    // Again: the record is as it was.
-    assert.deepEqual(registerSetUpLean({ folder: c.folder, now: () => new Date(T0.getTime() + 5000) }), found);
+    // Registered: not offered, and a second Yes registers nothing more.
+    assert.equal(await leanOffer(given), null);
+    assert.equal(await useLeanFolder(given), null);
     // Another folder of the same name gets its own name.
     const other = path.join(c.home, 'elsewhere', 'shop');
-    marked(other);
-    assert.equal(registerSetUpLean({ folder: other, now: () => T0 }).project, 'shop-2');
-    // A folder registered with a code host is left alone.
-    const hosted = path.join(c.home, 'hosted');
-    marked(hosted);
-    writeProject('hosted', { folder: hosted, remoteUrl: 'https://github.com/o/hosted.git', host: 'github', repo: 'o/hosted', connection: { host: 'github', mode: 'quick', project: 'o/hosted' } });
-    assert.equal(registerSetUpLean({ folder: hosted, now: () => T0 }), null);
+    fs.mkdirSync(other, { recursive: true });
+    await committed(other);
+    assert.equal((await useLeanFolder({ ...given, folder: other })).project, 'shop-2');
+    // Not now: the folder is not offered again, and a Yes for it registers nothing.
+    const later = path.join(c.home, 'later', 'app');
+    fs.mkdirSync(later, { recursive: true });
+    await committed(later);
+    assert.notEqual(await leanOffer({ ...given, folder: later }), null);
+    assert.equal(declineLean({ folder: later }), true);
+    assert.equal(await leanOffer({ ...given, folder: later }), null);
+    assert.equal(await useLeanFolder({ ...given, folder: later }), null);
+    // A folder the director took out of Lean (the helper's uninstall) is not offered again.
+    unregisterLean('shop');
+    assert.equal(readLean('shop'), null);
+    assert.equal(await leanOffer(given), null);
+  });
+  fs.rmSync(c.home, { recursive: true, force: true });
+});
+
+test('a folder with a code host\'s record is not offered', async () => {
+  const c = computer();
+  await committed(c.folder);
+  await c.as(async () => {
+    writeProject('hosted', { folder: c.folder, remoteUrl: 'https://github.com/o/hosted.git', host: 'github', repo: 'o/hosted', connection: { host: 'github', mode: 'quick', project: 'o/hosted' } });
+    assert.equal(await leanOffer({ folder: c.folder, nodeState: 'none', run, ready: true }), null);
   });
   fs.rmSync(c.home, { recursive: true, force: true });
 });

@@ -17,7 +17,7 @@ import { startedAsScript } from '../lib/started-as-script.js';
 export const OPEN_PANE = 'wheelhouse.openPane';
 // The functions that sign or record a binding click, and what reads their records.
 // Also what sets or lifts STOP, and the briefing; and any call to the desk's `act`, below.
-export const PRESS_NAMES = ['pressCard', 'pressSetting', 'signedRecords', 'keepEarned', 'whyCard', 'suggestCard', 'sendKept', 'liftStop', 'setStop', 'digestText'];
+export const PRESS_NAMES = ['pressCard', 'pressSetting', 'signedRecords', 'keepEarned', 'whyCard', 'suggestCard', 'sendKept', 'liftStop', 'setStop', 'digestText', 'useLeanFolder', 'declineLean'];
 // The two chat tools the add-on may offer. They are held to no press like any tool: a handler that reaches a name above fails.
 export const ALLOWED_TOOLS = Object.freeze(['wheelhouse_record', 'wheelhouse_board']);
 const HANDLER = 'onPaneMessage';

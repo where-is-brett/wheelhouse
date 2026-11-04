@@ -137,6 +137,16 @@ test('the offer to move the pane is a button, since VS Code allows the move (che
   assert.ok(!draw(model()).includes('Put Wheelhouse on the right'));
 });
 
+test('the Lean offer names the folder and has Yes and Not now', () => {
+  const line = 'Use this folder as your Lean project? /work/app VS Code can\'t see a Node.js on this computer.';
+  const html = draw(model(), { leanOffer: line });
+  assert.ok(html.includes('/work/app'));
+  assert.match(html, /data-act="lean-yes"/);
+  assert.match(html, /data-act="lean-no"/);
+  assert.ok(html.includes('Not now'));
+  assert.ok(!draw(model()).includes('lean-yes'));
+});
+
 test('the settings view shows rows and presses by key and choice', () => {
   const settings = { groups: [{ id: 'you', title: 'You, in every project', note: 'Yours.', rows: [{ key: 'briefing', label: 'Briefing', value: 'daily', kind: 'select', options: [{ value: 'daily', label: 'Daily' }, { value: 'off', label: 'Off' }] }, { key: 'budget', label: 'Budget', value: 'Normal', kind: 'value' }] }] };
   const html = draw(model(), { view: 'settings', settings });

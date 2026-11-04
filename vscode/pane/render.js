@@ -261,6 +261,12 @@ function drawOffer(offer) {
   return `<div class="offer"><p>${esc(OFFER)}</p>${PANE_MOVES ? button(OFFER, 'filled', { act: 'move' }) : `<p class="note">Drag the wheel to the right-hand side of the window, and VS Code will remember it.</p>${DRAG_PICTURE}`}</div>`;
 }
 
+// The offer to use the open folder as the Lean project, with its line (which names the folder) and two buttons.
+function drawLeanOffer(line) {
+  if (typeof line !== 'string' || line === '') return '';
+  return `<div class="offer"><p>${esc(line)}</p><div class="row">${button('Yes', 'filled', { act: 'lean-yes' })}${button('Not now', 'outlined', { act: 'lean-no' })}</div></div>`;
+}
+
 function drawFoot(model) {
   const views = [['board', labels.board], ['settings', labels.settings], ['briefing', labels.briefing]].map(([view, label]) => button(label, 'link', { act: 'view', view })).join('');
   return `<footer>${views}${text(model?.updated) ? `<span class="updated">Updated ${esc(model.updated)}</span>` : ''}</footer>`;
@@ -307,11 +313,12 @@ function drawBriefing(briefing) {
 // renderPane(model, { nonce, view, settings, briefing, notice, offer, at, recording, open, answered }) -> string
 // `model` is the desk's pane model (or the last one read, or null); `view` is 'main' (the default), 'board',
 // 'settings' or 'briefing'; `notice` is a line to put above the cards, such as that the helper isn't running; `offer`
-// is whether to show the first-run offer to put the pane on the right; `trusted` false (an untrusted folder) draws
+// is whether to show the first-run offer to put the pane on the right; `leanOffer` is the line of the offer to use this
+// folder as the Lean project (Yes and Not now), or null; `trusted` false (an untrusted folder) draws
 // STOP and the reason and no cards. `at` is the index of the card shown, `recording` the id of a card whose press is being
 // recorded, `open` whether the shown card's Why? ('why') or Suggest a change… ('suggest') box is open, and `answered` the line
 // that says a press was counted. Never throws.
-function renderPane(model, { nonce, view = 'main', settings, briefing, notice, offer = false, trusted = true, at = 0, recording = null, open = null, answered } = {}) {
+function renderPane(model, { nonce, view = 'main', settings, briefing, notice, offer = false, leanOffer = null, trusted = true, at = 0, recording = null, open = null, answered } = {}) {
   let body;
   try {
     const m = isRecord(model) ? model : null;
@@ -321,7 +328,7 @@ function renderPane(model, { nonce, view = 'main', settings, briefing, notice, o
     else if (view === 'settings') body = drawHeader(m) + alert + drawSettings(settings);
     else if (view === 'briefing') body = drawHeader(m) + alert + drawBriefing(text(briefing));
     else if (view === 'board') body = drawHeader(m) + alert + drawBoard(m);
-    else body = drawHeader(m) + alert + drawOffer(offer) + (m && m.at !== null ? drawMissing(m) + drawVerdict(m) + drawCards(m, { at, recording, open }) + drawQuiet(m) : `<p class="note">${esc(FIRST_READING)}</p>`) + drawFoot(m);
+    else body = drawHeader(m) + alert + drawOffer(offer) + drawLeanOffer(leanOffer) + (m && m.at !== null ? drawMissing(m) + drawVerdict(m) + drawCards(m, { at, recording, open }) + drawQuiet(m) : `<p class="note">${esc(FIRST_READING)}</p>`) + drawFoot(m);
   } catch {
     body = '<header><h1>Wheelhouse</h1></header><p class="notice">The pane couldn\'t be drawn just now.</p>';
   }

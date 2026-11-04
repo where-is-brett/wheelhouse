@@ -163,6 +163,26 @@ async function onPaneMessage(msg, deps) {
       return { made: out?.ok === true };
     }
 
+    // The offer to use this folder as the Lean project: the director's Yes registers it, Not now is remembered. Both
+    // are asked for again at the press, so only the folder the pane offered counts and nothing registers on open.
+    if (type === 'lean-yes' || type === 'lean-no') {
+      if (typeof deps.cwd !== 'string' || deps.cwd === '') return no();
+      if (type === 'lean-no') {
+        deps.press.declineLean?.({ folder: deps.cwd });
+        await deps.leanAnswered?.(null);
+        return { made: true };
+      }
+      const made = await deps.press.useLeanFolder?.({ folder: deps.cwd, nodeState: deps.nodeState?.(), run: deps.run, now: deps.now, ready: deps.leanReady?.() });
+      if (made === null || made === undefined) {
+        await deps.leanAnswered?.(null);
+        return say(no('That folder can\'t be used as a Lean project now; nothing was registered'));
+      }
+      await deps.leanAnswered?.(made);
+      await deps.notify('This folder is registered as your Lean project.');
+      await again();
+      return { made: true };
+    }
+
     if (type === 'move') {
       await deps.move?.();
       return { made: true };
