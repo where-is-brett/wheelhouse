@@ -116,6 +116,30 @@ test('the add-on records VS Code\'s versions at start, and again when its add-on
   assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).runtime, '0.32.0');
 });
 
+test('the Lean offer is only read at start: nothing registers until Yes is pressed, and it is asked only without Node.js', async () => {
+  const registered = [];
+  const line = 'Use this folder as your Lean project? /work/app VS Code can\'t see a Node.js on this computer.';
+  const more = { node: null, startLean: async () => null, leanOffer: async () => ({ folder: '/work/app', line }), press: { useLeanFolder: async () => { registered.push(1); return { project: 'app' }; }, declineLean: () => true } };
+  const first = await started({ more });
+  assert.deepEqual(registered, [], 'opening registers nothing');
+  await first.add.refresh();
+  assert.ok(first.add.state.leanOffer?.line.includes('/work/app'));
+  // With a Node.js on the computer the offer is not asked for at all.
+  let asked = 0;
+  const withNode = await started({ more: { node: '/usr/bin/node', leanOffer: async () => { asked += 1; return { folder: '/x', line }; } } });
+  assert.equal(asked, 0);
+  assert.equal(withNode.add.state.leanOffer, null);
+});
+
+test('nodeState says what the PATH holds, and is unsure rather than guess', () => {
+  const { nodeState } = require('../../vscode/desk.cjs');
+  const base = { env: { PATH: '/a:/b' }, platform: 'linux' };
+  assert.equal(nodeState({ ...base, exists: () => false }), 'none');
+  assert.equal(nodeState({ ...base, exists: () => true, run: () => 'v22.4.0\n' }), 'ok');
+  assert.equal(nodeState({ ...base, exists: () => true, run: () => 'v18.2.0\n' }), 'old');
+  assert.equal(nodeState({ ...base, exists: () => true, run: () => { throw new Error('no'); } }), 'unsure');
+});
+
 test('where no Node.js runs the Lean helper is asked for once, and stopped when the add-on is', async () => {
   const asked = [];
   const stopped = [];

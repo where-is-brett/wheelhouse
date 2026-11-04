@@ -25,6 +25,8 @@ const LOADS = Object.freeze({
   modDesk: 'scripts/desk/mod-desk.js',
   paths: 'scripts/lib/paths.js',
   lean: 'scripts/lean/project.js',
+  run: 'scripts/lib/run.js',
+  numbers: 'scripts/lib/copilot-numbers.js',
   labels: 'scripts/desk/pane-labels.js',
   vscodePane: 'scripts/lib/vscode-pane.js',
 });
@@ -56,6 +58,27 @@ function findNode({ env = process.env, platform = process.platform, exists = fs.
     }
   }
   return null;
+}
+
+// What the PATH holds of Node.js, for the Lean offer's words: 'ok' (a Node.js 22 or later), 'old' (one that runs, below 22),
+// 'none' (no node program at all), or 'unsure' (one is there and would not answer), where nothing is offered.
+function nodeState({ env = process.env, platform = process.platform, exists = fs.existsSync, run = childProcess.execFileSync } = {}) {
+  if (findNode({ env, platform, exists, run }) !== null) return 'ok';
+  const names = platform === 'win32' ? ['node.exe'] : ['node'];
+  let state = 'none';
+  for (const dir of String(env.PATH ?? env.Path ?? '').split(path.delimiter).filter(Boolean)) {
+    for (const name of names) {
+      const file = path.join(dir, name);
+      if (!exists(file)) continue;
+      try {
+        run(file, ['--version'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+        if (state !== 'unsure') state = 'old';
+      } catch {
+        state = 'unsure';
+      }
+    }
+  }
+  return state;
 }
 
 // startHelperIfNeeded({ ask, spawn, node, root }) -> Promise<boolean>: true when it started the helper. `ask` says
@@ -100,15 +123,23 @@ async function realDeps({ root, cwd }) {
     address: m.paths.helperAddress(),
     isLean: () => {
       try {
+        // A read, with no side effect: a folder is a Lean project only once a record says so.
         const id = project();
         return id !== null && m.lean.readLean(id) !== null;
       } catch {
         return false;
       }
     },
+    // The offer to register the folder Lean's chat setup left (scripts/lean/project.js leanOffer): { folder, line } or
+    // null. A read; nothing is registered until the director presses Yes (vscode/press.cjs).
+    leanOffer: () => m.lean.leanOffer({ folder: cwd, nodeState: nodeState(), run: m.run.run, ready: m.numbers.ADDON_LEAN_READY }),
+    // The switch, read first by the offer and again at the press.
+    leanReady: () => m.numbers.ADDON_LEAN_READY === true,
+    nodeState,
+    run: m.run.run,
     // The scripts' own exports, merged and handed on whole: this file names none of the functions that press. Only
     // vscode/press.cjs calls them, and only from onPaneMessage (scripts/addon/validate.js).
-    press: Object.assign({}, m.press, m.settings, m.digest, m.record, m.desk),
+    press: Object.assign({}, m.press, m.settings, m.digest, m.record, m.desk, m.lean.LEAN_PRESS),
     // Where the terminal record is kept (the project's state folder). The chat's rules and secret scan load in chat-tools.cjs.
     commandsFile: () => {
       const id = project();
@@ -130,4 +161,4 @@ async function realDeps({ root, cwd }) {
   };
 }
 
-module.exports = { LOADS, START_HELPER, HELPER_DOWN, NOTHING_READ, NO_NODE, wheelhouseRoot, load, findNode, startHelperIfNeeded, realDeps };
+module.exports = { LOADS, START_HELPER, HELPER_DOWN, NOTHING_READ, NO_NODE, wheelhouseRoot, load, findNode, nodeState, startHelperIfNeeded, realDeps };

@@ -128,6 +128,37 @@ test('a message that names anything but text for its fields records nothing', as
   assert.equal(calls.pressCard.length, 0);
 });
 
+test('Yes to the Lean offer registers the folder; no nonce, no registering; Not now is remembered', async () => {
+  const { calls, deps } = stand();
+  const used = [];
+  const declined = [];
+  const answered = [];
+  deps.press.useLeanFolder = async (a) => { used.push(a); return { project: 'work', record: {} }; };
+  deps.press.declineLean = (a) => { declined.push(a); return true; };
+  deps.nodeState = () => 'none';
+  deps.run = () => {};
+  deps.leanAnswered = async (made) => { answered.push(made); };
+  // A message without the pane's latest nonce does nothing.
+  assert.equal((await onPaneMessage({ nonce: 'wrong', type: 'lean-yes' }, deps)).made, false);
+  assert.deepEqual([used.length, declined.length], [0, 0]);
+  // Yes: the folder is the add-on's own, never one the message names.
+  let out = await onPaneMessage({ nonce: deps.nonces.renew(), type: 'lean-yes', folder: '/somewhere/else' }, deps);
+  assert.equal(out.made, true);
+  assert.equal(used.length, 1);
+  assert.deepEqual([used[0].folder, used[0].nodeState], ['/work/project', 'none']);
+  assert.match(calls.notified.at(-1), /registered as your Lean project/);
+  assert.equal(answered.length, 1);
+  // The offer no longer stands when the press asks again: nothing is registered, and it says so.
+  deps.press.useLeanFolder = async () => null;
+  out = await onPaneMessage({ nonce: deps.nonces.renew(), type: 'lean-yes' }, deps);
+  assert.equal(out.made, false);
+  assert.match(calls.notified.at(-1), /nothing was registered/);
+  // Not now.
+  out = await onPaneMessage({ nonce: deps.nonces.renew(), type: 'lean-no', folder: '/somewhere/else' }, deps);
+  assert.equal(out.made, true);
+  assert.deepEqual(declined, [{ folder: '/work/project' }]);
+});
+
 test('STOP is set at once', async () => {
   const { calls, deps } = stand();
   const nonce = deps.nonces.renew();

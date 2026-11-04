@@ -38,7 +38,7 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
   const startHelper = deps.startHelper ?? (() => desks.startHelperIfNeeded({ ask, node, root }));
 
   const nonces = makeNonces({ bytes: deps.nonceBytes ?? 32 });
-  const state = { last: null, notice: null, view: 'main', at: 0, pressing: null, answered: null, settings: null, briefing: '', offerPending: false, current: null, startedAt: 0, stopped: false, visibleAt: null, window: crypto.randomBytes(16).toString('hex') };
+  const state = { last: null, notice: null, view: 'main', at: 0, pressing: null, answered: null, settings: null, briefing: '', offerPending: false, leanOffer: null, current: null, startedAt: 0, stopped: false, visibleAt: null, window: crypto.randomBytes(16).toString('hex') };
 
   const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   item.command = OPEN_PANE;
@@ -51,13 +51,13 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
     // A hidden pane is not drawn: showing it again draws it, with a new nonce.
     if (state.current === null || state.current.visible === false) return;
     // Nothing drawn again when nothing changed, so what the director is typing or has open stays, and the nonce with it.
-    const key = JSON.stringify([state.last, state.notice, state.view, state.settings, state.briefing, state.at, state.pressing, state.answered]);
+    const key = JSON.stringify([state.last, state.notice, state.view, state.settings, state.briefing, state.at, state.pressing, state.answered, state.leanOffer]);
     if (!force && key === state.drawn && !state.offerPending) return;
     state.drawn = key;
     const offer = state.offerPending;
     state.offerPending = false;
     state.current.webview.html = renderPane(state.last, {
-      nonce: nonces.renew(), view: state.view, settings: state.settings, briefing: state.briefing, notice: state.notice, offer, at: state.at, recording: state.pressing, answered: state.answered,
+      nonce: nonces.renew(), view: state.view, settings: state.settings, briefing: state.briefing, notice: state.notice, offer, leanOffer: state.leanOffer?.line ?? null, at: state.at, recording: state.pressing, answered: state.answered,
       trusted: trusted(),
     });
   }
@@ -154,6 +154,15 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
     now: () => new Date(),
     cancelChat: chat.cancelChatRequest,
     move: movePane,
+    // The Lean offer's answers (vscode/press.cjs): the offer goes, and a folder just registered gets its helper.
+    nodeState: deps.nodeState ?? real.nodeState,
+    run: deps.run ?? real.run,
+    leanReady: deps.leanReady ?? real.leanReady,
+    leanAnswered: async (made) => {
+      state.leanOffer = null;
+      draw();
+      if (made) await startLeanHelper();
+    },
   });
   const settingsView = async () => (deps.settingsView ?? real.settingsView)?.() ?? { groups: [] };
 
@@ -202,13 +211,20 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
   } catch { /* The versions file is a record, not a need. */ }
   try { await startHelper(); } catch { /* The pane says the helper isn't running. */ }
   // Where no Node.js runs, a Lean project's helper runs in this process (switched off until ADDON_LEAN_READY), and stops with it.
-  if (node === null) {
+  async function startLeanHelper() {
+    if (node !== null) return;
     try {
       const running = await (deps.startLean ?? ((o) => leans.startLean({ ...o, root })))({
         address: deps.address ?? real.address, isLean: deps.isLean ?? real.isLean?.() ?? false, node,
       });
       if (running) context.subscriptions?.push({ dispose() { running.stop?.(); } });
     } catch { /* The pane says the helper isn't running. */ }
+  }
+  await startLeanHelper();
+  // The offer to use this folder as the Lean project, where Lean's chat setup left one and no Node.js 22 runs. It only
+  // reads: nothing is registered until the director presses Yes in the pane.
+  if (node === null) {
+    try { state.leanOffer = (await (deps.leanOffer ?? real.leanOffer)?.()) ?? null; } catch { state.leanOffer = null; }
   }
   // The chat's way in (chat-tools.cjs): two tools that bind nothing, the inbox where tools are switched off, and the
   // terminal commands recorded. The project is read afresh each time, and nothing here can press.
