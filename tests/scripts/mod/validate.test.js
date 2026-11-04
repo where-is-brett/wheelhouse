@@ -23,7 +23,8 @@ const LISTED = HOOKS.join(', ');
 const ARGV = "['node', `${$.plugin.root}/scripts/hooks/node-floor.cjs`, `${$.plugin.root}/scripts/mod/bridge.js`]";
 // The module's source as it stands: the bridge's one call in hooks/mod/ask.ts.
 const CLOSE_ON = "on('tool.call', { tool: 'AskUserQuestion' }, ($, e, next) => closeWhenAnswered($, e, next)).catch(($, e, next) => next(e))";
-const CLOSE_TS = "import { CLOSED_IN_PANEL } from './numbers'\nexport const closeWhenAnswered = async ($, e, next) => { const running = next(e); return Promise.race([running, Promise.resolve({ deny: CLOSED_IN_PANEL })]) }";
+const CLOSE_HEAD = "import type { EngineInterface } from 'claude-code'\nimport { CLOSED_IN_PANEL } from './numbers'\ntype Next = (e: any) => Promise<unknown>\nexport async function closeWhenAnswered($: EngineInterface, e: { questions?: unknown }, next: Next): Promise<unknown> {";
+const CLOSE_TS = `${CLOSE_HEAD}\n  const running = next(e)\n  return { deny: CLOSED_IN_PANEL }\n}`;
 const NUMBERS_TS = "export const CLOSED_IN_PANEL = 'Answered in the panel; this question is closed'";
 const SOURCES = {
   'hooks/register.ts': `import { closeWhenAnswered } from './mod/close'\nexport const register = (on) => { on("session.start", async ($, e, next) => { await ask($, {}); return next(e) }); ${CLOSE_ON} }`,
@@ -813,36 +814,70 @@ test('the closing hook may only refuse with its plain line or return what next(e
     assert.equal(got.ok, false, JSON.stringify(over));
     assert.match(got.why, pattern);
   };
-  const body = (inner) => `import { CLOSED_IN_PANEL } from './numbers'\nexport const closeWhenAnswered = async ($, e, next) => { ${inner} }`;
+  const body = (inner) => `${CLOSE_HEAD} ${inner} }`;
+  const R = 'return { deny: CLOSED_IN_PANEL }';
+  const refuse = /must refuse only with \{ deny: CLOSED_IN_PANEL \}/;
+  const nextOnce = /next only as next\(e\)/;
+  const changes = /changes the call or its fields/;
+  const toE = /gives the call to something other than/;
+  const keys = /key that is not a plain name/;
   // Another reason, a result, an answer, a changed input or a context.
-  bad({ [CLOSE_FILE]: body("next(e); return { deny: 'Answered in the panel' }") }, /must refuse only with \{ deny: CLOSED_IN_PANEL \}/);
+  bad({ [CLOSE_FILE]: body("next(e); return { deny: 'Answered in the panel' }") }, refuse);
   bad({ [CLOSE_FILE]: body('next(e); return { deny: CLOSED_IN_PANEL, result: { answers: {} } }') }, /never returns|must refuse only/);
-  bad({ [CLOSE_FILE]: body('next(e); return { result: { answers: { q: "Approve" } } }; const a = { deny: CLOSED_IN_PANEL }') }, /never returns/);
+  bad({ [CLOSE_FILE]: body('next(e); return { result: { answers: { q: "Approve" } } }') }, /never returns/);
   bad({ [CLOSE_FILE]: body('next(e); return { updatedInput: e, deny: CLOSED_IN_PANEL }') }, /never returns|must refuse only/);
-  bad({ [CLOSE_FILE]: body('next(e); return { context: "x" }; const a = { deny: CLOSED_IN_PANEL }') }, /never returns/);
+  bad({ [CLOSE_FILE]: body('next(e); return { context: "x" }') }, /never returns/);
+  bad({ [CLOSE_FILE]: body('next(e); const out = { a: 1 }; return out') }, refuse);
   // A rewritten call, or next called twice or not at all.
-  bad({ [CLOSE_FILE]: body('next({ ...e, answers: {} }); return { deny: CLOSED_IN_PANEL }') }, /next only as next\(e\)/);
-  bad({ [CLOSE_FILE]: body('next(e); next(e); return { deny: CLOSED_IN_PANEL }') }, /next only as next\(e\)/);
-  bad({ [CLOSE_FILE]: body('return { deny: CLOSED_IN_PANEL }') }, /next only as next\(e\)/);
-  // A second deny of another shape, or a line other than the director's agreed words.
-  bad({ [CLOSE_FILE]: body('next(e); const x = { deny: "x" }; return { deny: CLOSED_IN_PANEL }') }, /must refuse only/);
+  bad({ [CLOSE_FILE]: body(`next({ questions: [] }); ${R}`) }, nextOnce);
+  bad({ [CLOSE_FILE]: body(`next(e); next(e); ${R}`) }, nextOnce);
+  bad({ [CLOSE_FILE]: body(R) }, nextOnce);
   bad({ 'hooks/mod/numbers.ts': "export const CLOSED_IN_PANEL = 'Closed'" }, /must write CLOSED_IN_PANEL/);
   bad({ [CLOSE_FILE]: undefined }, /can't be found/);
-  // The call and its fields are read, never written; no spread; no import beyond the fixed three.
-  const changes = /changes the call or its fields/;
-  bad({ [CLOSE_FILE]: body('next(e); e.questions = []; return { deny: CLOSED_IN_PANEL }') }, changes);
-  bad({ [CLOSE_FILE]: body('next(e); e.questions[0].question = "x"; return { deny: CLOSED_IN_PANEL }') }, changes);
-  bad({ [CLOSE_FILE]: body('next(e); e = { questions: [] }; return { deny: CLOSED_IN_PANEL }') }, changes);
-  bad({ [CLOSE_FILE]: body('next(e); e.questions += 1; return { deny: CLOSED_IN_PANEL }') }, changes);
-  bad({ [CLOSE_FILE]: body('next(e); delete e.questions; return { deny: CLOSED_IN_PANEL }') }, changes);
-  bad({ [CLOSE_FILE]: body('next(e); e.questions.push(1); return { deny: CLOSED_IN_PANEL }') }, changes);
-  bad({ [CLOSE_FILE]: body('next(e); const same = e; same.x = 1; return { deny: CLOSED_IN_PANEL }') }, changes);
-  bad({ [CLOSE_FILE]: body('next(e); Object.assign(e, {}); return { deny: CLOSED_IN_PANEL }') }, changes);
-  bad({ [CLOSE_FILE]: body('next(e); const more = {}; return { deny: CLOSED_IN_PANEL, ...more }') }, /spread|must refuse only/);
-  bad({ [CLOSE_FILE]: `import fs from 'node:fs'\n${body('next(e); return { deny: CLOSED_IN_PANEL }')}` }, /imports node:fs/);
-  bad({ [CLOSE_FILE]: `import { x } from './cards'\n${body('next(e); return { deny: CLOSED_IN_PANEL }')}` }, /imports \.\/cards/);
+  // next reached some other way than next(e): call, apply, bind, an alias.
+  bad({ [CLOSE_FILE]: body(`next.call(null, { questions: [] }); ${R}`) }, nextOnce);
+  bad({ [CLOSE_FILE]: body(`next.apply(null, [{ questions: [] }]); ${R}`) }, nextOnce);
+  bad({ [CLOSE_FILE]: body(`next.bind(null)(e); ${R}`) }, nextOnce);
+  bad({ [CLOSE_FILE]: body(`const n = next; n({ questions: [] }); next(e); ${R}`) }, nextOnce);
+  // A computed key in what is returned.
+  bad({ [CLOSE_FILE]: body("next(e); return { ['updated' + 'Input']: e, deny: CLOSED_IN_PANEL }") }, keys);
+  bad({ [CLOSE_FILE]: body("next(e); return { ['answ' + 'ers']: {} }") }, keys);
+  bad({ [CLOSE_FILE]: body(`next(e); const o = { ['x' + 'y']: 1 }; ${R}`) }, keys);
+  // The call written through an alias, a callback, a helper or a reflective call.
+  bad({ [CLOSE_FILE]: body(`next(e); const same = e; same.x = 1; ${R}`) }, toE);
+  bad({ [CLOSE_FILE]: body(`next(e); const qs = e.questions; qs[0].question = 'x'; ${R}`) }, changes);
+  bad({ [CLOSE_FILE]: body(`next(e); e.questions.map((q) => { q.question = 'x' }); ${R}`) }, changes);
+  bad({ [CLOSE_FILE]: body(`next(e); function f(x: any) { x.questions = [] } f(e); ${R}`) }, toE);
+  bad({ [CLOSE_FILE]: body(`next(e); Reflect.set(e, 'questions', []); ${R}`) }, changes);
+  bad({ [CLOSE_FILE]: body(`next(e); e['questions'].splice(0, 1); ${R}`) }, toE);
+  bad({ [CLOSE_FILE]: body(`next(e); e.questions?.push(1); ${R}`) }, changes);
+  bad({ [CLOSE_FILE]: body(`next(e); e.questions = []; ${R}`) }, changes);
+  bad({ [CLOSE_FILE]: body(`next(e); e.questions[0].question = "x"; ${R}`) }, changes);
+  bad({ [CLOSE_FILE]: body(`next(e); e = { questions: [] }; ${R}`) }, changes);
+  bad({ [CLOSE_FILE]: body(`next(e); e.questions += 1; ${R}`) }, changes);
+  bad({ [CLOSE_FILE]: body(`next(e); delete e.questions; ${R}`) }, changes);
+  bad({ [CLOSE_FILE]: body(`next(e); e.questions.push(1); ${R}`) }, changes);
+  bad({ [CLOSE_FILE]: body(`next(e); Object.assign(e, {}); ${R}`) }, changes);
+  bad({ [CLOSE_FILE]: body(`next(e); Object.defineProperty(e, 'questions', { value: [] }); ${R}`) }, changes);
+  bad({ [CLOSE_FILE]: body(`next(e); eval('e.questions = 1'); ${R}`) }, changes);
+  bad({ [CLOSE_FILE]: body(`next(e); new Function('e', 'e.questions = 1')(e); ${R}`) }, changes);
+  bad({ [CLOSE_FILE]: body(`next(e); Array.prototype.splice.call(e.questions, 0); ${R}`) }, changes);
+  bad({ [CLOSE_FILE]: body('next(e); const more = {}; return { deny: CLOSED_IN_PANEL, ...more }') }, /spread/);
+  bad({ [CLOSE_FILE]: `import fs from 'node:fs'\n${body(`next(e); ${R}`)}` }, /imports node:fs/);
+  bad({ [CLOSE_FILE]: `import { x } from './cards'\n${body(`next(e); ${R}`)}` }, /imports \.\/cards/);
+  // The hook's own return is the refusal, running (what next(e) gave), or the choice between them, as written.
+  const held = 'const running = next(e)';
+  const got = 'const closing = new Promise<never>(() => {}); const got = await Promise.race([running.then((value) => ({ value })), closing.then(() => null)])';
+  assert.deepEqual(closeException(withClose({ [CLOSE_FILE]: body(`${held}; return running`) })), { ok: true });
+  assert.deepEqual(closeException(withClose({ [CLOSE_FILE]: body(`${held}; ${got}; return got === null ? { deny: CLOSED_IN_PANEL } : got.value`) })), { ok: true });
+  bad({ [CLOSE_FILE]: body(`${held}; return running.then((v) => v)`) }, refuse);
+  bad({ [CLOSE_FILE]: body(`${held}; return got === null ? { deny: CLOSED_IN_PANEL } : got.value`) }, /build got as/);
+  bad({ [CLOSE_FILE]: body('const running = { updatedInput: 1 }; next(e); return running') }, /hold next\(e\)'s result as/);
+  bad({ [CLOSE_FILE]: body(`${held}; if (e.questions) { const running = { x: 1 }; return running } ${R}`) }, /declares running more than once/);
+  // The header is the one agreed.
+  bad({ [CLOSE_FILE]: CLOSE_TS.replace('e: { questions?: unknown }', 'e: any') }, /must declare closeWhenAnswered once/);
   // Reading is fine: a comparison and a property read are not writes.
-  assert.deepEqual(closeException(withClose({ [CLOSE_FILE]: body('next(e); const q = e.questions; if (e === q || e.questions == 1) return 1; return { deny: CLOSED_IN_PANEL }') })), { ok: true });
+  assert.deepEqual(closeException(withClose({ [CLOSE_FILE]: body(`next(e); const q = e.questions; if (q == 1 || e.questions == 1) return { deny: CLOSED_IN_PANEL }; ${R}`) })), { ok: true });
 });
 
 test('the closing hook is registered in hooks/register.ts alone, on AskUserQuestion, handing over to closeWhenAnswered', () => {

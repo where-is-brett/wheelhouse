@@ -502,9 +502,170 @@ const CLOSED_WORDS = 'Answered in the panel; this question is closed';
 const CLOSE_ON = /on\(\s*'tool\.call'\s*,\s*\{\s*tool:\s*'AskUserQuestion'\s*\}\s*,\s*\(\$,\s*e,\s*next\)\s*=>\s*closeWhenAnswered\(\$,\s*e,\s*next\)\s*\)(?:\s*\.catch\(\(\$,\s*e,\s*next\)\s*=>\s*next\(e\)\s*\))?/g;
 // What the closing file may not say at all: an answer to the question, a tool result, a changed input.
 const NEVER_IN_CLOSE = /(?<![\w$.])(?:result|results|answers|updatedInput|context|consent|isError)(?![\w$])/;
-// The call and its fields are read, never written: no assignment or update to `e` or anything under it, no delete of
-// them, no alias of `e`, no mutating method on its questions, and no spread anywhere in the file.
-const WRITES_TO_E = /(?<![\w$.])delete\s+e(?![\w$])|(?<![\w$.])e(?:\s*\.\s*[\w$]+|\s*\[[^\]]*\])*\s*(?:=(?![=>])|[-+*/%|&^?]{1,2}=|\+\+|--)|(?<![\w$.])(?:\+\+|--)\s*e(?![\w$])|=\s*e(?![\w$:.])|(?<![\w$])e\s*\.\s*questions\s*\.\s*(?:push|pop|shift|unshift|splice|sort|reverse|fill|copyWithin)\b|(?<![\w$.])Object\s*\.\s*(?:assign|defineProperty|defineProperties|setPrototypeOf)\b/;
+// The closing file is read as tokens and held to an allowlist, not searched for patterns, so another spelling of the
+// same thing (an alias, `.call`, a computed key, a helper that writes) gets no further than the plain one.
+const CLOSE_TOKEN = /\s+|[A-Za-z_$][\w$]*|\d[\w.]*|'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`|\.\.\.|>>>=|===|!==|\*\*=|<<=|>>=|>>>|&&=|\|\|=|\?\?=|=>|==|!=|<=|>=|&&|\|\||\?\?|\?\.|\+\+|--|[-+*/%&|^]=|\*\*|<<|>>|[\s\S]/y;
+// Words the closing file never uses: each is a way to write to the call, or to reach what it holds, with no assignment to see.
+const CLOSE_BANNED = new Set(['Reflect', 'Object', 'Function', 'eval', 'delete', 'Proxy', 'globalThis', 'global', 'window', 'process', 'require',
+  'constructor', 'prototype', '__proto__', 'call', 'apply', 'bind', 'with', 'for', 'this', 'arguments', 'super', 'class']);
+// Methods that change what they are called on. `set` is allowed on the file's own map of pane presses.
+const CLOSE_MUTATORS = new Set(['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse', 'fill', 'copyWithin', 'clear', 'add', 'delete', 'set']);
+// What the file holds and changes on its own: the counters of its check loop.
+const CLOSE_LOCALS = new Set(['runs', 'asking', 'plain', 'told']);
+// Names the file never declares itself, so each stands for what it was imported or built as.
+const CLOSE_PROTECTED = new Set(['Promise', 'Array', 'Map', 'CLOSED_IN_PANEL', 'next', 'e', '$', 'ask', 'closeWhenAnswered', 'textsOf']);
+const CLOSE_HEADER = 'export async function closeWhenAnswered ( $ : EngineInterface , e : { questions ? : unknown } , next : Next ) : Promise < unknown > {';
+// The only things the hook itself returns: the refusal, what next(e) gave (held as running), and the choice between them.
+const CLOSE_RETURNS = ['{ deny : CLOSED_IN_PANEL }', 'running', 'got === null ? { deny : CLOSED_IN_PANEL } : got . value'];
+const CLOSE_RUNNING = 'const running = next ( e )';
+const CLOSE_GOT = 'const got = await Promise . race ( [ running . then ( ( value ) => ( { value } ) ) , closing . then ( ( ) => null ) ] )';
+// A `{` after one of these opens an object (or a type), not a block.
+const CLOSE_OBJECT_AFTER = new Set(['(', ',', '=', ':', '?', '[', '||', '&&', '??', '|', '&', '<', '!', '+', '-', 'return', 'await', 'as', 'yield', 'typeof', 'throw', 'case', '...', '||=', '&&=', '??=', '+=']);
+const closer = (w) => w === ')' || w === ']' || w === '}';
+const opener = (w) => w === '(' || w === '[' || w === '{';
+
+function closeTokens(code) {
+  const out = [];
+  CLOSE_TOKEN.lastIndex = 0;
+  let nl = false;
+  while (CLOSE_TOKEN.lastIndex < code.length) {
+    const m = CLOSE_TOKEN.exec(code);
+    if (m === null) break;
+    if (/^\s/.test(m[0])) { nl ||= m[0].includes('\n'); continue; }
+    out.push({ s: m[0], nl });
+    nl = false;
+  }
+  return out;
+}
+
+// The index of the bracket that closes the one at i (or, from a closer, opens it); -1 if none.
+function partner(s, i) {
+  const step = closer(s[i]) ? -1 : 1;
+  let depth = 0;
+  for (let j = i; j >= 0 && j < s.length; j += step) {
+    if (closer(s[j]) || opener(s[j])) depth += closer(s[j]) === (step === -1) ? 1 : -1;
+    if (depth === 0) return j;
+  }
+  return -1;
+}
+const isName = (w) => w !== undefined && /^[A-Za-z_$][\w$]*$/.test(w);
+
+// The problems with the closing file's code, as a list of lines.
+function closeProblems(code) {
+  const t = closeTokens(code);
+  const s = t.map((x) => x.s);
+  const at = (i) => s[i];
+  const span = (from, to) => s.slice(from, to).join(' ');
+  const problems = [];
+  const say = (line) => { if (!problems.includes(line)) problems.push(line); };
+  const changes = (what) => say(`${CLOSE_FILE} changes the call or its fields, or could (${what}), which the closing hook never does`);
+  const dotted = (i) => at(i - 1) === '.' || at(i - 1) === '?.';
+
+  s.forEach((w, i) => {
+    if (CLOSE_BANNED.has(w)) changes(w);
+    if (w === '...') say(`${CLOSE_FILE} uses a spread, which could put more into what it returns than the plain line`);
+    if (w[0] === '`' && w.includes('${')) say(`${CLOSE_FILE} puts an expression inside a template string, which the check can't follow`);
+    if (w === '/' || w === '/=') say(`${CLOSE_FILE} divides or writes a regular expression, which the check can't follow`);
+    if (w === 'import' && at(i + 1) === '(') say(`${CLOSE_FILE} imports dynamically, which the check can't follow`);
+    if (w === 'catch' && at(i + 1) === '(') say(`${CLOSE_FILE} names what it catches, which could hide a name the returns use`);
+    if (dotted(i) && CLOSE_MUTATORS.has(w) && !(w === 'set' && at(i - 2) === 'pressed')) changes(`.${w}()`);
+    if (['const', 'let', 'var', 'function'].includes(w) && CLOSE_PROTECTED.has(at(i + 1)) && !(w === 'function' && (at(i + 1) === 'textsOf' || at(i + 1) === 'closeWhenAnswered'))) say(`${CLOSE_FILE} declares ${at(i + 1)} itself, which it uses as it was given`);
+  });
+
+  // Assignments: only a declaration, the file's own counters and its timer.
+  s.forEach((w, i) => {
+    if (/^(?:\*\*|<<|>>>?|&&|\|\||\?\?|[-+*%&|^])?=$/.test(w)) {
+      let k = i - 1;
+      if (isName(at(k))) {
+        while (k >= 2 && (at(k - 1) === '.' || at(k - 1) === '?.') && isName(at(k - 2))) k -= 2;
+        const left = span(k, i).replaceAll(' ', '');
+        const before = at(k - 1);
+        if (before === '.' || before === '?.' || before === ']') return changes(`an assignment to ${left}`);
+        if ((before === 'const' || before === 'let' || before === 'type') && k === i - 1) return undefined;
+        if (CLOSE_LOCALS.has(left) || left === 'held.timer') return undefined;
+      }
+      // A declaration with a type: const name: type = …
+      let d = i - 1;
+      for (; d >= 0; d--) {
+        if (closer(at(d))) { d = partner(s, d); if (d < 0) break; continue; }
+        if (['const', 'let', 'var'].includes(at(d))) break;
+        if ([';', ',', '=', '=>', '(', '[', '{'].includes(at(d))) { d = -1; break; }
+      }
+      if (d >= 0 && w === '=' && isName(at(d + 1)) && at(d + 2) === ':') {
+        const between = s.slice(d + 3, i);
+        if (!between.some((x, n) => isName(x) && isName(between[n + 1]))) return undefined;
+      }
+      changes(`an assignment that is not a declaration, a counter or the timer: ${span(Math.max(0, i - 4), i + 2)}`);
+    }
+    if (w === '++' || w === '--') {
+      if (!((CLOSE_LOCALS.has(at(i - 1)) && at(i - 2) !== '.') || (CLOSE_LOCALS.has(at(i + 1)) && at(i - 1) !== '.'))) changes('an increment or decrement');
+    }
+    return undefined;
+  });
+
+  // The call, e: handed to next(e), once, and textsOf(e); typed where it is a parameter; read as e.questions.
+  const allowed = new Set();
+  let nextCalls = 0;
+  s.forEach((w, i) => {
+    if (dotted(i)) return;
+    if (w === 'next' && span(i, i + 4) === 'next ( e )') { nextCalls += 1; allowed.add(i).add(i + 2); }
+    else if (w === 'next' && at(i - 1) === ',' && span(i, i + 4) === 'next : Next )') allowed.add(i);
+    else if (w === 'textsOf' && span(i, i + 4) === 'textsOf ( e )') allowed.add(i + 2);
+    else if (w === 'e' && (at(i - 1) === '(' || at(i - 1) === ',') && span(i, i + 8) === 'e : { questions ? : unknown }') allowed.add(i);
+    else if (w === 'e' && span(i - 4, i + 4) === 'type Next = ( e : any )') allowed.add(i);
+    else if (w === 'e' && span(i, i + 3) === 'e . questions') allowed.add(i);
+  });
+  s.forEach((w, i) => {
+    if (dotted(i) || allowed.has(i)) return;
+    if (w === 'e') say(`${CLOSE_FILE} gives the call to something other than next(e), textsOf(e) or a read of e.questions, which could change it or hand on a changed copy`);
+    if (w === 'next') say(`${CLOSE_FILE} must call next only as next(e), once, with the call as it came (next is used another way: an alias, call, apply, bind or hand-over)`);
+  });
+  if (nextCalls !== 1) say(`${CLOSE_FILE} must call next only as next(e), once, with the call as it came`);
+
+  // Objects have plain keys only: no computed key, string key, method or getter.
+  s.forEach((w, i) => {
+    if (w !== '{' || !CLOSE_OBJECT_AFTER.has(at(i - 1) ?? '')) return;
+    const close = partner(s, i);
+    let depth = 0;
+    let part = [];
+    const parts = [];
+    for (const x of s.slice(i + 1, close < 0 ? s.length : close)) {
+      if (opener(x)) depth += 1;
+      else if (closer(x)) depth -= 1;
+      if (x === ',' && depth === 0) { parts.push(part); part = []; } else part.push(x);
+    }
+    parts.push(part);
+    for (const p of parts) if (p.length > 0 && !(isName(p[0]) && (p.length === 1 || p[1] === ':' || p[1] === '?'))) say(`${CLOSE_FILE} writes an object with a key that is not a plain name (a computed key, string key, method or getter): ${p.slice(0, 4).join(' ')}`);
+  });
+
+  // The hook: its header, and what it returns.
+  const whole = ` ${s.join(' ')} `;
+  const found = whole.indexOf(` ${CLOSE_HEADER} `);
+  if (found < 0 || s.filter((w) => w === 'closeWhenAnswered').length !== 1) {
+    say(`${CLOSE_FILE} must declare closeWhenAnswered once, as: ${CLOSE_HEADER} …`);
+    return problems;
+  }
+  const open = whole.slice(0, found).split(' ').filter(Boolean).length + CLOSE_HEADER.split(' ').length - 1;
+  const end = partner(s, open);
+  const used = new Set();
+  for (let i = open + 1; i < end; i++) {
+    if (s[i] === '{' && s[i - 1] === '=>') { i = partner(s, i); continue; }
+    if (s[i] !== 'return') continue;
+    const hit = CLOSE_RETURNS.findIndex((r) => {
+      const n = r.split(' ').length;
+      return span(i + 1, i + 1 + n) === r && (i + 1 + n >= s.length || s[i + 1 + n] === ';' || s[i + 1 + n] === '}' || t[i + 1 + n].nl);
+    });
+    if (hit < 0) say(`${CLOSE_FILE} must refuse only with { deny: CLOSED_IN_PANEL } and otherwise return only what next(e) gave; it returns something else`);
+    else used.add(hit);
+  }
+  const once = (decl) => whole.split(` ${decl} `).length === 2;
+  if ((used.has(1) || used.has(2)) && !once(CLOSE_RUNNING)) say(`${CLOSE_FILE} must hold next(e)'s result as: ${CLOSE_RUNNING}, once`);
+  if (used.has(2) && !once(CLOSE_GOT)) say(`${CLOSE_FILE} must build got as: ${CLOSE_GOT}, once`);
+  for (const name of ['running', 'got']) {
+    if (s.filter((w, i) => w === name && ['const', 'let', 'var', 'function'].includes(at(i - 1))).length > 1) say(`${CLOSE_FILE} declares ${name} more than once`);
+  }
+  return problems;
+}
 // The only files the closing file may import from.
 const CLOSE_IMPORTS = ['claude-code', './ask', './numbers'];
 
@@ -526,16 +687,9 @@ export function closeException(sources) {
   if (!/import\s*\{\s*closeWhenAnswered\s*\}\s*from\s*'\.\/mod\/close'/.test(registered)) problems.push("hooks/register.ts doesn't import closeWhenAnswered from ./mod/close");
   const close = codes.get(CLOSE_FILE);
   if (close === undefined) return { ok: false, why: [...problems, `${CLOSE_FILE} can't be found`].join('; ') };
-  const denies = [...close.matchAll(/(?<![\w$.])deny(?![\w$])/g)].length;
-  const shaped = [...close.matchAll(/\{\s*deny\s*:\s*CLOSED_IN_PANEL\s*\}/g)].length;
-  if (denies !== 1 || shaped !== 1) problems.push(`${CLOSE_FILE} must refuse only with { deny: CLOSED_IN_PANEL }, once`);
+  problems.push(...closeProblems(close));
   if (NEVER_IN_CLOSE.test(close)) problems.push(`${CLOSE_FILE} says result, answers, updatedInput, context, consent or isError, which the closing hook never returns`);
-  if (WRITES_TO_E.test(close)) problems.push(`${CLOSE_FILE} changes the call or its fields (an assignment, update, delete, alias or mutating method on e), which the closing hook never does`);
-  if (/\.\.\./.test(close)) problems.push(`${CLOSE_FILE} uses a spread, which could put more into what it returns than the plain line`);
   for (const { specifier } of importsIn(close)) if (!CLOSE_IMPORTS.includes(specifier)) problems.push(`${CLOSE_FILE} imports ${specifier}, which is not one of ${CLOSE_IMPORTS.join(', ')}`);
-  const calls = [...close.matchAll(/(?<![\w$.])next\s*\(/g)].length;
-  const plain = [...close.matchAll(/(?<![\w$.])next\(e\)/g)].length;
-  if (calls !== 1 || plain !== 1) problems.push(`${CLOSE_FILE} must call next only as next(e), once, with the call as it came`);
   if (!/import\s*\{\s*CLOSED_IN_PANEL\s*\}\s*from\s*'\.\/numbers'/.test(close)) problems.push(`${CLOSE_FILE} doesn't import CLOSED_IN_PANEL from ./numbers`);
   const words = /^export const CLOSED_IN_PANEL = '([^'\n]*)'/m.exec(files.get('hooks/mod/numbers.ts') ?? '');
   if (words === null || words[1] !== CLOSED_WORDS) problems.push(`hooks/mod/numbers.ts must write CLOSED_IN_PANEL as '${CLOSED_WORDS}'`);
