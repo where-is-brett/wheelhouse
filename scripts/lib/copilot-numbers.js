@@ -52,8 +52,9 @@ export const BACKGROUND_SESSIONS_READY = false;
 // a Copilot step runs in it (adapters/copilot/sandbox.js). It stays false until its own pull request after S3.
 export const COPILOT_SANDBOX_CHECKED = false;
 // Whether check 54 (sitting S1) has shown VS Code's Claude harness loads Wheelhouse's guards, so setup may offer it as
-// a front end (scripts/agents/index.js). It stays false until its own pull request after S1.
-export const CLAUDE_HARNESS_CHECKED = false;
+// a front end (scripts/agents/index.js). True since S1 on the Mac (4 November 2026): the plugin, its hooks, a deny rule
+// and the clickable question all worked there; the sandbox was not reached (docs/checks/54-claude-harness.md).
+export const CLAUDE_HARNESS_CHECKED = true;
 // Whether the add-on's press merges at Lean, and the add-on runs the helper in VS Code's own process where Node.js can't
 // run (vscode/lean.cjs). It stays false until the sitting that shows both on a real computer, and moves only by a commit
 // of its own. Read by scripts/lean/store.js and vscode/lean.cjs.
