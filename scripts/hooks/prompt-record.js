@@ -80,7 +80,6 @@ import { cardOutcomes } from '../state/views.js';
 import { clearOpen } from '../lib/session-files.js';
 import { cardProblems } from './card-check.js';
 import { openJournal } from '../update/journal.js';
-import { helperCardFor } from '../update/cards.js';
 import { SUGGEST, WHAT_WOULD_YOU_CHANGE, SEND_BACK } from '../lib/calm-words.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 import { PUT_OFF } from '../lib/front-desk.js';
@@ -471,10 +470,13 @@ export async function earned({ project, question, label, card, client, now, left
       waiting = JSON.parse(fs.readFileSync(path.join(openJournal(project).folder, 'finish.json'), 'utf8'))?.handover?.waiting?.card;
     } catch { /* nothing was raised */ }
     if (!waiting || waiting.id !== m[1] || !Array.isArray(waiting.options) || !waiting.options.includes(label)) return null;
-    let raised = null;
-    try { raised = helperCardFor(waiting).question; } catch { /* not a card the helper could raise */ }
-    if (!raised || raised.question !== question) return null;
-    if (card && typeof card === 'object' && !sameLabels(card.options, raised.options)) return null;
+    // The question and its options are the card the helper raised in the state: a card event with this set line whose text is
+    // this question word for word, and whose options are the labels the waiting record offers (and the click's, where given).
+    let raised = [];
+    try { raised = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'card' && e.data?.line === lines[0] && e.data.question === question); } catch { /* none */ }
+    const same = (labels) => Array.isArray(labels) && labels.length === waiting.options.length && labels.every((l, i) => l === waiting.options[i]);
+    if (!raised.some((e) => same(e.data.options))) return null;
+    if (card && typeof card === 'object' && !sameLabels(card.options, waiting.options)) return null;
     return action({ action: 'update-helper-answer', card: m[1] });
   }
   if (label === 'Approve') {

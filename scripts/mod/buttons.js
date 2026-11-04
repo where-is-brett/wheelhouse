@@ -22,7 +22,7 @@ import { signsOn } from '../hooks/prompt-record.js';
 import { CARD_KINDS, KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
 import { SUGGEST, NOT_NOW, SHOW_ME, WHY, SEND_BACK } from '../lib/calm-words.js';
 import { textOf } from '../cards/compose.js';
-import { setLinesOf, TRUST_LINE, TAKEOVER_LINE, PAIR_LINE, UNINSTALL_LINE } from '../state/card-lines.js';
+import { setLinesOf, TRUST_LINE, TAKEOVER_LINE, PAIR_LINE, UNINSTALL_LINE, RELEASE_LINE, UPDATE_HELPER_LINE, UPDATE_LINE } from '../state/card-lines.js';
 import { baselineWording } from '../lib/measures-clicks.js';
 import { UNATTENDED_CARD } from '../protection/windows-builds.js';
 import { heldBackWords, SHOW_THEM } from '../engine/words.js';
@@ -91,11 +91,13 @@ export function isSetupCard(card) {
   return card?.kind === 'setup' || card?.kind === 'confirm-all' || setLinesOf(text).some((line) => SETUP_LINE.test(line));
 }
 
-// Whether a card is a trust card, a take-over card or the card that pairs an app: of that kind, or carrying its set
-// line. Each is answered only by the click on the card itself.
+// Whether a card is a trust card, a take-over card, the card that pairs an app, or one of the update's cards (the Update card,
+// the release's approval, the old helper's): of that kind, or carrying its set line. Each is answered only by the click on the
+// card itself.
 export function isTrustCard(card) {
   const text = typeof card?.question === 'string' ? card.question : '';
-  return ['trust', 'take-over', 'pair'].includes(card?.kind) || setLinesOf(text).some((line) => TRUST_LINE.test(line) || TAKEOVER_LINE.test(line) || PAIR_LINE.test(line));
+  return ['trust', 'take-over', 'pair', 'update', 'release', 'update-helper'].includes(card?.kind)
+    || setLinesOf(text).some((line) => TRUST_LINE.test(line) || TAKEOVER_LINE.test(line) || PAIR_LINE.test(line) || UPDATE_LINE.test(line) || RELEASE_LINE.test(line) || UPDATE_HELPER_LINE.test(line));
 }
 
 // Whether a card is uninstall's: of kind uninstall, or carrying uninstall's set line.

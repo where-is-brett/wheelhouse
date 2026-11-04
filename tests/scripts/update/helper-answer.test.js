@@ -14,7 +14,7 @@ import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { registerLean } from '../../../scripts/lean/project.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
-import { dataHash, listEvents } from '../../../scripts/state/events.js';
+import { dataHash, listEvents, makeEvent, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
 import { updateHelperLine } from '../../../scripts/state/card-lines.js';
 import { earned } from '../../../scripts/hooks/prompt-record.js';
@@ -31,6 +31,14 @@ const ID = helperCardId({ pid: 4242, startTime: '2026-11-04T09:00:00.000Z' });
 const given = (kind = 'unknown', canStop = true) => helperCard({ kind, version: '0.2.4', canStop, id: ID });
 const now = () => T0;
 
+// The card the helper raised, in the project's state, as the update's runner keeps it.
+function raised(project, card) {
+  const { card: data } = helperCardFor(card);
+  const file = path.join(stateDir(project), eventPath(makeEvent({ kind: 'card', data, now })));
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(makeEvent({ kind: 'card', data, now }), null, 2)}\n`);
+}
+
 function waiting(project, card) {
   const journal = openJournal(project);
   fs.mkdirSync(journal.folder, { recursive: true });
@@ -43,6 +51,7 @@ test('the prompt record earns the answer only from the card finish is waiting on
   // No card is waiting: nothing is earned, however the card is worded.
   assert.equal(await click(), null);
   waiting('p1', given());
+  await raised('p1', given());
   const got = await click();
   assert.deepEqual(got.made, { kind: 'action', data: { action: 'update-helper-answer', card: ID, question: question.question, label: STOP_IT } });
   assert.equal((await click(question.question, LEAVE_IT)).made.data.label, LEAVE_IT);
@@ -53,6 +62,7 @@ test('the prompt record earns the answer only from the card finish is waiting on
   assert.equal(await click(`${question.question}\n${updateHelperLine('update-helper-9999-other')}`), null);
   // The busy card offers Wait longer, and only then.
   waiting('p1', given('busy', true));
+  await raised('p1', given('busy', true));
   assert.equal((await click(helperCardFor(given('busy', true)).question.question, WAIT_LONGER)).made.data.label, WAIT_LONGER);
 }));
 
@@ -60,6 +70,7 @@ test('the prompt record compares the question and options with the card the help
   const { question } = helperCardFor(given());
   const click = (text, card, label = STOP_IT) => earned({ project: 'p1', question: text, label, card, client: {}, now, left: (p) => p });
   waiting('p1', given());
+  await raised('p1', given());
   // Right words and options: earned, with or without the card as asked.
   assert.ok(await click(question.question, question));
   assert.ok(await click(question.question, undefined));
