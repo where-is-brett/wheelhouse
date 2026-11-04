@@ -1,0 +1,115 @@
+{
+  "v": 1,
+  "project": "owner__name",
+  "at": "2026-11-04T01:30:00.000Z",
+  "glance": "1 waiting",
+  "stop": {
+    "on": false,
+    "since": null
+  },
+  "cards": [
+    {
+      "id": "card-approval",
+      "n": 1,
+      "header": "Approval",
+      "kind": "approval",
+      "text": "Put pull request #13 live?\nPull request #13 changes the wording on the sign-in page.\nIt changes what users see, which is yours to decide at level 3.\nNothing is released and the agents carry on with other work.\nTo know more, just ask.\nApprove pull request #13 at commit abcdef123456\nReply code: J66Y",
+      "hash": "f78c290f9af6",
+      "buttons": [
+        {
+          "label": "Approve",
+          "does": "record",
+          "shape": "filled"
+        },
+        {
+          "label": "Suggest a change…",
+          "does": "suggest",
+          "shape": "outlined"
+        },
+        {
+          "label": "Not now",
+          "does": "record",
+          "shape": "small",
+          "corner": true
+        },
+        {
+          "label": "Why?",
+          "does": "why",
+          "shape": "small"
+        },
+        {
+          "label": "Show me",
+          "does": "turn",
+          "shape": "small"
+        }
+      ],
+      "note": null,
+      "blocking": false,
+      "asked": false,
+      "heldBack": false,
+      "parts": {
+        "kind": "approval",
+        "header": "Approval",
+        "ask": "Put pull request #13 live?",
+        "what": "Pull request #13 changes the wording on the sign-in page.",
+        "small": "It changes what users see, which is yours to decide at level 3.",
+        "recommendation": "Approve, because the checks passed and the change is small.",
+        "options": [
+          {
+            "label": "Approve",
+            "says": "It approve and goes ahead.",
+            "recommended": true
+          },
+          {
+            "label": "Suggest a change…",
+            "says": "Tell me what you'd change; I'll come back with a new proposal.",
+            "recommended": false
+          },
+          {
+            "label": "Show me",
+            "says": "I show you what it looks like, then ask again.",
+            "recommended": false
+          },
+          {
+            "label": "Not now",
+            "says": "Leave this waiting; nothing changes yet.",
+            "recommended": false
+          }
+        ],
+        "why": "It changes what users see, which is yours to decide at level 3.",
+        "meanwhile": "Nothing is released and the agents carry on with other work.",
+        "line": "Approve pull request #13 at commit abcdef123456",
+        "code": "J66Y"
+      },
+      "steered": null,
+      "waited": "asked 16 hours ago",
+      "revised": false,
+      "openInChat": false
+    }
+  ],
+  "held": null,
+  "verdict": "One thing needs you. Nothing is broken.",
+  "since": null,
+  "launch": null,
+  "building": [],
+  "health": [],
+  "healthNote": {
+    "allWell": true,
+    "protection": "Standard",
+    "week": null
+  },
+  "safekeeping": null,
+  "ideas": {
+    "count": 0,
+    "fresh": 0
+  },
+  "updated": "12:30",
+  "usage": null,
+  "finished": [],
+  "goalEnd": null,
+  "incidents": [],
+  "watcher": null,
+  "missing": [],
+  "view": "main",
+  "open": null
+}

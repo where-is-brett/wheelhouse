@@ -20,6 +20,21 @@ const DRAG_PICTURE = '<svg viewBox="0 0 260 90" role="img" aria-label="Drag the 
   + '<circle cx="17" cy="22" r="6"/><path d="M28 30 L178 30 M170 24 L178 30 L170 36" stroke-linecap="round"/>'
   + '<rect x="198" y="12" width="48" height="10" rx="2"/><rect x="198" y="30" width="48" height="10" rx="2"/></svg>';
 
+// The words of the pane's own controls (All stop, Lift All stop, Board, Settings, Briefing, Done) come from scripts/desk/pane-labels.js,
+// which the mod's words are held equal to (tests/mod/pane.test.ts). The add-on hands them over with setLabels once it has loaded
+// the scripts; until then, and if they can't be loaded, the pane draws the plain fallback words below and still works.
+const LABEL_KEYS = ['stop', 'lift', 'board', 'settings', 'briefing', 'done'];
+const capital = (words) => words.charAt(0).toUpperCase() + words.slice(1);
+const FALLBACK_LABELS = Object.freeze(Object.fromEntries(LABEL_KEYS.map((key) => [key, capital(key === 'lift' ? 'lift stop' : key)])));
+let labels = FALLBACK_LABELS;
+
+// setLabels(given) -> void: uses the labels given when every key is a non-empty string; otherwise keeps the words in use.
+function setLabels(given) {
+  if (given === null || typeof given !== 'object') return;
+  if (!LABEL_KEYS.every((key) => typeof given[key] === 'string' && given[key] !== '')) return;
+  labels = Object.freeze(Object.fromEntries(LABEL_KEYS.map((key) => [key, given[key]])));
+}
+
 const STYLE = (() => {
   try {
     return fs.readFileSync(path.join(__dirname, 'style.css'), 'utf8');
@@ -157,10 +172,10 @@ function drawCards(model) {
 
 function drawHeader(model) {
   const on = model?.stop?.on === true;
-  const head = `<header><h1>Wheelhouse</h1>${on ? '' : button('STOP', 'stop', { act: 'stop' })}</header>`;
+  const head = `<header><h1>Wheelhouse</h1>${on ? '' : button(labels.stop, 'stop', { act: 'stop' })}</header>`;
   if (!on) return head;
   const since = text(model.stop.since);
-  return `${head}<div class="halted"><p>All stop is on. Every agent is stopped, and nothing moves until you say.</p>${button('Lift STOP', 'lift', { act: 'lift', since })}</div>`;
+  return `${head}<div class="halted"><p>All stop is on. Every agent is stopped, and nothing moves until you say.</p>${button(labels.lift, 'lift', { act: 'lift', since })}</div>`;
 }
 
 function drawOffer(offer) {
@@ -169,7 +184,7 @@ function drawOffer(offer) {
 }
 
 function drawFoot(model) {
-  const views = ['Board', 'Settings', 'Briefing'].map((v) => button(v, 'link', { act: 'view', view: v.toLowerCase() })).join('');
+  const views = [['board', labels.board], ['settings', labels.settings], ['briefing', labels.briefing]].map(([view, label]) => button(label, 'link', { act: 'view', view })).join('');
   return `<footer>${views}${text(model?.updated) ? `<span class="updated">Updated ${esc(model.updated)}</span>` : ''}</footer>`;
 }
 
@@ -183,7 +198,7 @@ function drawBoard(model) {
   if (isRecord(model?.safekeeping) && text(model.safekeeping.line)) add('Safekeeping', [text(model.safekeeping.line)]);
   if (text(model?.usage)) add('This week', [model.usage]);
   if (lines.length === 0) lines.push('<p class="note">Nothing to show on the board yet.</p>');
-  return `${lines.join('')}<footer>${button('Done', 'filled', { act: 'view', view: 'main' })}</footer>`;
+  return `${lines.join('')}<footer>${button(labels.done, 'filled', { act: 'view', view: 'main' })}</footer>`;
 }
 
 function drawSettings(settings) {
@@ -200,11 +215,11 @@ function drawSettings(settings) {
   const body = groups.length === 0
     ? '<p class="note">The settings can\'t be read just now.</p>'
     : groups.map((g) => `<div class="group"><h2>${esc(g.title)}</h2>${text(g.note) ? `<p class="about">${esc(g.note)}</p>` : ''}${rows(g)}</div>`).join('');
-  return `${body}<footer>${button('Done', 'filled', { act: 'view', view: 'main' })}</footer>`;
+  return `${body}<footer>${button(labels.done, 'filled', { act: 'view', view: 'main' })}</footer>`;
 }
 
 function drawBriefing(briefing) {
-  return `<h2>Briefing</h2><p class="briefing">${esc(briefing)}</p><footer>${button('Done', 'filled', { act: 'view', view: 'main' })}</footer>`;
+  return `<h2>Briefing</h2><p class="briefing">${esc(briefing)}</p><footer>${button(labels.done, 'filled', { act: 'view', view: 'main' })}</footer>`;
 }
 
 // renderPane(model, { nonce, view, settings, briefing, notice, offer }) -> string
@@ -230,4 +245,4 @@ function renderPane(model, { nonce, view = 'main', settings, briefing, notice, o
     + `<body data-nonce="${n}">${body}<script nonce="${n}">${SCRIPT}</script></body></html>`;
 }
 
-module.exports = { renderPane, statusText, needsYou, waitingCards, PANE_MOVES, OFFER, esc };
+module.exports = { renderPane, setLabels, LABEL_KEYS, statusText, needsYou, waitingCards, PANE_MOVES, OFFER, esc };
