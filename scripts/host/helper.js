@@ -147,8 +147,8 @@ import { lookAtHead, raiseCard, withLocalLock } from '../lib/local-git.js';
 import { queueCall } from '../engine/broker/queue.js';
 import { toolPath } from '../lib/host-tools.js';
 import { RELEASE_BRANCH, RELEASE_WHY, SETTINGS_FILE, briefingLine, checkRelease, fetchTag, pinsOnlyChange, releaseBranch, undoBranch } from '../lineage/release.js';
-import { releaseApproved, updateProvenance } from '../gate/release-approval.js';
-import { RELEASE_LINE, releaseLine as releaseCardLine } from '../state/card-lines.js';
+import { baseRefOf, releaseApproved, updateProvenance } from '../gate/release-approval.js';
+import { RELEASE_TAG } from '../state/card-lines.js';
 import { WHEELHOUSE_URL } from '../lineage/manifest.js';
 import { SCREEN_SIZES, PUT_OFF } from '../lib/front-desk.js';
 import { CLICK_MS, HELPER_WAIT_MS } from '../lib/core-numbers.js';
@@ -2739,10 +2739,12 @@ export async function startHelper({
     }
     if (!fetched.ok) return { ...found, ok: false, approved: false, why: fetched.why };
     if (fetched.sha !== found.commit) return { ...found, ok: false, approved: false, why: RELEASE_WHY.commit };
-    const approved = pinsOnly || releaseApproved({
-      events: listEvents(stateDir(project), { report: () => {} }), release: found.release, commit: found.commit, enrolled,
-    });
-    return { ...found, approved };
+    // The release the project is on is the one the change's base names; the answer must stand for that move.
+    const previous = baseRefOf(changes.files?.[SETTINGS_FILE]?.base);
+    const approved = pinsOnly || (previous !== null && releaseApproved({
+      events: listEvents(stateDir(project), { report: () => {} }), previous, release: found.release, commit: found.commit, branch: headRef, enrolled,
+    }));
+    return { ...found, previous, approved };
   }
 
   // Whether the configuration git reads when the fenced runner `fenced` runs in `mirror` sets any
@@ -3619,7 +3621,7 @@ export async function startHelper({
       reviewKinds,
       hostApproval,
       approval,
-      ...(byRelease ? { release: { release: updateCheck.release, commit: updateCheck.commit, approved: updateCheck.approved === true } } : {}),
+      ...(byRelease ? { release: { previous: updateCheck.previous, release: updateCheck.release, commit: updateCheck.commit, approved: updateCheck.approved === true } } : {}),
       enrolled,
       upToDate,
       incident: incidentFor(views, number, { fix: fixCall ? fixOfRun({ views, opened: engineRun.openedOf(project, number), call: fixCall, headSha }) : null }),
@@ -3640,7 +3642,7 @@ export async function startHelper({
       // What the director's click can supply, by name, so the foreman can wait for that click
       // rather than ask (ruling R117). The reasons still list every condition that failed.
       const needs = decision.approvalMissing !== true ? {}
-        : byRelease ? { needs: { releaseApproval: { release: updateCheck.release, commit: updateCheck.commit } } } : { needs: { approval: { pr: number, commit: headSha } } };
+        : byRelease ? { needs: { releaseApproval: { previous: updateCheck.previous, release: updateCheck.release, commit: updateCheck.commit } } } : { needs: { approval: { pr: number, commit: headSha } } };
       return {
         ok: false,
         refused: [...(releaseLine === null ? [] : [releaseLine]), ...reasons].join('; '),
@@ -4928,7 +4930,7 @@ export async function startHelper({
       if (stopped()) return STOP_REFUSAL;
       const { release, commit } = body;
       if (typeof commit !== 'string' || !/^[0-9a-f]{40}$/.test(commit)) refuse('the release\'s commit must be written in full');
-      if (typeof release !== 'string' || !RELEASE_LINE.test(releaseCardLine(release, commit))) refuse('the release must be named by a plain tag');
+      if (typeof release !== 'string' || !RELEASE_TAG.test(release)) refuse('the release must be named by a plain tag');
       if (body.head !== releaseBranch(commit) && body.head !== undoBranch(commit)) return { ok: false, refused: 'the branch must be the release\'s or the undo\'s for that commit' };
       const adapter = await ctx.adapter();
       const defaultBranch = await defaultBranchOf(body.project, adapter);
@@ -5352,7 +5354,6 @@ export async function startHelper({
           const permit = await brokerPermit(project, call);
           const skipped = [];
           listEvents(stateDir(project), { report: () => {}, skipped });
-          const decided = skipped.length > 0 ? { allow: false, reason: STATE_DAMAGED } : brokerDecision(call, permit);
           let needsApproval = true;
           let release;
           try {
@@ -5368,6 +5369,10 @@ export async function startHelper({
           } catch (error) {
             if (error instanceof LookRefusal) throw error;
           }
+          // The broker still asks for every other condition; only the head's signed approval is replaced, and only for the
+          // update's own change whose release answer (or pins-only review) is in.
+          const decided = skipped.length > 0 ? { allow: false, reason: STATE_DAMAGED }
+            : brokerDecision(call, release?.ok === true && release.approved === true ? { ...permit, releaseApproved: true } : permit);
           return {
             ...(release === undefined ? {} : { release }),
             incident: permit.incident,

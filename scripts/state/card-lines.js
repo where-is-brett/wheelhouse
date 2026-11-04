@@ -162,10 +162,13 @@ export const TAKEOVER_LINE = /^Take over the lock from computer ([0-9a-f]{8}), c
 // (update design, section 6.2): the release's tag and its commit in full, so a click stands for that release at that commit
 // and no other. The card is named `release-<commit>`.
 export const RELEASE_LABEL = 'Approve';
-export function releaseLine(tag, commit) {
-  return `Move this project to Wheelhouse ${tag}, commit ${commit}`;
+// It also names the release the project is on now (`from`), so an answer stands for that one move and a later move back
+// to an earlier release is not covered by it.
+export function releaseLine(from, tag, commit) {
+  return `Move this project from Wheelhouse ${from} to ${tag}, commit ${commit}`;
 }
-export const RELEASE_LINE = /^Move this project to Wheelhouse ([A-Za-z0-9][A-Za-z0-9._-]{0,99}), commit ([0-9a-f]{40})$/;
+export const RELEASE_TAG = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+export const RELEASE_LINE = /^Move this project from Wheelhouse ([A-Za-z0-9][A-Za-z0-9._-]{0,99}) to ([A-Za-z0-9][A-Za-z0-9._-]{0,99}), commit ([0-9a-f]{40})$/;
 
 // The label on the card that pairs a later app with the desk (spec 5.3), and the line naming the app by its id and its
 // key's fingerprint (the first twelve hex characters of the SHA-256 of its public key), so a click stands for that

@@ -95,7 +95,7 @@ const isRelease = (x) => x !== null && typeof x === 'object' && !Array.isArray(x
 
 // The refusal's one sentence for a release's approval that is missing: it names the release and its commit, not the head.
 function releaseApprovalReason(release) {
-  return `no approval of release ${release.release} (${release.commit.slice(0, 7)}) from the director's card for it`;
+  return `no approval of the move from ${release.previous ?? 'the current release'} to ${release.release} (${release.commit.slice(0, 7)}) from the director's card for it`;
 }
 
 // Why the provenance check failed, or a plain fallback when the input has no reason.

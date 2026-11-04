@@ -78,6 +78,7 @@ import { keepClick as keepBaselineClick, shownBaseline, dropPending, carriesFigu
 import { localViews } from './session-start.js';
 import { cardOutcomes } from '../state/views.js';
 import { cardProblems } from './card-check.js';
+import { openJournal } from '../update/journal.js';
 import { SUGGEST, WHAT_WOULD_YOU_CHANGE, SEND_BACK } from '../lib/calm-words.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 import { PUT_OFF } from '../lib/front-desk.js';
@@ -421,10 +422,17 @@ export async function earned({ project, question, label, card, client, now, left
   }
   // The card for a Wheelhouse release that is not pins-only (update design, section 6.2): its one set line names the tag and
   // the commit in full, and the click earns an action naming both, which only the release's reviewed change counts.
+  // Earned only from the card the update's job raised: the journal, which only Wheelhouse's own processes write, names the
+  // move the card is for. An ordinary approval card with a release line added to it earns nothing.
   if (label === RELEASE_LABEL && setLinesOf(question).some((line) => RELEASE_LINE.test(line))) {
     const lines = setLinesOf(question);
     const m = lines.length === 1 ? RELEASE_LINE.exec(lines[0]) : null;
-    return m ? action({ action: 'approve-release', release: m[1], commit: m[2] }) : null;
+    if (!m) return null;
+    let raised = { newer: true };
+    try { raised = openJournal(project).read(); } catch { /* no journal: nothing was raised */ }
+    const card = raised.newer ? undefined : raised.steps?.change?.data?.card;
+    if (!card || card.previous !== m[1] || card.release !== m[2] || card.commit !== m[3]) return null;
+    return action({ action: 'approve-release', previous: m[1], release: m[2], commit: m[3] });
   }
   if (label === 'Approve') {
     const prs =[...question.matchAll(APPROVE)];

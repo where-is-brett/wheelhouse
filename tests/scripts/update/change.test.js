@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { approvalCard, changeSteps, namedRef, openChange, releaseKind, waitIdle, waitMerged } from '../../../scripts/update/change.js';
+import { approvalCard, changeSteps, namedRef, openChange, releaseKind, updateMirror, waitIdle, waitMerged } from '../../../scripts/update/change.js';
 import { openJournal } from '../../../scripts/update/journal.js';
 import { runJob } from '../../../scripts/update/job.js';
 import { SETTINGS_FILE, releaseBranch, releaseChange, settingsText, undoBranch } from '../../../scripts/lineage/release.js';
@@ -75,8 +75,10 @@ test('a release that is not pins-only raises the card named for its commit, with
     assert.equal(cards[0].id, `release-${NEW}`);
     assert.deepEqual(cards[0].options, ['Approve', 'Not now']);
     // The question's one set line names the tag and the commit in full, so a click stands for that release and no other.
-    assert.deepEqual(RELEASE_LINE.exec(setLineOf(cards[0].question)).slice(1), ['v0.2.7', NEW]);
-    assert.deepEqual(approvalCard({ release: 'v0.2.7', commit: NEW }), cards[0]);
+    assert.deepEqual(RELEASE_LINE.exec(setLineOf(cards[0].question)).slice(1), ['v0.2.6', 'v0.2.7', NEW]);
+    assert.deepEqual(approvalCard({ previous: 'v0.2.6', release: 'v0.2.7', commit: NEW }), cards[0]);
+    // The job records the card it raised, which is what lets a click on it be signed.
+    assert.deepEqual(got.card, { previous: 'v0.2.6', release: 'v0.2.7', commit: NEW });
   } finally { tidy(dir); }
 });
 
@@ -162,6 +164,15 @@ test('a pins-only release file is read from the fetched tag, and anything unread
   }
   assert.equal(await releaseKind({ tag: 'v0.2.7', run: async () => ({ code: 128, stdout: '', stderr: '' }), mirror: os.tmpdir() }), 'changes');
 });
+
+test('the release file is read from the mirror under the Wheelhouse home, never from a temporary folder', () => withHome(async (home) => {
+  const seen = [];
+  const run = async (file, args, options) => { seen.push(options?.cwd); return { code: 0, stdout: '{"kind":"pins-only","lineage":"passed"}', stderr: '' }; };
+  assert.equal(await releaseKind({ tag: 'v0.2.7', run }), 'pins-only');
+  assert.equal(updateMirror(), path.join(home, 'update', 'mirror'));
+  assert.deepEqual(seen.map((cwd) => fs.realpathSync(path.dirname(path.dirname(cwd)))), [fs.realpathSync(home)]);
+  assert.equal(path.basename(seen[0]), 'mirror');
+}));
 
 test('the change and the waits run as the job\'s steps, and a wait is carried on by the next apply', () => withHome(async () => {
   const dir = folder(settingsAt('v0.2.6'));

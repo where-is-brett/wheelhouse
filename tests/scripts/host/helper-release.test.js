@@ -92,8 +92,8 @@ async function remoteWithPr({ baseRef = 'v1.0.0', files }) {
   return { remote, head, cleanup: () => { remote.cleanup(); fs.rmSync(work, { recursive: true, force: true }); } };
 }
 
-function record(kind, data) {
-  const event = makeEvent({ kind, data, now: at(1000) });
+function record(kind, data, ms = 1000) {
+  const event = makeEvent({ kind, data, now: at(ms) });
   const file = path.join(stateDir('o__p'), eventPath(event));
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, `${JSON.stringify(event, null, 2)}\n`);
@@ -258,7 +258,8 @@ test('the update opens its change through its own route, which records only that
 });
 
 const opened = (release, commit, branch = releaseBranch(commit)) => record('provenance', { branch, provenance: { update: { release, commit } } });
-const answered = (release, commit) => record('action', { action: 'approve-release', release, commit, label: 'Approve', question: `Words.\n${releaseLine(release, commit)}` });
+// The project is on v1.0.0 (the base of every pull request here). An answer is made after the change opened, at 2000 ms.
+const answered = (previous, release, commit, ms = 2000) => record('action', { action: 'approve-release', previous, release, commit, label: 'Approve', question: `Words.\n${releaseLine(previous, release, commit)}` }, ms);
 const headApproved = (head) => record('approval', { pr: 7, commit: head, words: 'Approve', question: 'Approve pull request #7' });
 
 test('the update\'s change: a pins-only release merges on review alone, with no card', async () => {
@@ -276,7 +277,7 @@ test('the update\'s change: a release that is not pins-only merges only with the
   const repo = await wheelhouseRepo();
   const sha = repo.shas['v1.2.0'];
   const other = repo.shas['v1.1.0'];
-  const reason = `no approval of release v1.2.0 (${sha.slice(0, 7)}) from the director's card for it`;
+  const reason = `no approval of the move from v1.0.0 to v1.2.0 (${sha.slice(0, 7)}) from the director's card for it`;
   const tryMerge = async ({ setup = () => {}, files = released('v1.2.0'), commit = sha, tag = 'v1.2.0' }) => {
     const pr = await remoteWithPr({ files });
     try {
@@ -288,7 +289,7 @@ test('the update\'s change: a release that is not pins-only merges only with the
     const none = await tryMerge({});
     assert.equal(none.answer.ok, false);
     assert.ok(none.answer.reasons.includes(reason), JSON.stringify(none.answer));
-    assert.deepEqual(none.answer.needs, { releaseApproval: { release: 'v1.2.0', commit: sha } });
+    assert.deepEqual(none.answer.needs, { releaseApproval: { previous: 'v1.0.0', release: 'v1.2.0', commit: sha } });
     assert.deepEqual(none.merges, []);
     // An approval of the pull request's head is not the release's card.
     const head = await tryMerge({ setup: headApproved });
@@ -296,21 +297,30 @@ test('the update\'s change: a release that is not pins-only merges only with the
     assert.ok(head.answer.reasons.includes(reason));
     assert.deepEqual(head.merges, []);
     // An answer for another commit, or for another tag at this commit, doesn't count.
-    const wrong = await tryMerge({ setup: () => answered('v1.1.0', other) });
+    const wrong = await tryMerge({ setup: () => answered('v1.0.0', 'v1.1.0', other) });
     assert.equal(wrong.answer.ok, false);
     assert.deepEqual(wrong.merges, []);
-    const tag = await tryMerge({ setup: () => answered('v1.2.1', sha) });
+    const tag = await tryMerge({ setup: () => answered('v1.0.0', 'v1.2.1', sha) });
     assert.equal(tag.answer.ok, false);
+    // The replay: an answer for the same release from another starting point, or made before this change was opened, doesn't count.
+    const from = await tryMerge({ setup: () => answered('v0.9.0', 'v1.2.0', sha) });
+    assert.equal(from.answer.ok, false);
+    assert.ok(from.answer.reasons.includes(reason));
+    assert.deepEqual(from.merges, []);
+    const stale = await tryMerge({ setup: () => answered('v1.0.0', 'v1.2.0', sha, 500) });
+    assert.equal(stale.answer.ok, false);
+    assert.ok(stale.answer.reasons.includes(reason));
+    assert.deepEqual(stale.merges, []);
     // The answer for this release at this commit merges it.
-    const merged = await tryMerge({ setup: () => answered('v1.2.0', sha) });
+    const merged = await tryMerge({ setup: () => answered('v1.0.0', 'v1.2.0', sha) });
     assert.equal(merged.answer.ok, true, JSON.stringify(merged.answer));
     assert.equal(merged.merges.length, 1);
     // The answer lowers the approval only: a change of more than the ref is refused, and so is a tag that isn't at the commit.
-    const more = await tryMerge({ setup: () => answered('v1.2.0', sha), files: { [SETTINGS]: settingsText({ ...releaseChange(settingsAt('v1.0.0'), { ref: 'v1.2.0', sha }), autoCompactWindow: 100000 }) } });
+    const more = await tryMerge({ setup: () => answered('v1.0.0', 'v1.2.0', sha), files: { [SETTINGS]: settingsText({ ...releaseChange(settingsAt('v1.0.0'), { ref: 'v1.2.0', sha }), autoCompactWindow: 100000 }) } });
     assert.equal(more.answer.ok, false);
     assert.match(more.answer.refused, /changes more than the Wheelhouse marketplace's ref, to v1\.2\.0/);
     assert.deepEqual(more.merges, []);
-    const moved = await tryMerge({ setup: () => answered('v1.2.0', other), files: released('v1.2.0'), commit: other, tag: 'v1.2.0' });
+    const moved = await tryMerge({ setup: () => answered('v1.0.0', 'v1.2.0', other), files: released('v1.2.0'), commit: other, tag: 'v1.2.0' });
     assert.equal(moved.answer.ok, false);
     assert.deepEqual(moved.merges, []);
   } finally { repo.cleanup(); }

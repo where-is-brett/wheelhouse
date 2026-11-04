@@ -8,7 +8,7 @@ import { scanContent } from './secret-scan.js';
 import { briefProblem, briefWords } from '../delegation/brief.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { git } from './git.js';
-import { RELEASE_LABEL, RELEASE_LINE, releaseLine, keepControlLine, approvalLine, startGoalLine, setLineOf, CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, TAKEOVER_LABEL, takeOverLine, APP_ID, pairLine, unpairLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
+import { RELEASE_LABEL, RELEASE_TAG, releaseLine, keepControlLine, approvalLine, startGoalLine, setLineOf, CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, TAKEOVER_LABEL, takeOverLine, APP_ID, pairLine, unpairLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
 import { carriesFigures, CARRIES_BASELINE } from '../lib/measures-clicks.js';
 import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH } from '../lib/build-loop.js';
 import { CARD, CARD_KINDS, PUT_OFF } from '../lib/front-desk.js';
@@ -120,7 +120,7 @@ const ACTION_OWN = {
   'send-back': ['pr', 'sha'],
   // The director's Approve on the card for a Wheelhouse release that is not pins-only (update design, section 6.2): the
   // release's tag and its commit in full, as the card's set line names them. Only the release's reviewed change counts it.
-  'approve-release': ['release', 'commit'],
+  'approve-release': ['previous', 'release', 'commit'],
   // The director's Confirm on the card keeping a feature's files that steer agents as they are
   // (ruling P7-31): the work, and the full hash of the watcher's finding the card's line names.
   'keep-control-files': ['work', 'hash'],
@@ -246,10 +246,11 @@ function checkAction(data) {
     if (data.label !== SEND_BACK) bad(`needs the ${SEND_BACK} label`);
     if (setLineOf(data.question) !== approvalLine(data.pr, data.sha)) bad('carries the approval line for its pull request and commit as its question\'s one set line');
   } else if (data.action === 'approve-release') {
-    if (typeof data.release !== 'string' || !RELEASE_LINE.test(releaseLine(data.release, '0'.repeat(40)))) bad('needs the release, named by a plain tag');
+    if (typeof data.release !== 'string' || !RELEASE_TAG.test(data.release)) bad('needs the release, named by a plain tag');
+    if (typeof data.previous !== 'string' || !RELEASE_TAG.test(data.previous)) bad('needs the release the project is on, named by a plain tag');
     if (typeof data.commit !== 'string' || !/^[0-9a-f]{40}$/.test(data.commit)) bad('needs the release\'s commit in full');
     if (data.label !== RELEASE_LABEL) bad(`needs the ${RELEASE_LABEL} label`);
-    if (setLineOf(data.question) !== releaseLine(data.release, data.commit)) bad('carries the release line for its tag and commit as its question\'s one set line');
+    if (setLineOf(data.question) !== releaseLine(data.previous, data.release, data.commit)) bad('carries the release line for its tags and commit as its question\'s one set line');
   } else if (data.action === 'keep-main') {
     if (!['from', 'to'].every((k) => typeof data[k] === 'string' && /^[0-9a-f]{40}$/.test(data[k]))) bad('needs the main version\'s commits it keeps, from and to, in full');
     if (data.label !== 'Keep it') bad('needs the Keep it label');
@@ -824,7 +825,7 @@ function checkProvenance(data) {
     if (Object.keys(data.provenance).length !== 1) bad('from an update carries nothing else');
     if (!isPlain(u) || Object.keys(u).sort().join() !== 'commit,release') bad('from an update needs its release and its commit');
     if (typeof u.commit !== 'string' || !/^[0-9a-f]{40}$/.test(u.commit)) bad('from an update needs the commit in full');
-    if (typeof u.release !== 'string' || !RELEASE_LINE.test(releaseLine(u.release, u.commit))) bad('from an update needs the release, named by a plain tag');
+    if (typeof u.release !== 'string' || !RELEASE_TAG.test(u.release)) bad('from an update needs the release, named by a plain tag');
     if (data.branch !== `wheelhouse-release-${u.commit}` && data.branch !== `wheelhouse-undo-${u.commit}`) bad('from an update belongs to the release\'s or the undo\'s branch');
   }
 }

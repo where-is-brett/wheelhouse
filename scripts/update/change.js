@@ -8,13 +8,17 @@
 // merge) decides, and this reads what it did.
 import fs from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
+import { wheelhouseHome } from '../lib/paths.js';
 import { run as defaultRun } from '../lib/run.js';
 import { safeGit } from '../lib/safe-git.js';
 import { RELEASE_FILE, SETTINGS_FILE, canInstall, releaseBranch, releaseChange, settingsText, tagRefFor, undoBranch } from '../lineage/release.js';
 import { MARKETPLACE } from '../lineage/manifest.js';
 import { RELEASE_LABEL, releaseLine } from '../state/card-lines.js';
 import { releaseCardName } from '../gate/release-approval.js';
+
+// The mirror the update fetched the release's tag into, under the Wheelhouse home, which nothing in a session's sandbox
+// can write to.
+export const updateMirror = () => path.join(wheelhouseHome(), 'update', 'mirror');
 
 const NOT_NOW = 'Not now';
 const FULL_SHA = /^[0-9a-f]{40}$/;
@@ -39,7 +43,7 @@ export function namedRef(settings) {
 
 // Whether the release only moves the pins, by its own file in the fetched tag. This only decides whether the card is raised;
 // the gate reads the same file itself and is the one that decides what merges. Anything that can't be read is "changes".
-export async function releaseKind({ tag, run = defaultRun, mirror }) {
+export async function releaseKind({ tag, run = defaultRun, mirror = updateMirror() }) {
   try {
     const git = safeGit({ run, cwd: mirror, look: 'never', timeoutMs: 120000 });
     const got = await git(['cat-file', 'blob', `${tagRefFor(tag)}:${RELEASE_FILE}`], { input: '' });
@@ -53,10 +57,11 @@ export async function releaseKind({ tag, run = defaultRun, mirror }) {
 
 // The card the job raises for the director's approval of a release that is not pins-only. Named for the commit, so an
 // answer for another release or commit is not an answer to this one. The option that approves is Approve; Not now puts it off.
-export function approvalCard({ release, commit }) {
-  const line = releaseLine(release, commit);
+export function approvalCard({ previous, release, commit }) {
+  const line = releaseLine(previous, release, commit);
   return {
     id: releaseCardName(commit),
+    previous,
     release,
     commit,
     line,
@@ -105,9 +110,11 @@ export async function openChange({ project, target, previous, put = 'release', p
   if (opened?.ok !== true) return { ok: false, line: `The change naming ${ref} could not be opened: ${opened?.refused ?? 'no reason was given'}.` };
   const pr = Number.isInteger(opened.number) ? opened.number : undefined;
   const needsCard = kind !== 'pins-only';
-  if (needsCard && typeof raise === 'function') await raise(approvalCard({ release: ref, commit: sha }));
+  const card = approvalCard({ previous: named, release: ref, commit: sha });
+  if (needsCard && typeof raise === 'function') await raise(card);
   return {
     ok: true,
+    ...(needsCard ? { card: { previous: named, release: ref, commit: sha } } : {}),
     ...(pr === undefined ? {} : { pr }),
     approval: needsCard ? 'card' : 'review',
     line: `The change naming ${ref}${pr === undefined ? '' : ` (#${pr})`} is open${needsCard ? ', and waits for your approval' : ', and waits for its review'}.`,
@@ -141,7 +148,7 @@ export async function waitIdle({ stopped, features }) {
 // The steps `change`, `merged` and `idle` of the update's job (scripts/update/job.js), over the seams above. A wait returns
 // { ok: false, line }, and the next apply carries on from it. A change that was closed stops the job with nothing installed,
 // and the line says so. A journal read as { newer: true } is never read here: the job refuses it before any step runs.
-export function changeSteps({ projectDir, target, previous, put = 'release', open, raise, prState, stopped, features, run = defaultRun, mirror = path.join(os.tmpdir(), 'wheelhouse-update-mirror') }) {
+export function changeSteps({ projectDir, target, previous, put = 'release', open, raise, prState, stopped, features, run = defaultRun, mirror = updateMirror() }) {
   return [
     {
       name: 'change',
@@ -149,7 +156,7 @@ export function changeSteps({ projectDir, target, previous, put = 'release', ope
         const kind = await releaseKind({ tag: target.tag, run, mirror });
         const got = await openChange({ project, target, previous, put, projectDir, open, raise, kind });
         if (!got.ok) return { ok: false, line: got.line };
-        return { data: { pr: got.pr ?? null, skipped: got.skipped ?? null, approval: got.approval ?? null } };
+        return { data: { pr: got.pr ?? null, skipped: got.skipped ?? null, approval: got.approval ?? null, ...(got.card ? { card: got.card } : {}) } };
       },
     },
     {
