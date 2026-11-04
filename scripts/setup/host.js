@@ -105,7 +105,7 @@ import { joinedRepo, runClosed, stepDone, JOIN_STEP } from '../lib/setup-run.js'
 import { PROXY_HAS_PASSWORD } from '../host/proxy.js';
 import { askDirectorGit, directorProxy } from '../host/director-git.js';
 import { readProfileViews, PROFILE_BRANCH } from '../profile/store.js';
-import { toolsStatus, originUrl, applyCompanyCa, curlStatus } from './tools.js';
+import { toolsStatus, originUrl, applyCompanyCa, curlStatus, toolsLeftOut } from './tools.js';
 import {
   findAccess, backendFor, runKeyCard, asIsReachLine, keyCardPlanLine, noRoadLine, checkApiKey, hostAddress,
 } from './host-access.js';
@@ -733,6 +733,12 @@ function toolsStepDone(ctx) {
   } catch {
     return true;
   }
+}
+
+// Whether the host's tool is to be left out of this project: the project's settings or the director's answer at step 2
+// say never to use it (scripts/setup/tools.js), so the host is reached over its web API.
+function hostToolLeftOut(ctx, host) {
+  return toolsLeftOut({ tools: [TOOL[host]], folder: ctx.folder, answers: ctx.answers ?? {} }).length > 0;
 }
 
 // Quick's words where narrow is the recommendation (Windows, a Locked or launched project): its cost said plainly.
@@ -1826,8 +1832,8 @@ function directorFor({ signedIn, way, host, app, appKeys, joining = false, via =
 // found; `views` the views of the director's settings the plan reads their own app from, and
 // `profileRoutes` the helper's settings routes (/profile/*) apply records it through.
 export function hostStep({
-  run = realRun, fetch = globalThis.fetch, sleep = pause, open, askSecret = realAskSecret, appFile = APP_FILE,
-  hostUrl = httpsRemote, findGit = async ({ platform }) => (await toolsStatus({ platform, run, tools: ['git'] })).git,
+  run: runGiven = realRun, fetch = globalThis.fetch, sleep = pause, open, askSecret = realAskSecret, appFile = APP_FILE,
+  hostUrl = httpsRemote, findGit = async ({ platform }) => (await toolsStatus({ platform, run: runGiven, tools: ['git'] })).git,
   gitlab = ({ run: r, baseUrl }) => directorGitlabApi({ run: r, baseUrl, via }),
   profileRoutes = null, views = readProfileViews,
   // Whether GitLab's certificate is trusted from here, and how the company's is given to the tools
@@ -1837,6 +1843,17 @@ export function hostStep({
   // How the checks of the director's key are made (host-access.js's checkApiKey: run, curl, proxy, caFile, platform): stand-ins in tests.
   via = {},
 } = {}) {
+  // A host tool the project's settings or the director said to leave out is never run, even where one is installed (see
+  // "Leaving a host's tool out" in tools.js): it reads as not found. Set from the ctx at the start of plan and apply.
+  let neverRun = [];
+  const run = (file, args, options) => {
+    const name = path.basename(String(file)).replace(/\.exe$/i, '');
+    if (neverRun.includes(name)) return Promise.reject(Object.assign(new Error(`${name} is not used in this project`), { code: 'ENOENT' }));
+    return runGiven(file, args, options);
+  };
+  const leaveOut = (ctx) => {
+    neverRun = toolsLeftOut({ tools: ['gh', 'glab'], folder: ctx.folder, answers: ctx.answers ?? {} });
+  };
   // The settings routes through the helper, for the person's own app's record: `profileRoutes`
   // stands in for them in tests; otherwise made when apply needs them.
   const profileFor = () => profileRoutes ?? helperProfile();
@@ -1897,8 +1914,11 @@ export function hostStep({
       const located = await findGit({ platform, run });
       if (located?.ok && typeof located.path === 'string') gitPath = located.path;
     } catch { /* the bare name */ }
-    let tool = await toolState(TOOL[host], { run, platform });
-    if (tool === 'missing' && !toolsStepDone(ctx)) tool = 'works';
+    // A tool the director (or the project's settings) said to leave out counts as missing, even where one is installed, and is
+    // not assumed to be coming from step 2.
+    const left = hostToolLeftOut(ctx, host);
+    let tool = left ? 'missing' : await toolState(TOOL[host], { run, platform });
+    if (tool === 'missing' && !left && !toolsStepDone(ctx)) tool = 'works';
     const cliSigned = tool === 'works' && (await ask(run, host, ['auth', 'status', '--hostname', addressOf(host, base)], base)).code === 0;
     const repo = product.isNew || product.joining || typeof product.repo !== 'string' ? null : product.repo;
     // A look at the choices alone reads nothing from the host: no remote is tried.
@@ -1940,11 +1960,12 @@ export function hostStep({
     // where setup would insist on it. Gives the project's record, written by the move. `ours` is the repository an earlier try
     // of this move made, and `made(repo)` keeps its name before it is made, so a try cut short carries on with it.
     async forProject({ host, private: isPrivate = true, folder, say = () => {}, stopped = () => false, made = () => {}, ours = null, narrow = false, locked = false, platform = process.platform, now = () => new Date() }) {
+      leaveOut({ folder, answers: {} });
       const halt = () => {
         if (stopped()) throw new Error(STOPPED);
       };
       const base = DEFAULT_GITLAB;
-      const opener = open ?? ((url) => openPage(url, { platform, run }));
+      const opener = open ??((url) => openPage(url, { platform, run }));
       const git = await findGit({ platform, run });
       if (!git?.ok || typeof git.path !== 'string') throw new Error('git is not on this computer yet');
       const { user } = await signIn({ host, run, say, stopped, base, open: opener, askSecret, platform });
@@ -1967,6 +1988,7 @@ export function hostStep({
     },
 
     async plan(ctx) {
+      leaveOut(ctx);
       const platform = ctx.platform ?? process.platform;
       const answers = ctx.answers ?? {};
       const answer = (id) => answers[`3.${id}`] ?? null;
@@ -2079,7 +2101,7 @@ export function hostStep({
       const keyState = mode === 'as-is' && !signedIn && ['none', 'push-only', 'refused'].includes(reach.found.key) ? reach.found.key : null;
       // The web API carries everything but pushes where the tool does not start or is not signed in; a proxy that keeps its
       // password in plain text cannot be given to it.
-      const tool = reach?.tool ?? await toolState(TOOL[host], { run, platform });
+      const tool = reach?.tool ?? (hostToolLeftOut(ctx, host) ? 'missing' : await toolState(TOOL[host], { run, platform }));
       const backend = backendFor({ mode, tool, signedByTool: reach?.cliSigned === true });
       if (backend === 'rest' && reach?.proxyPassword) return { wait: OWN_APP_WAIT_MS, why: PROXY_HAS_PASSWORD };
       const owner = product.isNew ? user : (product.repo === null ? null : product.repo.split('/').slice(0, -1).join('/'));
@@ -2181,6 +2203,7 @@ export function hostStep({
     },
 
     async apply(ctx, changes) {
+      leaveOut(ctx);
       const platform = ctx.platform ?? process.platform;
       const now = ctx.now ?? (() => new Date());
       const say = typeof ctx.say === 'function' ? ctx.say : () => {};

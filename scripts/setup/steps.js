@@ -70,7 +70,7 @@ import {
 } from '../lib/calm-words.js';
 import { PUSH_TEST_STEP, stepsFor } from '../lib/setup-run.js';
 import { installStep } from './install-step.js';
-import { toolsStep } from './tools.js';
+import { toolsStep, webRouteReady } from './tools.js';
 import { hostStep } from './host.js';
 import { questionsStep } from './questions.js';
 import { rulesStep } from './rules.js';
@@ -88,7 +88,7 @@ export { firstUnfinished } from '../lib/setup-run.js';
 export const planHash = (changes) => listHash(changes);
 
 const STEP_OF = {
-  1: installStep, 2: toolsStep, 3: hostStep, 4: questionsStep, 5: rulesStep, 6: computerStep, 7: projectFilesStep, 8: lockedStep, 9: notifyStep, 10: healthStep,
+  1: installStep, 2: () => toolsStep({ webReady: webRouteReady }), 3: hostStep, 4: questionsStep, 5: rulesStep, 6: computerStep, 7: projectFilesStep, 8: lockedStep, 9: notifyStep, 10: healthStep,
 };
 
 export const STEPS = Object.freeze(Object.keys(SETUP_TITLES).map(Number).sort((a, b) => a - b).map((n) => STEP_OF[n]()));

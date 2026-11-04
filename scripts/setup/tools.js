@@ -54,7 +54,9 @@ import { setupCommand, allowRule } from '../protection/settings.js';
 import { detectHost } from '../host/adapter.js';
 import { curlPath } from '../host/curl.js';
 import { branchesOf, chosenHost, remotesOf } from './local.js';
-import { readGitlabHosts } from '../host/gitlab-base.js';
+import { readGitlabHosts, gitlabBase, DEFAULT_GITLAB } from '../host/gitlab-base.js';
+import { borrowKey } from '../host/store.js';
+import { checkApiKey, hostAddress } from './host-access.js';
 import { caFile, exportSystemRoots, stageCaFile, caEnv, glabCaArgs, gitCaConfig, addressOf, failureKind, CERTIFICATE_NOT_IN_STORE } from '../host/company-ca.js';
 import { composeCard, isTooLong } from '../cards/compose.js';
 import { WHEELHOUSE_REPO } from '../lineage/manifest.js';
@@ -205,15 +207,16 @@ async function latestTag(fetch, releases) {
 
 // ---- glab from the company's own list ----
 
-export const GLAB_FROM_LINE = 'glabFrom reads "gitlab" (glab\'s official release, the default) or "company <path or address>" (your company\'s own list), so setup did not fetch glab';
+export const GLAB_FROM_LINE = 'glabFrom reads "gitlab" (glab\'s official release, the default) "company <path or address>" (your company\'s own list) or "none" (glab is never fetched), so setup did not fetch glab';
 const ADDRESS_ONLY_HTTPS = 'A company\'s address is fetched only over https, so setup did not fetch glab from it';
 const LIST_LIMIT = 1024 * 1024;
 
-// Where `glab` comes from: { kind: 'gitlab', from: null } (the official release) or
-// { kind: 'company', from } with `from` a path or an https address, as written in the setting.
+// Where `glab` comes from: { kind: 'gitlab', from: null } (the official release), { kind: 'none', from: null }
+// (it is never fetched) or { kind: 'company', from } with `from` a path or an https address, as written in the setting.
 export function glabSource({ setting } = {}) {
   const text = typeof setting === 'string' ? setting.trim() : '';
   if (text === '' || text === 'gitlab') return { kind: 'gitlab', from: null };
+  if (text === 'none') return { kind: 'none', from: null };
   const from = /^company(?:\s+(\S[\s\S]*))?$/.exec(text)?.[1]?.trim();
   if (!from) throw new Error(GLAB_FROM_LINE);
   if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(from)) {
@@ -229,12 +232,92 @@ export function glabSource({ setting } = {}) {
 // The project's `glabFrom` setting, read from its committed configuration without judging the rest
 // of the file; undefined when there is none.
 export function readGlabFrom(folder) {
+  return readToolFrom(folder, 'glab');
+}
+
+// The project's `glabFrom` or `ghFrom` setting, undefined when there is none.
+function readToolFrom(folder, tool) {
   try {
-    const value = JSON.parse(withoutBom(fs.readFileSync(path.join(folder, '.claude', 'wheelhouse.json'), 'utf8')))?.glabFrom;
+    const value = JSON.parse(withoutBom(fs.readFileSync(path.join(folder, '.claude', 'wheelhouse.json'), 'utf8')))?.[`${tool}From`];
     return typeof value === 'string' ? value : undefined;
   } catch {
     return undefined;
   }
+}
+
+// ---- Leaving a host's tool out ----
+//
+// A director whose company rules forbid `glab` (or `gh`) can tell setup never to fetch it: the host is then reached over
+// its web API with the key their git already holds (design sections 8.2 and 12). Three things say so, and the first
+// that does wins:
+//   - the project's committed configuration, `glabFrom: "none"` or `ghFrom: "none"`. This is safe to read from a
+//     folder an agent can write to: the value can only remove a download, never add or redirect one;
+//   - the director's answer to setup's choice (`2.host-tool-glab`, `2.host-tool-gh`);
+//   - otherwise the tool is fetched. The card recommends leaving it out when it is missing and the web route is ready
+//     (curl is here and git holds a key that passes `GET /user`), else fetching; a recommendation is taken only by
+//     Go ahead on the one card or by the director's own answer, never silently.
+// A tool already on this computer that starts is not asked about: the choice is only ever about a download.
+export const HOST_TOOL_NAME = Object.freeze({ gh: 'GitHub', glab: 'GitLab' });
+export const hostToolId = (tool) => `host-tool-${tool}`;
+export const hostToolLabels = (tool) => ({ fetch: `Fetch ${HOST_TOOL_NAME[tool]}'s tool`, none: `Don't use ${HOST_TOOL_NAME[tool]}'s tool` });
+
+// Whether the project's committed configuration says to leave the tool out.
+export const toolLeftOutBySettings = (folder, tool) => (typeof folder === 'string' ? readToolFrom(folder, tool)?.trim() === 'none' : false);
+
+// 'none' or 'fetch': what the settings and the director's answers say about a host tool; null when neither says.
+export function hostToolChoice({ tool, folder, answers = {} }) {
+  if (toolLeftOutBySettings(folder, tool)) return 'none';
+  const label = answers[`2.${hostToolId(tool)}`]?.label;
+  if (label === hostToolLabels(tool).none) return 'none';
+  if (label === hostToolLabels(tool).fetch) return 'fetch';
+  return null;
+}
+
+// The host tools among `tools` that the settings and the answers say to leave out.
+export const toolsLeftOut = ({ tools, folder, answers }) => tools.filter((tool) => hostToolChoice({ tool, folder, answers }) === 'none');
+
+// The question of step 2 for a missing host tool. Plain words: never "REST", "curl" or "API".
+export function hostToolCard(tool, { recommend }) {
+  const name = HOST_TOOL_NAME[tool];
+  const labels = hostToolLabels(tool);
+  return {
+    level: 2,
+    what: `${name}'s own tool isn't on this computer. Should Wheelhouse fetch it, or reach ${name} without it?`,
+    why: `If your company's rules don't allow ${name}'s tool, Wheelhouse can work without it, through ${name}'s web pages, with the key your git already uses or one you make.`,
+    options: [
+      { label: labels.fetch, says: `Wheelhouse fetches ${name}'s tool from its official release into its own tools folder, and checks it.` },
+      { label: labels.none, says: `Nothing is fetched. Wheelhouse reaches ${name} without its tool, and never runs it.` },
+    ],
+    recommend: recommend === 'none' ? labels.none : labels.fetch,
+    because: recommend === 'none' ? `your git already holds a key that ${name} accepts, so the tool isn't needed` : 'it is the usual route, and it is checked against the published checksums',
+    meanwhile: 'Nothing runs until you choose.',
+  };
+}
+
+// Whether the web route is ready for a host: curl is here and git holds a key for the host that passes `GET /user` (the
+// checks of step 3). The choices are listed often, so an answer from the real checks is kept for half a minute.
+// Never throws: any fault reads as not ready.
+const READY_FOR_MS = 30 * 1000;
+const readyKept = new Map();
+export async function webRouteReady({ tool, folder, platform = process.platform, gitPath, borrow = borrowKey, verify = checkApiKey, now = Date.now, exists }) {
+  const kept = borrow === borrowKey && verify === checkApiKey;
+  const memo = `${tool}|${folder}|${platform}`;
+  const earlier = kept ? readyKept.get(memo) : undefined;
+  if (earlier && now() - earlier.at < READY_FOR_MS) return earlier.ready;
+  let ready = false;
+  try {
+    if (curlStatus({ platform, gitPath, ...(exists === undefined ? {} : { exists }) }).found) {
+      const host = tool === 'gh' ? 'github' : 'gitlab';
+      const base = host === 'gitlab' ? gitlabBase({ config: readGitlabHosts(folder), remoteUrl: originUrl(folder) }) : DEFAULT_GITLAB;
+      const address = hostAddress(host, base);
+      const lent = await borrow({ host: new URL(address).host, base: address });
+      if (typeof lent?.key === 'string' && lent.key !== '') ready = (await verify({ host, base, key: lent.key })).state === 'works';
+    }
+  } catch {
+    ready = false;
+  }
+  if (kept) readyKept.set(memo, { ready, at: now() });
+  return ready;
 }
 
 const isAddress = (from) => /^https:\/\//i.test(from);
@@ -785,7 +868,7 @@ function directorFor(changes, platform) {
 // permission rules at once, so the full wording is tried first and, when it does not compose, a terse one:
 // one short clause for each, the source of a company's list shortened (all of it stays in the change,
 // and so under the plan hash). The warning that a company's copy has no checksum is in both.
-function cardFor(changes, status, platform) {
+function cardFor(changes, status, platform, leftOut = []) {
   const processes = changes.filter((x) => x.kind === 'process');
   const fetches = changes.filter((c) => c.action === 'fetch');
   const official = fetches.filter((c) => c.from !== 'company').map((c) => c.tool);
@@ -811,6 +894,7 @@ function cardFor(changes, status, platform) {
   if (changes.some((c) => c.action === 'archon-settings')) full.push('the build engine set to run its steps with Claude');
   if (changes.some((c) => c.action === 'broker')) full.push('the engine\'s broker, so the engine reaches GitHub only through Wheelhouse\'s helper and never holds a key');
   for (const c of changes.filter((x) => x.action === 'agent-engine')) full.push(c.words.full);
+  for (const tool of leftOut) full.push(`${HOST_TOOL_NAME[tool]}'s own tool: not fetched, so Wheelhouse reaches ${HOST_TOOL_NAME[tool]} without it`);
   if (rule) full.push(`${ruleWords} in this project's .claude/settings.local.json, so setup's own command is not asked about each time`);
   const terse = [];
   for (const c of processes) terse.push(c.action === 'wait' ? 'git: waiting for its installer' : 'git: its installer');
@@ -824,6 +908,7 @@ function cardFor(changes, status, platform) {
   if (changes.some((c) => c.action === 'archon-settings')) terse.push('the engine set to use Claude');
   if (changes.some((c) => c.action === 'broker')) terse.push('its broker to GitHub');
   for (const c of changes.filter((x) => x.action === 'agent-engine')) terse.push(c.words.terse);
+  for (const tool of leftOut) terse.push(`${HOST_TOOL_NAME[tool]}'s tool: not fetched`);
   if (rule) terse.push(ruleWords);
   const card = (what) => ({
     kind: 'setup',
@@ -881,6 +966,9 @@ export function toolsStep({
   run = realRun, fetch = globalThis.fetch, arch = process.arch, pluginRoot = PLUGIN_ROOT, env = process.env,
   pollMs = POLL_MS, sleep = pause, tempRoot = os.tmpdir(),
   engine = { wanted: engineWanted, changes: engineChanges, apply: applyEngine },
+  // Whether the web route is ready for a host tool (webRouteReady's arguments); a stand-in in tests. Setup's list of steps
+  // gives the real one; the default reads as not ready, so a step made alone recommends fetching.
+  webReady = async () => false,
 } = {}) {
   return {
     n: 2,
@@ -901,8 +989,24 @@ export function toolsStep({
       // A host tool that is found but will not start is blocked here: it is not fetched, and the project settles on the
       // host's web API (design section 8.2).
       const blocked = hostTools.filter((tool) => stageOf(status[tool]) === 'blocked');
-      for (const tool of hostTools) {
-        if (status[tool].ok || blocked.includes(tool)) continue;
+      // A missing tool may be left out (see "Leaving a host's tool out"): by the settings, by the director's answer, or, when
+      // no one has said, because the web route is ready.
+      const missing = hostTools.filter((tool) => !status[tool].ok && !blocked.includes(tool));
+      const gitPath = status.git.found ? status.git.path : undefined;
+      const leftOut = [];
+      for (const tool of missing) {
+        const said = hostToolChoice({ tool, folder: ctx.folder, answers: ctx.answers });
+        if (said === 'none') leftOut.push(tool);
+        // A look at the choices (scripts/setup/choices.js) stops at the first question, as steps 3 and 4 do. The
+        // recommendation is only ever a recommendation: a tool no one has said to leave out is fetched.
+        if (said === null && ctx.choicesOnly === true) {
+          const ready = await webReady({ tool, folder: ctx.folder, platform, gitPath });
+          return { ask: { id: hostToolId(tool), card: hostToolCard(tool, { recommend: ready ? 'none' : 'fetch' }) } };
+        }
+      }
+      if (ctx.choicesOnly === true) return { wait: 0, why: 'every choice of step 2 is made' };
+      for (const tool of missing) {
+        if (leftOut.includes(tool)) continue;
         const change = { kind: 'folder', target: toolFolder(tool), action: 'fetch', tool };
         // Where the project's glabFrom names the company's own list, glab comes from there; what the list
         // says (its version, whether it gives a checksum) goes on the card before anything is fetched.
@@ -924,8 +1028,8 @@ export function toolsStep({
       // The build engine and its broker, where this computer runs it (scripts/setup/engine-parts.js).
       if (engine?.wanted({ platform, hosts: projectHosts({ folder: ctx.folder, answers: ctx.answers }) })) changes.push(...engine.changes({ agent: agentOfProject(ctx.folder, { computerId: computerId() }) }));
       // Nothing to do settles the step, with no Go ahead (ruling R75).
-      if (changes.length === 0) return { settled: { record: { nothing: true, ...(blocked.length > 0 ? { blocked } : {}) } } };
-      return { changes, card: cardFor(changes, status, platform), director: directorFor(changes, platform) };
+      if (changes.length === 0) return { settled: { record: { nothing: true, ...(blocked.length > 0 ? { blocked } : {}), ...(leftOut.length > 0 ? { leftOut } : {}) } } };
+      return { changes, card: cardFor(changes, status, platform, leftOut), director: directorFor(changes, platform) };
     },
     // Starts every installer at once, first, and fetches the host tools meanwhile; writes the rule
     // once each installer's start is recorded; then waits, looking every pollMs, until git is in

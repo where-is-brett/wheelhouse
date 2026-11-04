@@ -51,6 +51,7 @@ function laptop({ glab = 'absent', keys }) {
     if (name === 'glab' || name === 'gh') {
       w.hostRuns.push(name);
       if (glab === 'absent') throw Object.assign(new Error(`spawn ${name} ENOENT`), { code: 'ENOENT' });
+      if (glab === 'works') return { code: 0, stdout: `${name} version 1.80.0\n`, stderr: '' };
       return { code: 1, stdout: '', stderr: 'This program is blocked by group policy.' };
     }
     if (name === 'git' && args[0] === 'config' && args[1] === '--get-urlmatch') return args[2] === 'credential.helper' ? { code: 0, stdout: 'manager\n', stderr: '' } : { code: 1, stdout: '', stderr: '' };
@@ -206,6 +207,34 @@ test('the same card comes again on a key the host later refuses, and nothing is 
       const { lines } = await applyStep(step, folder, again.changes, again.answers);
       assert.ok(lines.some((l) => /key has stopped working/.test(l)), lines.join('\n'));
       assert.deepEqual(w.stored.map((s) => s.key), [SECOND]);
+    } finally {
+      restore();
+    }
+  });
+});
+
+test('a glab the director said to leave out is never run, even where one is installed: step 3 settles on the web API', async () => {
+  await withHome(async () => {
+    const w = laptop({ glab: 'works', keys: { [PUSH_ONLY]: 'a-director' } });
+    const restore = useHelper(w);
+    try {
+      const folder = await productOn(w);
+      const step = stepFor(w);
+      // Control: with the tool installed and no word about it, the tool carries the project.
+      const usual = await answerAll(step, ctxFor(folder), pick);
+      assert.equal(usual.changes.find((c) => c.action === 'connection').backend, 'cli');
+      assert.ok(w.hostRuns.length > 0);
+      // The director's answer at step 2.
+      w.hostRuns.length = 0;
+      const answered = await answerAll(step, ctxFor(folder, { answers: { '2.host-tool-glab': said("Don't use GitLab's tool") } }), pick);
+      assert.equal(answered.changes.find((c) => c.action === 'connection').backend, 'rest');
+      assert.deepEqual(w.hostRuns, [], 'glab was not run');
+      // The project's committed settings say it too.
+      fs.writeFileSync(path.join(folder, '.claude', 'wheelhouse.json'), `${JSON.stringify({ gitlabHosts: ['git.example.org'], glabFrom: 'none' })}\n`);
+      const configured = await answerAll(step, ctxFor(folder), pick);
+      assert.equal(configured.changes.find((c) => c.action === 'connection').backend, 'rest');
+      assert.deepEqual(w.hostRuns, [], 'glab was not run');
+      for (const text of [JSON.stringify(configured.card), configured.director]) assert.doesNotMatch(text, /\bREST\b|\bcurl\b/i);
     } finally {
       restore();
     }
