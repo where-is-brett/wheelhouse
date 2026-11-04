@@ -23,7 +23,8 @@
 // Its private record is a local repository at stateDir(project): events are committed there and never pushed.
 import fs from 'node:fs';
 import path from 'node:path';
-import { stateDir, projectsDir } from '../lib/paths.js';
+import { stateDir, projectsDir, wheelhouseHome } from '../lib/paths.js';
+import { safeGit } from '../lib/safe-git.js';
 import { readProject, projectForFolder } from '../lib/projects.js';
 import { openRecord } from '../state/record.js';
 
@@ -143,6 +144,9 @@ export function updateLean(project, changes) {
 // Removes the project's Lean record, so the hooks, the session start and the board no longer place its folder
 // (ruling P5-51). Its state, beside the record, is left as it is.
 export function unregisterLean(project) {
+  // The add-on's pane doesn't offer the folder again.
+  const held = readLean(project);
+  if (held !== null) declineLean({ folder: held.folder });
   fs.rmSync(leanFile(project), { force: true });
 }
 
@@ -176,6 +180,100 @@ export function registerLean({ project, folder, now = () => new Date() }) {
     folder, store: null, copy: null, test: null, identity: null, registeredAt: now().toISOString(),
   });
 }
+
+// --- Lean's chat setup leaves no record; the director may register its folder from the add-on's pane ---
+//
+// Lean's chat setup runs with git alone, so it can write no record of its own, and an agent never registers a project
+// (design for other agents, section 8.2). On a computer where no Node.js 22 runs, the add-on offers, in its pane, to
+// register the folder setup left, and registers it only when the director presses Yes. Nothing registers on open.
+
+const DECLINED_FILE = 'lean-declined.json';
+const declinedFile = () => path.join(wheelhouseHome(), DECLINED_FILE);
+
+// The folders (real paths) the director answered Not now for, or took out of Lean (unregisterLean): not offered again.
+function declinedFolders() {
+  try {
+    const list = JSON.parse(fs.readFileSync(declinedFile(), 'utf8'));
+    return Array.isArray(list) ? list.filter((x) => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+// Remembers that `folder` is not to be offered again. Never throws.
+export function declineLean({ folder } = {}) {
+  try {
+    const real = realOrNull(folder);
+    if (real === null) return false;
+    const held = declinedFolders();
+    if (held.includes(real)) return true;
+    fs.mkdirSync(wheelhouseHome(), { recursive: true });
+    fs.writeFileSync(declinedFile(), `${JSON.stringify([...held, real], null, 2)}\n`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// The name a Lean project gets for `folder`: the folder's own name made safe, with a number added while that name is
+// another project's.
+export function leanNameFor(folder) {
+  const base = path.basename(folder).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '').slice(0, 60) || 'project';
+  for (let n = 1; ; n += 1) {
+    const name = n === 1 ? base : `${base}-${n}`;
+    const held = readLean(name);
+    if (readProject(name) === null && (held === null || realOrNull(held.folder) === folder)) return name;
+  }
+}
+
+// Whether git tracks `.wheelhouse/record/.gitkeep` in `folder`: the mark setup's commit leaves, which a file merely
+// written does not make.
+async function tracksRecord(folder, run) {
+  const call = safeGit({ run, cwd: folder, env: {}, reach: 'local', list: 'project', look: 'once', caller: 'lean', what: 'the Lean setup\'s record folder' });
+  const got = await call(['ls-files', '--error-unmatch', '--', '.wheelhouse/record/.gitkeep']);
+  return got.code === 0;
+}
+
+// The words about Node.js in the offer: 'old' (a Node.js is on the PATH but older than 22) or 'none' (none is visible to
+// VS Code). Wherever a Node.js 22 or later runs ('ok') nothing is offered: the helper's install card serves there.
+const NODE_WORDS = Object.freeze({
+  old: 'The Node.js on this computer is older than version 22, so Wheelhouse\'s helper would run inside VS Code.',
+  none: 'VS Code can\'t see a Node.js on this computer, so Wheelhouse\'s helper would run inside VS Code.',
+});
+
+// The offer for `folder`, { folder, line }, or null: nothing until `ready` (the add-on's switch, checked first); nothing for a folder that is a
+// project already, was declined, or isn't a git folder with the record folder tracked; nothing for one Claude Code
+// setup might want (it has a `.claude` folder or a CLAUDE.md); nothing where Node.js 22 runs. Reads only; never throws.
+export async function leanOffer({ folder, nodeState, run, ready } = {}) {
+  try {
+    if (ready !== true) return null;
+    if (!Object.hasOwn(NODE_WORDS, nodeState)) return null;
+    const real = typeof folder === 'string' && fullPath(folder) ? realOrNull(folder) : null;
+    if (real === null || projectForFolder(real) !== null || declinedFolders().includes(real)) return null;
+    const has = (...parts) => fs.existsSync(path.join(real, ...parts));
+    if (!has('.git') || has('.claude') || has('CLAUDE.md')) return null;
+    if (!(await tracksRecord(real, run))) return null;
+    return { folder: real, line: `Use this folder as your Lean project? ${real} ${NODE_WORDS[nodeState]}` };
+  } catch {
+    return null;
+  }
+}
+
+// The director's Yes: the offer is made again (so nothing stale registers), and the folder is registered under the name
+// the helper's install would give. Gives { project, record } or null.
+export async function useLeanFolder({ folder, nodeState, run, now, ready } = {}) {
+  try {
+    const offered = await leanOffer({ folder, nodeState, run, ready });
+    if (offered === null) return null;
+    const project = leanNameFor(offered.folder);
+    return { project, record: registerLean({ project, folder: offered.folder, now }) };
+  } catch {
+    return null;
+  }
+}
+
+// What the add-on's press path may call (vscode/press.cjs).
+export const LEAN_PRESS = Object.freeze({ useLeanFolder, declineLean });
 
 // The Lean project's private record, made when the folder is absent or empty, as every project's is
 // (scripts/state/record.js): no remote, so nothing is ever pushed from it. Gives the folder.
