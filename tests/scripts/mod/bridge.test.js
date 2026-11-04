@@ -1260,3 +1260,13 @@ test('a failed read of the open mark never fails the tick', () => withHome(async
   const answer = await handle(tickOf(repo, { idle: false }), live({ readOpen: () => { throw new Error('unreadable'); } }));
   assert.equal(answer.ok, true);
 }));
+
+test('the bridge started through the Node.js version check answers as it does started alone', () => withHome(async (home) => {
+  const floor = fileURLToPath(new URL('../../../scripts/hooks/node-floor.cjs', import.meta.url));
+  const run = (args) => spawnSync(process.execPath, args, { input: '{"cmd":"__proto__"}', encoding: 'utf8', env: { ...process.env, WHEELHOUSE_HOME: home }, timeout: 20000 });
+  const alone = run([BRIDGE]);
+  const through = run([floor, BRIDGE]);
+  assert.equal(through.status, alone.status);
+  assert.equal(through.stdout, alone.stdout);
+  assert.equal(JSON.parse(through.stdout.trim()).ok, false);
+}));

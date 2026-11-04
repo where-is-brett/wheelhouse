@@ -242,7 +242,7 @@ function entriesOf(sources) {
 // The mod's one entry file, the only module hooks/hooks.json and the validator's notes may name.
 const ENTRY = './register.ts';
 const ASK = 'hooks/mod/ask.ts';
-const ARGV = /^\s*\[\s*'node'\s*,\s*`\$\{\$\.plugin\.root\}\/scripts\/mod\/bridge\.js`\s*\]\s*$/;
+const ARGV = /^\s*\[\s*'node'\s*,\s*`\$\{\$\.plugin\.root\}\/scripts\/hooks\/node-floor\.cjs`\s*,\s*`\$\{\$\.plugin\.root\}\/scripts\/mod\/bridge\.js`\s*\]\s*$/;
 // The only options the call may pass: what goes in on standard input and how long to wait.
 const OPTION = /^(?:stdin|timeoutMs)\s*(?::|$)/;
 
@@ -305,7 +305,7 @@ const OPTIONS_WHY = 'passes options other than stdin and timeoutMs (an object li
 // spread, computed key or variable, any of which could change what runs.
 function bridgeArguments(args) {
   const [argv, options, ...more] = splitTop(args);
-  if (!ARGV.test(argv)) return "runs something other than ['node', `${$.plugin.root}/scripts/mod/bridge.js`], the bridge";
+  if (!ARGV.test(argv)) return "runs something other than ['node', `${$.plugin.root}/scripts/hooks/node-floor.cjs`, `${$.plugin.root}/scripts/mod/bridge.js`], the bridge";
   // A backstop on the text after the argv, unparsed, for what the reading of strings below
   // could miss (a regular expression holding a quote hides what follows it as a string): no
   // `/`, no backtick and neither word env nor cwd anywhere in it.

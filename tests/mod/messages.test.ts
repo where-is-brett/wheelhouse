@@ -692,7 +692,7 @@ test('a courier\'s wake that can\'t be handed on asks the bridge to undo its mar
       expect(seen.toasts).toEqual([NOT_HANDED])
       expect(unsent().map((r: any) => r.request)).toEqual([{ cmd: 'unsent', session: seen.ticks[0].session, cwd: ROOT, ids: IDS, at: AT }])
       expect(seen.ticks[0].session.startsWith(SESSION)).toBe(true)
-      expect(unsent()[0].argv[1]).toMatch(/\/scripts\/mod\/bridge\.js$/)
+      expect(unsent()[0].argv[2]).toMatch(/\/scripts\/mod\/bridge\.js$/)
       refused.clear()
       // The next tick's wake is handed on: no unsent.
       clear()
@@ -839,7 +839,7 @@ test('/wheelhouse-digest answers with the bridge\'s briefing', async ($, on) => 
       expect(result).toMatchObject({ text: BRIEFING })
       expect(seen.runs).toHaveLength(1)
       expect(seen.runs[0].argv[0]).toBe('node')
-      expect(seen.runs[0].argv[1]).toEndWith('/scripts/mod/bridge.js')
+      expect(seen.runs[0].argv[2]).toEndWith('/scripts/mod/bridge.js')
       expect(seen.runs[0].timeoutMs).toBe(6500)
       expect(seen.runs[0].request).toEqual({ cmd: 'digest', origin: kind, cwd: ROOT })
       expect(seen.toasts).toHaveLength(0)

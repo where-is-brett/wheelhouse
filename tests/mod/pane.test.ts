@@ -136,7 +136,7 @@ test('the front desk\'s session opens the pane and sets the status line from the
     await start($, surface)
     expect(seen.ticks).toHaveLength(1)
     expect(seen.ticks[0].argv[0]).toBe('node')
-    expect(seen.ticks[0].argv[1]).toEndWith('/scripts/mod/bridge.js')
+    expect(seen.ticks[0].argv[2]).toEndWith('/scripts/mod/bridge.js')
     expect(seen.ticks[0].timeoutMs).toBe(TICK_ASK_MS)
     expect(seen.ticks[0].request).toEqual({ cmd: 'tick', session: current.session, cwd: ROOT, idle: true, surface, drawn: null })
     expect(seen.opens).toEqual([{ id: PANE_ID, title: '2 cards wait' }])
