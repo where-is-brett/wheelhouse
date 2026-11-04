@@ -94,3 +94,10 @@ test('cards: the old helper\'s card is a real card whose set line names the help
     makeEvent({ kind: 'card', data: made.card, now: () => new Date('2026-11-04T10:00:00Z') });
   }
 });
+
+test('cards: the update card names the account settings entry it changes, in one plain line', () => {
+  const card = updateCard({ hash: HASH, from: 'v0.2.6', to: 'v0.2.7', says: 'x', account: { from: 'v0.2.6', to: 'v0.2.7' } });
+  assert.match(card.question, /Your account settings name Wheelhouse at v0\.2\.6; the update changes that one entry to v0\.2\.7\./);
+  assert.deepEqual(cardProblems(card), []);
+  assert.doesNotMatch(updateCard({ hash: HASH, from: 'v0.2.6', to: 'v0.2.7', says: 'x' }).question, /account settings/);
+});

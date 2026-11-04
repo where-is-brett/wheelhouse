@@ -91,6 +91,9 @@ function computer({ account = true, extraProjects = 0 } = {}) {
       if (id === 'add') {
         if (state.refuseAdd) return bad;
         const [, tag] = args[3].split('#');
+        // Claude Code refuses to add the catalogue again when the account's settings declare it at another ref.
+        const declared = fs.existsSync(accountFile) ? readJson(accountFile).extraKnownMarketplaces?.wheelhouse?.source?.ref : undefined;
+        if (declared !== undefined && declared !== tag) return bad;
         const known = readJson(file('known_marketplaces.json'));
         known.wheelhouse.source.ref = tag;
         writeJson(file('known_marketplaces.json'), known);
@@ -149,18 +152,48 @@ test('install: the catalogue is moved without ever naming project scope', async 
   assert.equal(pc.readJson(pc.accountFile).model, 'mine', 'nothing else in the account file changes');
 });
 
-test('install: with a follower project the user install and the account ref stay', async () => {
+test('install: with a follower project the user install stays', async () => {
   const pc = computer({ extraProjects: 0 });
   const follower = tempFolder('wh-inst-follower-');
   const done = await installRelease({ ...common(pc), target: target('v1.1.0'), projects: [pc.projectDir, follower] });
   assert.equal(done.ok, true, done.line);
-  assert.deepEqual(claudeCalls(pc).filter((c) => c.includes('marketplace add')), ['claude plugin marketplace add where-is-brett/wheelhouse#v1.1.0 --scope local']);
+  assert.deepEqual(claudeCalls(pc).filter((c) => c.includes('marketplace add')), ['claude plugin marketplace add where-is-brett/wheelhouse#v1.1.0 --scope user']);
   assert.equal(pc.recordAt('wheelhouse', 'user').gitCommitSha, RELEASES['v1.0.0'].sha, 'the user install stays');
-  assert.equal(pc.readJson(pc.accountFile).extraKnownMarketplaces.wheelhouse.source.ref, 'v1.0.0', 'the account ref stays');
+  assert.equal(pc.readJson(pc.accountFile).extraKnownMarketplaces.wheelhouse.source.ref, 'v1.1.0', 'Claude Code refuses the catalogue at a ref the account contradicts, so the one line moves');
   assert.equal(pc.recordAt('wheelhouse', 'project').gitCommitSha, RELEASES['v1.1.0'].sha);
-  assert.ok(!claudeCalls(pc).some((c) => c.includes('--scope user')), 'no user-scope command ran');
+  assert.ok(!claudeCalls(pc).some((c) => c.includes('plugin update') && c.includes('--scope user')), 'no user install was moved');
   assert.match(done.line, new RegExp(`stay at the earlier release for ${path.basename(follower)}`));
-  assert.equal(pc.readJson(pc.localFile).extraKnownMarketplaces.wheelhouse.source.ref, 'v1.1.0');
+});
+
+test('install: the account line is the only byte changed, and a failure puts the file back', async () => {
+  const pc = computer();
+  const before = fs.readFileSync(pc.accountFile, 'utf8');
+  const done = await installRelease({ ...common(pc), target: target('v1.1.0'), projects: [pc.projectDir] });
+  assert.equal(done.ok, true, done.line);
+  assert.equal(fs.readFileSync(pc.accountFile, 'utf8'), before.replace('"v1.0.0"', '"v1.1.0"'));
+  const bad = computer();
+  const original = fs.readFileSync(bad.accountFile, 'utf8');
+  bad.state.failUpdates = true;
+  const failed = await installRelease({ ...common(bad), target: target('v1.1.0'), projects: [bad.projectDir] });
+  assert.equal(failed.ok, false);
+  assert.equal(fs.readFileSync(bad.accountFile, 'utf8'), original, 'the account file is back as it was');
+});
+
+test('install: an account that names another source is refused and nothing changes', async () => {
+  const pc = computer();
+  fs.writeFileSync(pc.accountFile, JSON.stringify({ extraKnownMarketplaces: { wheelhouse: { source: { source: 'github', repo: 'someone/else', ref: 'v1.0.0' } } } }));
+  const kept = fs.readFileSync(pc.accountFile, 'utf8');
+  const done = await installRelease({ ...common(pc), target: target('v1.1.0'), projects: [pc.projectDir] });
+  assert.equal(done.ok, false);
+  assert.match(done.line, /not the Wheelhouse repository/);
+  assert.equal(fs.readFileSync(pc.accountFile, 'utf8'), kept);
+  assert.equal(claudeCalls(pc).length, 0, 'no claude command ran');
+  const broken = computer();
+  fs.writeFileSync(broken.accountFile, '{ nope');
+  const got = await installRelease({ ...common(broken), target: target('v1.1.0'), projects: [broken.projectDir] });
+  assert.equal(got.ok, false);
+  assert.equal(fs.readFileSync(broken.accountFile, 'utf8'), '{ nope');
+  assert.equal(claudeCalls(broken).length, 0);
 });
 
 test('install: an account that does not name the catalogue is left alone', async () => {

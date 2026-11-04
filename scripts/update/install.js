@@ -12,6 +12,7 @@ import { LookRefusal, safeGit } from '../lib/safe-git.js';
 import { registeredProjects } from '../lib/projects.js';
 import { MARKETPLACE, MARKETPLACE_PATH, claudeHome as defaultClaudeHome } from '../lineage/manifest.js';
 import { SETTINGS_FILE, claudeIn, reinstall } from '../lineage/release.js';
+import { accountCatalogue, moveAccountRef } from './account-settings.js';
 import { backup, restore } from './journal.js';
 
 const FULL_SHA = /^[0-9a-f]{40}$/;
@@ -71,12 +72,6 @@ export function accountFollowers({ claudeHome = defaultClaudeHome(), projects = 
   const installs = readJson(pluginsFile(claudeHome, 'installed_plugins.json'))?.plugins?.[`${plugin}@${marketplace}`];
   const own = Array.isArray(installs) ? installs.filter((i) => isObject(i) && i.scope === 'project').map((i) => i.projectPath) : [];
   return projects.filter((folder) => !own.some((p) => sameFolder(p, folder)));
-}
-
-// Whether the account's settings name Wheelhouse's catalogue (check 37).
-function accountNamesCatalogue(claudeHome, marketplace) {
-  const named = readJson(path.join(claudeHome, 'settings.json'))?.extraKnownMarketplaces;
-  return isObject(named) && Object.hasOwn(named, marketplace);
 }
 
 // The address the catalogue was first added from, in the form Claude Code recorded it.
@@ -154,8 +149,11 @@ const folderOf = (project, projectDir) => projectDir ?? (registeredProjects().fi
 // Spec 6.4, steps 1 to 5. Backs up the files the install may change, moves the catalogue, moves
 // every install at the chosen scopes, and checks each install is at the release's pin. When it
 // fails after the catalogue moved, the computer is put back (putBack). `target` is { tag, sha }.
-// The scope is 'user' only when the account names the catalogue and no registered project follows
-// it; otherwise 'local', and the user install is left alone. Safe to run again after a stop.
+// Where the account's settings declare the catalogue at an old ref, Claude Code refuses to add it at
+// a new tag, so that one `ref` is changed first (account-settings.js; the director's ruling of 4
+// November 2026) and the catalogue is added at user scope; the file is restored by any put-back. The
+// account's own installs move only when no registered project follows them; otherwise they stay.
+// Without such a declaration the add is at 'local' scope. Safe to run again after a stop.
 export async function installRelease({
   project, target, journal, run = defaultRun, resolved = resolveClaude(), projectDir, claudeHome = defaultClaudeHome(),
   marketplace = MARKETPLACE, projects,
@@ -175,8 +173,11 @@ export async function installRelease({
 
   const folders = projects ?? registeredProjects().map((p) => p.record.folder).filter((f) => typeof f === 'string');
   const followers = accountFollowers({ claudeHome, projects: folders, marketplace });
-  const accountMoves = accountNamesCatalogue(claudeHome, marketplace) && followers.length === 0;
-  const scopeFlag = accountMoves ? 'user' : 'local';
+  // Refused before anything moves: the account's file is not the Wheelhouse repository's, or can't be read.
+  const declared = accountCatalogue({ claudeHome, marketplace });
+  if (declared?.refused) return { ok: false, line: `${declared.refused} Nothing was installed.` };
+  const accountMoves = declared !== null && followers.length === 0;
+  const scopeFlag = declared !== null ? 'user' : 'local';
   const scopes = accountMoves ? ['project', 'user'] : ['project'];
 
   const note = readNote(journal);
@@ -191,6 +192,10 @@ export async function installRelease({
     return { ok: false, line: `${line} ${back.line}` };
   };
 
+  if (declared !== null) {
+    const edited = moveAccountRef({ claudeHome, tag, marketplace });
+    if (!edited.ok) return failed(`Wheelhouse ${tag} was not installed: ${edited.why}`);
+  }
   const moved = await moveCatalogue({ tag, sha, scope: scopeFlag, ...ctx });
   if (!moved.ok) return failed(`Wheelhouse ${tag} was not installed: ${moved.why}.`);
 

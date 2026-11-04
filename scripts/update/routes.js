@@ -26,6 +26,8 @@ import { projectForFolder } from '../lib/projects.js';
 import { run as realRun } from '../lib/run.js';
 import { listEvents } from '../state/events.js';
 import { readEnrolled, verify } from '../state/signing.js';
+import { claudeHome as claudeHomeDir } from '../lineage/manifest.js';
+import { accountCatalogue } from './account-settings.js';
 import { runningVersion } from './board.js';
 import { releaseKind, updateMirror } from './change.js';
 import { decline } from './declined.js';
@@ -163,7 +165,7 @@ function milestones(steps, tag) {
 export function updateRoutes({
   now = () => new Date(), stopped = () => false, updateHeld = updateLockHeld, from = runningVersion, userHome = os.homedir(),
   run = realRun, spawn = nodeSpawn, list, fetch, check, kind, locked, requirements, claudeVersion = async () => null, signed = signedByDefault, clicked = clickedByDefault,
-  startRunner,
+  startRunner, account,
 } = {}) {
   const listing = list ?? (() => listReleases({ run }));
   const fetching = fetch ?? ((tag) => fetchTag({ ref: tag, run, mirror: updateMirror() }));
@@ -197,6 +199,7 @@ export function updateRoutes({
       check: checking,
       kind: kindOf,
       requirements: (floors) => (requirements ?? floorLine)({ ...floors, claude }),
+      account: account ?? (() => accountCatalogue({ claudeHome: claudeHomeDir() })),
       locked: lockedBy,
     });
     if (made.plan === undefined) return { ok: true, lines: made.lines };

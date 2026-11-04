@@ -22,14 +22,18 @@ const flat = (text) => String(text).replace(/\s+/g, ' ').trim();
 // other (update design, section 4). `approval` is 'card' when the release is not pins-only (the director approves the reviewed
 // change when it is ready) and 'review' when Wheelhouse's review is enough. `put` is 'undo' for a put-back; `carryOn` for an
 // update part-way. `locked` says this computer has Locked, which shows a password window; `others` are the other projects
-// whose Locked stays on an older release. `hash` is the full hash of the plan the card is for.
-export function updateCard({ from, to, says, approval = 'review', locked = false, others = [], put = 'release', carryOn = false, hash }) {
+// whose Locked stays on an older release. `account` is { from, to } when the account's settings name the catalogue at an old release,
+// which the update changes (one line, named on the card). `hash` is the full hash of the plan the card is for.
+export function updateCard({ from, to, says, approval = 'review', locked = false, others = [], put = 'release', carryOn = false, account = null, hash }) {
   const back = put === 'undo';
   const title = carryOn ? `Carry on with the update to ${to}` : back ? `Put Wheelhouse back to ${to} \u00b7 ${from} \u2192 ${to}` : `Update Wheelhouse \u00b7 ${from} \u2192 ${to}`;
   const happens = [
     `your project gets a small reviewed change naming ${to}, then this computer installs it and hands over to the new helper.`,
     'About five minutes. Work in progress finishes first.',
   ];
+  if (account !== null && account !== undefined) {
+    happens.push(`Your account settings name Wheelhouse at ${account.from}; the update changes that one entry to ${account.to}.`);
+  }
   if (approval === 'card') {
     happens.push(`${to} changes more than its pins, so once the change is ready you approve it, as you approve any change to the safety rules (a card here in Claude Code, the helper's window with another agent). Update starts it; it is not that approval.`);
   }
