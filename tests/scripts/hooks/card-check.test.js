@@ -6,7 +6,7 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { decide, cardProblems, DECIDED_LEAD, PANE_LEAD } from '../../../scripts/hooks/card-check.js';
+import { decide, decideRepeat, cardProblems, DECIDED_LEAD, PANE_LEAD } from '../../../scripts/hooks/card-check.js';
 import { markPane, markHere, readOpen } from '../../../scripts/lib/session-files.js';
 import { hookMain } from '../../../scripts/hooks/kit.js';
 import { composeCard, blindInput } from '../../../scripts/cards/compose.js';
@@ -476,6 +476,18 @@ test('a decided card is refused, naming what counted and where', () => withHome(
   assert.ok(out.includes('answered Comma in the panel at 10:34'), out);
   assert.ok(out.includes('The export needs to know which separator to use.'));
   assert.ok(!out.includes('c-1'));
+}));
+
+test('the repeat check alone refuses a decided card, with no form or pane check', () => withHome(async () => {
+  const decided = outcome('c-1', separator, { at: whenLocal, label: 'Comma', where: 'panel' });
+  const input = withSession([{ question: separator.question.question }]);
+  live();
+  const out = reason(await decideRepeat(input, { ...quick, outcomes: () => [decided], now: later }));
+  assert.ok(out.startsWith(DECIDED_LEAD));
+  assert.ok(out.includes('answered Comma in the panel at 10:34'), out);
+  // A waiting card, a card of a wrong form and a live pane do not refuse it.
+  assert.equal(await decideRepeat(input, { ...quick, outcomes: () => [SEPARATOR] }), undefined);
+  assert.equal(await decideRepeat({ ...input, tool_input: { questions: [{ question: 'bare' }] } }, { ...quick, outcomes: () => [decided] }), undefined);
 }));
 
 test('a mixed call names the decided card and asks only the waiting one', () => withHome(async () => {

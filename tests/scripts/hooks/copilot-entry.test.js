@@ -50,7 +50,7 @@ function run(event, raw, { env = COPILOT_ENV, steps = {}, ...deps } = {}) {
     return out;
   };
   const all = {
-    stopGuard: spy('stopGuard'), lineageHold: spy('lineageHold'), toolGuard: spy('toolGuard'), areas: spy('areas'),
+    stopGuard: spy('stopGuard'), lineageHold: spy('lineageHold'), toolGuard: spy('toolGuard'), areas: spy('areas'), cardGuard: spy('cardGuard'),
     stopWord: spy('stopWord'), boardContext: spy('boardContext'), sessionStart: spy('sessionStart'),
     ...Object.fromEntries(Object.entries(steps).map(([name, fn]) => [name, async (input, d) => {
       calls.push({ name, input });
@@ -227,6 +227,36 @@ test('the real guards run from the entry, as Copilot starts it', async () => {
   assert.equal(JSON.parse(env.stdout).permissionDecision, 'deny');
   // An event the registration doesn't name is answered with nothing.
   assert.deepEqual(spawnEntry('postToolUse', call('view', { path: path.join(MAIN, 'README.md') })), { code: 0, stdout: '', stderr: '' });
+});
+
+// Check 59: ask_user's preToolUse input holds the card in `toolArgs.message`; the answer comes back as text only.
+const ASK = (message) => call('ask_user', { message, requestedSchema: { properties: { decision: { type: 'string', title: 'Choice', enum: ['Approve', 'Not now'], default: 'Approve' } } } });
+
+test('a card already answered is refused when ask_user is called again', async () => {
+  const asked = await run('preToolUse', ASK('Approve the plan?'), { steps: { cardGuard: () => answer.deny('The director has already answered: the plan') } });
+  assert.deepEqual(asked.calls.map((c) => c.name), ['stopGuard', 'lineageHold', 'toolGuard', 'areas', 'cardGuard']);
+  const last = asked.calls.at(-1).input;
+  assert.equal(last.tool_name, 'AskUserQuestion');
+  assert.deepEqual(last.tool_input.questions, [{ question: 'Approve the plan?' }]);
+  assert.deepEqual(body(asked), deny('The director has already answered: the plan'));
+  assert.equal(asked.code, 2);
+  // A card still waiting goes through.
+  const waiting = await run('preToolUse', ASK('Approve the plan?'));
+  assert.equal(waiting.text, '');
+  assert.equal(waiting.code, 0);
+  // Another tool, or an ask_user with no message, never reaches the repeat guard.
+  for (const raw of [call('bash', { command: 'ls' }), call('ask_user', {})]) {
+    assert.ok(!(await run('preToolUse', raw)).calls.some((c) => c.name === 'cardGuard'), JSON.stringify(raw));
+  }
+});
+
+test('the repeat guard fails open and ignores other tools and folders', async () => {
+  const { decideRepeat } = await import('../../../scripts/hooks/card-check.js');
+  // Unreadable state fails open.
+  const input = { cwd: MAIN, tool_name: 'AskUserQuestion', tool_input: { questions: [{ question: 'Approve the plan?' }] } };
+  assert.equal(await decideRepeat(input, { dir: MANAGED, outcomes: () => { throw new Error('unreadable'); } }), undefined);
+  assert.equal(await decideRepeat({ ...input, cwd: OUTSIDE }, { dir: MANAGED }), undefined);
+  assert.equal(await decideRepeat({ ...input, tool_name: 'Bash' }, { dir: MANAGED }), undefined);
 });
 
 test('the precompact hook answers without blocking', async () => {
