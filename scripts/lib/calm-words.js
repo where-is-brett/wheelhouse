@@ -27,6 +27,9 @@ export const SUGGEST_SAYS = 'Tell me what you\'d change; I\'ll come back with a 
 export const WHAT_WOULD_YOU_CHANGE = 'What would you change?';
 // The note shown once the director's words have been handed to the front desk.
 export const SENT_TO_FRONT_DESK = 'Sent to the First Mate. A new proposal will follow.';
+// The pane's small line on a card a question in the chat has open as well, and the toast after a press on it.
+export const OPEN_IN_CHAT = 'Also open in the chat.';
+export const OPEN_IN_CHAT_TOAST = 'Counted. The copy in the chat now changes nothing: pick anything or press Skip.';
 // The note for a suggestion made at a time: a new proposal is coming and nothing goes live meanwhile.
 export const suggestedAt = (hhmm) => `You suggested a change at ${hhmm}. A new proposal is on its way, and nothing goes live meanwhile.`;
 // The note for a suggestion typed in the chat, naming the card it is about.

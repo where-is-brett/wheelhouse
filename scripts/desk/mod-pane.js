@@ -139,9 +139,11 @@ function clockOf(now) {
 // read the record's views and card events, and STOP, from a desk source (paneFrom) instead of the files.
 export async function paneModel({
   project, cwd, now = () => new Date(), helperUp, client, previews = previewFor, loadInputs = loadBoardInputs, timeZone,
-  readRecord = async () => filesRecord(project), readStop = async () => stopState(), readGoalLive = (id) => goalLiveOf(project, id),
+  readRecord = async () => filesRecord(project), readStop = async () => stopState(), readGoalLive = (id) => goalLiveOf(project, id), openCards = null,
 } = {}) {
   const clock = clockOf(now);
+  // The cards a question in the chat has open now (sessions/<id>/open.json), when the caller has them.
+  const openIds = new Set(Array.isArray(openCards) ? openCards.filter((id) => typeof id === 'string') : []);
   const missing = [];
   if (clock === null) missing.push(NO_CLOCK);
   const inputs = await Promise.resolve().then(() => loadInputs({ cwd, now: () => clock ?? new Date(Number.NaN), offline: true })).catch(() => null);
@@ -201,7 +203,7 @@ export async function paneModel({
     if (item.card === undefined) {
       return [{
         id: item.id, n: item.n, header: HEADERS.question, kind: 'question', text: QUESTION_WAITS, hash: hashOf(QUESTION_WAITS), buttons: [], note: null, blocking: blocks(answerCardFor(item.question, views), views), asked: false, heldBack: item.heldBack === true,
-        parts: null, steered: null, waited: null, revised: false,
+        parts: null, steered: null, waited: null, revised: false, openInChat: false,
       }];
     }
     const card = waiting.get(item.card);
@@ -228,6 +230,7 @@ export async function paneModel({
       steered: clockTime(card.steered, timeZone),
       waited: askedSince(card.at, clock),
       revised: typeof data.revises === 'string',
+      openInChat: openIds.has(item.id),
     }];
   }), []);
   // The build's records that wait on the director with no card yet, as the session start counts
@@ -245,7 +248,7 @@ export async function paneModel({
     ].sort((a, b) => String(a.at).localeCompare(String(b.at)));
     return due.map((d, i) => ({
       id: d.id, n: cards.length + i + 1, header: HEADERS[d.kind], kind: d.kind, text: CARD_TO_MAKE, hash: hashOf(CARD_TO_MAKE), buttons: [], note: null, blocking: d.blocking, asked: false, heldBack: false,
-      parts: null, steered: null, waited: null, revised: false,
+      parts: null, steered: null, waited: null, revised: false, openInChat: false,
     }));
   }, []));
 

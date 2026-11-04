@@ -101,8 +101,20 @@ test('the pane lists the waiting cards in the board\'s numbering, each with its 
     ['Comma', 'record', 'filled'], ['Tab', 'record', 'outlined'], ['Suggest a change…', 'suggest', 'outlined'], ['Why?', 'why', 'small'],
   ]);
   // A question from the build that no card asks yet is one line and no buttons.
-  assert.deepEqual(line, { id: 'q:q-export-csv-2', n: 2, header: 'Question', kind: 'question', text: QUESTION_WAITS, hash: sha(QUESTION_WAITS), buttons: [], note: null, blocking: false, asked: false, heldBack: false, parts: null, steered: null, waited: null, revised: false });
+  assert.deepEqual(line, { id: 'q:q-export-csv-2', n: 2, header: 'Question', kind: 'question', text: QUESTION_WAITS, hash: sha(QUESTION_WAITS), buttons: [], note: null, blocking: false, asked: false, heldBack: false, parts: null, steered: null, waited: null, revised: false, openInChat: false });
   assert.equal(QUESTION_WAITS, 'A question from the build waits; the First Mate will ask it');
+}));
+
+test('a card open in the chat is marked openInChat, and the others are not', () => withHome(async (home) => {
+  const repo = register(home);
+  keepWaiting();
+  const none = await paneModel({ project: P, cwd: repo, now: () => NOW });
+  assert.deepEqual(none.cards.map((c) => c.openInChat), [false, false, false]);
+  const some = await paneModel({ project: P, cwd: repo, now: () => NOW, openCards: ['card-approval', 'q:q-export-csv-2'] });
+  assert.deepEqual(some.cards.map((c) => [c.id, c.openInChat]), [['card-approval', true], ['q:q-export-csv-2', false], ['card-answer', false]]);
+  // Anything that is not a list of ids marks nothing.
+  const bad = await paneModel({ project: P, cwd: repo, now: () => NOW, openCards: 'card-approval' });
+  assert.deepEqual(bad.cards.map((c) => c.openInChat), [false, false, false]);
 }));
 
 test('the board\'s waiting items carry ids, and the pane numbers them as the board and the front desk do', () => withHome(async (home) => {
