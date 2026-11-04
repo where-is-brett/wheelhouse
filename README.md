@@ -62,6 +62,26 @@ Where your conversations, transcripts and records go, and what uninstall removes
 
 What Wheelhouse protects you from, what it doesn't, and how to report a problem are in [`SECURITY.md`](SECURITY.md). Setup switches these protections on by itself; on a Mac you can also choose **Make it stricter** when it asks how to connect to GitHub or GitLab.
 
+## Updating
+
+From the first release that has it, `/wheelhouse:update` updates Wheelhouse: type it in a session on your product. A computer on `v0.2.6` or earlier has no such command, so it updates once from Terminal, with one paste. Run it yourself: open Terminal (PowerShell on Windows) in your product's folder, and replace `<tag>` with the release you are moving to, such as the next version on Wheelhouse's [releases page](https://github.com/where-is-brett/wheelhouse/releases).
+
+macOS:
+
+```text
+rm -rf ~/.wheelhouse/update/bootstrap/<tag> && git clone --depth 1 --branch <tag> https://github.com/where-is-brett/wheelhouse.git ~/.wheelhouse/update/bootstrap/<tag> && node ~/.wheelhouse/update/bootstrap/<tag>/scripts/update/cli.js bootstrap "$PWD"
+```
+
+Windows PowerShell:
+
+```text
+Remove-Item -Recurse -Force "$HOME\.wheelhouse\update\bootstrap\<tag>" -ErrorAction SilentlyContinue; git clone --depth 1 --branch <tag> https://github.com/where-is-brett/wheelhouse.git "$HOME\.wheelhouse\update\bootstrap\<tag>"; if ($LASTEXITCODE -eq 0) { node "$HOME\.wheelhouse\update\bootstrap\<tag>\scripts\update\cli.js" bootstrap "$PWD" }
+```
+
+Each line removes an earlier copy of that release's folder first, so pasting again is safe. It checks the release first, so a clone that doesn't check out stops with nothing changed. It then shows you what the update does, in words, and waits for you to type `1` to update or `2` for not now. Only you can answer it: it refuses to run unless you are typing at the Terminal yourself. After a `1` it installs the release on this computer, hands over to the new helper, and opens a small change in your product naming the release. That change is reviewed and merged like any other; until it is, the board says the change is waiting to be merged. If the change is refused or closed, this computer is put back to the release it had. Every update after this one is `/wheelhouse:update`.
+
+**If you can't run the paste,** close your Wheelhouse sessions, then follow the Install step above with the new release's name in place of `v0.2.6` (the catalogue and the plugin each move to the new release), start a new session on the folder, and type `/wheelhouse:update` to finish.
+
 ## On GitHub Copilot
 
 Wheelhouse also runs in VS Code with GitHub Copilot, with nothing else installed. This is its lean tier ("Lean"): you need VS Code with Copilot, and git. You don't need Node.js, a code host, administrator rights or anything else, and Wheelhouse installs nothing. Everything stays on your computer, and Copilot builds in your own chat, one feature at a time.

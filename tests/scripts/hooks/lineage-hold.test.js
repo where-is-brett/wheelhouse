@@ -239,7 +239,7 @@ test('while held, the front desk\'s reading commands run, as under STOP; its wri
   });
 });
 
-test('while held, the update command\'s four forms run, and no other form, flag, root or chained command does', async () => {
+test('while held, the update command\'s four forms run, and bootstrap does not, and no other form, flag, root or chained command does', async () => {
   await withHome(async (home) => {
     const main = makeProject();
     hold();
@@ -254,7 +254,7 @@ test('while held, the update command\'s four forms run, and no other form, flag,
     }
     for (const command of [
       `${cli}`, `${cli} plan latest`, `${cli} plan v0.2.8 extra`, `${cli} plan --force`, `${cli} apply`, `${cli} apply abc`, `${cli} apply ${hash} now`,
-      `${cli} status all`, `${cli} answer ${hash}`, `${cli} answer ${hash} "Delete it"`, `${cli} answer ../x Approve`, `${cli} bootstrap`,
+      `${cli} status all`, `${cli} answer ${hash}`, `${cli} answer ${hash} "Delete it"`, `${cli} answer ../x Approve`, `${cli} bootstrap`, `${cli} bootstrap "$PWD"`, `${cli} bootstrap /Users/me/my-project`, `script -q /dev/null ${cli} bootstrap "$PWD"`, `script -q /dev/null node "${PLUGIN}/scripts/update/cli.js" bootstrap /p`, `${cli} bootstrap --force`, `${cli} bootstrap a b`, `${cli} bootstrap ""`, `${cli} bootstrap . && rm -rf x`,
       `${cli} status && rm -rf x`, `${cli} status > out.txt`, `${cli} apply ${hash} | tee x`, `node /other/root/scripts/update/cli.js status`,
       `node "${PLUGIN}/scripts/update/run.js" p1 /x`, `node "${PLUGIN}/scripts/update/finish.js" p1`,
     ]) {
