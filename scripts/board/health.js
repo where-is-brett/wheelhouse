@@ -184,12 +184,38 @@ export function readScreens({ folder, findBrowser = realFindBrowser } = {}) {
   return { pages, chrome };
 }
 
+// The board's lines about Wheelhouse's own version and its updates (design 2026-11-04-update-command-design.md, section 14),
+// from scripts/update/board.js's updateFacts. The version line, with the date for a week after an update; the part-way lines
+// and a refresh left, at watch since they wait on the director; a project naming a release this computer lacks; a newer
+// release and an old helper still answering, which are calm.
+export function updateLines(update) {
+  if (update === null || typeof update !== 'object') return [];
+  const lines = [];
+  const day = dayMonthYear(update.updatedAt);
+  if (typeof update.version === 'string') lines.push({ level: 'ok', text: `Wheelhouse ${update.version}${day ? ` (updated ${day})` : ''}` });
+  if (typeof update.newer === 'string') lines.push({ level: 'ok', text: `${update.newer} is out; type /wheelhouse:update when you want it` });
+  const part = update.partway;
+  if (part && typeof part.tag === 'string') {
+    const tail = { merge: 'is waiting for its change to merge', idle: 'is waiting for work in progress to finish', stopped: 'stopped: type /wheelhouse:update to carry on' }[part.kind];
+    if (tail) lines.push({ level: 'watch', text: `Wheelhouse's update to ${part.tag} ${tail}` });
+  }
+  if (update.refresh && typeof update.refresh.tag === 'string') {
+    const left = typeof update.refresh.left === 'string' && update.refresh.left !== '' ? update.refresh.left : 'one refresh';
+    lines.push({ level: 'watch', text: `Wheelhouse ${update.refresh.tag} is installed, but ${left} is left: type /wheelhouse:update to finish it` });
+  }
+  if (update.mismatch) {
+    lines.push({ level: 'watch', text: `This project names ${update.mismatch.names} but this computer has ${update.mismatch.has}: type /wheelhouse:update to try again` });
+  }
+  if (typeof update.oldHelper === 'string') lines.push({ level: 'ok', text: `An older Wheelhouse helper (${update.oldHelper}) is still answering; the new one takes over when it is idle` });
+  return lines;
+}
+
 // The lines for the board, in order. Each is { level: 'ok' | 'watch' | 'stop', text }. `builds` is
 // buildsShown's reading for this computer, { level, lockedUnattended }; missing, it shows nothing.
 // `screens` is readScreens'; only pages listed and Chrome not found bring its line. `phonePush`
 // is setup's push test as this computer's journal last recorded it, { arrived, at }
 // (scripts/lib/setup-run.js, phonePushResult); only `arrived: false` adds a line.
-export function healthLines({ record, locked, stop, lock, helperUp, facts, renewal, keyRenewal, ownFiles, hostApproval, platform = process.platform, realUsers, builds, screens, phonePush, frontDeskModel, safekeeping, agentSandbox, watcher, now = new Date() } = {}) {
+export function healthLines({ record, locked, stop, lock, helperUp, facts, renewal, keyRenewal, ownFiles, hostApproval, platform = process.platform, realUsers, builds, screens, phonePush, frontDeskModel, safekeeping, agentSandbox, watcher, update, now = new Date() } = {}) {
   const lines = [];
   const add = (level, text) => lines.push({ level, text });
 
@@ -198,6 +224,7 @@ export function healthLines({ record, locked, stop, lock, helperUp, facts, renew
     add('stop', since ? `${STOP_LINE}, since ${since}` : STOP_LINE);
   }
   add('ok', locked ? 'Protection: Locked' : 'Protection: Standard');
+  for (const line of updateLines(update)) add(line.level, line.text);
   if (!locked && realUsers && platform === 'darwin') add('watch', LOCKED_WOULD_LINE);
   // Quick is the Mac's default, since the sandbox denies its sign-in files and the keychain (check 73),
   // so it brings no line there; on Windows, where nothing does, it is a calm note (design section 22).
@@ -236,6 +263,8 @@ export function healthLines({ record, locked, stop, lock, helperUp, facts, renew
   if (keyRenewal?.due) add('watch', `A new signing key is due: ${keyRenewal.why}`);
   // The weekly look at Wheelhouse's own files and the guard files of the agent it runs (scripts/health/own-files.js).
   if (typeof ownFiles?.line === 'string') add('watch', ownFiles.line);
+  // A version move the director's approved update explains is a calm line, one to a row, and no watch line (design section 8).
+  if (typeof ownFiles?.calm === 'string') for (const row of ownFiles.calm.split('\n').filter((r) => r !== '')) add('ok', row);
   // A project that needs your own approval on GitHub to merge (scripts/host/host-approval.js).
   if (hostApproval === true) add('ok', 'Merging needs your own approval on GitHub');
   if (phonePush?.arrived === false) add('watch', phonePushLine(phonePush.at));
