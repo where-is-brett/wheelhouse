@@ -6,6 +6,7 @@
 // It registers one command, wheelhouse.openPane, and nothing else that could press (scripts/addon/validate.js).
 'use strict';
 
+const crypto = require('node:crypto');
 const { renderPane, statusText } = require('./pane/render.js');
 const { makeNonces } = require('./nonce.cjs');
 const { onPaneMessage } = require('./press.cjs');
@@ -34,7 +35,7 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
   const startHelper = deps.startHelper ?? (() => desks.startHelperIfNeeded({ ask, node, root }));
 
   const nonces = makeNonces({ bytes: deps.nonceBytes ?? 32 });
-  const state = { last: null, notice: null, view: 'main', settings: null, briefing: '', offerPending: false, current: null, startedAt: 0, stopped: false };
+  const state = { last: null, notice: null, view: 'main', settings: null, briefing: '', offerPending: false, current: null, startedAt: 0, stopped: false, visibleAt: null, window: crypto.randomBytes(16).toString('hex') };
 
   const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   item.command = OPEN_PANE;
@@ -44,7 +45,8 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
   // Draws the pane again, with a new nonce: whatever the old page posts after this counts for nothing.
   function draw(force = false) {
     item.text = statusText(state.last);
-    if (state.current === null) return;
+    // A hidden pane is not drawn: showing it again draws it, with a new nonce.
+    if (state.current === null || state.current.visible === false) return;
     // Nothing drawn again when nothing changed, so what the director is typing or has open stays, and the nonce with it.
     const key = JSON.stringify([state.last, state.notice, state.view, state.settings, state.briefing]);
     if (!force && key === state.drawn && !state.offerPending) return;
@@ -53,7 +55,26 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
     state.offerPending = false;
     state.current.webview.html = renderPane(state.last, {
       nonce: nonces.renew(), view: state.view, settings: state.settings, briefing: state.briefing, notice: state.notice, offer,
+      trusted: trusted(),
     });
+  }
+
+  // Whether the open folder is trusted. Unknown counts as trusted only when VS Code says nothing at all.
+  const trusted = () => vscode.workspace?.isTrusted !== false;
+
+  // The mark that says a panel is live for this project (scripts/lib/vscode-pane.js): written on each tick and on a
+  // change of visibility. `visible` moves only while the pane is on screen, so a hidden pane goes stale in 45 seconds.
+  // Nothing is written for an untrusted folder, whose pane cannot answer a card. Never throws.
+  function mark() {
+    try {
+      if (state.current === null || !trusted()) return;
+      const project = typeof real.project === 'function' ? real.project() : deps.project ?? null;
+      const panes = deps.vscodePane ?? real.vscodePane;
+      if (typeof project !== 'string' || project === '' || !panes) return;
+      const at = Date.now();
+      if (state.current.visible !== false) state.visibleAt = at;
+      panes.markVscodePane(project, { at, visible: state.visibleAt, window: state.window });
+    } catch { /* The mark is a hint; a pane without one is simply not live. */ }
   }
 
   // Reads the pane model from the desk. When nothing answers the last view stays, with the reason above it.
@@ -82,6 +103,7 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
       state.notice = (state.last === null ? desks.NOTHING_READ : desks.HELPER_DOWN) + (node === null && !helperUp ? desks.NO_NODE : '');
     }
     draw();
+    mark();
   }
 
   // What the press needs, gathered for each message so the project and STOP are read as they are now.
@@ -120,8 +142,17 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
   context.subscriptions?.push(vscode.window.registerWebviewViewProvider(PANE_ID, {
     resolveWebviewView(view) {
       state.current = view;
-      view.webview.options = { enableScripts: true };
+      // No file is loaded into the page: its one script and style are inline, under the nonce.
+      view.webview.options = { enableScripts: true, localResourceRoots: [] };
       view.onDidDispose?.(() => { if (state.current === view) { state.current = null; nonces.clear(); } });
+      // Nothing is retained while hidden (no retainContextWhenHidden), so the page drawn before is gone: its nonce
+      // counts for nothing from the moment the pane hides, and showing it draws a new page with a new nonce.
+      view.onDidChangeVisibility?.(() => {
+        if (state.current !== view) return;
+        if (view.visible === false) nonces.clear();
+        else draw(true);
+        mark();
+      });
       view.webview.onDidReceiveMessage((message) => onPaneMessage(message, pressDeps()));
       if (deps.onView) deps.onView(view, add);
       draw(true);
@@ -179,6 +210,14 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
     }
   } catch { /* The chat's way in is an extra; the pane does not need it. */ }
   await refresh();
+
+  // The mark renews on its own timer, whatever the desk loop does (it may be idle, or there may be no desk), so a
+  // quiet visible pane stays live.
+  if (deps.loop !== false) {
+    const markTimer = setInterval(mark, TICK_MS);
+    markTimer.unref?.();
+    context.subscriptions?.push({ dispose() { clearInterval(markTimer); } });
+  }
 
   // Redraws when the desk says something changed, and looks again every tick when it says nothing.
   if (deps.loop !== false && desk !== null) {
