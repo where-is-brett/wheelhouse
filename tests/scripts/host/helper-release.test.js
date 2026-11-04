@@ -76,7 +76,7 @@ const config = readConfig(null);
 const settingsAt = (ref) => projectSettings(config, { release: { ref } });
 
 // The project's remote: main holds the settings at `baseRef`, and pull request 7 changes `files`.
-async function remoteWithPr({ baseRef = 'v1.0.0', files }) {
+async function remoteWithPr({ baseRef = 'v1.0.0', files, extra = false }) {
   const remote = await makeBareRemote({ repo: 'o/p' });
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-work-'));
   await g(work, 'init', '-q', '-b', 'main');
@@ -88,6 +88,8 @@ async function remoteWithPr({ baseRef = 'v1.0.0', files }) {
   write(work, files);
   await g(work, 'add', '-A');
   await g(work, 'commit', '-q', '-m', 'Release');
+  // A commit added on top of the change afterwards, as one pushed to its branch would be.
+  if (extra) await g(work, '-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '--allow-empty', '-m', 'Extra');
   const head = await g(work, 'rev-parse', 'HEAD');
   await g(work, 'push', '-q', 'origin', `${head}:refs/pull/7/head`);
   return { remote, head, cleanup: () => { remote.cleanup(); fs.rmSync(work, { recursive: true, force: true }); } };
@@ -331,7 +333,7 @@ test('the update\'s change: a release that is not pins-only merges only with the
 
 // Asks the helper's /pr/merge-release for pull request 7, with the update's records in place: the plan on record, the checks and
 // change steps of its journal, the update's provenance for the branch, and (when `clicked`) the director's signed click on Update.
-async function mergeByUpdate({ pr, repo, tag, put = 'release', clicked = true, setup = () => {}, headRef, plan = {}, folderEdit = null }) {
+async function mergeByUpdate({ pr, repo, tag, put = 'release', checksFrom = 'v1.0.0', clicked = true, setup = () => {}, headRef, plan = {}, folderEdit = null }) {
   const sha = repo.shas[tag];
   const home = shortHome();
   const merges = [];
@@ -353,7 +355,7 @@ async function mergeByUpdate({ pr, repo, tag, put = 'release', clicked = true, s
       const stored = { hash: 'a'.repeat(64), project: 'o__p', folder, at: '2026-10-19T00:00:00.000Z', plan: { from: 'v1.0.0', to: tag, sha, put, ...plan } };
       fs.mkdirSync(journal.folder, { recursive: true });
       fs.writeFileSync(path.join(journal.folder, 'plan.json'), JSON.stringify(stored));
-      journal.mark('checks', 'done', { tag, sha, from: 'v1.0.0', put });
+      journal.mark('checks', 'done', { tag, sha, from: checksFrom, put });
       journal.mark('change', 'done', { pr: 7 });
       opened(tag, sha, put === 'undo' ? undoBranch(sha) : releaseBranch(sha));
       if (clicked) record('action', { action: 'update-click', hash: stored.hash, from: 'v1.0.0', to: tag, put, label: 'Update', question: `Update Wheelhouse?\n${updateLine('v1.0.0', tag, put, stored.hash)}` }, 500);
@@ -376,7 +378,7 @@ async function mergeByUpdate({ pr, repo, tag, put = 'release', clicked = true, s
 test('the helper merges the update\'s own change only for the director\'s signed click, and only exactly the update\'s edit', async () => {
   const repo = await wheelhouseRepo();
   const tryIt = async (options) => {
-    const pr = await remoteWithPr({ files: options.files ?? released(options.tag) });
+    const pr = await remoteWithPr({ files: options.files ?? released(options.tag), extra: options.extra });
     try { return await mergeByUpdate({ pr, repo, ...options }); } finally { pr.cleanup(); }
   };
   try {
@@ -406,6 +408,15 @@ test('the helper merges the update\'s own change only for the director\'s signed
     const wrongBranch = await tryIt({ tag: 'v1.1.0', headRef: releaseBranch(repo.shas['v1.0.0']) });
     assert.deepEqual([wrongBranch.answer.ok, wrongBranch.answer.kind], [false, 'mismatch']);
     assert.deepEqual([extra, line, wrongBranch].flatMap((r) => r.merges), []);
+    // The branch moved after the update opened it (a commit on top): its parent is no longer on the main version.
+    const moved = await tryIt({ tag: 'v1.1.0', extra: true });
+    assert.deepEqual([moved.answer.ok, moved.answer.kind], [false, 'mismatch']);
+    assert.match(moved.answer.refused, /one commit directly on the main version/);
+    assert.deepEqual(moved.merges, []);
+    // The project's settings name another release than the one the update moves from.
+    const from = await tryIt({ tag: 'v1.1.0', plan: { from: 'v0.9.0' }, checksFrom: 'v0.9.0' });
+    assert.deepEqual([from.answer.ok, from.answer.kind], [false, 'mismatch']);
+    assert.deepEqual([moved, from].flatMap((r) => r.merges), []);
     // A plan on record for another release is not this release's.
     const other = await tryIt({ tag: 'v1.1.0', plan: { to: 'v1.2.0' } });
     assert.deepEqual([other.answer.ok, other.answer.kind], [false, 'mismatch']);

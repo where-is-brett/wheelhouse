@@ -8,10 +8,11 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { MISMATCH_LINE, decideMerge, exactChange } from '../../../scripts/update/merge.js';
+import { MISMATCH_LINE, decideMerge, exactChange, releasePushRefusal } from '../../../scripts/update/merge.js';
 import { changeSteps } from '../../../scripts/update/change.js';
 import { openJournal } from '../../../scripts/update/journal.js';
 import { runJob } from '../../../scripts/update/job.js';
+import { gitRoute } from '../../../scripts/host/local/home.js';
 import { bringFolderUpBesideOwn, folderTakes } from '../../../scripts/host/local/folder.js';
 import { SETTINGS_FILE, releaseBranch, releaseChange, settingsText, undoBranch } from '../../../scripts/lineage/release.js';
 import { projectSettings } from '../../../scripts/protection/settings.js';
@@ -28,14 +29,14 @@ const sides = (over = {}) => ({ base: baseText, head: goodHead, headMode: '10064
 const world = (over = {}) => ({
   stored: { plan: { from: 'v0.2.6', to: 'v0.2.7', sha: NEW, put: 'release' } },
   clicked: true,
-  journal: { steps: { checks: { state: 'done', data: { tag: 'v0.2.7', sha: NEW } }, change: { state: 'done', data: { pr: 12 } } } },
+  journal: { steps: { checks: { state: 'done', data: { tag: 'v0.2.7', sha: NEW, from: 'v0.2.6' } }, change: { state: 'done', data: { pr: 12 } } } },
   number: 12,
   put: 'release',
   release: 'v0.2.7',
   commit: NEW,
   pr: { state: 'open', headRef: releaseBranch(NEW), baseRef: 'main' },
   defaultBranch: 'main',
-  changes: { paths: [SETTINGS_FILE], files: { [SETTINGS_FILE]: sides() } },
+  changes: { paths: [SETTINGS_FILE], files: { [SETTINGS_FILE]: sides() }, shape: { parents: ['e'.repeat(40)], onMain: true } },
   update: { matched: true, ok: true, release: 'v0.2.7', commit: NEW, approved: true },
   pinsOnly: false,
   ...over,
@@ -78,6 +79,13 @@ test('a change that differs from the update\'s edit in any way is a mismatch tha
   refused({ journal: { steps: { checks: { state: 'done', data: { tag: 'v0.2.7', sha: OLD } }, change: { state: 'done', data: { pr: 12 } } } } }, /checked/);
   refused({ stored: { plan: { to: 'v0.2.8', sha: NEW, put: 'release' } } }, /card showed/);
   refused({ release: 'v0.2.8' }, /card showed/);
+  // A criss-cross: the head merges something else in (two parents), or sits on commits that are not on the main version.
+  const shaped = (shape) => ({ changes: { paths: [SETTINGS_FILE], files: { [SETTINGS_FILE]: sides() }, shape } });
+  refused(shaped({ parents: ['e'.repeat(40), 'f'.repeat(40)], onMain: false }), /one commit directly/);
+  refused(shaped({ parents: ['e'.repeat(40)], onMain: false }), /one commit directly/);
+  refused({ changes: { paths: [SETTINGS_FILE], files: { [SETTINGS_FILE]: sides() } } }, /one commit directly/);
+  // The project's settings name another release than the one the update moves from.
+  refused({ journal: { steps: { checks: { state: 'done', data: { tag: 'v0.2.7', sha: NEW, from: 'v0.2.0' } }, change: { state: 'done', data: { pr: 12 } } } } }, /another release/);
   // Another change than the one the update opened.
   refused({ number: 13 }, /opened/);
   // Wheelhouse's repository does not have the tag at that commit, or the state does not record the change as the update's.
@@ -89,12 +97,12 @@ test('a change that differs from the update\'s edit in any way is a mismatch tha
 test('an undo is merged only from the undo branch, for the earlier release the plan names', () => {
   const undo = world({
     stored: { plan: { from: 'v0.2.7', to: 'v0.2.6', sha: OLD, put: 'undo' } },
-    journal: { steps: { checks: { state: 'done', data: { tag: 'v0.2.6', sha: OLD } }, change: { state: 'done', data: { pr: 12 } } } },
+    journal: { steps: { checks: { state: 'done', data: { tag: 'v0.2.6', sha: OLD, from: 'v0.2.7' } }, change: { state: 'done', data: { pr: 12 } } } },
     put: 'undo',
     release: 'v0.2.6',
     commit: OLD,
     pr: { state: 'open', headRef: undoBranch(OLD), baseRef: 'main' },
-    changes: { paths: [SETTINGS_FILE], files: { [SETTINGS_FILE]: { base: settingsText(settingsAt('v0.2.7')), head: settingsText(releaseChange(settingsAt('v0.2.7'), { ref: 'v0.2.6', sha: OLD })), headMode: '100644' } } },
+    changes: { shape: { parents: ['e'.repeat(40)], onMain: true }, paths: [SETTINGS_FILE], files: { [SETTINGS_FILE]: { base: settingsText(settingsAt('v0.2.7')), head: settingsText(releaseChange(settingsAt('v0.2.7'), { ref: 'v0.2.6', sha: OLD })), headMode: '100644' } } },
     update: { matched: true, ok: true, release: 'v0.2.6', commit: OLD, approved: true },
   });
   assert.deepEqual(decideMerge(undo), { ok: true });
@@ -312,3 +320,37 @@ test('the helper is asked only for a change that is open, and a helper that cann
     assert.deepEqual(calls, []);
   } finally { p.tidy(); }
 }));
+
+test('only the update\'s own commit can be pushed to a release\'s branch', async () => {
+  const p = localProject();
+  try {
+    const branch = releaseBranch(OLD);
+    const check = () => releasePushRefusal({ git: gitRoute()(p.folder, { reach: 'local', what: 'the project\'s folder' }), branch });
+    // The update\'s commit: one commit on main changing the ref and nothing else.
+    git(p.folder, 'checkout', '-q', '-b', branch);
+    fs.writeFileSync(path.join(p.folder, SETTINGS_FILE), goodHead);
+    git(p.folder, 'commit', '-q', '-am', 'Move');
+    assert.equal(await check(), null);
+    // An agent\'s: a second commit, another file beside it, a different edit, or a merge.
+    git(p.folder, 'commit', '-q', '--allow-empty', '-m', 'Extra');
+    assert.match(await check(), /written by the update alone/);
+    git(p.folder, 'reset', '-q', '--hard', 'HEAD~1');
+    fs.writeFileSync(path.join(p.folder, 'notes.txt'), 'two\n');
+    git(p.folder, 'commit', '-q', '-am', 'More');
+    assert.match(await check(), /written by the update alone/);
+    git(p.folder, 'reset', '-q', '--hard', 'HEAD~1');
+    const edited = JSON.parse(goodHead);
+    edited.permissions = { allow: ['Bash(*)'] };
+    fs.writeFileSync(path.join(p.folder, SETTINGS_FILE), settingsText(edited));
+    git(p.folder, 'commit', '-q', '-am', 'Edit');
+    assert.match(await check(), /written by the update alone/);
+    git(p.folder, 'reset', '-q', '--hard', 'HEAD~1');
+    git(p.folder, 'checkout', '-q', 'main');
+    git(p.folder, 'checkout', '-q', '-b', 'side');
+    fs.writeFileSync(path.join(p.folder, 'notes.txt'), 'side\n');
+    git(p.folder, 'commit', '-q', '-am', 'Side');
+    git(p.folder, 'checkout', '-q', branch);
+    git(p.folder, 'merge', '-q', '--no-ff', '-m', 'Merge', 'side');
+    assert.match(await check(), /written by the update alone/);
+  } finally { p.tidy(); }
+});

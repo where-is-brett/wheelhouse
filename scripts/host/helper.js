@@ -144,7 +144,7 @@ import { checkOwnFiles, ownFilesLine } from '../health/own-files.js';
 import { listReleases } from '../update/release.js';
 import { lookForLatest, readLatest } from '../update/board.js';
 import { openJournal, updateLockHeld } from '../update/journal.js';
-import { decideMerge } from '../update/merge.js';
+import { RELEASE_PUSH_REFUSAL, decideMerge, releasePushRefusal } from '../update/merge.js';
 import { clickedByDefault, updateRoutes } from '../update/routes.js';
 import { keyRenewalDue, lastKeyRenewal } from '../state/key-renewal.js';
 import { brokerRoutes } from '../engine/broker/routes.js';
@@ -335,7 +335,11 @@ export async function changedPaths({ mirror, host, number, headSha, defaultBranc
       const [before, after] = [await blobAt(must, base, file), await blobAt(must, prRef, file)];
       files[file] = { base: before.text, head: after.text, headMode: after.mode };
     }
-    return { paths, config: await changeConfig(must), files };
+    // The head's shape: its parents, and whether the one parent is on the default branch's history (the tip as just fetched, or
+    // behind it). The update's merge needs a head that is one commit directly on the main version (scripts/update/merge.js).
+    const parents = (await must(['rev-list', '--parents', '-n', '1', prRef], 'reading the head\'s parents')).trim().split(/\s+/).slice(1);
+    const onMain = parents.length === 1 && (await inMirror(['merge-base', '--is-ancestor', parents[0], BASE_REF])).code === 0;
+    return { paths, config: await changeConfig(must), files, shape: { parents, onMain } };
   } finally {
     await inMirror(['update-ref', '-d', prRef]);
   }
@@ -1644,6 +1648,10 @@ export async function startHelper({
     // only that one. Like /pull's, this reads the folder's HEAD, which a session can rewrite, so it
     // keeps a session's commands to their own branch, but holds no hostile agent.
     if (byFolder && branchOf(dir) !== branch) return { ok: false, refused: PUSH_REFUSALS.notOwn };
+    if (RELEASE_BRANCH.test(branch)) {
+      const why = await releasePushRefusal({ git: gitRoute({ run })(dir, { reach: 'local', what: 'the project\'s folder' }), branch }).catch(() => RELEASE_PUSH_REFUSAL);
+      if (why !== null) return { ok: false, refused: why };
+    }
     try {
       if (isPartialClone(dir)) return { ok: false, refused: PUSH_REFUSALS.partialClone };
     } catch {
