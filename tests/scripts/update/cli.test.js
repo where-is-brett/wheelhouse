@@ -84,10 +84,48 @@ test('cli: answer relays a label on a card and signs nothing; only the known lab
 });
 
 test('cli: nothing but the four forms is taken, and the usage names them', async () => {
-  for (const argv of [[], ['remove'],['plan', 'v0.2.8', 'extra'], ['status', 'x'], ['apply'], ['apply', HASH, 'x']]) {
+  for (const argv of [[], ['remove'],['plan', 'v0.2.8', 'extra'], ['status', 'x'], ['wait', 'x'], ['apply'], ['apply', HASH, 'x']]) {
     const got = await run(argv);
     assert.equal(got.code, 1, argv.join(' '));
     assert.deepEqual(got.calls, []);
   }
-  assert.match(USAGE, /plan \[<tag>\], apply <hash>, status, answer <card> <label>/);
+  assert.match(USAGE, /plan \[<tag>\], apply <hash>, status, wait, answer <card> <label>/);
+});
+
+test('cli: wait looks again until the update is done, has stopped or has a card to ask, and prints status\'s JSON', async () => {
+  const states = [
+    { ok: true, state: 'none', lines: ['No update is under way on this computer.'] },
+    { ok: true, state: 'running', lines: ['Updating Wheelhouse to v0.2.7.'] },
+    { ok: true, state: 'done', lines: ['Wheelhouse v0.2.7 is installed. Start a new session on this folder to use it.'] },
+    { ok: true, state: 'running', lines: ['never read'] },
+  ];
+  const slept = [];
+  let clock = 0;
+  const calls = [];
+  const client = { update: { status: async (b) => { calls.push(b); return states.shift(); } } };
+  let out = '';
+  const code = await main(['wait'], { cwd: '/p', client, out: (t) => { out += t; }, err: () => {}, sleep: async (ms) => { slept.push(ms); clock += ms; }, now: () => clock });
+  assert.equal(code, 0);
+  assert.equal(JSON.parse(out).state, 'done');
+  assert.equal(calls.length, 3);
+  assert.deepEqual(slept, [3000, 2000, 2000]);
+});
+
+test('cli: wait gives up after a minute and a half with the update still running, and stops at once for a card', async () => {
+  let clock = 0;
+  let out = '';
+  const running = { update: { status: async () => ({ ok: true, state: 'running', lines: ['Waiting.'] }) } };
+  await main(['wait'], { cwd: '/p', client: running, out: (t) => { out += t; }, err: () => {}, sleep: async (ms) => { clock += ms; }, now: () => clock });
+  assert.equal(JSON.parse(out).state, 'running');
+  assert.ok(clock >= 90000 && clock < 100000, String(clock));
+  clock = 0;
+  out = '';
+  const asking = { update: { status: async () => ({ ok: true, state: 'running', lines: ['x'], asks: [{ id: 'release-1', card: 'Q' }] }) } };
+  await main(['wait'], { cwd: '/p', client: asking, out: (t) => { out += t; }, err: () => {}, sleep: async (ms) => { clock += ms; }, now: () => clock });
+  assert.equal(JSON.parse(out).asks.length, 1);
+  assert.equal(clock, 3000);
+  const down = { update: { status: async () => ({ ok: false, refused: 'could not be reached' }) } };
+  out = '';
+  await main(['wait'], { cwd: '/p', client: down, out: (t) => { out += t; }, err: () => {}, sleep: async () => {}, now: () => 0 });
+  assert.equal(JSON.parse(out).state, 'unreachable');
 });

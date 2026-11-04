@@ -13,6 +13,7 @@ import { pathToFileURL } from 'node:url';
 import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
+import { openJournal } from '../../../scripts/update/journal.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
 import { makeEvent, eventPath } from '../../../scripts/state/events.js';
@@ -20,7 +21,7 @@ import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { takeLock } from '../../../scripts/state/lock.js';
 import { projectSettings } from '../../../scripts/protection/settings.js';
 import { readConfig } from '../../../scripts/gate/guardrails.js';
-import { releaseLine } from '../../../scripts/state/card-lines.js';
+import { releaseLine, updateLine } from '../../../scripts/state/card-lines.js';
 import { RELEASE_WHY, briefingLine, releaseBranch, releaseChange, settingsText, undoBranch } from '../../../scripts/lineage/release.js';
 import { makeBareRemote, push as plainPush, g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
@@ -323,5 +324,95 @@ test('the update\'s change: a release that is not pins-only merges only with the
     const moved = await tryMerge({ setup: () => answered('v1.0.0', 'v1.2.0', other), files: released('v1.2.0'), commit: other, tag: 'v1.2.0' });
     assert.equal(moved.answer.ok, false);
     assert.deepEqual(moved.merges, []);
+  } finally { repo.cleanup(); }
+});
+
+// --- The update merges its own change (update design, section 21) ---
+
+// Asks the helper's /pr/merge-release for pull request 7, with the update's records in place: the plan on record, the checks and
+// change steps of its journal, the update's provenance for the branch, and (when `clicked`) the director's signed click on Update.
+async function mergeByUpdate({ pr, repo, tag, put = 'release', clicked = true, setup = () => {}, headRef, plan = {}, folderEdit = null }) {
+  const sha = repo.shas[tag];
+  const home = shortHome();
+  const merges = [];
+  const branch = headRef ?? (put === 'undo' ? undoBranch(sha) : releaseBranch(sha));
+  try {
+    return await as(home, async () => {
+      const folder = path.join(home, 'work');
+      fs.mkdirSync(path.join(folder, '.claude'), { recursive: true });
+      await g(folder, 'init', '-q', '-b', 'main');
+      fs.writeFileSync(path.join(folder, SETTINGS), settingsText(settingsAt('v1.0.0')));
+      await g(folder, 'add', '-A');
+      await g(folder, '-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '-m', 'Base');
+      if (folderEdit) folderEdit(folder);
+      writeProject('o__p', { folder, remoteUrl: pr.remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
+      const { computer, publicKey } = makeSigningKey();
+      enrol({ computer, publicKey, enrolledAt: '2026-10-19T00:00:00.000Z' });
+      await openTestRecord({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: pr.remote.url });
+      const journal = openJournal('o__p');
+      const stored = { hash: 'a'.repeat(64), project: 'o__p', folder, at: '2026-10-19T00:00:00.000Z', plan: { from: 'v1.0.0', to: tag, sha, put, ...plan } };
+      fs.mkdirSync(journal.folder, { recursive: true });
+      fs.writeFileSync(path.join(journal.folder, 'plan.json'), JSON.stringify(stored));
+      journal.mark('checks', 'done', { tag, sha, from: 'v1.0.0', put });
+      journal.mark('change', 'done', { pr: 7 });
+      opened(tag, sha, put === 'undo' ? undoBranch(sha) : releaseBranch(sha));
+      if (clicked) record('action', { action: 'update-click', hash: stored.hash, from: 'v1.0.0', to: tag, put, label: 'Update', question: `Update Wheelhouse?\n${updateLine('v1.0.0', tag, put, stored.hash)}` }, 500);
+      setup();
+      const adapter = {
+        defaultBranch: async () => 'main',
+        prState: async () => ({ headSha: pr.head, headRef: branch, baseRef: 'main', mergeable: 'mergeable', state: 'open', body: BODY }),
+        ciState: async (s) => ({ sha: s, state: 'success' }),
+        merge: async (args) => { merges.push(args); return { merged: true }; },
+      };
+      const helper = await startHelper({ run: hostGuard, address: testAddress(home), adapterFor: async () => adapter, envFor: async () => ({}), wheelhouseRepo: repo.url, refreshMirror: async () => ({ ok: true }) });
+      try {
+        const answer = await helperClient({ address: helper.address }).mergeReleasePr({ project: 'o__p', number: 7, release: tag, commit: sha, put });
+        return { answer, merges };
+      } finally { await helper.close(); }
+    });
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+}
+
+test('the helper merges the update\'s own change only for the director\'s signed click, and only exactly the update\'s edit', async () => {
+  const repo = await wheelhouseRepo();
+  const tryIt = async (options) => {
+    const pr = await remoteWithPr({ files: options.files ?? released(options.tag) });
+    try { return await mergeByUpdate({ pr, repo, ...options }); } finally { pr.cleanup(); }
+  };
+  try {
+    // A pins-only release, clicked: merged, with no review and no card.
+    const merged = await tryIt({ tag: 'v1.1.0' });
+    assert.equal(merged.answer.ok, true, JSON.stringify(merged.answer));
+    assert.equal(merged.merges.length, 1);
+    // The same call with no signed click on the Update card (an agent's own) merges nothing.
+    const forged = await tryIt({ tag: 'v1.1.0', clicked: false });
+    assert.deepEqual([forged.answer.ok, forged.answer.kind], [false, 'held']);
+    assert.deepEqual(forged.merges, []);
+    // A release that changes more than the pins needs the signed card answer too.
+    const noCard = await tryIt({ tag: 'v1.2.0' });
+    assert.deepEqual([noCard.answer.ok, noCard.answer.kind], [false, 'held']);
+    assert.match(noCard.answer.refused, /approval/);
+    assert.deepEqual(noCard.merges, []);
+    const sha = repo.shas['v1.2.0'];
+    const withCard = await tryIt({ tag: 'v1.2.0', setup: () => answered('v1.0.0', 'v1.2.0', sha, 1500) });
+    assert.equal(withCard.answer.ok, true, JSON.stringify(withCard.answer));
+    assert.equal(withCard.merges.length, 1);
+    // An extra file, another line changed, or a branch naming another commit: a mismatch, nothing merged.
+    const pins = repo.shas['v1.1.0'];
+    const extra = await tryIt({ tag: 'v1.1.0', files: { ...released('v1.1.0'), 'package.json': '{}\n' } });
+    assert.deepEqual([extra.answer.ok, extra.answer.kind], [false, 'mismatch']);
+    const line = await tryIt({ tag: 'v1.1.0', files: { [SETTINGS]: settingsText({ ...releaseChange(settingsAt('v1.0.0'), { ref: 'v1.1.0', sha: pins }), autoCompactWindow: 100000 }) } });
+    assert.deepEqual([line.answer.ok, line.answer.kind], [false, 'mismatch']);
+    const wrongBranch = await tryIt({ tag: 'v1.1.0', headRef: releaseBranch(repo.shas['v1.0.0']) });
+    assert.deepEqual([wrongBranch.answer.ok, wrongBranch.answer.kind], [false, 'mismatch']);
+    assert.deepEqual([extra, line, wrongBranch].flatMap((r) => r.merges), []);
+    // A plan on record for another release is not this release's.
+    const other = await tryIt({ tag: 'v1.1.0', plan: { to: 'v1.2.0' } });
+    assert.deepEqual([other.answer.ok, other.answer.kind], [false, 'mismatch']);
+    // A settings file of the director's own with changes is not merged over.
+    const dirty = await tryIt({ tag: 'v1.1.0', folderEdit: (folder) => fs.appendFileSync(path.join(folder, SETTINGS), ' ') });
+    assert.deepEqual([dirty.answer.ok, dirty.answer.kind], [false, 'held']);
+    assert.match(dirty.answer.refused, /changes of its own/);
+    assert.deepEqual(dirty.merges, []);
   } finally { repo.cleanup(); }
 });

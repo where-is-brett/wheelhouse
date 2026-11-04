@@ -77,6 +77,30 @@ export async function bringFolderUp({ project, folder, branch, git = gitRoute(),
   return (await here.ok(['merge', '--ff-only', '--no-overwrite-ignore', '--quiet', home])) ? { moved: true } : { line: OWN_CHANGES_LINE };
 }
 
+export const NOT_ON_MAIN_LINE = 'Your folder is on another branch, so the newest version waits.';
+export const SETTINGS_CHANGED_LINE = 'Your folder has changes of its own to the project\'s Wheelhouse settings, so the update waits. Commit them or set them aside.';
+
+// Whether the folder can take a change to `file` without touching anything of the director's: it is on `branch`, and `file` has
+// no change of its own, staged, unstaged or untracked. Gives null when it can, else the line saying why not.
+export async function folderTakes({ folder, branch, file, git = gitRoute() }) {
+  const here = inFolder(folder, git);
+  const on = await here.call(['symbolic-ref', '-q', 'HEAD']);
+  if (on.code !== 0 || String(on.stdout).trim() !== `refs/heads/${branch}`) return NOT_ON_MAIN_LINE;
+  const changed = await here.call(['--no-optional-locks', 'status', '--porcelain', '--untracked-files=all', '--', file]);
+  return changed.code === 0 && String(changed.stdout).trim() === '' ? null : SETTINGS_CHANGED_LINE;
+}
+
+// Like bringFolderUp, for a change that touches one file the folder holds no change of (folderTakes): the director's other
+// uncommitted files stay as they are. A fast-forward touches only the files the change touches, and git refuses it, leaving
+// everything as it was, where one of those holds a change of its own. Gives { moved } or { line }.
+export async function bringFolderUpBesideOwn({ project, folder, branch, file, git = gitRoute(), from = null }) {
+  const why = await folderTakes({ folder, branch, file, git });
+  if (why !== null) return { line: why };
+  const { state, home } = await reading({ project, folder, branch, git, from });
+  if (state !== 'home-ahead') return { moved: false, state };
+  return (await inFolder(folder, git).ok(['merge', '--ff-only', '--no-overwrite-ignore', '--quiet', home])) ? { moved: true } : { line: OWN_CHANGES_LINE };
+}
+
 // Uninstall's: gives the folder all the home holds, so the folder's git is a full copy once the home has gone. The main line
 // comes by bringFolderUp, or by a merge where the two parted. { line } says why it waits, and { kept } names the line that
 // holds the home's main version where the merge clashed. A line the folder has no copy of comes as itself, and one that

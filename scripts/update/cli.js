@@ -10,6 +10,9 @@
 //                           signed click on that card (recorded when they click it in Claude Code).
 //   status                  { lines, state, asks? }: how the update stands, and any card for the director to answer,
 //                           each as { id, card }, to be asked exactly as given.
+//   wait                    status, looked at again every couple of seconds until the update is done, has stopped or has a card to
+//                           ask, or a minute and a half has passed: the same JSON as status. For right after apply, so an update
+//                           that goes through in one run shows its result at once.
 //   answer <card> <label>   relays an answer. It signs nothing. For the Update card (named by the plan's hash) a Not now
 //                           is kept, so nothing asks about that release again. For the cards the update raised (the
 //                           approval of a release, the old helper's), the director's click was signed by the prompt record
@@ -26,7 +29,13 @@ import { NO_TERMINAL, bootstrap, terminalAsk } from './bootstrap.js';
 
 export class CliError extends Error {}
 
-export const USAGE = 'Commands: plan [<tag>], apply <hash>, status, answer <card> <label>, bootstrap <project folder>';
+export const USAGE = 'Commands: plan [<tag>], apply <hash>, status, wait, answer <card> <label>, bootstrap <project folder>';
+export const WAIT_MS = 90 * 1000;
+export const WAIT_EVERY_MS = 2 * 1000;
+// The update's journal may still be the last update's for a moment after apply, so a first look comes after this.
+export const WAIT_FIRST_MS = 3 * 1000;
+const WAIT_BEGIN_MS = 15 * 1000;
+const napping = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 const HASH = /^[0-9a-f]{64}$/;
 const TAG = /^v\d+\.\d+\.\d+(?:-[A-Za-z0-9][A-Za-z0-9.-]{0,40})?$/;
 const CARD = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
@@ -49,7 +58,7 @@ async function ask(route, body) {
 const unreached = (got) => got?.ok === false && /could not be reached|did not answer in time/.test(String(got.refused));
 
 export async function main(argv, {
-  cwd = process.cwd(), client, stdin = process.stdin, typedAnswer, bootstrapDeps = {}, out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t),
+  cwd = process.cwd(), client, stdin = process.stdin, typedAnswer, bootstrapDeps = {}, sleep = napping, now = Date.now, out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t),
 } = {}) {
   try {
     const [form, ...rest] = argv;
@@ -64,19 +73,33 @@ export async function main(argv, {
       if (!HASH.test(rest[0])) throw new CliError('Give the full hash of the plan on the card, as plan gave it');
       const { ok, ...answer } = await ask(helper.update.apply, { folder, hash: rest[0] }); // eslint-disable-line no-unused-vars
       json(answer);
-    } else if (form === 'status' && rest.length === 0) {
-      let got;
-      try {
-        got = await helper.update.status({ folder });
-      } catch {
-        got = { ok: false, refused: 'could not be reached' };
-      }
-      if (unreached(got)) {
-        json({ lines: [UNREACHABLE], state: 'unreachable' });
-      } else {
+    } else if ((form === 'status' || form === 'wait') && rest.length === 0) {
+      // One look at how the update stands, as the JSON status prints; its unreachable line when the helper is not answering.
+      const look = async () => {
+        let got;
+        try {
+          got = await helper.update.status({ folder });
+        } catch {
+          got = { ok: false, refused: 'could not be reached' };
+        }
+        if (unreached(got)) return { lines: [UNREACHABLE], state: 'unreachable' };
         if (got?.ok !== true) throw new CliError(got?.refused ?? 'The host helper refused the request');
         const { ok, lines, ...rest_ } = got; // eslint-disable-line no-unused-vars
-        json({ lines: (Array.isArray(lines) ? lines : []).map((l) => String(l).replace(BREAKS, ' ')), ...rest_ });
+        return { lines: (Array.isArray(lines) ? lines : []).map((l) => String(l).replace(BREAKS, ' ')), ...rest_ };
+      };
+      if (form === 'status') {
+        json(await look());
+      } else {
+        const began = now();
+        await sleep(WAIT_FIRST_MS);
+        let seen = await look();
+        // 'none' just after apply is the runner not having begun yet, so it is looked at again for a few seconds.
+        const going = () => (seen.state === 'running' || (seen.state === 'none' && now() - began < WAIT_BEGIN_MS)) && !(seen.asks?.length > 0);
+        while (going() && now() - began < WAIT_MS) {
+          await sleep(WAIT_EVERY_MS);
+          seen = await look();
+        }
+        json(seen);
       }
     } else if (form === 'answer' && rest.length === 2) {
       if (!CARD.test(rest[0])) throw new CliError('Give the card as plan or status named it');

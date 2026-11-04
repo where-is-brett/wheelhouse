@@ -134,7 +134,7 @@ function isSetupRead(command, pluginRoots, platform) {
 }
 
 // The update command's forms (scripts/update/cli.js), by their exact words: `plan`, `plan <tag>`, `apply <hash>` (the plan's
-// full SHA-256), `status` and `answer <card> <label>` (a card the update named and one of the labels its cards have). The lineage
+// full SHA-256), `status`, `wait` and `answer <card> <label>` (a card the update named and one of the labels its cards have). The lineage
 // hold lets exactly these through, since an update is often the way out of a broken install (update design, section 15). Under
 // STOP the helper refuses `apply`, and this guard lets none of them through. `bootstrap` is not among them: the director pastes it into
 // their own Terminal, so an agent session never runs it, and every hook refuses it.
@@ -147,7 +147,7 @@ export function isUpdateCommand(command, pluginRoots, platform) {
   const [form, ...rest] = args;
   if (form === 'plan') return rest.length === 0 || (rest.length === 1 && UPDATE_TAG.test(rest[0]));
   if (form === 'apply') return rest.length === 1 && /^[0-9a-f]{64}$/.test(rest[0]);
-  if (form === 'status') return rest.length === 0;
+  if (form === 'status' || form === 'wait') return rest.length === 0;
   if (form === 'answer') return rest.length === 2 && UPDATE_CARD.test(rest[0]) && UPDATE_ANSWERS.includes(rest[1]);
   return false;
 }
