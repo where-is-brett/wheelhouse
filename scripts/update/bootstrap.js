@@ -26,6 +26,7 @@ import { helperClient } from '../host/helper-client.js';
 import { claudeHome as defaultClaudeHome } from '../lineage/manifest.js';
 import { projectForFolder } from '../lib/projects.js';
 import { run as defaultRun } from '../lib/run.js';
+import { safeGit } from '../lib/safe-git.js';
 import { openJournal } from './journal.js';
 import { updateMirror } from './change.js';
 import { checksOutLine } from './plan.js';
@@ -52,7 +53,9 @@ const readJson = (file) => {
 // What the folder this script runs from is: the tag (plugin.json's version) and its commit.
 async function cloneTag({ root, run }) {
   const version = readJson(path.join(root, '.claude-plugin', 'plugin.json'))?.version;
-  const got = await run('git', ['-C', root, 'rev-parse', 'HEAD'], { input: '' });
+  // Through the fenced route, never reading the clone's own configuration (it is only the folder the paste fetched).
+  const fenced = safeGit({ run, cwd: root, look: 'never' });
+  const got = await fenced(['rev-parse', 'HEAD'], { input: '' });
   const sha = got.code === 0 ? got.stdout.trim() : null;
   return typeof version === 'string' && /^[0-9a-f]{40}$/.test(sha ?? '') ? { tag: `v${version}`, sha } : null;
 }
