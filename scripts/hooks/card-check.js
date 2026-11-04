@@ -10,6 +10,10 @@
 // recommended (none on a blind card, whose set line marks it), and none Explain more. The prompt record is what refuses a wrong click, so this
 // only informs: it refuses nothing it can't read, and a failure of its own lets the card through.
 // A card that doesn't come from scripts/cards/compose.js can fail it; one that does cannot.
+// Before the form check, in a project's folder, two more refusals (one card, one answer): a question whose card the
+// director has already decided is refused with what counted and where, and, for the front desk with a live pane beside
+// it, a card the pane gives buttons to is held back unless the director asked for it in the chat. A call that goes
+// through notes the cards it is open on. Both inform and fail open.
 // In any folder, a card that reads as the baseline card (any of its fixed words however written, or
 // its header with the private note's figures) is refused unless it is the very card the helper
 // composed and recorded as shown, word for word: a reworded copy would carry the figures without
@@ -27,6 +31,15 @@ import {
   setLinesOf, replyCode, replyCodeLine, runbookLine, isLiftStopLine, BLIND_LINE, RUNBOOK_TITLES, SETUP_TITLES, ID, LANES, TRUST_LINE, TAKEOVER_LINE, PAIR_LINE, UNINSTALL_LINE, KEEP_CONTROL_LINE, USAGE_LINE, PREMIUM_LINE, START_GOAL_LINE,
 } from '../state/card-lines.js';
 import { startedAsScript } from '../lib/started-as-script.js';
+import { cardOutcomes } from '../state/views.js';
+import { listEvents } from '../state/events.js';
+import { readEnrolled } from '../state/signing.js';
+import { stateDir } from '../lib/paths.js';
+import { subjectOf, answeredWords } from '../cards/answered.js';
+import { paneLive, takeHere, markOpen, HOLD_FOR_PANE } from '../lib/session-files.js';
+import { sessionRole } from '../lib/role.js';
+import { cardButtons } from '../mod/buttons.js';
+import { standing } from './prompt-record.js';
 
 const SHA12 = '([0-9a-f]{12})';
 // The plain lines a card needs before its last: the question, why it is the director's and what happens meanwhile. A
@@ -144,7 +157,48 @@ function baselineFaults(questions, now, { figures = true } = {}) {
   });
 }
 
-export async function decide(input, { projectOf: find = projectOf, dir, now = () => new Date() } = {}) {
+export const DECIDED_LEAD = 'The director has already answered: ';
+export const PANE_LEAD = 'These cards are in the panel beside the chat: ';
+
+// The cards the questions are, as `standing` matches them: for each question, { card } while it waits or
+// { card, stale } once decided; a question matching no card is left out. Throws when the state can't be read.
+function cardsOf(questions, project, outcomes) {
+  const all = (outcomes ?? (() => cardOutcomes(listEvents(stateDir(project), { report: () => {} }), readEnrolled())))(project);
+  const clicks = questions.map((q) => ({ question: q?.question }));
+  const found = standing(clicks, all);
+  return clicks.map((click) => found.get(click) ?? null);
+}
+
+const plural = (n, one, many) => (n === 1 ? one : many);
+
+// The deny for cards the director has decided already, or for cards the live pane answers, or undefined; and the
+// ids a call that goes through is open on. Hooks inform and fail open: any failure here lets the questions through.
+function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere: take, holdForPane, role }) {
+  const questions = input.tool_input.questions;
+  const at = now();
+  const found = cardsOf(questions, project, outcomes);
+  const decided = found.filter((f) => f?.stale);
+  if (decided.length > 0) {
+    const lines = decided.map((f) => `${subjectOf(f.stale.card)}: ${answeredWords(f.stale, at)}`);
+    return { deny: `${DECIDED_LEAD}${lines.join('; ')}. Ask none of them again, and say so in one plain line. Ask the cards still waiting with \`again <n>\`.` };
+  }
+  const waiting = found.filter(Boolean);
+  const session = input.session_id;
+  const pane = (f) => cardButtons(f.card.data).buttons.some((b) => b.does === 'record' || b.does === 'turn');
+  const held = waiting.filter(pane);
+  if (held.length > 0 && holdForPane && role({ sessionId: session, cwd: input.cwd }) === 'front-desk'
+    && live(session, at.getTime()) && !take(session, held.map((f) => f.card.id), at.getTime())) {
+    const n = held.length;
+    const others = found.filter((f) => f === null || !held.includes(f)).length > 0;
+    return { deny: `${PANE_LEAD}${n}. Say in one line, before anything else, that ${n} ${plural(n, 'card waits', 'cards wait')} in the panel and that you can ask ${plural(n, 'it', 'them')} here instead. Give no card's words, number or id.${others ? ' Ask only the others.' : ''}` };
+  }
+  return { open: waiting.map((f) => f.card.id) };
+}
+
+export async function decide(input, {
+  projectOf: find = projectOf, dir, now = () => new Date(), outcomes, paneLive: live = paneLive, takeHere: take = takeHere,
+  markOpen: open = markOpen, holdForPane = HOLD_FOR_PANE, role = sessionRole,
+} = {}) {
   if (input.tool_name !== tools.ask) return undefined;
   const questions = input.tool_input?.questions;
   if (!Array.isArray(questions)) return undefined;
@@ -153,12 +207,28 @@ export async function decide(input, { projectOf: find = projectOf, dir, now = ()
   const baseline = baselineFaults(questions, now, { figures: recorded });
   if (baseline.length > 0) return answer.deny(`The director has not seen this card. ${baseline.join(' ')}`);
   if (!inProject) return undefined;
+  let open_ = null;
+  try {
+    const checked = oneCardCheck(input, find(input.cwd, { dir }).project, { now, outcomes, paneLive: live, takeHere: take, holdForPane, role });
+    if (checked.deny !== undefined) return answer.deny(checked.deny);
+    open_ = checked.open;
+  } catch {
+    // The state can't be read: the questions are asked as they were.
+  }
   const faults = questions.flatMap((q, i) => {
     if (typeof q?.question !== 'string') return [];
     const name = typeof q.header === 'string' && q.header !== '' ? `Question ${i + 1} ("${q.header}")` : `Question ${i + 1}`;
     return cardProblems(q).map((problem) => `${name} ${problem}.`);
   });
-  if (faults.length === 0) return undefined;
+  if (faults.length === 0) {
+    // The call goes through: note the cards it is open on, so a stopped question can be told about later.
+    try {
+      if (open_ !== null && open_.length > 0) open(input.session_id, open_, now().getTime());
+    } catch {
+      // Nothing is noted.
+    }
+    return undefined;
+  }
   return answer.deny(`The director has not seen this card, which is not in the form their cards take. ${faults.join(' ')} ${REFUSAL_END}`);
 }
 

@@ -6,7 +6,8 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { decide, cardProblems } from '../../../scripts/hooks/card-check.js';
+import { decide, cardProblems, DECIDED_LEAD, PANE_LEAD } from '../../../scripts/hooks/card-check.js';
+import { markPane, markHere, readOpen } from '../../../scripts/lib/session-files.js';
 import { hookMain } from '../../../scripts/hooks/kit.js';
 import { composeCard, blindInput } from '../../../scripts/cards/compose.js';
 import { baselineCard } from '../../../scripts/measures/baseline.js';
@@ -446,3 +447,105 @@ test('a goal\'s card carries no reply code, and one that carries a code is refus
   assert.ok(!card.includes('Reply code:'));
   assert.match(cardProblems(`${card}\nReply code: ABCD`).join(' '), /start-goal card has none/);
 });
+
+// --- One card, one answer: the two denies (decided card, live pane) ---
+
+const SID = 'sess-one';
+const T0 = Date.UTC(2026, 10, 4, 0, 0, 0);
+const at = (ms) => new Date(T0 + ms);
+const question = (what, extra = {}) => composeCard({ ...INPUTS.question, what, ...extra });
+const outcome = (id, made, decided = null) => ({ card: { id, data: made.card }, decided });
+const quick = { projectOf: () => ({ project: 'owner__name' }), now: () => at(0) };
+const withSession = (q, over = {}) => ({ ...call(...q), session_id: SID, ...over });
+const whenLocal = new Date(2026, 10, 4, 10, 34, 0).toISOString();
+const later = () => new Date(2026, 10, 4, 11, 0, 0);
+
+const separator = question('The export needs to know which separator to use.');
+const colour = question('The report needs a colour scheme.');
+const SEPARATOR = outcome('c-1', separator);
+const COLOUR = outcome('c-2', colour);
+const PLAIN = question('Which folder should the report go in?').question;
+
+const live = () => markPane(SID, { at: T0, drawn: T0, surface: 'desktop' });
+const run = (input, over = {}) => decide(input, { ...quick, role: () => 'front-desk', ...over });
+
+test('a decided card is refused, naming what counted and where', () => withHome(async () => {
+  const decided = outcome('c-1', separator, { at: whenLocal, label: 'Comma', where: 'panel' });
+  const out = reason(await run(withSession([separator.question]), { outcomes: () => [decided], now: later }));
+  assert.ok(out.startsWith(DECIDED_LEAD));
+  assert.ok(out.includes('answered Comma in the panel at 10:34'), out);
+  assert.ok(out.includes('The export needs to know which separator to use.'));
+  assert.ok(!out.includes('c-1'));
+}));
+
+test('a mixed call names the decided card and asks only the waiting one', () => withHome(async () => {
+  const decided = outcome('c-1', separator, { at: whenLocal, label: 'Comma', where: 'chat' });
+  const out = reason(await run(withSession([separator.question, colour.question]), { outcomes: () => [decided, COLOUR], now: later }));
+  assert.ok(out.includes('The export needs to know which separator to use.'));
+  assert.ok(!out.includes('colour scheme'));
+  assert.match(out, /again <n>/);
+}));
+
+test('a question matching no card passes', () => withHome(async () => {
+  assert.equal(await run(withSession([colour.question]), { outcomes: () => [SEPARATOR] }), undefined);
+}));
+
+test('a live pane holds back a card with buttons', () => withHome(async () => {
+  live();
+  const out = reason(await run(withSession([separator.question]), { outcomes: () => [SEPARATOR] }));
+  assert.ok(out.startsWith(PANE_LEAD));
+  assert.match(out, /1 card waits in the panel/);
+  assert.ok(!out.includes('separator') && !out.includes('c-1'));
+}));
+
+test('a live pane with other questions in the call says to ask only the others', () => withHome(async () => {
+  live();
+  const out = reason(await run(withSession([separator.question, colour.question, PLAIN]), { outcomes: () => [SEPARATOR, COLOUR] }));
+  assert.match(out, /2 cards wait in the panel/);
+  assert.match(out, /Ask only the others\./);
+}));
+
+test('a stale pane lets it through, and open.json holds the ids', () => withHome(async () => {
+  markPane(SID, { at: T0 - 46000, drawn: T0 - 46000, surface: 'desktop' });
+  assert.equal(await run(withSession([separator.question]), { outcomes: () => [SEPARATOR] }), undefined);
+  assert.deepEqual(readOpen(SID).cards, ['c-1']);
+}));
+
+test('a setup card goes through with a live pane', () => withHome(async () => {
+  live();
+  const setup = composeCard(INPUTS.setup);
+  assert.equal(await run(withSession([setup.question]), { outcomes: () => [outcome('c-3', setup)] }), undefined);
+}));
+
+test('a plain question with no card goes through with a live pane', () => withHome(async () => {
+  live();
+  assert.equal(await run(withSession([PLAIN]), { outcomes: () => [SEPARATOR] }), undefined);
+}));
+
+test('a feature session\'s card goes through with a live pane', () => withHome(async () => {
+  live();
+  assert.equal(await run(withSession([separator.question]), { outcomes: () => [SEPARATOR], role: () => 'feature' }), undefined);
+}));
+
+test('here lets them through once, and the second call at once is denied', () => withHome(async () => {
+  live();
+  markHere(SID, ['c-1'], T0);
+  assert.equal(await run(withSession([separator.question]), { outcomes: () => [SEPARATOR] }), undefined);
+  assert.ok(reason(await run(withSession([separator.question]), { outcomes: () => [SEPARATOR] })).startsWith(PANE_LEAD));
+}));
+
+test('HOLD_FOR_PANE off lets cards through', () => withHome(async () => {
+  live();
+  assert.equal(await run(withSession([separator.question]), { outcomes: () => [SEPARATOR], holdForPane: false }), undefined);
+}));
+
+test('a state that cannot be read lets the call through', () => withHome(async () => {
+  live();
+  const broken = () => { throw new Error('unreadable'); };
+  assert.equal(await run(withSession([separator.question]), { outcomes: broken }), undefined);
+}));
+
+test('a card with a form fault is still refused when no card matches', () => withHome(async () => {
+  const bad = { ...separator.question, question: 'Short' };
+  assert.match(reason(await run(withSession([bad]), { outcomes: () => [] })), /not in the form/);
+}));
