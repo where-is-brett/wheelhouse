@@ -25,7 +25,7 @@ const FULL_SHA = /^[0-9a-f]{40}$/;
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
-function readSettings(projectDir) {
+export function readSettings(projectDir) {
   try {
     const parsed = JSON.parse(fs.readFileSync(path.join(projectDir, ...SETTINGS_FILE.split('/')), 'utf8'));
     return isObject(parsed) ? parsed : null;
