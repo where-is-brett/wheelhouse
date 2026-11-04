@@ -15,6 +15,7 @@ const path = require('node:path');
 // says so the first-run offer shows the picture of the drag, once.
 const PANE_MOVES = false;
 const OFFER = 'Put Wheelhouse on the right';
+const UNTRUSTED = 'Wheelhouse runs only in a folder you trust, since it signs your clicks with this computer\'s key.';
 const DRAG_PICTURE = '<svg viewBox="0 0 260 90" role="img" aria-label="Drag the Wheelhouse wheel to the right-hand side of the window" fill="none" stroke="currentColor" stroke-width="1.5">'
   + '<rect x="4" y="4" width="252" height="82" rx="6"/><line x1="30" y1="4" x2="30" y2="86"/><line x1="190" y1="4" x2="190" y2="86"/>'
   + '<circle cx="17" cy="22" r="6"/><path d="M28 30 L178 30 M170 24 L178 30 L170 36" stroke-linecap="round"/>'
@@ -210,13 +211,16 @@ function drawBriefing(briefing) {
 // renderPane(model, { nonce, view, settings, briefing, notice, offer }) -> string
 // `model` is the desk's pane model (or the last one read, or null); `view` is 'main' (the default), 'board',
 // 'settings' or 'briefing'; `notice` is a line to put above the cards, such as that the helper isn't running; `offer`
-// is whether to show the first-run offer to put the pane on the right. Never throws.
-function renderPane(model, { nonce, view = 'main', settings, briefing, notice, offer = false } = {}) {
+// is whether to show the first-run offer to put the pane on the right; `trusted` false (an untrusted folder) draws
+// STOP and the reason and no cards. Never throws.
+function renderPane(model, { nonce, view = 'main', settings, briefing, notice, offer = false, trusted = true } = {}) {
   let body;
   try {
     const m = isRecord(model) ? model : null;
     const alert = text(notice) ? `<p class="notice" role="status">${esc(notice)}</p>` : '';
-    if (view === 'settings') body = drawHeader(m) + alert + drawSettings(settings);
+    // An untrusted folder gets no cards: STOP and the reason, nothing that could press.
+    if (trusted === false) body = drawHeader(null) + `<p class="notice" role="status">${esc(UNTRUSTED)}</p>`;
+    else if (view === 'settings') body = drawHeader(m) + alert + drawSettings(settings);
     else if (view === 'briefing') body = drawHeader(m) + alert + drawBriefing(text(briefing));
     else if (view === 'board') body = drawHeader(m) + alert + drawBoard(m);
     else body = drawHeader(m) + alert + drawOffer(offer) + (m ? drawVerdict(m) + drawCards(m) : '<p class="note">Nothing to show yet.</p>') + drawFoot(m);

@@ -120,3 +120,100 @@ test('where no Node.js runs the Lean helper is asked for once, and stopped when 
   assert.equal(asked.length, 1);
   assert.equal(withNode.context.subscriptions.length > 0, true);
 });
+
+// The panel mark and the trust guards (spec section 6).
+const vscodePane = await import('../../scripts/lib/vscode-pane.js');
+const nonceOf = (html) => /data-nonce="([0-9a-f]+)"/.exec(html)?.[1];
+
+// A view whose visibility a test can change.
+function visibleView() {
+  const view = fakeView();
+  const listeners = [];
+  view.onDidChangeVisibility = (fn) => { listeners.push(fn); return { dispose() {} }; };
+  view.setVisible = (value) => { view.visible = value; for (const fn of listeners) fn(); };
+  return view;
+}
+
+// A press function that records its calls.
+const pressing = (calls) => ({ pressCard: async (a) => { calls.push(a); return { made: true, says: 'Recorded.' }; } });
+const pressMessage = (nonce) => ({ nonce, type: 'press', card: 'c1', hash: 'abc123def456', choice: 'Approve' });
+
+test('the webview loads no files, and no context is retained', async () => {
+  const registered = [];
+  const { vscode } = await started({
+    setup: (v) => {
+      const register = v.window.registerWebviewViewProvider;
+      v.window.registerWebviewViewProvider = (id, provider, options) => { registered.push(options); return register(id, provider, options); };
+    },
+  });
+  assert.equal(registered.length, 1);
+  assert.equal(registered[0]?.webviewOptions?.retainContextWhenHidden, undefined);
+  const view = fakeView();
+  await vscode.seen.providers.get('wheelhouse.pane').resolveWebviewView(view);
+  assert.deepEqual(view.webview.options, { enableScripts: true, localResourceRoots: [] });
+});
+
+test('a page drawn before the pane hid counts for nothing', async () => {
+  const calls = [];
+  const { vscode, add } = await started({ more: { project: 'p1', press: pressing(calls), stop: {}, vscodePane } });
+  const view = visibleView();
+  await vscode.seen.providers.get('wheelhouse.pane').resolveWebviewView(view);
+  await add.refresh();
+  const old = nonceOf(view.html);
+  assert.match(old, /^[0-9a-f]{64}$/);
+  view.setVisible(false);
+  view.setVisible(true);
+  const fresh = nonceOf(view.html);
+  assert.match(fresh, /^[0-9a-f]{64}$/);
+  assert.notEqual(fresh, old);
+  await view.send(pressMessage(old));
+  assert.equal(calls.length, 0);
+  await view.send(pressMessage(fresh));
+  assert.equal(calls.length, 1);
+});
+
+test('no message counts while the pane is hidden', async () => {
+  const calls = [];
+  const { vscode, add } = await started({ more: { project: 'p1', press: pressing(calls), stop: {}, vscodePane } });
+  const view = visibleView();
+  await vscode.seen.providers.get('wheelhouse.pane').resolveWebviewView(view);
+  await add.refresh();
+  const current = nonceOf(view.html);
+  view.setVisible(false);
+  await view.send(pressMessage(current));
+  assert.equal(calls.length, 0);
+});
+
+test('the mark follows visibility', async () => {
+  const { vscode, add } = await started({ more: { project: 'p1', vscodePane } });
+  const view = visibleView();
+  await vscode.seen.providers.get('wheelhouse.pane').resolveWebviewView(view);
+  await add.refresh();
+  assert.equal(vscodePane.vscodePaneLive('p1', Date.now() + 1000), true);
+  view.setVisible(false);
+  await add.refresh();
+  const mark = JSON.parse(fs.readFileSync(path.join(process.env.WHEELHOUSE_HOME, 'panes', 'vscode-p1.json'), 'utf8'));
+  assert.equal(mark.surface, 'vscode');
+  assert.match(mark.window, /^[0-9a-f]{32}$/);
+  // Hidden: the tick goes on but the sighting does not, so 46 seconds later it is not live.
+  assert.equal(vscodePane.vscodePaneLive('p1', Date.now() + 46000), false);
+  view.setVisible(true);
+  assert.equal(vscodePane.vscodePaneLive('p1', Date.now() + 1000), true);
+});
+
+test('an unsafe project id writes no mark and does not throw', async () => {
+  const { vscode, add } = await started({ more: { project: '../x', vscodePane } });
+  const view = visibleView();
+  await vscode.seen.providers.get('wheelhouse.pane').resolveWebviewView(view);
+  await add.refresh();
+  assert.equal(vscodePane.vscodePaneLive('../x', Date.now()), false);
+});
+
+test('an untrusted folder draws no cards', async () => {
+  const { vscode, add } = await started({ setup: (v) => { v.workspace.isTrusted = false; } });
+  const view = fakeView();
+  await vscode.seen.providers.get('wheelhouse.pane').resolveWebviewView(view);
+  await add.refresh();
+  assert.ok(view.html.includes('Wheelhouse runs only in a folder you trust, since it signs your clicks with this computer&#39;s key.'));
+  assert.deepEqual([...view.html.matchAll(/<button[^>]*>([^<]*)</g)].map((m) => m[1]), ['STOP']);
+});

@@ -102,6 +102,7 @@ test('the closure holds everything the add-on loads', () => {
   const { LOADS, START_HELPER } = require('../../vscode/desk.cjs');
   for (const rel of [...Object.values(LOADS), START_HELPER]) assert.ok(closure.includes(rel), rel);
   assert.ok(RUN_ONLY.includes(START_HELPER));
+  for (const rel of ['scripts/lib/vscode-pane.js', 'scripts/lib/session-files.js']) assert.ok(closure.includes(rel), rel);
   assert.ok(closure.every((f) => !f.startsWith('tests/') && !f.startsWith('docs/')), 'no test or document');
 });
 

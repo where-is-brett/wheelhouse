@@ -25,6 +25,7 @@ const LOADS = Object.freeze({
   modDesk: 'scripts/desk/mod-desk.js',
   paths: 'scripts/lib/paths.js',
   lean: 'scripts/lean/project.js',
+  vscodePane: 'scripts/lib/vscode-pane.js',
 });
 // Run, not imported: the helper's starter.
 const START_HELPER = 'scripts/agents/copilot/start-helper.js';
@@ -87,6 +88,8 @@ async function realDeps({ root, cwd }) {
   };
   return {
     desk: m.desk.modDesk({ cwd, client }),
+    // The panel's live mark (scripts/lib/vscode-pane.js).
+    vscodePane: m.vscodePane,
     client,
     ask: async () => (await client.health().catch(() => null))?.ok === true,
     project,
