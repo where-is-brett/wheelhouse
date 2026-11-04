@@ -29,7 +29,7 @@ import { writeProject } from '../../../scripts/lib/projects.js';
 import { stateDir, computerId } from '../../../scripts/lib/paths.js';
 import { markVscodePane } from '../../../scripts/lib/vscode-pane.js';
 import { paneLine, SINCE_LEAD } from '../../../scripts/cards/panel-words.js';
-import { heldForVscode } from '../../../scripts/frontdesk/cli.js';
+import { vscodeAsk } from '../../../scripts/agents/vscode-held.js';
 import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
 import { sheetHash, pieceCovered } from '../../../scripts/engine/goal.js';
@@ -78,6 +78,7 @@ async function inHome(fn) {
 // a function read on each request) every write is refused and the views say STOP is on, as the
 // helper does under STOP. A pull request is open at `head`, unless `pr` answers for it. A write is
 // made at `writeAt(n)`, the nth write's time. The desk's reads are the real desk's, over what is held.
+let panelFolder = null;
 function fakeHelper({ events = [], stop = false, head = FULL, pr, profile = {}, writeAt = T, names, offer } = {}) {
   const held = [...events];
   const stopped = () => (typeof stop === 'function' ? stop() : stop);
@@ -109,6 +110,8 @@ function fakeHelper({ events = [], stop = false, head = FULL, pr, profile = {}, 
     enrolled: () => readEnrolled(),
     views: async (body = {}) => viewsAnswer(body),
     profile: async () => ({ settings: profile }),
+    // What the helper's desk source says of a live VS Code panel (scripts/agents/vscode-held.js), for the project vscodeProject made.
+    vscode: (asked) => (panelFolder === null ? {} : vscodeAsk({ project: 'o__p', folder: panelFolder, now: NOW.getTime() }, asked)),
   };
   const client = {
     desk: {
@@ -2715,6 +2718,7 @@ function vscodeProject(agent, { markAgeMs } = {}) {
   fs.mkdirSync(path.join(folder, '.claude'), { recursive: true });
   fs.writeFileSync(path.join(folder, '.claude', 'wheelhouse.json'), JSON.stringify({ agents: { [computerId()]: agent } }));
   writeProject('o__p', { folder, remoteUrl: 'https://example.test/o/p.git', host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
+  panelFolder = folder;
   if (markAgeMs !== undefined) markVscodePane('o__p', { at: NOW.getTime() - markAgeMs, visible: NOW.getTime() - markAgeMs, window: 'w' });
   return folder;
 }
@@ -2726,7 +2730,7 @@ test('a live VS Code panel holds Copilot\'s cards', async () => {
     const one = cardEvent(PRODUCT(1), 1);
     const two = cardEvent(PRODUCT(2), 2);
     const helper = fakeHelper({ events: [one, two] });
-    const held = await run(helper, ['cards'], undefined, { cwd: folder });
+    const held = await run(helper, ['cards'], undefined, { cwd: folder, env: {} });
     assert.equal(held.code, 0, held.err);
     assert.equal(held.json.questions, undefined);
     assert.equal(held.json.panel, paneLine(2));
@@ -2738,8 +2742,28 @@ test('a live VS Code panel holds Copilot\'s cards', async () => {
 test('a Claude Code project\'s cards are never held by a VS Code panel', async () => {
   await inHome(async () => {
     const folder = vscodeProject('claude-code', { markAgeMs: 1000 });
-    const out = await run(fakeHelper({ events: [cardEvent(PRODUCT(1), 1)] }), ['cards'], undefined, { cwd: folder });
+    const out = await run(fakeHelper({ events: [cardEvent(PRODUCT(1), 1)] }), ['cards'], undefined, { cwd: folder, env: {} });
     assert.equal(out.json.panel, undefined);
+    assert.equal(out.json.questions.length, 1);
+  });
+});
+
+test('a Claude Code session is never held, and never asks the desk about the panel', async () => {
+  await inHome(async () => {
+    const folder = vscodeProject(AGENT, { markAgeMs: 1000 });
+    const helper = fakeHelper({ events: [cardEvent(PRODUCT(1), 1)] });
+    const out = await run(helper, ['cards'], undefined, { cwd: folder, env: { CLAUDE_CODE_SESSION_ID: SESSION } });
+    assert.equal(out.json.questions.length, 1);
+    assert.ok(!helper.calls.some(([name, body]) => name === 'desk.read' && body.args?.vscode), 'the panel was not asked about');
+  });
+});
+
+test('a desk that cannot tell, or fails, asks the cards in the chat', async () => {
+  await inHome(async () => {
+    const folder = vscodeProject(AGENT, { markAgeMs: 1000 });
+    const helper = fakeHelper({ events: [cardEvent(PRODUCT(1), 1)] });
+    const failing = { ...helper.client, desk: { ...helper.client.desk, read: async (body) => (body.args?.vscode ? { ok: false, refused: 'the host helper did not answer in time' } : helper.client.desk.read(body)) } };
+    const out = await run({ ...helper, client: failing }, ['cards'], undefined, { cwd: folder, env: {} });
     assert.equal(out.json.questions.length, 1);
   });
 });
@@ -2748,7 +2772,7 @@ test('a project with no named agent is asked in the chat whatever its mark says'
   await inHome(async () => {
     const folder = vscodeProject('claude-code', { markAgeMs: 1000 });
     fs.rmSync(path.join(folder, '.claude', 'wheelhouse.json'));
-    const out = await run(fakeHelper({ events: [cardEvent(PRODUCT(1), 1)] }), ['cards'], undefined, { cwd: folder });
+    const out = await run(fakeHelper({ events: [cardEvent(PRODUCT(1), 1)] }), ['cards'], undefined, { cwd: folder, env: {} });
     assert.equal(out.json.questions.length, 1);
   });
 });
@@ -2756,7 +2780,7 @@ test('a project with no named agent is asked in the chat whatever its mark says'
 test('a stale mark holds nothing', async () => {
   await inHome(async () => {
     const folder = vscodeProject(AGENT, { markAgeMs: 46000 });
-    const out = await run(fakeHelper({ events: [cardEvent(PRODUCT(1), 1)] }), ['cards'], undefined, { cwd: folder });
+    const out = await run(fakeHelper({ events: [cardEvent(PRODUCT(1), 1)] }), ['cards'], undefined, { cwd: folder, env: {} });
     assert.equal(out.json.panel, undefined);
     assert.equal(out.json.questions.length, 1);
   });
@@ -2769,9 +2793,9 @@ test('--here lets them through once on a held project', async () => {
     const first = await run(helper, ['cards', '--here'], undefined, { cwd: folder, env: {} });
     assert.equal(first.code, 0, first.err);
     assert.equal(first.json.questions.length, 1, 'asked in the chat, as the director wanted');
-    const next = await run(helper, ['again', '1'], undefined, { cwd: folder });
+    const next = await run(helper, ['again', '1'], undefined, { cwd: folder, env: {} });
     assert.equal(next.json.questions.length, 1, 'let through once');
-    const after = await run(helper, ['again', '1'], undefined, { cwd: folder });
+    const after = await run(helper, ['again', '1'], undefined, { cwd: folder, env: {} });
     assert.equal(after.json.questions, undefined);
     assert.equal(after.json.panel, paneLine(1));
   });
@@ -2781,11 +2805,11 @@ test('again and pull-cards are held too, and --here still needs a session on Cla
   await inHome(async () => {
     const folder = vscodeProject(AGENT, { markAgeMs: 1000 });
     const helper = fakeHelper({ events: [cardEvent(PRODUCT(1), 1)] });
-    const asked = await run(helper, ['again', '1'], undefined, { cwd: folder });
+    const asked = await run(helper, ['again', '1'], undefined, { cwd: folder, env: {} });
     assert.equal(asked.json.panel, paneLine(1));
     assert.equal(asked.json.questions, undefined);
     helper.held.push(cardEvent(PRODUCT(2), 2));
-    const pulled = await run(helper, ['pull-cards'], undefined, { cwd: folder });
+    const pulled = await run(helper, ['pull-cards'], undefined, { cwd: folder, env: {} });
     assert.equal(pulled.json.questions, undefined);
     assert.equal(pulled.json.panel, paneLine(1));
     const claude = vscodeProject('claude-code', { markAgeMs: 1000 });
@@ -2795,8 +2819,8 @@ test('again and pull-cards are held too, and --here still needs a session on Cla
 });
 
 test('a failure reading the panel mark asks the cards in the chat', () => {
-  assert.equal(heldForVscode(null, NOW.getTime()), false);
-  assert.equal(heldForVscode({ project: '../x', record: { folder: 7 } }, NOW.getTime()), false);
+  assert.deepEqual(vscodeAsk({ project: '../x', folder: 7, now: NOW.getTime() }, { ids: ['a'] }), { applies: false, held: false });
+  assert.deepEqual(vscodeAsk(null, {}), { applies: false, held: false });
 });
 
 test('views waiting --since names panel answers only', async () => {

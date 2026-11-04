@@ -107,8 +107,6 @@ import { startedAsScript } from '../lib/started-as-script.js';
 import { isOpen, surveyLines, whyNext, workLines, RECENT_MS, RECENT_LEAD, recentLines } from '../desk/views.js';
 import { answeredWords } from '../cards/answered.js';
 import { markHere } from '../lib/session-files.js';
-import { markVscodeHere, takeVscodeHere } from '../lib/vscode-pane.js';
-import { heldForVscode as heldFor, runsVscodeAgent } from '../agents/vscode-held.js';
 import { paneLine, sinceLine } from '../cards/panel-words.js';
 
 // How far back `views waiting` looks for answers, and its lead (scripts/desk/views.js).
@@ -174,16 +172,6 @@ function readyIn(cwd) {
     return found === null ? [] : columnsReadyOf({ project: found.project });
   } catch {
     return [];
-  }
-}
-
-// Whether the cards of the project `found` (projectOf's answer) are held back from the chat because a VS Code panel is live
-// for it at `now` (ms). It fails open: anything that goes wrong gives false, and the cards are asked in the chat.
-export function heldForVscode(found, now) {
-  try {
-    return found !== null && typeof found === 'object' && heldFor({ project: found.project, folder: found.record?.folder }, now);
-  } catch {
-    return false;
   }
 }
 
@@ -574,10 +562,10 @@ export async function cards({ client, cwd, now, onAsked, hold }) {
   const chosen = cardsForVisit(withPutBack(views, again, events), { room: lift === null ? CARD.questions : 0 });
   problems.push(...await markAsked(client, cwd, chosen.ids, stop));
   // Cards a live panel answers are marked asked as usual, but the chat is told of the panel instead of being given them.
-  if (lift === null && chosen.ids.length > 0 && typeof hold === 'function' && hold(chosen.ids)) {
+  if (lift === null && chosen.ids.length > 0 && typeof hold === 'function' && await hold(chosen.ids)) {
     return { panel: paneLine(chosen.ids.length), left: chosen.left, ...(chosen.heldBack > 0 ? { heldBack: chosen.heldBack } : {}), ...withProblems(problems) };
   }
-  if (typeof onAsked === 'function') onAsked(chosen.ids);
+  if (typeof onAsked === 'function') await onAsked(chosen.ids);
   return { questions: [...(lift === null ? [] : [lift]), ...chosen.questions], left: chosen.left, ...(chosen.heldBack > 0 ? { heldBack: chosen.heldBack } : {}), ...withProblems(problems) };
 }
 
@@ -734,8 +722,8 @@ export async function again({ client, cwd, n, onAsked, hold }) {
   const found = cardNumbered(views, n, { events });
   if (found === null) throw new CliError(`The Logbook has no card ${n} to ask again; a question from the build is asked once \`cards\` has made its card`);
   const problems = withProblems(await markAsked(client, cwd, [found.id], stop));
-  if (typeof hold === 'function' && hold([found.id])) return { panel: paneLine(1), ...problems };
-  if (typeof onAsked === 'function') onAsked([found.id]);
+  if (typeof hold === 'function' && await hold([found.id])) return { panel: paneLine(1), ...problems };
+  if (typeof onAsked === 'function') await onAsked([found.id]);
   return { questions: [asQuestion(found)], id: found.id, ...problems };
 }
 
@@ -1188,7 +1176,7 @@ export async function review({ client, cwd, now, hold, makeId = () => crypto.ran
       problems.push(`The review wasn't recorded as done, so it stays due: ${error.message}`);
     }
   }
-  if (asked.length > 0 && typeof hold === 'function' && hold(asked.map((c) => c.id))) {
+  if (asked.length > 0 && typeof hold === 'function' && await hold(asked.map((c) => c.id))) {
     return { panel: paneLine(asked.length), left: made.length - asked.length, ...withProblems(problems) };
   }
   return { questions: asked.map((c) => c.question), left: made.length - asked.length, ...withProblems(problems) };
@@ -1437,27 +1425,32 @@ export async function main(argv, {
       return 0;
     }
     // `--here` on cards, again and pull-cards: the cards handed out are marked to be asked in the chat, once (here.json).
-    // Where a live VS Code panel answers a project's cards, they are held back from the chat and the chat is told of the
-    // panel; `--here` asks them in the chat once, through the panel's own here file (no session id is needed there).
-    const hereMark = (args) => {
+    // A session with no Claude Code session id is another agent's: where a live VS Code panel answers the project's cards,
+    // they are held back from the chat and the chat is told of the panel, and `--here` asks them in the chat once. The
+    // panel is asked of the desk, since this command can't read the home; any failure asks the cards in the chat.
+    const askPanel = async (vscode) => {
+      try {
+        const got = await deskOf(helper, here).read('waiting', { vscode });
+        const said = got?.ok === true ? got.data?.vscode : null;
+        return isPlain(said) ? { applies: said.applies === true, held: said.held === true } : { applies: false, held: false };
+      } catch {
+        return { applies: false, held: false };
+      }
+    };
+    const hereMark = async (args) => {
       const wanted = args.includes('--here');
       const left = args.filter((a) => a !== '--here');
       const stamp = (typeof now === 'function' ? now() : new Date(now ?? Date.now())).getTime();
-      let found = null;
-      try { found = projectOf(here); } catch { /* Not a registered project: the cards are asked here. */ }
       const session = env.CLAUDE_CODE_SESSION_ID;
-      const noSession = typeof session !== 'string' || session === '';
-      const live = heldForVscode(found, stamp);
-      if (live || (wanted && noSession && runsVscodeAgent(found?.record?.folder))) {
-        if (wanted) return { left, onAsked: (ids) => { if (ids.length > 0) markVscodeHere(found.project, ids, stamp); } };
-        return { left, hold: (ids) => !takeVscodeHere(found.project, ids, stamp) };
+      if (typeof session === 'string' && session !== '') {
+        return wanted ? { left, onAsked: (ids) => { if (ids.length > 0) markHere(session, ids, stamp); } } : { left };
       }
-      if (!wanted) return { left };
-      if (noSession) throw new CliError('The session isn\'t known, so the cards can\'t be asked here.');
-      return { left, onAsked: (ids) => { if (ids.length > 0) markHere(session, ids, stamp); } };
+      if (!wanted) return { left, hold: async (ids) => (await askPanel({ ids })).held };
+      if (!(await askPanel({})).applies) throw new CliError('The session isn\'t known, so the cards can\'t be asked here.');
+      return { left, onAsked: async (ids) => { if (ids.length > 0) await askPanel({ ids, here: true }); } };
     };
     if (command === 'pull-cards') {
-      const { left, onAsked, hold } = hereMark(rest);
+      const { left, onAsked, hold } = await hereMark(rest);
       only(left, 0, 'pull-cards takes no arguments');
       json(await pullCards({ client: helper, cwd: here, now, onAsked, hold }));
       return 0;
@@ -1487,14 +1480,14 @@ export async function main(argv, {
       return 0;
     }
     if (command === 'cards') {
-      const { left, onAsked, hold } = hereMark(rest);
+      const { left, onAsked, hold } = await hereMark(rest);
       only(left, 0, 'cards takes no arguments');
       json(await cards({ client: helper, cwd: here, now, onAsked, hold }));
     } else if (command === 'card') {
       only(rest, 0, 'card takes no arguments: give the card as JSON on standard input');
       json(await card({ client: helper, cwd: here, input: parsed(await stdin()), now }));
     } else if (command === 'again') {
-      const { left, onAsked, hold } = hereMark(rest);
+      const { left, onAsked, hold } = await hereMark(rest);
       if (left.length !== 1 || !/^[1-9][0-9]{0,8}$/.test(left[0])) throw new CliError('Give the card\'s number in the Logbook: again <n> [--here]');
       json(await again({ client: helper, cwd: here, n: Number(left[0]), onAsked, hold }));
     } else if (command === 'why') {
@@ -1512,7 +1505,7 @@ export async function main(argv, {
       json(await similar({ client: helper, cwd: here, text: rest.length > 0 ? rest.join(' ') : await stdin() }));
     } else if (command === 'review') {
       only(rest, 0, 'review takes no arguments');
-      json(await review({ client: helper, cwd: here, now, hold: hereMark([]).hold, ...(makeId ? { makeId } : {}) }));
+      json(await review({ client: helper, cwd: here, now, hold: (await hereMark([])).hold, ...(makeId ? { makeId } : {}) }));
     } else if (command === 'preview') {
       if (rest.length !== 1 || !/^[1-9][0-9]{0,8}$/.test(rest[0])) throw new CliError('Give the pull request\'s number: preview <n>');
       lines(await preview({ client: helper, cwd: here, n: Number(rest[0]) }));
