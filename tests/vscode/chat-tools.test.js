@@ -11,6 +11,9 @@ import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { CARD_HASH, CONFIRMED_STEPS, hashRefusal } from '../../scripts/agents/chat-clicks.js';
 import { scanText } from '../../scripts/state/secret-scan.js';
+import { computerId } from '../../scripts/lib/paths.js';
+import { markVscodePane } from '../../scripts/lib/vscode-pane.js';
+import { SINCE_LEAD } from '../../scripts/cards/panel-words.js';
 import { checkAddon, readAddon, ALLOWED_TOOLS } from '../../scripts/addon/validate.js';
 
 const tools = require('../../vscode/chat-tools.cjs');
@@ -62,6 +65,80 @@ test('a chat tool\'s write is never binding', async () => {
   // Without a project or a card, nothing is recorded.
   await registered.get('wheelhouse_record').invoke({ input: { label: 'Approve' } });
   assert.equal(calls.length, 1);
+});
+
+// A project folder whose configuration names `agent` for this computer, with a panel mark `ageMs` old, and the panel
+// helpers the add-on loads from the scripts.
+async function panelFor(agent, ageMs) {
+  const folder = tmp();
+  fs.mkdirSync(path.join(folder, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(folder, '.claude', 'wheelhouse.json'), JSON.stringify({ agents: { [computerId()]: agent } }));
+  const now = Date.now();
+  markVscodePane('owner__name', { at: now - ageMs, visible: now - ageMs, window: 'w' });
+  const loaded = await tools.loadRules(ROOT);
+  return { folder, panel: loaded.panel };
+}
+
+test('the board tool gives the panel line, not the cards, while live', async () => {
+  const { vscode, registered } = chatVscode();
+  const { folder, panel } = await panelFor('copilot', 1000);
+  assert.ok(panel, 'the add-on loads the panel helpers');
+  const desk = { read: async () => ({ ok: true, data: { pane: model({ cards: [card({ hash: HASH })] }), outcomes: [] } }) };
+  tools.registerChatTools({ vscode, client: recorder().client, desk, project: 'owner__name', folder, subscriptions: [], panel });
+  const text = textOf(await registered.get('wheelhouse_board').invoke({ input: {} }));
+  assert.ok(text.startsWith(panel.line(1)), text);
+  assert.ok(!text.includes('c1') && !text.includes(HASH), 'no card id or hash is given');
+});
+
+test('a Claude Code project still gets its cards from the board tool beside a live panel', async () => {
+  const { vscode, registered } = chatVscode();
+  const { folder, panel } = await panelFor('claude-code', 1000);
+  const desk = { read: async () => ({ ok: true, data: { pane: model({ cards: [card({ hash: HASH })] }), outcomes: [] } }) };
+  tools.registerChatTools({ vscode, client: recorder().client, desk, project: 'owner__name', folder, subscriptions: [], panel });
+  const text = textOf(await registered.get('wheelhouse_board').invoke({ input: {} }));
+  assert.ok(text.includes(HASH));
+});
+
+test('a stale mark, or panel helpers that did not load, give the cards', async () => {
+  const { vscode, registered } = chatVscode();
+  const { folder, panel } = await panelFor('copilot', 46000);
+  const desk = { read: async () => ({ ok: true, data: { pane: model({ cards: [card({ hash: HASH })] }), outcomes: [] } }) };
+  tools.registerChatTools({ vscode, client: recorder().client, desk, project: 'owner__name', folder, subscriptions: [], panel });
+  assert.ok(textOf(await registered.get('wheelhouse_board').invoke({ input: {} })).includes(HASH));
+  const none = chatVscode();
+  tools.registerChatTools({ vscode: none.vscode, client: recorder().client, desk, project: 'owner__name', folder, subscriptions: [] });
+  assert.ok(textOf(await none.registered.get('wheelhouse_board').invoke({ input: {} })).includes(HASH));
+  const broken = chatVscode();
+  tools.registerChatTools({ vscode: broken.vscode, client: recorder().client, desk, project: 'owner__name', folder, subscriptions: [], panel: { held: () => { throw new Error('x'); }, line: () => 'x', since: () => null } });
+  assert.ok(textOf(await broken.registered.get('wheelhouse_board').invoke({ input: {} })).includes(HASH), 'a panel that throws fails open');
+});
+
+test('the board tool\'s since names answers after its last call, once', async () => {
+  const { vscode, registered } = chatVscode();
+  const { folder, panel } = await panelFor('claude-code', 1000);
+  const asked = [];
+  let answers = [];
+  const desk = {
+    read: async (view, args) => {
+      if (view === 'waiting') { asked.push(args.outcomes.since); return { ok: true, data: { outcomes: answers } }; }
+      return { ok: true, data: { pane: model({ cards: [] }) } };
+    },
+  };
+  tools.registerChatTools({ vscode, client: recorder().client, desk, project: 'owner__name', folder, subscriptions: [], panel });
+  const board = registered.get('wheelhouse_board');
+  const first = textOf(await board.invoke({ input: {} }));
+  assert.ok(!first.includes(SINCE_LEAD), 'the first call gives none');
+  assert.deepEqual(asked, [], 'and asks for none');
+  const later = new Date(Date.now() + 5000).toISOString();
+  answers = [
+    { card: { id: 'k1', data: { kind: 'question', question: 'Which name?', parts: { what: 'Which name suits the page?' } } }, decided: { at: later, label: 'Plain', where: 'panel' } },
+    { card: { id: 'k2', data: { kind: 'question', question: 'Which colour?', parts: { what: 'Which colour suits the page?' } } }, decided: { at: later, label: 'Blue', where: 'chat' } },
+  ];
+  const second = textOf(await board.invoke({ input: {} }));
+  assert.ok(second.includes(SINCE_LEAD) && second.includes('Which name suits the page?') && !second.includes('Which colour'), second);
+  assert.equal(asked.length, 1);
+  answers = [];
+  assert.ok(!textOf(await board.invoke({ input: {} })).includes(SINCE_LEAD), 'told once');
 });
 
 test('an inbox file is read once and removed', async () => {

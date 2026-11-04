@@ -12,7 +12,8 @@ import { usageFigures, weeklyShare } from '../usage/figures.js';
 import { delegationReview } from '../frontdesk/learning.js';
 import { previewFor } from '../mod/previews.js';
 import { readEnrolled } from '../state/signing.js';
-import { namesOf } from '../lib/projects.js';
+import { namesOf, readProject } from '../lib/projects.js';
+import { vscodeAsk } from '../agents/vscode-held.js';
 import { stateDir } from '../lib/paths.js';
 import { stopState } from '../lib/stop.js';
 
@@ -56,6 +57,11 @@ export function fileSource(project, { cwd, client, now = () => new Date(), fresh
     },
     async stop() {
       return stopState();
+    },
+    // Whether a live panel answers this project's cards (scripts/agents/vscode-held.js): the card commands ask it here, since
+    // the sandbox they run in can't read the home.
+    vscode(asked) {
+      return vscodeAsk({ project, folder: readProject(project)?.folder, now: now().getTime() }, asked);
     },
     // An approval card's preview address, or null.
     async preview(cardId) {

@@ -48,7 +48,10 @@
 //   similar [words] the open work, ideas and rejections that share words with a request: its
 //                   words as the arguments, or its text on standard input
 //   views <name>    one view as short lines: rulebook, waiting, ideas, glossary, settings, levels or
-//                   work (the open work, running and waiting, in the glossary's plain words)
+//                   work (the open work, running and waiting, in the glossary's plain words);
+//                   `views waiting --since <time>` also names the cards answered since then anywhere but the chat
+//   Where a live VS Code panel answers a project's cards, cards, again, pull-cards and review give
+//   { "panel": <a line saying so> } instead of `questions`; --here asks them in the chat once.
 //   explain <term>  the glossary's plain words for a term, with its example
 //   review          the delegation review: each proposal as a level waiting for the director, with
 //                   its confirm card, as AskUserQuestion's input; then records the review as done
@@ -104,6 +107,7 @@ import { startedAsScript } from '../lib/started-as-script.js';
 import { isOpen, surveyLines, whyNext, workLines, RECENT_MS, RECENT_LEAD, recentLines } from '../desk/views.js';
 import { answeredWords } from '../cards/answered.js';
 import { markHere } from '../lib/session-files.js';
+import { paneLine, sinceLine } from '../cards/panel-words.js';
 
 // How far back `views waiting` looks for answers, and its lead (scripts/desk/views.js).
 export { RECENT_MS, RECENT_LEAD };
@@ -496,7 +500,7 @@ async function buildLoopCards({ client, cwd, views, words, now, problems }) {
 // not a failure: the cards waiting are still given. Under STOP the visit's one card is Lift STOP:
 // the helper writes nothing, so no card is made, and the cards waiting stay on the board, counted
 // in `left`, for the visit after STOP is lifted.
-export async function cards({ client, cwd, now, onAsked }) {
+export async function cards({ client, cwd, now, onAsked, hold }) {
   const problems = [];
   let { views, stop, names } = await viewsOf(client, cwd);
   const words = await wordsOf(client, cwd, views, now, names);
@@ -557,17 +561,21 @@ export async function cards({ client, cwd, now, onAsked }) {
   if (made > 0 || decided) ({ views, cards: events } = await viewsOf(client, cwd, { cards: decided }));
   const chosen = cardsForVisit(withPutBack(views, again, events), { room: lift === null ? CARD.questions : 0 });
   problems.push(...await markAsked(client, cwd, chosen.ids, stop));
-  if (typeof onAsked === 'function') onAsked(chosen.ids);
+  // Cards a live panel answers are marked asked as usual, but the chat is told of the panel instead of being given them.
+  if (lift === null && chosen.ids.length > 0 && typeof hold === 'function' && await hold(chosen.ids)) {
+    return { panel: paneLine(chosen.ids.length), left: chosen.left, ...(chosen.heldBack > 0 ? { heldBack: chosen.heldBack } : {}), ...withProblems(problems) };
+  }
+  if (typeof onAsked === 'function') await onAsked(chosen.ids);
   return { questions: [...(lift === null ? [] : [lift]), ...chosen.questions], left: chosen.left, ...(chosen.heldBack > 0 ? { heldBack: chosen.heldBack } : {}), ...withProblems(problems) };
 }
 
 // The director's Show them: the cards held back are named as pulled, which spends none of the day's budget, then this
 // visit's cards come as `cards` gives them. It raises cards and decides nothing.
-export async function pullCards({ client, cwd, now, onAsked }) {
+export async function pullCards({ client, cwd, now, onAsked, hold }) {
   const { views } = await viewsOf(client, cwd);
   const ids = Array.isArray(views.cardsWaiting?.ids) ? views.cardsWaiting.ids : [];
   if (ids.length > 0) await write(client, cwd, 'note', { about: 'cards-pulled', ids });
-  return cards({ client, cwd, now, onAsked });
+  return cards({ client, cwd, now, onAsked, hold });
 }
 
 // The director's End goal and narrowing, through the desk: neither needs the director's signature, since each only
@@ -709,12 +717,13 @@ function decidedBefore(outcomes, data, at) {
 
 // The card the board numbers n, as it was composed (in plain words then), with its id, recorded as
 // asked again. The id lets a press that names a card by number and id be checked against it.
-export async function again({ client, cwd, n, onAsked }) {
+export async function again({ client, cwd, n, onAsked, hold }) {
   const { views, stop, cards: events } = await viewsOf(client, cwd, { cards: true });
   const found = cardNumbered(views, n, { events });
   if (found === null) throw new CliError(`The Logbook has no card ${n} to ask again; a question from the build is asked once \`cards\` has made its card`);
   const problems = withProblems(await markAsked(client, cwd, [found.id], stop));
-  if (typeof onAsked === 'function') onAsked([found.id]);
+  if (typeof hold === 'function' && await hold([found.id])) return { panel: paneLine(1), ...problems };
+  if (typeof onAsked === 'function') await onAsked([found.id]);
   return { questions: [asQuestion(found)], id: found.id, ...problems };
 }
 
@@ -1120,7 +1129,7 @@ export function levelCard(event, words) {
 // it isn't due again until the next period, but only when every proposal and its card were
 // recorded: otherwise it stays due, and a level whose card wasn't written gets it from the
 // board-context hook on the next visit. Under STOP nothing is written, so it is refused.
-export async function review({ client, cwd, now, makeId = () => crypto.randomUUID() }) {
+export async function review({ client, cwd, now, hold, makeId = () => crypto.randomUUID() }) {
   const got = await recordOf(client, cwd, { review: true });
   if (got.stop === true) throw new CliError('All stop is on, so the review waits until it is lifted');
   if (!isPlain(got.review) || !Array.isArray(got.review.proposals)) throw new CliError('The host helper gave no review');
@@ -1167,6 +1176,9 @@ export async function review({ client, cwd, now, makeId = () => crypto.randomUUI
       problems.push(`The review wasn't recorded as done, so it stays due: ${error.message}`);
     }
   }
+  if (asked.length > 0 && typeof hold === 'function' && await hold(asked.map((c) => c.id))) {
+    return { panel: paneLine(asked.length), left: made.length - asked.length, ...withProblems(problems) };
+  }
   return { questions: asked.map((c) => c.question), left: made.length - asked.length, ...withProblems(problems) };
 }
 
@@ -1186,11 +1198,11 @@ const two = (n) => String(n).padStart(2, '0');
 const listed = (lines, none) => (lines.length > 0 ? lines : [none]);
 
 // One view as short lines.
-export async function view({ client, cwd, name, now }) {
+export async function view({ client, cwd, name, now, since: from }) {
   if (!VIEW_NAMES.includes(name)) throw new CliError(`views takes one of: ${VIEW_NAMES.join(', ')}`);
   const at = typeof now === 'function' ? now() : new Date(now ?? Date.now());
   const { views, cards: events, answers, outcomes, names } = await viewsOf(client, cwd, {
-    cards: name === 'waiting' || name === 'levels', answers: name === 'work', ...(name === 'waiting' ? { since: new Date(at.getTime() - RECENT_MS) } : {}),
+    cards: name === 'waiting' || name === 'levels', answers: name === 'work', ...(name === 'waiting' ? { since: new Date(Math.min(at.getTime() - RECENT_MS, from?.getTime() ?? Infinity)) } : {}),
   });
   // Volume only: until the director has set the bars, no result of a seal is shown (delegated decisions design, section 12).
   if (name === 'evidence') {
@@ -1223,7 +1235,8 @@ export async function view({ client, cwd, name, now }) {
     const items = numberedWaiting(views, events)
       .map((item) => `${item.n}. ${(item.card && firstPart(item.card)) || item.what}${item.card ? ` (card ${item.card})${steered(item.card)}` : ''}`);
     // Then the last hour's answers, from the record, so "Status?" is answered from it and not from memory.
-    return [...listed(items, 'Nothing is waiting for the director.'), ...recentLines(outcomes, at)];
+    const told = from === undefined ? null : sinceLine(outcomes, from.getTime(), at);
+    return [...listed(items, 'Nothing is waiting for the director.'), ...recentLines(outcomes, at), ...(told === null ? [] : [told])];
   }
   if (name === 'ideas') return listed(Object.entries(isPlain(views.ideas) ? views.ideas : {}).map(([key, entry]) => `- ${titleOf(entry, key)}`), 'No ideas are kept yet.');
   if (name === 'glossary') return Object.entries(glossaryOf(views.glossary)).map(([term, entry]) => `${term}: ${entry.plain}`);
@@ -1412,19 +1425,34 @@ export async function main(argv, {
       return 0;
     }
     // `--here` on cards, again and pull-cards: the cards handed out are marked to be asked in the chat, once (here.json).
-    const hereMark = (args) => {
+    // A session with no Claude Code session id is another agent's: where a live VS Code panel answers the project's cards,
+    // they are held back from the chat and the chat is told of the panel, and `--here` asks them in the chat once. The
+    // panel is asked of the desk, since this command can't read the home; any failure asks the cards in the chat.
+    const askPanel = async (vscode) => {
+      try {
+        const got = await deskOf(helper, here).read('waiting', { vscode });
+        const said = got?.ok === true ? got.data?.vscode : null;
+        return isPlain(said) ? { applies: said.applies === true, held: said.held === true } : { applies: false, held: false };
+      } catch {
+        return { applies: false, held: false };
+      }
+    };
+    const hereMark = async (args) => {
       const wanted = args.includes('--here');
       const left = args.filter((a) => a !== '--here');
-      if (!wanted) return { left };
-      const session = env.CLAUDE_CODE_SESSION_ID;
-      if (typeof session !== 'string' || session === '') throw new CliError('The session isn\'t known, so the cards can\'t be asked here.');
       const stamp = (typeof now === 'function' ? now() : new Date(now ?? Date.now())).getTime();
-      return { left, onAsked: (ids) => { if (ids.length > 0) markHere(session, ids, stamp); } };
+      const session = env.CLAUDE_CODE_SESSION_ID;
+      if (typeof session === 'string' && session !== '') {
+        return wanted ? { left, onAsked: (ids) => { if (ids.length > 0) markHere(session, ids, stamp); } } : { left };
+      }
+      if (!wanted) return { left, hold: async (ids) => (await askPanel({ ids })).held };
+      if (!(await askPanel({})).applies) throw new CliError('The session isn\'t known, so the cards can\'t be asked here.');
+      return { left, onAsked: async (ids) => { if (ids.length > 0) await askPanel({ ids, here: true }); } };
     };
     if (command === 'pull-cards') {
-      const { left, onAsked } = hereMark(rest);
+      const { left, onAsked, hold } = await hereMark(rest);
       only(left, 0, 'pull-cards takes no arguments');
-      json(await pullCards({ client: helper, cwd: here, now, onAsked }));
+      json(await pullCards({ client: helper, cwd: here, now, onAsked, hold }));
       return 0;
     }
     if (command === 'end-goal') {
@@ -1452,16 +1480,16 @@ export async function main(argv, {
       return 0;
     }
     if (command === 'cards') {
-      const { left, onAsked } = hereMark(rest);
+      const { left, onAsked, hold } = await hereMark(rest);
       only(left, 0, 'cards takes no arguments');
-      json(await cards({ client: helper, cwd: here, now, onAsked }));
+      json(await cards({ client: helper, cwd: here, now, onAsked, hold }));
     } else if (command === 'card') {
       only(rest, 0, 'card takes no arguments: give the card as JSON on standard input');
       json(await card({ client: helper, cwd: here, input: parsed(await stdin()), now }));
     } else if (command === 'again') {
-      const { left, onAsked } = hereMark(rest);
+      const { left, onAsked, hold } = await hereMark(rest);
       if (left.length !== 1 || !/^[1-9][0-9]{0,8}$/.test(left[0])) throw new CliError('Give the card\'s number in the Logbook: again <n> [--here]');
-      json(await again({ client: helper, cwd: here, n: Number(left[0]), onAsked }));
+      json(await again({ client: helper, cwd: here, n: Number(left[0]), onAsked, hold }));
     } else if (command === 'why') {
       if (rest.length !== 1 || !/^[1-9][0-9]{0,8}$/.test(rest[0])) throw new CliError('Give the card\'s number in the Logbook: why <n>');
       lines(await why({ client: helper, cwd: here, n: Number(rest[0]) }));
@@ -1477,7 +1505,7 @@ export async function main(argv, {
       json(await similar({ client: helper, cwd: here, text: rest.length > 0 ? rest.join(' ') : await stdin() }));
     } else if (command === 'review') {
       only(rest, 0, 'review takes no arguments');
-      json(await review({ client: helper, cwd: here, now, ...(makeId ? { makeId } : {}) }));
+      json(await review({ client: helper, cwd: here, now, hold: (await hereMark([])).hold, ...(makeId ? { makeId } : {}) }));
     } else if (command === 'preview') {
       if (rest.length !== 1 || !/^[1-9][0-9]{0,8}$/.test(rest[0])) throw new CliError('Give the pull request\'s number: preview <n>');
       lines(await preview({ client: helper, cwd: here, n: Number(rest[0]) }));
@@ -1505,8 +1533,15 @@ export async function main(argv, {
       only(rest, 0, `${command} takes no arguments`);
       lines([await (command === 'premium-card' ? premiumCard : premiumCheck)({ client: helper, cwd: here })]);
     } else if (command === 'views') {
-      only(rest, 1, `Give the view's name: views <name>, one of ${VIEW_NAMES.join(', ')}`);
-      lines(await view({ client: helper, cwd: here, name: rest[0], now }));
+      const usage = `Give the view's name: views <name>, one of ${VIEW_NAMES.join(', ')}; waiting also takes --since <time>`;
+      let since;
+      if (rest.length === 3 && rest[0] === 'waiting' && rest[1] === '--since') {
+        since = new Date(rest[2]);
+        if (Number.isNaN(since.getTime())) throw new CliError('Give --since a time such as 2026-11-04T10:00:00Z');
+      } else {
+        only(rest, 1, usage);
+      }
+      lines(await view({ client: helper, cwd: here, name: rest[0], now, ...(since === undefined ? {} : { since }) }));
     } else {
       lines(await explain({ client: helper, cwd: here, term: rest.join(' ') }));
     }
