@@ -186,11 +186,17 @@ test('a call to $.tool.call, $.fs.write, $.env.set or $.settings.read fails', ()
   assert.equal(matchesForbidden('$.tool', FORBIDDEN_CALLS), true);
 });
 
+test('$.session.append is a call the mod may make, for a counted press shown in the chat', () => {
+  assert.equal(CALLS.includes('$.session.append'), true);
+  assert.equal(matchesForbidden('$.session.append', FORBIDDEN_CALLS), false);
+  assert.equal(matchesForbidden('$.session.start', FORBIDDEN_CALLS), false);
+});
+
 test('the forbidden and allowed lists never overlap', () => {
   for (const hook of HOOKS) assert.equal(matchesForbidden(hook, FORBIDDEN_HOOKS), false, hook);
   for (const call of CALLS) assert.equal(matchesForbidden(call, FORBIDDEN_CALLS), false, call);
   assert.deepEqual(FORBIDDEN_HOOKS, ['tool.check', 'tool.call', 'tool.describe', 'config.set', 'agent.offer', 'plugin.register', 'classic.*']);
-  assert.deepEqual(FORBIDDEN_CALLS, ['$.tool.*', '$.agent.*', '$.fs.*', '$.settings.*', '$.http.*', '$.model.*', '$.command.run', '$.prompt.fill', '$.session.append', '$.process.spawn', '$.env.set']);
+  assert.deepEqual(FORBIDDEN_CALLS, ['$.tool.*', '$.agent.*', '$.fs.*', '$.settings.*', '$.http.*', '$.model.*', '$.command.run', '$.prompt.fill', '$.process.spawn', '$.env.set']);
 });
 
 test('a member used in an imported file but not in the report fails', () => {
@@ -694,13 +700,13 @@ test('the bridge call passes no option but stdin and timeoutMs', () => {
 // A name ending in `.*`, or `*` itself, is forbidden when it covers a forbidden pattern.
 test('a hook or call named by a wildcard that covers a forbidden one is forbidden', () => {
   for (const hook of ['tool.*', 'config.*', 'agent.*', 'plugin.*', '*', 'classic.*', 'tool*']) assert.equal(matchesForbidden(hook, FORBIDDEN_HOOKS), true, hook);
-  for (const call of ['$.*', '$.tool.*', '$.fs.*', '$.settings.*', '$.command.*', '$.process.*', '$.prompt.*', '$.session.*', '$.env.*', '*']) assert.equal(matchesForbidden(call, FORBIDDEN_CALLS), true, call);
+  for (const call of ['$.*', '$.tool.*', '$.fs.*', '$.settings.*', '$.command.*', '$.process.*', '$.prompt.*', '$.env.*', '*']) assert.equal(matchesForbidden(call, FORBIDDEN_CALLS), true, call);
   // A wildcard that covers nothing forbidden is not.
   // A hook's matcher after a wildcard changes nothing.
   assert.equal(matchesForbidden('tool.*{tool=Bash}', FORBIDDEN_HOOKS), true);
   assert.equal(matchesForbidden('*{tool=Bash}', FORBIDDEN_HOOKS), true);
   assert.equal(matchesForbidden('session.*{x=y}', FORBIDDEN_HOOKS), false);
-  for (const call of ['$.clock.*', '$.ui.*', '$.plugin.*']) assert.equal(matchesForbidden(call, FORBIDDEN_CALLS), false, call);
+  for (const call of ['$.clock.*', '$.ui.*', '$.plugin.*', '$.session.*']) assert.equal(matchesForbidden(call, FORBIDDEN_CALLS), false, call);
   for (const hook of ['session.*', 'prompt.*', 'command.*']) assert.equal(matchesForbidden(hook, FORBIDDEN_HOOKS), false, hook);
   const result = checkMod({
     report: reportWith([`./register.ts hooks: ${LISTED}, tool.*`, `./register.ts calls: ${CALLS.join(', ')}, $.*`]),

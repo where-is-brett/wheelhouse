@@ -62,12 +62,12 @@ type Reply = object | { exitCode: number } | { hold: number, then: object }
 
 // Registers the world beneath the mod and returns what it saw. `bridge` answers every request
 // but a tick's; `tick` answers the ticks.
-function world(on: any, bridge: (request: any) => Reply, tick: () => object = () => frontDesk()) {
+function world(on: any, bridge: (request: any) => Reply, tick: () => object = () => frontDesk(), append: ((e: any) => object | null) | null = () => null) {
   const clock = mock.clock(on, { now: START })
   const panes = new Map<string, string>()
   const current = { session: SESSION }
   let sessions = 0
-  const seen = { requests: [] as any[], ticks: [] as any[], toasts: [] as string[], submits: [] as any[] }
+  const seen = { requests: [] as any[], ticks: [] as any[], toasts: [] as string[], submits: [] as any[], appends: [] as any[] }
   const turn = { ended: Promise.resolve() as Promise<unknown> }
   on('session.id', () => ({ value: current.session }))
   on('session.root', () => ({ value: ROOT }))
@@ -103,6 +103,12 @@ function world(on: any, bridge: (request: any) => Reply, tick: () => object = ()
     await turn.ended
     return { text: e.text, origin: e.origin }
   })
+  if (append !== null) {
+    on('session.append', ($: any, e: any, next: any) => {
+      seen.appends.push({ message: { type: e.message.type, content: e.message.content }, door: e.door, origin: e.origin })
+      return append(e) ?? next(e)
+    })
+  }
   on('session.start', ($: any, e: any) => ({ cwd: e.cwd }))
   on('turn.start', ($: any, e: any) => ({ turnId: e.turnId }))
   on('turn.complete', ($: any, e: any) => ({ text: e.answer }))
@@ -1014,4 +1020,59 @@ test('Cancel clears the words as well as closing the box', async ($, on) => {
   expect(state.suggesting()).toBeNull()
   expect(seen.requests).toEqual([])
   await ui.unmount()
+})
+
+const NOTICE = 'You approved the banner change in the panel at 10:34.'
+const NOTE = 'Wheelhouse pane: the director approved in the panel at 10:34 on the banner change (card card-1). The chat already shows this to them: don\'t repeat it, and never ask that card again.'
+const counted = { ok: true, says: 'Approved.', submit: [], notice: NOTICE, note: NOTE }
+const row = (type: string, text: string) => ({ message: { type, content: [{ type: 'text', text }] }, door: 'note', origin: { kind: 'plugin', name: 'wheelhouse' } })
+
+test('a press that counted appends the notice as a system row, then the note as a user row, and starts no turn', async ($, on) => {
+  const { seen, clear, start } = world(on, () => counted)
+  for (const surface of SURFACES) {
+    await start($, surface)
+    const ui = await mount($, surface)
+    clear()
+    await ui.press({ key: cardKey('card-1', 'Approve') })
+    expect(seen.appends).toEqual([row('system', NOTICE), row('user', NOTE)])
+    expect(seen.submits).toEqual([])
+    await ui.unmount()
+  }
+})
+
+test('a press that carries no notice appends nothing', async ($, on) => {
+  const { seen, clear, start } = world(on, () => ({ ok: true, says: 'Recorded: Not now on card 1', submit: [] }))
+  for (const surface of SURFACES) {
+    await start($, surface)
+    const ui = await mount($, surface)
+    clear()
+    await ui.press({ key: cardKey('card-1', 'Not now') })
+    expect(seen.appends).toEqual([])
+    await ui.unmount()
+  }
+})
+
+test('a deny from the first append still tries the second', async ($, on) => {
+  const { seen, clear, start } = world(on, () => counted, () => frontDesk(), (e: any) => (e.message.type === 'system' ? { deny: 'refused' } : null))
+  for (const surface of SURFACES) {
+    await start($, surface)
+    const ui = await mount($, surface)
+    clear()
+    await ui.press({ key: cardKey('card-1', 'Approve') })
+    expect(seen.appends.map((a: any) => a.message.type)).toEqual(['system', 'user'])
+    await ui.unmount()
+  }
+})
+
+test('a session with no append draws the card as before and throws nothing', async ($, on) => {
+  const { seen, clear, start } = world(on, () => counted, () => frontDesk(), null)
+  for (const surface of SURFACES) {
+    await start($, surface)
+    const ui = await mount($, surface)
+    clear()
+    await ui.press({ key: cardKey('card-1', 'Approve') })
+    expect(seen.toasts).toContain('Approved.')
+    expect(seen.toasts).not.toContain(FAILED)
+    await ui.unmount()
+  }
 })

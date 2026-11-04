@@ -79,6 +79,19 @@ export async function submitAll($: EngineInterface, prompts: readonly string[], 
   return handed
 }
 
+// Shows a counted press in the chat at once, with no turn: the notice as a row the director sees, then the
+// note as a row only the front desk reads. Each is tried alone: a refusal, a throw, or an engine with no
+// such call is passed over, and the next prompt's line says it instead.
+export async function appendRows($: EngineInterface, notice: string, note: string) {
+  for (const [type, text] of [['system', notice], ['user', note]] as const) {
+    try {
+      await $.session.append({ message: { type, content: [{ type: 'text', text }] } })
+    } catch {
+      // The next prompt's line says it.
+    }
+  }
+}
+
 // A press once taken: said at once, sent with the session's folder, the bridge's words said (or
 // that it couldn't be recorded), the press released so the buttons are live again, `after`
 // started, and each prompt the bridge gave handed to the front desk, which isn't waited for: a
@@ -99,6 +112,7 @@ export async function carry($: EngineInterface, request: Record<string, unknown>
   }
   if (answer?.says !== undefined) $.ui.toast(answer.says)
   else if (answer === null || !answer.ok) $.ui.toast(FAILED)
+  if (answer?.notice !== undefined && answer.note !== undefined) await appendRows($, answer.notice, answer.note)
   void after().catch(() => undefined)
   void submitAll($, answer?.submit ?? []).catch(() => undefined)
 }

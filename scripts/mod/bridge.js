@@ -261,12 +261,16 @@ async function press(req, d) {
   if (req.origin !== PANE) return no(SAYS.notPane);
   const project = placeOf(req.cwd, d);
   if (!project) return no(SAYS.notProject);
-  const { made, says, submit } = await d.pressCard({
+  const { made, says, submit, notice, note } = await d.pressCard({
     project, card: req.card, hash: req.hash, label: req.label, client: clientOf(d), desk: deskOf(project, req.cwd, d), now: d.now, liftStop: d.liftStop, stopState: d.stopState, budget: helperMs(),
   });
   const answer = { ok: made === true || strings(submit) };
   if (typeof says === 'string') answer.says = inWords(project, says);
   if (strings(submit)) answer.submit = submit;
+  if (typeof notice === 'string' && typeof note === 'string') {
+    answer.notice = notice;
+    answer.note = note;
+  }
   return answer;
 }
 
@@ -671,6 +675,8 @@ export function lineOf(answer) {
   if (isRecord(answer?.pane)) out.pane = answer.pane;
   if (typeof answer?.glance === 'string') out.glance = answer.glance;
   if (typeof answer?.status === 'string') out.status = answer.status;
+  if (typeof answer?.notice === 'string') out.notice = answer.notice;
+  if (typeof answer?.note === 'string') out.note = answer.note;
   if (strings(answer?.submit)) out.submit = answer.submit;
   if (strings(answer?.woken)) out.woken = answer.woken;
   if (typeof answer?.wokeAt === 'string') out.wokeAt = answer.wokeAt;

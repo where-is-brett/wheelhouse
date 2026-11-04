@@ -2,6 +2,10 @@
 // Where and when a card was answered, in words every part of Wheelhouse shares. It reads the answers the state
 // holds and imports nothing, so the state and the hooks can both use it.
 
+// What the hidden line the mod appends after a panel press starts with (scripts/mod/press.js), kept here so the
+// hook can look for it without loading the pane's code.
+export const NOTE_LEAD = 'Wheelhouse pane: the director ';
+
 export const WHERE = Object.freeze(['panel', 'chat', 'reply']);
 
 const PLACE_WORDS = { panel: 'in the panel', chat: 'in the chat', reply: 'by reply code' };

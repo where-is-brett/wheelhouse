@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { pressCard, whyCard, suggestCard, SAYS } from '../../../scripts/mod/press.js';
+import { pressCard, whyCard, suggestCard, SAYS, NOTE_LEAD } from '../../../scripts/mod/press.js';
 import { replyRecord, repliedDir, claim } from '../../../scripts/mod/reply.js';
 import { hashOf } from '../../../scripts/mod/status.js';
 import { decide } from '../../../scripts/hooks/prompt-record.js';
@@ -21,6 +21,7 @@ import { sheetHash } from '../../../scripts/engine/goal.js';
 import { clicksDir } from '../../../scripts/lib/setup-clicks.js';
 import { cardHash } from '../../../scripts/lib/measures-clicks.js';
 import { asQuestion } from '../../../scripts/cards/visit.js';
+import { subjectOf } from '../../../scripts/cards/answered.js';
 
 const P = 'owner__name';
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -121,13 +122,14 @@ test('Approve on an approval card signs the approval a click earns, then writes 
   let keptFirst = null;
   const helper = fake({ refuse: true, onWrite: () => { keptFirst = pendingFiles().length; } });
   const out = await press(card, helper, 'Approve');
-  assert.deepEqual(out, { made: true, says: 'Approved. (kept until the helper takes it)' });
+  assert.deepEqual({ made: out.made, says: out.says }, { made: true, says: 'Approved. (kept until the helper takes it)' });
   assert.equal(keptFirst, 1);
 
   // Taken by the helper: the same record a click earns, signed, and then the plain answer.
   const other = putCard(approvalCard(14), 1);
   const client = fake();
-  assert.deepEqual(await press(other, client, 'Approve'), { made: true, says: 'Approved.' });
+  const approved = await press(other, client, 'Approve');
+  assert.deepEqual({ made: approved.made, says: approved.says }, { made: true, says: 'Approved.' });
   assert.deepEqual(client.calls.order, ['prState', 'record', 'write']);
   assert.deepEqual(signed(client), [{ kind: 'approval', data: { pr: 14, commit: FULL, words: 'Approve', question: other.data.question } }]);
   assert.equal(verify(client.calls.record[0].event, readEnrolled()), true);
@@ -147,7 +149,7 @@ test('an answer card\'s option signs the answer action for its question', () => 
   keepEvent(asked);
   const card = putCard(answerCard());
   const client = fake();
-  assert.deepEqual(await press(card, client, 'Tab'), { made: true, says: 'Recorded: Tab on card 1' });
+  assert.deepEqual(plain(await press(card, client, 'Tab')), { made: true, says: 'Recorded: Tab on card 1' });
   assert.deepEqual(signed(client), [{ kind: 'action', data: { action: 'answer', questionId: 'q-export-csv-1', questionHash: dataHash(QUESTION), question: card.data.question, label: 'Tab' } }]);
   assert.equal(verify(client.calls.record[0].event, readEnrolled()), true);
   assert.equal(client.calls.write.length, 1);
@@ -347,7 +349,7 @@ test('under STOP, Approve still records and closes its card; Not now says it was
   const approval = putCard(approvalCard());
   const other = putCard(approvalCard(14), 1);
   const client = fake({ stop: true });
-  assert.deepEqual(await press(approval, client, 'Approve'), { made: true, says: 'Approved.' });
+  assert.deepEqual(plain(await press(approval, client, 'Approve')), { made: true, says: 'Approved.' });
   assert.equal(client.calls.record.length, 1);
   assert.equal(verify(client.calls.record[0].event, readEnrolled()), true);
   // The record closes the card on its own; the helper would refuse the plain answer.
@@ -371,7 +373,7 @@ test('under STOP, Approve still records and closes its card; Not now says it was
   // A Lift All stop press lifts it, and its answer is then written.
   const lift = putCard(liftStopCard(), 2);
   const lifting = fake();
-  assert.deepEqual(await press(lift, lifting, 'Lift All stop', { liftStop }), { made: true, says: 'All stop lifted.' });
+  assert.deepEqual(plain(await press(lift, lifting, 'Lift All stop', { liftStop })), { made: true, says: 'All stop lifted.' });
   assert.equal(stopState().on, false);
   assert.deepEqual(lifting.calls.order, ['record', 'write']);
 }));
@@ -501,7 +503,7 @@ test('an ordinary press beside those still records: Allow on this computer\'s qu
   keepEvent(here);
   const card = putCard(composeCard(answerInput(data, 'export-csv')).card);
   const client = fake();
-  assert.deepEqual(await press(card, client, BUILD_QUESTION_LABELS.feature), { made: true, says: `Recorded: ${BUILD_QUESTION_LABELS.feature} on card 1` });
+  assert.deepEqual(plain(await press(card, client, BUILD_QUESTION_LABELS.feature)), { made: true, says: `Recorded: ${BUILD_QUESTION_LABELS.feature} on card 1` });
   assert.deepEqual(signed(client).map((r) => [r.data.action, r.data.questionId, r.data.label]), [['answer', 'q-export-csv-1', BUILD_QUESTION_LABELS.feature]]);
   assert.equal(waitingIds().includes(card.id), false);
 
@@ -800,4 +802,42 @@ test('a refused Start says why and writes nothing', () => withKey(async (home) =
   assert.equal(untouched(client), 0);
   assert.deepEqual(pendingFiles(), []);
   assert.deepEqual(waitingIds(), [card.id], 'the card stays waiting');
+}));
+
+// A press answer without the chat lines, for tests of the rest of it.
+const plain = ({ notice, note, ...rest }) => rest;
+const clockOf = (at) => `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+
+test('an Approve that counts answers a notice and a note for the chat', () => withKey(async () => {
+  const card = putCard(approvalCard());
+  const out = await press(card, fake(), 'Approve');
+  const subject = subjectOf({ data: card.data });
+  const at = clockOf(LATER);
+  assert.equal(out.notice, `You approved ${subject} in the panel at ${at}.`);
+  assert.equal(out.note, `${NOTE_LEAD}approved in the panel at ${at} on ${subject} (card ${card.id}). The chat already shows this to them: don't repeat it, and never ask that card again.`);
+  assert.equal(NOTE_LEAD, 'Wheelhouse pane: the director ');
+}));
+
+test('a press that is not a counted deciding press answers neither notice nor note', () => withKey(async () => {
+  const first = putCard(approvalCard());
+  const notNow = await press(first, fake(), 'Not now');
+  assert.equal(notNow.notice, undefined);
+  assert.equal(notNow.note, undefined);
+  const second = putCard(approvalCard(14), 1);
+  const shown = await press(second, fake(), 'Show me');
+  assert.equal(shown.notice, undefined);
+  assert.equal(shown.note, undefined);
+  const asking = putCard(questionCard(), 2);
+  const chose = await press(asking, fake(), 'Comma');
+  assert.equal(chose.notice, undefined);
+  // A stale press (the card changed) and a repeat press record nothing, so say nothing.
+  const stale = await pressCard({ project: P, card: first.id, hash: 'ffffffffffff', label: 'Approve', client: fake(), now: () => LATER, liftStop: () => {} });
+  assert.equal(stale.made, false);
+  assert.equal(stale.notice, undefined);
+  const third = putCard(approvalCard(15), 3);
+  assert.equal((await press(third, fake(), 'Approve')).made, true);
+  const again = await press(third, fake(), 'Approve');
+  assert.equal(again.made, false);
+  assert.equal(again.notice, undefined);
+  assert.equal(again.note, undefined);
 }));
