@@ -66,6 +66,18 @@ const INPUTS = {
     ...common, kind: 'start-goal', recommend: 'Start', what: 'The goal tidy-up has 2 pieces of work and a check that proves each is done.',
     options: [says('Start')], target: { goal: 'tidy-up', hash: DOC },
   },
+  update: {
+    ...common, kind: 'update', recommend: 'Update', what: 'Update Wheelhouse v0.2.6 to v0.2.7.',
+    options: [says('Update')], target: { from: 'v0.2.6', to: 'v0.2.7', put: 'release', hash: DOC },
+  },
+  release: {
+    ...common, kind: 'release', recommend: 'Approve', what: 'Move this project from Wheelhouse v0.2.6 to v0.2.7.',
+    options: [says('Approve')], target: { previous: 'v0.2.6', release: 'v0.2.7', commit: 'a'.repeat(40) },
+  },
+  'update-helper': {
+    ...common, kind: 'update-helper', recommend: 'Stop it', level: 2, what: 'The old helper is still running.',
+    options: [{ label: 'Stop it', says: 'The old helper is stopped.' }, { label: 'Leave it', says: 'It keeps running.' }], target: { card: 'update-helper-4242-x' },
+  },
   question: { ...common, kind: 'question', recommend: 'Comma', what: 'The export needs to know which separator to use.', options: OWN },
   'keep-control-files': {
     ...common, kind: 'keep-control-files', recommend: 'Confirm', what: 'The export-csv feature\'s folder has a new or changed file that steers agents.',
@@ -82,11 +94,11 @@ const SET_LINE_KINDS = Object.keys(DECIDING);
 // only by the click on the card itself, in the chat where it was asked. Nor does uninstall's card
 // (ruling R90), for the same reason.
 const SETUP_KINDS = ['setup', 'confirm-all'];
-const NO_BUTTON_KINDS = [...SETUP_KINDS, 'baseline', 'trust', 'take-over', 'pair', 'uninstall'];
+const NO_BUTTON_KINDS = [...SETUP_KINDS, 'baseline', 'trust', 'take-over', 'pair', 'uninstall', 'update', 'release', 'update-helper'];
 const NO_BUTTONS = { buttons: [], note: SETUP_ANSWER };
 const noButtonsFor = (kind) => {
   if (SETUP_KINDS.includes(kind)) return NO_BUTTONS;
-  return { buttons: [], note: { trust: TRUST_ANSWER, 'take-over': TRUST_ANSWER, pair: TRUST_ANSWER, uninstall: UNINSTALL_ANSWER }[kind] ?? CANT_ANSWER };
+  return { buttons: [], note: { trust: TRUST_ANSWER, 'take-over': TRUST_ANSWER, pair: TRUST_ANSWER, update: TRUST_ANSWER, release: TRUST_ANSWER, 'update-helper': TRUST_ANSWER, uninstall: UNINSTALL_ANSWER }[kind] ?? CANT_ANSWER };
 };
 
 const FILLED = (label) => ({ label, does: 'record', shape: 'filled' });
@@ -225,7 +237,7 @@ test('a card is judged by the card check\'s own tests, for every kind with a set
       lines.filter((l) => l !== TO_KNOW_MORE).join('\n'),
       // A setup card, a trust card, uninstall's and a Keep card have no reply code line to take away (rulings R36,
       // R80, R90, P7-31).
-      ...([...SETUP_KINDS, 'trust', 'take-over', 'pair', 'uninstall', 'keep-control-files', 'start-goal'].includes(kind) ? [] : [lines.filter((l) => !l.startsWith('Reply code:')).join('\n')]),
+      ...([...SETUP_KINDS, 'trust', 'take-over', 'pair', 'uninstall', 'keep-control-files', 'start-goal', 'update', 'release', 'update-helper'].includes(kind) ? [] : [lines.filter((l) => !l.startsWith('Reply code:')).join('\n')]),
       `${data.question}\nReply code: ${replyCode('another line')}`,
       `${data.question}\n${data.line}`,
       // Without its reason and its meanwhile, a card has too few plain lines.

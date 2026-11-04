@@ -108,3 +108,22 @@ test('a journal from a newer version is not run and not rewritten', () => withHo
   assert.deepEqual(calls, []);
   assert.equal(fs.readFileSync(path.join(journal.folder, 'journal.json'), 'utf8'), text);
 }));
+
+test('a step that waits stays running with its line, is asked again later, and a closed change still fails', () => withHome(async () => {
+  const journal = openJournal('p');
+  let ready = false;
+  const waits = [{
+    name: 'merged',
+    run: async () => (ready ? { data: { merged: true } } : { ok: false, waiting: true, line: 'Waiting for the change naming v0.2.7 to be merged.' }),
+  }];
+  const first = await runJob({ project: 'p', target: 'v0.2.7', steps: waits, journal });
+  assert.deepEqual([first.ok, first.waiting, first.step], [false, true, 'merged']);
+  assert.deepEqual([journal.read().steps.merged.state, journal.read().steps.merged.data.line], ['running', 'Waiting for the change naming v0.2.7 to be merged.']);
+  ready = true;
+  const second = await runJob({ project: 'p', target: 'v0.2.7', steps: waits, journal });
+  assert.equal(second.ok, true);
+  assert.equal(journal.read().steps.merged.state, 'done');
+  const closed = await runJob({ project: 'q', target: 'v0.2.7', steps: [{ name: 'merged', run: async () => ({ ok: false, line: 'The change was closed.' }) }], journal: openJournal('q') });
+  assert.equal(closed.waiting, undefined);
+  assert.equal(openJournal('q').read().steps.merged.state, 'failed');
+}));

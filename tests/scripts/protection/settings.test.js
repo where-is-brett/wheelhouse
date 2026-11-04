@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { FRONT_DESK_INPUT, WORK_REPORTS_RULE } from '../../../scripts/lib/front-desk.js';
-import { projectSettings, localSettings, directorStatusLine, isOwnStatusLine, withoutOwnStatusLine, mergeSettings, writeSettings, sandboxFlag, featureAllowRules, featureFileRules, frontDeskCommand, setupCommand, pluginScriptCommand, claudeCodeSettings, ATTRIBUTION_OFF, SWITCHED_OFF_PLUGINS, KEYCHAINS, HOST_TOKENS, withoutKeychainDenial, compactionRules, compactionLine, archonDenyRules, ownRunRules, readRule, ENGINE_HOME } from '../../../scripts/protection/settings.js';
+import { projectSettings, localSettings, directorStatusLine, isOwnStatusLine, withoutOwnStatusLine, mergeSettings, writeSettings, sandboxFlag, featureAllowRules, featureFileRules, frontDeskCommand, setupCommand, updateCommand, pluginScriptCommand, claudeCodeSettings, ATTRIBUTION_OFF, SWITCHED_OFF_PLUGINS, KEYCHAINS, HOST_TOKENS, withoutKeychainDenial, compactionRules, compactionLine, archonDenyRules, ownRunRules, readRule, ENGINE_HOME } from '../../../scripts/protection/settings.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { credentialPaths } from '../../../scripts/lib/credentials.js';
 import { helperAddress, archonHome } from '../../../scripts/lib/paths.js';
@@ -224,6 +224,9 @@ test('the local settings allow the command by its full path', () => {
   const setupRule = `Bash(node "${root}/scripts/setup/cli.js":*)`;
   const flagged = `Bash(node --no-use-system-ca "${root}/scripts/frontdesk/cli.js":*)`;
   const setupFlagged = `Bash(node --no-use-system-ca "${root}/scripts/setup/cli.js":*)`;
+  const updateRule = `Bash(node "${root}/scripts/update/cli.js":*)`;
+  const updateFlagged = `Bash(node --no-use-system-ca "${root}/scripts/update/cli.js":*)`;
+  assert.equal(updateCommand(root, { platform: 'darwin' }), `node "${root}/scripts/update/cli.js"`);
   assert.equal(frontDeskCommand(root, { platform: 'darwin', noSystemCa: true }), `node --no-use-system-ca "${root}/scripts/frontdesk/cli.js"`);
   assert.equal(frontDeskCommand(root, { platform: 'darwin' }), `node "${root}/scripts/frontdesk/cli.js"`);
   assert.equal(setupCommand(root, { platform: 'darwin' }), `node "${root}/scripts/setup/cli.js"`);
@@ -237,25 +240,30 @@ test('the local settings allow the command by its full path', () => {
   // And the work's reports it writes for `record work`: Markdown files directly in .wheelhouse/work/, nothing below or beside.
   const reports = WORK_REPORTS_RULE;
   assert.equal(reports, 'Edit(/.wheelhouse/work/*.md)');
-  assert.deepEqual(localSettings({ address, pluginRoot: root, platform: 'darwin' }).permissions, { allow: [rule, flagged, input, reports, setupRule, setupFlagged] });
+  assert.deepEqual(localSettings({ address, pluginRoot: root, platform: 'darwin' }).permissions, { allow: [rule, flagged, input, reports, setupRule, setupFlagged, updateRule, updateFlagged] });
   // With the status line or without it, and beside the socket.
   const full = localSettings({ address, node: '/usr/local/bin/node', pluginRoot: root, ownStatusLine: { type: 'command', command: 'x' }, platform: 'linux' });
-  assert.deepEqual(full.permissions, { allow: [rule, flagged, input, reports, setupRule, setupFlagged] });
+  assert.deepEqual(full.permissions, { allow: [rule, flagged, input, reports, setupRule, setupFlagged, updateRule, updateFlagged] });
   assert.deepEqual(full.sandbox, { network: { allowUnixSockets: [address] } });
   // On Windows the path is written with forward slashes after its drive letter, as node and Git Bash take it.
   assert.deepEqual(localSettings({ address, pluginRoot: 'C:\\Users\\Zoë\\wheelhouse', platform: 'win32' }).permissions,
-    { allow: ['Bash(node "C:/Users/Zoë/wheelhouse/scripts/frontdesk/cli.js":*)', 'Bash(node --no-use-system-ca "C:/Users/Zoë/wheelhouse/scripts/frontdesk/cli.js":*)', 'Edit(/.wheelhouse/front-desk.json)', 'Edit(/.wheelhouse/work/*.md)', 'Bash(node "C:/Users/Zoë/wheelhouse/scripts/setup/cli.js":*)', 'Bash(node --no-use-system-ca "C:/Users/Zoë/wheelhouse/scripts/setup/cli.js":*)'] });
+    { allow: ['Bash(node "C:/Users/Zoë/wheelhouse/scripts/frontdesk/cli.js":*)', 'Bash(node --no-use-system-ca "C:/Users/Zoë/wheelhouse/scripts/frontdesk/cli.js":*)', 'Edit(/.wheelhouse/front-desk.json)', 'Edit(/.wheelhouse/work/*.md)', 'Bash(node "C:/Users/Zoë/wheelhouse/scripts/setup/cli.js":*)', 'Bash(node --no-use-system-ca "C:/Users/Zoë/wheelhouse/scripts/setup/cli.js":*)', 'Bash(node "C:/Users/Zoë/wheelhouse/scripts/update/cli.js":*)', 'Bash(node --no-use-system-ca "C:/Users/Zoë/wheelhouse/scripts/update/cli.js":*)'] });
   // A folder a rule can't hold as it is gets no rule: the command is then asked about each time.
   for (const bad of ['/x"y', '/x*y', '/x(y', '/x)y', '/x\ny', 'relative/root', '/x`y', '/x$y']) {
     assert.equal(localSettings({ address, pluginRoot: bad, platform: 'linux' }).permissions, undefined, bad);
     assert.equal(frontDeskCommand(bad, { platform: 'linux' }), null, bad);
     assert.equal(setupCommand(bad, { platform: 'linux' }), null, bad);
+    assert.equal(updateCommand(bad, { platform: 'linux' }), null, bad);
   }
   // Merged into settings the director already has, their own rules stay first.
   const merged = mergeSettings({ permissions: { allow: ['Bash(ls:*)'] } }, localSettings({ address, pluginRoot: root, platform: 'darwin' }));
-  assert.deepEqual(merged.permissions.allow, ['Bash(ls:*)', rule, flagged, input, reports, setupRule, setupFlagged]);
+  assert.deepEqual(merged.permissions.allow, ['Bash(ls:*)', rule, flagged, input, reports, setupRule, setupFlagged, updateRule, updateFlagged]);
   // The shared project settings never name it: the path is this computer's.
-  assert.ok(!strings(projectSettings(config)).some((x) => x.includes('frontdesk') || x.includes('setup/cli.js')));
+  assert.ok(!strings(projectSettings(config)).some((x) => x.includes('frontdesk') || x.includes('setup/cli.js') || x.includes('update/cli.js')));
+  // The allow rule covers the update's one session script and no other of its scripts: the job and its second half are the helper's.
+  const allowed = localSettings({ address, pluginRoot: root, platform: 'darwin' }).permissions.allow.filter((r) => r.includes('/update/'));
+  assert.deepEqual(allowed, [updateRule, updateFlagged]);
+  assert.ok(allowed.every((r) => r.endsWith('scripts/update/cli.js":*)')));
 });
 
 test('the director\'s own status line is found in their user, project or local settings, and Wheelhouse\'s own is not theirs', () => {

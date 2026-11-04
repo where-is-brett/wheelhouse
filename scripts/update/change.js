@@ -165,16 +165,17 @@ export function changeSteps({ projectDir, target, previous, put = 'release', ope
         const made = data.change ?? {};
         if (made.skipped === 'before-step-7') return { data: { merged: false, skipped: 'before-step-7' } };
         const got = await waitMerged({ target, projectDir, pr: made.pr ?? undefined, prState });
-        if (got.merged) return { data: { merged: true } };
+        // Approved only when the director's card was the way in; a release that needed Wheelhouse's review alone was not.
+        if (got.merged) return { data: { merged: true, ...(made.approval === 'card' ? { approved: true } : made.approval === 'review' ? { approved: false } : {}) } };
         if (got.closed) return { ok: false, line: got.closed };
-        return { ok: false, line: got.waiting };
+        return { ok: false, waiting: true, line: got.waiting };
       },
     },
     {
       name: 'idle',
       async run() {
         const got = await waitIdle({ stopped, features });
-        return got.idle ? undefined : { ok: false, line: got.waiting };
+        return got.idle ? undefined : { ok: false, waiting: true, line: got.waiting };
       },
     },
   ];

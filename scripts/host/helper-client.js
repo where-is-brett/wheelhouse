@@ -66,6 +66,13 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     // sha256 of its data, shown in the helper's own window; a deciding click there is signed by the helper with proof
     // `window`. One window at a time on this computer, so this may wait for a click: give the client a long timeout.
     confirm: post('/confirm'),
+    // Updating Wheelhouse (scripts/update/routes.js), naming the folder, a full path; `scripts/update/cli.js` calls these.
+    update: {
+      plan: post('/update/plan'), //     { folder, tag? } -> { ok, hash, card, lines } | { ok, lines }: the Update card and a hash of the plan, or the one line when there is nothing to ask; refused from a feature session
+      apply: post('/update/apply'), //   { folder, hash } -> { ok, started }: only for the plan last shown, never under All stop, the job then running in its own process
+      status: post('/update/status'), // { folder } -> { ok, lines, state, asks? }: how the update stands and any card the director must answer; answered while the helper makes way for an update
+      answer: post('/update/answer'), // { folder, card, label } -> { ok, recorded?, lines }: signs nothing; Not now on the Update card is kept, and a signed answer to a raised card wakes the job
+    },
     push: post('/push'), //          { project | cwd, dir, refspec }: a feature session's `cli.js push` and `open-pr` give their worktree as `cwd`, and the helper places the project
     pull: post('/pull'), //          { project | cwd, dir, branch } -> { ok, already } or { ok, already: false, merged, from, sha, bundle }, or { ok: false, refused, conflicts? }: `cli.js pull` brings the host's copy of the worktree's own feature branch in; `bundle` (base64) holds the commits the worktree lacks, under refs/wheelhouse/pulled
     fetchBase: post('/base/fetch'), // { project } -> { ok, branch, sha } or { ok: false, refused }: the foreman's start has the host's default branch fetched into the project's mirror (refs/wheelhouse/base), which its child then copies into the main checkout with no key

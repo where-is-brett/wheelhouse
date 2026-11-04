@@ -8,7 +8,7 @@ import { scanContent } from './secret-scan.js';
 import { briefProblem, briefWords } from '../delegation/brief.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { git } from './git.js';
-import { RELEASE_LABEL, RELEASE_TAG, releaseLine, keepControlLine, approvalLine, startGoalLine, setLineOf, CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, TAKEOVER_LABEL, takeOverLine, APP_ID, pairLine, unpairLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
+import { RELEASE_LABEL, RELEASE_TAG, releaseLine, UPDATE_LABEL, updateLine, keepControlLine, approvalLine, startGoalLine, setLineOf, CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, TAKEOVER_LABEL, takeOverLine, APP_ID, pairLine, unpairLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
 import { carriesFigures, CARRIES_BASELINE } from '../lib/measures-clicks.js';
 import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH } from '../lib/build-loop.js';
 import { CARD, CARD_KINDS, PUT_OFF } from '../lib/front-desk.js';
@@ -68,7 +68,7 @@ export const RED_MAIN_OWN = 'only the helper records a red main line\'s incident
 export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'shadow', 'match', 'rule', 'slept', 'goal-end', 'goal-check', 'goal-card'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 
-const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main', 'safekeeping', 'send-back', 'start-goal', 'approve-release', 'update-helper-answer'];
+const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main', 'safekeeping', 'send-back', 'start-goal', 'approve-release', 'update-helper-answer', 'update-click'];
 // The fields each action carries beyond the card's question and the label clicked.
 const ACTION_OWN = {
   'lift-stop': [],
@@ -124,6 +124,9 @@ const ACTION_OWN = {
   // The director's answer to the card about an old helper that did not make way for an update: the card's id, which names the
   // process it asks about, so an answer to an earlier helper's card is no answer to a later one's.
   'update-helper-answer': ['card'],
+  // The director's click on the Update card (update design, section 4), Update or Not now: the full hash of the plan the card
+  // showed, the release the computer is on and the one it moves to, and whether the move is an update or a put-back.
+  'update-click': ['hash', 'from', 'to', 'put'],
   // The director's Confirm on the card keeping a feature's files that steer agents as they are
   // (ruling P7-31): the work, and the full hash of the watcher's finding the card's line names.
   'keep-control-files': ['work', 'hash'],
@@ -254,6 +257,12 @@ function checkAction(data) {
     if (typeof data.commit !== 'string' || !/^[0-9a-f]{40}$/.test(data.commit)) bad('needs the release\'s commit in full');
     if (data.label !== RELEASE_LABEL) bad(`needs the ${RELEASE_LABEL} label`);
     if (setLineOf(data.question) !== releaseLine(data.previous, data.release, data.commit)) bad('carries the release line for its tags and commit as its question\'s one set line');
+  } else if (data.action === 'update-click') {
+    if (typeof data.hash !== 'string' || !/^[0-9a-f]{64}$/.test(data.hash)) bad('needs the full hash of the plan its card showed');
+    if (![data.from, data.to].every((x) => typeof x === 'string' && RELEASE_TAG.test(x))) bad('needs the release the computer is on and the one it moves to, named by plain tags');
+    if (data.put !== 'release' && data.put !== 'undo') bad('needs to say whether it is an update or a put-back');
+    if (data.label !== UPDATE_LABEL && data.label !== 'Not now') bad(`needs the ${UPDATE_LABEL} or Not now label`);
+    if (setLineOf(data.question) !== updateLine(data.from, data.to, data.put, data.hash)) bad('carries the Update line for its move and plan as its question\'s one set line');
   } else if (data.action === 'update-helper-answer') {
     if (typeof data.card !== 'string' || !/^update-helper-[A-Za-z0-9.-]{1,80}$/.test(data.card)) bad('needs the id of the helper card it answers');
     if (!['Stop it', 'Leave it', 'Wait longer'].includes(data.label)) bad('needs one of the helper card\'s labels');

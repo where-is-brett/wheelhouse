@@ -3,7 +3,8 @@
 // part-way carries on at the first step not done and never does a done step twice.
 
 // steps: [{ name, run({ project, target, journal, data }) }]. A step finishes by returning
-// nothing, `{ data }` to record something for later steps, or `{ ok: false, line }` to stop.
+// nothing, `{ data }` to record something for later steps, or `{ ok: false, line }` to stop, or `{ ok: false, line, waiting: true }` to wait: the step stays running and the job
+// is asked again later.
 // A step that throws stops the job with the error's message as its line.
 export async function runJob({ project, target, steps, journal }) {
   const release = journal.lock();
@@ -29,6 +30,12 @@ export async function runJob({ project, target, steps, journal }) {
         return { ok: false, step: step.name, line };
       }
       if (result && result.ok === false) {
+        // A step that is waiting for something (a merge, an answer) stays running, with its line: it has not failed, and
+        // the board says what it waits for. The caller may ask again later.
+        if (result.waiting === true) {
+          journal.mark(step.name, 'running', { line: result.line });
+          return { ok: false, step: step.name, line: result.line, waiting: true };
+        }
         journal.mark(step.name, 'failed', { line: result.line });
         return { ok: false, step: step.name, line: result.line };
       }
