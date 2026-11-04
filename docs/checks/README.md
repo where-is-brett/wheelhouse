@@ -51,8 +51,8 @@ The answers to the checks in section 20 of the design, and to checks 24 to 31 in
 | 50 | Switching a project's own parts off and on | Deferred | [50-switch-off.md](50-switch-off.md) |
 | 52 | The low-integrity runner on Windows | Deferred | [52-low-integrity.md](52-low-integrity.md) |
 | 53 | Granting build commands to a feature session on Windows | Deferred | [53-windows-grants.md](53-windows-grants.md) |
-| 54 | VS Code's Claude harness | Yes on the Mac; the sandbox was not reached | [54-claude-harness.md](54-claude-harness.md) |
-| 55 | What an add-on's contributions reach | Not run yet | None yet |
+| 54 | VS Code's Claude harness | Yes on the Mac | [54-claude-harness.md](54-claude-harness.md) |
+| 55 | What an add-on's contributions reach | Yes on the Mac: both chat tools reach the chat | [55-addon-contributions.md](55-addon-contributions.md) |
 | 56 | Registration: what Copilot loads, and twice | Yes | [56-registration.md](56-registration.md) |
 | 57 | Copilot's sandbox | Not run yet | None yet |
 | 58 | The guards' input | Partly | [58-hook-input.md](58-hook-input.md) |
@@ -62,14 +62,14 @@ The answers to the checks in section 20 of the design, and to checks 24 to 31 in
 | 62 | Setup's tools on Windows, and the timed run | Not run yet | None yet |
 | 63 | Superpowers and Matt Pocock's skills on Copilot | Yes, with two gaps | [63-kits.md](63-kits.md) |
 | 64 | Usage figures | Deferred | [64-usage.md](64-usage.md) |
-| 65 | The phone | Not run yet | None yet |
+| 65 | The phone | Deferred: needs the phone and the CLI signed in | [65-phone.md](65-phone.md) |
 | 66 | A clean reviewer session | Yes, on a clean copy of the change only; an untrusted checkout and a trusted folder leak | [66-clean-review.md](66-clean-review.md) |
-| 67 | The pane's place | Not run yet | None yet |
+| 67 | The pane's place | Yes on the Mac: the add-on can move it and VS Code keeps it | [67-pane-place.md](67-pane-place.md) |
 | 68 | An approval on the host | GitLab routes Deferred, held for the director (H3); GitHub half held for its sitting (S4) | None yet |
 | 69 | Lean's guards without Node.js | Yes, on the Mac, with two surprises | [69-guards-without-node.md](69-guards-without-node.md) |
 | 70 | Lean in VS Code with nothing added | No at Auto on a free plan (Mac): the kit copies, but the chat skips the cards and the feature flow; Windows not run | [70-lean-in-vscode.md](70-lean-in-vscode.md) |
 | 71 | GitLab on the company's own servers | Partly, at Free: a commit status posted with the project key can stand in for a pipeline that never ran; Premium's half Deferred, held for the director (H3) | [71-gitlab-self-managed.md](71-gitlab-self-managed.md) |
-| 72 | The add-on at Lean. Sitting S6 also covers the panel: the release `.vsix` fetched, its hash checked and installed with Install from VSIX on an account with no admin rights; the Inset pane in light, dark and high-contrast themes in every state, with screenshots; a card asked in the chat and the panel, to see the hold and the answer reach the chat on the next turn; `extensions.allowed` set to leave Wheelhouse out, so the add-on is disabled, the mark goes stale and cards come back to the chat; and whether the helper in VS Code is the whole computer's helper and how far the inbox reaches | Not run yet | None yet |
+| 72 | The add-on at Lean. Sitting S6 also covers the panel: the release `.vsix` fetched, its hash checked and installed with Install from VSIX on an account with no admin rights; the Inset pane in light, dark and high-contrast themes in every state, with screenshots; a card asked in the chat and the panel, to see the hold and the answer reach the chat on the next turn; `extensions.allowed` set to leave Wheelhouse out, so the add-on is disabled, the mark goes stale and cards come back to the chat; and whether the helper in VS Code is the whole computer's helper and how far the inbox reaches | Partly on the Mac: install, themes and `extensions.allowed`; the helper did not run | [72-addon-at-lean.md](72-addon-at-lean.md) |
 | 73 | The keychain: does denying the keychain files stop a sandboxed `security` | Yes on the Mac (the denial holds); Windows waits for check 52 | [73-keychain.md](73-keychain.md) |
 | 74 | E1: Copilot through Archon's compiled binary | Deferred: the account has no included Copilot model, and Copilot spend waits for the director's go in the checking session | [74-archon-copilot.md](74-archon-copilot.md) |
 | 75 | E2: Wheelhouse's guards inside an Archon Claude step | No: the hooks and deny rules hold, but bypass mode turns the sandbox off; the one-line patch is the route | [75-archon-guards.md](75-archon-guards.md) |
