@@ -48,6 +48,7 @@ import { fileURLToPath } from 'node:url';
 import { answer, runAndExit, projectOf, pluginRoots, isInside, managedDir, managedMarker, readTailEntries, readSmallText, beingSetUp, removedFrom } from './kit.js';
 import { keep, sendPending, withinBudget } from './pending.js';
 import { startWatcher, watcherRunning } from '../foreman/start.js';
+import { recordClaudePath } from '../lib/claude.js';
 import { helperClient } from '../host/helper-client.js';
 import { isOlder } from '../host/retire-helper.js';
 import { caEnv } from '../host/company-ca.js';
@@ -482,12 +483,14 @@ async function takeOverNotes({ client, left, project, now }) {
   }
 }
 
-async function ensureWatcher(project, client, { spawn, pluginRoot }) {
+async function ensureWatcher(project, client, { spawn, pluginRoot, env = process.env, folder = null }) {
+  // This session has the PATH that finds claude; keep the full path for a watcher that is started with a bare one.
+  try { recordClaudePath({ env, inside: folder }); } catch { /* the watcher looks in the usual places */ }
   try {
     if (watcherRunning(project) || typeof client.config !== 'function') return;
     const read = await projectConfig(project, client);
     // As the start script reads the shape: anything but 2 is Shape 1.
-    if (read.config !== null && read.config.watcherShape !== 2) startWatcher(project, { spawn, pluginRoot });
+    if (read.config !== null && read.config.watcherShape !== 2) startWatcher(project, { spawn, pluginRoot, env });
   } catch { /* the session carries on without it */ }
 }
 
@@ -849,7 +852,7 @@ async function started(input, deps) {
     // which it is until that board has been green, nor while setup's journal can't be read, when
     // whether it has finished isn't known (beingSetUp counts such a folder as the project it is,
     // so the rest of the session start goes on as in any project, and a line says why: R72).
-    if (setup === null && trouble === null) await left(ensureWatcher(project, clientNow(), { spawn, pluginRoot }));
+    if (setup === null && trouble === null) await left(ensureWatcher(project, clientNow(), { spawn, pluginRoot, env, folder: found.record?.folder ?? input.cwd }));
   }
   views ??= fallbackViews(project);
   // A hold whose file is gone (a matching check, or a compaction that finds it removed) has its card
