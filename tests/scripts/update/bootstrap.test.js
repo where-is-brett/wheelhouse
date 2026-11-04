@@ -201,3 +201,17 @@ test('bootstrap: refuses inside a Claude Code or Wheelhouse session, before anyt
     assert.equal(asked, false);
   }
 }));
+
+test('bootstrap: the typed card names the account entry the update changes, and a foreign source stops it', () => withHome(async () => {
+  const w = await world();
+  fs.writeFileSync(path.join(w.claudeHome, 'settings.json'), JSON.stringify({ extraKnownMarketplaces: { wheelhouse: { source: { source: 'github', repo: 'where-is-brett/wheelhouse', ref: 'v0.2.6' } } } }));
+  const out = await w.call();
+  assert.equal(out.ok, true, out.line);
+  assert.ok(w.said.includes('Your account settings name Wheelhouse at v0.2.6; the update changes that one entry to v0.2.7.'));
+  const odd = await world();
+  fs.writeFileSync(path.join(odd.claudeHome, 'settings.json'), JSON.stringify({ extraKnownMarketplaces: { wheelhouse: { source: { source: 'github', repo: 'someone/else', ref: 'v0.2.6' } } } }));
+  const stopped = await odd.call();
+  assert.equal(stopped.ok, false);
+  assert.match(stopped.line, /not the Wheelhouse repository/);
+  assert.deepEqual(quiet(odd.log), []);
+}));

@@ -38,9 +38,12 @@ export function pidAlive(pid, { kill = process.kill.bind(process) } = {}) {
 
 const lines = (text) => String(text ?? '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
 
-// The plugin cache's folder: ~/.claude/plugins/cache.
-export function defaultCacheRoot({ home = os.homedir() } = {}) {
-  return path.join(home, '.claude', 'plugins', 'cache');
+// The plugin cache's folder: plugins/cache in the Claude folder, which is CLAUDE_CONFIG_DIR when that is set, else ~/.claude.
+// A helper started by a bare `node` name (not a full path) is still refused: the check needs the executable's full path, so
+// nothing is stopped and the restart line applies.
+export function defaultCacheRoot({ home = os.homedir(), env = process.env } = {}) {
+  const claude = env.CLAUDE_CONFIG_DIR ? env.CLAUDE_CONFIG_DIR : path.join(home, '.claude');
+  return path.join(claude, 'plugins', 'cache');
 }
 
 // Whether a process is Node.js running exactly the helper's script from this release's folder in the cache, and nothing

@@ -37,6 +37,7 @@ function setup(over = {}) {
     list: async () => releases,
     fetch: async (tag) => ({ ok: true, sha: releases.find((r) => r.tag === tag).sha }),
     check: async () => ({ ok: true, says: 'GitLab merges no longer need glab.', nodeFloor: null, claudeFloor: null }),
+    account: () => null,
     kind: async () => 'pins-only',
     locked: async () => ({ locked: false, others: [] }),
     startRunner: (args) => started.push(args),
@@ -340,4 +341,17 @@ test('placing the project trusts the caller\'s own folder: a lying caller change
   // A feature session that names the main folder is placed as the main checkout, and then meets the click.
   assert.match(await refusal(t.routes['/update/apply']({ folder: t.folder, hash: shown.hash })), /has not clicked Update/);
   assert.deepEqual(t.started, []);
+}));
+
+test('plan: an account that names the catalogue at an old release is said on the card, and one that is not Wheelhouse\'s stops the plan', () => withHome(async () => {
+  const named = setup({ account: () => ({ ref: 'v0.2.6' }) });
+  const got = await named.routes['/update/plan']({ folder: named.folder });
+  assert.match(got.card.question, /Your account settings name Wheelhouse at v0\.2\.6; the update changes that one entry to v0\.2\.7\./);
+  const none = setup();
+  const plain = await none.routes['/update/plan']({ folder: none.folder });
+  assert.doesNotMatch(plain.card.question, /account settings/);
+  const odd = setup({ account: () => ({ refused: 'The account\'s settings name a catalogue called wheelhouse that is not the Wheelhouse repository, so the update leaves them alone and stops.' }) });
+  const stopped = await odd.routes['/update/plan']({ folder: odd.folder });
+  assert.equal(stopped.card, undefined);
+  assert.match(stopped.lines[0], /not the Wheelhouse repository/);
 }));

@@ -80,7 +80,15 @@ Remove-Item -Recurse -Force "$HOME\.wheelhouse\update\bootstrap\<tag>" -ErrorAct
 
 Each line removes an earlier copy of that release's folder first, so pasting again is safe. It checks the release first, so a clone that doesn't check out stops with nothing changed. It then shows you what the update does, in words, and waits for you to type `1` to update or `2` for not now. Only you can answer it: it refuses to run unless you are typing at the Terminal yourself. After a `1` it installs the release on this computer, hands over to the new helper, and opens a small change in your product naming the release. That change is reviewed and merged like any other; until it is, the board says the change is waiting to be merged. If the change is refused or closed, this computer is put back to the release it had. Every update after this one is `/wheelhouse:update`.
 
-**If you can't run the paste,** close your Wheelhouse sessions, then follow the Install step above with the new release's name in place of `v0.2.6` (the catalogue and the plugin each move to the new release), start a new session on the folder, and type `/wheelhouse:update` to finish.
+**If you can't run the paste,** close your Wheelhouse sessions, then do these steps by hand in Terminal, in your product's folder, with the new release's name in place of `<tag>`:
+
+```text
+claude plugin marketplace list
+claude plugin marketplace add "where-is-brett/wheelhouse#<tag>" --scope project
+claude plugin update wheelhouse@wheelhouse --scope project
+```
+
+Run the `add` even when the first command lists `wheelhouse`: adding it again at the new release is what moves it, and it is refused only when it names a different address. Then run `claude plugin update`, not `claude plugin install`, because Wheelhouse is already installed here and `install` answers "already installed" and changes nothing. (Where Wheelhouse is also installed for your whole account, run the `update` again with `--scope user`.) If your account's own settings (`~/.claude/settings.json`, or the folder `CLAUDE_CONFIG_DIR` names) already name the Wheelhouse catalogue at an old release, Claude Code refuses the `add`: change the `ref` there to `<tag>` first. Then start a new session on the folder and type `/wheelhouse:update` to finish.
 
 ## On GitHub Copilot
 

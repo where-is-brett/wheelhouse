@@ -31,6 +31,7 @@ import { openJournal } from './journal.js';
 import { updateMirror } from './change.js';
 import { checksOutLine } from './plan.js';
 import { putBack } from './install.js';
+import { accountCatalogue } from './account-settings.js';
 import { runJob } from './job.js';
 import { startFresh, updateSteps } from './run.js';
 import { checkTarget, fetchTag } from './release.js';
@@ -99,10 +100,15 @@ export async function bootstrap({
   const looked = await check(target);
   if (looked?.ok !== true) return stop(`${checksOutLine(tag)} ${NOT_NOW_LINE}`);
 
+  const account = accountCatalogue({ claudeHome });
+  if (account?.refused) return stop(`${account.refused} ${NOT_NOW_LINE}`);
+  const moved = typeof account?.ref === 'string' && account.ref !== tag ? { from: account.ref, to: tag } : null;
+
   // 2. The card as plain text, and the typed answer.
   say(`Update Wheelhouse${from ? ` · ${from} → ${tag}` : ` to ${tag}`}`);
   say(looked.says ? `What's new: ${looked.says}` : 'No summary was given for this release.');
   say('What happens: this computer installs it and hands over to the new helper, then your project gets a small reviewed change naming it. About five minutes.');
+  if (moved) say(`Your account settings name Wheelhouse at ${moved.from}; the update changes that one entry to ${moved.to}.`);
   say('1  Update');
   say('2  Not now');
   let choice = null;
@@ -122,7 +128,7 @@ export async function bootstrap({
   if (!release) return stop('An update is already under way on this computer.');
   try {
     startFresh(jour);
-    const plan = { from, to: tag, sha, put: 'release', approval: 'review', carryOn: false };
+    const plan = { from, to: tag, sha, put: 'release', approval: 'review', carryOn: false, account: moved };
     const helper = client ?? helperClient({ timeout: 5 * 60 * 1000 });
     const all = updateSteps({ project: placed, folder: projectDir, plan, client: helper, claudeHome, mirror, run, ...over });
     const by = Object.fromEntries(all.map((s) => [s.name, s]));
