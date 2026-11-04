@@ -38,7 +38,7 @@ A sixth thing is outside this design. The approved work then sat "queued, not st
 
 **Setup's cards** are asked only in the chat. The pane draws them with no buttons (`scripts/mod/buttons.js`), with a line saying where they're answered. Their answers are claimed through `claimAnswer` in `scripts/lib/setup-clicks.js`. A claim left behind with no answer is taken back once stale.
 
-**Copilot** asks with its own question tool (`ask_user`, or `askQuestions` in VS Code). It has no pane, since the pane is a Claude desktop mod.
+**Copilot** asks with its own question tool (`ask_user`, or `askQuestions` in VS Code). Its VS Code add-on draws a pane, but that pane has no live mark yet, so nothing holds its cards back.
 
 **What Claude Code offers** (hooks documentation, and the 4 November transcript):
 
@@ -142,7 +142,7 @@ The pane rule makes this rare, but it can still happen. The pane might become li
 ## 7. Setup's cards and Copilot
 
 - **Setup's cards** have no pane buttons, so the pane rule never holds them back. They stay chat-only, and the pane keeps its line saying they're answered in the chat. Esc on a setup card records nothing (no PostToolUse). `claimAnswer` takes back a stale claim, and the setup step asks again through `plan <n>`, as today. Setup's skill gains the same rule as the front desk's: a stopped question is no answer. No other change.
-- **Copilot** has no panel, so its cards are always asked in its chat, as today. Nothing there is shown twice. The decided-card check keeps a card that was already answered (by a reply code, say) from being asked again. The decided-card check (section 5) applies where Copilot's hooks reach its question tool (`adapters/copilot/hooks.js`). Where they don't, `card`'s refusal and `views waiting`'s recent answers still keep it from asking a decided card. The builder checks which applies and says so in the build report.
+- **Copilot** has a panel, the VS Code add-on, but it does not yet mark itself live, so the pane rule never holds Copilot's cards back and they are asked in its chat, as today. The VS Code panel plan (`docs/superpowers/plans/2026-11-04-vscode-panel.md`) gives it that mark later. Nothing there is shown twice. The decided-card check keeps a card that was already answered (by a reply code, say) from being asked again. The decided-card check (section 5) applies where Copilot's hooks reach its question tool (`adapters/copilot/hooks.js`). Where they don't, `card`'s refusal and `views waiting`'s recent answers still keep it from asking a decided card. The builder checks which applies and says so in the build report.
 
 ## 8. The repeated board line
 
@@ -173,7 +173,7 @@ Each of these is checked at the Mac sitting, before the part that leans on it is
 
 **The chat is the main medium** (the director's clarification, 4 November 2026): the panel is the only place they click, every click is reflected in the chat, and typing an answer in the chat still counts (section 4). With that came the finding that the mod can add a line to the chat with no turn (`$.session.append`), so a panel answer now shows in the chat at once, and D2's next-time line is the fallback (section 4.4).
 
-**Copilot,** which the director asked about: with no panel, cards stay in the chat, and the decided-card check stops a repeat (section 7).
+**Copilot,** which the director asked about: until its VS Code panel marks itself live, cards stay in the chat, and the decided-card check stops a repeat (section 7).
 
 The alternatives set aside were both places kept in step (the chat's copy is left open after a panel answer), the chat alone while it asks, and a First Mate turn at once for each press. Section 6.1 is still built, as the safety net for the race and the fallback in section 9.1.
 
