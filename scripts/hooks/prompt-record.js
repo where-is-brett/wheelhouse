@@ -796,7 +796,7 @@ function withStoredText(project, input) {
 // How the cards the clicks are on stand, from `outcomes` (cardOutcomes): for each click, the card it answers (by the
 // state's text, or by its chat copy when that is all the click names) and, when every such card was decided before
 // it, `stale`, the latest of them. A click on no card the state holds is left out.
-function standing(out, outcomes) {
+export function standing(out, outcomes) {
   const found = new Map();
   for (const click of out) {
     const mine = outcomes.filter((o) => typeof o.card.data?.question === 'string'

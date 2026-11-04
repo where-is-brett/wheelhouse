@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
-import { healthLines, readHostFacts, readScreens, NO_CHROME_LINE, QUICK_LINE, phonePushLine } from '../../../scripts/board/health.js';
+import { verdict } from '../../../scripts/lib/calm-words.js';
+import { healthLines, brokenCount, readHostFacts, readScreens, NO_CHROME_LINE, QUICK_LINE, phonePushLine } from '../../../scripts/board/health.js';
 import { WINDOWS_LINE, UNATTENDED_LINE, GUARDED_LINE, LOCKED_UNATTENDED_LINE } from '../../../scripts/lib/platform-lines.js';
 import { FREE_PLAN_LINE } from '../../../scripts/host/protection.js';
 import { NO_HELPER } from '../../../scripts/hooks/session-start.js';
@@ -449,4 +450,40 @@ test('update lines: an old helper still answering is a calm line, and no update 
   const lines = healthLines({ ...calm, update: { oldHelper: 'v0.2.6', partway: { kind: 'stopped', tag: 'v0.2.7' } } });
   assert.ok(lines.some((l) => l.level === 'ok' && /older Wheelhouse helper \(v0\.2\.6\)/.test(l.text)));
   assert.equal(lines.some((l) => l.level === 'stop'), false);
+});
+
+// A watcher whose wakes keep failing is a broken thing the director is told about, not silence.
+const NOW_MS = Date.parse('2026-11-04T05:00:00.000Z');
+const failing = (message, minutesAgo = 2) => ({ lastError: { at: new Date(NOW_MS - minutesAgo * 60000).toISOString(), message } });
+const atNow = { now: new Date(NOW_MS) };
+const CANT_FIND = "Work can't start: Wheelhouse can't find Claude Code to start the builder. Start a new session in this folder.";
+
+test('repeated wake failures from a missing claude show a plain line at stop level, and the verdict is not calm', () => {
+  const lines = healthLines({ ...calm, ...atNow, watcher: failing('A wake for the Bosun has failed 101 times: spawn claude ENOENT') });
+  assert.deepEqual(lines.at(-1), { level: 'stop', text: CANT_FIND });
+  assert.equal(brokenCount(lines), 1);
+  assert.doesNotMatch(verdict({ waiting: 0, broken: brokenCount(lines) }), /Nothing is broken/);
+});
+
+test('other repeated wake failures say so without blaming claude', () => {
+  const line = healthLines({ ...calm, ...atNow, watcher: failing('A wake for sign-in has failed 4 times: exit 1') }).at(-1);
+  assert.equal(line.level, 'stop');
+  assert.match(line.text, /^Work can't start: Wheelhouse has tried 4 times to start the builder and failed\./);
+});
+
+test('old, few, unrelated or answered failures bring no line', () => {
+  const none = (watcher) => assert.deepEqual(healthLines({ ...calm, watcher }), [{ level: 'ok', text: 'Protection: Standard' }]);
+  none(failing('A wake for the Bosun has failed 101 times: spawn claude ENOENT', 40));
+  none(failing('A wake for the Bosun has failed 2 times: spawn claude ENOENT'));
+  none(failing('the watcher lost the helper'));
+  none({ ...failing('A wake for the Bosun has failed 9 times: spawn claude ENOENT'), lastOk: new Date(NOW_MS - 60000).toISOString() });
+  none(undefined);
+  none({});
+});
+
+test('own files: after an approved update the explained move is a calm line and brings no watch line', () => {
+  const lines = healthLines({ ...calm, ownFiles: { calm: 'Wheelhouse moved to v0.2.7 and its files match.' } });
+  assert.deepEqual(lines.at(-1), { level: 'ok', text: 'Wheelhouse moved to v0.2.7 and its files match.' });
+  assert.equal(lines.some((l) => l.level === 'watch'), false);
+  assert.equal(healthLines({ ...calm, ownFiles: { line: 'Files changed', calm: 'One row' } }).filter((l) => l.level === 'watch').length, 1);
 });

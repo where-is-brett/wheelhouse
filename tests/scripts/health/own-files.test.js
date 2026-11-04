@@ -5,7 +5,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ownFilesBaseline, ownFilesChanged, checkOwnFiles, ownFilesLine, readOwnFilesState } from '../../../scripts/health/own-files.js';
+import crypto from 'node:crypto';
+import { pathToFileURL } from 'node:url';
+import {
+  ownFilesBaseline, ownFilesChanged, checkOwnFiles, ownFilesLine, readOwnFilesState, pluginFoldersInUse, recordUpdate, changedForProject, fileHash,
+} from '../../../scripts/health/own-files.js';
+import { run as realRun } from '../../../scripts/lib/run.js';
+import { g } from '../../helpers/git-fixture.js';
 import { as, tempFolder } from '../../helpers/homes.js';
 
 // A person's home with Copilot's own folder, a plugin root, an engine with the clean home, and an add-on.
@@ -29,7 +35,7 @@ function layout() {
     login: put(path.join(home, 'Library', 'LaunchAgents', 'dev.wheelhouse.helper.plist'), '<plist/>\n'),
     other: put(path.join(home, '.copilot', 'session-state', 'chat.json'), 'not ours\n'),
   };
-  return { home, root, engine, files, loginFile: files.login };
+  return { home, root, engine, files, loginFile: files.login, claudeHome: path.join(base, 'claude') };
 }
 
 test('a changed hook file is named, and so is one added or removed', () => {
@@ -68,29 +74,272 @@ test('the sign-in is never read', () => {
 
 test('no baseline yet says nothing, and makes one', async () => {
   const l = layout();
-  await as(path.join(tempFolder('wh-own-home-'), 'wh'), () => {
-    const first = checkOwnFiles({ ...l, now: () => new Date('2026-11-02T00:00:00.000Z') });
-    assert.deepEqual(first, { changed: [] });
+  await as(path.join(tempFolder('wh-own-home-'), 'wh'), async () => {
+    const first = await checkOwnFiles({ ...l, now: () => new Date('2026-11-02T00:00:00.000Z') });
+    assert.deepEqual(first.changed, []);
     assert.notEqual(readOwnFilesState(), null, 'a baseline is kept');
     fs.writeFileSync(l.files.hook, '{"hooks":2}\n');
     // Checked again within the day: the answer from the day is kept, so the board never waits on a walk of the files.
-    assert.deepEqual(checkOwnFiles({ ...l, now: () => new Date('2026-11-02T06:00:00.000Z') }), { changed: [] });
-    assert.deepEqual(checkOwnFiles({ ...l, now: () => new Date('2026-11-03T06:00:00.000Z') }), { changed: [l.files.hook] });
-    assert.deepEqual(checkOwnFiles({ ...l, now: () => new Date('2026-11-05T06:00:00.000Z') }), { changed: [l.files.hook] }, 'still named until the files are accepted');
+    assert.deepEqual((await checkOwnFiles({ ...l, now: () => new Date('2026-11-02T06:00:00.000Z') })).changed, []);
+    assert.deepEqual((await checkOwnFiles({ ...l, now: () => new Date('2026-11-03T06:00:00.000Z') })).changed, [l.files.hook]);
+    assert.deepEqual((await checkOwnFiles({ ...l, now: () => new Date('2026-11-05T06:00:00.000Z') })).changed, [l.files.hook], 'still named until the files are accepted');
   });
 });
 
-test('an update of Wheelhouse makes a new baseline and names nothing', async () => {
+// --- Plugin folders in use, the skip list, and a moved version checked against its tag ---
+
+const blob = (text) => crypto.createHash('sha1').update(`blob ${Buffer.byteLength(text)}\0`).update(text).digest('hex');
+const release = (version) => ({
+  '.claude-plugin/plugin.json': `{"version":"${version}"}\n`,
+  'scripts/x.js': `x for ${version}\n`,
+});
+const treeOf = (files) => new Map(Object.entries(files).map(([rel, text]) => [rel, blob(text)]));
+const day = (n) => () => new Date(Date.UTC(2026, 10, n, 3));
+
+// A Claude folder whose installed_plugins.json lists the Wheelhouse installs given: { version, scope, project }.
+function claudeWith(installs) {
+  const base = tempFolder('wh-own-claude-');
+  const claudeHome = path.join(base, 'claude');
+  const folderOf = (version) => path.join(claudeHome, 'plugins', 'cache', 'wheelhouse', 'wheelhouse', version);
+  const relist = (next) => {
+    const list = next.map(({ version, scope, project }) => {
+      const folder = folderOf(version);
+      if (!fs.existsSync(folder)) {
+        for (const [rel, text] of Object.entries(release(version))) {
+          fs.mkdirSync(path.dirname(path.join(folder, rel)), { recursive: true });
+          fs.writeFileSync(path.join(folder, rel), text);
+        }
+      }
+      return { scope, ...(project ? { projectPath: project } : {}), installPath: folder, version };
+    });
+    fs.mkdirSync(path.join(claudeHome, 'plugins'), { recursive: true });
+    fs.writeFileSync(path.join(claudeHome, 'plugins', 'installed_plugins.json'), JSON.stringify({ version: 2, plugins: { 'wheelhouse@wheelhouse': list } }));
+  };
+  relist(installs);
+  return { claudeHome, folderOf, relist };
+}
+
+// The look with nothing else to see: Copilot's and the add-on's places are empty folders in a fresh home.
+const bare = () => {
+  const base = tempFolder('wh-own-bare-');
+  return { home: path.join(base, 'user'), engine: path.join(base, 'engine'), loginFile: null };
+};
+
+test('own-files: Claude Code\'s bookkeeping makes no line', async () => {
+  const c = claudeWith([{ version: '0.2.6', scope: 'user' }]);
+  const folder = c.folderOf('0.2.6');
+  const where = { ...bare(), claudeHome: c.claudeHome, treeFor: async () => null };
+  await as(path.join(tempFolder('wh-own-home-'), 'wh'), async () => {
+    fs.mkdirSync(path.join(folder, '.in_use'));
+    fs.writeFileSync(path.join(folder, '.in_use', '111'), '');
+    fs.writeFileSync(path.join(folder, '.orphaned_at'), '1700000000');
+    assert.deepEqual((await checkOwnFiles({ ...where, now: day(2) })).changed, []);
+    const kept = readOwnFilesState().folders[folder].files;
+    assert.deepEqual(Object.keys(kept).filter((f) => /\.in_use|\.orphaned_at/.test(f)), [], 'neither is hashed');
+    fs.writeFileSync(path.join(folder, '.in_use', '222'), '');
+    fs.rmSync(path.join(folder, '.in_use', '111'));
+    fs.writeFileSync(path.join(folder, '.orphaned_at'), '1700009999');
+    assert.deepEqual((await checkOwnFiles({ ...where, now: day(4) })).changed, [], 'changed between two looks');
+    // Only at the top, and only by those names.
+    fs.mkdirSync(path.join(folder, 'scripts', '.in_use'));
+    fs.writeFileSync(path.join(folder, 'scripts', '.in_use', '1'), 'deeper');
+    assert.deepEqual((await checkOwnFiles({ ...where, now: day(6) })).changed, [path.join(folder, 'scripts', '.in_use', '1')]);
+  });
+});
+
+test('own-files: the folders in use are listed, one entry each, for registered projects and the account', () => {
+  const a = path.join(tempFolder('wh-own-pa-'), 'a');
+  const b = path.join(tempFolder('wh-own-pb-'), 'b');
+  const c = claudeWith([
+    { version: '0.2.6', scope: 'project', project: a },
+    { version: '0.2.7', scope: 'project', project: b },
+    { version: '0.2.7', scope: 'user' },
+    { version: '0.1.2', scope: 'project', project: '/not/registered' },
+  ]);
+  fs.mkdirSync(c.folderOf('0.0.9'), { recursive: true }); // left behind, no install lists it
+  const found = pluginFoldersInUse({ claudeHome: c.claudeHome, projects: [a, b] });
+  assert.deepEqual(found.map((f) => [path.basename(f.folder), f.version, f.projects]), [
+    ['0.2.6', '0.2.6', [path.resolve(a)]],
+    ['0.2.7', '0.2.7', [path.resolve(b)]],
+  ]);
+  assert.deepEqual(pluginFoldersInUse({ claudeHome: path.join(c.claudeHome, 'none') }), []);
+});
+
+test('own-files: two projects on 0.2.6 and 0.2.7 keep their own entries, and a project\'s line names only its own folder', async () => {
+  const a = path.join(tempFolder('wh-own-pa-'), 'a');
+  const b = path.join(tempFolder('wh-own-pb-'), 'b');
+  const c = claudeWith([{ version: '0.2.6', scope: 'project', project: a }, { version: '0.2.7', scope: 'project', project: b }]);
+  const where = { ...bare(), claudeHome: c.claudeHome, projects: [a, b], treeFor: async () => null };
+  await as(path.join(tempFolder('wh-own-home-'), 'wh'), async () => {
+    await checkOwnFiles({ ...where, now: day(2) });
+    assert.deepEqual(Object.values(readOwnFilesState().folders).map((f) => f.version).sort(), ['0.2.6', '0.2.7']);
+    const touched = path.join(c.folderOf('0.2.7'), 'scripts', 'x.js');
+    fs.writeFileSync(touched, 'tampered\n');
+    const result = await checkOwnFiles({ ...where, now: day(4) });
+    assert.deepEqual(result.changed, [touched]);
+    assert.deepEqual(changedForProject(result, b), [touched]);
+    assert.deepEqual(changedForProject(result, a), []);
+    assert.match(ownFilesLine(changedForProject(result, b), { ...where, folders: result.folders.map((f) => f.folder) }), /Wheelhouse's own files/);
+  });
+});
+
+test('own-files: a folder no install lists any more drops out', async () => {
+  const c = claudeWith([{ version: '0.2.6', scope: 'user' }]);
+  const where = { ...bare(), claudeHome: c.claudeHome, treeFor: async (tag) => treeOf(release(tag.slice(1))) };
+  await as(path.join(tempFolder('wh-own-home-'), 'wh'), async () => {
+    await checkOwnFiles({ ...where, now: day(2) });
+    assert.equal(Object.keys(readOwnFilesState().folders).length, 1);
+    c.relist([{ version: '0.2.7', scope: 'user' }]);
+    await checkOwnFiles({ ...where, now: day(3) });
+    assert.deepEqual(Object.values(readOwnFilesState().folders).map((f) => f.version), ['0.2.7'], 'the old folder is gone from the record');
+  });
+});
+
+test('own-files: a moved version that matches its tag is calm', async () => {
+  const c = claudeWith([{ version: '0.2.6', scope: 'user' }]);
+  const asked = [];
+  const where = { ...bare(), claudeHome: c.claudeHome, treeFor: async (tag) => { asked.push(tag); return treeOf(release(tag.slice(1))); } };
+  await as(path.join(tempFolder('wh-own-home-'), 'wh'), async () => {
+    await checkOwnFiles({ ...where, now: day(2) });
+    c.relist([{ version: '0.2.7', scope: 'user' }]);
+    const moved = await checkOwnFiles({ ...where, now: day(3) });
+    assert.deepEqual(moved.changed, []);
+    assert.equal(moved.calm, 'Wheelhouse moved to v0.2.7 outside the update command');
+    assert.deepEqual(asked, ['v0.2.7']);
+    assert.equal((await checkOwnFiles({ ...where, now: day(10) })).calm, undefined, 'said once');
+  });
+});
+
+test('own-files: a moved version with an update record says it was approved', async () => {
+  const c = claudeWith([{ version: '0.2.6', scope: 'user' }]);
+  const where = { ...bare(), claudeHome: c.claudeHome, treeFor: async (tag) => treeOf(release(tag.slice(1))) };
+  await as(path.join(tempFolder('wh-own-home-'), 'wh'), async () => {
+    await checkOwnFiles({ ...where, now: day(2) });
+    recordUpdate({ from: 'v0.2.6', to: 'v0.2.7', at: '2026-11-04T03:00:00.000Z', answer: 'update', wrote: [] });
+    c.relist([{ version: '0.2.7', scope: 'user' }]);
+    const moved = await checkOwnFiles({ ...where, now: day(4) });
+    assert.deepEqual(moved.changed, []);
+    assert.equal(moved.calm, 'Wheelhouse was updated to v0.2.7 on 4 November 2026, approved by you');
+    assert.equal(readOwnFilesState().updates.length, 1, 'the record is kept');
+  });
+});
+
+test('own-files: one changed file in a moved version is a watch line', async () => {
+  const c = claudeWith([{ version: '0.2.6', scope: 'user' }]);
+  const where = { ...bare(), claudeHome: c.claudeHome, treeFor: async (tag) => treeOf(release(tag.slice(1))) };
+  await as(path.join(tempFolder('wh-own-home-'), 'wh'), async () => {
+    await checkOwnFiles({ ...where, now: day(2) });
+    c.relist([{ version: '0.2.7', scope: 'user' }]);
+    const bad = path.join(c.folderOf('0.2.7'), 'scripts', 'x.js');
+    fs.writeFileSync(bad, 'not the release\n');
+    fs.writeFileSync(path.join(c.folderOf('0.2.7'), 'extra.js'), 'added\n');
+    const moved = await checkOwnFiles({ ...where, now: day(3) });
+    assert.deepEqual(moved.changed, [path.join(c.folderOf('0.2.7'), 'extra.js'), bad].sort());
+    assert.equal(moved.calm, undefined);
+    assert.match(ownFilesLine(moved.changed, { ...where, folders: moved.folders.map((f) => f.folder) }), /Wheelhouse's own files/);
+    // Still named at the next look: nothing was accepted.
+    assert.equal((await checkOwnFiles({ ...where, now: day(6) })).changed.length, 2);
+  });
+});
+
+test('own-files: a file that is a link in a moved version is refused', async () => {
+  const c = claudeWith([{ version: '0.2.6', scope: 'user' }]);
+  const where = { ...bare(), claudeHome: c.claudeHome, treeFor: async (tag) => treeOf(release(tag.slice(1))) };
+  await as(path.join(tempFolder('wh-own-home-'), 'wh'), async () => {
+    await checkOwnFiles({ ...where, now: day(2) });
+    c.relist([{ version: '0.2.7', scope: 'user' }]);
+    const target = path.join(c.folderOf('0.2.7'), 'scripts', 'x.js');
+    const elsewhere = path.join(tempFolder('wh-own-elsewhere-'), 'x.js');
+    fs.writeFileSync(elsewhere, release('0.2.7')['scripts/x.js']); // the same bytes, behind a link
+    fs.rmSync(target);
+    try { fs.symlinkSync(elsewhere, target); } catch { return; } // no links on this system
+    assert.deepEqual((await checkOwnFiles({ ...where, now: day(3) })).changed, [target]);
+  });
+});
+
+test('own-files: a version that cannot be checked is not accepted and not named, and is looked at again', async () => {
+  const c = claudeWith([{ version: '0.2.6', scope: 'user' }]);
+  let reachable = false;
+  const where = { ...bare(), claudeHome: c.claudeHome, treeFor: async (tag) => (reachable ? treeOf(release(tag.slice(1))) : null) };
+  await as(path.join(tempFolder('wh-own-home-'), 'wh'), async () => {
+    await checkOwnFiles({ ...where, now: day(2) });
+    c.relist([{ version: '0.2.7', scope: 'user' }]);
+    const first = await checkOwnFiles({ ...where, now: day(3) });
+    assert.deepEqual(first.changed, []);
+    assert.equal(first.calm, undefined);
+    assert.deepEqual(readOwnFilesState().folders, {}, 'nothing accepted');
+    reachable = true;
+    assert.match((await checkOwnFiles({ ...where, now: day(4) })).calm, /moved to v0\.2\.7/);
+  });
+});
+
+test('own-files: files the update wrote are accepted only at the recorded hashes', async () => {
   const l = layout();
-  await as(path.join(tempFolder('wh-own-home-'), 'wh'), () => {
-    checkOwnFiles({ ...l, now: () => new Date('2026-11-02T00:00:00.000Z') });
-    fs.writeFileSync(l.files.manifest, '{"version":"0.2.1"}\n');
-    fs.writeFileSync(l.files.script, 'x2\n');
-    fs.writeFileSync(l.files.hook, '{"hooks":3}\n');
-    assert.deepEqual(checkOwnFiles({ ...l, now: () => new Date('2026-11-04T00:00:00.000Z') }), { changed: [] });
-    assert.equal(readOwnFilesState().version, '0.2.1');
-    fs.writeFileSync(l.files.hook, '{"hooks":4}\n');
-    assert.deepEqual(checkOwnFiles({ ...l, now: () => new Date('2026-11-06T00:00:00.000Z') }), { changed: [l.files.hook] }, 'a change after the update is named');
+  const where = { ...l, treeFor: async () => null };
+  await as(path.join(tempFolder('wh-own-home-'), 'wh'), async () => {
+    await checkOwnFiles({ ...where, now: day(2) });
+    fs.writeFileSync(l.files.hook, '{"hooks":"from the update"}\n');
+    fs.writeFileSync(l.files.addon, 'addon from the update\n');
+    recordUpdate({
+      from: '0.2.0', to: '0.2.1', at: '2026-11-04T03:00:00.000Z', answer: 'update',
+      wrote: [{ file: l.files.hook, hash: fileHash(l.files.hook) }, { file: l.files.addon, hash: fileHash(l.files.addon) }],
+    });
+    assert.deepEqual((await checkOwnFiles({ ...where, now: day(4) })).changed, [], 'the update\'s own writes');
+    fs.writeFileSync(l.files.hook, '{"hooks":"edited later"}\n');
+    assert.deepEqual((await checkOwnFiles({ ...where, now: day(6) })).changed, [l.files.hook], 'a later edit is named');
+    // A change to a file the update did not write is named too.
+    fs.writeFileSync(l.files.agent, 'other\n');
+    assert.deepEqual((await checkOwnFiles({ ...where, now: day(8) })).changed.sort(), [l.files.agent, l.files.hook].sort());
+  });
+});
+
+test('own-files: a file the update wrote, changed to something else before the look, is named', async () => {
+  const l = layout();
+  const where = { ...l, treeFor: async () => null };
+  await as(path.join(tempFolder('wh-own-home-'), 'wh'), async () => {
+    await checkOwnFiles({ ...where, now: day(2) });
+    recordUpdate({ from: '0.2.0', to: '0.2.1', at: '2026-11-04T03:00:00.000Z', answer: 'update', wrote: [{ file: l.files.hook, hash: fileHash(l.files.hook) }] });
+    fs.writeFileSync(l.files.hook, '{"hooks":"someone else"}\n');
+    assert.deepEqual((await checkOwnFiles({ ...where, now: day(4) })).changed, [l.files.hook]);
+  });
+});
+
+test('own-files: an old flat own-files.json is read once and replaced, with no line', async () => {
+  const l = layout();
+  await as(path.join(tempFolder('wh-own-home-'), 'wh'), async () => {
+    const old = { version: '0.2.0', at: 'x', checkedAt: '2026-10-01T00:00:00.000Z', files: { [path.join(l.root, '.in_use', '1')]: 'abc' }, changed: [path.join(l.root, '.in_use', '1')] };
+    const file = path.join(process.env.WHEELHOUSE_HOME, 'own-files.json');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(old));
+    const first = await checkOwnFiles({ ...l, treeFor: async () => null, now: day(4) });
+    assert.deepEqual(first.changed, []);
+    assert.equal('files' in readOwnFilesState(), false);
+    assert.equal(Object.keys(readOwnFilesState().folders).length, 1);
+  });
+});
+
+test('own-files: the move is checked through the mirror, fetching the tag first, against a repository on this computer', async () => {
+  const dir = tempFolder('wh-own-repo-');
+  const repo = path.join(dir, 'wheelhouse');
+  fs.mkdirSync(repo);
+  await g(repo, 'init', '-q', '-b', 'main');
+  for (const [rel, text] of Object.entries(release('0.2.7'))) {
+    fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
+    fs.writeFileSync(path.join(repo, rel), text);
+  }
+  await g(repo, 'add', '-A');
+  await g(repo, 'commit', '-q', '-m', 'v0.2.7');
+  await g(repo, 'tag', 'v0.2.7');
+  const c = claudeWith([{ version: '0.2.6', scope: 'user' }]);
+  const where = { ...bare(), claudeHome: c.claudeHome, run: realRun, mirror: path.join(dir, 'mirror'), url: pathToFileURL(repo).href };
+  await as(path.join(tempFolder('wh-own-home-'), 'wh'), async () => {
+    await checkOwnFiles({ ...where, now: day(2) });
+    c.relist([{ version: '0.2.7', scope: 'user' }]);
+    const moved = await checkOwnFiles({ ...where, now: day(3) });
+    assert.deepEqual(moved.changed, []);
+    assert.match(moved.calm, /moved to v0\.2\.7/);
+    fs.writeFileSync(path.join(c.folderOf('0.2.7'), 'scripts', 'x.js'), 'changed\n');
+    assert.equal((await checkOwnFiles({ ...where, now: day(5) })).changed.length, 1);
   });
 });
 

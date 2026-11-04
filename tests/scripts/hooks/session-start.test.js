@@ -902,6 +902,21 @@ test('in a Shape 1 project the session start starts the watcher when it isn\'t r
   });
 });
 
+test('the session start records where claude is, and starts the watcher with a PATH that holds it', async () => {
+  await withHome(async (home) => {
+    const bin = fs.realpathSync.native(tempFolder('wh-claude-bin '));
+    fs.writeFileSync(path.join(bin, 'claude'), '');
+    const f = fake();
+    f.client.health = async () => ({ ok: true });
+    f.client.config = async () => shapeConfig(1);
+    await run(f, { env: { PATH: bin, HOME: home, WHEELHOUSE_HOME: home } });
+    assert.equal(JSON.parse(fs.readFileSync(path.join(home, 'claude-path.json'), 'utf8')).path, path.join(bin, 'claude'));
+    const started = watcherStarts(f);
+    assert.equal(started.length, 1);
+    assert.ok(started[0].opts.env.PATH.split(':').includes(bin));
+  });
+});
+
 // The foreman's start is the last thing setup does, once step 10's board is green (ruling R44):
 // a session start in a project setup is still finishing starts no watcher.
 test('the session start starts no watcher in a project setup is still finishing', async () => {

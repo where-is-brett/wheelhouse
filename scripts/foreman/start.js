@@ -34,6 +34,7 @@ import { fileURLToPath } from 'node:url';
 import { isModelName } from '../gate/guardrails.js';
 import { helperClient } from '../host/helper-client.js';
 import { FOREMAN_FALLBACK_COMPACT } from '../lib/build-loop.js';
+import { pathWithClaude } from '../lib/claude.js';
 import { jobFolder, stateDir, wheelhouseHome } from '../lib/paths.js';
 import { readProject } from '../lib/projects.js';
 import { sessionsOfProject } from '../agents/project-agent.js';
@@ -146,13 +147,13 @@ export async function stopForeman(project, { alive = pidAlive, kill = process.ki
 // it runs already: `{ started }`.
 // Its environment is this process's less the host session's variables and
 // WHEELHOUSE_ROLE, so a watcher started from a foreman or any session is no one's.
-export function startWatcher(project, { spawn = nodeSpawn, pluginRoot = PLUGIN_ROOT, alive, now, env = process.env } = {}) {
+export function startWatcher(project, { spawn = nodeSpawn, pluginRoot = PLUGIN_ROOT, alive, now, env = process.env, exists = fs.existsSync } = {}) {
   stateDir(project); // a project name that is not a folder name throws here
   if (watcherRunning(project, { alive, now })) return { started: false };
   const home = wheelhouseHome();
   fs.mkdirSync(home, { recursive: true });
   const child = spawn(process.execPath, [path.join(pluginRoot, 'scripts', 'watcher', 'main.js'), project], {
-    cwd: jobFolder(), env: sessionEnv(env), detached: true, windowsHide: true, stdio: 'ignore',
+    cwd: jobFolder(), env: pathWithClaude(sessionEnv(env), { exists }), detached: true, windowsHide: true, stdio: 'ignore',
   });
   child?.on?.('error', () => {});
   child?.unref?.();
@@ -204,7 +205,7 @@ function launchHere(file, args, options) {
 
 export async function main(argv, {
   client = helperClient(), spawn = nodeSpawn, launch = launchHere, pluginRoot = PLUGIN_ROOT, platform = process.platform, env = process.env,
-  claude = null, alive, now, out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t),
+  claude = null, alive, now, exists = fs.existsSync, out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t),
 } = {}) {
   try {
     const [project, ...rest] = argv;
@@ -224,7 +225,7 @@ export async function main(argv, {
       return await launch(session.file, session.args, session.options);
     }
     const { started } = startWatcher(project, {
-      spawn, pluginRoot, alive, now, env,
+      spawn, pluginRoot, alive, now, env, exists,
     });
     out(started ? `Started the watcher for ${project}.\n` : `The watcher for ${project} is running already.\n`);
     return 0;

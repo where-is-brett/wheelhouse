@@ -123,6 +123,20 @@ test('the board says the project\'s tests could be faked, and names each secret,
   });
 });
 
+test('a watcher whose wakes keep failing reaches the board as a broken thing', async () => {
+  const home = shortHome();
+  await as(home, async () => {
+    const repo = register(home);
+    put(path.join(wheelhouseHome(), 'projects', P, 'watcher', 'health.json'), {
+      pid: 1, at: NOW.toISOString(), shape: 1, lastError: { at: new Date(NOW.getTime() - 60000).toISOString(), message: 'A wake for the Bosun has failed 101 times: spawn claude ENOENT' },
+    });
+    for (const offline of [false, true]) {
+      const inputs = await loadBoardInputs({ cwd: repo, client: fakeClient(), address: testAddress(home), now: () => NOW, offline });
+      assert.match(JSON.stringify(inputs.model), /"level":"stop","text":"Work can't start/, `offline ${offline}`);
+    }
+  });
+});
+
 test('outside a Wheelhouse project the inputs say so', async () => {
   const home = shortHome();
   await as(home, async () => {
@@ -237,6 +251,17 @@ test('the board names Wheelhouse\'s version, a newer release, and an update part
     // The glance says none of it.
     const glance = texts(await loadBoardInputs({ cwd: repo, address: testAddress(home), now: () => NOW, offline: true, version: 'v0.2.7' }));
     assert.equal(glance.some((t) => /Wheelhouse v0\.2\.7|is out/.test(t)), false);
+  });
+});
+
+test('the helper\'s calm line for an explained version move reaches the board as a calm line', async () => {
+  const home = shortHome();
+  await as(home, async () => {
+    const repo = register(home);
+    const found = await loadBoardInputs({ cwd: repo, client: fakeClient({ health: { ok: true, ownFilesCalm: 'Moved to v0.2.7, as the update said.' } }), address: testAddress(home), now: () => NOW });
+    const line = found.model.director.health.find((l) => l.text === 'Moved to v0.2.7, as the update said.');
+    assert.ok(line);
+    assert.equal(line.level, 'ok');
   });
 });
 

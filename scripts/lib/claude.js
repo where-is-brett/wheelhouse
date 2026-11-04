@@ -3,16 +3,22 @@
 // harness and the watcher's waker. resolveCommand and quoteForCmd serve any
 // other command line an adapter starts the same way.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
-// Where the program `name` is. Elsewhere than Windows the name is enough. On
+// Where the program `name` is. Elsewhere than Windows the name is enough when it is on the PATH. A
+// process started with a minimal PATH (the helper a LaunchAgent starts, a scheduled start) does not
+// have Claude Code's folder, so then, for `claude`, the full path a session recorded
+// (recordClaudePath) is used if it is still there, then the usual folders; with nothing found the
+// bare name is returned and the start fails as it would. Nothing inside `inside` (the project's
+// folder, which an agent can write to) is ever used. On
 // Windows a program is only started without a shell if it is an .exe, and npm
 // installs command lines as .cmd shims, so look for <name>.exe on the PATH
 // first, then <name>.cmd (run through cmd.exe with every argument passed through
 // quoteForCmd); say so if neither is there.
-export function resolveCommand({ name, platform = process.platform, env = process.env, exists = fs.existsSync } = {}) {
+export function resolveCommand({ name, platform = process.platform, env = process.env, exists = fs.existsSync, recorded = null, inside = null } = {}) {
   if (typeof name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) throw new Error(`This isn't the name of a program: ${JSON.stringify(name)}`);
-  if (platform !== 'win32') return { kind: 'direct', file: name };
+  if (platform !== 'win32') return resolvePosix({ name, env, exists, recorded, inside });
   const pathKey = Object.keys(env).find((key) => key.toLowerCase() === 'path');
   const folders = (pathKey ? env[pathKey] : '').split(';').map((folder) => folder.trim().replace(/^"|"$/g, '')).filter(Boolean);
   for (const [file, kind] of [[`${name}.exe`, 'direct'], [`${name}.cmd`, 'cmd']]) {
@@ -24,11 +30,82 @@ export function resolveCommand({ name, platform = process.platform, env = proces
   throw new Error(`Cannot find ${name}.exe or ${name}.cmd on the PATH.`);
 }
 
+const usualFolders = (env) => {
+  const home = env.HOME || env.USERPROFILE || '';
+  return [
+    ...(home ? [path.posix.join(home, '.local', 'bin'), path.posix.join(home, '.claude', 'local')] : []),
+    '/opt/homebrew/bin', '/usr/local/bin',
+    ...(home ? [path.posix.join(home, '.npm-global', 'bin'), path.posix.join(home, '.volta', 'bin')] : []),
+  ];
+};
+
+const posixPathFolders = (env) => (env.PATH || '').split(':').filter((folder) => folder.startsWith('/'));
+const within = (file, folder) => typeof folder === 'string' && folder !== '' && (file === folder || file.startsWith(folder.replace(/\/+$/, '') + '/'));
+
+// Where `name` is on the PATH, as a full path, or null.
+function foundOnPosixPath(name, env, exists) {
+  for (const folder of posixPathFolders(env)) {
+    const file = path.posix.join(folder, name);
+    if (exists(file)) return file;
+  }
+  return null;
+}
+
+// The full path of `claude` recorded by a session, or null. Kept in claude-path.json in Wheelhouse's home.
+export function readRecordedClaude(env = process.env) {
+  const home = env.WHEELHOUSE_HOME || (env.HOME ? path.join(env.HOME, '.wheelhouse') : null);
+  if (home === null) return null;
+  try {
+    const file = path.join(home, 'claude-path.json');
+    if (fs.statSync(file).size > 4096) return null;
+    const value = JSON.parse(fs.readFileSync(file, 'utf8'))?.path;
+    return typeof value === 'string' ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function resolvePosix({ name, env, exists, recorded, inside }) {
+  if (name !== 'claude' || foundOnPosixPath(name, env, exists) !== null) return { kind: 'direct', file: name };
+  const note = (recorded ?? (() => readRecordedClaude(env)))();
+  const candidates = [note, ...usualFolders(env).map((folder) => path.posix.join(folder, name))];
+  for (const file of candidates) {
+    if (typeof file === 'string' && path.posix.isAbsolute(file) && !within(file, inside) && exists(file)) return { kind: 'direct', file };
+  }
+  return { kind: 'direct', file: name };
+}
+
+// Records the full path of `claude` as this session sees it (a Claude Code session has the right
+// PATH), for the watcher and anything else started with a bare one. Returns the path, or null when
+// it is not found on the PATH, is inside `inside` (the project folder), or this is Windows.
+export function recordClaudePath({ platform = process.platform, env = process.env, exists = fs.existsSync, inside = null } = {}) {
+  if (platform === 'win32') return null;
+  const file = foundOnPosixPath('claude', env, exists);
+  if (file === null || within(file, inside)) return null;
+  const home = env.WHEELHOUSE_HOME || (env.HOME ? path.join(env.HOME, '.wheelhouse') : os.homedir() && path.join(os.homedir(), '.wheelhouse'));
+  try {
+    fs.mkdirSync(home, { recursive: true });
+    fs.writeFileSync(path.join(home, 'claude-path.json'), `${JSON.stringify({ path: file })}\n`);
+  } catch {
+    return null;
+  }
+  return file;
+}
+
+// `env` with the folder of `claude` at the front of its PATH when claude is found by full path and
+// not on the PATH already, so what a process starts can run `claude` by name.
+export function pathWithClaude(env, { platform = process.platform, exists = fs.existsSync, inside = null } = {}) {
+  if (platform === 'win32') return env;
+  const resolved = resolveCommand({ name: 'claude', platform, env, exists, inside });
+  if (resolved.file === 'claude') return env;
+  return { ...env, PATH: [path.posix.dirname(resolved.file), ...posixPathFolders(env)].join(':') };
+}
+
 // Where `claude` is: resolveCommand's answer for `claude`, with its own words
 // when neither claude.exe nor claude.cmd is on the PATH.
-export function resolveClaude({ platform = process.platform, env = process.env, exists = fs.existsSync } = {}) {
+export function resolveClaude({ platform = process.platform, env = process.env, exists = fs.existsSync, recorded = null, inside = null } = {}) {
   try {
-    return resolveCommand({ name: 'claude', platform, env, exists });
+    return resolveCommand({ name: 'claude', platform, env, exists, recorded, inside });
   } catch {
     throw new Error('Cannot find claude.exe or claude.cmd on the PATH. Install Claude Code, or open a terminal where `claude` runs.');
   }
