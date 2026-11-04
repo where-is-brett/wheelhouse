@@ -16,6 +16,7 @@ import { startRun, markStep, addChanges, newId } from '../../../scripts/setup/jo
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { clicksDir, noteShown, noteAsked, noteUninstallShown, uninstallShownFor, freshUninstallClicks, useClick } from '../../../scripts/setup/clicks.js';
 import { CLICK_FRESH_MS } from '../../../scripts/lib/setup-numbers.js';
+import { markOpen, readOpen } from '../../../scripts/lib/session-files.js';
 import { decide as sessionStart } from '../../../scripts/hooks/session-start.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
@@ -93,6 +94,25 @@ test('Approve on a card naming the pull request and its current head records a s
     assert.equal(rec.event.kind, 'approval');
     assert.deepEqual(rec.event.data, { pr: 7, commit: FULL, words: 'Approve', question: q });
     assert.ok(rec.event.sig);
+  });
+});
+
+test('a click clears the cards a chat question was open on', async () => {
+  await withHome(async () => {
+    const c = fake();
+    markOpen('s7', ['c1', 'c2'], Date.parse('2026-10-18T04:59:00.000Z'));
+    assert.deepEqual(readOpen('s7')?.cards, ['c1', 'c2']);
+    await decide({ ...input({ 'Anything else?': 'Not now' }), session_id: 's7' }, deps(c));
+    assert.equal(readOpen('s7'), null);
+  });
+});
+
+test('another session\'s open cards stay when a click comes', async () => {
+  await withHome(async () => {
+    const c = fake();
+    markOpen('s8', ['c1'], Date.parse('2026-10-18T04:59:00.000Z'));
+    await decide({ ...input({ 'Anything else?': 'Not now' }), session_id: 's7' }, deps(c));
+    assert.deepEqual(readOpen('s8')?.cards, ['c1']);
   });
 });
 
