@@ -336,7 +336,7 @@ test('Not now from the pane keeps the card waiting and off the next visit\'s car
 
   // Not now records the card answer alone, and hands the front desk nothing.
   assert.deepEqual(await press(c, drawn, 'Not now'), { ok: true, says: `Recorded: Not now on card ${drawn.n}` });
-  assert.deepEqual(eventsOf('card-answer').map((e) => e.data), [{ question: data.question, label: 'Not now' }]);
+  assert.deepEqual(eventsOf('card-answer').map((e) => e.data), [{ question: data.question, label: 'Not now', where: 'panel' }]);
   assert.deepEqual(eventsOf('approval'), []);
 
   // Still waiting, as put off: the pane draws it under the same number, with its buttons.
