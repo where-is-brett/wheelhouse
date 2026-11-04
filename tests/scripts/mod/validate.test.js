@@ -828,6 +828,21 @@ test('the closing hook may only refuse with its plain line or return what next(e
   bad({ [CLOSE_FILE]: body('next(e); const x = { deny: "x" }; return { deny: CLOSED_IN_PANEL }') }, /must refuse only/);
   bad({ 'hooks/mod/numbers.ts': "export const CLOSED_IN_PANEL = 'Closed'" }, /must write CLOSED_IN_PANEL/);
   bad({ [CLOSE_FILE]: undefined }, /can't be found/);
+  // The call and its fields are read, never written; no spread; no import beyond the fixed three.
+  const changes = /changes the call or its fields/;
+  bad({ [CLOSE_FILE]: body('next(e); e.questions = []; return { deny: CLOSED_IN_PANEL }') }, changes);
+  bad({ [CLOSE_FILE]: body('next(e); e.questions[0].question = "x"; return { deny: CLOSED_IN_PANEL }') }, changes);
+  bad({ [CLOSE_FILE]: body('next(e); e = { questions: [] }; return { deny: CLOSED_IN_PANEL }') }, changes);
+  bad({ [CLOSE_FILE]: body('next(e); e.questions += 1; return { deny: CLOSED_IN_PANEL }') }, changes);
+  bad({ [CLOSE_FILE]: body('next(e); delete e.questions; return { deny: CLOSED_IN_PANEL }') }, changes);
+  bad({ [CLOSE_FILE]: body('next(e); e.questions.push(1); return { deny: CLOSED_IN_PANEL }') }, changes);
+  bad({ [CLOSE_FILE]: body('next(e); const same = e; same.x = 1; return { deny: CLOSED_IN_PANEL }') }, changes);
+  bad({ [CLOSE_FILE]: body('next(e); Object.assign(e, {}); return { deny: CLOSED_IN_PANEL }') }, changes);
+  bad({ [CLOSE_FILE]: body('next(e); const more = {}; return { deny: CLOSED_IN_PANEL, ...more }') }, /spread|must refuse only/);
+  bad({ [CLOSE_FILE]: `import fs from 'node:fs'\n${body('next(e); return { deny: CLOSED_IN_PANEL }')}` }, /imports node:fs/);
+  bad({ [CLOSE_FILE]: `import { x } from './cards'\n${body('next(e); return { deny: CLOSED_IN_PANEL }')}` }, /imports \.\/cards/);
+  // Reading is fine: a comparison and a property read are not writes.
+  assert.deepEqual(closeException(withClose({ [CLOSE_FILE]: body('next(e); const q = e.questions; if (e === q || e.questions == 1) return 1; return { deny: CLOSED_IN_PANEL }') })), { ok: true });
 });
 
 test('the closing hook is registered in hooks/register.ts alone, on AskUserQuestion, handing over to closeWhenAnswered', () => {

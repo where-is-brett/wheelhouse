@@ -136,19 +136,18 @@ async function pressButton($: EngineInterface, card: Card, label: string, after:
   const id = card.id as string
   if (!(await claim($, { on: id, label }))) return
   const answer = await carry($, { cmd: 'press', origin: 'pane', card: id, hash: card.hash, label }, RECORDING, () => release($), after)
-  // A counted press closes the same question open in the chat (hooks/mod/close.ts), found by the card's set line. The
-  // note is kept in this process only, and only once the bridge says the press was counted.
-  const line = isRecord(card.parts) && typeof card.parts.line === 'string' ? card.parts.line : null
+  // A counted press closes the same question open in the chat (hooks/mod/close.ts), which the bridge matches to the card by
+  // its id. The note is kept in this process only, and only once the bridge says the press was counted.
   const counted = answer?.ok === true && typeof answer.notice === 'string'
-  if (counted && line !== null) {
+  if (counted) {
     try {
-      notePressed(line, await $.clock.now())
+      notePressed(id, await $.clock.now())
     } catch {
-      // The chat's copy then stays, and the toast below says so.
+      // The chat's copy then stays.
     }
   }
-  // A card the chat has open too: the copy there closes by itself when it has a set line; otherwise it changes nothing.
-  if (card.openInChat === true && answer?.ok === true && (answer.submit ?? []).length === 0) $.ui.toast(counted && line !== null ? OPEN_IN_CHAT_CLOSES : OPEN_IN_CHAT_TOAST)
+  // A card the chat has open too: the copy there closes by itself once counted; otherwise it changes nothing.
+  if (card.openInChat === true && answer?.ok === true && (answer.submit ?? []).length === 0) $.ui.toast(counted ? OPEN_IN_CHAT_CLOSES : OPEN_IN_CHAT_TOAST)
 }
 
 // Why? on a card. One the bridge gave as `why` opens or closes the reasons in place, and opening

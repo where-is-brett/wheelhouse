@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { closedQuestions } from '../../../scripts/mod/closed.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
-import { LIFT_STOP, LIFT_STOP_EARLIER } from '../../../scripts/state/card-lines.js';
+import { LIFT_STOP, LIFT_STOP_EARLIER, chatCopy } from '../../../scripts/state/card-lines.js';
 
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
 const common = {
@@ -15,7 +15,9 @@ const common = {
 const says = (label) => ({ label, says: `It ${label.toLowerCase()} and goes ahead.` });
 const approval = composeCard({ ...common, kind: 'approval', recommend: 'Approve', what: 'Pull request #13 changes the wording on the sign-in page.', options: [says('Approve')], target: { pr: 13, sha: FULL } });
 const lift = composeCard({ ...common, kind: 'lift-stop', recommend: 'Lift All stop', what: 'Every agent is stopped, and nothing moves until you say.', options: [says('Lift All stop')], target: {} });
-const text = approval.question.question;
+// The front desk asks the chat's copy: the card without its set line and reply code.
+const text = chatCopy(approval.question.question);
+const stored = approval.question.question;
 const outcome = (decided, signed) => ({ card: { id: 'c-1', data: approval.card }, decided, signed });
 const DECIDED = { at: '2026-11-05T01:00:00.000Z', label: 'Approve', where: 'panel' };
 const SIGNED = { at: '2026-11-05T01:00:00.000Z', label: null };
@@ -23,6 +25,20 @@ const ask = (questions, over = {}) => closedQuestions({ project: 'p', questions,
 
 test('a card decided by a signed record is closed', () => {
   assert.deepEqual(ask([text], { outcomes: [outcome(DECIDED, SIGNED)] }), { cards: 1, closed: 1 });
+});
+
+test('the stored text, with its set line and reply code, matches its card too', () => {
+  assert.notEqual(text, stored);
+  assert.ok(stored.includes('Reply code:'));
+  assert.ok(!text.includes('Reply code:'));
+  assert.deepEqual(ask([stored], { outcomes: [outcome(DECIDED, SIGNED)] }), { cards: 1, closed: 1 });
+});
+
+test('a card decided by a plain answer closes only for a pane press this session counted', () => {
+  assert.deepEqual(ask([text], { outcomes: [outcome(DECIDED, null)], pressed: ['c-1'] }), { cards: 1, closed: 1 });
+  assert.deepEqual(ask([text], { outcomes: [outcome(DECIDED, null)], pressed: ['c-2'] }), { cards: 1, closed: 0 });
+  // A press does not close a card that is still waiting.
+  assert.deepEqual(ask([text], { outcomes: [outcome(null, null)], pressed: ['c-1'] }), { cards: 1, closed: 0 });
 });
 
 test('a card decided only by a plain answer is not closed: anything reaching the helper can write one', () => {

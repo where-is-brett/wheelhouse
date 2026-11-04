@@ -2157,14 +2157,14 @@ test('a question the mod closed records no chat click, whatever the call carries
     const q = `${approvalLine(7, FULL)}? It changes the sign-in.`;
     const closed = (over) => ({ ...input({}, { response: false }), tool_input: { questions: [{ question: q, options: BUTTONS, multiSelect: false }] }, ...over });
     // The deny's words as the tool response, with no answers anywhere.
-    for (const response of [CLOSED_WORDS, { is_error: true, content: CLOSED_WORDS }, { isError: true, content: CLOSED_WORDS }]) {
+    for (const response of [CLOSED_WORDS, { is_error: true, content: CLOSED_WORDS }, { isError: true, content: [{ type: 'text', text: CLOSED_WORDS }] }, { content: CLOSED_WORDS }, { content: [{ type: 'text', text: CLOSED_WORDS }] }]) {
       const c = fake();
       await decide(closed({ tool_response: response }), deps(c));
       assert.deepEqual(c.calls.write, []);
       assert.deepEqual(c.calls.record, []);
     }
     // Even with an answer filled in on the input by something else, a closed call signs nothing.
-    for (const response of [CLOSED_WORDS, { is_error: true, answers: { [q]: 'Approve' } }, { content: CLOSED_WORDS, answers: { [q]: 'Approve' } }]) {
+    for (const response of [CLOSED_WORDS, { is_error: true, answers: { [q]: 'Approve' } }]) {
       const c = fake();
       const call = closed({ tool_response: response });
       call.tool_input = { ...call.tool_input, answers: { [q]: 'Approve' } };
@@ -2176,5 +2176,23 @@ test('a question the mod closed records no chat click, whatever the call carries
     const c = fake();
     await decide(input({ [q]: 'Approve' }), deps(c));
     assert.equal(c.calls.record.length, 1);
+  });
+});
+
+test('the closing line appearing in a question or a response does not stop a real click being signed', async () => {
+  await withHome(async () => {
+    const q = `${approvalLine(7, FULL)}? It changes the sign-in. ${CLOSED_WORDS}`;
+    // The line inside the question an agent wrote, with a real answer.
+    const c = fake();
+    await decide(input({ [q]: 'Approve' }), deps(c));
+    assert.equal(c.calls.record.length, 1);
+    // The line inside a real response beside the answers, or as part of a longer text.
+    for (const extra of [{ note: CLOSED_WORDS }, { content: `Done. ${CLOSED_WORDS}` }]) {
+      const d = fake();
+      const call = input({ [q]: 'Approve' });
+      call.tool_response = { answers: { [q]: 'Approve' }, ...extra };
+      await decide(call, deps(d));
+      assert.equal(d.calls.record.length, 1, JSON.stringify(extra));
+    }
   });
 });

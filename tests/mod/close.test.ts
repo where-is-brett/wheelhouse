@@ -63,7 +63,7 @@ test('a card answered elsewhere on proof closes the question with the plain line
   expect(got).toEqual({ deny: CLOSED })
   expect(Object.keys(got)).toEqual(['deny'])
   // The bridge was asked with the session's folder and the question's own text.
-  expect(seen.asked[0]).toEqual({ cmd: 'closed', cwd: ROOT, questions: [CARD] })
+  expect(seen.asked[0]).toEqual({ cmd: 'closed', cwd: ROOT, questions: [CARD], pressed: [] })
 })
 
 test('a card still waiting leaves the question alone, and the director\'s answer passes through untouched', async ($, on) => {

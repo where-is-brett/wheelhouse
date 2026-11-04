@@ -771,10 +771,13 @@ test('a card also open in the chat says so in its small line, and a press on it 
   }
 })
 
-// The chat's own copy of the card, as the question tool holds it: the card's set line, whole on its own line.
-const CHAT_COPY = 'Put pull request #42 live?\nIt changes what your users see.\nNothing goes live meanwhile.\nTo know more, just ask.\nApprove pull request #42 at commit 3f9c2a7b81d0\nReply code: K7QD'
+// The chat's own copy of the card, as the front desk asks it (chatCopy): the card without its set line and reply code.
+const CHAT_COPY = 'Put pull request #42 live?\nIt changes what your users see.\nNothing goes live meanwhile.\nTo know more, just ask.'
 const COUNTED = { ok: true, submit: [], notice: 'You approved pull request #42 in the panel at 10:34.', note: 'Wheelhouse pane: ...' }
 const ASKED = [{ question: CHAT_COPY, header: 'Approve', multiSelect: false, options: [{ label: 'Approve', description: 'a' }, { label: 'Not now', description: 'b' }] }]
+// The bridge: a press is counted (or answers `press`), and `closed` says the one card is closed when its id was pressed.
+const bridgeOf = (press: object = COUNTED) => (request: any) =>
+  request.cmd === 'closed' ? { ok: true, cards: 1, closed: request.pressed.includes('card-1') ? 1 : 0 } : press
 // The engine's own question dialog, which waits for the director.
 const dialog = (on: any, clock: any) => on('tool.call', async () => {
   await clock.sleep(600000)
@@ -782,7 +785,7 @@ const dialog = (on: any, clock: any) => on('tool.call', async () => {
 })
 
 test('a counted press closes the same question open in the chat, with the plain line and a toast saying so', async ($, on) => {
-  const { seen, clock, start } = world(on, () => COUNTED, withCards([partsCard({ openInChat: true })]))
+  const { seen, clock, start } = world(on, bridgeOf(), withCards([partsCard({ openInChat: true })]))
   dialog(on, clock)
   for (const surface of SURFACES) {
     await start($, surface)
@@ -800,9 +803,7 @@ test('a counted press closes the same question open in the chat, with the plain 
 })
 
 test('a press the bridge did not count leaves the chat\'s question open', async ($, on) => {
-  const answers = [{ ok: true, submit: [] }, { ok: false, says: 'That card has already been answered' }]
-  let n = 0
-  const { clock, start } = world(on, () => answers[n++ % 2], withCards([partsCard({ openInChat: true })]))
+  const { clock, start } = world(on, bridgeOf({ ok: false, says: 'That card has already been answered' }), withCards([partsCard({ openInChat: true })]))
   dialog(on, clock)
   await start($, 'desktop')
   const ui = await mount($, 'desktop')

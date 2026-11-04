@@ -33,7 +33,7 @@
 //   { cmd: 'go', origin, cwd, since? }              /wheelhouse-go or the pane: lifts STOP with a signed record;
 //                                                   the pane's carries the start of the STOP it drew
 //   { cmd: 'stop', origin, cwd }                    a phoned "stop" or the pane: sets STOP
-//   { cmd: 'closed', cwd, questions }               how many of the chat's open questions are Wheelhouse cards and
+//   { cmd: 'closed', cwd, questions, pressed? }             how many of the chat's open questions are Wheelhouse cards and
 //                                                   how many of those are answered elsewhere on proof (a verified
 //                                                   signed record, or STOP lifted): { cards, closed }. Reads only.
 //   { cmd: 'digest', origin, cwd }                  /wheelhouse-digest: the briefing since the last, as text (any origin)
@@ -654,7 +654,9 @@ async function closed(req, d) {
   if (!project) return no(SAYS.notProject);
   const questions = req.questions;
   if (!strings(questions) || questions.length === 0 || questions.length > MAX_QUESTIONS) return no(SAYS.unreadable);
-  const { cards, closed: done } = d.closedQuestions({ project, questions, stop: d.stopState });
+  const pressed = req.pressed === undefined ? [] : req.pressed;
+  if (!strings(pressed) || pressed.length > MAX_QUESTIONS * 2 || pressed.some((id) => id === '' || id.length > 64)) return no(SAYS.unreadable);
+  const { cards, closed: done } = d.closedQuestions({ project, questions, pressed, stop: d.stopState });
   return { ok: true, cards, closed: done };
 }
 

@@ -777,13 +777,18 @@ function responseOf(input) {
   }
 }
 
-// Whether the call was refused rather than answered: the tool reported an error, or its result is the line the mod's
-// hook closes a chat question with. Nothing was clicked then, so nothing is read from the call, whatever its input holds.
+// Whether the call was refused rather than answered: the tool reported an error, or its whole result is the line the
+// mod's hook closes a chat question with (as the bare text, or as the one text block of an error result). Judged by the
+// result's structure, never by the line appearing somewhere in it, so words an agent put in a question change nothing.
+// Nothing was clicked on a refused call, so nothing is read from it, whatever its input holds.
 function refused(input, response) {
   if (input.is_error === true || response?.is_error === true || response?.isError === true) return true;
   const raw = input.tool_response;
-  const text = typeof raw === 'string' ? raw : (() => { try { return JSON.stringify(raw ?? null); } catch { return ''; } })();
-  return text.includes(CLOSED_IN_PANEL);
+  if (typeof raw === 'string') return raw.trim() === CLOSED_IN_PANEL;
+  const only = (content) => content === CLOSED_IN_PANEL
+    || (Array.isArray(content) && content.length === 1 && isRecord(content[0]) && content[0].type === 'text' && content[0].text === CLOSED_IN_PANEL);
+  return isRecord(raw) && Object.keys(raw).every((key) => ['content', 'deny', 'text'].includes(key)) && Object.keys(raw).length > 0
+    && Object.values(raw).every(only);
 }
 
 // What was answered, and which answers came from a click on a button the card offered

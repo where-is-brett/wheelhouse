@@ -502,6 +502,11 @@ const CLOSED_WORDS = 'Answered in the panel; this question is closed';
 const CLOSE_ON = /on\(\s*'tool\.call'\s*,\s*\{\s*tool:\s*'AskUserQuestion'\s*\}\s*,\s*\(\$,\s*e,\s*next\)\s*=>\s*closeWhenAnswered\(\$,\s*e,\s*next\)\s*\)(?:\s*\.catch\(\(\$,\s*e,\s*next\)\s*=>\s*next\(e\)\s*\))?/g;
 // What the closing file may not say at all: an answer to the question, a tool result, a changed input.
 const NEVER_IN_CLOSE = /(?<![\w$.])(?:result|results|answers|updatedInput|context|consent|isError)(?![\w$])/;
+// The call and its fields are read, never written: no assignment or update to `e` or anything under it, no delete of
+// them, no alias of `e`, no mutating method on its questions, and no spread anywhere in the file.
+const WRITES_TO_E = /(?<![\w$.])delete\s+e(?![\w$])|(?<![\w$.])e(?:\s*\.\s*[\w$]+|\s*\[[^\]]*\])*\s*(?:=(?![=>])|[-+*/%|&^?]{1,2}=|\+\+|--)|(?<![\w$.])(?:\+\+|--)\s*e(?![\w$])|=\s*e(?![\w$:.])|(?<![\w$])e\s*\.\s*questions\s*\.\s*(?:push|pop|shift|unshift|splice|sort|reverse|fill|copyWithin)\b|(?<![\w$.])Object\s*\.\s*(?:assign|defineProperty|defineProperties|setPrototypeOf)\b/;
+// The only files the closing file may import from.
+const CLOSE_IMPORTS = ['claude-code', './ask', './numbers'];
 
 // closeException(sources) -> { ok, why? }: the mod's one tool.call hook is exactly the closing hook. Read from the code
 // of the module files: 'tool.call' is named once, in hooks/register.ts, as CLOSE_ON writes it; hooks/mod/close.ts returns
@@ -525,6 +530,9 @@ export function closeException(sources) {
   const shaped = [...close.matchAll(/\{\s*deny\s*:\s*CLOSED_IN_PANEL\s*\}/g)].length;
   if (denies !== 1 || shaped !== 1) problems.push(`${CLOSE_FILE} must refuse only with { deny: CLOSED_IN_PANEL }, once`);
   if (NEVER_IN_CLOSE.test(close)) problems.push(`${CLOSE_FILE} says result, answers, updatedInput, context, consent or isError, which the closing hook never returns`);
+  if (WRITES_TO_E.test(close)) problems.push(`${CLOSE_FILE} changes the call or its fields (an assignment, update, delete, alias or mutating method on e), which the closing hook never does`);
+  if (/\.\.\./.test(close)) problems.push(`${CLOSE_FILE} uses a spread, which could put more into what it returns than the plain line`);
+  for (const { specifier } of importsIn(close)) if (!CLOSE_IMPORTS.includes(specifier)) problems.push(`${CLOSE_FILE} imports ${specifier}, which is not one of ${CLOSE_IMPORTS.join(', ')}`);
   const calls = [...close.matchAll(/(?<![\w$.])next\s*\(/g)].length;
   const plain = [...close.matchAll(/(?<![\w$.])next\(e\)/g)].length;
   if (calls !== 1 || plain !== 1) problems.push(`${CLOSE_FILE} must call next only as next(e), once, with the call as it came`);
