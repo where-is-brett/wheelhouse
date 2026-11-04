@@ -264,7 +264,7 @@ export async function paneModel({
 
   const healthLines = list(model?.director?.health);
   const health = part('health lines', () => healthLines
-    .filter((l) => l.level === 'watch' || l.level === 'stop')
+    .filter((l) => (l.level === 'watch' || l.level === 'stop') && l.safekeeping !== true)
     .map((l) => ({ level: l.level, text: plain(l.text), of: ownLineOf(l) }))
     .filter((l) => l.text !== ''), []);
 
@@ -280,7 +280,7 @@ export async function paneModel({
 
   // The pane's health group: whether all is well, the protection level and the week's share line.
   const healthNote = part('health note', () => ({
-    allWell: model !== null && !healthLines.some((l) => l.level === 'watch' || l.level === 'stop'),
+    allWell: model !== null && !healthLines.some((l) => (l.level === 'watch' || l.level === 'stop') && l.safekeeping !== true),
     protection: /^Protection: (Locked|Standard)$/.exec(healthLines.map((l) => String(l.text)).find((t) => t.startsWith('Protection: ')) ?? '')?.[1] ?? null,
     week: typeof usage === 'string' ? usage : null,
   }), { allWell: false, protection: null, week: null });
