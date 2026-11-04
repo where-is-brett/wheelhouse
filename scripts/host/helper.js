@@ -141,6 +141,8 @@ import { brokerDecision } from '../engine/broker/rules.js';
 import { hostApprovalReady } from './approval-ready.js';
 import { hostApproved, hostApprovalNeeded } from './host-approval.js';
 import { checkOwnFiles, ownFilesLine } from '../health/own-files.js';
+import { listReleases } from '../update/release.js';
+import { lookForLatest, readLatest } from '../update/board.js';
 import { keyRenewalDue, lastKeyRenewal } from '../state/key-renewal.js';
 import { brokerRoutes } from '../engine/broker/routes.js';
 import { lookAtHead, raiseCard, withLocalLock } from '../lib/local-git.js';
@@ -1054,6 +1056,9 @@ export async function startHelper({
   pluginRoot = OWN_ROOT,
   // Wheelhouse's own repository, whose release tags the gate reads (ruling R132).
   wheelhouseRepo = WHEELHOUSE_URL,
+  // How the weekly look for a newer release lists Wheelhouse's tags (scripts/update/board.js): null for no look. The test
+  // suite sets WHEELHOUSE_NO_RELEASE_LOOK, so a helper started in a test never reaches the network.
+  releaseList = process.env.WHEELHOUSE_NO_RELEASE_LOOK === '1' ? null : () => listReleases({ run, url: wheelhouseRepo }),
   // The address a switched project's fetch-mirror rule names: its recorded one; a test whose remote is a folder gives one.
   mirrorAddress = (record) => record.remoteUrl,
   // Setup's steps (a module exporting STEPS), the user's own home, whose Projects folder setup may
@@ -5933,7 +5938,19 @@ export async function startHelper({
   // The board's two lines that need the keys folder or a write in the home, which no hook may do: the look at Wheelhouse's own
   // files and the key renewal. The helper works them out and the board reads them from its health answer; kept ten minutes.
   let guardKept = null;
+  // The weekly look for a newer release runs in the background and is never waited for: the board reads the
+  // answer it kept (scripts/update/board.js), and a look that is slow gives up by itself.
+  let looking = false;
+  function lookForRelease() {
+    if (releaseList === null || looking) return;
+    try {
+      if (!readLatest({ now }).due) return;
+    } catch { return; }
+    looking = true;
+    lookForLatest({ now, list: releaseList }).catch(() => {}).finally(() => { looking = false; });
+  }
   function guardLines() {
+    lookForRelease();
     const at = now().getTime();
     if (guardKept !== null && at - guardKept.at < 10 * 60 * 1000) return guardKept.lines;
     const lines = {};

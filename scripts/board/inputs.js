@@ -43,6 +43,7 @@ import { readLean } from '../lean/project.js';
 import { readStatus } from '../safekeeping/readings.js';
 import { readFrontDeskModel } from '../lib/front-desk-model.js';
 import { agentSandboxLine } from '../agents/sandbox-line.js';
+import { readLatest, runningVersion, updateFacts } from '../update/board.js';
 
 export const NOT_A_PROJECT = 'This folder isn\'t part of a Wheelhouse project';
 // readHostFacts keeps its own limit this far inside HELPER_WAIT_MS, so it has given up, and marked
@@ -115,6 +116,7 @@ async function helperFacts(project, { client, address, now, offline, clockRead, 
     engineRoom: typeof health?.engineRoom === 'string' ? health.engineRoom : undefined,
     // The helper's lines for the look at Wheelhouse's own files and the key renewal: they need the keys folder and a write in
     // the home, which no hook may do, so the helper works them out.
+    helperVersion: typeof health?.version === 'string' ? health.version : undefined,
     ownFilesLine: typeof health?.ownFilesLine === 'string' ? health.ownFilesLine : undefined,
     keyRenewal: health?.keyRenewal?.due === true && typeof health.keyRenewal.why === 'string' ? { due: true, why: health.keyRenewal.why } : undefined,
     lock: lock !== LATE && lock?.ok === true ? (isRecord(lock.result) ? lock.result : null) : undefined,
@@ -137,7 +139,7 @@ export async function loadBoardInputs(options = {}) {
   }
 }
 
-async function gather({ cwd, client, address, now = () => new Date(), offline = false, waitMs: asked, findBrowser, renewalVia }) {
+async function gather({ cwd, client, address, now = () => new Date(), offline = false, waitMs: asked, findBrowser, renewalVia, version }) {
   // A wait too short to leave readHostFacts its margin is no wait at all, so it gives the usual one.
   const most = HELPER_WAIT_MS + helperGrace();
   const waitMs = Number.isInteger(asked) && asked > FACTS_MARGIN_MS && asked <= most ? asked : most;
@@ -181,6 +183,11 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
     facts: known.facts ?? null,
     renewal,
     keyRenewal: offline ? null : known.keyRenewal,
+    // Wheelhouse's version and its updates, from files only: the update's journal, the weekly look's kept answer and the
+    // project's settings. The glance shows none of it.
+    update: offline ? null : attempt(() => updateFacts({
+      project, folder: record.folder, version: version ?? runningVersion(), latest: readLatest({ now: clock }).tag, helperVersion: known.helperVersion, now: clock,
+    })),
     ownFiles: offline || typeof known.ownFilesLine !== 'string' ? null : { line: known.ownFilesLine },
     hostApproval: attempt(() => hostApprovalNeeded({ agent: usageAgent, realUsers: settings?.phase?.value === 'launched', host: record.host }), false),
     platform: process.platform,

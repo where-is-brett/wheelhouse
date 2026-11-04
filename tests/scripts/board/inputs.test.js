@@ -14,6 +14,7 @@ import { recordAllowance } from '../../../scripts/usage/store.js';
 import { profileViewsDir, sourcesDir, stateDir, stopFile, usageDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { NO_HELPER } from '../../../scripts/hooks/session-start.js';
 import { NO_CHROME_LINE, phonePushLine } from '../../../scripts/board/health.js';
+import { openJournal } from '../../../scripts/update/journal.js';
 import { journalFile } from '../../../scripts/lib/setup-run.js';
 import { HOST_UNREACHABLE } from '../../../scripts/host/company-ca.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
@@ -217,6 +218,25 @@ test('the inputs wait at most 2 seconds for the helper and then use what they ha
     assert.ok(lines.includes(NO_HELPER));
     assert.equal(lines.includes(LOCKED_ELSEWHERE), false);
     assert.ok(lines.includes(NO_CI), 'host facts from the cache');
+  });
+});
+
+test('the board names Wheelhouse\'s version, a newer release, and an update part-way, from files only', async () => {
+  const home = shortHome();
+  await as(home, async () => {
+    const repo = register(home);
+    put(path.join(wheelhouseHome(), 'update', 'latest.json'), { tag: 'v0.2.8', at: NOW.toISOString() });
+    openJournal(P).mark('checks', 'done', { tag: 'v0.2.8' });
+    openJournal(P).mark('merged', 'running');
+    const run = async (options) => texts(await loadBoardInputs({ cwd: repo, client: fakeClient({ health: { ok: true, version: '0.2.6' } }), address: testAddress(home), now: () => NOW, version: 'v0.2.7', ...options }));
+    const lines = await run();
+    assert.ok(lines.includes('Wheelhouse v0.2.7'));
+    assert.ok(lines.includes('v0.2.8 is out; type /wheelhouse:update when you want it'));
+    assert.ok(lines.includes("Wheelhouse's update to v0.2.8 stopped: type /wheelhouse:update to carry on"), 'nothing holds the lock');
+    assert.ok(lines.some((t) => /older Wheelhouse helper \(v0\.2\.6\)/.test(t)));
+    // The glance says none of it.
+    const glance = texts(await loadBoardInputs({ cwd: repo, address: testAddress(home), now: () => NOW, offline: true, version: 'v0.2.7' }));
+    assert.equal(glance.some((t) => /Wheelhouse v0\.2\.7|is out/.test(t)), false);
   });
 });
 
