@@ -15,7 +15,7 @@ import { backupFile, chooseBackupFolder, readBackup } from '../../scripts/host/l
 import { localChanges } from '../../scripts/host/local/changes.js';
 import { restoreProject } from '../../scripts/host/local/restore.js';
 import { keepSeenMain, seenMain } from '../../scripts/host/local/merge.js';
-import { stateDir } from '../../scripts/lib/paths.js';
+import { engineDir, stateDir } from '../../scripts/lib/paths.js';
 import { run } from '../../scripts/lib/run.js';
 import { liftStop, setStop } from '../../scripts/lib/stop.js';
 import { g } from '../helpers/git-fixture.js';
@@ -316,3 +316,11 @@ test('the merge route answers to the main line and to a main version moved outsi
   assert.notEqual(moved.ok, true);
   assert.equal(changeOf(n).state, 'open');
 }, { check: checks((commit, onMain) => (onMain ? 'could-not-run' : 'passed')) }));
+
+test('a project with no host gets the engine and its dispatcher without a mirror rule, and its ready change is merged', { timeout: 120000 }, () => gitAloneWorld(async (world) => {
+  const { helper, home } = world;
+  assert.equal(fs.existsSync(path.join(engineDir(), 'mirrors', 'rules.json')), false, 'no https rule is written for a project kept on this computer');
+  const { n } = await readyChange(world, 'card-9', 'export const price = (c) => (c / 100).toFixed(2);\n');
+  const merged = await ticksUntil(helper, () => (changeOf(n).state === 'merged' ? changeOf(n) : null), 'the merge');
+  assert.equal(await headIn(home, 'refs/heads/main'), merged.mergeCommit);
+}, { check: checks(), realEngineFor: true }));

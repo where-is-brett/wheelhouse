@@ -79,8 +79,8 @@ async function world(over = {}) {
   const typed = [...(over.typed ?? ['1'])];
   const asked = [];
   const ask = async (prompt) => { asked.push(prompt); return typed.length > 0 ? typed.shift() : null; };
-  const call = () => bootstrap({
-    projectDir: dir, project: 'p1', root: clone, ask, say: (t) => said.push(t), client, claudeHome, mirror: tempFolder('wh-mirror-'), from: 'v0.2.6', steps, putBackRun, env: {},
+  const call = (extra = {}) => bootstrap({
+    projectDir: dir, project: 'p1', root: clone, ask, say: (t) => said.push(t), client, claudeHome, mirror: tempFolder('wh-mirror-'), from: 'v0.2.6', steps, putBackRun, env: {}, ...extra,
   });
   return { call, log, seen, said, asked, dir, claudeHome };
 }
@@ -95,6 +95,14 @@ test('bootstrap: checks, then the typed 1, then install, finish and the change, 
   assert.ok(w.said.some((l) => /v0\.2\.6 → v0\.2\.7/.test(l)));
   assert.equal(openJournal('p1').read().steps.done.state, 'done');
   assert.equal(updateLockHeld(), false, 'the lock is let go at the end');
+}));
+
+test('bootstrap: with no release given, it records the one the project\'s settings named before the update', () => withHome(async () => {
+  const w = await world();
+  const out = await w.call({ from: undefined });
+  assert.equal(out.ok, true);
+  assert.equal(openJournal('p1').read().steps.checks.data.from, 'v0.2.6');
+  assert.ok(w.said.some((l) => /v0\.2\.6 → v0\.2\.7/.test(l)), 'the typed card names the move too');
 }));
 
 test('bootstrap: finish runs through the job, under the live lock, from the cache folder of the tag', () => withHome(async () => {

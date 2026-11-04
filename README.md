@@ -69,13 +69,13 @@ From the first release that has it, `/wheelhouse:update` updates Wheelhouse: typ
 macOS:
 
 ```text
-rm -rf ~/.wheelhouse/update/bootstrap/<tag> && git clone --depth 1 --branch <tag> https://github.com/where-is-brett/wheelhouse.git ~/.wheelhouse/update/bootstrap/<tag> && node ~/.wheelhouse/update/bootstrap/<tag>/scripts/update/cli.js bootstrap "$PWD"
+rm -rf ~/.wheelhouse/update/bootstrap/<tag> && git -c advice.detachedHead=false clone -q --depth 1 --branch <tag> https://github.com/where-is-brett/wheelhouse.git ~/.wheelhouse/update/bootstrap/<tag> && node ~/.wheelhouse/update/bootstrap/<tag>/scripts/update/cli.js bootstrap "$PWD"
 ```
 
 Windows PowerShell:
 
 ```text
-Remove-Item -Recurse -Force "$HOME\.wheelhouse\update\bootstrap\<tag>" -ErrorAction SilentlyContinue; git clone --depth 1 --branch <tag> https://github.com/where-is-brett/wheelhouse.git "$HOME\.wheelhouse\update\bootstrap\<tag>"; if ($LASTEXITCODE -eq 0) { node "$HOME\.wheelhouse\update\bootstrap\<tag>\scripts\update\cli.js" bootstrap "$PWD" }
+Remove-Item -Recurse -Force "$HOME\.wheelhouse\update\bootstrap\<tag>" -ErrorAction SilentlyContinue; git -c advice.detachedHead=false clone -q --depth 1 --branch <tag> https://github.com/where-is-brett/wheelhouse.git "$HOME\.wheelhouse\update\bootstrap\<tag>"; if ($LASTEXITCODE -eq 0) { node "$HOME\.wheelhouse\update\bootstrap\<tag>\scripts\update\cli.js" bootstrap "$PWD" }
 ```
 
 Each line removes an earlier copy of that release's folder first, so pasting again is safe. It checks the release first, so a clone that doesn't check out stops with nothing changed. It then shows you what the update does, in words, and waits for you to type `1` to update or `2` for not now. Only you can answer it: it refuses to run unless you are typing at the Terminal yourself. After a `1` it installs the release on this computer, hands over to the new helper, and opens a small change in your product naming the release. That change is reviewed and merged like any other; until it is, the board says the change is waiting to be merged. If the change is refused or closed, this computer is put back to the release it had. Every update after this one is `/wheelhouse:update`.
