@@ -115,7 +115,7 @@ import {
   SIGNED_LEAN_PROOFS, sameCard, approvalCard, mainMovedCard, undoCards,
 } from '../lean/store.js';
 import { CHAT_PROOFS, CONFIRMED_STEPS, hashRefusal } from '../agents/chat-clicks.js';
-import { earned, signsOn } from '../hooks/prompt-record.js';
+import { earned, signsOn, askedUpdateCard } from '../hooks/prompt-record.js';
 import { askInWindow, NOT_NOW } from '../confirm/window.js';
 import { composeCard } from '../cards/compose.js';
 import { LIFT_STOP_CARD } from '../frontdesk/cli.js';
@@ -2342,6 +2342,9 @@ export async function startHelper({
     // The answer to the card about an old helper that did not make way for an update (update design, section 7.3): confirmed in the
     // window as the prompt record signs it, by the card's id, and read by the update's own finish.
     'update-helper-answer': 'update-helper',
+    // The click on the Update card (update design, section 4): confirmed in the window for the plan the card names, and counted
+    // only by the update's apply. Not now on that card signs nothing here; the pane's press signs it.
+    'update-click': 'update',
   };
   // The steps the window serves while STOP is on: Lift STOP, and a Lean undo, as the runbook's local steps carry on.
   const UNDER_STOP = ['lift-stop', 'undo-merge', 'undo-main'];
@@ -2384,7 +2387,7 @@ export async function startHelper({
     const client = { prState: ({ number }) => routes['/pr/state']({ project, number }, ctx), goalRecheck: (args) => routes['/goal-recheck'](args, ctx) };
     let got;
     try {
-      got = await earned({ project, question, label, client, now, left: (p) => p, shownAt: card.at });
+      got = await earned({ project, question, label, card: askedUpdateCard(question, card.data), client, now, left: (p) => p, shownAt: card.at });
     } catch {
       return null;
     }

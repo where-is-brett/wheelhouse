@@ -77,6 +77,8 @@ The update is mostly a sequence of parts Wheelhouse already has. A builder shoul
 
 When there is nothing newer: "You have the latest Wheelhouse, v0.2.6." No card.
 
+**Answering from the pane and the panel.** The three cards the update asks (the **Update** card, the approval of a release that isn't pins-only, and the old helper's card) are cards in the state like any other, so the pane and the VS Code panel draw them with buttons. A press is the director's click: it is signed in the pane's own process through the same function the prompt record uses, so it earns exactly the action a click in the chat earns, and `scripts/update/routes.js` reads it back unchanged. The **Update** press and the **Not now** press on that card each sign an `update-click` for the plan hash, both releases and the kind of move, and only against the plan the helper kept (the card's words and options must equal the card the helper showed, and a plan already started earns nothing). **Approve** signs `approve-release` for the move and commit the card's set line names, only from the card the journal raised; the gate still counts it only when it is newer than the change's provenance. The old helper's options sign `update-helper-answer` for the card finish is waiting on. **Not now** on the approval card signs nothing. The card the panel draws is the card the chat asked, so it names the account settings entry (`extraKnownMarketplaces.wheelhouse.source.ref`) it changes in the same line. Where a hook can't sign (another agent's chat), the helper's window serves the **Update** click as it already serves the other two; a **Not now** in the window records nothing, so the release is announced again.
+
 ## 5. Finding the release
 
 - **Where from.** Wheelhouse's own repository, read with the fenced git (`scripts/lib/safe-git.js`): `git ls-remote --tags` over HTTPS. No `gh`, no `glab`, no GitHub API, no sign-in: the repository is public. The helper's certificate settings (`caEnv`) apply, so a company proxy that git already passes works.
@@ -324,7 +326,7 @@ The questions were:
 
 - **D1. Getting from v0.2.6 to the first release with the command:** one paste in Terminal (PowerShell on Windows), chosen over the recommended paste in a chat session (section 13).
 - **D2. An old helper (v0.2.6 or earlier) that can't be asked, or stays busy:** find it by its address, check it is Wheelhouse's own beyond doubt, ask with a card, then stop it; where the computer won't say who holds the address, it goes when the computer restarts (section 7.3).
-- **D3. The approval for a release that isn't pins-only:** the **Update** card in the chat, then the usual confirmed approval when the change is ready: the signed approval card in Claude Code, the helper's window with another agent (section 6.2).
+- **D3. The approval for a release that isn't pins-only:** the **Update** card in the chat or on the pane, then the usual confirmed approval when the change is ready: the signed approval card in Claude Code or on the pane or panel, the helper's window with another agent (section 6.2, section 4).
 - **D4. Lean's update:** a `wheelhouse-update` skill the chat follows, as setup does (section 12.1).
 - **D5. When a release is out:** one quiet board line from a weekly look; no card, no notification (section 5).
 
