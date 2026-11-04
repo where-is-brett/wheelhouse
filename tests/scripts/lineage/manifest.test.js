@@ -66,6 +66,7 @@ test('the manifest names each upstream folder and file with its fingerprint, and
     }],
     copies: manifest.copies,
     claudeCode: { floor: CLAUDE_CODE_FLOOR },
+    node: { floor: '22.0.0' },
     agents: { copilot: { cli: COPILOT_VERSION } },
     engine: manifestPins(),
     models: MODELS,
@@ -190,6 +191,7 @@ test('the manifest in the repository lists Superpowers and Matt\'s skills at che
   const manifest = readManifest();
   assert.equal(manifest.wheelhouse.version, JSON.parse(fs.readFileSync(new URL('../../../.claude-plugin/plugin.json', import.meta.url), 'utf8')).version);
   assert.deepEqual(manifest.claudeCode, { floor: '2.1.299' });
+  assert.deepEqual(manifest.node, { floor: '22.0.0' });
   assert.equal(manifest.models, MODELS);
   assert.deepEqual(manifest.upstreams.map(({ name, plugin, repo, ref, sha }) => ({ name, plugin, repo, ref, sha })), [
     { name: 'superpowers', plugin: 'superpowers', repo: 'https://github.com/obra/superpowers.git', ref: 'v7.0.0', sha: 'bb92a77741419a4ab5f06e711a283343f1ada0c3' },

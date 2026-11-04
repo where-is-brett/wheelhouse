@@ -16,7 +16,7 @@ import { FEATURE_STEPS } from '../lib/build-loop.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { invocation, resolveClaude, withoutHostVariables } from '../lib/claude.js';
 import { run as defaultRun, withoutGitVars } from '../lib/run.js';
-import { LookRefusal, safeGit } from '../lib/safe-git.js';
+import { LookRefusal, reachFor, safeGit } from '../lib/safe-git.js';
 import { readProject } from '../lib/projects.js';
 import { MARKETPLACE, MARKETPLACE_PATH, WHEELHOUSE_REPO, WHEELHOUSE_URL, claudeHome as defaultClaudeHome, locateInstalled } from './manifest.js';
 import { startedAsScript } from '../lib/started-as-script.js';
@@ -126,14 +126,16 @@ const TAG_REF = 'refs/wheelhouse/release/tag';
 const DEFAULT_REF = 'refs/wheelhouse/release/default';
 const NO_HOOKS = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false'];
 
-// Whether `ref` is a pins-only Wheelhouse release at `sha`: Wheelhouse's repository at `url`,
-// fetched into `mirror` (a bare repository of the caller's own, made if missing) over that
-// address's protocol only, has the tag at `sha`, `sha` on its default branch, and at `sha` a
-// release file { kind: 'pins-only', lineage: 'passed' }. Read-only toward the repository.
-// `git(args, options)` runs git in the mirror. Never throws: anything that can't be read is a
-// refusal with one of RELEASE_WHY.
-export async function checkRelease({ ref, sha, mirror, git, url = WHEELHOUSE_URL }) {
-  if (!isTag(ref) || !FULL_SHA.test(sha ?? '') || typeof mirror !== 'string' || typeof url !== 'string') return { ok: false, why: RELEASE_WHY.shape };
+// The ref the update keeps a fetched tag at in the mirror, for the own-files look to read.
+export const tagRefFor = (tag) => `refs/wheelhouse/tags/${tag}`;
+
+// Fetches the tag `ref` and the default branch from `url` into `mirror` (a bare repository of the
+// caller's own, made if missing) over that address's protocol only, and checks the tag's commit is on
+// the default branch. With `sha`, the tag must also be at that commit. The tag stays at `tagRef` in
+// the mirror; the default branch is left at DEFAULT_REF for the caller to remove. `git(args, options)`
+// runs git in the mirror. Never throws: anything that can't be read is a refusal with one of RELEASE_WHY.
+async function fetchInto({ ref, sha = null, mirror, git, url, tagRef }) {
+  if (!isTag(ref) || (sha !== null && !FULL_SHA.test(sha)) || typeof mirror !== 'string' || typeof url !== 'string') return { ok: false, why: RELEASE_WHY.shape };
   const scheme = /^([a-z][a-z0-9+.-]*):\/\//.exec(url)?.[1];
   if (!scheme) return { ok: false, why: RELEASE_WHY.shape };
   const inMirror = (args) => git([...NO_HOOKS, ...args], { cwd: mirror, input: '' });
@@ -146,14 +148,58 @@ export async function checkRelease({ ref, sha, mirror, git, url = WHEELHOUSE_URL
     const fetched = await inMirror([
       '-c', 'protocol.allow=never', '-c', `protocol.${scheme}.allow=always`,
       'fetch', '-q', '--no-tags', '--no-recurse-submodules', '--no-write-fetch-head', '--end-of-options', url,
-      `+refs/tags/${ref}:${TAG_REF}`, `+HEAD:${DEFAULT_REF}`,
+      `+refs/tags/${ref}:${tagRef}`, `+HEAD:${DEFAULT_REF}`,
     ]);
     if (fetched.code !== 0) return { ok: false, why: RELEASE_WHY.fetch };
-    const tagged = await inMirror(['rev-parse', '--verify', '-q', `${TAG_REF}^{commit}`]);
+    const tagged = await inMirror(['rev-parse', '--verify', '-q', `${tagRef}^{commit}`]);
     if (tagged.code !== 0) return { ok: false, why: RELEASE_WHY.fetch };
-    if (tagged.stdout.trim() !== sha) return { ok: false, why: RELEASE_WHY.commit };
-    const onDefault = await inMirror(['merge-base', '--is-ancestor', sha, DEFAULT_REF]);
+    const found = tagged.stdout.trim();
+    if (sha !== null && found !== sha) return { ok: false, why: RELEASE_WHY.commit };
+    const onDefault = await inMirror(['merge-base', '--is-ancestor', found, DEFAULT_REF]);
     if (onDefault.code !== 0) return { ok: false, why: RELEASE_WHY.branch };
+    return { ok: true, sha: found };
+  } catch {
+    return { ok: false, why: RELEASE_WHY.fetch };
+  }
+}
+
+const dropRefs = async (git, mirror, names) => {
+  for (const name of names) {
+    try { await git([...NO_HOOKS, 'update-ref', '-d', name], { cwd: mirror, input: '' }); } catch { /* tidying is best effort */ }
+  }
+};
+
+// Fetches the release tag `ref` into `mirror` and checks it is on Wheelhouse's default branch, for the
+// update. `run` is the process runner; git goes through the fence. The tag stays in the mirror at
+// refs/wheelhouse/tags/<tag> (the own-files look reads it); the default branch's ref is removed.
+export async function fetchTag({ ref, run = defaultRun, mirror, url = WHEELHOUSE_URL }) {
+  if (typeof mirror !== 'string' || typeof url !== 'string') return { ok: false, why: RELEASE_WHY.shape };
+  fs.mkdirSync(path.dirname(mirror), { recursive: true });
+  // The fence's folder must exist before git runs in it: the mirror is made first.
+  fs.mkdirSync(mirror, { recursive: true });
+  const fenced = safeGit({ run, cwd: mirror, reach: reachFor(url), look: 'never', timeoutMs: 300000 });
+  // The fence sets the hooks and monitor settings and the folder itself, and refuses a call that sets them.
+  const git = (args, options = {}) => {
+    const { cwd: _folder, ...rest } = options;
+    return fenced(args.slice(0, NO_HOOKS.length).join('\0') === NO_HOOKS.join('\0') ? args.slice(NO_HOOKS.length) : args, rest);
+  };
+  const got = await fetchInto({ ref, mirror, git, url, tagRef: tagRefFor(String(ref)) });
+  await dropRefs(git, mirror, got.ok ? [DEFAULT_REF] : [DEFAULT_REF, tagRefFor(String(ref))]);
+  return got;
+}
+
+// Whether `ref` is a pins-only Wheelhouse release at `sha`: Wheelhouse's repository at `url`,
+// fetched into `mirror` (a bare repository of the caller's own, made if missing) over that
+// address's protocol only, has the tag at `sha`, `sha` on its default branch, and at `sha` a
+// release file { kind: 'pins-only', lineage: 'passed' }. Read-only toward the repository.
+// `git(args, options)` runs git in the mirror. Never throws: anything that can't be read is a
+// refusal with one of RELEASE_WHY.
+export async function checkRelease({ ref, sha, mirror, git, url = WHEELHOUSE_URL }) {
+  if (!FULL_SHA.test(sha ?? '')) return { ok: false, why: RELEASE_WHY.shape };
+  const inMirror = (args) => git([...NO_HOOKS, ...args], { cwd: mirror, input: '' });
+  try {
+    const got = await fetchInto({ ref, sha, mirror, git, url, tagRef: TAG_REF });
+    if (!got.ok) return got;
     const listed = await inMirror(['ls-tree', sha, '--', RELEASE_FILE]);
     if (listed.code !== 0 || !/^100644 blob [0-9a-f]+\t/.test(listed.stdout)) return { ok: false, why: RELEASE_WHY.file };
     const read = await inMirror(['cat-file', 'blob', `${sha}:${RELEASE_FILE}`]);
@@ -165,9 +211,7 @@ export async function checkRelease({ ref, sha, mirror, git, url = WHEELHOUSE_URL
   } catch {
     return { ok: false, why: RELEASE_WHY.fetch };
   } finally {
-    for (const name of [TAG_REF, DEFAULT_REF]) {
-      try { await inMirror(['update-ref', '-d', name]); } catch { /* tidying is best effort */ }
-    }
+    await dropRefs(git, mirror, [TAG_REF, DEFAULT_REF]);
   }
 }
 
