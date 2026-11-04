@@ -68,7 +68,7 @@ export const RED_MAIN_OWN = 'only the helper records a red main line\'s incident
 export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'shadow', 'match', 'rule', 'slept', 'goal-end', 'goal-check', 'goal-card'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 
-const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main', 'safekeeping', 'send-back', 'start-goal', 'approve-release'];
+const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main', 'safekeeping', 'send-back', 'start-goal', 'approve-release', 'update-helper-answer'];
 // The fields each action carries beyond the card's question and the label clicked.
 const ACTION_OWN = {
   'lift-stop': [],
@@ -121,6 +121,9 @@ const ACTION_OWN = {
   // The director's Approve on the card for a Wheelhouse release that is not pins-only (update design, section 6.2): the
   // release's tag and its commit in full, as the card's set line names them. Only the release's reviewed change counts it.
   'approve-release': ['previous', 'release', 'commit'],
+  // The director's answer to the card about an old helper that did not make way for an update: the card's id, which names the
+  // process it asks about, so an answer to an earlier helper's card is no answer to a later one's.
+  'update-helper-answer': ['card'],
   // The director's Confirm on the card keeping a feature's files that steer agents as they are
   // (ruling P7-31): the work, and the full hash of the watcher's finding the card's line names.
   'keep-control-files': ['work', 'hash'],
@@ -251,6 +254,9 @@ function checkAction(data) {
     if (typeof data.commit !== 'string' || !/^[0-9a-f]{40}$/.test(data.commit)) bad('needs the release\'s commit in full');
     if (data.label !== RELEASE_LABEL) bad(`needs the ${RELEASE_LABEL} label`);
     if (setLineOf(data.question) !== releaseLine(data.previous, data.release, data.commit)) bad('carries the release line for its tags and commit as its question\'s one set line');
+  } else if (data.action === 'update-helper-answer') {
+    if (typeof data.card !== 'string' || !/^update-helper-[A-Za-z0-9.-]{1,80}$/.test(data.card)) bad('needs the id of the helper card it answers');
+    if (!['Stop it', 'Leave it', 'Wait longer'].includes(data.label)) bad('needs one of the helper card\'s labels');
   } else if (data.action === 'keep-main') {
     if (!['from', 'to'].every((k) => typeof data[k] === 'string' && /^[0-9a-f]{40}$/.test(data[k]))) bad('needs the main version\'s commits it keeps, from and to, in full');
     if (data.label !== 'Keep it') bad('needs the Keep it label');
