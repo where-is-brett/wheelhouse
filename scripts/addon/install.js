@@ -53,3 +53,20 @@ export async function installAddon({ root = HERE, tmp = os.tmpdir(), run = realR
     return { ok: false, line: clicksFor(file), file };
   }
 }
+
+// Whether VS Code already has the add-on: `code --list-extensions` names it. Null when that can't be asked (no command line,
+// or it failed): the answer is "can't tell", and the offer still comes. Never throws.
+export async function addonInstalled({ run = realRun, platform = process.platform, env = process.env } = {}) {
+  try {
+    const resolved = resolveCommand({ name: 'code', platform, env });
+    const args = ['--list-extensions'];
+    const call = resolved.kind === 'cmd'
+      ? { file: 'cmd.exe', args: ['/d', '/s', '/c', `"${[resolved.file, ...args].map(quoteForCmd).join(' ')}"`], verbatim: true }
+      : { file: resolved.file, args, verbatim: false };
+    const result = await run(call.file, call.args, { env, input: '', timeoutMs: 30000, windowsVerbatimArguments: call.verbatim });
+    if (result?.code !== 0) return null;
+    return String(result.stdout ?? '').split(/\r?\n/).some((l) => l.trim().toLowerCase() === 'wheelhouse.wheelhouse');
+  } catch {
+    return null;
+  }
+}

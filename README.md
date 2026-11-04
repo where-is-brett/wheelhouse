@@ -92,7 +92,7 @@ Run the `add` even when the first command lists `wheelhouse`: adding it again at
 
 ## On GitHub Copilot
 
-Wheelhouse also runs in VS Code with GitHub Copilot, with nothing else installed. This is its lean tier ("Lean"): you need VS Code with Copilot, and git. You don't need Node.js, a code host, administrator rights or anything else, and Wheelhouse installs nothing. Everything stays on your computer, and Copilot builds in your own chat, one feature at a time.
+Wheelhouse also runs in VS Code with GitHub Copilot, with nothing else installed. This is its lean tier ("Lean"): you need VS Code with Copilot, and git. You don't need Node.js, a code host, administrator rights or anything else, and Wheelhouse installs nothing. If you'd like a panel beside the chat, Wheelhouse can offer its optional VS Code add-on later; you never need it. Everything stays on your computer, and Copilot builds in your own chat, one feature at a time.
 
 **Status:** `v0.2.6` is an early release for trying Wheelhouse out. Where this page says `v0.2.6`, use the latest release's name.
 

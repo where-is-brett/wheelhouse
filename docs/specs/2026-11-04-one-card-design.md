@@ -38,7 +38,7 @@ A sixth thing is outside this design. The approved work then sat "queued, not st
 
 **Setup's cards** are asked only in the chat. The pane draws them with no buttons (`scripts/mod/buttons.js`), with a line saying where they're answered. Their answers are claimed through `claimAnswer` in `scripts/lib/setup-clicks.js`. A claim left behind with no answer is taken back once stale.
 
-**Copilot** asks with its own question tool (`ask_user`, or `askQuestions` in VS Code). Its VS Code add-on draws a pane, but that pane has no live mark yet, so nothing holds its cards back.
+**Copilot** asks with its own question tool (`ask_user`, or `askQuestions` in VS Code). Its VS Code add-on draws a panel, and how that panel holds Copilot's cards back, and how its answers reach the chat, is in `docs/specs/2026-11-04-vscode-panel-design.md` (section 6).
 
 **What Claude Code offers** (hooks documentation, and the 4 November transcript):
 

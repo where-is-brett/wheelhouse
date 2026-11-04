@@ -1130,3 +1130,15 @@ test('taking the project off the helper is a card with the plan\'s lines, then t
   const stateCard = /"Keep this project's Wheelhouse state\?"[^\n]*?Then run/.exec(part)[0];
   for (const bit of [/what \(/, /why \(/, /\*\*Keep it\*\*/, /\*\*Remove it too\*\*/, /recommend/, /meanwhile \(/]) assert.match(stateCard, bit);
 });
+
+test('Lean reads the panel before asking cards, states what was answered there, and offers the add-on once after the first feature', () => {
+  const section = playbook.slice(playbook.indexOf('## The panel beside the chat'), playbook.indexOf('## Merging'));
+  assert.match(section, /`wheelhouse_board`/);
+  assert.match(section, /never ask that card again/);
+  assert.match(section, /topic `vscode-panel`/);
+  assert.match(section, /Would you like Wheelhouse's panel beside the chat\?/);
+  assert.match(section, /addon-check/);
+  assert.match(section, /Without the helper there is no offer\./);
+  assert.ok(leanKit.includes('The panel beside the chat'));
+  assert.ok(leanKit.includes('Copilot requests'), 'the kit names its own agent');
+});

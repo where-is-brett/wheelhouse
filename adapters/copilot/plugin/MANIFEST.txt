@@ -6,9 +6,9 @@ a35a5f4afe641aa82edf9f3ca4dadc6ab35a2ccc agents/wheelhouse-reviewer.agent.md
 2b9f056d81333d3d126210192782cb7f1bdfa73d skills/wheelhouse-all-stop/SKILL.md
 9de53d1764810d7f282ed66dc061a82c2dd312dc skills/wheelhouse-board/SKILL.md
 9b94e142f4743747476fb3c7b77202d883995f19 skills/wheelhouse-briefing/SKILL.md
-3fe7cfa73af9b4e822cd13c452db415677d6fd56 skills/wheelhouse-front-desk/SKILL.md
+0eb330936980ff7554b5a81faedbdaa94cb38e76 skills/wheelhouse-front-desk/SKILL.md
 85ffe20e8771f25294d7f3bc0d044e849e850fba skills/wheelhouse-intake/SKILL.md
-c912c04ca6e5f04f7bb0161c1cd2da1255ab9168 skills/wheelhouse-lean/SKILL.md
+7e6834aca63dffa39965786603baef629a4926ba skills/wheelhouse-lean/SKILL.md
 c847ce4a4fa9e627a9d9ad6e9ceecf51141cf9dd skills/wheelhouse-logbook/SKILL.md
 d714ba985f78e3bd1291b8e70007b65d1750c018 skills/wheelhouse-settings/SKILL.md
 7651fb5b8fff264ade3ac175d26cb9906ec9fc12 skills/wheelhouse-setup/SKILL.md

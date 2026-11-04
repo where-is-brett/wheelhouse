@@ -287,6 +287,12 @@ A second look in a separate chat, with `wheelhouse-reviewer`, which can read and
 4. When it says `FINDINGS` with the number found, **stay on `feature/<slug>`**: the feature is in hand again. Say the findings in plain words and ask a card: send them back to the Crew member, or **Not now**. The `review` line (`choice` `findings`) waits on the Logbook with the others. Only a clean review gets an approval card.
    - **Not now** sets the feature aside, which ends the hold: `git -c core.hooksPath=/dev/null switch main`, set "Building now" to Nothing and add "Set aside: <title>, on feature/<slug>" to the Logbook, then write the waiting lines and a `card` line (`card` `findings-<slug>`, `choice` `Not now`). The branch stays as it is; a later session can build another feature, or ask the director whether to go back to this one (`git -c core.hooksPath=/dev/null switch feature/<slug>` puts it in hand again).
 
+## The panel beside the chat
+
+When the add-on's board tool (`wheelhouse_board`) is there, call it before asking any card, and again at the start of each turn. When it says the panel holds the cards, say its one line and ask none of them; ask them here only when the director says to. Where it lists answers given since your last turn, state each in one plain line first, as a fact, and never ask that card again. Where the add-on is not installed, none of this applies.
+
+**The offer.** After the director's first feature is merged here, and only if Wheelhouse's helper answers and `<start> addon-check` (`<start>` is the helper's start pair, With Wheelhouse's helper, below) prints `"offer":true`, ask one card, once (topic `vscode-panel`): what "Would you like Wheelhouse's panel beside the chat?"; why it shows the board and the cards with buttons, and nothing in it spends {{agent}} requests; options **Yes, add it** (Wheelhouse adds its VS Code add-on; VS Code may ask you to allow it) and **Not now** (nothing changes; cards stay in the chat); meanwhile work carries on in the chat. When it prints `"offer":false`, say its `line` once and ask nothing. On **Yes, add it**, run `<start> addon` and say its line; a line that asks them to add it by hand is their next step, not a fault. On **Not now**, don't offer it again unless they ask. Without the helper there is no offer.
+
 ## Merging
 
 1. **Check before the card:**
