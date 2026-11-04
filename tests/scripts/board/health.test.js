@@ -472,8 +472,8 @@ test('other repeated wake failures say so without blaming claude', () => {
 });
 
 test('old, few, unrelated or answered failures bring no line', () => {
-  const none = (watcher) => assert.deepEqual(healthLines({ ...calm, watcher }), [{ level: 'ok', text: 'Protection: Standard' }]);
-  none(failing('A wake for the Bosun has failed 101 times: spawn claude ENOENT', 40));
+  const none = (watcher) => assert.deepEqual(healthLines({ ...calm, ...atNow, watcher }), [{ level: 'ok', text: 'Protection: Standard' }]);
+  none(failing('A wake for the Bosun has failed 101 times: spawn claude ENOENT', 24 * 60));
   none(failing('A wake for the Bosun has failed 2 times: spawn claude ENOENT'));
   none(failing('the watcher lost the helper'));
   none({ ...failing('A wake for the Bosun has failed 9 times: spawn claude ENOENT'), lastOk: new Date(NOW_MS - 60000).toISOString() });

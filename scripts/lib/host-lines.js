@@ -21,7 +21,7 @@ export function wakeFailureLine(watcher, now = new Date()) {
   const at = Date.parse(error?.at);
   const message = typeof error?.message === 'string' ? error.message : '';
   const times = /^A wake for .+ has failed (\d+) times: ([\s\S]*)$/.exec(message);
-  if (times === null || Number.isNaN(at) || now.getTime() - at > WAKE_FAILURE_WINDOW_MS || now.getTime() < at - 60000) return null;
+  if (times === null || Number(times[1]) < 3 || Number.isNaN(at) || now.getTime() - at > WAKE_FAILURE_WINDOW_MS || now.getTime() < at - 60000) return null;
   const ok = Date.parse(watcher?.lastOk);
   if (!Number.isNaN(ok) && ok >= at) return null;
   if (/ENOENT/.test(times[2]) && /claude/i.test(times[2])) {
