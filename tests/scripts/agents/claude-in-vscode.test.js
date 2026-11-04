@@ -12,10 +12,11 @@ import { CLAUDE_HARNESS_CHECKED } from '../../../scripts/lib/copilot-numbers.js'
 const managedByCompany = { read: (f) => (f === companyPlaces('darwin').managed ? '{"sandbox":{"enabled":true}}' : null), list: () => [] };
 const unmanaged = { read: () => null, list: () => [] };
 
-test('the switch starts off', () => {
-  assert.equal(CLAUDE_HARNESS_CHECKED, false);
-  assert.equal(claudeHarnessOffered(), false);
-  assert.deepEqual(claudeHarnessRoute({ platform: 'darwin', company: unmanaged }), { offered: false });
+test('the switch is on since check 54 passed on the Mac', () => {
+  assert.equal(CLAUDE_HARNESS_CHECKED, true);
+  assert.equal(claudeHarnessOffered(), true);
+  assert.deepEqual(claudeHarnessRoute({ platform: 'darwin', company: unmanaged }), { offered: true });
+  assert.deepEqual(claudeHarnessRoute({ platform: 'darwin', company: managedByCompany }), { offered: false });
 });
 
 test('setup offers it only where the check passed and the company allows it', () => {
