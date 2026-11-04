@@ -143,6 +143,11 @@ function runbookOf(question) {
   return null;
 }
 
+// The card a press or the helper's window gives `earned` as the card that was asked, which only the Update card is judged by: the
+// card the state holds, when `question` carries the Update card's set line, else nothing. `earned` still checks it against the plan
+// the helper kept, word for word, and a press or a window click is the director's own, so it counts as the card's click.
+export const askedUpdateCard = (question, data) => (typeof question === 'string' && setLinesOf(question).some((line) => UPDATE_LINE.test(line)) ? data : undefined);
+
 // The only match of a global pattern, or null when there are none or several.
 function only(pattern, text) {
   const all = [...text.matchAll(pattern)];

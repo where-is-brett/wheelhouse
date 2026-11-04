@@ -9,6 +9,7 @@ import { makeEvent } from '../../../scripts/state/events.js';
 import { approvalLine, replyCode, replyCodeLine, setLineOf, trustLine, takeOverLine, uninstallLine } from '../../../scripts/state/card-lines.js';
 import { unattendedCardData } from '../../../scripts/foreman/act.js';
 import { settingKey, UNATTENDED_CARD } from '../../../scripts/protection/windows-builds.js';
+import { updateCard } from '../../../scripts/update/cards.js';
 import { withHome } from '../../helpers/homes.js';
 
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -94,11 +95,13 @@ const SET_LINE_KINDS = Object.keys(DECIDING);
 // only by the click on the card itself, in the chat where it was asked. Nor does uninstall's card
 // (ruling R90), for the same reason.
 const SETUP_KINDS = ['setup', 'confirm-all'];
-const NO_BUTTON_KINDS = [...SETUP_KINDS, 'baseline', 'trust', 'take-over', 'pair', 'uninstall', 'update', 'release', 'update-helper'];
+const NO_BUTTON_KINDS = [...SETUP_KINDS, 'baseline', 'trust', 'take-over', 'pair', 'uninstall'];
+// The update's cards are answered on the pane, and have their own buttons.
+const UPDATE_KINDS = ['update', 'release', 'update-helper'];
 const NO_BUTTONS = { buttons: [], note: SETUP_ANSWER };
 const noButtonsFor = (kind) => {
   if (SETUP_KINDS.includes(kind)) return NO_BUTTONS;
-  return { buttons: [], note: { trust: TRUST_ANSWER, 'take-over': TRUST_ANSWER, pair: TRUST_ANSWER, update: TRUST_ANSWER, release: TRUST_ANSWER, 'update-helper': TRUST_ANSWER, uninstall: UNINSTALL_ANSWER }[kind] ?? CANT_ANSWER };
+  return { buttons: [], note: { trust: TRUST_ANSWER, 'take-over': TRUST_ANSWER, pair: TRUST_ANSWER, uninstall: UNINSTALL_ANSWER }[kind] ?? CANT_ANSWER };
 };
 
 const FILLED = (label) => ({ label, does: 'record', shape: 'filled' });
@@ -116,6 +119,7 @@ test('a card that decides something gets its deciding answer filled, Suggest a c
       assert.deepEqual(got, noButtonsFor(kind), kind);
       continue;
     }
+    if (UPDATE_KINDS.includes(kind)) continue;
     // STOP is lifted or it isn't, and files are kept as they are or they aren't, so those cards offer no Suggest a change….
     assert.deepEqual(got, {
       buttons: [
@@ -237,7 +241,7 @@ test('a card is judged by the card check\'s own tests, for every kind with a set
       lines.filter((l) => l !== TO_KNOW_MORE).join('\n'),
       // A setup card, a trust card, uninstall's and a Keep card have no reply code line to take away (rulings R36,
       // R80, R90, P7-31).
-      ...([...SETUP_KINDS, 'trust', 'take-over', 'pair', 'uninstall', 'keep-control-files', 'start-goal', 'update', 'release', 'update-helper'].includes(kind) ? [] : [lines.filter((l) => !l.startsWith('Reply code:')).join('\n')]),
+      ...([...SETUP_KINDS, 'trust', 'take-over', 'pair', 'uninstall', 'keep-control-files', 'start-goal', ...UPDATE_KINDS].includes(kind) ? [] : [lines.filter((l) => !l.startsWith('Reply code:')).join('\n')]),
       `${data.question}\nReply code: ${replyCode('another line')}`,
       `${data.question}\n${data.line}`,
       // Without its reason and its meanwhile, a card has too few plain lines.
@@ -398,4 +402,46 @@ test('a parked card\'s Send it back is a button that records, beside Approve', (
   assert.equal(note, null);
   assert.deepEqual(buttons.slice(0, 2).map((b) => [b.label, b.does]), [['Approve', 'record'], ['Send it back', 'record']]);
   assert.deepEqual(buttons.map((b) => b.label), ['Approve', 'Send it back', 'Suggest a change…', 'Why?', 'Show me']);
+});
+
+test('the Update card gets Update filled and Not now in the corner, both recorded, and Why? (update cards are answered on the pane)', () => {
+  // The card as the state keeps it when the chat asked it: its question, header and the labels and words of its options.
+  const asked = updateCard({ hash: 'e'.repeat(64), from: 'v0.2.6', to: 'v0.2.7', says: 'A small release.', account: { from: 'v0.2.6', to: 'v0.2.7' } });
+  const data = { kind: 'update', question: asked.question, header: asked.header, options: asked.options.map((o) => o.label), descriptions: asked.options.map((o) => o.description) };
+  assert.equal(isTrustCard(data), false);
+  // A card with no parts to open has a Why? that asks the front desk.
+  assert.deepEqual(cardButtons(data), { buttons: [FILLED('Update'), NOT_NOW_BUTTON, FAILED_WHY], note: null });
+  // The same card is drawn by the panel, so the line that names the account settings entry is on it.
+  assert.match(asked.question, /Your account settings name Wheelhouse at v0\.2\.6; the update changes that one entry to v0\.2\.7\./);
+  assert.deepEqual(cardButtons(dataOf('update')), { buttons: [FILLED('Update'), NOT_NOW_BUTTON, WHY_BUTTON], note: null });
+});
+
+test('the release\'s approval gets Approve filled, and Not now and Why? when it offers them', () => {
+  const data = dataOf('release');
+  const got = cardButtons(data);
+  assert.equal(got.note, null);
+  assert.deepEqual(got.buttons[0], FILLED('Approve'));
+  assert.ok(got.buttons.some((b) => b.label === 'Why?'));
+  assert.equal(got.buttons.filter((b) => b.does === 'record').every((b) => ['Approve', 'Not now'].includes(b.label)), true);
+});
+
+test('the old helper\'s card gets each of its options as a recorded answer, the recommended one filled', () => {
+  const got = cardButtons(dataOf('update-helper'));
+  assert.deepEqual(got.buttons, [
+    { label: 'Stop it', does: 'record', shape: 'filled' },
+    { label: 'Leave it', does: 'record', shape: 'outlined' },
+    WHY_BUTTON,
+  ]);
+  assert.equal(got.note, null);
+});
+
+test('an update card whose set line is another update card\'s gets no button that records anything', () => {
+  const update = dataOf('update');
+  const release = dataOf('release');
+  const crossed = { ...update, question: update.question.replace(setLineOf(update.question), setLineOf(release.question)) };
+  const got = cardButtons(crossed);
+  assert.equal(got.buttons.some((b) => b.does === 'record'), false);
+  assert.equal(got.note, CANT_ANSWER);
+  // A card of the update kind with no set line of the kind is judged the same way.
+  assert.equal(cardButtons({ ...update, kind: 'release' }).buttons.some((b) => b.does === 'record'), false);
 });

@@ -43,6 +43,13 @@ export const MAC_SCRIPT = [
   'end run',
 ];
 
+// The same, for a card whose window has no default button, so a stray Return or Enter chooses nothing: the dialog names none, and
+// the list starts with nothing selected (an empty selection is allowed, and is no choice).
+export const MAC_SCRIPT_NO_DEFAULT = MAC_SCRIPT.map((line) => line
+  .replace(' default button 1 giving up', ' giving up')
+  .replace('with prompt theText OK button name', 'with prompt theText default items {} with empty selection allowed OK button name'))
+  .flatMap((line) => (line === `if theChoice is false then return "${NOT_NOW}"` ? [line, 'if theChoice is {} then return ""'] : [line]));
+
 // Windows: the card is { title, lines, options, waitMs } as UTF-8 JSON in base64; `options` ends with Not now.
 // Writes the number of the button pressed, or -1 when the window closed without one.
 export const WINDOWS_SCRIPT = [
@@ -80,13 +87,14 @@ export const WINDOWS_SCRIPT = [
   '  $button.AutoSize = $true',
   '  $button.Text = [string]$options[$i]',
   '  $button.Tag = $i',
+  '  if ($card.noDefault) { $button.TabStop = $false }',
   '  $button.Add_Click({ param($s, $e) $script:choice = [int]$s.Tag; $form.Close() })',
   '  $row.Controls.Add($button)',
   '  $last = $button',
   '}',
   '$panel.Controls.Add($row)',
   '$form.Controls.Add($panel)',
-  '$form.ActiveControl = $last',
+  'if (-not $card.noDefault) { $form.ActiveControl = $last }',
   '$timer = New-Object System.Windows.Forms.Timer',
   '$timer.Interval = [int]$card.waitMs',
   '$timer.Add_Tick({ $timer.Stop(); $form.Close() })',
@@ -112,7 +120,7 @@ function checkCard({ title, lines, options, timeoutMs }) {
 
 // Shows the window and waits for a click: { choice } is the deciding option clicked, Not now, or null when the
 // window timed out, failed, or can't be shown here. `options` are the deciding options alone; Not now is added.
-export async function askInWindow({ title, lines, options, platform = process.platform, timeoutMs = WINDOW_MS, run, env = process.env }) {
+export async function askInWindow({ title, lines, options, noDefault = false, platform = process.platform, timeoutMs = WINDOW_MS, run, env = process.env }) {
   checkCard({ title, lines, options, timeoutMs });
   if (typeof run !== 'function') throw new Error('The window needs a run function');
   const known = [...options, NOT_NOW];
@@ -120,14 +128,14 @@ export async function askInWindow({ title, lines, options, platform = process.pl
   try {
     if (platform === 'darwin') {
       const seconds = String(Math.ceil(timeoutMs / 1000));
-      const script = MAC_SCRIPT.flatMap((line) => ['-e', line]);
+      const script = (noDefault === true ? MAC_SCRIPT_NO_DEFAULT : MAC_SCRIPT).flatMap((line) => ['-e', line]);
       answer = await run(MAC_OSASCRIPT, [...script, '--', title, lines.join('\n'), seconds, ...options], { timeoutMs: timeoutMs + GRACE_MS });
       if (answer.code !== 0 || answer.timedOut) return { choice: null };
       const said = String(answer.stdout).replace(/\r?\n$/, '');
       return { choice: known.includes(said) ? said : null };
     }
     if (platform === 'win32') {
-      const card = Buffer.from(JSON.stringify({ title, lines, options: known, waitMs: timeoutMs }), 'utf8').toString('base64');
+      const card = Buffer.from(JSON.stringify({ title, lines, options: known, waitMs: timeoutMs, ...(noDefault === true ? { noDefault: true } : {}) }), 'utf8').toString('base64');
       answer = await run(windowsShell(env.SystemRoot ?? env.SYSTEMROOT), ['-NoProfile', '-NonInteractive', '-STA', '-EncodedCommand', WINDOWS_ENCODED], {
         env: { [CARD_VARIABLE]: card }, timeoutMs: timeoutMs + GRACE_MS,
       });

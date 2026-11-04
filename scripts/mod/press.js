@@ -47,7 +47,7 @@
 // step goes ahead only by the director's click on the very card setup showed.
 import fs from 'node:fs';
 import path from 'node:path';
-import { earned, keepEarned, sendKept, signsOn } from '../hooks/prompt-record.js';
+import { earned, keepEarned, sendKept, signsOn, askedUpdateCard } from '../hooks/prompt-record.js';
 import { keep, taken, withinBudget, pendingDir, BUDGET_MS } from '../hooks/pending.js';
 import { helperGrace } from '../lib/helper-grace.js';
 import { helperClient } from '../host/helper-client.js';
@@ -239,7 +239,9 @@ async function press({ project, card, hash, label, client, desk, now, liftStop, 
   const mod = desk ?? modDesk({ project, client: api, now });
 
   // Not now and Keep as is sign nothing: each writes the plain card answer alone, as a click does.
-  if (label !== NOT_NOW && label !== KEEP_AS_IS && button.does === 'record') {
+  // The Update card's Not now is the exception: declining that release is signed, for the plan the card names.
+  const declines = label === NOT_NOW && data.kind === 'update';
+  if ((declines || (label !== NOT_NOW && label !== KEEP_AS_IS)) && button.does === 'record') {
     return signed({ project, card, hash, data, question, label, what, meanwhile: data.parts?.meanwhile, markers, shownAt: entry.at, api, desk: mod, left, now, liftStop, stopState, proof });
   }
 
@@ -294,7 +296,7 @@ async function signed({ project, card, hash, data, question, label, what, meanwh
   };
   let got;
   try {
-    got = await earned({ project, question, label, client: watched, now, left, stopState, shownAt });
+    got = await earned({ project, question, label, card: askedUpdateCard(question, data), client: watched, now, left, stopState, shownAt });
   } catch {
     release(held);
     return no(SAYS.failed);

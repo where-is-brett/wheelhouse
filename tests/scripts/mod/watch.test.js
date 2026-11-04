@@ -6,6 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { watchTick, watchFile, SHAPE_FRESH_MS, UNSENT_KEPT } from '../../../scripts/mod/watch.js';
@@ -70,12 +71,15 @@ test('Shape 1: a front desk tick starts a watcher that has stopped, at most once
   const h = helper(config());
   const c = clock();
   const fake = fakeSpawn();
-  const tick = (role = 'front-desk') => watchTick({ project: P, role, client: h.client, now: c.now, pluginRoot: ROOT, spawn: fake.spawn, env: { PATH: '/bin', CLAUDECODE: '1' } });
+  // A folder holding a claude file, first on the PATH, so the watcher's PATH is this one whatever is installed on the machine.
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-watch-bin-'));
+  fs.writeFileSync(path.join(bin, 'claude'), '');
+  const tick = (role = 'front-desk') => watchTick({ project: P, role, client: h.client, now: c.now, pluginRoot: ROOT, spawn: fake.spawn, env: { PATH: bin, CLAUDECODE: '1' } });
 
   assert.deepEqual(await tick(), { watcher: 'started', submit: [] });
   assert.equal(fake.calls.length, 1);
   assert.deepEqual(fake.calls[0].args, [path.join(ROOT, 'scripts', 'watcher', 'main.js'), P]);
-  assert.deepEqual(fake.calls[0].opts.env, { PATH: '/bin' }, 'the watcher is no one\'s session');
+  assert.deepEqual(fake.calls[0].opts.env, { PATH: bin }, 'the watcher is no one\'s session');
   assert.equal(fake.calls[0].opts.detached, true);
 
   // Within the minute, the last check stands and nothing is asked or started.
