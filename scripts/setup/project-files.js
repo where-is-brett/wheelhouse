@@ -129,6 +129,8 @@ import { aliasModel, FRONT_DESK_ALIAS, MID_SIZED_ALIAS } from './best-model.js';
 import { projectSettings, localSettings, mergeSettings, directorStatusLine, withoutKeychainDenial, compactionRules } from '../protection/settings.js';
 import { protectionStatus as realProtectionStatus } from '../host/protection.js';
 import { projectPath } from '../host/gitlab-key.js';
+import { COMPACT_HEADING, COMPACT_SECTION, EARLIER_COMPACT_HASHES, sectionHash, withCurrentSection, withSection, hasSection, withOwnSection } from '../lib/compact-section.js';
+export { COMPACT_HEADING, COMPACT_SECTION, EARLIER_COMPACT_HASHES, sectionHash, withCurrentSection, withOwnSection };
 import { DEFAULT_GITLAB, commitEmailOf } from '../host/gitlab-base.js';
 import { MARKETPLACE, WHEELHOUSE_REPO, readManifest, checkInstalled, locateInstalled, claudeHome as defaultClaudeHome } from '../lineage/manifest.js';
 import { keepQueue, readQueue } from '../checks/standing.js';
@@ -207,50 +209,6 @@ function withInstall(before, work) {
   const entry = installedMarketplace(work);
   if (entry !== null) out.extraKnownMarketplaces = { ...(isObject(out.extraKnownMarketplaces) ? out.extraKnownMarketplaces : {}), [MARKETPLACE]: structuredClone(entry) };
   return out;
-}
-export const COMPACT_HEADING = '## Compact instructions';
-// What the summary of a compaction keeps (design section 10). The session start after a
-// compaction reloads Wheelhouse's own records, so these are what only the conversation holds.
-export const COMPACT_SECTION = `${COMPACT_HEADING}
-
-When this conversation is summarised, keep:
-- what the director asked for and decided, in their own words where they gave them;
-- the work in hand: the step being done, what is finished and what is not;
-- each card shown to the director, and whether it was answered;
-- whether All stop is on;
-- the pull requests and branches in play, by number and name;
-- the ids of the cards, runs and goal pieces in play;
-- the session note's path, if one was written.
-
-Leave out file contents and command output that can be read again. Wheelhouse's records hold the rulebook, the levels, the waiting list and the status, and the session start after a compaction gives them back.
-`;
-// The section's earlier wordings, by the hash of their text (SHA-256, trimmed, line ends as \n). A project whose
-// section still matches one exactly is brought up to COMPACT_SECTION; an edited section is left as the director has it.
-export const EARLIER_COMPACT_HASHES = Object.freeze([
-  '262378b54935486b0e2f24f9a918d44828968d95b292865301353b1c4c1bc800',
-  '8a1fbab63343f98a17e20d403038890133a4aa1f432c78d337ad8bb3fbaa7119',
-]);
-export const sectionHash = (text) => crypto.createHash('sha256').update(text.replace(/\r\n/g, '\n').trim()).digest('hex');
-// The section in a file: from its heading to the next heading or the end.
-function sectionIn(text) {
-  const lines = text.split(/(?<=\n)/);
-  const start = lines.findIndex((l) => /^##?\s*Compact instructions\s*$/i.test(l.replace(/\r?\n$/, '')));
-  if (start === -1) return null;
-  let end = lines.length;
-  for (let i = start + 1; i < lines.length; i += 1) {
-    if (/^#{1,6}\s/.test(lines[i])) {
-      end = i;
-      break;
-    }
-  }
-  return { before: lines.slice(0, start).join(''), body: lines.slice(start, end).join(''), after: lines.slice(end).join('') };
-}
-// The file's text with an earlier wording of the section swapped for the current one; null when there is none to swap.
-export function withCurrentSection(text) {
-  if (text === null) return null;
-  const found = sectionIn(text);
-  if (found === null || !EARLIER_COMPACT_HASHES.includes(sectionHash(found.body))) return null;
-  return `${found.before}${COMPACT_SECTION}${found.after === '' ? '' : `\n${found.after}`}`;
 }
 // How long the step waits, when asked before step 3 has registered the project or step 4 has its answer.
 export const PROJECT_WAIT_MS = 30 * 1000;
@@ -417,12 +375,6 @@ export function wheelhouseRelease({ folder, claudeHome = defaultClaudeHome() }) 
 }
 
 // ---- The files ----
-
-const withSection = (text) => {
-  if (text === null || text === '') return COMPACT_SECTION;
-  return `${text}${text.endsWith('\n') ? '' : '\n'}\n${COMPACT_SECTION}`;
-};
-const hasSection = (text) => text !== null && /^##?\s*Compact instructions\s*$/im.test(text);
 
 // A JSON file's changes: the whole file when it isn't there, else each key that differs.
 function jsonChanges(file, existing, target) {
