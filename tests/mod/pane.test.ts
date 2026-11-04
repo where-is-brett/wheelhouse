@@ -4,6 +4,7 @@
 // keeps open, the status line and the clock. The mod's own rules are the bridge's: these tests
 // check only that the mod draws what the bridge answered, when it asks and what it keeps.
 import { test, expect, mock } from 'claude-code/testing'
+import { MODELS } from '../fixtures/pane-states/models.js'
 
 const SURFACES = ['terminal', 'desktop'] as const
 const ROOT = '/Users/someone/projects/shop'
@@ -780,4 +781,23 @@ test('a ui.open that resolves unplaced for want of a surface keeps the pane, and
   clear()
   await clock.advance(TICK_MS)
   expect(seen.opens).toEqual([{ id: PANE_ID, title: '2 cards wait' }])
+})
+
+// The pane's states, one pane model each (tests/fixtures/pane-states/), drawn by the mod as they are by the add-on (tests/vscode/states.test.js).
+test('the mod draws every state', async ($, on) => {
+  let reply: object = frontDesk('')
+  const { start } = world(on, () => reply)
+  expect(Object.keys(MODELS)).toHaveLength(16)
+  for (const [name, state] of Object.entries(MODELS)) {
+    // The settings are the mod's own view (hooks/mod/settings.tsx), drawn from the bridge's settings answer, not from the pane model.
+    if (state.view === 'settings') continue
+    reply = { ok: true, role: 'front-desk', every: TICK_MS, pane: state, glance: state.glance, status: state.glance }
+    for (const surface of SURFACES) {
+      await start($, surface)
+      const ui = await mount($, surface)
+      const drawn = await texts(ui)
+      expect(drawn.length, name).toBeGreaterThan(0)
+      await ui.unmount()
+    }
+  }
 })

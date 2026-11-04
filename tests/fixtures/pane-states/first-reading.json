@@ -1,0 +1,39 @@
+{
+  "v": 1,
+  "project": "owner__name",
+  "at": null,
+  "glance": "Wheelhouse",
+  "stop": {
+    "on": false,
+    "since": null
+  },
+  "cards": [],
+  "held": null,
+  "verdict": "Nothing needs you. Nothing is broken.",
+  "since": null,
+  "launch": null,
+  "building": [],
+  "health": [],
+  "healthNote": {
+    "allWell": true,
+    "protection": "Standard",
+    "week": null
+  },
+  "safekeeping": null,
+  "ideas": {
+    "count": 0,
+    "fresh": 0
+  },
+  "updated": null,
+  "usage": null,
+  "finished": [],
+  "goalEnd": null,
+  "incidents": [],
+  "watcher": null,
+  "missing": [
+    "The host helper isn't running, so nothing can be pushed or merged",
+    "Nothing has been synced to this computer yet, so nothing below is current"
+  ],
+  "view": "main",
+  "open": null
+}
