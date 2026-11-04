@@ -128,11 +128,12 @@ test('with nothing to read the pane says so and shows the last view', () => {
   assert.ok(empty.includes('helper isn&#39;t running'));
 });
 
-test('the offer to move the pane shows the picture of the drag until VS Code allows the move', () => {
-  assert.equal(PANE_MOVES, false);
+test('the offer to move the pane is a button, since VS Code allows the move (check 67)', () => {
+  assert.equal(PANE_MOVES, true);
   const html = draw(model(), { offer: true });
   assert.ok(html.includes('Put Wheelhouse on the right'));
-  assert.ok(html.includes('<svg'));
+  assert.match(html, /data-act="move"/);
+  assert.ok(!html.includes('<svg'));
   assert.ok(!draw(model()).includes('Put Wheelhouse on the right'));
 });
 
