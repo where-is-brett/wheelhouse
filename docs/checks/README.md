@@ -56,7 +56,7 @@ The answers to the checks in section 20 of the design, and to checks 24 to 31 in
 | 56 | Registration: what Copilot loads, and twice | Yes | [56-registration.md](56-registration.md) |
 | 57 | Copilot's sandbox | Not run yet | None yet |
 | 58 | The guards' input | Partly | [58-hook-input.md](58-hook-input.md) |
-| 59 | Clickable questions: whose answer | Partly (Mac, VS Code chat): a hook sees the answer; policy hook, CLI and forged input still open | [59-clickable-answer.md](59-clickable-answer.md) |
+| 59 | Clickable questions: whose answer | Partly on the Mac: the hook sees the answer, in both forms; policy hook open | [59-clickable-answer.md](59-clickable-answer.md) |
 | 60 | The other hooks | Partly | [60-other-hooks.md](60-other-hooks.md) |
 | 61 | Sessions from a script | Yes, with two gaps | [61-sessions.md](61-sessions.md) |
 | 62 | Setup's tools on Windows, and the timed run | Not run yet | None yet |
