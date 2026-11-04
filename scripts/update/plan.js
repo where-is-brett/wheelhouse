@@ -5,7 +5,6 @@
 // writes anything.
 import { compareVersions } from '../lib/versions.js';
 import { latestRelease } from './release.js';
-import { updateCard } from './cards.js';
 
 // The earliest release that can finish an update: a put-back to anything before it is refused (design 9.3).
 export const FIRST_UPDATE = 'v0.2.7';
@@ -31,7 +30,7 @@ export function partWay(journal) {
   return { tag: data.tag, sha: data.sha, from: data.from ?? null, put: data.put === 'undo' ? 'undo' : 'release', installing };
 }
 
-// Works out the plan. Resolves { lines } when there is nothing to ask, or { lines: [], plan, card } with the plan's facts
+// Works out the plan. Resolves { lines } when there is nothing to ask, or { lines: [], plan } with the plan's facts
 // (project-free: the route adds the project) and the Update card. Never throws for a thing that can be said in a line.
 export async function makePlan({
   tag = null, from, journal = null, held = false, list, fetch, check, kind, requirements = () => null, locked = () => ({ locked: false, others: [] }),
@@ -44,7 +43,7 @@ export async function makePlan({
   if (part !== null && (tag === null || tag === part.tag || part.installing)) {
     if (tag !== null && tag !== part.tag) return said(`The update to ${part.tag} is part-way. Finish it with /wheelhouse:update before naming another release.`);
     const plan = { from: part.from ?? from, to: part.tag, sha: part.sha, put: part.put, approval: 'review', says: null, locked: false, others: [], carryOn: true };
-    return { lines: [], plan, card: updateCard(plan) };
+    return { lines: [], plan };
   }
 
   let releases;
@@ -79,5 +78,5 @@ export async function makePlan({
   const plan = {
     from, to: target.tag, sha: target.sha, put, approval, says: looked.says ?? null, locked: here.locked === true, others: here.others ?? [], carryOn: false,
   };
-  return { lines: [], plan, card: updateCard(plan) };
+  return { lines: [], plan };
 }

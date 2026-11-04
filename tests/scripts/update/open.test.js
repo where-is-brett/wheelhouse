@@ -96,3 +96,23 @@ test('open: only a release or undo branch, and only the settings file, are taken
   assert.equal((await openReleaseChange({ ...request(dir), file: 'src/deep/a.js', client })).ok, false);
   assert.deepEqual(calls, []);
 });
+
+test('open: a local branch of that name left by anything else is reset to the commit worked out here, and what is pushed is that commit', async () => {
+  const dir = await repo();
+  // A planted branch holding other content.
+  await g(dir, 'checkout', '-q', '-b', 'planted');
+  fs.writeFileSync(path.join(dir, 'README.md'), 'planted\n');
+  fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), '{"planted":true}\n');
+  await g(dir, 'commit', '-q', '-a', '-m', 'planted');
+  await g(dir, 'branch', '-f', BRANCH, 'planted');
+  await g(dir, 'checkout', '-q', 'main');
+  const planted = await g(dir, 'rev-parse', BRANCH);
+  const { client, calls } = stand();
+  assert.equal((await openReleaseChange({ ...request(dir), client })).ok, true);
+  const tip = await g(dir, 'rev-parse', BRANCH);
+  assert.notEqual(tip, planted);
+  assert.equal(await g(dir, 'show', `${BRANCH}:.claude/settings.json`), NEW.trim());
+  assert.equal(await g(dir, 'show', `${BRANCH}:README.md`), 'hello');
+  assert.equal(await g(dir, 'rev-parse', `${BRANCH}^`), await g(dir, 'rev-parse', 'main'));
+  assert.equal(calls.find((c) => c[0] === 'push')[1].refspec, BRANCH, 'pushed by name, never forced');
+});

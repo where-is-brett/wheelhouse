@@ -63,7 +63,7 @@ import {
 } from '../state/card-lines.js';
 import {
   chatCopy, setLineOf, setLinesOf, replyCode, replyCodeLine, setupLine, SETUP_LABEL, SETUP_TITLES, BASELINE_LABEL, BASELINE_WORDS, baselineLine,
-  RELEASE_LABEL, RELEASE_LINE, UPDATE_HELPER_LINE, TRUST_LINE, TAKEOVER_LABEL, TAKEOVER_LINE, PAIR_LINE, UNPAIR_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine, KEEP_CONTROL_LINE, keepControlLine, USAGE_LINE, PREMIUM_LINE, START_GOAL_LINE,
+  RELEASE_LABEL, RELEASE_LINE, UPDATE_HELPER_LINE, UPDATE_LABEL, UPDATE_LINE, TRUST_LINE, TAKEOVER_LABEL, TAKEOVER_LINE, PAIR_LINE, UNPAIR_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine, KEEP_CONTROL_LINE, keepControlLine, USAGE_LINE, PREMIUM_LINE, START_GOAL_LINE,
 } from '../state/card-lines.js';
 import {
   keepClick, shownHash, keepAnswer, askedFor, claimAnswer, claimedAt, noteClaimed, releaseAnswer, keepUninstallClick, shownUninstall, typedVerdict, typedBefore, keepSetupRecords, sameWords,
@@ -80,6 +80,7 @@ import { cardOutcomes } from '../state/views.js';
 import { clearOpen } from '../lib/session-files.js';
 import { cardProblems } from './card-check.js';
 import { openJournal } from '../update/journal.js';
+import { helperCardFor } from '../update/cards.js';
 import { SUGGEST, WHAT_WOULD_YOU_CHANGE, SEND_BACK } from '../lib/calm-words.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 import { PUT_OFF } from '../lib/front-desk.js';
@@ -395,6 +396,10 @@ async function openHead(match, question, { project, client, left }) {
   return state?.ok === true && state.result?.state === 'open' && /^[0-9a-f]{40}$/.test(head ?? '') && head.startsWith(match[2]) ? { pr, head } : null;
 }
 
+// Whether two option lists offer the same labels in the same order.
+const sameLabels = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === b.length
+  && a.every((o, i) => (typeof o === 'string' ? o : o?.label) === (typeof b[i] === 'string' ? b[i] : b[i]?.label));
+
 // Works out the signed record a click earns, if any. May ask the helper for a
 // pull request's head. Returns { made, profile?, lift? }, { refused } (a Start the goal's rules refuse, in a sentence;
 // nothing is signed), or null. A Lift STOP earns nothing
@@ -435,9 +440,28 @@ export async function earned({ project, question, label, card, client, now, left
     if (!card || card.previous !== m[1] || card.release !== m[2] || card.commit !== m[3]) return null;
     return action({ action: 'approve-release', previous: m[1], release: m[2], commit: m[3] });
   }
+  // The Update card (update design, section 4): its one set line names the move, whether it is an update or a put-back, and the
+  // first twelve characters of the plan's hash. A click on Update or Not now earns the director's click for that plan, only
+  // from the card the helper showed last: the plan kept in the update's folder, which only the helper writes, must have that
+  // hash, that move and this very card, word for word, and the card as asked must offer the same options. Nothing is earned
+  // from a reply, a pane press or a card that was not asked, nor for a plan already started.
+  if (setLinesOf(question).some((line) => UPDATE_LINE.test(line))) {
+    if (label !== UPDATE_LABEL && label !== NOT_NOW) return null;
+    const lines = setLinesOf(question);
+    const m = lines.length === 1 ? UPDATE_LINE.exec(lines[0]) : null;
+    if (!m || !card || typeof card !== 'object') return null;
+    let stored = null;
+    try { stored = JSON.parse(fs.readFileSync(path.join(openJournal(project).folder, 'plan.json'), 'utf8')); } catch { /* no plan was shown */ }
+    const plan = stored?.plan;
+    if (!plan || typeof stored.hash !== 'string' || !/^[0-9a-f]{64}$/.test(stored.hash) || stored.used === true) return null;
+    if (!stored.hash.startsWith(m[4]) || plan.from !== m[1] || plan.to !== m[2] || plan.put !== m[3]) return null;
+    if (stored.card?.question !== question || card.question !== question || !sameLabels(card.options, stored.card.options)) return null;
+    return action({ action: 'update-click', hash: stored.hash, from: m[1], to: m[2], put: m[3] });
+  }
   // The card about an old helper that did not make way for an update (update design, section 7.3): its one set line names the
   // helper card's id, and a click on one of its options earns the director's answer to that card. Earned only from the card
-  // the update's finish raised and is waiting on: its record in the update's folder names the id and the options.
+  // the update's finish raised and is waiting on: its record in the update's folder names the id and the options, and the
+  // question (and the options, where the click gives them) are the card the helper composes from it, word for word.
   if (setLinesOf(question).some((line) => UPDATE_HELPER_LINE.test(line))) {
     const lines = setLinesOf(question);
     const m = lines.length === 1 ? UPDATE_HELPER_LINE.exec(lines[0]) : null;
@@ -447,6 +471,10 @@ export async function earned({ project, question, label, card, client, now, left
       waiting = JSON.parse(fs.readFileSync(path.join(openJournal(project).folder, 'finish.json'), 'utf8'))?.handover?.waiting?.card;
     } catch { /* nothing was raised */ }
     if (!waiting || waiting.id !== m[1] || !Array.isArray(waiting.options) || !waiting.options.includes(label)) return null;
+    let raised = null;
+    try { raised = helperCardFor(waiting).question; } catch { /* not a card the helper could raise */ }
+    if (!raised || raised.question !== question) return null;
+    if (card && typeof card === 'object' && !sameLabels(card.options, raised.options)) return null;
     return action({ action: 'update-helper-answer', card: m[1] });
   }
   if (label === 'Approve') {

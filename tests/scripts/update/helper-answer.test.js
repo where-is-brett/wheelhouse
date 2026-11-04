@@ -56,6 +56,21 @@ test('the prompt record earns the answer only from the card finish is waiting on
   assert.equal((await click(helperCardFor(given('busy', true)).question.question, WAIT_LONGER)).made.data.label, WAIT_LONGER);
 }));
 
+test('the prompt record compares the question and options with the card the helper composes from the waiting record', () => withHome(async () => {
+  const { question } = helperCardFor(given());
+  const click = (text, card, label = STOP_IT) => earned({ project: 'p1', question: text, label, card, client: {}, now, left: (p) => p });
+  waiting('p1', given());
+  // Right words and options: earned, with or without the card as asked.
+  assert.ok(await click(question.question, question));
+  assert.ok(await click(question.question, undefined));
+  // The set line with other words around it is not the card the helper raised.
+  const reworded = question.question.replace('The old helper', 'A helper');
+  assert.notEqual(reworded, question.question);
+  assert.equal(await click(reworded, { ...question, question: reworded }), null);
+  // The card as asked offers other options than the one raised.
+  assert.equal(await click(question.question, { ...question, options: [question.options[0], { label: 'Do anything' }] }), null);
+}));
+
 // A computer with an enrolled key, a Lean project and a helper whose window answers as the director would.
 async function computer(choose) {
   const home = shortHome();

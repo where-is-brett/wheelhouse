@@ -2,9 +2,13 @@
 // The helper's update routes (update design, sections 4, 6 and 15), which scripts/update/cli.js asks from the session's sandbox:
 //   /update/plan    the Update card and a hash of the plan it shows, or the one line when there is nothing to ask
 //   /update/apply   starts the plan last shown, in a process of its own (scripts/update/run.js); never under All stop, never
-//                   from a feature session, never for a hash that is not the plan last shown, never while an update runs
+//                   from a feature session, never for a hash that is not the plan last shown, never while an update runs,
+//                   and never without the director's click: a verified, signed `update-click` action of this computer's own key,
+//                   made after the plan was shown, naming its hash, both releases and whether it is an update or a put-back.
+//                   An agent's own `plan` then `apply` therefore starts nothing.
 //   /update/status  how the update stands, in lines, and the cards waiting for the director
-//   /update/answer  relays an answer and signs nothing. Not now on the Update card keeps the declined release. For a card
+//   /update/answer  relays an answer and signs nothing. Not now on the Update card keeps the declined release, but only after the
+//                   director's signed click on that card with Not now. For a card
 //                   the update raised (the approval of a release, the old helper's) it only checks that the prompt record or
 //                   the helper's window signed the director's click, and wakes the job if it has stopped.
 // Every look at the outside world is a seam, so a test starts no process and reaches no network.
@@ -26,7 +30,7 @@ import { runningVersion } from './board.js';
 import { releaseKind, updateMirror } from './change.js';
 import { decline } from './declined.js';
 import { signedAnswer } from './finish.js';
-import { helperCardFor, releaseCard } from './cards.js';
+import { helperCardFor, releaseCard, updateCard } from './cards.js';
 import { openJournal, updateLockHeld } from './journal.js';
 import { makePlan, partWay } from './plan.js';
 import { checkTarget, fetchTag, listReleases } from './release.js';
@@ -41,6 +45,8 @@ export const FEATURE_REFUSAL = 'Updating Wheelhouse is the director\'s own comma
 export const LEAN_REFUSAL = 'This project runs at Lean, which updates by its own skill; ask for "update Wheelhouse" in the agent\'s chat.';
 export const NOT_THE_PLAN = 'That is not the plan on the card last shown. Ask for the plan again.';
 export const NO_SUCH_CARD = 'No card of the update has that name.';
+export const NOT_CLICKED = 'The director has not clicked Update on the card for this plan, so nothing was started. Show the card and wait for the click.';
+export const NOT_CLICKED_NOT_NOW = 'The director has not clicked Not now on the card for this plan, so nothing was recorded.';
 export const NOT_SIGNED = 'That answer was not recorded by the card\'s own click, so nothing was done. Click the option on the card itself.';
 
 const HASH = /^[0-9a-f]{64}$/;
@@ -63,7 +69,10 @@ const realOf = (folder) => {
 };
 
 // The project this folder is the main checkout of. A feature session's folder is a worktree inside it, which is refused,
-// and so is a folder in no project or in a Lean project.
+// and so is a folder in no project or in a Lean project. The folder is the caller's own account of where it runs: the helper
+// is reached over a local socket from a sandbox and has no way to tell which session is calling, so (as for the foreman's
+// commands) a caller that names another folder is believed. What stops a feature session starting an update is therefore not
+// this check but the director's signed click, which only the card shown in the director's own session earns.
 function placeProject(folder) {
   if (typeof folder !== 'string' || !path.isAbsolute(folder)) refuse('the folder must be a full path');
   const real = realOf(folder);
@@ -114,6 +123,26 @@ export function signedByDefault({ project, card, label }) {
   return false;
 }
 
+// Whether the director clicked `label` on the Update card for the plan last shown: a verified action of this computer's own
+// key in the project's state, naming the plan's hash, both releases and the kind of move, and made after the plan was shown, so
+// a click on another plan's card, or on an earlier showing of this one, is no click for it.
+export function clickWasMade({ events, enrolled, stored, label }) {
+  const plan = stored?.plan;
+  if (!plan || typeof stored.at !== 'string' || !Array.isArray(events)) return false;
+  return events.some((e) => e?.kind === 'action'
+    && e.data?.action === 'update-click'
+    && e.data.hash === stored.hash
+    && e.data.from === plan.from
+    && e.data.to === plan.to
+    && e.data.put === plan.put
+    && e.data.label === label
+    && typeof e.at === 'string' && e.at > stored.at
+    && verify(e, enrolled));
+}
+export function clickedByDefault({ project, stored, label }) {
+  return clickWasMade({ events: listEvents(stateDir(project), { report: () => {} }), enrolled: readEnrolled(), stored, label });
+}
+
 // The steps' lines, in the voice of the main design: one line for each thing done, then what the running step waits for.
 function milestones(steps, tag) {
   const lines = [];
@@ -133,7 +162,7 @@ function milestones(steps, tag) {
 
 export function updateRoutes({
   now = () => new Date(), stopped = () => false, updateHeld = updateLockHeld, from = runningVersion, userHome = os.homedir(),
-  run = realRun, spawn = nodeSpawn, list, fetch, check, kind, locked, requirements, claudeVersion = async () => null, signed = signedByDefault,
+  run = realRun, spawn = nodeSpawn, list, fetch, check, kind, locked, requirements, claudeVersion = async () => null, signed = signedByDefault, clicked = clickedByDefault,
   startRunner,
 } = {}) {
   const listing = list ?? (() => listReleases({ run }));
@@ -172,8 +201,9 @@ export function updateRoutes({
     });
     if (made.plan === undefined) return { ok: true, lines: made.lines };
     const hash = hashOf(project, made.plan);
-    writeAtomic(planFile(project), { hash, project, folder, at: now().toISOString(), plan: made.plan });
-    return { ok: true, hash, card: made.card, lines: made.lines };
+    const card = updateCard({ ...made.plan, hash });
+    writeAtomic(planFile(project), { hash, project, folder, at: now().toISOString(), plan: made.plan, card });
+    return { ok: true, hash, card, lines: made.lines };
   }
   async function apply(body) {
     if (stopped()) return { ok: false, refused: STOP_FIRST };
@@ -183,9 +213,13 @@ export function updateRoutes({
     const stored = readJson(planFile(project));
     if (stored?.hash !== body.hash || stored.project !== project) refuse(NOT_THE_PLAN);
     if (starting.has(project) || updateHeld()) refuse(UNDER_WAY);
+    if (stored.used === true) refuse(NOT_THE_PLAN);
+    if (!clicked({ project, stored, label: 'Update' })) refuse(NOT_CLICKED);
     starting.add(project);
     try {
       if (stopped()) return { ok: false, refused: STOP_FIRST };
+      // A click starts one update: the plan is spent, and a later apply needs a new plan and a new click.
+      writeAtomic(planFile(project), { ...stored, used: true });
       start({ project, folder });
     } finally {
       // The runner takes the lock itself; a second apply in the next moments is refused by the lock if it has started.
@@ -243,6 +277,7 @@ export function updateRoutes({
     // The Update card is named by its plan's hash. Its Not now keeps the release declined; nothing is signed.
     if (HASH.test(body.card)) {
       if (stored?.hash !== body.card || body.label !== 'Not now') refuse(NO_SUCH_CARD);
+      if (!clicked({ project, stored, label: 'Not now' })) refuse(NOT_CLICKED_NOT_NOW);
       if (stored.plan.put === 'release' && stored.plan.carryOn !== true) decline(project, stored.plan.to);
       return { ok: true, recorded: true, lines: [`Understood. Nothing changes, and ${stored.plan.to} won't be announced again.`] };
     }

@@ -17,13 +17,15 @@ const HEADER = 'Update';
 const list = (names) => (names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`);
 const flat = (text) => String(text).replace(/\s+/g, ' ').trim();
 
-// The Update card, as AskUserQuestion takes it. `approval` is 'card' when the release is not pins-only (the director approves
-// the reviewed change when it is ready) and 'review' when Wheelhouse's review is enough. `put` is 'undo' for a put-back; `carryOn`
-// for an update part-way. `locked` says this computer has Locked, which shows a password window; `others` are the other
-// projects whose Locked stays on an older release.
-export function updateCard({ from, to, says, approval = 'review', locked = false, others = [], put = 'release', carryOn = false }) {
+// The Update card, as AskUserQuestion takes it: a composed card whose set line names the move, whether it is an update or a
+// put-back, and the plan's hash, so the director's click is signed by the prompt record as the click for that plan and no
+// other (update design, section 4). `approval` is 'card' when the release is not pins-only (the director approves the reviewed
+// change when it is ready) and 'review' when Wheelhouse's review is enough. `put` is 'undo' for a put-back; `carryOn` for an
+// update part-way. `locked` says this computer has Locked, which shows a password window; `others` are the other projects
+// whose Locked stays on an older release. `hash` is the full hash of the plan the card is for.
+export function updateCard({ from, to, says, approval = 'review', locked = false, others = [], put = 'release', carryOn = false, hash }) {
   const back = put === 'undo';
-  const title = carryOn ? `Carry on with the update to ${to}` : back ? `Put Wheelhouse back to ${to} · ${from} → ${to}` : `Update Wheelhouse · ${from} → ${to}`;
+  const title = carryOn ? `Carry on with the update to ${to}` : back ? `Put Wheelhouse back to ${to} \u00b7 ${from} \u2192 ${to}` : `Update Wheelhouse \u00b7 ${from} \u2192 ${to}`;
   const happens = [
     `your project gets a small reviewed change naming ${to}, then this computer installs it and hands over to the new helper.`,
     'About five minutes. Work in progress finishes first.',
@@ -33,22 +35,25 @@ export function updateCard({ from, to, says, approval = 'review', locked = false
   }
   if (locked) happens.push('Locked on this computer is brought up to date too, which shows a password window.');
   if (others.length > 0) happens.push(`Locked is one copy for the whole computer, so ${list(others)} will have the newer Locked and may need updating as well.`);
-  const question = [
-    title,
-    `What's new: ${flat(says ?? '') === '' ? NO_SUMMARY : flat(says)}`,
-    `What happens: ${happens.join(' ')}`,
-    `Meanwhile: nothing stops; sessions open now keep ${from} until you start a new one.`,
-  ].join('\n');
-  return {
-    question,
-    header: HEADER,
+  const compose = (summary) => composeCard({
+    kind: 'update',
+    level: 4,
+    ask: title,
+    what: title,
+    why: `What's new: ${summary}`,
+    meanwhile: `Meanwhile: nothing stops; sessions open now keep ${from} until you start a new one.`,
+    checks: `What happens: ${happens.join(' ')}`,
     recommend: UPDATE,
+    because: 'nothing changes before you click',
     options: [
-      { label: UPDATE, description: `Recommended: ${carryOn ? 'carries on from where it stopped' : back ? 'puts this project and this computer back' : 'starts the update'}; nothing changes before you click.` },
-      { label: NOT_NOW, description: 'Leave it. Nothing changes, and this release is not announced again.' },
+      { label: UPDATE, says: carryOn ? 'It carries on from where it stopped.' : back ? 'It puts this project and this computer back.' : 'It starts the update.' },
+      { label: NOT_NOW, says: 'Leave it. Nothing changes, and this release is not announced again.' },
     ],
-    multiSelect: false,
-  };
+    target: { from, to, put, hash },
+  }).question;
+  const summary = flat(says ?? '') === '' ? NO_SUMMARY : flat(says).slice(0, 300);
+  // A summary that cannot sit on a card (it holds a line the prompt record reads as a set line, or runs the card too long) is left out.
+  try { return compose(summary); } catch { return compose(NO_SUMMARY); }
 }
 
 // The card that asks whether to stop an old helper that can't be asked, as AskUserQuestion takes it (section 7.3).

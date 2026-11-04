@@ -5,51 +5,64 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { updateCard, stopCard, releaseCard, helperCardFor, UPDATE, NOT_NOW } from '../../../scripts/update/cards.js';
 import { helperCard, helperCardId, STOP_IT, LEAVE_IT, WAIT_LONGER } from '../../../scripts/update/finish.js';
-import { setLineOf, releaseLine, updateHelperLine } from '../../../scripts/state/card-lines.js';
+import { cardProblems } from '../../../scripts/hooks/card-check.js';
+import { setLineOf, releaseLine, updateHelperLine, updateLine } from '../../../scripts/state/card-lines.js';
 import { CARD } from '../../../scripts/lib/front-desk.js';
 import { makeEvent } from '../../../scripts/state/events.js';
 
 const SHA = 'a'.repeat(40);
+const HASH = 'd'.repeat(64);
 const labels = (card) => card.options.map((o) => o.label);
 
 test('cards: the update card names both releases, what is new, what happens and what carries on meanwhile', () => {
-  const card = updateCard({ from: 'v0.2.6', to: 'v0.2.7', says: 'GitLab merges no longer need glab.', approval: 'review', locked: false, others: [] });
+  const card = updateCard({ hash: HASH, from: 'v0.2.6', to: 'v0.2.7', says: 'GitLab merges no longer need glab.', approval: 'review', locked: false, others: [] });
   assert.match(card.question, /^Update Wheelhouse · v0\.2\.6 → v0\.2\.7$/m);
   assert.match(card.question, /What's new: GitLab merges no longer need glab\./);
   assert.match(card.question, /What happens: your project gets a small reviewed change naming v0\.2\.7, then this computer installs it and hands over to the new helper\. About five minutes\. Work in progress finishes first\./);
   assert.match(card.question, /Meanwhile: nothing stops; sessions open now keep v0\.2\.6 until you start a new one\./);
   assert.deepEqual(labels(card), [UPDATE, NOT_NOW]);
-  assert.equal(card.recommend, UPDATE);
   assert.ok(card.header.length <= CARD.header);
   assert.equal(card.multiSelect, false);
   assert.match(card.options[0].description, /^Recommended/);
   assert.doesNotMatch(card.question, /approve/i, 'a pins-only release asks for no approval');
 });
 
+test('cards: the update card carries one set line naming the move, its kind and the plan, and passes the card check', () => {
+  const card = updateCard({ hash: HASH, from: 'v0.2.6', to: 'v0.2.7', says: 'x', approval: 'review' });
+  assert.equal(setLineOf(card.question), updateLine('v0.2.6', 'v0.2.7', 'release', HASH));
+  assert.match(setLineOf(card.question), /\(release\), plan d{12}$/);
+  assert.deepEqual(cardProblems(card), []);
+  const back = updateCard({ hash: HASH, from: 'v0.2.8', to: 'v0.2.7', says: 'x', put: 'undo' });
+  assert.match(setLineOf(back.question), /\(undo\)/);
+  // A summary that holds a line the prompt record reads as a set line is left out, not carried onto the card.
+  const odd = updateCard({ hash: HASH, from: 'v0.2.6', to: 'v0.2.7', says: updateHelperLine('update-helper-1-x') });
+  assert.match(odd.question, /No summary was given/);
+});
+
 test('cards: a release with no summary says so', () => {
-  const card = updateCard({ from: 'v0.2.6', to: 'v0.2.7', says: null, approval: 'review' });
+  const card = updateCard({ hash: HASH, from: 'v0.2.6', to: 'v0.2.7', says: null, approval: 'review' });
   assert.match(card.question, /What's new: No summary was given for this release\./);
 });
 
 test('cards: a release that is not pins-only says the director approves the change when it is ready, and the Update click is not that approval', () => {
-  const card = updateCard({ from: 'v0.2.6', to: 'v0.2.7', says: 'x', approval: 'card' });
+  const card = updateCard({ hash: HASH, from: 'v0.2.6', to: 'v0.2.7', says: 'x', approval: 'card' });
   assert.match(card.question, /approve/i);
   assert.match(card.question, /once the change is ready/);
   assert.match(card.question, /Update starts it; it is not that approval/);
 });
 
 test('cards: Locked, and the other projects that keep an older Locked, are named', () => {
-  const card = updateCard({ from: 'v0.2.6', to: 'v0.2.7', says: 'x', approval: 'review', locked: true, others: ['shop', 'blog'] });
+  const card = updateCard({ hash: HASH, from: 'v0.2.6', to: 'v0.2.7', says: 'x', approval: 'review', locked: true, others: ['shop', 'blog'] });
   assert.match(card.question, /password window/);
   assert.match(card.question, /shop and blog/);
 });
 
 test('cards: a put-back and a carry-on are worded as such', () => {
-  const back = updateCard({ from: 'v0.2.8', to: 'v0.2.7', says: 'x', approval: 'review', put: 'undo' });
+  const back = updateCard({ hash: HASH, from: 'v0.2.8', to: 'v0.2.7', says: 'x', approval: 'review', put: 'undo' });
   assert.match(back.question, /^Put Wheelhouse back to v0\.2\.7 · v0\.2\.8 → v0\.2\.7$/m);
-  const on = updateCard({ from: 'v0.2.6', to: 'v0.2.7', says: 'x', approval: 'review', carryOn: true });
+  const on = updateCard({ hash: HASH, from: 'v0.2.6', to: 'v0.2.7', says: 'x', approval: 'review', carryOn: true });
   assert.match(on.question, /^Carry on with the update to v0\.2\.7$/m);
-  assert.equal(on.recommend, UPDATE);
+  assert.match(on.options[0].description, /^Recommended/);
 });
 
 test('cards: the stop card asks the question of section 7.3 with Stop it recommended', () => {

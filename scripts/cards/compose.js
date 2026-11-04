@@ -11,7 +11,7 @@
 // uninstall's card by the helper, for setup's playbook to ask as it is.
 import {
   approvalLine, confirmLine, confirmWords, LIFT_STOP, LIFT_LABEL, runbookLine, ciPushLine, approveWorkLine, answerLine, blindLine, amendLine, startGoalLine,
-  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, takeOverLine, TAKEOVER_LABEL, LEAVE_LABEL, pairLine, PAIR_LABEL, APP_ID, uninstallLine, keepControlLine, usageLine, premiumLine, releaseLine, updateHelperLine, RELEASE_LABEL, RELEASE_TAG, isLineName, dayOf, replyCode, replyCodeLine, setLineOf, SET_LINES,
+  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, takeOverLine, TAKEOVER_LABEL, LEAVE_LABEL, pairLine, PAIR_LABEL, APP_ID, uninstallLine, keepControlLine, usageLine, premiumLine, releaseLine, updateHelperLine, updateLine, UPDATE_LABEL, RELEASE_LABEL, RELEASE_TAG, isLineName, dayOf, replyCode, replyCodeLine, setLineOf, SET_LINES,
   RUNBOOK_TITLES, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, CORRECT_SOME_LABEL, BASELINE_LABEL, BASELINE_HEADER, TRUST_LABEL, UNINSTALL_LABEL, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
 import { CARD, CARD_KINDS, KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
@@ -51,6 +51,7 @@ export const HEADERS = Object.freeze({
   'start-goal': 'Start goal',
   release: 'Release',
   'update-helper': 'Old helper',
+  update: 'Update',
 });
 
 // The label whose click decides a kind, as the prompt record accepts it. An answer card's
@@ -75,6 +76,7 @@ export const DECIDING = Object.freeze({
   'keep-control-files': 'Confirm',
   'start-goal': 'Start',
   release: RELEASE_LABEL,
+  update: UPDATE_LABEL,
 });
 
 // The kinds whose set line has no reply code (ruling R36): a setup step goes ahead only on the
@@ -89,7 +91,7 @@ export const DECIDING = Object.freeze({
 // So is the premium model's card (design section 14.6): only the click on the card the helper offered counts.
 // So is a blind card: its click signs nothing, so a code would make a shown record that is never spent.
 // So is a start-goal card: a goal starts only on the click on the card itself.
-export const NO_REPLY_CODE = Object.freeze(['setup', 'confirm-all', 'trust', 'take-over', 'uninstall', 'keep-control-files', 'usage', 'premium', 'pair', 'blind', 'start-goal', 'release', 'update-helper']);
+export const NO_REPLY_CODE = Object.freeze(['setup', 'confirm-all', 'trust', 'take-over', 'uninstall', 'keep-control-files', 'usage', 'premium', 'pair', 'blind', 'start-goal', 'release', 'update-helper', 'update']);
 
 // The buttons a kind's card offers after its deciding label, in the order they are shown, where it
 // isn't the usual Suggest a change…, Show me and Not now (design section 23.4). All stop is lifted or it
@@ -112,6 +114,7 @@ const OFFERED_AFTER = Object.freeze({
   'start-goal': Object.freeze([SUGGEST, NOT_NOW]),
   // The release's approval can be put off: the update then waits and nothing is installed.
   release: Object.freeze([NOT_NOW]),
+  update: Object.freeze([NOT_NOW]),
 });
 const USUAL_AFTER = Object.freeze([SUGGEST, SHOW_ME, NOT_NOW]);
 // A parked pull request's card (delegated decisions design, section 8.1) says no as well as yes. A card shows four options at
@@ -154,6 +157,7 @@ const ASKS = Object.freeze({
   'start-goal': () => 'Start this goal?',
   release: (t) => `Move this project to Wheelhouse ${t.release}?`,
   'update-helper': () => 'What should the update do about the old helper?',
+  update: (t) => (t.put === 'undo' ? `Put Wheelhouse back to ${t.to}?` : `Update Wheelhouse to ${t.to}?`),
 });
 
 // Whether a confirm card's event is a proposal Wheelhouse made, not something the director asked
@@ -289,6 +293,12 @@ function lineFor(kind, target) {
     }
     return releaseLine(t.previous, t.release, t.commit);
   }
+  if (kind === 'update') {
+    if (![t.from, t.to].every((x) => typeof x === 'string' && RELEASE_TAG.test(x)) || (t.put !== 'release' && t.put !== 'undo') || typeof t.hash !== 'string' || !/^[0-9a-f]{64}$/.test(t.hash)) {
+      bad('needs the release the computer is on, the one it moves to, whether it is an update or a put-back, and the plan\'s hash in full');
+    }
+    return updateLine(t.from, t.to, t.put, t.hash);
+  }
   if (kind === 'update-helper') {
     if (typeof t.card !== 'string' || !/^update-helper-[A-Za-z0-9.-]{1,80}$/.test(t.card)) bad('needs the id of the helper card');
     return updateHelperLine(t.card);
@@ -347,6 +357,7 @@ export function whatProblem(kind, what, target, { abbreviated = false } = {}) {
   if (kind === 'start-goal') need = [nameId(target.goal), `the goal ${target.goal}`];
   if (kind === 'pair') need = [nameId(target.client), `the app ${target.client}`];
   if (kind === 'uninstall') need = [nameId(target.project), `the project ${target.project}`];
+  if (kind === 'update') need = [nameId(target.to), `the release ${target.to}`];
   if (kind === 'release') need = [nameId(target.release), `the release ${target.release}`];
   if (need !== null && !need[0]) return `must name ${need[1]}, as its set line does`;
   const commit = target.sha ?? target.hash;

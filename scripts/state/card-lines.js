@@ -171,6 +171,12 @@ export function releaseLine(from, tag, commit) {
 // which names the process it asks about, so a click stands for that helper's card and no other.
 export const updateHelperLine = (card) => `Answer the old helper's question ${card}`;
 export const UPDATE_HELPER_LINE = /^Answer the old helper's question (update-helper-[A-Za-z0-9.-]{1,80})$/;
+// The line on the Update card (update design, section 4): the move it offers (from, to), whether it is an update or a put-back,
+// and the first twelve characters of the plan's hash, so a click stands for that plan and no other. The full hash is kept in
+// the update's journal folder, where the prompt record reads it.
+export const UPDATE_LABEL = 'Update';
+export const updateLine = (from, to, put, hash) => `Update Wheelhouse from ${from} to ${to} (${put}), plan ${String(hash).slice(0, 12)}`;
+export const UPDATE_LINE = /^Update Wheelhouse from ([A-Za-z0-9][A-Za-z0-9._-]{0,99}) to ([A-Za-z0-9][A-Za-z0-9._-]{0,99}) \((release|undo)\), plan ([0-9a-f]{12})$/;
 export const RELEASE_TAG = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 export const RELEASE_LINE = /^Move this project from Wheelhouse ([A-Za-z0-9][A-Za-z0-9._-]{0,99}) to ([A-Za-z0-9][A-Za-z0-9._-]{0,99}), commit ([0-9a-f]{40})$/;
 
@@ -322,6 +328,7 @@ export const SET_LINES = [
   new RegExp(TAKEOVER_LINE.source, 'm'),
   new RegExp(RELEASE_LINE.source, 'm'),
   new RegExp(UPDATE_HELPER_LINE.source, 'm'),
+  new RegExp(UPDATE_LINE.source, 'm'),
   new RegExp(PAIR_LINE.source, 'm'),
   new RegExp(UNPAIR_LINE.source, 'm'),
   new RegExp(UNINSTALL_LINE.source, 'm'),

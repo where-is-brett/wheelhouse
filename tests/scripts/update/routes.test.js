@@ -6,12 +6,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { updateRoutes } from '../../../scripts/update/routes.js';
+import { updateRoutes, clickWasMade } from '../../../scripts/update/routes.js';
 import { openJournal } from '../../../scripts/update/journal.js';
 import { declined } from '../../../scripts/update/declined.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { releaseLine, updateHelperLine } from '../../../scripts/state/card-lines.js';
 import { helperCard, helperCardId, STOP_IT } from '../../../scripts/update/finish.js';
+import { earned } from '../../../scripts/hooks/prompt-record.js';
+import { makeEvent } from '../../../scripts/state/events.js';
+import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
 import { withHome, tempFolder } from '../../helpers/homes.js';
 
 const SHA = 'a'.repeat(40);
@@ -37,6 +40,7 @@ function setup(over = {}) {
     kind: async () => 'pins-only',
     locked: async () => ({ locked: false, others: [] }),
     startRunner: (args) => started.push(args),
+    clicked: () => true,
     ...over,
   });
   return { folder, routes, started, stop: (v) => { stop = v; }, hold: (v) => { held = v; } };
@@ -234,4 +238,106 @@ test('routes: only the fields each route takes are accepted', () => withHome(asy
   assert.match(await refusal(t.routes['/update/status']({ folder: t.folder, tag: 'v0.2.7' })), /only/);
   assert.match(await refusal(t.routes['/update/apply']({ folder: t.folder, hash: 'short' })), /full hash/);
   assert.match(await refusal(t.routes['/update/plan']({ folder: t.folder, tag: 'latest' })), /tag/);
+}));
+
+// ---- The director's click (update design, section 4): apply and the decline start from a signed click, never from the hash alone.
+const LATER = (seconds) => () => new Date(Date.now() + seconds * 1000);
+
+// What the prompt record earns from a click on `label` of the card `shown`, kept as a signed event `seconds` from now.
+async function clickOn(shown, label, { seconds = 5, question = shown.card.question, card = shown.card } = {}) {
+  const got = await earned({ project: 'p1', question, label, card, client: {}, now: LATER(seconds), left: (p) => p });
+  return got === null ? null : makeEvent({ kind: 'action', data: got.made.data, now: LATER(seconds) });
+}
+const keyed = (fn) => withHome(async () => {
+  const { computer, publicKey } = makeSigningKey();
+  enrol({ computer, publicKey, enrolledAt: '2026-11-04T00:00:00.000Z' });
+  return fn();
+});
+const stored = (project = 'p1') => JSON.parse(fs.readFileSync(path.join(openJournal(project).folder, 'plan.json'), 'utf8'));
+const hasClick = (events, label = 'Update') => clickWasMade({ events, enrolled: readEnrolled(), stored: stored(), label });
+
+test('apply: an agent\'s own plan then apply, with no click on the card, starts nothing', () => withHome(async () => {
+  const t = setup({ clicked: undefined });
+  const shown = await t.routes['/update/plan']({ folder: t.folder });
+  assert.match(await refusal(t.routes['/update/apply']({ folder: t.folder, hash: shown.hash })), /has not clicked Update/);
+  assert.deepEqual(t.started, []);
+  assert.equal(stored().used, undefined);
+}));
+
+test('apply: the director\'s real click on the card starts the update, once', () => keyed(async () => {
+  let events = [];
+  const t = setup({ clicked: (a) => clickWasMade({ events, enrolled: readEnrolled(), ...a }) });
+  const shown = await t.routes['/update/plan']({ folder: t.folder });
+  assert.match(await refusal(t.routes['/update/apply']({ folder: t.folder, hash: shown.hash })), /has not clicked Update/);
+  events = [await clickOn(shown, 'Update')];
+  assert.equal(hasClick(events), true);
+  const got = await t.routes['/update/apply']({ folder: t.folder, hash: shown.hash });
+  assert.equal(got.started, true);
+  assert.equal(t.started.length, 1);
+  // The click is spent: the same plan does not start a second update.
+  assert.match(await refusal(t.routes['/update/apply']({ folder: t.folder, hash: shown.hash })), /under way|not the plan on the card/);
+  assert.equal(t.started.length, 1);
+}));
+
+test('apply: a click on another plan\'s card, on Not now, or from before the plan was shown is no click for this plan', () => keyed(async () => {
+  const old = setup({ from: () => 'v0.2.5' });
+  const first = await old.routes['/update/plan']({ folder: old.folder });
+  const other = await clickOn(first, 'Update');
+  assert.ok(other);
+  const t = setup({ clicked: undefined });
+  const shown = await t.routes['/update/plan']({ folder: t.folder });
+  assert.notEqual(shown.hash, first.hash);
+  assert.equal(hasClick([other]), false, 'a click on another plan\'s card');
+  assert.equal(hasClick([await clickOn(shown, 'Not now')], 'Update'), false, 'Not now is not Update');
+  assert.equal(hasClick([await clickOn(shown, 'Update', { seconds: -3600 })]), false, 'a click made before the plan was shown');
+  assert.equal(hasClick([await clickOn(shown, 'Update')]), true);
+  assert.deepEqual(t.started, []);
+}));
+
+test('apply: a click ties to the kind of move: an update click is no click for a put-back plan of the same hash fields', () => keyed(async () => {
+  const t = setup({ from: () => 'v0.2.8' });
+  const back = await t.routes['/update/plan']({ folder: t.folder, tag: 'v0.2.7' });
+  assert.equal(stored().plan.put, 'undo');
+  const click = await clickOn(back, 'Update');
+  assert.equal(click.data.put, 'undo');
+  assert.equal(hasClick([click]), true);
+  const forged = { ...click, data: { ...click.data, put: 'release' } };
+  assert.equal(hasClick([forged]), false, 'its signature no longer holds');
+}));
+
+test('the prompt record earns the click only from the card the helper showed last, word for word, asked as it was shown', () => keyed(async () => {
+  const t = setup();
+  const shown = await t.routes['/update/plan']({ folder: t.folder });
+  assert.ok(await clickOn(shown, 'Update'));
+  assert.ok(await clickOn(shown, 'Not now'));
+  assert.equal(await clickOn(shown, 'Maybe'), null, 'a label the card does not offer');
+  assert.equal(await clickOn(shown, 'Update', { card: null }), null, 'a reply or a card that was not asked');
+  assert.equal(await clickOn(shown, 'Update', { card: { ...shown.card, options: [shown.card.options[0]] } }), null, 'other options');
+  const reworded = shown.card.question.replace("What's new", 'Whats new');
+  assert.equal(await clickOn(shown, 'Update', { question: reworded, card: { ...shown.card, question: reworded } }), null, 'a reworded card');
+  // After it has started, the plan is spent.
+  const file = path.join(openJournal('p1').folder, 'plan.json');
+  fs.writeFileSync(file, JSON.stringify({ ...stored(), used: true }));
+  assert.equal(await clickOn(shown, 'Update'), null);
+}));
+
+test('answer: Not now on the Update card keeps the release declined only after the director\'s signed Not now', () => keyed(async () => {
+  let events = [];
+  const t = setup({ clicked: (a) => clickWasMade({ events, enrolled: readEnrolled(), ...a }) });
+  const shown = await t.routes['/update/plan']({ folder: t.folder });
+  assert.match(await refusal(t.routes['/update/answer']({ folder: t.folder, card: shown.hash, label: 'Not now' })), /has not clicked Not now/);
+  assert.equal(declined('p1'), null);
+  events = [await clickOn(shown, 'Update')];
+  assert.match(await refusal(t.routes['/update/answer']({ folder: t.folder, card: shown.hash, label: 'Not now' })), /has not clicked Not now/, 'an Update click is no Not now');
+  events = [await clickOn(shown, 'Not now')];
+  assert.equal((await t.routes['/update/answer']({ folder: t.folder, card: shown.hash, label: 'Not now' })).ok, true);
+  assert.deepEqual(declined('p1'), { tag: 'v0.2.7' });
+}));
+
+test('placing the project trusts the caller\'s own folder: a lying caller changes nothing without the director\'s click', () => withHome(async () => {
+  const t = setup({ clicked: undefined });
+  const shown = await t.routes['/update/plan']({ folder: t.folder });
+  // A feature session that names the main folder is placed as the main checkout, and then meets the click.
+  assert.match(await refusal(t.routes['/update/apply']({ folder: t.folder, hash: shown.hash })), /has not clicked Update/);
+  assert.deepEqual(t.started, []);
 }));

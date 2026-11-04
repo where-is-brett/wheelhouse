@@ -6,7 +6,8 @@
 //                           when nothing is newer, All stop is on, or the release does not check out. A release named
 //                           (v0.2.8) older than the one installed is a put-back, with its own card.
 //   apply <hash>            starts the update the card showed, in its own process: { started: true }. Refused under All
-//                           stop, from a feature session, and for a hash that is not the plan's last shown.
+//                           stop, from a feature session, for a hash that is not the plan's last shown, and without the director's
+//                           signed click on that card (recorded when they click it in Claude Code).
 //   status                  { lines, state, asks? }: how the update stands, and any card for the director to answer,
 //                           each as { id, card }, to be asked exactly as given.
 //   answer <card> <label>   relays an answer. It signs nothing. For the Update card (named by the plan's hash) a Not now

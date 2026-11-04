@@ -31,6 +31,7 @@ function seams(started) {
     kind: async () => 'pins-only',
     locked: async () => ({ locked: false, others: [] }),
     startRunner: (args) => started.push(args),
+    clicked: () => true,
   };
 }
 

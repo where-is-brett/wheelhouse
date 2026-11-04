@@ -9,7 +9,8 @@ import { safeGit } from '../lib/safe-git.js';
 import { RELEASE_BRANCH, SETTINGS_FILE } from '../lineage/release.js';
 
 const FULL_SHA = /^[0-9a-f]{40}$/;
-const IDENTITY = { GIT_AUTHOR_NAME: 'Wheelhouse', GIT_AUTHOR_EMAIL: 'wheelhouse@localhost.invalid', GIT_COMMITTER_NAME: 'Wheelhouse', GIT_COMMITTER_EMAIL: 'wheelhouse@localhost.invalid' };
+const IDENTITY = { GIT_AUTHOR_NAME: 'Wheelhouse', GIT_AUTHOR_EMAIL: 'wheelhouse@localhost.invalid', GIT_COMMITTER_NAME: 'Wheelhouse', GIT_COMMITTER_EMAIL: 'wheelhouse@localhost.invalid',
+  GIT_AUTHOR_DATE: '2000-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2000-01-01T00:00:00Z' };
 const MAIN_NOT_FOUND = 'The project\'s main version could not be found, so the change could not be made.';
 
 // The tip of the project's main version: the host's default branch as the checkout last saw it, else a local main or master.
@@ -60,22 +61,22 @@ export async function openReleaseChange({
   if (file !== SETTINGS_FILE) return refuse('The update changes only the project\'s Wheelhouse settings.');
   const run_ = git ?? safeGit({ run, cwd: projectDir, list: 'project', look: 'once', caller: 'helper', what: 'the project', env: IDENTITY });
   try {
-    // A branch left by an earlier try is reused as it is.
-    let tip = await run_(['rev-parse', '--verify', '-q', `refs/heads/${branch}^{commit}`], { input: '' });
-    if (tip.code !== 0) {
-      const base = await mainTip(run_);
-      if (base === null) return refuse(MAIN_NOT_FOUND);
-      const blob = await run_(['hash-object', '-w', '--stdin'], { input: text });
-      if (blob.code !== 0) return refuse('The change could not be made.');
-      const root = (await run_(['rev-parse', `${base}^{tree}`], { input: '' })).stdout.trim();
-      const tree = await withBlob(run_, root, file.split('/'), blob.stdout.trim());
-      const made = await run_(['commit-tree', tree, '-p', base, '-m', title], { input: '' });
-      if (made.code !== 0) return refuse('The change could not be made.');
-      const ref = await run_(['update-ref', `refs/heads/${branch}`, made.stdout.trim()], { input: '' });
-      if (ref.code !== 0) return refuse('The change\'s branch could not be made.');
-      tip = await run_(['rev-parse', '--verify', '-q', `refs/heads/${branch}^{commit}`], { input: '' });
-    }
-    if (tip.code !== 0) return refuse('The change\'s branch could not be made.');
+    // The branch is made again from the project's main version each time, never reused as an earlier try left it: its local name
+    // is reset to the commit worked out here. The commit is the same for the same main version (its dates are fixed), so a
+    // second try pushes the same commit; a branch of this name on the host that holds anything else is refused by the push,
+    // which never forces.
+    const base = await mainTip(run_);
+    if (base === null) return refuse(MAIN_NOT_FOUND);
+    const blob = await run_(['hash-object', '-w', '--stdin'], { input: text });
+    if (blob.code !== 0) return refuse('The change could not be made.');
+    const root = (await run_(['rev-parse', `${base}^{tree}`], { input: '' })).stdout.trim();
+    const tree = await withBlob(run_, root, file.split('/'), blob.stdout.trim());
+    const made = await run_(['commit-tree', tree, '-p', base, '-m', title], { input: '' });
+    if (made.code !== 0) return refuse('The change could not be made.');
+    const ref = await run_(['update-ref', `refs/heads/${branch}`, made.stdout.trim()], { input: '' });
+    if (ref.code !== 0) return refuse('The change\'s branch could not be made.');
+    const tip = await run_(['rev-parse', '--verify', '-q', `refs/heads/${branch}^{commit}`], { input: '' });
+    if (tip.code !== 0 || tip.stdout.trim() !== made.stdout.trim()) return refuse('The change\'s branch could not be made.');
   } catch (error) {
     return refuse(String(error?.message ?? error).replace(/\s+/g, ' '));
   }
