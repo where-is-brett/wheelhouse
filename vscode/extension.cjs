@@ -18,6 +18,9 @@ const chat = require('./chat-tools.cjs');
 const OPEN_PANE = 'wheelhouse.openPane';
 const PANE_ID = 'wheelhouse.pane';
 const OFFER_KEY = 'wheelhouse.offerShown';
+// The secondary side bar's chat container, where the first-run offer moves the pane (check 67).
+const CHAT_CONTAINER = 'workbench.panel.chat';
+const OFFER = 'Put Wheelhouse on the right';
 // How often the add-on looks again when the desk has nothing new, as the mod's tick.
 const TICK_MS = 15000;
 // The most often it starts a helper that isn't answering.
@@ -109,6 +112,11 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
   }
 
   // What the press needs, gathered for each message so the project and STOP are read as they are now.
+  // Moves the pane into the secondary side bar's chat container and shows it. VS Code keeps the place (check 67).
+  const movePane = async () => {
+    await vscode.commands.executeCommand('vscode.moveViews', { viewIds: [PANE_ID], destinationId: CHAT_CONTAINER });
+    await vscode.commands.executeCommand(`${PANE_ID}.focus`);
+  };
   const pressDeps = () => ({
     nonces,
     project: typeof real.project === 'function' ? real.project() : deps.project ?? null,
@@ -145,6 +153,7 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
     timeZone: real.timeZone,
     now: () => new Date(),
     cancelChat: chat.cancelChatRequest,
+    move: movePane,
   });
   const settingsView = async () => (deps.settingsView ?? real.settingsView)?.() ?? { groups: [] };
 
@@ -172,12 +181,13 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
     },
   }));
 
-  // The first-run offer, once: the pane carries the picture of the drag (render.js) on its first draw after it.
+  // The first-run offer, once: the pane carries its button (render.js) on its first draw after it, and the message
+  // here carries the same button. Either moves the pane beside the chat, where VS Code keeps it.
   if (context.globalState && !context.globalState.get(OFFER_KEY, false)) {
     await context.globalState.update(OFFER_KEY, true);
     state.offerPending = true;
-    vscode.window.showInformationMessage('Put Wheelhouse on the right: drag its wheel to the right-hand side of the window, and VS Code will remember it.', 'Show me how')
-      ?.then?.((picked) => { if (picked) return vscode.commands.executeCommand(`${PANE_ID}.focus`); return undefined; });
+    vscode.window.showInformationMessage(`${OFFER}: it sits beside the chat, and VS Code remembers it.`, OFFER)
+      ?.then?.((picked) => { if (picked === OFFER) return movePane(); return undefined; });
   }
 
   // VS Code's versions and its Copilot runtime's, kept in the file the session start reads.

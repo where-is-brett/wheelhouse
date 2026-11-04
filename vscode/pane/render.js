@@ -11,9 +11,9 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-// Whether VS Code lets an extension move its view to the secondary sidebar for the person (check 67). Until it
-// says so the first-run offer shows the picture of the drag, once.
-const PANE_MOVES = false;
+// Whether VS Code lets an extension move its view to the secondary sidebar for the person. Check 67 showed it does
+// (VS Code 1.132 and 1.144, on the Mac): the first-run offer is a button that moves the pane beside the chat.
+const PANE_MOVES = true;
 const FIRST_READING = 'Reading how the project stands…';
 const NOTHING_NEEDS_YOU = 'Nothing needs you.';
 const OFFER = 'Put Wheelhouse on the right';
