@@ -165,7 +165,7 @@ async function runWith(helper, argv, input, { cwd = CWD, ready, env } = {}) {
   let out = '';
   let err = '';
   const code = await main(argv, {
-    cwd, client: helper.client, input, ...(env ? { env } : {}), ...(ready ? { columnsReady: ready } : {}), now: () => NOW, out: (t) => { out += t; }, err: (t) => { err += t; },
+    cwd, client: helper.client, input, env: env ?? {}, ...(ready ? { columnsReady: ready } : {}), now: () => NOW, out: (t) => { out += t; }, err: (t) => { err += t; },
   });
   let json;
   try { json = JSON.parse(out); } catch { json = undefined; }
@@ -1331,7 +1331,8 @@ test('again gives the card the board numbers n, with its id, and records it as a
     assert.equal(out.code, 0, out.err);
     assert.deepEqual(out.json.questions.map((q) => q.question), [one.data.question]);
     assert.equal(out.json.id, one.id, 'again names the card it gives by its id');
-    assert.deepEqual(helper.calls.map(([name, body]) => [name, body.view ?? body.data?.cards]), [['desk.read', 'waiting'], ['write', [one.id]]]);
+    // The panel is asked of the desk too (a session with no Claude Code id is another agent's); that ask is not the record's reads.
+    assert.deepEqual(helper.calls.filter(([, body]) => !body.args?.vscode).map(([name, body]) => [name, body.view ?? body.data?.cards]), [['desk.read', 'waiting'], ['write', [one.id]]]);
     assert.deepEqual(helper.writes(), [{ cwd: CWD, kind: 'asked', data: { cards: [one.id] } }]);
     for (const bad of [['again', '9'], ['again', '0'], ['again', 'x'], ['again'], ['again', '1', '2']]) {
       assert.equal((await run(helper, bad)).code, 1, bad.join(' '));
