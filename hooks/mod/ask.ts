@@ -29,6 +29,9 @@ export type Answer = {
   says?: string,
   role?: string,
   every?: number,
+  // The closed command's two counts (scripts/mod/closed.js): the questions that are cards, and those answered on proof.
+  cards?: number,
+  closed?: number,
   pane?: PaneModel,
   glance?: string,
   status?: string,
@@ -56,6 +59,9 @@ function answerOf(line: unknown): Answer | null {
     if (typeof line[key] === 'string') answer[key] = line[key]
   }
   if (typeof line.every === 'number' && Number.isFinite(line.every) && line.every >= 0) answer.every = line.every
+  for (const key of ['cards', 'closed'] as const) {
+    if (typeof line[key] === 'number' && Number.isSafeInteger(line[key]) && line[key] >= 0) answer[key] = line[key]
+  }
   if (isRecord(line.pane)) answer.pane = line.pane as PaneModel
   if (Array.isArray(line.submit) && line.submit.every((item) => typeof item === 'string')) answer.submit = line.submit
   if (Array.isArray(line.woken) && line.woken.every((item) => typeof item === 'string')) answer.woken = line.woken

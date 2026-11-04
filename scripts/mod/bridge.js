@@ -33,6 +33,9 @@
 //   { cmd: 'go', origin, cwd, since? }              /wheelhouse-go or the pane: lifts STOP with a signed record;
 //                                                   the pane's carries the start of the STOP it drew
 //   { cmd: 'stop', origin, cwd }                    a phoned "stop" or the pane: sets STOP
+//   { cmd: 'closed', cwd, questions, pressed? }             how many of the chat's open questions are Wheelhouse cards and
+//                                                   how many of those are answered elsewhere on proof (a verified
+//                                                   signed record, or STOP lifted): { cards, closed }. Reads only.
 //   { cmd: 'digest', origin, cwd }                  /wheelhouse-digest: the briefing since the last, as text (any origin)
 //
 // The signed records go through the desk (scripts/desk/client.js, as act's signed evidence) once
@@ -56,6 +59,7 @@ import { recordLift as defaultRecordLift } from '../lineage/check.js';
 import { journalTrouble as defaultJournalTrouble } from '../lib/setup-run.js';
 import { helperClient } from '../host/helper-client.js';
 import { recordModReading, recordReceived, recordSession } from '../usage/store.js';
+import { closedQuestions as defaultClosed } from './closed.js';
 import { stopState as defaultStopState, setStop as defaultSetStop, liftStop as defaultLiftStop } from '../lib/stop.js';
 import { sessionRole as defaultSessionRole } from '../lib/role.js';
 import { markPane as defaultMarkPane, readOpen as defaultReadOpen } from '../lib/session-files.js';
@@ -148,6 +152,7 @@ const DEFAULTS = {
   premiumView: premiumViewOf,
   // The bridge's own time zone, which the pane's times are worked out in.
   timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  closedQuestions: defaultClosed,
   stopState: defaultStopState,
   setStop: defaultSetStop,
   liftStop: defaultLiftStop,
@@ -641,7 +646,21 @@ async function unsent(req, d) {
   return { ok: true };
 }
 
-const COMMANDS = { usage, reply, press, safekeeping, 'pull-cards': pullCards, why, suggest, settings, setting, go, stop, digest, tick, unsent };
+// Which of the chat's open questions are answered elsewhere (closed.js). It reads and answers two counts; the mod's one
+// hook that closes a chat question acts on them (hooks/mod/close.ts).
+const MAX_QUESTIONS = 4;
+async function closed(req, d) {
+  const project = placeOf(req.cwd, d);
+  if (!project) return no(SAYS.notProject);
+  const questions = req.questions;
+  if (!strings(questions) || questions.length === 0 || questions.length > MAX_QUESTIONS) return no(SAYS.unreadable);
+  const pressed = req.pressed === undefined ? [] : req.pressed;
+  if (!strings(pressed) || pressed.length > MAX_QUESTIONS * 2 || pressed.some((id) => id === '' || id.length > 64)) return no(SAYS.unreadable);
+  const { cards, closed: done } = d.closedQuestions({ project, questions, pressed, stop: d.stopState });
+  return { ok: true, cards, closed: done };
+}
+
+const COMMANDS = { usage, reply, press, safekeeping, 'pull-cards': pullCards, why, suggest, settings, setting, go, stop, digest, tick, unsent, closed };
 
 // handle(request, deps) -> { ok, says? }. Never throws.
 export async function handle(request, deps = {}) {
@@ -700,6 +719,8 @@ export function lineOf(answer) {
   if (Array.isArray(answer?.rows) && answer.rows.every(isRecord)) out.rows = answer.rows;
   if (Array.isArray(answer?.groups) && answer.groups.every(isRecord)) out.groups = answer.groups;
   if (typeof answer?.text === 'string') out.text = answer.text;
+  if (Number.isSafeInteger(answer?.cards) && answer.cards >= 0) out.cards = answer.cards;
+  if (Number.isSafeInteger(answer?.closed) && answer.closed >= 0) out.closed = answer.closed;
   return JSON.stringify(out);
 }
 

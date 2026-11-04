@@ -12,7 +12,8 @@ import type { EngineInterface, PluginState, RenderInput } from 'claude-code'
 import { ask, FAILED, type Answer, type PaneModel } from './ask'
 import { band, body, caption, ends, filled, footnote, heading, link, outlined, small, stop as stopButton, tableOf } from './calm'
 import type { Table } from './calm'
-import { HIDE_WHY, NOT_HANDED, OPEN_IN_CHAT, OPEN_IN_CHAT_TOAST, PANE_LEAD, RECORDING, SHOW_ME, SUGGEST, WHAT_WOULD_YOU_CHANGE, WHY, suggestedAt, typeYourChange, WHAT_CHANGED } from './numbers'
+import { notePressed } from './close'
+import { HIDE_WHY, NOT_HANDED, OPEN_IN_CHAT, OPEN_IN_CHAT_CLOSES, OPEN_IN_CHAT_TOAST, PANE_LEAD, RECORDING, SHOW_ME, SUGGEST, WHAT_WOULD_YOU_CHANGE, WHY, suggestedAt, typeYourChange, WHAT_CHANGED } from './numbers'
 
 // A card of the pane's model. It comes from another process, so each field is read as anything.
 type Card = Record<string, unknown>
@@ -135,8 +136,18 @@ async function pressButton($: EngineInterface, card: Card, label: string, after:
   const id = card.id as string
   if (!(await claim($, { on: id, label }))) return
   const answer = await carry($, { cmd: 'press', origin: 'pane', card: id, hash: card.hash, label }, RECORDING, () => release($), after)
-  // A card the chat has open too: the copy there now changes nothing.
-  if (card.openInChat === true && answer?.ok === true && (answer.submit ?? []).length === 0) $.ui.toast(OPEN_IN_CHAT_TOAST)
+  // A counted press closes the same question open in the chat (hooks/mod/close.ts), which the bridge matches to the card by
+  // its id. The note is kept in this process only, and only once the bridge says the press was counted.
+  const counted = answer?.ok === true && typeof answer.notice === 'string'
+  if (counted) {
+    try {
+      notePressed(id, await $.clock.now())
+    } catch {
+      // The chat's copy then stays.
+    }
+  }
+  // A card the chat has open too: the copy there closes by itself once counted; otherwise it changes nothing.
+  if (card.openInChat === true && answer?.ok === true && (answer.submit ?? []).length === 0) $.ui.toast(counted ? OPEN_IN_CHAT_CLOSES : OPEN_IN_CHAT_TOAST)
 }
 
 // Why? on a card. One the bridge gave as `why` opens or closes the reasons in place, and opening

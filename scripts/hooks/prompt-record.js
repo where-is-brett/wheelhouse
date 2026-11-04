@@ -80,7 +80,7 @@ import { cardOutcomes } from '../state/views.js';
 import { clearOpen } from '../lib/session-files.js';
 import { cardProblems } from './card-check.js';
 import { openJournal } from '../update/journal.js';
-import { SUGGEST, WHAT_WOULD_YOU_CHANGE, SEND_BACK } from '../lib/calm-words.js';
+import { SUGGEST, WHAT_WOULD_YOU_CHANGE, SEND_BACK, CLOSED_IN_PANEL } from '../lib/calm-words.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 import { PUT_OFF } from '../lib/front-desk.js';
 import { whenSaid, askOf, countedOf } from '../cards/answered.js';
@@ -777,6 +777,20 @@ function responseOf(input) {
   }
 }
 
+// Whether the call was refused rather than answered: the tool reported an error, or its whole result is the line the
+// mod's hook closes a chat question with (as the bare text, or as the one text block of an error result). Judged by the
+// result's structure, never by the line appearing somewhere in it, so words an agent put in a question change nothing.
+// Nothing was clicked on a refused call, so nothing is read from it, whatever its input holds.
+function refused(input, response) {
+  if (input.is_error === true || response?.is_error === true || response?.isError === true) return true;
+  const raw = input.tool_response;
+  if (typeof raw === 'string') return raw.trim() === CLOSED_IN_PANEL;
+  const only = (content) => content === CLOSED_IN_PANEL
+    || (Array.isArray(content) && content.length === 1 && isRecord(content[0]) && content[0].type === 'text' && content[0].text === CLOSED_IN_PANEL);
+  return isRecord(raw) && Object.keys(raw).every((key) => ['content', 'deny', 'text'].includes(key)) && Object.keys(raw).length > 0
+    && Object.values(raw).every(only);
+}
+
 // What was answered, and which answers came from a click on a button the card offered
 // (`signable`) or were typed on a single-choice card (`typed`, AskUserQuestion's Other); for one
 // that is neither, `why`. The answers are the tool input's, where Claude Code puts the director's
@@ -785,6 +799,7 @@ function responseOf(input) {
 function clicks(input) {
   const ti = input.tool_input ?? {};
   const response = responseOf(input);
+  if (refused(input, response)) return [];
   const answers = isRecord(ti.answers) ? ti.answers : isRecord(response?.answers) ? response.answers : null;
   if (answers === null) return [];
   const asked = new Map((Array.isArray(ti.questions) ? ti.questions : []).map((q) => [q?.question, q]));
