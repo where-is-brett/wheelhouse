@@ -115,6 +115,7 @@ test('the kit holds exactly the files Tasks 2, 3 and 5 build, and Lean\'s shell 
     'skills/wheelhouse-setup/SKILL.md',
     'skills/wheelhouse-sources/SKILL.md',
     'skills/wheelhouse-stop/SKILL.md',
+    'skills/wheelhouse-update/SKILL.md',
   ]);
   // The hook files came with Part 5 Task 8: the hook file and the guard it runs, and nothing else under hooks/.
   assert.deepEqual([...kit.keys()].filter((f) => f.startsWith('hooks/')), ['hooks/wheelhouse-lean-guard.sh', 'hooks/wheelhouse.json']);
