@@ -425,6 +425,9 @@ async function branchNames(agent, project, client, left) {
 // computer holds it after; else the line that says why not. Nothing else takes it in real use.
 async function keepLock(project, client, left, seen = {}) {
   if (typeof client?.lock?.take !== 'function') return null;
+  // A project in git alone has no lock branch: its home's mark stands for the lock (spec 7.3), so there is nothing to keep or take.
+  // If the home can't be read, the helper's own health line says so.
+  if (readProject(project)?.host === 'local') return null;
   const touched = typeof client.lock.touch === 'function' ? await left(client.lock.touch({ project })) : null;
   if (touched?.ok === true && touched.result?.touched === true) return null;
   const took = await left(client.lock.take({ project }));

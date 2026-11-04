@@ -978,3 +978,16 @@ test('/lock/take-over takes a live lock only on this computer\'s own signed Take
     assert.equal(repo.host.refusedCount(), 0);
   } finally { await a.close(); await b.close(); await repo.cleanup(); }
 });
+
+test('a project in git alone has no lock branch: take, touch, take-over and read answer plainly and never reach for a lock repository', async () => {
+  const repo = await privateRepo();
+  const c = await computer(repo, { project: { host: 'local', remoteUrl: null, repo: `local/${PROJECT}`, connection: { mode: 'none' } } });
+  try {
+    const ask = (fn) => c.as(() => fn(c.client));
+    assert.deepEqual(await ask((x) => x.lock.take({ project: PROJECT })), { ok: true, result: { taken: true, local: true } });
+    assert.deepEqual(await ask((x) => x.lock.touch({ project: PROJECT })), { ok: true, result: { touched: true, local: true } });
+    assert.deepEqual(await ask((x) => x.lock.takeOver({ project: PROJECT })), { ok: true, result: { taken: true, local: true } });
+    assert.deepEqual(await ask((x) => x.lock.read({ project: PROJECT })), { ok: true, result: null });
+    assert.equal(repo.host.refusedCount(), 0);
+  } finally { await c.close(); await repo.cleanup(); }
+});
