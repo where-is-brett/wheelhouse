@@ -77,7 +77,7 @@ test('answer writes the signed record and the card-answer once', () => withKey(a
   assert.equal(got.ok, true, got.refused);
   assert.deepEqual(recorder.calls.map(([name]) => name), ['record', 'write']);
   assert.equal(recorder.calls[0][1].event.id, record.id);
-  assert.deepEqual(recorder.calls[1][1], { kind: 'card-answer', data: { question: CARD.question, label: 'Approve' } });
+  assert.deepEqual(recorder.calls[1][1], { kind: 'card-answer', data: { question: CARD.question, label: 'Approve', where: 'panel' } });
 }));
 
 test('set writes the setting and its confirmation', () => withKey(async () => {
@@ -141,7 +141,7 @@ test('not-now writes the plain card-answer, and a chat click goes the helper\'s 
   const source = memory();
   const recorder = spy();
   assert.equal((await runAct('not-now', { card: 'c1' }, { ok: true, records: [] }, { source, recorder, now })).ok, true);
-  assert.deepEqual(recorder.calls[0], ['write', { kind: 'card-answer', data: { question: CARD.question, label: 'Not now' } }]);
+  assert.deepEqual(recorder.calls[0], ['write', { kind: 'card-answer', data: { question: CARD.question, label: 'Not now', where: 'panel' } }]);
   await runAct('answer', { card: 'merge-12', option: 'Not now', hash: 'b'.repeat(64) }, { ok: true, records: [], chatClick: true }, { source, recorder, now });
   assert.deepEqual(recorder.calls[1], ['chatClick', { card: 'merge-12', label: 'Not now', hash: 'b'.repeat(64), proof: 'chat-click' }]);
 }));

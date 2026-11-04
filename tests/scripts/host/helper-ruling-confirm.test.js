@@ -115,7 +115,7 @@ test('at Lean a ruling\'s Confirm is a chat click the rulebook counts, naming th
     const got = await c.lean(['click', `ruling-${card.id}`, 'Confirm'], { question: shown });
     assert.equal(got.ok, true, got.refused);
     const answer = c.events().find((e) => e.id === got.id);
-    assert.deepEqual(answer.data, { card: card.id, label: 'Confirm', hash: sha(shown), proof: 'chat-click', tier: 'lean' });
+    assert.deepEqual(answer.data, { card: card.id, label: 'Confirm', hash: sha(shown), proof: 'chat-click', tier: 'lean', where: 'chat' });
     assert.equal(answer.sig, undefined, 'never signed');
     // The rulebook counts it and says the proof; the card no longer waits.
     const { views } = await c.client.state.views({ cwd: c.folder });
@@ -185,7 +185,7 @@ test('at Lean a ruling\'s card takes one chat click: Not now or Suggest a change
     // Not now closes the card by its id and hash; a Confirm after it is refused.
     const notNow = await c.lean(['click', `ruling-${first.id}`, 'Not now'], { question: first.shown });
     assert.equal(notNow.ok, true, notNow.refused);
-    assert.deepEqual(c.events().find((e) => e.id === notNow.id).data, { card: first.id, label: 'Not now', hash: sha(first.shown), proof: 'chat-click', tier: 'lean' });
+    assert.deepEqual(c.events().find((e) => e.id === notNow.id).data, { card: first.id, label: 'Not now', hash: sha(first.shown), proof: 'chat-click', tier: 'lean', where: 'chat' });
     assert.ok(!(await waiting()).includes(first.id));
     const late = await c.lean(['click', `ruling-${first.id}`, 'Confirm'], { question: first.shown });
     assert.equal(late.ok, false);
