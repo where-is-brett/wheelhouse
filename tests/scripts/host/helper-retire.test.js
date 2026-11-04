@@ -18,6 +18,7 @@ import { run } from '../../../scripts/lib/run.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { as, shortHome, testAddress } from '../../helpers/homes.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
+import { openJournal } from '../../../scripts/update/journal.js';
 import { until } from '../../helpers/until.js';
 
 const hostLog = [];
@@ -78,9 +79,12 @@ test('the record is written once the helper listens, and is gone after it closes
 test('the record is gone after a retire closes the helper by its own stop', () => inHome(async (home) => {
   let stopped = null;
   const stoppedOnce = new Promise((resolve) => { stopped = resolve; });
+  const release = openJournal('p').lock();
+  assert.equal(typeof release, 'function', 'the update lock is taken');
   const helper = await startRealHelper({ address: testAddress(home), keepRecord: true, startTime: async () => 'now', onStop: (close) => close().then(stopped) });
   assert.equal((await helperClient({ address: helper.address }).retire({ forUpdate: true })).retired, true);
   await stoppedOnce;
+  release();
   assert.equal(fs.existsSync(helperRecordFile()), false);
 }));
 
@@ -157,7 +161,7 @@ test('retire for an update on a busy helper answers at once, refuses new work, f
     await until(() => stopCount === 1, { what: 'the helper to close' });
     await sleep(300);
     assert.equal(stopCount, 1, 'it closes once');
-  }, { onStop: () => { stopCount += 1; } });
+  }, { onStop: () => { stopCount += 1; }, updateHeld: () => true });
 }));
 
 test('retire for an update on an idle helper closes it once its answer has gone', () => inHome(async () => {
@@ -165,7 +169,7 @@ test('retire for an update on an idle helper closes it once its answer has gone'
   await withHelper(fakeAdapter(), async (client) => {
     assert.deepEqual(await client.retire({ forUpdate: true }), { ok: true, retired: true });
     await until(() => stops === 1, { what: 'the helper to close' });
-  }, { onStop: () => { stops += 1; } });
+  }, { onStop: () => { stops += 1; }, updateHeld: () => true });
 }));
 
 test('retire without forUpdate is as before: only the boolean true counts', () => inHome(async () => {
@@ -210,4 +214,87 @@ test('the previous release\'s client calls are all answered ok', () => inHome(as
       assert.equal(sent.body.ok, true, `${method} ${route}: ${JSON.stringify(sent.body)}`);
     }
   });
+}));
+
+// ---- Who may retire the helper for an update, how long it waits, and what goes through ----
+
+test('retire for an update is refused when no update job holds the lock, and nothing is retired', () => inHome(async () => {
+  let stops = 0;
+  await withHelper(fakeAdapter(), async (client) => {
+    const asked = await client.retire({ forUpdate: true });
+    assert.equal(asked.ok, false);
+    assert.match(asked.refused, /no update is under way/);
+    const later = await client.openPr({ project: 'o__p', head: 'f', title: 't', body: 'b', session: 's' });
+    assert.notEqual(later.refused, UPDATING);
+    await sleep(300);
+    assert.equal(stops, 0);
+  }, { onStop: () => { stops += 1; } });
+}));
+
+test('a lock whose process has gone, or that cannot be read, does not let the retire through', () => inHome(async (home) => {
+  await withHelper(fakeAdapter(), async (client) => {
+    assert.equal((await client.retire({ forUpdate: true })).ok, false, 'no lock');
+    fs.mkdirSync(path.join(home, 'update'), { recursive: true });
+    fs.writeFileSync(path.join(home, 'update', 'lock'), JSON.stringify({ pid: 2 ** 22 + 12345, startTime: 1, project: 'p' }));
+    assert.equal((await client.retire({ forUpdate: true })).ok, false, 'a dead holder');
+    fs.writeFileSync(path.join(home, 'update', 'lock'), 'not json');
+    assert.equal((await client.retire({ forUpdate: true })).ok, false, 'an unreadable lock');
+  }, { onStop: () => {} });
+}));
+
+test('a helper that has not closed within the bound serves normally again', () => inHome(async () => {
+  const hold = { entered: false };
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const adapter = fakeAdapter({ prState: async () => { hold.entered = true; await gate; return { state: 'open' }; } });
+  let stops = 0;
+  const open = { project: 'o__p', head: 'f', title: 't', body: 'b', session: 's' };
+  await withHelper(adapter, async (client) => {
+    const pending = client.prState({ project: 'o__p', number: 7 });
+    await until(() => hold.entered, { what: 'the request to reach the adapter' });
+    assert.equal((await client.retire({ forUpdate: true })).retired, true);
+    assert.equal((await client.openPr(open)).refused, UPDATING);
+    await until(async () => (await client.openPr(open)).refused !== UPDATING, { what: 'the bound to lift the refusal' });
+    release();
+    await pending;
+    await sleep(400);
+    assert.equal(stops, 0, 'it did not close');
+  }, { onStop: () => { stops += 1; }, updateHeld: () => true, updateBoundMs: 300 });
+}));
+
+test('All stop, the desk\'s stopping acts and the confirm window go through while the helper makes way for an update', () => inHome(async () => {
+  writeProject('o__p', { folder: os.tmpdir(), remoteUrl: null, host: 'local', repo: 'local/o__p', connection: { mode: 'none' } });
+  await openTestRecord({ project: 'o__p' });
+  const hold = { entered: false };
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const adapter = fakeAdapter({ prState: async () => { hold.entered = true; await gate; return { state: 'open' }; } });
+  const act = (client, command) => client.desk.act({ v: 'desk/1', project: 'o__p', command, args: {} });
+  await withHelper(adapter, async (client) => {
+    const pending = client.prState({ project: 'o__p', number: 7 });
+    await until(() => hold.entered, { what: 'the request to reach the adapter' });
+    assert.equal((await client.retire({ forUpdate: true })).retired, true);
+    assert.deepEqual(await client.stop(), { ok: true }, '/stop/set');
+    assert.equal((await client.desk.act({ v: 'desk/1', project: 'o__p', command: 'all-stop', args: { by: 'mod' } })).ok, true, 'All stop from the desk');
+    for (const command of ['lift-all-stop', 'end-goal', 'narrow-goal']) {
+      assert.notEqual((await act(client, command)).refused, UPDATING, command);
+    }
+    assert.equal((await act(client, 'answer')).refused, UPDATING, 'other acts wait');
+    assert.notEqual((await client.confirm({ project: 'o__p', card: 'none', hash: 'a'.repeat(64) })).refused, UPDATING, '/confirm');
+    release();
+    await pending;
+  }, { onStop: () => {}, updateHeld: () => true });
+}));
+
+test('a retire whose caller has dropped still stops the helper', () => inHome(async () => {
+  let stops = 0;
+  await withHelper(fakeAdapter(), async (_client, helper) => {
+    const req = http.request({ socketPath: helper.address, agent: false, method: 'POST', path: '/helper/retire', headers: { 'content-type': 'application/json', 'content-length': 2 } });
+    req.on('error', () => {});
+    req.on('finish', () => req.destroy());
+    req.end('{}');
+    await until(() => stops >= 1, { what: 'the helper to stop' });
+    await sleep(200);
+    assert.equal(stops, 1);
+  }, { onStop: () => { stops += 1; } });
 }));

@@ -141,6 +141,7 @@ import { brokerDecision } from '../engine/broker/rules.js';
 import { hostApprovalReady } from './approval-ready.js';
 import { hostApproved, hostApprovalNeeded } from './host-approval.js';
 import { checkOwnFiles, ownFilesLine } from '../health/own-files.js';
+import { updateLockHeld } from '../update/journal.js';
 import { keyRenewalDue, lastKeyRenewal } from '../state/key-renewal.js';
 import { brokerRoutes } from '../engine/broker/routes.js';
 import { lookAtHead, raiseCard, withLocalLock } from '../lib/local-git.js';
@@ -1050,6 +1051,9 @@ export async function startHelper({
   // (null for none), or `findBrowser` to look for one (shoot.js's by default) when pictures are
   // needed.
   screens = {},
+  // Whether an update job holds the update lock (scripts/update/journal.js): an update's retire is accepted only then. And
+  // how long the helper makes way for an update before it serves normally again. Both are for tests.
+  updateHeld = updateLockHeld, updateBoundMs = 3 * 60 * 1000,
   // The installed Wheelhouse, whose lineage/manifest.json the gate checks a pull request's provenance against.
   pluginRoot = OWN_ROOT,
   // Wheelhouse's own repository, whose release tags the gate reads (ruling R132).
@@ -5976,16 +5980,27 @@ export async function startHelper({
   const UPDATING = 'Wheelhouse is updating; try again in a minute';
   const UPDATE_POLL_MS = 100;
 
-  // Closes the helper once the requests being answered, and the work busyWith names, have finished. Never gives up: the
-  // update's own wait is what runs out.
+  // Closes the helper once the requests being answered have been answered. A goal in force or a run at work does not hold
+  // it: the next helper reads its state from disk. The bound in the retire route is what ends a wait that never ends.
   function closeWhenIdle() {
     const look = () => {
-      if (closing) return;
-      if (inflight === 0 && busyWith() === null) Promise.resolve().then(() => onStop(close)).catch(() => {});
+      if (closing || retiring !== 'update') return;
+      if (inflight === 0) Promise.resolve().then(() => onStop(close)).catch(() => {});
       else setTimeout(look, UPDATE_POLL_MS);
     };
     look();
   }
+
+  // Runs `fn` once, when the answer has gone or the caller has dropped, whichever comes first.
+  function afterAnswer(res, fn) {
+    let done = false;
+    const once = () => { if (!done) { done = true; fn(); } };
+    res.once('finish', once);
+    res.once('close', once);
+  }
+
+  // What still goes through while the helper makes way for an update: All stop, and lifting it.
+  const UPDATE_THROUGH = ['/stop/set', '/confirm'];
 
   async function handle(req, res) {
     const url = new URL(req.url ?? '/', 'http://helper');
@@ -5996,7 +6011,8 @@ export async function startHelper({
       req.resume();
       return send(res, 200, { ok: true, retired: true });
     }
-    if ((closing || retiring) && url.pathname !== '/health') {
+    const through = retiring === 'update' && !closing && (UPDATE_THROUGH.includes(url.pathname) || url.pathname === '/desk/act');
+    if ((closing || retiring) && url.pathname !== '/health' && !through) {
       req.resume();
       return send(res, 200, { ok: false, refused: retiring === 'update' ? UPDATING : 'the helper is making way for a newer one; ask again' });
     }
@@ -6026,20 +6042,31 @@ export async function startHelper({
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
       return send(res, 400, { ok: false, refused: 'the request must be a JSON object' });
     }
+    // The desk's acts that stop things, and lift the stop, go through an update; every other act waits for it.
+    if (retiring === 'update' && url.pathname === '/desk/act' && !DESK_STOP_ACTS.includes(body.command)) {
+      return send(res, 200, { ok: false, refused: UPDATING });
+    }
     if (url.pathname === '/helper/retire') {
       // A session of a newer copy of the plugin asks this helper to make way. It stops only when idle: no setup step, push,
       // merge, engine run or goal under way. Otherwise it says what keeps it, and goes on.
       // An update (`forUpdate: true`) makes way whatever is under way: it refuses new work at once, lets what is running
       // finish, and closes when nothing is. Only the boolean true counts.
       if (body.forUpdate === true) {
+        // Only while an update job holds the update lock: any other caller on the socket is refused and nothing changes.
+        let held = false;
+        try { held = updateHeld() === true; } catch { /* taken as not held */ }
+        if (!held) return send(res, 200, { ok: false, refused: 'no update is under way, so the helper is not retired for one' });
         retiring = 'update';
-        res.once('finish', closeWhenIdle);
+        // The helper makes way for at most updateBoundMs; one that has not closed by then serves normally again.
+        const bound = setTimeout(() => { if (!closing) retiring = false; }, updateBoundMs);
+        bound.unref?.();
+        afterAnswer(res, closeWhenIdle);
         return send(res, 200, { ok: true, retired: true });
       }
       const why = busyWith();
       if (why !== null) return send(res, 200, { ok: true, retired: false, busy: why });
       retiring = true;
-      res.once('finish', () => { Promise.resolve().then(() => onStop(close)).catch(() => {}); });
+      afterAnswer(res, () => { Promise.resolve().then(() => onStop(close)).catch(() => {}); });
       return send(res, 200, { ok: true, retired: true });
     }
     if (url.pathname === '/stop/set') {
