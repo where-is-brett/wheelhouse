@@ -49,11 +49,7 @@
 import { answer, runAndExit, projectOf, beingSetUp, readTailEntries } from './kit.js';
 import { stoppedQuestion } from './stopped-question.js';
 import { answeredWords, subjectOf } from '../cards/answered.js';
-import { cardOutcomes } from '../state/views.js';
-import { listEvents } from '../state/events.js';
-import { readEnrolled } from '../state/signing.js';
 import { chatCopy } from '../state/card-lines.js';
-import { stateDir } from '../lib/paths.js';
 import { readOpen, clearOpen } from '../lib/session-files.js';
 import { featureSlug, SETUP_FIRST } from './session-start.js';
 import { briefingModel as realBriefingModel } from '../briefing/model.js';
@@ -179,12 +175,27 @@ const NOTE_CARDS = 6;
 // First Mate's last turn began (the prompt before this one); `open` is what the session's open.json held. A card the
 // stopped line names is left out of the since line.
 async function cardNotes({ project, input, since, at, desk, open }) {
-  const outcomes = cardOutcomes(listEvents(stateDir(project), { report: () => {} }), readEnrolled());
+  // The decided cards, the card events and the board's numbers all come through the desk (design section 4.4): the hook
+  // reads neither the state nor the keys itself.
+  const from = Date.parse(since);
+  const back = new Date((Number.isFinite(from) ? from : at.getTime()) - 3600000).toISOString();
+  const got = await desk.read('waiting', { outcomes: { since: back } });
+  const data = isRecord(got?.data) ? got.data : {};
+  const decided = Array.isArray(data.outcomes) ? data.outcomes.filter((o) => isRecord(o) && isRecord(o.card) && isRecord(o.decided)) : [];
+  const events = Array.isArray(data.cards) ? data.cards.filter((e) => isRecord(e) && typeof e.id === 'string') : [];
+  const numbers = new Map();
+  for (const item of Array.isArray(data.numbered) ? data.numbered : []) if (typeof item.card === 'string') numbers.set(item.card, item.n);
+  const outcomes = [
+    ...decided,
+    ...events.filter((e) => numbers.has(e.id) && !decided.some((o) => o.card.id === e.id)).map((card) => ({ card, decided: null })),
+  ];
+  const firstLine = (text) => String(text ?? '').split('\n')[0];
   const questions = stoppedQuestion(readTailEntries(input.transcript_path), { prompt: input.prompt });
   const named = new Map();
   if (questions !== null) {
     for (const text of questions) {
-      const mine = outcomes.filter((o) => typeof o.card.data?.question === 'string' && (o.card.data.question === text || chatCopy(o.card.data.question) === text));
+      const lines = [firstLine(text), firstLine(chatCopy(text))];
+      const mine = outcomes.filter((o) => typeof o.card.data?.question === 'string' && lines.some((l) => l === firstLine(o.card.data.question) || l === firstLine(chatCopy(o.card.data.question))));
       const found = mine.filter((o) => o.decided === null).at(-1) ?? mine.at(-1);
       if (found !== undefined) named.set(found.card.id, found);
     }
@@ -195,11 +206,6 @@ async function cardNotes({ project, input, since, at, desk, open }) {
   }
   let stopped = null;
   if (named.size > 0) {
-    const numbers = new Map();
-    if ([...named.values()].some((o) => o.decided === null)) {
-      const got = await desk.read('waiting');
-      for (const item of Array.isArray(got?.data?.numbered) ? got.data.numbered : []) if (typeof item.card === 'string') numbers.set(item.card, item.n);
-    }
     const parts = [...named.values()].slice(0, NOTE_CARDS).map((o) => {
       if (o.decided !== null) return `${subjectOf(o.card)}: ${answeredWords(o, at)}`;
       const n = numbers.get(o.card.id);
@@ -207,7 +213,6 @@ async function cardNotes({ project, input, since, at, desk, open }) {
     });
     stopped = `${STOPPED_LEAD}${parts.join('; ')}. ${STOPPED_TAIL}`;
   }
-  const from = Date.parse(since);
   const fresh = Number.isFinite(from)
     ? outcomes.filter((o) => o.decided !== null && o.decided.where !== 'chat' && Date.parse(o.decided.at) > from && !named.has(o.card.id))
       .sort((a, b) => Date.parse(a.decided.at) - Date.parse(b.decided.at)).slice(0, NOTE_CARDS)

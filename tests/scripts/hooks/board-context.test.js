@@ -1249,7 +1249,9 @@ test('open.json is cleared on a prompt that has no stopped question', async () =
 test('no record is written for a stopped question', async () => {
   await withProject(async ({ home, repo }) => {
     seenAt();
-    store(stateDir(P), [askedCard(QUESTION_A, '30'), askedCard(QUESTION_B, '30')]);
+    const waiting = [askedCard(QUESTION_A, '30'), askedCard(QUESTION_B, '30')];
+    store(stateDir(P), waiting);
+    put(path.join(wheelhouseHome(), 'projects', P, 'views', 'waiting.json'), waiting.map((e) => ({ id: e.id, at: e.at, data: e.data, asked: ASKED })));
     const before = fs.readdirSync(stateDir(P), { recursive: true }).sort();
     const calls = [];
     const spy = { ...client, state: { write: async (b) => { calls.push(b); return { ok: true }; }, record: async (b) => { calls.push(b); return { ok: true }; } } };
