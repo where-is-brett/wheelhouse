@@ -327,12 +327,31 @@ test('Local harness input is told apart from the Copilot harness\'s', () => {
   for (const file of camelFiles) {
     const raw = fixture(file);
     assert.equal(harnessOf(raw, { COPILOT_CLI: '1', COPILOT_CLI_BINARY_VERSION: '1.0.101' }), 'copilot', file);
-    // No input field names the harness (check 58), so without the CLI's variable the harness is not known,
-    // and it is refused as Local is; nothing is read as Local yet.
+    // VS Code's Copilot session target sets no version, but COPILOT_CLI and the hook folder (check 72).
+    assert.equal(harnessOf(raw, { COPILOT_CLI: '1', COPILOT_HOOK_DIR: '/h/.copilot/hooks' }), 'copilot', file);
+    // No input field names the harness (check 58), so with neither sign the harness is not known, and it is
+    // refused as Local is; nothing is read as Local yet.
     assert.equal(harnessOf(raw, { COPILOT_CLI: '1' }), 'unknown', file);
+    assert.equal(harnessOf(raw, { COPILOT_HOOK_DIR: '/h/.copilot/hooks' }), 'unknown', file);
     assert.equal(harnessOf(raw, { COPILOT_CLI_BINARY_VERSION: '' }), 'unknown', file);
     assert.equal(harnessOf(raw, {}), 'unknown', file);
   }
+});
+
+test('input with the Local harness\'s event name is never taken for the Copilot harness without the CLI\'s version', () => {
+  const vscodeCopilot = { COPILOT_CLI: '1', COPILOT_HOOK_DIR: '/h/.copilot/hooks' };
+  // The PascalCase payloads Copilot writes with the event's name in them are told apart; those without one
+  // (its subagent events) are Copilot's own camelCase input, and are Copilot's.
+  for (const file of pascalFiles) {
+    const raw = fixture(file);
+    assert.equal(harnessOf(raw, vscodeCopilot), 'hook_event_name' in raw ? 'unknown' : 'copilot', file);
+  }
+  // The Local harness's shape (check 59): snake_case with the event's name.
+  const local = { hook_event_name: 'PostToolUse', session_id: 's', cwd: MAIN, tool_name: 'vscode_askQuestions' };
+  assert.equal(harnessOf(local, vscodeCopilot), 'unknown');
+  assert.equal(harnessOf({ ...local, sessionId: 's' }, vscodeCopilot), 'unknown');
+  assert.equal(harnessOf(null, vscodeCopilot), 'unknown');
+  assert.equal(harnessOf({ sessionId: '' }, vscodeCopilot), 'unknown');
 });
 
 test('a PascalCase payload is Claude Code\'s, and the guards refuse its patch-string Edit', async () => {
