@@ -101,6 +101,9 @@ jobs:
       - run: npm run mod-check
       # The VS Code add-on's proof that only its own pane's buttons can press a binding click.
       - run: node scripts/addon/validate.js
+      # The add-on packs to the hash recorded in vscode/vsix.sha256; a change to the add-on or the scripts it carries
+      # needs `node scripts/addon/hash.js --write` run and committed.
+      - run: node scripts/addon/hash.js --check
 
   # Fetches each upstream shallow at the manifest's commit and checks the fingerprints, the
   # register's anchors and carried text, and the marketplace's pins.

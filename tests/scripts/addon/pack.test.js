@@ -7,7 +7,7 @@ import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { closureOf, reportOf, pack, ENTRIES, RUN_ONLY, vsixName } from '../../../scripts/addon/pack.js';
-import { installAddon } from '../../../scripts/addon/install.js';
+import { installAddon, MISMATCH, REFUSED } from '../../../scripts/addon/install.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { require } from '../../vscode/helpers.js';
 
@@ -201,10 +201,72 @@ test('the install packs the add-on and hands it to VS Code\'s command line', asy
   assert.ok(!calls[0][1].some((a) => /autoUpdate|update/i.test(a)));
 });
 
-test('the install says so when VS Code\'s command line isn\'t there or refuses', async () => {
+test('install without code gives the clicks and the file', async () => {
   const none = await installAddon({ root: ROOT, tmp: tempFolder('wh-install-'), run: async () => { throw new Error('spawn code ENOENT'); }, platform: 'darwin', env: {} });
   assert.equal(none.ok, false);
-  assert.match(none.line, /VS Code/);
+  assert.match(none.file, /wheelhouse-.*\.vsix$/);
+  assert.ok(fs.existsSync(none.file), 'the file is left for the director to pick');
+  assert.ok(none.line.startsWith('VS Code\'s command line isn\'t on this computer\'s path, so the add-on is ready for you to add by hand: in VS Code, open Extensions, choose ⋯, then Install from VSIX…, and pick '), none.line);
+  assert.ok(none.line.endsWith(`${none.file}.`), none.line);
+});
+
+test('a refusal by VS Code names IT', async () => {
   const refused = await installAddon({ root: ROOT, tmp: tempFolder('wh-install-'), run: async () => ({ code: 1, stdout: '', stderr: 'bad' }), platform: 'darwin', env: {} });
   assert.equal(refused.ok, false);
+  assert.ok(refused.line.startsWith(REFUSED), refused.line);
+  assert.match(refused.line, /Your company may allow only some extensions; your IT can allow wheelhouse\.wheelhouse\.$/);
+});
+
+test('install refuses a mismatch on a tag, and installs nothing', async () => {
+  const calls = [];
+  const out = await installAddon({
+    root: ROOT,
+    tmp: tempFolder('wh-install-'),
+    run: async (file, args) => { calls.push([file, args]); return { code: 0, stdout: '', stderr: '' }; },
+    platform: 'darwin',
+    env: {},
+    tagged: async () => true,
+    check: () => ({ ok: false, line: 'internal detail' }),
+  });
+  assert.equal(out.ok, false);
+  assert.equal(out.line, MISMATCH);
+  assert.equal(calls.length, 0, 'code is never run');
+  assert.equal(out.file, undefined);
+});
+
+test('the mismatch words are plain and say nothing was installed', () => {
+  assert.match(MISMATCH, /nothing was installed/i);
+  assert.doesNotMatch(MISMATCH, /sha|hash|checksum/i);
+});
+
+test('install on a tag passes when the pack matches the recorded hash', async () => {
+  const calls = [];
+  const out = await installAddon({
+    root: ROOT,
+    tmp: tempFolder('wh-install-'),
+    run: async (file, args) => { calls.push([file, args]); return { code: 0, stdout: '', stderr: '' }; },
+    platform: 'darwin',
+    env: {},
+    tagged: async () => true,
+  });
+  assert.equal(out.ok, true, out.line);
+  assert.equal(calls.length, 1);
+});
+
+test('between tags the pack is not checked', async () => {
+  let checked = false;
+  const out = await installAddon({
+    root: ROOT, tmp: tempFolder('wh-install-'), run: async () => ({ code: 0, stdout: '', stderr: '' }), platform: 'darwin', env: {},
+    tagged: async () => false, check: () => { checked = true; return { ok: false, line: 'x' }; },
+  });
+  assert.equal(out.ok, true);
+  assert.equal(checked, false);
+});
+
+test('a tag that cannot be read is treated as no tag', async () => {
+  const out = await installAddon({
+    root: ROOT, tmp: tempFolder('wh-install-'), run: async () => ({ code: 0, stdout: '', stderr: '' }), platform: 'darwin', env: {},
+    tagged: async () => { throw new Error('no git'); },
+  });
+  assert.equal(out.ok, true);
 });
