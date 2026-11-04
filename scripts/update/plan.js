@@ -3,6 +3,8 @@
 // put-back or a carry-on, whether it can be installed here, and whether the director's approval will be needed for the
 // project's reviewed change. Every look at the outside world is a seam, so a test never reaches the network. Nothing here
 // writes anything.
+import fs from 'node:fs';
+import path from 'node:path';
 import { compareVersions } from '../lib/versions.js';
 import { latestRelease } from './release.js';
 
@@ -13,6 +15,20 @@ export const latestLine = (version) => `You have the latest Wheelhouse, ${versio
 export const checksOutLine = (tag) => `Release ${tag} doesn't check out, so it won't be installed.`;
 export const noPutBackLine = (tag) => `Wheelhouse ${tag} can't be put back by this command: that release can't finish an update.`;
 export const installedLine = (version) => `Wheelhouse ${version} is already installed.`;
+
+// The release the project had before the update, from the journal: the one its checks step recorded, else the one the
+// change's card names as previous, else the install note's previous release. Null when none is known; the computer's own
+// release is no answer, since a carry-on runs after the install made it the new one.
+function before(journal) {
+  const named = [journal.steps?.checks?.data?.from, journal.steps?.change?.data?.card?.previous].find((v) => typeof v === 'string' && v !== '');
+  if (named !== undefined) return named;
+  try {
+    const ref = JSON.parse(fs.readFileSync(path.join(journal.folder, 'install.json'), 'utf8'))?.previous?.ref;
+    return typeof ref === 'string' && ref !== '' ? ref : null;
+  } catch {
+    return null;
+  }
+}
 
 // The journal's part-way update for this project, if any, as { tag, sha, from, put, installing }: a journal that is not done,
 // has begun, and has not failed before anything on this computer moved (such a journal starts again, since nothing was
@@ -27,7 +43,7 @@ export function partWay(journal) {
   const installing = ['backup', 'catalogue', 'installs', 'verify', 'finish'].some((name) => steps[name]?.state && steps[name].state !== 'todo');
   const failedEarly = !installing && Object.values(steps).some((s) => s?.state === 'failed');
   if (failedEarly) return null;
-  return { tag: data.tag, sha: data.sha, from: data.from ?? null, put: data.put === 'undo' ? 'undo' : 'release', installing };
+  return { tag: data.tag, sha: data.sha, from: before(journal), put: data.put === 'undo' ? 'undo' : 'release', installing };
 }
 
 // Works out the plan. Resolves { lines } when there is nothing to ask, or { lines: [], plan } with the plan's facts

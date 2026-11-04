@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import { effectiveSettings } from '../settings/effective.js';
 import { SETTINGS } from '../settings/catalogue.js';
 import { engineDir } from '../lib/paths.js';
+import { readProject } from '../lib/projects.js';
 import { engineInstalled, engineWanted, mirrorRulesFile } from './parts.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
@@ -34,8 +35,15 @@ export const switchBranch = (base) => `wheelhouse-engine-switch-${String(base).s
 export const SWITCH_WORK = 'engine-switch';
 export const SWITCH_NAME = 'the switch to the new build engine';
 
-// Whether the new engine can build `project`: its fetch-mirror rule is in the engine folder's list.
-export function engineReady(project, { engine = engineDir() } = {}) {
+// Whether the new engine can build `project`: its fetch-mirror rule is in the engine folder's list. A project kept on this
+// computer with no code host needs no rule: its engine reads the mirror that setup made from the project's home by path,
+// and no https address exists to write.
+export function engineReady(project, { engine = engineDir(), hostOf = (name) => readProject(name)?.host } = {}) {
+  if (typeof project === 'string') {
+    let host = null;
+    try { host = hostOf(project); } catch { host = null; }
+    if (host === 'local') return true;
+  }
   let rules;
   try { rules = JSON.parse(fs.readFileSync(mirrorRulesFile(engine), 'utf8')); } catch { return false; }
   return isPlain(rules) && typeof project === 'string' && typeof rules[project] === 'string' && /^https:\/\/\S+$/.test(rules[project]);

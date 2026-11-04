@@ -28,7 +28,7 @@ import { projectForFolder } from '../lib/projects.js';
 import { run as defaultRun } from '../lib/run.js';
 import { safeGit } from '../lib/safe-git.js';
 import { openJournal } from './journal.js';
-import { updateMirror } from './change.js';
+import { updateMirror, namedRef, readSettings } from './change.js';
 import { checksOutLine } from './plan.js';
 import { putBack } from './install.js';
 import { accountCatalogue } from './account-settings.js';
@@ -91,6 +91,8 @@ export async function bootstrap({
   if (named === null) return stop('This folder is not a Wheelhouse release, so nothing was changed.');
   const { tag, sha } = named;
   const target = { tag, sha };
+  // The release the project's settings name now, before anything changes: the move the card and the journal record start from.
+  from ??= namedRef(readSettings(projectDir));
 
   // 1. The checks, before anything is asked or changed.
   const fetch = over.fetch ?? ((t) => fetchTag({ ref: t, run, mirror }));
