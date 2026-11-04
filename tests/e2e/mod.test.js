@@ -307,7 +307,10 @@ test('a tick draws a waiting approval card; Approve from the pane lets the gate 
     { label: 'Show me', does: 'turn', shape: 'small' },
   ]);
 
-  assert.deepEqual(await press(c, drawn, 'Approve'), { ok: true, says: 'Approved.' });
+  const counted310 = await press(c, drawn, 'Approve');
+  assert.deepEqual({ ok: counted310.ok, says: counted310.says }, { ok: true, says: 'Approved.' });
+  assert.match(counted310.notice, /^You approved .* in the panel at \d\d:\d\d\.$/);
+  assert.match(counted310.note, /^Wheelhouse pane: the director approved in the panel at \d\d:\d\d on .* \(card [\w-]+\)\. The chat already shows this/);
   const approvals = eventsOf('approval');
   assert.equal(approvals.length, 1);
   assert.deepEqual([approvals[0].data.pr, approvals[0].data.commit], [PR, c.head]);
@@ -562,7 +565,10 @@ test('the bridge run where the signing key cannot be read signs nothing for a pr
   // The card still waits, with its buttons.
   const again = drawnCard(await tick(c), card.id);
   assert.deepEqual(again.buttons.map((b) => b.label), drawn.buttons.map((b) => b.label));
-  assert.deepEqual(await press(c, again, 'Approve'), { ok: true, says: 'Approved.' });
+  const counted565 = await press(c, again, 'Approve');
+  assert.deepEqual({ ok: counted565.ok, says: counted565.says }, { ok: true, says: 'Approved.' });
+  assert.match(counted565.notice, /^You approved .* in the panel at \d\d:\d\d\.$/);
+  assert.match(counted565.note, /^Wheelhouse pane: the director approved in the panel at \d\d:\d\d on .* \(card [\w-]+\)\. The chat already shows this/);
   assert.equal(eventsOf('approval').length, 1);
 }));
 
@@ -704,7 +710,10 @@ test('Why? notes quietly; a suggestion on an approval hands the words on, signs 
   assert.deepEqual(eventsOf('approval'), []);
 
   // Approve on the revised card signs the revised card's own commit.
-  assert.deepEqual(await press(c, drawnRevised, 'Approve'), { ok: true, says: 'Approved.' });
+  const counted707 = await press(c, drawnRevised, 'Approve');
+  assert.deepEqual({ ok: counted707.ok, says: counted707.says }, { ok: true, says: 'Approved.' });
+  assert.match(counted707.notice, /^You approved .* in the panel at \d\d:\d\d\.$/);
+  assert.match(counted707.note, /^Wheelhouse pane: the director approved in the panel at \d\d:\d\d on .* \(card [\w-]+\)\. The chat already shows this/);
   const approvals = eventsOf('approval');
   assert.equal(approvals.length, 1);
   assert.deepEqual([approvals[0].data.pr, approvals[0].data.commit], [PR, head2]);
