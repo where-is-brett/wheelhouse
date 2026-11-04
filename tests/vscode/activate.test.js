@@ -4,10 +4,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { tempFolder } from '../helpers/homes.js';
+import { PANE_LABELS } from '../../scripts/desk/pane-labels.js';
 import { require, model, card, fakeVscode, fakeView, memory } from './helpers.js';
 
 const { activate } = require('../../vscode/extension.cjs');
 const { startHelperIfNeeded } = require('../../vscode/desk.cjs');
+require('../../vscode/pane/render.js').setLabels(PANE_LABELS);
 
 const two = model({ cards: [card(), card({ id: 'c2', n: 2 })] });
 
@@ -215,7 +217,7 @@ test('an untrusted folder draws no cards', async () => {
   await vscode.seen.providers.get('wheelhouse.pane').resolveWebviewView(view);
   await add.refresh();
   assert.ok(view.html.includes('Wheelhouse runs only in a folder you trust, since it signs your clicks with this computer&#39;s key.'));
-  assert.deepEqual([...view.html.matchAll(/<button[^>]*>([^<]*)</g)].map((m) => m[1]), ['STOP']);
+  assert.deepEqual([...view.html.matchAll(/<button[^>]*>([^<]*)</g)].map((m) => m[1]), [PANE_LABELS.stop]);
 });
 
 test('a quiet visible pane stays live for a minute without a refresh', async (t) => {

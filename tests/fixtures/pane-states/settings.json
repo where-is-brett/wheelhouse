@@ -1,0 +1,354 @@
+{
+  "v": 1,
+  "project": "owner__name",
+  "at": "2026-11-04T01:30:00.000Z",
+  "glance": "Wheelhouse",
+  "stop": {
+    "on": false,
+    "since": null
+  },
+  "cards": [],
+  "held": null,
+  "verdict": "Nothing needs you. Nothing is broken.",
+  "since": null,
+  "launch": null,
+  "building": [],
+  "health": [],
+  "healthNote": {
+    "allWell": true,
+    "protection": "Standard",
+    "week": null
+  },
+  "safekeeping": null,
+  "ideas": {
+    "count": 0,
+    "fresh": 0
+  },
+  "updated": "12:30",
+  "usage": null,
+  "finished": [],
+  "goalEnd": null,
+  "incidents": [],
+  "watcher": null,
+  "missing": [],
+  "view": "settings",
+  "open": null,
+  "settings": {
+    "groups": [
+      {
+        "id": "stop",
+        "title": "All stop",
+        "note": "All stop halts the whole Crew at once. Only you can lift it.",
+        "rows": [
+          {
+            "key": "builders",
+            "label": "Crew",
+            "value": "Working",
+            "kind": "value"
+          }
+        ]
+      },
+      {
+        "id": "project",
+        "title": "This project",
+        "note": "Only for this project. A pick changes it at once and counts as your confirmation; Undo stays for a minute. Protection and build commands need your password or a careful yes, so the First Mate asks for them.",
+        "rows": [
+          {
+            "key": "autonomy",
+            "label": "Autonomy",
+            "value": "balanced",
+            "kind": "select",
+            "options": [
+              {
+                "value": "cautious",
+                "label": "Cautious"
+              },
+              {
+                "value": "balanced",
+                "label": "Balanced"
+              },
+              {
+                "value": "trusting",
+                "label": "Trusting"
+              }
+            ]
+          },
+          {
+            "key": "showFirst",
+            "label": "Show before building",
+            "value": "visual",
+            "kind": "select",
+            "options": [
+              {
+                "value": "always",
+                "label": "Always"
+              },
+              {
+                "value": "visual",
+                "label": "Visual changes"
+              },
+              {
+                "value": "asked",
+                "label": "Only when asked"
+              }
+            ]
+          },
+          {
+            "key": "milestones",
+            "label": "Feature milestones",
+            "value": "ask",
+            "kind": "select",
+            "options": [
+              {
+                "value": "demos",
+                "label": "Midpoint demos"
+              },
+              {
+                "value": "to-the-end",
+                "label": "Run to the end"
+              },
+              {
+                "value": "ask",
+                "label": "Ask per feature"
+              }
+            ]
+          },
+          {
+            "key": "pace",
+            "label": "Crew at once",
+            "value": "3",
+            "kind": "select",
+            "options": [
+              {
+                "value": "1",
+                "label": "1"
+              },
+              {
+                "value": "2",
+                "label": "2"
+              },
+              {
+                "value": "3",
+                "label": "3"
+              }
+            ]
+          },
+          {
+            "key": "efficiency",
+            "label": "Thoroughness",
+            "value": "balanced",
+            "kind": "select",
+            "options": [
+              {
+                "value": "lightest",
+                "label": "Lightest: not ready yet"
+              },
+              {
+                "value": "lean",
+                "label": "Lean: not ready yet"
+              },
+              {
+                "value": "balanced",
+                "label": "Balanced"
+              },
+              {
+                "value": "thorough",
+                "label": "Thorough"
+              }
+            ]
+          },
+          {
+            "key": "phase",
+            "label": "Product phase",
+            "value": "before-launch",
+            "kind": "select",
+            "options": [
+              {
+                "value": "before-launch",
+                "label": "Before launch"
+              },
+              {
+                "value": "launched",
+                "label": "Launched"
+              }
+            ]
+          },
+          {
+            "key": "cardsPerDay",
+            "label": "Cards a day",
+            "value": "3 cards a day",
+            "kind": "value"
+          },
+          {
+            "key": "windowsBuildCommands",
+            "label": "Build commands on Windows",
+            "value": "Ask",
+            "kind": "change"
+          },
+          {
+            "key": "budget",
+            "label": "Budget",
+            "value": "Report only",
+            "kind": "value"
+          },
+          {
+            "key": "protection",
+            "label": "Protection",
+            "value": "Ask the First Mate",
+            "kind": "change"
+          }
+        ]
+      },
+      {
+        "id": "you",
+        "title": "You, in every project",
+        "note": "These follow you to every project. Notifications and working hours are changed with the First Mate, which checks them with you.",
+        "rows": [
+          {
+            "key": "presence",
+            "label": "Availability",
+            "value": "here",
+            "kind": "select",
+            "options": [
+              {
+                "value": "here",
+                "label": "Here"
+              },
+              {
+                "value": "away-hours",
+                "label": "Away for 2 hours"
+              },
+              {
+                "value": "away-evening",
+                "label": "Away until 18:00"
+              },
+              {
+                "value": "away-morning",
+                "label": "Away until 09:00 tomorrow"
+              },
+              {
+                "value": "dnd-morning",
+                "label": "Do not disturb until 09:00 tomorrow"
+              },
+              {
+                "value": "dnd-open",
+                "label": "Do not disturb until I change it"
+              }
+            ]
+          },
+          {
+            "key": "briefing",
+            "label": "Briefing length",
+            "value": "standard",
+            "kind": "select",
+            "options": [
+              {
+                "value": "short",
+                "label": "Short"
+              },
+              {
+                "value": "standard",
+                "label": "Standard"
+              },
+              {
+                "value": "detailed",
+                "label": "Detailed"
+              }
+            ]
+          },
+          {
+            "key": "briefingGapHours",
+            "label": "Hours before a new briefing",
+            "value": "2 hours",
+            "kind": "change"
+          },
+          {
+            "key": "explanations",
+            "label": "Explanations",
+            "value": "plain",
+            "kind": "select",
+            "options": [
+              {
+                "value": "plain",
+                "label": "Plain"
+              },
+              {
+                "value": "some-terms",
+                "label": "Some technical terms"
+              }
+            ]
+          },
+          {
+            "key": "usageMark",
+            "label": "Usage nudge",
+            "value": "75",
+            "kind": "select",
+            "options": [
+              {
+                "value": "off",
+                "label": "Off"
+              },
+              {
+                "value": "50",
+                "label": "At 50%"
+              },
+              {
+                "value": "65",
+                "label": "At 65%"
+              },
+              {
+                "value": "75",
+                "label": "At 75%"
+              },
+              {
+                "value": "90",
+                "label": "At 90%"
+              }
+            ]
+          },
+          {
+            "key": "boardTab",
+            "label": "Logbook opens on",
+            "value": "director",
+            "kind": "select",
+            "options": [
+              {
+                "value": "director",
+                "label": "Captain"
+              },
+              {
+                "value": "build",
+                "label": "Build"
+              }
+            ]
+          },
+          {
+            "key": "notifications",
+            "label": "Notifications",
+            "value": "claude",
+            "kind": "change"
+          },
+          {
+            "key": "hours",
+            "label": "Working hours",
+            "value": "no set hours",
+            "kind": "change"
+          }
+        ]
+      },
+      {
+        "id": "advanced",
+        "title": "Advanced settings",
+        "note": "",
+        "rows": [
+          {
+            "key": "advanced",
+            "label": "Advanced settings",
+            "value": "",
+            "kind": "change"
+          }
+        ]
+      }
+    ]
+  }
+}
