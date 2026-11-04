@@ -12,7 +12,7 @@
 // director's press on the pane; `sdk`, `peer` and every other origin never count.
 //
 //   { cmd: 'usage', session, cwd, usd?, windows? }  the session's running cost and the allowance
-//   { cmd: 'tick', session, cwd, idle, surface, received? }  what the pane and the status line show now and the
+//   { cmd: 'tick', session, cwd, idle, surface, drawn?, received? }  what the pane and the status line show now and the
 //                                                   courier's wake, with the ids it marked sent and its
 //                                                   stamp, or a Shape 2 foreman's wakes from one
 //                                                   watcher loop, or nothing while setup runs; it also
@@ -58,6 +58,7 @@ import { helperClient } from '../host/helper-client.js';
 import { recordModReading, recordReceived, recordSession } from '../usage/store.js';
 import { stopState as defaultStopState, setStop as defaultSetStop, liftStop as defaultLiftStop } from '../lib/stop.js';
 import { sessionRole as defaultSessionRole } from '../lib/role.js';
+import { markPane as defaultMarkPane } from '../lib/session-files.js';
 import { isOwnStatusLine } from '../protection/settings.js';
 import { LIFT_STOP } from '../state/card-lines.js';
 import { FOREMAN_TICK_MS, TICK_MS, WATCH_BRIDGE_MS } from '../lib/mod-numbers.js';
@@ -152,6 +153,7 @@ const DEFAULTS = {
   liftStop: defaultLiftStop,
   stopDeskMs: STOP_DESK_MS,
   sessionRole: defaultSessionRole,
+  markPane: defaultMarkPane,
   beingSetUp: defaultBeingSetUp,
   journalTrouble: defaultJournalTrouble,
   digestText: defaultDigest,
@@ -551,6 +553,7 @@ async function tick(req, d) {
   if (found !== null && role === 'foreman') return foremanTick(found, d);
   if (role === 'front-desk' && settingUp(req.cwd, d)) return { ok: true, role: SETUP_ROLE, every: TICK_MS };
   if (role !== 'front-desk' || found === null) return { ok: true, role, every: 0 };
+  notePane(req, d);
   const started = d.elapsedClock();
   // The watch runs beside the pane, so the two share the time the tick has; so does the desk's
   // watch of the changes since the courier's cursor.
@@ -577,6 +580,16 @@ async function tick(req, d) {
     if (wake.wokeAt !== undefined) answer.wokeAt = wake.wokeAt;
   }
   return answer;
+}
+
+// Marks the session's pane live (sessions/<id>/pane.json): the tick's time and when the mod last
+// drew the pane, which the question hook reads. A failed write is a note that is missed, never a
+// failed tick.
+function notePane(req, d) {
+  try {
+    const drawn = Number.isFinite(req.drawn) ? req.drawn : null;
+    d.markPane(req.session, { at: d.now().getTime(), drawn, surface: typeof req.surface === 'string' ? req.surface : null });
+  } catch { /* the next tick writes it again */ }
 }
 
 // The pane's model, from the desk's glance (scripts/desk/mod-pane.js), at the bridge's clock and in its
