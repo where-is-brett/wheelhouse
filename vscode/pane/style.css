@@ -1,49 +1,104 @@
 /* vscode/pane/style.css */
-/* Calm (design section 23) drawn in VS Code's own theme colours, so it holds in light and dark themes. */
+/* The Inset look (pane design, direction A) drawn in VS Code's own theme colours, so it holds in light, dark and high-contrast themes. */
 * { box-sizing: border-box; }
-body { margin: 0; padding: 12px; color: var(--vscode-foreground); font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); line-height: 1.45; }
+body { margin: 0; padding: 12px; color: var(--vscode-foreground); font-family: var(--vscode-font-family); font-size: 13px; line-height: 1.45; }
 button { font: inherit; cursor: pointer; border: 1px solid transparent; border-radius: 4px; padding: 5px 12px; color: inherit; background: none; }
 button:focus-visible, textarea:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
-h1 { font-size: 1.15em; font-weight: 600; margin: 0; }
-.stop { color: var(--vscode-errorForeground); border-color: var(--vscode-errorForeground); font-weight: 600; letter-spacing: 0.04em; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+h1 { font-size: 20px; font-weight: 600; margin: 0; }
+h2 { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--vscode-descriptionForeground); margin: 16px 0 6px; }
+
+/* A raised group with the quiet line. */
+.panel { background: var(--vscode-sideBarSectionHeader-background, var(--vscode-editorWidget-background, transparent)); border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+.panel > :first-child { margin-top: 0; }
+.panel > :last-child { margin-bottom: 0; }
+
+/* The recommendation, and the lines that warn. */
+.band { margin: 0 0 12px; padding: 8px 10px; border-radius: 4px; background: var(--vscode-textBlockQuote-background); border-left: 3px solid var(--vscode-textBlockQuote-border, var(--vscode-widget-border, var(--vscode-panel-border))); }
+.band.warn { border-left-color: var(--vscode-editorWarning-foreground); }
+.notice { margin: 0 0 12px; padding: 8px 10px; border-radius: 4px; border-left: 3px solid var(--vscode-editorWarning-foreground); background: var(--vscode-textBlockQuote-background); }
+
+/* All stop. */
+.stop { color: var(--vscode-errorForeground); border-color: var(--vscode-errorForeground); font-weight: 600; letter-spacing: 0.04em; font-size: 12px; }
 .lift { color: var(--vscode-button-foreground); background: var(--vscode-errorForeground); font-weight: 600; }
-.halted { border: 1px solid var(--vscode-errorForeground); border-radius: 6px; padding: 8px 10px; margin-bottom: 10px; }
+.halted { border: 1px solid var(--vscode-errorForeground); border-radius: 8px; padding: 8px 10px; margin-bottom: 10px; background: var(--vscode-inputValidation-errorBackground); }
 .halted p { margin: 0 0 6px; }
-.verdict { margin: 0 0 12px; }
+
+.verdict { margin: 0 0 12px; font-size: 14px; }
 .verdict .ok { display: block; color: var(--vscode-testing-iconPassed); }
 .verdict .bad { display: block; color: var(--vscode-editorWarning-foreground); }
-.notice { margin: 0 0 12px; padding: 8px 10px; border-left: 3px solid var(--vscode-editorWarning-foreground); background: var(--vscode-textBlockQuote-background); }
-.offer { margin: 0 0 12px; padding: 8px 10px; border: 1px solid var(--vscode-panel-border); border-radius: 6px; }
+.status { margin: 0 0 12px; }
+.status.ok { color: var(--vscode-testing-iconPassed); }
+
+.offer { margin: 0 0 12px; padding: 8px 10px; border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); border-radius: 8px; }
 .offer svg { display: block; width: 100%; max-width: 260px; margin: 6px 0; color: var(--vscode-descriptionForeground); }
-.card { border: 1px solid var(--vscode-panel-border); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; background: var(--vscode-editorWidget-background, transparent); }
+
+/* A card is a panel. */
 .card-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-.kind { font-weight: 600; }
+.kind { font-weight: 600; font-size: 14px; }
 .text { margin: 6px 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
-.note { margin: 6px 0; color: var(--vscode-descriptionForeground); }
-.quiet, .link { color: var(--vscode-textLink-foreground); padding: 2px 4px; }
+.note { margin: 6px 0; color: var(--vscode-descriptionForeground); font-size: 12px; }
+.quiet, .link { color: var(--vscode-descriptionForeground); padding: 2px 4px; font-size: 12px; }
+.link { color: var(--vscode-textLink-foreground); }
 .links { display: flex; gap: 12px; margin-bottom: 8px; }
-.why-box { margin: 0 0 8px; padding: 6px 8px; border-left: 2px solid var(--vscode-panel-border); color: var(--vscode-descriptionForeground); }
+.why-box { margin: 0 0 8px; padding: 6px 8px; border-left: 2px solid var(--vscode-widget-border, var(--vscode-panel-border)); color: var(--vscode-descriptionForeground); }
 .why-box p { margin: 0 0 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .actions { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
 .filled { color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
 .filled:hover { background: var(--vscode-button-hoverBackground); }
-.outlined { color: var(--vscode-textLink-foreground); border-color: var(--vscode-textLink-foreground); }
+.outlined { color: var(--vscode-button-secondaryForeground, var(--vscode-foreground)); background: var(--vscode-button-secondaryBackground, transparent); }
+.outlined:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-toolbar-hoverBackground)); }
 .suggest-box { margin-top: 8px; }
-.suggest-box textarea { width: 100%; min-height: 4.5em; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 4px; padding: 4px 6px; font: inherit; }
+.suggest-box textarea { width: 100%; min-height: 4.5em; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-widget-border, var(--vscode-panel-border))); border-radius: 4px; padding: 4px 6px; font: inherit; }
 .suggest-box .row { display: flex; gap: 6px; margin-top: 6px; }
 .hidden { display: none; }
-h2 { font-size: 0.85em; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--vscode-descriptionForeground); margin: 14px 0 6px; }
+
 .item { display: flex; gap: 8px; align-items: baseline; margin: 0 0 6px; }
 .dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--vscode-editorWarning-foreground); }
 .item .small { color: var(--vscode-descriptionForeground); }
-footer { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-top: 16px; border-top: 1px solid var(--vscode-panel-border); padding-top: 8px; }
-footer .updated { margin-left: auto; color: var(--vscode-descriptionForeground); font-size: 0.9em; }
-.group { margin-bottom: 14px; }
-.group p.about { margin: 0 0 6px; color: var(--vscode-descriptionForeground); }
-.row-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 6px; }
-.row-line .label { min-width: 8em; }
-.row-line .value { color: var(--vscode-descriptionForeground); }
+
+/* Rows: the name on the left, the value on the right. */
+.rows { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; margin: 0 0 6px; }
+.row-name { min-width: 0; overflow-wrap: anywhere; }
+.row-value { color: var(--vscode-descriptionForeground); text-align: right; }
+.rows.select { align-items: center; }
+.rows.select .row-value { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
+.about { margin: 0 0 8px; color: var(--vscode-descriptionForeground); font-size: 12px; }
 .chosen { color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
-.pick { border-color: var(--vscode-panel-border); }
+.pick { border-color: var(--vscode-widget-border, var(--vscode-panel-border)); font-size: 12px; padding: 3px 8px; }
+
+/* The launch bar. Its fill is set by a class, never by an inline style. */
+.launch-bar { height: 6px; margin: 4px 0 10px; border-radius: 3px; overflow: hidden; background: var(--vscode-input-background); }
+.launch-fill { display: block; height: 100%; background: var(--vscode-progressBar-background); }
+.w-0 { width: 0%; }
+.w-5 { width: 5%; }
+.w-10 { width: 10%; }
+.w-15 { width: 15%; }
+.w-20 { width: 20%; }
+.w-25 { width: 25%; }
+.w-30 { width: 30%; }
+.w-35 { width: 35%; }
+.w-40 { width: 40%; }
+.w-45 { width: 45%; }
+.w-50 { width: 50%; }
+.w-55 { width: 55%; }
+.w-60 { width: 60%; }
+.w-65 { width: 65%; }
+.w-70 { width: 70%; }
+.w-75 { width: 75%; }
+.w-80 { width: 80%; }
+.w-85 { width: 85%; }
+.w-90 { width: 90%; }
+.w-95 { width: 95%; }
+.w-100 { width: 100%; }
+
+footer { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-top: 16px; border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); padding-top: 8px; }
+footer .updated { margin-left: auto; color: var(--vscode-descriptionForeground); font-size: 11px; }
 .briefing { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 0 12px; }
+
+/* High contrast: a line on everything, no fills. */
+body.vscode-high-contrast .panel, body.vscode-high-contrast .band, body.vscode-high-contrast .notice, body.vscode-high-contrast .halted, body.vscode-high-contrast .launch-bar { background: transparent; border-color: var(--vscode-contrastBorder); }
+body.vscode-high-contrast .launch-fill { background: var(--vscode-contrastActiveBorder, var(--vscode-contrastBorder)); }
+body.vscode-high-contrast .filled, body.vscode-high-contrast .outlined, body.vscode-high-contrast .chosen { background: transparent; color: var(--vscode-foreground); border-color: var(--vscode-contrastBorder); }
+body.vscode-high-contrast .pick { border-color: var(--vscode-contrastBorder); }
+body.vscode-high-contrast footer, body.vscode-high-contrast .offer, body.vscode-high-contrast .why-box { border-color: var(--vscode-contrastBorder); }

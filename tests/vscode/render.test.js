@@ -3,6 +3,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { require, model, card } from './helpers.js';
 import { PANE_LABELS } from '../../scripts/desk/pane-labels.js';
+import fs from 'node:fs';
+import { loadState } from '../fixtures/pane-states/index.js';
 
 const { renderPane, statusText, needsYou, PANE_MOVES, setLabels } = require('../../vscode/pane/render.js');
 
@@ -126,4 +128,66 @@ test('a card with parts shows what it is, not the record\'s set line', () => {
   assert.ok(html.includes('It changes the wording.'));
   assert.ok(!html.includes('Reply code'));
   assert.ok(html.includes('Yours to decide.'));
+});
+
+// The Inset look.
+const drawFixture = (name) => { const f = loadState(name); return renderPane(f, { nonce: NONCE, view: f.view, settings: f.settings }); };
+const CSS = fs.readFileSync(new URL('../../vscode/pane/style.css', import.meta.url), 'utf8');
+
+test('the card is the first panel', () => {
+  const html = draw(model({ cards: [card({ text: 'Put the sign-in wording live?', parts: null })] }));
+  const first = html.search(/class="(?:card )?panel/);
+  assert.ok(first > -1);
+  const end = html.indexOf('</section>', first);
+  assert.ok(html.slice(first, end).includes('Put the sign-in wording live?'));
+  assert.match(html.slice(first), /^class="card panel" data-card-box/);
+});
+
+test('group names sit above their panels', () => {
+  assert.match(drawFixture('to-watch'), /<h2>To watch<\/h2><(?:div|section) class="panel[^"]*">/);
+});
+
+test('rows put the name left and the value right', () => {
+  assert.match(drawFixture('to-watch'), /<span class="row-name">CI is failing on main<\/span><span class="row-value">[^<]+<\/span>/);
+  assert.match(drawFixture('settings'), /<span class="row-name">Crew<\/span><span class="row-value">Working<\/span>/);
+});
+
+test('the launch bar is drawn', () => {
+  const bar = (launch) => draw(model({ over: { launch } }), { view: 'board' });
+  assert.match(bar({ gained: 3, total: 4, next: [] }), /class="launch-bar"[^>]*><span class="launch-fill w-75"/);
+  assert.match(bar({ gained: 9, total: 4, next: [] }), /launch-fill w-100"/);
+  assert.match(bar({ gained: -2, total: 4, next: [] }), /launch-fill w-0"/);
+  assert.match(bar({ gained: 1, total: 0, next: [] }), /launch-fill w-0"/);
+  for (let n = 0; n <= 100; n += 5) assert.ok(CSS.includes(`.w-${n} `), `w-${n}`);
+  assert.ok(!bar({ gained: 1, total: 2 }).includes(' style="'));
+});
+
+test('the verdict doesn\'t repeat', () => {
+  const count = (html, words) => html.split(words).length - 1;
+  assert.equal(count(draw(model()), 'Nothing needs you.'), 1);
+  assert.equal(count(draw(model({ verdict: 'The shop page is down.' })), 'Nothing needs you.'), 1);
+  assert.equal(count(draw(model({ cards: [card()], verdict: 'One thing needs you.' })), 'Nothing needs you.'), 0);
+});
+
+test('out of date shows the warning and no figures', () => {
+  const f = loadState('out-of-date');
+  const html = drawFixture('out-of-date');
+  for (const line of f.missing) assert.ok(html.includes(line.replace(/'/g, '&#39;')), line);
+  assert.match(html, /class="band[^"]*"[^>]*role="status"/);
+  // No digit in the verdict's text: look only between tags, so no markup is stripped.
+  const verdict = html.match(/<p class="verdict">(.*?)<\/p>/)[1];
+  assert.ok(!/(^|>)[^<]*\d/.test(verdict));
+});
+
+test('first reading draws the mod\'s line', () => {
+  for (const html of [draw(null), drawFixture('first-reading')]) {
+    assert.ok(html.includes('Reading how the project stands…'));
+    assert.ok(!html.includes('Nothing to show yet'));
+  }
+});
+
+test('high contrast has borders and no fills', () => {
+  assert.match(CSS, /body\.vscode-high-contrast[^{]*\.panel[^{]*\{[^}]*background: transparent/);
+  assert.match(CSS, /body\.vscode-high-contrast[^{]*\.band[^{]*\{[^}]*background: transparent/);
+  assert.ok(CSS.includes('--vscode-contrastBorder'));
 });

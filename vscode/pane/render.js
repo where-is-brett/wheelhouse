@@ -14,6 +14,8 @@ const path = require('node:path');
 // Whether VS Code lets an extension move its view to the secondary sidebar for the person (check 67). Until it
 // says so the first-run offer shows the picture of the drag, once.
 const PANE_MOVES = false;
+const FIRST_READING = 'Reading how the project stands…';
+const NOTHING_NEEDS_YOU = 'Nothing needs you.';
 const OFFER = 'Put Wheelhouse on the right';
 const UNTRUSTED = 'Wheelhouse runs only in a folder you trust, since it signs your clicks with this computer\'s key.';
 const DRAG_PICTURE = '<svg viewBox="0 0 260 90" role="img" aria-label="Drag the Wheelhouse wheel to the right-hand side of the window" fill="none" stroke="currentColor" stroke-width="1.5">'
@@ -104,6 +106,29 @@ function statusText(model) {
   return n === 0 ? 'Wheelhouse' : `Wheelhouse · ${n} ${n === 1 ? 'needs' : 'need'} you`;
 }
 
+// A raised group with the quiet line, and a group name above it.
+const panel = (inner) => `<div class="panel">${inner}</div>`;
+const group = (heading, inner) => `<h2>${esc(heading)}</h2>${panel(inner)}`;
+// A row: the name on the left, the value on the right.
+const row = (name, value) => `<p class="rows"><span class="row-name">${esc(name)}</span><span class="row-value">${esc(value)}</span></p>`;
+
+// The launch bar's fill, in steps of five: a class, since the page allows no inline style.
+function fillClass(done, total) {
+  const d = Number(done);
+  const t = Number(total);
+  if (!Number.isFinite(d) || !Number.isFinite(t) || t <= 0 || d <= 0) return 'w-0';
+  return `w-${Math.min(100, Math.round((d / t) * 20) * 5)}`;
+}
+
+// "Nothing needs you." once: the verdict may already say it.
+function drawQuiet(model) {
+  const none = waitingCards(model).length === 0 && !(isRecord(model?.held) && text(model.held.line));
+  return none && !text(model?.verdict).startsWith(NOTHING_NEEDS_YOU) ? `<p class="status ok">${esc(NOTHING_NEEDS_YOU)}</p>` : '';
+}
+
+// The lines that say the reading is incomplete or old.
+const drawMissing = (model) => list(model?.missing).map(text).filter(Boolean).map((line) => `<p class="band warn" role="status">${esc(line)}</p>`).join('');
+
 function drawVerdict(model) {
   const sentences = text(model?.verdict).split(/(?<=\.)\s+/).filter(Boolean);
   if (sentences.length === 0) return '';
@@ -147,7 +172,7 @@ function drawCard(card) {
   const why = parts && (text(parts.why) || text(parts.meanwhile))
     ? `<div class="why-box hidden">${[parts.why, parts.meanwhile].filter((p) => text(p)).map((p) => `<p>${esc(p)}</p>`).join('')}</div>`
     : '';
-  return `<section class="card" data-card-box="1">`
+  return `<section class="card panel" data-card-box="1">`
     + `<div class="card-top"><span class="kind">${esc(card.header)}</span>${top.join('')}</div>`
     + `<p class="text">${esc(cardWords(card))}</p>`
     + (text(card.note) ? `<p class="note">${esc(card.note)}</p>` : '')
@@ -191,31 +216,35 @@ function drawFoot(model) {
 
 function drawBoard(model) {
   const lines = [];
-  const add = (heading, rows) => { if (rows.length > 0) lines.push(`<h2>${esc(heading)}</h2>${rows.map((r) => `<p class="item"><span>${esc(r)}</span></p>`).join('')}`); };
+  const add = (heading, inner) => { if (inner !== '') lines.push(group(heading, inner)); };
+  const plain = (items) => items.map((r) => `<p class="item"><span>${esc(r)}</span></p>`).join('');
   const launch = isRecord(model?.launch) ? model.launch : null;
-  if (launch) add('Progress to launch', [`${launch.gained ?? 0} of ${launch.total} done`, ...list(launch.next).map((n) => text(n?.text)).filter(Boolean)]);
-  add('Building', list(model?.building).map((b) => text(b?.text)).filter(Boolean));
-  add('To watch', list(model?.health).map((h) => text(h?.text)).filter(Boolean));
-  if (isRecord(model?.safekeeping) && text(model.safekeeping.line)) add('Safekeeping', [text(model.safekeeping.line)]);
-  if (text(model?.usage)) add('This week', [model.usage]);
+  if (launch) {
+    const done = typeof launch.resolved === 'number' ? launch.resolved : (launch.gained ?? 0);
+    const bar = `<div class="launch-bar" role="img" aria-label="${esc(done)} of ${esc(launch.total)}"><span class="launch-fill ${fillClass(done, launch.total)}"></span></div>`;
+    add('Progress to launch', row(`${done} of ${launch.total}`, 'cleared') + bar + plain(list(launch.next).map((n) => text(n?.text)).filter(Boolean)));
+  }
+  add('Building', plain(list(model?.building).map((b) => text(b?.text)).filter(Boolean)));
+  add('To watch', list(model?.health).filter(isRecord).filter((h) => text(h.text)).map((h) => row(text(h.text), h.level === 'stop' ? 'Urgent' : 'Watch')).join(''));
+  if (isRecord(model?.safekeeping) && text(model.safekeeping.line)) add('Safekeeping', plain([text(model.safekeeping.line)]));
+  if (text(model?.usage)) add('This week', plain([model.usage]));
   if (lines.length === 0) lines.push('<p class="note">Nothing to show on the board yet.</p>');
   return `${lines.join('')}<footer>${button(labels.done, 'filled', { act: 'view', view: 'main' })}</footer>`;
 }
 
 function drawSettings(settings) {
   const groups = list(settings?.groups).filter(isRecord);
-  const rows = (group) => list(group.rows).filter(isRecord).map((row) => {
-    const label = `<span class="label">${esc(row.label)}</span>`;
-    if (row.kind === 'select') {
-      const options = list(row.options).filter(isRecord).map((o) => button(text(o.label), `pick${o.value === row.value ? ' chosen' : ''}`, { act: 'setting', key: row.key, choice: o.value }));
-      const undo = isRecord(row.changed) && row.changed.undo ? button('Undo', 'link', { act: 'setting', key: row.key, choice: 'undo' }) : '';
-      return `<div class="row-line">${label}${options.join('')}${undo}</div>`;
+  const rows = (group_) => list(group_.rows).filter(isRecord).map((r) => {
+    if (r.kind === 'select') {
+      const options = list(r.options).filter(isRecord).map((o) => button(text(o.label), `pick${o.value === r.value ? ' chosen' : ''}`, { act: 'setting', key: r.key, choice: o.value }));
+      const undo = isRecord(r.changed) && r.changed.undo ? button('Undo', 'link', { act: 'setting', key: r.key, choice: 'undo' }) : '';
+      return `<div class="rows select"><span class="row-name">${esc(r.label)}</span><span class="row-value">${options.join('')}${undo}</span></div>`;
     }
-    return `<div class="row-line">${label}<span class="value">${esc(row.value)}</span></div>`;
+    return row(r.label, r.value);
   }).join('');
   const body = groups.length === 0
     ? '<p class="note">The settings can\'t be read just now.</p>'
-    : groups.map((g) => `<div class="group"><h2>${esc(g.title)}</h2>${text(g.note) ? `<p class="about">${esc(g.note)}</p>` : ''}${rows(g)}</div>`).join('');
+    : groups.map((g) => group(g.title, `${text(g.note) ? `<p class="about">${esc(g.note)}</p>` : ''}${rows(g)}`)).join('');
   return `${body}<footer>${button(labels.done, 'filled', { act: 'view', view: 'main' })}</footer>`;
 }
 
@@ -238,7 +267,7 @@ function renderPane(model, { nonce, view = 'main', settings, briefing, notice, o
     else if (view === 'settings') body = drawHeader(m) + alert + drawSettings(settings);
     else if (view === 'briefing') body = drawHeader(m) + alert + drawBriefing(text(briefing));
     else if (view === 'board') body = drawHeader(m) + alert + drawBoard(m);
-    else body = drawHeader(m) + alert + drawOffer(offer) + (m ? drawVerdict(m) + drawCards(m) : '<p class="note">Nothing to show yet.</p>') + drawFoot(m);
+    else body = drawHeader(m) + alert + drawOffer(offer) + (m && m.at !== null ? drawMissing(m) + drawVerdict(m) + drawCards(m) + drawQuiet(m) : `<p class="note">${esc(FIRST_READING)}</p>`) + drawFoot(m);
   } catch {
     body = '<header><h1>Wheelhouse</h1></header><p class="notice">The pane couldn\'t be drawn just now.</p>';
   }
