@@ -222,7 +222,7 @@ export { briefingLine } from '../lib/release-line.js';
 // --- The reinstall (check 30's route) ---
 
 // `claude <args>` through `run`, in the project's folder, without the host session's variables.
-async function claudeIn({ run, resolved, projectDir }, args) {
+export async function claudeIn({ run, resolved, projectDir }, args) {
   const call = invocation(resolved, [], args);
   return run(call.file, call.args, {
     cwd: projectDir, input: call.input, baseEnv: withoutHostVariables(withoutGitVars(process.env)), timeoutMs: 10 * 60 * 1000,
@@ -259,13 +259,15 @@ function pinsOf(installLocation, sha) {
 // <plugin>@<marketplace> --scope project`, and where that leaves another commit installed (two
 // releases with one plugin.json version are "already at the latest version"), uninstall then
 // install. What is installed is read from gitCommitSha in installed_plugins.json, never the
-// folder. Every child process goes through `run`. A project settings file the uninstall or
+// folder. `scopes` says where: 'project' (the default) for the project's own installs, and 'user' too
+// for the account's, which are updated only for the plugins already installed there. Every child process goes through `run`. A project settings file the uninstall or
 // install rewrote is put back as it was, since it is the merged release's. `marketplace` and
 // `claudeHome` are for probes. Resolves with { ok, line, installed: [{ plugin, want, got, route }] }.
 export async function reinstall({
-  projectDir, release, run = defaultRun, marketplace = MARKETPLACE, claudeHome = defaultClaudeHome(), resolved = resolveClaude(),
+  projectDir, release, run = defaultRun, marketplace = MARKETPLACE, claudeHome = defaultClaudeHome(), resolved = resolveClaude(), scopes = ['project'],
 }) {
   const { ref, sha } = release ?? {};
+  if (!Array.isArray(scopes) || scopes.length === 0 || scopes.some((scope) => scope !== 'project' && scope !== 'user')) throw new Error('The scopes must be project, user or both');
   if (!isTag(ref) || !FULL_SHA.test(sha ?? '')) throw new Error('The release must be a plain tag and its full commit');
   const ctx = { run, resolved, projectDir };
   const settingsFile = path.join(projectDir, ...SETTINGS_FILE.split('/'));
@@ -300,25 +302,34 @@ export async function reinstall({
   }
   const pins = pinsOf(installLocation, sha);
   if (pins === null) return { ok: false, installed: [], line: `The ${marketplace} marketplace at ${ref} lists a plugin this can't read the commit of, so nothing was reinstalled.` };
-  const gotFor = (plugin) => locateInstalled({ plugin }, { projectDir, claudeHome, marketplace })?.sha ?? null;
+  const userGot = (plugin) => {
+    const installs = readJson(path.join(claudeHome, 'plugins', 'installed_plugins.json'))?.plugins?.[`${plugin}@${marketplace}`];
+    const found = Array.isArray(installs) ? installs.find((one) => isObject(one) && one.scope === 'user' && typeof one.gitCommitSha === 'string') : null;
+    return found ? found.gitCommitSha : null;
+  };
   const installed = [];
-  for (const { plugin, want } of pins) {
-    const id = `${plugin}@${marketplace}`;
-    let route = 'update';
-    let got = gotFor(plugin);
-    if (got !== want) {
-      await claudeIn(ctx, ['plugin', 'update', id, '--scope', 'project', '--json']);
-      got = gotFor(plugin);
-    } else {
-      route = 'already installed';
+  for (const scope of scopes) {
+    const gotFor = (plugin) => (scope === 'user' ? userGot(plugin) : (locateInstalled({ plugin }, { projectDir, claudeHome, marketplace })?.sha ?? null));
+    for (const { plugin, want } of pins) {
+      // The account's installs are moved where they exist; none is added to it.
+      if (scope === 'user' && gotFor(plugin) === null) continue;
+      const id = `${plugin}@${marketplace}`;
+      let route = 'update';
+      let got = gotFor(plugin);
+      if (got !== want) {
+        await claudeIn(ctx, ['plugin', 'update', id, '--scope', scope, '--json']);
+        got = gotFor(plugin);
+      } else {
+        route = 'already installed';
+      }
+      if (got !== want) {
+        route = 'uninstall, then install';
+        await claudeIn(ctx, ['plugin', 'uninstall', id, '--scope', scope, '--json']);
+        await claudeIn(ctx, ['plugin', 'install', id, '--scope', scope, '--json']);
+        got = gotFor(plugin);
+      }
+      installed.push({ plugin, want, got, route, ...(scope === 'user' ? { scope } : {}) });
     }
-    if (got !== want) {
-      route = 'uninstall, then install';
-      await claudeIn(ctx, ['plugin', 'uninstall', id, '--scope', 'project', '--json']);
-      await claudeIn(ctx, ['plugin', 'install', id, '--scope', 'project', '--json']);
-      got = gotFor(plugin);
-    }
-    installed.push({ plugin, want, got, route });
   }
   let putBack = false;
   if (settingsBefore !== null && readText(settingsFile) !== settingsBefore) {
@@ -326,15 +337,15 @@ export async function reinstall({
     putBack = true;
   }
   const wrong = installed.filter((one) => one.got !== one.want);
-  const said = installed.map((one) => `${one.plugin} ${one.got ? short(one.got) : 'not installed'}`).join(', ');
+  const said = installed.map((one) => `${one.plugin}${one.scope ? ` (${one.scope})` : ''} ${one.got ? short(one.got) : 'not installed'}`).join(', ');
   const kept = putBack ? ' Claude Code rewrote the project\'s settings on the way, so they were put back as the release has them.' : '';
   return {
     ok: wrong.length === 0,
     installed,
     putBack,
     line: wrong.length === 0
-      ? `Wheelhouse ${ref} is installed for this project: ${said}.${kept}`
-      : `Wheelhouse ${ref} is not fully installed: ${wrong.map((one) => one.plugin).join(', ')} ${wrong.length === 1 ? 'is' : 'are'} not at the release's commit (installed now: ${said}).${kept}`,
+      ? `Wheelhouse ${ref} is installed for ${scopes.includes('user') ? 'this project and this account' : 'this project'}: ${said}.${kept}`
+      : `Wheelhouse ${ref} is not fully installed: ${wrong.map((one) => one.plugin + (one.scope ? ` (${one.scope})` : '')).join(', ')} ${wrong.length === 1 ? 'is' : 'are'} not at the release's commit (installed now: ${said}).${kept}`,
   };
 }
 

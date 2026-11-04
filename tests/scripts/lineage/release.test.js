@@ -8,7 +8,7 @@ import path from 'node:path';
 import { readConfig } from '../../../scripts/gate/guardrails.js';
 import { projectSettings } from '../../../scripts/protection/settings.js';
 import {
-  RELEASE_BRANCH, SETTINGS_FILE, canInstall, pinsOnlyChange, releaseBranch, releaseChange, settingsText, undo, undoBranch,
+  RELEASE_BRANCH, SETTINGS_FILE, canInstall, pinsOnlyChange, reinstall, releaseBranch, releaseChange, settingsText, undo, undoBranch,
 } from '../../../scripts/lineage/release.js';
 import { tempFolder } from '../../helpers/homes.js';
 
@@ -255,4 +255,18 @@ test('the reinstall stops when the computer\'s marketplace is not at the release
   fs.writeFileSync(pc.settingsFile, '{}\n');
   const none = await undo({ project: 'o__p', projectDir: pc.projectDir, claudeHome: pc.claudeHome, run: pc.run, resolved: DIRECT, previous: { ref: 'v1.0.0', sha: 'a'.repeat(40) } });
   assert.deepEqual(none, { ok: false, line: 'The project\'s settings name no Wheelhouse marketplace, so there is no release to put back.' });
+});
+
+test('the reinstall takes scopes: project by default, the account\'s installs only where they exist', async () => {
+  const pc = computer();
+  const release = { ref: 'v1.0.0', sha: 'a'.repeat(40) };
+  const common = { projectDir: pc.projectDir, claudeHome: pc.claudeHome, run: pc.run, resolved: DIRECT, release };
+  await assert.rejects(() => reinstall({ ...common, scopes: ['project', 'local'] }), /project, user or both/);
+  await assert.rejects(() => reinstall({ ...common, scopes: [] }), /project, user or both/);
+  // The account has no install here, so asking for its scope adds none.
+  pc.calls.length = 0;
+  const done = await reinstall({ ...common, scopes: ['user'] });
+  assert.equal(done.ok, true, done.line);
+  assert.deepEqual(done.installed, []);
+  assert.equal(pc.calls.filter((c) => /plugin (update|install|uninstall) /.test(c)).length, 0);
 });
