@@ -133,7 +133,10 @@ const drawMissing = (model) => list(model?.missing).map(text).filter(Boolean).ma
 function drawVerdict(model) {
   const sentences = text(model?.verdict).split(/(?<=\.)\s+/).filter(Boolean);
   if (sentences.length === 0) return '';
-  const [first, ...rest] = sentences;
+  const [first, ...all] = sentences;
+  // With the reading incomplete or old, "Nothing is broken." can't be trusted, so it isn't said; a fault still is.
+  const stale = list(model?.missing).some((line) => text(line) !== '');
+  const rest = stale ? all.filter((s) => !/^Nothing is broken/.test(s)) : all;
   const state = rest.map((s) => `<span class="${/^Nothing is broken/.test(s) ? 'ok' : 'bad'}">${esc(s)}</span>`).join('');
   return `<p class="verdict">${esc(first)}${state}</p>`;
 }

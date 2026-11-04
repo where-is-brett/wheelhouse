@@ -211,6 +211,15 @@ test('out of date shows the warning and no figures', () => {
   assert.ok(!/(^|>)[^<]*\d/.test(verdict));
 });
 
+test('out of date does not claim that nothing is broken', () => {
+  const stale = drawFixture('out-of-date');
+  assert.ok(!stale.includes('Nothing is broken'));
+  assert.ok(stale.includes('One thing needs you.'));
+  assert.ok(!stale.includes('class="ok"'));
+  assert.ok(draw(model({ cards: [card()], verdict: 'One thing needs you. Nothing is broken.' })).includes('Nothing is broken.'));
+  assert.ok(draw(model({ missing: ['Old.'], verdict: 'One thing needs you. The shop page is down.' })).includes('The shop page is down.'));
+});
+
 test('first reading draws the mod\'s line', () => {
   for (const html of [draw(null), drawFixture('first-reading')]) {
     assert.ok(html.includes('Reading how the project stands…'));
