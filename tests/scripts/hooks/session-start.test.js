@@ -20,6 +20,7 @@ import { checkLineage, holdFile, MANIFEST_UNREADABLE, MANIFEST_UNREADABLE_NOT_HE
 import { pendingDir } from '../../../scripts/hooks/pending.js';
 import { CLAUDE_CODE_FLOOR } from '../../../scripts/lib/build-loop.js';
 import { writeCaFile } from '../../../scripts/host/company-ca.js';
+import { openJournal } from '../../../scripts/update/journal.js';
 import { as, tempFolder } from '../../helpers/homes.js';
 import { removeFolder } from '../../helpers/remove.js';
 import { stopWatcher } from '../../../scripts/foreman/start.js';
@@ -763,6 +764,20 @@ test('versions are compared as numbers: 0.2.10 is not older than 0.2.9', async (
     const f = helperOf('0.2.10', () => ({ ok: true, retired: true }));
     await run(f, { pluginRoot: ownRoot(home, '0.2.9') });
     assert.equal(f.retireCalls.retire, 0);
+  });
+});
+
+test('the first session after an update says so once, naming its version and the helper\'s', async () => {
+  await withHome(async (home) => {
+    const journal = openJournal(P);
+    journal.mark('checks', 'done', { tag: 'v0.2.7' });
+    journal.mark('merged', 'done', { approved: true });
+    journal.mark('done', 'done');
+    const sentence = /Wheelhouse v0\.2\.7 is running \(updated today, approved by you\); the helper is v0\.2\.7\./;
+    // A session still on the old release says nothing, and leaves it for the one that is on the new.
+    assert.doesNotMatch(text(await run(helperOf('0.2.7', () => ({ ok: true, retired: true })), { pluginRoot: ownRoot(home, '0.2.6') })), /is running \(updated/);
+    assert.match(text(await run(helperOf('0.2.7', () => ({ ok: true, retired: true })), { pluginRoot: ownRoot(home, '0.2.7') })), sentence);
+    assert.doesNotMatch(text(await run(helperOf('0.2.7', () => ({ ok: true, retired: true })), { pluginRoot: ownRoot(home, '0.2.7') })), /is running \(updated/);
   });
 });
 

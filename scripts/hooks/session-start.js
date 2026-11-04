@@ -73,6 +73,7 @@ import {
 import { checkLineage, hasCopies, holdEvent, inspectCopies, inspectLineage, markRecorded, recordLift, warningLines, writeProvenance } from '../lineage/check.js';
 import { claudeCodeOf } from '../lineage/provenance.js';
 import { MARKETPLACE } from '../lineage/manifest.js';
+import { confirmingLine } from '../update/board.js';
 import { makeSigningKey, ownKey, readEnrolled, enrol } from '../state/signing.js';
 import { SETUP_STEPS, firstUnfinished, journalTrouble, stepDone } from '../lib/setup-run.js';
 import { composeCard } from '../cards/compose.js';
@@ -863,6 +864,11 @@ async function started(input, deps) {
   } catch { /* it informs */ }
   if ((await left(usage))?.receiver === 'failed') notes.push(NO_USAGE);
 
+  // The first session after an update has finished says so once, naming this copy's version and the helper's.
+  if (up && checked) {
+    const confirmed = confirmingLine({ project, sessionVersion: ownVersion(pluginRoot), helperVersion: up.version, now });
+    if (confirmed !== null) notes.push(confirmed);
+  }
   const setupLine = setup === null ? null : setupNote(setup);
   if (setupLine !== null) notes.push(setupLine);
   // The front desk's session: not a feature's, nor the foreman's own. Only it is told why the

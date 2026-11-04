@@ -414,6 +414,44 @@ test('the safekeeping line is always there, at watch only when its status is, wi
   assert.equal(healthLines(calm).some((line) => line.safekeeping), false);
 });
 
+test('update lines: nothing is said without update facts', () => {
+  assert.deepEqual(healthLines({ ...calm, update: null }), healthLines(calm));
+});
+
+test('update lines: the version line carries the date for a week after an update, then only the version', () => {
+  assert.deepEqual(texts({ update: { version: 'v0.2.7', updatedAt: '2026-11-04T09:00:00.000Z' } }), ['Protection: Standard', 'Wheelhouse v0.2.7 (updated 4 November 2026)']);
+  assert.deepEqual(texts({ update: { version: 'v0.2.7', updatedAt: null } }), ['Protection: Standard', 'Wheelhouse v0.2.7']);
+});
+
+test('update lines: a newer release is announced in the director\'s words, and calmly', () => {
+  const lines = healthLines({ ...calm, update: { version: 'v0.2.7', newer: 'v0.2.8' } });
+  assert.deepEqual(lines.at(-1), { level: 'ok', text: 'v0.2.8 is out; type /wheelhouse:update when you want it' });
+  assert.equal(texts({ update: { version: 'v0.2.7', newer: null } }).some((t) => /is out/.test(t)), false);
+});
+
+test('update lines: the three part-way lines, and a refresh left', () => {
+  const part = (kind) => healthLines({ ...calm, update: { partway: { kind, tag: 'v0.2.7' } } }).at(-1);
+  assert.deepEqual(part('merge'), { level: 'watch', text: "Wheelhouse's update to v0.2.7 is waiting for its change to merge" });
+  assert.deepEqual(part('idle'), { level: 'watch', text: "Wheelhouse's update to v0.2.7 is waiting for work in progress to finish" });
+  assert.deepEqual(part('stopped'), { level: 'watch', text: "Wheelhouse's update to v0.2.7 stopped: type /wheelhouse:update to carry on" });
+  const left = healthLines({ ...calm, update: { refresh: { tag: 'v0.2.7', left: "Locked's password refresh" } } }).at(-1);
+  assert.equal(left.level, 'watch');
+  assert.match(left.text, /v0\.2\.7 is installed.*Locked's password refresh is left/);
+});
+
+test('update lines: a project naming a release this computer does not have', () => {
+  assert.deepEqual(
+    healthLines({ ...calm, update: { mismatch: { names: 'v0.2.7', has: 'v0.2.6' } } }).at(-1),
+    { level: 'watch', text: 'This project names v0.2.7 but this computer has v0.2.6: type /wheelhouse:update to try again' },
+  );
+});
+
+test('update lines: an old helper still answering is a calm line, and no update line is broken', () => {
+  const lines = healthLines({ ...calm, update: { oldHelper: 'v0.2.6', partway: { kind: 'stopped', tag: 'v0.2.7' } } });
+  assert.ok(lines.some((l) => l.level === 'ok' && /older Wheelhouse helper \(v0\.2\.6\)/.test(l.text)));
+  assert.equal(lines.some((l) => l.level === 'stop'), false);
+});
+
 // A watcher whose wakes keep failing is a broken thing the director is told about, not silence.
 const NOW_MS = Date.parse('2026-11-04T05:00:00.000Z');
 const failing = (message, minutesAgo = 2) => ({ lastError: { at: new Date(NOW_MS - minutesAgo * 60000).toISOString(), message } });
@@ -441,4 +479,11 @@ test('old, few, unrelated or answered failures bring no line', () => {
   none({ ...failing('A wake for the Bosun has failed 9 times: spawn claude ENOENT'), lastOk: new Date(NOW_MS - 60000).toISOString() });
   none(undefined);
   none({});
+});
+
+test('own files: after an approved update the explained move is a calm line and brings no watch line', () => {
+  const lines = healthLines({ ...calm, ownFiles: { calm: 'Wheelhouse moved to v0.2.7 and its files match.' } });
+  assert.deepEqual(lines.at(-1), { level: 'ok', text: 'Wheelhouse moved to v0.2.7 and its files match.' });
+  assert.equal(lines.some((l) => l.level === 'watch'), false);
+  assert.equal(healthLines({ ...calm, ownFiles: { line: 'Files changed', calm: 'One row' } }).filter((l) => l.level === 'watch').length, 1);
 });
