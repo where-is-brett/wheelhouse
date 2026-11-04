@@ -1391,7 +1391,7 @@ test('suggest hands a suggested change on an approval card to the build as one w
     // so the pane says a new proposal is on its way only once the change is handed on: nothing else is written.
     assert.deepEqual(helper.writes(), [
       { cwd: CWD, kind: 'work', data: { ...work.data, title: 'The sign-in page says Welcome back instead of Sign in' } },
-      { cwd: CWD, kind: 'card-answer', data: { question: approval.data.question, label: SUGGEST } },
+      { cwd: CWD, kind: 'card-answer', data: { question: approval.data.question, label: SUGGEST, where: 'chat' } },
     ]);
     assert.equal(typeof helper.views().waiting.find((c) => c.id === approval.id).steered, 'string');
 

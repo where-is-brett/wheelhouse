@@ -789,7 +789,7 @@ export async function suggest({ client, cwd, card: cardId, work: workId, change 
   }
   const data = { ...views.work[workId].work.data, title: words };
   const got = await write(client, cwd, 'work', data);
-  await write(client, cwd, 'card-answer', { question: pressed.data.question, label: SUGGEST });
+  await write(client, cwd, 'card-answer', { question: pressed.data.question, label: SUGGEST, where: 'chat' });
   return { id: got.id, pushed: got.pushed === true, say: SUGGESTED };
 }
 
