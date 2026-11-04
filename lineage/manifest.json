@@ -140,6 +140,9 @@
   "claudeCode": {
     "floor": "2.1.299"
   },
+  "node": {
+    "floor": "22.0.0"
+  },
   "agents": {
     "copilot": {
       "cli": "1.0.101"
