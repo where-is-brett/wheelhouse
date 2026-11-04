@@ -225,28 +225,53 @@ async function computer(choose) {
   };
 }
 
-test('the helper\'s window signs the Update card\'s click for the plan the helper kept, and update\'s apply reads it back', async () => {
+async function windowOn(pick) {
   const shown = [];
-  let pick = 'Update';
   const c = await computer((card) => { shown.push(card); return pick; });
+  const { stored, asked } = keepPlan('shop');
+  const data = stateData(asked, 'update');
+  const made = await c.client.state.write({ project: 'shop', kind: 'card', data });
+  assert.equal(made.ok, true, JSON.stringify(made));
+  return { c, shown, at: { ...stored, at: T0.toISOString() }, confirm: () => c.client.confirm({ project: 'shop', card: made.id, hash: dataHash(data) }) };
+}
+
+test('the helper\'s window signs the Update card\'s click for the plan the helper kept, and update\'s apply reads it back', async () => {
+  const w = await windowOn('Update');
   try {
-    const { stored, asked } = keepPlan('shop');
-    const data = stateData(asked, 'update');
-    const made = await c.client.state.write({ project: 'shop', kind: 'card', data });
-    assert.equal(made.ok, true, JSON.stringify(made));
-    const hash = dataHash(data);
-    pick = 'Not now';
-    assert.equal((await c.client.confirm({ project: 'shop', card: made.id, hash })).recorded, false);
-    assert.equal(c.events().filter((e) => e.kind === 'action').length, 0);
-    pick = 'Update';
-    const got = await c.client.confirm({ project: 'shop', card: made.id, hash });
+    const got = await w.confirm();
     assert.deepEqual([got.ok, got.recorded, got.kind, got.step, got.choice], [true, true, 'action', 'update', 'Update']);
-    assert.deepEqual(shown[0].options, ['Update']);
-    const click = c.events().find((e) => e.kind === 'action');
+    assert.deepEqual(w.shown[0].options, ['Update']);
+    const click = w.c.events().find((e) => e.kind === 'action');
     assert.deepEqual([click.data.action, click.data.hash, click.data.proof], ['update-click', HASH, 'window']);
-    assert.equal(clickWasMade({ events: c.events(), enrolled: readEnrolled(), stored: { ...stored, at: T0.toISOString() }, label: 'Update' }), true);
+    assert.equal(clickWasMade({ events: w.c.events(), enrolled: readEnrolled(), stored: w.at, label: 'Update' }), true);
   } finally {
-    await c.close();
+    await w.c.close();
+  }
+});
+
+test('Not now in the helper\'s window is a signed decline for the same plan, earned the way the panel\'s is', async () => {
+  const w = await windowOn('Not now');
+  try {
+    const got = await w.confirm();
+    assert.deepEqual([got.ok, got.recorded, got.choice], [true, true, 'Not now']);
+    const decline = w.c.events().find((e) => e.kind === 'action');
+    assert.deepEqual([decline.data.action, decline.data.hash, decline.data.from, decline.data.to, decline.data.put, decline.data.label, decline.data.proof], ['update-click', HASH, 'v0.2.6', 'v0.2.7', 'release', 'Not now', 'window']);
+    assert.equal(verify(decline, readEnrolled()), true);
+    assert.equal(clickWasMade({ events: w.c.events(), enrolled: readEnrolled(), stored: w.at, label: 'Not now' }), true);
+    assert.equal(clickWasMade({ events: w.c.events(), enrolled: readEnrolled(), stored: w.at, label: 'Update' }), false);
+  } finally {
+    await w.c.close();
+  }
+});
+
+test('a window closed without a click records nothing on the Update card', async () => {
+  const w = await windowOn(null);
+  try {
+    const got = await w.confirm();
+    assert.equal(got.recorded, false);
+    assert.equal(w.c.events().filter((e) => e.kind === 'action').length, 0);
+  } finally {
+    await w.c.close();
   }
 });
 
