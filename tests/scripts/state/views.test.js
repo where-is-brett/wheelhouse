@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildViews, writeViews, latestFor, readyColumns, cardOutcomes } from '../../../scripts/state/views.js';
+import { buildViews, writeViews, latestFor, readyColumns, cardOutcomes, signedCardOutcomes } from '../../../scripts/state/views.js';
 import { listEvents, makeEvent, confirmationFor, eventHash, dataHash, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, sign } from '../../../scripts/state/signing.js';
 import { approvalLine, ciPushLine, confirmLine, startGoalLine } from '../../../scripts/state/card-lines.js';
@@ -1793,5 +1793,25 @@ test('the goals view reaches the views folder on disk', async () => {
     const out = path.join(tempFolder('wh-goals-'), 'views');
     await writeViews('o__p', { now, dir: tempFolder('wh-goals-state-'), out });
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(out, 'goals.json'), 'utf8')), {});
+  });
+});
+
+test('signedCardOutcomes: a plain answer decides a card but proves nothing, a verified signed record does', async () => {
+  await withHome(() => {
+    const question = 'Approve pull request #7 at commit abcdef123456?';
+    const card = ev('card', 1, cardData(question));
+    const of = (events) => signedCardOutcomes(events, readEnrolled()).find((o) => o.card.id === card.id);
+    const plain = of([card, ev('card-answer', 5, { question, label: 'Approve', where: 'panel' })]);
+    assert.equal(plain.decided.label, 'Approve');
+    assert.equal(plain.signed, null);
+    const approval = ev('approval', 4, { pr: 7, commit: 'abcdef123456', words: 'Approve', question });
+    assert.deepEqual(of([card, approval]).signed, { at: T(4), label: null });
+    assert.equal(of([card]).signed, null);
+    // A record that claims to be signed but isn't verified by an enrolled computer proves nothing.
+    const forged = { ...approval, sig: 'AAAA' };
+    assert.equal(of([card, forged]).signed, null);
+    // The same outcomes as cardOutcomes, with only `signed` added.
+    const events = [card, approval, ev('card-answer', 5, { question, label: 'Approve', where: 'panel' })];
+    assert.deepEqual(signedCardOutcomes(events, readEnrolled()).map(({ signed, ...rest }) => rest), cardOutcomes(events, readEnrolled()));
   });
 });

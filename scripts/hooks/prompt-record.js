@@ -80,7 +80,7 @@ import { cardOutcomes } from '../state/views.js';
 import { clearOpen } from '../lib/session-files.js';
 import { cardProblems } from './card-check.js';
 import { openJournal } from '../update/journal.js';
-import { SUGGEST, WHAT_WOULD_YOU_CHANGE, SEND_BACK } from '../lib/calm-words.js';
+import { SUGGEST, WHAT_WOULD_YOU_CHANGE, SEND_BACK, CLOSED_IN_PANEL } from '../lib/calm-words.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 import { PUT_OFF } from '../lib/front-desk.js';
 import { whenSaid, askOf, countedOf } from '../cards/answered.js';
@@ -777,6 +777,15 @@ function responseOf(input) {
   }
 }
 
+// Whether the call was refused rather than answered: the tool reported an error, or its result is the line the mod's
+// hook closes a chat question with. Nothing was clicked then, so nothing is read from the call, whatever its input holds.
+function refused(input, response) {
+  if (input.is_error === true || response?.is_error === true || response?.isError === true) return true;
+  const raw = input.tool_response;
+  const text = typeof raw === 'string' ? raw : (() => { try { return JSON.stringify(raw ?? null); } catch { return ''; } })();
+  return text.includes(CLOSED_IN_PANEL);
+}
+
 // What was answered, and which answers came from a click on a button the card offered
 // (`signable`) or were typed on a single-choice card (`typed`, AskUserQuestion's Other); for one
 // that is neither, `why`. The answers are the tool input's, where Claude Code puts the director's
@@ -785,6 +794,7 @@ function responseOf(input) {
 function clicks(input) {
   const ti = input.tool_input ?? {};
   const response = responseOf(input);
+  if (refused(input, response)) return [];
   const answers = isRecord(ti.answers) ? ti.answers : isRecord(response?.answers) ? response.answers : null;
   if (answers === null) return [];
   const asked = new Map((Array.isArray(ti.questions) ? ti.questions : []).map((q) => [q?.question, q]));

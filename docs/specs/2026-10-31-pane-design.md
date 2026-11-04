@@ -116,6 +116,10 @@ Words, keys, order and behaviour stay held as they are, and the mod proof (`scri
 - the green "Nothing needs you." line;
 - the Input's `label`, which moves to a line above.
 
+## A card that is also open in the chat
+
+A card the First Mate asked in the chat can be answered in the pane, the VS Code panel or another session. The chat's copy then closes by itself. The mod's one hook on a tool call does this, and only for AskUserQuestion: it lets the question open as usual, and once every card in it is answered on proof, it refuses the call with the plain line "Answered in the panel; this question is closed". The turn carries on, and the First Mate says so in one line. This is the one exception to the rule that the mod approves nothing and hooks no tool call, and the reason it is safe is that a refusal is all the hook can return: no answer, no result, no changed input, so nothing is ever recorded in the chat's name. The proof it accepts is this session's own counted pane press, a verified signed record, or, for Lift All stop, STOP being off; a plain card answer proves nothing. The pane's small line still says "Also open in the chat." while the copy is open, and after a counted press the toast says it closes by itself. Copilot's `ask_user` can't be closed this way (no mod runs there); it keeps the hold and the next-turn line. The rule and its pin are in `docs/specs/2026-11-04-one-card-design.md`, section 6.1, and `scripts/mod/validate.js`.
+
 ## The build
 
 Short plan, in order: the look-pinning tests change first, then the drawing kit (`hooks/mod/calm.tsx`), then the pane, the card and Settings use it. Words, keys and behaviour stay. Each of these follows the picture the director chose:

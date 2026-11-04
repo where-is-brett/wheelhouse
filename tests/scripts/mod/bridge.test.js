@@ -1270,3 +1270,22 @@ test('the bridge started through the Node.js version check answers as it does st
   assert.equal(through.stdout, alone.stdout);
   assert.equal(JSON.parse(through.stdout.trim()).ok, false);
 }));
+
+test('closed hands closed.js the project, the question texts and STOP, and answers its two counts', () => withHome(async (home) => {
+  const repo = registered(home);
+  const asked = [];
+  const closedQuestions = (args) => { asked.push(args); return { cards: 1, closed: 1, extra: 'x' }; };
+  const answer = await handle({ cmd: 'closed', cwd: repo, questions: ['one', 'two'], origin: 'pane' }, live({ closedQuestions }));
+  assert.deepEqual(answer, { ok: true, cards: 1, closed: 1 });
+  assert.equal(asked[0].project, P);
+  assert.deepEqual(asked[0].questions, ['one', 'two']);
+  assert.equal(typeof asked[0].stop, 'function');
+  assert.deepEqual(JSON.parse(lineOf(answer)), { ok: true, cards: 1, closed: 1 });
+  // Outside a project, with no questions, too many, or not strings, nothing is asked.
+  assert.deepEqual(await handle({ cmd: 'closed', cwd: repo, questions: ['x'] }, live({ projectOf: () => null, closedQuestions })), { ok: false, says: SAYS.notProject });
+  for (const questions of [undefined, [], ['1', '2', '3', '4', '5'], [1], 'one']) {
+    assert.deepEqual(await handle({ cmd: 'closed', cwd: repo, questions }, live({ closedQuestions })), { ok: false, says: SAYS.unreadable });
+  }
+  assert.equal(asked.length, 1);
+  assert.deepEqual(await handle({ cmd: 'closed', cwd: repo, questions: ['x'] }, live({ closedQuestions: () => { throw new Error('x'); } })), { ok: false, says: SAYS.failed });
+}));

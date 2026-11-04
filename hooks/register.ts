@@ -16,6 +16,8 @@
 //   session.receive  keeps Wheelhouse traffic out of the front desk and ticks instead, the same
 //   turn.start       marks the session busy, for the tick
 //   turn.complete    marks it idle again
+//   tool.call        only on AskUserQuestion: refuses a Wheelhouse card's question with a plain line once it is
+//                    answered elsewhere (hooks/mod/close.ts); the one exception to hooking no tool call
 //   command.run      /wheelhouse-go sends go and answers with the bridge's words; /wheelhouse opens the pane;
 //                    /wheelhouse-digest answers with the bridge's briefing
 //   ui.render        draws the pane, with each card's buttons, STOP or Lift STOP and the settings
@@ -29,6 +31,7 @@ import type { Register, EngineInterface, PromptSubmitInput, SessionRateLimit, Se
 import { ask, send, FAILED, NODE_MISSING, nodeNotFound, type Answer } from './mod/ask'
 import { drawPane, openPane, startPane, turnEnded, turnStarted } from './mod/pane'
 import { keepOut, KEPT_OUT, ownWords } from './mod/messages'
+import { closeWhenAnswered } from './mod/close'
 
 const DIRECTOR = ['composer', 'bridge']
 // The options a reply code can answer: the signed labels of scripts/hooks/prompt-record.js,
@@ -195,6 +198,12 @@ export const register: Register = on => {
     if (words === undefined) $.ui.toast(FAILED)
     return { text: words ?? FAILED }
   })
+
+  // The mod's one hook on a tool call: a Wheelhouse card open in the chat as a question closes by itself once it is
+  // answered elsewhere. It can only refuse, with a plain line (hooks/mod/close.ts); scripts/mod/validate.js pins this
+  // matcher, that file and what it returns. A failure of its own lets the question stand.
+  on('tool.call', { tool: 'AskUserQuestion' }, ($, e, next) => closeWhenAnswered($, e, next))
+    .catch(($, e, next) => next(e))
 
   // The pane's id, PANE_ID, written out so the validator can name the hook; scripts/mod/validate.js
   // checks it is PANE_ID.

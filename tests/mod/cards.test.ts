@@ -22,6 +22,8 @@ const PANE_PROPS = {
 const FAILED = 'That wasn\'t recorded. Try again, or type it in the chat.'
 const OPEN_IN_CHAT = 'Also open in the chat.'
 const OPEN_IN_CHAT_TOAST = 'Counted. The copy in the chat now changes nothing: pick anything or press Skip.'
+const OPEN_IN_CHAT_CLOSES = 'Counted. The copy in the chat closes by itself.'
+const CLOSED_IN_PANEL = 'Answered in the panel; this question is closed'
 const CANT_ANSWER = 'This card can\'t be answered here: ask the First Mate about it.'
 
 const FIRST = 'Merge the banner change?'
@@ -767,6 +769,51 @@ test('a card also open in the chat says so in its small line, and a press on it 
     expect(seen.toasts).toEqual(['Recording…', OPEN_IN_CHAT_TOAST])
     await ui.unmount()
   }
+})
+
+// The chat's own copy of the card, as the question tool holds it: the card's set line, whole on its own line.
+const CHAT_COPY = 'Put pull request #42 live?\nIt changes what your users see.\nNothing goes live meanwhile.\nTo know more, just ask.\nApprove pull request #42 at commit 3f9c2a7b81d0\nReply code: K7QD'
+const COUNTED = { ok: true, submit: [], notice: 'You approved pull request #42 in the panel at 10:34.', note: 'Wheelhouse pane: ...' }
+const ASKED = [{ question: CHAT_COPY, header: 'Approve', multiSelect: false, options: [{ label: 'Approve', description: 'a' }, { label: 'Not now', description: 'b' }] }]
+// The engine's own question dialog, which waits for the director.
+const dialog = (on: any, clock: any) => on('tool.call', async () => {
+  await clock.sleep(600000)
+  return { result: { answers: {} }, text: 'answered' }
+})
+
+test('a counted press closes the same question open in the chat, with the plain line and a toast saying so', async ($, on) => {
+  const { seen, clock, start } = world(on, () => COUNTED, withCards([partsCard({ openInChat: true })]))
+  dialog(on, clock)
+  for (const surface of SURFACES) {
+    await start($, surface)
+    const ui = await mount($, surface)
+    const call = $.tool.call({ tool: 'AskUserQuestion', questions: ASKED })
+    await clock.settle()
+    await ui.press({ key: cardKey('card-1', 'Approve') })
+    await clock.advance(1000)
+    const got = await call
+    expect(got).toEqual({ deny: CLOSED_IN_PANEL })
+    expect(seen.toasts).toContain(OPEN_IN_CHAT_CLOSES)
+    expect(seen.toasts).not.toContain(OPEN_IN_CHAT_TOAST)
+    await ui.unmount()
+  }
+})
+
+test('a press the bridge did not count leaves the chat\'s question open', async ($, on) => {
+  const answers = [{ ok: true, submit: [] }, { ok: false, says: 'That card has already been answered' }]
+  let n = 0
+  const { clock, start } = world(on, () => answers[n++ % 2], withCards([partsCard({ openInChat: true })]))
+  dialog(on, clock)
+  await start($, 'desktop')
+  const ui = await mount($, 'desktop')
+  const call = $.tool.call({ tool: 'AskUserQuestion', questions: ASKED })
+  await clock.settle()
+  await ui.press({ key: cardKey('card-1', 'Approve') })
+  await ui.press({ key: cardKey('card-1', 'Approve') })
+  await clock.advance(5000)
+  await clock.advance(600000)
+  expect(((await call) as any).deny).toBeUndefined()
+  await ui.unmount()
 })
 
 test('a press on a card not open in the chat toasts only Recording…', async ($, on) => {

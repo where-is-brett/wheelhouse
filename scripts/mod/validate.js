@@ -25,8 +25,15 @@ const VALIDATE_MS = 60000;
 // mod's lists, each entry added by the task that first needs it.
 export const HOOKS = [
   'session.start', 'session.measure', 'turn.start', 'turn.complete', 'prompt.submit', 'command.run{command=wheelhouse-go}', 'session.receive',
-  'command.run{command=wheelhouse}', 'command.run{command=wheelhouse-digest}', `ui.render{component=Pane, requestId=${PANE_ID}}`,
+  'command.run{command=wheelhouse}', 'command.run{command=wheelhouse-digest}', 'tool.call{tool=AskUserQuestion}', `ui.render{component=Pane, requestId=${PANE_ID}}`,
 ];
+// The one tool.call hook the mod may have, an exception to the rule that it hooks none (FORBIDDEN_HOOKS keeps tool.call):
+// a Wheelhouse card open in the chat as a question closes by itself once it is answered elsewhere (director's ruling, 5
+// November 2026). It is pinned three ways, so any other use of tool.call fails the check: the hook's exact matcher
+// (CLOSE_HOOK), the file that holds it (CLOSE_FILE), and what it may return, which is { deny: CLOSED_IN_PANEL } and the
+// result of `next(e)` run on the call as it came (closeException).
+export const CLOSE_HOOK = 'tool.call{tool=AskUserQuestion}';
+export const CLOSE_FILE = 'hooks/mod/close.ts';
 // $.clock.now reads the time a tick's answer was read and the time the pane is drawn, for the
 // line saying what is shown is old. $.prompt.submit hands the front desk the prompts a press's
 // answer holds, and the settings view's Ask the front desk, and hands on the prompts a tick's
@@ -488,6 +495,45 @@ export function kitPresses(sources) {
   return problems.length === 0 ? { ok: true } : { ok: false, why: problems.join('; ') };
 }
 
+// The line the closing hook refuses with, as hooks/mod/numbers.ts writes it.
+const CLOSED_WORDS = 'Answered in the panel; this question is closed';
+// The registration, written out whole: the matcher, then one arrow that hands the call to the closing function and nothing
+// else, then at most a catch that lets the call run.
+const CLOSE_ON = /on\(\s*'tool\.call'\s*,\s*\{\s*tool:\s*'AskUserQuestion'\s*\}\s*,\s*\(\$,\s*e,\s*next\)\s*=>\s*closeWhenAnswered\(\$,\s*e,\s*next\)\s*\)(?:\s*\.catch\(\(\$,\s*e,\s*next\)\s*=>\s*next\(e\)\s*\))?/g;
+// What the closing file may not say at all: an answer to the question, a tool result, a changed input.
+const NEVER_IN_CLOSE = /(?<![\w$.])(?:result|results|answers|updatedInput|context|consent|isError)(?![\w$])/;
+
+// closeException(sources) -> { ok, why? }: the mod's one tool.call hook is exactly the closing hook. Read from the code
+// of the module files: 'tool.call' is named once, in hooks/register.ts, as CLOSE_ON writes it; hooks/mod/close.ts returns
+// of its own only { deny: CLOSED_IN_PANEL } (one `deny`, nowhere a result, answers, changed input or context), calls
+// `next` only as next(e), with the call as it came, and CLOSED_IN_PANEL is the line hooks/mod/numbers.ts writes. The
+// report from `claude plugin validate` (checkMod) holds the matcher.
+export function closeException(sources) {
+  const problems = [];
+  const files = new Map(entriesOf(sources));
+  const codes = new Map([...files].map(([file, text]) => [file, codeOf(text)]));
+  const named = [...codes].flatMap(([file, code]) => [...code.matchAll(/['"`]tool\.call['"`]/g)].map(() => file));
+  const registered = codes.get('hooks/register.ts') ?? '';
+  const ons = [...registered.matchAll(CLOSE_ON)].length;
+  if (named.length !== 1 || named[0] !== 'hooks/register.ts' || ons !== 1 || (registered.match(/(?<![\w$.])on\(\s*'tool\.call'/g) ?? []).length !== 1) {
+    problems.push(`The mod must name 'tool.call' once, in hooks/register.ts, as the closing hook on { tool: 'AskUserQuestion' } handing the call to closeWhenAnswered and nothing else; it names it ${named.length} time${named.length === 1 ? '' : 's'}${named.length > 0 ? ` (in ${[...new Set(named)].join(', ')})` : ''}`);
+  }
+  if (!/import\s*\{\s*closeWhenAnswered\s*\}\s*from\s*'\.\/mod\/close'/.test(registered)) problems.push("hooks/register.ts doesn't import closeWhenAnswered from ./mod/close");
+  const close = codes.get(CLOSE_FILE);
+  if (close === undefined) return { ok: false, why: [...problems, `${CLOSE_FILE} can't be found`].join('; ') };
+  const denies = [...close.matchAll(/(?<![\w$.])deny(?![\w$])/g)].length;
+  const shaped = [...close.matchAll(/\{\s*deny\s*:\s*CLOSED_IN_PANEL\s*\}/g)].length;
+  if (denies !== 1 || shaped !== 1) problems.push(`${CLOSE_FILE} must refuse only with { deny: CLOSED_IN_PANEL }, once`);
+  if (NEVER_IN_CLOSE.test(close)) problems.push(`${CLOSE_FILE} says result, answers, updatedInput, context, consent or isError, which the closing hook never returns`);
+  const calls = [...close.matchAll(/(?<![\w$.])next\s*\(/g)].length;
+  const plain = [...close.matchAll(/(?<![\w$.])next\(e\)/g)].length;
+  if (calls !== 1 || plain !== 1) problems.push(`${CLOSE_FILE} must call next only as next(e), once, with the call as it came`);
+  if (!/import\s*\{\s*CLOSED_IN_PANEL\s*\}\s*from\s*'\.\/numbers'/.test(close)) problems.push(`${CLOSE_FILE} doesn't import CLOSED_IN_PANEL from ./numbers`);
+  const words = /^export const CLOSED_IN_PANEL = '([^'\n]*)'/m.exec(files.get('hooks/mod/numbers.ts') ?? '');
+  if (words === null || words[1] !== CLOSED_WORDS) problems.push(`hooks/mod/numbers.ts must write CLOSED_IN_PANEL as '${CLOSED_WORDS}'`);
+  return problems.length === 0 ? { ok: true } : { ok: false, why: problems.join('; ') };
+}
+
 // scripts/setup/git.js is the one file of scripts/setup/ the bridge may reach: it is git's fence (an
 // environment and an allowed list, importing only scripts/lib/), the records' git
 // takes through scripts/lib/safe-git.js, and it writes no settings. It is to move into scripts/lib/.
@@ -638,7 +684,7 @@ export function checkMod({ report, sources, hooksJson, allow = {} }) {
   }
   for (const hook of hooks) {
     if (MATCHED_HOOKS.includes(hook)) problems.push(`The mod hooks ${hook} with no matcher, which would draw every component the engine draws`);
-    if (matchesForbidden(hook, FORBIDDEN_HOOKS)) problems.push(`The mod hooks ${hook}, which the mod must never hook`);
+    if (hook !== CLOSE_HOOK && matchesForbidden(hook, FORBIDDEN_HOOKS)) problems.push(`The mod hooks ${hook}, which the mod must never hook`);
     else if (!allowedHooks.includes(hook)) problems.push(`The mod hooks ${hook}, which its brief doesn't name`);
   }
   for (const hook of allowedHooks) if (!hooks.includes(hook)) problems.push(`The mod doesn't hook ${hook}`);
@@ -682,7 +728,7 @@ export function checkMod({ report, sources, hooksJson, allow = {} }) {
     }
     if (/(?<![\w$])\$\s*(?:\?\.)?\s*\[/.test(code)) problems.push(`The mod's source reads a member of $ by a computed name, which the checks can't follow (in ${file})`);
   }
-  for (const check of [bridgeArgv(sources), paneOrigin(sources), kitPresses(sources)]) if (!check.ok) problems.push(check.why);
+  for (const check of [bridgeArgv(sources), paneOrigin(sources), kitPresses(sources), closeException(sources)]) if (!check.ok) problems.push(check.why);
   return { hooks, calls, problems };
 }
 

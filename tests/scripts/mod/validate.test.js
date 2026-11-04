@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import {
   checkMod, membersIn, moduleFiles, readMod, bridgeArgv, paneOrigin, kitPresses, bridgeImports,
-  HOOKS, CALLS, FORBIDDEN_HOOKS, FORBIDDEN_CALLS, matchesForbidden,
+  HOOKS, CALLS, CLOSE_HOOK, CLOSE_FILE, closeException, FORBIDDEN_HOOKS, FORBIDDEN_CALLS, matchesForbidden,
 } from '../../../scripts/mod/validate.js';
 import { SIGNED_LABELS } from '../../../scripts/hooks/prompt-record.js';
 import { CODE_ALPHABET } from '../../../scripts/state/card-lines.js';
@@ -22,9 +22,14 @@ const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 const LISTED = HOOKS.join(', ');
 const ARGV = "['node', `${$.plugin.root}/scripts/hooks/node-floor.cjs`, `${$.plugin.root}/scripts/mod/bridge.js`]";
 // The module's source as it stands: the bridge's one call in hooks/mod/ask.ts.
+const CLOSE_ON = "on('tool.call', { tool: 'AskUserQuestion' }, ($, e, next) => closeWhenAnswered($, e, next)).catch(($, e, next) => next(e))";
+const CLOSE_TS = "import { CLOSED_IN_PANEL } from './numbers'\nexport const closeWhenAnswered = async ($, e, next) => { const running = next(e); return Promise.race([running, Promise.resolve({ deny: CLOSED_IN_PANEL })]) }";
+const NUMBERS_TS = "export const CLOSED_IN_PANEL = 'Answered in the panel; this question is closed'";
 const SOURCES = {
-  'hooks/register.ts': 'export const register = (on) => { on("session.start", async ($, e, next) => { await ask($, {}); return next(e) }) }',
+  'hooks/register.ts': `import { closeWhenAnswered } from './mod/close'\nexport const register = (on) => { on("session.start", async ($, e, next) => { await ask($, {}); return next(e) }); ${CLOSE_ON} }`,
   'hooks/mod/ask.ts': `export const ask = async ($, request) => $.process.run(${ARGV}, { stdin: JSON.stringify(request) })`,
+  'hooks/mod/close.ts': CLOSE_TS,
+  'hooks/mod/numbers.ts': NUMBERS_TS,
 };
 
 // A report recorded from `claude plugin validate --json` in check 40, paths replaced by placeholders.
@@ -193,7 +198,11 @@ test('$.session.append is a call the mod may make, for a counted press shown in 
 });
 
 test('the forbidden and allowed lists never overlap', () => {
-  for (const hook of HOOKS) assert.equal(matchesForbidden(hook, FORBIDDEN_HOOKS), false, hook);
+  // tool.call stays forbidden; the closing hook is the one exception, named apart (CLOSE_HOOK) and pinned.
+  for (const hook of HOOKS.filter((h) => h !== CLOSE_HOOK)) assert.equal(matchesForbidden(hook, FORBIDDEN_HOOKS), false, hook);
+  assert.equal(matchesForbidden(CLOSE_HOOK, FORBIDDEN_HOOKS), true);
+  assert.equal(CLOSE_HOOK, 'tool.call{tool=AskUserQuestion}');
+  assert.equal(CLOSE_FILE, 'hooks/mod/close.ts');
   for (const call of CALLS) assert.equal(matchesForbidden(call, FORBIDDEN_CALLS), false, call);
   assert.deepEqual(FORBIDDEN_HOOKS, ['tool.check', 'tool.call', 'tool.describe', 'config.set', 'agent.offer', 'plugin.register', 'classic.*']);
   assert.deepEqual(FORBIDDEN_CALLS, ['$.tool.*', '$.agent.*', '$.fs.*', '$.settings.*', '$.http.*', '$.model.*', '$.command.run', '$.prompt.fill', '$.process.spawn', '$.env.set']);
@@ -465,7 +474,7 @@ test('the mod reads a reply code from the code alphabet', () => {
 test('the mod\'s numbers are the scripts\' numbers, named once in hooks/mod/numbers.ts', () => {
   const source = fs.readFileSync(path.join(ROOT, 'hooks', 'mod', 'numbers.ts'), 'utf8');
   const written = Object.fromEntries([...source.matchAll(/^export const ([A-Z_]+) = (.*)$/gm)].map((m) => [m[1], m[2]]));
-  assert.deepEqual(Object.keys(written).sort(), ['ASK_MS', 'BRIDGE_MS', 'FOREMAN_LEAD', 'HIDE_WHY', 'MESSAGE_LEAD', 'NODE_MISSING', 'NOTHING_NEEDS_YOU', 'NOT_HANDED', 'NOT_HERE', 'NOT_RECORDED', 'ONLY_YOU_LIFT', 'OPEN_IN_CHAT', 'OPEN_IN_CHAT_TOAST', 'PANE_ID', 'PANE_LEAD', 'RECORDING', 'SENT_TO_FRONT_DESK', 'SETTING_UP', 'SHOW_ME', 'STALE_TICKS', 'STOP_HALTS', 'SUGGEST', 'TICK_ASK_MS', 'TICK_MS', 'UNDO_MS', 'WATCH_BRIDGE_MS', 'WHAT_CHANGED', 'WHAT_WOULD_YOU_CHANGE', 'WHY']);
+  assert.deepEqual(Object.keys(written).sort(), ['ASK_MS', 'BRIDGE_MS', 'CLOSED_IN_PANEL', 'FOREMAN_LEAD', 'HIDE_WHY', 'MESSAGE_LEAD', 'NODE_MISSING', 'NOTHING_NEEDS_YOU', 'NOT_HANDED', 'NOT_HERE', 'NOT_RECORDED', 'ONLY_YOU_LIFT', 'OPEN_IN_CHAT', 'OPEN_IN_CHAT_CLOSES', 'OPEN_IN_CHAT_TOAST', 'PANE_ID', 'PANE_LEAD', 'RECORDING', 'SENT_TO_FRONT_DESK', 'SETTING_UP', 'SHOW_ME', 'STALE_TICKS', 'STOP_HALTS', 'SUGGEST', 'TICK_ASK_MS', 'TICK_MS', 'UNDO_MS', 'WATCH_BRIDGE_MS', 'WHAT_CHANGED', 'WHAT_WOULD_YOU_CHANGE', 'WHY']);
   const value = (name) => JSON.parse(written[name].replaceAll("'", '"'));
   assert.equal(value('PANE_ID'), PANE_ID);
   assert.equal(value('TICK_MS'), TICK_MS);
@@ -479,7 +488,7 @@ test('the mod\'s numbers are the scripts\' numbers, named once in hooks/mod/numb
   // The Calm set words are scripts/lib/calm-words.js's, written as the mod says them (a quoted
   // string may hold an escaped apostrophe, so each is read as the string it is).
   const word = (name) => new Function(`return ${written[name]}`)();
-  for (const name of ['STOP_HALTS', 'ONLY_YOU_LIFT', 'NOTHING_NEEDS_YOU', 'RECORDING', 'NOT_HERE', 'SETTING_UP', 'WHY', 'HIDE_WHY', 'SHOW_ME', 'WHAT_CHANGED', 'NOT_HANDED', 'NOT_RECORDED', 'SUGGEST', 'WHAT_WOULD_YOU_CHANGE', 'SENT_TO_FRONT_DESK', 'OPEN_IN_CHAT', 'OPEN_IN_CHAT_TOAST']) {
+  for (const name of ['STOP_HALTS', 'ONLY_YOU_LIFT', 'NOTHING_NEEDS_YOU', 'RECORDING', 'NOT_HERE', 'SETTING_UP', 'WHY', 'HIDE_WHY', 'SHOW_ME', 'WHAT_CHANGED', 'NOT_HANDED', 'NOT_RECORDED', 'SUGGEST', 'WHAT_WOULD_YOU_CHANGE', 'SENT_TO_FRONT_DESK', 'OPEN_IN_CHAT', 'OPEN_IN_CHAT_CLOSES', 'OPEN_IN_CHAT_TOAST', 'CLOSED_IN_PANEL']) {
     assert.equal(word(name), calmWords[name], name);
   }
   // The words for no Node.js are the hooks' check's (scripts/hooks/node-floor.cjs).
@@ -776,4 +785,71 @@ test('a member of $ after a // in text that is not a comment is found, whatever 
   // Allowed members named only in comments are not a problem.
   const comment = checkMod({ report, sources: { ...repoSources(), 'hooks/mod/more.ts': '// calls $.ui.toast and $.plugin.root\n' } });
   assert.deepEqual(comment.problems, []);
+});
+
+// --- The one tool.call hook: a Wheelhouse card's chat question closes by itself once answered elsewhere ---
+
+const closeReport = (...more) => reportWith([`./register.ts hooks: ${LISTED}${more.map((m) => `, ${m}`).join('')}`, './register.ts calls: $.process.run']);
+const withClose = (over) => Object.fromEntries(Object.entries({ ...SOURCES, ...over }).filter(([, text]) => text !== undefined));
+
+test('the closing hook is the one tool.call hook allowed, by its exact matcher', () => {
+  assert.deepEqual(checkMod({ report: closeReport(), sources: SOURCES }).problems, []);
+  // Any other tool.call hook fails: another tool, a bare one, a wider matcher, or a second of the same.
+  for (const other of ['tool.call', 'tool.call{tool=Bash}', 'tool.call{tool=AskUserQuestion, extra=1}', 'tool.call{tool=*}']) {
+    const result = checkMod({ report: closeReport(other), sources: SOURCES });
+    assert.match(result.problems.join('\n'), /which the mod must never hook/, other);
+  }
+  assert.match(checkMod({ report: closeReport(CLOSE_HOOK), sources: SOURCES }).problems.join('\n'), /hooks an event twice/);
+  // The other tool hooks stay forbidden, the closing hook's name or not.
+  assert.match(checkMod({ report: closeReport('tool.check{tool=AskUserQuestion}'), sources: SOURCES }).problems.join('\n'), /tool\.check\{tool=AskUserQuestion\}, which the mod must never hook/);
+  // The hook missing from the report fails too.
+  assert.match(checkMod({ report: reportWith([`./register.ts hooks: ${HOOKS.filter((h) => h !== CLOSE_HOOK).join(', ')}`]), sources: SOURCES }).problems.join('\n'), /doesn't hook tool\.call\{tool=AskUserQuestion\}/);
+});
+
+test('the closing hook may only refuse with its plain line or return what next(e) gave', () => {
+  assert.deepEqual(closeException(SOURCES), { ok: true });
+  const bad = (over, pattern) => {
+    const got = closeException(withClose(over));
+    assert.equal(got.ok, false, JSON.stringify(over));
+    assert.match(got.why, pattern);
+  };
+  const body = (inner) => `import { CLOSED_IN_PANEL } from './numbers'\nexport const closeWhenAnswered = async ($, e, next) => { ${inner} }`;
+  // Another reason, a result, an answer, a changed input or a context.
+  bad({ [CLOSE_FILE]: body("next(e); return { deny: 'Answered in the panel' }") }, /must refuse only with \{ deny: CLOSED_IN_PANEL \}/);
+  bad({ [CLOSE_FILE]: body('next(e); return { deny: CLOSED_IN_PANEL, result: { answers: {} } }') }, /never returns|must refuse only/);
+  bad({ [CLOSE_FILE]: body('next(e); return { result: { answers: { q: "Approve" } } }; const a = { deny: CLOSED_IN_PANEL }') }, /never returns/);
+  bad({ [CLOSE_FILE]: body('next(e); return { updatedInput: e, deny: CLOSED_IN_PANEL }') }, /never returns|must refuse only/);
+  bad({ [CLOSE_FILE]: body('next(e); return { context: "x" }; const a = { deny: CLOSED_IN_PANEL }') }, /never returns/);
+  // A rewritten call, or next called twice or not at all.
+  bad({ [CLOSE_FILE]: body('next({ ...e, answers: {} }); return { deny: CLOSED_IN_PANEL }') }, /next only as next\(e\)/);
+  bad({ [CLOSE_FILE]: body('next(e); next(e); return { deny: CLOSED_IN_PANEL }') }, /next only as next\(e\)/);
+  bad({ [CLOSE_FILE]: body('return { deny: CLOSED_IN_PANEL }') }, /next only as next\(e\)/);
+  // A second deny of another shape, or a line other than the director's agreed words.
+  bad({ [CLOSE_FILE]: body('next(e); const x = { deny: "x" }; return { deny: CLOSED_IN_PANEL }') }, /must refuse only/);
+  bad({ 'hooks/mod/numbers.ts': "export const CLOSED_IN_PANEL = 'Closed'" }, /must write CLOSED_IN_PANEL/);
+  bad({ [CLOSE_FILE]: undefined }, /can't be found/);
+});
+
+test('the closing hook is registered in hooks/register.ts alone, on AskUserQuestion, handing over to closeWhenAnswered', () => {
+  const bad = (over, pattern) => {
+    const got = closeException(withClose(over));
+    assert.equal(got.ok, false, JSON.stringify(over));
+    assert.match(got.why, pattern);
+  };
+  const register = (on) => `import { closeWhenAnswered } from './mod/close'\nexport const register = (on) => { ${on} }`;
+  bad({ 'hooks/register.ts': register("on('tool.call', { tool: 'Bash' }, ($, e, next) => closeWhenAnswered($, e, next))") }, /name 'tool\.call' once/);
+  bad({ 'hooks/register.ts': register("on('tool.call', { tool: 'AskUserQuestion' }, ($, e, next) => ({ result: { answers: {} } }))") }, /name 'tool\.call' once/);
+  bad({ 'hooks/register.ts': register("on('tool.call', { tool: 'AskUserQuestion' }, ($, e, next) => closeWhenAnswered($, { ...e, answers: {} }, next))") }, /name 'tool\.call' once/);
+  bad({ 'hooks/register.ts': register("on('tool.call', ($, e, next) => closeWhenAnswered($, e, next))") }, /name 'tool\.call' once/);
+  bad({ 'hooks/register.ts': register(`${CLOSE_ON}; ${CLOSE_ON}`) }, /name 'tool\.call' once/);
+  bad({ 'hooks/register.ts': register('') }, /name 'tool\.call' once/);
+  bad({ 'hooks/mod/x.ts': "export const f = (on) => on('tool.call', { tool: 'AskUserQuestion' }, ($, e, next) => next(e))" }, /name 'tool\.call' once.*hooks\/mod\/x\.ts/);
+  bad({ 'hooks/mod/x.ts': 'export const name = "tool.call"' }, /name 'tool\.call' once/);
+  // A comment naming it is not a registration.
+  assert.deepEqual(closeException(withClose({ 'hooks/mod/x.ts': "// on('tool.call', { tool: 'Bash' }, f)" })), { ok: true });
+  bad({ 'hooks/register.ts': `export const register = (on) => { ${CLOSE_ON} }` }, /doesn't import closeWhenAnswered/);
+});
+
+test('the real closing hook passes the pin', () => {
+  assert.deepEqual(closeException(repoSources()), { ok: true });
 });

@@ -298,6 +298,16 @@ export function confirmationTimes(events, enrolled) {
 // but those five decides it. `answers` are all its answers, in order; `explained` the times of its
 // Explain more and Why? answers; `steered` the time of its latest Suggest a change… answer
 // made after the card, or null.
+// The earliest verified signed record that decides a card: one carrying the card's question (a click's approval or
+// action) or confirming the event its confirm line names. Undefined when there is none. A plain card answer is never
+// one, so what an agent could write through the helper's plain route decides nothing here.
+function signedForCard(card, { answeredBy, confirmations }) {
+  const question = typeof card.data?.question === 'string' ? card.data.question : card.data?.title;
+  const carried = answeredBy.find((e) => byOrder(card, e) < 0 && e.data.question === question);
+  const confirmed = confirmedAfter(confirmations, card, confirmNamed(typeof card.data?.line === 'string' ? card.data.line : question))?.event;
+  return [carried, confirmed].filter(Boolean).sort(byOrder)[0];
+}
+
 function outcomesOf(sorted, { confirmations, answeredBy, lean = false }) {
   const answers = sorted.filter((e) => e.kind === 'card-answer');
   const questionOf = (card) => (typeof card.data?.question === 'string' ? card.data.question : card.data?.title);
@@ -311,12 +321,7 @@ function outcomesOf(sorted, { confirmations, answeredBy, lean = false }) {
       && (card.data?.kind !== 'approval' || byOrder(card, a) < 0)));
   // Words typed on a blind card decide it too: they stand in for its pick, and its answer card follows.
   const decides = (card, label) => !PUT_OFF.includes(label) && (card.data?.kind === 'blind' || !Array.isArray(card.data?.options) || card.data.options.includes(label));
-  const signedFor = (card) => {
-    const question = questionOf(card);
-    const carried = answeredBy.find((e) => byOrder(card, e) < 0 && e.data.question === question);
-    const confirmed = confirmedAfter(confirmations, card, confirmNamed(typeof card.data?.line === 'string' ? card.data.line : question))?.event;
-    return [carried, confirmed].filter(Boolean).sort(byOrder)[0];
-  };
+  const signedFor = (card) => signedForCard(card, { answeredBy, confirmations });
   return sorted.filter((e) => e.kind === 'card').map((card) => {
     const mine = answersTo(card);
     // At Lean, a ruling's confirm card is decided by its first chat click, Not now included (ruling P5-53).
@@ -352,6 +357,19 @@ function stampSteers(questions, outcomes, sorted) {
 export function cardOutcomes(events, enrolled) {
   const { sorted } = uniqueSorted(events);
   return outcomesOf(sorted, { confirmations: confirmationsOf(sorted, enrolled).confirmations, answeredBy: answeredByOf(sorted, enrolled) });
+}
+
+// signedCardOutcomes(events, enrolled) -> cardOutcomes' entries, each with `signed`: the verified signed record that
+// decides the card ({ at, label }), or null when none does. A card decided only by a plain answer has `decided` and no
+// `signed`, since a plain answer proves nobody pressed anything.
+export function signedCardOutcomes(events, enrolled) {
+  const { sorted } = uniqueSorted(events);
+  const confirmations = confirmationsOf(sorted, enrolled).confirmations;
+  const answeredBy = answeredByOf(sorted, enrolled);
+  return outcomesOf(sorted, { confirmations, answeredBy }).map((o) => {
+    const record = signedForCard(o.card, { answeredBy, confirmations });
+    return { ...o, signed: record === undefined ? null : { at: record.at, label: typeof record.data?.label === 'string' ? record.data.label : null } };
+  });
 }
 
 // A `known:<concept>` setting of false counts without a confirmation: it only makes explanations

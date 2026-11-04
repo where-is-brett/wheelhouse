@@ -2147,3 +2147,34 @@ test('a Start stops on what the helper\'s checks find at the click, and on a hel
     }
   });
 });
+
+// --- A question the mod closed by itself records no chat click ---
+
+const CLOSED_WORDS = 'Answered in the panel; this question is closed';
+
+test('a question the mod closed records no chat click, whatever the call carries', async () => {
+  await withHome(async () => {
+    const q = `${approvalLine(7, FULL)}? It changes the sign-in.`;
+    const closed = (over) => ({ ...input({}, { response: false }), tool_input: { questions: [{ question: q, options: BUTTONS, multiSelect: false }] }, ...over });
+    // The deny's words as the tool response, with no answers anywhere.
+    for (const response of [CLOSED_WORDS, { is_error: true, content: CLOSED_WORDS }, { isError: true, content: CLOSED_WORDS }]) {
+      const c = fake();
+      await decide(closed({ tool_response: response }), deps(c));
+      assert.deepEqual(c.calls.write, []);
+      assert.deepEqual(c.calls.record, []);
+    }
+    // Even with an answer filled in on the input by something else, a closed call signs nothing.
+    for (const response of [CLOSED_WORDS, { is_error: true, answers: { [q]: 'Approve' } }, { content: CLOSED_WORDS, answers: { [q]: 'Approve' } }]) {
+      const c = fake();
+      const call = closed({ tool_response: response });
+      call.tool_input = { ...call.tool_input, answers: { [q]: 'Approve' } };
+      await decide(call, deps(c));
+      assert.deepEqual(c.calls.write, [], JSON.stringify(response));
+      assert.deepEqual(c.calls.record, [], JSON.stringify(response));
+    }
+    // The same call answered for real still signs.
+    const c = fake();
+    await decide(input({ [q]: 'Approve' }), deps(c));
+    assert.equal(c.calls.record.length, 1);
+  });
+});
