@@ -195,7 +195,7 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
     const loaded = deps.chatRules !== undefined ? {} : await chat.loadRules(root);
     const rules = deps.chatRules ?? loaded.rules;
     const scan = deps.scanText ?? loaded.scan;
-    chat.registerChatTools({ vscode, client: clientNow, desk, project: projectNow, folder, subscriptions: context.subscriptions, rules });
+    chat.registerChatTools({ vscode, client: clientNow, desk, project: projectNow, folder, subscriptions: context.subscriptions, rules, panel: deps.chatPanel ?? loaded.panel });
     if (typeof folder === 'string') {
       const file = deps.commandsFile ?? real.commandsFile;
       const terminal = chat.watchTerminal({ vscode, record: (line) => chat.commandFile(file?.(), { scan })(line) });

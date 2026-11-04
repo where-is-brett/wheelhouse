@@ -13,6 +13,7 @@ import { cardButtons } from '../mod/buttons.js';
 import { dataHash } from '../state/events.js';
 import { cardOutcomes } from '../state/views.js';
 import { answeredWords, askOf, subjectOf } from '../cards/answered.js';
+import { sinceLine } from '../cards/panel-words.js';
 import { contextText } from './context.js';
 import { readStatus } from '../safekeeping/readings.js';
 import { paneFrom } from './mod-pane.js';
@@ -323,11 +324,20 @@ const VIEWS = {
     if (got.refused) return { ok: false, refused: got.refused };
     const numbered = numberedWaiting(got.views, got.cards ?? []);
     const at = typeof now === 'function' ? now() : new Date();
-    const decided = typeof source.events === 'function' ? decidedOutcomes(source.events(), source.enrolled?.() ?? [], new Date(at.getTime() - RECENT_MS)) : [];
-    const lines = [...(numbered.length === 0 ? ['Nothing is waiting for the director.'] : numbered.map((item) => `${item.n}. ${item.what}`)), ...recentLines(decided, at)];
+    // `vscode: { ids?, here? }` asks whether a live VS Code panel answers the cards (the card commands run where the home
+    // can't be read); a source that can't tell, or any failure, says nothing and the cards are asked in the chat.
+    let vscode = {};
+    if (isPlain(args.vscode) && typeof source.vscode === 'function') {
+      try { vscode = { vscode: await source.vscode(args.vscode) }; } catch { vscode = {}; }
+    }
+    // With `since` (a time), a line also names the cards answered after it anywhere but the chat, as the front desk's `views waiting --since` does.
+    const from = typeof args.since === 'string' && !Number.isNaN(Date.parse(args.since)) ? Date.parse(args.since) : null;
+    const decided = typeof source.events === 'function' ? decidedOutcomes(source.events(), source.enrolled?.() ?? [], new Date(Math.min(at.getTime() - RECENT_MS, from ?? Infinity))) : [];
+    const told = from === null ? null : sinceLine(decided, from, at);
+    const lines = [...(numbered.length === 0 ? ['Nothing is waiting for the director.'] : numbered.map((item) => `${item.n}. ${item.what}`)), ...recentLines(decided, at), ...(told === null ? [] : [told])];
     const given = isPlain(args.outcomes) && typeof args.outcomes.since === 'string' && typeof source.events === 'function'
       ? { outcomes: decidedOutcomes(source.events(), source.enrolled?.() ?? [], new Date(args.outcomes.since)) } : {};
-    return { ok: true, data: { ...got, numbered, ...given }, lines };
+    return { ok: true, data: { ...got, numbered, ...given, ...vscode }, lines };
   },
 
   async card(args, source) {

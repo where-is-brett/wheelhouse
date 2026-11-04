@@ -23,14 +23,25 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 // The scripts this loads, relative to the add-on's `wheelhouse/` folder. The pack walks their imports (scripts/addon/pack.js).
-const CHAT_LOADS = Object.freeze({ rules: 'scripts/agents/chat-clicks.js', secrets: 'scripts/state/secret-scan.js' });
+const CHAT_LOADS = Object.freeze({
+  rules: 'scripts/agents/chat-clicks.js',
+  secrets: 'scripts/state/secret-scan.js',
+  held: 'scripts/agents/vscode-held.js',
+  words: 'scripts/cards/panel-words.js',
+});
 
 // The rules a click is held to and the secret scan, from the add-on's own copy of the scripts; {} where they can't be loaded.
+// `panel` is what the board tool needs to hold a project's cards back for the panel and to tell what was answered there; it
+// is left out (and the tool gives the cards) where the scripts for it can't be loaded.
 async function loadRules(root) {
   try {
     const { pathToFileURL } = require('node:url');
-    const [rules, secrets] = await Promise.all(Object.values(CHAT_LOADS).map((rel) => import(pathToFileURL(path.join(root, rel)).href)));
-    return { rules: { hash: rules.CARD_HASH, steps: rules.CONFIRMED_STEPS }, scan: secrets.scanText };
+    const [rules, secrets, held, words] = await Promise.all(Object.values(CHAT_LOADS).map((rel) => import(pathToFileURL(path.join(root, rel)).href)));
+    return {
+      rules: { hash: rules.CARD_HASH, steps: rules.CONFIRMED_STEPS },
+      scan: secrets.scanText,
+      panel: { held: held.heldForVscode, line: words.paneLine, since: words.sinceLine },
+    };
   } catch {
     return {};
   }
@@ -95,13 +106,27 @@ function boardText(pane) {
 }
 
 // Registers the two chat tools. `client` is the helper's; `desk` reads the board. The tools press nothing.
-function registerChatTools({ vscode, client, desk, project, folder, subscriptions, rules }) {
+function registerChatTools({ vscode, client, desk, project, folder, subscriptions, rules, panel }) {
   if (typeof vscode?.lm?.registerTool !== 'function') return [];
   const result = (message) => {
     const part = vscode.LanguageModelTextPart ? new vscode.LanguageModelTextPart(message) : { value: message };
     return vscode.LanguageModelToolResult ? new vscode.LanguageModelToolResult([part]) : { content: [part] };
   };
   const projectNow = () => (typeof project === 'function' ? project() : project);
+  // What the director answered, anywhere but the chat, since this tool was last called in this window (kept in memory); the
+  // first call has no earlier call, so it gives none.
+  let lastCall = null;
+  async function answeredSince(at) {
+    const from = lastCall;
+    lastCall = at;
+    if (from === null || typeof panel?.since !== 'function') return null;
+    try {
+      const got = await desk?.read('waiting', { outcomes: { since: from.toISOString() } });
+      return got?.ok === true ? panel.since(got.data?.outcomes, from.getTime(), at) : null;
+    } catch {
+      return null;
+    }
+  }
   const made = [
     vscode.lm.registerTool(RECORD_TOOL, {
       async invoke(options) {
@@ -111,9 +136,20 @@ function registerChatTools({ vscode, client, desk, project, folder, subscription
     }),
     vscode.lm.registerTool(BOARD_TOOL, {
       async invoke() {
+        const at = new Date();
+        const since = await answeredSince(at);
         try {
-          const got = await desk?.read('glance', { pane: true, helperUp: true, at: new Date().toISOString() });
-          if (got?.ok === true && got.data?.pane) return result(boardText(got.data.pane));
+          const got = await desk?.read('glance', { pane: true, helperUp: true, at: at.toISOString() });
+          if (got?.ok === true && got.data?.pane) {
+            const cards = Array.isArray(got.data.pane.cards) ? got.data.pane.cards : [];
+            // Cards a live panel answers for a project that runs this chat's agent are not given here: the chat says they
+            // wait in the panel. Anything that goes wrong in the check gives the cards.
+            let held = null;
+            try {
+              if (cards.length > 0 && panel?.held({ project: projectNow(), folder }, at.getTime()) === true) held = panel.line(cards.length);
+            } catch { held = null; }
+            return result([held ?? boardText(got.data.pane), since].filter(Boolean).join('\n'));
+          }
         } catch { /* Said below. */ }
         return result('The board could not be read just now.');
       },
