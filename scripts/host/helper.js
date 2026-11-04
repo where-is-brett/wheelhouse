@@ -5933,15 +5933,38 @@ export async function startHelper({
   // The board's two lines that need the keys folder or a write in the home, which no hook may do: the look at Wheelhouse's own
   // files and the key renewal. The helper works them out and the board reads them from its health answer; kept ten minutes.
   let guardKept = null;
+  // The look at Wheelhouse's own files follows the plugin folders Claude Code has in use (not the helper's own), and may read
+  // the release tag's files; so it runs in the background, and the board reads its last answer. Kept ten minutes.
+  let ownKept = null;
+  let ownRunning = false;
+  function ownFilesLines() {
+    const at = now().getTime();
+    if (!ownRunning && (ownKept === null || at - ownKept.at >= 10 * 60 * 1000)) {
+      ownRunning = true;
+      (async () => {
+        const lines = {};
+        try {
+          // A helper run from a folder other than the installed plugin (a test, a checkout) looks at that folder only.
+          const installed = pluginRoot === OWN_ROOT;
+          const where = {
+            root: pluginRoot,
+            now,
+            ...(installed ? { projects: registeredProjects().map(({ record }) => record?.folder).filter(Boolean) } : { claudeHome: path.join(wheelhouseHome(), 'no-claude-home') }),
+          };
+          const result = await checkOwnFiles(where);
+          const line = ownFilesLine(result.changed, { ...where, folders: result.folders.map((f) => f.folder) });
+          if (line !== null) lines.ownFilesLine = line;
+          if (typeof result.calm === 'string') lines.ownFilesCalm = result.calm;
+        } catch { /* the look is made again next time */ }
+        ownKept = { at: now().getTime(), lines };
+      })().finally(() => { ownRunning = false; });
+    }
+    return ownKept?.lines ?? {};
+  }
   function guardLines() {
     const at = now().getTime();
-    if (guardKept !== null && at - guardKept.at < 10 * 60 * 1000) return guardKept.lines;
+    if (guardKept !== null && at - guardKept.at < 10 * 60 * 1000) return { ...guardKept.lines, ...ownFilesLines() };
     const lines = {};
-    try {
-      const where = { root: pluginRoot, now };
-      const line = ownFilesLine(checkOwnFiles(where).changed, where);
-      if (line !== null) lines.ownFilesLine = line;
-    } catch { /* the look is made again next time */ }
     try {
       const enrolled = readEnrolled();
       const events = registeredProjects().flatMap(({ project }) => listEvents(stateDir(project), { report: () => {} }));
@@ -5949,7 +5972,7 @@ export async function startHelper({
       if (due.due) lines.keyRenewal = { due: true, why: due.why };
     } catch { /* as above */ }
     guardKept = { at, lines };
-    return lines;
+    return { ...lines, ...ownFilesLines() };
   }
 
   // What keeps the helper from stopping now, in a few plain words, or null when it is idle. Doubt counts as busy.
