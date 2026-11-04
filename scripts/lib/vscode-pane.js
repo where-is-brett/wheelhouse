@@ -51,7 +51,7 @@ function writeJson(file, value) {
 // Marks the project's VS Code panel as ticking at `at` and last seen at `visible` (null while never seen).
 export function markVscodePane(project, { at, visible, window } = {}) {
   if (!isTime(at)) return false;
-  return writeJson(fileOf(project, ''), {
+  return writeJson(fileOf(project, '.mark'), {
     at,
     visible: isTime(visible) ? visible : null,
     surface: 'vscode',
@@ -62,7 +62,7 @@ export function markVscodePane(project, { at, visible, window } = {}) {
 // Whether a VS Code panel is live for the project at `now`: a tick and a sighting both within LIVE_MS.
 export function vscodePaneLive(project, now) {
   try {
-    const mark = readJson(fileOf(project, ''));
+    const mark = readJson(fileOf(project, '.mark'));
     if (mark === null || !isTime(mark.at) || !isTime(mark.visible) || !isTime(now)) return false;
     return now - mark.at <= LIVE_MS && now - mark.visible <= LIVE_MS;
   } catch {

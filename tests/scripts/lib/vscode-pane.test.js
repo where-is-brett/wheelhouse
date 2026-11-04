@@ -23,15 +23,15 @@ test('a tick without a recent sighting is not live', () => withHome(() => {
 
 test('the mark holds the surface and the window', () => withHome(() => {
   markVscodePane('p1', { at: T, visible: T, window: 'abc' });
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(panes(), 'vscode-p1.json'), 'utf8')), { at: T, visible: T, surface: 'vscode', window: 'abc' });
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(panes(), 'vscode-p1.mark.json'), 'utf8')), { at: T, visible: T, surface: 'vscode', window: 'abc' });
 }));
 
 test('a missing file, a half-written file, a null sighting and an unsafe id are not live and never throw', () => withHome(() => {
   assert.equal(vscodePaneLive('none', T), false);
   fs.mkdirSync(panes(), { recursive: true });
-  fs.writeFileSync(path.join(panes(), 'vscode-half.json'), '{');
+  fs.writeFileSync(path.join(panes(), 'vscode-half.mark.json'), '{');
   assert.equal(vscodePaneLive('half', T), false);
-  fs.writeFileSync(path.join(panes(), 'vscode-odd.json'), JSON.stringify({ at: 'x', visible: {} }));
+  fs.writeFileSync(path.join(panes(), 'vscode-odd.mark.json'), JSON.stringify({ at: 'x', visible: {} }));
   assert.equal(vscodePaneLive('odd', T), false);
   markVscodePane('p2', { at: T, visible: null, window: 'w' });
   assert.equal(vscodePaneLive('p2', T), false);
@@ -50,6 +50,15 @@ test('takeVscodeHere gives true once, then false, and false after 121 seconds', 
   assert.equal(takeVscodeHere('p1', ['c1', 'c2'], T + 2000), false);
   markVscodeHere('p1', ['c3'], T);
   assert.equal(takeVscodeHere('p1', ['c3'], T + 121000), false);
+}));
+
+test('a project named like another\'s here file collides with nothing', () => withHome(() => {
+  markVscodeHere('p1', ['c1'], T);
+  markVscodePane('p1.here', { at: T, visible: T, window: 'w' });
+  markVscodePane('p1', { at: T, visible: T, window: 'w' });
+  assert.equal(takeVscodeHere('p1', ['c1'], T), true);
+  assert.equal(vscodePaneLive('p1.here', T), true);
+  assert.equal(takeVscodeHere('p1.here', ['c1'], T), false);
 }));
 
 test('takeVscodeHere needs every id, and survives a half-written file', () => withHome(() => {

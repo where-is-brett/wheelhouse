@@ -211,6 +211,14 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
   } catch { /* The chat's way in is an extra; the pane does not need it. */ }
   await refresh();
 
+  // The mark renews on its own timer, whatever the desk loop does (it may be idle, or there may be no desk), so a
+  // quiet visible pane stays live.
+  if (deps.loop !== false) {
+    const markTimer = setInterval(mark, TICK_MS);
+    markTimer.unref?.();
+    context.subscriptions?.push({ dispose() { clearInterval(markTimer); } });
+  }
+
   // Redraws when the desk says something changed, and looks again every tick when it says nothing.
   if (deps.loop !== false && desk !== null) {
     context.subscriptions?.push({ dispose() { state.stopped = true; } });

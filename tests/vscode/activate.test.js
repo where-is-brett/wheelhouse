@@ -192,7 +192,7 @@ test('the mark follows visibility', async () => {
   assert.equal(vscodePane.vscodePaneLive('p1', Date.now() + 1000), true);
   view.setVisible(false);
   await add.refresh();
-  const mark = JSON.parse(fs.readFileSync(path.join(process.env.WHEELHOUSE_HOME, 'panes', 'vscode-p1.json'), 'utf8'));
+  const mark = JSON.parse(fs.readFileSync(path.join(process.env.WHEELHOUSE_HOME, 'panes', 'vscode-p1.mark.json'), 'utf8'));
   assert.equal(mark.surface, 'vscode');
   assert.match(mark.window, /^[0-9a-f]{32}$/);
   // Hidden: the tick goes on but the sighting does not, so 46 seconds later it is not live.
@@ -216,4 +216,14 @@ test('an untrusted folder draws no cards', async () => {
   await add.refresh();
   assert.ok(view.html.includes('Wheelhouse runs only in a folder you trust, since it signs your clicks with this computer&#39;s key.'));
   assert.deepEqual([...view.html.matchAll(/<button[^>]*>([^<]*)</g)].map((m) => m[1]), ['STOP']);
+});
+
+test('a quiet visible pane stays live for a minute without a refresh', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval', 'Date'], now: 5_000_000 });
+  const { vscode, context } = await started({ more: { project: 'p1', vscodePane, loop: true } });
+  const view = visibleView();
+  await vscode.seen.providers.get('wheelhouse.pane').resolveWebviewView(view);
+  t.mock.timers.tick(60_000);
+  assert.equal(vscodePane.vscodePaneLive('p1', Date.now() + 1000), true);
+  for (const s of context.subscriptions) s.dispose?.();
 });
