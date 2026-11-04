@@ -61,7 +61,7 @@ function register(home) {
   return repo;
 }
 
-const question = (id, when, what) => ({ question: { key: id, id: `ev-${id}`, at: when, data: { id, work: 'export-csv', what, why: '', options: [{ label: 'Comma', says: 'x' }], recommendation: 'Comma', level: 3 } }, answer: null });
+const question = (id, when, what) => ({ question: { key: id, id: `ev-${id}`, at: when, data: { id, work: 'export-csv', what, why: 'It sets how the file is read.', options: [{ label: 'Comma', says: 'Commas between values.' }], recommendation: 'Comma', level: 3 } }, answer: null });
 
 // Two cards and, between them, a question from the build that no card asks yet.
 function keepWaiting() {
@@ -101,7 +101,7 @@ test('the pane lists the waiting cards in the board\'s numbering, each with its 
     ['Comma', 'record', 'filled'], ['Tab', 'record', 'outlined'], ['Suggest a change…', 'suggest', 'outlined'], ['Why?', 'why', 'small'],
   ]);
   // A question from the build that no card asks yet is one line and no buttons.
-  assert.deepEqual(line, { id: 'q:q-export-csv-2', n: 2, header: 'Question', kind: 'question', text: QUESTION_WAITS, hash: sha(QUESTION_WAITS), buttons: [], note: null, blocking: false, asked: false, heldBack: false, parts: null, steered: null, waited: null, revised: false, openInChat: false });
+  assert.deepEqual(line, { id: 'q:q-export-csv-2', n: 2, header: 'Question', kind: 'question', text: `${QUESTION_WAITS}. Which encoding? Choices: Comma.`, hash: sha(`${QUESTION_WAITS}. Which encoding? Choices: Comma.`), buttons: [], note: null, blocking: false, asked: false, heldBack: false, parts: null, steered: null, waited: null, revised: false, openInChat: false });
   assert.equal(QUESTION_WAITS, 'A question from the build waits; the First Mate will ask it');
 }));
 
@@ -302,7 +302,22 @@ test('a build-loop question no card asks yet is one line with no buttons', () =>
   assert.equal(cards.length, 1);
   assert.equal(cards[0].id, 'q:q-export-csv-2');
   assert.deepEqual(cards[0].buttons, []);
-  assert.equal(cards[0].text, 'A question from the build waits; the First Mate will ask it');
+  assert.equal(cards[0].text, `${QUESTION_WAITS}. Which encoding? Choices: Comma.`);
+}));
+
+test('a question no card can be made of is shown as a problem, not as one that is coming', () => withHome(async (home) => {
+  const repo = register(home);
+  view('waiting', []);
+  view('work', {});
+  view('features', {});
+  const stuck = question('q-export-csv-2', at(11), 'Which encoding?');
+  stuck.question.data.options = [{ label: 'Comma', says: 'Commas.' }, { label: 'Not now', says: 'Later.' }];
+  view('questions', { 'q-export-csv-2': stuck });
+  const { cards } = await paneModel({ project: P, cwd: repo, now: () => NOW });
+  assert.equal(cards.length, 1);
+  assert.match(cards[0].text, /^A question from the build can't be shown as a card, so it waits: .*Not now/);
+  assert.doesNotMatch(cards[0].text, /the First Mate will ask it/);
+  assert.deepEqual(cards[0].buttons, []);
 }));
 
 test('a card\'s text is kept as written; the other lines are one line each, in plain words', async () => {

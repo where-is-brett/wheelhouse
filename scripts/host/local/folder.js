@@ -7,6 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { CHECK_AND_ADD, LEAVE_THEM_OUT } from '../../state/card-lines.js';
+import { withOwnSection } from '../../lib/compact-section.js';
 import { gitRoute, homeDir, homeGit, isBranchName } from './home.js';
 
 export const FOLDER_REMOTE = 'wheelhouse';
@@ -131,6 +132,51 @@ export async function takeHome({ project, folder, branch, env = {}, git = gitRou
   return { kept };
 }
 
+const MANAGED_FILE = 'CLAUDE.md';
+const sameLines = (a, b) => a.replace(/\r\n/g, '\n') === b.replace(/\r\n/g, '\n');
+
+// Whether the folder's difference from `base` (a commit) is exactly the managed section of CLAUDE.md as the installed release
+// writes it, and nothing else: the one file, holding what Wheelhouse writes into the base's text. `tip` is the folder's
+// commit, or null for its working tree. A hand edit in or beside the section makes the text differ, so it is not Wheelhouse's own.
+async function onlyOwnSection({ folder, base, tip, git }) {
+  const here = inFolder(folder, git);
+  const names = tip === null
+    ? await here.call(['--no-optional-locks', 'diff', '--name-only', base])
+    : await here.call(['diff', '--name-only', base, tip]);
+  if (names.code !== 0 || String(names.stdout).trim() !== MANAGED_FILE) return false;
+  const was = await here.call(['show', `${base}:${MANAGED_FILE}`]);
+  if (was.code !== 0) return false;
+  let now;
+  if (tip === null) {
+    try {
+      now = fs.readFileSync(path.join(folder, MANAGED_FILE), 'utf8');
+    } catch {
+      return false;
+    }
+  } else {
+    const shown = await here.call(['show', `${tip}:${MANAGED_FILE}`]);
+    if (shown.code !== 0) return false;
+    now = String(shown.stdout);
+  }
+  const wanted = withOwnSection(String(was.stdout));
+  return wanted !== String(was.stdout) && sameLines(now, wanted);
+}
+
+// The folder's CLAUDE.md, left changed in the working tree by a refresh of Wheelhouse's own section, committed as that
+// alone so it reaches the main version by the route any folder commit takes. Anything else the folder holds is left.
+async function commitOwnSection({ folder, branch, git }) {
+  const here = inFolder(folder, git);
+  const on = await here.call(['symbolic-ref', '-q', 'HEAD']);
+  if (on.code !== 0 || String(on.stdout).trim() !== `refs/heads/${branch}`) return false;
+  const dirty = await here.call(['--no-optional-locks', 'status', '--porcelain', '--untracked-files=no']);
+  if (dirty.code !== 0 || String(dirty.stdout).trimEnd() !== ` M ${MANAGED_FILE}`) return false;
+  if (!(await onlyOwnSection({ folder, base: 'HEAD', tip: null, git }))) return false;
+  const { identityOf } = await import('./merge.js');
+  const env = await identityOf(folder, git);
+  const making = git(folder, { reach: 'local', what: FOLDER_WHAT, env });
+  return making.ok(['commit', '--quiet', '--only', '--no-verify', '--no-gpg-sign', '-m', 'Update Wheelhouse\'s section of CLAUDE.md', '--', MANAGED_FILE]);
+}
+
 // The card for work the folder holds and the home doesn't (spec 5.4).
 export function handMadeCard() {
   return {
@@ -141,7 +187,6 @@ export function handMadeCard() {
     options: [
       { label: CHECK_AND_ADD, says: 'They go through the same review and checks as any other work, and join the main version if they pass.' },
       { label: LEAVE_THEM_OUT, says: 'They stay in your folder as they are, and you won\'t be asked about them again.' },
-      { label: 'Not now', says: 'Nothing changes, and the question stays open.' },
     ],
     recommendation: CHECK_AND_ADD,
   };
@@ -168,6 +213,18 @@ function keep(file, kept) {
 export function folderWatch({ project, folder, branchOf, git = gitRoute(), file, card, answerOf, note, add, stopped = () => false }) {
   async function answers(found, kept) {
     for (const [tip, entry] of Object.entries(kept.tips)) {
+      if (entry.own === true) {
+        // Wheelhouse's own section: it goes by the same route as work the director chose to add, with no question.
+        if (entry.done) continue;
+        const waiting = found.state === 'folder-ahead' || found.state === 'parted';
+        const got = waiting && found.tip === tip ? await add(tip, { parted: found.state === 'parted' }) : { ok: true };
+        if (got?.ok === true) entry.done = true;
+        else if (kept.failed !== tip) {
+          kept.failed = tip;
+          await note(`Wheelhouse's own change to CLAUDE.md couldn't be added yet: ${got?.refused ?? 'the helper didn\'t say why'}`);
+        }
+        continue;
+      }
       const label = entry.done ? null : answerOf(entry.id);
       if (label === LEAVE_THEM_OUT) entry.done = true;
       if (label !== CHECK_AND_ADD) continue;
@@ -187,7 +244,10 @@ export function folderWatch({ project, folder, branchOf, git = gitRoute(), file,
   async function tick() {
     if (stopped()) return;
     const branch = await branchOf();
-    const found = await reading({ project, folder, branch, git });
+    let found = await reading({ project, folder, branch, git });
+    if ((found.state === 'same' || found.state === 'folder-ahead') && await commitOwnSection({ folder, branch, git })) {
+      found = await reading({ project, folder, branch, git });
+    }
     const kept = readKept(file);
     await answers(found, kept);
     if (found.state === 'home-ahead') {
@@ -197,6 +257,15 @@ export function folderWatch({ project, folder, branchOf, git = gitRoute(), file,
         kept.said = found.home;
       }
     } else if ((found.state === 'folder-ahead' || found.state === 'parted') && kept.tips[found.tip] === undefined) {
+      const base = found.state === 'parted'
+        ? String((await inFolder(folder, git).call(['merge-base', found.home, found.tip])).stdout).trim()
+        : found.home;
+      if (base !== '' && await onlyOwnSection({ folder, base, tip: found.tip, git })) {
+        kept.tips[found.tip] = { id: null, done: false, own: true };
+        await answers(found, kept);
+        keep(file, kept);
+        return;
+      }
       kept.cards += 1;
       const id = `q-${HAND_MADE_WORK}-${kept.cards}`;
       await card({ id, ...handMadeCard() });

@@ -1289,3 +1289,38 @@ test('closed hands closed.js the project, the question texts and STOP, and answe
   assert.equal(asked.length, 1);
   assert.deepEqual(await handle({ cmd: 'closed', cwd: repo, questions: ['x'] }, live({ closedQuestions: () => { throw new Error('x'); } })), { ok: false, says: SAYS.failed });
 }));
+
+// A build question no card asks yet, as the views on disk hold it.
+const waitingQuestion = (home) => {
+  const dir = path.join(home, 'projects', P, 'views');
+  fs.mkdirSync(dir, { recursive: true });
+  const data = { id: 'q-export-csv-2', work: 'export-csv', what: 'Which encoding?', why: 'It sets how the file is read.', options: [{ label: 'Comma', says: 'Commas between values.' }], recommendation: 'Comma', level: 3 };
+  const views = { waiting: [], work: {}, features: {}, questions: { 'q-export-csv-2': { question: { key: 'q-export-csv-2', id: 'ev-q', at: '2026-10-19T04:00:00.000Z', data }, answer: null } } };
+  for (const [name, value] of Object.entries(views)) fs.writeFileSync(path.join(dir, `${name}.json`), JSON.stringify(value));
+};
+
+test('a tick with a question no card asks yet has its card made, held for the pane, so it can be pressed there', () => withHome(async (home) => {
+  const repo = registered(home);
+  waitingQuestion(home);
+  const made = [];
+  await handle(tickOf(repo), live({ makeCards: async (args) => { made.push({ held: await args.hold(['x']), cwd: args.cwd }); return {}; } }));
+  assert.deepEqual(made, [{ held: true, cwd: repo }]);
+}));
+
+test('a tick with no such question makes no cards, and nor does one under All stop', () => withHome(async (home) => {
+  const repo = registered(home);
+  const made = [];
+  const deps = () => live({ makeCards: async () => { made.push(1); return {}; } });
+  await handle(tickOf(repo), deps());
+  waitingQuestion(home);
+  setStop({ by: 'prompt', now: () => NOW });
+  await handle(tickOf(repo), deps());
+  assert.deepEqual(made, []);
+}));
+
+test('cards that cannot be made leave the tick whole', () => withHome(async (home) => {
+  const repo = registered(home);
+  waitingQuestion(home);
+  const answer = await handle(tickOf(repo), live({ makeCards: async () => { throw new Error('no'); } }));
+  assert.equal(answer.ok, true);
+}));
