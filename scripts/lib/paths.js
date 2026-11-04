@@ -146,6 +146,11 @@ export function jobFolder() {
   return os.homedir();
 }
 
+// The helper's running record: its pid, start time, version, plugin folder and address, kept while it runs.
+export function helperRecordFile() {
+  return path.join(wheelhouseHome(), 'helper.json');
+}
+
 // The helper's socket file in `home`, or on Windows its named pipe. A pipe is one per computer, not
 // per folder, so the pipe of a home other than ~/.wheelhouse (an evaluation run's, a test's) carries
 // a short hash of that home's path, as its socket would be a file of that home's own.

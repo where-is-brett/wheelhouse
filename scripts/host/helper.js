@@ -5968,20 +5968,43 @@ export async function startHelper({
     }
   }
 
-  // Set from the moment the helper has said it will make way, so nothing new starts between that answer and the close.
+  // Set from the moment the helper has said it will make way, so nothing new starts between that answer and the close:
+  // 'update' when an update asked (it finishes what is running first), true when a session of a newer copy asked.
   let retiring = false;
+  // The requests being answered now. An update's retire closes only once these have been answered.
+  let inflight = 0;
+  const UPDATING = 'Wheelhouse is updating; try again in a minute';
+  const UPDATE_POLL_MS = 100;
+
+  // Closes the helper once the requests being answered, and the work busyWith names, have finished. Never gives up: the
+  // update's own wait is what runs out.
+  function closeWhenIdle() {
+    const look = () => {
+      if (closing) return;
+      if (inflight === 0 && busyWith() === null) Promise.resolve().then(() => onStop(close)).catch(() => {});
+      else setTimeout(look, UPDATE_POLL_MS);
+    };
+    look();
+  }
 
   async function handle(req, res) {
     const url = new URL(req.url ?? '/', 'http://helper');
+    inflight += 1;
+    res.once('close', () => { inflight -= 1; });
+    if (retiring === 'update' && url.pathname === '/helper/retire') {
+      // Asked again while making way for an update: the answer is the same, and nothing more is done.
+      req.resume();
+      return send(res, 200, { ok: true, retired: true });
+    }
     if ((closing || retiring) && url.pathname !== '/health') {
       req.resume();
-      return send(res, 200, { ok: false, refused: 'the helper is making way for a newer one; ask again' });
+      return send(res, 200, { ok: false, refused: retiring === 'update' ? UPDATING : 'the helper is making way for a newer one; ask again' });
     }
     if (url.pathname === '/health') {
       const away = awayLog.fresh();
       const roomOpen = room?.line() ?? null;
       const guards = guardLines();
-      return send(res, 200, { ok: true, ...guards, ...(PLUGIN_VERSION ? { version: PLUGIN_VERSION } : {}), ...(Object.keys(away).length > 0 ? { away } : {}), ...(roomOpen ? { engineRoom: roomOpen } : {}) });
+      return send(res, 200, { ok: true, pid: process.pid, ...guards, ...(PLUGIN_VERSION ? { version: PLUGIN_VERSION } : {}), ...(Object.keys(away).length > 0 ? { away } : {}), ...(roomOpen ? { engineRoom: roomOpen } : {}) });
     }
     const route = Object.hasOwn(routes, url.pathname) ? routes[url.pathname] : null;
     if (!route) {
@@ -6006,6 +6029,13 @@ export async function startHelper({
     if (url.pathname === '/helper/retire') {
       // A session of a newer copy of the plugin asks this helper to make way. It stops only when idle: no setup step, push,
       // merge, engine run or goal under way. Otherwise it says what keeps it, and goes on.
+      // An update (`forUpdate: true`) makes way whatever is under way: it refuses new work at once, lets what is running
+      // finish, and closes when nothing is. Only the boolean true counts.
+      if (body.forUpdate === true) {
+        retiring = 'update';
+        res.once('finish', closeWhenIdle);
+        return send(res, 200, { ok: true, retired: true });
+      }
       const why = busyWith();
       if (why !== null) return send(res, 200, { ok: true, retired: false, busy: why });
       retiring = true;

@@ -1,0 +1,51 @@
+[
+  {
+    "method": "GET",
+    "path": "/health"
+  },
+  {
+    "method": "POST",
+    "path": "/state/clone",
+    "body": {
+      "project": "PROJECT"
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/state/views",
+    "body": {
+      "project": "PROJECT"
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/state/views",
+    "body": {
+      "project": "PROJECT",
+      "cards": true
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/state/views",
+    "body": {
+      "project": "PROJECT",
+      "answers": true
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/state/answer",
+    "body": {
+      "project": "PROJECT",
+      "questionId": "nothing-asked"
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/state/sync",
+    "body": {
+      "project": "PROJECT"
+    }
+  }
+]
