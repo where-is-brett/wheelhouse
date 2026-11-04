@@ -12,7 +12,7 @@ import type { EngineInterface, PluginState, RenderInput } from 'claude-code'
 import { ask, FAILED, type Answer, type PaneModel } from './ask'
 import { band, body, caption, ends, filled, footnote, heading, link, outlined, small, stop as stopButton, tableOf } from './calm'
 import type { Table } from './calm'
-import { HIDE_WHY, NOT_HANDED, PANE_LEAD, RECORDING, SHOW_ME, SUGGEST, WHAT_WOULD_YOU_CHANGE, WHY, suggestedAt, typeYourChange, WHAT_CHANGED } from './numbers'
+import { HIDE_WHY, NOT_HANDED, OPEN_IN_CHAT, OPEN_IN_CHAT_TOAST, PANE_LEAD, RECORDING, SHOW_ME, SUGGEST, WHAT_WOULD_YOU_CHANGE, WHY, suggestedAt, typeYourChange, WHAT_CHANGED } from './numbers'
 
 // A card of the pane's model. It comes from another process, so each field is read as anything.
 type Card = Record<string, unknown>
@@ -97,7 +97,7 @@ export async function appendRows($: EngineInterface, notice: string, note: strin
 // started, and each prompt the bridge gave handed to the front desk, which isn't waited for: a
 // submit resolves as the prompt's own turn starts, and a turn under way would hold the press past
 // the engine's ten seconds for a hook (check 88). Never throws.
-export async function carry($: EngineInterface, request: Record<string, unknown>, taken: string, done: () => Promise<unknown>, after: After) {
+export async function carry($: EngineInterface, request: Record<string, unknown>, taken: string, done: () => Promise<unknown>, after: After): Promise<Answer | null> {
   let answer: Answer | null = null
   try {
     $.ui.toast(taken)
@@ -115,6 +115,7 @@ export async function carry($: EngineInterface, request: Record<string, unknown>
   if (answer?.notice !== undefined && answer.note !== undefined) await appendRows($, answer.notice, answer.note)
   void after().catch(() => undefined)
   void submitAll($, answer?.submit ?? []).catch(() => undefined)
+  return answer
 }
 
 // A press on one of the Safekeeping row's buttons: the bridge signs it, and the helper does it.
@@ -133,7 +134,9 @@ export async function pressPull($: EngineInterface, after: After) {
 async function pressButton($: EngineInterface, card: Card, label: string, after: After) {
   const id = card.id as string
   if (!(await claim($, { on: id, label }))) return
-  await carry($, { cmd: 'press', origin: 'pane', card: id, hash: card.hash, label }, RECORDING, () => release($), after)
+  const answer = await carry($, { cmd: 'press', origin: 'pane', card: id, hash: card.hash, label }, RECORDING, () => release($), after)
+  // A card the chat has open too: the copy there now changes nothing.
+  if (card.openInChat === true && answer?.ok === true && (answer.submit ?? []).length === 0) $.ui.toast(OPEN_IN_CHAT_TOAST)
 }
 
 // Why? on a card. One the bridge gave as `why` opens or closes the reasons in place, and opening
@@ -341,7 +344,7 @@ function drawParts($: EngineInterface, e: RenderInput<'Pane'>, card: Card, parts
   const draw = (b: Given) => drawButton($, t, card, id as string, b, pressing, open, after)
   const corner = given.find((b) => b.corner)
   const minutes = typeof parts.optional === 'number' && parts.optional > 0 ? `optional · ${parts.optional} min` : null
-  const smallLine = [text(parts.small), text(card.waited), minutes].filter((x) => x !== null).join(' · ')
+  const smallLine = [text(parts.small), text(card.waited), minutes, card.openInChat === true ? OPEN_IN_CHAT : null].filter((x) => x !== null).join(' · ')
   const options = Array.isArray(parts.options) ? parts.options.filter(isRecord) : []
   const reasons = [text(parts.why), ...options.map((o) => (text(o.label) === null ? null : `${o.label}: ${text(o.says) ?? ''}`.replace(/: $/, ''))), text(parts.meanwhile)]
   const row = given.filter((b) => !b.corner && (b.does === 'why' || b.shape === 'link' || b.label === SHOW_ME))

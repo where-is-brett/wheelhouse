@@ -20,6 +20,8 @@ const PANE_PROPS = {
   scroll: { offset: 0, bodyRows: 40 }, view: {},
 }
 const FAILED = 'That wasn\'t recorded. Try again, or type it in the chat.'
+const OPEN_IN_CHAT = 'Also open in the chat.'
+const OPEN_IN_CHAT_TOAST = 'Counted. The copy in the chat now changes nothing: pick anything or press Skip.'
 const CANT_ANSWER = 'This card can\'t be answered here: ask the First Mate about it.'
 
 const FIRST = 'Merge the banner change?'
@@ -749,6 +751,44 @@ test('a revised card is headed Approval · revised and says what changed', async
     const nodes = await textNodes(ui)
     expect(nodes.map(textOfNode)).toContain('Approval · revised')
     expect(nodes.find((n: any) => n.text === 'What changed: the banner is now blue')?.props.size).toBe('body')
+    await ui.unmount()
+  }
+})
+
+test('a card also open in the chat says so in its small line, and a press on it toasts that the chat copy changes nothing', async ($, on) => {
+  const { seen, clear, start } = world(on, () => ({ ok: true, submit: [] }), withCards([partsCard({ openInChat: true })]))
+  for (const surface of SURFACES) {
+    await start($, surface)
+    const ui = await mount($, surface)
+    const nodes = (await textNodes(ui)).map(textOfNode)
+    expect(nodes.filter((t: string) => t.includes(OPEN_IN_CHAT))).toEqual([`Small feature · changes what users see · asked 2 hours ago · ${OPEN_IN_CHAT}`])
+    clear()
+    await ui.press({ key: cardKey('card-1', 'Approve') })
+    expect(seen.toasts).toEqual(['Recording…', OPEN_IN_CHAT_TOAST])
+    await ui.unmount()
+  }
+})
+
+test('a press on a card not open in the chat toasts only Recording…', async ($, on) => {
+  const { seen, clear, start } = world(on, () => ({ ok: true, submit: [] }), withCards([partsCard({ openInChat: false })]))
+  for (const surface of SURFACES) {
+    await start($, surface)
+    const ui = await mount($, surface)
+    clear()
+    await ui.press({ key: cardKey('card-1', 'Approve') })
+    expect(seen.toasts).toEqual(['Recording…'])
+    await ui.unmount()
+  }
+})
+
+test('a refused press on a card also open in the chat does not toast that it counted', async ($, on) => {
+  const { seen, clear, start } = world(on, () => ({ ok: false, says: 'That card has changed: look at the pane again' }), withCards([partsCard({ openInChat: true })]))
+  for (const surface of SURFACES) {
+    await start($, surface)
+    const ui = await mount($, surface)
+    clear()
+    await ui.press({ key: cardKey('card-1', 'Approve') })
+    expect(seen.toasts).toEqual(['Recording…', 'That card has changed: look at the pane again'])
     await ui.unmount()
   }
 })

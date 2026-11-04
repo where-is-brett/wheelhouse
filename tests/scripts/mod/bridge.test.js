@@ -10,6 +10,7 @@ import { handle, runBridge, lineOf, limitFor, BRIDGE_MS, MAX_REQUEST_BYTES, HELP
 import { readPaneStatus, hashOf } from '../../../scripts/mod/status.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { makeEvent, eventPath } from '../../../scripts/state/events.js';
+import { markOpen } from '../../../scripts/lib/session-files.js';
 import { recordRole, roleFile } from '../../../scripts/lib/role.js';
 import { NO_HELPER } from '../../../scripts/hooks/session-start.js';
 import { COURIER_GAP_MS, FOREMAN_TICK_MS, TICK_MS, WATCH_BRIDGE_MS } from '../../../scripts/lib/mod-numbers.js';
@@ -1232,4 +1233,30 @@ test('a failed pane mark never fails the tick', () => withHome(async (home) => {
   const answer = await handle(tickOf(repo, { drawn: 1000 }), live({ markPane: () => { throw new Error('disk full'); } }));
   assert.equal(answer.ok, true);
   assert.equal(answer.every, TICK_MS);
+}));
+
+test('a card open in the chat is marked openInChat on a busy tick, and not once the session is idle', () => withHome(async (home) => {
+  const repo = registered(home);
+  const dir = path.join(home, 'projects', P, 'views');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'waiting.json'), JSON.stringify(['c-one', 'c-two'].map((id, i) => ({
+    id,
+    at: new Date(Date.UTC(2026, 9, 18, 9 + i)).toISOString(),
+    data: { kind: 'question', header: 'Question', options: ['Yes'], question: `The words of ${id}?`, level: 3 },
+    asked: null,
+  }))));
+  const flags = (answer) => answer.pane.cards.map((c) => [c.id, c.openInChat]);
+  assert.deepEqual(flags(await handle(tickOf(repo), live())), [['c-one', false], ['c-two', false]]);
+  markOpen('sess-1', ['c-two'], NOW.getTime());
+  assert.deepEqual(flags(await handle(tickOf(repo, { idle: false }), live())), [['c-one', false], ['c-two', true]]);
+  // The turn that asked has ended: the mark left behind reads as nothing.
+  assert.deepEqual(flags(await handle(tickOf(repo, { idle: true }), live())), [['c-one', false], ['c-two', false]]);
+  // Another session's mark is not this one's.
+  assert.deepEqual(flags(await handle({ ...tickOf(repo, { idle: false }), session: 'sess-2' }, live())), [['c-one', false], ['c-two', false]]);
+}));
+
+test('a failed read of the open mark never fails the tick', () => withHome(async (home) => {
+  const repo = registered(home);
+  const answer = await handle(tickOf(repo, { idle: false }), live({ readOpen: () => { throw new Error('unreadable'); } }));
+  assert.equal(answer.ok, true);
 }));

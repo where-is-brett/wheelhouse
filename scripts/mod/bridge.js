@@ -58,7 +58,7 @@ import { helperClient } from '../host/helper-client.js';
 import { recordModReading, recordReceived, recordSession } from '../usage/store.js';
 import { stopState as defaultStopState, setStop as defaultSetStop, liftStop as defaultLiftStop } from '../lib/stop.js';
 import { sessionRole as defaultSessionRole } from '../lib/role.js';
-import { markPane as defaultMarkPane } from '../lib/session-files.js';
+import { markPane as defaultMarkPane, readOpen as defaultReadOpen } from '../lib/session-files.js';
 import { isOwnStatusLine } from '../protection/settings.js';
 import { LIFT_STOP } from '../state/card-lines.js';
 import { FOREMAN_TICK_MS, TICK_MS, WATCH_BRIDGE_MS } from '../lib/mod-numbers.js';
@@ -154,6 +154,7 @@ const DEFAULTS = {
   stopDeskMs: STOP_DESK_MS,
   sessionRole: defaultSessionRole,
   markPane: defaultMarkPane,
+  readOpen: defaultReadOpen,
   beingSetUp: defaultBeingSetUp,
   journalTrouble: defaultJournalTrouble,
   digestText: defaultDigest,
@@ -566,6 +567,7 @@ async function tick(req, d) {
   const changes = deskWatch(found.project, req.cwd, d);
   // The pane says whether the helper is up, so it asks it, to say so when it isn't.
   const pane = await paneOf(found.project, req.cwd, await helperAnswers(d), d);
+  noteOpenInChat(pane, req, d);
   const watcher = (await watched)?.watcher;
   pane.watcher = typeof watcher === 'string' ? watcher : null;
   await lifting;
@@ -594,6 +596,21 @@ function notePane(req, d) {
     const drawn = Number.isFinite(req.drawn) ? req.drawn : null;
     d.markPane(req.session, { at: d.now().getTime(), drawn, surface: typeof req.surface === 'string' ? req.surface : null });
   } catch { /* the next tick writes it again */ }
+}
+
+// Marks each card a question in the chat has open (sessions/<id>/open.json) as `openInChat`. A mark
+// counts only while the session is busy: the mod sends idle when a turn completes, so a mark a
+// stopped turn left behind reads as nothing. A failed read leaves every card unmarked.
+function noteOpenInChat(pane, req, d) {
+  if (!Array.isArray(pane?.cards)) return;
+  let open = [];
+  try {
+    const got = req.idle === true ? null : d.readOpen(req.session);
+    if (Array.isArray(got?.cards)) open = got.cards;
+  } catch { /* the cards read as not open */ }
+  for (const card of pane.cards) {
+    if (isRecord(card)) card.openInChat = open.includes(card.id);
+  }
 }
 
 // The pane's model, from the desk's glance (scripts/desk/mod-pane.js), at the bridge's clock and in its

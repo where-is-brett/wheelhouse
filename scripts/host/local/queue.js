@@ -28,7 +28,10 @@ const answer = (row, reason = row) => ({ act: GATE_ROWS.find((r) => r.row === ro
 // What the sweep does with one open change that is ready, pure, in the table's order. `main` is 'red', 'waiting' or 'green';
 // `incident` is incidentFor's; `check` the head's own reading, 'waiting', 'red' or 'green'; `review` whether a signed CLEAN
 // review of the head counts; `clashes` whether the head no longer merges; `permit` brokerDecision's answer.
-export function sweepDecision({ main, stopped, incident, check, review, clashes, needsApproval, approval, permit }) {
+// `release` is given only for the update's own reviewed change (update design, section 6.2): { ok, pinsOnly, approved }, the
+// helper's finding. Such a change that is not what the update says it is waits. A release that is not pins-only is asked
+// of the director on the card for it (the update's, not the usual approval card), and no approval of the head stands in.
+export function sweepDecision({ main, stopped, incident, check, review, clashes, needsApproval, approval, permit, release }) {
   if (main === 'red') return answer('main-red');
   if (stopped !== false) return answer('stopped');
   if (incident?.open !== false && incident?.isFix !== true) return answer('incident');
@@ -37,7 +40,10 @@ export function sweepDecision({ main, stopped, incident, check, review, clashes,
   if (check !== 'green') return answer('check-waiting');
   if (review !== true) return answer('review-stale', 'stale');
   if (clashes === true) return answer('clash');
-  if (needsApproval === true && approval !== true) return answer('approval');
+  if (release !== undefined && release !== null) {
+    if (release.ok !== true) return answer('permit', 'the change is not what the update says it is');
+    if (release.pinsOnly !== true && release.approved !== true) return answer('approval', 'release');
+  } else if (needsApproval === true && approval !== true) return answer('approval');
   if (permit?.allow !== true) return answer('permit', permit?.reason ?? 'the permit gave no answer');
   return answer('merge');
 }
@@ -81,7 +87,7 @@ export async function localSweep({ project, facts, acts, lock = withLocalLock, n
       if (decided.act === 'hold') break;
       if (decided.act === 'merge') await acts.merge(change, marked);
       else if (decided.act === 'send-back') await acts.sendBack(change, decided.reason, marked.work);
-      else if (decided.act === 'raise') await acts.raise(change, { ...marked, level: about.level });
+      else if (decided.act === 'raise') await acts.raise(change, { ...marked, level: about.level, ...(decided.reason === 'release' ? { release: true } : {}) });
       else await acts.wait(change, decided.reason);
     }
     return done;

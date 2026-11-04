@@ -91,6 +91,13 @@ function approvalReason(short, needs) {
     : `no approval of ${short} that counts: the project has real users, so a click in the chat isn't enough and it needs ${NEEDS_WORDS[needs]}`;
 }
 
+const isRelease = (x) => x !== null && typeof x === 'object' && !Array.isArray(x) && typeof x.release === 'string' && /^[0-9a-f]{40}$/.test(x.commit ?? '');
+
+// The refusal's one sentence for a release's approval that is missing: it names the release and its commit, not the head.
+function releaseApprovalReason(release) {
+  return `no approval of the move from ${release.previous ?? 'the current release'} to ${release.release} (${release.commit.slice(0, 7)}) from the director's card for it`;
+}
+
 // Why the provenance check failed, or a plain fallback when the input has no reason.
 function provenanceWhy(provenance) {
   const why = provenance?.why;
@@ -148,9 +155,15 @@ export function gateDecision(input) {
   if (needReview && !(headSha !== '' && reviewCounts(i.review, headSha, i.enrolled, kinds))) {
     reasons.push(kinds === null ? `no CLEAN review of ${short}` : NO_CLEAN_REVIEW(short));
   }
-  const approved = needApproval ? approvalOf(i, headSha) : { counts: true };
+  // The change that moves a project to a Wheelhouse release that is not pins-only (update design, section 6.2) is approved by
+  // the director's card for that release at that commit, and by no other approval: the caller gives `release`, { release,
+  // commit, approved }, only for a change it has found to be exactly that and nothing else, and `approved` only for a signed
+  // answer to that card.
+  const byRelease = isRelease(i.release);
+  let approved = { counts: true };
+  if (needApproval) approved = byRelease ? { counts: i.release.approved === true } : approvalOf(i, headSha);
   const approvalMissing = !approved.counts;
-  if (approvalMissing) reasons.push(approvalReason(short, approved.needs));
+  if (approvalMissing) reasons.push(byRelease ? releaseApprovalReason(i.release) : approvalReason(short, approved.needs));
 
   // The person's approval on the host, where the project needs it: undefined when it isn't needed, else exactly true to pass.
   if (i.hostApproval !== undefined && i.hostApproval !== true) reasons.push(NO_HOST_APPROVAL(short));
