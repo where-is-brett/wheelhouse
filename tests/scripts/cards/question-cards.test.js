@@ -35,7 +35,7 @@ for (const [name, card] of Object.entries(BUILDERS)) {
 
 // The builders held in closures (the checks runner, the dispatcher) can't be called here, so their source is read: no
 // question that carries a recommendation offers a button that puts a card off.
-const escaped = PUT_OFF.map((w) => `['"]${w.replace(/[?.…]/g, '\\$&')}['"]`);
+const escaped = PUT_OFF.map((w) => `['"]${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"]`);
 const PUT_OFF_LABEL = new RegExp(`label: *(?:NOT_NOW|SHOW_ME|WHY|SUGGEST|${escaped.join('|')})`);
 function sources(dir) {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? sources(path.join(dir, e.name))
