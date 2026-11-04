@@ -92,6 +92,14 @@ function glanceUsage(clock, clockRead, otherAgent = false) {
   return { week: { share: share ?? null, shareAt: shareAt ?? null }, missing: [] };
 }
 
+// The watcher's health record, or null when there is none or it can't be read.
+function readWatcherHealth(project) {
+  const file = path.join(path.dirname(stateDir(project)), 'watcher', 'health.json');
+  if (fs.statSync(file).size > 65536) return null;
+  const value = JSON.parse(fs.readFileSync(file, 'utf8'));
+  return isRecord(value) ? value : null;
+}
+
 // What the helper knows: whether it is up and who holds the lock (undefined when unknown, so
 // healthLines leaves their lines out), and the host facts, from their cache when it is fresh.
 async function helperFacts(project, { client, address, now, offline, clockRead, waitMs }) {
@@ -196,6 +204,9 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
     // The agent's sandbox on this computer, for an agent whose adapter says (agentSandboxLine).
     agentSandbox: !offline && typeof usageAgent === 'string' ? attempt(() => agentSandboxLine(usageAgent)) : undefined,
     // Lean projects keep their own copy step, and have no status.
+    // The watcher's own record of how its wakes are going (scripts/watcher/main.js); a small file, so the glance reads it too.
+    watcher: attempt(() => readWatcherHealth(project)),
+    now: clock(),
     safekeeping: lean === true ? null : attempt(() => readStatus(project)),
   }));
   const health = Array.isArray(lines) && typeof known.engineRoom === 'string' ? [...lines, { level: 'watch', text: known.engineRoom }] : lines;
