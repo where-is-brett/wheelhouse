@@ -139,6 +139,7 @@ Step 2 finds the tools and says which of them work; step 3 chooses how the agent
 - **The key card:** where the key git holds has no use on the host's API, was refused (401) or can only push (403), setup shows the key card: a page opens, the director pastes the new key into the box, setup checks it, and the credential helper stores it over that one entry. The card says it replaces that one entry. Raise the same card whenever the host answers 401 later: re-run step 3 ("check my GitLab connection").
 - **Narrow GitHub sign-in:** where the director has only a key for one repository, step 7 asks a one-off Administration key for protection and does not keep it.
 - Nothing needs `glab` or `gh` to be fetched where the computer will not run them; setup goes on by the host's web API and says so in one line.
+- **A tool the director's rules forbid:** if their company rules (or their own instructions) say `glab` or `gh` must not be installed or run, do not stop and do not fetch it. Setup's plan has a choice for it, "Don't use GitLab's tool" (or GitHub's); offer it with `change 2.host-tool-glab` (or `2.host-tool-gh`), which works until step 2 has run, and the plan then fetches nothing. A project can also say it in `.claude/wheelhouse.json` with `"glabFrom": "none"` or `"ghFrom": "none"`.
 
 ## Lines the session start gives
 

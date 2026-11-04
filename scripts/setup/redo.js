@@ -36,7 +36,7 @@ function answeredOutside(open, answers) {
   const kinds = new Map();
   for (const [key, a] of Object.entries(answers)) {
     // The privacy card of step 3 is a check, not a choice of the director's.
-    if (!/^[34]\./.test(key) || key.startsWith('3.not-private-') || open.some((c) => c.key === key)) continue;
+    if (!/^[234]\./.test(key) || key.startsWith('3.not-private-') || open.some((c) => c.key === key)) continue;
     const about = aboutOf(key);
     const was = kinds.get(about);
     if (!was || Date.parse(a.at) > Date.parse(was.at)) kinds.set(about, { key, ...a });
@@ -131,7 +131,7 @@ export function redoCard({ key, answers, name, record, described, count, stepRan
       found: [`Change the project's settings to ${want}.`],
     };
   }
-  if (actedBy(key) === 3) {
+  if (actedBy(key) === 3 || actedBy(key) === 2) {
     const host = HOST_NAME[record?.host] ?? 'its host';
     return {
       id: `redo-again-${n}`,

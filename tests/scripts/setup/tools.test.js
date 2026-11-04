@@ -12,7 +12,11 @@ import path from 'node:path';
 import {
   toolsStatus, startInstaller, fetchHostTool, toolsStep, hostToolsFor, nodeRefusal, openCommand, pickInstaller, notesChecksums,
   NODE_LINE, INSTALL_COMMANDS, MAC_INSTALLER, GIT_INSTALLER_ARGS, ChecksumError, stageOf, curlStatus,
+  glabSource, GLAB_FROM_LINE, webRouteReady,
 } from '../../../scripts/setup/tools.js';
+import { openChoices, oneCard, aboutOf, actedBy } from '../../../scripts/setup/choices.js';
+import { choiceList } from '../../../scripts/setup/redo.js';
+import { cardProblems } from '../../../scripts/hooks/card-check.js';
 import { STEPS, planHash } from '../../../scripts/setup/steps.js';
 import { runApply, setupRoutes } from '../../../scripts/setup/engine.js';
 import { startRun, markStep, findRun, reverseChange } from '../../../scripts/setup/journal.js';
@@ -758,4 +762,114 @@ test('curl is found by full path only, and its absence is said as not found', ()
   assert.deepEqual(curlStatus({ platform: 'darwin', exists: () => false }), { found: false, path: null });
   const found = curlStatus({ platform: 'win32', gitPath: 'C:\\Program Files\\Git\\cmd\\git.exe', exists: (file) => file.endsWith('Git\\cmd\\curl.exe') });
   assert.equal(found.found, true);
+});
+
+// ---- Leaving a host's tool out ----
+
+const NONE_GLAB = "Don't use GitLab's tool";
+const said = (label) => ({ label, text: null, at: NOW.toISOString() });
+const noGlab = () => machine({ paths: { git: '/usr/bin/git', node: '/usr/local/bin/node' }, versions: { git: '2.39.5', node: '22.3.0' } });
+
+test('the director\'s answer to leave glab out: nothing is fetched, no release page is asked, and the step settles', async () => {
+  await withHome(async () => {
+    const folder = gitlabFolder();
+    const step = toolsStep({ engine: null, run: noGlab().run, fetch: noFetch, pluginRoot: PLUGIN, env: {} });
+    const planned = await step.plan(ctxFor(folder, { answers: { '2.host-tool-glab': said(NONE_GLAB) } }));
+    assert.deepEqual(planned, { settled: { record: { nothing: true, leftOut: ['glab'] } } });
+    // The other answer fetches, as before.
+    const fetching = await step.plan(ctxFor(folder, { answers: { '2.host-tool-glab': said("Fetch GitLab's tool") } }));
+    assert.deepEqual(fetching.changes.map((c) => [c.action, c.tool]), [['fetch', 'glab']]);
+  });
+});
+
+test('the project\'s committed settings can leave glab or gh out, and say so on a card that has other things to do', async () => {
+  await withHome(async () => {
+    const folder = gitlabFolder();
+    fs.mkdirSync(path.join(folder, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(folder, '.claude', 'wheelhouse.json'), JSON.stringify({ glabFrom: 'none' }));
+    const step = toolsStep({ engine: null, run: noGlab().run, fetch: noFetch, pluginRoot: PLUGIN, env: {} });
+    assert.deepEqual(await step.plan(ctxFor(folder)), { settled: { record: { nothing: true, leftOut: ['glab'] } } });
+    // With a permission rule still to add, the card says glab is left out.
+    fs.writeFileSync(path.join(folder, '.claude', 'settings.local.json'), JSON.stringify({ permissions: { allow: [] } }));
+    const planned = await step.plan(ctxFor(folder));
+    assert.deepEqual(planned.changes.map((c) => c.kind), ['json-key']);
+    assert.match(planned.card.what, /GitLab's own tool: not fetched, so Wheelhouse reaches GitLab without it/);
+    assert.doesNotMatch(JSON.stringify(planned.card), /\bREST\b|\bcurl\b|\bAPI\b/);
+    // gh, for a GitHub project.
+    const hub = fs.realpathSync.native(tempFolder('wh-hub '));
+    fs.mkdirSync(path.join(hub, '.git'));
+    fs.mkdirSync(path.join(hub, '.claude'));
+    fs.writeFileSync(path.join(hub, '.git', 'config'), '[remote "origin"]\n\turl = https://github.com/team/product.git\n');
+    fs.writeFileSync(path.join(hub, '.claude', 'settings.local.json'), JSON.stringify({ permissions: { allow: SETUP_RULES } }));
+    fs.writeFileSync(path.join(hub, '.claude', 'wheelhouse.json'), JSON.stringify({ ghFrom: 'none' }));
+    assert.deepEqual(await step.plan(ctxFor(hub)), { settled: { record: { nothing: true, leftOut: ['gh'] } } });
+  });
+});
+
+test('glabFrom "none" is a source that fetches nothing, and the line for a bad setting names it', () => {
+  assert.deepEqual(glabSource({ setting: 'none' }), { kind: 'none', from: null });
+  assert.deepEqual(glabSource({ setting: ' none ' }), { kind: 'none', from: null });
+  assert.throws(() => glabSource({ setting: 'nothing' }), (error) => error.message === GLAB_FROM_LINE && /"none"/.test(error.message));
+});
+
+test('a look at the choices asks about a missing tool, recommending to leave it out only when the web route is ready', async () => {
+  await withHome(async () => {
+    const folder = gitlabFolder();
+    for (const [ready, recommended] of [[false, "Fetch GitLab's tool"], [true, NONE_GLAB]]) {
+      const step = toolsStep({ engine: null, run: noGlab().run, fetch: noFetch, pluginRoot: PLUGIN, env: {}, webReady: async () => ready });
+      const got = await step.plan(ctxFor(folder, { choicesOnly: true }));
+      assert.equal(got.ask.id, 'host-tool-glab');
+      assert.deepEqual(got.ask.card.options.map((o) => o.label), ["Fetch GitLab's tool", NONE_GLAB]);
+      assert.equal(got.ask.card.recommend, recommended);
+      assert.deepEqual(cardProblems(composeCard({ ...got.ask.card, kind: 'question', suggest: false }).question), []);
+      assert.doesNotMatch(JSON.stringify(got.ask.card), /\bREST\b|\bcurl\b|\bAPI\b/);
+      // Answered, it asks nothing more; and a recommendation is never taken without an answer.
+      const answered = await step.plan(ctxFor(folder, { choicesOnly: true, answers: { '2.host-tool-glab': said(recommended) } }));
+      assert.equal(answered.ask, undefined);
+      const unasked = await step.plan(ctxFor(folder));
+      assert.deepEqual(unasked.changes.map((c) => [c.action, c.tool]), [['fetch', 'glab']]);
+    }
+    // Nothing is asked when the settings already say.
+    fs.mkdirSync(path.join(folder, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(folder, '.claude', 'wheelhouse.json'), JSON.stringify({ glabFrom: 'none' }));
+    const step = toolsStep({ engine: null, run: noGlab().run, fetch: noFetch, pluginRoot: PLUGIN, env: {} });
+    assert.equal((await step.plan(ctxFor(folder, { choicesOnly: true }))).ask, undefined);
+  });
+});
+
+test('the web route is ready when curl is here and git holds a key that passes, and a fault reads as not ready', async () => {
+  await withHome(async () => {
+    const folder = gitlabFolder();
+    const asked = [];
+    const base = { tool: 'glab', folder, platform: 'darwin', exists: (file) => file === '/usr/bin/curl', borrow: async (a) => { asked.push(a); return { key: 'stand-in-key', username: 'oauth2' }; } };
+    assert.equal(await webRouteReady({ ...base, verify: async () => ({ state: 'works' }) }), true);
+    assert.deepEqual(asked, [{ host: 'gitlab.com', base: 'https://gitlab.com' }]);
+    assert.equal(await webRouteReady({ ...base, verify: async () => ({ state: 'refused' }) }), false);
+    assert.equal(await webRouteReady({ ...base, verify: async () => { throw new Error('no road'); } }), false);
+    assert.equal(await webRouteReady({ ...base, exists: () => false, verify: async () => ({ state: 'works' }) }), false, 'no curl');
+    assert.equal(await webRouteReady({ ...base, borrow: async () => null, verify: async () => ({ state: 'works' }) }), false, 'no key');
+  });
+});
+
+test('Customise reaches the tool question: found last, with its line on the one card, and changeable while step 2 has not run', async () => {
+  await withHome(async () => {
+    const folder = gitlabFolder();
+    const step = toolsStep({ engine: null, run: noGlab().run, fetch: noFetch, pluginRoot: PLUGIN, env: {}, webReady: async () => true });
+    const other = { n: 3, plan: async (ctx) => (ctx.answers['3.real-users'] ? { wait: 0, why: 'made' } : { ask: { id: 'real-users', card: { recommend: 'No' } } }) };
+    const planOf = (s, answers) => s.plan(ctxFor(folder, { answers, choicesOnly: true }));
+    const list = await openChoices({ steps: [step, other], run: null, answers: {}, planOf });
+    assert.deepEqual(list.map((c) => c.key), ['3.real-users', '2.host-tool-glab']);
+    assert.equal(list[1].label, NONE_GLAB);
+    assert.equal(list[1].chosen, null);
+    const card = oneCard({ folder, list, product: { isNew: false, host: 'gitlab', repo: 'team/product', name: 'product' }, platform: 'darwin', toRun: [2, 3], count: 0 }).card;
+    assert.match(card.question, /- GitLab's own tool left out: Wheelhouse reaches GitLab without it\./);
+    assert.deepEqual(cardProblems(card), []);
+    // The director's own answer replaces the recommendation; the paused plan takes it without starting over.
+    const chosen = await openChoices({ steps: [step, other], run: null, answers: { '2.host-tool-glab': said("Fetch GitLab's tool") }, planOf });
+    assert.equal(chosen.find((c) => c.id === 'host-tool-glab').label, "Fetch GitLab's tool");
+    assert.equal(aboutOf('2.host-tool-glab'), "GitLab's own tool");
+    assert.equal(actedBy('2.host-tool-glab'), 2);
+    const shown = choiceList({ open: [], answers: { '2.host-tool-glab': said(NONE_GLAB) }, doneOrRunning: (n) => n === 2 });
+    assert.deepEqual(shown, [{ key: '2.host-tool-glab', about: "GitLab's own tool", chosen: NONE_GLAB, acted: true }]);
+  });
 });
