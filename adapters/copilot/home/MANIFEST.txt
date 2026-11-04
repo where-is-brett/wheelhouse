@@ -16,3 +16,4 @@ a39badcc87f0e4568eb3b3b4ef5359647b87d64a skills/wheelhouse-logbook/SKILL.md
 6cd0b4aa1709f38fa041ba1a30cc1122f065ea08 skills/wheelhouse-setup/SKILL.md
 02ef8878d401f6481f7480263363eeedfb59b853 skills/wheelhouse-sources/SKILL.md
 0902ef1979229cdbda9dae0a32e4a6a8980375a2 skills/wheelhouse-stop/SKILL.md
+f22c2138d802cb110d7e485aea211eafb5fdd635 skills/wheelhouse-update/SKILL.md

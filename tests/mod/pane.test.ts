@@ -137,7 +137,7 @@ test('the front desk\'s session opens the pane and sets the status line from the
     expect(seen.ticks[0].argv[0]).toBe('node')
     expect(seen.ticks[0].argv[1]).toEndWith('/scripts/mod/bridge.js')
     expect(seen.ticks[0].timeoutMs).toBe(TICK_ASK_MS)
-    expect(seen.ticks[0].request).toEqual({ cmd: 'tick', session: current.session, cwd: ROOT, idle: true, surface })
+    expect(seen.ticks[0].request).toEqual({ cmd: 'tick', session: current.session, cwd: ROOT, idle: true, surface, drawn: null })
     expect(seen.opens).toEqual([{ id: PANE_ID, title: '2 cards wait' }])
     expect(seen.statuses).toEqual(['2 cards wait'])
 
@@ -147,7 +147,7 @@ test('the front desk\'s session opens the pane and sets the status line from the
     reply = frontDesk('1 card waits')
     await $.turn.start({ turnId: 't1', text: 'hello' })
     await clock.advance(TICK_MS)
-    expect(seen.ticks.map((t: any) => t.request)).toEqual([{ cmd: 'tick', session: current.session, cwd: ROOT, idle: false, surface }])
+    expect(seen.ticks.map((t: any) => t.request)).toEqual([{ cmd: 'tick', session: current.session, cwd: ROOT, idle: false, surface, drawn: null }])
     expect(seen.opens).toEqual([{ id: PANE_ID, title: '1 card waits' }])
     expect(seen.statuses).toEqual(['1 card waits'])
 
@@ -168,6 +168,19 @@ test('the front desk\'s session opens the pane and sets the status line from the
     expect(seen.statuses).toEqual([undefined])
     expect(seen.opens).toEqual([{ id: PANE_ID, title: '1 card waits' }])
   }
+})
+
+test('a tick carries null for drawn before the pane has drawn, and the draw time after', async ($, on) => {
+  const { start, seen, clear, clock } = world(on, () => frontDesk('2 cards wait'))
+  await start($, SURFACES[0])
+  expect(seen.ticks[0].request.drawn).toBeNull()
+  const ui = await mount($, SURFACES[0])
+  await texts(ui)
+  const drawnAt = clock.now()
+  clear()
+  await clock.advance(TICK_MS)
+  expect(seen.ticks[0].request.drawn).toBe(drawnAt)
+  await ui.unmount()
 })
 
 test('a held card isn\'t drawn, and its line shows how many wait, one press from being shown', async ($, on) => {

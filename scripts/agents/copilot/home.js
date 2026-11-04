@@ -67,6 +67,7 @@ const PLAYBOOK_SKILLS = Object.freeze([
   { name: 'intake', source: 'skills/intake/SKILL.md' },
   { name: 'lean', source: 'adapters/copilot/skills/lean/SKILL.md' },
   { name: 'setup', source: 'adapters/copilot/skills/setup-lean/SKILL.md' },
+  { name: 'update', source: 'adapters/copilot/skills/update-lean/SKILL.md' },
 ]);
 // The words a source holds back for the kit to fill in, so the source stays in general words (the core never names an
 // agent). `{{agent}}` is the product the kit is for, where a safety line names it (adapters/copilot/safety-line.js);

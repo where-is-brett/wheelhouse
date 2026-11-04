@@ -132,8 +132,8 @@ export function runClosed(run) {
 }
 
 // A setup choice's key, as `cli.js choices` lists it (design section 15.1): its step (0 for a redo
-// card's, 3 or 4 for a question's) and its question id.
-export const CHOICE_KEY = /^[034]\.[a-z0-9-]{1,40}$/;
+// card's, 2, 3 or 4 for a question's) and its question id.
+export const CHOICE_KEY = /^[0234]\.[a-z0-9-]{1,40}$/;
 
 // The step that tests a push to the director's phone (Phone notifications, ruling R39).
 export const PUSH_TEST_STEP = 9;

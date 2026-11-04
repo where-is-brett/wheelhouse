@@ -595,6 +595,19 @@ test('the pane carries the Safekeeping row with the status\'s own buttons, and n
   assert.deepEqual((await paneModel({ project: P, cwd, now: () => NOW })).safekeeping, { level: 'watch', line: 'Only here', detail: 'Lost with it', actions: [{ action: 'choose-folder', label: 'Choose a backup folder' }] });
 }));
 
+test('safekeeping shows once: as its row, not as a health line', () => withHome(async () => {
+  const cwd = tempFolder('wh-once-');
+  writeProject(P, { folder: cwd, remoteUrl: null, host: 'local', repo: `local/${P}`, connection: { host: 'local', mode: 'none' } });
+  fs.mkdirSync(path.dirname(safekeepingFile(P)), { recursive: true });
+  fs.writeFileSync(safekeepingFile(P), `${JSON.stringify({ status: { level: 'watch', line: 'Only on this computer, no backup', detail: 'Lost with it', actions: [] } })}\n`);
+  const health = [{ level: 'ok', text: 'Protection: Standard' }, { level: 'watch', text: 'Safekeeping: Only on this computer, no backup', safekeeping: true }];
+  const loadInputs = async () => ({ project: P, model: { missing: [], director: { health }, build: { features: [] } }, usage: null });
+  const model = await paneModel({ project: P, cwd, now: () => NOW, loadInputs });
+  assert.equal(model.health.some((l) => l.text.startsWith('Safekeeping:')), false);
+  assert.equal(model.safekeeping.line, 'Only on this computer, no backup');
+  assert.equal(model.healthNote.allWell, true);
+}));
+
 test('a goal in force gives the pane its one line, and an ended one the courier its ending', () => withHome(async (home) => {
   const repo = register(home);
   const piece = (id, title) => ({ id, title, lane: 'quick', visible: false, dependsOn: [] });

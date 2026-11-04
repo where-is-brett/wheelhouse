@@ -38,13 +38,16 @@ import { LIVE_DATA, PRODUCT, SIGNS_APPS, productName } from './questions.js';
 import { FIRST_CHECK_LINE, KEEP_HERE, KEPT_LINE, PUT_ON_GITLAB, STARTED_LINE } from './local.js';
 import { backupNamed } from '../host/local/restore.js';
 import { compactionLine, compactionRules } from '../protection/settings.js';
+import { HOST_TOOL_NAME, hostToolLabels } from './tools.js';
 
 // The one card's step: none of setup's ten.
 export const ONE_CARD_STEP = 0;
 export const GO_AHEAD = 'Go ahead';
 export const CUSTOMISE = 'Customise';
 // The steps whose questions are setup's choices.
-export const CHOICE_STEPS = Object.freeze([3, 4]);
+// Step 2's is whether to fetch a missing host tool (scripts/setup/tools.js); it is found last, since which tool is
+// missing depends on the host that steps 3 and 4's answers name.
+export const CHOICE_STEPS = Object.freeze([2, 3, 4]);
 // AskUserQuestion takes at most four questions at once.
 export const PER_CARD = 4;
 // The most questions one step's dry run may ask before it is taken as stuck.
@@ -68,6 +71,7 @@ export function aboutOf(key) {
   if (id.startsWith('product-')) return 'the description';
   if (id === 'live-data') return 'live data';
   if (id === 'apple-apps') return 'signing Apple apps';
+  if (id.startsWith('host-tool-')) return `${id === 'host-tool-gh' ? 'GitHub' : 'GitLab'}'s own tool`;
   return id;
 }
 
@@ -76,6 +80,7 @@ export function aboutOf(key) {
 // project's settings at step 7; the description and the phase are records, never acted on.
 export function actedBy(key) {
   const [step, id] = [Number(key.slice(0, key.indexOf('.'))), key.slice(key.indexOf('.') + 1)];
+  if (step === 2) return 2;
   if (step === 3 && id !== 'real-users') return 3;
   if (id === 'live-data' || id === 'apple-apps') return 7;
   return null;
@@ -87,7 +92,8 @@ export function actedBy(key) {
 // director's, or the card's recommendation). `planOf(step, answers)` runs the step's plan with a
 // look at the choices only; `answers` are the run's answers as the steps read them.
 export async function openChoices({ steps, run, answers, planOf }) {
-  const open = steps.filter((s) => CHOICE_STEPS.includes(s.n) && onRunList(run, s.n) && !stepDone(run, s.n));
+  const open = steps.filter((s) => CHOICE_STEPS.includes(s.n) && onRunList(run, s.n) && !stepDone(run, s.n))
+    .sort((a, b) => Number(a.n === 2) - Number(b.n === 2));
   // The open steps' questions are asked afresh in the dry run; a done step's answers stand as they are.
   const taken = Object.fromEntries(Object.entries(answers).filter(([key]) => !open.some((s) => key.startsWith(`${s.n}.`))));
   const list = [];
@@ -167,6 +173,11 @@ function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
     if (label === LIVE_DATA.no) return before && choices.some((c) => c.id === 'real-users') ? null : 'No live data yet.';
     return 'Agents use test data only, to be safe.';
   }
+  if (id.startsWith('host-tool-')) {
+    const tool = id === 'host-tool-gh' ? 'gh' : 'glab';
+    const name = HOST_TOOL_NAME[tool];
+    return label === hostToolLabels(tool).none ? `${name}'s own tool left out: Wheelhouse reaches ${name} without it.` : `${name}'s own tool fetched from its official release and checked.`;
+  }
   if (id === 'apple-apps') return label === SIGNS_APPS.yes ? 'Builds may use your saved passwords to sign the app.' : 'Builds can\'t reach your saved passwords.';
   return null;
 }
@@ -201,7 +212,7 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
   if (toRun.includes(3) && product && product.isNew === false && product.host !== 'local') lines.push(`${name} on ${product.host === 'gitlab' ? 'GitLab' : 'GitHub'}, as it is.`);
   // In the card's order: where it is kept, how agents reach it, its phase and data, Locked, the
   // description, then Apple signing.
-  const rank = ({ id }) => ['join', 'host', 'kept', 'branch-', 'connection', 'real-users', 'live-data', 'locked', 'product-', 'apple-apps']
+  const rank = ({ id }) => ['join', 'host', 'kept', 'branch-', 'connection', 'host-tool-', 'real-users', 'live-data', 'locked', 'product-', 'apple-apps']
     .findIndex((p) => id === p || id.startsWith(p.endsWith('-') ? p : `${p}-`));
   for (const c of [...list].sort((x, y) => rank(x) - rank(y))) {
     const readme = describedBy(c);

@@ -14,3 +14,4 @@ d714ba985f78e3bd1291b8e70007b65d1750c018 skills/wheelhouse-settings/SKILL.md
 7651fb5b8fff264ade3ac175d26cb9906ec9fc12 skills/wheelhouse-setup/SKILL.md
 bfaefc41db3617193650afe629c06a888b81466f skills/wheelhouse-sources/SKILL.md
 a4fa683338ec5610deb90ec75bfe591b02e3f0f9 skills/wheelhouse-stop/SKILL.md
+2feda63331c229a7149654e7abfcefcadd00e609 skills/wheelhouse-update/SKILL.md

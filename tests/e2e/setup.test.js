@@ -95,6 +95,8 @@ const NEW_ANSWERS = {
   join: HOST_LABELS.github, 'real-users': REAL_USERS.no, connection: WAYS.quick,
   product: 'Tide tables for sailors, used by the harbour\'s skippers.', 'live-data': LIVE_DATA.no,
   'phone-ready': READY.ready, 'push-arrived': ARRIVED.yes,
+  // Step 2's choice about gh, which this computer lacks: fetched, as these tests follow.
+  'host-tool-gh': 'Fetch GitHub\'s tool',
 };
 // The board in a log `follow` gave.
 const log10 = (log) => log.find((e) => e.health).health;
@@ -323,10 +325,12 @@ test('an existing project with rules: step 5 asks nothing and follows them as th
     assert.deepEqual(shape(log), [
       [0, 'plan'],
       [3, 'real-users'], [3, 'connection'], [4, 'product-before-launch'], [4, 'live-data'],
+      // This computer has no gh, so step 2's choice about fetching it is the fifth, on a card of its own.
+      [2, 'host-tool-gh'],
       [0, 'plan'],
       [1, 'settled'], [2, 'covered'], [3, 'covered'], [4, 'settled'], [5, 'settled'],
     ]);
-    assert.ok(log.filter((e) => e.together).every((e) => e.together === 4), 'asked together');
+    assert.deepEqual(log.filter((e) => e.together).map((e) => e.together), [4, 4, 4, 4, 1], 'asked together, four to a card');
     assert.match(log.find((e) => e.step === 3 && e.goAhead).card.question, /a-director\/Harbour-Log on GitHub, kept as it is/);
     assert.ok(!a.calls.some((call) => call[1] === 'repo' && call[2] === 'create' && call[3] === repo));
 
@@ -370,7 +374,7 @@ test('setup stopped after Customise\'s cards resumes at the one card in the next
     await a.sessionStart();
     // The rest of the choices (step 4's), then the one card with the director's choices on it.
     const next = (await a.cli('resume')).plan;
-    assert.deepEqual(next.asks.map((x) => x.id.replace(/-[0-9a-f]{10}$/, '')), ['connection'], 'the questions already answered are not asked again');
+    assert.deepEqual(next.asks.map((x) => x.id.replace(/-[0-9a-f]{10}$/, '')), ['connection', 'host-tool-gh'], 'the questions already answered are not asked again');
     await a.clickAll(next.asks.map((x) => x.card), next.asks.map((x) => byId(NEW_ANSWERS)(x.id)));
     const card = (await a.cli('resume')).plan;
     assert.equal(card.step, 0);
@@ -469,6 +473,36 @@ test('the description\'s card refuses a hand-back and a first question, records 
     assert.deepEqual(glossary, ['Tide tables for sailors?']);
     assert.deepEqual(a.refused, []);
     assert.deepEqual(shims.calls(), []);
+  } finally {
+    await a.cleanup();
+  }
+});
+
+// A setup whose plan has gh to fetch can take the answer to leave it out without starting over: the choice is on the
+// one card, "change" reaches it while step 2 has not run, the one card comes back, and step 2 then fetches nothing.
+test('a setup paused before step 2 takes the answer to leave gh out, and step 2 fetches nothing', { skip: SKIP }, async () => {
+  const { a } = fresh();
+  try {
+    await a.start();
+    await a.sessionStart();
+    // Customise, then Go ahead on the card with the director's choices, which says gh is fetched.
+    const first = await follow(a, { answer: customiseOnce(NEW_ANSWERS), through: 1 });
+    const planCard = first.find((e) => e.ask?.startsWith('plan-'));
+    assert.ok(planCard);
+    const { choices } = await a.cli('choices');
+    const tool = choices.find((c) => c.key === '2.host-tool-gh');
+    assert.deepEqual([tool.about, tool.acted], ['GitHub\'s own tool', false]);
+    const { asks } = await a.cli('change', '2.host-tool-gh');
+    assert.deepEqual(asks.map((x) => x.id), ['host-tool-gh']);
+    await a.click(asks[0].card, 'Don\'t use GitHub\'s tool');
+    const again = (await a.cli('resume')).plan;
+    assert.equal(again.step, 0);
+    assert.match(again.ask.card.question, /GitHub's own tool left out: Wheelhouse reaches GitHub without it\./);
+    await a.click(again.ask.card, 'Go ahead');
+    const log = await follow(a, { answer: byId(NEW_ANSWERS), through: 2 });
+    assert.ok(log.some((e) => e.step === 2), 'step 2 ran');
+    const fetched = (await a.setupRun()).changes.filter((c) => c.step === 2 && c.kind === 'folder');
+    assert.deepEqual(fetched, [], 'nothing was fetched');
   } finally {
     await a.cleanup();
   }

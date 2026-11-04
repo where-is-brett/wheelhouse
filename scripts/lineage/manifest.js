@@ -22,7 +22,9 @@ import { AGENT_PINS } from '../agents/pins.js';
 import { ENGINE_PINS, manifestPins } from '../engine/pins.js';
 
 export const MANIFEST_PATH = 'lineage/manifest.json';
-export const MODELS = 'the routing table in .claude/wheelhouse.json';
+// The oldest Node.js a Wheelhouse release runs on (package.json's engines).
+export const NODE_FLOOR = '22.0.0';
+export const MODELS ='the routing table in .claude/wheelhouse.json';
 // The marketplace Wheelhouse installs the pinned copies through.
 export const MARKETPLACE = 'wheelhouse';
 // Wheelhouse's own repository on GitHub, named once: the project's settings fetch the
@@ -89,6 +91,7 @@ export function readManifest(root = repoRoot()) {
   const ok = isObject(manifest) && manifest.v === 1
     && typeof manifest.wheelhouse?.version === 'string'
     && typeof manifest.claudeCode?.floor === 'string'
+    && (manifest.node === undefined || (isObject(manifest.node) && typeof manifest.node.floor === 'string'))
     && typeof manifest.models === 'string'
     && (manifest.agents === undefined || pinsOk(manifest.agents))
     && (manifest.copies === undefined || isHashed(manifest.copies))
@@ -210,6 +213,7 @@ export function buildManifest({ roots, version, upstreams = UPSTREAMS, pins = AG
     // Wheelhouse's own skill copies, for the hold of a project whose steps read them (scripts/lineage/check.js).
     copies: readCopies(copiesRoot).map(({ name }) => ({ path: `skills/${name}`, hash: fingerprintTree(path.join(copiesRoot, 'skills', name)).hash })),
     claudeCode: { floor: CLAUDE_CODE_FLOOR },
+    node: { floor: NODE_FLOOR },
     agents: agentPins(pins),
     engine: manifestPins(engine),
     models: MODELS,
