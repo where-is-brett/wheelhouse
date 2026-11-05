@@ -15,6 +15,7 @@ import { readEnrolled } from '../state/signing.js';
 import { namesOf, readProject } from '../lib/projects.js';
 import { vscodeAsk } from '../agents/vscode-held.js';
 import { stateDir } from '../lib/paths.js';
+import { readLean } from '../lean/project.js';
 import { stopState } from '../lib/stop.js';
 
 const APPROVAL_LINE = /^Approve pull request #([1-9][0-9]*) at commit ([0-9a-f]{12})$/;
@@ -61,7 +62,7 @@ export function fileSource(project, { cwd, client, now = () => new Date(), fresh
     // Whether a live panel answers this project's cards (scripts/agents/vscode-held.js): the card commands ask it here, since
     // the sandbox they run in can't read the home.
     vscode(asked) {
-      return vscodeAsk({ project, folder: readProject(project)?.folder, now: now().getTime() }, asked);
+      return vscodeAsk({ project, folder: (readProject(project) ?? readLean(project))?.folder, now: now().getTime() }, asked);
     },
     // An approval card's preview address, or null.
     async preview(cardId) {
