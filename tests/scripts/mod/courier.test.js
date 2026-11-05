@@ -661,3 +661,13 @@ test('the card for changes made by hand wakes the front desk at once, inside the
   assert.notEqual(woke.submit, null);
   assert.deepEqual(woke.sent, ['card:q:q-by-hand-1']);
 }));
+
+test('a change made by hand to carry on wakes at once, even away, and tells the front desk to carry it on', () => opened(async () => {
+  assert.notEqual((await wake([{ id: 'finished:w-1', kind: 'finished' }], { now: () => at(T0 - MIN) })).submit, null);
+  const items = needsYou({ after: model({ carryOn: [3] }) });
+  assert.deepEqual(items, [{ id: 'carry-on:3', kind: 'carry-on', atOnce: true }]);
+  const woke = await wake(items, { presence: { value: 'away' } });
+  assert.notEqual(woke.submit, null);
+  assert.match(woke.context, /changes made by hand to carry on/);
+  assert.match(woke.context, /carry-on <n>/);
+}));
