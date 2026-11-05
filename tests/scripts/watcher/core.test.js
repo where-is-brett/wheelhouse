@@ -854,3 +854,16 @@ test('work tied to a verified by-hand press starts at once; a plain from field d
   assert.deepEqual(diff(observation(), observation({ events: [tie(true)] }), { handled: new Set() }).map((e) => [e.type, e.work]), [['work-ready', 'carry-on-2']]);
   assert.deepEqual(diff(observation(), observation({ events: [tie(false)] }), { handled: new Set() }), []);
 });
+
+test('a findings wake says in Wheelhouse\'s words whether the review holds the merge, and a clearing review notes its minors', () => {
+  const HEAD = 'a'.repeat(40);
+  const prs = (p) => ({ prs: { 7: { work: 'w', head: HEAD, ci: 'success', mergeable: 'yes', ...p } } });
+  const events = (p) => diff({ prs: {} }, { ...prs(p), events: [], features: {}, testMerges: [], stop: false, at: '2026-11-06T00:00:00.000Z' }, {});
+  const held = events({ review: 'findings', findings: 3, blocking: null }).find((e) => e.type === 'findings');
+  assert.match(held.detail.next, /signed review of aaaaaaa holds the merge \(3 findings; no severity count\)\. Fix every finding it lists, push, then dispatch wheelhouse:reviewer on the new head\. You can't defer these\./);
+  const some = events({ review: 'findings', findings: 3, blocking: 1 }).find((e) => e.type === 'findings');
+  assert.match(some.detail.next, /1 of them BLOCKER or HIGH/);
+  const minor = events({ review: 'clean', findings: 2, blocking: 0 });
+  assert.match(minor.find((e) => e.type === 'review-passed').detail.next, /leaves only minor findings; they're deferred and the merge goes ahead; nothing to do\./);
+  assert.ok(minor.some((e) => e.type === 'merge-ready'), 'and the merge is raised');
+});

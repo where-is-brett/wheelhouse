@@ -4,6 +4,7 @@
 // report from Wheelhouse's own reviewer, naming the open pull request's current
 // head, is recorded as a signed review. Only this hook signs. A report that says
 // `pr: none` (work before the feature has a pull request) is complete but never signs.
+import { severityCounts } from '../lib/review-verdict.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -47,6 +48,13 @@ export function parseReport(text, role) {
   } else {
     need('verdict', (v) => v === 'CLEAN' || v === 'FINDINGS');
     if (fields.verdict === 'FINDINGS') need('findings', (v) => /^[0-9]+$/.test(v ?? '') && Number.isSafeInteger(Number(v)));
+    // `blocking` (the BLOCKER and HIGH findings) is needed with findings, and is a count of at most the findings; CLEAN gives none.
+    if (fields.verdict === 'FINDINGS' || fields.blocking !== undefined) need('blocking', (v) => /^[0-9]+$/.test(v ?? '') && Number.isSafeInteger(Number(v)) && fields.verdict === 'FINDINGS' && Number(v) <= Number(fields.findings));
+  }
+  // The `blocking` it signs must be what its listed findings show: the count of BLOCKER and HIGH lines, and as many lines as findings.
+  if (kind === 'reviewer' && fields.verdict === 'FINDINGS' && !bad.includes('blocking') && !bad.includes('findings')) {
+    const seen = severityCounts(text);
+    if (seen.blocking !== Number(fields.blocking) || seen.total !== Number(fields.findings)) bad.push('blocking (and one `- SEVERITY: …` line for each finding)');
   }
   if (fields.check !== undefined) need('check', (v) => /^[A-Za-z0-9._-]{1,64} [A-Za-z0-9:+/=._-]{1,128}$/.test(v));
   return { fields, missing: bad };
@@ -150,6 +158,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
     commit: fields.commit,
     verdict: fields.verdict,
     findings: fields.verdict === 'FINDINGS' ? Number(fields.findings) : 0,
+    ...(fields.verdict === 'FINDINGS' && fields.blocking !== undefined ? { blocking: Number(fields.blocking) } : {}),
     ...(fields.check ? { check: fields.check } : {}),
     claudeCode: text(input.claudeCode) ?? text(seen.claudeCode) ?? 'unknown',
     model: text(input.model) ?? text(seen.model) ?? 'unknown',

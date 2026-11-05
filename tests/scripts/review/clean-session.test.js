@@ -49,8 +49,10 @@ const T0 = new Date('2026-10-24T01:00:00.000Z');
 const at = (ms) => () => new Date(T0.getTime() + ms);
 const LINE = 'WHEELHOUSE CLEAN REVIEWER 0123456789abcdef0123456789abcdef';
 
+// A FINDINGS report lists one HIGH line for each finding and says so in `blocking`, as the reviewer is told to.
 const report = ({ pr = 7, commit, verdict = 'CLEAN', findings }) => [
-  'WHEELHOUSE REPORT', 'role: reviewer', `pr: ${pr}`, `commit: ${commit}`, `verdict: ${verdict}`, ...(findings === undefined ? [] : [`findings: ${findings}`]),
+  ...(findings === undefined ? [] : Array.from({ length: findings }, (_, i) => `- HIGH: finding ${i + 1}`)),
+  'WHEELHOUSE REPORT', 'role: reviewer', `pr: ${pr}`, `commit: ${commit}`, `verdict: ${verdict}`, ...(findings === undefined ? [] : [`findings: ${findings}`, `blocking: ${findings}`]),
 ].join('\n');
 
 function listing(dir) {
@@ -140,7 +142,7 @@ test('a steering file name found in the folder refuses with NO_CLEAN_REVIEW', as
 
 test('a verdict counts only from an answer that begins with the session\'s own line and names the pull request and head', () => {
   const good = `${LINE}\nChecked the loop.\n${report({ commit: SHA, verdict: 'FINDINGS', findings: 1 })}`;
-  assert.deepEqual(readVerdict({ answer: good, firstLine: LINE, number: 7, sha: SHA }), { ok: true, data: { pr: 7, commit: SHA, verdict: 'FINDINGS', findings: 1 } });
+  assert.deepEqual(readVerdict({ answer: good, firstLine: LINE, number: 7, sha: SHA }), { ok: true, data: { pr: 7, commit: SHA, verdict: 'FINDINGS', findings: 1, blocking: 1 } });
   assert.equal(readVerdict({ answer: good.slice(LINE.length + 1), firstLine: LINE, number: 7, sha: SHA }).ok, false);
   assert.equal(readVerdict({ answer: good, firstLine: LINE, number: 8, sha: SHA }).ok, false);
   assert.equal(readVerdict({ answer: good.replace(SHA, 'b'.repeat(40)), firstLine: LINE, number: 7, sha: SHA }).ok, false);
@@ -570,7 +572,7 @@ test('the helper signs the review of a clean session it starts and reads, with t
     });
     assert.deepEqual(notes, []);
     assert.equal(reviews.length, 1);
-    assert.deepEqual(reviews[0].data, { pr: 7, commit: project.head, verdict: 'FINDINGS', findings: 1, reviewKind: 'clean-session' });
+    assert.deepEqual(reviews[0].data, { pr: 7, commit: project.head, verdict: 'FINDINGS', findings: 1, blocking: 1, reviewKind: 'clean-session' });
     const seen = fs.readFileSync(record, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
     assert.deepEqual(seen.map((call) => (call.args[0] === '-p' ? '-p' : call.args.join(' '))), ['--version', 'instruction list --json', 'lsp list --json', 'mcp list --json', 'skill list', '-p']);
     for (const call of seen) {

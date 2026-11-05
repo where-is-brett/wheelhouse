@@ -1,4 +1,5 @@
 // scripts/state/views.js
+import { reviewClear } from '../lib/review-verdict.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -49,7 +50,11 @@ function recordsByPr(events, kind, enrolled) {
     const commit = e.data?.commit;
     if (pr === undefined || pr === null || !isPlainKey(String(commit ?? ''))) continue;
     const bucket = (out[String(pr)] ??= {});
-    bucket[String(commit)] = e;
+    // A review that holds a head (findings that block, or a FINDINGS record that does not say) stays the review of that
+    // head: a later record that clears it, from running the review again until one passes, does not take its place. A
+    // changed head is a new commit, with a review of its own.
+    const held = kind === 'review' && bucket[String(commit)] !== undefined && !reviewClear(bucket[String(commit)].data);
+    if (!held) bucket[String(commit)] = e;
   }
   return out;
 }
