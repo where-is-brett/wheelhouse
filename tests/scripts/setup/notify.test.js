@@ -111,6 +111,15 @@ test('step 9 does not settle before step 6, even with the answer to whether the 
   });
 });
 
+test('in a terminal session step 9 recommends Skip for now and says plainly what Ready needs', async () => {
+  const terminal = await notifyStep().plan({ answers: {}, now: () => T0, desktop: false });
+  assert.equal(terminal.ask.card.recommend, READY.skip);
+  assert.match(terminal.ask.card.because, /need Claude Desktop and your phone/);
+  assert.deepEqual(terminal.ask.card.options.map((o) => o.label), [READY.ready, READY.skip]);
+  const app = await notifyStep().plan({ answers: {}, now: () => T0, desktop: true });
+  assert.equal(app.ask.card.recommend, READY.ready);
+});
+
 test('with no answer, step 9 asks the card of plain steps, ending with the screen locked until the phone buzzes', async () => {
   const got = await notifyStep().plan({ answers: {}, now: () => T0 });
   assert.equal(got.ask.id, READY_ID);
