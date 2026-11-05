@@ -3,7 +3,7 @@
 // signed review holds the merge, and none without an open pull request.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { workCardFor, workQuestion, FIX_FINDINGS, RESTART_BUILDER } from '../../../scripts/foreman/ask-help.js';
+import { stuckAskCommand, workCardFor, workQuestion, FIX_FINDINGS, RESTART_BUILDER } from '../../../scripts/foreman/ask-help.js';
 import { questionProblem } from '../../../scripts/cards/compose.js';
 
 const COMMIT = 'c'.repeat(40);
@@ -55,4 +55,9 @@ test('no card for a stuck work, a merged pull request, or within 30 minutes of t
   const now = new Date('2026-11-05T10:40:00.000Z');
   assert.ok(workCardFor(answered('2026-11-05T10:20:00.000Z'), { work: 'mine', pr: 2, now }).skip.match(/30 minutes/));
   assert.ok(workCardFor(answered('2026-11-05T10:05:00.000Z'), { work: 'mine', pr: 2, now }).data);
+});
+
+test('the stuck wake\'s command matches the stuck card: fix the findings when a review holds, else restart', () => {
+  assert.match(stuckAskCommand('mine', { phase: 'pr-open', still: 20 * 60000, findings: true }), /--option 'Have the builder fix the findings=act restart mine' --option 'Wait=.+' --recommend 'Have the builder fix the findings' --level 2$/);
+  assert.match(stuckAskCommand('mine', { findings: false }), /--option 'Restart the builder on where it left off=act restart mine'/);
 });

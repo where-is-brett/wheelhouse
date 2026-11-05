@@ -13,6 +13,13 @@ export function askExample(work = '<work>') {
     + "--option 'Go on=Leave it running' --option 'Look again later=Nothing to do now' --recommend 'Go on' --level 2";
 }
 
+// The command that puts a stuck work's card to the director, matching the card the helper writes (stuckQuestion): it runs as it stands.
+export function stuckAskCommand(work, { phase = null, still = 0, findings = false } = {}) {
+  const q = stuckQuestion(work, { phase, still, findings });
+  const opts = q.options.map((o) => `--option '${o.label}=${o.says}'`).join(' ');
+  return `act ask ${work} --what '${q.what}' --why '${q.why}' ${opts} --recommend '${q.recommendation}' --level ${q.level}`;
+}
+
 export const ASK_HELP = [
   'act ask <work> --what <the question> --why <why it comes to the director> --option "<label>=<what it means>" (two or more) --recommend <one of the labels> --level <1 to 4>',
   'Every flag takes a value; give --option once for each choice. Type it all on one line. For example:',

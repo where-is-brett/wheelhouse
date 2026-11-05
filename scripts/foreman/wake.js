@@ -66,7 +66,7 @@
 //
 // The shared pieces here (ForemanError, the views, the configuration, a
 // feature's worktree and plan, the clash and slot answers) are act.js's too.
-import { askExample } from './ask-help.js';
+import { holdingReview, stuckAskCommand } from './ask-help.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { clashCheck, fileMapOf, nextWork, since } from './queue.js';
@@ -506,7 +506,12 @@ function eventLine(e, ctx) {
     case 'stuck': {
       const still = `no progress for ${Math.round((Number(d.still) || 0) / 60000)} minutes, at phase ${d.phase ?? 'unknown'}`;
       const held = heldLine(work, ctx);
-      return held !== null ? `${head}: ${oneLine(still)}; ${held}.` : said(still, `Ask the director now, in this one command: ${askExample(work)}. Do not close this wake as idle first`);
+      if (held !== null) return `${head}: ${oneLine(still)}; ${held}.`;
+      // The move offered is the one the helper's own stuck card offers: fixing the findings a review holds, or restarting the builder.
+      let findings = false;
+      try { findings = holdingReview(ctx.views, readPrRecord(worktreeOf(ctx.project, ctx.views, work))?.pr) !== null; } catch { /* no pull request to read */ }
+      const phase = typeof d.phase === 'string' && /^[a-z-]{1,32}$/.test(d.phase) ? d.phase : null;
+      return said(still, `Ask the director now, in this one command: ${stuckAskCommand(work, { phase, still: Number(d.still) || 0, findings })}. Do not close this wake as idle first; do not invent other options (act build refuses work that is building already)`);
     }
     case 'over-appetite': return said(`${d.tokens} tokens used against an appetite of ${d.appetite}`, 'Ask the director: act ask');
     case 'brief-tampered': return said(`its brief reads ${short(d.found)}, not the ${short(d.recorded)} recorded`, 'Ask the director: act ask');
