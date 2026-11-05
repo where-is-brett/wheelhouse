@@ -6,7 +6,7 @@ import path from 'node:path';
 import { withHome } from '../../helpers/homes.js';
 import { roleFile } from '../../../scripts/lib/role.js';
 import {
-  LIVE_MS, HERE_MS, HOLD_FOR_PANE, markPane, paneLive, markHere, takeHere, markOpen, readOpen, clearOpen,
+  LIVE_MS, HERE_MS, HOLD_FOR_PANE, ANY_CARD, markPane, paneLive, markHere, takeHere, markOpen, readOpen, clearOpen,
 } from '../../../scripts/lib/session-files.js';
 
 const T = 1_000_000;
@@ -89,4 +89,10 @@ test('here.json that is unreadable reads as absent', () => withHome(() => {
   assert.equal(takeHere('s1', ['a'], T), false);
   markHere('s1', ['a'], T);
   assert.equal(takeHere('s1', ['a'], T), true);
+}));
+
+test('the mark for every card takes any ids once', () => withHome(() => {
+  assert.equal(markHere('s1', [ANY_CARD], T), true);
+  assert.equal(takeHere('s1', ['x', 'y'], T + 1000), true);
+  assert.equal(takeHere('s1', ['x'], T + 2000), false);
 }));

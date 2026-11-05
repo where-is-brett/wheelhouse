@@ -265,3 +265,54 @@ test('a working tree with another change beside the section is left as it is', (
   assert.equal(await git(folder, ['rev-parse', 'HEAD']), before);
   assert.deepEqual(added, []);
 }));
+
+test('a tracked file edited by hand and not committed raises the card once the edit has stood, and Check and add sends it', () => level(async (folder) => {
+  await commitIn(folder, 'README.md', 'first\n');
+  await git(folder, ['push', '-q', homeDir(P), 'HEAD:refs/heads/main', '--force']);
+  fs.writeFileSync(path.join(folder, 'README.md'), 'edited by hand\n');
+  const answers = {};
+  const { watch, cards, added } = watching(folder, { answers });
+  await watch.tick();
+  assert.equal(cards.length, 0);
+  await watch.tick();
+  await watch.tick();
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].work, HAND_MADE_WORK);
+  answers[cards[0].id] = CHECK_AND_ADD;
+  await watch.tick();
+  await watch.tick();
+  assert.equal(added.length, 1);
+  assert.equal(added[0].parted, false);
+  assert.equal(await git(folder, ['show', `${added[0].tip}:README.md`]), 'edited by hand');
+  assert.equal(await git(folder, ['rev-parse', 'HEAD']), await git(folder, ['rev-parse', `${added[0].tip}^`]));
+  assert.equal(fs.readFileSync(path.join(folder, 'README.md'), 'utf8'), 'edited by hand\n');
+  assert.equal(cards.length, 1);
+}));
+
+test('Leave them out keeps an uncommitted edit from asking again, and a further edit asks anew', () => level(async (folder) => {
+  await commitIn(folder, 'README.md', 'first\n');
+  await git(folder, ['push', '-q', homeDir(P), 'HEAD:refs/heads/main', '--force']);
+  fs.writeFileSync(path.join(folder, 'README.md'), 'one\n');
+  const answers = {};
+  const { watch, cards, added } = watching(folder, { answers });
+  await watch.tick();
+  await watch.tick();
+  answers[cards[0].id] = LEAVE_THEM_OUT;
+  await watch.tick();
+  await watch.tick();
+  assert.equal(cards.length, 1);
+  assert.deepEqual(added, []);
+  fs.writeFileSync(path.join(folder, 'README.md'), 'two\n');
+  await watch.tick();
+  await watch.tick();
+  assert.equal(cards.length, 2);
+}));
+
+test('an untracked file alone raises no card', () => level(async (folder) => {
+  fs.writeFileSync(path.join(folder, 'notes.txt'), 'mine\n');
+  const { watch, cards } = watching(folder);
+  await watch.tick();
+  await watch.tick();
+  await watch.tick();
+  assert.deepEqual(cards, []);
+}));

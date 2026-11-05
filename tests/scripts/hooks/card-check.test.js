@@ -607,3 +607,12 @@ test('the Lift All stop question is not held for a feature session or with HOLD_
   assert.equal(await run(withSession([LIFT]), { outcomes: () => [], stop: STOP_ON, role: () => 'feature' }), undefined);
   assert.equal(await run(withSession([LIFT]), { outcomes: () => [], stop: STOP_ON, holdForPane: false }), undefined);
 }));
+
+test('the mark for every card (the update\'s --here) lets a held card through once, and expires', () => withHome(async () => {
+  live();
+  markHere(SID, ['*'], T0);
+  assert.equal(await run(withSession([separator.question]), { outcomes: () => [SEPARATOR] }), undefined);
+  assert.ok(reason(await run(withSession([separator.question]), { outcomes: () => [SEPARATOR] })).startsWith(PANE_LEAD), 'taken once');
+  markHere(SID, ['*'], T0 - 121000);
+  assert.ok(reason(await run(withSession([separator.question]), { outcomes: () => [SEPARATOR] })).startsWith(PANE_LEAD), 'expired');
+}));
