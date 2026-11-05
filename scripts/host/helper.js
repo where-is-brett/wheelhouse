@@ -5845,10 +5845,19 @@ export async function startHelper({
         return seen.reports?.[work]?.data?.outcome === 'merged' || endedBy(seen.reports ?? {}, work, entry.work);
       },
       // The heads of the changes runs opened, as the host has them: the merge queue brings a change up to date itself.
-      openHeads: async () => (await (await adapterNow()).openRequests()).flatMap((r) => {
-        const opened = r.fork || typeof r.head !== 'string' ? null : engineRun.openedOf(project, r.number);
-        return opened ? [{ head: r.head, work: opened.work }] : [];
-      }),
+      // A change a session opened (a feature's, carried on from a hand edit or a request) has no run's record: its work is
+      // the one whose feature branch it is, so a project whose checks run here checks that head too and reports on it.
+      openHeads: async () => {
+        const open = await (await adapterNow()).openRequests();
+        const features = open.some((r) => !r.fork && typeof r.head === 'string' && !engineRun.openedOf(project, r.number)) ? views().features ?? {} : {};
+        return open.flatMap((r) => {
+          if (r.fork || typeof r.head !== 'string') return [];
+          const opened = engineRun.openedOf(project, r.number);
+          if (opened) return [{ head: r.head, work: opened.work }];
+          const work = typeof r.branch === 'string' ? Object.keys(features).find((w) => features[w]?.data?.branch === r.branch) : undefined;
+          return work === undefined ? [] : [{ head: r.head, work }];
+        });
+      },
     });
     // A project in git alone: its open changes follow their branches, whatever broke off after a push, and its folder is
     // kept in step with its home.
@@ -5860,6 +5869,7 @@ export async function startHelper({
         answerOf: (id) => views().questions?.[id]?.answer?.label ?? null,
         note: (words) => write('note', { about: 'engine', words }),
         add: (tip, how) => addHandMade(project, tip, how),
+        inFlight: async () => (await (await adapterNow()).openRequests()).some((r) => HAND_MADE_BRANCH.test(r.branch)),
       });
       let trouble = null;
       return async () => {

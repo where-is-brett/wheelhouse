@@ -50,6 +50,8 @@ const GOAL_STOPPED = 'A goal stopped early';
 const GOAL_FINISHED = 'A goal finished';
 // The items that wake at once, inside the gap after the last wake.
 const AT_ONCE = ['stop', 'incident'];
+// The pane's id for the question behind the card for changes made by hand (scripts/host/local/folder.js).
+const HAND_CARD = /^q:q-by-hand-\d+$/;
 
 // How long after a wake its line still brings its instructions, and how many wakes are kept for it.
 export const WAKE_CONTEXT_MS = 10 * 60 * 1000;
@@ -94,7 +96,10 @@ export function needsYou({ after } = {}) {
   // A card the front desk has asked has reached the director already (a question from the build
   // is never asked until its card is made).
   for (const card of list(after.cards)) {
-    if (typeof card.id === 'string' && Number.isInteger(card.n) && card.asked !== true && card.heldBack !== true) items.push({ id: `card:${card.id}`, kind: 'card', n: card.n, blocking: card.blocking === true });
+    if (typeof card.id === 'string' && Number.isInteger(card.n) && card.asked !== true && card.heldBack !== true) {
+      // The card for changes made by hand comes just after the director's own edit, so it wakes at once, inside the gap too.
+      items.push({ id: `card:${card.id}`, kind: 'card', n: card.n, blocking: card.blocking === true, ...(HAND_CARD.test(card.id) ? { atOnce: true } : {}) });
+    }
   }
   for (const work of Array.isArray(after.finished) ? after.finished : []) {
     if (typeof work === 'string' && work !== '') items.push({ id: `finished:${work}`, kind: 'finished' });
@@ -323,7 +328,7 @@ export async function courierWake({ project, session, items, presence, quiet, id
     const last = kept.lastWakeAt === null ? Number.NaN : Date.parse(kept.lastWakeAt);
     const sinceLast = t - last;
     const inGap = Number.isFinite(sinceLast) && sinceLast >= 0 && sinceLast < COURIER_GAP_MS;
-    if (waking.length === 0 || idle !== true || (inGap && !waking.some((i) => AT_ONCE.includes(i.kind)))) {
+    if (waking.length === 0 || idle !== true || (inGap && !waking.some((i) => AT_ONCE.includes(i.kind) || i.atOnce === true))) {
       // Only that this session ticked is kept.
       mark([], kept.lastWakeAt);
       return NOTHING;

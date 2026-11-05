@@ -6,7 +6,7 @@ import { wheelhouseHome, profileDir, stateDir } from '../lib/paths.js';
 import { listEvents, eventHash, dataHash, CONFIRMABLE_KINDS, PIN_NAMES, READY_COLUMNS } from './events.js';
 import { ruleStands, stageOf } from '../delegation/rules.js';
 import { briefStands } from '../delegation/brief.js';
-import { answerLine, approvalLine, BLIND_LINE, chatCopy, ciPushLine, confirmLine } from './card-lines.js';
+import { answerLine, approvalLine, BLIND_LINE, CHECK_AND_ADD, chatCopy, ciPushLine, confirmLine } from './card-lines.js';
 import { joinQuestions } from './joiners.js';
 import { isLeanProject } from '../lean/project.js';
 import { verify, readEnrolled } from './signing.js';
@@ -379,6 +379,9 @@ export const countsAtOnce = (e) => e.kind === 'setting' && typeof e.data?.key ==
 // The most of the card router's Logbook lines the views keep.
 const ENGINE_NOTES = 30;
 
+const HAND_CARD = /^q-by-hand-\d+$/;
+const HAND_BRANCH = /^feature\/by-hand-/;
+
 // The build loop's views: work and its approvals, features, questions and incidents.
 // Every approval, answer, amendment and lift here is read from a verified action,
 // so a plain event of any kind stands in for none of them.
@@ -524,6 +527,18 @@ function buildLoopViews(sorted, enrolled) {
   const goalChecks = {};
   for (const e of sorted) {
     if (e.kind === 'goal-check' && isPlainKey(e.data?.goal) && verify(e, enrolled)) (goalChecks[e.data.goal] ??= []).push({ ...e.data, at: e.at });
+  }
+  // Work carried on from a change made by hand needs no approval of its own once the director has pressed Check and add them
+  // on the card for such changes: the change exists only because they did, so the click is the approval, and the work waits
+  // for nothing else. Only a local change this computer signed, on a by-hand branch, counts.
+  if (questions !== undefined && Object.entries(questions).some(([id, q]) => HAND_CARD.test(id) && q.answer?.label === CHECK_AND_ADD)) {
+    const byHand = new Set(sorted.filter((e) => e.kind === 'change' && HAND_BRANCH.test(String(e.data?.branch)) && verify(e, enrolled)).map((e) => e.data.n));
+    for (const entry of Object.values(work)) {
+      const { from, lane, doc } = entry.work.data;
+      if (entry.approved || !Number.isInteger(from?.request) || !byHand.has(from.request) || typeof doc?.hash !== 'string') continue;
+      entry.approved = true;
+      entry.approval = { hash: doc.hash, shownFirst: false, lane, byHand: true };
+    }
   }
   return {
     work, features, reports, questions, incidents: { open: [...open.values()] },

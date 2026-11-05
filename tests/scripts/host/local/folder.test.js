@@ -316,3 +316,32 @@ test('an untracked file alone raises no card', () => level(async (folder) => {
   await watch.tick();
   assert.deepEqual(cards, []);
 }));
+
+test('a further hand edit while an earlier change made by hand is open asks anew, and the card says so', () => level(async (folder) => {
+  await commitIn(folder, 'README.md', 'first\n');
+  await git(folder, ['push', '-q', homeDir(P), 'HEAD:refs/heads/main', '--force']);
+  fs.writeFileSync(path.join(folder, 'README.md'), 'one\n');
+  const answers = {};
+  let open = false;
+  const cards = [];
+  const watch = folderWatch({
+    project: P, folder, branchOf: async () => 'main', file: path.join(tempFolder('wh-kept-'), 'folder.json'),
+    card: async (data) => { cards.push(data); }, answerOf: (id) => answers[id] ?? null, note: async () => {},
+    add: async () => { open = true; return { ok: true }; }, inFlight: async () => open,
+  });
+  await watch.tick();
+  await watch.tick();
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].what, handMadeCard().what);
+  answers[cards[0].id] = CHECK_AND_ADD;
+  await watch.tick();
+  assert.equal(open, true, 'the first edit was added');
+  // The folder keeps the first edit, and the director edits again while that change is open.
+  fs.writeFileSync(path.join(folder, 'README.md'), 'two\n');
+  await watch.tick();
+  await watch.tick();
+  assert.equal(cards.length, 2);
+  assert.equal(cards[1].what, handMadeCard({ more: true }).what);
+  assert.match(cards[1].what, /^More changes were made by hand .* while the earlier ones are still being checked/);
+  assert.deepEqual(cards[1].options.map((o) => o.label), [CHECK_AND_ADD, LEAVE_THEM_OUT]);
+}));

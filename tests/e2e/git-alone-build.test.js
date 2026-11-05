@@ -97,3 +97,21 @@ test('parted work is brought up to date with the main version', { timeout: 12000
   assert.equal(fs.existsSync(path.join(folder, 'by-hand.txt')), true);
   assert.notEqual(change.head, moved);
 }, { check: standInCheck }));
+
+test('a change a session opened is checked at its head, and its result reads as the change\'s checks', { timeout: 120000 }, () => gitAloneWorld(async ({ helper, client, home, worktreeWith }) => {
+  const { worktree, head } = await worktreeWith('feature/card-9', 'export const price = () => 9;\n');
+  await g(worktree, 'push', '-q', home, 'HEAD:refs/heads/feature/card-9');
+  const change = await localChanges({ project: P }).openChange({ branch: 'feature/card-9', base: 'main', title: 'A change', body: 'A session opened it.', head });
+  // The feature's record names the branch, as a session's feature does; no run opened the change.
+  const feature = makeEvent({ kind: 'feature', data: { work: 'card-9', step: 'building', branch: 'feature/card-9' } });
+  const file = path.join(stateDir(P), eventPath(feature));
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(feature, null, 2)}\n`);
+  const check = await until(async () => {
+    await helper.engine.tick();
+    return records('check').find((e) => e.data.commit === head);
+  }, { what: 'a check at the session\'s head', within: 30000 });
+  assert.equal(check.data.result, 'passed');
+  const ci = await client.ci({ project: P, sha: head });
+  assert.equal(ci.result.state, 'success', `change ${change.n} reads as checked`);
+}, { check: standInCheck }));

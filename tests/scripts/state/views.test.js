@@ -1815,3 +1815,29 @@ test('signedCardOutcomes: a plain answer decides a card but proves nothing, a ve
     assert.deepEqual(signedCardOutcomes(events, readEnrolled()).map(({ signed, ...rest }) => rest), cardOutcomes(events, readEnrolled()));
   });
 });
+
+// --- work carried on from a change made by hand ---
+
+const FROM_SHA = 'a'.repeat(40);
+const handWork = (n, request = 3) => workEv(n, { id: 'carry-on-3', lane: 'small', from: { sha: FROM_SHA, ref: 'refs/wheelhouse/from/carry-on-3', request } });
+const handChange = (n, extra = {}) => ev('change', n, { n: 3, rev: 1, branch: 'feature/by-hand-af40bcd1f165', base: 'main', title: 'Changes made by hand in the project folder', body: 'x', state: 'open', head: FROM_SHA, mergeCommit: null, ...extra });
+const handCard = (n) => ev('question', n, { id: 'q-by-hand-1', work: 'by-hand', level: 3, what: 'Changes were made by hand.', why: 'Yours to decide.', options: [{ label: 'Check and add them', says: 'a' }, { label: 'Leave them out', says: 'b' }], recommendation: 'Check and add them' });
+const handClick = (n, question, label = 'Check and add them') => ev('action', n, { action: 'answer', question: 'the card as shown', questionId: 'q-by-hand-1', questionHash: dataHash(question.data), label });
+
+test('work carried on from a change made by hand is approved by the director\'s Check and add them', async () => {
+  await withHome(() => {
+    const q = handCard(1);
+    const v = build([q, handChange(2), handWork(3), handClick(4, q)]).work['carry-on-3'];
+    assert.equal(v.approved, true);
+    assert.deepEqual(v.approval, { hash: H1, shownFirst: false, lane: 'small', byHand: true });
+    // Leave them out is no approval, and neither is a click that was never made.
+    assert.equal(build([q, handChange(2), handWork(3), handClick(4, q, 'Leave them out')]).work['carry-on-3'].approved, false);
+    assert.equal(build([q, handChange(2), handWork(3)]).work['carry-on-3'].approved, false);
+    // Only the change the work carries on counts, and only one on a by-hand branch.
+    assert.equal(build([q, handChange(2), handWork(3, 7), handClick(4, q)]).work['carry-on-3'].approved, false);
+    assert.equal(build([q, handChange(2, { branch: 'feature/other' }), handWork(3), handClick(4, q)]).work['carry-on-3'].approved, false);
+    // An unsigned click or change stands for nothing.
+    assert.equal(build([q, handChange(2), handWork(3), unsigned(handClick(4, q))]).work['carry-on-3'].approved, false);
+    assert.equal(build([q, unsigned(handChange(2)), handWork(3), handClick(4, q)]).work['carry-on-3'].approved, false);
+  });
+});

@@ -242,10 +242,21 @@ export function plainWords(text, glossary, { explanations = 'plain', known = [],
         skip = tail[0].length;
       }
     }
-    const capital = /^\p{Lu}/u.test(text.slice(m.index, end)) && SENTENCE_START.test(before);
+    let capital = /^\p{Lu}/u.test(text.slice(m.index, end)) && SENTENCE_START.test(before);
+    // A word before the term that the phrase begins with is taken in: "an independent review" is "an independent check", not
+    // "an independent independent check".
+    let kept = text.slice(at, m.index);
+    const first = phrase.split(/\s+/)[0];
+    if (/\s/.test(phrase) && !phrase.startsWith('(')) {
+      const echoed = new RegExp(`(^|[^\\p{L}\\p{N}_])(${first.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})([ \\t]+)$`, 'iu').exec(kept);
+      if (echoed !== null) {
+        kept = kept.slice(0, echoed.index) + echoed[1];
+        capital = capital || /^\p{Lu}/u.test(echoed[2]);
+      }
+    }
     if (capital) phrase = phrase[0].toUpperCase() + phrase.slice(1);
     // "a review" is "an independent check".
-    const lead = text.slice(at, m.index).replace(/(^|[^\p{L}\p{N}_])(a|an)(\s+)$/iu, (all, gap, article, space) => {
+    const lead = kept.replace(/(^|[^\p{L}\p{N}_])(a|an)(\s+)$/iu, (all, gap, article, space) => {
       const fitted = /^[aeiou]/i.test(phrase) ? 'an' : 'a';
       return `${gap}${article[0] === 'A' ? fitted[0].toUpperCase() + fitted.slice(1) : fitted}${space}`;
     });

@@ -593,6 +593,10 @@ function foremanSays(option) {
 // Names in a sentence: a, b and c.
 const listed = (names) => (names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`);
 
+// The work the card for changes made by hand is recorded under (scripts/host/local/folder.js), and why it recommends adding them.
+const HAND_WORK = 'by-hand';
+const HAND_BECAUSE = 'they get a second look before they join the main version, and nothing is lost';
+
 // The input for the answer card to a question the build recorded, `data` as its question event
 // holds it: its words, its own options with what each says, and its own recommendation (ruling
 // F10). `work` names the work, by its title or its id. A level 4 question's card says what
@@ -618,7 +622,7 @@ export function answerInput(data, work, { joiners = [], saidBefore = null, picke
     why: flat(data.why),
     options: data.options.map((o) => ({ label: o?.label, says: foreman ? foremanSays(o) : flat(o?.says) || o?.label })),
     recommend: offered ?? data.recommendation,
-    because: offered !== undefined ? 'it is what you said before' : foreman ? `the Bosun recommends it for ${work}` : `the session building ${work} recommends it`,
+    because: offered !== undefined ? 'it is what you said before' : foreman ? `the Bosun recommends it for ${work}` : data.work === HAND_WORK ? HAND_BECAUSE : `the session building ${work} recommends it`,
     meanwhile: MEANWHILE,
     ...(data.level === 4 ? { checks: flat(data.checks) || CHECKS_UNSAID } : {}),
     target: { questionId: data.id },

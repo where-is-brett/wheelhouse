@@ -261,6 +261,10 @@ test('replaced sentences read as English', () => {
   const plain = (text) => plainWords(text, g, PLAIN).text.split('\n\n')[0];
   assert.equal(plain('We need a review'), 'We need an independent check');
   assert.equal(plain('A review is due'), 'An independent check is due');
+  // A word the phrase begins with is not said twice.
+  assert.equal(plain('it joins only after an independent review'), 'it joins only after an independent check');
+  assert.equal(plain('Independent review is due'), 'Independent check is due');
+  assert.equal(plain('an independent check'), 'an independent check');
   assert.equal(plain('a CI run failed'), 'an automatic check run failed');
   assert.equal(plain('The CI runs failed'), 'The automatic check runs failed');
   assert.equal(plain('a PR'), 'a proposed change');
