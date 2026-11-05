@@ -1955,18 +1955,25 @@ test('close works out the outcome, and refuses a report that is missing or incom
   const wakerFor = () => ({ wakeFeature: async (work, file) => { woken.push({ work, wake: JSON.parse(fs.readFileSync(file, 'utf8')) }); } });
   const none = await act(['close', 'none'], { client: fake.client, wakerFor });
   assert.equal(none.code, 0, none.err);
-  assert.match(none.out, /report\.md is not there.*Sent back to its session.*Do not ask the director/);
+  assert.match(none.out, /the report is not written\. Sent back to its session/);
   const short = await act(['close', 'short'], { client: fake.client, wakerFor });
   assert.equal(short.code, 0, short.err);
-  assert.match(short.out, /lacks the fields: tests, assumptions, concerns, rulings/);
+  assert.match(short.out, /required fields are missing from the report\. Sent back/);
   const unruled = await act(['close', 'unruled'], { client: fake.client, wakerFor });
   assert.equal(unruled.code, 0, unruled.err);
-  assert.match(unruled.out, /A ruling is missing from the report's rulings: Ruling: kept/);
+  assert.match(unruled.out, /1 ruling is missing from the report's rulings\. Sent back/);
+  assert.doesNotMatch(unruled.out, /Ruling: kept/);
   assert.deepEqual(woken.map((w) => w.work), ['none', 'short', 'unruled']);
-  assert.match(woken[2].wake.events[0].detail.next, /Ruling: kept.*Add it.*Nothing is asked of the director/);
+  assert.match(woken[2].wake.events[0].detail.next, /1 ruling is missing.*Run the report check/);
+  assert.doesNotMatch(woken[2].wake.events[0].detail.next, /Ruling: kept/);
   // With no way to wake the session, the gap is still reported and not turned into a card.
   const unwoken = await act(['close', 'none'], { client: fake.client, wakerFor: () => ({ wakeFeature: async () => { throw new Error('no session'); } }) });
   refusedInOneLine(unwoken);
+  // The same gap again is not sent back a second time: the refusal stands and the Bosun asks the director.
+  const again = await act(['close', 'none'], { client: fake.client, wakerFor });
+  refusedInOneLine(again);
+  assert.match(again.err, /still not whole: ask the director/);
+  assert.equal(woken.length, 3);
   assert.equal(fake.writes.length, n);
 }));
 

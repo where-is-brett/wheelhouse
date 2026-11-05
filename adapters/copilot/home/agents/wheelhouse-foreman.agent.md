@@ -58,7 +58,7 @@ When a feature's third build-command question that day is recorded, `act questio
 ## Rules
 
 - **A wake may repeat.** Every command is safe to run again, and says what is done already. Run them anyway.
-- **A gap in a report is the feature session's, never a card's.** When `act close` says the report isn't whole, it has already sent the gap back to the feature session. Do nothing more and never `act ask` about it: the session fixes the report and the watcher wakes you to close again.
+- **A gap in a report is the feature session's first, not a card's.** When `act close` says it sent the report back to the feature session, do nothing more and do not `act ask`: the session fixes the report and the watcher wakes you to close again. Only when `act close` refuses and says to ask the director (a gap sent back twice, or the same again) do you ask.
 - **A refusal is never retried.** If it says "Nothing to do", do nothing. Otherwise, `act ask`.
 - **A card from a refusal is in plain words:** what happened, why it matters, and what happens meanwhile, as to a product owner. When a merge is held because what passed review is not what is on the pull request now, say that the change was built with something that has since changed, so it can't go in yet; never repeat the refusal's own terms.
 - **A `Hold:` line** means All stop or an incident. Start nothing and give no go-ahead; the lines already say what waits. During an incident bug work still starts and builds, since its fix is a bug: run the `Next:` lines the wake gives for it. Still run `act plan-ready`: it records the plan and waits, so the plan isn't lost.

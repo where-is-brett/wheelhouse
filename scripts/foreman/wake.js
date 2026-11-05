@@ -177,7 +177,7 @@ export async function loadViews(project, client, { kept = false } = {}) {
   const fresh = views !== null;
   if (views === null && kept) views = keptViews(project);
   if (views === null) refuse(`The views can't be had: ${why}`);
-  return {
+  const out = {
     views: {
       work: isPlain(views.work) ? views.work : {},
       features: isPlain(views.features) ? views.features : {},
@@ -197,6 +197,26 @@ export async function loadViews(project, client, { kept = false } = {}) {
     fresh,
     ...(fresh ? {} : { why }),
   };
+  if (fresh) await markSettled(project, client, out.views);
+  return out;
+}
+
+// Marks (as `settled`, on the view only) each building feature whose work is over: its kept pull request is marked merged
+// for its current plan, its status reads done, and the host says the pull request merged. The files are the
+// session's to write, so the host's word is what counts; with no answer the feature stays unmarked and still clashes.
+async function markSettled(project, client, views) {
+  for (const [work, f] of Object.entries(views.features)) {
+    if (!CHANGING.includes(f?.data?.step)) continue;
+    try {
+      const worktree = worktreeOf(project, views, work);
+      const kept = readPrRecord(worktree);
+      if (kept === null || !kept.merged) continue;
+      if (!NO_PLAN.includes(laneOf(views, work)) && kept.plan !== (typeof f.data.plan === 'string' ? f.data.plan : null)) continue;
+      if (readStatus(featurePaths(worktree).status)?.phase !== 'done') continue;
+      const state = await client.prState({ project, number: kept.pr });
+      if (state?.ok === true && state.result?.state === 'merged') f.settled = true;
+    } catch { /* unreadable: it stays in the clash */ }
+  }
 }
 
 // The configuration on the default branch, through the helper (ruling R50).
@@ -354,21 +374,10 @@ export function openPrWait(worktree) {
   return kept !== null && !kept.merged ? `its pull request #${kept.pr} is still open; the next plan is checked once it merges` : null;
 }
 
-// Whether the feature's work is over: its last pull request merged and its status reads done. Its files are no longer
-// being changed, though it stays open until the Bosun closes it, so it holds no clash meanwhile.
-function mergedAndDone(f) {
-  try {
-    if (typeof f.worktree !== 'string' || readPrRecord(f.worktree)?.merged !== true) return false;
-    return readStatus(featurePaths(f.worktree).status)?.phase === 'done';
-  } catch {
-    return false;
-  }
-}
-
 // The features whose recorded files are being changed, other than `work`'s.
 export function runningFiles(views, work) {
   return Object.entries(views.features)
-    .filter(([w, f]) => w !== work && CHANGING.includes(f?.data?.step) && Array.isArray(f.data.files) && !mergedAndDone(f.data))
+    .filter(([w, f]) => w !== work && CHANGING.includes(f?.data?.step) && Array.isArray(f.data.files) && f.settled !== true)
     .map(([w, f]) => ({ work: w, files: f.data.files.filter((x) => typeof x === 'string') }));
 }
 
@@ -510,7 +519,7 @@ function eventLine(e, ctx) {
       `the director clicked to push ${d.branch} at ${short(d.sha)}, which changes a CI file, for pull request #${d.pr}`,
       'When it is ready to merge, the queue below lists it',
     );
-    case 'report': return said('it has ended, and its report is written', `Next: act close ${work}. If it says the report leaves something out, that went back to the feature session: never ask the director about it`);
+    case 'report': return said('it has ended, and its report is written', `Next: act close ${work}. If it says the report was sent back to the feature session, there is nothing to ask the director; only a refusal that says to ask is asked`);
     case 'stuck': {
       const still = `no progress for ${Math.round((Number(d.still) || 0) / 60000)} minutes, at phase ${d.phase ?? 'unknown'}`;
       const held = heldLine(work, ctx);

@@ -354,7 +354,8 @@ function featureEvents(prev, next, settled, out) {
     // Also when the report is rewritten while the feature stays done: a report the close refused is sent back to its session.
     const rewritten = pf !== null && text(pf.reportHash) !== null && text(f.reportHash) !== null && pf.reportHash !== f.reportHash;
     if (status?.phase === 'done' && (ps?.phase !== 'done' || rewritten)) {
-      out.push({ type: 'report', work, id: `report:${work}:${anchor}`, detail: { phase: status.phase } });
+      // A rewrite is named by its report's hash, so each distinct report raises it once (the cursor remembers the ids).
+      out.push({ type: 'report', work, id: ps?.phase === 'done' ? `report:${work}:rewrite:${f.reportHash}` : `report:${work}:${anchor}`, detail: { phase: status.phase } });
     }
 
     if (s.still >= STUCK_MS && !((pf?.still ?? 0) >= STUCK_MS)) {

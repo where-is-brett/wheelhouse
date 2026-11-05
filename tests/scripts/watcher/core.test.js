@@ -757,6 +757,11 @@ test('a report rewritten while the feature stays done wakes the foreman again, s
   assert.equal(run(at('h1', 2000), 2000), 0, 'the same report: no second wake');
   assert.equal(run(at('h2', 3000), 3000), 1, 'a rewritten report wakes again');
   assert.equal(run(at('h2', 4000), 4000), 0);
+  // A rewrite is named by its report's hash, so a report seen before as a rewrite raises no second time. (The first
+  // arrival at done has an id of its own, so h1 raises once more here.)
+  assert.equal(run(at('h1', 5000), 5000), 1);
+  assert.equal(run(at('h2', 6000), 6000), 0, 'h2 raised as a rewrite already');
+  assert.equal(run(at('h1', 7000), 7000), 0, 'and so has h1');
 });
 
 test('plan-ready is not repeated after a restart from the cursor, and a handled one goes to the digest', () => withHome(() => {

@@ -165,7 +165,7 @@ import { readEnrolled, verify } from '../state/signing.js';
 import { recordHandled } from '../watcher/handled.js';
 import { recordedBriefs } from '../watcher/sources.js';
 import { writeBaseline } from '../watcher/control-files.js';
-import { makeWaker, sessionFile, writeWake } from '../watcher/waker.js';
+import { makeWaker, sessionFile, watcherDir, writeJsonFile, writeWake } from '../watcher/waker.js';
 import { guardedCardInput, guardedCommand, readSelfTest } from '../windows/low.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
@@ -1400,7 +1400,7 @@ async function close(ctx, work, rest) {
   }
   if (missing.length > 0) {
     // A gap in the report is the feature session's to fill, never a card to the director: it goes back to the session.
-    if (!safeFeatureFolder(worktree)) refuse(`${work}'s report isn't whole: ${missing.join(' ')}`);
+    if (!safeFeatureFolder(worktree)) refuse(`${work}'s report isn't whole: ${gapKinds(missing)}`);
     await reportBack(ctx, work, missing);
     return;
   }
@@ -1434,6 +1434,11 @@ async function close(ctx, work, rest) {
   if (!same(views.reports[work]?.data, data)) await ctx.write('report', data);
   await ctx.write('feature', { ...carried(f), step: 'closed' });
   fs.rmSync(sessionFile(ctx.project, work), { force: true });
+  const backs = readReportBacks(ctx.project);
+  if (backs[work] !== undefined) {
+    delete backs[work];
+    writeJsonFile(reportBacksFile(ctx.project), backs);
+  }
   ctx.say(`Recorded ${work}'s report (${outcome}, ${plural(data.rulings.length, 'ruling')}) and closed it.`);
   // Unfinished work: the director decides whether it is queued again, and in which lane (R102).
   if (status === 'partial' || status === 'blocked') ctx.say(queueAgainLine(work, status, laneOf(views, work)));
@@ -1441,13 +1446,48 @@ async function close(ctx, work, rest) {
   ctx.say('A slot or a dependency may be free: run wake read again.');
 }
 
-// Wakes the feature's own session with what its report lacks, in words of this program's own (the gaps come from the
-// report check, never from a caller), so it adds them and runs `report` again; the watcher then wakes the Bosun to close.
+// What the report check found lacking, as kinds and counts in this program's own words. The check's lines carry the
+// builder's words (a ruling's text, the work's name), and those never go into a wake or a refusal.
+function gapKinds(missing) {
+  const kinds = [];
+  const count = (re) => missing.filter((m) => re.test(m)).length;
+  if (count(/^report\.md is not there/) > 0) kinds.push('the report is not written');
+  const fields = count(/^report\.md lacks the field/);
+  if (fields > 0) kinds.push('required fields are missing from the report');
+  if (count(/^report\.md has fields of the wrong kind/) > 0) kinds.push('some report fields are of the wrong kind');
+  if (count(/^report\.md must begin/) > 0) kinds.push('the report does not begin with its fields');
+  if (count(/^report\.md names the work/) > 0) kinds.push('the report names the wrong work');
+  if (count(/^The report is \d+ words/) > 0) kinds.push('the report is too long');
+  const rulings = count(/^A ruling is missing from the report's rulings/);
+  if (rulings > 0) kinds.push(`${rulings} ${rulings === 1 ? 'ruling is' : 'rulings are'} missing from the report's rulings`);
+  if (count(/^rulings\.jsonl can't be read/) > 0) kinds.push('the rulings file cannot be read');
+  return kinds.length > 0 ? kinds.join('; ') : 'the report check found something lacking';
+}
+
+const REPORT_BACKS = 2;
+const reportBacksFile = (project) => path.join(watcherDir(project), 'report-backs.json');
+function readReportBacks(project) {
+  try {
+    const kept = JSON.parse(readCapped(reportBacksFile(project), 64 * 1024) ?? '{}');
+    return isPlain(kept) ? kept : {};
+  } catch {
+    return {};
+  }
+}
+
+// Wakes the feature's own session with the kinds of gap in its report, so it adds them and runs the report check
+// again; the watcher then wakes the Bosun to close. A gap is sent back twice at most, and not again when it is the same
+// as the last: then the refusal stands and the Bosun asks the director.
 async function reportBack(ctx, work, missing) {
-  const gap = oneLine(missing.join(' '), 600);
+  const gap = gapKinds(missing);
+  const kept = readReportBacks(ctx.project);
+  const before = isPlain(kept[work]) ? kept[work] : { n: 0, last: null };
+  if (before.n >= REPORT_BACKS || before.last === gap) {
+    refuse(`${work}'s report isn't whole: ${gap}. It was sent back to its session already and is still not whole: ask the director`);
+  }
   const id = `report-gap:${work}:${ctx.now().getTime()}`;
   const event = {
-    type: 'build', work, id, detail: { next: `Your report leaves something out: ${gap} Add it, run the report check again, and the Bosun then closes the work. Nothing is asked of the director.` },
+    type: 'build', work, id, detail: { next: `Your report leaves something out: ${gap}. Run the report check to see each line, add what it names, and run it again; the Bosun then closes the work.` },
   };
   const file = writeWake(ctx.project, { to: 'feature', work, events: [event], digest: [], dropped: 0 }, { now: ctx.now });
   try {
@@ -1455,7 +1495,8 @@ async function reportBack(ctx, work, missing) {
   } catch (error) {
     refuse(`${work}'s report isn't whole (${gap}) and its session wasn't woken: ${oneLine(error instanceof Error ? error.message : 'unknown error', 200)}`);
   }
-  ctx.say(`${work}'s report isn't whole: ${gap} Sent back to its session to add it; the Bosun closes the work once it has. Do not ask the director: nothing to do now.`);
+  writeJsonFile(reportBacksFile(ctx.project), { ...kept, [work]: { n: before.n + 1, last: gap } });
+  ctx.say(`${work}'s report isn't whole: ${gap}. Sent back to its session to add it; the Bosun closes the work once it has. Nothing to do now.`);
 }
 
 // The lanes, smallest first: work queued again only ever goes up (design section 4).

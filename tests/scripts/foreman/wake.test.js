@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { clashFor, main, measures, measuresFile, readWakeLines, recordDone } from '../../../scripts/foreman/wake.js';
+import { clashFor, loadViews, main, measures, measuresFile, readWakeLines, recordDone } from '../../../scripts/foreman/wake.js';
 import { foremanCommands } from '../../../scripts/foreman/tools.js';
 import { briefHash, featurePaths, writeStatus } from '../../../scripts/feature/files.js';
 import { LANE_APPETITE } from '../../../scripts/lib/build-loop.js';
@@ -247,7 +247,7 @@ test('wake read: while STOP or an incident holds, it says so at the top, and not
   assert.match(text, /^- merge-ready m: pull request #6 at aaaaaaaaaaaa\. It waits: incident site-down is open, and only an incident's fix merges$/m);
   assert.match(text, /^- merge-ready x: pull request #7 at bbbbbbbbbbbb\. Next: act merge x$/m);
   // A feature's end is closed, whatever holds (R94).
-  assert.match(text, /^- report m: it has ended, and its report is written\. Next: act close m\. If it says the report leaves something out, that went back to the feature session: never ask the director about it$/m);
+  assert.match(text, /^- report m: it has ended, and its report is written\. Next: act close m\. If it says the report was sent back to the feature session, there is nothing to ask the director; only a refusal that says to ask is asked$/m);
   assert.doesNotMatch(text, /Next: act (start|build) /);
 
   // STOP holds everything, a fix's merge too.
@@ -597,19 +597,27 @@ test('wake gives work approved by the by-hand card its start with the fixed done
   assert.ok(line.includes(`--goal '${HAND_GOAL}'`), line);
 }));
 
-test('a merged work whose status reads done holds no file clash while it waits to be closed', () => withHome(async () => {
+test('a merged work whose status reads done, with the host agreeing, holds no file clash while it waits to be closed', () => withHome(async () => {
   const checkout = await project();
   const views = emptyViews();
+  views.work['todo-cli'] = workView('todo-cli', { lane: 'quick' });
   const wt = worktree(checkout, 'todo-cli', { pr: { pr: 4, plan: 'p.md', merged: true } });
   views.features['todo-cli'] = featureView('todo-cli', { step: 'building', worktree: wt, files: ['test/todos.test.js'] });
-  const config = { hotFiles: [] };
   const status = (phase) => ({
-    v: 1, work: 'todo-cli', lane: 'feature', phase, task: null, fixRound: null, waitingOn: null, head: null, pr: 4, slice: null, tokens: null, updatedAt: '2026-11-05T21:57:00.000Z',
+    v: 1, work: 'todo-cli', lane: 'quick', phase, task: null, fixRound: null, waitingOn: null, head: null, pr: 4, slice: null, tokens: null, updatedAt: '2026-11-05T21:57:00.000Z',
   });
+  const clash = async (answers) => {
+    const { client } = fakeClient({ views, answers });
+    const { views: loaded } = await loadViews(P, client);
+    return clashFor(loaded, { hotFiles: [] }, 'carry-on-4', ['test/todos.test.js']).ok;
+  };
+  const host = (state) => ({ prState: { ok: true, result: { state, headSha: 'b'.repeat(40) } } });
   writeStatus(featurePaths(wt).status, status('pr-open'));
-  assert.equal(clashFor(views, config, 'carry-on-4', ['test/todos.test.js']).ok, false, 'not done yet: it still clashes');
+  assert.equal(await clash(host('merged')), false, 'not done yet: it still clashes');
   writeStatus(featurePaths(wt).status, status('done'));
-  assert.equal(clashFor(views, config, 'carry-on-4', ['test/todos.test.js']).ok, true, 'merged and done: no clash');
+  assert.equal(await clash(host('merged')), true, 'merged, done and the host agrees: no clash');
+  assert.equal(await clash(host('open')), false, 'the host says it is open: a forged pr.json changes nothing');
+  assert.equal(await clash({ prState: { ok: false, refused: 'no answer' } }), false, 'no word from the host: it still clashes');
   fs.writeFileSync(featurePaths(wt).pr, `${JSON.stringify({ pr: 4, plan: 'p.md' })}\n`);
-  assert.equal(clashFor(views, config, 'carry-on-4', ['test/todos.test.js']).ok, false, 'done but not merged: it still clashes');
+  assert.equal(await clash(host('merged')), false, 'not marked merged: it still clashes');
 }));
