@@ -8,7 +8,7 @@ import path from 'node:path';
 import { tempFolder } from '../../../helpers/homes.js';
 import { commitIn, git, projectFolderWith, withKeyedHome } from '../../../helpers/local-home.js';
 import { addFolderRemote, bringFolderUp, compareFolder, folderWatch, handMadeCard, HAND_MADE_WORK, OWN_CHANGES_LINE } from '../../../../scripts/host/local/folder.js';
-import { homeDir, makeHome } from '../../../../scripts/host/local/home.js';
+import { gitRoute, homeDir, makeHome } from '../../../../scripts/host/local/home.js';
 import { CHECK_AND_ADD, LEAVE_THEM_OUT } from '../../../../scripts/state/card-lines.js';
 
 const P = 'shop';
@@ -434,11 +434,25 @@ test('staged content that is neither the folder\'s commit nor the main waits', (
   assert.match(await git(folder, ['diff', '--cached']), /staged/);
 }));
 
-test('edits let go are kept in a stash entry that can be got back', () => level(async (folder) => {
+test('a save made after the edits were staged and before the merge survives, whether git takes the move or refuses it', () => level(async (folder) => {
+  await readmeCase(folder, 'edited\n');
+  fs.writeFileSync(path.join(folder, 'README.md'), 'edited\n');
+  const real = gitRoute();
+  const racing = (cwd, opts) => {
+    const r = real(cwd, opts);
+    return { ...r, ok: async (args, ...rest) => { if (args[0] === 'merge') fs.writeFileSync(path.join(folder, 'README.md'), 'late save\n'); return r.ok(args, ...rest); } };
+  };
+  const got = await bringFolderUp({ project: P, folder, branch: 'main', git: racing });
+  assert.ok(got.moved === true || typeof got.line === 'string');
+  assert.equal(fs.readFileSync(path.join(folder, 'README.md'), 'utf8'), 'late save\n');
+  assert.equal(await git(folder, ['stash', 'list']), '');
+}));
+
+test('a successful move leaves no stash entry behind', () => level(async (folder) => {
   await readmeCase(folder, 'edited\n');
   fs.writeFileSync(path.join(folder, 'README.md'), 'edited\n');
   assert.deepEqual(await bringFolderUp({ project: P, folder, branch: 'main' }), { moved: true });
-  assert.match(await git(folder, ['stash', 'list']), /Wheelhouse/);
+  assert.equal(await git(folder, ['stash', 'list']), '');
 }));
 
 test('when the fast-forward fails after the edits were let go, the folder is put back and says why', () => level(async (folder) => {

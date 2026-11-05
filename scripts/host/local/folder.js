@@ -78,13 +78,40 @@ export async function bringFolderUp({ project, folder, branch, git = gitRoute(),
   if (!(await folderFree({ folder, branch, git }))) {
     letGo = await editsAlreadyIn({ folder, branch, home, git });
     if (letGo === null) return { line: OWN_CHANGES_LINE };
+    if (letGo.failed !== undefined) return { line: letGo.failed ? withStash(OWN_CHANGES_LINE) : OWN_CHANGES_LINE };
   }
   const here = inFolder(folder, git);
-  if (await here.ok(['merge', '--ff-only', '--no-overwrite-ignore', '--quiet', home])) return { moved: true };
+  if (await here.ok(['merge', '--ff-only', '--no-overwrite-ignore', '--quiet', home])) {
+    if (letGo !== null) await forget(here, letGo.snapshot);
+    return { moved: true };
+  }
   if (letGo === null) return { line: OWN_CHANGES_LINE };
-  // The edits were let go and the merge still refused: they come back from the snapshot, so the folder is as it was.
-  const back = await here.ok(['stash', 'apply', '--index', '--quiet', letGo]);
-  return { line: back ? NOT_BROUGHT_LINE : `${NOT_BROUGHT_LINE} Your edits are kept in the folder's stash, under "${SNAPSHOT_MESSAGE}".` };
+  // The merge refused (a file changed after it was staged, or something else in the way): the index goes back as it was. The
+  // working files were never touched, so any save made meanwhile stands.
+  return { line: (await putBack(here, letGo)) ? NOT_BROUGHT_LINE : withStash(NOT_BROUGHT_LINE) };
+}
+
+const withStash = (words) => `${words} Your edits are kept in the folder's stash, under "${SNAPSHOT_MESSAGE}".`;
+
+// Puts the index entries of `letGo` back as they were, and drops its snapshot once nothing is lost without it.
+async function putBack(here, letGo) {
+  let back = true;
+  for (const file of letGo.files) {
+    const was = letGo.original[file];
+    const done = was === null
+      ? await here.ok(['update-index', '--force-remove', '--', file])
+      : await here.ok(['update-index', '--add', '--cacheinfo', `${was.mode},${was.sha},${file}`]);
+    back = back && done;
+  }
+  if (back) await forget(here, letGo.snapshot);
+  return back;
+}
+
+// Drops the stash entry that is `snapshot`.
+async function forget(here, snapshot) {
+  const list = await here.call(['stash', 'list', '--format=%H %gd']);
+  const row = String(list.stdout).split('\n').map((l) => l.split(' ')).find(([sha]) => sha === snapshot);
+  if (row?.[1]) await here.call(['stash', 'drop', '--quiet', row[1]]);
 }
 
 export const NOT_BROUGHT_LINE = 'The newest version could not be brought in, so your folder was put back as it was.';
@@ -113,11 +140,13 @@ async function editsAlreadyIn({ folder, branch, home, git }) {
   if (files.length === 0) return null;
   const unmerged = await here.call(['--no-optional-locks', 'diff', '--name-only', '--diff-filter=U']);
   if (unmerged.code !== 0 || String(unmerged.stdout).trim() !== '') return null;
+  const original = {};
   for (const file of files) {
     const head = entryOf((await here.call(['ls-tree', 'HEAD', '--', file])).stdout);
     if (head === null) return null;
     const theirs = entryOf((await here.call(['ls-tree', home, '--', file])).stdout);
     const staged = entryOf((await here.call(['ls-files', '-s', '--', file])).stdout);
+    original[file] = staged;
     if (staged !== null && staged.sha !== head.sha && staged.sha !== theirs?.sha) return null;
     if (staged === null && theirs !== null) return null;
     const full = path.join(folder, file);
@@ -149,7 +178,18 @@ async function editsAlreadyIn({ folder, branch, home, git }) {
     if ((theirs.code === 0 ? String(theirs.stdout).trim() : null) !== (kept.code === 0 ? String(kept.stdout).trim() : null)) return null;
   }
   if (!(await making.ok(['stash', 'store', '-m', SNAPSHOT_MESSAGE, snapshot]))) return null;
-  return (await here.ok(['checkout', '-q', 'HEAD', '--', ...files])) ? snapshot : null;
+  // The files are staged, not checked out: git takes an index entry that already is the target's, and its own check refuses the
+  // merge where a working file changed after staging, so a save made now is not overwritten.
+  const taken = { snapshot, files, original };
+  const staging = await here.ok(['add', '-A', '--', ...files]);
+  for (const file of files) {
+    const theirs = entryOf((await here.call(['ls-tree', home, '--', file])).stdout);
+    const now = entryOf((await here.call(['ls-files', '-s', '--', file])).stdout);
+    if (!staging || now?.sha !== theirs?.sha || now?.mode !== theirs?.mode) {
+      return { ...taken, failed: !(await putBack(here, taken)) };
+    }
+  }
+  return taken;
 }
 
 export const NOT_ON_MAIN_LINE = 'Your folder is on another branch, so the newest version waits.';
