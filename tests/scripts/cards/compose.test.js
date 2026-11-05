@@ -1003,3 +1003,17 @@ test('a recorded question left with fewer than two options once put-offs are dro
   const data = { ...OLD_BY_HAND(), options: [OLD_BY_HAND().options[0], OLD_BY_HAND().options[2]] };
   assert.match(questionProblem(data, { recorded: true }), /^An answer card's options must not use Not now/);
 });
+
+test('a recorded build-command question keeps its own Not now', () => {
+  const data = {
+    id: 'q-flag-1', work: 'flag', what: 'The build needs to run a command.', why: 'The tests need running.',
+    options: BUILD_QUESTION_OPTIONS.map((o) => ({ ...o })), recommendation: 'Allow this time', level: 3, commands: ['npm test'],
+  };
+  const labels = (input) => input.options.map((o) => o.label);
+  assert.deepEqual(labels(answerInput(data, 'flag', { recorded: true })), BUILD_QUESTION_OPTIONS.map((o) => o.label));
+  assert.ok(composeCard(answerInput(data, 'flag', { recorded: true })).card.options.includes('Not now'));
+});
+
+test('a recorded question whose recommendation is a put-off is still refused, not given another recommendation', () => {
+  assert.match(questionProblem({ ...OLD_BY_HAND(), recommendation: 'Not now' }, { recorded: true }), /must not use Not now/);
+});

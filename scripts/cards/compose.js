@@ -605,14 +605,25 @@ const HAND_BECAUSE = 'they get a review and checks before they join the main ver
 // `joiners` ([{ id, name, words }]) are the questions the answer goes to as well: the card lists each piece, and each
 // wording of its own (`words`, for a close match), so the words a click signs say what it covers. `saidBefore` is the director's answer to the card this question joined too late for.
 // `picked` is the option taken on the question's blind card, and `blind` marks a card that followed one.
-// `recorded`: the question is already on file, so options that put a card off are dropped (the card offers its own
-// put-off buttons) when at least the fewest options remain. A live ask is not recorded, and is refused with them.
-export function answerInput(data, work, { joiners = [], saidBefore = null, picked = null, blind = false, recorded = false } = {}) {
-  if (!isPlain(data) || !Array.isArray(data.options)) throw new Error('its record can\'t be read');
-  if (recorded) {
+// `recorded`: the question is already on file. If its card can't be made as it stands, options that put a card off are
+// dropped (the card offers its own put-off buttons), provided the recommendation is not one of them and at least the
+// fewest options remain. A question the composer accepts as it is (a build-command question with its own Not now) is left
+// whole. A live ask is not recorded, and is refused with them.
+export function answerInput(data, work, { recorded = false, ...rest } = {}) {
+  const input = plainAnswerInput(data, work, rest);
+  if (!recorded) return input;
+  try {
+    composeCard(input);
+    return input;
+  } catch (error) {
     const kept = data.options.filter((o) => !PUT_OFF.includes(o?.label));
-    if (kept.length < data.options.length && kept.length >= CARD.fewestOptions) data = { ...data, options: kept, recommendation: kept.some((o) => o?.label === data.recommendation) ? data.recommendation : kept[0].label };
+    if (kept.length === data.options.length || kept.length < CARD.fewestOptions || !kept.some((o) => o?.label === data.recommendation)) throw error;
+    return plainAnswerInput({ ...data, options: kept }, work, rest);
   }
+}
+
+function plainAnswerInput(data, work, { joiners = [], saidBefore = null, picked = null, blind = false } = {}) {
+  if (!isPlain(data) || !Array.isArray(data.options)) throw new Error('its record can\'t be read');
   const foreman = questionIdOf(data.id)?.foreman === true;
   const said = data.level === 3 && typeof saidBefore === 'string' ? saidBefore : null;
   // That answer goes first where the card still offers it; the words say it either way.

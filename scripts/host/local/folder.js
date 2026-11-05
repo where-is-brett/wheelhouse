@@ -379,10 +379,10 @@ export function folderWatch({ project, folder, branchOf, git = gitRoute(), file,
         continue;
       }
       const label = entry.done ? null : answerOf(entry.id);
-      // A question no card can be made of (one recorded in an older shape) is set aside, and the tip is asked afresh below.
-      if (!entry.done && label === null && entry.id !== null && entry.id !== undefined && stuck(entry.id)) {
-        delete kept.tips[tip];
-        kept.tips[`${tip}:${entry.id}`] = { id: entry.id, done: true };
+      // A question no card can be made of (one recorded in an older shape) is recorded again under its own id, as the
+      // card now reads, so it is the one question and not a second beside it.
+      if (!entry.done && label === null && typeof entry.id === 'string' && stuck(entry.id)) {
+        await card({ id: entry.id, ...handMadeCard({ earlier: await earlierOf(kept, inFlight) }) });
         continue;
       }
       if (label === LEAVE_THEM_OUT) entry.done = true;
