@@ -77,6 +77,7 @@ import {
 } from '../feature/status.js';
 import { forward } from './forward.js';
 import { helperClient } from '../host/helper-client.js';
+import { HAND_DONE, HAND_GOAL } from '../lib/by-hand-done.js';
 import { HASH, LANE_APPETITE, PACE, SLUG, questionIdOf } from '../lib/build-loop.js';
 import { stateDir, wheelhouseHome } from '../lib/paths.js';
 import { projectForFolder, readProject } from '../lib/projects.js';
@@ -572,6 +573,11 @@ function queueLines(ctx) {
     }
     // Quick, bug and small work: the lane's appetite, where the document sets none (LANE_APPETITE).
     const own = LANE_APPETITE[data.lane];
+    // Changes made by hand: the goal and done lines are fixed, so there is nothing to ask.
+    if (own && views.work[id].approval?.byHand === true) {
+      return `Next: act start ${id} --goal '${HAND_GOAL}' ${HAND_DONE.map((d) => `--done '${d}'`).join(' ')} --appetite-sessions ${own.sessions} --appetite-tokens ${own.tokens} `
+        + `(changes made by hand: its goal and done lines are fixed)`;
+    }
     if (own) {
       return `Next: act start ${id} --goal … --done … --appetite-sessions ${own.sessions} --appetite-tokens ${own.tokens} `
         + `(from its approved document, ${doc.path}; the ${data.lane} lane's appetite)`;

@@ -12,6 +12,7 @@ import { briefHash, featurePaths } from '../../../scripts/feature/files.js';
 import { LANE_APPETITE } from '../../../scripts/lib/build-loop.js';
 import { liftStop, setStop } from '../../../scripts/lib/stop.js';
 import { writeCursor } from '../../../scripts/watcher/core.js';
+import { HAND_DONE, HAND_GOAL } from '../../../scripts/lib/by-hand-done.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
 import {
   P, T0, config, emptyViews, fakeClient, featureView, project, recordInState, wakeFile, workView, worktree,
@@ -579,4 +580,19 @@ test('wake read at Lean counts one building slot, and says so', () => withHome(a
   assert.match(flat, /^Building \(1 of 3\): e\.$/m);
   assert.doesNotMatch(flat, /one builds at a time/);
   assert.match(flat, /^- start a-bug \(bug\)/m);
+}));
+
+test('wake gives work approved by the by-hand card its start with the fixed done lines, and never sends it to ask', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  views.work['carry-on-4'] = approvedDoc(checkout, workView('carry-on-4'), 'carry-on-4', '# Changes made by hand\n\nCheck them.\n');
+  views.work['carry-on-4'].approval.byHand = true;
+  const { client } = fakeClient({ views });
+  const file = wakeFile(path.join(checkout, 'w'), 'one', { events: [ev('work-ready', 'carry-on-4', 'x', { lane: 'small' })] });
+  const text = (await readWakeLines({ file, project: P, client, now })).lines.join('\n');
+  const line = text.split('\n').find((l) => l.startsWith('- start carry-on-4'));
+  assert.ok(line, text);
+  assert.ok(!line.includes('Ask the director'), line);
+  for (const d of HAND_DONE) assert.ok(line.includes(`--done '${d}'`), line);
+  assert.ok(line.includes(`--goal '${HAND_GOAL}'`), line);
 }));

@@ -77,6 +77,7 @@
 // card's answer, a shown or asked record, or a signed kind, and an answer card's options come only
 // from the question the build recorded. Every card handed out is recorded as asked, and
 // its words are put in the glossary's plain words. Errors are one line on standard error.
+import { HAND_DONE, HAND_GOAL } from '../lib/by-hand-done.js';
 import { BRIEF_LINES, addFact, briefProblem, briefText, wholeBrief } from '../delegation/brief.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -1382,7 +1383,8 @@ async function ready(ask, body, what) {
   const got = await ask(body);
   if (got?.ok !== true || typeof got.work !== 'string' || !isPlain(got.from)) throw new CliError(said(got, `The host helper didn't make the ${what} ready`));
   const { ok: _ok, ...made } = got;
-  return made;
+  // A change made by hand has fixed done lines, given here so the brief never words them itself.
+  return typeof made.branch === 'string' && /^feature\/by-hand-[0-9a-f]+$/.test(made.branch) ? { ...made, goal: HAND_GOAL, done: [...HAND_DONE] } : made;
 }
 
 // --- The session note ---

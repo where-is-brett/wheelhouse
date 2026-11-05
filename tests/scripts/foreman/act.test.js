@@ -28,6 +28,7 @@ import { selfTestFile } from '../../../scripts/windows/low.js';
 import { setStop } from '../../../scripts/lib/stop.js';
 import { writeReadyRecord } from '../../../scripts/survey/ready-record.js';
 import { eventPath, makeEvent } from '../../../scripts/state/events.js';
+import { HAND_DONE, HAND_GOAL } from '../../../scripts/lib/by-hand-done.js';
 import { enrol, makeSigningKey } from '../../../scripts/state/signing.js';
 import { makeWaker, sessionFile } from '../../../scripts/watcher/waker.js';
 import { run as runProgram } from '../../../scripts/lib/run.js';
@@ -2158,4 +2159,22 @@ test('a question about a refused start is asked once while it waits, however it 
   const other = await ask('Which colour should the button be?', false);
   assert.match(other.out, /Asked the director: q-add-export-1000002/);
   assert.equal(fake.writes.filter((w) => w.kind === 'question').length, 2);
+}));
+
+test('start of work approved by the by-hand card takes the fixed done lines, whatever the foreman gives', () => withHome(async () => {
+  const checkout = await project({ git: true });
+  const waker = fakeWaker();
+  const run = async (id, extra) => {
+    const views = emptyViews();
+    views.work[id] = workView(id);
+    views.work[id].approval.byHand = true;
+    const r = await act(['start', id, ...extra, '--appetite-sessions', '1', '--appetite-tokens', '200000'], { client: fakeClient({ views }).client, wakerFor: waker.wakerFor });
+    assert.equal(r.code, 0, r.err);
+    return parseBrief(fs.readFileSync(featurePaths(path.join(checkout, '.claude', 'worktrees', id)).brief, 'utf8')).fields;
+  };
+  const bare = await run('carry-on-4', []);
+  assert.deepEqual(bare.done, HAND_DONE);
+  assert.equal(bare.goal, HAND_GOAL);
+  const given = await run('carry-on-5', ['--goal', 'Mine', '--done', 'Something else']);
+  assert.deepEqual(given.done, HAND_DONE);
 }));
