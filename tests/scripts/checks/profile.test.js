@@ -123,7 +123,10 @@ test('each stage denies the home folder, then opens only the tools kept there an
     const tools = lines.findIndex((l) => l.startsWith('(allow file-read*') && l.includes(`"${USER}/.nvm"`));
     const again = lines.findLastIndex((l) => l.startsWith('(deny file-read*') && l.includes(`"${USER}/.ssh"`));
     assert.ok(home > -1 && home < tools && tools < again, stage);
-    assert.doesNotMatch(text, /"[^"]*\/\.cargo"/);
+    assert.doesNotMatch(text, /\(subpath "[^"]*\/\.cargo"\)/);
+    // The folders above the tools can be looked at and nothing more: never read.
+    assert.match(text, new RegExp(`\\(allow file-read-metadata [^\\n]*\\(literal "${USER}"\\)`));
+    assert.doesNotMatch(text, new RegExp(`\\(allow file-read\\* [^\\n]*\\(literal "${USER}[^"]*"\\)`));
     for (const dir of paths().root.split('/').slice(1).map((_, i, all) => `/${all.slice(0, i + 1).join('/')}`)) assert.match(text, new RegExp(`\\(allow file-read-metadata .*\\(literal "${dir.replaceAll('.', '\\.')}"\\)`), dir);
   }
 });
@@ -218,6 +221,25 @@ test('a test can\'t read the home folder, but can read a tool kept there', mac, 
   for (const stage of ['test', 'prepare']) {
     assert.notEqual(sandboxed(w, `cat '${w.base}/notes.txt'`, { stage }).status, 0, stage);
     assert.equal(sandboxed(w, `cat '${w.base}/.nvm/node'`, { stage }).status, 0, stage);
+  }
+});
+
+test('a tool under the home folder can start: its folders can be looked at (lstat), and still not listed or read', mac, () => {
+  const w = world();
+  for (const tool of ['.nvm/versions/node', '.local/share/pnpm', '.cargo/bin']) fs.mkdirSync(path.join(w.base, tool), { recursive: true });
+  fs.writeFileSync(path.join(w.base, '.nvm', 'versions', 'node', 'npm-cli.js'), 'a tool');
+  fs.writeFileSync(path.join(w.base, '.cargo', 'registry-token'), 'secret');
+  fs.writeFileSync(path.join(w.base, 'notes.txt'), 'private');
+  for (const stage of ['test', 'prepare']) {
+    // What node's realpath does to an entry script: lstat each folder on the way down.
+    for (const folder of [w.base, path.join(w.base, '.nvm'), path.join(w.base, '.local'), path.join(w.base, '.local', 'share'), path.join(w.base, '.cargo')]) {
+      const got = sandboxed(w, `/usr/bin/stat -f %N '${folder}'`, { stage });
+      assert.equal(got.status, 0, `${stage} ${folder}: ${got.stderr}`);
+    }
+    assert.equal(sandboxed(w, `cat '${w.base}/.nvm/versions/node/npm-cli.js'`, { stage }).status, 0, stage);
+    for (const command of [`ls '${w.base}'`, `ls '${w.base}/.local'`, `cat '${w.base}/notes.txt'`, `cat '${w.base}/.cargo/registry-token'`, `ls '${w.base}/.cargo'`]) {
+      assert.notEqual(sandboxed(w, command, { stage }).status, 0, `${stage} ${command}`);
+    }
   }
 });
 

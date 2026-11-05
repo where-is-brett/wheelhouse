@@ -74,6 +74,9 @@ function foldersAbove(folder) {
   return out;
 }
 
+// The home folder and each folder between it and a tool folder, such as `.local` and `.local/share`.
+const toolAncestors = (userHome) => [...new Set([userHome, ...TOOLS.flatMap((tool) => foldersAbove(path.dirname(`${userHome}/${tool}`)).filter((f) => f.length > userHome.length))])];
+
 // The SBPL text for one stage of a check. `stage` is `prepare` or `test`. `denied` is the deny list as real paths and
 // `temp` the temporary folders a check may write, which leave out the per-user ones (above).
 export function checkProfile({ paths, main, stage, network, denied, temp, userHome }) {
@@ -98,6 +101,10 @@ export function checkProfile({ paths, main, stage, network, denied, temp, userHo
     // has the network, so this holds in both stages. The deny list comes again, as the last matching rule wins.
     `(deny file-read* (subpath ${quoted(userHome)}))`,
     `(allow file-read* ${subpaths(TOOLS.map((tool) => `${userHome}/${tool}`))})`,
+    // A tool in there can't start otherwise: node's realpath of its entry script looks at (lstat) every folder above it, the
+    // home folder included. Metadata only, on those folders alone and not their contents: a program learns that they exist,
+    // and can neither list them nor read a file in them that isn't a tool's.
+    `(allow file-read-metadata ${toolAncestors(userHome).map(literal).join(' ')})`,
     `(deny file-read* ${subpaths(denied)})`,
   ];
   // A program must be able to look at the folders on the way down to the check folder to start there, though nothing here
