@@ -237,6 +237,14 @@ function reviewOf(views, pr, head) {
   return 'none';
 }
 
+// The counts the head's own signed review gives, for the words of its wake: `findings`, and `blocking` (null when the
+// record gives none). Nothing when the head has no review of its own that lists findings.
+function findingsOf(views, pr, head) {
+  const data = views.reviews?.[String(pr)]?.[head]?.data;
+  if (data?.verdict !== 'FINDINGS' || !Number.isInteger(data.findings)) return {};
+  return { findings: data.findings, blocking: Number.isInteger(data.blocking) ? data.blocking : null };
+}
+
 // A head with no signed review of its own counts as reviewed when the helper, by the gate's
 // own carry-over rule (/pr/carried), says an earlier commit's CLEAN review still holds for it:
 // so a branch the gate brought up to date raises merge-ready again once CI is green. When none
@@ -289,6 +297,7 @@ async function readPr({ project, client, number, works, branchOf, views }) {
     ci: ci.result.state,
     mergeable: MERGEABLE.includes(pr.mergeable) ? pr.mergeable : 'unknown',
     review: asked ? await carriedReview({ project, client, number }) : own,
+    ...findingsOf(views, number, pr.headSha),
   };
 }
 

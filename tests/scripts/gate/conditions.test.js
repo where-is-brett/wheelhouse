@@ -368,3 +368,18 @@ test('a review that holds a head stays its review when a clearing one is recorde
     assert.equal(verdictOf(viewsOf(made({ verdict: 'FINDINGS', findings: 3, blocking: 0 }), made({ verdict: 'CLEAN' }))), 'CLEAN', 'minor, then clean takes its place');
   });
 });
+
+test('a review with only minor findings lets the gate merge and raises merge-ready, end to end', async () => {
+  await withHome(async () => {
+    const { buildViews } = await import('../../../scripts/state/views.js');
+    const { diff } = await import('../../../scripts/watcher/core.js');
+    const minor = findings(2, 0);
+    assert.equal(gateDecision(input({ reviewRequired: true, review: minor })).allow, true, 'the gate merges');
+    const views = buildViews([minor], readEnrolled());
+    const verdict = views.reviews['7'][SHA].data;
+    const obs = { prs: { 7: { work: 'w', head: SHA, ci: 'success', mergeable: 'yes', review: 'clean', findings: verdict.findings, blocking: verdict.blocking } }, events: [], features: {}, testMerges: [], stop: false, at: '2026-11-06T00:00:00.000Z' };
+    assert.ok(diff({ prs: {} }, obs, {}).some((e) => e.type === 'merge-ready' && e.pr === 7), 'the watcher raises merge-ready');
+    const blocked = findings(2, 1);
+    assert.equal(gateDecision(input({ reviewRequired: true, review: blocked })).allow, false);
+  });
+});

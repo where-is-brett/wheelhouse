@@ -152,7 +152,7 @@ test('only the last report counts, and a role that does not match the agent is a
 });
 
 test('field values are checked', () => {
-  const ok = parseReport(`WHEELHOUSE REPORT\nrole: reviewer\npr: 7\ncommit: ${FULL}\nverdict: FINDINGS\nfindings: 3`);
+  const ok = parseReport(`WHEELHOUSE REPORT\nrole: reviewer\npr: 7\ncommit: ${FULL}\nverdict: FINDINGS\nfindings: 3\nblocking: 1`.replace('WHEELHOUSE REPORT', '- HIGH: a\n- LOW: b\n- LOW: c\nWHEELHOUSE REPORT'));
   assert.deepEqual(ok.missing, []);
   assert.equal(ok.fields.findings, '3');
   const bad = parseReport(`WHEELHOUSE REPORT\nrole: reviewer\npr: 0\ncommit: ${FULL.toUpperCase()}\nverdict: MAYBE`);
@@ -303,7 +303,7 @@ test('a reviewer report with pr: none is not sent back, and records nothing or a
 test('a reviewer report with pr: none and findings is also complete and signs nothing', async () => {
   await withHome(async () => {
     const c = fake();
-    const text = `WHEELHOUSE REPORT\nrole: reviewer\npr: none\ncommit: ${FULL}\nverdict: FINDINGS\nfindings: 2`;
+    const text = `- HIGH: a\n- LOW: b\nWHEELHOUSE REPORT\nrole: reviewer\npr: none\ncommit: ${FULL}\nverdict: FINDINGS\nfindings: 2\nblocking: 1`;
     assert.equal(await decide(stop('wheelhouse:reviewer', text), deps(c)), undefined);
     assert.equal(c.calls.record.length, 0);
     assert.equal(c.calls.prState.length, 0);
@@ -314,11 +314,11 @@ test('a reviewer report may give blocking, which must match the severity lines i
   const report = (lines, body = '') => parseReport(`${body}WHEELHOUSE REPORT\nrole: reviewer\npr: 7\ncommit: ${FULL}\n${lines}`);
   const list = '- HIGH: a case\n- LOW: polish\n- MEDIUM: more polish\n';
   assert.deepEqual(report('verdict: FINDINGS\nfindings: 3\nblocking: 1', list).missing, []);
-  assert.ok(report('verdict: FINDINGS\nfindings: 3\nblocking: 0', list).missing.includes('blocking'), 'a HIGH line the count leaves out');
-  assert.ok(report('verdict: FINDINGS\nfindings: 3\nblocking: 3', list).missing.includes('blocking'));
-  assert.ok(report('verdict: FINDINGS\nfindings: 2\nblocking: 1', list).missing.includes('blocking'), 'as many lines as findings');
-  assert.ok(report('verdict: FINDINGS\nfindings: 2\nblocking: 0').missing.includes('blocking'), 'no severity lines');
-  assert.deepEqual(report('verdict: FINDINGS\nfindings: 3').missing, [], 'no blocking given: holds for every finding');
-  assert.ok(report('verdict: FINDINGS\nfindings: 3\nblocking: -1', list).missing.includes('blocking'));
+  assert.ok(report('verdict: FINDINGS\nfindings: 3\nblocking: 0', list).missing.length > 0, 'a HIGH line the count leaves out');
+  assert.ok(report('verdict: FINDINGS\nfindings: 3\nblocking: 3', list).missing.length > 0);
+  assert.ok(report('verdict: FINDINGS\nfindings: 2\nblocking: 1', list).missing.length > 0, 'as many lines as findings');
+  assert.ok(report('verdict: FINDINGS\nfindings: 2\nblocking: 0').missing.length > 0, 'no severity lines');
+  assert.ok(report('verdict: FINDINGS\nfindings: 3', list).missing.some((m) => m.startsWith('blocking')), 'no blocking line: sent back to be completed');
+  assert.ok(report('verdict: FINDINGS\nfindings: 3\nblocking: -1', list).missing.length > 0);
   assert.ok(report('verdict: CLEAN\nblocking: 0').missing.includes('blocking'));
 });

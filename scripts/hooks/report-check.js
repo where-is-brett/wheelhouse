@@ -48,13 +48,13 @@ export function parseReport(text, role) {
   } else {
     need('verdict', (v) => v === 'CLEAN' || v === 'FINDINGS');
     if (fields.verdict === 'FINDINGS') need('findings', (v) => /^[0-9]+$/.test(v ?? '') && Number.isSafeInteger(Number(v)));
-    // `blocking` (the BLOCKER and HIGH findings) is optional, but when given it is a count of at most the findings.
-    if (fields.blocking !== undefined) need('blocking', (v) => /^[0-9]+$/.test(v ?? '') && Number.isSafeInteger(Number(v)) && fields.verdict === 'FINDINGS' && Number(v) <= Number(fields.findings));
+    // `blocking` (the BLOCKER and HIGH findings) is needed with findings, and is a count of at most the findings; CLEAN gives none.
+    if (fields.verdict === 'FINDINGS' || fields.blocking !== undefined) need('blocking', (v) => /^[0-9]+$/.test(v ?? '') && Number.isSafeInteger(Number(v)) && fields.verdict === 'FINDINGS' && Number(v) <= Number(fields.findings));
   }
   // The `blocking` it signs must be what its listed findings show: the count of BLOCKER and HIGH lines, and as many lines as findings.
-  if (kind === 'reviewer' && fields.verdict === 'FINDINGS' && fields.blocking !== undefined && !bad.includes('blocking') && !bad.includes('findings')) {
+  if (kind === 'reviewer' && fields.verdict === 'FINDINGS' && !bad.includes('blocking') && !bad.includes('findings')) {
     const seen = severityCounts(text);
-    if (seen.blocking !== Number(fields.blocking) || seen.total !== Number(fields.findings)) bad.push('blocking');
+    if (seen.blocking !== Number(fields.blocking) || seen.total !== Number(fields.findings)) bad.push('blocking (and one `- SEVERITY: …` line for each finding)');
   }
   if (fields.check !== undefined) need('check', (v) => /^[A-Za-z0-9._-]{1,64} [A-Za-z0-9:+/=._-]{1,128}$/.test(v));
   return { fields, missing: bad };
