@@ -3,8 +3,9 @@
 // `node hook-entry.js <event>`, with Copilot's camelCase input on stdin. It reads the input once and, in a
 // Wheelhouse project only, runs every Wheelhouse hook for that event in this one process, in order:
 //
-//   preToolUse           the harness check, the STOP guard, the lineage hold, then the tool guard and the areas guard
-//                        once for each input the translation gives (one per path of an apply_patch), then, for the
+//   preToolUse           the harness check, the STOP guard, the lineage hold, then the tool guard, the areas guard and
+//                        the Lean branch guard (no product file is written off a feature's own copy) once for each input
+//                        the translation gives (one per path of an apply_patch), then, for the
 //                        question tool, the repeat guard (a card the director has already decided isn't asked
 //                        again); the first refusal wins
 //   userPromptSubmitted  the STOP word, then the board context
@@ -60,6 +61,7 @@ const STEP_MODULES = Object.freeze({
   lineageHold: () => import('../../hooks/lineage-hold.js'),
   toolGuard: () => import('../../hooks/tool-guard.js'),
   areas: () => import('../../hooks/areas.js'),
+  branchGuard: () => import('../../../adapters/copilot/lean-branch-writes.js'),
   cardGuard: async () => ({ decide: (await import('../../hooks/card-check.js')).decideRepeat }),
   stopWord: () => import('../../hooks/stop-word.js'),
   boardContext: () => import('../../hooks/board-context.js'),
@@ -127,7 +129,7 @@ const cardOf = (input) => (input?.tool_name === copilotTools.ask && typeof input
   : []);
 const cards = (inputs) => inputs.slice(0, 1).flatMap(cardOf);
 const STEPS = Object.freeze({
-  preToolUse: [['stopGuard', first], ['lineageHold', first], ['toolGuard', each], ['areas', each], ['cardGuard', cards]],
+  preToolUse: [['stopGuard', first], ['lineageHold', first], ['toolGuard', each], ['areas', each], ['branchGuard', each], ['cardGuard', cards]],
   userPromptSubmitted: [['stopWord', first], ['boardContext', first]],
   sessionStart: [['sessionStart', first]],
 });

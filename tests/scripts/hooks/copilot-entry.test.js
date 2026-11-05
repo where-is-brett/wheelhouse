@@ -50,7 +50,7 @@ function run(event, raw, { env = COPILOT_ENV, steps = {}, ...deps } = {}) {
     return out;
   };
   const all = {
-    stopGuard: spy('stopGuard'), lineageHold: spy('lineageHold'), toolGuard: spy('toolGuard'), areas: spy('areas'), cardGuard: spy('cardGuard'),
+    stopGuard: spy('stopGuard'), lineageHold: spy('lineageHold'), toolGuard: spy('toolGuard'), areas: spy('areas'), branchGuard: spy('branchGuard'), cardGuard: spy('cardGuard'),
     stopWord: spy('stopWord'), boardContext: spy('boardContext'), sessionStart: spy('sessionStart'),
     ...Object.fromEntries(Object.entries(steps).map(([name, fn]) => [name, async (input, d) => {
       calls.push({ name, input });
@@ -145,11 +145,12 @@ test('a guard that hangs is refused at GUARD_DEADLINE_MS with DEADLINE', async (
 });
 
 test('the first refusal wins and later guards do not run', async () => {
-  // Order (ruling P5-14): STOP guard, lineage hold, the tool guard once per path, then the areas guard once per path.
+  // Order (ruling P5-14): STOP guard, lineage hold, the tool guard once per path, then the areas guard once per path, then the Lean branch guard once per path.
   const all = await run('preToolUse', call('apply_patch', patch(path.join(MAIN, 'a.txt'), path.join(MAIN, 'b.txt'))));
-  assert.deepEqual(all.calls.map((c) => c.name), ['stopGuard', 'lineageHold', 'toolGuard', 'toolGuard', 'areas', 'areas']);
+  assert.deepEqual(all.calls.map((c) => c.name), ['stopGuard', 'lineageHold', 'toolGuard', 'toolGuard', 'areas', 'areas', 'branchGuard', 'branchGuard']);
   assert.deepEqual(all.calls.slice(2, 4).map((c) => c.input.tool_input.file_path), [path.join(MAIN, 'a.txt'), path.join(MAIN, 'b.txt')]);
-  assert.deepEqual(all.calls.slice(4).map((c) => c.input.tool_input.file_path), [path.join(MAIN, 'a.txt'), path.join(MAIN, 'b.txt')]);
+  assert.deepEqual(all.calls.slice(4, 6).map((c) => c.input.tool_input.file_path), [path.join(MAIN, 'a.txt'), path.join(MAIN, 'b.txt')]);
+  assert.deepEqual(all.calls.slice(6).map((c) => c.input.tool_input.file_path), [path.join(MAIN, 'a.txt'), path.join(MAIN, 'b.txt')]);
   assert.equal(all.text, '');
   assert.equal(all.code, 0);
 
@@ -234,7 +235,7 @@ const ASK = (message) => call('ask_user', { message, requestedSchema: { properti
 
 test('a card already answered is refused when ask_user is called again', async () => {
   const asked = await run('preToolUse', ASK('Approve the plan?'), { steps: { cardGuard: () => answer.deny('The director has already answered: the plan') } });
-  assert.deepEqual(asked.calls.map((c) => c.name), ['stopGuard', 'lineageHold', 'toolGuard', 'areas', 'cardGuard']);
+  assert.deepEqual(asked.calls.map((c) => c.name), ['stopGuard', 'lineageHold', 'toolGuard', 'areas', 'branchGuard', 'cardGuard']);
   const last = asked.calls.at(-1).input;
   assert.equal(last.tool_name, 'AskUserQuestion');
   assert.deepEqual(last.tool_input.questions, [{ question: 'Approve the plan?' }]);
@@ -310,4 +311,28 @@ test('in the Local harness only reading is let through', async () => {
 
 test('no real copilot, gh, glab or curl ran', () => {
   assert.deepEqual(stand.calls(), []);
+});
+
+test('the Lean branch guard, as the entry loads it, refuses a product file on the main version and allows it on a feature', async () => {
+  const lean = fs.realpathSync.native(tempFolder('wh-copilot-lean-branch-'));
+  fs.mkdirSync(path.join(lean, '.git'));
+  fs.writeFileSync(path.join(lean, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+  fs.mkdirSync(path.join(lean, '.wheelhouse', 'record'), { recursive: true });
+  writeProject('owner__leanbranch', { folder: lean, remoteUrl: 'https://example.com/owner/leanbranch.git', host: 'github', repo: 'owner/leanbranch', connection: {} });
+  const quiet = () => undefined;
+  const entry = (raw) => runEntry('preToolUse', {
+    stdin: Readable.from([JSON.stringify(raw)]),
+    env: COPILOT_ENV,
+    deps: { dir: MANAGED, steps: { stopGuard: quiet, lineageHold: quiet, toolGuard: quiet, areas: quiet, cardGuard: quiet } },
+  });
+  const file = path.join(lean, 'src', 'a.js');
+  const refused = await entry(call('apply_patch', patch(file), lean));
+  assert.equal(refused.code, 2);
+  assert.equal(body(refused).permissionDecision, 'deny');
+  assert.match(body(refused).permissionDecisionReason, /does not let the chat change the product's own files/);
+  assert.equal((await entry(call('create', { path: file }, lean))).code, 2);
+  assert.equal((await entry(call('bash', { command: 'echo x > src/a.js' }, lean))).code, 2);
+  assert.equal((await entry(call('create', { path: path.join(lean, '.wheelhouse', 'feature', 'brief.md') }, lean))).code, 0);
+  fs.writeFileSync(path.join(lean, '.git', 'HEAD'), 'ref: refs/heads/feature/greeting\n');
+  assert.equal((await entry(call('create', { path: file }, lean))).code, 0);
 });

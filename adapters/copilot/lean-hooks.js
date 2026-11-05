@@ -19,6 +19,7 @@ import { AGENT_CONTROL, CONTROL_FILE, homeControlFolders } from '../../scripts/l
 import { credentialPaths } from '../../scripts/lib/credentials.js';
 import { GUARD_DEADLINE_MS, GUARD_TIMEOUT_SEC, LEAN_RECORD_DIR } from '../../scripts/lib/copilot-numbers.js';
 import { COULD_NOT_RUN, DEADLINE } from '../../scripts/agents/copilot/hook-entry.js';
+import { LEAN_NO_MAIN_WRITES, LEAN_BRANCH_LEFT } from './lean-branch-writes.js';
 import tools from './tools.js';
 import { KNOWN_TOOLS, TOOL_MAP, UNKNOWN_TOOL, toGuardInput } from './translate.js';
 
@@ -121,11 +122,13 @@ export function leanGuardScript({ root = REPO, comment, plutil = '/usr/bin/pluti
     HOME_CONTROL: lines(homeControl()),
     SECRETS: lines([...credentialPaths('darwin'), WHEELHOUSE_FOLDER]),
     RECORD_DIR: LEAN_RECORD_DIR.toLowerCase(),
+    BRANCH_LEFT: lines(LEAN_BRANCH_LEFT),
     SAY_CONTROL: CONTROL_FILE,
     SAY_SECRET: SAY.SECRET,
     SAY_ENV: SAY.ENV,
     SAY_SEARCH: SAY.SEARCH,
     SAY_RECORD: SAY.RECORD,
+    SAY_BRANCH: LEAN_NO_MAIN_WRITES,
     SAY_PLACE: SAY.PLACE,
     SAY_COULD_NOT_RUN: COULD_NOT_RUN,
     SAY_PLUTIL: PLUTIL_MISSING,
