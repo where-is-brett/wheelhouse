@@ -4,6 +4,7 @@
 // Anything that goes wrong gives false, so the cards are asked in the chat. These read the Wheelhouse home, so they run
 // in the helper (through the desk's source), never in a sandboxed command.
 import { agentOfProject } from './names.js';
+import { readLean } from '../lean/project.js';
 import { computerId } from '../lib/paths.js';
 import { vscodePaneLive, markVscodeHere, takeVscodeHere } from '../lib/vscode-pane.js';
 
@@ -16,11 +17,20 @@ export function runsVscodeAgent(folder) {
   }
 }
 
+// Whether a Lean project (one with no configuration in its folder, only its Lean record) runs the VS Code agent here.
+function leanRunsVscodeAgent(project) {
+  try {
+    return typeof project === 'string' && readLean(project)?.agent === 'copilot';
+  } catch {
+    return false;
+  }
+}
+
 // `project` is the project's id and `folder` its main folder; `now` is in ms.
 export function heldForVscode({ project, folder }, now) {
   try {
     if (typeof project !== 'string') return false;
-    return runsVscodeAgent(folder) && vscodePaneLive(project, now);
+    return (runsVscodeAgent(folder) || leanRunsVscodeAgent(project)) && vscodePaneLive(project, now);
   } catch {
     return false;
   }
@@ -33,7 +43,7 @@ export function vscodeAsk(where, asked) {
   try {
     const { project, folder, now } = where;
     const { ids, here } = asked ?? {};
-    const applies = runsVscodeAgent(folder);
+    const applies = runsVscodeAgent(folder) || leanRunsVscodeAgent(project);
     if (!applies || !heldForVscode({ project, folder }, now)) return { applies, held: false };
     if (!Array.isArray(ids) || ids.length === 0) return { applies, held: true };
     if (here === true) {
