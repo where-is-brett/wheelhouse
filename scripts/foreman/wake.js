@@ -66,6 +66,7 @@
 //
 // The shared pieces here (ForemanError, the views, the configuration, a
 // feature's worktree and plan, the clash and slot answers) are act.js's too.
+import { askExample } from './ask-help.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { clashCheck, fileMapOf, nextWork, since } from './queue.js';
@@ -184,6 +185,8 @@ export async function loadViews(project, client, { kept = false } = {}) {
       reports: isPlain(views.reports) ? views.reports : {},
       questions: isPlain(views.questions) ? views.questions : {},
       rulebook: Array.isArray(views.rulebook) ? views.rulebook : [],
+      // The signed reviews by pull request and commit, for the reviews that hold a pull request.
+      reviews: isPlain(views.reviews) ? views.reviews : {},
       incidents: { open: Array.isArray(views.incidents?.open) ? views.incidents.open.filter(isPlain) : [] },
       // The settings and the proposals not yet confirmed, for the level of build commands on Windows, and the
       // Thoroughness columns ready, for the level in force (scripts/routing/in-force.js).
@@ -503,7 +506,7 @@ function eventLine(e, ctx) {
     case 'stuck': {
       const still = `no progress for ${Math.round((Number(d.still) || 0) / 60000)} minutes, at phase ${d.phase ?? 'unknown'}`;
       const held = heldLine(work, ctx);
-      return held !== null ? `${head}: ${oneLine(still)}; ${held}.` : said(still, 'Ask the director: act ask');
+      return held !== null ? `${head}: ${oneLine(still)}; ${held}.` : said(still, `Ask the director now, in this one command: ${askExample(work)}. Do not close this wake as idle first`);
     }
     // The review of a head was asked for twice and never came: the director is asked, with the whole command given.
     case 'review-overdue': {
