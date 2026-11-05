@@ -31,7 +31,7 @@ Copilot's design C-sandbox (section 6.4, level 1): with the settings that `adapt
 
 `gh auth token` works because of `GH_TOKEN`: `gh` prints the variable's value. The two let-throughs are one fault.
 
-## What it means
+## What it means for the design
 
 - **The sandbox holds files and network on this Mac.** The denials came from the sandbox, not the model's choice.
 - **The `GH_TOKEN` is the gap.** The design (section 20, the host tools' token variables) wants `GH_TOKEN`, `GITHUB_TOKEN` and `GITLAB_TOKEN` unset in every sandboxed command. For Copilot the settings in `adapters/copilot/sandbox.js` have no such entry, and the pages it was written from don't list one. Not yet found: a Copilot setting that unsets it. Until then a Copilot step in the sandbox holds the director's GitHub token. The sandbox stays UNCHECKED (`COPILOT_SANDBOX_CHECKED = false`), and Copilot steps keep relying on the other layers.
