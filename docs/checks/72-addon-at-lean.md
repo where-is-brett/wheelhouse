@@ -46,7 +46,7 @@ Whether the add-on gives a Lean project its pane, presses and helper in VS Code 
 - **`extensions.allowed` works as the panel design expects:** leaving Wheelhouse out disables the add-on at the next start.
 - **The pane reads well in the three themes** in the one state seen.
 
-## Re-test of the harness check, 5 November 2026
+### Re-test of the harness check, 5 November 2026
 
 **Answer:** Yes. With the harness check now reading `COPILOT_CLI` with `COPILOT_HOOK_DIR` and camelCase input (`harnessOf`, pull request #318), Wheelhouse switches on in VS Code's Copilot chat.
 
