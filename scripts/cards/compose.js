@@ -595,7 +595,7 @@ const listed = (names) => (names.length < 2 ? names.join('') : `${names.slice(0,
 
 // The work the card for changes made by hand is recorded under (scripts/host/local/folder.js), and why it recommends adding them.
 const HAND_WORK = 'by-hand';
-const HAND_BECAUSE = 'they get a second look before they join the main version, and nothing is lost';
+const HAND_BECAUSE = 'it is how your edits reach the main version, after a review and checks, and your folder keeps them either way';
 
 // The input for the answer card to a question the build recorded, `data` as its question event
 // holds it: its words, its own options with what each says, and its own recommendation (ruling

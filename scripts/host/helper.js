@@ -48,7 +48,7 @@ import { HOSTS, MOVING_LINE, holdsWork, moveWatch, readMove } from './local/move
 import { SAVE_PROMPT, chooseFolder, safekeepingAct } from '../safekeeping/actions.js';
 import { LEADS } from '../lib/mod-numbers.js';
 import { readReadings, readStatus, safekeepingTick } from '../safekeeping/readings.js';
-import { gitRoute, homeDir, homeGit, homeReadable, projectFolder } from './local/home.js';
+import { gitRoute, homeDir, homeGit, homeReadable, isBranchName, projectFolder } from './local/home.js';
 import { HAND_MADE_BRANCH, carriesFolderWork, cleanMerged, dropNextMain, finishMerge, keepSeenMain, mergeChange, revertOnHome, seenMain } from './local/merge.js';
 import { headReading, localSweep, needsApprovalOf } from './local/queue.js';
 import { protectionStatus } from './protection.js';
@@ -5887,7 +5887,19 @@ export async function startHelper({
         answerOf: (id) => views().questions?.[id]?.answer?.label ?? null,
         note: (words) => write('note', { about: 'engine', words }),
         add: (tip, how) => addHandMade(project, tip, how),
-        inFlight: async () => (await (await adapterNow()).openRequests()).some((r) => HAND_MADE_BRANCH.test(r.branch)),
+        // One whose head the main version already holds has merged, and is not being checked.
+        inFlight: async () => {
+          const adapter = await adapterNow();
+          const mine = (await adapter.openRequests()).filter((q) => HAND_MADE_BRANCH.test(q.branch));
+          if (mine.length === 0) return false;
+          const home = homeGit(project, gitRoute({ run }));
+          const main = await defaultBranchOf(project, adapter);
+          for (const r of mine) {
+            const within = typeof r.head === 'string' && isBranchName(main) ? await home.call(['merge-base', '--is-ancestor', r.head, `refs/heads/${main}`]) : { code: 1 };
+            if (within.code !== 0) return true;
+          }
+          return false;
+        },
       });
       let trouble = null;
       return async () => {

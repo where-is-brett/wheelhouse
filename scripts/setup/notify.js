@@ -87,7 +87,10 @@ function readyAsk(id, { terminal = false } = {}) {
         + 'and allow Claude\'s notifications on your phone. '
         + `Then click Ready and ${LOCK}`,
       why: 'Only you can do these.',
-      options: [
+      options: terminal ? [
+        { label: READY.skip, says: 'Setup carries on without your phone; the First Mate can set it up later.' },
+        { label: READY.ready, says: `Setup sends a test ${MINUTES} later and asks if it arrived.` },
+      ] : [
         { label: READY.ready, says: `Setup sends a test ${MINUTES} later and asks if it arrived.` },
         { label: READY.skip, says: 'Setup carries on without your phone; the First Mate can set it up later.' },
       ],

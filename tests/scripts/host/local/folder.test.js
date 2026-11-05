@@ -8,7 +8,7 @@ import path from 'node:path';
 import { tempFolder } from '../../../helpers/homes.js';
 import { commitIn, git, projectFolderWith, withKeyedHome } from '../../../helpers/local-home.js';
 import { addFolderRemote, bringFolderUp, compareFolder, folderWatch, handMadeCard, HAND_MADE_WORK, OWN_CHANGES_LINE } from '../../../../scripts/host/local/folder.js';
-import { homeDir, makeHome } from '../../../../scripts/host/local/home.js';
+import { gitRoute, homeDir, makeHome } from '../../../../scripts/host/local/home.js';
 import { CHECK_AND_ADD, LEAVE_THEM_OUT } from '../../../../scripts/state/card-lines.js';
 
 const P = 'shop';
@@ -344,4 +344,141 @@ test('a further hand edit while an earlier change made by hand is open asks anew
   assert.equal(cards[1].what, handMadeCard({ more: true }).what);
   assert.match(cards[1].what, /^More changes were made by hand .* while the earlier ones are still being checked/);
   assert.deepEqual(cards[1].options.map((o) => o.label), [CHECK_AND_ADD, LEAVE_THEM_OUT]);
+}));
+
+// The home's main moves on by a commit that writes `text` to `file`, as the merge of an accepted hand edit does.
+async function homeWrites(file, text) {
+  const copy = path.join(tempFolder('wh-copy-'), 'copy');
+  await git(path.dirname(copy), ['clone', '-q', homeDir(P), copy]);
+  const commit = await commitIn(copy, file, text);
+  await git(copy, ['push', '-q', 'origin', 'HEAD:refs/heads/main']);
+  return commit;
+}
+
+test('a folder whose uncommitted edit is exactly what the merged main holds takes the main, losing nothing', () => level(async (folder) => {
+  await commitIn(folder, 'README.md', 'first\n');
+  await git(folder, ['push', '-q', homeDir(P), 'HEAD:refs/heads/main', '--force']);
+  fs.writeFileSync(path.join(folder, 'README.md'), 'edited\n');
+  const commit = await homeWrites('README.md', 'edited\n');
+  assert.deepEqual(await bringFolderUp({ project: P, folder, branch: 'main' }), { moved: true });
+  assert.equal(await git(folder, ['rev-parse', 'HEAD']), commit);
+  assert.equal(fs.readFileSync(path.join(folder, 'README.md'), 'utf8'), 'edited\n');
+  assert.equal(await git(folder, ['status', '--porcelain']), '');
+}));
+
+test('a folder edit that differs from the merged main still waits, untouched', () => level(async (folder) => {
+  await commitIn(folder, 'README.md', 'first\n');
+  await git(folder, ['push', '-q', homeDir(P), 'HEAD:refs/heads/main', '--force']);
+  fs.writeFileSync(path.join(folder, 'README.md'), 'edited again\n');
+  await homeWrites('README.md', 'edited\n');
+  assert.deepEqual(await bringFolderUp({ project: P, folder, branch: 'main' }), { line: OWN_CHANGES_LINE });
+  assert.equal(fs.readFileSync(path.join(folder, 'README.md'), 'utf8'), 'edited again\n');
+}));
+
+test('an identical edit beside another uncommitted edit waits, and both stay', () => level(async (folder) => {
+  await commitIn(folder, 'README.md', 'first\n');
+  await git(folder, ['push', '-q', homeDir(P), 'HEAD:refs/heads/main', '--force']);
+  fs.writeFileSync(path.join(folder, 'README.md'), 'edited\n');
+  fs.writeFileSync(path.join(folder, 'a.txt'), 'mine\n');
+  await homeWrites('README.md', 'edited\n');
+  assert.deepEqual(await bringFolderUp({ project: P, folder, branch: 'main' }), { line: OWN_CHANGES_LINE });
+  assert.equal(fs.readFileSync(path.join(folder, 'README.md'), 'utf8'), 'edited\n');
+  assert.equal(fs.readFileSync(path.join(folder, 'a.txt'), 'utf8'), 'mine\n');
+}));
+
+test('a further hand edit after the earlier change stopped being checked does not say it is still being checked', () => level(async (folder) => {
+  await commitIn(folder, 'README.md', 'first\n');
+  await git(folder, ['push', '-q', homeDir(P), 'HEAD:refs/heads/main', '--force']);
+  fs.writeFileSync(path.join(folder, 'README.md'), 'one\n');
+  const answers = {};
+  const cards = [];
+  const watch = folderWatch({
+    project: P, folder, branchOf: async () => 'main', file: path.join(tempFolder('wh-kept-'), 'folder.json'),
+    card: async (data) => { cards.push(data); }, answerOf: (id) => answers[id] ?? null, note: async () => {},
+    add: async () => ({ ok: true }), inFlight: async () => false,
+  });
+  await watch.tick();
+  await watch.tick();
+  answers[cards[0].id] = CHECK_AND_ADD;
+  await watch.tick();
+  fs.writeFileSync(path.join(folder, 'README.md'), 'two\n');
+  await watch.tick();
+  await watch.tick();
+  assert.equal(cards.length, 2);
+  assert.doesNotMatch(cards[1].what, /still being checked/);
+  assert.match(cards[1].what, /^More changes were made by hand/);
+  assert.match(cards[1].what, /no longer being checked/);
+}));
+
+// A folder holding README.md as committed, and the home's main moved on to write `text` there.
+async function readmeCase(folder, text) {
+  await commitIn(folder, 'README.md', 'first\n');
+  await git(folder, ['push', '-q', homeDir(P), 'HEAD:refs/heads/main', '--force']);
+  return homeWrites('README.md', text);
+}
+
+test('a mode-only change with the same content waits and keeps its mode', () => level(async (folder) => {
+  await readmeCase(folder, 'first\nmore\n');
+  fs.writeFileSync(path.join(folder, 'README.md'), 'first\nmore\n');
+  fs.chmodSync(path.join(folder, 'README.md'), 0o755);
+  assert.deepEqual(await bringFolderUp({ project: P, folder, branch: 'main' }), { line: OWN_CHANGES_LINE });
+  assert.equal(fs.statSync(path.join(folder, 'README.md')).mode & 0o111, 0o111);
+}));
+
+test('staged content that is neither the folder\'s commit nor the main waits', () => level(async (folder) => {
+  await readmeCase(folder, 'edited\n');
+  fs.writeFileSync(path.join(folder, 'README.md'), 'staged\n');
+  await git(folder, ['add', 'README.md']);
+  fs.writeFileSync(path.join(folder, 'README.md'), 'edited\n');
+  assert.deepEqual(await bringFolderUp({ project: P, folder, branch: 'main' }), { line: OWN_CHANGES_LINE });
+  assert.match(await git(folder, ['diff', '--cached']), /staged/);
+}));
+
+test('a save made after the edits were staged and before the merge survives, whether git takes the move or refuses it', () => level(async (folder) => {
+  await readmeCase(folder, 'edited\n');
+  fs.writeFileSync(path.join(folder, 'README.md'), 'edited\n');
+  const real = gitRoute();
+  const racing = (cwd, opts) => {
+    const r = real(cwd, opts);
+    return { ...r, ok: async (args, ...rest) => { if (args[0] === 'merge') fs.writeFileSync(path.join(folder, 'README.md'), 'late save\n'); return r.ok(args, ...rest); } };
+  };
+  const got = await bringFolderUp({ project: P, folder, branch: 'main', git: racing });
+  assert.ok(got.moved === true || typeof got.line === 'string');
+  assert.equal(fs.readFileSync(path.join(folder, 'README.md'), 'utf8'), 'late save\n');
+  assert.equal(await git(folder, ['stash', 'list']), '');
+}));
+
+test('a file name with glob characters stages only that file, never one the name would match', () => level(async (folder) => {
+  await commitIn(folder, '[x].md', 'first\n');
+  await git(folder, ['push', '-q', homeDir(P), 'HEAD:refs/heads/main', '--force']);
+  await homeWrites('[x].md', 'edited\n');
+  fs.writeFileSync(path.join(folder, '[x].md'), 'edited\n');
+  fs.writeFileSync(path.join(folder, 'x.md'), 'mine\n');
+  await bringFolderUp({ project: P, folder, branch: 'main' });
+  assert.equal(await git(folder, ['ls-files', '--', 'x.md']), '');
+  assert.equal(await git(folder, ['status', '--porcelain', '--', 'x.md']), '?? x.md');
+  assert.equal(fs.readFileSync(path.join(folder, 'x.md'), 'utf8'), 'mine\n');
+}));
+
+test('a successful move leaves no stash entry behind', () => level(async (folder) => {
+  await readmeCase(folder, 'edited\n');
+  fs.writeFileSync(path.join(folder, 'README.md'), 'edited\n');
+  assert.deepEqual(await bringFolderUp({ project: P, folder, branch: 'main' }), { moved: true });
+  assert.equal(await git(folder, ['stash', 'list']), '');
+}));
+
+test('when the fast-forward fails after the edits were let go, the folder is put back and says why', () => level(async (folder) => {
+  await readmeCase(folder, 'edited\n');
+  fs.writeFileSync(path.join(folder, 'README.md'), 'edited\n');
+  // An untracked file in the way of a file the home adds makes the merge refuse.
+  const copy = path.join(tempFolder('wh-copy-'), 'copy');
+  await git(path.dirname(copy), ['clone', '-q', homeDir(P), copy]);
+  await commitIn(copy, 'blocker.txt', 'home\n');
+  await git(copy, ['push', '-q', 'origin', 'HEAD:refs/heads/main']);
+  fs.writeFileSync(path.join(folder, 'blocker.txt'), 'mine\n');
+  const got = await bringFolderUp({ project: P, folder, branch: 'main' });
+  assert.equal(got.moved, undefined);
+  assert.match(got.line, /put back|left as it was/);
+  assert.equal(fs.readFileSync(path.join(folder, 'README.md'), 'utf8'), 'edited\n');
+  assert.equal(fs.readFileSync(path.join(folder, 'blocker.txt'), 'utf8'), 'mine\n');
 }));
