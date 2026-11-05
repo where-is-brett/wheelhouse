@@ -344,7 +344,7 @@ function answerCard(id, data, views, words, { joiners = [], revises, saidBefore,
     for (const titled of [true, false]) {
       const named = joiners.map((j) => ({ id: j.id, name: (titled && title(j.work)) || j.work, words: views.questions?.[j.id]?.question?.data?.what }));
       try {
-        return composePlain({ ...answerInput(data, name, { joiners: named, saidBefore, picked, blind }), ...reissue }, words);
+        return composePlain({ ...answerInput(data, name, { joiners: named, saidBefore, picked, blind, recorded: true }), ...reissue }, words);
       } catch (error) {
         refusal ??= error;
       }

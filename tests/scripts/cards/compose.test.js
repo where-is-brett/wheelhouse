@@ -970,3 +970,36 @@ test('Send it back must be described, and belongs to a parked approval only', ()
   assert.throws(() => composeCard({ ...INPUTS.approval, recommend: 'Approve', options: [says('Approve'), says(SEND_BACK)] }), /can't describe Send it back/);
   assert.throws(() => composeCard({ ...INPUTS.confirm, parked: true }), /parked/);
 });
+
+// A by-hand question as an earlier release recorded it: a third option, Not now, beside its two answers.
+const OLD_BY_HAND = () => ({
+  id: 'q-by-hand-1', work: 'by-hand', level: 3,
+  what: 'Changes were made by hand in your project folder. They aren\'t part of the main version yet.',
+  why: 'Whether these should join the main version is yours to decide, at level 3.',
+  options: [
+    { label: 'Check them and add them', says: 'They go through the same review and checks as any other work.' },
+    { label: 'Leave them out', says: 'They stay in your folder as they are.' },
+    { label: 'Not now', says: 'Ask me later.' },
+  ],
+  recommendation: 'Check them and add them',
+});
+
+test('a question already on file with Not now among its options becomes a card of its two answers plus the put-off button', () => {
+  const data = OLD_BY_HAND();
+  assert.equal(questionProblem(data, { recorded: true }), null);
+  const { card } = composeCard(answerInput(data, 'by-hand', { recorded: true }));
+  assert.deepEqual(card.options.slice(0, 2), ['Check them and add them', 'Leave them out']);
+  assert.equal(card.options.filter((label) => label === 'Not now').length, 0);
+  assert.ok(card.options.length <= CARD.options);
+  assert.deepEqual(blindInput(data, 'by-hand').options.map((o) => o.label).sort(), ['Check them and add them', 'Leave them out']);
+});
+
+test('a live ask with Not now among its options is still refused', () => {
+  assert.match(questionProblem(OLD_BY_HAND()), /must not use Not now/);
+  assert.throws(() => composeCard(answerInput(OLD_BY_HAND(), 'by-hand')), /must not use Not now/);
+});
+
+test('a recorded question left with fewer than two options once put-offs are dropped is still refused, in plain words', () => {
+  const data = { ...OLD_BY_HAND(), options: [OLD_BY_HAND().options[0], OLD_BY_HAND().options[2]] };
+  assert.match(questionProblem(data, { recorded: true }), /^An answer card's options must not use Not now/);
+});
