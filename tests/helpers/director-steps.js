@@ -56,7 +56,8 @@ export async function startsAndMergesShownFirst(w, work, change, { pr }) {
   assert.equal(build.pr, pr);
   await w.tick();
   const asked = await w.desk(['cards']);
-  assert.equal(asked.json.questions.length, 1, 'a clean review leads to one merge card');
+  const why = async () => `${JSON.stringify(asked)} | waiting: ${await waitingCards(w)} | cards: ${JSON.stringify(w.records('card').map((c) => [c.data.line, c.data.question?.slice(0, 60)]))} | asks: ${JSON.stringify(w.records('ask').map((c) => c.data))}`;
+  assert.equal(asked.json.questions.length, 1, `a clean review leads to one merge card: ${await why()}`);
   await w.press(asked.json.questions[0], 'Approve');
   w.engine.setOutput(build.runId, 'approval', JSON.stringify({ decision: 'approve', text: '' }));
   const marked = await build.ticketed.engine.ready({ runId: build.runId });
