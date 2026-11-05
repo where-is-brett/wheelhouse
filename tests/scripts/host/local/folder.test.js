@@ -562,3 +562,23 @@ test('when the fast-forward fails after the edits were let go, the folder is put
   assert.equal(fs.readFileSync(path.join(folder, 'README.md'), 'utf8'), 'edited\n');
   assert.equal(fs.readFileSync(path.join(folder, 'blocker.txt'), 'utf8'), 'mine\n');
 }));
+
+test('a tip whose recorded question can no longer be made a card is recorded again under its own id', () => level(async (folder) => {
+  await commitIn(folder, 'by-hand.txt');
+  const stuckIds = new Set();
+  const cards = [];
+  const watch = folderWatch({
+    project: P, folder, branchOf: async () => 'main', file: path.join(tempFolder('wh-kept-'), 'folder.json'),
+    card: async (data) => { cards.push(data); stuckIds.delete(data.id); }, answerOf: () => null, note: async () => {}, stuck: (id) => stuckIds.has(id),
+    add: async () => ({ ok: true }),
+  });
+  await watch.tick();
+  assert.equal(cards.length, 1);
+  stuckIds.add(cards[0].id);
+  await watch.tick();
+  await watch.tick();
+  assert.equal(cards.length, 2);
+  assert.equal(cards[1].id, cards[0].id);
+  assert.match(cards[1].id, /^q-by-hand-\d+$/);
+  assert.deepEqual(cards[1].options.map((o) => o.label), [CHECK_AND_ADD, LEAVE_THEM_OUT]);
+}));

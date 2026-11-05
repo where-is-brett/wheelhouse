@@ -43,20 +43,21 @@ The release the director named, such as `v0.3.0`, is used as it is written, in p
   git ls-remote --tags --refs https://github.com/where-is-brett/wheelhouse.git 'v*' \
     | sed 's|.*refs/tags/||' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -t. -k1.2,1n -k2,2n -k3,3n | tail -n 1
   echo "On this computer:"
-  ls -1 "$HOME/.copilot/wheelhouse" 2>/dev/null
+  ls -1 "${COPILOT_HOME:-$HOME/.copilot}/wheelhouse" 2>/dev/null
 )
 ```
 
 ```powershell
 # find-latest
 & {
+  $Cop = if ($env:COPILOT_HOME) { $env:COPILOT_HOME } else { Join-Path $HOME '.copilot' }
   $Tags = git ls-remote --tags --refs https://github.com/where-is-brett/wheelhouse.git 'v*' |
     ForEach-Object { ($_ -split "`t")[1] -replace '^refs/tags/', '' } |
     Where-Object { $_ -match '^v\d+\.\d+\.\d+$' } |
     Sort-Object { [version]($_ -replace '^v', '') }
   $Tags | Select-Object -Last 1
   'On this computer:'
-  Get-ChildItem (Join-Path $HOME '.copilot\wheelhouse') -Directory -ErrorAction SilentlyContinue | ForEach-Object Name
+  Get-ChildItem (Join-Path $Cop 'wheelhouse') -Directory -ErrorAction SilentlyContinue | ForEach-Object Name
 }
 ```
 
@@ -74,7 +75,7 @@ Clone the release at its tag into its own folder, `~/.copilot/wheelhouse/<tag>/`
 # clone-release
 (
   TAG='<tag>'
-  KIT="$HOME/.copilot/wheelhouse/$TAG"
+  KIT="${COPILOT_HOME:-$HOME/.copilot}/wheelhouse/$TAG"
   [ -d "$KIT" ] || git clone --depth 1 --branch "$TAG" https://github.com/where-is-brett/wheelhouse.git "$KIT" || exit 1
   [ "$(git -C "$KIT" describe --tags --exact-match 2>/dev/null)" = "$TAG" ] || { echo "$KIT is not the release $TAG"; exit 1; }
   echo "The release $TAG is in $KIT"
@@ -84,8 +85,9 @@ Clone the release at its tag into its own folder, `~/.copilot/wheelhouse/<tag>/`
 ```powershell
 # clone-release
 & {
+  $Cop = if ($env:COPILOT_HOME) { $env:COPILOT_HOME } else { Join-Path $HOME '.copilot' }
   $Tag = '<tag>'
-  $Kit = Join-Path $HOME ".copilot\wheelhouse\$Tag"
+  $Kit = Join-Path $Cop "wheelhouse\$Tag"
   if (-not (Test-Path $Kit)) { git clone --depth 1 --branch $Tag https://github.com/where-is-brett/wheelhouse.git $Kit; if ($LASTEXITCODE -ne 0) { throw 'The clone failed' } }
   if ((git -C $Kit describe --tags --exact-match 2>$null) -ne $Tag) { throw "$Kit is not the release $Tag" }
   "The release $Tag is in $Kit"
@@ -96,15 +98,15 @@ If the clone fails, stop: nothing in `~/.copilot/` has changed. Say what happene
 
 ## Step 3: check every file, then copy the kit
 
-Check every file of the new release's kit with `git hash-object` against its `MANIFEST.txt`, the list of each file's fingerprint that comes with the kit. **Every file is checked before anything is replaced.** One that doesn't match stops the update with the old kit as it was. Then copy the kit into `~/.copilot/` and check each copy as it is made. The `hooks/` files are copied only where Wheelhouse's shell guard is already in place on this Mac (`$HOME/.copilot/hooks/wheelhouse-lean-guard.sh` exists, which is the Mac without Node.js); anywhere else they are left out.
+Check every file of the new release's kit with `git hash-object` against its `MANIFEST.txt`, the list of each file's fingerprint that comes with the kit. **Every file is checked before anything is replaced.** One that doesn't match stops the update with the old kit as it was. Then copy the kit into `~/.copilot/` and check each copy as it is made. The `hooks/` files are copied only where Wheelhouse's shell guard is already in place on this Mac (`${COPILOT_HOME:-$HOME/.copilot}/hooks/wheelhouse-lean-guard.sh` exists, which is the Mac without Node.js); anywhere else they are left out.
 
 ```sh
 # check-and-copy
 (
   TAG='<tag>'
-  SRC="$HOME/.copilot/wheelhouse/$TAG/adapters/copilot/home"
+  SRC="${COPILOT_HOME:-$HOME/.copilot}/wheelhouse/$TAG/adapters/copilot/home"
   cd "$SRC" || exit 1
-  GUARD=no; [ -f "$HOME/.copilot/hooks/wheelhouse-lean-guard.sh" ] && GUARD=yes
+  GUARD=no; [ -f "${COPILOT_HOME:-$HOME/.copilot}/hooks/wheelhouse-lean-guard.sh" ] && GUARD=yes
   skip() { case "$1" in hooks/*) [ "$GUARD" = yes ] || return 0; return 1 ;; esac; return 1; }
   # before anything is replaced: every file in the clone matches its fingerprint
   while read -r hash file; do
@@ -114,9 +116,9 @@ Check every file of the new release's kit with `git hash-object` against its `MA
   # after each file is copied: the copy matches too, and the first that doesn't stops the rest
   while read -r hash file; do
     skip "$file" && continue
-    mkdir -p "$HOME/.copilot/$(dirname "$file")"
-    cp "$file" "$HOME/.copilot/$file"
-    [ "$(git hash-object --no-filters "$HOME/.copilot/$file")" = "$hash" ] || { echo "Does not match MANIFEST.txt: $file"; exit 1; }
+    mkdir -p "${COPILOT_HOME:-$HOME/.copilot}/$(dirname "$file")"
+    cp "$file" "${COPILOT_HOME:-$HOME/.copilot}/$file"
+    [ "$(git hash-object --no-filters "${COPILOT_HOME:-$HOME/.copilot}/$file")" = "$hash" ] || { echo "Does not match MANIFEST.txt: $file"; exit 1; }
   done < MANIFEST.txt
   echo "Every file matches MANIFEST.txt"
 )
@@ -125,8 +127,9 @@ Check every file of the new release's kit with `git hash-object` against its `MA
 ```powershell
 # check-and-copy
 & {
+  $Cop = if ($env:COPILOT_HOME) { $env:COPILOT_HOME } else { Join-Path $HOME '.copilot' }
   $Tag = '<tag>'
-  $Source = Join-Path $HOME ".copilot\wheelhouse\$Tag\adapters\copilot\home"
+  $Source = Join-Path $Cop "wheelhouse\$Tag\adapters\copilot\home"
   $Lines = Get-Content (Join-Path $Source 'MANIFEST.txt') | Where-Object { $_ -ne '' }
   # before anything is replaced: every file in the clone matches its fingerprint (no hooks/ file is copied on Windows)
   foreach ($Line in $Lines) {
@@ -140,7 +143,7 @@ Check every file of the new release's kit with `git hash-object` against its `MA
     $Hash, $File = $Line -split ' ', 2
     if ($File -like 'hooks/*') { continue }
     $From = Join-Path $Source ($File -replace '/', '\')
-    $To = Join-Path $HOME (Join-Path '.copilot' ($File -replace '/', '\'))
+    $To = Join-Path $Cop ($File -replace '/', '\')
     New-Item -ItemType Directory -Force (Split-Path $To) | Out-Null
     Copy-Item $From $To -Force
     if ((git hash-object --no-filters $To) -ne $Hash) { throw "Does not match MANIFEST.txt: $File" }

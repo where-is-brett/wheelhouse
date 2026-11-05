@@ -117,7 +117,7 @@ import {
 import { CHAT_PROOFS, CONFIRMED_STEPS, hashRefusal } from '../agents/chat-clicks.js';
 import { earned, signsOn, askedUpdateCard } from '../hooks/prompt-record.js';
 import { askInWindow, NOT_NOW } from '../confirm/window.js';
-import { composeCard } from '../cards/compose.js';
+import { composeCard, questionProblem } from '../cards/compose.js';
 import { LIFT_STOP_CARD } from '../frontdesk/cli.js';
 import { matchGlob } from '../gate/glob.js';
 import { chatCopy, ciPushLine } from '../state/card-lines.js';
@@ -5900,6 +5900,7 @@ export async function startHelper({
         branchOf: async () => defaultBranchOf(project, await adapterNow()),
         card: ownCard('folder'),
         answerOf: (id) => views().questions?.[id]?.answer?.label ?? null,
+        stuck: (id) => { const asked = views().questions?.[id]?.question?.data; return asked !== null && typeof asked === 'object' && questionProblem(asked, { recorded: true }) !== null; },
         note: (words) => write('note', { about: 'engine', words }),
         add: (tip, how) => addHandMade(project, tip, how),
         // One whose head the main version already holds has merged, and is not being checked.

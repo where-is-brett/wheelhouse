@@ -390,7 +390,7 @@ function keep(file, kept) {
 // folderWatch({ project, folder, branchOf, git, file, card, answerOf, note, add, stopped }) -> { tick }. `branchOf()` gives the
 // default branch, `file` keeps what has been asked and said, `card(data)` raises a question, `answerOf(id)` the label chosen,
 // `note(words)` writes to the Logbook, and `add(tip, { parted })` opens the local change, { ok } or { refused }, and `inFlight()` says whether an earlier change made by hand is still open.
-export function folderWatch({ project, folder, branchOf, git = gitRoute(), file, card, answerOf, note, add, inFlight = async () => false, stopped = () => false }) {
+export function folderWatch({ project, folder, branchOf, git = gitRoute(), file, card, answerOf, note, add, inFlight = async () => false, stuck = () => false, stopped = () => false }) {
   async function answers(found, kept) {
     for (const [tip, entry] of Object.entries(kept.tips)) {
       if (entry.own === true) {
@@ -406,6 +406,12 @@ export function folderWatch({ project, folder, branchOf, git = gitRoute(), file,
         continue;
       }
       const label = entry.done ? null : answerOf(entry.id);
+      // A question no card can be made of (one recorded in an older shape) is recorded again under its own id, as the
+      // card now reads, so it is the one question and not a second beside it.
+      if (!entry.done && label === null && typeof entry.id === 'string' && stuck(entry.id)) {
+        await card({ id: entry.id, ...handMadeCard({ earlier: await earlierOf(kept, inFlight) }) });
+        continue;
+      }
       if (label === LEAVE_THEM_OUT) entry.done = true;
       if (label !== CHECK_AND_ADD) continue;
       if (entry.edit === true) {

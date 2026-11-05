@@ -187,10 +187,11 @@ const bare = (text) => text.replace(/[.!?]+$/, '');
 const clause = (text) => bare(text).replace(/^([A-Z])(?=[a-z])/, (c) => c.toLowerCase());
 
 // Whether an error from composeCard is its length refusal (and not another fault in the card).
-export const isTooLong = (error) => /^A [\w-]+ card text would pass \d+ characters/.test(String(error?.message));
+export const isTooLong = (error) => /^An? [\w-]+ card('s)? text would pass \d+ characters/.test(String(error?.message));
 
 function fail(kind, part, why) {
-  throw new Error(`A ${kind} card ${why === undefined ? `needs its ${part}` : `${part} ${why}`}`);
+  const a = /^[aeiou]/i.test(kind) ? 'An' : 'A';
+  throw new Error(why === undefined ? `${a} ${kind} card needs its ${part}` : `${a} ${kind} card's ${part} ${why}`);
 }
 
 // A part of the card's words: some text on one line that doesn't read as a set line.
@@ -604,7 +605,24 @@ const HAND_BECAUSE = 'they get a review and checks before they join the main ver
 // `joiners` ([{ id, name, words }]) are the questions the answer goes to as well: the card lists each piece, and each
 // wording of its own (`words`, for a close match), so the words a click signs say what it covers. `saidBefore` is the director's answer to the card this question joined too late for.
 // `picked` is the option taken on the question's blind card, and `blind` marks a card that followed one.
-export function answerInput(data, work, { joiners = [], saidBefore = null, picked = null, blind = false } = {}) {
+// `recorded`: the question is already on file. If its card can't be made as it stands, options that put a card off are
+// dropped (the card offers its own put-off buttons), provided the recommendation is not one of them and at least the
+// fewest options remain. A question the composer accepts as it is (a build-command question with its own Not now) is left
+// whole. A live ask is not recorded, and is refused with them.
+export function answerInput(data, work, { recorded = false, ...rest } = {}) {
+  const input = plainAnswerInput(data, work, rest);
+  if (!recorded) return input;
+  try {
+    composeCard(input);
+    return input;
+  } catch (error) {
+    const kept = data.options.filter((o) => !PUT_OFF.includes(o?.label));
+    if (kept.length === data.options.length || kept.length < CARD.fewestOptions || !kept.some((o) => o?.label === data.recommendation)) throw error;
+    return plainAnswerInput({ ...data, options: kept }, work, rest);
+  }
+}
+
+function plainAnswerInput(data, work, { joiners = [], saidBefore = null, picked = null, blind = false } = {}) {
   if (!isPlain(data) || !Array.isArray(data.options)) throw new Error('its record can\'t be read');
   const foreman = questionIdOf(data.id)?.foreman === true;
   const said = data.level === 3 && typeof saidBefore === 'string' ? saidBefore : null;
@@ -637,7 +655,7 @@ export function answerInput(data, work, { joiners = [], saidBefore = null, picke
 // The input for a blind card: the question as the answer card would ask it, in full, its options in the order its id
 // gives, and no recommendation. `work` names the work, by its title or its id.
 export function blindInput(data, work) {
-  const { level, what, why, options } = answerInput(data, work);
+  const { level, what, why, options } = answerInput(data, work, { recorded: true });
   return {
     kind: 'blind', level, what, why,
     options: shuffled(options, data.id),
@@ -649,9 +667,10 @@ export function blindInput(data, work) {
 // Why no answer card could be made of a question from the build, as the composer refuses it, or
 // null when one can. The card is judged naming the work by its id, as the front desk names it when
 // the work's title won't fit, so the build's ask commands refuse what no card could carry.
-export function questionProblem(data) {
+// `recorded`: the question is on file (see answerInput); a live ask is judged without it.
+export function questionProblem(data, { recorded = false } = {}) {
   try {
-    composeCard(answerInput(data, data?.work));
+    composeCard(answerInput(data, data?.work, { recorded }));
     return null;
   } catch (error) {
     return error.message;

@@ -170,11 +170,11 @@ test('Copilot\'s cards bind only from outside the agent, and its packaging is wh
   for (const proof of ['chat-click', 'hook-click', 'signed-hook']) assert.ok(!copilot.cards.binding.includes(proof), `${proof} does not bind on Copilot`);
   // The first commit's list (setup-lean's block "first-commit"): the board is ignored and never committed, and no
   // .claude/wheelhouse.json is written at Lean. The setup-lean test holds the block to this same list.
-  assert.deepEqual(copilot.packaging.files(), ['.gitignore', '.vscode/settings.json', `${LEAN_RECORD_DIR}/.gitkeep`]);
+  assert.deepEqual(copilot.packaging.files(), ['.gitignore', '.vscode/settings.json', '.github/copilot-instructions.md', `${LEAN_RECORD_DIR}/.gitkeep`]);
   assert.ok(!copilot.packaging.files().includes(BOARD_FILE));
   const first = copilot.packaging.files();
   first.length = 0;
-  assert.equal(copilot.packaging.files().length, 3);
+  assert.equal(copilot.packaging.files().length, 4);
 });
 
 // ---- The tool sheet ----
