@@ -351,8 +351,8 @@ export async function observe({ project, client, now = () => new Date(), interva
       const qid = Object.keys(hv.questions ?? {}).find((q) => hv.questions[q].byHand?.n === from.request && hv.questions[q].byHand?.head === from.sha);
       if (qid === undefined) continue;
       const mine = fresh.filter((e) => e.id === w.work.id
-        || (e.kind === 'by-hand' && e.data?.question === qid)
-        || (e.kind === 'action' && e.data?.action === 'answer' && e.data?.questionId === qid));
+        || (e.kind === 'by-hand' && e.data?.question === qid && verify(e, enrolled))
+        || (e.kind === 'action' && e.data?.action === 'answer' && e.data?.questionId === qid && verify(e, enrolled)));
       if (mine.length > 0) handMarks.set(mine.at(-1).id, { id, work: mine.at(-1).id === w.work.id });
     }
   }
