@@ -7,7 +7,7 @@
 //     "what": { "<step>": what }, "ask": { "<step>": [{ id, options, typed?, what? }] },
 //     "uses": { "<step>": ["<step>.<id>"] }, "settle": [<step>], "record": { "<step>": record },
 //     "wait": { "<step>": { ms, why } }, "after": { "<step>": [<step>] },
-//     "asksDuring": { "<step>": [<step>] } }
+//     "asksDuring": { "<step>": [<step>] }, "needsDesktop": [<step>] }
 // A file is in the folder being set up, or with `home` in the user's home the step is given;
 // `planMs` makes each plan take that long, so a test can have two requests planning at once. Apply
 // writes each listed key with ctx.applyJsonKey, which records the change in the journal as it is
@@ -80,9 +80,11 @@ function step(n, { long = false } = {}) {
       return world().asksDuring?.[n];
     },
     async plan(ctx) {
-      const { [n]: listed = [], planMs = 0, planFail = {}, what = {}, ask = {}, uses = {}, settle = [], record = {}, wait = {} } = world();
+      const { [n]: listed = [], planMs = 0, planFail = {}, what = {}, ask = {}, uses = {}, settle = [], record = {}, wait = {}, needsDesktop = [] } = world();
       if (planMs > 0) await new Promise((resolve) => { setTimeout(resolve, planMs); });
       if (typeof planFail[n] === 'string') throw new Error(planFail[n]);
+      // A step that plans its list only in the Desktop app's session (as step 3 does with a backup folder to pick).
+      if (needsDesktop.includes(n) && ctx.desktop !== true) return { wait: 1, why: 'only the Desktop app plans this list' };
       if (wait[n]) return { wait: wait[n].ms, why: wait[n].why };
       const answers = ctx.answers ?? {};
       const questions = ask[n] ?? [];

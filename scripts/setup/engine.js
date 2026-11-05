@@ -822,7 +822,7 @@ export function setupRoutes({
       } catch { /* status then says it is stuck once its time is up */ }
     };
     try {
-      const child = spawn(process.execPath, [RUN_STEP, stepsModule, run.folder, String(step.n), hash, run.id, clickedAt, deadline, userHome], {
+      const child = spawn(process.execPath, [RUN_STEP, stepsModule, run.folder, String(step.n), hash, run.id, clickedAt, deadline, userHome, sessionIsApp ? 'desktop' : 'terminal'], {
         cwd: jobFolder(), detached: true, stdio: 'ignore', windowsHide: true, env: { ...process.env, ...caEnv(wheelhouseHome()) },
       });
       child?.on?.('error', failed);

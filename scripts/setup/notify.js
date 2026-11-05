@@ -74,7 +74,7 @@ const READY_STALE_MS = PUSH_TEST_WAIT_MS + CLICK_FRESH_MS;
 const idsFor = (round) => (round === 0 ? { ready: READY_ID, arrived: ARRIVED_ID } : { ready: `${READY_ID}-${round + 1}`, arrived: `${ARRIVED_ID}-${round + 1}` });
 
 // The card of plain steps, asked until the director clicks Ready or Skip for now.
-function readyAsk(id) {
+function readyAsk(id, { terminal = false } = {}) {
   return {
     id,
     card: {
@@ -91,8 +91,9 @@ function readyAsk(id) {
         { label: READY.ready, says: `Setup sends a test ${MINUTES} later and asks if it arrived.` },
         { label: READY.skip, says: 'Setup carries on without your phone; the First Mate can set it up later.' },
       ],
-      recommend: READY.ready,
-      because: 'it shows now whether your phone works',
+      // Remote Control and the push options are Claude Desktop's settings, so a terminal session recommends the way it can finish.
+      recommend: terminal ? READY.skip : READY.ready,
+      because: terminal ? 'phone notifications need Claude Desktop and your phone, and this terminal session has neither; the First Mate can set them up later' : 'it shows now whether your phone works',
       meanwhile: 'Setup waits for your click.',
     },
   };
@@ -146,11 +147,11 @@ export function notifyStep({ pushResult = () => phonePushResult(), settledBefore
       if (earlier?.arrived === true && earlier.run !== ctx.runId) return { settled: { record: { pushArrived: true, from: earlier.run } } };
       const ready = answers[`${PUSH_TEST_STEP}.${ids.ready}`];
       if (ready?.label === READY.skip) return { settled: { record: { ...SKIPPED } } };
-      if (ready?.label !== READY.ready) return { ask: readyAsk(ids.ready) };
+      if (ready?.label !== READY.ready) return { ask: readyAsk(ids.ready, { terminal: ctx.desktop === false }) };
       // From the Ready answer's own time; one that reads as later than now waits the whole time.
       const readyAt = Date.parse(ready.at);
       const since = Number.isFinite(readyAt) ? ctx.now().getTime() - readyAt : 0;
-      if (since > READY_STALE_MS) return { ask: readyAsk(ids.ready) };
+      if (since > READY_STALE_MS) return { ask: readyAsk(ids.ready, { terminal: ctx.desktop === false }) };
       const left = Math.min(PUSH_TEST_WAIT_MS, PUSH_TEST_WAIT_MS - since);
       if (left > 0) {
         return {
