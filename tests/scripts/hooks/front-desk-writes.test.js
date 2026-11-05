@@ -57,7 +57,7 @@ test('a feature or foreman session, an engine step, and a project being set up a
   const target = path.join(folder, 'notes.js');
   assert.equal(decide(write(folder, target), options(folder, { role: () => 'feature' })), undefined);
   assert.equal(decide(write(folder, target), options(folder, { role: () => 'foreman' })), undefined);
-  assert.equal(decide(write(folder, target), options(folder, { setUp: () => ({ folder }) })), undefined);
+  assert.equal(decide(write(folder, target), options(folder, { setUp: () => ({ folder, run: { startedAt: new Date().toISOString() } }) })), undefined);
   const engine = { WHEELHOUSE_ENGINE_RUN: '1', ARCHON_NODE_EXECUTION: JSON.stringify({ runId: 'r1' }), WORKFLOW_ID: 'r1' };
   assert.equal(decide(write(folder, target), options(folder, { env: engine })), undefined);
 });
@@ -68,4 +68,53 @@ test('a folder that is not a set-up project, and other tools, are untouched', ()
   assert.equal(decide(write(folder, target), options(folder, { find: () => null })), undefined);
   assert.equal(decide({ tool_name: 'Read', cwd: folder, tool_input: { file_path: target } }, options(folder)), undefined);
   assert.equal(decide({ tool_name: 'Write', tool_input: { file_path: target } }, options(folder)), undefined);
+});
+
+test('a setup run that has been still for hours no longer turns the hook off', () => {
+  const { folder } = project();
+  const target = path.join(folder, 'notes.js');
+  const old = { folder, run: { startedAt: '2026-11-01T00:00:00.000Z', steps: { 1: { doneAt: '2026-11-01T01:00:00.000Z' } } } };
+  assert.ok(denied(decide(write(folder, target), options(folder, { setUp: () => old, now: () => Date.parse('2026-11-05T00:00:00.000Z') }))));
+  assert.equal(decide(write(folder, target), options(folder, { setUp: () => old, now: () => Date.parse('2026-11-01T01:30:00.000Z') })), undefined);
+});
+
+test('a nested repository made inside the project does not turn the hook off, but a linked worktree is its own checkout', () => {
+  const { folder } = project();
+  const nested = path.join(folder, 'app');
+  fs.mkdirSync(path.join(nested, '.git'), { recursive: true });
+  assert.ok(denied(decide(write(nested, path.join(nested, 'index.js')), options(folder))));
+  assert.ok(denied(decide(write(nested, path.join(folder, 'notes.js')), options(folder))));
+});
+
+const bash = (cwd, command) => ({ tool_name: 'Bash', cwd, session_id: 's1', tool_input: { command } });
+
+test('a shell command that writes the product is refused', () => {
+  const { folder } = project();
+  for (const command of [
+    'cat > notes.js <<EOF\nconsole.log(1)\nEOF', 'echo x >> README.md', 'echo x | tee src/a.js', 'sed -i s/a/b/ src/a.js', 'perl -pi -e s/a/b/ src/a.js',
+    'cp /tmp/a.js src/a.js', 'mv /tmp/a.js notes.js', 'touch notes.js', 'npm create vite@latest', 'npx create-react-app app', 'git init',
+    'cd app && git init', 'node -e "require(\'fs\').writeFileSync(\'a.js\', \'x\')"', 'python3 -c "open(\'a.py\', \'w\').write(\'x\')"',
+  ]) {
+    const out = decide(bash(folder, command), options(folder));
+    assert.ok(denied(out), command);
+    assert.match(out.hookSpecificOutput.permissionDecisionReason, /plan or work/);
+  }
+});
+
+test('a shell command that reads, or writes outside the product, passes', () => {
+  const { folder } = project();
+  for (const command of [
+    'ls -la', 'git status', 'npm test 2>&1', 'npm test >/dev/null 2>&1', 'node cli.js card < /tmp/front-desk.json', 'cat <<EOF | node cli.js card\ntouch a\ntee b\nEOF',
+    'echo x > /tmp/front-desk.json', `echo x > ${path.join(folder, '.wheelhouse', 'work', 'a.md')}`, 'cat > .wheelhouse/front-desk.json <<EOF\n{}\nEOF',
+    'sed -n 1,20p src/a.js', 'git init /tmp/other', 'node cli.js views waiting', 'echo "a > b"', 'grep -r "touch" src',
+  ]) assert.equal(decide(bash(folder, command), options(folder)), undefined, command);
+  assert.equal(decide(bash(folder, 'echo ${HOME} > "$X"'), options(folder)), undefined, 'a target it can\'t place');
+  assert.equal(decide(bash(folder, 'echo (unclosed'), options(folder)), undefined, 'a command it can\'t read');
+});
+
+test('the shell check keeps to the same conditions', () => {
+  const { folder, worktree } = project();
+  assert.equal(decide(bash(worktree, 'touch notes.js'), options(folder)), undefined, 'a linked worktree');
+  assert.equal(decide(bash(folder, 'touch notes.js'), options(folder, { role: () => 'feature' })), undefined);
+  assert.equal(decide(bash(folder, 'touch notes.js'), options(folder, { find: () => null })), undefined);
 });

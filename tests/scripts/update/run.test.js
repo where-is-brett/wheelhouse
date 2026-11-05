@@ -50,7 +50,10 @@ async function ready(over = {}) {
     prState: async () => {
       const next = state.prStates.length > 1 ? state.prStates.shift() : state.prStates[0];
       log.push(['pr', next]);
-      if (next === 'merged') fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), named('v0.2.7'));
+      if (next === 'merged') {
+        fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), named('v0.2.7'));
+        await g(dir, 'commit', '-q', '-am', 'merged');
+      }
       return { ok: true, state: next };
     },
     state: { views: async () => ({ ok: true, views: { features: state.features } }) },
@@ -87,6 +90,7 @@ test('run: the steps go in the journal\'s order; the approval card is raised, th
   assert.deepEqual(read.steps.change.data.card, { previous: 'v0.2.6', release: 'v0.2.7', commit: NEWER });
   assert.equal(read.steps.change.data.pr, 5);
   assert.deepEqual(read.steps.merged.data, { merged: true, approved: true });
+  for (const name of ['backup', 'catalogue', 'verify']) assert.equal(read.steps[name].state, 'done', name);
   assert.equal(read.steps.done.state, 'done');
   assert.equal(read.steps.done.data.line, 'Wheelhouse v0.2.7 is installed. Start a new session on this folder to use it.');
   assert.equal(w.log.find((l) => l[0] === 'raise')[2], releaseLine('v0.2.6', 'v0.2.7', NEWER));

@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { approvalCard, changeSteps, namedRef, openChange, releaseKind, updateMirror, waitIdle, waitMerged } from '../../../scripts/update/change.js';
 import { openJournal } from '../../../scripts/update/journal.js';
 import { runJob } from '../../../scripts/update/job.js';
@@ -243,4 +244,65 @@ test('the ref a project names is read from its settings', () => {
   assert.equal(namedRef(settingsAt('v0.2.6')), 'v0.2.6');
   assert.equal(namedRef({}), null);
   assert.equal(namedRef(null), null);
+});
+
+// A git project whose committed settings name `committed` and whose working copy names `working`.
+function repo(committed, working) {
+  const dir = folder(settingsAt(committed));
+  const git = (...args) => execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@localhost.invalid', ...args], { stdio: 'pipe', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' } });
+  git('init', '-q', '-b', 'main');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'one');
+  if (working !== committed) fs.writeFileSync(path.join(dir, SETTINGS_FILE), settingsText(settingsAt(working)));
+  return dir;
+}
+
+test('pins only in the working tree are not "already merged": the change is opened from the committed version', async () => {
+  const dir = repo('v0.2.6', 'v0.2.7');
+  try {
+    const { open, calls } = opener();
+    const got = await openChange({ project: 'p', target, previous: { ref: 'v0.2.6', sha: OLD }, projectDir: dir, open, kind: 'pins-only' });
+    assert.equal(got.ok, true);
+    assert.equal(got.skipped, undefined);
+    assert.equal(calls.length, 1);
+    assert.equal(got.pr, 12);
+  } finally { tidy(dir); }
+});
+
+test('a release committed in the main version is skipped as already merged', async () => {
+  const dir = repo('v0.2.7', 'v0.2.7');
+  try {
+    const { open, calls } = opener();
+    const got = await openChange({ project: 'p', target, previous: null, projectDir: dir, open, kind: 'pins-only' });
+    assert.equal(got.skipped, 'merged');
+    assert.deepEqual(calls, []);
+  } finally { tidy(dir); }
+});
+
+test('the wait does not take pins left in the working tree as the merge while the change is open', async () => {
+  const dir = repo('v0.2.6', 'v0.2.7');
+  try {
+    const open = await waitMerged({ target, projectDir: dir, pr: 12, prState: async () => ({ state: 'open' }) });
+    assert.equal(open.merged, undefined);
+    assert.match(open.waiting, /Waiting for the change naming v0\.2\.7/);
+    assert.ok((await waitMerged({ target, projectDir: dir })).waiting);
+    // Once the folder's own commit holds them, they are in.
+    execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@localhost.invalid', 'commit', '-q', '-am', 'two'], { stdio: 'pipe', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' } });
+    assert.deepEqual(await waitMerged({ target, projectDir: dir }), { merged: true });
+  } finally { tidy(dir); }
+});
+
+test('a commit only on another branch of the folder, not the main version, is not the merge', async () => {
+  const dir = repo('v0.2.6', 'v0.2.6');
+  const git = (...args) => execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@localhost.invalid', ...args], { stdio: 'pipe', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' } });
+  try {
+    git('checkout', '-q', '-b', 'mine');
+    fs.writeFileSync(path.join(dir, SETTINGS_FILE), settingsText(settingsAt('v0.2.7')));
+    git('commit', '-q', '-am', 'unpushed');
+    const { open, calls } = opener();
+    const got = await openChange({ project: 'p', target, previous: { ref: 'v0.2.6', sha: OLD }, projectDir: dir, open, kind: 'pins-only' });
+    assert.equal(got.skipped, undefined);
+    assert.equal(calls.length, 1, 'the change is still opened');
+    assert.match((await waitMerged({ target, projectDir: dir })).waiting, /Waiting for the change/);
+  } finally { tidy(dir); }
 });

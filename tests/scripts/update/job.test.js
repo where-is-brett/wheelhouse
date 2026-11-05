@@ -127,3 +127,14 @@ test('a step that waits stays running with its line, is asked again later, and a
   assert.equal(closed.waiting, undefined);
   assert.equal(openJournal('q').read().steps.merged.state, 'failed');
 }));
+
+test('a job that has no step for a required step stops before done and says which', () => withHome(async () => {
+  const calls = [];
+  const journal = openJournal('p');
+  const out = await runJob({ project: 'p', target: 'v0.2.7', steps: steps(calls).filter((s) => !['backup', 'verify'].includes(s.name)), journal });
+  assert.equal(out.ok, false);
+  assert.equal(out.step, 'finish');
+  assert.match(out.line, /backup, verify/);
+  assert.notEqual(journal.read().steps.done.state, 'done');
+  assert.notEqual(journal.read().steps.finish.state, 'done');
+}));
