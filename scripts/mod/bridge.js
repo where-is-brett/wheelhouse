@@ -577,7 +577,9 @@ async function tick(req, d) {
   let pane = await paneOf(found.project, req.cwd, up, d);
   // A question from the build no card asks yet gets its answer card made now, by the same `cards` the First Mate runs, so it
   // is pressable here with the signed press every card has. The pane holds it, so the chat does not ask it too.
-  if (up && !d.stopState().on && (pane.cards ?? []).some((c) => c?.kind === 'question' && String(c.id).startsWith('q:') && String(c.text).startsWith(QUESTION_WAITS))) {
+  // A terminal has no pane to press in, so no card is made here: making one would mark it asked, and the front desk would then never
+  // be woken for it nor ask it. The question stays as it is until the wake has the front desk run `cards` and ask it in the chat.
+  if (up && req.surface !== 'terminal' && !d.stopState().on && (pane.cards ?? []).some((c) => c?.kind === 'question' && String(c.id).startsWith('q:') && String(c.text).startsWith(QUESTION_WAITS))) {
     try {
       await d.makeCards({ client: clientOf(d), cwd: req.cwd, now: d.now, hold: async () => true });
       pane = await paneOf(found.project, req.cwd, up, d);
