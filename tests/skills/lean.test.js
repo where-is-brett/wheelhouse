@@ -1182,7 +1182,8 @@ test('the builder is started as a sub-agent that never needs the playbook, and t
   assert.match(building, /does not load this playbook/);
   assert.match(building, /grep -i '\^co-auth'/);
   const routing = read('adapters/copilot/project-instructions.md');
-  assert.match(routing, /doesn't load the skill: its own agent file and the brief it was given are its playbook/);
+  assert.match(routing, /only when your own agent file is `wheelhouse-builder`, `wheelhouse-reviewer` or `wheelhouse-tester`; a chat in the default agent is never a Crew member/);
+  assert.match(routing, /takes its own agent file and the brief it was given as its playbook/);
   assert.match(routing, /never stops because the skill isn't there/);
 });
 
@@ -1199,4 +1200,11 @@ test('changes made by hand are noticed at the start of a turn and asked about as
 test('the kit carries the same words for the home copy of the playbook', () => {
   assert.match(leanKit, /Every change goes the whole way/);
   assert.match(leanKit, /Look for changes made by hand/);
+});
+
+test('silence answers only the shaping questions, by-hand edits the chat made are said to be its own, and a code host branches from its version', () => {
+  const intake = section(playbook, 'Intake at Lean');
+  assert.match(intake, /This holds only for the three shaping questions\. A card that approves or confirms \(brief, design, changes made by hand, guardrails, merge, undo, All stop\) waits for the director's click, and silence never answers it/);
+  assert.match(intake, /have the card say that you made them, not the director/);
+  assert.match(intake, /on a code host, from the host's version: `git fetch origin`[\s\S]*origin\/main/);
 });
