@@ -315,7 +315,7 @@ test('a question no card can be made of is shown as a problem, not as one that i
   view('questions', { 'q-export-csv-2': stuck });
   const { cards } = await paneModel({ project: P, cwd: repo, now: () => NOW });
   assert.equal(cards.length, 1);
-  assert.match(cards[0].text, /^A question from the build can't be shown as a card, so it waits: .*Not now/);
+  assert.match(cards[0].text, /^A question from the build can't be shown as a card, so it waits\. The reason: An answer card's options must not use Not now/);
   assert.doesNotMatch(cards[0].text, /the First Mate will ask it/);
   assert.deepEqual(cards[0].buttons, []);
 }));

@@ -18,6 +18,12 @@ if (process.platform !== 'win32') {
   if (found[0] !== noLaunchctl) process.env.PATH = [noLaunchctl, ...found.filter((p) => p !== noLaunchctl)].join(path.delimiter);
 }
 
+// The person's real launch agents folder is named here, before any test changes HOME, so a write into it fails
+// (scripts/lib/login-start.js) wherever the test's HOME or WHEELHOUSE_HOME points.
+if (!process.env.WHEELHOUSE_TEST_REAL_LAUNCH_AGENTS) {
+  process.env.WHEELHOUSE_TEST_REAL_LAUNCH_AGENTS = path.join(os.homedir(), 'Library', 'LaunchAgents');
+}
+
 // The helper's weekly look for a newer Wheelhouse release reaches the network; a helper started in a test never does.
 process.env.WHEELHOUSE_NO_RELEASE_LOOK = '1';
 process.env.WHEELHOUSE_RUNNING_VERSION = '0.0.0';

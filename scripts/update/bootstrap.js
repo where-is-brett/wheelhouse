@@ -134,7 +134,7 @@ export async function bootstrap({
     const helper = client ?? helperClient({ timeout: 5 * 60 * 1000 });
     const all = updateSteps({ project: placed, folder: projectDir, plan, client: helper, claudeHome, mirror, run, ...over });
     const by = Object.fromEntries(all.map((s) => [s.name, s]));
-    const ordered = ['checks', 'installs', 'finish', 'change', 'merged', 'idle', 'done'].map((n) => by[n]);
+    const ordered = ['checks', 'installs', 'backup', 'catalogue', 'verify', 'finish', 'change', 'merged', 'idle', 'done'].map((n) => by[n]);
     // The lock is held here for the whole job; runJob's own take of it is a no-op.
     const held = { ...jour, lock: () => () => {} };
     const got = await runJob({ project: placed, target: tag, steps: ordered, journal: held });

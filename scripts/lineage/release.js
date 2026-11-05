@@ -111,6 +111,33 @@ export function pinsOnlyChange(paths, sides) {
   }
 }
 
+// Whether `now` is `base` (both the settings file's text) with nothing changed but Wheelhouse's own marketplace entry's
+// pins: its `ref`, which must be `tag`, the release the update moves to, and its `autoUpdate` flag, which must be absent or false. The entry must still name Wheelhouse's repository, and every
+// other key anywhere stays as it was. This is what an update that did not land its change leaves in a project's folder.
+export function onlyPinEdit(base, now, { tag } = {}) {
+  try {
+    const before = JSON.parse(base);
+    const after = JSON.parse(now);
+    const was = wheelhouseSource(before);
+    const is = wheelhouseSource(after);
+    // The pin must be the release the update is moving to (`tag`), never another tag or a branch, and `autoUpdate` may only be
+    // absent or false: anything else is a change of the project's own settings.
+    if (was === null || is === null || !isTag(tag) || is.ref !== tag) return false;
+    const auto = after.extraKnownMarketplaces[WHEELHOUSE_DECLARED.marketplace].autoUpdate;
+    if (auto !== undefined && auto !== false) return false;
+    const pin = (settings) => {
+      const entry = settings.extraKnownMarketplaces[WHEELHOUSE_DECLARED.marketplace];
+      delete entry.autoUpdate;
+      delete entry.source.ref;
+    };
+    pin(before);
+    pin(after);
+    return canonicalJson(before) === canonicalJson(after);
+  } catch {
+    return false;
+  }
+}
+
 // --- Is the release pins-only (ruling R132) ---
 
 // Why a release is not taken as pins-only, always one of these set phrases.

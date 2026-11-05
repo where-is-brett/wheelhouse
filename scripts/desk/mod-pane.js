@@ -37,7 +37,7 @@ import { SHOW_ME, verdict, sinceLine, askedSince } from '../lib/calm-words.js';
 export const PANE_VERSION = 1;
 export const QUESTION_WAITS = 'A question from the build waits; the First Mate will ask it';
 // A question from the build that no card can be made of: the composer's reason follows, in one line.
-export const QUESTION_STUCK = 'A question from the build can\'t be shown as a card, so it waits: ';
+export const QUESTION_STUCK = 'A question from the build can\'t be shown as a card, so it waits. The reason: ';
 export const CARD_TO_MAKE = 'A card from the build waits; the First Mate will make it and ask it';
 // The views the pane reads: the glance's, the reports and glossary, the open incidents, and the
 // build's records the front desk makes cards from.
@@ -206,7 +206,7 @@ export async function paneModel({
     if (item.card === undefined) {
       // A question the composer refuses never becomes a card, so it is said as a problem and not as one that is coming.
       const asked = views?.questions?.[item.question]?.question?.data;
-      const problem = isRecord(asked) ? questionProblem(asked) : null;
+      const problem = isRecord(asked) ? questionProblem(asked, { recorded: true }) : null;
       const labels = isRecord(asked) && Array.isArray(asked.options) ? asked.options.map((o) => oneLine(o?.label)).filter(Boolean) : [];
       const words = isRecord(asked) ? oneLine(asked.what) : '';
       // The question's own words and choices are shown while its card is made, so the director can read it here.
