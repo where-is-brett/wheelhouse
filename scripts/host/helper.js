@@ -643,6 +643,7 @@ function isPartialClone(dir) {
 // A repository's git settings that the look refused (or could not read): its text is the route's refusal.
 export { LookRefusal };
 
+const HAND_PUSH = Symbol('push of a branch for changes made by hand');
 const HAND_BRANCH_REFUSAL = 'A branch for changes made by hand is Wheelhouse\'s own, made when the director presses Check and add them';
 export const PUSH_REFUSALS = {
   plain: 'only a plain branch name may be pushed',
@@ -1627,7 +1628,7 @@ export async function startHelper({
     return answer.ok ? { ok: true } : answer;
   }
 
-  async function doPush({ project, dir, refspec, byFolder = false }, ctx) {
+  async function doPush({ project, dir, refspec, byFolder = false }, ctx, own = null) {
     if (stopped()) return STOP_REFUSAL;
     if (movingHome(project)) return { ok: false, refused: MOVING_LINE };
     const adapter = await ctx.adapter();
@@ -1636,6 +1637,8 @@ export async function startHelper({
     if (!spelled.allowed) return { ok: false, refused: spelled.refused };
     const { branch } = spelled;
     if (branch === STATE_BRANCH || branch === LOCK_BRANCH) return { ok: false, refused: PUSH_REFUSALS.ownRequests };
+    // Whatever the route, a by-hand branch is pushed only by addHandMade, which holds the module's own token.
+    if (/^feature\/by-hand-/.test(branch) && own !== HAND_PUSH) return { ok: false, refused: HAND_BRANCH_REFUSAL };
     if (bypassActive({ now })) return { ok: false, refused: BYPASS_PUSH };
     if (typeof dir !== 'string' || !path.isAbsolute(dir)) refuse('the folder to push from must be a full path');
     let isDir = false;
@@ -4886,8 +4889,7 @@ export async function startHelper({
     '/runbook/restore-state': signedIn(clicked(4, doRestoreState)),
     '/runbook/contain': signedIn(clicked(5, doContain)),
     '/runbook/candidates': signedIn(doCandidates),
-    // A by-hand branch is the helper's own, pushed only by addHandMade at the commit the director pressed on.
-    '/push': (body, ctx) => (/feature\/by-hand-/.test(String(body.refspec)) ? { ok: false, refused: HAND_BRANCH_REFUSAL } : oneAtATime(`push:${body.project}`, () => doPush(body, ctx))),
+    '/push': (body, ctx) => oneAtATime(`push:${body.project}`, () => doPush(body, ctx)),
     '/pull': (body, ctx) => doPull(body, ctx),
     '/base/fetch': (body, ctx) => doFetchBase(body, ctx),
     '/merge': (body, ctx) => oneAtATime(`merge:${body.project}`, () => doMerge(body, ctx)),
@@ -5608,7 +5610,7 @@ export async function startHelper({
     await inFolder.must(['update-ref', `refs/heads/${branch}`, tip], 'The changes could not be set aside to be sent');
     let pushed;
     try {
-      pushed = await oneAtATime(`push:${project}`, () => doPush({ project, dir: folder, refspec: branch }, ctx));
+      pushed = await oneAtATime(`push:${project}`, () => doPush({ project, dir: folder, refspec: branch }, ctx, HAND_PUSH));
     } finally {
       await inFolder.call(['update-ref', '-d', `refs/heads/${branch}`]);
     }
@@ -5616,23 +5618,23 @@ export async function startHelper({
     const subjects = await inFolder.must(['log', '--format=%s', '--max-count=20', tip, '--not', `refs/remotes/${FOLDER_REMOTE}/${await defaultBranchOf(project, adapter)}`], 'The changes could not be read');
     const number = (await adapter.openRequests()).find((r) => r.branch === branch)?.number
       ?? (await adapter.openPr({ head: branch, base: await defaultBranchOf(project, adapter), title: 'Changes made by hand in the project folder', body: subjects })).number;
+    // The branch must hold exactly what was pressed on before anything is done to it, and exactly the commit the helper's own
+    // update returned (or the same one) after: whatever else is there is never tied to the director's answer.
+    let expected = tip;
+    const heldAt = async () => (await adapter.prState(number)).headSha;
+    const wrong = { ok: false, refused: 'The branch for these changes holds something other than what you pressed on, so nothing was tied to it' };
+    if (typeof question === 'string' && (await heldAt()) !== tip) return wrong;
     if (parted) {
       const updated = await doUpdateBranch({ project, number }, ctx);
       // One that clashes stays as it is: the lane that carries it on brings it up to date.
       if (!updated.ok && updated.conflicts === undefined) return updated;
+      if (updated.ok && updated.updated === true) expected = updated.head;
     }
-    // The tie names only the commit pressed on: the branch holds exactly it, or, brought up to date, the helper's own merge
-    // on top of it. Anything else on the branch (a commit pushed there first) is never tied.
-    const atHead = (await adapter.prState(number)).headSha;
-    // The helper's own update is a merge of the main version into the pressed commit: two parents, the first of them the tip.
-    const parents = parted && atHead !== tip ? String((await homeGit(project, gitRoute({ run })).call(['rev-list', '--parents', '-n', '1', atHead])).stdout).trim().split(/\s+/).slice(1) : [];
-    const held = atHead === tip || (parents.length === 2 && parents[0] === tip);
-    if (!held && typeof question === 'string') return { ok: false, refused: 'The branch for these changes holds something other than what you pressed on, so nothing was tied to it' };
-    // The tie between the director's answer on this card and this change, at the commit pressed on (after any bringing up to
-    // date): the only thing that lets that answer approve work carried on from the change. Work of Wheelhouse's own section
-    // has no card, so no tie.
     if (typeof question === 'string') {
-      await checkWrite(project, makeEvent({ kind: 'by-hand', data: { question, n: number, head: atHead }, now }));
+      if ((await heldAt()) !== expected) return wrong;
+      // The tie: the director's answer on this card, this change, and the commit checked above. Work of Wheelhouse's own
+      // section has no card, so no tie.
+      await checkWrite(project, makeEvent({ kind: 'by-hand', data: { question, n: number, head: expected }, now }));
     }
     const latest = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'survey').sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0)).at(-1);
     const taken = await takeSurvey({ project, run, adapter: () => ctx.adapter(), rules: shapedSurvey({ rules: latest?.data?.rules }).rules });

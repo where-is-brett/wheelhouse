@@ -147,3 +147,24 @@ test('a commit put on the by-hand branch before the press is never tied to the d
   for (let i = 0; i < 3; i += 1) await helper.engine.tick();
   assert.deepEqual(records('by-hand'), []);
 }, { check: standInCheck }));
+
+test('a merge holding its own edits put on the by-hand branch of parted work is never tied to the answer', { timeout: 120000 }, () => gitAloneWorld(async ({ helper, folder, home, worktreeWith }) => {
+  const { worktree } = await worktreeWith('wh/card-3', 'export const price = () => 1;\n');
+  await g(worktree, 'push', '-q', home, 'HEAD:refs/heads/main');
+  const moved = await headIn(home, 'refs/heads/main');
+  const tip = await commitIn(folder, 'by-hand.txt');
+  // A merge [tip, main] that also holds an edit of its own, reaching the home's by-hand branch some way other than the push route.
+  await g(folder, 'checkout', '-q', '-b', 'sneak');
+  await g(folder, 'fetch', '-q', home, 'main');
+  await g(folder, 'merge', '-q', '--no-ff', '--no-edit', moved);
+  await commitIn(folder, 'extra.txt');
+  await g(folder, 'push', '-q', home, `HEAD:refs/heads/feature/by-hand-${tip.slice(0, 12)}`);
+  await g(folder, 'checkout', '-q', 'main');
+  const card = await until(async () => {
+    await helper.engine.tick();
+    return records('question').find((e) => e.data.work === 'by-hand');
+  }, { what: 'the card', within: 30000 });
+  answer(card);
+  for (let i = 0; i < 4; i += 1) await helper.engine.tick();
+  assert.deepEqual(records('by-hand'), []);
+}, { check: standInCheck }));
