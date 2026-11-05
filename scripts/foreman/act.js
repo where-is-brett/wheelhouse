@@ -1400,7 +1400,9 @@ async function close(ctx, work, rest) {
   }
   if (missing.length > 0) {
     // A gap in the report is the feature session's to fill, never a card to the director: it goes back to the session.
-    if (!safeFeatureFolder(worktree)) refuse(`${work}'s report isn't whole: ${gapKinds(missing)}`);
+    // Only for finished work, with a report that has gaps: work still building, or with no report yet, is refused as
+    // before, and nothing is written. Finished means its status reads done or the host says its pull request merged.
+    if (!safeFeatureFolder(worktree) || !(await finished(ctx, worktree, missing))) refuse(`${work}'s report isn't whole: ${gapKinds(missing)}`);
     await reportBack(ctx, work, missing);
     return;
   }
@@ -1462,6 +1464,20 @@ function gapKinds(missing) {
   if (rulings > 0) kinds.push(`${rulings} ${rulings === 1 ? 'ruling is' : 'rulings are'} missing from the report's rulings`);
   if (count(/^rulings\.jsonl can't be read/) > 0) kinds.push('the rulings file cannot be read');
   return kinds.length > 0 ? kinds.join('; ') : 'the report check found something lacking';
+}
+
+// Whether the work has ended with a report that exists but has gaps.
+async function finished(ctx, worktree, missing) {
+  if (missing.some((m) => /^report\.md is not there/.test(m))) return false;
+  if (readStatus(featurePaths(worktree).status)?.phase === 'done') return true;
+  const pr = readPrRecord(worktree)?.pr;
+  if (pr === undefined) return false;
+  try {
+    const state = await ctx.client.prState({ project: ctx.project, number: pr });
+    return state?.ok === true && state.result?.state === 'merged';
+  } catch {
+    return false;
+  }
 }
 
 const REPORT_BACKS = 2;
