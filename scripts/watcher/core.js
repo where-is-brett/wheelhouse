@@ -251,6 +251,10 @@ function stateEvents(next, prs, out) {
   for (const e of list(next.events)) {
     if (!isPlain(e) || typeof e.id !== 'string' || !isPlain(e.data)) continue;
     const { id, kind, data } = e;
+    // The signed tie or press that came after the work: the observer names the work the views now show approved by hand.
+    if (e.verified === true && (kind === 'by-hand' || (kind === 'action' && data.action === 'answer')) && Array.isArray(e.startsWork)) {
+      for (const work of e.startsWork) if (typeof work === 'string') out.push({ type: 'work-ready', work, id: `${id}:${work}`, detail: { byHand: true } });
+    }
     if (kind === 'approval' && e.verified === true) {
       const pr = isPlain(prs[String(data.pr)]) ? prs[String(data.pr)] : null;
       if (pr !== null && typeof pr.head === 'string' && pr.head === data.commit) {

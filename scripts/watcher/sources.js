@@ -340,16 +340,32 @@ export async function observe({ project, client, now = () => new Date(), interva
   const fresh = known === null ? [] : recent.filter((e) => !known.has(e.id));
   // Work carried on from a change made by hand is approved by the director's signed press on that card. The views decide
   // that, as the foreman's start reads them, so the watcher and the start cannot disagree; the work's own data never does.
-  const handViews = fresh.some((e) => e.kind === 'work' && isPlain(e.data?.from)) ? buildViews(events, enrolled, { now }) : null;
-  const tiedByHand = (e) => e.kind === 'work' && handViews !== null && isText(e.data?.id)
-    && handViews.work?.[e.data.id]?.work?.id === e.id && handViews.work[e.data.id].approval?.byHand === true;
-  const sent = fresh.map((e) => ({
-    id: e.id,
-    kind: e.kind,
-    data: e.data,
-    verified: PROTECTED_KINDS.includes(e.kind) && verify(e, enrolled),
-    ...(tiedByHand(e) ? { byHand: true } : {}),
-  }));
+  // The wake rides on the last of the three records (the work, the signed tie, the signed press) to arrive, so it fires
+  // once per work, in whatever order they came: the work event itself carries `byHand`, the others `startsWork`.
+  const handMarks = new Map();
+  if (fresh.some((e) => e.kind === 'work' || e.kind === 'by-hand' || (e.kind === 'action' && e.data?.action === 'answer'))) {
+    const hv = buildViews(events, enrolled, { now });
+    for (const [id, w] of Object.entries(isPlain(hv.work) ? hv.work : {})) {
+      const from = w?.work?.data?.from;
+      if (w?.approval?.byHand !== true || !isPlain(from) || hv.features?.[id] !== undefined) continue;
+      const qid = Object.keys(hv.questions ?? {}).find((q) => hv.questions[q].byHand?.n === from.request && hv.questions[q].byHand?.head === from.sha);
+      if (qid === undefined) continue;
+      const mine = fresh.filter((e) => e.id === w.work.id
+        || (e.kind === 'by-hand' && e.data?.question === qid)
+        || (e.kind === 'action' && e.data?.action === 'answer' && e.data?.questionId === qid));
+      if (mine.length > 0) handMarks.set(mine.at(-1).id, { id, work: mine.at(-1).id === w.work.id });
+    }
+  }
+  const sent = fresh.map((e) => {
+    const mark = handMarks.get(e.id);
+    return {
+      id: e.id,
+      kind: e.kind,
+      data: e.data,
+      verified: PROTECTED_KINDS.includes(e.kind) && verify(e, enrolled),
+      ...(mark === undefined ? {} : mark.work ? { byHand: true } : { startsWork: [mark.id] }),
+    };
+  });
 
   // 4. The pull requests: those known before, until they close, then those a
   // running feature's status names. Each number's claimants are in that
