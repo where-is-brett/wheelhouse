@@ -616,3 +616,43 @@ test('the mark for every card (the update\'s --here) lets a held card through on
   markHere(SID, ['*'], T0 - 121000);
   assert.ok(reason(await run(withSession([separator.question]), { outcomes: () => [SEPARATOR] })).startsWith(PANE_LEAD), 'expired');
 }));
+
+// --- A pending card is asked exactly as `cards` printed it ---
+
+const FOUR = [
+  { label: 'Approve', says: 'It goes ahead.' },
+  { label: 'Not yet', says: 'It waits.' },
+  { label: 'Drop it', says: 'It is dropped.' },
+];
+const four = composeCard({ ...INPUTS.question, what: 'The report needs a footer.', recommend: 'Approve', options: FOUR });
+const FOUR_WAITING = outcome('c-4', four);
+const exactly = (q) => ({ ...q, options: q.options.map((o) => ({ ...o })) });
+
+test('a waiting card asked exactly as printed passes', () => withHome(async () => {
+  assert.equal(await run(withSession([exactly(four.question)]), { outcomes: () => [FOUR_WAITING], holdForPane: false }), undefined);
+}));
+
+test('a waiting card with an option left out is refused, naming what differs', () => withHome(async () => {
+  const trimmed = { ...four.question, options: four.question.options.slice(0, 3) };
+  const out = reason(await run(withSession([trimmed]), { outcomes: () => [FOUR_WAITING], holdForPane: false }));
+  assert.match(out, /Question 1/);
+  assert.match(out, /Suggest a change…/);
+  assert.match(out, /exactly as `cli.js cards` printed it/);
+}));
+
+test('a waiting card with its options reordered is refused', () => withHome(async () => {
+  const [a, b, ...rest] = four.question.options;
+  const swapped = { ...four.question, options: [b, a, ...rest] };
+  assert.match(reason(await run(withSession([swapped]), { outcomes: () => [FOUR_WAITING], holdForPane: false })), /order/);
+}));
+
+test('a waiting card with a changed label or header is refused', () => withHome(async () => {
+  const relabelled = { ...four.question, options: four.question.options.map((o, i) => (i === 1 ? { ...o, label: 'Later' } : o)) };
+  assert.match(reason(await run(withSession([relabelled]), { outcomes: () => [FOUR_WAITING], holdForPane: false })), /Later/);
+  const reheaded = { ...four.question, header: 'Other' };
+  assert.match(reason(await run(withSession([reheaded]), { outcomes: () => [FOUR_WAITING], holdForPane: false })), /header/);
+}));
+
+test('a question matching no card is not held to a card\'s options', () => withHome(async () => {
+  assert.equal(await run(withSession([colour.question]), { outcomes: () => [FOUR_WAITING], holdForPane: false }), undefined);
+}));

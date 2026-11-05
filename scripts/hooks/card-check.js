@@ -13,7 +13,10 @@
 // Before the form check, in a project's folder, two more refusals (one card, one answer): a question whose card the
 // director has already decided is refused with what counted and where, and, for the front desk with a live pane beside
 // it, a card the pane gives buttons to is held back unless the director asked for it in the chat. A call that goes
-// through notes the cards it is open on. Both inform and fail open.
+// through notes the cards it is open on. Both inform and fail open. A question that is a card the state holds (matched by its
+// question's words) must also be that card as `cli.js cards` printed it: the same question, header and option labels in the
+// same order, else it is refused saying what differs. An answer to a hand-trimmed copy can't be matched to the card, so
+// the director's click would record nothing. A question matching no card is left as it was.
 // In any folder, a card that reads as the baseline card (any of its fixed words however written, or
 // its header with the private note's figures) is refused unless it is the very card the helper
 // composed and recorded as shown, word for word: a reworded copy would carry the figures without
@@ -28,7 +31,7 @@ import { whatProblem, NO_REPLY_CODE } from '../cards/compose.js';
 import { TO_KNOW_MORE, TO_CHANGE_IT } from '../lib/calm-words.js';
 import { CARD } from '../lib/front-desk.js';
 import {
-  setLinesOf, setLineOf, replyCode, replyCodeLine, runbookLine, isLiftStopLine, BLIND_LINE, RUNBOOK_TITLES, SETUP_TITLES, ID, LANES, TRUST_LINE, TAKEOVER_LINE, PAIR_LINE, UNINSTALL_LINE, KEEP_CONTROL_LINE, USAGE_LINE, PREMIUM_LINE, START_GOAL_LINE, RELEASE_LINE, UPDATE_HELPER_LINE, UPDATE_LINE,
+  chatCopy, setLinesOf, setLineOf, replyCode, replyCodeLine, runbookLine, isLiftStopLine, BLIND_LINE, RUNBOOK_TITLES, SETUP_TITLES, ID, LANES, TRUST_LINE, TAKEOVER_LINE, PAIR_LINE, UNINSTALL_LINE, KEEP_CONTROL_LINE, USAGE_LINE, PREMIUM_LINE, START_GOAL_LINE, RELEASE_LINE, UPDATE_HELPER_LINE, UPDATE_LINE,
 } from '../state/card-lines.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { cardOutcomes } from '../state/views.js';
@@ -174,6 +177,29 @@ function cardsOf(questions, project, outcomes) {
   return clicks.map((click) => found.get(click) ?? null);
 }
 
+// What differs between a question asked and the card it matches, as printed (`asQuestion`: the state's question, in
+// the chat's words or whole, its header and its option labels in order); an empty list when it is exactly that card.
+function printedProblems(q, card) {
+  const { question, header, options } = card.data;
+  const problems = [];
+  if (q.question !== question && q.question !== chatCopy(question)) problems.push('its question is not worded as printed');
+  if (q.header !== header) problems.push(`its header is "${q.header}", and the card's is "${header}"`);
+  const asked = Array.isArray(q.options) ? q.options.map((o) => (typeof o === 'string' ? o : o?.label)) : [];
+  const printed = Array.isArray(options) ? options : [];
+  if (asked.join('\n') !== printed.join('\n')) {
+    const left = printed.filter((l) => !asked.includes(l));
+    const added = asked.filter((l) => !printed.includes(l));
+    const same = left.length === 0 && added.length === 0;
+    problems.push(`its options are ${asked.map((l) => `"${l}"`).join(', ') || 'none'}, and the card's are ${printed.map((l) => `"${l}"`).join(', ')}`
+      + (left.length > 0 ? ` (left out: ${left.map((l) => `"${l}"`).join(', ')})` : '')
+      + (added.length > 0 ? ` (not the card's: ${added.map((l) => `"${l}"`).join(', ')})` : '')
+      + (same ? ' (the order differs; keep the order printed)' : ''));
+  }
+  return problems;
+}
+
+const PRINTED_END = 'A card is asked exactly as `cli.js cards` printed it: pass the `questions` JSON it gave, word for word, with every option in its order.';
+
 const plural = (n, one, many) => (n === 1 ? one : many);
 
 // The deny for cards the director has decided already, or for cards the live pane answers, or undefined; and the
@@ -202,6 +228,13 @@ function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere:
     const others = lifts.includes(false);
     return { deny: `All stop is already lifted, so that question is not asked. Say so in one plain line, and ask nothing about it again.${others ? ' Ask only the others.' : ''}` };
   }
+  const wrong = questions.flatMap((q, i) => {
+    const f = found[i];
+    if (!f || typeof q?.question !== 'string') return [];
+    const problems = printedProblems(q, f.card);
+    return problems.length === 0 ? [] : [`Question ${i + 1} is a card, but ${problems.join('; ')}.`];
+  });
+  if (wrong.length > 0) return { deny: `The director has not seen this card. ${wrong.join(' ')} ${PRINTED_END}` };
   const waiting = found.filter(Boolean);
   const session = input.session_id;
   const pane = (f) => cardButtons(f.card.data).buttons.some((b) => b.does === 'record' || b.does === 'turn');
