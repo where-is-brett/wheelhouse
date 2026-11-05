@@ -627,7 +627,10 @@ test('a merge waits while the director has a question open on its work, and for 
 });
 
 // The director answers the open question on the work after the head was reviewed.
+const treeOf = (world, work) => path.join(world.checkout, '.claude', 'worktrees', work);
 async function answeredAfterReview(world) {
+  await building(world, 'export', 'The orders export');
+  await building(world, 'search', 'Searching the menu');
   const head = await openPr(world, 7, 'export', { 'src/export.js': 'export const kind = \'csv\';\n' });
   const { question } = await frontDesk(world, ['card'], approvalCard(7, 'adds the orders export.'));
   await ask(world, [question], { [question.question]: 'Approve' });
@@ -647,9 +650,15 @@ test('an answer that needs no change holds the merge until the session says so, 
     // Reading the answer clears nothing.
     assert.equal((await world.client.state.answer({ project: P, questionId: 'q-export-1' })).answer, 'CSV');
     assert.equal((await merge(world, 7)).ok, false);
+    // Another work's session, no folder, and a folder outside any feature can't say it.
+    const say = (extra) => world.client.state.answer({ project: P, questionId: 'q-export-1', noChange: true, ...extra });
+    assert.equal((await say({ cwd: treeOf(world, 'search') })).ok, false);
+    assert.equal((await say({})).ok, false);
+    assert.equal((await say({ cwd: world.work })).ok, false);
+    assert.equal((await merge(world, 7)).ok, false);
     // The session says it needs no change.
-    assert.equal((await world.client.state.answer({ project: P, questionId: 'q-export-1', noChange: true })).ok, true);
-    assert.deepEqual(await merge(world, 7), { ok: true, merged: true, sha: head, guardrailPaths: [], criticalAreas: [] });
+    assert.equal((await world.client.state.answer({ project: P, cwd: treeOf(world, 'export'), questionId: 'q-export-1', noChange: true })).ok, true);
+    assert.deepEqual(await merge(world, 7), { ok: true, merged: true, sha: head, guardrailPaths: [], criticalAreas: [], answeredNoChange: ['q-export-1'] });
   });
 });
 

@@ -3204,6 +3204,19 @@ export async function startHelper({
     }
   }
 
+  // The work whose recorded worktree holds `folder`, from the state's feature records; null when none or more than one does.
+  function workOfFolder(project, folder) {
+    const latest = new Map();
+    const events = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'feature').sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+    for (const e of events) if (typeof e.data?.work === 'string' && typeof e.data.worktree === 'string') latest.set(e.data.work, e.data.worktree);
+    const inside = (root) => {
+      const rel = path.relative(root, folder);
+      return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+    };
+    const here = [...latest].filter(([, root]) => path.isAbsolute(root) && inside(root)).map(([work]) => work);
+    return here.length === 1 ? here[0] : null;
+  }
+
   // The most of a brief the reviewer is given.
   const BRIEF_BYTES = 64 * 1024;
   // The feature's brief as the state records it: the brief file in the worktree of the feature whose branch is the
@@ -3738,8 +3751,10 @@ export async function startHelper({
     const { upToDate, review, approval } = await gateRecords({ project, number, headSha, views, adapter, compare: approvalRequired }, ctx);
     // The director's questions on this work come first: a merge never goes ahead past one still open, or an answer no newer version carries.
     const holdWork = FEATURE_BRANCH.exec(typeof pr.headRef === 'string' ? pr.headRef : '')?.[1];
-    const hold = restore || fixCall ? null
-      : questionHold({ views, work: holdWork, review, handled: readHandled(handledDir(project), questionsOf(views, holdWork).map((q) => q.id)) });
+    const handled = readHandled(handledDir(project), questionsOf(views, holdWork).map((q) => q.id));
+    const hold = restore || fixCall ? null : questionHold({ views, work: holdWork, review, handled });
+    // The answers the session said needed no change, which the merge went ahead on: said again where the merge is told.
+    const noChangeIds = questionsOf(views, holdWork).filter((q) => q.answered && handled[q.id] === q.at).map((q) => q.id);
     if (hold !== null) stateReasons.push(hold);
     // The kinds of review that count for the agent this computer runs, from the default branch's configuration:
     // null, today's rule, unless the agent's review module names them (ruling P7-15). The configuration doesn't
@@ -3823,7 +3838,7 @@ export async function startHelper({
     // The front desk adds the briefing line for a pins-only release.
     if (merged?.merged === true) {
       if (recordOf(project).host === 'local') await afterLocalMerge(project, number, merged.commit);
-      return { ok: true, merged: true, sha: headSha, ...found, ...(pinsOnly ? { ...release, briefing: briefingLine(releaseCheck.ref) } : {}) };
+      return { ok: true, merged: true, sha: headSha, ...found, ...(noChangeIds.length > 0 ? { answeredNoChange: noChangeIds } : {}), ...(pinsOnly ? { ...release, briefing: briefingLine(releaseCheck.ref) } : {}) };
     }
     // On GitLab a project with real users is merged by Maintainers only, which refuses this key; the
     // adapter's plain refusal is given its reason and what to do.
@@ -5032,13 +5047,19 @@ export async function startHelper({
       }
       return { ok: true, offer: null };
     }, { write: true }),
-    // The label of a question's verified answer, from the views alone, else null. Read-only, so STOP lets it through.
-    '/state/answer': stateRoute(async ({ project, questionId, noChange }) => {
+    // The label of a question's verified answer, from the views alone, else null. Reading is free under STOP; saying an answer
+    // needs no change (noChange) writes a small marker, so STOP refuses it.
+    '/state/answer': stateRoute(async ({ project, questionId, noChange, cwd }) => {
       if (typeof questionId !== 'string' || questionId === '') refuse('the question id must be text');
+      if (noChange === true && stopped()) return STOP_REFUSAL;
       const { questions } = await writeViews(project, { now });
       const label = Object.hasOwn(questions ?? {}, questionId) ? questions[questionId]?.answer?.label : undefined;
       // The session says the answer needs no change: the merge's hold on that answer lets go (scripts/gate/open-questions.js).
       if (noChange === true) {
+        // Only the work's own session may say so: the work is placed from the folder the state records for a feature, never
+        // from the request's word.
+        const own = typeof cwd === 'string' ? workOfFolder(project, cwd) : null;
+        if (own === null || questions?.[questionId]?.question?.data?.work !== own) refuse('only the session working on this question\'s work can say its answer needs no change');
         const at = Object.hasOwn(questions ?? {}, questionId) ? questions[questionId]?.answer?.at : undefined;
         if (typeof label !== 'string' || !markHandled(handledDir(project), questionId, at)) refuse('there is no answer to that question to mark as needing no change');
       }

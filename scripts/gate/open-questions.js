@@ -6,14 +6,21 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const QUESTION_ID = /^[A-Za-z0-9._-]{1,120}$/;
+// The ids a feature session's own `ask` gives: q-<work>-<n>.
+const QUESTION_ID = /^q-([a-z0-9-]+)-[0-9]+$/;
 const isRecord = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 
-// The questions of `work` in the build loop's views, each { id, answered, at } where `at` is when it was answered.
+// The open-able questions of `work` in the build loop's views, each { id, answered, at } where `at` is when it was answered. Only
+// a plain question the work's own session raised counts (an id q-<work>-<n>): not an engine question, one that joins another
+// or is gone, one asked again that the director had answered, or one tied to a change made by hand.
 export function questionsOf(views, work) {
   if (typeof work !== 'string' || !isRecord(views?.questions)) return [];
   return Object.entries(views.questions)
-    .filter(([, e]) => isRecord(e) && isRecord(e.question) && isRecord(e.question.data) && e.question.data.work === work)
+    .filter(([id, e]) => QUESTION_ID.exec(id)?.[1] === work
+      && isRecord(e) && isRecord(e.question) && isRecord(e.question.data) && e.question.data.work === work
+      && e.question.data.engine === undefined && e.question.data.key === undefined
+      && e.joins === undefined && e.gone !== true && e.byHand === undefined
+      && !(e.answer === null && e.saidBefore !== undefined))
     .map(([id, e]) => ({ id, answered: isRecord(e.answer), at: isRecord(e.answer) && typeof e.answer.at === 'string' ? e.answer.at : null }));
 }
 
@@ -41,7 +48,7 @@ export function readHandled(dir, ids) {
     if (!QUESTION_ID.test(id)) continue;
     try {
       const file = path.join(dir, id);
-      if (fs.lstatSync(file).isFile()) out[id] = fs.readFileSync(file, 'utf8').trim();
+      if (path.dirname(file) === dir && fs.lstatSync(file).isFile()) out[id] = fs.readFileSync(file, 'utf8').trim();
     } catch { /* none kept */ }
   }
   return out;
@@ -51,6 +58,7 @@ export function markHandled(dir, id, at) {
   if (!QUESTION_ID.test(id) || typeof at !== 'string' || at === '') return false;
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, id);
+  if (path.dirname(file) !== dir) return false;
   const temp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(temp, `${at}\n`);
   fs.renameSync(temp, file);
