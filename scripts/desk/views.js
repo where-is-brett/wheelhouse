@@ -173,7 +173,13 @@ export function workLines(views, answers, words, prs = {}) {
     .map(([id, entry]) => ({ id, entry, ...workState(entry, features[id], held(id), latestRun(views, id)) }))
     .sort((a, b) => Number(b.running) - Number(a.running) || String(a.entry.since ?? a.entry.work.at).localeCompare(String(b.entry.since ?? b.entry.work.at))
       || a.id.localeCompare(b.id));
-  if (open.length === 0) return ['No work is open: nothing is running or waiting.'];
+  // Work that has ended but whose pull request was never recorded as merged: its changes may be stranded on its branch,
+  // so it is named and not left out of sight.
+  const stranded = Object.entries(isPlain(views.work) ? views.work : {})
+    .filter(([id, entry]) => isPlain(entry?.work?.data) && !isOpen(views, id) && isPlain(prs[id]) && prs[id].merged !== true && Number.isSafeInteger(prs[id].pr))
+    .map(([id, entry]) => `${id}: ${flat(entry.work.data.title) || id}: finished, but pull request #${prs[id].pr} is not recorded as merged, so its changes may not be in the product yet`)
+    .sort();
+  if (open.length === 0 && stranded.length === 0) return ['No work is open: nothing is running or waiting.'];
   const lines = open.map(({ id, entry, running, state }) => {
     const { title, lane } = entry.work.data;
     const slice = running ? features[id]?.data?.slice : undefined;
@@ -189,7 +195,8 @@ export function workLines(views, answers, words, prs = {}) {
     ].join(', ');
   });
   // Labels, ids and work titles stay as written, as the board keeps titles (design section 21).
-  const protect = [...LABELS, ...open.map(({ id }) => `${id}:`), ...open.map(({ entry }) => flat(entry.work.data.title)).filter((t) => t !== '')];
+  lines.push(...stranded);
+  const protect = [...LABELS, ...open.map(({ id }) => `${id}:`), ...stranded.map((l) => `${l.split(':')[0]}:`), ...open.map(({ entry }) => flat(entry.work.data.title)).filter((t) => t !== '')];
   return plainWords(lines.join('\n'), words.glossary, { ...words, protect }).text.split('\n');
 }
 

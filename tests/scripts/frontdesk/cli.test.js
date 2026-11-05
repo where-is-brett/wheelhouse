@@ -1000,14 +1000,14 @@ test('record works out the hash of the document a work or an amendment names, an
     for (const data of [{ work: 'no-such-work', change: 'x' }, { work: 'no-such-work', change: 'x', hash: DOC }]) {
       const unknown = await run(helper, ['record', 'amendment'], JSON.stringify({ ...data, readBack: READ_BACK }), at);
       assert.equal(unknown.code, 1);
-      assert.match(unknown.err, /The work no-such-work isn't open, so there is nothing to amend/);
+      assert.match(unknown.err, /The work no-such-work isn't a known work, so there is nothing to amend/);
     }
     // Work whose feature closed, with no report ending it, isn't open either, as the queue reads it.
     await run(helper, ['record', 'work'], JSON.stringify({ ...work, id: 'shut' }), at);
     helper.held.push(makeEvent({ kind: 'feature', data: { work: 'shut', step: 'closed' }, now: () => new Date('2026-10-18T01:00:00.000Z') }));
     const shut = await run(helper, ['record', 'amendment'], JSON.stringify({ work: 'shut', change: 'x', hash: DOC, readBack: READ_BACK }), at);
     assert.equal(shut.code, 1);
-    assert.match(shut.err, /The work shut isn't open/);
+    assert.match(shut.err, /The work shut has finished, so it can't be amended: that work has finished; this becomes a new work/);
     // Open work that names no document needs the changed document's hash.
     await run(helper, ['record', 'work'], JSON.stringify({ ...work, id: 'no-doc' }), at);
     const nameless = await run(helper, ['record', 'amendment'], JSON.stringify({ work: 'no-doc', change: 'x', readBack: READ_BACK }), at);

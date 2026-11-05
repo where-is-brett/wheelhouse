@@ -109,7 +109,7 @@ import { countsAtOnce, gateTargetOf } from '../state/views.js';
 import { briefHash } from '../feature/files.js';
 import { endedBy, since, NO_PLAN, STARTS_UNAPPROVED } from '../foreman/queue.js';
 import { startedAsScript } from '../lib/started-as-script.js';
-import { prsOfWork } from '../desk/work-prs.js';
+import { FINISHED_WORDS, prsOfWork, workFinished } from '../desk/work-prs.js';
 import { isOpen, surveyLines, whyNext, workLines, RECENT_MS, RECENT_LEAD, recentLines } from '../desk/views.js';
 import { answeredWords } from '../cards/answered.js';
 import { markHere } from '../lib/session-files.js';
@@ -789,10 +789,11 @@ export async function suggest({ client, cwd, card: cardId, work: workId, change 
   if (pressed === undefined) throw new CliError(`Card ${cardId} no longer waits: say so in one line and ask nothing`);
   const kind = pressed.data?.kind;
   if (!['approval', 'ci-push'].includes(kind)) throw new CliError(`Card ${cardId} is ${/^[aeiou]/.test(String(kind)) ? 'an' : 'a'} ${kind} card: revise the proposal and compose its new card with \`card\``);
-  if (!isOpen(views, workId)) {
+  if (!isPlain(views.work?.[workId])) {
     const open = Object.keys(isPlain(views.work) ? views.work : {}).filter((id) => isOpen(views, id));
     throw new CliError(`${workId} isn't open work: the open work is ${open.length ? open.join(', ') : 'none'}`);
   }
+  if (workFinished(views, workId, cwd, isOpen)) throw new CliError(`${workId} has finished, so a suggested change can't go into it: ${FINISHED_WORDS}`);
   const data = { ...views.work[workId].work.data, title: words };
   const got = await write(client, cwd, 'work', data);
   await write(client, cwd, 'card-answer', { question: pressed.data.question, label: SUGGEST, where: 'chat' });
@@ -1061,7 +1062,8 @@ async function withHash(client, cwd, kind, input) {
   }
   if (kind !== 'amendment') return input;
   const { views } = await viewsOf(client, cwd);
-  if (!isOpen(views, input.work)) throw new CliError(`The work ${input.work} isn't open, so there is nothing to amend`);
+  if (!isPlain(views.work?.[input.work])) throw new CliError(`The work ${input.work} isn't a known work, so there is nothing to amend`);
+  if (workFinished(views, input.work, cwd, isOpen)) throw new CliError(`The work ${input.work} has finished, so it can't be amended: ${FINISHED_WORDS}. Record a new work for it with \`record work\`, with no amendment`);
   const file = views.work[input.work].work?.data?.doc?.path;
   if (typeof file !== 'string') {
     if (input.hash !== undefined) return input;
