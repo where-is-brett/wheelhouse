@@ -157,7 +157,7 @@ export function cardsDue(views, at) {
   const fresh = new Set(waiting.filter((card) => (card.asked === null || card.asked === undefined) && !heldBackLine(card.data?.line, views)).map((card) => card.id));
   const questions = Object.entries(isRecord(views.questions) ? views.questions : {})
     .filter(([id, entry]) => isRecord(entry) && !entry.answer && entry.joins === undefined && existingCard({ waiting }, answerLine(id)) === null && existingCard({ waiting }, blindLine(id)) === null && !heldBackLine(answerLine(id), views)
-      && questionProblem(entry.question?.data) === null).length;
+      && questionProblem(entry.question?.data, { recorded: true }) === null).length;
   const gate = gateAsksDue(views, at);
   for (const due of gate) if (due.again !== undefined) fresh.add(due.again);
   const made = gate.filter((due) => due.make).length + holdsDue(views).length + controlFilesDue(views).length + premiumFailuresDue(views).length;
