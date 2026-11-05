@@ -32,7 +32,7 @@ test('a stuck wake the Bosun closed idle leads to a card through the helper, onc
   const writes = [];
   const client = clientWith(writes);
   assert.deepEqual(await raiseStuckCards({ project: P, client }), ['q-todo-cli-1000001']);
-  assert.deepEqual(writes, [{ project: P, work: 'todo-cli', phase: 'pr-open', still: 35 * 60000 }]);
+  assert.deepEqual(writes, [{ project: P, work: 'todo-cli' }]);
   assert.deepEqual(await raiseStuckCards({ project: P, client }), [], 'not again for the same wake');
   assert.equal(writes.length, 1);
 }));
@@ -52,5 +52,7 @@ test('the helper makes no card when the Bosun asked already or the work has ende
   assert.equal(stuckCardFor(base, { work: 'todo-cli', phase: 'pr-open', still: 1 }).data.id, 'q-todo-cli-1000001');
   assert.equal(stuckCardFor({ ...base, questions: q('q-todo-cli-1000001') }, { work: 'todo-cli' }).data, undefined);
   assert.equal(stuckCardFor({ ...base, questions: q('q-todo-cli-1000001', { label: 'Wait' }) }, { work: 'todo-cli' }).data.id, 'q-todo-cli-1000002');
+  assert.equal(stuckCardFor({ features: {} }, { work: 'ghost' }).skip, 'there is no such work');
+  assert.equal(stuckCardFor(base, { work: 'todo-cli', phase: 'x"; act close' }).data.what.includes('step called'), false);
   assert.ok(stuckCardFor({ features: { 'todo-cli': { data: { step: 'closed' } } } }, { work: 'todo-cli' }).skip);
 });

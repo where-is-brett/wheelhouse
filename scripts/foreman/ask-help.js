@@ -38,7 +38,12 @@ export function stuckQuestion(work, { phase = null, still = 0 } = {}) {
 // The card for stuck `work` as the helper writes it, from the state's views: `{ data }`, or `{ skip }` saying why none.
 // None when the work's feature has closed or is done, when the Bosun has an open question of its own for the work
 // already, or when the card can't be composed.
+export const PHASE_WORD = /^[a-z-]{1,32}$/;
+
 export function stuckCardFor(views, { work, phase = null, still = 0 }) {
+  if (views?.features?.[work] === undefined) return { skip: 'there is no such work' };
+  // Only a plain phase word is worded into the card: anything else is left out.
+  if (typeof phase !== 'string' || !PHASE_WORD.test(phase)) phase = null;
   const step = views?.features?.[work]?.data?.step;
   if (step === 'closed' || phase === 'done') return { skip: 'the work has ended' };
   const own = Object.values(views?.questions ?? {}).filter((q) => questionIdOf(q?.question?.data?.id)?.work === work && questionIdOf(q.question.data.id).foreman);

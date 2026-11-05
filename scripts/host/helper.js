@@ -14,6 +14,7 @@
 // from that folder (its config, remote, replace refs and hooks count for
 // nothing). The checks and the push then run in the mirror, with the key.
 import { stuckCardFor } from '../foreman/ask-help.js';
+import { recentStuck } from '../watcher/stuck-cards.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -4990,13 +4991,14 @@ export async function startHelper({
     // A stuck work's card, written for the watcher (scripts/watcher/stuck-cards.js) when the Bosun closed its stuck wake
     // idle without asking. The helper makes the question from its own reading of the state and holds the pass itself, so
     // no caller names a foreman question's words or id.
-    '/state/stuck-card': stateRoute(async ({ project, work, phase, still }, ctx) => {
+    '/state/stuck-card': stateRoute(async ({ project, work }, ctx) => {
       if (typeof work !== 'string' || !SLUG.test(work)) refuse('the work must be named');
+      // The phase and the time come from the watcher's own record of the stuck work, never from the request.
+      const stuck = recentStuck(project, work, { now });
+      if (stuck === null) return { ok: true, skipped: 'the watcher has not recorded this work as stuck' };
       const events = listEvents(stateDir(project), { report: () => {} });
       const views = buildViews(events, readEnrolled(), { now });
-      const made = stuckCardFor(views, {
-        work, phase: typeof phase === 'string' ? phase.slice(0, 64) : null, still: Number.isFinite(still) ? Math.max(0, Math.min(still, 1e10)) : 0,
-      });
+      const made = stuckCardFor(views, { work, phase: stuck.phase, still: Math.max(0, Math.min(stuck.still, 1e10)) });
       if (made.skip !== undefined) return { ok: true, skipped: made.skip };
       const pass = crypto.randomUUID();
       foremanRuns.set(pass, project);

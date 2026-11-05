@@ -3,6 +3,7 @@
 // closes that wake `--idle` without running `act ask` leaves no card. This reads the measures the Bosun's `wake.js
 // done` leaves: for each wake closed idle that carried a `stuck` event, the question is put to the director here, in
 // code, through the helper: it asks nothing when the work already has an open question from the Bosun or has ended.
+import fs from 'node:fs';
 import path from 'node:path';
 import { readCapped } from '../feature/status.js';
 import {
@@ -55,7 +56,7 @@ export async function raiseStuckCards({ project, client }) {
     let failed = false;
     for (const e of stuck) {
       try {
-        const answer = await client.state.stuckCard({ project, work: e.work, phase: e.detail?.phase ?? null, still: e.detail?.still ?? 0 });
+        const answer = await client.state.stuckCard({ project, work: e.work });
         if (answer?.ok !== true) throw new Error('refused');
         if (typeof answer.id === 'string') written.push(answer.id);
       } catch {
@@ -66,4 +67,28 @@ export async function raiseStuckCards({ project, client }) {
   }
   if (handled.length > 0) writeJsonFile(doneFile(project), { done: [...done, ...handled].slice(-KEPT) });
   return written;
+}
+
+const RECENT_MS = 48 * 60 * 60 * 1000;
+
+// What the watcher itself recorded about `work` being stuck: the newest `stuck` event for it in a wake the watcher wrote
+// in the last two days, as { phase, still }, or null. The helper takes the stuck card's phase and time from here and
+// never from the caller, so a caller can't make a card for a work that isn't stuck or put its words in the card.
+export function recentStuck(project, work, { now = () => new Date() } = {}) {
+  let names = [];
+  try {
+    names = fs.readdirSync(wakesDir(project)).filter((n) => n.endsWith('.json')).sort().reverse();
+  } catch {
+    return null;
+  }
+  for (const name of names) {
+    const wake = readWake(path.join(wakesDir(project), name));
+    const at = Date.parse(wake?.at);
+    if (!Number.isFinite(at) || now().getTime() - at > RECENT_MS || at > now().getTime() + 60000) continue;
+    const e = (Array.isArray(wake.events) ? wake.events : []).find((x) => x?.type === 'stuck' && x.work === work);
+    if (e === undefined) continue;
+    const still = Number(e.detail?.still);
+    return { phase: typeof e.detail?.phase === 'string' ? e.detail.phase : null, still: Number.isFinite(still) ? still : 0 };
+  }
+  return null;
 }
