@@ -44,3 +44,15 @@ test('a path that climbs out is refused', () => {
   assert.throws(() => writeInside(root, '../x.md', 'x'));
   assert.throws(() => writeInside(root, 'a//b.md', 'x'));
 });
+
+test('a file already there is replaced by a new one, never written through', () => {
+  const root = tempFolder('wh-wi-');
+  const file = writeInside(root, 'a.md', 'one\n');
+  const before = fs.statSync(file).ino;
+  const link = path.join(root, 'b.md');
+  fs.linkSync(file, link);
+  writeInside(root, 'a.md', 'two\n');
+  assert.equal(fs.readFileSync(link, 'utf8'), 'one\n', 'the other name of the old file is untouched');
+  assert.equal(fs.readFileSync(file, 'utf8'), 'two\n');
+  assert.notEqual(fs.statSync(file).ino, before);
+});

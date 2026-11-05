@@ -5655,7 +5655,9 @@ export async function startHelper({
   async function prepareHand(project, { number, head }, ctx) {
     const say = (words) => doWrite({ project, kind: 'note', data: { about: 'engine', words } }, ctx, { own: true }).catch(() => {});
     return oneAtATime(`ready:${project}`, async () => {
-      if (stopped() || handWorkOf(project, number, head) !== undefined) return null;
+      if (stopped()) return null;
+      // A tie already names a work for this change: it was carried on, and is not carried on again.
+      if (listEvents(stateDir(project), { report: () => {} }).some((e) => e.kind === 'by-hand' && e.data?.n === number && e.data.head === head && typeof e.data.work === 'string')) return null;
       const record = recordOf(project);
       if (typeof record.folder !== 'string' || !path.isAbsolute(record.folder) || !fs.existsSync(record.folder)) {
         await say('The changes made by hand could not be carried on yet: the project\'s folder isn\'t on this computer.');

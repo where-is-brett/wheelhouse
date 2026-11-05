@@ -572,7 +572,7 @@ test('work carried on from a signed by-hand press is sent as tied; a forged from
   record('action', {
     action: 'answer', question: 'the card as shown', questionId: 'q-by-hand-1', questionHash: dataHash(q.data), label: 'Check and add them',
   }, 2 * SEC);
-  record('by-hand', { question: 'q-by-hand-1', n: 2, head: FROM }, 3 * SEC);
+  record('by-hand', { question: 'q-by-hand-1', n: 2, head: FROM, work: 'carry-on-2', doc: '1'.repeat(64) }, 3 * SEC);
   const body = (id, request) => ({
     id, title: 't', lane: 'small', visible: true, dependsOn: [], doc: { path: 'd.md', hash: '1'.repeat(64) }, from: { sha: FROM, ref: `refs/wheelhouse/from/${id}`, request },
   });
@@ -615,7 +615,7 @@ test('a signed tie that lands after the work wakes the foreman once, for that wo
   assert.deepEqual(await readyAt(state, 20 * SEC), [], 'no press or tie yet');
   record('action', handPress(q), 21 * SEC);
   assert.deepEqual(await readyAt(state, 40 * SEC), [], 'no tie yet');
-  record('by-hand', { question: 'q-by-hand-1', n: 2, head: FROM }, 41 * SEC);
+  record('by-hand', { question: 'q-by-hand-1', n: 2, head: FROM, work: 'carry-on-2', doc: '1'.repeat(64) }, 41 * SEC);
   assert.deepEqual(await readyAt(state, 60 * SEC), ['carry-on-2']);
   assert.deepEqual(await readyAt(state, 80 * SEC), [], 'no repeat on a later tick');
 }));
@@ -625,7 +625,7 @@ test('a signed press that lands last, after the tie and the work, wakes the fore
   const state = { cursor: step({ seen: [], prev: null }, await observe({ project: P, client: fakeClient(), now: at(0), prev: null })).cursor };
   const FROM = 'd'.repeat(40);
   const q = record('question', handCard(), 1 * SEC);
-  record('by-hand', { question: 'q-by-hand-1', n: 2, head: FROM }, 2 * SEC);
+  record('by-hand', { question: 'q-by-hand-1', n: 2, head: FROM, work: 'carry-on-2', doc: '1'.repeat(64) }, 2 * SEC);
   record('work', handBody('carry-on-2', 2, FROM), 3 * SEC);
   assert.deepEqual(await readyAt(state, 20 * SEC), []);
   record('action', handPress(q), 21 * SEC);

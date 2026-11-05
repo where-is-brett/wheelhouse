@@ -562,10 +562,12 @@ function buildLoopViews(sorted, enrolled) {
   // only at the document it first named: a brief changed afterwards asks the director as any work does.
   const pressed = Object.values(questions).filter((q) => q.byHand !== undefined && q.answer?.label === CHECK_AND_ADD).map((q) => q.byHand);
   for (const tie of pressed) {
-    // A tie that names the work the helper made for it (and its brief's hash) approves that work alone, at that brief: a
-    // work any other hand recorded for the same change is never it. An older tie names none, and the first work stands.
+    // Only a tie that names the work the helper made for it (and its brief's hash) approves anything, and that work alone, at
+    // that brief: a work any other hand recorded for the same change is never it. A tie that names none approves nothing,
+    // so work for that change asks the director as any work does.
+    if (tie.work === undefined) continue;
     const first = sorted.find((e) => e.kind === 'work' && e.data?.from?.request === tie.n && e.data.from.sha === tie.head
-      && (tie.work === undefined || (e.data.id === tie.work && e.data.doc?.hash === tie.doc)));
+      && e.data.id === tie.work && e.data.doc?.hash === tie.doc);
     const entry = first === undefined ? undefined : work[first.data.id];
     const hash = first?.data.doc?.hash;
     if (entry === undefined || entry.approved || typeof hash !== 'string' || entry.work.data.doc?.hash !== hash || entry.work.data.from?.request !== tie.n

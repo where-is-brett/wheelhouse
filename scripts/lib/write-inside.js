@@ -25,13 +25,29 @@ export function writeInside(root, rel, text) {
   const file = path.join(dir, parts.at(-1));
   const stat = lstatOf(file);
   if (stat !== null && !stat.isFile()) throw new Error(`${file} is not a plain file`);
-  const fd = fs.openSync(file, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | (fs.constants.O_NOFOLLOW ?? 0), 0o600);
+  // A fresh file each time: one that is there is taken away first, and the new one is created exclusively, never truncated,
+  // so a folder swapped for a link after the looks above cannot make this open an existing file of someone else's.
+  if (stat !== null) fs.unlinkSync(file);
+  const fd = fs.openSync(file, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | (fs.constants.O_NOFOLLOW ?? 0), 0o600);
+  let ok = false;
   try {
-    const where = fs.realpathSync.native(file);
-    if (where !== path.join(real, ...parts)) throw new Error(`${file} does not lie inside ${root}`);
+    // What was opened must be the file at the expected path, and each folder on the way must still be a real one there.
+    let at = real;
+    for (const part of parts.slice(0, -1)) {
+      at = path.join(at, part);
+      const one = lstatOf(at);
+      if (one === null || !one.isDirectory() || fs.realpathSync.native(at) !== at) throw new Error(`${at} is not a real folder`);
+    }
+    const here = lstatOf(file);
+    const opened = fs.fstatSync(fd);
+    if (here === null || !here.isFile() || here.ino !== opened.ino || here.dev !== opened.dev) throw new Error(`${file} is not the file that was opened`);
     fs.writeSync(fd, text);
+    ok = true;
   } finally {
     fs.closeSync(fd);
+    if (!ok) {
+      try { fs.unlinkSync(file); } catch { /* nothing of ours is left there */ }
+    }
   }
   return file;
 }

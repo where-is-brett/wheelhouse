@@ -1823,8 +1823,8 @@ const OTHER_SHA = 'b'.repeat(40);
 const handWork = (n, extra = {}, id = 'carry-on-3') => workEv(n, { id, lane: 'small', from: { sha: FROM_SHA, ref: `refs/wheelhouse/from/${id}`, request: 3 }, ...extra });
 const handCard = (n, id = 'q-by-hand-1') => ev('question', n, { id, work: 'by-hand', level: 3, what: 'Changes were made by hand.', why: 'Yours to decide.', options: [{ label: 'Check and add them', says: 'a' }, { label: 'Leave them out', says: 'b' }], recommendation: 'Check and add them' });
 const handClick = (n, question, label = 'Check and add them') => ev('action', n, { action: 'answer', question: 'the card as shown', questionId: question.data.id, questionHash: dataHash(question.data), label });
-// The helper's tie of the card to the change it opened for it, at the commit pressed on.
-const handTie = (n, extra = {}) => ev('by-hand', n, { question: 'q-by-hand-1', n: 3, head: FROM_SHA, ...extra });
+// The helper's tie of the card to the change it opened for it, at the commit pressed on, naming the work and brief it made.
+const handTie = (n, extra = {}) => ev('by-hand', n, { question: 'q-by-hand-1', n: 3, head: FROM_SHA, work: 'carry-on-3', doc: H1, ...extra });
 const approvedOf = (events, id = 'carry-on-3') => build(events).work[id].approved;
 
 test('work carried on from a change made by hand is approved by the director\'s Check and add them', async () => {
@@ -1879,8 +1879,9 @@ test('a tie that names the helper\'s work approves that work at that brief alone
     assert.equal(approvedOf([first, ...press, handWork(6)]), true, 'the helper\'s still is');
     // The same id with another brief than the tie names is not approved.
     assert.equal(approvedOf([...press, handWork(6, { doc: { path: 'x.md', hash: H2 } })]), false);
-    // A tie of the old kind, naming no work, keeps the first work standing.
-    assert.equal(approvedOf([q, handTie(2), handClick(5, q), handWork(6)]), true);
+    // A tie that names no work approves nothing: the work asks the director, whoever recorded it.
+    const bare = ev('by-hand', 2, { question: 'q-by-hand-1', n: 3, head: FROM_SHA });
+    assert.equal(approvedOf([q, bare, handClick(5, q), handWork(6)]), false);
   });
 });
 

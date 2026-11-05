@@ -90,27 +90,28 @@ test('a hand edit, then Check and add them: the front desk does nothing; the hel
   assert.doesNotMatch(second.question, /still being checked|still checking/i);
 }));
 
-// Guards: the same path in the order work, then press and tie: the work was recorded before the helper tied the press to its
-// change. Fault: the work, approved afterwards by the press, did not wake the foreman.
-test('a hand edit, then Check and add them: work, then press and tie; the foreman is woken and no second Approve card comes', { timeout: 120000 }, () => world({ recordings: carryOn() }, async (w) => {
+// Guards: work recorded by another hand for the change before the press and tie (the front desk, or an agent) is never the
+// one the press approves. The helper carries the change on under a work id of its own, which the tie names; the other work
+// is left to ask the director as any work does.
+test('a hand edit, work recorded by another hand first, then press and tie: only the helper\'s own work is approved and woken', { timeout: 120000 }, () => world({ recordings: { ...carryOn(), 'carry-on-1-2': running('carry-on-1-2') } }, async (w) => {
   await w.watch();
   await w.terminalTick();
   fs.appendFileSync(path.join(w.folder, 'README.md'), `${HAND_LINE}\n`);
   await git([...HAND, 'commit', '-q', '-am', 'A hand commit'], w.folder);
   const tip = await git(['rev-parse', 'HEAD'], w.folder);
   const card = await handCardRaised(w);
-  // The front desk has the work recorded for the change the helper will open (the first), before the press is tied.
   await record(w, 'carry-on-1', { lane: 'small', visible: true, title: 'Your edit to the README', from: { sha: tip, ref: 'refs/wheelhouse/from/carry-on-1', request: 1 } });
-  assert.equal(approveCards(w).length, 0, 'no Approve card for work that waits on the press');
   await w.tick();
   assert.equal(w.starts().length, 0, 'it does not start before the press');
   await w.watch();
   await w.press(card, CHECK_AND_ADD);
   await w.tickUntil(() => w.eventsOf('by-hand').length > 0, 'the tie');
+  assert.equal(w.eventsOf('by-hand').at(-1).data.work, 'carry-on-1-2', 'the tie names the helper\'s own work');
   const woken = foremanWakes(await w.watch());
-  assert.ok(woken.some((e) => e.type === 'work-ready' && e.work === 'carry-on-1'), `the foreman is woken for the work (${JSON.stringify(woken)})`);
-  assert.equal(approveCards(w).length, 0, 'no second Approve card');
-  await buildsAndMerges(w, 'carry-on-1', { committed: true });
+  assert.ok(woken.some((e) => e.type === 'work-ready' && e.work === 'carry-on-1-2'), `the foreman is woken for the helper's work (${JSON.stringify(woken)})`);
+  assert.ok(!woken.some((e) => e.type === 'work-ready' && e.work === 'carry-on-1'), 'not for the other work');
+  await buildsAndMerges(w, 'carry-on-1-2', { committed: true });
+  assert.equal(w.starts().filter((s) => s.order.work === 'carry-on-1').length, 0, 'the other work never started');
 }));
 
 // Guards: "Leave them out" is the director's answer for good: the card was asked again at every tick after it.
