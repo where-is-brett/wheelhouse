@@ -506,3 +506,35 @@ test('a test that reaches the real launch agents folder fails', onMacPaths, asyn
     assert.equal(fs.existsSync(entry.path) && fs.readFileSync(entry.path, 'utf8') === entry.content, false);
   });
 });
+
+test('WHEELHOUSE_LOGIN_START never lets an isolated process reach the real launchctl', onMacPaths, async () => {
+  const folder = path.join(shortHome(), 'LaunchAgents');
+  const before = process.env.WHEELHOUSE_LOGIN_START;
+  process.env.WHEELHOUSE_LOGIN_START = folder;
+  try {
+    await as(shortHome(), async () => {
+      const entry = loginEntry({ platform: 'darwin', node: MAC_NODE, root: '/private/tmp/w95/wh9', script: START_SCRIPT, home: shortHome() });
+      // The real run: if it reached launchctl, the stand-in on the PATH would record the call (checked after each test).
+      assert.deepEqual(await installLoginStart({ entry, run, now: () => T0 }), { written: entry.path });
+      assert.equal(fs.existsSync(entry.path), true);
+      assert.deepEqual((await removeLoginStart({ run, platform: 'darwin' })), { removed: true });
+    });
+  } finally {
+    if (before === undefined) delete process.env.WHEELHOUSE_LOGIN_START; else process.env.WHEELHOUSE_LOGIN_START = before;
+  }
+});
+
+test('WHEELHOUSE_LOGIN_START is ignored by a process on the default home', onMacPaths, async () => {
+  const os = await import('node:os');
+  const home = shortHome();
+  const before = process.env.WHEELHOUSE_LOGIN_START;
+  process.env.WHEELHOUSE_LOGIN_START = path.join(shortHome(), 'elsewhere');
+  try {
+    await as(path.join(os.default.homedir(), '.wheelhouse'), async () => {
+      const entry = loginEntry({ platform: 'darwin', node: MAC_NODE, root: MAC_ROOT, script: START_SCRIPT, home });
+      assert.equal(entry.path, path.join(home, 'Library', 'LaunchAgents', 'dev.wheelhouse.helper.plist'));
+    });
+  } finally {
+    if (before === undefined) delete process.env.WHEELHOUSE_LOGIN_START; else process.env.WHEELHOUSE_LOGIN_START = before;
+  }
+});

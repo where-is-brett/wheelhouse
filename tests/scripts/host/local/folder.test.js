@@ -270,6 +270,14 @@ test('a working tree with another change beside the section is left as it is', (
 // update that did not land its change.
 const settingsWith = (ref, extra = {}) => `${JSON.stringify({ permissions: { allow: [] }, extraKnownMarketplaces: { wheelhouse: { source: { source: 'github', repo: 'where-is-brett/wheelhouse', ref }, ...extra } } }, null, 2)}\n`;
 
+// The update in progress, as its journal records it: the target tag, and whether it has ended.
+function updateUnderWay(tag, { ended = false } = {}) {
+  const dir = path.join(process.env.WHEELHOUSE_HOME, 'update', P);
+  fs.mkdirSync(dir, { recursive: true });
+  const steps = { checks: { state: 'done', data: { tag } }, ...(ended ? { done: { state: 'done' } } : {}) };
+  fs.writeFileSync(path.join(dir, 'journal.json'), JSON.stringify({ schema: 1, steps }));
+}
+
 async function withPinnedSettings(fn) {
   await levelWithEarlier(async (folder) => {
     fs.mkdirSync(path.join(folder, '.claude'), { recursive: true });
@@ -280,6 +288,7 @@ async function withPinnedSettings(fn) {
 }
 
 test('pins left in the working tree by an update raise no hand-made card', () => withPinnedSettings(async (folder) => {
+  updateUnderWay('v0.2.9');
   fs.writeFileSync(path.join(folder, '.claude', 'settings.json'), settingsWith('v0.2.9'));
   fs.writeFileSync(path.join(folder, 'CLAUDE.md'), await ownText(`${MINE}${EARLIER}`));
   const { watch, cards, added } = watching(folder);
@@ -289,11 +298,35 @@ test('pins left in the working tree by an update raise no hand-made card', () =>
 }));
 
 test('pins alone in the settings, with nothing else changed, raise no card either', () => withPinnedSettings(async (folder) => {
+  updateUnderWay('v0.2.9');
   fs.writeFileSync(path.join(folder, '.claude', 'settings.json'), settingsWith('v0.2.9'));
   const { watch, cards } = watching(folder);
   for (let i = 0; i < 4; i += 1) await watch.tick();
   assert.deepEqual(cards, []);
 }));
+
+for (const [what, ref, extra, journal] of [
+  ['a downgrade to another tag', 'v0.2.7', {}, () => updateUnderWay('v0.2.9')],
+  ['a branch name', 'main', {}, () => updateUnderWay('v0.2.9')],
+  ['autoUpdate switched on', 'v0.2.9', { autoUpdate: true }, () => updateUnderWay('v0.2.9')],
+  ['the target tag with no update under way', 'v0.2.9', {}, () => {}],
+  ['the target tag after the update ended', 'v0.2.9', {}, () => updateUnderWay('v0.2.9', { ended: true })],
+]) {
+  test(`a pin edit that is ${what} raises the card, uncommitted or committed`, () => withPinnedSettings(async (folder) => {
+    journal();
+    fs.writeFileSync(path.join(folder, '.claude', 'settings.json'), settingsWith(ref, extra));
+    const uncommitted = watching(folder);
+    for (let i = 0; i < 4; i += 1) await uncommitted.watch.tick();
+    assert.equal(uncommitted.cards.length, 1, 'uncommitted');
+    assert.deepEqual(uncommitted.added, []);
+    await git(folder, ['checkout', '-q', '.']);
+    await commitIn(folder, '.claude/settings.json', settingsWith(ref, extra));
+    const committed = watching(folder);
+    await committed.watch.tick();
+    assert.equal(committed.cards.length, 1, 'committed');
+    assert.deepEqual(committed.added, []);
+  }));
+}
 
 test('a settings edit that is more than the pins still raises the card', () => withPinnedSettings(async (folder) => {
   const edited = JSON.parse(settingsWith('v0.2.9'));

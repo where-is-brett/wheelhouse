@@ -272,13 +272,19 @@ test('the reinstall takes scopes: project by default, the account\'s installs on
   assert.equal(pc.calls.filter((c) => /plugin (update|install|uninstall) /.test(c)).length, 0);
 });
 
-test('onlyPinEdit: only the marketplace entry\'s ref and autoUpdate may differ', () => {
+test('onlyPinEdit: only the marketplace entry\'s ref, to the update\'s tag, and autoUpdate off, may differ', () => {
   const at = (ref, extra = {}, more = {}) => JSON.stringify({ a: 1, ...more, extraKnownMarketplaces: { wheelhouse: { source: { source: 'github', repo: 'where-is-brett/wheelhouse', ref }, ...extra } } });
-  assert.equal(onlyPinEdit(at('v0.2.8', { autoUpdate: false }), at('v0.2.9')), true);
-  assert.equal(onlyPinEdit(at('v0.2.8'), at('v0.2.8')), true);
-  assert.equal(onlyPinEdit(at('v0.2.8'), at('v0.2.9', {}, { b: 2 })), false);
-  assert.equal(onlyPinEdit(at('v0.2.8'), at('../x')), false);
-  assert.equal(onlyPinEdit(at('v0.2.8'), at('v0.2.9').replace('where-is-brett', 'other')), false);
-  assert.equal(onlyPinEdit(at('v0.2.8'), at('v0.2.9', { hooks: 1 })), false);
-  assert.equal(onlyPinEdit('not json', at('v0.2.9')), false);
+  const tag = { tag: 'v0.2.9' };
+  assert.equal(onlyPinEdit(at('v0.2.8', { autoUpdate: false }), at('v0.2.9'), tag), true);
+  assert.equal(onlyPinEdit(at('v0.2.8'), at('v0.2.9', { autoUpdate: false }), tag), true);
+  assert.equal(onlyPinEdit(at('v0.2.8'), at('v0.2.9', {}, { b: 2 }), tag), false);
+  assert.equal(onlyPinEdit(at('v0.2.8'), at('v0.2.9').replace('where-is-brett', 'other'), tag), false);
+  assert.equal(onlyPinEdit(at('v0.2.8'), at('v0.2.9', { hooks: 1 }), tag), false);
+  assert.equal(onlyPinEdit('not json', at('v0.2.9'), tag), false);
+  // Another tag (a downgrade), a branch, a missing target and autoUpdate on are the project's own changes.
+  assert.equal(onlyPinEdit(at('v0.2.8'), at('v0.2.7'), tag), false);
+  assert.equal(onlyPinEdit(at('v0.2.8'), at('main'), tag), false);
+  assert.equal(onlyPinEdit(at('v0.2.8'), at('v0.2.9')), false);
+  assert.equal(onlyPinEdit(at('v0.2.8'), at('v0.2.9', { autoUpdate: true }), tag), false);
+  assert.equal(onlyPinEdit(at('v0.2.8'), at('v0.2.9', { autoUpdate: 'yes' }), tag), false);
 });

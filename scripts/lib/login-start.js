@@ -99,14 +99,15 @@ function isolatedHome() {
 // some other home folder than the person's own (a test's temporary one) gets that one's LaunchAgents folder.
 export function loginAgentsFolder({ home = os.homedir() } = {}) {
   const told = process.env.WHEELHOUSE_LOGIN_START;
-  if (typeof told === 'string' && told !== '' && path.isAbsolute(told)) return path.basename(told) === 'LaunchAgents' ? told : path.join(told, 'LaunchAgents');
+  // The variable only moves where an isolated process keeps its file; a process on the default home ignores it.
+  if (isolatedHome() && typeof told === 'string' && told !== '' && path.isAbsolute(told)) return path.basename(told) === 'LaunchAgents' ? told : path.join(told, 'LaunchAgents');
   if (isolatedHome() && path.resolve(home) === path.resolve(os.homedir())) return path.join(wheelhouseHome(), 'LaunchAgents');
   return agentsFolder(home);
 }
 
 // Whether a call to the computer's own launchd or registry would reach the person's real sign-in start: the real
-// `run`, in a process whose home isn't the default, with no folder told. Such a process only writes its files.
-const reachesComputer = (run) => run === realRun && isolatedHome() && !process.env.WHEELHOUSE_LOGIN_START;
+// `run`, in a process whose home isn't the default, whatever WHEELHOUSE_LOGIN_START says. Such a process only writes its files.
+const reachesComputer = (run) => run === realRun && isolatedHome();
 
 // loginEntry({ platform, node, root, script, home }) -> { kind, path, content } | null
 //   node    the full path of the Node.js that runs the start command

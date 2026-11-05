@@ -291,3 +291,18 @@ test('the wait does not take pins left in the working tree as the merge while th
     assert.deepEqual(await waitMerged({ target, projectDir: dir }), { merged: true });
   } finally { tidy(dir); }
 });
+
+test('a commit only on another branch of the folder, not the main version, is not the merge', async () => {
+  const dir = repo('v0.2.6', 'v0.2.6');
+  const git = (...args) => execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@localhost.invalid', ...args], { stdio: 'pipe', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' } });
+  try {
+    git('checkout', '-q', '-b', 'mine');
+    fs.writeFileSync(path.join(dir, SETTINGS_FILE), settingsText(settingsAt('v0.2.7')));
+    git('commit', '-q', '-am', 'unpushed');
+    const { open, calls } = opener();
+    const got = await openChange({ project: 'p', target, previous: { ref: 'v0.2.6', sha: OLD }, projectDir: dir, open, kind: 'pins-only' });
+    assert.equal(got.skipped, undefined);
+    assert.equal(calls.length, 1, 'the change is still opened');
+    assert.match((await waitMerged({ target, projectDir: dir })).waiting, /Waiting for the change/);
+  } finally { tidy(dir); }
+});

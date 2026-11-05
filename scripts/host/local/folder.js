@@ -9,6 +9,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { CHECK_AND_ADD, LEAVE_THEM_OUT } from '../../state/card-lines.js';
 import { withOwnSection } from '../../lib/compact-section.js';
+import { wheelhouseHome } from '../../lib/paths.js';
 import { onlyPinEdit } from '../../lineage/release.js';
 import { gitRoute, homeDir, homeGit, isBranchName } from './home.js';
 
@@ -251,12 +252,24 @@ const MANAGED_FILE = 'CLAUDE.md';
 const PINNED_FILE = '.claude/settings.json';
 const sameLines = (a, b) => a.replace(/\r\n/g, '\n') === b.replace(/\r\n/g, '\n');
 
+// The release the project's update in progress is moving to (its journal's checks step), or null when none is under way or
+// it has finished. Only this tag counts as Wheelhouse's own pin in the folder's settings.
+function updateTarget(project) {
+  try {
+    const journal = JSON.parse(fs.readFileSync(path.join(wheelhouseHome(), 'update', project, 'journal.json'), 'utf8'));
+    const tag = journal?.steps?.checks?.data?.tag;
+    return journal?.steps?.checks?.state === 'done' && journal?.steps?.done?.state !== 'done' && typeof tag === 'string' ? tag : null;
+  } catch {
+    return null;
+  }
+}
+
 // Whether the folder's difference from `base` (a commit) is only what Wheelhouse itself writes, and nothing else: the managed
 // section of CLAUDE.md as the installed release writes it, and the release pins in .claude/settings.json (Wheelhouse's
 // marketplace `ref` and `autoUpdate`, an update's leftover when its change did not land; onlyPinEdit). At least one of the two,
 // no other file. `tip` is the folder's commit, or null for its working tree. A hand edit in or beside either makes the text
 // differ, so it is not Wheelhouse's own.
-async function onlyOwnSection({ folder, base, tip, git }) {
+async function onlyOwnSection({ folder, base, tip, git, target = null }) {
   const here = inFolder(folder, git);
   const names = tip === null
     ? await here.call(['--no-optional-locks', 'diff', '--name-only', base])
@@ -283,7 +296,7 @@ async function onlyOwnSection({ folder, base, tip, git }) {
     if (file === MANAGED_FILE) {
       const wanted = withOwnSection(String(was.stdout));
       if (wanted === String(was.stdout) || !sameLines(now, wanted)) return false;
-    } else if (!onlyPinEdit(String(was.stdout), now)) {
+    } else if (target === null || !onlyPinEdit(String(was.stdout), now, { tag: target })) {
       return false;
     }
   }
@@ -292,13 +305,13 @@ async function onlyOwnSection({ folder, base, tip, git }) {
 
 // The folder's CLAUDE.md, left changed in the working tree by a refresh of Wheelhouse's own section, committed as that
 // alone so it reaches the main version by the route any folder commit takes. Anything else the folder holds is left.
-async function commitOwnSection({ folder, branch, git }) {
+async function commitOwnSection({ folder, branch, git, target = null }) {
   const here = inFolder(folder, git);
   const on = await here.call(['symbolic-ref', '-q', 'HEAD']);
   if (on.code !== 0 || String(on.stdout).trim() !== `refs/heads/${branch}`) return false;
   const dirty = await here.call(['--no-optional-locks', 'status', '--porcelain', '--untracked-files=no']);
   if (dirty.code !== 0 || String(dirty.stdout).trimEnd() !== ` M ${MANAGED_FILE}`) return false;
-  if (!(await onlyOwnSection({ folder, base: 'HEAD', tip: null, git }))) return false;
+  if (!(await onlyOwnSection({ folder, base: 'HEAD', tip: null, git, target }))) return false;
   const { identityOf } = await import('./merge.js');
   const env = await identityOf(folder, git);
   const making = git(folder, { reach: 'local', what: FOLDER_WHAT, env });
@@ -329,13 +342,13 @@ export function handMadeCard({ more = false, earlier = more ? 'open' : null } = 
 
 // What the folder's working tree holds that no commit does (tracked files only, as folderFree reads them), as a short
 // fingerprint of the difference from HEAD, or null when it holds nothing, is off `branch`, or is only Wheelhouse's own section.
-async function uncommittedEdit({ folder, branch, git }) {
+async function uncommittedEdit({ folder, branch, git, target = null }) {
   const here = inFolder(folder, git);
   const on = await here.call(['symbolic-ref', '-q', 'HEAD']);
   if (on.code !== 0 || String(on.stdout).trim() !== `refs/heads/${branch}`) return null;
   const dirty = await here.call(['--no-optional-locks', 'status', '--porcelain', '--untracked-files=no']);
   if (dirty.code !== 0 || String(dirty.stdout).trim() === '') return null;
-  if (await onlyOwnSection({ folder, base: 'HEAD', tip: null, git })) return null;
+  if (await onlyOwnSection({ folder, base: 'HEAD', tip: null, git, target })) return null;
   const diff = await here.call(['--no-optional-locks', 'diff', 'HEAD']);
   if (diff.code !== 0) return null;
   return crypto.createHash('sha256').update(String(diff.stdout)).digest('hex').slice(0, 16);
@@ -397,7 +410,7 @@ export function folderWatch({ project, folder, branchOf, git = gitRoute(), file,
       if (label !== CHECK_AND_ADD) continue;
       if (entry.edit === true) {
         // An edit not yet committed: it goes as a commit of its own, while the folder still holds exactly that edit.
-        if (found.state !== 'same' || (await uncommittedEdit({ folder, branch: await branchOf(), git })) !== tip) {
+        if (found.state !== 'same' || (await uncommittedEdit({ folder, branch: await branchOf(), git, target: updateTarget(project) })) !== tip) {
           entry.done = true;
           continue;
         }
@@ -428,9 +441,10 @@ export function folderWatch({ project, folder, branchOf, git = gitRoute(), file,
 
   async function tick() {
     if (stopped()) return;
+    const target = updateTarget(project);
     const branch = await branchOf();
     let found = await reading({ project, folder, branch, git });
-    if ((found.state === 'same' || found.state === 'folder-ahead') && await commitOwnSection({ folder, branch, git })) {
+    if ((found.state === 'same' || found.state === 'folder-ahead') && await commitOwnSection({ folder, branch, git, target })) {
       found = await reading({ project, folder, branch, git });
     }
     const kept = readKept(file);
@@ -445,7 +459,7 @@ export function folderWatch({ project, folder, branchOf, git = gitRoute(), file,
       const base = found.state === 'parted'
         ? String((await inFolder(folder, git).call(['merge-base', found.home, found.tip])).stdout).trim()
         : found.home;
-      if (base !== '' && await onlyOwnSection({ folder, base, tip: found.tip, git })) {
+      if (base !== '' && await onlyOwnSection({ folder, base, tip: found.tip, git, target })) {
         kept.tips[found.tip] = { id: null, done: false, own: true };
         await answers(found, kept);
         keep(file, kept);
@@ -458,7 +472,7 @@ export function folderWatch({ project, folder, branchOf, git = gitRoute(), file,
     } else if (found.state === 'same') {
       // A tracked file edited by hand and not committed: the same question, once the edit has stood for two ticks (a write
       // of Wheelhouse's own is gone by then). Its key is the edit itself, so a further edit is a new question.
-      const edit = await uncommittedEdit({ folder, branch, git });
+      const edit = await uncommittedEdit({ folder, branch, git, target });
       if (edit === null) kept.seen = null;
       else if (kept.tips[edit] === undefined) {
         if (kept.seen !== edit) kept.seen = edit;
