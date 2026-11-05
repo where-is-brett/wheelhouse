@@ -2084,6 +2084,18 @@ test('carry-on <n> asks the helper to make the request ready, and prints the wor
   assert.equal(asked.length, 2);
 });
 
+test('carry-on <n> for changes made by hand prints the fixed goal and done lines', async () => {
+  const ready = {
+    ok: true, work: 'carry-on-4', from: { sha: FULL, ref: 'refs/wheelhouse/from/carry-on-4', request: 4 },
+    branch: 'feature/by-hand-0123456789ab', fork: false, title: 'Changes made by hand in the project folder', body: '', bodyWithheld: false, files: [], commits: ['Add slug page'],
+  };
+  const helper = { client: { survey: { carryOn: async () => ready } } };
+  const made = await run(helper, ['carry-on', '4']);
+  assert.equal(made.code, 0, made.err);
+  assert.deepEqual(made.json.done, ['The hand-made changes pass review', 'The checks pass', 'They join the main version']);
+  assert.equal(typeof made.json.goal, 'string');
+});
+
 test('carry-on --line <name> asks the helper to make that piece of work ready, by its name', async () => {
   const asked = [];
   const ready = {

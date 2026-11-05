@@ -51,8 +51,8 @@ const GOAL_STOPPED = 'A goal stopped early';
 const GOAL_FINISHED = 'A goal finished';
 // The items that wake at once, inside the gap after the last wake.
 const AT_ONCE = ['stop', 'incident'];
-// The pane's id for the question behind the card for changes made by hand (scripts/host/local/folder.js).
-const HAND_CARD = /^q:q-by-hand-\d+$/;
+// The pane's id for a question from the build (the foreman's, or the card for changes made by hand): it blocks running work.
+const QUESTION_CARD = /^q:/;
 
 // How long after a wake its line still brings its instructions, and how many wakes are kept for it.
 export const WAKE_CONTEXT_MS = 10 * 60 * 1000;
@@ -98,8 +98,8 @@ export function needsYou({ after } = {}) {
   // is never asked until its card is made).
   for (const card of list(after.cards)) {
     if (typeof card.id === 'string' && Number.isInteger(card.n) && card.asked !== true && card.heldBack !== true) {
-      // The card for changes made by hand comes just after the director's own edit, so it wakes at once, inside the gap too.
-      items.push({ id: `card:${card.id}`, kind: 'card', n: card.n, blocking: card.blocking === true, ...(HAND_CARD.test(card.id) ? { atOnce: true } : {}) });
+      // A question from the build blocks running work, so it wakes at once, inside the gap too.
+      items.push({ id: `card:${card.id}`, kind: 'card', n: card.n, blocking: card.blocking === true, ...(QUESTION_CARD.test(card.id) ? { atOnce: true } : {}) });
     }
   }
   for (const n of Array.isArray(after.carryOn) ? after.carryOn : []) {

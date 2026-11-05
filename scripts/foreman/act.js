@@ -145,6 +145,7 @@ import { classifyChange } from '../gate/guardrails.js';
 import { routingFrom } from '../routing/in-force.js';
 import { helperClient } from '../host/helper-client.js';
 import { FOREMAN_QUESTIONS, HASH, SLUG, questionIdOf } from '../lib/build-loop.js';
+import { HAND_DONE, HAND_GOAL } from '../lib/by-hand-done.js';
 import { CARD } from '../lib/front-desk.js';
 import { TO_KNOW_MORE } from '../lib/calm-words.js';
 import { canonicalJson } from '../lib/canonical.js';
@@ -603,8 +604,10 @@ async function start(ctx, work, rest) {
   }
 
   // The brief's fields, all checked before anything is made.
-  const goal = needed(found, 'goal');
-  const done = (found.done ?? []).map((d) => d.trim()).filter((d) => d !== '');
+  // Work the director's press on the by-hand card approved has fixed words for its goal and done lines (never a model's).
+  const byHand = entry.approval?.byHand === true;
+  const goal = byHand ? HAND_GOAL : needed(found, 'goal');
+  const done = byHand ? [...HAND_DONE] : (found.done ?? []).map((d) => d.trim()).filter((d) => d !== '');
   if (done.length === 0) refuse('Give the done contract: --done "<line>", once for each line');
   const appetite = { sessions: wholeNumber(found, 'appetite-sessions', 'sessions'), tokens: wholeNumber(found, 'appetite-tokens', 'tokens') };
   const rulings = [...new Set(found.ruling ?? [])].map((id) => {
