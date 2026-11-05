@@ -14,7 +14,9 @@ const FULL_SHA = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 export async function changeOf({ cwd, base, start, run = defaultRun }) {
   // The fence alone: the worktree's own settings are an agent's to write, and nothing here runs its hooks or filters.
   // Objects are read as they are: a replace ref the builder made would show the start commit as another tree.
-  const git = safeGit({ run, cwd, look: 'never', env: { GIT_NO_REPLACE_OBJECTS: '1' } });
+  const fenced = safeGit({ run, cwd, look: 'never', env: { GIT_NO_REPLACE_OBJECTS: '1' } });
+  // And without the commit-graph, a file the builder can write that tells git what a commit's parents are.
+  const git = (args, options) => fenced(['-c', 'core.commitGraph=false', ...args], options);
   const must = async (args) => {
     const got = await git(args, { limit: MOST_BYTES });
     if (got.code !== 0) throw new Error(`git ${args[0]} failed in the worktree: ${String(got.stderr).trim().split('\n').pop()}`);

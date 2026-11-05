@@ -322,3 +322,13 @@ test('a git replace of the start commit, or a graft, does not hide a protected c
   const grafted = await check(dir);
   assert.equal(grafted.code, 1);
 });
+
+test('a commit-graph the builder wrote does not change where the run\'s change begins', async () => {
+  const dir = behindFolder();
+  fs.writeFileSync(path.join(dir, 'jest.config.js'), 'module.exports = { coverageThreshold: { global: { lines: 10 } } };\n');
+  git(dir, 'commit', '-qam', 'loosen');
+  git(dir, 'commit-graph', 'write', '--reachable');
+  const found = await check(dir);
+  assert.equal(found.code, 1);
+  assert.match(found.lines.join('\n'), /changes the test settings in jest\.config\.js/);
+});
