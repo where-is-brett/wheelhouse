@@ -333,12 +333,12 @@ test('ensureIgnored adds the entry once, from the folder itself and from a workt
   try {
     ensureIgnored(main, { mainCheckout: main });
     ensureIgnored(main, { mainCheckout: main });
-    assert.equal(fs.readFileSync(exclude, 'utf8'), '.wheelhouse/\n');
+    assert.equal(fs.readFileSync(exclude, 'utf8'), '.wheelhouse/\n.claude/worktrees/\n');
     const tree = path.join(base, 'tree');
     fakeWorktree(main, tree, 'tree');
     ensureIgnored(tree, { mainCheckout: main });
     ensureIgnored(tree, { mainCheckout: main });
-    assert.equal(fs.readFileSync(exclude, 'utf8'), '.wheelhouse/\n');
+    assert.equal(fs.readFileSync(exclude, 'utf8'), '.wheelhouse/\n.claude/worktrees/\n');
     assert.equal(fs.existsSync(path.join(tree, '.gitignore')), false);
     assert.equal(fs.existsSync(path.join(main, '.gitignore')), false);
   } finally {
@@ -347,10 +347,13 @@ test('ensureIgnored adds the entry once, from the folder itself and from a workt
   // Existing entries are kept, a missing final newline is supplied, and a line already naming it counts.
   fs.writeFileSync(exclude, '# mine\n*.log');
   ensureIgnored(main, { mainCheckout: main });
-  assert.equal(fs.readFileSync(exclude, 'utf8'), '# mine\n*.log\n.wheelhouse/\n');
+  assert.equal(fs.readFileSync(exclude, 'utf8'), '# mine\n*.log\n.wheelhouse/\n.claude/worktrees/\n');
   fs.writeFileSync(exclude, '/.wheelhouse/\r\n');
   ensureIgnored(main, { mainCheckout: main });
-  assert.equal(fs.readFileSync(exclude, 'utf8'), '/.wheelhouse/\r\n');
+  assert.equal(fs.readFileSync(exclude, 'utf8'), '/.wheelhouse/\r\n.claude/worktrees/\n');
+  fs.writeFileSync(exclude, '/.wheelhouse/\n/.claude/worktrees\n');
+  ensureIgnored(main, { mainCheckout: main });
+  assert.equal(fs.readFileSync(exclude, 'utf8'), '/.wheelhouse/\n/.claude/worktrees\n');
 });
 
 const refused = { message: "The worktree's git folder isn't the project's" };
