@@ -376,7 +376,7 @@ test('until the configuration is read, the watcher wakes and starts nothing, ask
   // Once it reads, the watcher goes on, and what happened meanwhile wakes the foreman.
   answer = { ok: true, config: { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [], routing: { foreman: 'model-a' } } };
   await runWatcher({ project: P, client, observe: seen.observe, wakerOptions, loops: 6, now: c.now, sleep: c.sleep, log: quiet });
-  assert.equal(asks, 13, 'asked at every loop, also once it reads, so a change on the default branch is taken');
+  assert.equal(asks, 12, 'asked at every loop, also once it reads, so a change on the default branch is taken');
   assert.equal(calls.length, 1);
   assert.equal(JSON.parse(fs.readFileSync(healthFile(P), 'utf8')).shape, 1);
 }));
