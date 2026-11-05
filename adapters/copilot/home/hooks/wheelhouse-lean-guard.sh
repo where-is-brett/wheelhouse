@@ -130,11 +130,20 @@ SECRETS='.ssh
 .vercel
 .wheelhouse'
 RECORD_DIR='.wheelhouse/record'
+BRANCH_LEFT='.wheelhouse
+.wheelhouse/*
+.git
+.git/*
+wheelhouse/board.md
+.gitignore
+.vscode/settings.json
+.github/copilot-instructions.md'
 SAY_CONTROL='That file steers an agent, so changing it is a guardrail change: ask the director'
 SAY_SECRET='Wheelhouse does not let an agent open Wheelhouse'\''s keys or the credentials on this computer'
 SAY_ENV='Wheelhouse does not let an agent read a .env file'
 SAY_SEARCH='Wheelhouse does not let an agent search the home folder or a folder holding credentials'
 SAY_RECORD='That file is Wheelhouse'\''s record, which is only added to: an earlier record file is never changed, so add the new line with the shell'
+SAY_BRANCH='Wheelhouse does not let the chat change the product'\''s own files while the project is on the main version. Record the change through Intake and ask its card; a Crew member builds it on a feature'\''s own copy, and it is reviewed and added from there.'
 SAY_PLACE='Wheelhouse'\''s guard could not tell where that path leads, so it refuses'
 SAY_COULD_NOT_RUN='Wheelhouse'\''s check could not run'
 SAY_PLUTIL='This Mac'\''s built-in file reader is too old for Wheelhouse'\''s guard, so the guard refuses'
@@ -280,6 +289,23 @@ lean_of() {
   done
 }
 
+# Whether the Lean project $1 (a real path) is on a feature's own copy: its HEAD, read from the file git keeps (in a
+# linked worktree `.git` is a file naming the real folder), is a `refs/heads/feature/...` branch. Status 0 for a feature,
+# and also where HEAD can't be read at all (the guard fails open here); 1 for the main version or a detached HEAD.
+on_feature() {
+  _gitdir=$1/.git
+  if [ -f "$_gitdir" ]; then
+    _line=$(/usr/bin/head -n 1 "$_gitdir" 2>/dev/null) || return 0
+    case $_line in 'gitdir: '*) _gitdir=${_line#'gitdir: '} ;; *) return 0 ;; esac
+    case $_gitdir in /*) ;; *) _gitdir=$1/$_gitdir ;; esac
+  fi
+  [ -r "$_gitdir/HEAD" ] || return 0
+  _head=$(/usr/bin/head -n 1 "$_gitdir/HEAD" 2>/dev/null) || return 0
+  [ -n "$_head" ] || return 0
+  case $_head in 'ref: refs/heads/feature/'?*) return 0 ;; esac
+  return 1
+}
+
 # ---- The places, worked out once a path needs them ----
 
 places_ready=no
@@ -396,6 +422,18 @@ check_write() {
     esac
   done
   IFS=$_ifs
+  # A product file is not written while the project is on the main version: only on a feature's own copy. The Wheelhouse
+  # files, git's folder and the files setup makes are left alone (BRANCH_LEFT).
+  if [ -n "$_target_root" ] && ! on_feature "$_target_root"; then
+    case $REAL in "$_target_root"/*) _rel=$(lower "${REAL#"$_target_root"/}") ;; *) return 0 ;; esac
+    _ifs=$IFS
+    IFS=$NL
+    for _pattern in $BRANCH_LEFT; do
+      case $_rel in $_pattern) IFS=$_ifs; return 0 ;; esac
+    done
+    IFS=$_ifs
+    deny_it "$SAY_BRANCH"
+  fi
 }
 
 # The paths a patch changes, one a line, in PATCH_PATHS; status 1 for a patch with none, an empty one, or a header line

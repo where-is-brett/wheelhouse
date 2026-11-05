@@ -41,11 +41,13 @@ CONTROL_PATTERNS=@CONTROL_PATTERNS@
 HOME_CONTROL=@HOME_CONTROL@
 SECRETS=@SECRETS@
 RECORD_DIR=@RECORD_DIR@
+BRANCH_LEFT=@BRANCH_LEFT@
 SAY_CONTROL=@SAY_CONTROL@
 SAY_SECRET=@SAY_SECRET@
 SAY_ENV=@SAY_ENV@
 SAY_SEARCH=@SAY_SEARCH@
 SAY_RECORD=@SAY_RECORD@
+SAY_BRANCH=@SAY_BRANCH@
 SAY_PLACE=@SAY_PLACE@
 SAY_COULD_NOT_RUN=@SAY_COULD_NOT_RUN@
 SAY_PLUTIL=@SAY_PLUTIL@
@@ -191,6 +193,23 @@ lean_of() {
   done
 }
 
+# Whether the Lean project $1 (a real path) is on a feature's own copy: its HEAD, read from the file git keeps (in a
+# linked worktree `.git` is a file naming the real folder), is a `refs/heads/feature/...` branch. Status 0 for a feature,
+# and also where HEAD can't be read at all (the guard fails open here); 1 for the main version or a detached HEAD.
+on_feature() {
+  _gitdir=$1/.git
+  if [ -f "$_gitdir" ]; then
+    _line=$(/usr/bin/head -n 1 "$_gitdir" 2>/dev/null) || return 0
+    case $_line in 'gitdir: '*) _gitdir=${_line#'gitdir: '} ;; *) return 0 ;; esac
+    case $_gitdir in /*) ;; *) _gitdir=$1/$_gitdir ;; esac
+  fi
+  [ -r "$_gitdir/HEAD" ] || return 0
+  _head=$(/usr/bin/head -n 1 "$_gitdir/HEAD" 2>/dev/null) || return 0
+  [ -n "$_head" ] || return 0
+  case $_head in 'ref: refs/heads/feature/'?*) return 0 ;; esac
+  return 1
+}
+
 # ---- The places, worked out once a path needs them ----
 
 places_ready=no
@@ -307,6 +326,18 @@ check_write() {
     esac
   done
   IFS=$_ifs
+  # A product file is not written while the project is on the main version: only on a feature's own copy. The Wheelhouse
+  # files, git's folder and the files setup makes are left alone (BRANCH_LEFT).
+  if [ -n "$_target_root" ] && ! on_feature "$_target_root"; then
+    case $REAL in "$_target_root"/*) _rel=$(lower "${REAL#"$_target_root"/}") ;; *) return 0 ;; esac
+    _ifs=$IFS
+    IFS=$NL
+    for _pattern in $BRANCH_LEFT; do
+      case $_rel in $_pattern) IFS=$_ifs; return 0 ;; esac
+    done
+    IFS=$_ifs
+    deny_it "$SAY_BRANCH"
+  fi
 }
 
 # The paths a patch changes, one a line, in PATCH_PATHS; status 1 for a patch with none, an empty one, or a header line
