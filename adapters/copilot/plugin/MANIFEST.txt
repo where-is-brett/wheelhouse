@@ -1,6 +1,6 @@
 89f5d532adf7efb49fe9e47757726b3b44b4e2b8 agents/wheelhouse-builder.agent.md
 dc6f86d7e33a301f2706e5f160d0bfb50eb042fe agents/wheelhouse-foreman.agent.md
-a35a5f4afe641aa82edf9f3ca4dadc6ab35a2ccc agents/wheelhouse-reviewer.agent.md
+c934a21bacb7cc511b15360c7a33fd9a493fcac1 agents/wheelhouse-reviewer.agent.md
 358896d95d7710861401a68c6d2acac58e03480d agents/wheelhouse-tester.agent.md
 64c902e3d9d79cf268df2de394b47904ba11f53e plugin.json
 2b9f056d81333d3d126210192782cb7f1bdfa73d skills/wheelhouse-all-stop/SKILL.md

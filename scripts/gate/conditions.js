@@ -1,8 +1,9 @@
 // scripts/gate/conditions.js
+import { reviewClear } from '../lib/review-verdict.js';
 import { verify } from '../state/signing.js';
 import { NO_HOST_APPROVAL } from '../host/host-approval.js';
 
-// A review counts only if it verifies and says CLEAN. A plain record must also
+// A review counts only if it verifies and clears the head (CLEAN, or findings none of which is a BLOCKER or HIGH: reviewClear). A plain record must also
 // name the head commit. The carried form, { carried: true, record }, is a review
 // of an earlier commit that the caller has already judged still counts (the
 // feature's own changes did not move), so it need not name the head.
@@ -12,7 +13,7 @@ export function reviewCounts(entry, headSha, enrolled, kinds = null) {
   const record = carried ? entry.record : entry;
   return record?.kind === 'review'
     && verify(record, enrolled)
-    && record.data?.verdict === 'CLEAN'
+    && reviewClear(record.data)
     && (carried || record.data?.commit === headSha)
     && (kinds === null || kinds.includes(record.data?.reviewKind));
 }

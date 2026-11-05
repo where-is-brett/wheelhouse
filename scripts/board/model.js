@@ -4,6 +4,7 @@
 // settings in force and the sources report. Nothing here reads a file or the host, and nothing
 // throws: a missing or damaged input becomes a line in `missing`. Every text an agent wrote
 // reaches the board through oneLine, as one capped line with no Markdown of its own.
+import { minorsOf, reviewClear } from '../lib/review-verdict.js';
 import { LINE_CHARS, WEEK_MS } from '../lib/core-numbers.js';
 import { latestFor } from '../state/views.js';
 import { answerLine, approvalLine, blindLine, BLIND_LINE } from '../state/card-lines.js';
@@ -308,6 +309,7 @@ function headReview(reviews, approvals, pr) {
   return reviews[String(pr)]?.[String(approval.data.commit)] ?? null;
 }
 function reviewState(record) {
+  if (reviewClear(record?.data)) return 'clean';
   const verdict = typeof record?.data?.verdict === 'string' ? record.data.verdict.toUpperCase() : null;
   if (verdict === 'CLEAN') return 'clean';
   return verdict === 'FINDINGS' ? 'findings' : 'none';
@@ -559,7 +561,7 @@ export function boardModel({ project, views, profileUnconfirmed, events, usage, 
         // Blocked while its work's latest report says so and names it: the report's summary is why.
         const latest = named ? reports.filter((r) => r.data.work === named.data.work).sort(oldestFirst).at(-1) : null;
         const blocked = latest?.data.outcome === 'blocked' && latest.data.pr === pr ? oneLine(latest.data.summary) : null;
-        return { pr, work: named ? oneLine(named.data.work) : null, review: reviewState(review), findings: review ? findingsOf(review) : null, blocked };
+        return { pr, work: named ? oneLine(named.data.work) : null, review: reviewState(review), findings: review ? findingsOf(review) : null, ...(review && minorsOf(review.data) > 0 ? { minors: minorsOf(review.data) } : {}), blocked };
       });
     }, []),
     quality: part(missing, 'quality this week', () => {
