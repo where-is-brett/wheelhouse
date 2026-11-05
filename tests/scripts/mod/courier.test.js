@@ -67,7 +67,7 @@ test('a new card, STOP, an incident, a health stop and a finished feature are ea
     { id: `health:${hashOf('The site checks fail')}`, kind: 'health' },
     cardItem('c-plain', 1),
     cardItem('c-block', 2, true),
-    cardItem('q:q-1', 3),
+    { ...cardItem('q:q-1', 3), atOnce: true },
     { id: 'finished:export-csv', kind: 'finished' },
   ]);
   // A watch line is not needs-you, and nothing is found in a model that isn't one.
@@ -89,7 +89,7 @@ test('a new card, STOP, an incident, a health stop and a finished feature are ea
 
 test('a card the front desk has asked is not needs-you; an unasked card and a build question are', () => {
   const after = model({ cards: [{ ...card('c-asked', 1), asked: true }, { ...card('c-new', 2), asked: false }, { ...card('q:q-1', 3, true), asked: false }] });
-  assert.deepEqual(needsYou({ after }), [cardItem('c-new', 2), cardItem('q:q-1', 3, true)]);
+  assert.deepEqual(needsYou({ after }), [cardItem('c-new', 2), { ...cardItem('q:q-1', 3, true), atOnce: true }]);
 });
 
 test('away lets through STOP, an incident, health and a blocking card, and holds the rest', () => opened(async () => {
@@ -656,7 +656,9 @@ test('the card for changes made by hand wakes the front desk at once, inside the
   // The pane model names the question behind the by-hand card, and needsYou marks it.
   const items = needsYou({ after: model({ cards: [{ ...card('q:q-by-hand-1', 1), kind: 'question' }] }) });
   assert.deepEqual(items, [{ id: 'card:q:q-by-hand-1', kind: 'card', n: 1, blocking: false, atOnce: true }]);
-  assert.deepEqual(needsYou({ after: model({ cards: [card('q:q-other-1', 1)] }) }), [{ id: 'card:q:q-other-1', kind: 'card', n: 1, blocking: false }]);
+  // A foreman question blocks running work, so it wakes at once too; an ordinary card keeps the gap.
+  assert.deepEqual(needsYou({ after: model({ cards: [card('q:q-carry-on-4-1000001', 1)] }) }), [{ id: 'card:q:q-carry-on-4-1000001', kind: 'card', n: 1, blocking: false, atOnce: true }]);
+  assert.deepEqual(needsYou({ after: model({ cards: [card('c-9', 1)] }) }), [{ id: 'card:c-9', kind: 'card', n: 1, blocking: false }]);
   const woke = await wake(items);
   assert.notEqual(woke.submit, null);
   assert.deepEqual(woke.sent, ['card:q:q-by-hand-1']);
