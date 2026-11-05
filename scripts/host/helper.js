@@ -1914,8 +1914,12 @@ export async function startHelper({
     // the fields that say where an answer goes.
     if (kind === 'question') {
       for (const field of ['engine', 'key', 'head']) if (Object.hasOwn(data, field)) refuse(`a question written here can't carry ${field}: only the helper's own cards do`);
-      const held = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'question' && e.data?.id === data.id);
-      if (held.length > 0 && !held.some((e) => dataHash(e.data) === dataHash(data))) refuse('the state already holds a question with that id: ask a new one under a new id');
+      // Questions the state holds, and writes a hook kept to send later, both count as holding the id.
+      const held = [
+        ...listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'question' && e.data?.id === data.id).map((e) => e.data),
+        ...pendingRecords(project).filter(({ route, body }) => route === 'write' && body?.kind === 'question' && body.data?.id === data.id).map(({ body }) => body.data),
+      ];
+      if (held.length > 0 && !held.some((d) => dataHash(d) === dataHash(data))) refuse('the state already holds a question with that id: ask a new one under a new id');
     }
     if (kind === 'setting') {
       try { checkSetting(data.key, data.value, data.until); } catch (error) { refuse(error.message); }

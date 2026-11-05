@@ -1030,3 +1030,42 @@ test('/state/write refuses a question that carries the helper\'s own fields', as
     });
   } finally { await c.close(); await repo.cleanup(); }
 });
+
+test('/state/write refuses `replaces` for every card the helper or the dispatcher raises, and for another work', async () => {
+  const repo = await privateRepo();
+  const c = await computer(repo);
+  try {
+    await c.as(async () => {
+      const F = 1000001;
+      const attempts = [
+        // The helper's card works, with a foreman-range id of the same work.
+        ['by-hand', 'q-by-hand-3', `q-by-hand-${F}`], ['move', 'q-move-2', `q-move-${F}`], ['checks', 'q-checks-1', `q-checks-${F}`], ['merge-queue', 'q-merge-queue-4', `q-merge-queue-${F}`],
+        // A dispatcher or engine card of a real work (counters from 500000 up), and the foreman's own question.
+        ['mine', 'q-mine-500001', `q-mine-${F}`], ['mine', 'q-mine-507500', `q-mine-${F}`], ['mine', `q-mine-${F + 5}`, `q-mine-${F}`],
+        // A root of another work, and a new id that is not the foreman's.
+        ['mine', 'q-other-1', `q-mine-${F}`], ['hand-made', 'q-hand-made-3', 'q-hand-made-999'], ['mine', 'q-mine-1', 'q-mine-2'],
+      ];
+      for (const [work, root, id] of attempts) {
+        const r = await c.client.state.write({ project: PROJECT, kind: 'question', data: ASKED(id, { work, replaces: root }) });
+        assert.equal(r.ok, false, `${root} <- ${id}`);
+        assert.match(r.refused, /replaces only a feature's own question/);
+      }
+      // A feature's own question may be replaced by the foreman's id of the same work.
+      const ok = await c.client.state.write({ project: PROJECT, kind: 'question', data: ASKED(`q-mine-${F}`, { replaces: 'q-mine-1' }) });
+      assert.equal(ok.ok, true, ok.refused);
+    });
+  } finally { await c.close(); await repo.cleanup(); }
+});
+
+test('/state/write counts a question a hook kept to send as holding its id', async () => {
+  const repo = await privateRepo();
+  const c = await computer(repo);
+  try {
+    await c.as(async () => {
+      keep(PROJECT, 'write', { project: PROJECT, kind: 'question', data: ASKED('q-mine-7') }, at(100));
+      const reworded = await c.client.state.write({ project: PROJECT, kind: 'question', data: ASKED('q-mine-7', { what: 'Something else?' }) });
+      assert.equal(reworded.ok, false);
+      assert.match(reworded.refused, /already holds a question with that id/);
+    });
+  } finally { await c.close(); await repo.cleanup(); }
+});

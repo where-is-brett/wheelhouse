@@ -10,7 +10,7 @@ import { canonicalJson } from '../lib/canonical.js';
 import { git } from './git.js';
 import { RELEASE_LABEL, RELEASE_TAG, releaseLine, UPDATE_LABEL, updateLine, keepControlLine, approvalLine, startGoalLine, setLineOf, CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, TAKEOVER_LABEL, takeOverLine, APP_ID, pairLine, unpairLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
 import { carriesFigures, CARRIES_BASELINE } from '../lib/measures-clicks.js';
-import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH } from '../lib/build-loop.js';
+import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH, mayReplace } from '../lib/build-loop.js';
 import { CARD, CARD_KINDS, PUT_OFF } from '../lib/front-desk.js';
 import { SETUP_QUESTION_ID } from '../lib/setup-clicks.js';
 import { SEND_BACK } from '../lib/calm-words.js';
@@ -625,8 +625,7 @@ function checkPlain(kind, data) {
     if (data.about !== undefined && data.about !== 'start') bad('is about something other than a start');
     // A question the foreman records again, changed, takes the place of the earlier one: it names the first id it was recorded under.
     if (data.replaces !== undefined) {
-      const was = typeof data.replaces === 'string' ? questionIdOf(data.replaces) : null;
-      if (!was || was.work !== data.work || data.replaces === data.id) bad('replaces a question of its own work, by that question\'s id');
+      if (typeof data.replaces !== 'string' || !mayReplace(data.id, data.replaces) || data.replaces === data.id) bad('replaces only a feature\'s own question of its own work, with one of the foreman\'s ids');
     }
     if (data.head !== undefined && !(typeof data.head === 'string' && /^[0-9a-f]{40,64}$/.test(data.head))) bad('has a head that is not a commit');
     if (data.saidBefore !== undefined && (!isText(data.saidBefore) || data.level !== 3)) bad('says what was said before only at level 3, in words');

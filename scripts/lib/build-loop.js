@@ -47,6 +47,13 @@ export const FOREMAN_QUESTIONS = 1000000;
 // Why a feature is paused: the director's amendment, or the five-hour window.
 export const PAUSED_FOR = Object.freeze(['director', 'five-hour']);
 
+// The first number of the engine's question ids (scripts/engine/router.js ENGINE_QUESTIONS): a feature's own questions
+// count up from 1 and stay below it.
+export const FEATURE_QUESTIONS_END = 500000;
+// The works whose cards the helper itself raises under counters of its own (scripts/host/local/folder.js, move.js,
+// scripts/checks/runner.js, scripts/engine/dispatcher.js): never a feature's, so never replaced by a question.
+export const SYSTEM_WORKS = Object.freeze(['by-hand', 'move', 'checks', 'merge-queue']);
+
 // A question id `q-<work>-<n>` as `{ work, n, foreman }`, where `foreman` says
 // it is one of the foreman's own; null when it is not one.
 export function questionIdOf(id) {
@@ -54,4 +61,13 @@ export function questionIdOf(id) {
   if (m === null || !SLUG.test(m[1])) return null;
   const n = Number(m[2]);
   return { work: m[1], n, foreman: n >= FOREMAN_QUESTIONS };
+}
+
+// Whether question `id` may take the place of question `root`: the foreman's re-recording of a feature's own question. The
+// root is one of a feature's own (below the engine's numbers, of a work that is a feature and not one of the helper's card
+// works), and the new id is one of the foreman's, of the same work. No card the helper raises is ever replaced.
+export function mayReplace(id, root) {
+  const now = questionIdOf(id);
+  const was = questionIdOf(root);
+  return now !== null && was !== null && now.work === was.work && now.foreman && !was.foreman && was.n < FEATURE_QUESTIONS_END && !SYSTEM_WORKS.includes(was.work);
 }

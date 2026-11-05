@@ -1922,3 +1922,12 @@ test('a question never takes the place of an engine question, a question with an
   const { questions } = buildViews(events, { now: () => new Date('2026-10-18T04:00:00Z') });
   assert.deepEqual(Object.keys(questions).sort(), ['q-mine-1', 'q-mine-1000001']);
 });
+
+test('a replacement that the rules refuse hides nothing, even when it is in the log', () => {
+  const ask = (id, extra = {}) => ({ id, work: 'by-hand', what: 'What?', why: 'Why', options: [{ label: 'Check and add them', says: 'Do it' }], recommendation: 'Check and add them', level: 3, ...extra });
+  const forged = makeEvent({ kind: 'question', data: ask('q-by-hand-1000001'), now: () => new Date('2026-10-18T02:00:00Z') });
+  forged.data.replaces = 'q-by-hand-3';
+  const events = [makeEvent({ kind: 'question', data: ask('q-by-hand-3'), now: () => new Date('2026-10-18T01:00:00Z') }), forged];
+  const { questions } = buildViews(events, { now: () => new Date('2026-10-18T04:00:00Z') });
+  assert.deepEqual(Object.keys(questions).sort(), ['q-by-hand-1000001', 'q-by-hand-3']);
+});
