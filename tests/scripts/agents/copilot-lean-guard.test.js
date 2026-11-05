@@ -19,6 +19,7 @@ import { leanHookFile, leanGuardScript, GUARD_SCRIPT, LEAN_HOOK_COMMAND, PLUTIL_
 import { buildHome } from '../../../scripts/agents/copilot/home.js';
 import { glossaryOf, plainWords } from '../../../scripts/frontdesk/glossary.js';
 import { COULD_NOT_RUN, DEADLINE } from '../../../scripts/agents/copilot/hook-entry.js';
+import * as leanBranch from '../../../adapters/copilot/lean-branch-writes.js';
 
 // Stand-ins for gh, glab, copilot and curl come first on the PATH; the last test asserts none ran.
 const stand = standInTools();
@@ -388,4 +389,53 @@ test('the entry runs the guard from a home with a space and an apostrophe', onMa
 
 test('no real copilot, gh, glab or curl ran', () => {
   assert.deepEqual(stand.calls(), []);
+});
+
+// --- Product files are written only on a feature's own copy ---
+
+// A Lean project of its own whose .git/HEAD says `head`.
+function leanOn(name, head) {
+  const dir = path.join(HOME, 'Projects', name);
+  put(path.join(dir, '.git', 'HEAD'), head);
+  put(path.join(dir, '.wheelhouse', 'record', '.gitkeep'), '');
+  put(path.join(dir, 'src', 'app.js'));
+  return dir;
+}
+
+test('a product file is refused on the main version and on a detached HEAD, and allowed on a feature', onMac, () => {
+  const main = leanOn('on-main', 'ref: refs/heads/main\n');
+  const detached = leanOn('detached', '0123456789abcdef0123456789abcdef01234567\n');
+  const feature = leanOn('on-feature', 'ref: refs/heads/feature/greeting\n');
+  const { LEAN_NO_MAIN_WRITES } = leanBranch;
+  for (const dir of [main, detached]) {
+    refused(runGuard(call('create', { path: path.join(dir, 'src', 'new.test.js') }, dir), { cwd: dir }), 'a new file', LEAN_NO_MAIN_WRITES);
+    refused(runGuard(call('edit', { path: path.join(dir, 'src', 'app.js') }, dir), { cwd: dir }), 'an edit', LEAN_NO_MAIN_WRITES);
+    refused(runGuard(call('apply_patch', patch(`*** Add File: ${path.join(dir, 'README.md')}`, '+x'), dir), { cwd: dir }), 'a patch', LEAN_NO_MAIN_WRITES);
+  }
+  allowed(runGuard(call('create', { path: path.join(feature, 'src', 'new.test.js') }, feature), { cwd: feature }), 'a feature\'s own copy');
+});
+
+test('the Wheelhouse files, git\'s folder and the setup files are written on the main version', onMac, () => {
+  const main = leanOn('on-main-left', 'ref: refs/heads/main\n');
+  for (const file of ['.wheelhouse/feature/brief.md', '.wheelhouse/record/2026-11-06.jsonl', 'wheelhouse/board.md', '.gitignore', '.vscode/settings.json']) {
+    const r = runGuard(call('create', { path: path.join(main, file) }, main), { cwd: main });
+    assert.notEqual(r.status === 2 && /product's own files/.test(r.stdout), true, file);
+  }
+  refused(runGuard(call('create', { path: path.join(main, 'wheelhouse', 'other.md') }, main), { cwd: main }), 'only the Logbook of that folder', leanBranch.LEAN_NO_MAIN_WRITES);
+  const folder = runGuard(call('create', { path: path.join(main, 'wheelhouse') }, main), { cwd: main });
+  assert.notEqual(folder.status === 2 && /product's own files/.test(folder.stdout), true, 'the Logbook\'s folder itself');
+});
+
+test('a linked worktree\'s HEAD is read through its .git file, and a HEAD that cannot be read lets the write through', onMac, () => {
+  const real = path.join(base, 'store', 'wt');
+  put(path.join(real, 'HEAD'), 'ref: refs/heads/main\n');
+  const wt = path.join(HOME, 'Projects', 'linked');
+  put(path.join(wt, '.git'), `gitdir: ${real}\n`);
+  put(path.join(wt, '.wheelhouse', 'record', '.gitkeep'), '');
+  put(path.join(wt, 'a.js'));
+  refused(runGuard(call('edit', { path: path.join(wt, 'a.js') }, wt), { cwd: wt }), 'main, through the .git file', leanBranch.LEAN_NO_MAIN_WRITES);
+  put(path.join(real, 'HEAD'), 'ref: refs/heads/feature/x\n');
+  allowed(runGuard(call('edit', { path: path.join(wt, 'a.js') }, wt), { cwd: wt }), 'a feature, through the .git file');
+  fs.rmSync(path.join(real, 'HEAD'));
+  allowed(runGuard(call('edit', { path: path.join(wt, 'a.js') }, wt), { cwd: wt }), 'no HEAD: fails open');
 });
