@@ -48,6 +48,7 @@ import { makeBundler, readCursor, route, step, writeCursor } from './core.js';
 import { readHandled } from './handled.js';
 import { INTERVALS, LOOKBACK_MS, observe } from './sources.js';
 import { makeRecovery } from './recover.js';
+import { raiseStuckCards } from './stuck-cards.js';
 import { makeWaker, watcherDir, watcherFolder, writeJsonFile, writeWake } from './waker.js';
 import { foremanTools } from '../foreman/tools.js';
 import { readConfig } from '../gate/guardrails.js';
@@ -277,6 +278,12 @@ export async function runWatcher({
           else await wake.wakeFeature(bundle.work, file);
         }
         await wake.pump();
+        // A stuck wake the Bosun closed idle, without asking, still reaches the director.
+        try {
+          await raiseStuckCards({ project, client });
+        } catch (error) {
+          log(`A stuck work's card couldn't be raised: ${error.message}`);
+        }
         const written = { ...next, held: bundler.held() };
         writeCursor(project, written);
         cursor = written;

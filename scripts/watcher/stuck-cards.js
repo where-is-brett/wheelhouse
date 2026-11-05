@@ -1,0 +1,94 @@
+// scripts/watcher/stuck-cards.js
+// A stuck work must never stay silent. The watcher's `stuck` wake tells the Bosun to ask the director, but a Bosun that
+// closes that wake `--idle` without running `act ask` leaves no card. This reads the measures the Bosun's `wake.js
+// done` leaves: for each wake closed idle that carried a `stuck` event, the question is put to the director here, in
+// code, through the helper: it asks nothing when the work already has an open question from the Bosun or has ended.
+import fs from 'node:fs';
+import path from 'node:path';
+import { readCapped } from '../feature/status.js';
+import {
+  readWake, watcherDir, watcherFolder, wakesDir, writeJsonFile,
+} from './waker.js';
+
+const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+const KEPT = 200;
+
+const doneFile = (project) => path.join(watcherDir(project), 'stuck-cards.json');
+
+function readDone(project) {
+  try {
+    const kept = JSON.parse(readCapped(doneFile(project), 64 * 1024) ?? '{}');
+    return Array.isArray(kept?.done) ? kept.done.filter((x) => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+// The wakes the Bosun closed idle, oldest first.
+function idleWakes(project) {
+  let text = null;
+  try {
+    text = readCapped(path.join(watcherDir(project), 'measures.jsonl'), 64 * 1024 * 1024);
+  } catch { /* none */ }
+  const out = [];
+  for (const line of (text ?? '').split('\n')) {
+    try {
+      const m = JSON.parse(line);
+      if (isPlain(m) && m.outcome === 'idle' && typeof m.wake === 'string') out.push(m.wake);
+    } catch { /* a damaged line */ }
+  }
+  return out;
+}
+
+// Asks the helper for the card of each stuck work in a wake closed idle, once. The helper makes the question itself (a
+// question of the Bosun's own range is written by the helper alone) and leaves none when the Bosun has asked already
+// or the work has ended. Gives the ids written.
+export async function raiseStuckCards({ project, client }) {
+  watcherFolder(project);
+  const done = readDone(project);
+  const fresh = idleWakes(project).filter((id) => !done.includes(id));
+  if (fresh.length === 0) return [];
+  const written = [];
+  const handled = [];
+  for (const id of fresh) {
+    const wake = readWake(path.join(wakesDir(project), `${id}.json`));
+    const stuck = (Array.isArray(wake?.events) ? wake.events : []).filter((e) => e?.type === 'stuck' && typeof e.work === 'string');
+    let failed = false;
+    for (const e of stuck) {
+      try {
+        const answer = await client.state.stuckCard({ project, work: e.work });
+        if (answer?.ok !== true) throw new Error('refused');
+        if (typeof answer.id === 'string') written.push(answer.id);
+      } catch {
+        failed = true; // asked again at the next loop
+      }
+    }
+    if (!failed) handled.push(id);
+  }
+  if (handled.length > 0) writeJsonFile(doneFile(project), { done: [...done, ...handled].slice(-KEPT) });
+  return written;
+}
+
+const RECENT_MS = 48 * 60 * 60 * 1000;
+
+// What the watcher itself recorded about `work` being stuck: the newest `stuck` event for it in a wake the watcher wrote
+// in the last two days, as { phase, still }, or null. The helper takes the stuck card's phase and time from here and
+// never from the caller, so a caller can't make a card for a work that isn't stuck or put its words in the card.
+export function recentStuck(project, work, { now = () => new Date() } = {}) {
+  let names = [];
+  try {
+    names = fs.readdirSync(wakesDir(project)).filter((n) => n.endsWith('.json')).sort().reverse();
+  } catch {
+    return null;
+  }
+  for (const name of names) {
+    const wake = readWake(path.join(wakesDir(project), name));
+    const at = Date.parse(wake?.at);
+    if (!Number.isFinite(at) || now().getTime() - at > RECENT_MS || at > now().getTime() + 60000) continue;
+    const e = (Array.isArray(wake.events) ? wake.events : []).find((x) => x?.type === 'stuck' && x.work === work);
+    if (e === undefined) continue;
+    const still = Number(e.detail?.still);
+    return { phase: typeof e.detail?.phase === 'string' ? e.detail.phase : null, still: Number.isFinite(still) ? still : 0 };
+  }
+  return null;
+}
