@@ -316,6 +316,7 @@ The lane only goes up. If a quick change turns out bigger, work stops and the di
 
 - **Visual or behavioural changes** are shown first by default, as the PR's preview deployment link plus screenshots. The change merges only after the director's yes.
 - **The director can waive it** per request ("go ahead, no need to show me"), and the waiver is recorded.
+- Adding or changing anything a person sees or uses (output, a flag, a command, text, a page, behaviour) is visible, however small: a new `--version` flag is shown first. Only a small removal or obvious fix that changes nothing a person relies on, or work no person sees (tests, internals), skips it.
 - **Small removals and obvious fixes** are not shown first; they're reported once in the briefing with a screenshot.
 - **When in doubt, show.**
 - While a preview waits, other work carries on.

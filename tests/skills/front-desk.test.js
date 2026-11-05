@@ -326,7 +326,13 @@ test('a musing ends on the one line as it stands, brainstorming sizes a change, 
   // main design 7.1; ruling F92): no line asks for the lane before brainstorming.
   assert.doesNotMatch(intake, /add the lane you expect/);
   // Scenario 8: small removals and obvious fixes are reported after, not shown first (design 7.3).
-  assert.match(intake, /A small removal or an obvious fix is not shown first: record it with `visible: false` and ask no card; it is reported after\./);
+  assert.match(intake, /A small removal or an obvious fix of something broken is not shown first: record it with `visible: false` and ask no card; it is reported after\./);
+  // Anything that adds to or changes what a person sees or uses (output, a flag or option, a command, text, a page, behaviour) is
+  // visible, however small: it is the small lane with a card. Both skills say so in the same words.
+  assert.match(intake, /Visible means anything that adds to or changes what a person sees or uses: command-line output, a new flag or option, a command, text, a page or a behaviour\. Such work is visible however small, and a new flag that prints something is visible\./);
+  assert.match(intake, /Only a small removal or obvious fix that changes nothing a person relies on, or work no person sees \(tests, internals\), may be `visible: false`\./);
+  assert.match(intake, /When in doubt, `visible: true`\./);
+  assert.match(playbook, /Anything that adds to or changes what a person sees or uses is visible, however small/);
   // Scenario 7: work shown first is never quick, and `record` holds that.
   assert.match(intake, /Work you would show the director first is the small lane: `record` refuses the quick lane with `visible: true`\./);
 });

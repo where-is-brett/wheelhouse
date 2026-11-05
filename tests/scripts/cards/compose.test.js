@@ -754,7 +754,7 @@ test('questionProblem says why a question from the build could not be its answer
   assert.equal(tab, 'Recommended: Tabs between values; safe for text with commas, because the session building Export a report recommends it.');
   // The card for changes made by hand gives its reason plainly, and names no session.
   const hand = composeCard(answerInput({ ...question, id: 'q-by-hand-1', work: 'by-hand', recommendation: 'Tab' }, 'by-hand')).card;
-  assert.equal(hand.descriptions[hand.options.indexOf('Tab')], 'Recommended: Tabs between values; safe for text with commas, because it is how your edits reach the main version, after a review and checks, and your folder keeps them either way.');
+  assert.equal(hand.descriptions[hand.options.indexOf('Tab')], 'Recommended: Tabs between values; safe for text with commas, because they get a review and checks before they join the main version, and your folder keeps your edits either way.');
   assert.ok(lines(card.question).includes(MEANWHILE));
   assert.ok(lines(composeCard(answerInput({ ...question, level: 4 }, 'x')).card.question).includes(CHECKS_UNSAID));
   assert.equal(CHECKS_UNSAID, "The build didn't say. Ask me why and I'll find out before you answer.");

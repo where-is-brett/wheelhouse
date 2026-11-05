@@ -49,7 +49,7 @@ import { SAVE_PROMPT, chooseFolder, safekeepingAct } from '../safekeeping/action
 import { LEADS } from '../lib/mod-numbers.js';
 import { readReadings, readStatus, safekeepingTick } from '../safekeeping/readings.js';
 import { gitRoute, homeDir, homeGit, homeReadable, isBranchName, projectFolder } from './local/home.js';
-import { HAND_MADE_BRANCH, carriesFolderWork, cleanMerged, dropNextMain, finishMerge, keepSeenMain, mergeChange, revertOnHome, seenMain } from './local/merge.js';
+import { HAND_MADE_BRANCH, carriesFolderWork, cleanMerged, dropNextMain, finishMerge, heldByMain, keepSeenMain, mergeChange, revertOnHome, seenMain } from './local/merge.js';
 import { headReading, localSweep, needsApprovalOf } from './local/queue.js';
 import { protectionStatus } from './protection.js';
 import { cutAccess, INSTALLATIONS_PAGE } from './cut-access.js';
@@ -5588,9 +5588,9 @@ export async function startHelper({
     const git = gitRoute({ run });
     const changes = localChanges({ project, git, write: ({ event }) => checkWrite(project, event), now });
     const adapter = await (await contextFor(project)).adapter();
-    const main = await adapter.branchHead(await defaultBranchOf(project, adapter));
+    const main = await defaultBranchOf(project, adapter);
     for (const change of changes.openChanges().filter((c) => HAND_MADE_BRANCH.test(c.branch))) {
-      if (await homeGit(project, git).ok(['merge-base', '--is-ancestor', change.head, main])) await changes.closeChange(change.n);
+      if (await heldByMain({ project, head: change.head, base: main, git })) await changes.closeChange(change.n);
     }
     if (typeof engine.complete !== 'function') return;
     const file = path.join(stateDir(project), '..', 'engine', 'tidied.json');
@@ -5907,11 +5907,11 @@ export async function startHelper({
           const adapter = await adapterNow();
           const mine = (await adapter.openRequests()).filter((q) => HAND_MADE_BRANCH.test(q.branch));
           if (mine.length === 0) return false;
-          const home = homeGit(project, gitRoute({ run }));
           const main = await defaultBranchOf(project, adapter);
+          // Held by the main version by its commits or by its content: a lane that carried the edit on may have squashed it.
           for (const r of mine) {
-            const within = typeof r.head === 'string' && isBranchName(main) ? await home.call(['merge-base', '--is-ancestor', r.head, `refs/heads/${main}`]) : { code: 1 };
-            if (within.code !== 0) return true;
+            const held = isBranchName(main) && await heldByMain({ project, head: r.head, base: main, git: gitRoute({ run }) }).catch(() => false);
+            if (!held) return true;
           }
           return false;
         },

@@ -7,7 +7,7 @@ import path from 'node:path';
 import { localChanges } from '../../../../scripts/host/local/changes.js';
 import { bringFolderUp, compareFolder, addFolderRemote, FOLDER_REMOTE } from '../../../../scripts/host/local/folder.js';
 import { homeDir, makeHome } from '../../../../scripts/host/local/home.js';
-import { carriesFolderWork, cleanMerged, dropNextMain, finishMerge, keepSeenMain, mergeChange, nextMain, revertOnHome, seenMain } from '../../../../scripts/host/local/merge.js';
+import { carriesFolderWork, cleanMerged, heldByMain, dropNextMain, finishMerge, keepSeenMain, mergeChange, nextMain, revertOnHome, seenMain } from '../../../../scripts/host/local/merge.js';
 import { commitIn, git, projectFolderWith, withKeyedHome } from '../../../helpers/local-home.js';
 import { tempFolder } from '../../../helpers/homes.js';
 
@@ -159,6 +159,25 @@ test('a lane carrying the folder\'s work on keeps its history, and an ordinary o
   assert.equal(await carriesFolderWork({ project: P, folder, branch: 'main', change: carried }), true);
   assert.equal(await git(folder, ['for-each-ref', `refs/remotes/${FOLDER_REMOTE}/pull`]), '', 'nothing left behind');
   void home; void changes;
+}));
+
+test('the main version holds a by-hand change whether it took its commits or only its content', () => world(async ({ home, change }) => {
+  // A hand-made change merged as itself: its head is within the main version.
+  const own = await change('feature/by-hand-aaaaaaaaaaaa', 'one.txt');
+  assert.equal(await heldByMain({ project: P, head: own.head, base: 'main' }), false, 'not merged yet');
+  await mergeChange({ project: P, n: own.n, head: own.head, keepHistory: true });
+  assert.equal(await heldByMain({ project: P, head: own.head, base: 'main' }), true);
+  // The same edit carried on by a lane that squashed: the main version holds what it says, but not its commits.
+  const hand = await change('feature/by-hand-bbbbbbbbbbbb', 'two.txt');
+  const lane = await change('wh/lane', 'two.txt', { title: 'Two' });
+  assert.equal(await heldByMain({ project: P, head: hand.head, base: 'main' }), false, 'not merged yet');
+  await finishMerge({ project: P });
+  dropNextMain(P);
+  const squashed = await mergeChange({ project: P, n: lane.n, head: lane.head });
+  assert.equal(squashed.merged, true, squashed.reason);
+  const within = await git(home, ['merge-base', '--is-ancestor', hand.head, 'refs/heads/main']).then(() => true, () => false);
+  assert.equal(within, false, 'its commits are not in the main version');
+  assert.equal(await heldByMain({ project: P, head: hand.head, base: 'main' }), true);
 }));
 
 test('a fast-forward\'s head pass leaves the main line unchecked', async () => {
