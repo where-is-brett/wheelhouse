@@ -1950,15 +1950,23 @@ test('close works out the outcome, and refuses a report that is missing or incom
   assert.equal(hostSaysMerged.writes.length, 0);
 
   const n = fake.writes.length;
-  const none = await act(['close', 'none'], { client: fake.client });
-  refusedInOneLine(none);
-  assert.match(none.err, /report\.md is not there/);
-  const short = await act(['close', 'short'], { client: fake.client });
-  refusedInOneLine(short);
-  assert.match(short.err, /lacks the fields: tests, assumptions, concerns, rulings/);
-  const unruled = await act(['close', 'unruled'], { client: fake.client });
-  refusedInOneLine(unruled);
-  assert.match(unruled.err, /A ruling is missing from the report's rulings: Ruling: kept/);
+  // A gap in the report goes back to the feature's session; nothing is refused to the Bosun, so no card is asked.
+  const woken = [];
+  const wakerFor = () => ({ wakeFeature: async (work, file) => { woken.push({ work, wake: JSON.parse(fs.readFileSync(file, 'utf8')) }); } });
+  const none = await act(['close', 'none'], { client: fake.client, wakerFor });
+  assert.equal(none.code, 0, none.err);
+  assert.match(none.out, /report\.md is not there.*Sent back to its session.*Do not ask the director/);
+  const short = await act(['close', 'short'], { client: fake.client, wakerFor });
+  assert.equal(short.code, 0, short.err);
+  assert.match(short.out, /lacks the fields: tests, assumptions, concerns, rulings/);
+  const unruled = await act(['close', 'unruled'], { client: fake.client, wakerFor });
+  assert.equal(unruled.code, 0, unruled.err);
+  assert.match(unruled.out, /A ruling is missing from the report's rulings: Ruling: kept/);
+  assert.deepEqual(woken.map((w) => w.work), ['none', 'short', 'unruled']);
+  assert.match(woken[2].wake.events[0].detail.next, /Ruling: kept.*Add it.*Nothing is asked of the director/);
+  // With no way to wake the session, the gap is still reported and not turned into a card.
+  const unwoken = await act(['close', 'none'], { client: fake.client, wakerFor: () => ({ wakeFeature: async () => { throw new Error('no session'); } }) });
+  refusedInOneLine(unwoken);
   assert.equal(fake.writes.length, n);
 }));
 

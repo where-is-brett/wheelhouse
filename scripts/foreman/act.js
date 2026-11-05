@@ -165,7 +165,7 @@ import { readEnrolled, verify } from '../state/signing.js';
 import { recordHandled } from '../watcher/handled.js';
 import { recordedBriefs } from '../watcher/sources.js';
 import { writeBaseline } from '../watcher/control-files.js';
-import { makeWaker, sessionFile } from '../watcher/waker.js';
+import { makeWaker, sessionFile, writeWake } from '../watcher/waker.js';
 import { guardedCardInput, guardedCommand, readSelfTest } from '../windows/low.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
@@ -1398,7 +1398,12 @@ async function close(ctx, work, rest) {
   } catch (error) {
     refuse(oneLine(error.message, 200));
   }
-  if (missing.length > 0) refuse(`${work}'s report isn't whole: ${missing.join(' ')}`);
+  if (missing.length > 0) {
+    // A gap in the report is the feature session's to fill, never a card to the director: it goes back to the session.
+    if (!safeFeatureFolder(worktree)) refuse(`${work}'s report isn't whole: ${missing.join(' ')}`);
+    await reportBack(ctx, work, missing);
+    return;
+  }
   const parsed = parseReport(readCapped(featurePaths(worktree).report, REPORT_BYTES));
   const summary = parsed.body.trim();
   if (summary === '') refuse(`${work}'s report has no text after its fields`);
@@ -1434,6 +1439,23 @@ async function close(ctx, work, rest) {
   if (status === 'partial' || status === 'blocked') ctx.say(queueAgainLine(work, status, laneOf(views, work)));
   // Its slot, and any work that depended on it, may be free now; this close's own records wake no one (R64).
   ctx.say('A slot or a dependency may be free: run wake read again.');
+}
+
+// Wakes the feature's own session with what its report lacks, in words of this program's own (the gaps come from the
+// report check, never from a caller), so it adds them and runs `report` again; the watcher then wakes the Bosun to close.
+async function reportBack(ctx, work, missing) {
+  const gap = oneLine(missing.join(' '), 600);
+  const id = `report-gap:${work}:${ctx.now().getTime()}`;
+  const event = {
+    type: 'build', work, id, detail: { next: `Your report leaves something out: ${gap} Add it, run the report check again, and the Bosun then closes the work. Nothing is asked of the director.` },
+  };
+  const file = writeWake(ctx.project, { to: 'feature', work, events: [event], digest: [], dropped: 0 }, { now: ctx.now });
+  try {
+    await ctx.waker(await ctx.config()).wakeFeature(work, file);
+  } catch (error) {
+    refuse(`${work}'s report isn't whole (${gap}) and its session wasn't woken: ${oneLine(error instanceof Error ? error.message : 'unknown error', 200)}`);
+  }
+  ctx.say(`${work}'s report isn't whole: ${gap} Sent back to its session to add it; the Bosun closes the work once it has. Do not ask the director: nothing to do now.`);
 }
 
 // The lanes, smallest first: work queued again only ever goes up (design section 4).

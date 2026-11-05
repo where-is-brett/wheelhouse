@@ -177,7 +177,7 @@ export function inWorktreesFolder(checkout, worktree) {
 // read with a cap, and refused when it is not a regular file, without
 // waiting on it.
 function readFeature(work, worktree, checkout) {
-  const nothing = { status: null, questions: [], extraPlans: [], skipped: 0, briefHash: null, appetite: null, report: false, gone: false };
+  const nothing = { status: null, questions: [], extraPlans: [], skipped: 0, briefHash: null, appetite: null, report: false, reportHash: null, gone: false };
   if (!plainWorktreePath(worktree) || !isText(checkout)) return nothing;
   const stat = lstatOf(worktree);
   if (stat instanceof Error) {
@@ -197,10 +197,12 @@ function readFeature(work, worktree, checkout) {
     } catch { /* a brief that can't be read has no appetite */ }
   }
   let report = false;
+  let reportHash = null;
   const reportText = readCapped(p.report, REPORT_BYTES);
   if (reportText !== null) {
     try {
       report = parseReport(reportText).fields.work === work;
+      if (report) reportHash = briefHash(reportText);
     } catch { /* a report that can't be read is no report */ }
   }
   return {
@@ -211,6 +213,7 @@ function readFeature(work, worktree, checkout) {
     briefHash: brief === null ? null : briefHash(brief),
     appetite,
     report,
+    reportHash,
     gone: false,
   };
 }

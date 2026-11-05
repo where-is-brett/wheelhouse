@@ -154,12 +154,12 @@ test('observe reads state, feature files and PRs into one observation', () => wi
     recordedBrief: briefHash(brief),
     recordedBefore: briefHash(oldBrief),
     appetite: 400000,
-    report: false,
+    report: false, reportHash: null,
     gone: false,
   });
   assert.deepEqual(first.features['search-box'], {
     status: null, questions: [], extraPlans: [], skipped: 0, briefHash: briefHash(briefText('search-box')),
-    recordedBrief: null, recordedBefore: null, appetite: 400000, report: false, gone: false,
+    recordedBrief: null, recordedBefore: null, appetite: 400000, report: false, reportHash: null, gone: false,
   });
   assert.deepEqual(first.prs, { 7: { work: 'login-page', head: HEAD, branch: 'login-page', ci: 'failure', mergeable: 'yes', review: 'clean' } });
   assert.deepEqual(first.testMerges, [{ a: 'login-page', b: 'search-box', clean: false, conflicts: ['app.js'] }]);
@@ -233,7 +233,7 @@ test('a feature whose worktree is gone is reported, not thrown', () => withHome(
   const obs = await observe({ project: P, client: fakeClient(), now: at(SEC) });
   assert.deepEqual(obs.features['gone-one'], {
     status: null, questions: [], extraPlans: [], skipped: 0, briefHash: null,
-    recordedBrief: 'b'.repeat(64), recordedBefore: null, appetite: null, report: false, gone: true,
+    recordedBrief: 'b'.repeat(64), recordedBefore: null, appetite: null, report: false, reportHash: null, gone: true,
   });
   // A relative path is refused: nothing is read through it, and it is not gone either.
   assert.equal(obs.features.relative.gone, false);
@@ -313,7 +313,7 @@ test('a FIFO at any feature path is refused, not waited on', { skip: !unix }, ()
   const obs = await observe({ project: P, client: fakeClient(), now: at(SEC) });
   assert.deepEqual(obs.features.fifo, {
     status: null, questions: [], extraPlans: [], skipped: 0, briefHash: null,
-    recordedBrief: null, recordedBefore: null, appetite: null, report: false, gone: false,
+    recordedBrief: null, recordedBefore: null, appetite: null, report: false, reportHash: null, gone: false,
   });
 }));
 

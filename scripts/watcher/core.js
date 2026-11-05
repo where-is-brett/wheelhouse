@@ -17,6 +17,7 @@
 //       recordedBefore: string | null, the hash it recorded before that one
 //       appetite: number | null,      the brief's token appetite
 //       report: boolean,
+//       reportHash: string | null,    the report's hash as it is now, so a rewritten report wakes the foreman again
 //       gone: boolean,                the feature's worktree is missing
 //     }>,
 //     prs: Record<pr, { work, head, branch?, ci, mergeable, review } | null>,   null: closed, forget it;
@@ -350,7 +351,9 @@ function featureEvents(prev, next, settled, out) {
 
     // A feature's end, merged, blocked or closed with its report (ruling R94):
     // the phase is done now and was not when last seen. The foreman closes it.
-    if (status?.phase === 'done' && ps?.phase !== 'done') {
+    // Also when the report is rewritten while the feature stays done: a report the close refused is sent back to its session.
+    const rewritten = pf !== null && text(pf.reportHash) !== null && text(f.reportHash) !== null && pf.reportHash !== f.reportHash;
+    if (status?.phase === 'done' && (ps?.phase !== 'done' || rewritten)) {
       out.push({ type: 'report', work, id: `report:${work}:${anchor}`, detail: { phase: status.phase } });
     }
 

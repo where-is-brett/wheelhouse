@@ -71,7 +71,7 @@ import path from 'node:path';
 import { clashCheck, fileMapOf, nextWork, since } from './queue.js';
 import { onNewEngine } from '../engine/lanes.js';
 import { PLUGIN_ROOT, foremanCommands } from './tools.js';
-import { briefHash, featurePaths } from '../feature/files.js';
+import { briefHash, featurePaths, readStatus } from '../feature/files.js';
 import {
   loadFeature, readCapped, readPlan, readPrRecord, safeFeatureFolder,
 } from '../feature/status.js';
@@ -354,10 +354,21 @@ export function openPrWait(worktree) {
   return kept !== null && !kept.merged ? `its pull request #${kept.pr} is still open; the next plan is checked once it merges` : null;
 }
 
+// Whether the feature's work is over: its last pull request merged and its status reads done. Its files are no longer
+// being changed, though it stays open until the Bosun closes it, so it holds no clash meanwhile.
+function mergedAndDone(f) {
+  try {
+    if (typeof f.worktree !== 'string' || readPrRecord(f.worktree)?.merged !== true) return false;
+    return readStatus(featurePaths(f.worktree).status)?.phase === 'done';
+  } catch {
+    return false;
+  }
+}
+
 // The features whose recorded files are being changed, other than `work`'s.
 export function runningFiles(views, work) {
   return Object.entries(views.features)
-    .filter(([w, f]) => w !== work && CHANGING.includes(f?.data?.step) && Array.isArray(f.data.files))
+    .filter(([w, f]) => w !== work && CHANGING.includes(f?.data?.step) && Array.isArray(f.data.files) && !mergedAndDone(f.data))
     .map(([w, f]) => ({ work: w, files: f.data.files.filter((x) => typeof x === 'string') }));
 }
 
@@ -499,7 +510,7 @@ function eventLine(e, ctx) {
       `the director clicked to push ${d.branch} at ${short(d.sha)}, which changes a CI file, for pull request #${d.pr}`,
       'When it is ready to merge, the queue below lists it',
     );
-    case 'report': return said('it has ended, and its report is written', `Next: act close ${work}`);
+    case 'report': return said('it has ended, and its report is written', `Next: act close ${work}. If it says the report leaves something out, that went back to the feature session: never ask the director about it`);
     case 'stuck': {
       const still = `no progress for ${Math.round((Number(d.still) || 0) / 60000)} minutes, at phase ${d.phase ?? 'unknown'}`;
       const held = heldLine(work, ctx);
