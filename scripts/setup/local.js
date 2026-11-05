@@ -146,7 +146,7 @@ export function keptAsk(name, others) {
 
 // The one card about backups (spec 8.1), and the only one ever: with Time Machine on, it names it and offers a second copy off
 // the computer. `refused` says why the folder typed before doesn't count. The plan carries the warning, whichever is chosen.
-export function backupAsk(name, { id = 'backup', machine = false, refused = null } = {}) {
+export function backupAsk(name, { id = 'backup', machine = false, refused = null, desktop = true } = {}) {
   const what = machine ? `Time Machine backs ${name} up. Do you want a second copy off the computer too?` : `${ONLY_HERE_LINE} Do you want a backup of ${name} elsewhere?`;
   return {
     id,
@@ -157,7 +157,7 @@ export function backupAsk(name, { id = 'backup', machine = false, refused = null
       what: `${refused === null ? '' : `${refused}. `}${what} To name a folder yourself, type its full path.`,
       why: 'A backup in a folder off this disk is what brings the project back. It holds the project and its history, not your cards and clicks, which stay on this computer.',
       options: [
-        { label: CHOOSE_BACKUP, says: 'You pick an external drive, or a folder a cloud service keeps. A backup goes there after each merge.' },
+        { label: CHOOSE_BACKUP, says: desktop ? 'You pick an external drive, or a folder a cloud service keeps, in a window that opens on this computer. A backup goes there after each merge.' : 'Type the full path of an external drive, or a folder a cloud service keeps, under Other. A backup goes there after each merge.' },
         { label: NO_BACKUP, says: 'Building goes on, and you won\'t be asked again. The Safekeeping row in the pane shows how it stands.' },
       ],
       recommend: CHOOSE_BACKUP,
@@ -169,14 +169,20 @@ export function backupAsk(name, { id = 'backup', machine = false, refused = null
 
 // What the backup card's answers say: { ask } while it is open, or { folder }, a folder typed, null to pick one in the system's
 // window, or undefined for none. A typed folder that doesn't count asks again, saying why.
-export function backupChoice({ answer, name, root, machine }) {
+export function backupChoice({ answer, name, root, machine, desktop = true }) {
   let refused = null;
   for (let n = 0; ; n += 1) {
     const id = n === 0 ? 'backup' : `backup-${n}`;
     const got = answer(id);
-    if (got === null) return { ask: backupAsk(name, { id, machine, refused }) };
+    if (got === null) return { ask: backupAsk(name, { id, machine, refused, desktop }) };
     if (got.label === NO_BACKUP) return {};
-    if (typeof got.text !== 'string' || got.text.trim() === '') return { folder: null };
+    if (typeof got.text !== 'string' || got.text.trim() === '') {
+      // No window is opened in a terminal session: the card asks again for a typed path, or No backup. An answer taken from the
+      // one card's Go ahead (or its dry run, which has no time) is no click on this card to ask again for: the folder is left for later.
+      if (desktop || got.at === null || got.consent === true) return { folder: null };
+      refused = 'A terminal session has no window to pick a folder in. Type the folder\'s full path, or choose to go without';
+      continue;
+    }
     const folder = got.text.trim();
     const place = backupPlace({ folder, root });
     if (place.ok) return { folder };
@@ -315,10 +321,15 @@ export async function applyLocal({ ctx, changes, run, gitPath, say, halt, pick =
   await addFolderRemote({ folder, mirror: remote.after, git: route });
   const backup = changes.find((c) => c.action === 'backup-folder');
   if (backup !== undefined) {
-    // Choosing never holds setup up: a folder that isn't chosen here is offered again on the pane's Safekeeping row.
-    const place = backup.folder ?? await pick({ run });
-    const chosen = place === null ? { ok: false, why: 'No backup folder was chosen' } : chooseBackupFolder({ project, folder: place });
-    if (!chosen.ok) say(`${chosen.why}. The Safekeeping row in the pane offers it again.`);
+    // Choosing never holds setup up. The system's window opens only for a click on "Choose a backup folder" in the Desktop app,
+    // says so first, and closes by itself; a folder that isn't chosen here is left for later, on the pane's Safekeeping row.
+    let place = backup.folder;
+    if (place === null && ctx.desktop === true) {
+      say('A window for the backup folder is open on this computer. If you leave it, it closes by itself in two minutes and setup carries on.');
+      place = await pick({ run });
+    }
+    const chosen = place === null ? { ok: false, why: 'No backup folder was chosen, so there is no backup yet' } : chooseBackupFolder({ project, folder: place });
+    if (!chosen.ok) say(`${chosen.why}. You can choose one later, from the Safekeeping row in the pane.`);
   }
   say(KEPT_LINE);
   return [];

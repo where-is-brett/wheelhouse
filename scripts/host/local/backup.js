@@ -21,7 +21,8 @@ const EARLIER_END = '.earlier';
 const PART_END = '.part';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TOOL_WAIT_MS = 10 * 1000;
-const PICK_WAIT_MS = 10 * 60 * 1000;
+// How long the system's folder window may stay open before it is closed and the choice is left for later.
+export const PICK_WAIT_MS = 2 * 60 * 1000;
 // Wheelhouse's own lines of work, never the project's history.
 const OWN_LINE = /^refs\/heads\/wheelhouse[-/]/;
 // Folders a cloud service keeps. They sit on this computer's disk, and the service sends what lands there off it (spec 8.1).
@@ -196,15 +197,17 @@ export async function timeMachine({ run = realRun, platform = process.platform }
 const PICK_WORDS = 'Choose a folder for this project\'s backup: an external drive, or a folder a cloud service keeps.';
 const WINDOWS_PICK = `Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description = '${PICK_WORDS.replace(/'/g, '\'\'')}'; if ($d.ShowDialog() -eq 'OK') { [Console]::Out.Write($d.SelectedPath) }`;
 
-// The system's own window for picking a folder: its path, or null when it is closed or this system has none.
-export async function pickFolder({ run = realRun, platform = process.platform } = {}) {
+// The system's own window for picking a folder: its path, or null when it is closed, left open past `waitMs` (the window is
+// then shut) or this system has none.
+export async function pickFolder({ run = realRun, platform = process.platform, waitMs = PICK_WAIT_MS } = {}) {
   const asked = {
     darwin: ['osascript', ['-e', `POSIX path of (choose folder with prompt "${PICK_WORDS}")`]],
     win32: ['powershell.exe', ['-NoProfile', '-STA', '-Command', WINDOWS_PICK]],
   }[platform];
   if (asked === undefined) return null;
   try {
-    const got = await run(asked[0], asked[1], { timeoutMs: PICK_WAIT_MS });
+    const got = await run(asked[0], asked[1], { timeoutMs: waitMs });
+    if (got.timedOut === true) return null;
     const folder = String(got.stdout ?? '').trim().replace(/(?<=.)[/\\]$/, '');
     return got.code === 0 && folder !== '' ? folder : null;
   } catch {

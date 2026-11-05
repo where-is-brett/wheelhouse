@@ -9,7 +9,7 @@ import { git, commitIn, projectFolderWith, withKeyedHome } from '../../../helper
 import { tempFolder } from '../../../helpers/homes.js';
 import { gitRoute, homeDir, makeHome } from '../../../../scripts/host/local/home.js';
 import {
-  backUp, backupDue, backupFile, backupPlace, backupRecord, chooseBackupFolder, earlierFile, pickFolder, readBackup, timeMachine, writeBackup,
+  backUp, backupDue, backupFile, backupPlace, backupRecord, chooseBackupFolder, earlierFile, PICK_WAIT_MS, pickFolder, readBackup, timeMachine, writeBackup,
 } from '../../../../scripts/host/local/backup.js';
 import { writeProject } from '../../../../scripts/lib/projects.js';
 import { run as realRun } from '../../../../scripts/lib/run.js';
@@ -239,6 +239,14 @@ test('a folder is picked by the system\'s own window, and a closed window picks 
   assert.equal(picked, '/Volumes/Spare/Backups');
   assert.equal(await pickFolder({ platform: 'darwin', run: async () => ({ code: 1, stdout: '', stderr: 'User canceled' }) }), null);
   assert.equal(await pickFolder({ platform: 'linux', run: async () => { throw new Error('not asked'); } }), null);
+});
+
+test('a window left open past its time is shut and picks none', async () => {
+  let given = null;
+  const got = await pickFolder({ platform: 'darwin', waitMs: 5000, run: async (file, args, options) => { given = options; return { code: null, stdout: '/Volumes/Spare\n', timedOut: true }; } });
+  assert.equal(got, null);
+  assert.equal(given.timeoutMs, 5000);
+  assert.ok(PICK_WAIT_MS <= 2 * 60 * 1000);
 });
 
 test('a lock a killed try left behind doesn\'t stop the next backup', async () => {

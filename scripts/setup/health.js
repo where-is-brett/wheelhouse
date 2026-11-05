@@ -257,14 +257,14 @@ const passes = (check, result, host) => (check.okOn?.[host] ?? check.ok ?? [chec
 // to be run again by a fresh card (ruling R67), which runs the session's trials again too.
 const needsNewSession = (check, result, host) => !passes(check, result, host) && check.newSession === true && result !== 'could not run';
 
-function checkLine(check, result, { session = false, host } = {}) {
+function checkLine(check, result, { session = false, host, desktop = false } = {}) {
   const by = session ? ' (reported by the session)' : '';
   if (passes(check, result, host)) return `Passed: ${check.passed}.${by}`;
   if (needsNewSession(check, result, host)) {
     return `Not yet: the sandbox's limit on ${check.what} starts only in a new session, so this check passes there, as setup expects. ${NEW_SESSION}.${by}`;
   }
   if (result === 'could not run') {
-    return `Failed: setup couldn't try ${check.what}. ${RERUN}; if it can't again, check this computer is online and Claude Desktop is open.${by}`;
+    return `Failed: setup couldn't try ${check.what}. ${RERUN}; if it can't again, check this computer is online${desktop ? ' and Claude Desktop is open' : ''}.${by}`;
   }
   const [failed, todo] = check.results?.[result] ?? [check.failed, check.todo];
   return `${check.watch ? 'Watch' : 'Failed'}: ${failed} (${check.expected} was expected, ${result} came back). ${todo}.${by}`;
@@ -670,10 +670,10 @@ function runIn(folder) {
 // healthCheck({ folder, reported }) -> { green, lines, board, trials, project }: step 10's checks in
 // the helper, the session's trial lines (`reported`, as trials.js printed them), and the board's
 // health lines, each said plainly, a failed one with what to do. `trials` names the pull request and
-// project the session's trials take, or is null before step 10 has opened one. `run` (the folder's
+// project the session's trials take, or is null before step 10 has opened one. `desktop` says the session is in the Desktop app, the only place a line may tell the director to check it is open. `run` (the folder's
 // run), `load` (loadBoardInputs), `client` (the helper's, for the board) and `now` are for the
 // engine and tests.
-export async function healthCheck({ folder, reported = [], run, load = loadBoardInputs, client, now = () => new Date() } = {}) {
+export async function healthCheck({ folder, reported = [], run, load = loadBoardInputs, client, now = () => new Date(), desktop = false } = {}) {
   const here = run ?? runIn(folder);
   const lines = [];
   let green = true;
@@ -717,7 +717,7 @@ export async function healthCheck({ folder, reported = [], run, load = loadBoard
     const result = tried.get(name);
     count(passes(check, result));
     if (!passes(check, result)) green = false;
-    lines.push(checkLine(check, result));
+    lines.push(checkLine(check, result, { desktop }));
   }
   // The trial pull request: still open for the session's trials, or how its clean-up went.
   if (Number.isInteger(record?.pr)) {
@@ -748,7 +748,7 @@ export async function healthCheck({ folder, reported = [], run, load = loadBoard
     count(passes(check, result, host));
     if (needsNewSession(check, result, host)) waiting += 1;
     if (!passes(check, result, host)) green = false;
-    lines.push(checkLine(check, result, { session: true, host }));
+    lines.push(checkLine(check, result, { session: true, host, desktop }));
   }
   if (unreadable > 0) lines.push(`Left out: ${unreadable} ${unreadable === 1 ? 'line' : 'lines'} the session handed in that ${unreadable === 1 ? 'isn\'t a trial\'s' : 'aren\'t trials\''}.`);
   // The board's health lines, and the board itself.

@@ -502,6 +502,20 @@ test('a green run gives a green board', async () => {
   });
 });
 
+test('the hint to check Claude Desktop is open shows only for a session in the Desktop app', async () => {
+  await withProject(async ({ folder }) => {
+    const run = await cleaned(folder, runWith(folder, { checks: GREEN_CHECKS }));
+    const reported = GREEN_LINES.map((l) => (l.startsWith('helper health') ? 'helper health: reached / could not run' : l));
+    const cli = await healthCheck({ folder, run, reported, load: OK_BOARD });
+    const couldNot = cli.lines.find((l) => /^Failed: setup couldn't try reaching the helper\./.test(l));
+    assert.ok(couldNot, cli.lines.join('\n'));
+    assert.doesNotMatch(couldNot, /Desktop/);
+    assert.match(couldNot, /check this computer is online\./);
+    const app = await healthCheck({ folder, run, reported, load: OK_BOARD, desktop: true });
+    assert.match(app.lines.find((l) => /^Failed: setup couldn't try reaching the helper\./.test(l)), /online and Claude Desktop is open\./);
+  });
+});
+
 test('a failed trial is named with what to do, and what to do can be done', async () => {
   await withProject(async ({ folder }) => {
     const checks = GREEN_CHECKS.map((c) => (c.name === 'write under stop' ? { ...c, result: 'allowed', ok: false } : c));

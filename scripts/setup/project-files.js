@@ -79,8 +79,8 @@
 // the host holds commits the folder hasn't got. When one of the three files holds the director's
 // own changes not yet committed (the .gitignore too: see its part above), it asks (ruling R95):
 // "Put your changes to <file> in setup's commit" or "Leave them; I'll come back", under an id carrying a hash of the file's text, so a
-// file changed since asks again (R51); recommended Put them in for a new product (step 3 made its
-// repository), Leave them for an existing one. Put them in lists them on the commit, so the card
+// file changed since asks again (R51); recommended Put them in, since leaving them
+// makes the step wait. Put them in lists them on the commit, so the card
 // says so and the list's hash covers them; Leave them makes the step wait, saying why. What step
 // 1's project-scope install left in the project's settings (the plugin switched on, check 37) is
 // not the director's, and goes up in setup's commit with no question. A setup commit
@@ -459,8 +459,8 @@ export function yoursAsk({ rel, text, isNew }) {
         { label: put, says: deleted ? 'The commit puts back a .gitignore holding only the .env lines, on your Go ahead.' : 'They go up with setup\'s own changes in its one commit, on your Go ahead.' },
         { label: LEAVE_YOURS, says: 'Setup waits at this step until you have committed them or put them aside.' },
       ],
-      recommend: isNew ? put : LEAVE_YOURS,
-      because: isNew ? 'every file of a new product is new, so its first commit is the natural home for them' : 'they may be work in progress, which is yours to commit when it is ready',
+      recommend: put,
+      because: isNew ? 'every file of a new product is new, so its first commit is the natural home for them' : 'it lets setup finish now; leaving them makes setup wait until you have committed them',
       meanwhile: 'Setup waits at this step; nothing changes.',
     },
   };

@@ -177,7 +177,7 @@ test('step 10 names its wait, forbids a loop of the session\'s own, speaks plain
   assert.match(ten, /Never write a wait loop of your own, in Bash or otherwise\./);
   assert.match(ten, /When it has run long \(three calls\), tell the director in one line/);
   assert.match(ten, /never "trials", "sandbox" or "session" to the director/);
-  assert.match(ten, /\*\*One new session\.\*\*[^\n]*start a new session on this folder, then say "carry on with setup"[^\n]*not a failure/);
+  assert.match(ten, /\*\*One new session\.\*\*[^\n]*setup needs one new session on this folder, that it carries on by itself there, and that their request is kept[^\n]*not a failure/);
   assert.match(ten, /A `Not yet` line saying a new session is needed is not a failure/);
 });
 
@@ -302,4 +302,23 @@ test('the playbook says how step 3 reaches the host: as-is first, the key card, 
   assert.match(section, /replaces that one entry/);
   assert.match(section, /never use the words "REST" or "curl" to the director/);
   assert.match(section, /one-off Administration key/);
+});
+
+// Every question to the director is a card from the command: the playbook never has the session put one in its own words, and
+// the lines the command and the session start give hold no question where a card exists.
+test('setup puts no question to the director in prose where a card exists', async () => {
+  assert.match(playbook, /\*\*Every question to the director is a card from the command\.\*\*/);
+  assert.match(playbook, /Never put a question to them in your own words/);
+  assert.match(playbook, /\*\*All stop is theirs to switch on\.\*\*/);
+  // No instruction to "offer" to do something, which reads out as "Do you want me to...?"; a card, or a statement, replaces it.
+  assert.doesNotMatch(playbook, /\boffer to (?:carry on|set|run|re-?run|turn)/i);
+  assert.doesNotMatch(playbook, /\boffer(?:s)? (?:them )?to (?:run|try|turn|re-?run)/i);
+  assert.match(playbook, /never ask in your own words whether to run step 10 again/i);
+  const { HELPER_CHECKS, SESSION_CHECKS } = await import('../../scripts/setup/health.js');
+  const said = [];
+  for (const check of [...Object.values(HELPER_CHECKS), ...Object.values(SESSION_CHECKS)]) {
+    said.push(check.passed, check.failed, check.todo, ...Object.values(check.results ?? {}).flat());
+  }
+  said.push(NOT_SET_UP, REMOVED, JOURNAL_UNREADABLE, NODE_LINE);
+  for (const line of said.filter((l) => typeof l === 'string')) assert.doesNotMatch(line, /\?/, `a prose question in: ${line}`);
 });

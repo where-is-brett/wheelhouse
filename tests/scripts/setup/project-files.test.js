@@ -788,11 +788,11 @@ test('step 1\'s install left in the folder, not committed, goes up in setup\'s c
 // install commands wrote, the plugin switched on and Wheelhouse's marketplace as a git address at
 // the release, and step 7 asked about it as the director's own change.
 test('the install line\'s own marketplace entry, at any release, goes up in setup\'s commit with no question', async () => {
-  for (const ref of ['v0.1.2', 'v9.0.0', undefined]) {
+  for (const [ref, form] of [['v0.1.2', 'address'], ['v9.0.0', 'address'], [undefined, 'address'], ['v0.2.8', 'name'], [undefined, 'name']]) {
     await withHome(async () => {
       const w = await world({ stepOne: 'untracked' });
       const file = path.join(w.folder, '.claude', 'settings.json');
-      const source = { source: 'git', url: 'https://github.com/where-is-brett/wheelhouse.git', ...(ref ? { ref } : {}) };
+      const source = form === 'name' ? { source: 'github', repo: 'where-is-brett/wheelhouse', ...(ref ? { ref } : {}) } : { source: 'git', url: 'https://github.com/where-is-brett/wheelhouse.git', ...(ref ? { ref } : {}) };
       fs.writeFileSync(file, `${JSON.stringify({ extraKnownMarketplaces: { wheelhouse: { source } }, enabledPlugins: STEP_ONE }, null, 2)}\n`);
       const planned = await w.plan();
       assert.ok(Array.isArray(planned.changes), `no question: ${planned.ask?.card.what}`);
@@ -1318,13 +1318,13 @@ const composedQuestion = (asked) => composeCard({ ...asked.card, kind: 'question
 
 test('the director\'s own changes to a shared file are asked about: Leave them waits, and a file changed since asks again', async () => {
   await withHome(async () => {
-    // An existing product (no repository step 3 made): Leave them is recommended.
+    // An existing product (no repository step 3 made): Put them in is recommended too, since Leave them stalls setup.
     const w = await world();
     fs.appendFileSync(path.join(w.folder, 'CLAUDE.md'), '- Draft rule.\n');
     const asked = (await w.plan()).ask;
     assert.match(asked.id, /^yours-[0-9a-f]{12}$/);
     assert.deepEqual(asked.card.options.map((o) => o.label), ['Put your changes to CLAUDE.md in setup\'s commit', 'Leave them; I\'ll come back']);
-    assert.equal(asked.card.recommend, LEAVE_YOURS);
+    assert.equal(asked.card.recommend, putYoursIn('CLAUDE.md'));
     assert.match(asked.card.what, /CLAUDE\.md has changes of yours not yet committed/);
     assert.deepEqual(composedQuestion(asked).options.slice(0, 2).map((o) => o.label), [putYoursIn('CLAUDE.md'), LEAVE_YOURS]);
     // Asked again with nothing changed, the same question.
