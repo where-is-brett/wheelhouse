@@ -34,7 +34,7 @@ import { fileURLToPath } from 'node:url';
 import { isModelName } from '../gate/guardrails.js';
 import { helperClient } from '../host/helper-client.js';
 import { FOREMAN_FALLBACK_COMPACT } from '../lib/build-loop.js';
-import { pathWithClaude } from '../lib/claude.js';
+import { pathWithClaude, pathWithNode } from '../lib/claude.js';
 import { jobFolder, stateDir, wheelhouseHome } from '../lib/paths.js';
 import { readProject } from '../lib/projects.js';
 import { sessionsOfProject } from '../agents/project-agent.js';
@@ -153,7 +153,7 @@ export function startWatcher(project, { spawn = nodeSpawn, pluginRoot = PLUGIN_R
   const home = wheelhouseHome();
   fs.mkdirSync(home, { recursive: true });
   const child = spawn(process.execPath, [path.join(pluginRoot, 'scripts', 'watcher', 'main.js'), project], {
-    cwd: jobFolder(), env: pathWithClaude(sessionEnv(env), { exists }), detached: true, windowsHide: true, stdio: 'ignore',
+    cwd: jobFolder(), env: pathWithClaude(pathWithNode(sessionEnv(env), { exists }), { exists }), detached: true, windowsHide: true, stdio: 'ignore',
   });
   child?.on?.('error', () => {});
   child?.unref?.();

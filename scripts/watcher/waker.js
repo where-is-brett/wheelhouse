@@ -154,6 +154,7 @@ import { computerId, stateDir, wheelhouseHome } from '../lib/paths.js';
 import { readProject } from '../lib/projects.js';
 import { clearOtherAgentHolds, hasAgentHolds, recordLift } from '../lineage/check.js';
 import { agentInFolder, agentOfConfig } from '../agents/names.js';
+import { pathWithNode } from '../lib/claude.js';
 import { run as runProgram } from '../lib/run.js';
 import { takeStartLock } from '../lib/start-lock.js';
 import { stopState } from '../lib/stop.js';
@@ -730,7 +731,7 @@ export function makeWaker({
   labelGuarded = null,
   claude = null,
   sessions = null,
-  baseEnv = process.env,
+  baseEnv: givenEnv = process.env,
   platform = process.platform,
   pluginRoot = PLUGIN_ROOT,
   onError = () => {},
@@ -741,6 +742,9 @@ export function makeWaker({
   beforeCopy = () => {},
 }) {
   if (shape !== 1 && shape !== 2) throw new Error('The watcher shape is 1 or 2');
+  // Every hook of a session is `node ...`, so a session started with a PATH that has no node (a LaunchAgent's) would
+  // fail at once: the folder of the node that runs this watcher is put on the PATH of what it starts.
+  const baseEnv = pathWithNode(givenEnv, { platform });
   // The foreman's wake command, for its prompt; none when the plugin's folder can't be given as one.
   let wakeCommand = null;
   try {
@@ -872,6 +876,18 @@ export function makeWaker({
     return next;
   };
 
+  // A plain note, in words, on the board and in the Logbook, for a fault the director would otherwise meet as silence
+  // (approved work that never starts). Said once for each wording by this waker; a note that can't be recorded is
+  // reported instead.
+  const said = new Set();
+  const sayWhy = (words) => {
+    if (said.has(words)) return;
+    said.add(words);
+    Promise.resolve().then(() => raise({ kind: 'note', data: { about: 'engine', words } })).catch(() => onError(words));
+  };
+  // " (Node.js wasn't found)" and the like, from a failure's own words.
+  const startFault = (why) => (/node(\.js)?\b.*(not found|isn't found|wasn't found|ENOENT)|(not found|ENOENT).*\bnode\b/i.test(String(why)) ? " (Node.js wasn't found)" : '');
+
   // How each entry in `ids` turned out: `done` leaves the outbox; `failed`
   // waits and counts a failure; `again` is sent again with no failure counted.
   const settle = (ids, outcome, why) => {
@@ -887,6 +903,7 @@ export function makeWaker({
         const wait = BACKOFF_MS[Math.min(failures, BACKOFF_MS.length) - 1];
         kept.push({ ...e, flight: null, failures, retryAt: new Date(now().getTime() + wait).toISOString(), lastError: why });
         if (failures >= FAILURES_REPORTED) onError(`A wake for ${e.to === 'foreman' ? 'the Bosun' : e.work} has failed ${failures} times: ${why}`);
+        if (e.to === 'foreman' && failures >= 2 && !/without recording/.test(why)) sayWhy(`The Bosun couldn't start${startFault(why)}, so approved work is waiting. Wheelhouse tries again.`);
       }
     }
     save(kept);
@@ -920,6 +937,14 @@ export function makeWaker({
     }
     settle(done, 'done');
     settle(lost, 'failed', 'the Bosun ended without recording the wake');
+    // A wake let go at the limit, or one that has now ended twice with nothing recorded, is said in words.
+    for (const wanted of entries) {
+      const e = open.find((x) => x.id === (wanted.id ?? wanted));
+      if (!e || e.to !== 'foreman' || wakeRecorded(e.file)) continue;
+      const ended = (Number.isInteger(e.failures) ? e.failures : 0) + 1;
+      if (ended >= WAKE_SENDS) sayWhy('The Bosun ended three times without recording what it did, so approved work may be waiting. Wheelhouse will look for it again.');
+      else if (ended >= 2) sayWhy('The Bosun ended twice without recording what it did, so approved work may be waiting. Wheelhouse tries again.');
+    }
   };
 
   // --- What is running (Shape 1) ---

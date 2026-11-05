@@ -24,7 +24,7 @@ import { projectForFolder } from '../../../scripts/lib/projects.js';
 import { startRun, findRun, addChanges, newId } from '../../../scripts/setup/journal.js';
 import { stepDone } from '../../../scripts/lib/setup-run.js';
 import { LIVE_DATA, SIGNS_APPS } from '../../../scripts/setup/questions.js';
-import { FRONT_DESK_ALIAS, MID_SIZED_ALIAS } from '../../../scripts/setup/best-model.js';
+import { FRONT_DESK_ALIAS, MID_SIZED_ALIAS, SOLE_MODEL_VARIABLE } from '../../../scripts/setup/best-model.js';
 import { readConfig, ROLES, DEFAULT_BUILD_COMMANDS, DEFAULT_HOT_FILES } from '../../../scripts/gate/guardrails.js';
 import { buildManifest, checkInstalled, MARKETPLACE } from '../../../scripts/lineage/manifest.js';
 import { SWITCHED_OFF_PLUGINS, setupCommand, frontDeskCommand, updateCommand, projectSettings, KEYCHAINS } from '../../../scripts/protection/settings.js';
@@ -131,7 +131,7 @@ async function world({
   defaultBranch = 'main', branch = 'main', claudeMissing = false, release = REF, host = 'github', stepOne = 'committed', gitignore = COVERED, ownStatusLine = null, baseUrl = null,
   engine = 'wheelhouse',
 } = {}) {
-  const w = { calls: [], protection: [], asked: [], gitCalls: [], duringInstall: () => {}, gitFails: () => false, api: [], layout: (o) => JSON.stringify(o), best: BEST_MODEL, mid: MID_MODEL, bestAsked: 0, aliases: [] };
+  const w = { calls: [], protection: [], asked: [], gitCalls: [], duringInstall: () => {}, gitFails: () => false, api: [], layout: (o) => JSON.stringify(o), best: BEST_MODEL, mid: MID_MODEL, bestAsked: 0, aliases: [], env: {} };
   w.noGlobal = path.join(tempFolder('wh-git-'), 'empty-config');
   fs.writeFileSync(w.noGlobal, '');
   const hostRoot = tempFolder('wh-host-');
@@ -236,7 +236,7 @@ async function world({
     manifest: () => w.manifest, claudeHome: () => w.claudeHome, switchOn: w.switchOn, protectionStatus: (...args) => { w.statusEnv = args[0].env; return w.status(...args); },
     adminKey: (...args) => w.adminKey(...args),
     gitlab: ({ run, baseUrl: asked }) => { w.asked.push(asked); return directorGitlabApi({ run, via: w.via, baseUrl: asked }); },
-    address: () => ADDRESS, node: NODE, pluginRoot: PLUGIN_ROOT,
+    address: () => ADDRESS, node: NODE, pluginRoot: PLUGIN_ROOT, env: w.env,
     best: async (alias) => { w.bestAsked += 1; w.aliases.push(alias); return alias === MID_SIZED_ALIAS ? w.mid : w.best; },
     engineOf: () => engine, loginOf: async () => 'ann-oneil',
   });
@@ -355,6 +355,28 @@ test('the starter configuration pins the front desk\'s model when setup was give
   assert.ok(Object.entries(config.routing).every(([role, m]) => role === 'frontDesk' || m === null), 'no other role is named');
   assert.deepEqual(readConfig(JSON.stringify(config)), config);
   assert.equal(starterConfig({ answers }).routing.frontDesk, null);
+});
+
+test('the starter configuration pins one model to every role and both classes when setup was told to use one model', () => {
+  const answers = { '4.live-data': { label: LIVE_DATA.no, text: null } };
+  const config = starterConfig({ answers, frontDesk: BEST_MODEL, midSized: BEST_MODEL, everyRole: BEST_MODEL });
+  assert.ok(ROLES.every((role) => config.routing[role] === BEST_MODEL), 'every role is named');
+  assert.deepEqual(config.tiers.pins, { mostCapable: BEST_MODEL, midSized: BEST_MODEL });
+  assert.deepEqual(readConfig(JSON.stringify(config)), config);
+});
+
+test('step 7 asks for one alias and pins it to every role when the sole-model variable names one', async () => {
+  await withHome(async () => {
+    const w = await world();
+    w.env[SOLE_MODEL_VARIABLE] = 'small';
+    const planned = await w.plan();
+    assert.deepEqual([...new Set(w.aliases)], ['small'], 'only the one alias is asked about');
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, true, done.reason);
+    const config = w.json('.claude/wheelhouse.json');
+    assert.ok(ROLES.every((role) => config.routing[role] === BEST_MODEL));
+    assert.equal(config.tiers.pins.midSized, BEST_MODEL);
+  });
 });
 
 test('step 7 pins the front desk to what Claude Code\'s opus alias stands for, in the configuration and this computer\'s settings, and says so on its card', async () => {
