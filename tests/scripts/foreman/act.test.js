@@ -1451,7 +1451,7 @@ test('ask records the foreman\'s own question with an id the feature can never u
     ['ask', 'mine', '--what', 'x', '--why', 'y', '--option', 'a=', '--option', 'b=waiting', '--recommend', 'a', '--level', '2'],
   ]) refusedInOneLine(await act(bad, { client: fake.client }));
   const long = await act(['ask', 'mine', '--what', 'x', '--why', 'y', '--option', `a=act merge ${'m'.repeat(291)}`,'--option', 'b=waiting', '--recommend', 'a', '--level', '2'], { client: fake.client });
-  assert.match(long.err, /^--option "a" must say what it means on one line, with single spaces, in at most 300 characters$/m);
+  assert.match(long.err, /^--option "a" must say what it means on one line, with single spaces, in at most 300 characters\. Type it on one line, like this: act ask a /m);
   // Exactly 300 is taken.
   const fits = await act(['ask', 'mine', '--what', 'x', '--why', 'y', '--option', `a=act merge ${'m'.repeat(290)}`, '--option', 'b=waiting', '--recommend', 'a', '--level', '2'], { client: fake.client });
   assert.equal(fits.code, 0, fits.err);
@@ -2207,3 +2207,13 @@ test('the pass the helper gave a foreman command is taken out of the environment
     assert.equal(fake.writes[0].foreman, 'a-pass', 'but sent with the command\'s own writes');
   } finally { delete process.env.WHEELHOUSE_FOREMAN_RUN; }
 }));
+
+test('act ask --help says exactly what to type, and a missing flag is answered with a command that runs', async () => {
+  const help = await act(['ask', '--help'], {});
+  assert.equal(help.code, 0);
+  assert.match(help.out, /--what .*--why .*--option .*--recommend .*--level/);
+  assert.match(help.out, /act ask <work> --what|act ask todo-cli|act ask <work>/);
+  const missing = await act(['ask', 'todo-cli', '--what', 'Go on?'], { client: fakeClient().client });
+  assert.equal(missing.code, 1);
+  assert.match(missing.err, /--why is needed\. Type it on one line, like this: act ask todo-cli --what/);
+});

@@ -117,6 +117,7 @@
 // Git runs only in the main checkout, to bring the default branch up to date
 // and make the worktree, with hooks and fsmonitor off. Everything read from a worktree goes through the safe
 // readers of scripts/feature/files.js and status.js.
+import { ASK_HELP, askExample } from './ask-help.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -1055,16 +1056,28 @@ const foremanNumber = (id, work) => {
   return named !== null && named.work === work && named.foreman ? named.n : null;
 };
 
+// Reads what `ask` takes; a refusal ends with a command that runs.
+function askArguments(work, rest) {
+  try {
+    const found = flagsOf(rest, ['what', 'why', 'option', 'recommend', 'level', 'about'], 'ask');
+    const what = needed(found, 'what');
+    const why = needed(found, 'why');
+    const recommendation = needed(found, 'recommend');
+    const level = needed(found, 'level');
+    if (!/^[1-4]$/.test(level)) refuse('--level is a decision level from 1 to 4');
+    const about = single(found, 'about');
+    if (about !== undefined && about !== 'start') refuse('--about is start, for a question about work that could not start');
+    return { what, why, recommendation, level, about, options: optionsOf(found, recommendation) };
+  } catch (error) {
+    if (error instanceof ForemanError) refuse(`${error.message}. Type it on one line, like this: ${askExample(work)}`);
+    throw error;
+  }
+}
+
 async function ask(ctx, work, rest) {
-  const found = flagsOf(rest, ['what', 'why', 'option', 'recommend', 'level', 'about'], 'ask');
-  const what = needed(found, 'what');
-  const why = needed(found, 'why');
-  const recommendation = needed(found, 'recommend');
-  const level = needed(found, 'level');
-  if (!/^[1-4]$/.test(level)) refuse('--level is a decision level from 1 to 4');
-  const about = single(found, 'about');
-  if (about !== undefined && about !== 'start') refuse('--about is start, for a question about work that could not start');
-  const options = optionsOf(found, recommendation);
+  const {
+    what, why, recommendation, level, about, options,
+  } = askArguments(work, rest);
   const views = await ctx.views();
   if (!isPlain(views.work[work]) && featureOf(views, work) === null) refuse(`There is no work named ${work} in state`);
 
@@ -1476,6 +1489,10 @@ export async function main(argv, {
 } = {}) {
   try {
     const [command, work, ...rest] = argv;
+    if (command === 'help' || argv.includes('--help') || argv.includes('-h')) {
+      out(`${command === 'ask' || argv[1] === 'ask' ? ASK_HELP : `${USAGE}\nFor the exact form of a command: act ask --help`}\n`);
+      return 0;
+    }
     if (typeof command !== 'string' || !Object.hasOwn(COMMANDS, command)) refuse(USAGE);
     if (typeof work !== 'string' || !SLUG.test(work)) refuse('Give the work id: lower-case letters, digits and hyphens, at most 40');
     const project = given ?? projectHere(cwd);
