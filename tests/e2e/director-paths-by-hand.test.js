@@ -15,6 +15,8 @@ import { CHECK_AND_ADD, LEAVE_THEM_OUT } from '../../scripts/state/card-lines.js
 
 waitLongerOnTheHelper();
 
+// The director's own name for a hand commit, so it commits on a machine with no git identity set.
+const HAND = ['-c', 'user.name=Hand', '-c', 'user.email=hand@example.invalid'];
 const HAND_LINE = 'Written by hand in the folder.';
 const HAND_PATTERN = /Written by hand in the folder\./;
 const handCards = (w) => w.records('question').filter((q) => q.data.work === 'by-hand');
@@ -89,7 +91,7 @@ test('a hand edit, then Check and add them: work, then press and tie; the forema
   await w.watch();
   await w.terminalTick();
   fs.appendFileSync(path.join(w.folder, 'README.md'), `${HAND_LINE}\n`);
-  await git(['commit', '-q', '-am', 'A hand commit', '--author', 'Hand <hand@example.invalid>'], w.folder);
+  await git([...HAND, 'commit', '-q', '-am', 'A hand commit'], w.folder);
   const tip = await git(['rev-parse', 'HEAD'], w.folder);
   const card = await handCardRaised(w);
   // The front desk has the work recorded for the change the helper will open (the first), before the press is tied.
@@ -136,7 +138,7 @@ test('a hand commit of a bracketed file name carries only that file and leaves a
   fs.writeFileSync(path.join(w.folder, bracketed), 'The page.\n');
   fs.writeFileSync(path.join(w.folder, 'app', 's', 'page.md'), 'Not committed.\n');
   await git(['add', '--', ':(literal)app/[slug]/page.md'], w.folder);
-  await git(['commit', '-q', '-m', 'A hand commit'], w.folder);
+  await git([...HAND, 'commit', '-q', '-m', 'A hand commit'], w.folder);
   const card = await handCardRaised(w);
   await w.press(card, CHECK_AND_ADD);
   await w.tickUntil(() => w.eventsOf('by-hand').length > 0, 'the tie');
