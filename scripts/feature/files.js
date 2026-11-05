@@ -330,7 +330,14 @@ function readText(p) {
   }
 }
 
-// Adds `.wheelhouse/` once to `info/exclude` in the project's git folder, so no
+// What is kept out of version control on this computer: Wheelhouse's own folder, and the worktrees Claude Code makes under
+// .claude/. Each is taken as there already in any of its forms.
+const IGNORED = Object.freeze([
+  { line: '.wheelhouse/', forms: ['.wheelhouse/', '/.wheelhouse/', '.wheelhouse', '/.wheelhouse'] },
+  { line: '.claude/worktrees/', forms: ['.claude/worktrees/', '/.claude/worktrees/', '.claude/worktrees', '/.claude/worktrees'] },
+]);
+
+// Adds `.wheelhouse/` and `.claude/worktrees/` once each to `info/exclude` in the project's git folder, so no
 // project's own .gitignore is touched. `mainCheckout` is the project's main
 // checkout, named by the caller that made the worktree. The worktree's git
 // folder is found with fs, following its .git file and that folder's commondir,
@@ -366,8 +373,10 @@ export function ensureIgnored(worktree, { mainCheckout } = {}) {
   const file = path.join(info, 'exclude');
   if (lstatOf(info)?.isSymbolicLink() || lstatOf(file)?.isSymbolicLink()) throw new Error(NOT_THE_PROJECTS);
   const current = readText(file) ?? '';
-  if (current.split(/\r?\n/).some((line) => ['.wheelhouse/', '/.wheelhouse/', '.wheelhouse', '/.wheelhouse'].includes(line.trim()))) return;
+  const held = new Set(current.split(/\r?\n/).map((line) => line.trim()));
+  const missing = IGNORED.filter((entry) => !entry.forms.some((form) => held.has(form))).map((entry) => entry.line);
+  if (missing.length === 0) return;
   fs.mkdirSync(info, { recursive: true });
   const lead = current === '' || current.endsWith('\n') ? '' : '\n';
-  fs.appendFileSync(file, `${lead}.wheelhouse/\n`);
+  fs.appendFileSync(file, `${lead}${missing.join('\n')}\n`);
 }

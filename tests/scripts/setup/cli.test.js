@@ -34,7 +34,7 @@ const H = 'ab'.repeat(32);
 async function run(argv, { client, cwd = '/x/Projects/shop', ...rest } = {}) {
   let out = '';
   let err = '';
-  const code = await main(argv, { client, cwd, out: (t) => { out += t; }, err: (t) => { err += t; }, entrypoint: 'cli', ...rest });
+  const code = await main(argv, { client, cwd, out: (t) => { out += t; }, err: (t) => { err += t; }, entrypoint: 'cli', env: {}, ...rest });
   return { code, out, err };
 }
 

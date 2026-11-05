@@ -96,7 +96,7 @@ import { heldByNotNow, numberedWaiting } from '../board/model.js';
 import { glossaryOf, knownConcepts, plainWords, termPattern } from './glossary.js';
 import { windowRefusal } from '../settings/compact-window.js';
 import { checkSetting, definitionOf, KNOWN, SETTINGS, WINDOWS_BUILD_COMMANDS, OWN_GITHUB_APP_KEY } from '../settings/catalogue.js';
-import { CARD, OFFER_ASK } from '../lib/front-desk.js';
+import { CARD, OFFER_ASK, WORK_REPORTS } from '../lib/front-desk.js';
 import { effectiveSettings, levelWords, settingsText, settingWords } from '../settings/effective.js';
 import { similar as similarTo } from '../intake/similar.js';
 import { answerLine, blindLine, chatCopy, ID, keepControlLine } from '../state/card-lines.js';
@@ -809,7 +809,29 @@ export async function drop({ client, cwd, work: workId }) {
   const started = (isPlain(views.runs) && Array.isArray(views.runs[workId]) && views.runs[workId].length > 0) || isPlain(views.features?.[workId]?.data);
   if (started) throw new CliError(`${workId} has already begun building, so it can't be dropped here: say so in one line`);
   const got = await write(client, cwd, 'report', { work: workId, outcome: 'closed', summary: 'Dropped at the director\'s request before it began.', rulings: [] });
+  removeBrief(cwd, views, workId);
   return { work: workId, id: got.id, say: DROPPED };
+}
+
+// The request's own file in .wheelhouse/work/, taken away once the work is dropped. Only a Markdown file directly in that folder
+// goes, and not one that other work still names.
+function removeBrief(cwd, views, workId) {
+  const data = views.work[workId]?.work?.data;
+  const file = typeof data?.doc === 'string' ? data.doc : data?.doc?.path;
+  if (typeof file !== 'string') return;
+  const dir = path.resolve(cwd, WORK_REPORTS);
+  const full = path.resolve(cwd, file);
+  if (path.dirname(full) !== dir || !full.endsWith('.md')) return;
+  const shared = Object.entries(views.work).some(([id, entry]) => {
+    if (id === workId) return false;
+    const other = entry?.work?.data?.doc;
+    const named = typeof other === 'string' ? other : other?.path;
+    return typeof named === 'string' && path.resolve(cwd, named) === full;
+  });
+  if (shared) return;
+  try {
+    fs.rmSync(full, { force: true });
+  } catch { /* the file stays; the drop has been recorded */ }
 }
 
 // --- record ---
