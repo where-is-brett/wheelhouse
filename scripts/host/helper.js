@@ -183,6 +183,7 @@ import { maintainersText } from '../setup/engine-parts.js';
 import { briefHash, featurePaths } from '../feature/files.js';
 import { HAND_DONE, HAND_GOAL } from '../lib/by-hand-done.js';
 import { writeInside } from '../lib/write-inside.js';
+import { tieNamesWork } from '../lib/by-hand-tie.js';
 import { readCapped } from '../feature/status.js';
 
 export const STATE_BRANCH = 'wheelhouse-state';
@@ -5657,7 +5658,7 @@ export async function startHelper({
     return oneAtATime(`ready:${project}`, async () => {
       if (stopped()) return null;
       // A tie already names a work for this change: it was carried on, and is not carried on again.
-      if (listEvents(stateDir(project), { report: () => {} }).some((e) => e.kind === 'by-hand' && e.data?.n === number && e.data.head === head && typeof e.data.work === 'string')) return null;
+      if (tieNamesWork(listEvents(stateDir(project), { report: () => {} }), number, head, (e) => verify(e, readEnrolled()))) return null;
       const record = recordOf(project);
       if (typeof record.folder !== 'string' || !path.isAbsolute(record.folder) || !fs.existsSync(record.folder)) {
         await say('The changes made by hand could not be carried on yet: the project\'s folder isn\'t on this computer.');
