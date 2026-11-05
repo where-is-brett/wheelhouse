@@ -6167,7 +6167,7 @@ export async function startHelper({
     } catch (error) {
       got = { reloaded: false, why: error.message };
     }
-    const words = got.reloaded ? 'Wheelhouse\'s helper now comes back within a minute if it stops.' : `What starts Wheelhouse's helper couldn't be brought up to date: ${got.why}.`;
+    const words = got.reloaded ? (got.tookOver ? 'Wheelhouse\'s helper was set to start from a temporary copy of Wheelhouse. It now starts from this install, and comes back within a minute if it stops.' : 'Wheelhouse\'s helper now comes back within a minute if it stops.') : `What starts Wheelhouse's helper couldn't be brought up to date: ${got.why}.`;
     await Promise.allSettled(engineHosts.map(({ project }) => engineWrite(project, 'note', { about: 'engine', words })));
   }
 

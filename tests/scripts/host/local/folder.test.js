@@ -266,6 +266,53 @@ test('a working tree with another change beside the section is left as it is', (
   assert.deepEqual(added, []);
 }));
 
+// A project's settings as an earlier release pinned them, and the same with a later release's pin written over them by an
+// update that did not land its change.
+const settingsWith = (ref, extra = {}) => `${JSON.stringify({ permissions: { allow: [] }, extraKnownMarketplaces: { wheelhouse: { source: { source: 'github', repo: 'where-is-brett/wheelhouse', ref }, ...extra } } }, null, 2)}\n`;
+
+async function withPinnedSettings(fn) {
+  await levelWithEarlier(async (folder) => {
+    fs.mkdirSync(path.join(folder, '.claude'), { recursive: true });
+    await commitIn(folder, '.claude/settings.json', settingsWith('v0.2.8', { autoUpdate: false }));
+    await git(folder, ['push', '-q', homeDir(P), 'HEAD:refs/heads/main', '--force']);
+    await fn(folder);
+  });
+}
+
+test('pins left in the working tree by an update raise no hand-made card', () => withPinnedSettings(async (folder) => {
+  fs.writeFileSync(path.join(folder, '.claude', 'settings.json'), settingsWith('v0.2.9'));
+  fs.writeFileSync(path.join(folder, 'CLAUDE.md'), await ownText(`${MINE}${EARLIER}`));
+  const { watch, cards, added } = watching(folder);
+  for (let i = 0; i < 4; i += 1) await watch.tick();
+  assert.deepEqual(cards, []);
+  assert.deepEqual(added, []);
+}));
+
+test('pins alone in the settings, with nothing else changed, raise no card either', () => withPinnedSettings(async (folder) => {
+  fs.writeFileSync(path.join(folder, '.claude', 'settings.json'), settingsWith('v0.2.9'));
+  const { watch, cards } = watching(folder);
+  for (let i = 0; i < 4; i += 1) await watch.tick();
+  assert.deepEqual(cards, []);
+}));
+
+test('a settings edit that is more than the pins still raises the card', () => withPinnedSettings(async (folder) => {
+  const edited = JSON.parse(settingsWith('v0.2.9'));
+  edited.permissions.allow.push('Bash(rm:*)');
+  fs.writeFileSync(path.join(folder, '.claude', 'settings.json'), `${JSON.stringify(edited, null, 2)}\n`);
+  const { watch, cards } = watching(folder);
+  for (let i = 0; i < 4; i += 1) await watch.tick();
+  assert.equal(cards.length, 1);
+}));
+
+test('a pin that names another repository still raises the card', () => withPinnedSettings(async (folder) => {
+  const edited = JSON.parse(settingsWith('v0.2.9'));
+  edited.extraKnownMarketplaces.wheelhouse.source.repo = 'someone/else';
+  fs.writeFileSync(path.join(folder, '.claude', 'settings.json'), `${JSON.stringify(edited, null, 2)}\n`);
+  const { watch, cards } = watching(folder);
+  for (let i = 0; i < 4; i += 1) await watch.tick();
+  assert.equal(cards.length, 1);
+}));
+
 test('a tracked file edited by hand and not committed raises the card once the edit has stood, and Check and add sends it', () => level(async (folder) => {
   await commitIn(folder, 'README.md', 'first\n');
   await git(folder, ['push', '-q', homeDir(P), 'HEAD:refs/heads/main', '--force']);

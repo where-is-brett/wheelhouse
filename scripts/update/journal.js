@@ -11,6 +11,14 @@ export const JOURNAL_SCHEMA = 1;
 export const STEPS = ['checks', 'change', 'merged', 'idle', 'backup', 'catalogue', 'installs', 'verify', 'finish', 'done'];
 export const STATES = ['todo', 'running', 'done', 'failed'];
 
+// The steps that must be done before `finish` and `done` may run, whatever order the job ran them in (a bootstrap turns the
+// order round): the install and its three accounts for `finish`; every other step for `done`.
+const BEFORE_FINISH = ['checks', 'installs', 'backup', 'catalogue', 'verify'];
+export function unfinishedBefore(steps, name) {
+  const needed = name === 'finish' ? BEFORE_FINISH : name === 'done' ? STEPS.filter((step) => step !== 'done') : [];
+  return needed.filter((step) => steps?.[step]?.state !== 'done');
+}
+
 const SAFE_PART = /^[A-Za-z0-9._-]+$/;
 
 function updateDir() {

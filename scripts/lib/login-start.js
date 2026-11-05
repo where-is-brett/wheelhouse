@@ -85,6 +85,29 @@ export function needsLoginStart({ projects = [] } = {}) {
 
 const agentsFolder = (home) => path.join(home, 'Library', 'LaunchAgents');
 
+// Whether this process runs with a Wheelhouse home of its own (an evaluation run, a trial, a test) rather than the
+// default `.wheelhouse` in the person's home folder.
+function isolatedHome() {
+  const given = process.env.WHEELHOUSE_HOME;
+  if (!given) return false;
+  return path.resolve(given) !== path.resolve(path.join(os.homedir(), '.wheelhouse'));
+}
+
+// The folder the launch agent's file goes in. The person's real LaunchAgents folder belongs to the default Wheelhouse
+// home only: a process with a home of its own keeps its agent file inside that home, so a trial run can't rewrite the
+// person's real one. WHEELHOUSE_LOGIN_START names another folder to hold it, for a run told to. A caller that names
+// some other home folder than the person's own (a test's temporary one) gets that one's LaunchAgents folder.
+export function loginAgentsFolder({ home = os.homedir() } = {}) {
+  const told = process.env.WHEELHOUSE_LOGIN_START;
+  if (typeof told === 'string' && told !== '' && path.isAbsolute(told)) return path.basename(told) === 'LaunchAgents' ? told : path.join(told, 'LaunchAgents');
+  if (isolatedHome() && path.resolve(home) === path.resolve(os.homedir())) return path.join(wheelhouseHome(), 'LaunchAgents');
+  return agentsFolder(home);
+}
+
+// Whether a call to the computer's own launchd or registry would reach the person's real sign-in start: the real
+// `run`, in a process whose home isn't the default, with no folder told. Such a process only writes its files.
+const reachesComputer = (run) => run === realRun && isolatedHome() && !process.env.WHEELHOUSE_LOGIN_START;
+
 // loginEntry({ platform, node, root, script, home }) -> { kind, path, content } | null
 //   node    the full path of the Node.js that runs the start command
 //   root    the Wheelhouse folder (a full path)
@@ -99,7 +122,7 @@ export function loginEntry({ platform = process.platform, node = process.execPat
   if (platform === 'darwin') {
     fullPath(home, platform, 'the home folder');
     const file = path.posix.join(root, script);
-    return { kind: 'launch-agent', path: path.join(agentsFolder(home), PLIST), content: plist([node, file, 'start']) };
+    return { kind: 'launch-agent', path: path.join(loginAgentsFolder({ home }), PLIST), content: plist([node, file, 'start']) };
   }
   const file = path.win32.join(root, ...script.split('/'));
   return { kind: 'run-entry', path: `${RUN_KEY}\\${RUN_NAME}`, content: `${windowsQuoted(node)} ${windowsQuoted(file)} start` };
@@ -142,6 +165,7 @@ export function renewedEntry({ platform = process.platform, node = process.execP
 // `launchctl bootout`: launchd lets go of the agent. A running helper isn't its job, since the start command left it
 // running and exited (AbandonProcessGroup), so it carries on. An agent not loaded answers with a failure, which is fine.
 async function unload(run, uid) {
+  if (reachesComputer(run)) return;
   try {
     await run('launchctl', ['bootout', `gui/${uid}/${LAUNCH_AGENT_LABEL}`]);
   } catch { /* nothing more can be done here: the entry goes all the same */ }
@@ -149,6 +173,7 @@ async function unload(run, uid) {
 
 // launchd reads the file at `file` now: { code, stderr }. Loading it runs the start command at once.
 async function load(run, file, uid) {
+  if (reachesComputer(run)) return { code: 0, stderr: '' };
   await unload(run, uid);
   try {
     return await run('launchctl', ['bootstrap', `gui/${uid}`, file]);
@@ -157,7 +182,15 @@ async function load(run, file, uid) {
   }
 }
 
+// A test process is told, by tests/helpers/test-home.js, which folder is the person's real LaunchAgents folder, and may
+// never write into it: a test that reaches it fails here instead of changing the person's sign-in start.
+function refuseRealAgents(file) {
+  const real = process.env.WHEELHOUSE_TEST_REAL_LAUNCH_AGENTS;
+  if (real && inside(path.resolve(file), path.resolve(real))) throw new Error(`A test tried to write the real launch agents folder: ${file}`);
+}
+
 function writeWhole(file, text) {
+  refuseRealAgents(file);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const temp = `${file}.${process.pid}.tmp`;
   try {
@@ -181,13 +214,48 @@ export async function installLoginStart({ entry, run = realRun, now = () => new 
     await load(run, entry.path, uid);
     return { written: entry.path };
   }
+  if (reachesComputer(run)) return { written: entry.path };
   const got = await run('reg', ['add', RUN_KEY, '/v', RUN_NAME, '/t', 'REG_SZ', '/d', entry.content, '/f']);
   if (got.code !== 0) throw new Error(`The start-up entry could not be added (${String(got.stderr ?? '').trim() || 'reg gave no reason'})`);
   return { written: entry.path };
 }
 
+// The folders a trial or a test leaves its copies in.
+function tempFolders() {
+  const found = new Set(['/tmp', '/private/tmp', '/var/folders', '/private/var/folders']);
+  for (const dir of [os.tmpdir(), process.env.TMPDIR].filter((d) => typeof d === 'string' && d !== '')) {
+    found.add(path.resolve(dir));
+    try { found.add(fs.realpathSync(dir)); } catch { /* not there */ }
+  }
+  return [...found];
+}
+
+const inside = (file, dir) => {
+  const rel = path.relative(dir, file);
+  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+};
+
+// Whether a launch agent that differs from the record is a stray copy of Wheelhouse's own (a run from a throwaway
+// checkout left it) and so may be replaced with the real one. It must be shaped exactly as this module writes it:
+// node, Wheelhouse's start command, `start`. And that start command must be in a Wheelhouse plugin install, be a
+// path that no longer exists, or be under a temporary folder. Anything else (another program, or a start command
+// anywhere else that is still there) is the person's own and is left. Nothing here ever adopts what the agent runs:
+// the file is only replaced, with the entry the caller made from the running install.
+function strayAgent(held, entry) {
+  const args = [...String(held).matchAll(/<string>([^<]*)<\/string>/g)].map((m) => m[1].replaceAll('&quot;', '"').replaceAll('&apos;', '\'').replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&amp;', '&'));
+  // Label, node, script, `start`, then the two /dev/null paths.
+  const [label, node, script, verb] = args;
+  if (args.length !== 6 || label !== LAUNCH_AGENT_LABEL || verb !== 'start') return false;
+  if (!path.posix.isAbsolute(node) || !path.posix.isAbsolute(script) || script.split('/').includes('..') || !/\/scripts\/agents\/copilot\/start-helper\.js$/.test(script)) return false;
+  // Byte for byte what this module writes for those two paths, so no extra key (a different program, a keep-alive) rides along.
+  if (held !== plist([node, script, 'start'])) return false;
+  if (/\/\.claude\/plugins\/cache\/[^/]+\/wheelhouse\//.test(script) || /\/\.copilot\/wheelhouse\//.test(script)) return true;
+  if (tempFolders().some((dir) => inside(script, dir))) return true;
+  return !fs.existsSync(script);
+}
+
 // Writes `entry` over the launch agent recorded here and has launchd load it: { reloaded: true }, or { reloaded: false,
-// why }. An entry changed since it was made, or taken away, is left. The record names the new text before the file
+// why }. An entry changed since it was made, or taken away, is left, unless the change is a stray copy of Wheelhouse's own start command (strayAgent), which is replaced: { reloaded: true, tookOver: true }. The record names the new text before the file
 // holds it, as the install's does, and takes it as the entry's only once it is loaded: a reload cut short or refused
 // is tried again at the next start of the helper, and uninstall knows either form.
 export async function reloadLoginStart({ run = realRun, entry, now = () => new Date(), uid = process.getuid?.() } = {}) {
@@ -199,18 +267,23 @@ export async function reloadLoginStart({ run = realRun, entry, now = () => new D
   } catch (error) {
     return { reloaded: false, why: error.code === 'ENOENT' ? 'it was taken away, so it was left' : `it could not be read (${error.code ?? 'no reason given'})` };
   }
-  if (held !== record.content && held !== record.next) return { reloaded: false, why: 'it was changed since Wheelhouse made it, so it was left' };
+  let tookOver = false;
+  if (held !== record.content && held !== record.next) {
+    if (!strayAgent(held, entry)) return { reloaded: false, why: 'it was changed since Wheelhouse made it, so it was left' };
+    tookOver = true;
+  }
   const { next: _, ...rest } = record;
   writeWhole(loginRecordFile(), `${JSON.stringify({ ...rest, next: entry.content }, null, 2)}\n`);
   writeWhole(entry.path, entry.content);
   const got = await load(run, entry.path, uid);
   if (got.code !== 0) return { reloaded: false, why: `launchd would not load it (${String(got.stderr ?? '').trim() || 'no reason given'}); it loads at the next sign-in` };
   writeWhole(loginRecordFile(), `${JSON.stringify({ ...rest, content: entry.content, at: now().toISOString() }, null, 2)}\n`);
-  return { reloaded: true };
+  return tookOver ? { reloaded: true, tookOver: true } : { reloaded: true };
 }
 
 // The Run value's data as `reg query` prints it, or null when the value isn't there.
 async function runValue(run) {
+  if (reachesComputer(run)) return null;
   const got = await run('reg', ['query', RUN_KEY, '/v', RUN_NAME]);
   if (got.code !== 0) return null;
   for (const line of String(got.stdout ?? '').split(/\r?\n/)) {
@@ -254,6 +327,7 @@ export async function removeLoginStart({ run = realRun, platform = process.platf
     return { removed: false, why: 'it was gone already' };
   }
   if (held !== record.content) return { removed: false, why: 'it was changed since Wheelhouse made it, so it was left' };
+  if (reachesComputer(run)) { forget(); return { removed: true }; }
   const got = await run('reg', ['delete', RUN_KEY, '/v', RUN_NAME, '/f']);
   if (got.code !== 0) return { removed: false, why: `reg could not remove it (${String(got.stderr ?? '').trim() || 'no reason given'})` };
   forget();

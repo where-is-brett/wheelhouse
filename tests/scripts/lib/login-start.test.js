@@ -421,3 +421,88 @@ test('a removed agent is unloaded, so nothing starts the helper again', onMacPat
     assert.deepEqual(l.calls, []);
   });
 });
+
+// A launch agent file overwritten by a trial that ran from a throwaway checkout.
+async function strayAgent(root, mutate = (text) => text) {
+  const userHome = shortHome();
+  const entry = loginEntry({ platform: 'darwin', node: MAC_NODE, root: MAC_ROOT, script: START_SCRIPT, home: userHome });
+  await installLoginStart({ entry, run: launchctl().run, now: () => T0 });
+  const stray = loginEntry({ platform: 'darwin', node: MAC_NODE, root, script: START_SCRIPT, home: userHome });
+  fs.writeFileSync(entry.path, mutate(stray.content));
+  return { entry, stray };
+}
+
+test('a launch agent pointing into a temporary checkout is replaced with the real one, and said', onMacPaths, async () => {
+  await as(shortHome(), async () => {
+    for (const root of ['/private/tmp/w95/wh9', '/tmp/w95/wh1', '/var/folders/ab/cd/T/wh-x/scripts', '/Users/Ann/.claude/plugins/cache/wheelhouse/wheelhouse/0.2.8', '/Users/Ann/gone/forever']) {
+      const { entry } = await strayAgent(root);
+      const l = launchctl();
+      assert.deepEqual(await reloadLoginStart({ run: l.run, entry, uid: 501 }), { reloaded: true, tookOver: true }, root);
+      assert.equal(fs.readFileSync(entry.path, 'utf8'), entry.content);
+      assert.equal(loginStartRecord().content, entry.content);
+      assert.equal(l.calls.length, 2);
+    }
+  });
+});
+
+test('a launch agent that differs and runs something else is left alone', onMacPaths, async () => {
+  await as(shortHome(), async () => {
+    // A start command that is there, in a folder that is neither temporary nor a plugin install (this checkout).
+    const real = path.resolve('.');
+    const cases = [
+      ['a start command that exists outside any temporary or plugin folder', real, (t) => t],
+      ['another program', '/private/tmp/w95/wh9', (t) => t.replace('/start-helper.js', '/evil.js')],
+      ['an extra key', '/private/tmp/w95/wh9', (t) => t.replace('<key>RunAtLoad</key>', '<key>KeepAlive</key>\n  <true/>\n  <key>RunAtLoad</key>')],
+      ['a path with ..', '/private/tmp/w95/wh9', (t) => t.replace('/wh9/', '/wh9/../wh8/')],
+    ];
+    for (const [what, root, mutate] of cases) {
+      const { entry } = await strayAgent(root, mutate);
+      const before = fs.readFileSync(entry.path, 'utf8');
+      const l = launchctl();
+      const got = await reloadLoginStart({ run: l.run, entry, uid: 501 });
+      assert.equal(got.reloaded, false, what);
+      assert.match(got.why, /changed since/, what);
+      assert.equal(fs.readFileSync(entry.path, 'utf8'), before, what);
+      assert.deepEqual(l.calls, [], what);
+    }
+  });
+});
+
+test('a process with a Wheelhouse home of its own never writes the real launch agents folder', onMacPaths, async () => {
+  const home = shortHome();
+  const realHome = (await import('node:os')).default.homedir();
+  await as(home, async () => {
+    const entry = loginEntry({ platform: 'darwin', node: MAC_NODE, root: MAC_ROOT, script: START_SCRIPT, home: realHome });
+    assert.equal(entry.path, path.join(home, 'LaunchAgents', 'dev.wheelhouse.helper.plist'));
+    const seen = [];
+    const run = async (file, args) => { seen.push([file, ...args]); return { code: 0, stdout: '', stderr: '' }; };
+    await installLoginStart({ entry, run, now: () => T0, uid: 501 });
+    assert.equal(fs.existsSync(entry.path), true);
+    assert.equal(seen.length, 2, 'a run that is not the real one is still asked, as the tests do');
+  });
+});
+
+test('WHEELHOUSE_LOGIN_START names where an isolated process keeps its launch agent', onMacPaths, async () => {
+  const home = shortHome();
+  const folder = path.join(shortHome(), 'LaunchAgents');
+  const before = process.env.WHEELHOUSE_LOGIN_START;
+  process.env.WHEELHOUSE_LOGIN_START = folder;
+  try {
+    await as(home, async () => {
+      const entry = loginEntry({ platform: 'darwin', node: MAC_NODE, root: MAC_ROOT, script: START_SCRIPT, home: shortHome() });
+      assert.equal(entry.path, path.join(folder, 'dev.wheelhouse.helper.plist'));
+    });
+  } finally {
+    if (before === undefined) delete process.env.WHEELHOUSE_LOGIN_START; else process.env.WHEELHOUSE_LOGIN_START = before;
+  }
+});
+
+test('a test that reaches the real launch agents folder fails', onMacPaths, async () => {
+  const real = process.env.WHEELHOUSE_TEST_REAL_LAUNCH_AGENTS;
+  assert.ok(real, 'the test helper names the real folder');
+  await as(shortHome(), async () => {
+    const entry = { ...loginEntry({ platform: 'darwin', node: MAC_NODE, root: MAC_ROOT, script: START_SCRIPT, home: shortHome() }), path: path.join(real, 'dev.wheelhouse.helper.plist') };
+    await assert.rejects(installLoginStart({ entry, run: launchctl().run, now: () => T0 }), /real launch agents folder/);
+    assert.equal(fs.existsSync(entry.path) && fs.readFileSync(entry.path, 'utf8') === entry.content, false);
+  });
+});

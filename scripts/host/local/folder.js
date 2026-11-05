@@ -9,6 +9,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { CHECK_AND_ADD, LEAVE_THEM_OUT } from '../../state/card-lines.js';
 import { withOwnSection } from '../../lib/compact-section.js';
+import { onlyPinEdit } from '../../lineage/release.js';
 import { gitRoute, homeDir, homeGit, isBranchName } from './home.js';
 
 export const FOLDER_REMOTE = 'wheelhouse';
@@ -247,33 +248,46 @@ export async function takeHome({ project, folder, branch, env = {}, git = gitRou
 }
 
 const MANAGED_FILE = 'CLAUDE.md';
+const PINNED_FILE = '.claude/settings.json';
 const sameLines = (a, b) => a.replace(/\r\n/g, '\n') === b.replace(/\r\n/g, '\n');
 
-// Whether the folder's difference from `base` (a commit) is exactly the managed section of CLAUDE.md as the installed release
-// writes it, and nothing else: the one file, holding what Wheelhouse writes into the base's text. `tip` is the folder's
-// commit, or null for its working tree. A hand edit in or beside the section makes the text differ, so it is not Wheelhouse's own.
+// Whether the folder's difference from `base` (a commit) is only what Wheelhouse itself writes, and nothing else: the managed
+// section of CLAUDE.md as the installed release writes it, and the release pins in .claude/settings.json (Wheelhouse's
+// marketplace `ref` and `autoUpdate`, an update's leftover when its change did not land; onlyPinEdit). At least one of the two,
+// no other file. `tip` is the folder's commit, or null for its working tree. A hand edit in or beside either makes the text
+// differ, so it is not Wheelhouse's own.
 async function onlyOwnSection({ folder, base, tip, git }) {
   const here = inFolder(folder, git);
   const names = tip === null
     ? await here.call(['--no-optional-locks', 'diff', '--name-only', base])
     : await here.call(['diff', '--name-only', base, tip]);
-  if (names.code !== 0 || String(names.stdout).trim() !== MANAGED_FILE) return false;
-  const was = await here.call(['show', `${base}:${MANAGED_FILE}`]);
-  if (was.code !== 0) return false;
-  let now;
-  if (tip === null) {
-    try {
-      now = fs.readFileSync(path.join(folder, MANAGED_FILE), 'utf8');
-    } catch {
+  if (names.code !== 0) return false;
+  const changed = String(names.stdout).split('\n').map((n) => n.trim()).filter(Boolean);
+  if (changed.length === 0 || changed.some((n) => n !== MANAGED_FILE && n !== PINNED_FILE)) return false;
+  const textNow = async (file) => {
+    if (tip === null) {
+      try {
+        return fs.readFileSync(path.join(folder, file), 'utf8');
+      } catch {
+        return null;
+      }
+    }
+    const shown = await here.call(['show', `${tip}:${file}`]);
+    return shown.code === 0 ? String(shown.stdout) : null;
+  };
+  for (const file of changed) {
+    const was = await here.call(['show', `${base}:${file}`]);
+    if (was.code !== 0) return false;
+    const now = await textNow(file);
+    if (now === null) return false;
+    if (file === MANAGED_FILE) {
+      const wanted = withOwnSection(String(was.stdout));
+      if (wanted === String(was.stdout) || !sameLines(now, wanted)) return false;
+    } else if (!onlyPinEdit(String(was.stdout), now)) {
       return false;
     }
-  } else {
-    const shown = await here.call(['show', `${tip}:${MANAGED_FILE}`]);
-    if (shown.code !== 0) return false;
-    now = String(shown.stdout);
   }
-  const wanted = withOwnSection(String(was.stdout));
-  return wanted !== String(was.stdout) && sameLines(now, wanted);
+  return true;
 }
 
 // The folder's CLAUDE.md, left changed in the working tree by a refresh of Wheelhouse's own section, committed as that

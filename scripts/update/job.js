@@ -2,6 +2,8 @@
 // Runs the update's steps in order from the journal. Done steps are skipped, so a job stopped
 // part-way carries on at the first step not done and never does a done step twice.
 
+import { unfinishedBefore } from './journal.js';
+
 // steps: [{ name, run({ project, target, journal, data }) }]. A step finishes by returning
 // nothing, `{ data }` to record something for later steps, or `{ ok: false, line }` to stop, or `{ ok: false, line, waiting: true }` to wait: the step stays running and the job
 // is asked again later.
@@ -20,6 +22,12 @@ export async function runJob({ project, target, steps, journal }) {
     for (const [name, entry] of Object.entries(start.steps)) if (entry.data !== undefined) data[name] = entry.data;
     for (const step of steps) {
       if (journal.read().steps[step.name]?.state === 'done') continue;
+      // The end is never recorded while a step before it is not done, whether the steps given left one out or one failed to be marked.
+      const missing = unfinishedBefore(journal.read().steps, step.name);
+      if (missing.length > 0) {
+        const line = `The update cannot finish: these steps are not done (${missing.join(', ')}).`;
+        return { ok: false, step: step.name, line };
+      }
       journal.mark(step.name, 'running');
       let result;
       try {

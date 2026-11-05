@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { openJournal, backup, restore, JOURNAL_SCHEMA } from '../../../scripts/update/journal.js';
+import { openJournal, unfinishedBefore, backup, restore, JOURNAL_SCHEMA } from '../../../scripts/update/journal.js';
 
 function withHome(fn) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-uj-'));
@@ -117,4 +117,15 @@ test('backup: a second backup keeps the first copy of a file', () => withHome((h
 
 test('restore with no backup does nothing', () => withHome(() => {
   assert.doesNotThrow(() => restore(openJournal('proj')));
+}));
+
+test('journal: finish and done need the steps they rest on, in whatever order the job ran', () => withHome(() => {
+  const j = openJournal('proj');
+  for (const s of ['checks', 'installs']) j.mark(s, 'done');
+  assert.deepEqual(unfinishedBefore(j.read().steps, 'finish'), ['backup', 'catalogue', 'verify']);
+  for (const s of ['backup', 'catalogue', 'verify']) j.mark(s, 'done');
+  assert.deepEqual(unfinishedBefore(j.read().steps, 'finish'), []);
+  j.mark('finish', 'done');
+  assert.deepEqual(unfinishedBefore(j.read().steps, 'done'), ['change', 'merged', 'idle']);
+  assert.deepEqual(unfinishedBefore(j.read().steps, 'checks'), []);
 }));

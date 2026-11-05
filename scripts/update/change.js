@@ -18,6 +18,7 @@ import { MARKETPLACE } from '../lineage/manifest.js';
 import { RELEASE_LABEL, releaseLine } from '../state/card-lines.js';
 import { releaseCardName } from '../gate/release-approval.js';
 import { MISMATCH_LINE } from './merge.js';
+import { mainTip } from './open.js';
 
 // The mirror the update fetched the release's tag into, under the Wheelhouse home, which nothing in a session's sandbox
 // can write to.
@@ -35,6 +36,25 @@ export function readSettings(projectDir) {
   } catch {
     return null;
   }
+}
+
+// The project's settings as it holds them committed (never the working copy): [the main version's file, the folder's current
+// commit's file], each left out where it can't be read (not a git folder, no main version, no file). An update that did not
+// land its change can leave the pins in the working copy alone, so "already merged" and "merged" are judged on these. The
+// main version's file is first: it is what the change is made from.
+export async function committedSettings({ projectDir, run = defaultRun }) {
+  const found = [];
+  try {
+    const git = safeGit({ run, cwd: projectDir, list: 'project', look: 'never', caller: 'helper', what: 'the project', timeoutMs: 120000 });
+    for (const at of [await mainTip(git), 'HEAD']) {
+      if (at === null) continue;
+      const got = await git(['show', `${at}:${SETTINGS_FILE}`], { input: '' });
+      if (got.code !== 0) continue;
+      const parsed = JSON.parse(got.stdout);
+      if (isObject(parsed)) found.push(parsed);
+    }
+  } catch { /* what was read stands */ }
+  return found;
 }
 
 // The release the project's settings name, or null when they name no Wheelhouse marketplace (or can't be read).
@@ -83,17 +103,20 @@ export function approvalCard({ previous, release, commit }) {
 // is opened (it pushes the branch and calls the helper's /pr/open-release), resolving { ok, number } or { ok: false, refused }.
 // `raise(card)` raises the approval card when the release needs one. `kind` says whether the release is pins-only (releaseKind).
 // Resolves { ok, pr?, skipped?, approval?, line }. Never writes the settings file.
-export async function openChange({ project, target, previous, put = 'release', projectDir, open, raise, kind }) {
+export async function openChange({ project, target, previous, put = 'release', projectDir, open, raise, kind, run = defaultRun, committed = () => committedSettings({ projectDir, run }) }) {
   const aim = put === 'undo' ? previous : { ref: target?.tag, sha: target?.sha };
   const ref = aim?.ref ?? aim?.tag;
   const sha = aim?.sha;
   if (typeof ref !== 'string' || !FULL_SHA.test(sha ?? '')) return { ok: false, line: 'The release to move this project to is not known in full.' };
-  const settings = readSettings(projectDir);
+  const working = readSettings(projectDir);
+  // The change is made from the main version's file. Where that can't be read, the working copy stands in for it.
+  const held = typeof committed === 'function' ? await committed() : [];
+  const settings = held[0] ?? working;
   const named = namedRef(settings);
   // Before setup's step 7 the settings don't name the catalogue yet: there is nothing to change, and the update moves only this computer.
   if (named === null) return { ok: true, skipped: 'before-step-7', line: 'This project does not name Wheelhouse in its settings yet, so only this computer moves.' };
-  // Another computer updated the project first: the change is already in.
-  if (named === ref) return { ok: true, skipped: 'merged', line: `This project already names ${ref}.` };
+  // Another computer updated the project first: the change is already in the main version. Pins only in the working copy are not that.
+  if (named === ref || held.some((h) => namedRef(h) === ref) || (held.length === 0 && namedRef(working) === ref)) return { ok: true, skipped: 'merged', line: `This project already names ${ref}.` };
   let text;
   try {
     text = settingsText(releaseChange(settings, { ref, sha }));
@@ -127,9 +150,13 @@ export async function openChange({ project, target, previous, put = 'release', p
 // Where the change stands. `target` is { tag }; `projectDir` the main checkout, whose settings must name the tag before anything
 // installs (a merge on the host is not enough until the folder has it). `prState(number)` resolves the host's state of the
 // change, { state: 'open' | 'merged' | 'closed' }, when `pr` is known. Resolves { merged } | { waiting: line } | { closed: line }.
-export async function waitMerged({ target, projectDir, pr, prState }) {
+export async function waitMerged({ target, projectDir, pr, prState, run = defaultRun, committed = () => committedSettings({ projectDir, run }) }) {
   const tag = target?.tag;
-  if (namedRef(readSettings(projectDir)) === tag) return { merged: true };
+  if (namedRef(readSettings(projectDir)) === tag) {
+    // Pins in the working copy alone are not the merge: what is committed has to name the release too, where it can be read.
+    const held = typeof committed === 'function' ? await committed() : [];
+    if (held.length === 0 || held.some((h) => namedRef(h) === tag)) return { merged: true };
+  }
   let state = null;
   if (Number.isInteger(pr) && typeof prState === 'function') {
     try { state = (await prState(pr))?.state ?? null; } catch { state = null; }
