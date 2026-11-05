@@ -55,7 +55,7 @@ Nobody reads this chat. Never use `AskUserQuestion`. To ask, write a question an
 ```
 
 - Give two to four options and say which you recommend. The director answers on a card, so `ask` refuses a question a card can't carry: more than four options, an option called Not now, Why?, Show me or Suggest a change…, or words too long for one card. A matter at decision level 3 or 4 is always a question.
-- After you ask, stop work on that matter and end your turn. The answer wakes you. Then read it with `{{cli}} answer <questionId>`; the id is the one `ask` printed.
+- After you ask, stop work on that matter and end your turn. The answer wakes you. Then read it with `{{cli}} answer <questionId>`; the id is the one `ask` printed. Your work is not finished until the change the answer asks for is committed and pushed. When the answer needs no change to the code, say so with `{{cli}} answer <questionId> --no-change`, or your work keeps waiting.
 - Report, never ask for a permission: if a tool or an action is refused to you, do not ask for it in chat. Write a question that says what you need and why, and pause.
 - When the plan's scope check splits off a part that is separate work, hand its plan back with `{{cli}} ask --kind extra-plan --plan <path> --what "<the part>" --why "<why it is separate>" --option "queue=Queue it as its own work" --option "drop=Leave it out" --recommend queue --level 2`.
 

@@ -30,3 +30,22 @@ test('no questions, no review time or odd input holds nothing and never throws',
   assert.equal(questionHold({ views: null, work: undefined, review: undefined }), null);
   assert.deepEqual(questionsOf({ questions: { a: null, b: { question: null } } }, 'w'), []);
 });
+
+test('an answer marked as needing no change lets go, only for the answer time it covers', async () => {
+  const { markHandled, readHandled } = await import('../../../scripts/gate/open-questions.js');
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'handled-'));
+  const at = '2026-11-06T11:00:00.000Z';
+  const views = { questions: { a: q('todo-cli', at) } };
+  const rev = review('2026-11-06T10:00:00.000Z');
+  assert.match(questionHold({ views, work: 'todo-cli', review: rev, handled: readHandled(dir, ['a']) }), /after this version was reviewed/);
+  assert.equal(markHandled(dir, 'a', at), true);
+  assert.equal(questionHold({ views, work: 'todo-cli', review: rev, handled: readHandled(dir, ['a']) }), null);
+  // The director changes the answer: a new time holds again.
+  const changed = { questions: { a: q('todo-cli', '2026-11-06T12:00:00.000Z') } };
+  assert.match(questionHold({ views: changed, work: 'todo-cli', review: rev, handled: readHandled(dir, ['a']) }), /after/);
+  assert.equal(markHandled(dir, '../x', at), false);
+  fs.rmSync(dir, { recursive: true, force: true });
+});

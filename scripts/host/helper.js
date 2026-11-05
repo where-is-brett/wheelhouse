@@ -24,7 +24,7 @@ import { stopState, setStop, liftStop } from '../lib/stop.js';
 import { bypassActive } from '../lib/bypass.js';
 import { run as realRun, withoutGitVars } from '../lib/run.js';
 import { approvalCounts, checkCounts, gateDecision, reviewCounts } from '../gate/conditions.js';
-import { questionHold } from '../gate/open-questions.js';
+import { questionHold, questionsOf, readHandled, markHandled } from '../gate/open-questions.js';
 import { classifyChange, readConfig, isModelName, CI_FILES, PLUGIN_MANIFEST } from '../gate/guardrails.js';
 import { scrub } from './adapter.js';
 import { hide, cleanDeep } from '../lib/clean.js';
@@ -377,6 +377,7 @@ const pagesOf = (config) => (Array.isArray(config?.pages) ? config.pages : []);
 
 // The project's cache of pictures' hashes: beside its mirror, outside the state repository, so
 // never committed or pushed.
+const handledDir = (project) => path.join(stateDir(project), '..', 'handled');
 const screensDir = (project) => path.join(stateDir(project), '..', 'screens');
 
 // Removes the files in `dir` not modified for SCREENS_KEPT_MS, by this computer's clock, which is
@@ -3736,7 +3737,9 @@ export async function startHelper({
     const holdsLock = await lockHeld(project, ctx);
     const { upToDate, review, approval } = await gateRecords({ project, number, headSha, views, adapter, compare: approvalRequired }, ctx);
     // The director's questions on this work come first: a merge never goes ahead past one still open, or an answer no newer version carries.
-    const hold = restore || fixCall ? null : questionHold({ views, work: FEATURE_BRANCH.exec(typeof pr.headRef === 'string' ? pr.headRef : '')?.[1], review });
+    const holdWork = FEATURE_BRANCH.exec(typeof pr.headRef === 'string' ? pr.headRef : '')?.[1];
+    const hold = restore || fixCall ? null
+      : questionHold({ views, work: holdWork, review, handled: readHandled(handledDir(project), questionsOf(views, holdWork).map((q) => q.id)) });
     if (hold !== null) stateReasons.push(hold);
     // The kinds of review that count for the agent this computer runs, from the default branch's configuration:
     // null, today's rule, unless the agent's review module names them (ruling P7-15). The configuration doesn't
@@ -5030,10 +5033,15 @@ export async function startHelper({
       return { ok: true, offer: null };
     }, { write: true }),
     // The label of a question's verified answer, from the views alone, else null. Read-only, so STOP lets it through.
-    '/state/answer': stateRoute(async ({ project, questionId }) => {
+    '/state/answer': stateRoute(async ({ project, questionId, noChange }) => {
       if (typeof questionId !== 'string' || questionId === '') refuse('the question id must be text');
       const { questions } = await writeViews(project, { now });
       const label = Object.hasOwn(questions ?? {}, questionId) ? questions[questionId]?.answer?.label : undefined;
+      // The session says the answer needs no change: the merge's hold on that answer lets go (scripts/gate/open-questions.js).
+      if (noChange === true) {
+        const at = Object.hasOwn(questions ?? {}, questionId) ? questions[questionId]?.answer?.at : undefined;
+        if (typeof label !== 'string' || !markHandled(handledDir(project), questionId, at)) refuse('there is no answer to that question to mark as needing no change');
+      }
       return { ok: true, answer: typeof label === 'string' ? label : null };
     }),
     // Opens the settings record, making it the first time.
