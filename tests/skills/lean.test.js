@@ -1149,3 +1149,54 @@ test('shaping questions are asked only for what the request leaves open', () => 
   assert.match(lean, /don't ask it again/);
   assert.match(lean, /ask none and go straight to the size/);
 });
+
+// --- Copilot Lean trial, round 3 ---
+
+test('every change, invisible ones too, goes branch, build, review and merge; the chat writes no product file', () => {
+  const intake = section(playbook, 'Intake at Lean');
+  assert.match(intake, /Every change goes the whole way, however small or invisible/);
+  assert.match(intake, /add a test for the greeting/);
+  assert.match(intake, /You never write a product file yourself/);
+  assert.match(intake, /Chore: the quick size of route 9, which is still a branch, a build, a review and a merge/);
+  assert.match(intake, /Building then|Building \(the same branch, build, review and merge as any feature\)/);
+});
+
+test('a free-text question is not asked before the code is read, and skipping a question never cancels the work', () => {
+  const intake = section(playbook, 'Intake at Lean');
+  assert.match(intake, /Read before you ask/);
+  assert.match(intake, /never a free-text question/);
+  assert.match(intake, /Skipping a question never cancels the work/);
+});
+
+test('the chat carries straight on from the build into the review', () => {
+  const building = section(playbook, 'Building');
+  assert.match(building, /do not stop and wait to be asked/);
+  assert.match(building, /go on to Reviewing, step 1, in the same turn/);
+  assert.match(building, /Then go on to the review at once/);
+});
+
+test('the builder is started as a sub-agent that never needs the playbook, and told to add no co-author line', () => {
+  const building = section(playbook, 'Building');
+  assert.match(building, /start `wheelhouse-builder` itself as a sub-agent/);
+  assert.match(building, /Commit messages carry no co-author line/);
+  assert.match(building, /does not load this playbook/);
+  assert.match(building, /grep -i '\^co-auth'/);
+  const routing = read('adapters/copilot/project-instructions.md');
+  assert.match(routing, /doesn't load the skill: its own agent file and the brief it was given are its playbook/);
+  assert.match(routing, /never stops because the skill isn't there/);
+});
+
+test('changes made by hand are noticed at the start of a turn and asked about as a card', () => {
+  const intake = section(playbook, 'Intake at Lean');
+  assert.match(intake, /0\. \*\*Look for changes made by hand\*\*/);
+  assert.match(intake, /git status --short -- \. ':\(exclude\)\.wheelhouse' ':\(exclude\)wheelhouse'/);
+  assert.match(intake, /\*\*Check and add them\*\*/);
+  assert.match(intake, /\*\*Leave them out\*\*/);
+  assert.match(intake, /switch -c feature\/by-hand-/);
+  assert.match(playbook, /## Hand edits\nNothing/);
+});
+
+test('the kit carries the same words for the home copy of the playbook', () => {
+  assert.match(leanKit, /Every change goes the whole way/);
+  assert.match(leanKit, /Look for changes made by hand/);
+});

@@ -885,3 +885,10 @@ test('setup ends with a ready line, and the copy folder is always a card, never 
   assert.match(end, /Wheelhouse is ready\./);
   assert.match(end, /Intake at Lean/);
 });
+
+test('setup cuts the asking down and never types out a home folder from memory', () => {
+  assert.match(skill, /Cut the asking down/);
+  assert.match(skill, /one command rather than several/);
+  assert.match(skill, /Never type out a home folder's path from memory/);
+  assert.match(skill, /echo "\$\{COPILOT_HOME:-\$HOME\/\.copilot\}"/);
+});
