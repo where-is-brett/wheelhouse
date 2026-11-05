@@ -74,39 +74,82 @@ export async function folderFree({ folder, branch, git = gitRoute() }) {
 export async function bringFolderUp({ project, folder, branch, git = gitRoute(), from = null }) {
   const { state, home } = await reading({ project, folder, branch, git, from });
   if (state !== 'home-ahead') return { moved: false, state };
-  if (!(await folderFree({ folder, branch, git })) && !(await editsAlreadyIn({ folder, branch, home, git }))) return { line: OWN_CHANGES_LINE };
+  let letGo = null;
+  if (!(await folderFree({ folder, branch, git }))) {
+    letGo = await editsAlreadyIn({ folder, branch, home, git });
+    if (letGo === null) return { line: OWN_CHANGES_LINE };
+  }
   const here = inFolder(folder, git);
-  return (await here.ok(['merge', '--ff-only', '--no-overwrite-ignore', '--quiet', home])) ? { moved: true } : { line: OWN_CHANGES_LINE };
+  if (await here.ok(['merge', '--ff-only', '--no-overwrite-ignore', '--quiet', home])) return { moved: true };
+  if (letGo === null) return { line: OWN_CHANGES_LINE };
+  // The edits were let go and the merge still refused: they come back from the snapshot, so the folder is as it was.
+  const back = await here.ok(['stash', 'apply', '--index', '--quiet', letGo]);
+  return { line: back ? NOT_BROUGHT_LINE : `${NOT_BROUGHT_LINE} Your edits are kept in the folder's stash, under "${SNAPSHOT_MESSAGE}".` };
 }
 
+export const NOT_BROUGHT_LINE = 'The newest version could not be brought in, so your folder was put back as it was.';
+const SNAPSHOT_MESSAGE = 'Wheelhouse: edits already in the main version';
+const MODE_EXEC = '100755';
+
+// The blob and mode a line of `ls-tree` or `ls-files -s` names, or null when git gives none.
+const entryOf = (out) => {
+  const m = /^(\d+) (?:blob )?([0-9a-f]{40,64})(?: \d)?\t/.exec(String(out).split('\n')[0]);
+  return m === null ? null : { mode: m[1], sha: m[2] };
+};
+
 // Whether everything the folder holds uncommitted is already in the home's main version `home`, file for file with the same
-// content, and so is let go: those files go back to the folder's commit, which loses nothing, since the fast-forward that
-// follows writes the same content. Only tracked files that the folder's commit holds, on `branch`. A file that differs from the
-// home's version, or a change git can't read, leaves everything as it is and gives false.
+// content and mode, and so is let go. Gives null when something is not, leaving everything as it is. Otherwise a snapshot of
+// the folder's changes is made and kept in its stash (so a save made in the moment after the check can still be got back),
+// every file is checked again as the snapshot holds it, and those files go back to the folder's commit; the commit that
+// is the snapshot is given. Only tracked files the folder's commit holds, on `branch`, each with an index entry that is the
+// folder's commit's or the home's, and no merge in progress.
 async function editsAlreadyIn({ folder, branch, home, git }) {
   const here = inFolder(folder, git);
   const on = await here.call(['symbolic-ref', '-q', 'HEAD']);
-  if (on.code !== 0 || String(on.stdout).trim() !== `refs/heads/${branch}`) return false;
+  if (on.code !== 0 || String(on.stdout).trim() !== `refs/heads/${branch}`) return null;
   const changed = await here.call(['--no-optional-locks', 'diff', '--name-only', '--no-renames', '-z', 'HEAD']);
-  if (changed.code !== 0) return false;
+  if (changed.code !== 0) return null;
   const files = String(changed.stdout).split('\0').filter(Boolean);
-  if (files.length === 0) return false;
+  if (files.length === 0) return null;
   const unmerged = await here.call(['--no-optional-locks', 'diff', '--name-only', '--diff-filter=U']);
-  if (unmerged.code !== 0 || String(unmerged.stdout).trim() !== '') return false;
+  if (unmerged.code !== 0 || String(unmerged.stdout).trim() !== '') return null;
   for (const file of files) {
-    if ((await here.call(['cat-file', '-e', `HEAD:${file}`])).code !== 0) return false;
-    const theirs = await here.call(['rev-parse', '-q', '--verify', `${home}:${file}`]);
+    const head = entryOf((await here.call(['ls-tree', 'HEAD', '--', file])).stdout);
+    if (head === null) return null;
+    const theirs = entryOf((await here.call(['ls-tree', home, '--', file])).stdout);
+    const staged = entryOf((await here.call(['ls-files', '-s', '--', file])).stdout);
+    if (staged !== null && staged.sha !== head.sha && staged.sha !== theirs?.sha) return null;
+    if (staged === null && theirs !== null) return null;
     const full = path.join(folder, file);
     let ours = null;
-    if (fs.existsSync(full)) {
-      if (!fs.statSync(full).isFile()) return false;
+    let exec = false;
+    try {
+      const seen = fs.lstatSync(full);
+      if (!seen.isFile()) return null;
+      exec = (seen.mode & 0o111) !== 0;
       const hashed = await here.call(['hash-object', '--', file]);
-      if (hashed.code !== 0) return false;
+      if (hashed.code !== 0) return null;
       ours = String(hashed.stdout).trim();
+    } catch (error) {
+      if (error?.code !== 'ENOENT') return null;
     }
-    if (ours !== (theirs.code === 0 ? String(theirs.stdout).trim() : null)) return false;
+    if (ours !== (theirs?.sha ?? null)) return null;
+    if (theirs !== null && (theirs.mode === MODE_EXEC) !== exec) return null;
+    if (theirs !== null && theirs.mode !== '100644' && theirs.mode !== MODE_EXEC) return null;
   }
-  return here.ok(['checkout', '-q', 'HEAD', '--', ...files]);
+  const { identityOf } = await import('./merge.js');
+  const making = git(folder, { reach: 'local', what: FOLDER_WHAT, env: await identityOf(folder, git) });
+  const made = await making.call(['stash', 'create', SNAPSHOT_MESSAGE]);
+  const snapshot = String(made.stdout).trim();
+  if (made.code !== 0 || snapshot === '') return null;
+  // What the snapshot holds is what is checked again, so a save in the gap is either in it or after it.
+  for (const file of files) {
+    const theirs = await here.call(['rev-parse', '-q', '--verify', `${home}:${file}`]);
+    const kept = await here.call(['rev-parse', '-q', '--verify', `${snapshot}:${file}`]);
+    if ((theirs.code === 0 ? String(theirs.stdout).trim() : null) !== (kept.code === 0 ? String(kept.stdout).trim() : null)) return null;
+  }
+  if (!(await making.ok(['stash', 'store', '-m', SNAPSHOT_MESSAGE, snapshot]))) return null;
+  return (await here.ok(['checkout', '-q', 'HEAD', '--', ...files])) ? snapshot : null;
 }
 
 export const NOT_ON_MAIN_LINE = 'Your folder is on another branch, so the newest version waits.';

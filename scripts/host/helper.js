@@ -5889,9 +5889,12 @@ export async function startHelper({
         add: (tip, how) => addHandMade(project, tip, how),
         // One whose head the main version already holds has merged, and is not being checked.
         inFlight: async () => {
+          const adapter = await adapterNow();
+          const mine = (await adapter.openRequests()).filter((q) => HAND_MADE_BRANCH.test(q.branch));
+          if (mine.length === 0) return false;
           const home = homeGit(project, gitRoute({ run }));
-          for (const r of (await (await adapterNow()).openRequests()).filter((q) => HAND_MADE_BRANCH.test(q.branch))) {
-            const main = await defaultBranchOf(project, await adapterNow());
+          const main = await defaultBranchOf(project, adapter);
+          for (const r of mine) {
             const within = typeof r.head === 'string' && isBranchName(main) ? await home.call(['merge-base', '--is-ancestor', r.head, `refs/heads/${main}`]) : { code: 1 };
             if (within.code !== 0) return true;
           }
