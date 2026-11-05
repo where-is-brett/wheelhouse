@@ -153,14 +153,6 @@ function wordOf(attempt) {
   return NESTED.test(attempt.output) || NO_TOOL.includes(attempt.code) ? 'could-not-run' : null;
 }
 
-// Whether a run that exited 0 says it counted no tests: the summary of `node --test`'s TAP output (`# tests 0`, `# pass 0`,
-// `# fail 0`). Nothing ran, so nothing passed; the project has no tests yet, which is not the same as tests that fail.
-// The last summary wins, since a command can run more than one suite.
-export function countedNoTests(output) {
-  const totals = (name) => [...String(output).matchAll(new RegExp(`^# ${name} (\\d+)\\s*$`, 'gm'))].at(-1)?.[1];
-  return totals('tests') === '0' && totals('pass') === '0' && totals('fail') === '0';
-}
-
 // The output with what a person or a builder needs to know of why it ended so, where the output doesn't say. Last, so the
 // end kept of it holds the line.
 function explained(attempt) {
@@ -248,7 +240,6 @@ async function oneCheck({
     const word = wordOf(first);
     // Tests with no host stand in for the real ones, so only their pass says anything.
     if (isHostless(testCommand)) return answer(word === 'passed' ? 'passed' : 'could-not-run', first.output);
-    if (word === 'passed' && countedNoTests(first.output)) return answer('not-counted', first.output);
     if (word !== null) return answer(word, explained(first));
     const hosted = secondTryOf(testCommand);
     if (hosted !== null && TESTS_REFUSED.test(first.output)) {

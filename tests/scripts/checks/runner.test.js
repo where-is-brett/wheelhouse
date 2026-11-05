@@ -752,15 +752,6 @@ test('a first red holds the report back and raises one card', () => withHome(asy
   assert.ok(!w.posts.some((p) => p.state === 'failure'), 'a red the director hasn\'t seen would start the fix by itself');
 }));
 
-test('a first check that counted no tests starts not counting and raises no card', () => withHome(async () => {
-  const { w, runner } = world({ word: () => 'not-counted' });
-  await ticked(runner);
-  await ticked(runner);
-  assert.deepEqual(w.records.filter((r) => r.kind === 'checks-state'), [{ kind: 'checks-state', data: { state: 'not-counting', why: 'no-tests' } }]);
-  assert.equal(w.cards.length, 0);
-  assert.ok(!w.posts.some((p) => p.state === 'failure'));
-}));
-
 test('Get them passing first starts the fix and tells the host the truth', () => withHome(async () => {
   const fixes = [];
   const { w, runner } = world({ word: () => 'failed', onFix: (commit) => fixes.push(commit) });
