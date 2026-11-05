@@ -61,7 +61,7 @@ It reads GitHub's figure (`gh api /copilot_internal/user`, as in check 74) befor
 - **A yes to spend part of the Copilot allowance:** the same card as check 74, queued with the main session on 29 October 2026. With it, an agent runs `node probes/79-archon-spend/run.js trial --copilot 20 --allowance 25` after check 74's setup, and this note is rewritten with the comparison.
 - Removed afterwards: the scratch project under `$TMPDIR/wheelhouse-archon-checks/e6`, moved to the Trash.
 
-## The 5 November 2026 attempt
+### The 5 November 2026 attempt
 
 - The trial (`trial --copilot 20 --allowance 10`) was started on the Mac against a fresh scratch Archon. The scratch engine's Claude provider could not be added (`archon provider add claude` failed with no message), so the three Claude steps could not run; that is a gap in the scratch engine, not a fault in the meter.
 - **GitHub now counts in AI credits, not whole requests.** A short Copilot prompt at Auto cost about 0.16 credits (the CLI prints it), and the quota figure fell by about the same. `credits_used` shows whole numbers, so compare `quota_remaining`, which has two decimals. The meter's estimate of one request per prompt at `auto` will run well above GitHub's figure until it counts credits. This changes the comparison this check was set up to make.
