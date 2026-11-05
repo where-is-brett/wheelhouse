@@ -1,6 +1,6 @@
 4acd13567e69ef9ffacee6aa85c8fa0176f3aa49 agents/wheelhouse-builder.agent.md
 85cc5bae9b008b1545cb98cf3a6b97710ebb2d67 agents/wheelhouse-foreman.agent.md
-aa1c40f9dd04d2836716899b68d41ec69810b10b agents/wheelhouse-reviewer.agent.md
+4c959fc19bf702ab93f3c7f349be606ccfe7fd73 agents/wheelhouse-reviewer.agent.md
 e2cbf7fc03bbe4ca79d010dac5f74a53e4c70f5e agents/wheelhouse-tester.agent.md
 746ae080cd29a0cbb74dde56badda0950dae8515 hooks/wheelhouse-lean-guard.sh
 5517f936c01fe91c88c5cf72bd4f81ec7345426a hooks/wheelhouse.json

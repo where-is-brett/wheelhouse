@@ -117,7 +117,6 @@
 // Git runs only in the main checkout, to bring the default branch up to date
 // and make the worktree, with hooks and fsmonitor off. Everything read from a worktree goes through the safe
 // readers of scripts/feature/files.js and status.js.
-import { reviewClear } from '../lib/review-verdict.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -1233,6 +1232,7 @@ async function releaseMerged(ctx, pr, merged) {
   await ctx.write('merge', { pr, ...commit, forUsers: merged.briefing });
 }
 
+// Thorough means stricter: only a CLEAN verdict counts here, never findings that are all minor.
 // The verified CLEAN reviews of pull request `pr` at `head` on record, each counted once: by its record's id, which a
 // record sent again (from a session's pending folder, say) keeps, and its signer. Two reviewers' records may hold
 // the same data (the same verdict, model and version), so the data alone never makes two reviews one.
@@ -1240,7 +1240,7 @@ function cleanReviewsOf(project, pr, head) {
   const enrolled = readEnrolled();
   const seen = new Set();
   for (const e of stateEvents(project)) {
-    if (!(e.kind === 'review' && isPlain(e.data) && e.data.pr === pr && e.data.commit === head && reviewClear(e.data) && verify(e, enrolled))) continue;
+    if (!(e.kind === 'review' && isPlain(e.data) && e.data.pr === pr && e.data.commit === head && e.data.verdict === 'CLEAN' && verify(e, enrolled))) continue;
     seen.add(`${e.sig.computer}:${e.id}`);
   }
   return seen.size;

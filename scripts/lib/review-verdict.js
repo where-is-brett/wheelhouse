@@ -18,3 +18,18 @@ export function reviewClear(data) {
 export function minorsOf(data) {
   return reviewClear(data) && data.verdict === 'FINDINGS' ? data.findings : 0;
 }
+
+// The findings a reviewer's message lists, counted by the severity each line starts with (`- BLOCKER: …`, `- HIGH: …`,
+// `- MEDIUM: …`, `- LOW: …`, also numbered or in bold): `{ total, blocking }`. A report's `blocking` must equal this
+// count of BLOCKER and HIGH lines, so the number it signs is the number it shows.
+export function severityCounts(text) {
+  let total = 0;
+  let blocking = 0;
+  for (const line of String(text ?? '').split(/\r?\n/)) {
+    const m = /^\s*(?:[-*]|\d+[.)])\s+\**\[?(BLOCKER|HIGH|MEDIUM|LOW)\]?\**\s*[:\u2013\u2014-]/.exec(line);
+    if (!m) continue;
+    total += 1;
+    if (m[1] === 'BLOCKER' || m[1] === 'HIGH') blocking += 1;
+  }
+  return { total, blocking };
+}

@@ -355,3 +355,16 @@ test('the blocking count of a signed review cannot be lowered after it is signed
     assert.deepEqual(gateDecision(input({ reviewRequired: true, review: unsigned })).reasons, ['no CLEAN review of abcdef1']);
   });
 });
+
+test('a review that holds a head stays its review when a clearing one is recorded after it', async () => {
+  await withHome(async () => {
+    const { buildViews } = await import('../../../scripts/state/views.js');
+    let t = Date.parse('2026-11-06T00:00:00.000Z');
+    const made = (data) => { t += 1000; return makeEvent({ kind: 'review', data: { pr: 7, commit: SHA, ...data }, now: () => new Date(t) }); };
+    const viewsOf = (...events) => buildViews(events, readEnrolled());
+    const verdictOf = (v) => v.reviews['7'][SHA].data.verdict;
+    assert.equal(verdictOf(viewsOf(made({ verdict: 'FINDINGS', findings: 3, blocking: 1 }), made({ verdict: 'CLEAN' }))), 'FINDINGS', 'blocking, then clean');
+    assert.equal(verdictOf(viewsOf(made({ verdict: 'FINDINGS', findings: 3 }), made({ verdict: 'CLEAN' }))), 'FINDINGS', 'no count, then clean');
+    assert.equal(verdictOf(viewsOf(made({ verdict: 'FINDINGS', findings: 3, blocking: 0 }), made({ verdict: 'CLEAN' }))), 'CLEAN', 'minor, then clean takes its place');
+  });
+});

@@ -372,16 +372,15 @@ test('a head with no signed review of its own counts as reviewed when the helper
   assert.ok(diff(null, obs, { seen: new Set() }).some((e) => e.type === 'merge-ready' && e.work === 'login-page'));
 
   // A head with its own signed review needs no asking.
-  record('review', { pr: 7, commit: HEAD, verdict: 'FINDINGS' }, 2 * SEC);
-  const own = ciIs(fakeClient({ prs: open, carried: { ok: true, review: 'clean', upToDate: true } }), 'success');
-  assert.equal((await observe({ project: P, client: own, now: at(3 * SEC) })).prs[7].review, 'findings');
-  assert.deepEqual(names(own.calls).filter((n) => n === 'carried'), []);
+  // Findings that are all minor clear the head; a later review with findings and no count replaces it and holds.
+  record('review', { pr: 7, commit: HEAD, verdict: 'FINDINGS', findings: 2, blocking: 0 }, 2 * SEC);
+  const minor = ciIs(fakeClient({ prs: open, carried: { ok: true, review: 'none' } }), 'success');
+  assert.equal((await observe({ project: P, client: minor, now: at(2.5 * SEC) })).prs[7].review, 'clean');
 
-  // Findings that are all minor clear the head; a blocking one, or a record that does not say, does not.
-  record('review', { pr: 7, commit: HEAD, verdict: 'FINDINGS', findings: 2, blocking: 0 }, 4 * SEC);
-  assert.equal((await observe({ project: P, client: own, now: at(5 * SEC) })).prs[7].review, 'clean');
-  record('review', { pr: 7, commit: HEAD, verdict: 'FINDINGS', findings: 2, blocking: 1 }, 6 * SEC);
-  assert.equal((await observe({ project: P, client: own, now: at(7 * SEC) })).prs[7].review, 'findings');
+  record('review', { pr: 7, commit: HEAD, verdict: 'FINDINGS' }, 3 * SEC);
+  const own = ciIs(fakeClient({ prs: open, carried: { ok: true, review: 'clean', upToDate: true } }), 'success');
+  assert.equal((await observe({ project: P, client: own, now: at(4 * SEC) })).prs[7].review, 'findings');
+  assert.deepEqual(names(own.calls).filter((n) => n === 'carried'), []);
 }));
 
 test('a green head whose earlier CLEAN review did not carry over wakes its session to review it (R119)', () => withHome(async () => {
