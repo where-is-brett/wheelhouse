@@ -28,7 +28,7 @@ import tools from '../../adapters/claude-code/tools.js';
 import { runAndExit, answer, projectOf, beingSetUp } from './kit.js';
 import { looksLikeBaseline, holdsFigures, cardHash, readShown, cardText, sweepStale } from '../lib/measures-clicks.js';
 import { whatProblem, NO_REPLY_CODE } from '../cards/compose.js';
-import { TO_KNOW_MORE, TO_CHANGE_IT } from '../lib/calm-words.js';
+import { TO_KNOW_MORE, TO_CHANGE_IT, SUGGEST, SHOW_ME, NOT_NOW, SEND_BACK } from '../lib/calm-words.js';
 import { CARD } from '../lib/front-desk.js';
 import {
   chatCopy, setLinesOf, setLineOf, replyCode, replyCodeLine, runbookLine, isLiftStopLine, BLIND_LINE, RUNBOOK_TITLES, SETUP_TITLES, ID, LANES, TRUST_LINE, TAKEOVER_LINE, PAIR_LINE, UNINSTALL_LINE, KEEP_CONTROL_LINE, USAGE_LINE, PREMIUM_LINE, START_GOAL_LINE, RELEASE_LINE, UPDATE_HELPER_LINE, UPDATE_LINE,
@@ -170,8 +170,10 @@ export { PANE_LEAD };
 
 // The cards the questions are, as `standing` matches them: for each question, { card } while it waits or
 // { card, stale } once decided; a question matching no card is left out. Throws when the state can't be read.
+const allOutcomes = (project, outcomes) => (outcomes ?? (() => cardOutcomes(listEvents(stateDir(project), { report: () => {} }), readEnrolled())))(project);
+
 function cardsOf(questions, project, outcomes) {
-  const all = (outcomes ?? (() => cardOutcomes(listEvents(stateDir(project), { report: () => {} }), readEnrolled())))(project);
+  const all = allOutcomes(project, outcomes);
   const clicks = questions.map((q) => ({ question: q?.question }));
   const found = standing(clicks, all);
   return clicks.map((click) => found.get(click) ?? null);
@@ -196,6 +198,19 @@ function printedProblems(q, card) {
       + (same ? ' (the order differs; keep the order printed)' : ''));
   }
   return problems;
+}
+
+// The waiting card a question matching no card reads as reworded: it has two or more of the card's option labels, or its header and one label (headers are
+// per kind, so a header alone is not enough). Null when it overlaps none.
+// The buttons nearly every card ends with say nothing about which card it is, so they don't count as shared.
+const COMMON = [SUGGEST, SHOW_ME, NOT_NOW, SEND_BACK];
+function rewordedOf(q, open) {
+  const labels = (Array.isArray(q.options) ? q.options : []).map((o) => (typeof o === 'string' ? o : o?.label)).filter((l) => typeof l === 'string');
+  return open.find((o) => {
+    const { header, options } = o.card.data;
+    const shared = Array.isArray(options) ? options.filter((l) => labels.includes(l) && !COMMON.includes(l)).length : 0;
+    return shared >= 2 || (shared >= 1 && typeof header === 'string' && header !== '' && q.header === header);
+  }) ?? null;
 }
 
 const PRINTED_END = 'A card is asked exactly as `cli.js cards` printed it: pass the `questions` JSON it gave, word for word, with every option in its order.';
@@ -228,9 +243,14 @@ function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere:
     const others = lifts.includes(false);
     return { deny: `All stop is already lifted, so that question is not asked. Say so in one plain line, and ask nothing about it again.${others ? ' Ask only the others.' : ''}` };
   }
+  const open = allOutcomes(project, outcomes).filter((o) => o.decided === null && typeof o.card?.data?.question === 'string');
   const wrong = questions.flatMap((q, i) => {
     const f = found[i];
-    if (!f || typeof q?.question !== 'string') return [];
+    if (typeof q?.question !== 'string') return [];
+    if (!f) {
+      const card = rewordedOf(q, open);
+      return card === null ? [] : [`Question ${i + 1} is a waiting card reworded: ${printedProblems(q, card.card).join('; ')}.`];
+    }
     const problems = printedProblems(q, f.card);
     return problems.length === 0 ? [] : [`Question ${i + 1} is a card, but ${problems.join('; ')}.`];
   });

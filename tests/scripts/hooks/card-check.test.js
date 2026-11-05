@@ -461,10 +461,10 @@ const whenLocal = new Date(2026, 10, 4, 10, 34, 0).toISOString();
 const later = () => new Date(2026, 10, 4, 11, 0, 0);
 
 const separator = question('The export needs to know which separator to use.');
-const colour = question('The report needs a colour scheme.');
+const colour = question('The report needs a colour scheme.', { recommend: 'Blue', options: [{ label: 'Blue', says: 'Blue is used.' }, { label: 'Green', says: 'Green is used.' }] });
 const SEPARATOR = outcome('c-1', separator);
 const COLOUR = outcome('c-2', colour);
-const PLAIN = question('Which folder should the report go in?').question;
+const PLAIN = question('Which folder should the report go in?', { recommend: 'Shared', options: [{ label: 'Shared', says: 'Goes in the shared folder.' }, { label: 'Private', says: 'Goes in your folder.' }] }).question;
 
 const live = () => markPane(SID, { at: T0, drawn: T0, surface: 'desktop' });
 const run = (input, over = {}) => decide(input, { ...quick, role: () => 'front-desk', ...over });
@@ -655,4 +655,24 @@ test('a waiting card with a changed label or header is refused', () => withHome(
 
 test('a question matching no card is not held to a card\'s options', () => withHome(async () => {
   assert.equal(await run(withSession([colour.question]), { outcomes: () => [FOUR_WAITING], holdForPane: false }), undefined);
+}));
+
+test('a waiting card with its question reworded but its labels kept is refused', () => withHome(async () => {
+  const reworded = { ...four.question, question: 'Shall we add a footer to the report?' };
+  const out = reason(await run(withSession([reworded]), { outcomes: () => [FOUR_WAITING], holdForPane: false }));
+  assert.match(out, /reworded/);
+  assert.match(out, /not worded as printed/);
+}));
+
+test('a reworded question with the card\'s header and one label is refused; a decided card is not matched', () => withHome(async () => {
+  const headed = { ...colour.question, header: four.question.header, options: [four.question.options[0], { label: 'Else', description: 'x' }] };
+  assert.match(reason(await run(withSession([headed]), { outcomes: () => [FOUR_WAITING], holdForPane: false })), /reworded/);
+  const decidedFour = outcome('c-4', four, { at: whenLocal, label: 'Approve', where: 'chat' });
+  const out = reason(await run(withSession([{ ...four.question, question: 'Other words' }]), { outcomes: () => [decidedFour], now: later, holdForPane: false }).then((o) => o ?? { hookSpecificOutput: { permissionDecision: 'deny', permissionDecisionReason: 'none' } }));
+  assert.ok(!/reworded/.test(out));
+}));
+
+test('a plain question sharing neither header nor two labels still passes with a card waiting', () => withHome(async () => {
+  const plain = { ...PLAIN, options: [...PLAIN.options.slice(0, 1), { label: 'Elsewhere', description: 'x' }] };
+  assert.equal(await run(withSession([plain]), { outcomes: () => [FOUR_WAITING], holdForPane: false }), undefined);
 }));
