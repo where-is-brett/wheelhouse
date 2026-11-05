@@ -106,6 +106,27 @@ test('the dispatcher starts quick work through the helper\'s own start, with its
   } finally { p.cleanup(); }
 });
 
+test('a project the engine could not follow when the helper started is followed once it can, and its quick work starts', async () => {
+  const p = await setUp();
+  const engine = fakeEngine({ recordings: { 'quick-approved': recordings['quick-approved'] }, artefacts: p.artefacts });
+  let ready = false;
+  try {
+    await as(p.home, async () => {
+      put('work', { id: 'card-12', title: 'Fix the heading', lane: 'quick', visible: false, dependsOn: [] }, '2026-10-29T08:00:00.000Z');
+      const helper = await helperFor(p, engine, { engineFor: () => (ready ? engine : null), dispatchMs: 5 });
+      try {
+        await helper.engine.tick();
+        assert.equal(engine.calls.filter((c) => c.call === 'start').length, 0, 'no engine host yet, so nothing starts');
+        ready = true;
+        await until(() => engine.calls.filter((c) => c.call === 'start').length === 1, { what: 'the quick work started by the helper\'s own look' });
+        await until(() => records('run').length === 1, { what: 'the run on the record' });
+      } finally {
+        await helper.close();
+      }
+    });
+  } finally { p.cleanup(); }
+});
+
 test('the dispatcher starts nothing under All stop', async () => {
   const p = await setUp();
   const engine = fakeEngine({ recordings: { 'quick-approved': recordings['quick-approved'] }, artefacts: p.artefacts });

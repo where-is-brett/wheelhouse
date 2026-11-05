@@ -26,6 +26,12 @@ import { guardedCommand, selfTestFile } from '../../../scripts/windows/low.js';
 import { readBaseline, writeBaseline } from '../../../scripts/watcher/control-files.js';
 
 const unix = process.platform !== 'win32';
+// What `wake.js done` leaves for a wake the Bosun has handled: a line in the watcher's measures.
+function recordDone(file) {
+  const dir = watcherDir(P);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.appendFileSync(path.join(dir, 'measures.jsonl'), `${JSON.stringify({ at: '2026-10-19T09:00:00.000Z', wake: path.basename(file, '.json'), outcome: 'idle', events: 1, conflicts: 0, merges: 0 })}\n`);
+}
 const P = 'o__p';
 const T0 = Date.parse('2026-10-19T09:00:00.000Z');
 const MIN = 60 * 1000;
@@ -225,7 +231,8 @@ test('several waiting wakes go as one, each event once, read only from the recor
   checkout();
   const fake = fakeRun({ exits: true });
   const w = waker(fake);
-  await w.wakeForeman(writeWake(P, bundle('e0')));
+  const first = writeWake(P, bundle('e0'));
+  await w.wakeForeman(first);
   const third = writeWake(P, bundle('e3', { digest: [{ type: 'progress', id: 'p1' }] }));
   const fourth = writeWake(P, bundle('e4', { events: [{ type: 'incident', id: 'e3' }, { type: 'stuck', id: 'e4' }], digest: [{ type: 'progress', id: 'p2' }], dropped: 2 }));
   await w.wakeForeman(third);
@@ -233,6 +240,7 @@ test('several waiting wakes go as one, each event once, read only from the recor
   // A copy the foreman could write is never read back.
   fs.mkdirSync(foremanCopies(), { recursive: true });
   fs.writeFileSync(path.join(foremanCopies(), path.basename(third)), JSON.stringify({ v: 1, to: 'foreman', events: [{ id: 'planted' }] }));
+  recordDone(first);
   fake.end(fake.calls[0].pid, 0);
   await flush();
   assert.equal(fake.calls.length, 2, 'the exit started the next foreman, with no pump called');
@@ -245,16 +253,60 @@ test('several waiting wakes go as one, each event once, read only from the recor
   assert.deepEqual(w.waiting().map((e) => e.file), [merged], 'the merged record takes their place');
 }));
 
-test('a wake leaves the outbox only when its session exits with 0', () => withHome(async () => {
+test('a wake leaves the outbox only when its session exits with 0 and the Bosun has recorded it', () => withHome(async () => {
   checkout();
   const fake = fakeRun({ exits: true });
   const w = waker(fake);
-  await w.wakeForeman(writeWake(P, bundle('e1')));
+  const file = writeWake(P, bundle('e1'));
+  await w.wakeForeman(file);
   assert.equal(w.waiting().length, 1, 'kept while in flight');
+  recordDone(file);
   fake.end(fake.calls[0].pid, 0);
   await flush();
   assert.deepEqual(w.waiting(), []);
   assert.equal(fs.existsSync(runningFile(P, 'foreman')), false);
+}));
+
+test('a wake the Bosun ended without recording is sent again after the back-off, and let go after three sends', () => withHome(async () => {
+  checkout();
+  const fake = fakeRun({ exits: true });
+  const errors = [];
+  const w = waker(fake, { onError: (m) => errors.push(m) });
+  await w.wakeForeman(writeWake(P, bundle('e1')));
+  fake.end(fake.calls[0].pid, 0);
+  await flush();
+  const [entry] = w.waiting();
+  assert.equal(entry.failures, 1);
+  assert.match(entry.lastError, /without recording the wake/);
+  await w.pump();
+  assert.equal(fake.calls.length, 1, 'not before its wait');
+  w.clock.move(MIN);
+  await w.pump();
+  assert.equal(fake.calls.length, 2, 'sent again');
+  fake.end(fake.calls[1].pid, 0);
+  await flush();
+  w.clock.move(5 * MIN);
+  await w.pump();
+  assert.equal(fake.calls.length, 3, 'and a third time');
+  fake.end(fake.calls[2].pid, 0);
+  await flush();
+  assert.deepEqual(w.waiting(), [], 'let go after the third send');
+}));
+
+test('a wake sent again and then recorded leaves the outbox', () => withHome(async () => {
+  checkout();
+  const fake = fakeRun({ exits: true });
+  const w = waker(fake);
+  const file = writeWake(P, bundle('e1'));
+  await w.wakeForeman(file);
+  fake.end(fake.calls[0].pid, 0);
+  await flush();
+  w.clock.move(MIN);
+  await w.pump();
+  recordDone(w.waiting()[0].file);
+  fake.end(fake.calls[1].pid, 0);
+  await flush();
+  assert.deepEqual(w.waiting(), []);
 }));
 
 test('a session that exits with an error puts its wake back, waiting 1, 5, then 15 minutes, and is reported from the third', () => withHome(async () => {

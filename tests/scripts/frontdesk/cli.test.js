@@ -1378,6 +1378,25 @@ test('why n on a card that uses a glossary term gives the whole sentence, with t
   });
 });
 
+test('drop ends a queued copy with a closed report, and refuses work that is not open', async () => {
+  await inHome(async () => {
+    const first = makeEvent({ kind: 'work', data: { id: 'version-flag', title: 'Print the version', lane: 'quick', visible: false, dependsOn: [] }, now: () => T(1) });
+    const copy = makeEvent({ kind: 'work', data: { id: 'version-flag-2', title: 'Print the version', lane: 'quick', visible: false, dependsOn: [] }, now: () => T(2) });
+    const helper = fakeHelper({ events: [first, copy] });
+    const out = await run(helper, ['drop', 'version-flag-2']);
+    assert.equal(out.code, 0, out.err);
+    assert.match(out.json.say, /will not be built/);
+    assert.deepEqual(helper.writes().map((w) => [w.kind, w.data.work, w.data.outcome]), [['report', 'version-flag-2', 'closed']]);
+    // It is out of the open work now, so a second drop and an unknown name are refused with nothing more written.
+    for (const args of [['drop', 'version-flag-2'], ['drop', 'nothing-here'], ['drop']]) {
+      const refused = await run(helper, args);
+      assert.equal(refused.code, 1, args.join(' '));
+    }
+    assert.match((await run(helper, ['drop', 'version-flag-2'])).err, /isn't open work: the open work is version-flag\n$/);
+    assert.equal(helper.writes().length, 1);
+  });
+});
+
 test('suggest hands a suggested change on an approval card to the build as one work record, and gives the one line to say (scenario 36)', async () => {
   await inHome(async () => {
     const approval = cardEvent({ ...APPROVAL, target: { pr: 7, sha: FULL } }, 2);
@@ -2110,7 +2129,7 @@ test('an unknown command, or a helper that can\'t be reached, is one line on sta
     const helper = fakeHelper();
     const unknown = await run(helper, ['show', '7']);
     assert.equal(unknown.code, 1);
-    assert.match(unknown.err, /^Commands: cards, pull-cards, card, again, why, suggest, record, similar, views, explain, review, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, end-goal, narrow-goal, goal-baseline, goal-draft, goal-card, note\n$/);
+    assert.match(unknown.err, /^Commands: cards, pull-cards, card, again, why, suggest, drop, record, similar, views, explain, review, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, end-goal, narrow-goal, goal-baseline, goal-draft, goal-card, note\n$/);
     const away = { client: { desk: { read: async () => ({ ok: false, refused: 'the host helper could not be reached: is it running?' }) } } };
     const out = await run(away, ['cards']);
     assert.equal(out.code, 1);
@@ -2170,7 +2189,7 @@ test('through the real helper, the command places the project from its folder an
 test('run as a script, an unknown command is refused with the list of commands', async () => {
   const done = spawnSync(process.execPath, [SCRIPT, 'nonsense'], { encoding: 'utf8' });
   assert.equal(done.status, 1);
-  assert.equal(done.stderr, 'Commands: cards, pull-cards, card, again, why, suggest, record, similar, views, explain, review, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, end-goal, narrow-goal, goal-baseline, goal-draft, goal-card, note\n');
+  assert.equal(done.stderr, 'Commands: cards, pull-cards, card, again, why, suggest, drop, record, similar, views, explain, review, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, end-goal, narrow-goal, goal-baseline, goal-draft, goal-card, note\n');
   assert.equal(done.stdout, '');
 });
 
