@@ -74,9 +74,39 @@ export async function folderFree({ folder, branch, git = gitRoute() }) {
 export async function bringFolderUp({ project, folder, branch, git = gitRoute(), from = null }) {
   const { state, home } = await reading({ project, folder, branch, git, from });
   if (state !== 'home-ahead') return { moved: false, state };
-  if (!(await folderFree({ folder, branch, git }))) return { line: OWN_CHANGES_LINE };
+  if (!(await folderFree({ folder, branch, git })) && !(await editsAlreadyIn({ folder, branch, home, git }))) return { line: OWN_CHANGES_LINE };
   const here = inFolder(folder, git);
   return (await here.ok(['merge', '--ff-only', '--no-overwrite-ignore', '--quiet', home])) ? { moved: true } : { line: OWN_CHANGES_LINE };
+}
+
+// Whether everything the folder holds uncommitted is already in the home's main version `home`, file for file with the same
+// content, and so is let go: those files go back to the folder's commit, which loses nothing, since the fast-forward that
+// follows writes the same content. Only tracked files that the folder's commit holds, on `branch`. A file that differs from the
+// home's version, or a change git can't read, leaves everything as it is and gives false.
+async function editsAlreadyIn({ folder, branch, home, git }) {
+  const here = inFolder(folder, git);
+  const on = await here.call(['symbolic-ref', '-q', 'HEAD']);
+  if (on.code !== 0 || String(on.stdout).trim() !== `refs/heads/${branch}`) return false;
+  const changed = await here.call(['--no-optional-locks', 'diff', '--name-only', '--no-renames', '-z', 'HEAD']);
+  if (changed.code !== 0) return false;
+  const files = String(changed.stdout).split('\0').filter(Boolean);
+  if (files.length === 0) return false;
+  const unmerged = await here.call(['--no-optional-locks', 'diff', '--name-only', '--diff-filter=U']);
+  if (unmerged.code !== 0 || String(unmerged.stdout).trim() !== '') return false;
+  for (const file of files) {
+    if ((await here.call(['cat-file', '-e', `HEAD:${file}`])).code !== 0) return false;
+    const theirs = await here.call(['rev-parse', '-q', '--verify', `${home}:${file}`]);
+    const full = path.join(folder, file);
+    let ours = null;
+    if (fs.existsSync(full)) {
+      if (!fs.statSync(full).isFile()) return false;
+      const hashed = await here.call(['hash-object', '--', file]);
+      if (hashed.code !== 0) return false;
+      ours = String(hashed.stdout).trim();
+    }
+    if (ours !== (theirs.code === 0 ? String(theirs.stdout).trim() : null)) return false;
+  }
+  return here.ok(['checkout', '-q', 'HEAD', '--', ...files]);
 }
 
 export const NOT_ON_MAIN_LINE = 'Your folder is on another branch, so the newest version waits.';
@@ -180,13 +210,17 @@ async function commitOwnSection({ folder, branch, git }) {
 
 // The card for work the folder holds and the home doesn't (spec 5.4). `more`: an earlier change made by hand is still open,
 // so these are further changes on top of it, and the card says so.
-export function handMadeCard({ more = false } = {}) {
+// `earlier` says what became of them: 'open' (`more`) while they are still being checked, 'done' when they no longer are.
+export function handMadeCard({ more = false, earlier = more ? 'open' : null } = {}) {
+  more = earlier !== null;
   return {
     work: HAND_MADE_WORK,
     level: 3,
-    what: more
+    what: earlier === 'open'
       ? 'More changes were made by hand in your project folder, while the earlier ones are still being checked. These aren\'t part of the main version yet.'
-      : 'Changes were made by hand in your project folder. They aren\'t part of the main version yet.',
+      : earlier === 'done'
+        ? 'More changes were made by hand in your project folder. The earlier ones are no longer being checked. These aren\'t part of the main version yet.'
+        : 'Changes were made by hand in your project folder. They aren\'t part of the main version yet.',
     why: 'Nothing joins the main version without a review, and whether these should join it is yours to decide, at level 3.',
     options: [
       { label: CHECK_AND_ADD, says: more ? 'They go through the same review and checks as the earlier ones, as a change of their own, and join the main version if they pass.' : 'They go through the same review and checks as any other work, and join the main version if they pass.' },
@@ -219,6 +253,13 @@ async function commitUncommitted({ folder, git }) {
   if (saved === '') return null;
   const head = String(await making.must(['rev-parse', '--verify', 'HEAD^{commit}'], 'The changes made by hand could not be read')).trim();
   return String(await making.must(['commit-tree', '--no-gpg-sign', `${saved}^{tree}`, '-p', head, '-m', 'Changes made by hand'], 'The changes made by hand could not be set aside')).trim();
+}
+
+// Which of the earlier changes made by hand is the case now: 'open' while one is still being checked, 'done' when one was added
+// and no longer is, else null.
+async function earlierOf(kept, inFlight) {
+  if (await inFlight().catch(() => false)) return 'open';
+  return Object.values(kept.tips).some((e) => e.added === true) ? 'done' : null;
 }
 
 const readKept = (file) => {
@@ -265,8 +306,10 @@ export function folderWatch({ project, folder, branchOf, git = gitRoute(), file,
         }
         const made = await commitUncommitted({ folder, git });
         const got = made === null ? { ok: true } : await add(made, { parted: false, question: entry.id });
-        if (got?.ok === true) entry.done = true;
-        else if (kept.failed !== tip) {
+        if (got?.ok === true) {
+          entry.done = true;
+          if (made !== null) entry.added = true;
+        } else if (kept.failed !== tip) {
           kept.failed = tip;
           await note(`The changes made by hand couldn't be added yet: ${got?.refused ?? 'the helper didn\'t say why'}`);
         }
@@ -277,6 +320,7 @@ export function folderWatch({ project, folder, branchOf, git = gitRoute(), file,
       const got = waiting ? await add(found.tip, { parted: found.state === 'parted', question: entry.id }) : { ok: true };
       if (got?.ok === true) {
         entry.done = true;
+        if (waiting) entry.added = true;
         if (waiting && kept.tips[found.tip]) kept.tips[found.tip].done = true;
       } else if (kept.failed !== tip) {
         kept.failed = tip;
@@ -312,7 +356,7 @@ export function folderWatch({ project, folder, branchOf, git = gitRoute(), file,
       }
       kept.cards += 1;
       const id = `q-${HAND_MADE_WORK}-${kept.cards}`;
-      await card({ id, ...handMadeCard({ more: await inFlight().catch(() => false) }) });
+      await card({ id, ...handMadeCard({ earlier: await earlierOf(kept, inFlight) }) });
       kept.tips[found.tip] = { id, done: false };
     } else if (found.state === 'same') {
       // A tracked file edited by hand and not committed: the same question, once the edit has stood for two ticks (a write
@@ -324,7 +368,7 @@ export function folderWatch({ project, folder, branchOf, git = gitRoute(), file,
         else {
           kept.cards += 1;
           const id = `q-${HAND_MADE_WORK}-${kept.cards}`;
-          await card({ id, ...handMadeCard({ more: await inFlight().catch(() => false) }) });
+          await card({ id, ...handMadeCard({ earlier: await earlierOf(kept, inFlight) }) });
           kept.tips[edit] = { id, done: false, edit: true };
         }
       }

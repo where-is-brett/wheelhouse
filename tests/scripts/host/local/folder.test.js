@@ -345,3 +345,67 @@ test('a further hand edit while an earlier change made by hand is open asks anew
   assert.match(cards[1].what, /^More changes were made by hand .* while the earlier ones are still being checked/);
   assert.deepEqual(cards[1].options.map((o) => o.label), [CHECK_AND_ADD, LEAVE_THEM_OUT]);
 }));
+
+// The home's main moves on by a commit that writes `text` to `file`, as the merge of an accepted hand edit does.
+async function homeWrites(file, text) {
+  const copy = path.join(tempFolder('wh-copy-'), 'copy');
+  await git(path.dirname(copy), ['clone', '-q', homeDir(P), copy]);
+  const commit = await commitIn(copy, file, text);
+  await git(copy, ['push', '-q', 'origin', 'HEAD:refs/heads/main']);
+  return commit;
+}
+
+test('a folder whose uncommitted edit is exactly what the merged main holds takes the main, losing nothing', () => level(async (folder) => {
+  await commitIn(folder, 'README.md', 'first\n');
+  await git(folder, ['push', '-q', homeDir(P), 'HEAD:refs/heads/main', '--force']);
+  fs.writeFileSync(path.join(folder, 'README.md'), 'edited\n');
+  const commit = await homeWrites('README.md', 'edited\n');
+  assert.deepEqual(await bringFolderUp({ project: P, folder, branch: 'main' }), { moved: true });
+  assert.equal(await git(folder, ['rev-parse', 'HEAD']), commit);
+  assert.equal(fs.readFileSync(path.join(folder, 'README.md'), 'utf8'), 'edited\n');
+  assert.equal(await git(folder, ['status', '--porcelain']), '');
+}));
+
+test('a folder edit that differs from the merged main still waits, untouched', () => level(async (folder) => {
+  await commitIn(folder, 'README.md', 'first\n');
+  await git(folder, ['push', '-q', homeDir(P), 'HEAD:refs/heads/main', '--force']);
+  fs.writeFileSync(path.join(folder, 'README.md'), 'edited again\n');
+  await homeWrites('README.md', 'edited\n');
+  assert.deepEqual(await bringFolderUp({ project: P, folder, branch: 'main' }), { line: OWN_CHANGES_LINE });
+  assert.equal(fs.readFileSync(path.join(folder, 'README.md'), 'utf8'), 'edited again\n');
+}));
+
+test('an identical edit beside another uncommitted edit waits, and both stay', () => level(async (folder) => {
+  await commitIn(folder, 'README.md', 'first\n');
+  await git(folder, ['push', '-q', homeDir(P), 'HEAD:refs/heads/main', '--force']);
+  fs.writeFileSync(path.join(folder, 'README.md'), 'edited\n');
+  fs.writeFileSync(path.join(folder, 'a.txt'), 'mine\n');
+  await homeWrites('README.md', 'edited\n');
+  assert.deepEqual(await bringFolderUp({ project: P, folder, branch: 'main' }), { line: OWN_CHANGES_LINE });
+  assert.equal(fs.readFileSync(path.join(folder, 'README.md'), 'utf8'), 'edited\n');
+  assert.equal(fs.readFileSync(path.join(folder, 'a.txt'), 'utf8'), 'mine\n');
+}));
+
+test('a further hand edit after the earlier change stopped being checked does not say it is still being checked', () => level(async (folder) => {
+  await commitIn(folder, 'README.md', 'first\n');
+  await git(folder, ['push', '-q', homeDir(P), 'HEAD:refs/heads/main', '--force']);
+  fs.writeFileSync(path.join(folder, 'README.md'), 'one\n');
+  const answers = {};
+  const cards = [];
+  const watch = folderWatch({
+    project: P, folder, branchOf: async () => 'main', file: path.join(tempFolder('wh-kept-'), 'folder.json'),
+    card: async (data) => { cards.push(data); }, answerOf: (id) => answers[id] ?? null, note: async () => {},
+    add: async () => ({ ok: true }), inFlight: async () => false,
+  });
+  await watch.tick();
+  await watch.tick();
+  answers[cards[0].id] = CHECK_AND_ADD;
+  await watch.tick();
+  fs.writeFileSync(path.join(folder, 'README.md'), 'two\n');
+  await watch.tick();
+  await watch.tick();
+  assert.equal(cards.length, 2);
+  assert.doesNotMatch(cards[1].what, /still being checked/);
+  assert.match(cards[1].what, /^More changes were made by hand/);
+  assert.match(cards[1].what, /no longer being checked/);
+}));
