@@ -25,6 +25,11 @@ export async function firstCheck({ found, check, state, note, card }) {
     await state({ state: 'not-counting', why: 'nothing-found' });
     return 'nothing';
   }
+  // Exit 0 with no tests counted: the tests don't count yet, and nothing is failing.
+  if (check.result === 'not-counted') {
+    await state({ state: 'not-counting', why: 'no-tests' });
+    return 'nothing';
+  }
   if (check.result === 'passed') {
     await state({ state: 'counting', why: 'passed' });
     await note(checksRanLine(check));

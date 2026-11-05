@@ -54,3 +54,10 @@ test('could not run leaves it to the runner\'s own card', async () => {
   assert.equal(await firstCheck({ ...args, found, check: { result: 'could-not-run', minutes: 1 } }), 'could-not-run');
   assert.deepEqual([w.states, w.notes, w.cards], [[], [], []]);
 });
+
+test('a check that counted no tests starts not counting, with no card', async () => {
+  const { w, args } = world();
+  assert.equal(await firstCheck({ ...args, found, check: { result: 'not-counted', minutes: 1 } }), 'nothing');
+  assert.deepEqual(w.states, [{ state: 'not-counting', why: 'no-tests' }]);
+  assert.equal(w.cards.length, 0);
+});

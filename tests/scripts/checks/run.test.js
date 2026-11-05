@@ -656,3 +656,22 @@ test('runCheck on a small project gives a signed check event', mac, async () => 
     assert.ok(verify(event, readEnrolled()));
   });
 });
+
+const TAP_ZERO = "printf '# tests 0\\n# suites 0\\n# pass 0\\n# fail 0\\n# cancelled 0\\n# skipped 0\\n# todo 0\\n'";
+
+test('a test run that exits 0 and counted no tests is not-counted, on the main line too', unix, async () => {
+  await withHome(async () => {
+    assert.equal((await check(`${TAP_ZERO}; exit 0`)).result, 'not-counted');
+    const s = await source();
+    const got = await runCheck({ project: 'p', commit: s.commit, main: true, settings: settings(`${TAP_ZERO}; exit 0`), source: s.url, platform: 'darwin', sandbox: standIn() });
+    assert.equal(got.result, 'not-counted');
+    assert.equal(got.clean, true);
+  });
+});
+
+test('a pass that counted tests, and a failure with none counted, keep their words', unix, async () => {
+  await withHome(async () => {
+    assert.equal((await check("printf '# tests 3\\n# pass 3\\n# fail 0\\n'; exit 0")).result, 'passed');
+    assert.equal((await check("printf '# tests 0\\n# pass 0\\n# fail 0\\n'; exit 1")).result, 'failed');
+  });
+});

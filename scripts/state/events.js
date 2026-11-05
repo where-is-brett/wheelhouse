@@ -949,7 +949,7 @@ function checkMatch(data) {
 
 // Whether a project's tests count, and why (spec 4.5).
 function checkChecksState(data) {
-  const fits = data?.state === 'counting' ? data.why === 'passed' : data?.state === 'not-counting' && ['nothing-found', 'director'].includes(data.why);
+  const fits = data?.state === 'counting' ? data.why === 'passed' : data?.state === 'not-counting' && ['nothing-found', 'no-tests', 'director'].includes(data.why);
   if (!isPlain(data) || !fits || Object.keys(data).length !== 2) throw new Error('A checks-state event needs a state and why it holds');
 }
 
