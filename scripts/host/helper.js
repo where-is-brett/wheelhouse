@@ -1887,8 +1887,8 @@ export async function startHelper({
   // made here too, unless the caller made it (the foreman's act command does,
   // to record the id as handled before the event exists, ruling R86): then it
   // must be shaped as a random UUID and not one the state holds already.
-  // The passes of the foreman commands running now (/foreman/run), each held for that one run.
-  const foremanRuns = new Set();
+  // The passes of the foreman commands running now (/foreman/run), each held for that one run and that one project.
+  const foremanRuns = new Map();
   // A card-answer naming a proof, a commit or a card's hash is a click record only the helper's own routes make
   // (/cards/chat-click): `own` is theirs. From /state/write, which anyone who reaches the helper may call, it is
   // refused, so no caller can name a proof the gate would read.
@@ -1917,7 +1917,7 @@ export async function startHelper({
     if (kind === 'question') {
       // The foreman's own questions (ids from one million up) and a question that replaces another are written by the
       // foreman's command alone, which the helper runs and hands a pass for that run: no other caller holds one.
-      if ((questionIdOf(data.id)?.foreman === true || Object.hasOwn(data, 'replaces')) && !(typeof foreman === 'string' && foremanRuns.has(foreman))) {
+      if ((questionIdOf(data.id)?.foreman === true || Object.hasOwn(data, 'replaces')) && !(typeof foreman === 'string' && foremanRuns.get(foreman) === project)) {
         refuse('only the Bosun\'s own command writes its questions, or a question that replaces another');
       }
       for (const field of ['engine', 'key', 'head']) if (Object.hasOwn(data, field)) refuse(`a question written here can't carry ${field}: only the helper's own cards do`);
@@ -5182,7 +5182,7 @@ export async function startHelper({
       if (why !== null) refuse(why);
       let result;
       const pass = crypto.randomUUID();
-      foremanRuns.add(pass);
+      foremanRuns.set(pass, project);
       try {
         result = await run(process.execPath, [FOREMAN_RUNNER, address, script, ...argv], {
           cwd: recordOf(project).folder, baseEnv: { ...foremanEnv(process.env), WHEELHOUSE_FOREMAN_RUN: pass }, timeoutMs: FOREMAN_RUN_MS, limit: FOREMAN_OUTPUT_BYTES,

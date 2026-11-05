@@ -433,3 +433,28 @@ test('the foreman\'s questions are written only with the pass of a foreman comma
   assert.equal(results.own.ok, true, 'a feature\'s own question needs no pass');
 });
 
+
+test('a foreman pass is for its own project alone', async () => {
+  const p = await project();
+  const results = {};
+  await as(p.home, async () => {
+    writeProject('o__other', { folder: fs.realpathSync.native(tempFolder('wh-other-')), remoteUrl: p.remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
+    await openTestRecord({ env: LOCAL_PATHS, project: 'o__other', remoteUrl: p.remote.url });
+  });
+  try {
+    await withHelper(p.home, async (client) => {
+      helperRun.current = async (file, args, options = {}) => {
+        if (file !== process.execPath) return hostGuard(file, args, options);
+        results.other = await client.state.write({ project: 'o__other', kind: 'question', data: { id: 'q-mine-1000001', work: 'mine', what: 'What?', why: 'Why', options: [{ label: 'Yes', says: 'act ask' }], recommendation: 'Yes', level: 3 }, foreman: options.baseEnv.WHEELHOUSE_FOREMAN_RUN });
+        return { code: 0, stdout: '', stderr: '' };
+      };
+      await client.foreman.run({ folder: p.checkout, script: 'act', argv: ['merge', 'export'] });
+    }, { run: (...a) => helperRun.current(...a) });
+  } finally { p.remote.cleanup(); }
+  assert.equal(results.other.ok, false);
+  assert.match(results.other.refused, /only the Bosun's own command writes its questions/);
+});
+
+test('a session the foreman starts is not given the pass', () => {
+  assert.deepEqual(sessionEnv({ PATH: '/bin', WHEELHOUSE_FOREMAN_RUN: 'a-pass', wheelhouse_foreman_run: 'b' }), { PATH: '/bin' });
+});

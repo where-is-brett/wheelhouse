@@ -10,6 +10,8 @@ import { EFFORTS } from '../../scripts/routing/thoroughness.js';
 
 // The variable that tells a hook the session is the foreman's.
 export const ROLE_VARIABLE = 'WHEELHOUSE_ROLE';
+// The pass a foreman command holds for its run (scripts/host/helper.js): never given to a session it starts.
+export const FOREMAN_PASS_VARIABLE = 'WHEELHOUSE_FOREMAN_RUN';
 
 // The explicit permission mode sessions start in: the configuration's, or
 // `acceptEdits`. Bypass mode, and any mode not known, are refused.
@@ -63,7 +65,7 @@ function effortArgs({ effort, fallback }) {
 // CLAUDE_CODE_OAUTH_TOKEN and the like start "CLAUDE", as the host session's do.
 export function sessionEnv(env) {
   const kept = Object.entries(env).filter(([name]) => isClaudeSignIn(name));
-  const rest = Object.entries(withoutHostVariables(env)).filter(([name]) => name.toUpperCase() !== ROLE_VARIABLE);
+  const rest = Object.entries(withoutHostVariables(env)).filter(([name]) => name.toUpperCase() !== ROLE_VARIABLE && name.toUpperCase() !== FOREMAN_PASS_VARIABLE);
   return Object.fromEntries([...rest, ...kept]);
 }
 

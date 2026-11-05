@@ -255,7 +255,7 @@ function optionsOf(found, recommendation) {
 
 // --- Where things stand, and writing to state ---
 
-function context({ project, client, now, run, wakerFor, pluginRoot, makeId, out, platform, isLocked }) {
+function context({ project, client, now, run, wakerFor, pluginRoot, makeId, out, platform, isLocked, foremanPass }) {
   let views = null;
   let config = null;
   const ctx = {
@@ -285,7 +285,7 @@ function context({ project, client, now, run, wakerFor, pluginRoot, makeId, out,
       recordHandled(project, [id], { now });
       let answer;
       try {
-        answer = await client.state.write({ project, kind, data, id, ...(process.env.WHEELHOUSE_FOREMAN_RUN ? { foreman: process.env.WHEELHOUSE_FOREMAN_RUN } : {}) });
+        answer = await client.state.write({ project, kind, data, id, ...(foremanPass ? { foreman: foremanPass } : {}) });
       } catch {
         answer = null;
       }
@@ -1461,10 +1461,18 @@ const USAGE = `Commands: ${Object.keys(COMMANDS).join(', ')}, each followed by t
 
 // Runs a command and resolves with its exit code. `wakerFor(config, print)`
 // gives the waker that starts a session.
+// The pass the helper gave this command run (WHEELHOUSE_FOREMAN_RUN), taken once and removed from the environment, so no
+// session or tool this command starts inherits it.
+function takeForemanPass() {
+  const pass = process.env.WHEELHOUSE_FOREMAN_RUN;
+  delete process.env.WHEELHOUSE_FOREMAN_RUN;
+  return typeof pass === 'string' && pass !== '' ? pass : undefined;
+}
+
 export async function main(argv, {
   cwd = process.cwd(), project: given, client = helperClient(), now = () => new Date(), run = runProgram,
   wakerFor, pluginRoot = PLUGIN_ROOT, makeId = () => crypto.randomUUID(), platform = process.platform, isLocked = lockedByPath,
-  out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t),
+  out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t), foremanPass = takeForemanPass(),
 } = {}) {
   try {
     const [command, work, ...rest] = argv;
@@ -1472,7 +1480,7 @@ export async function main(argv, {
     if (typeof work !== 'string' || !SLUG.test(work)) refuse('Give the work id: lower-case letters, digits and hyphens, at most 40');
     const project = given ?? projectHere(cwd);
     const waker = wakerFor ?? ((cfg, print) => makeWaker({ shape: cfg.watcherShape, project, config: cfg, print }));
-    const ctx = context({ project, client, now, run, wakerFor: waker, pluginRoot, makeId, out, platform, isLocked });
+    const ctx = context({ project, client, now, run, wakerFor: waker, pluginRoot, makeId, out, platform, isLocked, foremanPass });
     await COMMANDS[command](ctx, work, rest);
     return 0;
   } catch (error) {

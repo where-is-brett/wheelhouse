@@ -332,12 +332,13 @@ test('the window confirms no answer but an Ask allowance on a build question as 
     const oddCard = await c.ask(odd);
     assert.match((await c.client.confirm({ cwd: c.folder, card: oddCard.card, hash: oddCard.hash })).refused, /not one the window confirms/);
 
-    // A build question recorded again with other commands after its card was made: the card's answer names the old
-    // question's hash, so it is no allowance any more.
+    // A build question recorded again with other commands after its card was made: the helper refuses the write, since a
+    // question's id is its card's, so the card's answer keeps naming the question as it was.
     const first = buildQuestion(3, ['npm test']);
-    const firstCard = await c.ask(first);
-    await c.write('question', { ...first, commands: ['npm run build'], what: 'Let this feature\'s builder run: npm run build.' });
-    assert.match((await c.client.confirm({ cwd: c.folder, card: firstCard.card, hash: firstCard.hash })).refused, /not one the window confirms/);
+    await c.ask(first);
+    const again = await c.client.state.write({ project: PROJECT, kind: 'question', data: { ...first, commands: ['npm run build'], what: 'Let this feature\'s builder run: npm run build.' } });
+    assert.equal(again.ok, false);
+    assert.match(again.refused, /already holds a question with that id/);
     assert.equal(c.windows.length, 0);
 
     // Under STOP an allowance isn't served.

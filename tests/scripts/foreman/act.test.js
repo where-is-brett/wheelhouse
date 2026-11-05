@@ -2195,3 +2195,15 @@ test('start of work approved by the by-hand card takes the fixed done lines, wha
   const given = await run('carry-on-5', ['--goal', 'Mine', '--done', 'Something else']);
   assert.deepEqual(given.done, HAND_DONE);
 }));
+
+test('the pass the helper gave a foreman command is taken out of the environment before any session starts', () => withHome(async () => {
+  process.env.WHEELHOUSE_FOREMAN_RUN = 'a-pass';
+  try {
+    const { views } = await questionScene();
+    const fake = fakeClient({ views });
+    const r = await act(['question', 'mine', 'q-mine-1'], { client: fake.client });
+    assert.equal(r.code, 0, r.err);
+    assert.equal(process.env.WHEELHOUSE_FOREMAN_RUN, undefined, 'removed from the environment');
+    assert.equal(fake.writes[0].foreman, 'a-pass', 'but sent with the command\'s own writes');
+  } finally { delete process.env.WHEELHOUSE_FOREMAN_RUN; }
+}));
