@@ -337,11 +337,18 @@ export async function observe({ project, client, now = () => new Date(), interva
   });
   const stateIds = recent.map((e) => e.id);
   const known = isPlain(prev) && Array.isArray(prev.stateIds) ? new Set(prev.stateIds) : null;
-  const sent = known === null ? [] : recent.filter((e) => !known.has(e.id)).map((e) => ({
+  const fresh = known === null ? [] : recent.filter((e) => !known.has(e.id));
+  // Work carried on from a change made by hand is approved by the director's signed press on that card. The views decide
+  // that, as the foreman's start reads them, so the watcher and the start cannot disagree; the work's own data never does.
+  const handViews = fresh.some((e) => e.kind === 'work' && isPlain(e.data?.from)) ? buildViews(events, enrolled, { now }) : null;
+  const tiedByHand = (e) => e.kind === 'work' && handViews !== null && isText(e.data?.id)
+    && handViews.work?.[e.data.id]?.work?.id === e.id && handViews.work[e.data.id].approval?.byHand === true;
+  const sent = fresh.map((e) => ({
     id: e.id,
     kind: e.kind,
     data: e.data,
     verified: PROTECTED_KINDS.includes(e.kind) && verify(e, enrolled),
+    ...(tiedByHand(e) ? { byHand: true } : {}),
   }));
 
   // 4. The pull requests: those known before, until they close, then those a

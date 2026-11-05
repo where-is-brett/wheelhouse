@@ -12,7 +12,7 @@ import { briefHash, featurePaths } from '../../../scripts/feature/files.js';
 import { BUILD_QUESTION_LABELS, BUILD_QUESTION_OPTIONS } from '../../../scripts/protection/windows-builds.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { setStop } from '../../../scripts/lib/stop.js';
-import { makeEvent, eventPath } from '../../../scripts/state/events.js';
+import { makeEvent, eventPath, dataHash } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { readProject, writeProject } from '../../../scripts/lib/projects.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
@@ -560,4 +560,27 @@ test('a seal never reaches the watcher: it is sent to no session', () => withHom
   const next = await observe({ project: P, client: fakeClient(), now: at(3 * SEC), prev });
   assert.equal(next.stateIds.includes(line.id), false);
   assert.equal((next.state ?? []).some((e) => e.kind === 'shadow'), false);
+}));
+
+test('work carried on from a signed by-hand press is sent as tied; a forged from field is not', () => withHome(async () => {
+  enrolHere();
+  const first = await observe({ project: P, client: fakeClient(), now: at(0), prev: null });
+  const cursor = step({ seen: [], prev: null }, first).cursor;
+  const FROM = 'd'.repeat(40);
+  const options = [{ label: 'Check and add them', says: 'a' }, { label: 'Leave them out', says: 'b' }];
+  const q = record('question', { id: 'q-by-hand-1', work: 'by-hand', level: 3, what: 'Changes were made by hand.', why: 'Yours to decide.', options, recommendation: 'Check and add them' }, 1 * SEC);
+  record('action', {
+    action: 'answer', question: 'the card as shown', questionId: 'q-by-hand-1', questionHash: dataHash(q.data), label: 'Check and add them',
+  }, 2 * SEC);
+  record('by-hand', { question: 'q-by-hand-1', n: 2, head: FROM }, 3 * SEC);
+  const body = (id, request) => ({
+    id, title: 't', lane: 'small', visible: true, dependsOn: [], doc: { path: 'd.md', hash: '1'.repeat(64) }, from: { sha: FROM, ref: `refs/wheelhouse/from/${id}`, request },
+  });
+  const real = record('work', body('carry-on-2', 2), 4 * SEC);
+  const forged = record('work', body('carry-on-9', 9), 5 * SEC);
+  const second = await observe({ project: P, client: fakeClient(), now: at(15 * SEC), prev: cursor.prev });
+  const sent = (id) => second.events.find((e) => e.id === id);
+  assert.equal(sent(real.id).byHand, true);
+  assert.equal(sent(forged.id).byHand, undefined);
+  assert.deepEqual(diff(cursor.prev, second).filter((e) => e.type === 'work-ready').map((e) => e.work), ['carry-on-2']);
 }));
