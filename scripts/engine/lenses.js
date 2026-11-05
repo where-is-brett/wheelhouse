@@ -14,7 +14,7 @@ import { helperClient } from '../host/helper-client.js';
 import { withTicket } from './ticket.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { runArg } from './done-check.js';
-import { changeOf } from './change.js';
+import { changeOf, startOf } from './change.js';
 import { run as defaultRun } from '../lib/run.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -68,7 +68,9 @@ export async function main(argv = process.argv.slice(2), { client: given = helpe
   const order = got?.ok === true ? got.order : null;
   let security = true;
   try {
-    const changes = await changeOf({ cwd, base, run });
+    const start = order === null ? null : startOf(order);
+    if (start === null) throw new Error('the commit the run started from is not known');
+    const changes = await changeOf({ cwd, base, start, run });
     let added = '';
     for (const change of changes) added += `${addedLines(await change.before(), await change.after())}\n`;
     const paths = changes.flatMap((change) => [change.path, change.from].filter((p) => typeof p === 'string'));

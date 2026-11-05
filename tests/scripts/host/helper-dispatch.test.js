@@ -74,7 +74,7 @@ const records = (kind) => listEvents(stateDir(P), { report: () => {} }).filter((
 
 const helperFor = (p, engine, extra = {}) => startHelper({
   run: hostGuard, address: testAddress(p.home), adapterFor: async () => ({}), envFor: async () => ({}),
-  spawn: stubSpawn(), refreshMirror: noMirror, engineFor: () => engine, dispatchMs: 60 * 60 * 1000, ...extra,
+  spawn: stubSpawn(), refreshMirror: noMirror, baseOfMirror: async () => 'b'.repeat(40), engineFor: () => engine, dispatchMs: 60 * 60 * 1000, ...extra,
 });
 
 test('the dispatcher starts quick work through the helper\'s own start, with its order, its ticket and its run record', async () => {

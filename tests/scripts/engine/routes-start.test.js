@@ -7,6 +7,7 @@ import path from 'node:path';
 import { engineRoutes } from '../../../scripts/engine/routes.js';
 import { workOrder } from '../../../scripts/engine/order.js';
 import { tempFolder } from '../../helpers/homes.js';
+import { ticketedRoutes } from '../../helpers/engine-tickets.js';
 
 function setup(refresh, { stepAgent, projectAgents, recheckCopies } = {}) {
   const dir = tempFolder('wh-start-route-');
@@ -130,4 +131,34 @@ test('a run with no level key records none', async () => {
   const { routes, written } = recording({});
   await routes.start({ project: 'p', order });
   assert.equal(Object.hasOwn(written.find((w) => w.kind === 'run').data, 'level'), false);
+});
+
+// The commit a run's worktree is made from is read where no builder reaches, kept with the run, and given in its order.
+function withBase(baseOf) {
+  const t = setup(fresh);
+  const dir = tempFolder('wh-start-base-');
+  const calls = [];
+  const engine = { ...t.engine, start: async () => { calls.push('start'); return { ok: true, runId: 'run-1', branch: 'wh/card-1' }; }, artefactsOf: (runId) => path.join(dir, 'art', runId) };
+  const routes = engineRoutes({
+    projects: () => [{ project: 'p', folder: path.join(dir, 'project') }], engineFor: () => engine, ordersDir: () => path.join(dir, 'orders'),
+    filesDir: () => path.join(dir, 'engine'), write: async () => {}, refresh: fresh, baseOf,
+  });
+  return { routes, calls, tickets: ticketedRoutes(routes, engine, 'o/p').routes };
+}
+
+test('a run keeps the commit its worktree starts from, and its order gives it', async () => {
+  const sha = 'a'.repeat(40);
+  const t = withBase(async () => sha);
+  assert.equal((await t.routes.start({ project: 'p', order })).ok, true);
+  assert.equal((await t.tickets['/engine/order']({ runId: 'run-1' })).order.startCommit, sha);
+});
+
+test('no run starts when the commit it would start from cannot be read', async () => {
+  for (const baseOf of [async () => null, async () => { throw new Error('no'); }, async () => 'main']) {
+    const t = withBase(baseOf);
+    const got = await t.routes.start({ project: 'p', order });
+    assert.equal(got.ok, false);
+    assert.match(got.refused, /the commit the run would start from/);
+    assert.deepEqual(t.calls, []);
+  }
 });

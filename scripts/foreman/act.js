@@ -153,6 +153,7 @@ import { run as runProgram } from '../lib/run.js';
 import { LookRefusal, safeGit } from '../lib/safe-git.js';
 import { readProject } from '../lib/projects.js';
 import { sameRemote } from '../state/git.js';
+import { FOLDER_REMOTE } from '../host/local/folder.js';
 import { sessionsOfProject } from '../agents/project-agent.js';
 import { readReadyRecord } from '../survey/ready-record.js';
 import {
@@ -176,7 +177,7 @@ const GIT_MS = 2 * 60 * 1000;
 const CONFIG_BYTES = 1024 * 1024;
 // What each `feature` event carries forward from the one before.
 const CARRIED = Object.freeze(['worktree', 'branch', 'session', 'plan', 'files', 'slice']);
-const BASE_REF = /^refs\/remotes\/origin\/[A-Za-z0-9._/-]+$/;
+const BASE_REF = /^refs\/remotes\/(?:origin|wheelhouse)\/[A-Za-z0-9._/-]+$/;
 // Where the helper keeps the host's default branch in the project's mirror (scripts/host/helper.js).
 const MIRROR_BASE = 'refs/wheelhouse/base';
 
@@ -388,6 +389,10 @@ function checkRepoConfig(checkout) {
 // A main checkout setup connected with `remote add` and a fetch, not a clone (a new product, a computer joining
 // one), names no default branch. It is named here from the host's, as the helper reads it (/base/fetch): true when
 // origin/HEAD now names it, false when the host's couldn't be read, which leaves the start refused.
+// The remote whose copy of the default branch a worktree starts from: `origin` for a project on a code host, and the
+// folder's own `wheelhouse` for a project in git alone, which has no `origin` and no address to hold a remote to.
+const remoteOf = (ctx) => (readProject(ctx.project)?.host === 'local' ? FOLDER_REMOTE : 'origin');
+
 async function nameBase(ctx, git) {
   let answer;
   try {
@@ -395,22 +400,28 @@ async function nameBase(ctx, git) {
   } catch {
     return false;
   }
-  const ref = `refs/remotes/origin/${String(answer?.branch ?? '')}`;
+  const remote = remoteOf(ctx);
+  const ref = `refs/remotes/${remote}/${String(answer?.branch ?? '')}`;
   if (answer?.ok !== true || !BASE_REF.test(ref) || ref.includes('..')) return false;
-  const named = await git(['symbolic-ref', 'refs/remotes/origin/HEAD', ref]);
+  const named = await git(['symbolic-ref', `refs/remotes/${remote}/HEAD`, ref]);
   if (named.code !== 0) return false;
   ctx.say(`The main checkout named no default branch; it now names the host's, ${oneLine(answer.branch, 80)}.`);
   return true;
 }
 
 async function fetchBase(ctx, git, checkout, base) {
-  const name = base.slice('refs/remotes/origin/'.length);
-  const behind = (why) => ctx.say(`origin/${name} wasn't brought up to date: ${why}, so the worktree starts from the copy fetched last.`);
+  const remote = remoteOf(ctx);
+  const name = base.slice(`refs/remotes/${remote}/`.length);
+  const behind = (why) => ctx.say(`${remote}/${name} wasn't brought up to date: ${why}, so the worktree starts from the copy fetched last.`);
   const record = readProject(ctx.project);
-  const origin = await git(['remote', 'get-url', 'origin']);
-  if (origin.code !== 0 || typeof record?.remoteUrl !== 'string' || !sameRemote(String(origin.stdout ?? '').trim(), record.remoteUrl)) {
-    behind("the main checkout's origin isn't the address setup recorded");
-    return;
+  // A project in git alone has no address to hold the remote to: its copy comes from the mirror, a local path, and
+  // `wheelhouse` is only the name the copy is kept under.
+  if (record?.host !== 'local') {
+    const origin = await git(['remote', 'get-url', 'origin']);
+    if (origin.code !== 0 || typeof record?.remoteUrl !== 'string' || !sameRemote(String(origin.stdout ?? '').trim(), record.remoteUrl)) {
+      behind("the main checkout's origin isn't the address setup recorded");
+      return;
+    }
   }
   let answer;
   try {
@@ -446,7 +457,7 @@ async function fetchBase(ctx, git, checkout, base) {
     behind(`copying it from the helper's mirror failed (${copied.timedOut ? 'it took too long' : oneLine(copied.stderr || copied.stdout || 'git gave no reason', 160)})`);
     return;
   }
-  ctx.say(`Brought origin/${name} up to date.`);
+  ctx.say(`Brought ${remote}/${name} up to date.`);
 }
 
 // Git in the main checkout by the fenced route, looking at the repository's settings before each
@@ -504,11 +515,12 @@ async function makeWorktree(ctx, work, checkout, worktree, branch, from) {
   realFolders(checkout, ['.claude', 'worktrees']);
   if (lstatOf(worktree) !== null) refuse(`${worktree} is there already, but no recorded feature made it: ask the director`);
   checkRepoConfig(checkout);
-  let head = await git(['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']);
-  if (head.code !== 0 && await nameBase(ctx, git)) head = await git(['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']);
+  const headRef = `refs/remotes/${remoteOf(ctx)}/HEAD`;
+  let head = await git(['symbolic-ref', '--quiet', headRef]);
+  if (head.code !== 0 && await nameBase(ctx, git)) head = await git(['symbolic-ref', '--quiet', headRef]);
   const base = String(head.stdout ?? '').trim();
   if (head.code !== 0 || !BASE_REF.test(base) || base.includes('..')) {
-    refuse("The main checkout doesn't name its default branch (refs/remotes/origin/HEAD), so no worktree was made");
+    refuse(`The main checkout doesn't name its default branch (${headRef}), so no worktree was made`);
   }
   await fetchBase(ctx, git, checkout, base);
   const kept = await git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]);
@@ -1030,22 +1042,31 @@ const foremanNumber = (id, work) => {
 };
 
 async function ask(ctx, work, rest) {
-  const found = flagsOf(rest, ['what', 'why', 'option', 'recommend', 'level'], 'ask');
+  const found = flagsOf(rest, ['what', 'why', 'option', 'recommend', 'level', 'about'], 'ask');
   const what = needed(found, 'what');
   const why = needed(found, 'why');
   const recommendation = needed(found, 'recommend');
   const level = needed(found, 'level');
   if (!/^[1-4]$/.test(level)) refuse('--level is a decision level from 1 to 4');
+  const about = single(found, 'about');
+  if (about !== undefined && about !== 'start') refuse('--about is start, for a question about work that could not start');
   const options = optionsOf(found, recommendation);
   const views = await ctx.views();
   if (!isPlain(views.work[work]) && featureOf(views, work) === null) refuse(`There is no work named ${work} in state`);
 
   const asked = Object.values(views.questions).filter((q) => isPlain(q?.question?.data) && foremanNumber(q.question.data.id, work) !== null);
-  const body = { what, why, options, recommendation, level: Number(level) };
-  const bodyOf = (d) => ({ what: d.what, why: d.why, options: d.options, recommendation: d.recommendation, level: d.level });
+  const body = { what, why, options, recommendation, level: Number(level), ...(about === undefined ? {} : { about }) };
+  const bodyOf = (d) => ({ what: d.what, why: d.why, options: d.options, recommendation: d.recommendation, level: d.level, ...(d.about === undefined ? {} : { about: d.about }) });
   const again = asked.find((q) => q.answer === null && same(bodyOf(q.question.data), body));
   if (again) {
     ctx.say(`The director was asked this already: ${again.question.data.id}.`);
+    return;
+  }
+  // Each wake that finds a start refused again would raise a new card, worded afresh, so one question about the start stands
+  // until the director answers it. A question about anything else is raised as it comes.
+  const open = about === 'start' ? asked.find((q) => q.answer === null && q.question.data.about === 'start') : undefined;
+  if (open) {
+    ctx.say(`The director was asked about ${work} already: ${open.question.data.id}. It waits for their answer.`);
     return;
   }
   const n = Math.max(FOREMAN_QUESTIONS, ...asked.map((q) => foremanNumber(q.question.data.id, work))) + 1;

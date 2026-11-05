@@ -7,6 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import {
   main, FOREMAN_QUESTIONS, extraPlanId, unattendedCardData, unattendedCardFault,
@@ -2079,4 +2080,82 @@ test('merge asks the helper once for its clean review when the gate lacks it, an
   const stale = fakeClient({ views, answers: { updateBranch: current, merge: { ok: false, refused: other, reasons: [other] } } });
   refusedInOneLine(await act(['merge', 'mine'], { client: stale.client }));
   assert.equal(stale.calls.filter(([name]) => name === 'review').length, 0);
+}));
+
+// --- start on a project in git alone (the local host) ---
+
+// A main checkout with no `origin`: its one remote is the folder's `wheelhouse`, at the engine's
+// mirror path (which need not exist), and the project's record names no remote address. The
+// home's main is ahead of the folder's copy by one commit, as it is after a change merged.
+async function localFolder() {
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-local-')));
+  const checkout = path.join(root, 'main');
+  fs.mkdirSync(checkout);
+  await g(checkout, 'init', '-q', '-b', 'main');
+  fs.writeFileSync(path.join(checkout, 'README.md'), 'The product.\n');
+  await g(checkout, 'add', 'README.md');
+  await g(checkout, 'commit', '-q', '-m', 'First');
+  const home = path.join(root, 'home.git');
+  await g(checkout, 'clone', '-q', '--bare', '.', home);
+  await g(checkout, 'remote', 'add', 'wheelhouse', path.join(root, 'engine', 'mirrors', 'shop.git'));
+  await g(checkout, 'update-ref', 'refs/remotes/wheelhouse/main', 'HEAD');
+  const other = path.join(root, 'other');
+  fs.mkdirSync(other);
+  await g(other, 'clone', '-q', home, '.');
+  fs.writeFileSync(path.join(other, 'NEW.md'), 'Merged since.\n');
+  await g(other, 'add', 'NEW.md');
+  await g(other, 'commit', '-q', '-m', 'Merged since');
+  await g(other, 'push', '-q', 'origin', 'main');
+  const ahead = await g(other, 'rev-parse', 'HEAD');
+  writeProject(P, { folder: checkout, remoteUrl: null, host: 'local', repo: `local/${P}`, connection: { mode: 'none' } });
+  const mirror = path.join(stateDir(P), '..', 'mirror.git');
+  // The helper's /base/fetch for a project in git alone: the home's main into the project's mirror.
+  const fetchBase = async () => {
+    fs.mkdirSync(mirror, { recursive: true });
+    await g(mirror, 'init', '-q', '--bare');
+    await g(mirror, 'fetch', '-q', home, '+refs/heads/main:refs/wheelhouse/base');
+    return { ok: true, branch: 'main', sha: await g(mirror, 'rev-parse', 'refs/wheelhouse/base') };
+  };
+  return { checkout, ahead, fetchBase };
+}
+
+test('start makes the worktree on a project in git alone, from the home\'s main as the folder\'s wheelhouse remote keeps it', () => withHome(async () => {
+  const p = await localFolder();
+  const fake = fakeClient({ views: startViews(), answers: { fetchBase: p.fetchBase } });
+  const r = await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(await g(path.join(p.checkout, '.claude', 'worktrees', 'add-export'), 'rev-parse', 'HEAD'), p.ahead);
+  assert.equal(await g(p.checkout, 'rev-parse', 'refs/remotes/wheelhouse/main'), p.ahead);
+  assert.match(r.out, /^Brought wheelhouse\/main up to date\.$/m);
+  assert.equal(await g(p.checkout, 'symbolic-ref', 'refs/remotes/wheelhouse/HEAD'), 'refs/remotes/wheelhouse/main');
+  assert.doesNotMatch(r.out + r.err, /origin/);
+}));
+
+test('start on a project in git alone with the helper unable to fetch starts from the copy the folder holds', () => withHome(async () => {
+  const p = await localFolder();
+  const before = await g(p.checkout, 'rev-parse', 'refs/remotes/wheelhouse/main');
+  const fake = fakeClient({ views: startViews(), answers: { fetchBase: async () => ({ ok: true, branch: 'main', sha: before }) } });
+  await g(p.checkout, 'symbolic-ref', 'refs/remotes/wheelhouse/HEAD', 'refs/remotes/wheelhouse/main');
+  const refusing = fakeClient({ views: startViews(), answers: { fetchBase: async () => ({ ok: false, refused: 'the home could not be read' }) } });
+  const r = await act(START, { client: refusing.client, wakerFor: fakeWaker().wakerFor });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(await g(path.join(p.checkout, '.claude', 'worktrees', 'add-export'), 'rev-parse', 'HEAD'), before);
+  assert.match(r.out, /^wheelhouse\/main wasn't brought up to date: the helper couldn't fetch it/m);
+  assert.ok(fake);
+}));
+
+test('a question about a refused start is asked once while it waits, however it is worded, and any other question is still asked', () => withHome(async () => {
+  await project({ git: true });
+  const fake = fakeClient({ views: startViews() });
+  const ask = (what, about = true) => act(['ask', 'add-export', '--what', what, '--why', 'It could not start.', '--option', 'Wait=waiting', '--option', 'Drop it=act drop add-export', '--recommend', 'Wait', '--level', '3', ...(about ? ['--about', 'start'] : [])], { client: fake.client });
+  const first = await ask('The change could not start.');
+  assert.equal(first.code, 0, first.err);
+  assert.match(first.out, /Asked the director: q-add-export-1000001/);
+  const second = await ask('The work could not begin yet.');
+  assert.equal(second.code, 0, second.err);
+  assert.match(second.out, /asked about add-export already: q-add-export-1000001/);
+  assert.equal(fake.writes.filter((w) => w.kind === 'question').length, 1);
+  const other = await ask('Which colour should the button be?', false);
+  assert.match(other.out, /Asked the director: q-add-export-1000002/);
+  assert.equal(fake.writes.filter((w) => w.kind === 'question').length, 2);
 }));

@@ -27,6 +27,8 @@ import { as, shortHome, testAddress } from '../../helpers/homes.js';
 
 // The fake engine reads no fetch mirror.
 const noMirror = async () => ({ ok: true });
+// The commit the fetch mirror holds as the default branch, which the helper keeps with the run.
+const START = 'b'.repeat(40);
 const hostLog = [];
 const hostGuard = guardedRun(realRun, { log: hostLog });
 after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
@@ -67,7 +69,7 @@ test('only the helper starts a run: no route starts one', async () => {
     await as(p.home, async () => {
       const helper = await startHelper({
         run: hostGuard, address: testAddress(p.home), adapterFor: async () => ({}), envFor: async () => ({}),
-        spawn: stubSpawn(), refreshMirror: noMirror, engineFor: () => engine,
+        spawn: stubSpawn(), refreshMirror: noMirror, baseOfMirror: async () => START, engineFor: () => engine,
       });
       try {
         const client = helperClient({ address: testAddress(p.home) });
@@ -96,7 +98,7 @@ test('a run the helper started gets its order back with its own ticket, and noth
     await as(p.home, async () => {
       const helper = await startHelper({
         run: hostGuard, address: testAddress(p.home), adapterFor: async () => ({}), envFor: async () => ({}),
-        spawn: stubSpawn(), refreshMirror: noMirror, engineFor: () => engine,
+        spawn: stubSpawn(), refreshMirror: noMirror, baseOfMirror: async () => START, engineFor: () => engine,
       });
       try {
         const client = helperClient({ address: testAddress(p.home) });
@@ -106,7 +108,7 @@ test('a run the helper started gets its order back with its own ticket, and noth
         assert.equal(engine.calls[0].order.project, p.folder);
         assert.ok(!JSON.stringify(engine.calls[0].order).includes('Fix the heading'), 'the order\'s words never go to the engine');
         const ticket = ticketOf(p.artefacts, started.runId);
-        assert.deepEqual(await client.engine.order({ runId: started.runId, ticket }), { ok: true, order: ORDER });
+        assert.deepEqual(await client.engine.order({ runId: started.runId, ticket }), { ok: true, order: { ...ORDER, startCommit: START } });
         assert.deepEqual(await client.engine.order({ runId: started.runId }), { ok: false, refused: 'the call didn\'t carry the run\'s own ticket' });
         assert.equal((await client.engine.order({ runId: started.runId, ticket: 'f'.repeat(64) })).ok, false);
         assert.deepEqual(await client.engine.order({ runId: 'fake-99-other', ticket }), { ok: false, refused: 'there is no work order for that run' });
@@ -136,7 +138,7 @@ test('no run starts under All stop', async () => {
     await as(p.home, async () => {
       const helper = await startHelper({
         run: hostGuard, address: testAddress(p.home), adapterFor: async () => ({}), envFor: async () => ({}),
-        spawn: stubSpawn(), refreshMirror: noMirror, engineFor: () => engine,
+        spawn: stubSpawn(), refreshMirror: noMirror, baseOfMirror: async () => START, engineFor: () => engine,
       });
       try {
         setStop({ by: 'helper' });

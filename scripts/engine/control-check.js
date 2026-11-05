@@ -3,11 +3,14 @@
 // adds or changes a file that steers agents (a hook, an instruction file, a Claude Code setting) could steer the
 // reviewer or the next run, so the change goes to the blocked exit for the director, never on. The list is the
 // watcher's own (isControlPath, scripts/watcher/control-files.js). With --json it prints { clean, paths } and exits 0.
-//   node scripts/engine/control-check.js --base <ref> [--json]
+// The change begins at the commit the helper recorded for the run (its order's startCommit), never at a ref in the worktree.
+//   node scripts/engine/control-check.js --run <run id> --base <ref> [--json]
 import { startedAsScript } from '../lib/started-as-script.js';
 import { isControlPath } from '../watcher/control-files.js';
 import { runArg } from './done-check.js';
-import { changeOf } from './change.js';
+import { changeOf, startOf } from './change.js';
+import { helperClient } from '../host/helper-client.js';
+import { withTicket } from './ticket.js';
 
 // The paths among `changes` (changeOf's) that steer agents, the moved-from path of a rename included.
 export function controlFindings(changes, { platform = process.platform } = {}) {
@@ -18,16 +21,21 @@ export function controlFindings(changes, { platform = process.platform } = {}) {
   return [...paths].sort();
 }
 
-export async function main(argv = process.argv.slice(2), { cwd = process.cwd(), out = (line) => process.stdout.write(`${line}\n`), run, platform } = {}) {
+export async function main(argv = process.argv.slice(2), { client: given = helperClient({ timeout: 30000 }), cwd = process.cwd(), out = (line) => process.stdout.write(`${line}\n`), run, platform } = {}) {
+  const client = withTicket(given, argv);
+  const runId = runArg(argv);
   const base = runArg(argv, '--base');
-  if (!base) {
-    out('usage: node scripts/engine/control-check.js --base <ref> [--json]');
+  if (!base || !runId) {
+    out('usage: node scripts/engine/control-check.js --run <run id> --base <ref> [--json]');
     return 2;
   }
   let paths;
   let trouble = null;
   try {
-    paths = controlFindings(await changeOf({ cwd, base, run }), { platform });
+    const got = await client.engine.order({ runId });
+    const start = got?.ok === true ? startOf(got.order) : null;
+    if (start === null) throw new Error("the helper didn't give the commit this run started from");
+    paths = controlFindings(await changeOf({ cwd, base, start, run }), { platform });
   } catch (error) {
     paths = [];
     trouble = `the change could not be read: ${error.message}`;

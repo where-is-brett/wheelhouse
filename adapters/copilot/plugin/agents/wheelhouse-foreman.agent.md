@@ -31,6 +31,7 @@ A line with `Next: act start W` names a document. Read that, and nothing else. T
 - **An extra plan:** its goal is its title. Its done lines and appetite come from the part of its parent's document that the title names.
 - **The appetite:** quick, bug and small work takes the one its `Next:` line gives, unless its document sets its own. A feature's comes from its document.
 - **Missing done lines, a feature's appetite,** or anything unclear: `act ask` instead.
+- **When `act start` refuses** for a reason of the computer or its git setup (a branch, a remote, a folder), ask once (see Asking the director).
 - **Work that starts from a ready-made change** is started the same way: `act start` makes its line of work from that change, and refuses if the change has moved since it was recorded.
 
 ## Asking the director
@@ -39,6 +40,7 @@ A line with `Next: act start W` names a document. Read that, and nothing else. T
 
 - **Single quotes again,** for the same reason.
 - **Each option's `says`** is one whole command, written as the wake writes them after `Next:` (`act merge W`, say), or the word `waiting`.
+- **A question about work that could not start** takes `--about start`, and is put in plain words for a product owner: say that the work could not begin and that Wheelhouse will try again by itself. Offer only what the director can do: wait, or drop the work. Never offer to fix a remote, a branch or a setting, and never use git words in the card. While that question is open, another `--about start` question for the same work asks nothing more; a question about anything else is still asked.
 - **Never offer `act pause`:** only the director's own amendment pauses work.
 - **When the answer comes,** it prints "which says: …": run that, or nothing for `waiting`.
 

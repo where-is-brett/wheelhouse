@@ -118,6 +118,8 @@ export function engineRoutes({
   host, provenance, previewsDir = (project) => path.join(filesDir(project), 'previews'),
   incidentOf = () => null, changesOf = async () => null, goalViews = () => ({}), merge = async () => ({ ok: false, refused: 'the helper can\'t merge here' }),
   refresh = async () => ({ ok: true }), readerViewOf = () => null, briefOf = () => null,
+  // The commit the engine's copy of the project holds as its default branch, which a run's worktree is made from.
+  baseOf = null,
 } = {}) {
   const storeOf = (project) => orderStore(ordersDir(project));
 
@@ -126,10 +128,22 @@ export function engineRoutes({
     if (!isRunId(runId)) return null;
     for (const { project, folder } of projects()) {
       const order = storeOf(project).load(runId);
-      if (order) return { project, folder, order };
+      if (order) return { project, folder, order, runId };
     }
     return null;
   }
+
+  // The commit a run's worktree was made from, kept beside its order where no builder reaches. The guard checks read the
+  // change from it, since any ref in the worktree is one the builder can move.
+  const startFile = (project, runId) => path.join(ordersDir(project), `${runId}.start`);
+  const startOf = (project, runId) => {
+    try {
+      const text = fs.readFileSync(startFile(project, runId), 'utf8').trim();
+      return FULL_SHA.test(text) ? text : null;
+    } catch {
+      return null;
+    }
+  };
 
   // The hash of a run's ticket, kept beside its order.
   const ticketFile = (project, runId) => path.join(ordersDir(project), `${runId}.ticket`);
@@ -167,9 +181,22 @@ export function engineRoutes({
     if (fresh?.ok !== true) return { ok: false, refused: `the engine's copy of the project couldn't be brought up to date${fresh?.refused ? ` (${fresh.refused})` : ''}, so no run started` };
     const stands = await recheckHold(project, found.folder, engine, order.bindings);
     if (stands) return { ok: false, refused: stands };
+    let startCommit = null;
+    if (baseOf) {
+      try { startCommit = await baseOf(project); } catch { startCommit = null; }
+      if (!FULL_SHA.test(String(startCommit ?? ''))) return { ok: false, refused: 'the commit the run would start from couldn\'t be read, so no run started' };
+    }
     const started = await engine.start({ work: order.work, lane: order.lane, branch, carryOn: carryOn === true, project: found.folder, bindings: order.bindings });
     if (!started?.ok) return { ok: false, refused: started?.refused ?? 'the engine didn\'t start the run', ...(started?.uncertain === true ? { uncertain: true } : {}) };
     storeOf(project).save(started.runId, order);
+    if (startCommit !== null) {
+      try {
+        fs.writeFileSync(startFile(project, started.runId), `${startCommit}\n`, { flag: 'wx', mode: 0o600 });
+      } catch {
+        const stopped = await Promise.resolve().then(() => engine.act(started.runId, { cancel: { reason: 'the commit the run started from couldn\'t be kept' } })).catch(() => null);
+        return stopped?.ok === true ? { ok: false, refused: 'the commit the run started from couldn\'t be kept, so it was stopped' } : { ok: false, refused: 'the commit the run started from couldn\'t be kept, and the run couldn\'t be stopped', uncertain: true };
+      }
+    }
     const artefacts = engine.artefactsOf(started.runId, host?.repo?.(project));
     const ticket = newTicket();
     try {
@@ -585,7 +612,8 @@ export function engineRoutes({
   function orderNow(run) {
     const found = run.order.lane === 'bug' ? readVerdicts(run.project).reproduced[run.order.work] : null;
     const areas = areasNow(run.project, run.order);
-    return { ...run.order, ...(found ? { done: [...run.order.done, found.check] } : {}), ...(areas ? { areas } : {}) };
+    const startCommit = startOf(run.project, run.runId);
+    return { ...run.order, ...(found ? { done: [...run.order.done, found.check] } : {}), ...(areas ? { areas } : {}), ...(startCommit ? { startCommit } : {}) };
   }
 
   // What the helper knows of a pull request it marked ready: { head, runId, showFirst, work }, or null.

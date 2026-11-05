@@ -8,17 +8,36 @@ import { safeGit } from '../lib/safe-git.js';
 import { run as defaultRun } from '../lib/run.js';
 
 const MOST_BYTES = 2 * 1024 * 1024;
+const FULL_SHA = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 
 // [{ status: 'A'|'M'|'D'|'R', path, from? , before(), after() }] for the worktree `cwd` against `base`.
-export async function changeOf({ cwd, base, run = defaultRun }) {
+export async function changeOf({ cwd, base, start, run = defaultRun }) {
   // The fence alone: the worktree's own settings are an agent's to write, and nothing here runs its hooks or filters.
-  const git = safeGit({ run, cwd, look: 'never' });
+  // Objects are read as they are: a replace ref the builder made would show the start commit as another tree.
+  const fenced = safeGit({ run, cwd, look: 'never', env: { GIT_NO_REPLACE_OBJECTS: '1' } });
+  // And without the commit-graph, a file the builder can write that tells git what a commit's parents are.
+  const git = (args, options) => fenced(['-c', 'core.commitGraph=false', ...args], options);
   const must = async (args) => {
     const got = await git(args, { limit: MOST_BYTES });
     if (got.code !== 0) throw new Error(`git ${args[0]} failed in the worktree: ${String(got.stderr).trim().split('\n').pop()}`);
     return String(got.stdout);
   };
-  const mergeBase = (await must(['merge-base', base, 'HEAD'])).trim();
+  // With `start`, the commit the helper recorded as the one the run's worktree was made from (held outside the worktree, where
+  // the builder can't move it), the change begins where the run's history leaves it. Without one, `base` is read as a ref in
+  // the worktree's repository, which a builder can move: the checks that guard the change always give a start.
+  let mergeBase;
+  if (start !== undefined) {
+    // A graft or a shallow marker rewrites what history reads as, and the builder can write both: neither is accepted.
+    const common = (await must(['rev-parse', '--git-common-dir'])).trim();
+    const commonDir = path.resolve(cwd, common);
+    for (const name of [path.join('info', 'grafts'), 'shallow']) {
+      if (fs.existsSync(path.join(commonDir, name))) throw new Error(`the repository has a ${name.replace(path.sep, '/')} file, which changes how its history reads`);
+    }
+    if (start === null || !FULL_SHA.test(String(start))) throw new Error('the commit the run started from is not known');
+    mergeBase = (await must(['merge-base', start, 'HEAD'])).trim();
+  } else {
+    mergeBase = (await must(['merge-base', base, 'HEAD'])).trim();
+  }
   const listed = (await must(['-c', 'core.quotePath=false', 'diff', '--no-ext-diff', '--no-textconv', '--name-status', '-M', '-z', mergeBase])).split('\0').filter(Boolean);
   const changes = [];
   for (let i = 0; i < listed.length;) {
@@ -46,3 +65,7 @@ export async function changeOf({ cwd, base, run = defaultRun }) {
     after: () => Promise.resolve(change.status === 'D' ? null : onDisk(change.path)),
   }));
 }
+
+// The commit a run's order records as the one its worktree was made from, or null: the guard checks take it from the helper's
+// order, never from the worktree, and fail closed without it.
+export const startOf = (order) => (FULL_SHA.test(String(order?.startCommit ?? '')) ? order.startCommit : null);

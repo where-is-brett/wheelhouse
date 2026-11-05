@@ -9,7 +9,7 @@ import { helperClient } from '../host/helper-client.js';
 import { withTicket } from './ticket.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { runArg } from './done-check.js';
-import { changeOf } from './change.js';
+import { changeOf, startOf } from './change.js';
 import { isMakefile, isPackage, isTestFile, isTestSettings, isSwiftPackage, packageTools, skipCount, assertionCount, listed, settingsAppear, testRunner, testTargetCount } from './test-guard.js';
 
 // The findings for `changes` (changeOf's), as plain lines, leaving out the files `protectedFiles` lists.
@@ -72,7 +72,7 @@ export async function main(argv = process.argv.slice(2), { client: given = helpe
   if (got?.ok !== true || !got.order) findings = [`the helper gave no work order for this run (${got?.refused ?? 'no answer'})`];
   else {
     try {
-      findings = await protectedFindings(await changeOf({ cwd, base, run }), got.order.protectedFiles, { command: got.order.testCommand ?? '' });
+      findings = await protectedFindings(await changeOf({ cwd, base, start: startOf(got.order), run }), got.order.protectedFiles, { command: got.order.testCommand ?? '' });
     } catch (error) {
       findings = [`the change could not be read: ${error.message}`];
     }

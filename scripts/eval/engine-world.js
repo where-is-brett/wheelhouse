@@ -212,6 +212,7 @@ export async function openWorld({ engine: kind = 'fake', recordings = {}, now = 
         spawn, engineFor: () => engine, dispatchMs: 60 * 60 * 1000, stopPollMs: 50,
         // The fake engine reads no fetch mirror, so the merge queue runs in the project's folder.
         refreshMirror: async () => ({ ok: true }),
+        baseOfMirror: async () => 'b'.repeat(40),
         queueFolder: async () => ({ ok: true, folder }),
       });
     }

@@ -9,7 +9,7 @@ import { helperClient } from '../host/helper-client.js';
 import { withTicket } from './ticket.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { runArg } from './done-check.js';
-import { changeOf } from './change.js';
+import { changeOf, startOf } from './change.js';
 import { isTestFile } from './test-guard.js';
 import { fixProblems } from './bug-check.js';
 import { MOST_FILES } from './reproduction.js';
@@ -37,7 +37,10 @@ export async function main(argv = process.argv.slice(2), { client: given = helpe
   if (problems.length > 0) return bigger('The fix for this bug didn\'t pass its checks within its rounds. Should it go on as a small change, with a plan, or as a feature?', problems.join('; '));
   let files;
   try {
-    files = (await changeOf({ cwd, base, run })).map((c) => c.path).filter((file) => !isTestFile(file));
+    const got = await client.engine.order({ runId });
+    const start = got?.ok === true ? startOf(got.order) : null;
+    if (start === null) throw new Error('the commit the run started from is not known');
+    files = (await changeOf({ cwd, base, start, run })).map((c) => c.path).filter((file) => !isTestFile(file));
   } catch (error) {
     return bigger('The fix for this bug couldn\'t be measured. Should it go on as a small change, with a plan, or as a feature?', `the change could not be read: ${error.message}`);
   }
