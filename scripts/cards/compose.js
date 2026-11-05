@@ -187,7 +187,7 @@ const bare = (text) => text.replace(/[.!?]+$/, '');
 const clause = (text) => bare(text).replace(/^([A-Z])(?=[a-z])/, (c) => c.toLowerCase());
 
 // Whether an error from composeCard is its length refusal (and not another fault in the card).
-export const isTooLong = (error) => /^A [\w-]+ card text would pass \d+ characters/.test(String(error?.message));
+export const isTooLong = (error) => /^An? [\w-]+ card('s)? text would pass \d+ characters/.test(String(error?.message));
 
 function fail(kind, part, why) {
   const a = /^[aeiou]/i.test(kind) ? 'An' : 'A';
