@@ -248,7 +248,9 @@ export async function runWatcher({
         // Approved work that nothing started (its wake lost) is raised again, at the start and then now and again.
         try {
           recover ??= makeRecovery({ project, client, now });
-          const again = await recover.check();
+          const again = await recover.check({
+            skip: [...events, ...(bundler.held()?.foreman?.events ?? [])].filter((e) => e.type === 'work-ready').map((e) => e.work),
+          });
           if (again.length > 0) bundler.add(route(again));
         } catch (error) {
           log(`Approved work that has not started couldn't be looked for: ${error.message}`);

@@ -79,7 +79,7 @@ test('Shape 1: a front desk tick starts a watcher that has stopped, at most once
   assert.deepEqual(await tick(), { watcher: 'started', submit: [] });
   assert.equal(fake.calls.length, 1);
   assert.deepEqual(fake.calls[0].args, [path.join(ROOT, 'scripts', 'watcher', 'main.js'), P]);
-  assert.deepEqual(fake.calls[0].opts.env, { PATH: bin }, 'the watcher is no one\'s session');
+  assert.deepEqual(fake.calls[0].opts.env, { PATH: `${path.dirname(process.execPath)}:${bin}` }, 'the watcher is no one\'s session');
   assert.equal(fake.calls[0].opts.detached, true);
 
   // Within the minute, the last check stands and nothing is asked or started.

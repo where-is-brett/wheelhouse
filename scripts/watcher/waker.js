@@ -1047,10 +1047,8 @@ export function makeWaker({
       }
     }
     if (target !== 'foreman' && kept.idFromRun === true) keepStartedId(nameOf(target), result?.sessionId ?? null);
-    if (result?.ok === true) {
-      if (target === 'foreman') settleEnded(target, entries);
-      else settle(entries, 'done');
-    } else {
+    if (result?.ok === true) settle(entries, 'done');
+    else {
       const why = typeof result?.why === 'string' ? result.why : 'its run gave no outcome';
       settle(entries, 'failed', why);
       if (entries.length === 0) onError(`The ${nameOf(target)} session's run failed: ${why}`);
