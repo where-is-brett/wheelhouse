@@ -87,6 +87,16 @@ const REGISTRATION = {
         ]
       },
       {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/node-floor.cjs\" \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/front-desk-writes.js\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
         "matcher": "AskUserQuestion",
         "hooks": [
           {
