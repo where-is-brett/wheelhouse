@@ -5020,9 +5020,9 @@ export async function startHelper({
       if (typeof work !== 'string' || !SLUG.test(work)) refuse('the work must be named');
       const events = listEvents(stateDir(project), { report: () => {} });
       const views = buildViews(events, readEnrolled(), { now });
-      let pr = null;
-      try { pr = readPrRecord(worktreeOf(project, views, work))?.pr ?? null; } catch { /* none */ }
-      const made = workCardFor(views, { work, pr });
+      let kept = null;
+      try { kept = readPrRecord(worktreeOf(project, views, work)); } catch { /* none */ }
+      const made = workCardFor(views, { work, pr: kept?.pr ?? null, merged: kept?.merged === true, stuck: recentStuck(project, work, { now }) !== null, now: now() });
       if (made.skip !== undefined) return { ok: true, skipped: made.skip };
       const pass = crypto.randomUUID();
       foremanRuns.set(pass, project);

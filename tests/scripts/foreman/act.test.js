@@ -1888,6 +1888,19 @@ test('a merge that waits only for the director\'s click records what it waits fo
   assert.deepEqual(asks(next.writes).map((w) => w.data.sha), [later]);
 }));
 
+test('close is refused for work with an open pull request and no report, and writes nothing', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  views.work.mine = workView('mine');
+  const wt = worktree(checkout, 'mine', { pr: { pr: 12, merged: false } });
+  views.features.mine = featureView('mine', { step: 'building', worktree: wt, branch: 'feature/mine' });
+  const fake = fakeClient({ views, answers: { prState: { ok: true, result: { state: 'open' } } } });
+  const r = await act(['close', 'mine'], { client: fake.client });
+  assert.notEqual(r.code, 0);
+  assert.match(r.err, /report/);
+  assert.equal(fake.writes.length, 0);
+}));
+
 test('close records the report with every ruling, then closes the feature and forgets its session', () => withHome(async () => {
   const checkout = await project();
   const views = emptyViews();

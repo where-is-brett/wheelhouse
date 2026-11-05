@@ -16,7 +16,7 @@ const base = (reviews = {}) => ({
   features: { 'todo-cli': { at: '2026-11-05T18:20:00.000Z', data: { work: 'todo-cli', step: 'building' } } },
   reviews,
 });
-const review = (verdict, findings) => ({ 2: { [HEAD]: { data: { pr: 2, commit: HEAD, verdict, findings } } } });
+const review = (verdict, findings, commit = HEAD) => ({ 2: { [commit]: { at: '2026-11-05T18:35:00.000Z', data: { pr: 2, commit, verdict, findings } } } });
 const line = (views, prs) => workLines(views, [], words, prs).join('\n');
 
 test('a pull request with a review that has findings is said to hold the merge, with the count', () => {
@@ -24,11 +24,18 @@ test('a pull request with a review that has findings is said to hold the merge, 
   assert.match(text, /pull request #2 is open, its review holds the merge: 3 findings to fix/);
 });
 
-test('a clean review, no review of this head, and a wait on the director each say so', () => {
+test('a clean review, no review, a review of an earlier commit: each says so, and the status is only a hint', () => {
   assert.match(line(base(review('CLEAN', 0)), { 'todo-cli': { pr: 2, head: HEAD } }), /pull request #2 is open, its review is clean; it merges once the checks pass/);
-  assert.match(line(base(), { 'todo-cli': { pr: 2, head: HEAD } }), /pull request #2 is open, no signed review of its latest commit yet/);
-  assert.match(line(base(review('FINDINGS', 3)), { 'todo-cli': { pr: 2, head: 'd'.repeat(40) } }), /no signed review of its latest commit yet/);
-  assert.match(line(base(), { 'todo-cli': { pr: 2, head: HEAD, waitingOn: 'director' } }), /pull request #2 is open, waiting on the director/);
+  assert.match(line(base(), { 'todo-cli': { pr: 2, head: HEAD } }), /pull request #2 is open, no signed review yet/);
+  assert.match(line(base(review('FINDINGS', 3)), { 'todo-cli': { pr: 2, head: 'd'.repeat(40) } }), /its signed review is of an earlier commit, so the newest has none yet/);
+  // A status that says it waits on the director changes nothing: the record decides.
+  assert.doesNotMatch(line(base(review('FINDINGS', 3)), { 'todo-cli': { pr: 2, head: HEAD, waitingOn: 'director' } }), /waiting on the director/);
+});
+
+test('the record\'s pull request number wins over the status\'s', () => {
+  const views = base(review('FINDINGS', 1));
+  views.reports = { 'todo-cli': { at: '2026-11-05T19:00:00.000Z', data: { pr: 2 } } };
+  assert.match(line(views, { 'todo-cli': { pr: 9, head: HEAD } }), /pull request #2, its review holds the merge: 1 finding to fix/);
 });
 
 test('work with no pull request says none', () => {
@@ -45,7 +52,7 @@ test('prsOfWork reads the pull request from the work\'s own status, only inside 
     fs.writeFileSync(path.join(dir, '.wheelhouse', 'feature', 'status.json'), JSON.stringify(status));
   }
   const views = { features: { 'todo-cli': { data: { worktree: inside } }, stray: { data: { worktree: outside } } } };
-  assert.deepEqual(prsOfWork(views, checkout), { 'todo-cli': { pr: 2, head: HEAD, phase: 'pr-open', waitingOn: null } });
+  assert.deepEqual(prsOfWork(views, checkout), { 'todo-cli': { pr: 2, head: HEAD, phase: 'pr-open' } });
 });
 
 test('ask-bosun says what the helper did, and refuses nothing it was not given', async () => {

@@ -11,7 +11,7 @@ import { endedBy, since, NO_PLAN, STARTS_UNAPPROVED } from '../foreman/queue.js'
 import { cardTextOf, hashOf } from '../mod/status.js';
 import { cardButtons } from '../mod/buttons.js';
 import { dataHash } from '../state/events.js';
-import { cardOutcomes } from '../state/views.js';
+import { cardOutcomes, latestFor } from '../state/views.js';
 import { answeredWords, askOf, subjectOf } from '../cards/answered.js';
 import { sinceLine } from '../cards/panel-words.js';
 import { contextText } from './context.js';
@@ -135,17 +135,18 @@ const latestRun = (views, id) => (isPlain(views.runs) && Array.isArray(views.run
 // What each lane is, in words a sentence takes.
 const LANE_WORDS = { quick: 'quick work', small: 'small work', feature: 'a feature', bug: 'a bug fix' };
 
-// What a pull request is waiting on, in words: `open` is the work's own status (its pull request, the
-// head commit and what it waits on), `known` the number the record already named. The signed review of
-// that exact head is read from the record's reviews; a review of another commit doesn't count.
+// What a pull request is waiting on, in words. `known` is the number the record names, which wins; `open` is the work's
+// own status, which only names a pull request when the record has none and gives the head commit as a hint that the
+// newest commit may be newer than its review. The review is the record's latest signed one for the pull request, as the
+// merge gate reads it; nothing else in the status is believed.
 export function prLine(views, open, known) {
-  const n = isPlain(open) && Number.isSafeInteger(open.pr) && open.pr > 0 ? open.pr : known;
-  if (!Number.isSafeInteger(n) || n <= 0) return [];
+  const n = Number.isSafeInteger(known) && known > 0 ? known : isPlain(open) && Number.isSafeInteger(open.pr) && open.pr > 0 ? open.pr : null;
+  if (n === null) return [];
   const head = isPlain(open) && typeof open.head === 'string' ? open.head : null;
-  const review = head !== null && isPlain(views.reviews?.[n]) ? views.reviews[n][head]?.data : undefined;
-  const lead = Number.isSafeInteger(known) && known === n ? [] : [`pull request #${n} is open`];
-  if (isPlain(open) && open.waitingOn === 'director') return [...lead, 'waiting on the director'];
-  if (!isPlain(review)) return [...lead, `no signed review of its latest commit yet, so it can't merge`];
+  const review = latestFor(views.reviews, n)?.data;
+  const lead = n === known ? [] : [`pull request #${n} is open`];
+  if (!isPlain(review)) return [...lead, 'no signed review yet, so it can\'t merge'];
+  if (head !== null && review.commit !== head) return [...lead, 'its signed review is of an earlier commit, so the newest has none yet and it can\'t merge'];
   if (review.verdict === 'CLEAN') return [...lead, 'its review is clean; it merges once the checks pass and the director has approved it'];
   const found = Number.isSafeInteger(review.findings) ? `${review.findings} finding${review.findings === 1 ? '' : 's'} to fix` : 'findings to fix';
   return [...lead, `its review holds the merge: ${found}`];

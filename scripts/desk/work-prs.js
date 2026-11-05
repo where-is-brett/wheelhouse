@@ -1,6 +1,6 @@
 // scripts/desk/work-prs.js
-// The pull request each open work has, as its own status says: the number, the head commit it was
-// opened at and what it waits on. The record names a work's pull request only once the gate asks
+// The pull request each open work has, as its own status says: the number and the head commit it was
+// opened at, as a hint only. The record names a work's pull request only once the gate asks
 // about it, so a pull request that is open with a review on it shows nowhere in the record's views;
 // the work's status file in its worktree does. Read only through the watcher's own folder checks.
 import { inWorktreesFolder, plainWorktreePath } from '../watcher/sources.js';
@@ -20,7 +20,7 @@ export function prsOfWork(views, checkout) {
       if (!inWorktreesFolder(checkout, worktree) || !safeFeatureFolder(worktree)) continue;
       const status = readStatus(featurePaths(worktree).status);
       if (status !== null && Number.isSafeInteger(status.pr) && status.pr > 0) {
-        out[id] = { pr: status.pr, head: typeof status.head === 'string' ? status.head : null, phase: status.phase, waitingOn: status.waitingOn };
+        out[id] = { pr: status.pr, head: typeof status.head === 'string' ? status.head : null, phase: status.phase };
       }
     } catch { /* a status that can't be read shows no pull request */ }
   }

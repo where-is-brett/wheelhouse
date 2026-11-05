@@ -10,7 +10,7 @@ import { latestFor } from '../state/views.js';
 // A command that runs as it stands, for `work`.
 export function askExample(work = '<work>') {
   return `act ask ${work} --what 'Should ${work} go on?' --why 'It has not moved for 20 minutes.' `
-    + "--option 'Go on=Leave it running' --option 'Drop it=Close the work' --recommend 'Go on' --level 2";
+    + "--option 'Go on=Leave it running' --option 'Look again later=Nothing to do now' --recommend 'Go on' --level 2";
 }
 
 export const ASK_HELP = [
@@ -41,7 +41,6 @@ export function stuckQuestion(work, { phase = null, still = 0, findings = false 
     options: [
       { label: move, says: `act restart ${work}` },
       { label: 'Wait', says: 'Nothing to do now; the watcher raises it again if it stays still' },
-      { label: 'Drop it', says: 'Close the work with act close; it will not be built' },
     ],
     recommendation: move,
     level: 2,
@@ -67,19 +66,21 @@ export function stuckCardFor(views, { work, phase = null, still = 0, pr = null }
   return problem === null ? { data } : { skip: `the card can't be composed: ${problem}` };
 }
 
-// The question the director's "fix it" or "ship it" about work with an open pull request puts to the Bosun, in fixed
-// words: the front desk supplies none. While a signed review holds the merge, shipping it as it is is not offered (the
-// gate's rules stand); the builder fixes the findings, or the work stops.
-export const STOP_WORK = 'Stop this work';
+// The question put to the Bosun about work with an open pull request. It words only what the helper checked: the
+// helper cannot prove the director asked, so the card claims no request. While a signed review holds the merge, shipping it
+// as it is is not offered (the gate's rules stand). No option closes the work: `act close` needs the builder's report, and
+// only the director's own amendment pauses work, so the second option leaves things as they are.
+export const LEAVE_WORK = 'Leave it for now';
+export const WORK_CARD_COOLDOWN_MS = 30 * 60 * 1000;
 
 export function workQuestion(work, { pr, findings = false }) {
   const move = findings ? FIX_FINDINGS : RESTART_BUILDER;
   return {
-    what: `The director asked to finish ${work}, pull request #${pr}. ${findings ? 'Its signed review holds the merge, so it cannot go in as it is. ' : ''}What should happen?`,
-    why: 'The director asked for it to be finished, and only the Bosun can move it.',
+    what: `${work} has pull request #${pr} open.${findings ? ' Its signed review holds the merge.' : ''} What should happen?`,
+    why: 'Only the Bosun can move it.',
     options: [
       { label: move, says: `act restart ${work}` },
-      { label: STOP_WORK, says: `act close ${work}` },
+      { label: LEAVE_WORK, says: 'Nothing to do now; the pull request waits as it is' },
     ],
     recommendation: move,
     level: 2,
@@ -87,12 +88,18 @@ export function workQuestion(work, { pr, findings = false }) {
 }
 
 // The card for `work`'s open pull request `pr`, as the helper writes it: `{ data }`, or `{ skip }` saying why none.
-export function workCardFor(views, { work, pr = null }) {
+// A stuck work's own card goes first (`stuck`), a merged pull request has nothing to ask, and no card is made within
+// the cooldown of the last one for the work or of an answer to it.
+export function workCardFor(views, { work, pr = null, merged = false, stuck = false, now = new Date() }) {
   if (views?.features?.[work] === undefined) return { skip: 'there is no such work' };
   if (views.features[work].data?.step === 'closed') return { skip: 'the work has ended' };
+  if (merged === true) return { skip: 'its pull request has merged' };
   if (!Number.isSafeInteger(pr) || pr <= 0) return { skip: 'the work has no open pull request' };
+  if (stuck === true) return { skip: 'the work is stuck, and its stuck card is the one to ask' };
   const own = Object.values(views?.questions ?? {}).filter((q) => questionIdOf(q?.question?.data?.id)?.work === work && questionIdOf(q.question.data.id).foreman);
   if (own.some((q) => q.answer === null)) return { skip: 'the Bosun has asked already' };
+  const last = Math.max(0, ...own.flatMap((q) => [Date.parse(q.question?.at), Date.parse(q.answer?.at)]).filter(Number.isFinite));
+  if (now.getTime() - last < WORK_CARD_COOLDOWN_MS) return { skip: 'the Bosun was asked about it less than 30 minutes ago' };
   const n = Math.max(FOREMAN_QUESTIONS, ...own.map((q) => questionIdOf(q.question.data.id).n)) + 1;
   const data = { id: `q-${work}-${n}`, work, ...workQuestion(work, { pr, findings: holdingReview(views, pr) !== null }) };
   const problem = questionProblem(data);
