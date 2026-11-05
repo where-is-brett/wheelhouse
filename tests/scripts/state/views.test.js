@@ -1899,3 +1899,35 @@ test('re-recording by-hand work at another commit or in another lane loses the a
     assert.equal(approvedOf([...press, handWork(5)]), true);
   });
 });
+
+// ---- A question that replaces another (the foreman's changed question) ----
+
+test('a question that replaces an unanswered one takes its place, and the old one is gone from the views', () => {
+  const ask = (id, extra = {}) => ({ id, work: 'mine', what: 'What?', why: 'Why', options: [{ label: 'Yes', says: 'Do it' }], recommendation: 'Yes', level: 3, ...extra });
+  const events = [
+    makeEvent({ kind: 'question', data: ask('q-mine-1'), now: () => new Date('2026-10-18T01:00:00Z') }),
+    makeEvent({ kind: 'question', data: ask('q-mine-1000001', { replaces: 'q-mine-1', what: 'Changed?' }), now: () => new Date('2026-10-18T02:00:00Z') }),
+    makeEvent({ kind: 'question', data: ask('q-mine-1000002', { replaces: 'q-mine-1', what: 'Changed again?' }), now: () => new Date('2026-10-18T03:00:00Z') }),
+  ];
+  const { questions } = buildViews(events, { now: () => new Date('2026-10-18T04:00:00Z') });
+  assert.deepEqual(Object.keys(questions), ['q-mine-1000002']);
+});
+
+test('a question never takes the place of an engine question, a question with an engine part, or one with a click on it', () => {
+  const ask = (id, extra = {}) => ({ id, work: 'mine', what: 'What?', why: 'Why', options: [{ label: 'Yes', says: 'Do it' }], recommendation: 'Yes', level: 3, ...extra });
+  const events = [
+    makeEvent({ kind: 'question', data: ask('q-mine-1', { engine: { runId: 'r', ask: 'a', options: { Yes: 'go' } } }), now: () => new Date('2026-10-18T01:00:00Z') }),
+    makeEvent({ kind: 'question', data: ask('q-mine-1000001', { replaces: 'q-mine-1' }), now: () => new Date('2026-10-18T02:00:00Z') }),
+  ];
+  const { questions } = buildViews(events, { now: () => new Date('2026-10-18T04:00:00Z') });
+  assert.deepEqual(Object.keys(questions).sort(), ['q-mine-1', 'q-mine-1000001']);
+});
+
+test('a replacement that the rules refuse hides nothing, even when it is in the log', () => {
+  const ask = (id, extra = {}) => ({ id, work: 'by-hand', what: 'What?', why: 'Why', options: [{ label: 'Check and add them', says: 'Do it' }], recommendation: 'Check and add them', level: 3, ...extra });
+  const forged = makeEvent({ kind: 'question', data: ask('q-by-hand-1000001'), now: () => new Date('2026-10-18T02:00:00Z') });
+  forged.data.replaces = 'q-by-hand-3';
+  const events = [makeEvent({ kind: 'question', data: ask('q-by-hand-3'), now: () => new Date('2026-10-18T01:00:00Z') }), forged];
+  const { questions } = buildViews(events, { now: () => new Date('2026-10-18T04:00:00Z') });
+  assert.deepEqual(Object.keys(questions).sort(), ['q-by-hand-1000001', 'q-by-hand-3']);
+});

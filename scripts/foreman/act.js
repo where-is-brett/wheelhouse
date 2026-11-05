@@ -255,7 +255,7 @@ function optionsOf(found, recommendation) {
 
 // --- Where things stand, and writing to state ---
 
-function context({ project, client, now, run, wakerFor, pluginRoot, makeId, out, platform, isLocked }) {
+function context({ project, client, now, run, wakerFor, pluginRoot, makeId, out, platform, isLocked, foremanPass }) {
   let views = null;
   let config = null;
   const ctx = {
@@ -285,7 +285,7 @@ function context({ project, client, now, run, wakerFor, pluginRoot, makeId, out,
       recordHandled(project, [id], { now });
       let answer;
       try {
-        answer = await client.state.write({ project, kind, data, id });
+        answer = await client.state.write({ project, kind, data, id, ...(foremanPass ? { foreman: foremanPass } : {}) });
       } catch {
         answer = null;
       }
@@ -845,13 +845,24 @@ async function question(ctx, work, rest) {
     id: q.id, work, what: q.what, why: q.why, options: q.options, recommendation: q.recommendation, level: q.level,
     ...(q.kind === 'build-command' ? { commands: q.commands } : {}),
   };
+  // The question as it stands now: the one recorded under this id, or the latest that replaced it.
+  const kept = Object.values(views.questions ?? {}).filter((x) => x?.question?.data?.id === q.id || x?.question?.data?.replaces === q.id)
+    .sort((a, b) => String(a.question.at).localeCompare(String(b.question.at))).at(-1);
+  const { replaces, ...keptBody } = kept?.question?.data ?? {};
   let at;
-  if (same(views.questions[q.id]?.question?.data, data)) {
+  if (kept !== undefined && same(keptBody, kept.question.data.id === q.id ? data : { ...data, id: kept.question.data.id })) {
     ctx.say(`Question ${q.id} is recorded already.`);
-    at = views.questions[q.id].question.at;
-  } else {
+    at = kept.question.at;
+  } else if (kept === undefined) {
     await ctx.write('question', data);
     ctx.say(`Recorded question ${q.id} for the director.`);
+    at = ctx.now().toISOString();
+  } else {
+    // The words changed since it was recorded. A question's id is its card's, so the new words go under a new id, and the
+    // earlier question is replaced in the views: the director meets one card, with the words now written.
+    const n = Math.max(FOREMAN_QUESTIONS, ...Object.values(views.questions).map((x) => foremanNumber(x.question.data.id, work))) + 1;
+    await ctx.write('question', { ...data, id: `q-${work}-${n}`, replaces: q.id });
+    ctx.say(`Recorded question ${q.id} again, with its new words, for the director.`);
     at = ctx.now().toISOString();
   }
   await offerUnattended(ctx, views, work, { ...data, at });
@@ -1450,10 +1461,18 @@ const USAGE = `Commands: ${Object.keys(COMMANDS).join(', ')}, each followed by t
 
 // Runs a command and resolves with its exit code. `wakerFor(config, print)`
 // gives the waker that starts a session.
+// The pass the helper gave this command run (WHEELHOUSE_FOREMAN_RUN), taken once and removed from the environment, so no
+// session or tool this command starts inherits it.
+function takeForemanPass() {
+  const pass = process.env.WHEELHOUSE_FOREMAN_RUN;
+  delete process.env.WHEELHOUSE_FOREMAN_RUN;
+  return typeof pass === 'string' && pass !== '' ? pass : undefined;
+}
+
 export async function main(argv, {
   cwd = process.cwd(), project: given, client = helperClient(), now = () => new Date(), run = runProgram,
   wakerFor, pluginRoot = PLUGIN_ROOT, makeId = () => crypto.randomUUID(), platform = process.platform, isLocked = lockedByPath,
-  out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t),
+  out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t), foremanPass = takeForemanPass(),
 } = {}) {
   try {
     const [command, work, ...rest] = argv;
@@ -1461,7 +1480,7 @@ export async function main(argv, {
     if (typeof work !== 'string' || !SLUG.test(work)) refuse('Give the work id: lower-case letters, digits and hyphens, at most 40');
     const project = given ?? projectHere(cwd);
     const waker = wakerFor ?? ((cfg, print) => makeWaker({ shape: cfg.watcherShape, project, config: cfg, print }));
-    const ctx = context({ project, client, now, run, wakerFor: waker, pluginRoot, makeId, out, platform, isLocked });
+    const ctx = context({ project, client, now, run, wakerFor: waker, pluginRoot, makeId, out, platform, isLocked, foremanPass });
     await COMMANDS[command](ctx, work, rest);
     return 0;
   } catch (error) {

@@ -132,7 +132,7 @@ import { writeProfileViews } from '../profile/store.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { pendingDir } from '../hooks/pending.js';
 import { branchOf } from '../hooks/session-start.js';
-import { SLUG, paceOf } from '../lib/build-loop.js';
+import { SLUG, paceOf, questionIdOf } from '../lib/build-loop.js';
 import { ROOT as OWN_ROOT, recheckCopies } from '../lineage/check.js';
 import { requestMeter, requestsThisMonth } from '../engine/request-meter.js';
 import { weeklyShare } from '../usage/figures.js';
@@ -1887,10 +1887,12 @@ export async function startHelper({
   // made here too, unless the caller made it (the foreman's act command does,
   // to record the id as handled before the event exists, ruling R86): then it
   // must be shaped as a random UUID and not one the state holds already.
+  // The passes of the foreman commands running now (/foreman/run), each held for that one run and that one project.
+  const foremanRuns = new Map();
   // A card-answer naming a proof, a commit or a card's hash is a click record only the helper's own routes make
   // (/cards/chat-click): `own` is theirs. From /state/write, which anyone who reaches the helper may call, it is
   // refused, so no caller can name a proof the gate would read.
-  async function doWrite({ project, kind, data, id }, ctx, { own = false } = {}) {
+  async function doWrite({ project, kind, data, id, foreman }, ctx, { own = false } = {}) {
     if (PROTECTED_KINDS.includes(kind)) refuse('a signed kind is recorded through /state/record, never written here');
     if (HELPER_ONLY_KINDS.includes(kind)) refuse('only the helper itself records that kind');
     if (kind === 'incident' && data && typeof data === 'object' && RED_MAIN_FIELDS.some((k) => Object.hasOwn(data, k))) refuse(RED_MAIN_OWN);
@@ -1908,6 +1910,23 @@ export async function startHelper({
     if (id !== undefined) {
       const kept = pendingRecords(project);
       if (idsOf(kept).has(id) && !keptWrite(kept, { kind, data, id })) refuse('a record waiting to be sent from this computer has that id');
+    }
+    // A question's id is the card's: one written again under the same id would change a live card's words or options under
+    // the director's eyes. The helper's own writes (the engine's cards) don't come this way, and neither may a caller name
+    // the fields that say where an answer goes.
+    if (kind === 'question') {
+      // The foreman's own questions (ids from one million up) and a question that replaces another are written by the
+      // foreman's command alone, which the helper runs and hands a pass for that run: no other caller holds one.
+      if ((questionIdOf(data.id)?.foreman === true || Object.hasOwn(data, 'replaces')) && !(typeof foreman === 'string' && foremanRuns.get(foreman) === project)) {
+        refuse('only the Bosun\'s own command writes its questions, or a question that replaces another');
+      }
+      for (const field of ['engine', 'key', 'head']) if (Object.hasOwn(data, field)) refuse(`a question written here can't carry ${field}: only the helper's own cards do`);
+      // Questions the state holds, and writes a hook kept to send later, both count as holding the id.
+      const held = [
+        ...listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'question' && e.data?.id === data.id).map((e) => e.data),
+        ...pendingRecords(project).filter(({ route, body }) => route === 'write' && body?.kind === 'question' && body.data?.id === data.id).map(({ body }) => body.data),
+      ];
+      if (held.length > 0 && !held.some((d) => dataHash(d) === dataHash(data))) refuse('the state already holds a question with that id: ask a new one under a new id');
     }
     if (kind === 'setting') {
       try { checkSetting(data.key, data.value, data.until); } catch (error) { refuse(error.message); }
@@ -5162,12 +5181,16 @@ export async function startHelper({
       const why = foremanRequestRefusal({ script, argv });
       if (why !== null) refuse(why);
       let result;
+      const pass = crypto.randomUUID();
+      foremanRuns.set(pass, project);
       try {
         result = await run(process.execPath, [FOREMAN_RUNNER, address, script, ...argv], {
-          cwd: recordOf(project).folder, baseEnv: foremanEnv(process.env), timeoutMs: FOREMAN_RUN_MS, limit: FOREMAN_OUTPUT_BYTES,
+          cwd: recordOf(project).folder, baseEnv: { ...foremanEnv(process.env), WHEELHOUSE_FOREMAN_RUN: pass }, timeoutMs: FOREMAN_RUN_MS, limit: FOREMAN_OUTPUT_BYTES,
         });
       } catch {
         return { ok: false, refused: `the Bosun's ${script} command could not be started` };
+      } finally {
+        foremanRuns.delete(pass);
       }
       const stopped = result.timedOut ? `The Bosun's ${script} command did not finish in fifteen minutes and was stopped.\n` : '';
       return { ok: true, code: result.timedOut ? 1 : result.code, stdout: result.stdout, stderr: `${result.stderr}${stopped}` };
