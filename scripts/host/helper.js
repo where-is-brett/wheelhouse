@@ -181,6 +181,9 @@ import { COMMAND_BODY, COMMAND_TITLE, COMMAND_WORK, commandBranch, commandChange
 import { ARCHON_CONFIG_FILE, ENGINE_FILES, POLICY_FILE, mirrorRulesFile } from '../engine/parts.js';
 import { maintainersText } from '../setup/engine-parts.js';
 import { briefHash, featurePaths } from '../feature/files.js';
+import { HAND_DONE, HAND_GOAL } from '../lib/by-hand-done.js';
+import { writeInside } from '../lib/write-inside.js';
+import { tieNamesWork } from '../lib/by-hand-tie.js';
 import { readCapped } from '../feature/status.js';
 
 export const STATE_BRANCH = 'wheelhouse-state';
@@ -2230,12 +2233,18 @@ export async function startHelper({
   // request: { line }, its name, as the latest survey lists it (doCarryOnPiece).
   async function doCarryOn(body, ctx) {
     if (body.line !== undefined) return doCarryOnPiece(body, ctx);
-    const { project, number, record, git, used } = body;
+    const { project, number, record, git, used, views } = body;
     if (!Number.isInteger(number) || number < 1) refuse('the request number must be a whole number from 1');
     const adapter = await ctx.adapter();
     const listed = adapter.openRequests();
     const open = { ...adapter, openRequests: () => listed };
     const lines = (await listed).map((r) => r?.branch).filter((b) => typeof b === 'string');
+    // A change made by hand is carried on by the helper itself once the press is tied to it: nothing more is made for it.
+    const head = (await listed).find((r) => r?.number === number)?.head;
+    // Refused only where the director's press is tied to this request at this commit and the work is recorded for it.
+    const tied = typeof head === 'string' && Object.values(views.questions ?? {}).some((q) => q?.byHand?.n === number && q.byHand.head === head);
+    const taken = tied ? handWorkOf(project, number, head) : undefined;
+    if (taken !== undefined) refuse(`request #${number} is already being carried on as the work ${taken}, which builds by itself: there is nothing more to record for it, so say nothing about it`);
     const work = await freeWork({ git, remoteUrl: remoteOf(project), base: `carry-on-${number}`, lines, used });
     const made = await carryOn({ git, adapter: open, remoteUrl: remoteOf(project), number, work });
     await keepReady(project, git, work, { sha: made.sha, ref: made.ref, request: number, branch: made.branch });
@@ -5635,6 +5644,67 @@ export async function startHelper({
     }
   }
 
+  // The work that already carries a change by hand: recorded for `number` at `head`, by the front desk or by the helper.
+  const handWorkOf = (project, number, head) => listEvents(stateDir(project), { report: () => {} })
+    .find((e) => e.kind === 'work' && e.data?.from?.request === number && e.data.from.sha === head)?.data.id;
+
+  // The change the helper opened for the director's press is carried on by the helper itself, so a weak front desk cannot
+  // leave it waiting. In two parts around the tie: `prepareHand` makes the change ready and words its brief (nothing is
+  // written yet) and the tie then names that work and the brief's hash, so the press approves that work alone; `finishHand`
+  // writes the brief, without following a link, and records the work. A part that cannot go on is said on the Logbook, and
+  // the change is then left to the front desk's carry-on, as it always was.
+  async function prepareHand(project, { number, head }, ctx) {
+    const say = (words) => doWrite({ project, kind: 'note', data: { about: 'engine', words } }, ctx, { own: true }).catch(() => {});
+    return oneAtATime(`ready:${project}`, async () => {
+      if (stopped()) return null;
+      // A tie already names a work for this change: it was carried on, and is not carried on again.
+      if (tieNamesWork(listEvents(stateDir(project), { report: () => {} }), number, head, (e) => verify(e, readEnrolled()))) return null;
+      const record = recordOf(project);
+      if (typeof record.folder !== 'string' || !path.isAbsolute(record.folder) || !fs.existsSync(record.folder)) {
+        await say('The changes made by hand could not be carried on yet: the project\'s folder isn\'t on this computer.');
+        return null;
+      }
+      const views = buildViews(listEvents(stateDir(project), { report: () => {} }), ownKeyOnly(), { now });
+      const git = readyGit(project, record);
+      const used = (id) => (views.work !== null && typeof views.work === 'object' && Object.hasOwn(views.work, id)) || fs.existsSync(readyRecordFile(project, id));
+      const listed = await (await ctx.adapter()).openRequests();
+      const adapter = { ...(await ctx.adapter()), openRequests: () => listed };
+      const work = await freeWork({ git, remoteUrl: remoteOf(project), base: `carry-on-${number}`, lines: listed.map((r) => r?.branch).filter((b) => typeof b === 'string'), used });
+      let made;
+      try {
+        made = await carryOn({ git, adapter, remoteUrl: remoteOf(project), number, work });
+      } catch (error) {
+        if (!(error instanceof ReadyRefusal)) throw error;
+        await say(`The changes made by hand could not be carried on yet: ${error.message}.`);
+        return null;
+      }
+      // Only the commit the director pressed on, as the tie names it.
+      if (made.sha !== head) {
+        await dropRef(git, work, made.sha);
+        await say('The changes made by hand moved on while they were being carried on, so they were left for the next look.');
+        return null;
+      }
+      await keepReady(project, git, work, { sha: made.sha, ref: made.ref, request: number, branch: made.branch });
+      const lineOf = (items, shown) => (items.length === 0 ? '' : `${shown}\n${items.map((i) => `- ${i}`).join('\n')}\n\n`);
+      const text = `# Your changes made by hand\n\nYou changed files in your project folder by hand and chose Check and add them.\n\n`
+        + lineOf(made.files.slice(0, 20).map((f) => f.path), 'Files changed:') + lineOf(made.commits.slice(0, 20), 'Commits:')
+        + `Goal: ${HAND_GOAL}.\n\nDone when:\n${HAND_DONE.map((d) => `- ${d}`).join('\n')}\n`;
+      return { work, text, rel: `.wheelhouse/work/${work}.md`, hash: briefHash(text), from: { sha: made.sha, ref: made.ref, request: number }, folder: record.folder };
+    });
+  }
+
+  async function finishHand(project, plan, ctx) {
+    const say = (words) => doWrite({ project, kind: 'note', data: { about: 'engine', words } }, ctx, { own: true }).catch(() => {});
+    try {
+      writeInside(plan.folder, plan.rel, plan.text);
+    } catch (error) {
+      await say(`The brief for the changes made by hand could not be written: ${error.message}.`);
+      return;
+    }
+    const data = { id: plan.work, title: 'Your changes made by hand', lane: 'small', visible: true, dependsOn: [], doc: { path: plan.rel, hash: plan.hash }, from: plan.from };
+    await doWrite({ project, kind: 'work', data }, ctx, { own: true });
+  }
+
   // The director's Check and add them on the card for changes made by hand (spec 5.4): the folder's work goes to the home by
   // the same push as any other, on a branch of its own that the folder doesn't keep, and waits as a local change. Parted from
   // the main version, it is brought up to date first. The survey lists it, so it is carried on as any request is, with a
@@ -5672,7 +5742,10 @@ export async function startHelper({
       if ((await heldAt()) !== expected) return wrong;
       // The tie: the director's answer on this card, this change, and the commit checked above. Work of Wheelhouse's own
       // section has no card, so no tie.
-      await checkWrite(project, makeEvent({ kind: 'by-hand', data: { question, n: number, head: expected }, now }));
+      const plan = await prepareHand(project, { number, head: expected }, ctx);
+      if ((await heldAt()) !== expected) return wrong;
+      await checkWrite(project, makeEvent({ kind: 'by-hand', data: { question, n: number, head: expected, ...(plan === null ? {} : { work: plan.work, doc: plan.hash }) }, now }));
+      if (plan !== null) await finishHand(project, plan, ctx);
     }
     const latest = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'survey').sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0)).at(-1);
     const taken = await takeSurvey({ project, run, adapter: () => ctx.adapter(), rules: shapedSurvey({ rules: latest?.data?.rules }).rules });

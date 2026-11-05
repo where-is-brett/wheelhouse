@@ -72,12 +72,18 @@ test('changes made by hand reach a local change by the director\'s click, and th
   assert.equal(await headIn(folder, `refs/heads/${change.branch}`), '', 'the folder keeps no branch for it');
   const survey = records('survey').at(-1);
   assert.deepEqual(survey.data.requests.map((r) => r.number), [change.n]);
-  const carried = await client.survey.carryOn({ project: P, number: change.n });
-  assert.equal(carried.ok, true, carried.refused);
-  assert.equal(carried.from.sha, tip);
-  // The helper tied the director's answer to this change, at the commit pressed on.
+  // The helper tied the director's answer to this change, at the commit pressed on, and recorded the work it names.
   const tie = records('by-hand').find((e) => e.data.question === card.data.id);
   assert.deepEqual([tie.data.n, tie.data.head], [change.n, tip]);
+  const work = records('work').find((e) => e.data.id === tie.data.work);
+  assert.equal(work.data.from.sha, tip);
+  assert.equal(work.data.from.request, change.n);
+  assert.equal(work.data.lane, 'small');
+  // The front desk's carry-on after it is refused in plain words and makes no second work.
+  const carried = await client.survey.carryOn({ project: P, number: change.n });
+  assert.equal(carried.ok, false);
+  assert.match(carried.refused, /already being carried on as the work/);
+  assert.equal(records('work').length, 1);
   // An agent can't open a change on a by-hand branch itself.
   const refused = await client.openPr({ project: P, head: 'feature/by-hand-abc', title: 'x', body: 'x', session: 'nobody' });
   assert.equal(refused.ok, false);

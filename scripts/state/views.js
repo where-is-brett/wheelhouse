@@ -539,7 +539,7 @@ function buildLoopViews(sorted, enrolled) {
   // The card for changes made by hand ties to the one change the helper opened for it (a signed `by-hand`), at the commit pressed on.
   const hand = {};
   for (const e of sorted) {
-    if (e.kind === 'by-hand' && verify(e, enrolled) && questions[e.data?.question] && hand[e.data.question] === undefined) hand[e.data.question] = { n: e.data.n, head: e.data.head };
+    if (e.kind === 'by-hand' && verify(e, enrolled) && questions[e.data?.question] && hand[e.data.question] === undefined) hand[e.data.question] = { n: e.data.n, head: e.data.head, ...(e.data.work === undefined ? {} : { work: e.data.work, doc: e.data.doc }) };
   }
   for (const [id, tie] of Object.entries(hand)) questions[id].byHand = tie;
   // A question recorded again, changed, names the first id it was recorded under (`replaces`): the latest of them stands, and the
@@ -562,7 +562,12 @@ function buildLoopViews(sorted, enrolled) {
   // only at the document it first named: a brief changed afterwards asks the director as any work does.
   const pressed = Object.values(questions).filter((q) => q.byHand !== undefined && q.answer?.label === CHECK_AND_ADD).map((q) => q.byHand);
   for (const tie of pressed) {
-    const first = sorted.find((e) => e.kind === 'work' && e.data?.from?.request === tie.n && e.data.from.sha === tie.head);
+    // Only a tie that names the work the helper made for it (and its brief's hash) approves anything, and that work alone, at
+    // that brief: a work any other hand recorded for the same change is never it. A tie that names none approves nothing,
+    // so work for that change asks the director as any work does.
+    if (tie.work === undefined) continue;
+    const first = sorted.find((e) => e.kind === 'work' && e.data?.from?.request === tie.n && e.data.from.sha === tie.head
+      && e.data.id === tie.work && e.data.doc?.hash === tie.doc);
     const entry = first === undefined ? undefined : work[first.data.id];
     const hash = first?.data.doc?.hash;
     if (entry === undefined || entry.approved || typeof hash !== 'string' || entry.work.data.doc?.hash !== hash || entry.work.data.from?.request !== tie.n
