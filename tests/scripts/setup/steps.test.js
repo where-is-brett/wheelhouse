@@ -241,6 +241,22 @@ test('a long step\'s own process acts only on a step the helper marked clicked, 
   });
 });
 
+test('a long step\'s process plans in the session kind it was started for, so its list is the one the card named', async () => {
+  await withHome(async (home) => {
+    const folder = fs.realpathSync.native(tempFolder('wh-kind '));
+    fs.mkdirSync(home, { recursive: true });
+    fs.writeFileSync(path.join(home, 'test-world.json'), JSON.stringify({ 1: [{ file: 'x.json', key: ['a'], value: 1 }], needsDesktop: [1] }));
+    const hash = planHash([{ kind: 'json-key', target: path.join(folder, 'x.json'), key: ['a'], after: 1 }]);
+    const run = startRun({ folder, now: () => NOW });
+    markStep(run.id, 1, 'clickedAt', { now: () => NOW });
+    assert.equal(await runStep([...childArgs({ folder, hash, runId: run.id }), 'terminal'], { now: () => NOW }), 1);
+    assert.match(findRun(folder).steps[1].failed, /list changed/);
+    markStep(run.id, 1, 'clickedAt', { now: () => NOW });
+    assert.equal(await runStep([...childArgs({ folder, hash, runId: run.id }), 'desktop'], { now: () => NOW }), 0);
+    assert.equal(fs.existsSync(path.join(folder, 'x.json')), true);
+  });
+});
+
 // Step 2 of the test steps is long: it makes its first change, then waits for <home>/release-2.
 function longWorld(home, folder) {
   fs.mkdirSync(home, { recursive: true });

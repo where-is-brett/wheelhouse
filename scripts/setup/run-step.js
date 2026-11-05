@@ -29,7 +29,7 @@ import { startedAsScript } from '../lib/started-as-script.js';
 
 export const TICK_MS = 5 * 1000;
 
-export async function runStep([modulePath, folder, stepText, hash, runId, clickedAt, deadlineText, userHome], {
+export async function runStep([modulePath, folder, stepText, hash, runId, clickedAt, deadlineText, userHome, sessionKind], {
   now = () => new Date(), exit = (code) => process.exit(code), tickMs = TICK_MS,
 } = {}) {
   const n = Number(stepText);
@@ -63,7 +63,7 @@ export async function runStep([modulePath, folder, stepText, hash, runId, clicke
     const step = (await loadSteps(modulePath)).find((s) => s.n === n);
     if (!step) return fail(`there is no setup step ${n}`);
     if (stopState().on) return fail('All stop is on');
-    const ctx = { folder, step: n, runId, startedAt: run.startedAt, now, userHome, platform: process.platform, answers: answersWithConsent(runId).answers, stopped: () => stopState().on };
+    const ctx = { folder, step: n, runId, startedAt: run.startedAt, now, userHome, platform: process.platform, desktop: sessionKind === 'desktop', answers: answersWithConsent(runId).answers, stopped: () => stopState().on };
     const got = await step.plan(ctx);
     if (!Array.isArray(got?.changes) || planHash(got.changes) !== hash) return fail('the list changed before the step began, so nothing was changed');
     if (expired) return 1;

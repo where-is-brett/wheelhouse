@@ -636,3 +636,12 @@ test('projectSettings leaves its compaction window out where the director has a 
   assert.equal(projectSettings(config).autoCompactWindow, 300000);
   assert.equal(Object.hasOwn(projectSettings(config, { keepCompaction: true }), 'autoCompactWindow'), false);
 });
+
+test('the helper socket is allowed by every spelling of its path, so a home under a symlinked folder reaches it', () => {
+  const real = fs.realpathSync.native(tempFolder('wh-sock-real '));
+  const linked = path.join(fs.realpathSync.native(tempFolder('wh-sock-link ')), 'home');
+  fs.symlinkSync(real, linked);
+  const address = path.join(linked, 'helper.sock');
+  assert.deepEqual(localSettings({ address }).sandbox.network.allowUnixSockets, [address, path.join(real, 'helper.sock')]);
+  assert.deepEqual(localSettings({ address: '/nowhere/at/all/helper.sock' }).sandbox.network.allowUnixSockets, ['/nowhere/at/all/helper.sock']);
+});

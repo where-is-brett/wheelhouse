@@ -541,6 +541,17 @@ export function allowRule(command) {
   return command === null ? null : `Bash(${command}:*)`;
 }
 
+// A socket's spellings: as given, and through the real path of its folder, so the sandbox knows it
+// whichever way a session names it (the temporary folder has two on macOS, and a home under a
+// symlinked folder has two anywhere).
+export function socketSpellings(socket) {
+  try {
+    return [...new Set([socket, path.join(fs.realpathSync(path.dirname(socket)), path.basename(socket))])];
+  } catch {
+    return [socket];
+  }
+}
+
 // The socket's path names this computer's home folder, so it stays out of the
 // shared file. The status line is added only when `node` and `pluginRoot` are given and the
 // director has none of their own (`ownStatusLine`, from directorStatusLine); otherwise theirs
@@ -552,7 +563,7 @@ export function allowRule(command) {
 // reports it writes for `record work` (WORK_REPORTS_RULE: Markdown files directly in .wheelhouse/work/),
 // by the project-relative form, and nothing else in the project.
 export function localSettings({ address, node, pluginRoot, ownStatusLine = null, platform = process.platform, model = null }) {
-  const settings = { sandbox: { network: { allowUnixSockets: [address] } } };
+  const settings = { sandbox: { network: { allowUnixSockets: socketSpellings(address) } } };
   // The front desk's model, pinned in the routing table (design section 8). This file is never
   // committed; the worktrees inside the folder read it too, so the foreman's and the feature
   // sessions' calls always name their own model (adapters/claude-code/sessions.js).
