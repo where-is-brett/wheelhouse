@@ -1142,3 +1142,10 @@ test('Lean reads the panel before asking cards, states what was answered there, 
   assert.ok(leanKit.includes('The panel beside the chat'));
   assert.ok(leanKit.includes('Copilot requests'), 'the kit names its own agent');
 });
+
+test('shaping questions are asked only for what the request leaves open', () => {
+  const lean = fs.readFileSync(new URL('../../adapters/copilot/skills/lean/SKILL.md', import.meta.url), 'utf8');
+  assert.match(lean, /ask only the ones it leaves open/);
+  assert.match(lean, /don't ask it again/);
+  assert.match(lean, /ask none and go straight to the size/);
+});

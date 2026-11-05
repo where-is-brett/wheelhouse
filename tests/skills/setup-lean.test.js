@@ -72,7 +72,7 @@ const sh = (script, { cwd, home }) => spawnSync('sh', ['-c', script], { cwd, env
 // A release of the test's own: a repository holding the kit as it is on disk, tagged, which the block clones from file://.
 function makeRelease(tag, mutate) {
   const dir = tempFolder('wh-release-');
-  for (const rel of ['adapters/copilot/home', 'adapters/copilot/vscode-settings.json', 'docs/copilot/tested-versions.md']) {
+  for (const rel of ['adapters/copilot/home', 'adapters/copilot/vscode-settings.json', 'adapters/copilot/project-instructions.md', 'docs/copilot/tested-versions.md']) {
     const from = path.join(ROOT, ...rel.split('/'));
     if (!fs.existsSync(from)) continue;
     fs.cpSync(from, path.join(dir, ...rel.split('/')), { recursive: true });
@@ -252,9 +252,9 @@ test('a clone that is not the tag asked for stops setup', { skip: !unix && 'a sh
 
 test('every sh block runs in a subshell and every PowerShell block in a script block of its own, never exit', () => {
   const marked = blocks(skill).filter((b) => /^# [a-z-]+$/.test(b.body.split('\n')[0]));
-  assert.equal(marked.length, 9, 'fetch-and-check, ignore-lines, first-commit and copy-remote, each for sh and for PowerShell, and copy-guard for the Mac alone');
+  assert.equal(marked.length, 11, 'fetch-and-check, ignore-lines, routing-file, first-commit and copy-remote, each for sh and for PowerShell, and copy-guard for the Mac alone');
   assert.deepEqual(marked.filter((b) => b.body.startsWith('# copy-guard\n')).map((b) => b.lang), ['sh'], 'the shell guard is the Mac\'s (check 69)');
-  for (const marker of ['fetch-and-check', 'ignore-lines', 'first-commit', 'copy-remote']) {
+  for (const marker of ['fetch-and-check', 'ignore-lines', 'routing-file', 'first-commit', 'copy-remote']) {
     assert.equal(marked.filter((b) => b.body.split('\n')[0] === `# ${marker}`).map((b) => b.lang).sort().join(), 'powershell,sh', `${marker} has a block for each shell`);
   }
   for (const { lang, body } of marked) {
@@ -462,7 +462,7 @@ test('the first commit holds the three files and nothing else of the director\'s
 });
 
 test('the first commit\'s files, in both shells, are the adapter\'s packaging list', () => {
-  const listed = (body) => [...body.matchAll(/'((?:\.gitignore|\.vscode\/settings\.json|\.wheelhouse\/record\/\.gitkeep))'/g)].map((m) => m[1]);
+  const listed = (body) => [...body.matchAll(/'((?:\.gitignore|\.vscode\/settings\.json|\.github\/copilot-instructions\.md|\.wheelhouse\/record\/\.gitkeep))'/g)].map((m) => m[1]);
   const fromSh = block('first-commit', 'sh').split('\n').find((l) => l.includes('for p in')).match(/for p in (.*); do/)[1].split(' ');
   assert.deepEqual(fromSh, copilot.packaging.files(), 'the sh block commits what the adapter says setup writes');
   assert.deepEqual(listed(block('first-commit', 'powershell')), copilot.packaging.files(), 'and so does the PowerShell block');
@@ -812,4 +812,76 @@ test('the helper\'s section gives its command as the full-path pair, and its rem
   assert.match(left, /<start> uninstall-plan --remove-state yes\|no/);
   assert.match(left, /<start> uninstall --hash <hash> --remove-state yes\|no/);
   assert.match(left, /git moves back into the folder/);
+});
+
+// ---- The Copilot home, the routing file, the ready line (trial of v0.2.9) ----
+
+test('setup honours COPILOT_HOME: the clone and the kit go there, and nothing goes into ~/.copilot', { skip: !unix && 'a shell script' }, () => {
+  const release = makeRelease('v9.9.9');
+  const { home, project } = makeProject();
+  const chome = tempFolder('wh-chome-');
+  const result = spawnSync('sh', ['-c', fetchBlock('v9.9.9', release)], { cwd: project, env: { ...GIT_ENV(home), COPILOT_HOME: chome }, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.ok(fs.existsSync(path.join(chome, 'wheelhouse', 'v9.9.9', 'adapters', 'copilot', 'home', 'MANIFEST.txt')), 'the clone is under COPILOT_HOME');
+  assert.ok(fs.existsSync(path.join(chome, 'skills', 'wheelhouse-lean', 'SKILL.md')), 'the kit is under COPILOT_HOME');
+  assert.ok(!fs.existsSync(path.join(home, '.copilot')), '~/.copilot was not made');
+});
+
+test('every path of the Copilot folder in the skill\'s blocks goes through COPILOT_HOME, in both shells', () => {
+  for (const b of blocks(skill)) {
+    if (b.lang === 'sh') for (const l of b.body.split('\n')) if (l.includes('$HOME/.copilot')) assert.ok(l.includes('${COPILOT_HOME:-$HOME/.copilot}'), l);
+    if (b.lang === 'powershell') for (const l of b.body.split('\n')) if (/\.copilot|'\.copilot'/.test(l)) assert.ok(/COPILOT_HOME/.test(l), l);
+  }
+  assert.match(skill, /`COPILOT_HOME`/);
+});
+
+const routing = block('routing-file');
+const ROUTING_SOURCE = 'adapters/copilot/project-instructions.md';
+
+test('setup puts a routing file in the project, so a plain request goes through Wheelhouse', { skip: !unix && 'a shell script' }, () => {
+  const release = makeRelease('v9.9.9');
+  const { home, project } = makeProject();
+  const chome = tempFolder('wh-chome-');
+  const env = { ...GIT_ENV(home), COPILOT_HOME: chome };
+  assert.equal(spawnSync('sh', ['-c', fetchBlock('v9.9.9', release)], { cwd: project, env, encoding: 'utf8' }).status, 0);
+  const run = () => spawnSync('sh', ['-c', routing.replaceAll('<tag>', 'v9.9.9')], { cwd: project, env, encoding: 'utf8' });
+  const file = path.join(project, '.github', 'copilot-instructions.md');
+  // Needs the source in the clone: makeRelease builds from the repository's files.
+  assert.equal(run().status, 0);
+  const text = fs.readFileSync(file, 'utf8');
+  assert.match(text, /wheelhouse-lean/);
+  assert.match(text, /before (reading|you read|opening)/i);
+  assert.equal(run().status, 0, 'again is safe');
+  assert.equal(fs.readFileSync(file, 'utf8'), text, 'nothing twice');
+  // A project with instructions of its own keeps them.
+  fs.writeFileSync(file, 'Use tabs.\n');
+  assert.equal(run().status, 0);
+  const merged = fs.readFileSync(file, 'utf8');
+  assert.ok(merged.startsWith('Use tabs.\n'));
+  assert.match(merged, /wheelhouse-lean/);
+  assert.equal(run().status, 0);
+  assert.equal(fs.readFileSync(file, 'utf8'), merged);
+});
+
+test('the routing text tells the chat to enter Wheelhouse before touching any file, and holds no placeholder', () => {
+  const text = read(ROUTING_SOURCE);
+  assert.match(text, /wheelhouse-lean/);
+  assert.match(text, /Intake at Lean/);
+  assert.match(text, /BEGIN WHEELHOUSE/);
+  assert.ok(!text.includes('{{'));
+  assert.deepEqual(copilot.packaging.files(), ['.gitignore', '.vscode/settings.json', '.github/copilot-instructions.md', `${LEAN_RECORD_DIR}/.gitkeep`]);
+});
+
+test('the Logbook is written from the installed skill, never the clone\'s source, and is checked for placeholders', () => {
+  const step = section('Step 4: set up the project');
+  assert.match(step, /never from[^.]*adapters\/copilot\/skills/i);
+  assert.match(step, /grep -n '\[\{\]\[\{\]' wheelhouse\/board\.md/);
+});
+
+test('setup ends with a ready line, and the copy folder is always a card, never a closing line of text', () => {
+  const copy = section('Step 5: the copy');
+  assert.match(copy, /never a line of plain text/i);
+  const end = section('What setup leaves behind');
+  assert.match(end, /Wheelhouse is ready\./);
+  assert.match(end, /Intake at Lean/);
 });

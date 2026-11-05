@@ -31,7 +31,7 @@ export default Object.freeze({
   cards: Object.freeze({ binding: Object.freeze(['policy-hook', 'window', 'add-on', 'host']) }),
   // What Lean's setup commits in a project (design section 6.4), as its first commit: the ignore lines, VS Code's
   // settings and the record folder's placeholder, so git tracks the folder. The board is not here: git ignores it.
-  packaging: Object.freeze({ files: () => ['.gitignore', '.vscode/settings.json', `${LEAN_RECORD_DIR}/.gitkeep`] }),
+  packaging: Object.freeze({ files: () => ['.gitignore', '.vscode/settings.json', '.github/copilot-instructions.md', `${LEAN_RECORD_DIR}/.gitkeep`] }),
   toolSheet,
   safetyLine,
   // The board's line for the sandbox on this computer, { level, text }, from the kept test (sandbox.js); not a contract part (the board reads it through scripts/agents/sandbox-line.js).
