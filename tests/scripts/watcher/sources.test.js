@@ -394,7 +394,7 @@ test('a green head whose earlier CLEAN review did not carry over wakes its sessi
   assert.equal(events.some((e) => e.type === 'merge-ready'), false);
   // Routed to the session, which pulls and dispatches the reviewer on the head.
   assert.deepEqual(route(raised).features['login-page'].map((e) => e.type), ['review-needed']);
-  assert.match(raised[0].detail.next, new RegExp(`wheelhouse:reviewer with pr: 7 on ${HEAD}`));
+  assert.match(raised[0].detail.next, new RegExp(`wheelhouse:reviewer now with pr: 7 on ${HEAD}`));
 }));
 
 test('worktree paths from state are followed only inside the project\'s checkout', () => withHome(async () => {
