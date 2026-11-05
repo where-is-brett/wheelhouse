@@ -770,6 +770,25 @@ test('a feature whose phase arrives at done wakes the foreman once with report, 
   assert.deepEqual(first.filter((e) => e.type === 'report').map((e) => e.work), ['login-page']);
 });
 
+test('a report rewritten while the feature stays done wakes the foreman again, so a report sent back is closed', () => {
+  const at = (hash, ms) => feature({ status: status({ phase: 'done', updatedAt: iso(ms) }), report: true, reportHash: hash });
+  let cursor = { seen: [], prev: observation({ features: { 'login-page': feature({ status: status({ phase: 'pr-open' }) }) } }) };
+  const run = (f, ms) => {
+    const r = step(cursor, observation({ at: iso(ms), awake: 1000, features: { 'login-page': f } }), { handled: new Set() });
+    cursor = r.cursor;
+    return r.events.filter((e) => e.type === 'report').length;
+  };
+  assert.equal(run(at('h1', 1000), 1000), 1);
+  assert.equal(run(at('h1', 2000), 2000), 0, 'the same report: no second wake');
+  assert.equal(run(at('h2', 3000), 3000), 1, 'a rewritten report wakes again');
+  assert.equal(run(at('h2', 4000), 4000), 0);
+  // A rewrite is named by its report's hash, so a report seen before as a rewrite raises no second time. (The first
+  // arrival at done has an id of its own, so h1 raises once more here.)
+  assert.equal(run(at('h1', 5000), 5000), 1);
+  assert.equal(run(at('h2', 6000), 6000), 0, 'h2 raised as a rewrite already');
+  assert.equal(run(at('h1', 7000), 7000), 0, 'and so has h1');
+});
+
 test('plan-ready is not repeated after a restart from the cursor, and a handled one goes to the digest', () => withHome(() => {
   const at = (phase, ms) => observation({ at: iso(ms), awake: 1000, features: { 'login-page': feature({ status: status({ phase, updatedAt: iso(ms) }) }) } });
   const start = { seen: [], prev: settle(null, at('planning', 0)), held: null };

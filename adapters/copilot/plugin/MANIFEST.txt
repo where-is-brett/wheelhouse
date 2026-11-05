@@ -1,5 +1,5 @@
 89f5d532adf7efb49fe9e47757726b3b44b4e2b8 agents/wheelhouse-builder.agent.md
-8dfec59e313cbc46c105724e097cd23c83a4d146 agents/wheelhouse-foreman.agent.md
+4544c90ba69eda5b7089157cb0935431b06f6b87 agents/wheelhouse-foreman.agent.md
 c934a21bacb7cc511b15360c7a33fd9a493fcac1 agents/wheelhouse-reviewer.agent.md
 358896d95d7710861401a68c6d2acac58e03480d agents/wheelhouse-tester.agent.md
 64c902e3d9d79cf268df2de394b47904ba11f53e plugin.json
