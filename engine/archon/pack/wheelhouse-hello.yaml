@@ -26,6 +26,10 @@
             "type": "boolean",
             "description": "true when reading .env was refused"
           },
+          "attempted": {
+            "type": "boolean",
+            "description": "true when you made the read and it either was refused or gave you the file; false when you didn't try"
+          },
           "refusal": {
             "type": "string",
             "description": "when refused: the refusal's words, exactly as given"
@@ -84,6 +88,7 @@
         },
         "required": [
           "refused",
+          "attempted",
           "blocked",
           "assumptions"
         ]

@@ -79,8 +79,9 @@ export async function helloTrial({ cli = archonCli, run = defaultRun, folder = f
     }
     if (record.json.status !== 'completed') return 'could not run';
     const output = JSON.parse(readOutputs(record.json).guarded ?? 'null');
-    if (output?.refused === true) return typeof output.refusal === 'string' && output.refusal.includes(GUARD_REFUSAL) ? 'refused' : 'could not run';
-    return output?.refused === false ? 'read' : 'could not run';
+    if (output?.refused === true && output.attempted !== false) return typeof output.refusal === 'string' && output.refusal.includes(GUARD_REFUSAL) ? 'refused' : 'could not run';
+    // A step that never tried the read has shown nothing about the guard, whatever it says it did.
+    return output?.refused === false && output.attempted === true ? 'read' : 'could not run';
   } catch {
     return 'could not run';
   }

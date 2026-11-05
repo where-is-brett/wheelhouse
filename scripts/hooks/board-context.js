@@ -324,8 +324,9 @@ export async function decide(input, deps = {}) {
     const markSeenHere = writes ? markSeen : () => {};
     const markRaised = writes ? raiseMarked : () => {};
     if (!isRecord(input) || typeof input.cwd !== 'string' || typeof input.prompt !== 'string') return undefined;
-    // While setup is unfinished here, setup comes first, whatever the prompt asks.
-    const setup = featureSlug(input.cwd) === null && !isOwnPrompt(input.prompt) ? attempt(() => beingSetUp(input.cwd), null) : null;
+    // While setup is unfinished here, setup comes first, whatever the prompt asks. A step the build engine started is
+    // not the director arriving, so setup never comes first for it (the health trial runs in an unfinished folder).
+    const setup = featureSlug(input.cwd) === null && !isOwnPrompt(input.prompt) && env?.WHEELHOUSE_ENGINE_RUN !== '1' ? attempt(() => beingSetUp(input.cwd), null) : null;
     const found = projectOf(input.cwd, { dir });
     if (!found) return setup === null ? undefined : answer.context('UserPromptSubmit', SETUP_FIRST);
     const role = sessionRole({ sessionId: input.session_id, env, prompt: input.prompt, cwd: input.cwd });
