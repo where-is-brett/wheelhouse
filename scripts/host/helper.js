@@ -13,6 +13,7 @@
 // agent's folder into the mirror, with no key, reading nothing but objects
 // from that folder (its config, remote, replace refs and hooks count for
 // nothing). The checks and the push then run in the mirror, with the key.
+import { stuckCardFor } from '../foreman/ask-help.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -4986,6 +4987,25 @@ export async function startHelper({
     // (ruling F41), for the front desk's `review`, which can't list them. With `answers`, the
     // card-answer events, for the front desk's `views work` to tell a feature the director's Not now
     // holds. Read-only, so STOP lets it through.
+    // A stuck work's card, written for the watcher (scripts/watcher/stuck-cards.js) when the Bosun closed its stuck wake
+    // idle without asking. The helper makes the question from its own reading of the state and holds the pass itself, so
+    // no caller names a foreman question's words or id.
+    '/state/stuck-card': stateRoute(async ({ project, work, phase, still }, ctx) => {
+      if (typeof work !== 'string' || !SLUG.test(work)) refuse('the work must be named');
+      const events = listEvents(stateDir(project), { report: () => {} });
+      const views = buildViews(events, readEnrolled(), { now });
+      const made = stuckCardFor(views, {
+        work, phase: typeof phase === 'string' ? phase.slice(0, 64) : null, still: Number.isFinite(still) ? Math.max(0, Math.min(still, 1e10)) : 0,
+      });
+      if (made.skip !== undefined) return { ok: true, skipped: made.skip };
+      const pass = crypto.randomUUID();
+      foremanRuns.set(pass, project);
+      try {
+        return await doWrite({ project, kind: 'question', data: made.data, foreman: pass }, ctx);
+      } finally {
+        foremanRuns.delete(pass);
+      }
+    }, { write: true }),
     '/state/views': stateRoute(async ({ project, cards, review, answers }) => {
       const views = await writeViews(project, { now });
       const events = cards === true || review === true || answers === true ? listEvents(stateDir(project), { report: () => {} }) : [];

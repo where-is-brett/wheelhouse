@@ -2,13 +2,8 @@
 // A stuck work must never stay silent. The watcher's `stuck` wake tells the Bosun to ask the director, but a Bosun that
 // closes that wake `--idle` without running `act ask` leaves no card. This reads the measures the Bosun's `wake.js
 // done` leaves: for each wake closed idle that carried a `stuck` event, the question is put to the director here, in
-// code, unless the work already has an open question from the Bosun, or has moved on (its feature is done or closed).
-import fs from 'node:fs';
+// code, through the helper: it asks nothing when the work already has an open question from the Bosun or has ended.
 import path from 'node:path';
-import { FOREMAN_QUESTIONS, questionIdOf } from '../lib/build-loop.js';
-import { questionProblem } from '../cards/compose.js';
-import { stuckQuestion } from '../foreman/ask-help.js';
-import { loadViews } from '../foreman/wake.js';
 import { readCapped } from '../feature/status.js';
 import {
   readWake, watcherDir, watcherFolder, wakesDir, writeJsonFile,
@@ -44,18 +39,14 @@ function idleWakes(project) {
   return out;
 }
 
-// Puts a question to the director for each stuck work in a wake closed idle, once. Gives the ids it wrote.
+// Asks the helper for the card of each stuck work in a wake closed idle, once. The helper makes the question itself (a
+// question of the Bosun's own range is written by the helper alone) and leaves none when the Bosun has asked already
+// or the work has ended. Gives the ids written.
 export async function raiseStuckCards({ project, client }) {
   watcherFolder(project);
   const done = readDone(project);
   const fresh = idleWakes(project).filter((id) => !done.includes(id));
   if (fresh.length === 0) return [];
-  let views;
-  try {
-    ({ views } = await loadViews(project, client));
-  } catch {
-    return []; // looked at again at the next loop
-  }
   const written = [];
   const handled = [];
   for (const id of fresh) {
@@ -63,21 +54,12 @@ export async function raiseStuckCards({ project, client }) {
     const stuck = (Array.isArray(wake?.events) ? wake.events : []).filter((e) => e?.type === 'stuck' && typeof e.work === 'string');
     let failed = false;
     for (const e of stuck) {
-      const step = views.features?.[e.work]?.data?.step;
-      if (step === 'closed' || e.detail?.phase === 'done') continue;
-      const open = Object.values(views.questions ?? {}).some((q) => q?.answer === null && questionIdOf(q?.question?.data?.id)?.work === e.work && questionIdOf(q.question.data.id).foreman);
-      if (open) continue;
-      const numbers = Object.values(views.questions ?? {}).map((q) => questionIdOf(q?.question?.data?.id)).filter((n) => n?.work === e.work && n.foreman).map((n) => n.n);
-      const qid = `q-${e.work}-${Math.max(FOREMAN_QUESTIONS, ...numbers) + 1}`;
-      const data = { id: qid, work: e.work, ...stuckQuestion(e.work, e.detail ?? {}) };
-      if (questionProblem(data) !== null) continue;
       try {
-        const answer = await client.state.write({ project, kind: 'question', data });
+        const answer = await client.state.stuckCard({ project, work: e.work, phase: e.detail?.phase ?? null, still: e.detail?.still ?? 0 });
         if (answer?.ok !== true) throw new Error('refused');
-        written.push(qid);
-        views.questions = { ...(views.questions ?? {}), [qid]: { question: { key: qid, data }, answer: null } };
+        if (typeof answer.id === 'string') written.push(answer.id);
       } catch {
-        failed = true;
+        failed = true; // asked again at the next loop
       }
     }
     if (!failed) handled.push(id);

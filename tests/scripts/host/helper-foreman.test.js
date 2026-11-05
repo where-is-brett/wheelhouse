@@ -458,3 +458,23 @@ test('a foreman pass is for its own project alone', async () => {
 test('a session the foreman starts is not given the pass', () => {
   assert.deepEqual(sessionEnv({ PATH: '/bin', WHEELHOUSE_FOREMAN_RUN: 'a-pass', wheelhouse_foreman_run: 'b' }), { PATH: '/bin' });
 });
+
+test('the watcher\'s stuck card is written by the helper itself, once, and a caller cannot write it with its own words', async () => {
+  const p = await project();
+  const out = {};
+  try {
+    await withHelper(p.home, async (client) => {
+      out.first = await client.state.stuckCard({ project: P, work: 'mine', phase: 'pr-open', still: 35 * 60000 });
+      out.again = await client.state.stuckCard({ project: P, work: 'mine', phase: 'pr-open', still: 36 * 60000 });
+      out.bad = await client.state.stuckCard({ project: P, work: 'Not A Slug' });
+      out.views = await client.state.views({ project: P });
+    });
+  } finally { p.remote.cleanup(); }
+  assert.equal(out.first.ok, true, JSON.stringify(out.first));
+  assert.match(out.first.id ?? '', /^[0-9a-f-]{36}$/);
+  assert.equal(out.again.ok, true);
+  assert.match(out.again.skipped ?? '', /already/);
+  assert.equal(out.bad.ok, false);
+  const ids = Object.keys(out.views.views.questions);
+  assert.deepEqual(ids.filter((id) => id.startsWith('q-mine-')), ['q-mine-1000001']);
+});

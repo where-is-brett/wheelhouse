@@ -8,49 +8,49 @@ import { watcherDir, wakesDir, writeWake } from '../../../scripts/watcher/waker.
 import { recordDone } from '../../../scripts/foreman/wake.js';
 import { withHome } from '../../helpers/homes.js';
 import { questionProblem } from '../../../scripts/cards/compose.js';
-import { stuckQuestion, askExample } from '../../../scripts/foreman/ask-help.js';
+import { stuckQuestion, askExample, stuckCardFor } from '../../../scripts/foreman/ask-help.js';
 
 const P = 'o__p';
 const stuckBundle = (work = 'todo-cli') => ({
   to: 'foreman', events: [{ type: 'stuck', work, id: `stuck:${work}:1`, detail: { still: 35 * 60000, phase: 'pr-open' } }], digest: [], dropped: 0,
 });
-const clientWith = (views, writes) => ({
-  state: {
-    views: async () => ({ ok: true, views }),
-    write: async (body) => { writes.push(body); return { ok: true }; },
-  },
-});
-const views = (over = {}) => ({ work: {}, features: { 'todo-cli': { key: 'todo-cli', data: { step: 'building' } } }, reports: {}, questions: {}, ...over });
+const clientWith = (writes) => ({ state: { stuckCard: async (body) => { writes.push(body); return { ok: true, id: 'q-todo-cli-1000001' }; } } });
 
 test('the stuck question is a card the composer accepts', () => {
   assert.equal(questionProblem({ id: 'q-todo-cli-1000001', work: 'todo-cli', ...stuckQuestion('todo-cli', { phase: 'pr-open', still: 2100000 }) }), null);
   assert.match(askExample('todo-cli'), /--recommend/);
 });
 
-test('a stuck wake the Bosun closed idle leads to a card for the director, once', () => withHome(async () => {
+const idleWake = () => {
   const file = writeWake(P, stuckBundle());
-  const copy = path.join(watcherDir(P), 'copy.json');
-  fs.copyFileSync(file, copy);
-  // The Bosun reads the wake from its own folder; the measure names the wake by its file name.
-  recordDone({ file: copy, project: P, outcome: 'idle' });
   fs.copyFileSync(file, path.join(wakesDir(P), 'copy.json'));
+  recordDone({ file: path.join(wakesDir(P), 'copy.json'), project: P, outcome: 'idle' });
+};
+
+test('a stuck wake the Bosun closed idle leads to a card through the helper, once', () => withHome(async () => {
+  idleWake();
   const writes = [];
-  const client = clientWith(views(), writes);
-  const first = await raiseStuckCards({ project: P, client });
-  assert.equal(first.length, 1);
-  assert.equal(writes[0].kind, 'question');
-  assert.equal(writes[0].data.work, 'todo-cli');
-  assert.ok(writes[0].data.options.length >= 2);
+  const client = clientWith(writes);
+  assert.deepEqual(await raiseStuckCards({ project: P, client }), ['q-todo-cli-1000001']);
+  assert.deepEqual(writes, [{ project: P, work: 'todo-cli', phase: 'pr-open', still: 35 * 60000 }]);
   assert.deepEqual(await raiseStuckCards({ project: P, client }), [], 'not again for the same wake');
   assert.equal(writes.length, 1);
 }));
 
-test('no card when the Bosun already asked, or the work has moved on', () => withHome(async () => {
-  const file = writeWake(P, stuckBundle());
-  fs.copyFileSync(file, path.join(wakesDir(P), 'copy.json'));
-  recordDone({ file: path.join(wakesDir(P), 'copy.json'), project: P, outcome: 'idle' });
-  const asked = views({ questions: { 'q-todo-cli-1000001': { question: { key: 'q', data: { id: 'q-todo-cli-1000001' } }, answer: null } } });
-  const writes = [];
-  assert.deepEqual(await raiseStuckCards({ project: P, client: clientWith(asked, writes) }), []);
-  assert.equal(writes.length, 0);
+test('a card the helper refuses is asked for again at the next loop', () => withHome(async () => {
+  idleWake();
+  let ok = false;
+  const client = { state: { stuckCard: async () => (ok ? { ok: true, id: 'q-todo-cli-1000001' } : { ok: false, refused: 'busy' }) } };
+  assert.deepEqual(await raiseStuckCards({ project: P, client }), []);
+  ok = true;
+  assert.deepEqual(await raiseStuckCards({ project: P, client }), ['q-todo-cli-1000001']);
 }));
+
+test('the helper makes no card when the Bosun asked already or the work has ended', () => {
+  const q = (id, answer = null) => ({ [id]: { question: { key: id, data: { id } }, answer } });
+  const base = { features: { 'todo-cli': { data: { step: 'building' } } }, questions: {} };
+  assert.equal(stuckCardFor(base, { work: 'todo-cli', phase: 'pr-open', still: 1 }).data.id, 'q-todo-cli-1000001');
+  assert.equal(stuckCardFor({ ...base, questions: q('q-todo-cli-1000001') }, { work: 'todo-cli' }).data, undefined);
+  assert.equal(stuckCardFor({ ...base, questions: q('q-todo-cli-1000001', { label: 'Wait' }) }, { work: 'todo-cli' }).data.id, 'q-todo-cli-1000002');
+  assert.ok(stuckCardFor({ features: { 'todo-cli': { data: { step: 'closed' } } } }, { work: 'todo-cli' }).skip);
+});

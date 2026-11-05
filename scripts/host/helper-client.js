@@ -142,6 +142,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     state: {
       clone: post('/state/clone'), //   { project }: opens the project's private record, making it the first time
       write: post('/state/write'), //   { project, kind, data, id? }: a plain kind; the helper makes the event, with the caller's id when one is given (a random UUID the state does not hold); `cwd` may stand for `project`
+      stuckCard: post('/state/stuck-card'), // { project, work, phase, still } -> { ok, skipped? | id }: the card for a stuck work whose wake the Bosun closed idle, made by the helper (the watcher's)
       record: post('/state/record'), // { project, event, target? }: a signed event made by this computer's hook; a confirmation may carry the plain ruling or setting it confirms
       sync: post('/state/sync'), //     { project } -> { ok, pulled: 0, unpushed: 0 }: the record has no remote, so nothing to do
       import: post('/state/import'), // { project } -> { ok, done, at?, imported, held, unsigned, unreadable }: v0.1.x's state clone imported once (design section 24.5); refused under STOP
