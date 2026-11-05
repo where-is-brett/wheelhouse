@@ -54,7 +54,8 @@ test('start starts the watcher once', () => withHome(async (home) => {
   assert.equal(call.file, process.execPath);
   assert.deepEqual(call.args, [path.join(ROOT, 'scripts', 'watcher', 'main.js'), P]);
   // No role and no host session's variables: the watcher is no one's session.
-  assert.deepEqual(call.opts.env, { PATH: '/bin' });
+  // ... but with the running node's folder on its PATH, which the hooks of the sessions it starts need.
+  assert.deepEqual(call.opts.env, { PATH: `${path.dirname(process.execPath)}:/bin` });
   assert.equal(call.opts.detached, true);
   assert.equal(call.opts.windowsHide, true);
   assert.equal(call.opts.stdio, 'ignore');
