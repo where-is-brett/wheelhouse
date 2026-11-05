@@ -1307,6 +1307,25 @@ test('a tick with a question no card asks yet has its card made, held for the pa
   assert.deepEqual(made, [{ held: true, cwd: repo }]);
 }));
 
+test('a terminal tick makes no cards and marks none asked, so the by-hand card wakes the front desk once, at once', () => withHome(async (home) => {
+  const repo = registered(home);
+  const later = (ms) => () => new Date(NOW.getTime() + ms);
+  await handle(tickOf(repo, { surface: 'terminal', idle: true }), live({ now: later(-24 * 60 * 60 * 1000) }));
+  const dir = path.join(home, 'projects', P, 'views');
+  fs.mkdirSync(dir, { recursive: true });
+  const data = { id: 'q-by-hand-1', work: 'by-hand', what: 'Changes were made by hand in your project folder', why: 'They are not on the board.', options: [{ label: 'Check and add them', says: 'Adds them.' }], recommendation: 'Check and add them', level: 3 };
+  const views = { waiting: [], work: {}, features: {}, questions: { 'q-by-hand-1': { question: { key: 'q-by-hand-1', id: 'ev-q', at: '2026-10-19T04:00:00.000Z', data }, answer: null } } };
+  for (const [name, value] of Object.entries(views)) fs.writeFileSync(path.join(dir, `${name}.json`), JSON.stringify(value));
+  const made = [];
+  const deps = (extra = {}) => live({ makeCards: async () => { made.push(1); return {}; }, ...extra });
+  const woken = await handle(tickOf(repo, { surface: 'terminal', idle: true }), deps());
+  assert.deepEqual(made, []);
+  assert.equal(woken.submit?.length, 1);
+  assert.deepEqual(woken.woken, ['card:q:q-by-hand-1']);
+  // Not again on the next tick.
+  assert.equal('submit' in await handle(tickOf(repo, { surface: 'terminal', idle: true }), deps({ now: later(TICK_MS * 2) })), false);
+}));
+
 test('a tick with no such question makes no cards, and nor does one under All stop', () => withHome(async (home) => {
   const repo = registered(home);
   const made = [];

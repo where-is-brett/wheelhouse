@@ -74,9 +74,122 @@ export async function folderFree({ folder, branch, git = gitRoute() }) {
 export async function bringFolderUp({ project, folder, branch, git = gitRoute(), from = null }) {
   const { state, home } = await reading({ project, folder, branch, git, from });
   if (state !== 'home-ahead') return { moved: false, state };
-  if (!(await folderFree({ folder, branch, git }))) return { line: OWN_CHANGES_LINE };
+  let letGo = null;
+  if (!(await folderFree({ folder, branch, git }))) {
+    letGo = await editsAlreadyIn({ folder, branch, home, git });
+    if (letGo === null) return { line: OWN_CHANGES_LINE };
+    if (letGo.failed !== undefined) return { line: letGo.failed ? withStash(OWN_CHANGES_LINE) : OWN_CHANGES_LINE };
+  }
   const here = inFolder(folder, git);
-  return (await here.ok(['merge', '--ff-only', '--no-overwrite-ignore', '--quiet', home])) ? { moved: true } : { line: OWN_CHANGES_LINE };
+  if (await here.ok(['merge', '--ff-only', '--no-overwrite-ignore', '--quiet', home])) {
+    if (letGo !== null) await forget(here, letGo.snapshot);
+    return { moved: true };
+  }
+  if (letGo === null) return { line: OWN_CHANGES_LINE };
+  // The merge refused (a file changed after it was staged, or something else in the way): the index goes back as it was. The
+  // working files were never touched, so any save made meanwhile stands.
+  return { line: (await putBack(here, letGo)) ? NOT_BROUGHT_LINE : withStash(NOT_BROUGHT_LINE) };
+}
+
+const withStash = (words) => `${words} Your edits are kept in the folder's stash, under "${SNAPSHOT_MESSAGE}".`;
+
+// Puts the index entries of `letGo` back as they were, and drops its snapshot once nothing is lost without it.
+async function putBack(here, letGo) {
+  let back = true;
+  for (const file of letGo.files) {
+    const was = letGo.original[file];
+    const done = was === null
+      ? await here.ok(['--literal-pathspecs', 'update-index', '--force-remove', '--', file])
+      : await here.ok(['--literal-pathspecs', 'update-index', '--add', '--cacheinfo', `${was.mode},${was.sha},${file}`]);
+    back = back && done;
+  }
+  if (back) await forget(here, letGo.snapshot);
+  return back;
+}
+
+// Drops the stash entry that is `snapshot`.
+async function forget(here, snapshot) {
+  const list = await here.call(['stash', 'list', '--format=%H %gd']);
+  const row = String(list.stdout).split('\n').map((l) => l.split(' ')).find(([sha]) => sha === snapshot);
+  if (row?.[1]) await here.call(['stash', 'drop', '--quiet', row[1]]);
+}
+
+export const NOT_BROUGHT_LINE = 'The newest version could not be brought in, so your folder was put back as it was.';
+const SNAPSHOT_MESSAGE = 'Wheelhouse: edits already in the main version';
+const MODE_EXEC = '100755';
+
+// The blob and mode a line of `ls-tree` or `ls-files -s` names, or null when git gives none.
+const entryOf = (out) => {
+  const m = /^(\d+) (?:blob )?([0-9a-f]{40,64})(?: \d)?\t/.exec(String(out).split('\n')[0]);
+  return m === null ? null : { mode: m[1], sha: m[2] };
+};
+
+// Whether everything the folder holds uncommitted is already in the home's main version `home`, file for file with the same
+// content and mode, and so is let go. Gives null when something is not, leaving everything as it is. Otherwise a snapshot of
+// the folder's changes is made and kept in its stash (so a save made in the moment after the check can still be got back),
+// every file is checked again as the snapshot holds it, and those files go back to the folder's commit; the commit that
+// is the snapshot is given. Only tracked files the folder's commit holds, on `branch`, each with an index entry that is the
+// folder's commit's or the home's, and no merge in progress.
+async function editsAlreadyIn({ folder, branch, home, git }) {
+  const here = inFolder(folder, git);
+  const on = await here.call(['symbolic-ref', '-q', 'HEAD']);
+  if (on.code !== 0 || String(on.stdout).trim() !== `refs/heads/${branch}`) return null;
+  const changed = await here.call(['--no-optional-locks', 'diff', '--name-only', '--no-renames', '-z', 'HEAD']);
+  if (changed.code !== 0) return null;
+  const files = String(changed.stdout).split('\0').filter(Boolean);
+  if (files.length === 0) return null;
+  const unmerged = await here.call(['--no-optional-locks', 'diff', '--name-only', '--diff-filter=U']);
+  if (unmerged.code !== 0 || String(unmerged.stdout).trim() !== '') return null;
+  const original = {};
+  for (const file of files) {
+    const head = entryOf((await here.call(['--literal-pathspecs', 'ls-tree', 'HEAD', '--', file])).stdout);
+    if (head === null) return null;
+    const theirs = entryOf((await here.call(['--literal-pathspecs', 'ls-tree', home, '--', file])).stdout);
+    const staged = entryOf((await here.call(['--literal-pathspecs', 'ls-files', '-s', '--', file])).stdout);
+    original[file] = staged;
+    if (staged !== null && staged.sha !== head.sha && staged.sha !== theirs?.sha) return null;
+    if (staged === null && theirs !== null) return null;
+    const full = path.join(folder, file);
+    let ours = null;
+    let exec = false;
+    try {
+      const seen = fs.lstatSync(full);
+      if (!seen.isFile()) return null;
+      exec = (seen.mode & 0o111) !== 0;
+      const hashed = await here.call(['hash-object', '--', file]);
+      if (hashed.code !== 0) return null;
+      ours = String(hashed.stdout).trim();
+    } catch (error) {
+      if (error?.code !== 'ENOENT') return null;
+    }
+    if (ours !== (theirs?.sha ?? null)) return null;
+    if (theirs !== null && (theirs.mode === MODE_EXEC) !== exec) return null;
+    if (theirs !== null && theirs.mode !== '100644' && theirs.mode !== MODE_EXEC) return null;
+  }
+  const { identityOf } = await import('./merge.js');
+  const making = git(folder, { reach: 'local', what: FOLDER_WHAT, env: await identityOf(folder, git) });
+  const made = await making.call(['stash', 'create', SNAPSHOT_MESSAGE]);
+  const snapshot = String(made.stdout).trim();
+  if (made.code !== 0 || snapshot === '') return null;
+  // What the snapshot holds is what is checked again, so a save in the gap is either in it or after it.
+  for (const file of files) {
+    const theirs = await here.call(['rev-parse', '-q', '--verify', `${home}:${file}`]);
+    const kept = await here.call(['rev-parse', '-q', '--verify', `${snapshot}:${file}`]);
+    if ((theirs.code === 0 ? String(theirs.stdout).trim() : null) !== (kept.code === 0 ? String(kept.stdout).trim() : null)) return null;
+  }
+  if (!(await making.ok(['stash', 'store', '-m', SNAPSHOT_MESSAGE, snapshot]))) return null;
+  // The files are staged, not checked out: git takes an index entry that already is the target's, and its own check refuses the
+  // merge where a working file changed after staging, so a save made now is not overwritten.
+  const taken = { snapshot, files, original };
+  const staging = await here.ok(['--literal-pathspecs', 'add', '-A', '--', ...files]);
+  for (const file of files) {
+    const theirs = entryOf((await here.call(['--literal-pathspecs', 'ls-tree', home, '--', file])).stdout);
+    const now = entryOf((await here.call(['--literal-pathspecs', 'ls-files', '-s', '--', file])).stdout);
+    if (!staging || now?.sha !== theirs?.sha || now?.mode !== theirs?.mode) {
+      return { ...taken, failed: !(await putBack(here, taken)) };
+    }
+  }
+  return taken;
 }
 
 export const NOT_ON_MAIN_LINE = 'Your folder is on another branch, so the newest version waits.';
@@ -88,7 +201,7 @@ export async function folderTakes({ folder, branch, file, git = gitRoute() }) {
   const here = inFolder(folder, git);
   const on = await here.call(['symbolic-ref', '-q', 'HEAD']);
   if (on.code !== 0 || String(on.stdout).trim() !== `refs/heads/${branch}`) return NOT_ON_MAIN_LINE;
-  const changed = await here.call(['--no-optional-locks', 'status', '--porcelain', '--untracked-files=all', '--', file]);
+  const changed = await here.call(['--literal-pathspecs', '--no-optional-locks', 'status', '--porcelain', '--untracked-files=all', '--', file]);
   return changed.code === 0 && String(changed.stdout).trim() === '' ? null : SETTINGS_CHANGED_LINE;
 }
 
@@ -180,13 +293,17 @@ async function commitOwnSection({ folder, branch, git }) {
 
 // The card for work the folder holds and the home doesn't (spec 5.4). `more`: an earlier change made by hand is still open,
 // so these are further changes on top of it, and the card says so.
-export function handMadeCard({ more = false } = {}) {
+// `earlier` says what became of them: 'open' (`more`) while they are still being checked, 'done' when they no longer are.
+export function handMadeCard({ more = false, earlier = more ? 'open' : null } = {}) {
+  more = earlier !== null;
   return {
     work: HAND_MADE_WORK,
     level: 3,
-    what: more
+    what: earlier === 'open'
       ? 'More changes were made by hand in your project folder, while the earlier ones are still being checked. These aren\'t part of the main version yet.'
-      : 'Changes were made by hand in your project folder. They aren\'t part of the main version yet.',
+      : earlier === 'done'
+        ? 'More changes were made by hand in your project folder. The earlier ones are no longer being checked. These aren\'t part of the main version yet.'
+        : 'Changes were made by hand in your project folder. They aren\'t part of the main version yet.',
     why: 'Nothing joins the main version without a review, and whether these should join it is yours to decide, at level 3.',
     options: [
       { label: CHECK_AND_ADD, says: more ? 'They go through the same review and checks as the earlier ones, as a change of their own, and join the main version if they pass.' : 'They go through the same review and checks as any other work, and join the main version if they pass.' },
@@ -219,6 +336,13 @@ async function commitUncommitted({ folder, git }) {
   if (saved === '') return null;
   const head = String(await making.must(['rev-parse', '--verify', 'HEAD^{commit}'], 'The changes made by hand could not be read')).trim();
   return String(await making.must(['commit-tree', '--no-gpg-sign', `${saved}^{tree}`, '-p', head, '-m', 'Changes made by hand'], 'The changes made by hand could not be set aside')).trim();
+}
+
+// Which of the earlier changes made by hand is the case now: 'open' while one is still being checked, 'done' when one was added
+// and no longer is, else null.
+async function earlierOf(kept, inFlight) {
+  if (await inFlight().catch(() => false)) return 'open';
+  return Object.values(kept.tips).some((e) => e.added === true) ? 'done' : null;
 }
 
 const readKept = (file) => {
@@ -265,8 +389,10 @@ export function folderWatch({ project, folder, branchOf, git = gitRoute(), file,
         }
         const made = await commitUncommitted({ folder, git });
         const got = made === null ? { ok: true } : await add(made, { parted: false, question: entry.id });
-        if (got?.ok === true) entry.done = true;
-        else if (kept.failed !== tip) {
+        if (got?.ok === true) {
+          entry.done = true;
+          if (made !== null) entry.added = true;
+        } else if (kept.failed !== tip) {
           kept.failed = tip;
           await note(`The changes made by hand couldn't be added yet: ${got?.refused ?? 'the helper didn\'t say why'}`);
         }
@@ -277,6 +403,7 @@ export function folderWatch({ project, folder, branchOf, git = gitRoute(), file,
       const got = waiting ? await add(found.tip, { parted: found.state === 'parted', question: entry.id }) : { ok: true };
       if (got?.ok === true) {
         entry.done = true;
+        if (waiting) entry.added = true;
         if (waiting && kept.tips[found.tip]) kept.tips[found.tip].done = true;
       } else if (kept.failed !== tip) {
         kept.failed = tip;
@@ -312,7 +439,7 @@ export function folderWatch({ project, folder, branchOf, git = gitRoute(), file,
       }
       kept.cards += 1;
       const id = `q-${HAND_MADE_WORK}-${kept.cards}`;
-      await card({ id, ...handMadeCard({ more: await inFlight().catch(() => false) }) });
+      await card({ id, ...handMadeCard({ earlier: await earlierOf(kept, inFlight) }) });
       kept.tips[found.tip] = { id, done: false };
     } else if (found.state === 'same') {
       // A tracked file edited by hand and not committed: the same question, once the edit has stood for two ticks (a write
@@ -324,7 +451,7 @@ export function folderWatch({ project, folder, branchOf, git = gitRoute(), file,
         else {
           kept.cards += 1;
           const id = `q-${HAND_MADE_WORK}-${kept.cards}`;
-          await card({ id, ...handMadeCard({ more: await inFlight().catch(() => false) }) });
+          await card({ id, ...handMadeCard({ earlier: await earlierOf(kept, inFlight) }) });
           kept.tips[edit] = { id, done: false, edit: true };
         }
       }

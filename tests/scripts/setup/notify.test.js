@@ -115,7 +115,7 @@ test('in a terminal session step 9 recommends Skip for now and says plainly what
   const terminal = await notifyStep().plan({ answers: {}, now: () => T0, desktop: false });
   assert.equal(terminal.ask.card.recommend, READY.skip);
   assert.match(terminal.ask.card.because, /need Claude Desktop and your phone/);
-  assert.deepEqual(terminal.ask.card.options.map((o) => o.label), [READY.ready, READY.skip]);
+  assert.deepEqual(terminal.ask.card.options.map((o) => o.label), [READY.skip, READY.ready]);
   const app = await notifyStep().plan({ answers: {}, now: () => T0, desktop: true });
   assert.equal(app.ask.card.recommend, READY.ready);
 });
@@ -369,7 +369,7 @@ test('a run parked on the earlier card, answered Later, is asked the new card an
     const asked = await plan(9);
     assert.equal(asked.ok, true, asked.refused);
     assert.equal(asked.ask.id, READY_ID);
-    assert.deepEqual(asked.ask.card.options.map((o) => o.label), [READY.ready, READY.skip]);
+    assert.deepEqual(asked.ask.card.options.map((o) => o.label), [READY.skip, READY.ready]);
     // The old Later no longer counts: the card asked now has other words.
     assert.equal(answersFor(run.id)[`9.${READY_ID}`], undefined);
     await answer(asked.ask.card, READY.skip);
@@ -396,7 +396,7 @@ test('a skipped phone test, or one that didn\'t arrive, is taken again later wit
       const a = await planAt(day);
       assert.equal(a.ok, true, a.refused);
       assert.equal(a.ask.id, `${READY_ID}-2`);
-      assert.deepEqual(a.ask.card.options.map((o) => o.label), [READY.ready, READY.skip]);
+      assert.deepEqual(a.ask.card.options.map((o) => o.label), [READY.skip, READY.ready]);
       await answerAt(folder, a.ask.card, READY.ready, after(day));
       assert.equal((await planAt(day)).wait, PUSH_TEST_WAIT_MS);
       const b = await planAt(day + PUSH_TEST_WAIT_MS);

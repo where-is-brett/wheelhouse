@@ -72,6 +72,8 @@ export function markPane(sessionId, { at, drawn, surface }) {
 export function paneLive(sessionId, now) {
   const mark = readJson(fileOf(sessionId, PANE));
   if (mark === null || !isTime(mark.at) || !isTime(now)) return false;
+  // A terminal session draws no panel, however fresh its ticks: its cards are asked in the chat.
+  if (mark.surface === 'terminal') return false;
   if (now - mark.at > LIVE_MS) return false;
   if (mark.drawn === null || mark.drawn === undefined) return true;
   return isTime(mark.drawn) && now - mark.drawn <= LIVE_MS;
