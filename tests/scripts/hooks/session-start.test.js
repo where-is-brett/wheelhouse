@@ -1589,6 +1589,16 @@ const setupStart = (f, cwd, extra = {}) => decide(
   { pluginRoot: PLUGIN_ROOT, client: f.client, spawn: f.spawn, platform: 'darwin', projectOf: () => null, stopState: () => ({ on: false }), pause: async () => {}, startWaitMs: 200, ...extra },
 );
 
+test('a step the build engine started is not told setup comes first', async () => {
+  await withHome(async () => {
+    const folder = pluginOn(fs.realpathSync.native(tempFolder('wh-engine-step ')));
+    const asked = withoutSheet(await setupStart(fake(), folder));
+    assert.equal(asked, NOT_SET_UP);
+    const step = withoutSheet(await setupStart(fake(), folder, { env: { WHEELHOUSE_ENGINE_RUN: '1' } }));
+    assert.ok(step === undefined || !String(step).includes('Setup comes first'));
+  });
+});
+
 test('a fresh computer gets a signing key and enrols it once', async () => {
   await withHome(async () => {
     const folder = pluginOn(fs.realpathSync.native(tempFolder('wh-fresh zoë ')));

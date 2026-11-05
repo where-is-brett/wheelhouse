@@ -130,6 +130,21 @@ test('writes to the project\'s settings and hooks are refused; reads are not', a
   });
 });
 
+test('writes to the folder CLAUDE_CONFIG_DIR names are refused as ~/.claude\'s are, and reads are not', async () => {
+  await withHome(async (home) => {
+    const { base, main } = makeProject();
+    try {
+      const config = path.join(base, 'elsewhere-claude');
+      const env = { CLAUDE_CONFIG_DIR: config };
+      for (const tool of ['Edit', 'Write', 'MultiEdit']) {
+        assert.ok(denied(await runWithEnv(base, home, call(main, tool, { file_path: path.join(config, 'plugins', 'installed_plugins.json') }), { env })));
+        assert.equal(await runWithEnv(base, home, call(main, tool, { file_path: path.join(config, 'plugins', 'installed_plugins.json') })), undefined);
+      }
+      assert.equal(await runWithEnv(base, home, call(main, 'Read', { file_path: path.join(config, 'settings.json') }), { env }), undefined);
+    } finally { fs.rmSync(base, { recursive: true, force: true }); }
+  });
+});
+
 test('writes to ~/.claude, the plugin and settings.local.json are refused; reads of ~/.claude are not', async () => {
   await withHome(async (home) => {
     const { base, main } = makeProject();

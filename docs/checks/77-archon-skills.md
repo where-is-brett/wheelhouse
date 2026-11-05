@@ -2,7 +2,7 @@
 
 # Check 77: skills inside Archon's steps (early check E4)
 
-**Answer:** Partly. Of the eleven items the pass rule counts, nine passed. Item 7 did not show what it was meant to show. Item 11 (Copilot) is Deferred: it waits on the director's answer about Copilot spend. Item 10, the nice-to-have, also passed. In detail:
+**Answer:** Partly. Of the eleven items the pass rule counts, ten passed. Item 7 did not show what it was meant to show. Item 11 (Copilot) passed on 5 November 2026 (below). Item 10, the nice-to-have, also passed. In detail:
 
 - Skills load inside Archon's Claude steps as section 7.1 needs. The allowlist is exact. Test-first shows in the transcripts, with the plugin's original and with Wheelhouse's copy. No step asked a person, and the three-round loop kept its earlier rounds' work. The pairing works, and a misspelt name only warns.
 - Two results change the design's choices, not its shape. **The same rules written into the prompt did as well as the skill** (item 8), so the prompt text carries the method. **A plain name does find a plugin's skill, but it also lets in a project or user skill of the same name**, so Claude steps should keep the prefixed form.
@@ -53,7 +53,7 @@ Tokens are a step's input plus output, as the run record gives them. Archon's `i
 | 8 Skill against prompt text | mid-sized model, rules in the prompt, no skill | **Prompt text did as well.** It was test-first, in three vertical red-green slices (the skill runs did one or two). It ran the suite once at the end | 160,903 ($0.057) |
 | 9 Misspelt name | `skills: [tddd]` | **Pass on Archon's side.** Archon logged the warning `claude.skills_unresolved` ("an unknown name is ignored rather than loaded"). The step ran with no skills at all and completed. The pack's own check is part 3b's to build; the probe's `unknownSkills` shows the rule | 23,075 ($0.001) |
 | 10 Slash prompt | prompt starting `/tdd` | **Yes.** Claude Code took `/tdd` as the skill's command and put the copy's full text into the context before the first turn. No Skill tool call was made | 23,055 ($0.001) |
-| 11 Copilot | | **Deferred**, pending the director's answer on Copilot spend. Not run | |
+| 11 Copilot | One Copilot step on Auto, `skills: [tdd]` (the plain name), the skill copy in the project's `.agents/skills/tdd` | **Pass** (5 November 2026). The step opened the skill (the guard's log shows a `skill` tool call) and quoted its probe marker `KESTREL-74` from the copy, so Archon resolved the plain name against the project's `.agents/skills/` and the CLI loaded it. The planted `.env` read was refused by the guard. Same run as check 74's trial | 13,541 in, 41 out; about 0.4 of the allowance |
 | 12 Full suite | items 2, 3, 5 and 8 | **Pass.** Every implement step and every loop round ran `bun test` on the whole suite once, at the end. The done check `sh check.sh`, run just before committing, runs the suite once more inside it. The one exception is item 4's open request, which ran it twice: its first commit carried a failing test, so it corrected that and ran the suite again | |
 
 **Plain names (designer's call 34).**
@@ -85,7 +85,6 @@ Tokens are a step's input plus output, as the run record gives them. Archon's `i
 
 ### What was not tested
 
-- Item 11 (Copilot).
 - Superpowers' TDD skill on items 4 and 5.
 - The Superpowers plugin with a builder that is told to brainstorm.
 - The most capable model, and real lane-sized tasks: the measures come from one small task, and each case ran once.
@@ -108,4 +107,4 @@ These go to the main session as cards: the prompt text taking over the method, t
 
 ## Needs the director
 
-Nothing for this check. Item 11 waits on the director's answer about Copilot spend, which the main session already holds.
+Nothing for this check.

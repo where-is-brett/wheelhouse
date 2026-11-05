@@ -637,7 +637,7 @@ function setupNote(setup) {
 // they speak of a project's deny rules and its build-command level, and a folder with no project
 // record has neither until setup writes them (a registered folder being set up gets the project's
 // reload, Windows lines included).
-async function setupStart(input, setup, { given, spawn, pluginRoot, root, platform, startWaitMs, totalMs, pause, stopOf, now }) {
+async function setupStart(input, setup, { given, spawn, pluginRoot, root, platform, startWaitMs, totalMs, pause, stopOf, now, engineStep = false }) {
   firstKey(now);
   const end = Date.now() + totalMs;
   const lines = [];
@@ -649,7 +649,9 @@ async function setupStart(input, setup, { given, spawn, pluginRoot, root, platfo
   if (!up) lines.push(NO_HELPER);
   // The setup playbook runs the Wheelhouse command, so a folder being set up is told where it is.
   lines.push(...toolSheetLines(agentOfInput(input) ?? 'claude-code', { pluginRoot: root, platform }));
-  const note = setupNote(setup);
+  // A step the build engine started is not the director arriving: it is told nothing about setup, or it would put
+  // its own work off for a setup that is not its to run.
+  const note = engineStep ? null : setupNote(setup);
   if (note !== null) lines.push(note);
   // Once step 3 is done, v0.1.x's profile clone, when there is one, is imported into the settings.
   if (up && setup.run !== null && setup.run !== undefined && stepDone(setup.run, 3)) {
@@ -782,7 +784,7 @@ async function started(input, deps) {
   const found = find(input.cwd, { dir });
   if (!found) {
     const setup = beingSetUp(input.cwd);
-    if (setup !== null) return setupStart(input, setup, { given, spawn, pluginRoot, root: commandRoot({ dir, self }, pluginRoot), platform, startWaitMs, totalMs, pause, stopOf, now });
+    if (setup !== null) return setupStart(input, setup, { engineStep: env?.WHEELHOUSE_ENGINE_RUN === '1', given, spawn, pluginRoot, root: commandRoot({ dir, self }, pluginRoot), platform, startWaitMs, totalMs, pause, stopOf, now });
     if (removedFrom(input.cwd) === null) return undefined;
     // Setting up again follows the setup playbook, which runs the Wheelhouse command.
     return answer.context('SessionStart', [REMOVED, ...toolSheetLines(agentOfInput(input) ?? 'claude-code', { pluginRoot: commandRoot({ dir, self }, pluginRoot), platform })].join('\n'));

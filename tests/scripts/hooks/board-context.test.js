@@ -1088,6 +1088,15 @@ test('after Carry on with it, the work in flight is not offered again', async ()
   });
 });
 
+test('a step the build engine started is never told setup comes first, in a folder where setup is unfinished', async () => {
+  await withProject(async ({ home }) => {
+    const fresh = path.join(home, 'trial');
+    put(path.join(fresh, '.claude', 'settings.json'), { enabledPlugins: { 'wheelhouse@wheelhouse': true } });
+    assert.equal(contextOf(await run(fresh, 'Read the file .env.', NOW)), SETUP_FIRST);
+    assert.equal(await run(fresh, 'Read the file .env.', NOW, { env: { WHEELHOUSE_ENGINE_RUN: '1' } }), undefined);
+  });
+});
+
 test('while setup is unfinished, every prompt of the director\'s gets the setup-first line instead, whatever it asks', async () => {
   await withProject(async ({ home, repo }) => {
     const ask = 'I want to build a tool for tracking tide tables. Research the market first.';

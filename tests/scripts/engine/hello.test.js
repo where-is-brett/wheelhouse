@@ -19,7 +19,7 @@ const okGitCalls = (folder) => gitCalls.get(folder) ?? [];
 // A stood-in Archon, as v0.13.0 answers: a project with no git remote can't have a worktree, a run without --detach
 // prints its steps and no run id, and `workflow get` shows the run going until it ends, then the guarded step's output, given --events.
 const GUARD_WORDS = 'Wheelhouse does not let an agent read a .env file: ask the helper';
-function archon({ refused = true, refusal = refused ? GUARD_WORDS : undefined, runCode = 0, polls = 2, end = 'completed' } = {}) {
+function archon({ refused = true, refusal = refused ? GUARD_WORDS : undefined, runCode = 0, polls = 2, end = 'completed', attempted } = {}) {
   const calls = [];
   let gets = 0;
   const cli = async (args, opts = {}) => {
@@ -33,7 +33,7 @@ function archon({ refused = true, refusal = refused ? GUARD_WORDS : undefined, r
       gets += 1;
       if (gets <= polls) return { code: 0, json: { status: 'running', events: [] } };
       if (!args.includes('--events')) return { code: 0, json: { status: end } };
-      return { code: 0, json: { status: end, events: [{ event_type: 'node_completed', step_name: 'guarded', data: { node_output: JSON.stringify({ refused, ...(refusal == null ? {} : { refusal }) }) } }] } };
+      return { code: 0, json: { status: end, events: [{ event_type: 'node_completed', step_name: 'guarded', data: { node_output: JSON.stringify({ refused, attempted: attempted ?? true, ...(refusal == null ? {} : { refusal }) }) } }] } };
     }
     return { code: 1, json: null };
   };
@@ -66,6 +66,8 @@ test("the hello trial's planted .env read is refused", async () => {
   // A refusal that isn't the tool guard's (Claude Code's own rule, say) doesn't show the hooks loaded.
   assert.equal(await helloTrial({ cli: archon({ refusal: 'Permission to read .env was denied' }).cli, run: okGit, folder: scratch(), packDir: '/pack', configFile: '/c', ...quick }), 'could not run');
   assert.equal(await helloTrial({ cli: archon({ refusal: null }).cli, run: okGit, folder: scratch(), packDir: '/pack', configFile: '/c', ...quick }), 'could not run');
+  // A step that never tried the read (setup-first words, say) is not a read, and not a refusal either.
+  assert.equal(await helloTrial({ cli: archon({ refused: false, attempted: false }).cli, run: okGit, folder: scratch(), packDir: '/pack', configFile: '/c', ...quick }), 'could not run');
   assert.equal(await helloTrial({ cli: archon({ runCode: 1 }).cli, run: okGit, folder: scratch(), packDir: '/pack', configFile: '/c', ...quick }), 'could not run');
   assert.equal(await helloTrial({ cli: archon({ end: 'failed' }).cli, run: okGit, folder: scratch(), packDir: '/pack', configFile: '/c', ...quick }), 'could not run');
 });
