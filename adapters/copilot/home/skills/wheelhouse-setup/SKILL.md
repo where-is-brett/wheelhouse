@@ -12,6 +12,8 @@ At Lean the director has VS Code with Copilot and git, and nothing else. No prog
 
 **You never:** install anything (not git, Node.js or a program of any kind: say where it comes from and let them do it); ask for a key or a password in the chat; change a file of the project beyond the ones this page names; commit anything of the director's own; push anywhere; answer a card for the director; carry on past a file that doesn't match its fingerprint.
 
+**The Copilot folder.** `~/.copilot/` in this page means the folder Copilot reads, which is `COPILOT_HOME` when that is set, and `~/.copilot/` in the home folder otherwise. Every block here already follows `COPILOT_HOME`; never write to `~/.copilot/` by hand when `COPILOT_HOME` is set.
+
 **Plain words.** The director is a product owner. Say what you are doing and what is next, in a line or two. Say "the main version" for `main`, and "a feature's own copy" for a branch. Dates in prose read like 23 October 2026.
 
 **Copilot asks the director before each command you run.** That is Copilot's own habit, not Wheelhouse's; say so once, in a line, before the first command: "Copilot will ask you to allow each command I run. They are git commands and file copies, and I'll say what each one is for."
@@ -48,7 +50,7 @@ Wheelhouse's own repository is public, so no sign-in is needed. Clone it at the 
 # fetch-and-check
 (
   TAG='<tag>'
-  KIT="$HOME/.copilot/wheelhouse/$TAG"
+  KIT="${COPILOT_HOME:-$HOME/.copilot}/wheelhouse/$TAG"
   [ -d "$KIT" ] || git clone --depth 1 --branch "$TAG" https://github.com/where-is-brett/wheelhouse.git "$KIT" || exit 1
   [ "$(git -C "$KIT" describe --tags --exact-match 2>/dev/null)" = "$TAG" ] || { echo "$KIT is not the release $TAG"; exit 1; }
   cd "$KIT/adapters/copilot/home" || exit 1
@@ -60,9 +62,9 @@ Wheelhouse's own repository is public, so no sign-in is needed. Clone it at the 
   # after each file is copied: the copy matches too, and the first that doesn't stops the rest
   while read -r hash file; do
     case "$file" in hooks/*) continue ;; esac
-    mkdir -p "$HOME/.copilot/$(dirname "$file")"
-    cp "$file" "$HOME/.copilot/$file"
-    [ "$(git hash-object --no-filters "$HOME/.copilot/$file")" = "$hash" ] || { echo "Does not match MANIFEST.txt: $file"; exit 1; }
+    mkdir -p "${COPILOT_HOME:-$HOME/.copilot}/$(dirname "$file")"
+    cp "$file" "${COPILOT_HOME:-$HOME/.copilot}/$file"
+    [ "$(git hash-object --no-filters "${COPILOT_HOME:-$HOME/.copilot}/$file")" = "$hash" ] || { echo "Does not match MANIFEST.txt: $file"; exit 1; }
   done < MANIFEST.txt
   echo "Every file matches MANIFEST.txt"
 )
@@ -71,8 +73,9 @@ Wheelhouse's own repository is public, so no sign-in is needed. Clone it at the 
 ```powershell
 # fetch-and-check
 & {
+  $Cop = if ($env:COPILOT_HOME) { $env:COPILOT_HOME } else { Join-Path $HOME '.copilot' }
   $Tag = '<tag>'
-  $Kit = Join-Path $HOME ".copilot\wheelhouse\$Tag"
+  $Kit = Join-Path $Cop "wheelhouse\$Tag"
   if (-not (Test-Path $Kit)) { git clone --depth 1 --branch $Tag https://github.com/where-is-brett/wheelhouse.git $Kit; if ($LASTEXITCODE -ne 0) { throw 'The clone failed' } }
   if ((git -C $Kit describe --tags --exact-match 2>$null) -ne $Tag) { throw "$Kit is not the release $Tag" }
   $Source = Join-Path $Kit 'adapters\copilot\home'
@@ -89,7 +92,7 @@ Wheelhouse's own repository is public, so no sign-in is needed. Clone it at the 
     $Hash, $File = $Line -split ' ', 2
     if ($File -like 'hooks/*') { continue }
     $From = Join-Path $Source ($File -replace '/', '\')
-    $To = Join-Path $HOME (Join-Path '.copilot' ($File -replace '/', '\'))
+    $To = Join-Path $Cop ($File -replace '/', '\')
     New-Item -ItemType Directory -Force (Split-Path $To) | Out-Null
     Copy-Item $From $To -Force
     if ((git hash-object --no-filters $To) -ne $Hash) { throw "Does not match MANIFEST.txt: $File" }
@@ -125,15 +128,59 @@ Then say which tier this is, in one sentence: "This computer runs Wheelhouse at 
 
 ## Step 4: set up the project
 
-Start in the project's folder: the folder VS Code has open, which the terminal opens in. Check that `git rev-parse --show-toplevel` prints it (and not the release clone under `$HOME/.copilot/wheelhouse/`); if the terminal is anywhere else, `cd` to the project's folder first, and run every command of this step and the next from there. Each part checks first and does nothing twice.
+Start in the project's folder: the folder VS Code has open, which the terminal opens in. Check that `git rev-parse --show-toplevel` prints it (and not the release clone under `${COPILOT_HOME:-$HOME/.copilot}/wheelhouse/`); if the terminal is anywhere else, `cd` to the project's folder first, and run every command of this step and the next from there. Each part checks first and does nothing twice.
 
 **The folder is a git repository, and the main version is `main`.** `git rev-parse --is-inside-work-tree` must print `true`. If the folder isn't a repository, ask a card: "Start tracking this folder with git?" (what: git will keep this project's history on this computer; why: Wheelhouse needs it; options **Start tracking** and **Not now**; recommend **Start tracking**; meanwhile nothing changes). On **Start tracking**, run `git init -b main`. On **Not now**, stop and say setup carries on when they're ready. If the repository's main version has another name (`git branch --show-current` prints `master`, say), ask a card with **Rename it to main** (`git branch -m main`) and **Not now**: every Lean step says `main`.
 
 **VS Code's settings.** The release holds `adapters/copilot/vscode-settings.json`: the settings that keep every command asked for, edits outside the project asked for, edits to files that steer an agent asked for, and nothing approved automatically.
 
-- **The project has no `.vscode/settings.json`:** copy that file from the release clone (`$HOME/.copilot/wheelhouse/<tag>/adapters/copilot/vscode-settings.json`) to `.vscode/settings.json`, making the `.vscode` folder first.
+- **The project has no `.vscode/settings.json`:** copy that file from the release clone (`${COPILOT_HOME:-$HOME/.copilot}/wheelhouse/<tag>/adapters/copilot/vscode-settings.json`) to `.vscode/settings.json`, making the `.vscode` folder first.
 - **It has one:** work out the merged file: the project's own settings, with Wheelhouse's added, and a setting the project already has with another value changed to Wheelhouse's. Show it on a card, and write it only after **Approve**. The card says what this is (the project's VS Code settings, with Wheelhouse's added); why it comes to them (it is a file the project already has); the options **Approve**, **Show me** (the lines that would change) and **Not now**; a recommendation (**Approve**, because these settings only make VS Code ask more); and what happens meanwhile (the file stays as it is, and VS Code asks about commands as it did). Make the change by editing the file's text, line by line, so its comments and order stay: never rewrite it whole from parsed JSON. After **Not now**, carry on with the rest of setup and say the settings weren't added.
 - **These settings are conveniences, not controls.** Say so on the card and in your line afterwards: VS Code's own settings, the company's settings and the director's choices win over them, and a person can approve commands without asking. The Logbook's lines say the same: Copilot's command prompts aren't a control.
+
+**The routing file.** Without it a plain request ("add a flag that prints the version") is handled by Copilot's ordinary chat, which edits the file straight away and never reaches Wheelhouse. The release holds `adapters/copilot/project-instructions.md`: a short block that tells the chat to load `wheelhouse-lean` and follow its Intake at Lean before it touches any file of the product. VS Code reads `.github/copilot-instructions.md` for every chat in the project. Put the block there:
+
+- **The project has no `.github/copilot-instructions.md`:** the block makes it.
+- **It has one:** the block is added at its end, between its `BEGIN WHEELHOUSE` and `END WHEELHOUSE` lines, and the project's own lines stay as they are. It is a file the project already has, so ask a card first, as for the settings: what this is (a few lines added to the project's chat instructions, so a plain request goes through Wheelhouse); why it comes to them; the options **Approve**, **Show me** and **Not now**; recommend **Approve**; meanwhile (the file stays as it is, and only a request that says "Using Wheelhouse" goes through Wheelhouse). Run the block only after **Approve**.
+
+```sh
+# routing-file
+(
+  TAG='<tag>'
+  SRC="${COPILOT_HOME:-$HOME/.copilot}/wheelhouse/$TAG/adapters/copilot/project-instructions.md"
+  [ -f "$SRC" ] || { echo "The release has no project-instructions.md"; exit 1; }
+  DEST=.github/copilot-instructions.md
+  mkdir -p .github
+  if [ ! -f "$DEST" ]; then
+    { echo '<!-- .github/copilot-instructions.md -->'; tail -n +2 "$SRC"; } > "$DEST"
+  elif ! grep -q 'BEGIN WHEELHOUSE' "$DEST"; then
+    [ -z "$(tail -c1 "$DEST")" ] || echo >> "$DEST"
+    { echo; tail -n +2 "$SRC"; } >> "$DEST"
+  fi
+  grep -q 'BEGIN WHEELHOUSE' "$DEST" && echo 'Wheelhouse routing is in place'
+)
+```
+
+```powershell
+# routing-file
+& {
+  $Cop = if ($env:COPILOT_HOME) { $env:COPILOT_HOME } else { Join-Path $HOME '.copilot' }
+  $Tag = '<tag>'
+  $Src = Join-Path $Cop "wheelhouse\$Tag\adapters\copilot\project-instructions.md"
+  if (-not (Test-Path $Src)) { throw 'The release has no project-instructions.md' }
+  $Block = (Get-Content $Src | Select-Object -Skip 1) -join "`n"
+  $Dest = '.github/copilot-instructions.md'
+  New-Item -ItemType Directory -Force .github | Out-Null
+  if (-not (Test-Path $Dest)) {
+    Set-Content -LiteralPath $Dest -Value ("<!-- .github/copilot-instructions.md -->`n" + $Block + "`n") -NoNewline
+  } elseif (-not (Select-String -LiteralPath $Dest -SimpleMatch 'BEGIN WHEELHOUSE' -Quiet)) {
+    Add-Content -LiteralPath $Dest -Value ("`n" + $Block + "`n") -NoNewline
+  }
+  if (Select-String -LiteralPath $Dest -SimpleMatch 'BEGIN WHEELHOUSE' -Quiet) { 'Wheelhouse routing is in place' }
+}
+```
+
+The chat reads this file at the start of each chat, so it takes hold from the director's next new chat: say that in a line.
 
 **The record, the Logbook and what git ignores.** Wheelhouse's playbook for Lean (`wheelhouse-lean`) expects the record folder tracked, its feature folder and the Logbook ignored.
 
@@ -185,7 +232,7 @@ Start in the project's folder: the folder VS Code has open, which the terminal o
 # copy-guard
 (
   TAG='<tag>'
-  KIT="$HOME/.copilot/wheelhouse/$TAG/adapters/copilot/home"
+  KIT="${COPILOT_HOME:-$HOME/.copilot}/wheelhouse/$TAG/adapters/copilot/home"
   HOOKS="${COPILOT_HOME:-$HOME/.copilot}/hooks"
   if command -v node >/dev/null 2>&1; then echo 'Node.js runs here, so no shell guard is copied'; exit 1; fi
   mkdir -p "$HOOKS" || exit 1
@@ -206,7 +253,7 @@ Start in the project's folder: the folder VS Code has open, which the terminal o
    - **It stops:** say what it printed in a line, and that no Wheelhouse guard runs here yet. The Logbook takes the lines for a Mac with no helper. Don't copy the files by another route.
    - **On Windows, and where Node.js runs,** copy no hook file: on Windows no guard runs without Node.js yet, and where Node.js runs Wheelhouse's helper registers its own (Wheelhouse's helper, where Node.js runs).
 
-4. Write the Logbook, `wheelhouse/board.md` (make the `wheelhouse` folder first), **only if there is none.** If the file is already there, setup has run before and the Logbook holds the director's live state (All stop, cards waiting, lines waiting to be recorded, what is building, what was copied): keep it as it is. Change only its tier lines, the `Tier: Lean` line and the dash lines straight under it up to the first blank line, and only if they differ from this computer's case now; replace those lines and nothing below them. Otherwise the Logbook is untouched, and a run of setup never turns All stop off. A new Logbook's first line is `Tier: Lean`, and its next lines are the safety lines for this computer's case, from Step 3. Take them from `wheelhouse-lean` (now in `~/.copilot/skills/wheelhouse-lean/SKILL.md`), the block in its section "The Logbook" for this computer: on a Mac where item 3 put the shell guard in place, the block for a Mac where the shell guard runs; on any other Mac, or on Windows where Node.js runs, the block for a Mac or Windows with no helper answering; on Windows without Node.js, its own block. Copy each line exactly, with a dash in front. The rest of the Logbook follows, in this order, with "Nothing" in each part that is empty and "No copy yet" under The copy:
+4. Write the Logbook, `wheelhouse/board.md` (make the `wheelhouse` folder first), **only if there is none.** If the file is already there, setup has run before and the Logbook holds the director's live state (All stop, cards waiting, lines waiting to be recorded, what is building, what was copied): keep it as it is. Change only its tier lines, the `Tier: Lean` line and the dash lines straight under it up to the first blank line, and only if they differ from this computer's case now; replace those lines and nothing below them. Otherwise the Logbook is untouched, and a run of setup never turns All stop off. A new Logbook's first line is `Tier: Lean`, and its next lines are the safety lines for this computer's case, from Step 3. Take them from `wheelhouse-lean` (now in `~/.copilot/skills/wheelhouse-lean/SKILL.md`; never from the release clone's `adapters/copilot/skills/`, which holds sources with unfilled words in double braces), the block in its section "The Logbook" for this computer: on a Mac where item 3 put the shell guard in place, the block for a Mac where the shell guard runs; on any other Mac, or on Windows where Node.js runs, the block for a Mac or Windows with no helper answering; on Windows without Node.js, its own block. Copy each line exactly, with a dash in front. The rest of the Logbook follows, in this order, with "Nothing" in each part that is empty and "No copy yet" under The copy:
 
 ```
 ## Waiting on you
@@ -234,13 +281,15 @@ Nothing
 Nothing
 ```
 
+   Then check the Logbook: `grep -n '[{][{]' wheelhouse/board.md` must print nothing. If it prints a line, a safety line came from the wrong file: rewrite that line from the installed `wheelhouse-lean`, and check again.
+
 5. **The first commit.** It holds only the files setup made, never anything of the director's own, and leaves out a path the project ignores (a project may ignore `.vscode`). A change the director already made, staged or not, stays exactly as it was.
 
 ```sh
 # first-commit
 (
   set --
-  for p in .gitignore .vscode/settings.json .wheelhouse/record/.gitkeep; do
+  for p in .gitignore .vscode/settings.json .github/copilot-instructions.md .wheelhouse/record/.gitkeep; do
     [ -e "$p" ] && { git check-ignore -q "$p" || set -- "$@" "$p"; }
   done
   git add -- "$@" && git commit -m "Set up Wheelhouse at Lean" -- "$@"
@@ -253,7 +302,7 @@ Nothing
 # first-commit
 & {
   $Paths = @()
-  foreach ($P in '.gitignore', '.vscode/settings.json', '.wheelhouse/record/.gitkeep') {
+  foreach ($P in '.gitignore', '.vscode/settings.json', '.github/copilot-instructions.md', '.wheelhouse/record/.gitkeep') {
     if (Test-Path $P) {
       git check-ignore -q $P
       if ($LASTEXITCODE -ne 0) { $Paths += $P }
@@ -269,13 +318,13 @@ Nothing
 
    If git says there is nothing to commit, an earlier setup made it: go on. If git says it doesn't know who is committing, ask the director for the name and email to use (a card), and set them for this project only (`git config user.name` and `git config user.email`, without `--global`), then commit again.
 
-Now say in a line what is in place: the settings, the record folder and the Logbook.
+Now say in a line what is in place: the settings, the routing file, the record folder and the Logbook.
 
 ## Step 5: the copy
 
 Lean's copy off the project is a folder the director picks, such as a company drive, holding a bare copy of the project's history that the chat pushes to after each merge. If `git remote get-url wheelhouse-copy` prints a folder, setup made it already: say where it is, update The copy on the Logbook to say "Nothing copied yet, to <the folder>" only if the Logbook still says "No copy yet", and go to Step 6.
 
-Otherwise ask a card. What this is: a copy of the project's history in a folder you choose, so a copy exists off this computer's own disk. Why it comes to them: nothing else at Lean keeps a copy, and it is how they could get back to an earlier state if this computer were lost. Options: **Choose a folder** and **Not now**. Recommend **Choose a folder**, on a drive that is not this computer's own disk (a company drive or a USB drive), and not in this project's folder, which would be no copy at all. Meanwhile: the work is kept only on this computer, and the Logbook says "No copy yet".
+Otherwise ask a card. It is always a card, with your clickable-question tool, never a line of plain text and never offered as "an optional step" in your closing words. What this is: a copy of the project's history in a folder you choose, so a copy exists off this computer's own disk. Why it comes to them: nothing else at Lean keeps a copy, and it is how they could get back to an earlier state if this computer were lost. Options: **Choose a folder** and **Not now**. Recommend **Choose a folder**, on a drive that is not this computer's own disk (a company drive or a USB drive), and not in this project's folder, which would be no copy at all. Meanwhile: the work is kept only on this computer, and the Logbook says "No copy yet".
 
 - **Choose a folder:** ask the director to type or paste the folder's path into the chat (a folder's path is not secret). The bare copy goes in a new folder inside it, named for the project, so the chosen folder needn't be empty. Then check the folder is there and outside the project, make it and add it as the remote `wheelhouse-copy`:
 
@@ -295,6 +344,7 @@ Otherwise ask a card. What this is: a copy of the project's history in a folder 
 ```powershell
 # copy-remote
 & {
+  $Cop = if ($env:COPILOT_HOME) { $env:COPILOT_HOME } else { Join-Path $HOME '.copilot' }
   $Folder = '<folder>'
   if (-not (Test-Path -LiteralPath $Folder -PathType Container)) { throw "That folder isn't there" }
   $Inside = (Resolve-Path -LiteralPath $Folder).ProviderPath.TrimEnd('\') + '\'
@@ -328,7 +378,7 @@ VS Code and Copilot's runtime update every week, and Wheelhouse can't pin them. 
 
 Only where Step 3 found Node.js 22 or later on a Mac or Windows; otherwise leave this out and go on. Wheelhouse's helper is Wheelhouse's own program, in the release you copied: it enforces All stop and the guards as Copilot hooks, writes the record, keeps the project's git in Wheelhouse's own folder so only it moves the main version, runs the tests on the approved commit, and confirms the steps that matter most in its own window. Installing it fetches nothing: everything it needs came with the release. It changes this computer, so it is the director's call, on a card.
 
-The helper's command is the full path of Node.js and of its script, each in double quotes: `"<node>" "<root>/scripts/agents/copilot/start-helper.js"`, where `<node>` is what `node -p "process.execPath"` prints and `<root>` is the release's folder, `$HOME/.copilot/wheelhouse/<tag>`, written out in full. Call it `<start>`. It is the same pair the session start's Lean command gives, so the director allows the same command each time. Run it in the project's folder.
+The helper's command is the full path of Node.js and of its script, each in double quotes: `"<node>" "<root>/scripts/agents/copilot/start-helper.js"`, where `<node>` is what `node -p "process.execPath"` prints and `<root>` is the release's folder, `${COPILOT_HOME:-$HOME/.copilot}/wheelhouse/<tag>`, written out in full. Call it `<start>`. It is the same pair the session start's Lean command gives, so the director allows the same command each time. Run it in the project's folder.
 
 1. **Ask two cards first.** "Is this a work computer?" (what: whether a company looks after this computer; why: a company's security software may treat a program that starts at sign-in as suspicious, so on a work computer the helper doesn't start at sign-in and runs once the director allows its start command; options **Yes, a work computer** and **No, my own**; no recommendation, it is theirs to say; meanwhile nothing changes). Then "Does the product have real users?" (why: with real users a merge is approved only in Wheelhouse's own window, never by a click in the chat; options **Yes** and **Not yet**; meanwhile nothing changes). Ask, in a line, for the command that tests the product, such as `npm test`, if it has one; none is an answer.
 2. **The plan.** Run `<start> plan --work-computer yes|no --real-users yes|no`, adding `--test '<the command>'` when there is one. It changes nothing, and prints the changes, one line each, and a last line `Hash: <hash>`. If it prints one line and no hash, the project's git can't move into Wheelhouse's own folder as it is (changes not committed, a folder off the main version, a hooks folder such as husky's, worktrees or submodules): nothing was changed. Say that line to the director in plain words, ask no card, and offer the helper again once it is put right.
@@ -341,11 +391,11 @@ The helper's command is the full path of Node.js and of its script, each in doub
 Say it in a short list at the end, in plain words, and that "set up Wheelhouse" again is safe: each step checks first.
 
 - In `~/.copilot/`: Wheelhouse's skills, agents and instructions (every name starts `wheelhouse`), and `wheelhouse/<tag>/`, the release it came from; on a Mac without Node.js, also Wheelhouse's shell guard and its hook file in `hooks/`. Nothing outside it changed.
-- In the project: `.vscode/settings.json` (Wheelhouse's settings added, if the director approved), `.gitignore` (the three ignore lines), `.wheelhouse/record/` (empty, tracked), `wheelhouse/board.md` (not committed), and one commit, "Set up Wheelhouse at Lean".
+- In the project: `.vscode/settings.json` (Wheelhouse's settings added, if the director approved), `.github/copilot-instructions.md` (the routing block, so a plain request goes through Wheelhouse), `.gitignore` (the three ignore lines), `.wheelhouse/record/` (empty, tracked), `wheelhouse/board.md` (not committed), and one commit, "Set up Wheelhouse at Lean".
 - The remote `wheelhouse-copy`, and a bare copy of the project in the folder the director chose, if they chose one.
 - Where the director approved Wheelhouse's helper: the hook file in `~/.copilot/hooks/`, the sign-in start (none on a work computer), and the project's git in Wheelhouse's own folder, with this folder a worktree of it. Taking the project off the helper is a card too, as installing it is: `<start> uninstall-plan --remove-state yes|no` prints the changes and their hash, and on the click `<start> uninstall --hash <hash> --remove-state yes|no` makes them. Its git moves back into the folder with the main version checked out, the hook file and the sign-in start go when no other project needs them, and the project's Wheelhouse state goes only if the director chose it; the record files in the project stay (`wheelhouse-lean`, With Wheelhouse's helper).
 
-Then point to the next step: "Tell me what you'd like built, or say 'show me the Logbook'." From here the chat follows `wheelhouse-lean`.
+Then end with a line of its own, "Wheelhouse is ready.", once Steps 1 to 6 are done (the copy folder answered, by a click on either option). Never write it before then, and never call a step "optional" instead of asking its card. After it, say what to do next: "Tell me what you'd like built, or say 'show me the Logbook'." If the director's request came with the setup line, or they gave one before it, say in one line that you're picking it up now, and hand it to `wheelhouse-lean` as their first message, at its Intake at Lean. From here the chat follows `wheelhouse-lean`, and the routing file makes every new chat start there.
 
 ## Red flags: stop
 
@@ -355,7 +405,7 @@ Then point to the next step: "Tell me what you'd like built, or say 'show me the
 | "One file doesn't match, but it's only a comment" | Stop. Copy nothing more, and say so. |
 | "The project has a `.vscode/settings.json`; I'll just write over it" | Merge on a card, and write it after **Approve**. |
 | "The `.gitignore` hides the record; I'll fix the line" | Ask the card first. |
-| "I'll stage everything for the first commit" | Only the three files named. The director's own work stays theirs. |
+| "I'll stage everything for the first commit" | Only the files named. The director's own work stays theirs. |
 | "They typed 'yes' to the folder card" | Only a click answers. Ask it again. |
 | "They gave me their password so I can push" | Stop them. It goes in git's sign-in window, once, never in the chat. |
 | "Node.js is here, so the Logbook can show the lines for Node.js" | Only the helper answering changes the lines, and only once the director approved it. Show the lines for what runs now. |

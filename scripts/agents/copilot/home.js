@@ -114,6 +114,7 @@ const INTAKE_LEAN_LINE = 'At Lean, where no Wheelhouse command runs, follow whee
 const INTAKE_LEAN_ANCHOR = '\n## Every message, in this order\n';
 
 const INSTRUCTIONS_LINE = 'In VS Code\'s Local harness Wheelhouse doesn\'t run: say so and ask the director to switch the chat to Copilot.';
+const ROUTING_LINE = 'In a project that has both `.wheelhouse/record` and `wheelhouse/board.md`, Wheelhouse is set up: load the skill `wheelhouse-lean` and follow its Intake at Lean before you read or change any file, whatever the director asks.';
 
 // ---- Reading the sources ----
 
@@ -281,7 +282,7 @@ function instructionsFrom(root) {
     file,
     source,
     front: { name: 'wheelhouse', description: 'How the Wheelhouse playbooks name Copilot\'s tools, and where Wheelhouse does not run.', applyTo: '**' },
-    rest: `\n${sheet}\n\n${INSTRUCTIONS_LINE}\n`,
+    rest: `\n${sheet}\n\n${INSTRUCTIONS_LINE}\n\n${ROUTING_LINE}\n`,
   })];
 }
 
