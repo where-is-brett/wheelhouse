@@ -59,36 +59,71 @@ function setupLive(run, now) {
 
 const flagless = (args) => args.filter((a) => !a.startsWith('-'));
 // Code a one-line program (node -e, python -c) runs that writes a file.
-const WRITING_CODE = /writeFile|appendFile|createWriteStream|copyFile|\brename(Sync)?\b|mkdirSync|\bwrite_text\b|\bwrite_bytes\b|\.write\s*\(|open\s*\([^)]*['"][wax]\+?b?['"]/;
+const WRITING_CODE = /writeFile|appendFile|createWriteStream|copyFile|\brename(Sync)?\b|mkdirSync|\bwrite_text\b|\bwrite_bytes\b|(?<!std(?:out|err))\.write\s*\(|open\s*\([^)]*['"][wax]\+?b?['"]/;
 const CODE_FLAGS = { node: ['-e', '--eval', '-p', '--print'], deno: ['eval'], python: ['-c'], python3: ['-c'], perl: ['-e', '-pe', '-ne', '-E'], ruby: ['-e'] };
 const POWERSHELL_WRITERS = new Set(['set-content', 'add-content', 'out-file', 'new-item', 'copy-item', 'move-item']);
 
-// The heredoc bodies of a command taken out, so words inside one are never read as commands.
+// The paths a PowerShell writer names: the values of -Path, -LiteralPath, -FilePath and -Destination, and its first
+// argument when that is not a flag. Other flags' values (-ItemType Directory, -Encoding utf8) are not paths.
+const POWERSHELL_PATH_FLAGS = new Set(['-path', '-literalpath', '-filepath', '-destination']);
+function powershellPaths(args) {
+  const found = args.length > 0 && !args[0].startsWith('-') ? [args[0]] : [];
+  args.forEach((a, k) => {
+    const flag = a.toLowerCase();
+    if (POWERSHELL_PATH_FLAGS.has(flag) && args[k + 1] !== undefined && !args[k + 1].startsWith('-')) found.push(args[k + 1]);
+    else {
+      const joined = /^(-[A-Za-z]+):(.+)$/.exec(a);
+      if (joined && POWERSHELL_PATH_FLAGS.has(joined[1].toLowerCase())) found.push(joined[2]);
+    }
+  });
+  return found;
+}
+
+// The heredoc bodies of a command taken out, so words inside one are never read as commands: { text, bodies }, where
+// `bodies` holds those fed to a program that runs them ({ program, body }), which are read instead.
+const RUNS_ITS_INPUT = new Set(['python', 'python3', 'node', 'deno', 'ruby', 'perl', 'sh', 'bash', 'zsh']);
 function withoutHeredocs(command) {
   const lines = String(command).split('\n');
   const kept = [];
+  const bodies = [];
   let end = null;
+  let current = null;
   for (const line of lines) {
     if (end !== null) {
-      if (line.trim() === end) end = null;
+      if (line.trim() === end) {
+        end = null;
+        if (current !== null) bodies.push(current);
+        current = null;
+      } else if (current !== null) current.body += `${line}\n`;
       continue;
     }
     const found = /<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1/.exec(line);
     kept.push(found ? line.replace(found[0], ' ') : line);
-    if (found) end = found[2];
+    if (found) {
+      end = found[2];
+      const before = line.slice(0, found.index).split(/[|;&]/).at(-1).trim().split(/\s+/)[0] ?? '';
+      const program = path.basename(before).replace(/\.exe$/i, '').replace(/\d+(\.\d+)*$/, '');
+      current = RUNS_ITS_INPUT.has(program) ? { program, body: '' } : null;
+    }
   }
-  return kept.join('\n');
+  return { text: kept.join('\n'), bodies };
 }
 
 // What a shell command would change: { paths: [full path], here: whether it writes somewhere it doesn't name, in the
 // folder it runs in }, or null when it can't be read. A `cd` to a plain folder moves where the rest runs.
 export function shellChanges(command, cwd, { windows = false, home = os.homedir() } = {}) {
-  const text = withoutHeredocs(command).replace(/\d*>&(\d+|-)(?=$|[\s;|&)])/g, ' ');
+  const { text: bare, bodies } = withoutHeredocs(command);
+  const text = bare.replace(/\d*>&(\d+|-)(?=$|[\s;|&)])/g, ' ');
   const read = segmentsWithOperators(text, windows);
   if (read === null || read.operators.some((op) => op === '(' || op === '`')) return null;
   const paths = [];
   let here = false;
   let at = cwd;
+  const inner = [];
+  for (const { program, body } of bodies) {
+    if (['sh', 'bash', 'zsh'].includes(program)) inner.push(shellChanges(body, cwd, { windows, home }));
+    else if (WRITING_CODE.test(body)) here = true;
+  }
   const place = (given) => {
     if (typeof given !== 'string' || given === '' || /[$`*?]/.test(given)) return;
     paths.push(given === '~' ? home : given.startsWith('~/') ? path.join(home, given.slice(2)) : path.resolve(at, given));
@@ -122,8 +157,13 @@ export function shellChanges(command, cwd, { windows = false, home = os.homedir(
       const flags = CODE_FLAGS[name] ?? CODE_FLAGS[name.replace(/\d+(\.\d+)*$/, '')];
       const k = args.findIndex((a) => flags.includes(a));
       if (k >= 0 && WRITING_CODE.test(args.slice(k + 1).join(' '))) here = true;
-    } else if (windows && POWERSHELL_WRITERS.has(lower)) flagless(args).forEach(place);
+    } else if (windows && POWERSHELL_WRITERS.has(lower)) powershellPaths(args).forEach(place);
   });
+  for (const one of inner) {
+    if (one === null) continue;
+    paths.push(...one.paths);
+    if (one.here !== null) here = true;
+  }
   return { paths, here: here ? at : null };
 }
 

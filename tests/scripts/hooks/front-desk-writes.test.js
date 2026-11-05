@@ -118,3 +118,29 @@ test('the shell check keeps to the same conditions', () => {
   assert.equal(decide(bash(folder, 'touch notes.js'), options(folder, { role: () => 'feature' })), undefined);
   assert.equal(decide(bash(folder, 'touch notes.js'), options(folder, { find: () => null })), undefined);
 });
+
+test('a one-liner that prints to stdout or stderr is not a write', () => {
+  const { folder } = project();
+  for (const command of ['node -e "process.stdout.write(\'x\')"', 'python3 -c "import sys; sys.stderr.write(\'x\')"']) assert.equal(decide(bash(folder, command), options(folder)), undefined, command);
+});
+
+test('PowerShell reads only the path parameters and the first argument as paths', () => {
+  const { folder } = project();
+  const ps = (command) => ({ tool_name: 'PowerShell', cwd: folder, session_id: 's1', tool_input: { command } });
+  assert.equal(decide(ps('New-Item -ItemType Directory -Path .wheelhouse/work'), options(folder)), undefined);
+  assert.equal(decide(ps('Get-Date | Out-File .wheelhouse/a.txt -Encoding utf8'), options(folder)), undefined);
+  assert.ok(denied(decide(ps('New-Item -ItemType File -Path src/a.js'), options(folder))));
+  assert.ok(denied(decide(ps('Set-Content notes.js -Value x'), options(folder))));
+  assert.ok(denied(decide(ps('Out-File -FilePath notes.js -Encoding utf8'), options(folder))));
+});
+
+test('a heredoc fed to an interpreter is read, and one fed to anything else is not', () => {
+  const { folder } = project();
+  assert.ok(denied(decide(bash(folder, "python3 - <<'EOF'\nopen('a.py', 'w').write('x')\nEOF"), options(folder))));
+  assert.ok(denied(decide(bash(folder, 'node - <<EOF\nrequire("fs").writeFileSync("a.js", "x")\nEOF'), options(folder))));
+  assert.ok(denied(decide(bash(folder, 'bash <<EOF\ntouch notes.js\nEOF'), options(folder))));
+  assert.equal(decide(bash(folder, "python3 - <<'EOF'\nprint(1)\nEOF"), options(folder)), undefined);
+  assert.equal(decide(bash(folder, 'bash <<EOF\nls\nEOF'), options(folder)), undefined);
+  assert.equal(decide(bash(folder, 'cat <<EOF | node cli.js card\nwriteFileSync touch a\nEOF'), options(folder)), undefined);
+  assert.equal(decide(bash(folder, 'cat > .wheelhouse/f.json <<EOF\nwriteFileSync\nEOF'), options(folder)), undefined);
+});
