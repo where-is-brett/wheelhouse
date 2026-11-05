@@ -330,6 +330,7 @@ test('a musing ends on the one line as it stands, brainstorming sizes a change, 
   // Anything that adds to or changes what a person sees or uses (output, a flag or option, a command, text, a page, behaviour) is
   // visible, however small: it is the small lane with a card. Both skills and the design say so in the same words.
   assert.match(intake, /Visible means anything that adds to or changes what a person sees or uses: command-line output, a new flag or option, a command, text, a page or a behaviour\. Such work is visible however small, and a new flag that prints something is visible\./);
+  assert.match(intake, /Only a small removal or obvious fix that changes nothing a person relies on, or work no person sees \(tests, internals\), may be `visible: false`\./);
   assert.match(intake, /When in doubt, `visible: true`\./);
   assert.match(playbook, /Anything that adds to or changes what a person sees or uses is visible, however small/);
   assert.match(read('docs/specs/2026-10-17-wheelhouse-design.md'), /Adding or changing anything a person sees or uses \(output, a flag, a command, text, a page, behaviour\) is visible, however small/);
