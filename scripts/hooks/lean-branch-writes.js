@@ -19,10 +19,11 @@ import { BOARD_FILE, LEAN_RECORD_DIR } from '../lib/copilot-numbers.js';
 const SHELL = ['Bash', 'PowerShell'];
 // What may be written on the main version, below the project's folder.
 const OWN = Object.freeze(['.wheelhouse', '.git']);
-const SETUP_FILES = Object.freeze([BOARD_FILE, '.gitignore', '.vscode/settings.json', '.github/copilot-instructions.md']);
+// The Logbook's folder itself too, so setup can make it again on the main version; only the Logbook goes in it.
+const SETUP_FILES = Object.freeze([path.posix.dirname(BOARD_FILE), BOARD_FILE, '.gitignore', '.vscode/settings.json', '.github/copilot-instructions.md']);
 
 export const LEAN_NO_MAIN_WRITES = 'Wheelhouse does not let the chat change the product\'s own files while the project is on the main version. '
-  + 'Record the change through Intake and ask its card; a Crew member builds it on a feature\'s own copy, and it is reviewed and added from there.';
+  + 'Record the change through Intake (the brief and its card), and do not make a branch yourself.';
 
 // The real path of `file`, which may not exist yet: its nearest folder that does, with the rest after it.
 function realPath(file) {

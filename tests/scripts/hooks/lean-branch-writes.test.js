@@ -53,6 +53,9 @@ test('the Wheelhouse files, git\'s folder and the files setup makes are left alo
     assert.equal(decide(edit(MAIN, path.join(MAIN, file), 'Write')), undefined, file);
   }
   assert.ok(denied(decide(edit(MAIN, path.join(MAIN, 'wheelhouse', 'other.md'), 'Write'))), 'only the Logbook of that folder');
+  assert.equal(decide(bash(MAIN, 'mkdir -p wheelhouse')), undefined, 'the Logbook\'s folder itself, made again by setup');
+  assert.match(LEAN_NO_MAIN_WRITES, /Record the change through Intake \(the brief and its card\), and do not make a branch yourself/);
+  assert.doesNotMatch(LEAN_NO_MAIN_WRITES, /feature's own copy/);
   assert.ok(denied(decide(edit(MAIN, path.join(MAIN, '.wheelhouse-not', 'x'), 'Write'))), 'a folder whose name only starts the same');
 });
 

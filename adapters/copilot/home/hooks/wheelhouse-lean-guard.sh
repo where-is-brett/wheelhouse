@@ -134,6 +134,7 @@ BRANCH_LEFT='.wheelhouse
 .wheelhouse/*
 .git
 .git/*
+wheelhouse
 wheelhouse/board.md
 .gitignore
 .vscode/settings.json
@@ -143,7 +144,7 @@ SAY_SECRET='Wheelhouse does not let an agent open Wheelhouse'\''s keys or the cr
 SAY_ENV='Wheelhouse does not let an agent read a .env file'
 SAY_SEARCH='Wheelhouse does not let an agent search the home folder or a folder holding credentials'
 SAY_RECORD='That file is Wheelhouse'\''s record, which is only added to: an earlier record file is never changed, so add the new line with the shell'
-SAY_BRANCH='Wheelhouse does not let the chat change the product'\''s own files while the project is on the main version. Record the change through Intake and ask its card; a Crew member builds it on a feature'\''s own copy, and it is reviewed and added from there.'
+SAY_BRANCH='Wheelhouse does not let the chat change the product'\''s own files while the project is on the main version. Record the change through Intake (the brief and its card), and do not make a branch yourself.'
 SAY_PLACE='Wheelhouse'\''s guard could not tell where that path leads, so it refuses'
 SAY_COULD_NOT_RUN='Wheelhouse'\''s check could not run'
 SAY_PLUTIL='This Mac'\''s built-in file reader is too old for Wheelhouse'\''s guard, so the guard refuses'

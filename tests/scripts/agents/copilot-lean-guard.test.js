@@ -422,6 +422,8 @@ test('the Wheelhouse files, git\'s folder and the setup files are written on the
     assert.notEqual(r.status === 2 && /product's own files/.test(r.stdout), true, file);
   }
   refused(runGuard(call('create', { path: path.join(main, 'wheelhouse', 'other.md') }, main), { cwd: main }), 'only the Logbook of that folder', leanBranch.LEAN_NO_MAIN_WRITES);
+  const folder = runGuard(call('create', { path: path.join(main, 'wheelhouse') }, main), { cwd: main });
+  assert.notEqual(folder.status === 2 && /product's own files/.test(folder.stdout), true, 'the Logbook\'s folder itself');
 });
 
 test('a linked worktree\'s HEAD is read through its .git file, and a HEAD that cannot be read lets the write through', onMac, () => {
