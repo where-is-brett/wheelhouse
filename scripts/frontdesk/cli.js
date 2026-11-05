@@ -24,6 +24,10 @@
 //                   hands a change the director suggested on a waiting approval or CI push card to
 //                   the build: the work re-stated with the change, in the front desk's own words, as
 //                   its title; prints the one line to say
+//   ask-bosun <work>
+//                   the director's "fix it" or "ship it" about work with an open pull request: the helper puts the
+//                   Bosun's question to them in its own fixed words (fix the findings or restart the builder, or stop the
+//                   work; shipping as it is is never offered while a signed review holds the merge) and prints the line to say
 //   end-goal [--now]
 //                   asks for the running goal to end: it stops starting work, and with --now stops what is running too
 //   goal-baseline <goal>
@@ -105,6 +109,7 @@ import { countsAtOnce, gateTargetOf } from '../state/views.js';
 import { briefHash } from '../feature/files.js';
 import { endedBy, since, NO_PLAN, STARTS_UNAPPROVED } from '../foreman/queue.js';
 import { startedAsScript } from '../lib/started-as-script.js';
+import { prsOfWork } from '../desk/work-prs.js';
 import { isOpen, surveyLines, whyNext, workLines, RECENT_MS, RECENT_LEAD, recentLines } from '../desk/views.js';
 import { answeredWords } from '../cards/answered.js';
 import { markHere } from '../lib/session-files.js';
@@ -133,7 +138,7 @@ export const RECORD_KINDS = Object.freeze([
   'work', 'amendment', 'incident', 'note', 'brief', 'goal',
 ]);
 export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey', 'evidence', 'brief']);
-const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'record', 'similar', 'views', 'explain', 'review', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'end-goal', 'narrow-goal', 'goal-baseline', 'goal-draft', 'goal-card', 'note'];
+const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'review', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'end-goal', 'narrow-goal', 'goal-baseline', 'goal-draft', 'goal-card', 'note'];
 // How long `confirm` waits for the helper: one window at a time on the computer, so it may wait for another's.
 const CONFIRM_WAIT_MS = 3 * WINDOW_MS;
 export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
@@ -796,6 +801,14 @@ export async function suggest({ client, cwd, card: cardId, work: workId, change 
 
 // --- drop ---
 
+// The director's "fix it" or "ship it" about work with an open pull request, put to the Bosun by the helper. Resolves with { work, say }.
+export async function askBosun({ client, cwd, work }) {
+  const got = await client.state.workCard({ cwd, work });
+  if (got?.ok !== true) throw new CliError(said(got, 'The helper could not ask the Bosun'));
+  if (typeof got.skipped === 'string') return { work, say: `Nothing was asked: ${got.skipped}.` };
+  return { work, id: got.id, say: 'Asked: the Bosun decides what happens to its pull request. Run cards and ask the card it gives.' };
+}
+
 export const DROPPED = 'Dropped: it will not be built.';
 
 // Ends a piece of work the director asked to drop (a copy of one already queued, or a request they have changed their
@@ -1284,7 +1297,7 @@ export async function view({ client, cwd, name, now, since: from }) {
   if (name === 'glossary') return Object.entries(glossaryOf(views.glossary)).map(([term, entry]) => `${term}: ${entry.plain}`);
   if (name === 'levels') return listed(levelLines(views, events), 'No decision topics yet.');
   if (name === 'survey') return surveyLines(views.survey);
-  if (name === 'work') return workLines(views, answers, await wordsOf(client, cwd, views, now, names));
+  if (name === 'work') return workLines(views, answers, await wordsOf(client, cwd, views, now, names), prsOfWork(views, cwd));
   // settings: the project's over the director's own, over the defaults
   const own = await ownSettings(client, cwd);
   return settingsText(effectiveSettings({ project: isPlain(views.settings) ? views.settings : {}, profile: own, now })).split('\n');
@@ -1542,6 +1555,9 @@ export async function main(argv, {
     } else if (command === 'drop') {
       if (rest.length !== 1 || rest[0] === '') throw new CliError('Give the work to drop: drop <work id>');
       json(await drop({ client: helper, cwd: here, work: rest[0] }));
+    } else if (command === 'ask-bosun') {
+      if (rest.length !== 1 || rest[0] === '') throw new CliError('Give the work: ask-bosun <work id>');
+      json(await askBosun({ client: helper, cwd: here, work: rest[0] }));
     } else if (command === 'record') {
       only(rest, 1, `Give the kind to record: record <kind>, one of ${RECORD_KINDS.join(', ')}`);
       if (!RECORD_KINDS.includes(rest[0])) throw new CliError(`record takes one of: ${RECORD_KINDS.join(', ')}`);
