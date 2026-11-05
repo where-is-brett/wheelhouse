@@ -13,7 +13,7 @@ import { startedAsScript } from '../lib/started-as-script.js';
 import { run as defaultRun } from '../lib/run.js';
 import { safeGit } from '../lib/safe-git.js';
 import { runArg, runDoneChecks } from './done-check.js';
-import { changeOf } from './change.js';
+import { changeOf, startOf } from './change.js';
 import { protectedFindings } from './protected-check.js';
 
 export const ROUNDS_FILE = 'bug-rounds.json';
@@ -46,7 +46,7 @@ export async function fixProblems({ client, runId, cwd, base, run = defaultRun, 
     if (same?.code !== 0) problems.push('the reproduction\'s test changed since it went red');
   }
   try {
-    for (const finding of await protectedFindings(await changeOf({ cwd, base, run }), answer.order.protectedFiles)) problems.push(`the change ${finding}`);
+    for (const finding of await protectedFindings(await changeOf({ cwd, base, start: startOf(answer.order), run }), answer.order.protectedFiles)) problems.push(`the change ${finding}`);
   } catch (error) {
     problems.push(`the change could not be read: ${error.message}`);
   }

@@ -8,9 +8,10 @@ import { safeGit } from '../lib/safe-git.js';
 import { run as defaultRun } from '../lib/run.js';
 
 const MOST_BYTES = 2 * 1024 * 1024;
+const FULL_SHA = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 
 // [{ status: 'A'|'M'|'D'|'R', path, from? , before(), after() }] for the worktree `cwd` against `base`.
-export async function changeOf({ cwd, base, run = defaultRun }) {
+export async function changeOf({ cwd, base, start, run = defaultRun }) {
   // The fence alone: the worktree's own settings are an agent's to write, and nothing here runs its hooks or filters.
   const git = safeGit({ run, cwd, look: 'never' });
   const must = async (args) => {
@@ -18,23 +19,15 @@ export async function changeOf({ cwd, base, run = defaultRun }) {
     if (got.code !== 0) throw new Error(`git ${args[0]} failed in the worktree: ${String(got.stderr).trim().split('\n').pop()}`);
     return String(got.stdout);
   };
-  // A branch name is also read at the remotes' copies of it (a project in git alone keeps the home's main as
-  // refs/remotes/wheelhouse/<name>; a hosted one has origin's). The folder's own copy can be behind them, and a run's
-  // worktree is made from theirs, so the change begins at the nearest of the points they share with the run. A copy
-  // that is missing is left out; the named base alone is what a project with no remotes has.
-  const starts = [(await must(['merge-base', base, 'HEAD'])).trim()];
-  if (/^[A-Za-z0-9_][A-Za-z0-9._-]*(?:\/[A-Za-z0-9._-]+)*$/.test(base) && !base.includes('..')) {
-    for (const remote of ['wheelhouse', 'origin']) {
-      const got = await git(['merge-base', `refs/remotes/${remote}/${base}`, 'HEAD']);
-      if (got.code === 0 && String(got.stdout).trim() !== '') starts.push(String(got.stdout).trim());
-    }
-  }
-  let mergeBase = starts[0];
-  for (const start of starts.slice(1)) {
-    if (start === mergeBase) continue;
-    // The nearer one is the one that has the other behind it.
-    const behind = await git(['merge-base', '--is-ancestor', mergeBase, start]);
-    if (behind.code === 0) mergeBase = start;
+  // With `start`, the commit the helper recorded as the one the run's worktree was made from (held outside the worktree, where
+  // the builder can't move it), the change begins where the run's history leaves it. Without one, `base` is read as a ref in
+  // the worktree's repository, which a builder can move: the checks that guard the change always give a start.
+  let mergeBase;
+  if (start !== undefined) {
+    if (start === null || !FULL_SHA.test(String(start))) throw new Error('the commit the run started from is not known');
+    mergeBase = (await must(['merge-base', start, 'HEAD'])).trim();
+  } else {
+    mergeBase = (await must(['merge-base', base, 'HEAD'])).trim();
   }
   const listed = (await must(['-c', 'core.quotePath=false', 'diff', '--no-ext-diff', '--no-textconv', '--name-status', '-M', '-z', mergeBase])).split('\0').filter(Boolean);
   const changes = [];
@@ -63,3 +56,7 @@ export async function changeOf({ cwd, base, run = defaultRun }) {
     after: () => Promise.resolve(change.status === 'D' ? null : onDisk(change.path)),
   }));
 }
+
+// The commit a run's order records as the one its worktree was made from, or null: the guard checks take it from the helper's
+// order, never from the worktree, and fail closed without it.
+export const startOf = (order) => (FULL_SHA.test(String(order?.startCommit ?? '')) ? order.startCommit : null);

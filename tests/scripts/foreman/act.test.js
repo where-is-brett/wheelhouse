@@ -2144,10 +2144,10 @@ test('start on a project in git alone with the helper unable to fetch starts fro
   assert.ok(fake);
 }));
 
-test('a question about work that has not started is asked once while it waits, however it is worded', () => withHome(async () => {
+test('a question about a refused start is asked once while it waits, however it is worded, and any other question is still asked', () => withHome(async () => {
   await project({ git: true });
   const fake = fakeClient({ views: startViews() });
-  const ask = (what) => act(['ask', 'add-export', '--what', what, '--why', 'It could not start.', '--option', 'Wait=waiting', '--option', 'Drop it=act drop add-export', '--recommend', 'Wait', '--level', '3'], { client: fake.client });
+  const ask = (what, about = true) => act(['ask', 'add-export', '--what', what, '--why', 'It could not start.', '--option', 'Wait=waiting', '--option', 'Drop it=act drop add-export', '--recommend', 'Wait', '--level', '3', ...(about ? ['--about', 'start'] : [])], { client: fake.client });
   const first = await ask('The change could not start.');
   assert.equal(first.code, 0, first.err);
   assert.match(first.out, /Asked the director: q-add-export-1000001/);
@@ -2155,4 +2155,7 @@ test('a question about work that has not started is asked once while it waits, h
   assert.equal(second.code, 0, second.err);
   assert.match(second.out, /asked about add-export already: q-add-export-1000001/);
   assert.equal(fake.writes.filter((w) => w.kind === 'question').length, 1);
+  const other = await ask('Which colour should the button be?', false);
+  assert.match(other.out, /Asked the director: q-add-export-1000002/);
+  assert.equal(fake.writes.filter((w) => w.kind === 'question').length, 2);
 }));

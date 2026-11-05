@@ -80,7 +80,7 @@ test('an answer that earns it brings one line offering a rule, and a Confirm sig
       const adapter = { defaultBranch: async () => 'main', branchHead: async () => main };
       const helper = await startHelper({
         run: hostGuard, address: testAddress(home), adapterFor: async () => adapter, envFor: async () => ({}), evalsFolder: tempFolder('wh-evals-'),
-        spawn: stubSpawn(), refreshMirror: async () => ({ ok: true }), engineFor: () => engine, dispatchMs: 60 * 60 * 1000,
+        spawn: stubSpawn(), refreshMirror: async () => ({ ok: true }), baseOfMirror: async () => 'b'.repeat(40), engineFor: () => engine, dispatchMs: 60 * 60 * 1000,
       });
       try {
         const client = helperClient({ address: helper.address });

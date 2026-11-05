@@ -24,6 +24,8 @@ const write = (dir, file, text) => {
   fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
   fs.writeFileSync(path.join(dir, file), text);
 };
+// The commit the run's worktree began from, which the helper records and gives in the order.
+let lastStart = null;
 // The project on its bug branch with the reproduction committed; `commit` is the reproduction's.
 function project() {
   const dir = tempFolder('wh-bugcheck-');
@@ -31,6 +33,7 @@ function project() {
   for (const [file, text] of Object.entries(FILES)) write(dir, file, text);
   git(dir, 'add', '-A');
   git(dir, 'commit', '-qm', 'base');
+  lastStart = git(dir, 'rev-parse', 'HEAD').trim();
   git(dir, 'checkout', '-qb', 'wh/video-length');
   write(dir, REPRODUCTION_FILE, REPRODUCTION);
   git(dir, 'add', '-A');
@@ -45,7 +48,7 @@ function artefacts() {
 }
 const client = (commit, files = [REPRODUCTION_FILE]) => ({
   engine: {
-    order: async () => ({ ok: true, order: { ...order, done: [...order.done, CHECK] } }),
+    order: async () => ({ ok: true, order: { ...order, done: [...order.done, CHECK], startCommit: lastStart } }),
     reproductionFind: async () => ({ ok: true, kept: { check: CHECK, files, commit }, given: null }),
   },
 });

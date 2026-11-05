@@ -1122,6 +1122,9 @@ export async function startHelper({
   // How the engine's fetch mirror of a project is brought up to date before a run starts: the helper's own, from the
   // host with the connection's key, unless a test whose engine reads no mirror gives its own.
   refreshMirror = null,
+  // The commit a run's worktree is made from, read in the fetch mirror: the helper's own, unless a test whose engine reads no
+  // mirror gives its own: (project) -> the default branch's commit.
+  baseOfMirror = null,
   // The folder the merge queue runs in, Wheelhouse's own checkout of the project's fetch mirror (queue-folder.js),
   // unless a test whose engine reads no mirror gives its own: (project) -> { ok, folder } or { ok: false, refused }.
   queueFolder = null,
@@ -4522,6 +4525,7 @@ export async function startHelper({
   // project's context, since a step knows its run and not its project; each route finds the project from the run.
   const engineRun = engineRoutes({
     refresh: (project) => (refreshMirror ?? refreshFetchMirror)(project),
+    baseOf: (project) => (baseOfMirror ?? baseOfFetchMirror)(project),
     readerViewOf: (project, card) => engineHosts.find((h) => h.project === project)?.seals.viewFor(card) ?? null,
     briefOf: (project) => buildViews(listEvents(stateDir(project), { report: () => {} }), ownKeyOnly(), { now }).brief,
     projects: () => registeredProjects().map(({ project, record }) => ({ project, folder: record.folder })),
@@ -4768,6 +4772,14 @@ export async function startHelper({
     const fresh = await (refreshMirror ?? refreshFetchMirror)(project);
     if (!fresh?.ok) return { ok: false, refused: fresh?.refused ?? 'the fetch mirror could not be brought up to date' };
     return prepareQueueFolder({ project, remoteUrl: recordOf(project)?.remoteUrl, mirror: fetchMirrorOf(project), socket: address, run });
+  }
+  // The commit the fetch mirror holds as the project's default branch, which Archon makes a run's worktree from; the
+  // checks that guard a run's change begin it there. Read in the mirror, which no session can reach.
+  async function baseOfFetchMirror(project) {
+    const base = await (await (await contextFor(project)).adapter()).defaultBranch();
+    if (typeof base !== 'string' || !/^[A-Za-z0-9._/-]+$/.test(base) || base.includes('..')) return null;
+    const read = await local(fetchMirrorOf(project))([...NO_HOOKS, 'rev-parse', '--verify', '-q', `refs/heads/${base}^{commit}`]);
+    return read.code === 0 && FULL_SHA.test(read.stdout.trim()) ? read.stdout.trim() : null;
   }
   async function refreshFetchMirror(project) {
     const ctx = await contextFor(project);

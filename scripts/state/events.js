@@ -316,7 +316,7 @@ const PLAIN_SHAPES = {
   // `blind`: drawn for a blind card, whose first pick comes before the recommendation (scripts/delegation/blind.js).
   // `key`: the decision it asks (scripts/delegation/asked.js); `head`: its branch's head when it was asked; `saidBefore`:
   // the director's answer the last time, which the card says first.
-  question: { must: ['id', 'work', 'what', 'why', 'options', 'recommendation', 'level'], may: ['commands', 'checks', 'engine', 'joins', 'key', 'head', 'saidBefore', 'blind'] },
+  question: { must: ['id', 'work', 'what', 'why', 'options', 'recommendation', 'level'], may: ['commands', 'checks', 'engine', 'joins', 'key', 'head', 'saidBefore', 'blind', 'about'] },
   report: { must: ['work', 'outcome', 'summary', 'rulings'], may: ['pr', 'provenance'] },
   // A red-main incident (design on Archon, section 7.7) names its kind, the pull request the merge queue suspects
   // (or null) and the fix's work; the helper opens and closes it, and the director never needs to.
@@ -621,6 +621,8 @@ function checkPlain(kind, data) {
       bad('joins a card only at level 3, by another question\'s id');
     }
     if (data.key !== undefined && !(typeof data.key === 'string' && /^[0-9a-f]{64}$/.test(data.key))) bad('has a key that is not a decision\'s');
+    // The foreman marks a question about work that could not start, so a wake that finds the start refused again raises no second one.
+    if (data.about !== undefined && data.about !== 'start') bad('is about something other than a start');
     if (data.head !== undefined && !(typeof data.head === 'string' && /^[0-9a-f]{40,64}$/.test(data.head))) bad('has a head that is not a commit');
     if (data.saidBefore !== undefined && (!isText(data.saidBefore) || data.level !== 3)) bad('says what was said before only at level 3, in words');
     if (data.blind !== undefined && (data.blind !== true || data.level !== 3)) bad('is blind only at level 3');

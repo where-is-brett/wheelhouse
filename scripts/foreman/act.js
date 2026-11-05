@@ -1042,27 +1042,29 @@ const foremanNumber = (id, work) => {
 };
 
 async function ask(ctx, work, rest) {
-  const found = flagsOf(rest, ['what', 'why', 'option', 'recommend', 'level'], 'ask');
+  const found = flagsOf(rest, ['what', 'why', 'option', 'recommend', 'level', 'about'], 'ask');
   const what = needed(found, 'what');
   const why = needed(found, 'why');
   const recommendation = needed(found, 'recommend');
   const level = needed(found, 'level');
   if (!/^[1-4]$/.test(level)) refuse('--level is a decision level from 1 to 4');
+  const about = single(found, 'about');
+  if (about !== undefined && about !== 'start') refuse('--about is start, for a question about work that could not start');
   const options = optionsOf(found, recommendation);
   const views = await ctx.views();
   if (!isPlain(views.work[work]) && featureOf(views, work) === null) refuse(`There is no work named ${work} in state`);
 
   const asked = Object.values(views.questions).filter((q) => isPlain(q?.question?.data) && foremanNumber(q.question.data.id, work) !== null);
-  const body = { what, why, options, recommendation, level: Number(level) };
-  const bodyOf = (d) => ({ what: d.what, why: d.why, options: d.options, recommendation: d.recommendation, level: d.level });
+  const body = { what, why, options, recommendation, level: Number(level), ...(about === undefined ? {} : { about }) };
+  const bodyOf = (d) => ({ what: d.what, why: d.why, options: d.options, recommendation: d.recommendation, level: d.level, ...(d.about === undefined ? {} : { about: d.about }) });
   const again = asked.find((q) => q.answer === null && same(bodyOf(q.question.data), body));
   if (again) {
     ctx.say(`The director was asked this already: ${again.question.data.id}.`);
     return;
   }
-  // Work that has not started can only be asked about its start. Each wake that finds the start refused again would raise
-  // a new card, worded afresh, so one question stands for it until the director answers it.
-  const open = featureOf(views, work) === null ? asked.find((q) => q.answer === null) : undefined;
+  // Each wake that finds a start refused again would raise a new card, worded afresh, so one question about the start stands
+  // until the director answers it. A question about anything else is raised as it comes.
+  const open = about === 'start' ? asked.find((q) => q.answer === null && q.question.data.about === 'start') : undefined;
   if (open) {
     ctx.say(`The director was asked about ${work} already: ${open.question.data.id}. It waits for their answer.`);
     return;
