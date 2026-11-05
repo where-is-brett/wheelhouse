@@ -643,6 +643,7 @@ function isPartialClone(dir) {
 // A repository's git settings that the look refused (or could not read): its text is the route's refusal.
 export { LookRefusal };
 
+const HAND_BRANCH_REFUSAL = 'A branch for changes made by hand is Wheelhouse\'s own, made when the director presses Check and add them';
 export const PUSH_REFUSALS = {
   plain: 'only a plain branch name may be pushed',
   force: 'a force-push is refused',
@@ -4885,7 +4886,8 @@ export async function startHelper({
     '/runbook/restore-state': signedIn(clicked(4, doRestoreState)),
     '/runbook/contain': signedIn(clicked(5, doContain)),
     '/runbook/candidates': signedIn(doCandidates),
-    '/push': (body, ctx) => oneAtATime(`push:${body.project}`, () => doPush(body, ctx)),
+    // A by-hand branch is the helper's own, pushed only by addHandMade at the commit the director pressed on.
+    '/push': (body, ctx) => (/feature\/by-hand-/.test(String(body.refspec)) ? { ok: false, refused: HAND_BRANCH_REFUSAL } : oneAtATime(`push:${body.project}`, () => doPush(body, ctx))),
     '/pull': (body, ctx) => doPull(body, ctx),
     '/base/fetch': (body, ctx) => doFetchBase(body, ctx),
     '/merge': (body, ctx) => oneAtATime(`merge:${body.project}`, () => doMerge(body, ctx)),
@@ -5025,7 +5027,7 @@ export async function startHelper({
       const spelled = checkRefspec(body.head, defaultBranch);
       if (!spelled.allowed) return { ok: false, refused: spelled.refused };
       if (spelled.branch === STATE_BRANCH || spelled.branch === LOCK_BRANCH) return { ok: false, refused: PUSH_REFUSALS.ownRequests };
-      if (/^feature\/by-hand-/.test(spelled.branch)) return { ok: false, refused: 'A branch for changes made by hand is opened by Wheelhouse itself, on the director\'s Check and add them' };
+      if (/^feature\/by-hand-/.test(spelled.branch)) return { ok: false, refused: HAND_BRANCH_REFUSAL };
       const provenance = sessionProvenance({ project: body.project, sessionId: body.session });
       if (provenance === null) return { ok: false, refused: NO_PROVENANCE };
       if (stopped()) return STOP_REFUSAL;
@@ -5619,12 +5621,18 @@ export async function startHelper({
       // One that clashes stays as it is: the lane that carries it on brings it up to date.
       if (!updated.ok && updated.conflicts === undefined) return updated;
     }
+    // The tie names only the commit pressed on: the branch holds exactly it, or, brought up to date, the helper's own merge
+    // on top of it. Anything else on the branch (a commit pushed there first) is never tied.
+    const atHead = (await adapter.prState(number)).headSha;
+    // The helper's own update is a merge of the main version into the pressed commit: two parents, the first of them the tip.
+    const parents = parted && atHead !== tip ? String((await homeGit(project, gitRoute({ run })).call(['rev-list', '--parents', '-n', '1', atHead])).stdout).trim().split(/\s+/).slice(1) : [];
+    const held = atHead === tip || (parents.length === 2 && parents[0] === tip);
+    if (!held && typeof question === 'string') return { ok: false, refused: 'The branch for these changes holds something other than what you pressed on, so nothing was tied to it' };
     // The tie between the director's answer on this card and this change, at the commit pressed on (after any bringing up to
     // date): the only thing that lets that answer approve work carried on from the change. Work of Wheelhouse's own section
     // has no card, so no tie.
     if (typeof question === 'string') {
-      const head = (await adapter.prState(number)).headSha;
-      await checkWrite(project, makeEvent({ kind: 'by-hand', data: { question, n: number, head }, now }));
+      await checkWrite(project, makeEvent({ kind: 'by-hand', data: { question, n: number, head: atHead }, now }));
     }
     const latest = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'survey').sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0)).at(-1);
     const taken = await takeSurvey({ project, run, adapter: () => ctx.adapter(), rules: shapedSurvey({ rules: latest?.data?.rules }).rules });

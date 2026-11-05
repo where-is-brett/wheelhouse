@@ -122,3 +122,28 @@ test('a change a session opened is checked at its head, and its result reads as 
   const ci = await client.ci({ project: P, sha: head });
   assert.equal(ci.result.state, 'success', `change ${change.n} reads as checked`);
 }, { check: standInCheck }));
+
+test('a commit put on the by-hand branch before the press is never tied to the director\'s answer', { timeout: 120000 }, () => gitAloneWorld(async ({ helper, client, folder, home }) => {
+  const tip = await commitIn(folder, 'by-hand.txt');
+  const branch = `feature/by-hand-${tip.slice(0, 12)}`;
+  // The push route refuses a by-hand branch outright.
+  const refused = await client.push({ project: P, cwd: folder, refspec: branch });
+  assert.equal(refused.ok, false);
+  assert.match(refused.refused, /Check and add them/);
+  // Were an extra commit on top of the tip to reach the home's branch some other way, the press still ties nothing to it.
+  await g(folder, 'checkout', '-q', '-b', 'sneak');
+  await commitIn(folder, 'extra.txt');
+  await g(folder, 'push', '-q', home, `HEAD:refs/heads/${branch}`);
+  await g(folder, 'checkout', '-q', 'main');
+  const card = await until(async () => {
+    await helper.engine.tick();
+    return records('question').find((e) => e.data.work === 'by-hand');
+  }, { what: 'the card', within: 30000 });
+  answer(card);
+  await until(async () => {
+    await helper.engine.tick();
+    return records('note').length > 0 || localChanges({ project: P }).openChanges().length > 0;
+  }, { what: 'the helper to act on the answer', within: 30000 }).catch(() => {});
+  for (let i = 0; i < 3; i += 1) await helper.engine.tick();
+  assert.deepEqual(records('by-hand'), []);
+}, { check: standInCheck }));
