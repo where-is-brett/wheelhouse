@@ -647,3 +647,27 @@ test('sessionsTicking counts the sessions heard from lately, and none with no re
   fs.writeFileSync(file, JSON.stringify({ sent: [], lastWakeAt: null, sessions: [{ id: 'now', at: at(T0).toISOString() }, { id: 'long-gone', at: at(T0 - 24 * 60 * MIN).toISOString() }], wakes: [], cursor: null }));
   assert.equal(sessionsTicking(P, { now: () => at(T0) }), 1);
 }));
+
+test('the card for changes made by hand wakes the front desk at once, inside the gap after another wake', () => opened(async () => {
+  // Another wake just went out, so the gap holds an ordinary card back.
+  assert.notEqual((await wake([{ id: 'finished:w-1', kind: 'finished' }], { now: () => at(T0 - MIN) })).submit, null);
+  const ordinary = await wake([cardItem('c-1', 1)]);
+  assert.deepEqual(ordinary, { submit: null, sent: [] });
+  // The pane model names the question behind the by-hand card, and needsYou marks it.
+  const items = needsYou({ after: model({ cards: [{ ...card('q:q-by-hand-1', 1), kind: 'question' }] }) });
+  assert.deepEqual(items, [{ id: 'card:q:q-by-hand-1', kind: 'card', n: 1, blocking: false, atOnce: true }]);
+  assert.deepEqual(needsYou({ after: model({ cards: [card('q:q-other-1', 1)] }) }), [{ id: 'card:q:q-other-1', kind: 'card', n: 1, blocking: false }]);
+  const woke = await wake(items);
+  assert.notEqual(woke.submit, null);
+  assert.deepEqual(woke.sent, ['card:q:q-by-hand-1']);
+}));
+
+test('a change made by hand to carry on wakes at once, even away, and tells the front desk to carry it on', () => opened(async () => {
+  assert.notEqual((await wake([{ id: 'finished:w-1', kind: 'finished' }], { now: () => at(T0 - MIN) })).submit, null);
+  const items = needsYou({ after: model({ carryOn: [3] }) });
+  assert.deepEqual(items, [{ id: 'carry-on:3', kind: 'carry-on', atOnce: true }]);
+  const woke = await wake(items, { presence: { value: 'away' } });
+  assert.notEqual(woke.submit, null);
+  assert.match(woke.context, /changes made by hand to carry on/);
+  assert.match(woke.context, /carry-on <n>/);
+}));

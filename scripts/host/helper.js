@@ -643,6 +643,8 @@ function isPartialClone(dir) {
 // A repository's git settings that the look refused (or could not read): its text is the route's refusal.
 export { LookRefusal };
 
+const HAND_PUSH = Symbol('push of a branch for changes made by hand');
+const HAND_BRANCH_REFUSAL = 'A branch for changes made by hand is Wheelhouse\'s own, made when the director presses Check and add them';
 export const PUSH_REFUSALS = {
   plain: 'only a plain branch name may be pushed',
   force: 'a force-push is refused',
@@ -1626,7 +1628,7 @@ export async function startHelper({
     return answer.ok ? { ok: true } : answer;
   }
 
-  async function doPush({ project, dir, refspec, byFolder = false }, ctx) {
+  async function doPush({ project, dir, refspec, byFolder = false }, ctx, own = null) {
     if (stopped()) return STOP_REFUSAL;
     if (movingHome(project)) return { ok: false, refused: MOVING_LINE };
     const adapter = await ctx.adapter();
@@ -1635,6 +1637,8 @@ export async function startHelper({
     if (!spelled.allowed) return { ok: false, refused: spelled.refused };
     const { branch } = spelled;
     if (branch === STATE_BRANCH || branch === LOCK_BRANCH) return { ok: false, refused: PUSH_REFUSALS.ownRequests };
+    // Whatever the route, a by-hand branch is pushed only by addHandMade, which holds the module's own token.
+    if (/^feature\/by-hand-/.test(branch) && own !== HAND_PUSH) return { ok: false, refused: HAND_BRANCH_REFUSAL };
     if (bypassActive({ now })) return { ok: false, refused: BYPASS_PUSH };
     if (typeof dir !== 'string' || !path.isAbsolute(dir)) refuse('the folder to push from must be a full path');
     let isDir = false;
@@ -5025,6 +5029,7 @@ export async function startHelper({
       const spelled = checkRefspec(body.head, defaultBranch);
       if (!spelled.allowed) return { ok: false, refused: spelled.refused };
       if (spelled.branch === STATE_BRANCH || spelled.branch === LOCK_BRANCH) return { ok: false, refused: PUSH_REFUSALS.ownRequests };
+      if (/^feature\/by-hand-/.test(spelled.branch)) return { ok: false, refused: HAND_BRANCH_REFUSAL };
       const provenance = sessionProvenance({ project: body.project, sessionId: body.session });
       if (provenance === null) return { ok: false, refused: NO_PROVENANCE };
       if (stopped()) return STOP_REFUSAL;
@@ -5596,7 +5601,7 @@ export async function startHelper({
   // the same push as any other, on a branch of its own that the folder doesn't keep, and waits as a local change. Parted from
   // the main version, it is brought up to date first. The survey lists it, so it is carried on as any request is, with a
   // brief, a review and the checks.
-  async function addHandMade(project, tip, { parted }) {
+  async function addHandMade(project, tip, { parted, question = null }) {
     const ctx = await contextFor(project);
     const adapter = await ctx.adapter();
     const { folder } = recordOf(project);
@@ -5605,7 +5610,7 @@ export async function startHelper({
     await inFolder.must(['update-ref', `refs/heads/${branch}`, tip], 'The changes could not be set aside to be sent');
     let pushed;
     try {
-      pushed = await oneAtATime(`push:${project}`, () => doPush({ project, dir: folder, refspec: branch }, ctx));
+      pushed = await oneAtATime(`push:${project}`, () => doPush({ project, dir: folder, refspec: branch }, ctx, HAND_PUSH));
     } finally {
       await inFolder.call(['update-ref', '-d', `refs/heads/${branch}`]);
     }
@@ -5613,10 +5618,23 @@ export async function startHelper({
     const subjects = await inFolder.must(['log', '--format=%s', '--max-count=20', tip, '--not', `refs/remotes/${FOLDER_REMOTE}/${await defaultBranchOf(project, adapter)}`], 'The changes could not be read');
     const number = (await adapter.openRequests()).find((r) => r.branch === branch)?.number
       ?? (await adapter.openPr({ head: branch, base: await defaultBranchOf(project, adapter), title: 'Changes made by hand in the project folder', body: subjects })).number;
+    // The branch must hold exactly what was pressed on before anything is done to it, and exactly the commit the helper's own
+    // update returned (or the same one) after: whatever else is there is never tied to the director's answer.
+    let expected = tip;
+    const heldAt = async () => (await adapter.prState(number)).headSha;
+    const wrong = { ok: false, refused: 'The branch for these changes holds something other than what you pressed on, so nothing was tied to it' };
+    if (typeof question === 'string' && (await heldAt()) !== tip) return wrong;
     if (parted) {
       const updated = await doUpdateBranch({ project, number }, ctx);
       // One that clashes stays as it is: the lane that carries it on brings it up to date.
       if (!updated.ok && updated.conflicts === undefined) return updated;
+      if (updated.ok && updated.updated === true) expected = updated.head;
+    }
+    if (typeof question === 'string') {
+      if ((await heldAt()) !== expected) return wrong;
+      // The tie: the director's answer on this card, this change, and the commit checked above. Work of Wheelhouse's own
+      // section has no card, so no tie.
+      await checkWrite(project, makeEvent({ kind: 'by-hand', data: { question, n: number, head: expected }, now }));
     }
     const latest = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'survey').sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0)).at(-1);
     const taken = await takeSurvey({ project, run, adapter: () => ctx.adapter(), rules: shapedSurvey({ rules: latest?.data?.rules }).rules });
@@ -5845,10 +5863,19 @@ export async function startHelper({
         return seen.reports?.[work]?.data?.outcome === 'merged' || endedBy(seen.reports ?? {}, work, entry.work);
       },
       // The heads of the changes runs opened, as the host has them: the merge queue brings a change up to date itself.
-      openHeads: async () => (await (await adapterNow()).openRequests()).flatMap((r) => {
-        const opened = r.fork || typeof r.head !== 'string' ? null : engineRun.openedOf(project, r.number);
-        return opened ? [{ head: r.head, work: opened.work }] : [];
-      }),
+      // A change a session opened (a feature's, carried on from a hand edit or a request) has no run's record: its work is
+      // the one whose feature branch it is, so a project whose checks run here checks that head too and reports on it.
+      openHeads: async () => {
+        const open = await (await adapterNow()).openRequests();
+        const features = open.some((r) => !r.fork && typeof r.head === 'string' && !engineRun.openedOf(project, r.number)) ? views().features ?? {} : {};
+        return open.flatMap((r) => {
+          if (r.fork || typeof r.head !== 'string') return [];
+          const opened = engineRun.openedOf(project, r.number);
+          if (opened) return [{ head: r.head, work: opened.work }];
+          const work = typeof r.branch === 'string' ? Object.keys(features).find((w) => features[w]?.data?.branch === r.branch) : undefined;
+          return work === undefined ? [] : [{ head: r.head, work }];
+        });
+      },
     });
     // A project in git alone: its open changes follow their branches, whatever broke off after a push, and its folder is
     // kept in step with its home.
@@ -5860,6 +5887,7 @@ export async function startHelper({
         answerOf: (id) => views().questions?.[id]?.answer?.label ?? null,
         note: (words) => write('note', { about: 'engine', words }),
         add: (tip, how) => addHandMade(project, tip, how),
+        inFlight: async () => (await (await adapterNow()).openRequests()).some((r) => HAND_MADE_BRANCH.test(r.branch)),
       });
       let trouble = null;
       return async () => {

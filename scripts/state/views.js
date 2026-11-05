@@ -6,7 +6,7 @@ import { wheelhouseHome, profileDir, stateDir } from '../lib/paths.js';
 import { listEvents, eventHash, dataHash, CONFIRMABLE_KINDS, PIN_NAMES, READY_COLUMNS } from './events.js';
 import { ruleStands, stageOf } from '../delegation/rules.js';
 import { briefStands } from '../delegation/brief.js';
-import { answerLine, approvalLine, BLIND_LINE, chatCopy, ciPushLine, confirmLine } from './card-lines.js';
+import { answerLine, approvalLine, BLIND_LINE, CHECK_AND_ADD, chatCopy, ciPushLine, confirmLine } from './card-lines.js';
 import { joinQuestions } from './joiners.js';
 import { isLeanProject } from '../lean/project.js';
 import { verify, readEnrolled } from './signing.js';
@@ -524,6 +524,24 @@ function buildLoopViews(sorted, enrolled) {
   const goalChecks = {};
   for (const e of sorted) {
     if (e.kind === 'goal-check' && isPlainKey(e.data?.goal) && verify(e, enrolled)) (goalChecks[e.data.goal] ??= []).push({ ...e.data, at: e.at });
+  }
+  // The card for changes made by hand ties to the one change the helper opened for it (a signed `by-hand`), at the commit pressed on.
+  const hand = {};
+  for (const e of sorted) {
+    if (e.kind === 'by-hand' && verify(e, enrolled) && questions[e.data?.question] && hand[e.data.question] === undefined) hand[e.data.question] = { n: e.data.n, head: e.data.head };
+  }
+  for (const [id, tie] of Object.entries(hand)) questions[id].byHand = tie;
+  // Work carried on from such a change needs no approval of its own: the director's signed Check and add them on that card is
+  // it. Only the first work recorded for the change (its commit as pressed on, so none with later commits) is approved, and
+  // only at the document it first named: a brief changed afterwards asks the director as any work does.
+  const pressed = Object.values(questions).filter((q) => q.byHand !== undefined && q.answer?.label === CHECK_AND_ADD).map((q) => q.byHand);
+  for (const tie of pressed) {
+    const first = sorted.find((e) => e.kind === 'work' && e.data?.from?.request === tie.n && e.data.from.sha === tie.head);
+    const entry = first === undefined ? undefined : work[first.data.id];
+    const hash = first?.data.doc?.hash;
+    if (entry === undefined || entry.approved || typeof hash !== 'string' || entry.work.data.doc?.hash !== hash || entry.work.data.from?.request !== tie.n) continue;
+    entry.approved = true;
+    entry.approval = { hash, shownFirst: false, lane: entry.work.data.lane, byHand: true };
   }
   return {
     work, features, reports, questions, incidents: { open: [...open.values()] },

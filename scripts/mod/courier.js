@@ -42,6 +42,7 @@ const CURSOR_CHARS = 64 * 1024;
 // director had answered.
 const SEND = (title, saying) => `Send Claude's notification in one line, titled "${title}", saying: ${saying}`;
 const ASK = 'Then ask any new cards now, once.';
+const CARRY_ASK = 'Then carry on the change made by hand that `views survey` lists, with `carry-on <n>`, without asking an approval card. ';
 // A reminder's ask: the cards it names weren't asked at their wake (its notification wasn't sent),
 // so they are asked now, whatever the notification answers this time.
 const REMIND_ASK = (cards) => `Then ask ${cards === 1 ? 'it' : 'them'} now, once.`;
@@ -50,6 +51,8 @@ const GOAL_STOPPED = 'A goal stopped early';
 const GOAL_FINISHED = 'A goal finished';
 // The items that wake at once, inside the gap after the last wake.
 const AT_ONCE = ['stop', 'incident'];
+// The pane's id for the question behind the card for changes made by hand (scripts/host/local/folder.js).
+const HAND_CARD = /^q:q-by-hand-\d+$/;
 
 // How long after a wake its line still brings its instructions, and how many wakes are kept for it.
 export const WAKE_CONTEXT_MS = 10 * 60 * 1000;
@@ -61,7 +64,7 @@ const list = (value) => (Array.isArray(value) ? value.filter(isRecord) : []);
 // What each presence lets wake the front desk. Inside the quiet hours, as do not disturb.
 export const PRESENCE_LETS = Object.freeze({
   here: () => true,
-  away: (item) => ['stop', 'incident', 'health', 'goal-stopped'].includes(item.kind) || (['card', 'remind'].includes(item.kind) && item.blocking === true),
+  away: (item) => ['stop', 'incident', 'health', 'goal-stopped', 'carry-on'].includes(item.kind) || (['card', 'remind'].includes(item.kind) && item.blocking === true),
   dnd: (item) => AT_ONCE.includes(item.kind),
 });
 
@@ -94,7 +97,13 @@ export function needsYou({ after } = {}) {
   // A card the front desk has asked has reached the director already (a question from the build
   // is never asked until its card is made).
   for (const card of list(after.cards)) {
-    if (typeof card.id === 'string' && Number.isInteger(card.n) && card.asked !== true && card.heldBack !== true) items.push({ id: `card:${card.id}`, kind: 'card', n: card.n, blocking: card.blocking === true });
+    if (typeof card.id === 'string' && Number.isInteger(card.n) && card.asked !== true && card.heldBack !== true) {
+      // The card for changes made by hand comes just after the director's own edit, so it wakes at once, inside the gap too.
+      items.push({ id: `card:${card.id}`, kind: 'card', n: card.n, blocking: card.blocking === true, ...(HAND_CARD.test(card.id) ? { atOnce: true } : {}) });
+    }
+  }
+  for (const n of Array.isArray(after.carryOn) ? after.carryOn : []) {
+    if (Number.isInteger(n)) items.push({ id: `carry-on:${n}`, kind: 'carry-on', atOnce: true });
   }
   for (const work of Array.isArray(after.finished) ? after.finished : []) {
     if (typeof work === 'string' && work !== '') items.push({ id: `finished:${work}`, kind: 'finished' });
@@ -221,6 +230,7 @@ function whatOf(items) {
   if (count('stop') > 0) parts.push('All stop is on');
   if (count('incident') > 0) parts.push(`${plural(count('incident'), 'incident', 'incidents')} open`);
   if (count('health') > 0) parts.push(`${plural(count('health'), 'health line', 'health lines')} at its stop level`);
+  if (count('carry-on') > 0) parts.push('changes made by hand to carry on');
   if (count('finished') > 0) parts.push(`${plural(count('finished'), 'feature', 'features')} finished`);
   if (count('goal-stopped') > 0) parts.push(GOAL_STOPPED.toLowerCase());
   if (count('goal-finished') > 0) parts.push(GOAL_FINISHED.toLowerCase());
@@ -237,6 +247,7 @@ function sayingOf(items) {
   if (cards.length > 0) parts.push(waitingOnYou(cards));
   if (count('incident') > 0) parts.push(`${plural(count('incident'), 'incident', 'incidents')} open.`);
   if (count('health') > 0) parts.push(`${plural(count('health'), 'health line', 'health lines')} at its stop level.`);
+  if (count('carry-on') > 0) parts.push('Your changes made by hand are being checked.');
   if (count('finished') > 0) parts.push(`${plural(count('finished'), 'feature', 'features')} finished.`);
   if (count('goal-stopped') > 0) parts.push(`${GOAL_STOPPED}.`);
   if (count('goal-finished') > 0) parts.push(`${GOAL_FINISHED}.`);
@@ -323,13 +334,14 @@ export async function courierWake({ project, session, items, presence, quiet, id
     const last = kept.lastWakeAt === null ? Number.NaN : Date.parse(kept.lastWakeAt);
     const sinceLast = t - last;
     const inGap = Number.isFinite(sinceLast) && sinceLast >= 0 && sinceLast < COURIER_GAP_MS;
-    if (waking.length === 0 || idle !== true || (inGap && !waking.some((i) => AT_ONCE.includes(i.kind)))) {
+    if (waking.length === 0 || idle !== true || (inGap && !waking.some((i) => AT_ONCE.includes(i.kind) || i.atOnce === true))) {
       // Only that this session ticked is kept.
       mark([], kept.lastWakeAt);
       return NOTHING;
     }
     const reminding = waking.some((i) => i.kind === 'remind');
-    const ask = reminding ? REMIND_ASK([...numbersOf(waking, 'card'), ...numbersOf(waking, 'remind')].length) : ASK;
+    const carrying = waking.some((i) => i.kind === 'carry-on');
+    const ask = `${carrying ? CARRY_ASK : ''}${reminding ? REMIND_ASK([...numbersOf(waking, 'card'), ...numbersOf(waking, 'remind')].length) : ASK}`;
     const title = stopped || waking.some((i) => i.kind === 'stop') ? NOTIFICATION_TITLE_STOP : NOTIFICATION_TITLE;
     const line = lineOf(waking);
     const context = `${LEADS.courier} ${whatOf(waking)}. ${SEND(title, sayingOf(waking))} ${ask}`;

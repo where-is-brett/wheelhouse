@@ -75,6 +75,13 @@ test('changes made by hand reach a local change by the director\'s click, and th
   const carried = await client.survey.carryOn({ project: P, number: change.n });
   assert.equal(carried.ok, true, carried.refused);
   assert.equal(carried.from.sha, tip);
+  // The helper tied the director's answer to this change, at the commit pressed on.
+  const tie = records('by-hand').find((e) => e.data.question === card.data.id);
+  assert.deepEqual([tie.data.n, tie.data.head], [change.n, tip]);
+  // An agent can't open a change on a by-hand branch itself.
+  const refused = await client.openPr({ project: P, head: 'feature/by-hand-abc', title: 'x', body: 'x', session: 'nobody' });
+  assert.equal(refused.ok, false);
+  assert.match(refused.refused, /Check and add them/);
   assert.deepEqual(tools, []);
 }, { check: standInCheck }));
 
@@ -96,4 +103,68 @@ test('parted work is brought up to date with the main version', { timeout: 12000
   }, { what: 'the change brought up to date', within: 30000 });
   assert.equal(fs.existsSync(path.join(folder, 'by-hand.txt')), true);
   assert.notEqual(change.head, moved);
+}, { check: standInCheck }));
+
+test('a change a session opened is checked at its head, and its result reads as the change\'s checks', { timeout: 120000 }, () => gitAloneWorld(async ({ helper, client, home, worktreeWith }) => {
+  const { worktree, head } = await worktreeWith('feature/card-9', 'export const price = () => 9;\n');
+  await g(worktree, 'push', '-q', home, 'HEAD:refs/heads/feature/card-9');
+  const change = await localChanges({ project: P }).openChange({ branch: 'feature/card-9', base: 'main', title: 'A change', body: 'A session opened it.', head });
+  // The feature's record names the branch, as a session's feature does; no run opened the change.
+  const feature = makeEvent({ kind: 'feature', data: { work: 'card-9', step: 'building', branch: 'feature/card-9' } });
+  const file = path.join(stateDir(P), eventPath(feature));
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(feature, null, 2)}\n`);
+  const check = await until(async () => {
+    await helper.engine.tick();
+    return records('check').find((e) => e.data.commit === head);
+  }, { what: 'a check at the session\'s head', within: 30000 });
+  assert.equal(check.data.result, 'passed');
+  const ci = await client.ci({ project: P, sha: head });
+  assert.equal(ci.result.state, 'success', `change ${change.n} reads as checked`);
+}, { check: standInCheck }));
+
+test('a commit put on the by-hand branch before the press is never tied to the director\'s answer', { timeout: 120000 }, () => gitAloneWorld(async ({ helper, client, folder, home }) => {
+  const tip = await commitIn(folder, 'by-hand.txt');
+  const branch = `feature/by-hand-${tip.slice(0, 12)}`;
+  // The push route refuses a by-hand branch outright.
+  const refused = await client.push({ project: P, cwd: folder, refspec: branch });
+  assert.equal(refused.ok, false);
+  assert.match(refused.refused, /Check and add them/);
+  // Were an extra commit on top of the tip to reach the home's branch some other way, the press still ties nothing to it.
+  await g(folder, 'checkout', '-q', '-b', 'sneak');
+  await commitIn(folder, 'extra.txt');
+  await g(folder, 'push', '-q', home, `HEAD:refs/heads/${branch}`);
+  await g(folder, 'checkout', '-q', 'main');
+  const card = await until(async () => {
+    await helper.engine.tick();
+    return records('question').find((e) => e.data.work === 'by-hand');
+  }, { what: 'the card', within: 30000 });
+  answer(card);
+  await until(async () => {
+    await helper.engine.tick();
+    return records('note').length > 0 || localChanges({ project: P }).openChanges().length > 0;
+  }, { what: 'the helper to act on the answer', within: 30000 }).catch(() => {});
+  for (let i = 0; i < 3; i += 1) await helper.engine.tick();
+  assert.deepEqual(records('by-hand'), []);
+}, { check: standInCheck }));
+
+test('a merge holding its own edits put on the by-hand branch of parted work is never tied to the answer', { timeout: 120000 }, () => gitAloneWorld(async ({ helper, folder, home, worktreeWith }) => {
+  const { worktree } = await worktreeWith('wh/card-3', 'export const price = () => 1;\n');
+  await g(worktree, 'push', '-q', home, 'HEAD:refs/heads/main');
+  const moved = await headIn(home, 'refs/heads/main');
+  const tip = await commitIn(folder, 'by-hand.txt');
+  // A merge [tip, main] that also holds an edit of its own, reaching the home's by-hand branch some way other than the push route.
+  await g(folder, 'checkout', '-q', '-b', 'sneak');
+  await g(folder, 'fetch', '-q', home, 'main');
+  await g(folder, 'merge', '-q', '--no-ff', '--no-edit', moved);
+  await commitIn(folder, 'extra.txt');
+  await g(folder, 'push', '-q', home, `HEAD:refs/heads/feature/by-hand-${tip.slice(0, 12)}`);
+  await g(folder, 'checkout', '-q', 'main');
+  const card = await until(async () => {
+    await helper.engine.tick();
+    return records('question').find((e) => e.data.work === 'by-hand');
+  }, { what: 'the card', within: 30000 });
+  answer(card);
+  for (let i = 0; i < 4; i += 1) await helper.engine.tick();
+  assert.deepEqual(records('by-hand'), []);
 }, { check: standInCheck }));

@@ -178,15 +178,18 @@ async function commitOwnSection({ folder, branch, git }) {
   return making.ok(['commit', '--quiet', '--only', '--no-verify', '--no-gpg-sign', '-m', 'Update Wheelhouse\'s section of CLAUDE.md', '--', MANAGED_FILE]);
 }
 
-// The card for work the folder holds and the home doesn't (spec 5.4).
-export function handMadeCard() {
+// The card for work the folder holds and the home doesn't (spec 5.4). `more`: an earlier change made by hand is still open,
+// so these are further changes on top of it, and the card says so.
+export function handMadeCard({ more = false } = {}) {
   return {
     work: HAND_MADE_WORK,
     level: 3,
-    what: 'Changes were made by hand in your project folder. They aren\'t part of the main version yet.',
+    what: more
+      ? 'More changes were made by hand in your project folder, while the earlier ones are still being checked. These aren\'t part of the main version yet.'
+      : 'Changes were made by hand in your project folder. They aren\'t part of the main version yet.',
     why: 'Nothing joins the main version without a review, and whether these should join it is yours to decide, at level 3.',
     options: [
-      { label: CHECK_AND_ADD, says: 'They go through the same review and checks as any other work, and join the main version if they pass.' },
+      { label: CHECK_AND_ADD, says: more ? 'They go through the same review and checks as the earlier ones, as a change of their own, and join the main version if they pass.' : 'They go through the same review and checks as any other work, and join the main version if they pass.' },
       { label: LEAVE_THEM_OUT, says: 'They stay in your folder as they are, and you won\'t be asked about them again.' },
     ],
     recommendation: CHECK_AND_ADD,
@@ -235,8 +238,8 @@ function keep(file, kept) {
 
 // folderWatch({ project, folder, branchOf, git, file, card, answerOf, note, add, stopped }) -> { tick }. `branchOf()` gives the
 // default branch, `file` keeps what has been asked and said, `card(data)` raises a question, `answerOf(id)` the label chosen,
-// `note(words)` writes to the Logbook, and `add(tip, { parted })` opens the local change, { ok } or { refused }.
-export function folderWatch({ project, folder, branchOf, git = gitRoute(), file, card, answerOf, note, add, stopped = () => false }) {
+// `note(words)` writes to the Logbook, and `add(tip, { parted })` opens the local change, { ok } or { refused }, and `inFlight()` says whether an earlier change made by hand is still open.
+export function folderWatch({ project, folder, branchOf, git = gitRoute(), file, card, answerOf, note, add, inFlight = async () => false, stopped = () => false }) {
   async function answers(found, kept) {
     for (const [tip, entry] of Object.entries(kept.tips)) {
       if (entry.own === true) {
@@ -261,7 +264,7 @@ export function folderWatch({ project, folder, branchOf, git = gitRoute(), file,
           continue;
         }
         const made = await commitUncommitted({ folder, git });
-        const got = made === null ? { ok: true } : await add(made, { parted: false });
+        const got = made === null ? { ok: true } : await add(made, { parted: false, question: entry.id });
         if (got?.ok === true) entry.done = true;
         else if (kept.failed !== tip) {
           kept.failed = tip;
@@ -271,7 +274,7 @@ export function folderWatch({ project, folder, branchOf, git = gitRoute(), file,
       }
       // Anything the folder holds now goes, and an older card's press means the same thing.
       const waiting = found.state === 'folder-ahead' || found.state === 'parted';
-      const got = waiting ? await add(found.tip, { parted: found.state === 'parted' }) : { ok: true };
+      const got = waiting ? await add(found.tip, { parted: found.state === 'parted', question: entry.id }) : { ok: true };
       if (got?.ok === true) {
         entry.done = true;
         if (waiting && kept.tips[found.tip]) kept.tips[found.tip].done = true;
@@ -309,7 +312,7 @@ export function folderWatch({ project, folder, branchOf, git = gitRoute(), file,
       }
       kept.cards += 1;
       const id = `q-${HAND_MADE_WORK}-${kept.cards}`;
-      await card({ id, ...handMadeCard() });
+      await card({ id, ...handMadeCard({ more: await inFlight().catch(() => false) }) });
       kept.tips[found.tip] = { id, done: false };
     } else if (found.state === 'same') {
       // A tracked file edited by hand and not committed: the same question, once the edit has stood for two ticks (a write
@@ -321,7 +324,7 @@ export function folderWatch({ project, folder, branchOf, git = gitRoute(), file,
         else {
           kept.cards += 1;
           const id = `q-${HAND_MADE_WORK}-${kept.cards}`;
-          await card({ id, ...handMadeCard() });
+          await card({ id, ...handMadeCard({ more: await inFlight().catch(() => false) }) });
           kept.tips[edit] = { id, done: false, edit: true };
         }
       }

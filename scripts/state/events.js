@@ -42,13 +42,15 @@ export const PLAIN_KINDS = [
 // reads a run that happened, never a status anyone could post. `checks-state` says whether the project's tests count, which
 // lets merges pass with none, and `checks-found` is the command the finder found, which a check runs: both the helper's.
 // `change` is a local change as it stands (spec 7.1), the helper's too: it names the head the local queue merges.
+// `by-hand` ties the director's answer on the card for changes made by hand to the one local change the helper opened for it,
+// at the commit that was pressed on: signed, so only the helper's own tie lets that answer approve work (scripts/state/views.js).
 // `shadow` is a line of a card's seal (delegated decisions design, section 12), the helper's too: signed, so what it says
 // can't be rewritten once the answer is known, and read by nothing but scripts/delegation/.
 // `match` is what came of the reader saying a card asks what another did (delegated decisions design, section 7.4), the
 // helper's too: it stands a question behind another's card, which no build's own record can, so only one signed here counts.
 // `goal-check` is the result of a goal's checks on the main line (unattended goals design, section 4.1), the helper's too:
 // read from the engine's record of a run with no model step, and never a step's word.
-export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file', 'usage-card', 'premium-card', 'premium-check', 'premium-failed', 'provenance', 'check', 'checks-state', 'checks-found', 'change', 'shadow', 'match', 'goal-check', 'goal-card'];
+export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file', 'usage-card', 'premium-card', 'premium-check', 'premium-failed', 'provenance', 'check', 'checks-state', 'checks-found', 'change', 'by-hand', 'shadow', 'match', 'goal-check', 'goal-card'];
 // Plain kinds only the helper itself records, from what it read itself: no caller writes one
 // through /state/write. The survey (design section 15, ruling A1) is taken and recorded in the
 // helper, when setup finishes and when it is taken again. A column-ready record (design section 14.6) is the
@@ -65,7 +67,7 @@ export const RED_MAIN_OWN = 'only the helper records a red main line\'s incident
 // `rule` is a rule proposed from an answered card (delegated decisions design, section 11.1): the helper composes it from
 // what it read itself, and it means nothing until the director's signed click confirms that very record.
 // `goal-end` is the helper's own record of how a goal ended and what it spent: it ends the goal, so no caller writes one.
-export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'shadow', 'match', 'rule', 'slept', 'goal-end', 'goal-check', 'goal-card'];
+export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'by-hand', 'shadow', 'match', 'rule', 'slept', 'goal-end', 'goal-check', 'goal-card'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 
 const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main', 'safekeeping', 'send-back', 'start-goal', 'approve-release', 'update-helper-answer', 'update-click'];
@@ -894,6 +896,16 @@ function checkChange(data) {
   if (data.state === 'merged' ? !(typeof data.mergeCommit === 'string' && FULL_COMMIT.test(data.mergeCommit)) : data.mergeCommit !== null) bad('names a merge only once merged');
 }
 
+// The change the helper opened for the card on changes made by hand: the card's question, the change's number and the commit
+// pressed on.
+function checkByHand(data) {
+  const bad = (why) => { throw new Error(`A by-hand event ${why}`); };
+  if (!isPlain(data) || Object.keys(data).sort().join() !== 'head,n,question') bad('needs its question, its change and its commit, and no others');
+  if (typeof data.question !== 'string' || !/^q-by-hand-[1-9][0-9]*$/.test(data.question)) bad('needs the by-hand card\'s question');
+  if (!Number.isInteger(data.n) || data.n < 1) bad('needs the change\'s number');
+  if (typeof data.head !== 'string' || !FULL_COMMIT.test(data.head)) bad('needs the whole commit');
+}
+
 // The work a reader's tokens go under. No piece of work may have this name, so none is taken for the reader.
 export const READER_WORK = 'delegation-reader';
 
@@ -969,6 +981,7 @@ export function makeEvent({ kind, data, now = () => new Date() }) {
   if (kind === 'checks-state') checkChecksState(data);
   if (kind === 'checks-found') checkChecksFound(data);
   if (kind === 'change') checkChange(data);
+  if (kind === 'by-hand') checkByHand(data);
   if (kind === 'shadow') checkShadow(data);
   if (kind === 'match') checkMatch(data);
   if (Object.hasOwn(PLAIN_SHAPES, kind)) checkPlain(kind, data);
@@ -1017,6 +1030,7 @@ export function checkRecord(event, { enrolled, held = [], computer = computerId(
   if (event.kind === 'provenance') return 'only the helper records what built a pull request';
   if (event.kind === 'check' || event.kind === 'checks-state' || event.kind === 'checks-found') return 'only the helper records a check';
   if (event.kind === 'change') return 'only the helper records a local change';
+  if (event.kind === 'by-hand') return 'only the helper records the change it opened for changes made by hand';
   if (event.kind === 'shadow') return 'only the helper records a seal';
   if (event.kind === 'match') return 'only the helper records a close match';
   if (event.kind === 'goal-check') return 'only the helper records a goal\'s checks';

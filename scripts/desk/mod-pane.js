@@ -326,6 +326,16 @@ export async function paneModel({
     .map(([work]) => work)
     .sort(), []);
 
+  // The changes made by hand that the director said to check and add, which no work carries on yet: the courier wakes the
+  // front desk for each, so it is carried on at once and not at the next visit.
+  const carryOn = part('list of hand changes to carry on', () => {
+    // Only a change the helper tied to the director's own answer on the by-hand card counts, never one named by its title.
+    const taken = new Set(Object.values(isRecord(views?.work) ? views.work : {}).map((w) => w?.work?.data?.from?.request).filter(Number.isInteger));
+    return Object.values(isRecord(views?.questions) ? views.questions : {})
+      .filter((q) => isRecord(q) && q.answer?.label === 'Check and add them' && Number.isInteger(q.byHand?.n) && !taken.has(q.byHand.n))
+      .map((q) => q.byHand.n);
+  }, []);
+
   // The open incidents' ids, for the courier. No incidents view means none is open.
   const incidents = part('list of open incidents', () => {
     if (views?.incidents === undefined) return [];
@@ -357,6 +367,7 @@ export async function paneModel({
     updated: clockTime(clock === null ? null : clock.toISOString(), timeZone),
     usage: typeof usage === 'string' ? usage : null,
     finished,
+    carryOn,
     goalEnd: attempt(() => goalEndOf(views), null),
     incidents,
     watcher: null,
