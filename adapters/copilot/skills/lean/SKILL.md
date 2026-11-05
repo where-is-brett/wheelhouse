@@ -239,7 +239,7 @@ Commit it alone on the main version, as The record says; while a feature is in h
 
 `{"at":"2026-10-23T02:05:00Z","kind":"ruling","card":"exports-are-csv","choice":"Confirm","commit":null,"proof":"chat-click","by":"chat","tier":"lean","text":"Every export is a CSV file, never Excel."}`
 
-**Change: Lean's shaping questions.** The intake's route 9 starts a brainstorming skill, which isn't installed with Lean's kit. Ask these in its place, one at a time: what it does, who sees it, and what done means. The answers set the size, and the size only goes up:
+**Change: Lean's shaping questions.** The intake's route 9 starts a brainstorming skill, which isn't installed with Lean's kit. Ask these in its place: what it does, who sees it, and what done means. First read the request for each of the three, and ask only the ones it leaves open, one at a time. A request that says what it does, or who it is for, has answered that question: take the answer as written, say it back in the brief, and don't ask it again. If the request answers all three, ask none and go straight to the size. The answers set the size, and the size only goes up:
 
 - **Quick** (one small step, with no choice users would see): a short brief, then Building.
 - **Small** (a change users would see, or one that leaves a choice): the brief, confirmed by its card (Building, step 3).

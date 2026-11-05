@@ -17,3 +17,5 @@ The Wheelhouse playbooks name your tools in general words. In Copilot:
 - Keep your task list in the `sql` tool's `todos` table.
 
 In VS Code's Local harness Wheelhouse doesn't run: say so and ask the director to switch the chat to Copilot.
+
+In a project that has both `.wheelhouse/record` and `wheelhouse/board.md`, Wheelhouse is set up: load the skill `wheelhouse-lean` and follow its Intake at Lean before you read or change any file, whatever the director asks.
