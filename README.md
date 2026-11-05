@@ -47,13 +47,14 @@ You need **Node.js** (a free program; [download the version marked LTS](https://
 3. **Install Wheelhouse.** Paste this message into the session and press Enter:
 
    ```text
-   Please run these two commands in this folder, one after the other, and tell me when both have finished. First run `claude plugin marketplace list`: if wheelhouse is already listed, skip the first command and run only the second.
+   Please run these two commands in this folder, one after the other. First run `claude plugin marketplace list`: if wheelhouse is already listed, skip the first command and run only the second.
    claude plugin marketplace add "where-is-brett/wheelhouse#v0.2.10" --scope project
    claude plugin install wheelhouse@wheelhouse --scope project
+   When both have finished, say only this, and do nothing else in this chat: "Wheelhouse is installed. Open a new chat on this folder now, and setup starts there."
    ```
 
    Claude asks before it runs each one: allow it. The first adds Wheelhouse's own catalogue, at release `v0.2.10` (a Mac that already has it, from an earlier setup or install, lists it, and the first command is skipped: adding it again under another address is refused); the second installs Wheelhouse from that catalogue, for this project only. Both name Wheelhouse's catalogue, so nothing else with a similar name can be installed by mistake. (A later release, from Wheelhouse's [releases page](https://github.com/where-is-brett/wheelhouse/releases), goes in place of `v0.2.10`.) If you prefer a terminal, the same two commands work there, run in the product's folder.
-4. **Start a new session on the same folder.** Wheelhouse loads, and setup starts.
+4. **Open a new chat on the same folder now.** This is the only restart: this chat started before Wheelhouse was installed, so it never loads it, and a new one does. Wheelhouse loads there and setup starts by itself. Don't ask this chat for anything else first.
 5. **If the commands don't work,** use the plugin browser instead: click the **+** button beside the message box, then **Add plugins** (or **Plugins**, then **Browse plugins**). Add the catalogue `where-is-brett/wheelhouse`, choose **Wheelhouse** from it, choose **this project** when asked where, then start a new session on the folder.
 
 Setup goes one step at a time. Each step shows you a card listing exactly what it will change, and nothing changes until you click **Go ahead**. You can stop at any card and carry on later: setup picks up where it left off. To take Wheelhouse out of a project again, type `/wheelhouse:uninstall` in a session on it.
