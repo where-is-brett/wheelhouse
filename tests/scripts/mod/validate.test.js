@@ -25,7 +25,7 @@ const ARGV = "['node', `${$.plugin.root}/scripts/hooks/node-floor.cjs`, `${$.plu
 const CLOSE_ON = "on('tool.call', { tool: 'AskUserQuestion' }, ($, e, next) => closeWhenAnswered($, e, next)).catch(($, e, next) => next(e))";
 const CLOSE_HEAD = "import type { EngineInterface } from 'claude-code'\nimport { CLOSED_IN_PANEL } from './numbers'\ntype Next = (e: any) => Promise<unknown>\nexport async function closeWhenAnswered($: EngineInterface, e: { questions?: unknown }, next: Next): Promise<unknown> {";
 const CLOSE_TS = `${CLOSE_HEAD}\n  const running = next(e)\n  return { deny: CLOSED_IN_PANEL }\n}`;
-const NUMBERS_TS = "export const CLOSED_IN_PANEL = 'Answered in the panel; this question is closed'";
+const NUMBERS_TS = "export const CLOSED_IN_PANEL = 'Answered elsewhere; this question is closed'";
 const SOURCES = {
   'hooks/register.ts': `import { closeWhenAnswered } from './mod/close'\nexport const register = (on) => { on("session.start", async ($, e, next) => { await ask($, {}); return next(e) }); ${CLOSE_ON} }`,
   'hooks/mod/ask.ts': `export const ask = async ($, request) => $.process.run(${ARGV}, { stdin: JSON.stringify(request) })`,

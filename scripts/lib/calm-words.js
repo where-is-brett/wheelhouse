@@ -31,7 +31,7 @@ export const SENT_TO_FRONT_DESK = 'Sent to the First Mate. A new proposal will f
 export const OPEN_IN_CHAT = 'Also open in the chat.';
 export const OPEN_IN_CHAT_CLOSES = 'Counted. The copy in the chat closes by itself.';
 // The line the mod's one question-closing hook (hooks/mod/close.ts) refuses a chat question with once it is answered elsewhere.
-export const CLOSED_IN_PANEL = 'Answered in the panel; this question is closed';
+export const CLOSED_IN_PANEL = 'Answered elsewhere; this question is closed';
 export const OPEN_IN_CHAT_TOAST = 'Counted. The copy in the chat now changes nothing: pick anything or press Skip.';
 // The note for a suggestion made at a time: a new proposal is coming and nothing goes live meanwhile.
 export const suggestedAt = (hhmm) => `You suggested a change at ${hhmm}. A new proposal is on its way, and nothing goes live meanwhile.`;

@@ -567,3 +567,21 @@ test('the playbook says what to do with a panel line, the since answers and the 
   assert.doesNotMatch(playbook, /Copilot/);
   assert.match(read('skills/setup/SKILL.md'), /The panel offer, last\./);
 });
+
+test('the playbook never models an answer as given in the panel, and names the place only as the record gives it', () => {
+  const rule = playbook.match(/\*\*An answer given elsewhere is a fact:\*\*[^\n]*/)[0];
+  assert.doesNotMatch(rule, /you approved[^"]*in the panel/i);
+  assert.match(rule, /Name the place only as the line gives it/);
+  assert.match(rule, /never the panel unless the line says so/);
+});
+
+test('the playbook does not read the closed-question line as a panel answer', () => {
+  assert.match(playbook, /a terminal has no panel\. The line says only that the card was answered/);
+  assert.doesNotMatch(playbook, /the panel may have answered it/);
+});
+
+test('the playbook gives the approve-work card plain words and says why a visible change gets a second card', () => {
+  assert.match(playbook, /An `approve-work` card's words are for a person who doesn't write code/);
+  assert.match(playbook, /Wheelhouse builds it and tests it, then shows you the result/);
+  assert.match(playbook, /this one starts the building, and the later "Put pull request #n live\?" card/);
+});
