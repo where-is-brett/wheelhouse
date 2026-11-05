@@ -991,3 +991,42 @@ test('a project in git alone has no lock branch: take, touch, take-over and read
     assert.equal(repo.host.refusedCount(), 0);
   } finally { await c.close(); await repo.cleanup(); }
 });
+
+const ASKED = (id, over = {}) => ({ id, work: 'mine', what: 'What?', why: 'Why', options: [{ label: 'Yes', says: 'Do it' }, { label: 'No', says: 'Leave it' }], recommendation: 'Yes', level: 3, ...over });
+
+test('/state/write refuses a question under an id the state already holds, unless it is the same question', async () => {
+  const repo = await privateRepo();
+  const c = await computer(repo);
+  try {
+    await c.as(async () => {
+      const first = await c.client.state.write({ project: PROJECT, kind: 'question', data: ASKED('q-mine-1') });
+      assert.equal(first.ok, true, first.refused);
+      const reworded = await c.client.state.write({ project: PROJECT, kind: 'question', data: ASKED('q-mine-1', { options: [{ label: 'Yes', says: 'Leave the edits out' }, { label: 'No', says: 'Leave it' }] }) });
+      assert.equal(reworded.ok, false);
+      assert.match(reworded.refused, /already holds a question with that id/);
+      const same = await c.client.state.write({ project: PROJECT, kind: 'question', data: ASKED('q-mine-1') });
+      assert.equal(same.ok, true, 'the same question again is not a change');
+      const other = await c.client.state.write({ project: PROJECT, kind: 'question', data: ASKED('q-mine-2') });
+      assert.equal(other.ok, true, other.refused);
+    });
+  } finally { await c.close(); await repo.cleanup(); }
+});
+
+test('/state/write refuses a question that carries the helper\'s own fields', async () => {
+  const repo = await privateRepo();
+  const c = await computer(repo);
+  try {
+    await c.as(async () => {
+      const cases = {
+        engine: { runId: 'r', ask: 'a', options: { Yes: 'go' } },
+        key: 'a'.repeat(64),
+        head: 'b'.repeat(40),
+      };
+      for (const [field, value] of Object.entries(cases)) {
+        const r = await c.client.state.write({ project: PROJECT, kind: 'question', data: ASKED('q-mine-5', { [field]: value }) });
+        assert.equal(r.ok, false, field);
+        assert.match(r.refused, new RegExp(field));
+      }
+    });
+  } finally { await c.close(); await repo.cleanup(); }
+});

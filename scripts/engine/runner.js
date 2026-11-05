@@ -693,7 +693,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       ...(blind ? { blind: true } : {}),
     });
     if (blind) state.blindDay = day;
-    state.questions[id] = { runId, ask, work, ...(typeof joins === 'string' ? { joins, options: q.engine.options } : {}) };
+    state.questions[id] = { runId, ask, work, options: q.engine.options, ...(typeof joins === 'string' ? { joins } : {}) };
     // A joiner raises no card, so it has none to seal.
     if (typeof joins !== 'string') sealCard({ id, kind: cardKind(ask), work, runId, level: q.level, ...placeOf(ask) });
   }
@@ -734,7 +734,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       const answer = views.questions?.[id]?.answer;
       if (!isPlain(answer) || typeof answer.label !== 'string') continue;
       // A joiner signs nothing of its own, so its answer goes where it was routed, whatever its record says now.
-      const engineRef = kept.joins ? { ask: kept.ask?.id, options: kept.options } : views.questions[id].question?.data?.engine ?? { ask: kept.ask?.id, options: {} };
+      const engineRef = kept.joins || isPlain(kept.options) ? { ask: kept.ask?.id, options: kept.options } : views.questions[id].question?.data?.engine ?? { ask: kept.ask?.id, options: {} };
       answered.push({ key: id, kept, answer: answerFor(engineRef, answer.label, answer.words) });
     }
     for (const [key, kept] of Object.entries(state.approvals)) {

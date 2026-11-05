@@ -1909,6 +1909,14 @@ export async function startHelper({
       const kept = pendingRecords(project);
       if (idsOf(kept).has(id) && !keptWrite(kept, { kind, data, id })) refuse('a record waiting to be sent from this computer has that id');
     }
+    // A question's id is the card's: one written again under the same id would change a live card's words or options under
+    // the director's eyes. The helper's own writes (the engine's cards) don't come this way, and neither may a caller name
+    // the fields that say where an answer goes.
+    if (kind === 'question') {
+      for (const field of ['engine', 'key', 'head']) if (Object.hasOwn(data, field)) refuse(`a question written here can't carry ${field}: only the helper's own cards do`);
+      const held = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'question' && e.data?.id === data.id);
+      if (held.length > 0 && !held.some((e) => dataHash(e.data) === dataHash(data))) refuse('the state already holds a question with that id: ask a new one under a new id');
+    }
     if (kind === 'setting') {
       try { checkSetting(data.key, data.value, data.until); } catch (error) { refuse(error.message); }
       // The premium model is allowed only by a click on its own card (design section 14.6), whose setting comes with

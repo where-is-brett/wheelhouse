@@ -845,13 +845,24 @@ async function question(ctx, work, rest) {
     id: q.id, work, what: q.what, why: q.why, options: q.options, recommendation: q.recommendation, level: q.level,
     ...(q.kind === 'build-command' ? { commands: q.commands } : {}),
   };
+  // The question as it stands now: the one recorded under this id, or the latest that replaced it.
+  const kept = Object.values(views.questions ?? {}).filter((x) => x?.question?.data?.id === q.id || x?.question?.data?.replaces === q.id)
+    .sort((a, b) => String(a.question.at).localeCompare(String(b.question.at))).at(-1);
+  const { replaces, ...keptBody } = kept?.question?.data ?? {};
   let at;
-  if (same(views.questions[q.id]?.question?.data, data)) {
+  if (kept !== undefined && same(keptBody, kept.question.data.id === q.id ? data : { ...data, id: kept.question.data.id })) {
     ctx.say(`Question ${q.id} is recorded already.`);
-    at = views.questions[q.id].question.at;
-  } else {
+    at = kept.question.at;
+  } else if (kept === undefined) {
     await ctx.write('question', data);
     ctx.say(`Recorded question ${q.id} for the director.`);
+    at = ctx.now().toISOString();
+  } else {
+    // The words changed since it was recorded. A question's id is its card's, so the new words go under a new id, and the
+    // earlier question is replaced in the views: the director meets one card, with the words now written.
+    const n = Math.max(FOREMAN_QUESTIONS, ...Object.values(views.questions).map((x) => foremanNumber(x.question.data.id, work))) + 1;
+    await ctx.write('question', { ...data, id: `q-${work}-${n}`, replaces: q.id });
+    ctx.say(`Recorded question ${q.id} again, with its new words, for the director.`);
     at = ctx.now().toISOString();
   }
   await offerUnattended(ctx, views, work, { ...data, at });

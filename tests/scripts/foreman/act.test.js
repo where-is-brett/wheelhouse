@@ -1065,6 +1065,23 @@ test('question copies the feature\'s question line into state unchanged, once', 
   assert.equal(fake.writes.length, 1);
 }));
 
+test('a question whose words changed is recorded under a fresh id that replaces the first, never under the same id again', () => withHome(async () => {
+  const { views } = await questionScene();
+  const { kind, ...asked } = QUESTION;
+  // The state holds the question as it was first recorded; the feature's file now words it differently.
+  views.questions = { 'q-mine-1': { question: { key: 'q-mine-1', at: '2026-10-18T01:00:00.000Z', data: { ...asked, work: 'mine', what: 'Which date format, first?' } }, answer: null } };
+  const fake = fakeClient({ views });
+  const r = await act(['question', 'mine', 'q-mine-1'], { client: fake.client });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(fake.writes.length, 1);
+  const data = fake.writes[0].data;
+  assert.equal(fake.writes[0].kind, 'question');
+  assert.notEqual(data.id, 'q-mine-1', 'never the same id again');
+  assert.equal(data.id, `q-mine-${FOREMAN_QUESTIONS + 1}`);
+  assert.equal(data.replaces, 'q-mine-1');
+  assert.equal(data.what, QUESTION.what);
+}));
+
 test('question records a build-command question with the commands it asks for', () => withHome(async () => {
   const checkout = await project();
   const views = emptyViews();

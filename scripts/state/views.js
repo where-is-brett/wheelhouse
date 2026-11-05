@@ -541,6 +541,21 @@ function buildLoopViews(sorted, enrolled) {
     if (e.kind === 'by-hand' && verify(e, enrolled) && questions[e.data?.question] && hand[e.data.question] === undefined) hand[e.data.question] = { n: e.data.n, head: e.data.head };
   }
   for (const [id, tie] of Object.entries(hand)) questions[id].byHand = tie;
+  // A question recorded again, changed, names the first id it was recorded under (`replaces`): the latest of them stands, and the
+  // earlier ones go from the views so the director meets one card, not two. Only a plain question that nobody has answered is
+  // replaced; an engine question, one a click is on, or one tied to a change by hand stays as it was recorded.
+  const lastOf = {};
+  for (const e of sorted) {
+    if (e.kind === 'question' && typeof e.data?.replaces === 'string' && isPlainKey(e.data.id)) lastOf[e.data.replaces] = e.data.id;
+  }
+  for (const [root, last] of Object.entries(lastOf)) {
+    for (const id of Object.keys(questions)) {
+      const data = questions[id].question.data;
+      if (id === last || (id !== root && data?.replaces !== root)) continue;
+      if (questions[id].answer !== null || questions[id].byHand !== undefined || data?.engine !== undefined || data?.key !== undefined) continue;
+      delete questions[id];
+    }
+  }
   // Work carried on from such a change needs no approval of its own: the director's signed Check and add them on that card is
   // it. Only the first work recorded for the change (its commit as pressed on, so none with later commits) is approved, and
   // only at the document it first named: a brief changed afterwards asks the director as any work does.

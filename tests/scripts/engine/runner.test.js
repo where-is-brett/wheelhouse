@@ -98,6 +98,21 @@ test('the engine is answered only after the signed record is written', async () 
   } finally { t.cleanup(); }
 });
 
+test('an answer goes by the mapping kept when the question was asked, not by a later record of the same id', async () => {
+  const t = setUp();
+  try {
+    const { runId } = await t.ask();
+    const id = t.writes.find((w) => w.kind === 'question').data.id;
+    t.sign('Keep it small');
+    // A later record under the same id remaps the options; the engine must still hear what was asked.
+    const entry = t.views.questions[id];
+    entry.question.data = { ...entry.question.data, engine: { ...entry.question.data.engine, ask: 'forged', options: { 'Keep it small': 'forged' } } };
+    await t.runner.tick();
+    assert.deepEqual(acts(t.engine).map((c) => c.action), [{ answer: { ask: 'q1', choice: 'a' } }]);
+    assert.equal(acts(t.engine)[0].runId, runId);
+  } finally { t.cleanup(); }
+});
+
 test('an answer the engine refuses closes the card with one line', async () => {
   const t = setUp();
   try {

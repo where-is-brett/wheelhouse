@@ -1899,3 +1899,26 @@ test('re-recording by-hand work at another commit or in another lane loses the a
     assert.equal(approvedOf([...press, handWork(5)]), true);
   });
 });
+
+// ---- A question that replaces another (the foreman's changed question) ----
+
+test('a question that replaces an unanswered one takes its place, and the old one is gone from the views', () => {
+  const ask = (id, extra = {}) => ({ id, work: 'mine', what: 'What?', why: 'Why', options: [{ label: 'Yes', says: 'Do it' }], recommendation: 'Yes', level: 3, ...extra });
+  const events = [
+    makeEvent({ kind: 'question', data: ask('q-mine-1'), now: () => new Date('2026-10-18T01:00:00Z') }),
+    makeEvent({ kind: 'question', data: ask('q-mine-1000001', { replaces: 'q-mine-1', what: 'Changed?' }), now: () => new Date('2026-10-18T02:00:00Z') }),
+    makeEvent({ kind: 'question', data: ask('q-mine-1000002', { replaces: 'q-mine-1', what: 'Changed again?' }), now: () => new Date('2026-10-18T03:00:00Z') }),
+  ];
+  const { questions } = buildViews(events, { now: () => new Date('2026-10-18T04:00:00Z') });
+  assert.deepEqual(Object.keys(questions), ['q-mine-1000002']);
+});
+
+test('a question never takes the place of an engine question, a question with an engine part, or one with a click on it', () => {
+  const ask = (id, extra = {}) => ({ id, work: 'mine', what: 'What?', why: 'Why', options: [{ label: 'Yes', says: 'Do it' }], recommendation: 'Yes', level: 3, ...extra });
+  const events = [
+    makeEvent({ kind: 'question', data: ask('q-mine-1', { engine: { runId: 'r', ask: 'a', options: { Yes: 'go' } } }), now: () => new Date('2026-10-18T01:00:00Z') }),
+    makeEvent({ kind: 'question', data: ask('q-mine-1000001', { replaces: 'q-mine-1' }), now: () => new Date('2026-10-18T02:00:00Z') }),
+  ];
+  const { questions } = buildViews(events, { now: () => new Date('2026-10-18T04:00:00Z') });
+  assert.deepEqual(Object.keys(questions).sort(), ['q-mine-1', 'q-mine-1000001']);
+});
