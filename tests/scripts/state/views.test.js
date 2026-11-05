@@ -1866,3 +1866,16 @@ test('only the first work for a by-hand change, at the document it first named, 
     assert.equal(approvedOf(both, 'carry-on-9'), false);
   });
 });
+
+test('re-recording by-hand work at another commit or in another lane loses the approval', async () => {
+  await withHome(() => {
+    const q = handCard(1);
+    const press = [q, handTie(2), handClick(4, q)];
+    const other = { from: { sha: OTHER_SHA, ref: 'refs/wheelhouse/from/carry-on-3', request: 3 } };
+    assert.equal(approvedOf([...press, handWork(5), handWork(6, other)]), false);
+    assert.equal(approvedOf([...press, handWork(5), handWork(6, { lane: 'feature' })]), false);
+    // Only small work is approved by the press, even when it was first recorded in another lane.
+    assert.equal(approvedOf([...press, handWork(5, { lane: 'feature' })]), false);
+    assert.equal(approvedOf([...press, handWork(5)]), true);
+  });
+});
