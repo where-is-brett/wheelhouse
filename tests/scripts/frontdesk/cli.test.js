@@ -1397,6 +1397,27 @@ test('drop ends a queued copy with a closed report, and refuses work that is not
   });
 });
 
+test('drop takes away the request\'s file in .wheelhouse/work, and leaves one that other work names or that lies elsewhere', async () => {
+  await inHome(async () => {
+    const dir = tempFolder('wh-frontdesk-drop-');
+    fs.mkdirSync(path.join(dir, '.wheelhouse', 'work'), { recursive: true });
+    const own = path.join(dir, '.wheelhouse', 'work', 'help-flag.md');
+    const shared = path.join(dir, '.wheelhouse', 'work', 'version-flag.md');
+    const outside = path.join(dir, 'NOTES.md');
+    for (const file of [own, shared, outside]) fs.writeFileSync(file, 'what was asked\n');
+    const doc = (file) => ({ path: path.relative(dir, file), hash: 'a'.repeat(64) });
+    const work = (id, file, n) => makeEvent({ kind: 'work', data: { id, title: id, lane: 'quick', visible: false, dependsOn: [], doc: doc(file) }, now: () => T(n) });
+    const helper = fakeHelper({ events: [work('help-flag', own, 1), work('version-flag', shared, 2), work('version-flag-2', shared, 3), work('notes', outside, 4)] });
+    for (const id of ['help-flag', 'version-flag-2', 'notes']) {
+      const out = await runWith(helper, ['drop', id], undefined, { cwd: dir });
+      assert.equal(out.code, 0, out.err);
+    }
+    assert.equal(fs.existsSync(own), false, 'its own request file goes');
+    assert.equal(fs.existsSync(shared), true, 'a file the other open work names stays');
+    assert.equal(fs.existsSync(outside), true, 'a file outside .wheelhouse/work stays');
+  });
+});
+
 test('suggest hands a suggested change on an approval card to the build as one work record, and gives the one line to say (scenario 36)', async () => {
   await inHome(async () => {
     const approval = cardEvent({ ...APPROVAL, target: { pr: 7, sha: FULL } }, 2);

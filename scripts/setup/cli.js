@@ -76,7 +76,11 @@ import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
 import { CHOICE_KEY, HEALTH_STEP } from '../lib/setup-run.js';
 
 // Whether this session is the Desktop app's own: CLAUDE_CODE_ENTRYPOINT is set by the app, and a terminal session has another value.
-export const inDesktopApp = (entrypoint) => entrypoint === 'claude-desktop' || entrypoint === 'claude-desktop-3p';
+// A terminal started from inside a Desktop session (a multiplexer such as tmux, or a remote shell) inherits the app's value, so
+// those markers rule the app out: the session is in a terminal.
+const TERMINAL_MARKERS = ['TMUX', 'STY', 'SSH_TTY', 'SSH_CONNECTION'];
+export const inDesktopApp = (entrypoint, env = process.env) => (entrypoint === 'claude-desktop' || entrypoint === 'claude-desktop-3p')
+  && !TERMINAL_MARKERS.some((name) => typeof env?.[name] === 'string' && env[name] !== '');
 
 // An error whose message is said to the session as it is.
 export class CliError extends Error {}
@@ -128,9 +132,9 @@ async function plan(client, folder, step) {
 export async function main(argv, {
   cwd = process.cwd(), client, out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t),
   now = () => Date.now(), sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); }),
-  entrypoint = process.env.CLAUDE_CODE_ENTRYPOINT,
+  entrypoint = process.env.CLAUDE_CODE_ENTRYPOINT, env = process.env,
 } = {}) {
-  inApp = inDesktopApp(entrypoint);
+  inApp = inDesktopApp(entrypoint, env);
   try {
     const [form, ...rest] = argv;
     const json = (value) => out(`${JSON.stringify(value, null, 2)}\n`);
