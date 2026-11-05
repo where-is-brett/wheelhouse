@@ -376,6 +376,12 @@ test('a head with no signed review of its own counts as reviewed when the helper
   const own = ciIs(fakeClient({ prs: open, carried: { ok: true, review: 'clean', upToDate: true } }), 'success');
   assert.equal((await observe({ project: P, client: own, now: at(3 * SEC) })).prs[7].review, 'findings');
   assert.deepEqual(names(own.calls).filter((n) => n === 'carried'), []);
+
+  // Findings that are all minor clear the head; a blocking one, or a record that does not say, does not.
+  record('review', { pr: 7, commit: HEAD, verdict: 'FINDINGS', findings: 2, blocking: 0 }, 4 * SEC);
+  assert.equal((await observe({ project: P, client: own, now: at(5 * SEC) })).prs[7].review, 'clean');
+  record('review', { pr: 7, commit: HEAD, verdict: 'FINDINGS', findings: 2, blocking: 1 }, 6 * SEC);
+  assert.equal((await observe({ project: P, client: own, now: at(7 * SEC) })).prs[7].review, 'findings');
 }));
 
 test('a green head whose earlier CLEAN review did not carry over wakes its session to review it (R119)', () => withHome(async () => {

@@ -117,6 +117,7 @@
 // Git runs only in the main checkout, to bring the default branch up to date
 // and make the worktree, with hooks and fsmonitor off. Everything read from a worktree goes through the safe
 // readers of scripts/feature/files.js and status.js.
+import { reviewClear } from '../lib/review-verdict.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -1239,7 +1240,7 @@ function cleanReviewsOf(project, pr, head) {
   const enrolled = readEnrolled();
   const seen = new Set();
   for (const e of stateEvents(project)) {
-    if (!(e.kind === 'review' && isPlain(e.data) && e.data.pr === pr && e.data.commit === head && e.data.verdict === 'CLEAN' && verify(e, enrolled))) continue;
+    if (!(e.kind === 'review' && isPlain(e.data) && e.data.pr === pr && e.data.commit === head && reviewClear(e.data) && verify(e, enrolled))) continue;
     seen.add(`${e.sig.computer}:${e.id}`);
   }
   return seen.size;
