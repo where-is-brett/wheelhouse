@@ -587,7 +587,7 @@ function checkPlain(kind, data) {
     text('runId');
     if (!COST_SOURCES.includes(data.source)) bad('needs its source to be reported, estimated or unknown');
     const figure = (k, whole) => data[k] === null || (typeof data[k] === 'number' && Number.isFinite(data[k]) && data[k] >= 0 && (!whole || Number.isInteger(data[k])));
-    if (!figure('tokens', true) || !figure('dollars') || !figure('premiumRequests', true) || !figure('minutes')) bad('needs tokens, dollars, premiumRequests and minutes to be a number or null');
+    if (!figure('tokens', true) || !figure('dollars') || !figure('premiumRequests') || !figure('minutes')) bad('needs tokens, dollars, premiumRequests and minutes to be a number or null');
     // A figure that is not known stays null; it is never written as 0.
     if (data.source === 'unknown' && (data.dollars !== null || data.premiumRequests !== null || data.tokens === 0)) bad('has a source that is unknown, so its dollars and premiumRequests must be null and its tokens not 0');
     if (!isPlain(data.byRole)) bad('needs byRole to be a record');
