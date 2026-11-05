@@ -48,7 +48,10 @@ async function world(over = {}) {
     // A change that merges at once reaches the project's folder as soon as it is opened.
     openReleasePr: async (b) => {
       log.push(['open', b.head]);
-      if (state.pr === 'merged' && state.open.ok) fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), named('v0.2.7'));
+      if (state.pr === 'merged' && state.open.ok) {
+        fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), named('v0.2.7'));
+        await g(dir, 'commit', '-q', '-am', 'merged');
+      }
       return state.open;
     },
     prState: async () => ({ ok: true, state: state.pr }),

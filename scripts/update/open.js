@@ -14,7 +14,7 @@ const IDENTITY = { GIT_AUTHOR_NAME: 'Wheelhouse', GIT_AUTHOR_EMAIL: 'wheelhouse@
 const MAIN_NOT_FOUND = 'The project\'s main version could not be found, so the change could not be made.';
 
 // The tip of the project's main version: the host's default branch as the checkout last saw it, else a local main or master.
-async function mainTip(git) {
+export async function mainTip(git) {
   const head = await git(['symbolic-ref', '-q', 'refs/remotes/origin/HEAD'], { input: '' });
   const names = [head.code === 0 ? head.stdout.trim() : null, 'refs/remotes/origin/main', 'refs/remotes/origin/master', 'refs/heads/main', 'refs/heads/master'].filter(Boolean);
   for (const name of names) {

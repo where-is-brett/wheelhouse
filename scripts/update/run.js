@@ -154,6 +154,14 @@ export function updateSteps({
         return got.ok ? { data: { line: got.line } } : { ok: false, line: got.line };
       },
     },
+    // The backup, the catalogue move and the check of the installs are all made inside the install above; each is marked done
+    // once the install is, so the journal says what happened and `finish` can't come before it.
+    ...['backup', 'catalogue', 'verify'].map((name) => ({
+      name,
+      async run({ data }) {
+        return data.installs === undefined ? { ok: false, line: 'The install was not made, so this step cannot be marked done.' } : { data: { by: 'installs' } };
+      },
+    })),
     {
       name: 'finish',
       async run() {
