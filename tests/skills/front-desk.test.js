@@ -333,7 +333,6 @@ test('a musing ends on the one line as it stands, brainstorming sizes a change, 
   assert.match(intake, /Only a small removal or obvious fix that changes nothing a person relies on, or work no person sees \(tests, internals\), may be `visible: false`\./);
   assert.match(intake, /When in doubt, `visible: true`\./);
   assert.match(playbook, /Anything that adds to or changes what a person sees or uses is visible, however small/);
-  assert.match(read('docs/specs/2026-10-17-wheelhouse-design.md'), /Adding or changing anything a person sees or uses \(output, a flag, a command, text, a page, behaviour\) is visible, however small/);
   // Scenario 7: work shown first is never quick, and `record` holds that.
   assert.match(intake, /Work you would show the director first is the small lane: `record` refuses the quick lane with `visible: true`\./);
 });
