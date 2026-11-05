@@ -1867,6 +1867,23 @@ test('only the first work for a by-hand change, at the document it first named, 
   });
 });
 
+test('a tie that names the helper\'s work approves that work at that brief alone, even when another hand recorded one first', async () => {
+  await withHome(() => {
+    const q = handCard(1);
+    const named = (extra = {}) => handTie(2, { work: 'carry-on-3', doc: H1, ...extra });
+    // The agent's own work for the same change, recorded before the helper's, under another id or with another brief.
+    const first = handWork(2, { doc: { path: 'x.md', hash: H2 } }, 'carry-on-9');
+    const press = [q, named(), handClick(5, q)];
+    assert.equal(approvedOf([...press, handWork(6)]), true);
+    assert.equal(approvedOf([first, ...press, handWork(6)], 'carry-on-9'), false, 'the other hand\'s work is not approved');
+    assert.equal(approvedOf([first, ...press, handWork(6)]), true, 'the helper\'s still is');
+    // The same id with another brief than the tie names is not approved.
+    assert.equal(approvedOf([...press, handWork(6, { doc: { path: 'x.md', hash: H2 } })]), false);
+    // A tie of the old kind, naming no work, keeps the first work standing.
+    assert.equal(approvedOf([q, handTie(2), handClick(5, q), handWork(6)]), true);
+  });
+});
+
 test('an approve-work card for work that has been dropped or has ended no longer waits', async () => {
   await withHome(() => {
     const line = approveWorkLine('export-csv', 'small', A, { shownFirst: true });

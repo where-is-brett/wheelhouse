@@ -906,7 +906,10 @@ function checkChange(data) {
 // pressed on.
 function checkByHand(data) {
   const bad = (why) => { throw new Error(`A by-hand event ${why}`); };
-  if (!isPlain(data) || Object.keys(data).sort().join() !== 'head,n,question') bad('needs its question, its change and its commit, and no others');
+  // The helper's own carry-on names the work it records and its brief's hash, so only that work is approved by the press.
+  const keys = isPlain(data) ? Object.keys(data).sort().join() : '';
+  if (keys !== 'head,n,question' && keys !== 'doc,head,n,question,work') bad('needs its question, its change and its commit, and at most the work and brief the helper made for it');
+  if (keys !== 'head,n,question' && !(typeof data.work === 'string' && /^[a-z0-9][a-z0-9-]{0,62}$/.test(data.work) && typeof data.doc === 'string' && /^[0-9a-f]{64}$/.test(data.doc))) bad('needs a work id and the hash of its brief');
   if (typeof data.question !== 'string' || !/^q-by-hand-[1-9][0-9]*$/.test(data.question)) bad('needs the by-hand card\'s question');
   if (!Number.isInteger(data.n) || data.n < 1) bad('needs the change\'s number');
   if (typeof data.head !== 'string' || !FULL_COMMIT.test(data.head)) bad('needs the whole commit');
