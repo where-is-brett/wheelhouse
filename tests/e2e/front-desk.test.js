@@ -610,6 +610,22 @@ test('an update after an approval with identical pages merges; with a changed pa
   });
 });
 
+test('a merge waits while the director has a question open on its work, and for an answer no newer version carries', async () => {
+  await onComputer(async (world) => {
+    const head = await openPr(world, 7, 'export', { 'src/export.js': 'export const kind = \'csv\';\n' });
+    const { question } = await frontDesk(world, ['card'], approvalCard(7, 'adds the orders export.'));
+    await ask(world, [question], { [question.question]: 'Approve' });
+    // The approval names the head; a question of the director's still open on the same work holds the merge.
+    await buildLoop(world, 'question', EXPORT_QUESTION);
+    const held = await merge(world, 7);
+    assert.equal(held.ok, false);
+    assert.match(held.refused, /question open on export/);
+    assert.deepEqual(world.host.merges, []);
+    assert.equal(held.needs, undefined, 'no card is asked for the merge while the question waits');
+    assert.ok(head);
+  });
+});
+
 test('an approval card steered with Suggest a change… is revised once the change is committed; the old code answers nothing and the click on the revised card lets the gate merge its commit', async () => {
   await onComputer(async (world) => {
     const head = await openPr(world, 7, 'banner', { 'src/home.js': 'export const banner = \'Hot cross buns are back\';\n' });

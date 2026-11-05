@@ -24,6 +24,7 @@ import { stopState, setStop, liftStop } from '../lib/stop.js';
 import { bypassActive } from '../lib/bypass.js';
 import { run as realRun, withoutGitVars } from '../lib/run.js';
 import { approvalCounts, checkCounts, gateDecision, reviewCounts } from '../gate/conditions.js';
+import { questionHold } from '../gate/open-questions.js';
 import { classifyChange, readConfig, isModelName, CI_FILES, PLUGIN_MANIFEST } from '../gate/guardrails.js';
 import { scrub } from './adapter.js';
 import { hide, cleanDeep } from '../lib/clean.js';
@@ -3734,6 +3735,9 @@ export async function startHelper({
     const byRelease = updateCheck.matched && updateCheck.ok && !pinsOnly;
     const holdsLock = await lockHeld(project, ctx);
     const { upToDate, review, approval } = await gateRecords({ project, number, headSha, views, adapter, compare: approvalRequired }, ctx);
+    // The director's questions on this work come first: a merge never goes ahead past one still open, or an answer no newer version carries.
+    const hold = restore || fixCall ? null : questionHold({ views, work: FEATURE_BRANCH.exec(typeof pr.headRef === 'string' ? pr.headRef : '')?.[1], review });
+    if (hold !== null) stateReasons.push(hold);
     // The kinds of review that count for the agent this computer runs, from the default branch's configuration:
     // null, today's rule, unless the agent's review module names them (ruling P7-15). The configuration doesn't
     // depend on the pull request's files, so when those couldn't be read it is read by itself; only when the
