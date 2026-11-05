@@ -1451,7 +1451,7 @@ test('ask records the foreman\'s own question with an id the feature can never u
     ['ask', 'mine', '--what', 'x', '--why', 'y', '--option', 'a=', '--option', 'b=waiting', '--recommend', 'a', '--level', '2'],
   ]) refusedInOneLine(await act(bad, { client: fake.client }));
   const long = await act(['ask', 'mine', '--what', 'x', '--why', 'y', '--option', `a=act merge ${'m'.repeat(291)}`,'--option', 'b=waiting', '--recommend', 'a', '--level', '2'], { client: fake.client });
-  assert.match(long.err, /^--option "a" must say what it means on one line, with single spaces, in at most 300 characters\. Type it on one line, like this: act ask a /m);
+  assert.match(long.err, /^--option "a" must say what it means on one line, with single spaces, in at most 300 characters\. Type it on one line, like this: act ask mine /m);
   // Exactly 300 is taken.
   const fits = await act(['ask', 'mine', '--what', 'x', '--why', 'y', '--option', `a=act merge ${'m'.repeat(290)}`, '--option', 'b=waiting', '--recommend', 'a', '--level', '2'], { client: fake.client });
   assert.equal(fits.code, 0, fits.err);
