@@ -674,16 +674,19 @@ test('a change made by hand the director said to add, which no work carries on y
   const repo = register(home);
   view('waiting', []);
   view('features', {});
-  const req = { number: 3, title: 'Changes made by hand in the project folder', draft: false };
-  view('survey', { id: 's', at: at(1), data: { requests: [req, { number: 4, title: 'Something else', draft: false }] } });
-  const asked = { ...question('q-by-hand-1', at(2), 'Changes were made by hand.'), answer: { label: 'Check and add them', at: at(3) } };
   view('work', {});
-  view('questions', { 'q-by-hand-1': asked });
+  const tied = { ...question('q-by-hand-1', at(2), 'Changes were made by hand.'), answer: { label: 'Check and add them', at: at(3) }, byHand: { n: 3, head: 'a'.repeat(40) } };
+  view('questions', { 'q-by-hand-1': tied });
   assert.deepEqual((await paneModel({ project: P, cwd: repo, now: () => NOW })).carryOn, [3]);
   // Left out, or already carried on, it is not listed.
-  view('questions', { 'q-by-hand-1': { ...asked, answer: { label: 'Leave them out', at: at(3) } } });
+  view('questions', { 'q-by-hand-1': { ...tied, answer: { label: 'Leave them out', at: at(3) } } });
   assert.deepEqual((await paneModel({ project: P, cwd: repo, now: () => NOW })).carryOn, []);
-  view('questions', { 'q-by-hand-1': asked });
+  view('questions', { 'q-by-hand-1': tied });
   view('work', { 'carry-on-3': { work: { data: { id: 'carry-on-3', from: { request: 3 } } } } });
+  assert.deepEqual((await paneModel({ project: P, cwd: repo, now: () => NOW })).carryOn, []);
+  // A request that only carries the title, with no tie the helper made to the director's answer, wakes nobody.
+  view('work', {});
+  view('survey', { id: 's', at: at(1), data: { requests: [{ number: 9, title: 'Changes made by hand in the project folder', draft: false }] } });
+  view('questions', { 'q-by-hand-1': { ...tied, byHand: undefined } });
   assert.deepEqual((await paneModel({ project: P, cwd: repo, now: () => NOW })).carryOn, []);
 }));

@@ -1819,25 +1819,50 @@ test('signedCardOutcomes: a plain answer decides a card but proves nothing, a ve
 // --- work carried on from a change made by hand ---
 
 const FROM_SHA = 'a'.repeat(40);
-const handWork = (n, request = 3) => workEv(n, { id: 'carry-on-3', lane: 'small', from: { sha: FROM_SHA, ref: 'refs/wheelhouse/from/carry-on-3', request } });
-const handChange = (n, extra = {}) => ev('change', n, { n: 3, rev: 1, branch: 'feature/by-hand-af40bcd1f165', base: 'main', title: 'Changes made by hand in the project folder', body: 'x', state: 'open', head: FROM_SHA, mergeCommit: null, ...extra });
-const handCard = (n) => ev('question', n, { id: 'q-by-hand-1', work: 'by-hand', level: 3, what: 'Changes were made by hand.', why: 'Yours to decide.', options: [{ label: 'Check and add them', says: 'a' }, { label: 'Leave them out', says: 'b' }], recommendation: 'Check and add them' });
-const handClick = (n, question, label = 'Check and add them') => ev('action', n, { action: 'answer', question: 'the card as shown', questionId: 'q-by-hand-1', questionHash: dataHash(question.data), label });
+const OTHER_SHA = 'b'.repeat(40);
+const handWork = (n, extra = {}, id = 'carry-on-3') => workEv(n, { id, lane: 'small', from: { sha: FROM_SHA, ref: `refs/wheelhouse/from/${id}`, request: 3 }, ...extra });
+const handCard = (n, id = 'q-by-hand-1') => ev('question', n, { id, work: 'by-hand', level: 3, what: 'Changes were made by hand.', why: 'Yours to decide.', options: [{ label: 'Check and add them', says: 'a' }, { label: 'Leave them out', says: 'b' }], recommendation: 'Check and add them' });
+const handClick = (n, question, label = 'Check and add them') => ev('action', n, { action: 'answer', question: 'the card as shown', questionId: question.data.id, questionHash: dataHash(question.data), label });
+// The helper's tie of the card to the change it opened for it, at the commit pressed on.
+const handTie = (n, extra = {}) => ev('by-hand', n, { question: 'q-by-hand-1', n: 3, head: FROM_SHA, ...extra });
+const approvedOf = (events, id = 'carry-on-3') => build(events).work[id].approved;
 
 test('work carried on from a change made by hand is approved by the director\'s Check and add them', async () => {
   await withHome(() => {
     const q = handCard(1);
-    const v = build([q, handChange(2), handWork(3), handClick(4, q)]).work['carry-on-3'];
+    const v = build([q, handTie(2), handWork(3), handClick(4, q)]).work['carry-on-3'];
     assert.equal(v.approved, true);
     assert.deepEqual(v.approval, { hash: H1, shownFirst: false, lane: 'small', byHand: true });
     // Leave them out is no approval, and neither is a click that was never made.
-    assert.equal(build([q, handChange(2), handWork(3), handClick(4, q, 'Leave them out')]).work['carry-on-3'].approved, false);
-    assert.equal(build([q, handChange(2), handWork(3)]).work['carry-on-3'].approved, false);
-    // Only the change the work carries on counts, and only one on a by-hand branch.
-    assert.equal(build([q, handChange(2), handWork(3, 7), handClick(4, q)]).work['carry-on-3'].approved, false);
-    assert.equal(build([q, handChange(2, { branch: 'feature/other' }), handWork(3), handClick(4, q)]).work['carry-on-3'].approved, false);
-    // An unsigned click or change stands for nothing.
-    assert.equal(build([q, handChange(2), handWork(3), unsigned(handClick(4, q))]).work['carry-on-3'].approved, false);
-    assert.equal(build([q, unsigned(handChange(2)), handWork(3), handClick(4, q)]).work['carry-on-3'].approved, false);
+    assert.equal(approvedOf([q, handTie(2), handWork(3), handClick(4, q, 'Leave them out')]), false);
+    assert.equal(approvedOf([q, handTie(2), handWork(3)]), false);
+    // An unsigned click or tie stands for nothing.
+    assert.equal(approvedOf([q, handTie(2), handWork(3), unsigned(handClick(4, q))]), false);
+    assert.equal(approvedOf([q, unsigned(handTie(2)), handWork(3), handClick(4, q)]), false);
+  });
+});
+
+test('an agent\'s own change on a by-hand branch is not approved by the director\'s press on another', async () => {
+  await withHome(() => {
+    const q = handCard(1);
+    const press = [q, handTie(2), handClick(4, q)];
+    // A change the helper signed for an agent's push (no tie), carried on as request 7: nothing approves it.
+    const agent = ev('change', 3, { n: 7, rev: 1, branch: 'feature/by-hand-x', base: 'main', title: 'Changes made by hand in the project folder', body: 'x', state: 'open', head: OTHER_SHA, mergeCommit: null });
+    assert.equal(approvedOf([...press, agent, handWork(5, { from: { sha: OTHER_SHA, ref: 'refs/wheelhouse/from/carry-on-3', request: 7 } })]), false);
+    // Nor is the pressed change's number carried at another commit.
+    assert.equal(approvedOf([...press, handWork(5, { from: { sha: OTHER_SHA, ref: 'refs/wheelhouse/from/carry-on-3', request: 3 } })]), false);
+  });
+});
+
+test('only the first work for a by-hand change, at the document it first named, is approved', async () => {
+  await withHome(() => {
+    const q = handCard(1);
+    const press = [q, handTie(2), handClick(4, q)];
+    // A wider brief recorded later for the same work asks the director, as any work does.
+    assert.equal(approvedOf([...press, handWork(5), handWork(6, { doc: { path: 'd.md', hash: H2 } })]), false);
+    // A second work naming the same change is not approved.
+    const both = [...press, handWork(5), handWork(6, {}, 'carry-on-9')];
+    assert.equal(approvedOf(both), true);
+    assert.equal(approvedOf(both, 'carry-on-9'), false);
   });
 });

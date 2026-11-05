@@ -5025,6 +5025,7 @@ export async function startHelper({
       const spelled = checkRefspec(body.head, defaultBranch);
       if (!spelled.allowed) return { ok: false, refused: spelled.refused };
       if (spelled.branch === STATE_BRANCH || spelled.branch === LOCK_BRANCH) return { ok: false, refused: PUSH_REFUSALS.ownRequests };
+      if (/^feature\/by-hand-/.test(spelled.branch)) return { ok: false, refused: 'A branch for changes made by hand is opened by Wheelhouse itself, on the director\'s Check and add them' };
       const provenance = sessionProvenance({ project: body.project, sessionId: body.session });
       if (provenance === null) return { ok: false, refused: NO_PROVENANCE };
       if (stopped()) return STOP_REFUSAL;
@@ -5596,7 +5597,7 @@ export async function startHelper({
   // the same push as any other, on a branch of its own that the folder doesn't keep, and waits as a local change. Parted from
   // the main version, it is brought up to date first. The survey lists it, so it is carried on as any request is, with a
   // brief, a review and the checks.
-  async function addHandMade(project, tip, { parted }) {
+  async function addHandMade(project, tip, { parted, question = null }) {
     const ctx = await contextFor(project);
     const adapter = await ctx.adapter();
     const { folder } = recordOf(project);
@@ -5617,6 +5618,13 @@ export async function startHelper({
       const updated = await doUpdateBranch({ project, number }, ctx);
       // One that clashes stays as it is: the lane that carries it on brings it up to date.
       if (!updated.ok && updated.conflicts === undefined) return updated;
+    }
+    // The tie between the director's answer on this card and this change, at the commit pressed on (after any bringing up to
+    // date): the only thing that lets that answer approve work carried on from the change. Work of Wheelhouse's own section
+    // has no card, so no tie.
+    if (typeof question === 'string') {
+      const head = (await adapter.prState(number)).headSha;
+      await checkWrite(project, makeEvent({ kind: 'by-hand', data: { question, n: number, head }, now }));
     }
     const latest = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'survey').sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0)).at(-1);
     const taken = await takeSurvey({ project, run, adapter: () => ctx.adapter(), rules: shapedSurvey({ rules: latest?.data?.rules }).rules });

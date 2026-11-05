@@ -42,7 +42,7 @@ export const CARD_TO_MAKE = 'A card from the build waits; the First Mate will ma
 // The views the pane reads: the glance's, the reports and glossary, the open incidents, and the
 // build's records the front desk makes cards from.
 const PANE_VIEWS = ['waiting', 'questions', 'cardsWaiting', 'work', 'features', 'reports', 'glossary', 'status', 'incidents', 'blockers', 'ideas',
-  'gateAsks', 'lineageHolds', 'controlFiles', 'premiumFailures', 'goals', 'goalNotes', 'survey'];
+  'gateAsks', 'lineageHolds', 'controlFiles', 'premiumFailures', 'goals', 'goalNotes'];
 // The line of an approval card's set line, from which its preview is asked for.
 const APPROVAL_LINE = /^Approve pull request #([1-9][0-9]*) at commit ([0-9a-f]{12})$/;
 const NEVER_SYNCED = 'Nothing has been synced to this computer yet, so nothing below is current';
@@ -329,10 +329,11 @@ export async function paneModel({
   // The changes made by hand that the director said to check and add, which no work carries on yet: the courier wakes the
   // front desk for each, so it is carried on at once and not at the next visit.
   const carryOn = part('list of hand changes to carry on', () => {
-    const answered = Object.entries(isRecord(views?.questions) ? views.questions : {}).some(([id, q]) => /^q-by-hand-\d+$/.test(id) && q?.answer?.label === 'Check and add them');
-    if (!answered) return [];
+    // Only a change the helper tied to the director's own answer on the by-hand card counts, never one named by its title.
     const taken = new Set(Object.values(isRecord(views?.work) ? views.work : {}).map((w) => w?.work?.data?.from?.request).filter(Number.isInteger));
-    return list(views?.survey?.data?.requests).filter((r) => r.title === 'Changes made by hand in the project folder' && Number.isInteger(r.number) && !taken.has(r.number)).map((r) => r.number);
+    return Object.values(isRecord(views?.questions) ? views.questions : {})
+      .filter((q) => isRecord(q) && q.answer?.label === 'Check and add them' && Number.isInteger(q.byHand?.n) && !taken.has(q.byHand.n))
+      .map((q) => q.byHand.n);
   }, []);
 
   // The open incidents' ids, for the courier. No incidents view means none is open.

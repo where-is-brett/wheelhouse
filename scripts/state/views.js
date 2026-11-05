@@ -379,9 +379,6 @@ export const countsAtOnce = (e) => e.kind === 'setting' && typeof e.data?.key ==
 // The most of the card router's Logbook lines the views keep.
 const ENGINE_NOTES = 30;
 
-const HAND_CARD = /^q-by-hand-\d+$/;
-const HAND_BRANCH = /^feature\/by-hand-/;
-
 // The build loop's views: work and its approvals, features, questions and incidents.
 // Every approval, answer, amendment and lift here is read from a verified action,
 // so a plain event of any kind stands in for none of them.
@@ -528,17 +525,23 @@ function buildLoopViews(sorted, enrolled) {
   for (const e of sorted) {
     if (e.kind === 'goal-check' && isPlainKey(e.data?.goal) && verify(e, enrolled)) (goalChecks[e.data.goal] ??= []).push({ ...e.data, at: e.at });
   }
-  // Work carried on from a change made by hand needs no approval of its own once the director has pressed Check and add them
-  // on the card for such changes: the change exists only because they did, so the click is the approval, and the work waits
-  // for nothing else. Only a local change this computer signed, on a by-hand branch, counts.
-  if (questions !== undefined && Object.entries(questions).some(([id, q]) => HAND_CARD.test(id) && q.answer?.label === CHECK_AND_ADD)) {
-    const byHand = new Set(sorted.filter((e) => e.kind === 'change' && HAND_BRANCH.test(String(e.data?.branch)) && verify(e, enrolled)).map((e) => e.data.n));
-    for (const entry of Object.values(work)) {
-      const { from, lane, doc } = entry.work.data;
-      if (entry.approved || !Number.isInteger(from?.request) || !byHand.has(from.request) || typeof doc?.hash !== 'string') continue;
-      entry.approved = true;
-      entry.approval = { hash: doc.hash, shownFirst: false, lane, byHand: true };
-    }
+  // The card for changes made by hand ties to the one change the helper opened for it (a signed `by-hand`), at the commit pressed on.
+  const hand = {};
+  for (const e of sorted) {
+    if (e.kind === 'by-hand' && verify(e, enrolled) && questions[e.data?.question] && hand[e.data.question] === undefined) hand[e.data.question] = { n: e.data.n, head: e.data.head };
+  }
+  for (const [id, tie] of Object.entries(hand)) questions[id].byHand = tie;
+  // Work carried on from such a change needs no approval of its own: the director's signed Check and add them on that card is
+  // it. Only the first work recorded for the change (its commit as pressed on, so none with later commits) is approved, and
+  // only at the document it first named: a brief changed afterwards asks the director as any work does.
+  const pressed = Object.values(questions).filter((q) => q.byHand !== undefined && q.answer?.label === CHECK_AND_ADD).map((q) => q.byHand);
+  for (const tie of pressed) {
+    const first = sorted.find((e) => e.kind === 'work' && e.data?.from?.request === tie.n && e.data.from.sha === tie.head);
+    const entry = first === undefined ? undefined : work[first.data.id];
+    const hash = first?.data.doc?.hash;
+    if (entry === undefined || entry.approved || typeof hash !== 'string' || entry.work.data.doc?.hash !== hash || entry.work.data.from?.request !== tie.n) continue;
+    entry.approved = true;
+    entry.approval = { hash, shownFirst: false, lane: entry.work.data.lane, byHand: true };
   }
   return {
     work, features, reports, questions, incidents: { open: [...open.values()] },

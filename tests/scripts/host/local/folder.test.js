@@ -137,7 +137,7 @@ test('parted raises the same card and the lane brings it up to date', () => leve
   answers[cards[0].id] = CHECK_AND_ADD;
   await watch.tick();
   await watch.tick();
-  assert.deepEqual(added, [{ tip, parted: true }]);
+  assert.deepEqual(added, [{ tip, parted: true, question: cards[0].id }]);
 }));
 
 test('an agent\'s commit to the folder\'s main branch gets the same card and merges nothing', () => level(async (folder) => {

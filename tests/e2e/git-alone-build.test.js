@@ -75,6 +75,13 @@ test('changes made by hand reach a local change by the director\'s click, and th
   const carried = await client.survey.carryOn({ project: P, number: change.n });
   assert.equal(carried.ok, true, carried.refused);
   assert.equal(carried.from.sha, tip);
+  // The helper tied the director's answer to this change, at the commit pressed on.
+  const tie = records('by-hand').find((e) => e.data.question === card.data.id);
+  assert.deepEqual([tie.data.n, tie.data.head], [change.n, tip]);
+  // An agent can't open a change on a by-hand branch itself.
+  const refused = await client.openPr({ project: P, head: 'feature/by-hand-abc', title: 'x', body: 'x', session: 'nobody' });
+  assert.equal(refused.ok, false);
+  assert.match(refused.refused, /Check and add them/);
   assert.deepEqual(tools, []);
 }, { check: standInCheck }));
 

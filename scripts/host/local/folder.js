@@ -264,7 +264,7 @@ export function folderWatch({ project, folder, branchOf, git = gitRoute(), file,
           continue;
         }
         const made = await commitUncommitted({ folder, git });
-        const got = made === null ? { ok: true } : await add(made, { parted: false });
+        const got = made === null ? { ok: true } : await add(made, { parted: false, question: entry.id });
         if (got?.ok === true) entry.done = true;
         else if (kept.failed !== tip) {
           kept.failed = tip;
@@ -274,7 +274,7 @@ export function folderWatch({ project, folder, branchOf, git = gitRoute(), file,
       }
       // Anything the folder holds now goes, and an older card's press means the same thing.
       const waiting = found.state === 'folder-ahead' || found.state === 'parted';
-      const got = waiting ? await add(found.tip, { parted: found.state === 'parted' }) : { ok: true };
+      const got = waiting ? await add(found.tip, { parted: found.state === 'parted', question: entry.id }) : { ok: true };
       if (got?.ok === true) {
         entry.done = true;
         if (waiting && kept.tips[found.tip]) kept.tips[found.tip].done = true;
