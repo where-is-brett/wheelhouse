@@ -101,6 +101,17 @@ export function pathWithClaude(env, { platform = process.platform, exists = fs.e
   return { ...env, PATH: [path.posix.dirname(resolved.file), ...posixPathFolders(env)].join(':') };
 }
 
+// `env` with the folder of the Node.js that runs this process at the front of its PATH when no `node` is on the
+// PATH already. A process started with a minimal PATH (the helper a LaunchAgent starts) has none of the user's
+// version-managed Node.js (nvm, Volta, fnm, asdf), and every hook of a session it starts is `node ...`, so the
+// session would fail at once. The node that runs the watcher is known to work, so its folder is the one added.
+export function pathWithNode(env, { platform = process.platform, exists = fs.existsSync, execPath = process.execPath } = {}) {
+  if (platform === 'win32') return env;
+  if (foundOnPosixPath('node', env, exists) !== null) return env;
+  if (typeof execPath !== 'string' || !path.posix.isAbsolute(execPath)) return env;
+  return { ...env, PATH: [path.posix.dirname(execPath), ...posixPathFolders(env)].join(':') };
+}
+
 // Where `claude` is: resolveCommand's answer for `claude`, with its own words
 // when neither claude.exe nor claude.cmd is on the PATH.
 export function resolveClaude({ platform = process.platform, env = process.env, exists = fs.existsSync, recorded = null, inside = null } = {}) {

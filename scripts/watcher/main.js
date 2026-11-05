@@ -47,6 +47,7 @@ import path from 'node:path';
 import { makeBundler, readCursor, route, step, writeCursor } from './core.js';
 import { readHandled } from './handled.js';
 import { INTERVALS, LOOKBACK_MS, observe } from './sources.js';
+import { makeRecovery } from './recover.js';
 import { makeWaker, watcherDir, watcherFolder, writeJsonFile, writeWake } from './waker.js';
 import { foremanTools } from '../foreman/tools.js';
 import { readConfig } from '../gate/guardrails.js';
@@ -139,6 +140,7 @@ export async function runWatcher({
   loops = Infinity,
   signal,
   handled = () => new Set(),
+  recovery = null,
   log = (message) => process.stderr.write(`${message}\n`),
 }) {
   const every = { ...INTERVALS, ...intervals };
@@ -170,6 +172,7 @@ export async function runWatcher({
     let settings = config;
     let shape = settings?.watcherShape ?? null;
     let wake = null;
+    let recover = recovery;
 
     let cursor = readCursor(project);
     let bundler = makeBundler({ now, held: cursor.held });
@@ -242,6 +245,14 @@ export async function runWatcher({
         const seen = await look({ project, client, now, intervals: every, prev: cursor.prev, awake });
         const { events, cursor: next } = step(cursor, seen, { handled: handled(seen) });
         bundler.add(route(events));
+        // Approved work that nothing started (its wake lost) is raised again, at the start and then now and again.
+        try {
+          recover ??= makeRecovery({ project, client, now });
+          const again = await recover.check();
+          if (again.length > 0) bundler.add(route(again));
+        } catch (error) {
+          log(`Approved work that has not started couldn't be looked for: ${error.message}`);
+        }
         for (const bundle of bundler.due()) {
           let file;
           try {
