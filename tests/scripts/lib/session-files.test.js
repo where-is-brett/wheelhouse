@@ -30,6 +30,13 @@ test('paneLive needs the draw to be within the window too, and takes the tick al
   assert.equal(paneLive('s1', T + 1000), true);
 }));
 
+test('paneLive is false for a terminal session, which draws no panel, however fresh its ticks', () => withHome(() => {
+  markPane('s1', { at: T, drawn: null, surface: 'terminal' });
+  assert.equal(paneLive('s1', T + 1000), false);
+  markPane('s1', { at: T, drawn: T, surface: 'terminal' });
+  assert.equal(paneLive('s1', T + 1000), false);
+}));
+
 test('paneLive is false for a missing file, a half-written file and an unsafe id', () => withHome(() => {
   assert.equal(paneLive('none', T), false);
   const file = path.join(path.dirname(roleFile('s2')), 'pane.json');
