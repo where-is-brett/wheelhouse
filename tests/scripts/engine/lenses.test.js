@@ -11,6 +11,9 @@ import { tempFolder } from '../../helpers/homes.js';
 
 const git = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'init.defaultBranch=main', ...args], { cwd, stdio: 'pipe' }).toString();
 
+// The commit the run's worktree began from, which the helper records and gives in the order.
+let lastStart = null;
+
 function repo() {
   const dir = tempFolder('wh-lens-');
   git(dir, 'init', '-q');
@@ -18,14 +21,15 @@ function repo() {
   fs.writeFileSync(path.join(dir, 'src', 'price.js'), 'export const price = () => 12;\n');
   git(dir, 'add', '-A');
   git(dir, 'commit', '-qm', 'base');
+  lastStart = git(dir, 'rev-parse', 'HEAD').trim();
   git(dir, 'checkout', '-qb', 'wh/card-1');
   return dir;
 }
-const client = (preview) => ({ engine: { order: async () => ({ ok: true, order: { preview } }) } });
+const client = (preview, startCommit = lastStart) => ({ engine: { order: async () => ({ ok: true, order: { preview, ...(startCommit === null ? {} : { startCommit }) } }) } });
 
-async function lenses(dir, preview = null) {
+async function lenses(dir, preview = null, startCommit = lastStart) {
   const lines = [];
-  assert.equal(await main(['--run', 'run-1', '--base', 'main'], { client: client(preview), cwd: dir, out: (l) => lines.push(l) }), 0);
+  assert.equal(await main(['--run', 'run-1', '--base', 'main'], { client: client(preview, startCommit), cwd: dir, out: (l) => lines.push(l) }), 0);
   return JSON.parse(lines[0]);
 }
 
@@ -125,4 +129,17 @@ test('the whole-feature lens runs every round of a feature\'s own run, and in no
   };
   assert.equal((await run({ lane: 'feature', preview: null })).feature, true);
   assert.equal((await run({ lane: 'slice', preview: null })).feature, false);
+});
+
+test('moving main to HEAD hides no sign-in change from the security lens, and a missing start commit keeps it on', async () => {
+  const dir = repo();
+  fs.mkdirSync(path.join(dir, 'src', 'auth'));
+  fs.writeFileSync(path.join(dir, 'src', 'auth', 'login.js'), 'export const ok = true;\n');
+  git(dir, 'add', '-A');
+  git(dir, 'commit', '-qm', 'login');
+  git(dir, 'update-ref', 'refs/heads/main', 'HEAD');
+  assert.equal((await lenses(dir)).security, true);
+  const plain = repo();
+  fs.writeFileSync(path.join(plain, 'src', 'price.js'), 'export const price = () => 13;\n');
+  assert.equal((await lenses(plain, null, null)).security, true, 'no start commit, so the lens runs');
 });

@@ -13,7 +13,8 @@ const FULL_SHA = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 // [{ status: 'A'|'M'|'D'|'R', path, from? , before(), after() }] for the worktree `cwd` against `base`.
 export async function changeOf({ cwd, base, start, run = defaultRun }) {
   // The fence alone: the worktree's own settings are an agent's to write, and nothing here runs its hooks or filters.
-  const git = safeGit({ run, cwd, look: 'never' });
+  // Objects are read as they are: a replace ref the builder made would show the start commit as another tree.
+  const git = safeGit({ run, cwd, look: 'never', env: { GIT_NO_REPLACE_OBJECTS: '1' } });
   const must = async (args) => {
     const got = await git(args, { limit: MOST_BYTES });
     if (got.code !== 0) throw new Error(`git ${args[0]} failed in the worktree: ${String(got.stderr).trim().split('\n').pop()}`);
@@ -24,6 +25,12 @@ export async function changeOf({ cwd, base, start, run = defaultRun }) {
   // the worktree's repository, which a builder can move: the checks that guard the change always give a start.
   let mergeBase;
   if (start !== undefined) {
+    // A graft or a shallow marker rewrites what history reads as, and the builder can write both: neither is accepted.
+    const common = (await must(['rev-parse', '--git-common-dir'])).trim();
+    const commonDir = path.resolve(cwd, common);
+    for (const name of [path.join('info', 'grafts'), 'shallow']) {
+      if (fs.existsSync(path.join(commonDir, name))) throw new Error(`the repository has a ${name.replace(path.sep, '/')} file, which changes how its history reads`);
+    }
     if (start === null || !FULL_SHA.test(String(start))) throw new Error('the commit the run started from is not known');
     mergeBase = (await must(['merge-base', start, 'HEAD'])).trim();
   } else {

@@ -306,3 +306,19 @@ test('the checks fail closed when the order records no start commit', async () =
   assert.equal(await controlMain(['--run', 'run-1', '--base', 'main'], { client: orderClient([], null), cwd: dir, out: (l) => lines.push(l) }), 1);
   assert.match(lines.join('\n'), /start/);
 });
+
+test('a git replace of the start commit, or a graft, does not hide a protected change', async () => {
+  const dir = behindFolder();
+  const start = git(dir, 'rev-parse', 'HEAD').trim();
+  fs.writeFileSync(path.join(dir, 'jest.config.js'), 'module.exports = { coverageThreshold: { global: { lines: 10 } } };\n');
+  git(dir, 'commit', '-qam', 'loosen');
+  git(dir, 'replace', start, 'HEAD');
+  const found = await check(dir);
+  assert.equal(found.code, 1);
+  assert.match(found.lines.join('\n'), /changes the test settings in jest\.config\.js/);
+  git(dir, 'replace', '-d', start);
+  fs.mkdirSync(path.join(dir, '.git', 'info'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.git', 'info', 'grafts'), `${git(dir, 'rev-parse', 'HEAD').trim()}\n`);
+  const grafted = await check(dir);
+  assert.equal(grafted.code, 1);
+});

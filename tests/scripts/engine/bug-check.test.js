@@ -126,3 +126,14 @@ test('a fix that changes more files than a bug\'s, or never passed, is bigger th
   assert.equal(red.blocked, true);
   assert.match(red.question, /didn't pass its checks within its rounds/);
 });
+
+test('moving main to HEAD does not hide a wide fix from the size limit', async () => {
+  const p = project();
+  write(p.dir, 'src/duration.js', FIX);
+  for (const n of [1, 2, 3, 4, 5]) write(p.dir, `src/extra-${n}.js`, `export const n = ${n};\n`);
+  commitAll(p.dir, 'A wide fix');
+  git(p.dir, 'update-ref', 'refs/heads/main', 'HEAD');
+  const wide = (await size(p)).got;
+  assert.equal(wide.blocked, true);
+  assert.match(wide.question, /changes 6 files/);
+});

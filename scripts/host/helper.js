@@ -4778,8 +4778,11 @@ export async function startHelper({
   async function baseOfFetchMirror(project) {
     const base = await (await (await contextFor(project)).adapter()).defaultBranch();
     if (typeof base !== 'string' || !/^[A-Za-z0-9._/-]+$/.test(base) || base.includes('..')) return null;
-    const read = await local(fetchMirrorOf(project))([...NO_HOOKS, 'rev-parse', '--verify', '-q', `refs/heads/${base}^{commit}`]);
-    return read.code === 0 && FULL_SHA.test(read.stdout.trim()) ? read.stdout.trim() : null;
+    // In the mirror's queue, so a fetch into it can't move the branch between the refresh and the read.
+    return oneAtATime(`mirror:${project}`, async () => {
+      const read = await local(fetchMirrorOf(project))([...NO_HOOKS, 'rev-parse', '--verify', '-q', `refs/heads/${base}^{commit}`]);
+      return read.code === 0 && FULL_SHA.test(read.stdout.trim()) ? read.stdout.trim() : null;
+    });
   }
   async function refreshFetchMirror(project) {
     const ctx = await contextFor(project);
