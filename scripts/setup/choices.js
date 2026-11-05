@@ -310,7 +310,7 @@ export function answersWithConsent(runId, { read = answersFor } = {}) {
   for (const found of all) {
     for (const c of found.choices) {
       const mine = own[c.key];
-      if (!mine || !newer(mine.at, found.at)) answers[c.key] = { label: c.label, text: c.text, at: found.at };
+      if (!mine || !newer(mine.at, found.at)) answers[c.key] = { label: c.label, text: c.text, at: found.at, consent: true };
     }
   }
   const newest = all.at(-1);

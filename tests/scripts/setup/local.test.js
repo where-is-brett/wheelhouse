@@ -325,6 +325,10 @@ test('a terminal session opens no window: the card asks for a typed path, and th
     assert.match(backupAsk('Shop', { desktop: false }).card.options[0].says, /Type the full path/);
     const app = await stepFor().plan({ ...ctxFor(folder), answers });
     assert.equal(app.ask, undefined, 'the Desktop app goes on to the window');
+    const taken = await stepFor().plan({ ...ctxFor(folder, { desktop: false }), answers: { ...answers, '3.backup': { label: CHOOSE_BACKUP, text: null, at: null } }, choicesOnly: true });
+    assert.equal(taken.ask, undefined, 'the recommendation taken for the one card asks nothing more in a terminal');
+    const covered = await stepFor().plan({ ...ctxFor(folder, { desktop: false }), answers: { ...answers, '3.backup': { ...said(CHOOSE_BACKUP), consent: true } } });
+    assert.equal(covered.ask, undefined, 'the one card\'s Go ahead, covering the backup, asks nothing more in a terminal');
     const none = { ...answers, '3.backup': said(CHOOSE_BACKUP), '3.backup-1': said(NO_BACKUP) };
     const got = await stepFor().plan({ ...ctxFor(folder, { desktop: false }), answers: none });
     const lines = await applied(stepFor({ pick: async () => assert.fail('no window opens') }), folder, { ...got, answers: none }, { desktop: false });

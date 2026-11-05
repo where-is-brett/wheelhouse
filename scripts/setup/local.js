@@ -177,8 +177,9 @@ export function backupChoice({ answer, name, root, machine, desktop = true }) {
     if (got === null) return { ask: backupAsk(name, { id, machine, refused, desktop }) };
     if (got.label === NO_BACKUP) return {};
     if (typeof got.text !== 'string' || got.text.trim() === '') {
-      // No window is opened in a terminal session: the card asks again for a typed path, or No backup.
-      if (desktop) return { folder: null };
+      // No window is opened in a terminal session: the card asks again for a typed path, or No backup. An answer taken from the
+      // one card's Go ahead (or its dry run, which has no time) is no click on this card to ask again for: the folder is left for later.
+      if (desktop || got.at === null || got.consent === true) return { folder: null };
       refused = 'A terminal session has no window to pick a folder in. Type the folder\'s full path, or choose to go without';
       continue;
     }
