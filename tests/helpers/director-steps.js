@@ -54,7 +54,8 @@ export async function startsAndMergesShownFirst(w, work, change, { pr }) {
   const build = await w.build(work, { ...change, ready: false });
   assert.deepEqual(build.checks, { done: 0, protected: 0, control: 0 }, 'the guard checks pass');
   assert.equal(build.pr, pr);
-  await w.tick();
+  // The card router reads the run's ask on a tick of its own; tick until it has made the card.
+  await w.tickUntil(() => w.records('card').some((c) => /^Approve pull request #/.test(c.data.line ?? '')), 'the merge card');
   const asked = await w.desk(['cards']);
   const why = async () => `${JSON.stringify(asked)} | waiting: ${await waitingCards(w)} | cards: ${JSON.stringify(w.records('card').map((c) => [c.data.line, c.data.question?.slice(0, 60)]))} | asks: ${JSON.stringify(w.records('ask').map((c) => c.data))}`;
   assert.equal(asked.json.questions.length, 1, `a clean review leads to one merge card: ${await why()}`);
