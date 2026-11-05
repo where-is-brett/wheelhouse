@@ -448,6 +448,18 @@ test('a save made after the edits were staged and before the merge survives, whe
   assert.equal(await git(folder, ['stash', 'list']), '');
 }));
 
+test('a file name with glob characters stages only that file, never one the name would match', () => level(async (folder) => {
+  await commitIn(folder, '[x].md', 'first\n');
+  await git(folder, ['push', '-q', homeDir(P), 'HEAD:refs/heads/main', '--force']);
+  await homeWrites('[x].md', 'edited\n');
+  fs.writeFileSync(path.join(folder, '[x].md'), 'edited\n');
+  fs.writeFileSync(path.join(folder, 'x.md'), 'mine\n');
+  await bringFolderUp({ project: P, folder, branch: 'main' });
+  assert.equal(await git(folder, ['ls-files', '--', 'x.md']), '');
+  assert.equal(await git(folder, ['status', '--porcelain', '--', 'x.md']), '?? x.md');
+  assert.equal(fs.readFileSync(path.join(folder, 'x.md'), 'utf8'), 'mine\n');
+}));
+
 test('a successful move leaves no stash entry behind', () => level(async (folder) => {
   await readmeCase(folder, 'edited\n');
   fs.writeFileSync(path.join(folder, 'README.md'), 'edited\n');

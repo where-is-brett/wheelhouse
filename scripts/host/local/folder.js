@@ -99,8 +99,8 @@ async function putBack(here, letGo) {
   for (const file of letGo.files) {
     const was = letGo.original[file];
     const done = was === null
-      ? await here.ok(['update-index', '--force-remove', '--', file])
-      : await here.ok(['update-index', '--add', '--cacheinfo', `${was.mode},${was.sha},${file}`]);
+      ? await here.ok(['--literal-pathspecs', 'update-index', '--force-remove', '--', file])
+      : await here.ok(['--literal-pathspecs', 'update-index', '--add', '--cacheinfo', `${was.mode},${was.sha},${file}`]);
     back = back && done;
   }
   if (back) await forget(here, letGo.snapshot);
@@ -142,10 +142,10 @@ async function editsAlreadyIn({ folder, branch, home, git }) {
   if (unmerged.code !== 0 || String(unmerged.stdout).trim() !== '') return null;
   const original = {};
   for (const file of files) {
-    const head = entryOf((await here.call(['ls-tree', 'HEAD', '--', file])).stdout);
+    const head = entryOf((await here.call(['--literal-pathspecs', 'ls-tree', 'HEAD', '--', file])).stdout);
     if (head === null) return null;
-    const theirs = entryOf((await here.call(['ls-tree', home, '--', file])).stdout);
-    const staged = entryOf((await here.call(['ls-files', '-s', '--', file])).stdout);
+    const theirs = entryOf((await here.call(['--literal-pathspecs', 'ls-tree', home, '--', file])).stdout);
+    const staged = entryOf((await here.call(['--literal-pathspecs', 'ls-files', '-s', '--', file])).stdout);
     original[file] = staged;
     if (staged !== null && staged.sha !== head.sha && staged.sha !== theirs?.sha) return null;
     if (staged === null && theirs !== null) return null;
@@ -181,10 +181,10 @@ async function editsAlreadyIn({ folder, branch, home, git }) {
   // The files are staged, not checked out: git takes an index entry that already is the target's, and its own check refuses the
   // merge where a working file changed after staging, so a save made now is not overwritten.
   const taken = { snapshot, files, original };
-  const staging = await here.ok(['add', '-A', '--', ...files]);
+  const staging = await here.ok(['--literal-pathspecs', 'add', '-A', '--', ...files]);
   for (const file of files) {
-    const theirs = entryOf((await here.call(['ls-tree', home, '--', file])).stdout);
-    const now = entryOf((await here.call(['ls-files', '-s', '--', file])).stdout);
+    const theirs = entryOf((await here.call(['--literal-pathspecs', 'ls-tree', home, '--', file])).stdout);
+    const now = entryOf((await here.call(['--literal-pathspecs', 'ls-files', '-s', '--', file])).stdout);
     if (!staging || now?.sha !== theirs?.sha || now?.mode !== theirs?.mode) {
       return { ...taken, failed: !(await putBack(here, taken)) };
     }
@@ -201,7 +201,7 @@ export async function folderTakes({ folder, branch, file, git = gitRoute() }) {
   const here = inFolder(folder, git);
   const on = await here.call(['symbolic-ref', '-q', 'HEAD']);
   if (on.code !== 0 || String(on.stdout).trim() !== `refs/heads/${branch}`) return NOT_ON_MAIN_LINE;
-  const changed = await here.call(['--no-optional-locks', 'status', '--porcelain', '--untracked-files=all', '--', file]);
+  const changed = await here.call(['--literal-pathspecs', '--no-optional-locks', 'status', '--porcelain', '--untracked-files=all', '--', file]);
   return changed.code === 0 && String(changed.stdout).trim() === '' ? null : SETTINGS_CHANGED_LINE;
 }
 
