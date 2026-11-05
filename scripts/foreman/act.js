@@ -1392,7 +1392,7 @@ async function merge(ctx, work, rest) {
   if (merged?.ok !== true) refuse(`Pull request #${pr} for ${work} was not merged: ${refusal(merged)}. Ask the director; don't try again.`);
   if (typeof merged.briefing === 'string' && merged.briefing !== '') await releaseMerged(ctx, pr, merged);
   const phase = markMerged();
-  ctx.say(`Merged pull request #${pr} for ${work} at ${short(merged.sha)}; its status reads ${phase}.`);
+  ctx.say(`Merged pull request #${pr} for ${work} at ${short(merged.sha)}; its status reads ${phase}.${Array.isArray(merged.answeredNoChange) && merged.answeredNoChange.length > 0 ? ` The session marked the director's answer to ${merged.answeredNoChange.join(', ')} as needing no change.` : ''}`);
 }
 
 async function close(ctx, work, rest) {
