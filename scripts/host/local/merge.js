@@ -158,6 +158,21 @@ export async function revertOnHome({ project, branch, commits, folder, run = rea
 const REBUILT = /^!! (.*\/)?(node_modules|\.build|build|dist|target|out|coverage|__pycache__|\.venv|venv|\.pytest_cache|\.next|\.turbo|\.cache|DerivedData|\.gradle|\.wheelhouse)\/.*$/;
 const isRebuilt = (line) => REBUILT.test(line);
 
+// heldByMain({ project, head, base, git }) -> boolean: whether the main version already holds a change's work. Either the
+// change's commits are within it, or merging the change in would alter nothing, as when a lane that carried a hand-made
+// change on squashed it, so the content is in but not the commits.
+export async function heldByMain({ project, head, base, git = gitRoute() }) {
+  if (typeof head !== 'string' || head === '') return false;
+  const home = homeGit(project, git);
+  const ref = `refs/heads/${base}`;
+  if (await home.ok(['merge-base', '--is-ancestor', head, ref])) return true;
+  const merged = await home.call(['merge-tree', '--write-tree', '--no-messages', ref, head]);
+  if (merged.code !== 0) return false;
+  const tree = String(merged.stdout).split('\n')[0].trim();
+  const now = await home.call(['rev-parse', '--verify', '-q', `${ref}^{tree}`]);
+  return now.code === 0 && tree !== '' && tree === String(now.stdout).trim();
+}
+
 // Whether a merged change's worktree can go, and if so sends it (check 83). `archon complete` refuses a squashed branch, and
 // `--force` takes anything at all, so this look stands in front of it: the worktree goes only when the branch is within what
 // merged, nothing in it is uncommitted, untracked, ignored but not rebuilt, or half done, and no run is on it. Gives 'gone',
