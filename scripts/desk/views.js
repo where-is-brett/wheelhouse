@@ -135,12 +135,28 @@ const latestRun = (views, id) => (isPlain(views.runs) && Array.isArray(views.run
 // What each lane is, in words a sentence takes.
 const LANE_WORDS = { quick: 'quick work', small: 'small work', feature: 'a feature', bug: 'a bug fix' };
 
+// What a pull request is waiting on, in words: `open` is the work's own status (its pull request, the
+// head commit and what it waits on), `known` the number the record already named. The signed review of
+// that exact head is read from the record's reviews; a review of another commit doesn't count.
+export function prLine(views, open, known) {
+  const n = isPlain(open) && Number.isSafeInteger(open.pr) && open.pr > 0 ? open.pr : known;
+  if (!Number.isSafeInteger(n) || n <= 0) return [];
+  const head = isPlain(open) && typeof open.head === 'string' ? open.head : null;
+  const review = head !== null && isPlain(views.reviews?.[n]) ? views.reviews[n][head]?.data : undefined;
+  const lead = Number.isSafeInteger(known) && known === n ? [] : [`pull request #${n} is open`];
+  if (isPlain(open) && open.waitingOn === 'director') return [...lead, 'waiting on the director'];
+  if (!isPlain(review)) return [...lead, `no signed review of its latest commit yet, so it can't merge`];
+  if (review.verdict === 'CLEAN') return [...lead, 'its review is clean; it merges once the checks pass and the director has approved it'];
+  const found = Number.isSafeInteger(review.findings) ? `${review.findings} finding${review.findings === 1 ? '' : 's'} to fix` : 'findings to fix';
+  return [...lead, `its review holds the merge: ${found}`];
+}
+
 // The open work, running work first, each oldest first (then by id): its id, title and lane, whether a feature
 // runs for it, its step or state, the slice in hand and the pull request the gate waits on or its
 // latest report names, either since the work was queued. `answers` are the card-answer events, for
 // the director's Not now. In the glossary's plain words, but for the titles, kept as written: the
 // front desk reads this to tell the director how things stand.
-export function workLines(views, answers, words) {
+export function workLines(views, answers, words, prs = {}) {
   const features = isPlain(views.features) ? views.features : {};
   const questions = isPlain(views.questions) ? views.questions : {};
   const reports = Object.values(isPlain(views.reports) ? views.reports : {}).filter((r) => isPlain(r?.data));
@@ -168,6 +184,7 @@ export function workLines(views, answers, words) {
       state,
       ...(isPlain(slice) && Number.isInteger(slice.n) && Number.isInteger(slice.m) ? [`slice ${slice.n} of ${slice.m}`] : []),
       ...(Number.isSafeInteger(pr) && pr > 0 ? [`pull request #${pr}`] : []),
+      ...(prs[id] === undefined ? [] : prLine(views, prs[id], pr)),
     ].join(', ');
   });
   // Labels, ids and work titles stay as written, as the board keeps titles (design section 21).
