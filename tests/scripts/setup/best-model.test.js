@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { FRONT_DESK_ALIAS, STRONGEST_ALIAS, aliasModel, initModel } from '../../../scripts/setup/best-model.js';
+import { FRONT_DESK_ALIAS, STRONGEST_ALIAS, aliasModel, initModel, soleModelAlias, SOLE_MODEL_VARIABLE } from '../../../scripts/setup/best-model.js';
 
 const init = (model) => `${JSON.stringify({ type: 'system', subtype: 'init', model })}\n${JSON.stringify({ type: 'result', is_error: false })}\n`;
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -57,4 +57,11 @@ test('setup names no model of its own, only Claude Code\'s aliases', () => {
     const text = fs.readFileSync(path.join(ROOT, 'scripts', 'setup', name), 'utf8');
     assert.doesNotMatch(text, /\bclaude-(opus|sonnet|haiku|fable)|\bfable\b/i, name);
   }
+});
+
+test('one alias for every role is read from the variable, and only an alias counts', () => {
+  assert.equal(soleModelAlias({ [SOLE_MODEL_VARIABLE]: 'small' }), 'small');
+  assert.equal(soleModelAlias({ [SOLE_MODEL_VARIABLE]: ' small-2 ' }), 'small-2');
+  for (const bad of ['', 'Two Words', '--model x', '../x', undefined]) assert.equal(soleModelAlias({ [SOLE_MODEL_VARIABLE]: bad }), null);
+  assert.equal(soleModelAlias({}), null);
 });

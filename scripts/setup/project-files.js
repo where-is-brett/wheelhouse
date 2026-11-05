@@ -124,8 +124,8 @@ import { CARD } from '../lib/front-desk.js';
 import { STATE_BRANCH } from '../state/record.js';
 import { sameRemote } from '../state/git.js';
 import { PROFILE_BRANCH } from '../profile/store.js';
-import { readConfig, isModelName } from '../gate/guardrails.js';
-import { aliasModel, FRONT_DESK_ALIAS, MID_SIZED_ALIAS } from './best-model.js';
+import { readConfig, isModelName, ROLES } from '../gate/guardrails.js';
+import { aliasModel, FRONT_DESK_ALIAS, MID_SIZED_ALIAS, soleModelAlias } from './best-model.js';
 import { projectSettings, localSettings, mergeSettings, directorStatusLine, withoutKeychainDenial, compactionRules } from '../protection/settings.js';
 import { protectionStatus as realProtectionStatus } from '../host/protection.js';
 import { projectPath } from '../host/gitlab-key.js';
@@ -295,7 +295,8 @@ function sameContent(rel, a, b) {
 // command line's own default), the front desk's `pages` (none, so no approval carries over a
 // screenshot), and `liveData` from step 4's answer (ruling R31). Real users are the `phase` setting
 // in state, never a key here (ruling R38). The configuration is the same on GitHub and GitLab.
-export function starterConfig({ answers = {}, frontDesk = null, midSized = null, found = null } = {}) {
+// `everyRole` is one model for the whole routing table (see best-model.js's SOLE_MODEL_VARIABLE).
+export function starterConfig({ answers = {}, frontDesk = null, midSized = null, found = null, everyRole = null } = {}) {
   const live = answers['4.live-data'];
   if (live?.label !== LIVE_DATA.yes && live?.label !== LIVE_DATA.no) throw new Error('Step 4 has not been told whether the product holds live data yet');
   const starter = { ...readConfig(null), pages: [], liveData: live.label === LIVE_DATA.yes };
@@ -307,6 +308,7 @@ export function starterConfig({ answers = {}, frontDesk = null, midSized = null,
     if (found.prepare) starter.checks = { prepare: found.prepare };
   }
   const out = frontDesk ? { ...starter, routing: { ...starter.routing, frontDesk } } : starter;
+  if (isModelName(everyRole)) out.routing = Object.fromEntries(ROLES.map((role) => [role, everyRole]));
   // The most capable class is the front desk's model; the mid-sized class is what its alias stands for.
   // No premium pin is ever written here: it is the director's separate opt-in (design section 14.6).
   const pins = { ...(frontDesk ? { mostCapable: frontDesk } : {}), ...(midSized ? { midSized } : {}) };
@@ -1093,7 +1095,7 @@ export function projectFilesStep({
   // with one, the one-off key is asked for on its own page (askAdministrationKey), used for this step only and never kept.
   adminKey = askAdministrationKey, open = null, askSecret = realAskSecret,
   address = () => helperAddress(), node = process.execPath, pluginRoot = PLUGIN_ROOT,
-  best = (alias) => aliasModel(alias, { run, claude }),
+  best = (alias) => aliasModel(alias, { run, claude }), env = process.env,
   // The build engine in force for a project, and the login the helper posts as on GitHub.
   engineOf = engineInForce, loginOf = githubLogin,
 } = {}) {
@@ -1246,11 +1248,12 @@ export function projectFilesStep({
 
       // The front desk's model (design section 8): the pin the configuration holds, else what Claude
       // Code's alias for the front desk stands for now, asked only while there is no pin.
-      const pin = frontDeskPin(objectIn(CONFIG, readText(at(CONFIG)))) ?? await bestOnce(found.project, ctx.runId, FRONT_DESK_ALIAS, best);
+      const sole = soleModelAlias(env);
+      const pin = frontDeskPin(objectIn(CONFIG, readText(at(CONFIG)))) ?? await bestOnce(found.project, ctx.runId, sole ?? FRONT_DESK_ALIAS, best);
       // The lighter model for Lean and Lightest the same way: the pin held, else what its alias stands for, asked once.
       const held = midSizedPin(objectIn(CONFIG, readText(at(CONFIG))));
-      const mid = held ?? await bestOnce(found.project, ctx.runId, MID_SIZED_ALIAS, best);
-      const config = starterConfig({ answers: ctx.answers, frontDesk: pin, midSized: mid, found: await foundAtHead(git) });
+      const mid = held ?? await bestOnce(found.project, ctx.runId, sole ?? MID_SIZED_ALIAS, best);
+      const config = starterConfig({ answers: ctx.answers, frontDesk: pin, midSized: mid, found: await foundAtHead(git), everyRole: sole === null ? null : pin });
       const home = claudeHome();
       const release = wheelhouseRelease({ folder, claudeHome: home });
       const targets = targetsFor({ folder, config, release, claudeHome: home });

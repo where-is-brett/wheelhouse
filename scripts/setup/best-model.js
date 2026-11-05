@@ -26,6 +26,15 @@ export const FRONT_DESK_ALIAS = 'opus';
 export const MID_SIZED_ALIAS = 'sonnet';
 // Claude Code's alias for its strongest model, for the premium model's opt-in (design section 14.6).
 export const STRONGEST_ALIAS = 'best';
+// One alias for every role. When this variable names a Claude Code alias, setup asks what it stands for once and pins
+// that model to the front desk, to the mid-sized class and to every role of the routing table, in place of the
+// usual choices above. It is for running the whole of Wheelhouse on one model; the premium model stays the director's opt-in.
+export const SOLE_MODEL_VARIABLE = 'WHEELHOUSE_SETUP_MODEL';
+// The alias the variable names, or null when it names none or something that is not an alias.
+export const soleModelAlias = (env = process.env) => {
+  const value = typeof env?.[SOLE_MODEL_VARIABLE] === 'string' ? env[SOLE_MODEL_VARIABLE].trim() : '';
+  return /^[a-z][a-z0-9-]{0,31}$/.test(value) ? value : null;
+};
 // How long Claude Code may take to start and say which model it runs on.
 export const ALIAS_WAIT_MS = 60 * 1000;
 
