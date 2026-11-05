@@ -3,6 +3,7 @@
 // desk recording work and asking its card, a change merging, and the check that nothing told to the director in a terminal
 // speaks of a panel.
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { inDirectorWorld } from './director-world.js';
 import { approving } from '../eval/build-loop/engine-recordings.js';
 
@@ -33,6 +34,14 @@ export const record = async (w, work, { lane, visible, title = `The ${work} chan
 export const waitingCards = async (w) => (await w.desk(['views', 'waiting'])).out;
 export const approveCards = (w) => w.records('card').filter((c) => /^Approve .* as written/.test(c.data.line ?? ''));
 export const merged = (w, pr) => w.tickUntil(() => (w.changeOf(pr)?.state === 'merged' ? w.changeOf(pr) : null), `change ${pr} to merge`);
+
+// The events the foreman's wakes among `lines` (a watch's) carry, as { type, work }.
+export function foremanWakes(lines) {
+  return lines.filter((l) => /^WAKE foreman /.test(l)).flatMap((l) => {
+    const wake = JSON.parse(fs.readFileSync(l.replace(/^WAKE foreman /, ''), 'utf8'));
+    return [...(wake.events ?? []), ...(wake.digest ?? [])].map((e) => ({ type: e.type, work: e.work }));
+  });
+}
 
 // Visible work is shown first: the run asks for the director's approval of its change, a merge card comes, the director's
 // press is signed, the run goes on and the change is marked ready. Resolves the merged change. `recordings` is the object the

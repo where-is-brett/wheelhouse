@@ -30,6 +30,7 @@ import { listEvents } from '../../scripts/state/events.js';
 import { sandboxed } from './sandbox-wall.js';
 import { tempFolder } from './homes.js';
 
+import { keepSeenMain } from '../../scripts/host/local/merge.js';
 import { homeDir } from '../../scripts/host/local/home.js';
 import { run } from '../../scripts/lib/run.js';
 import { main as doneCheck } from '../../scripts/engine/done-check.js';
@@ -61,10 +62,10 @@ export const recordingsNamed = (...names) => {
 
 // openDirectorWorld({ recordings, says, lanes }) -> the world, with a terminal session ('desk-session') for the front desk.
 // `lanes` are the lanes the project has put on the engine, as its confirmed setting; the quick lane alone by default.
-export async function openDirectorWorld({ recordings = {}, says, lanes = ['quick', 'small'], adapt } = {}) {
+export async function openDirectorWorld({ recordings = {}, says, lanes = ['quick', 'small'], adapt, files } = {}) {
   const clock = { base: Date.parse('2026-11-05T09:00:00.000Z'), from: Date.now() };
   const now = () => new Date(clock.base + (Date.now() - clock.from));
-  const world = await openWorld({ place: 'git-alone', recordings, now, ...(says ? { says } : {}), ...(adapt ? { adapt } : {}) });
+  const world = await openWorld({ place: 'git-alone', recordings, now, ...(says ? { says } : {}), ...(adapt ? { adapt } : {}), ...(files ? { files } : {}) });
   const client = helperClient({ address: helperAddress({ home: world.home }) });
   const walls = [...new Set([path.resolve(world.home), fs.realpathSync.native(world.home)])];
   const lines = [];
@@ -181,6 +182,22 @@ export async function openDirectorWorld({ recordings = {}, says, lanes = ['quick
         if (marked?.ok !== true) throw new Error(`the change wasn't marked ready: ${marked?.refused}`);
       }
       return made;
+    },
+    // The main version moves on by a commit of `files`, made apart from the folder, as another computer's work or a merge
+    // would; the helper takes it as its own. Resolves the new main commit.
+    async landFiles(files) {
+      const scratch = tempFolder('wh-land-');
+      await git(['clone', '-q', world.gitHome, scratch], scratch.replace(/[^/]*$/, ''));
+      for (const [name, body] of Object.entries(files)) {
+        fs.mkdirSync(path.dirname(path.join(scratch, name)), { recursive: true });
+        fs.writeFileSync(path.join(scratch, name), body);
+      }
+      await git(['add', '-A'], scratch);
+      await git([...WHO, 'commit', '-q', '-m', 'Main moves on'], scratch);
+      await git(['push', '-q', 'origin', 'HEAD:refs/heads/main'], scratch);
+      const commit = await git(['rev-parse', 'HEAD'], scratch);
+      keepSeenMain(PROJECT, commit);
+      return commit;
     },
     // Ticks until `found` gives something.
     tickUntil: (found, what) => untilTrue(async () => { await world.tick(); return found(); }, what),

@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { git } from '../helpers/director-world.js';
-import { world, record, approveCards, merged, startsAndMergesShownFirst, assertNoPanelWords } from '../helpers/director-steps.js';
+import { world, record, approveCards, foremanWakes, merged, startsAndMergesShownFirst, assertNoPanelWords } from '../helpers/director-steps.js';
 import { waitLongerOnTheHelper } from '../helpers/until.js';
 import { running } from '../eval/build-loop/engine-recordings.js';
 import { CHECK_AND_ADD, LEAVE_THEM_OUT } from '../../scripts/state/card-lines.js';
@@ -69,9 +69,10 @@ test('a hand edit, then Check and add them: press, tie, work; one wake, no secon
   await w.tickUntil(() => w.eventsOf('by-hand').length > 0, 'the tie');
   const from = await carriedOn(w);
   assert.equal(w.eventsOf('work').length, 0);
+  await w.watch(); // the press and the tie are seen, and their wake is past
   await record(w, from.work, { lane: 'small', visible: true, title: 'Your edit to the README', from: from.from });
-  const woken = await w.watch();
-  assert.equal(woken.filter((l) => /^WAKE foreman /.test(l)).length, 1, 'the foreman is woken');
+  const woken = foremanWakes(await w.watch());
+  assert.ok(woken.some((e) => e.type === 'work-ready' && e.work === from.work), `the foreman is woken for the work (${JSON.stringify(woken)})`);
   assert.equal(approveCards(w).length, 0, 'no second Approve card');
   assert.deepEqual((await w.desk(['cards'])).json.questions, []);
   await buildsAndMerges(w, from.work);
@@ -99,8 +100,8 @@ test('a hand edit, then Check and add them: work, then press and tie; the forema
   await w.watch();
   await w.press(card, CHECK_AND_ADD);
   await w.tickUntil(() => w.eventsOf('by-hand').length > 0, 'the tie');
-  const woken = await w.watch();
-  assert.equal(woken.filter((l) => /^WAKE foreman /.test(l)).length, 1, 'the foreman is woken');
+  const woken = foremanWakes(await w.watch());
+  assert.ok(woken.some((e) => e.type === 'work-ready' && e.work === 'carry-on-1'), `the foreman is woken for the work (${JSON.stringify(woken)})`);
   assert.equal(approveCards(w).length, 0, 'no second Approve card');
   await buildsAndMerges(w, 'carry-on-1', { committed: true });
 }));
@@ -149,6 +150,31 @@ test('a hand commit of a bracketed file name carries only that file and leaves a
   assert.equal(fs.readFileSync(path.join(w.folder, 'app', 's', 'page.md'), 'utf8'), 'Not committed.\n', 'the untracked file is untouched');
   assert.equal(await git(['status', '--porcelain', '--untracked-files=all'], w.folder), '?? app/s/page.md');
 }));
+
+// Guards the same fault where the folder lets go of an edit the main version already holds: the file, already tracked, is
+// edited by hand and not committed. Git read app/[slug]/page.md as a pattern that also matched the untracked app/s/page.md,
+// so the folder never took the main version.
+test('an uncommitted edit of a bracketed file name is let go for the main version and app/s/ stays untracked', { timeout: 120000 }, () => {
+  const bracketed = 'app/[slug]/page.md';
+  return world({ recordings: carryOn(), files: { [bracketed]: 'The page.\n' } }, async (w) => {
+    await w.terminalTick();
+    fs.mkdirSync(path.join(w.folder, 'app', 's'), { recursive: true });
+    fs.writeFileSync(path.join(w.folder, 'app', 's', 'page.md'), 'Not committed.\n');
+    const edited = 'The page.\nWritten by hand in the folder.\n';
+    fs.writeFileSync(path.join(w.folder, bracketed), edited);
+    const card = await handCardRaised(w);
+    await w.press(card, CHECK_AND_ADD);
+    await w.tickUntil(() => w.eventsOf('by-hand').length > 0, 'the tie');
+    const from = await carriedOn(w);
+    assert.deepEqual(from.files.map((f) => f.path), [bracketed], 'the change carries only the edited file');
+    await record(w, from.work, { lane: 'small', visible: true, title: 'Your page', from: from.from });
+    const change = await startsAndMergesShownFirst(w, from.work, { files: { [bracketed]: edited } }, { pr: 2 });
+    await w.tickUntil(async () => (await w.folderMain()) === change.mergeCommit, 'the folder to take the main version');
+    assert.equal(fs.readFileSync(path.join(w.folder, bracketed), 'utf8'), edited, 'the edit is kept');
+    assert.equal(fs.readFileSync(path.join(w.folder, 'app', 's', 'page.md'), 'utf8'), 'Not committed.\n');
+    assert.equal(await git(['status', '--porcelain', '--untracked-files=all'], w.folder), '?? app/s/page.md', 'app/s/ stays untracked');
+  });
+});
 
 // Guards: a terminal was told of a panel beside the chat. Nothing told to the director in these tests, in the cards, the
 // commands' output or the wakes, speaks of one.

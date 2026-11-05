@@ -83,6 +83,21 @@ test('a quick change nobody sees: no card, it starts, builds and merges, and the
   assert.deepEqual(w.hostCalls, []);
 }));
 
+// Guards: the guard checks read a run's change from the commit the helper kept for the run. With the main version ahead of the
+// folder's own copy of it (the folder holds an edit, so it cannot take the new main), reading from the folder's branch made the
+// moved-on main's files, a control file here, look like the run's own change and held a clean run for the director.
+test('a quick change started after the main version moved on carries only its own change through the guard checks', { timeout: 120000 }, () => world({ recordings: { tidy: running('tidy') } }, async (w) => {
+  await w.landFiles({ 'CLAUDE.md': 'Notes for agents.\n' });
+  fs.appendFileSync(path.join(w.folder, 'README.md'), 'An edit made by hand.\n');
+  await record(w, 'tidy', { lane: 'quick', visible: false });
+  await w.tick();
+  assert.equal(w.starts().length, 1);
+  const build = await w.build('tidy');
+  const verdicts = build.said.filter((l) => l.startsWith('{')).map((l) => JSON.parse(l));
+  assert.deepEqual(verdicts.map((v) => v.clean), [true, true], `the guard checks find nothing: ${build.said.join(' | ')}`);
+  await merged(w, build.pr);
+}));
+
 // Guards: a refused start raised a new card at every wake, worded afresh. The same fault stands for the engine's start: one
 // card for the work, however many wakes find the start refused again, and its choices are ones the director can act on.
 test('a start that is refused raises one card across many wakes, with choices the director can act on', { timeout: 120000 }, () => {
