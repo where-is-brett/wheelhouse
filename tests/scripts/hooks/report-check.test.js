@@ -309,3 +309,12 @@ test('a reviewer report with pr: none and findings is also complete and signs no
     assert.equal(c.calls.prState.length, 0);
   });
 });
+
+test('a reviewer report may give blocking, a count of at most the findings, and only for FINDINGS', () => {
+  const report = (lines) => parseReport(`WHEELHOUSE REPORT\nrole: reviewer\npr: 7\ncommit: ${FULL}\n${lines}`);
+  assert.deepEqual(report('verdict: FINDINGS\nfindings: 3\nblocking: 0').missing, []);
+  assert.deepEqual(report('verdict: FINDINGS\nfindings: 3\nblocking: 3').missing, []);
+  assert.ok(report('verdict: FINDINGS\nfindings: 3\nblocking: 4').missing.includes('blocking'));
+  assert.ok(report('verdict: FINDINGS\nfindings: 3\nblocking: -1').missing.includes('blocking'));
+  assert.ok(report('verdict: CLEAN\nblocking: 0').missing.includes('blocking'));
+});

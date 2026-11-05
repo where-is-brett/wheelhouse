@@ -27,6 +27,9 @@ async function withHome(fn) {
 }
 
 const review = (commit = SHA, verdict = 'CLEAN') => makeEvent({ kind: 'review', data: { pr: 7, commit, verdict } });
+const findings = (findingsCount, blocking, commit = SHA) => makeEvent({
+  kind: 'review', data: { pr: 7, commit, verdict: 'FINDINGS', findings: findingsCount, ...(blocking === undefined ? {} : { blocking }) },
+});
 const approval = (commit = SHA) => makeEvent({ kind: 'approval', data: { pr: 7, commit } });
 
 const input = (extra = {}) => ({
@@ -332,3 +335,23 @@ test('a signed approval naming the proof add-on counts for a project with real u
   const click = { kind: 'card-answer', data: { label: 'Approve', commit: SHA, proof: 'chat-click' } };
   assert.equal(gateDecision(input({ ...taken, approval: click })).allow, false);
 }));
+
+test('a review whose findings are all minor counts; a blocking one, or one that does not say, does not', async () => {
+  await withHome(() => {
+    const allowed = (r) => gateDecision(input({ reviewRequired: true, review: r })).reasons;
+    assert.deepEqual(allowed(findings(3, 0)), [], 'all MEDIUM or LOW');
+    assert.deepEqual(allowed(findings(3, 1)), ['no CLEAN review of abcdef1'], 'a BLOCKER or HIGH holds');
+    assert.deepEqual(allowed(findings(3)), ['no CLEAN review of abcdef1'], 'no blocking count: every finding holds');
+    assert.deepEqual(allowed(findings(0, 0)), ['no CLEAN review of abcdef1'], 'no findings with a FINDINGS verdict is not a clear');
+  });
+});
+
+test('the blocking count of a signed review cannot be lowered after it is signed', async () => {
+  await withHome(() => {
+    const r = findings(3, 2);
+    const lowered = { ...r, data: { ...r.data, blocking: 0 } };
+    assert.deepEqual(gateDecision(input({ reviewRequired: true, review: lowered })).reasons, ['no CLEAN review of abcdef1']);
+    const unsigned = { kind: 'review', data: { pr: 7, commit: SHA, verdict: 'FINDINGS', findings: 3, blocking: 0 } };
+    assert.deepEqual(gateDecision(input({ reviewRequired: true, review: unsigned })).reasons, ['no CLEAN review of abcdef1']);
+  });
+});

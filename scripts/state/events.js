@@ -824,6 +824,7 @@ function checkReview(data) {
   if (typeof data.commit !== 'string' || data.commit === '') bad('needs the commit');
   if (data.verdict !== undefined && typeof data.verdict !== 'string') bad('has a verdict that is not text');
   if (data.findings !== undefined && (!Number.isInteger(data.findings) || data.findings < 0)) bad('has a count of findings that is not a count');
+  if (data.blocking !== undefined && (!Number.isInteger(data.blocking) || data.blocking < 0 || (Number.isInteger(data.findings) && data.blocking > data.findings))) bad('has a count of blocking findings that is not a count within the findings');
   for (const k of ['check', 'claudeCode', 'model']) if (data[k] !== undefined && typeof data[k] !== 'string') bad(`has a ${k} that is not text`);
   // A review the helper signs from the engine's record names where it read it (Archon design, section 7.5).
   const fromEngine = ['engine', 'runId', 'step', 'digest'].filter((k) => data[k] !== undefined);

@@ -47,6 +47,8 @@ export function parseReport(text, role) {
   } else {
     need('verdict', (v) => v === 'CLEAN' || v === 'FINDINGS');
     if (fields.verdict === 'FINDINGS') need('findings', (v) => /^[0-9]+$/.test(v ?? '') && Number.isSafeInteger(Number(v)));
+    // `blocking` (the BLOCKER and HIGH findings) is optional, but when given it is a count of at most the findings.
+    if (fields.blocking !== undefined) need('blocking', (v) => /^[0-9]+$/.test(v ?? '') && Number.isSafeInteger(Number(v)) && fields.verdict === 'FINDINGS' && Number(v) <= Number(fields.findings));
   }
   if (fields.check !== undefined) need('check', (v) => /^[A-Za-z0-9._-]{1,64} [A-Za-z0-9:+/=._-]{1,128}$/.test(v));
   return { fields, missing: bad };
@@ -150,6 +152,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
     commit: fields.commit,
     verdict: fields.verdict,
     findings: fields.verdict === 'FINDINGS' ? Number(fields.findings) : 0,
+    ...(fields.verdict === 'FINDINGS' && fields.blocking !== undefined ? { blocking: Number(fields.blocking) } : {}),
     ...(fields.check ? { check: fields.check } : {}),
     claudeCode: text(input.claudeCode) ?? text(seen.claudeCode) ?? 'unknown',
     model: text(input.model) ?? text(seen.model) ?? 'unknown',

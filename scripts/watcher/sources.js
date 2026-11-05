@@ -35,6 +35,7 @@
 //     already in state is where things stand, not news.
 // `awake`, the milliseconds the watcher ran since its last observation, is
 // the caller's to measure, since only the running process can know it.
+import { reviewClear } from '../lib/review-verdict.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { featurePaths, briefHash, parseBrief, parseReport, readQuestions, readStatus } from '../feature/files.js';
@@ -230,9 +231,9 @@ function spelt(checkout, worktree) {
 
 // The review of the pull request's head, from the signed review records.
 function reviewOf(views, pr, head) {
-  const verdict = views.reviews?.[String(pr)]?.[head]?.data?.verdict;
-  if (verdict === 'CLEAN') return 'clean';
-  if (verdict === 'FINDINGS') return 'findings';
+  const data = views.reviews?.[String(pr)]?.[head]?.data;
+  if (reviewClear(data)) return 'clean';
+  if (data?.verdict === 'FINDINGS') return 'findings';
   return 'none';
 }
 

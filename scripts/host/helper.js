@@ -15,6 +15,7 @@
 // nothing). The checks and the push then run in the mirror, with the key.
 import { stuckCardFor } from '../foreman/ask-help.js';
 import { recentStuck } from '../watcher/stuck-cards.js';
+import { reviewClear } from '../lib/review-verdict.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -3075,7 +3076,7 @@ export async function startHelper({
     const review = latestFor(views.reviews, number);
     const approval = withApproval ? latestFor(views.approvals, number) : null;
     const from = {
-      review: review?.data?.verdict === 'CLEAN' && review.data.commit !== headSha ? review.data.commit : null,
+      review: reviewClear(review?.data) && review.data.commit !== headSha ? review.data.commit : null,
       approval: approval !== null && approval.data?.commit !== headSha ? approval.data?.commit : null,
     };
     let facts = { upToDate: null, review: false, approval: false };
@@ -3113,10 +3114,10 @@ export async function startHelper({
     // As the merge gate counts them: this computer's own signatures alone.
     const views = buildViews(listEvents(stateDir(project), { report: () => {}, skipped }), ownKeyOnly(), { damaged: skipped, now });
     const reviews = views.reviews?.[String(number)] ?? {};
-    const cleanEarlier = Object.values(reviews).filter((r) => r?.data?.verdict === 'CLEAN' && r.data.commit !== pr.headSha);
+    const cleanEarlier = Object.values(reviews).filter((r) => reviewClear(r?.data) && r.data.commit !== pr.headSha);
     // With no CLEAN review as the latest, nothing counts and nothing can carry: the mirror is not
     // read, so the watcher's poll costs no fetch, and upToDate is not known (false).
-    if (latestFor(views.reviews, number)?.data?.verdict !== 'CLEAN') return { ok: true, review: 'none', upToDate: false, earlier: cleanEarlier.length > 0 };
+    if (!reviewClear(latestFor(views.reviews, number)?.data)) return { ok: true, review: 'none', upToDate: false, earlier: cleanEarlier.length > 0 };
     const found = await gateRecords({ project, number, headSha: pr.headSha, views, adapter, withApproval: false, withConfig: true }, ctx);
     // Only a review of a kind the gate counts for the agent this computer runs (ruling P8-14), from the default
     // branch's configuration as the merge reads it (here from the same fetch, so the poll costs no second one): null,
@@ -3127,7 +3128,7 @@ export async function startHelper({
     const counted = (record) => kinds === null || kinds.includes(record?.data?.reviewKind);
     const earlier = cleanEarlier.some(counted);
     const record = found.review?.carried === true ? found.review.record : found.review;
-    const own = found.review?.data?.commit === pr.headSha && found.review?.data?.verdict === 'CLEAN';
+    const own = found.review?.data?.commit === pr.headSha && reviewClear(found.review?.data);
     const clean = (found.review?.carried === true || own) && counted(record);
     return { ok: true, review: clean ? 'clean' : 'none', upToDate: found.upToDate === true, earlier };
   }
