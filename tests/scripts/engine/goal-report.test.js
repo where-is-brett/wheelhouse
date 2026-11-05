@@ -118,7 +118,7 @@ test('with no reading the tokens stand alone, and the report says so', () => {
 test('counted requests stand in for the allowance', () => {
   const sheet = sheetOf({ spend: { tokens: 1000000, requests: 300 } });
   const text = textOf(goalOf({ sheet, spent: spentOf({ points: null, requests: 120, readAt: null }) }), viewsOf({ reports: merged('a', 'b', 'c', 'd') }));
-  assert.match(text, /120 requests, of the 300 you allowed/);
+  assert.match(text, /120 AI credits, of the 300 you allowed/);
   assert.ok(!text.includes('allowance'), text);
 });
 

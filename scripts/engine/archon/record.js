@@ -3,6 +3,7 @@
 // provider reported it, step by step; where Archon has no figure the step's source is 'unknown' and the figure is
 // null, never zero (spec 6.1, 10).
 import crypto from 'node:crypto';
+import { CREDITS_PER_PROMPT } from '../spend.js';
 
 const STATUS = { pending: 'running', running: 'running', paused: 'paused', completed: 'ended', failed: 'ended', cancelled: 'ended' };
 
@@ -19,11 +20,11 @@ function outcomeOf(json) {
   return null;
 }
 
-// The providers whose plan counts each prompt sent as a request. The rate each model counts at comes from the
-// account's list (scripts/agents/copilot/column.js's requestRates): an included model 0, and any model the list doesn't
-// rate one, never zero (checks 74 and 79).
+// The providers whose plan counts each prompt sent, in AI credits. What each model's prompt is estimated to cost comes
+// from the account's list (scripts/agents/copilot/column.js's requestRates): an included model 0, and any model the
+// list doesn't rate a prompt's credits at the Auto rate, never zero (checks 74 and 79).
 export const REQUEST_RATES = Object.freeze({ copilot: true });
-const ONE_EACH = () => 1;
+const ONE_EACH = () => CREDITS_PER_PROMPT;
 
 // The tokens a step or a run spent: new input and output. A provider's input figure already holds what it read back from
 // its cache, the same context again, which would otherwise fill a cap; what it wrote to its cache is new, and stays. A

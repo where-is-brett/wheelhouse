@@ -20,7 +20,7 @@ test('the month adds up every project on the account', async () => {
 test('a cost record that counts null is never read as 0', async () => {
   const roles = { build: {}, 'review-spec': {}, 'review-standards': {} };
   const projects = [project([cost(null, undefined, roles), cost(null), cost(0)])];
-  assert.equal(await requestsThisMonth({ projects, month: '2026-10', inspect: async () => null }), 4, 'one for each step it names, and at least one');
+  assert.equal(await requestsThisMonth({ projects, month: '2026-10', inspect: async () => null }), 1, 'a quarter credit for each step it names, and at least one: 0.75 + 0.25 + 0');
 });
 
 test('a run that has not ended counts from the engine\'s record, and one that can\'t be read counts as unknown', async () => {
@@ -29,7 +29,7 @@ test('a run that has not ended counts from the engine\'s record, and one that ca
     projects: [project([], ['paused', 'lost', 'throws'])], month: '2026-10',
     inspect: async (id) => { if (id === 'throws') throw new Error('no engine'); return id === 'lost' ? { status: 'unknown', steps: [] } : records[id]; },
   });
-  assert.equal(got, 5, 'three steps, and one each for the two it can\'t read');
+  assert.equal(got, 3.5, 'three steps, and a quarter credit each for the two it can\'t read');
 });
 
 test('two projects share one meter: one reading of the provider, one line, and the same count', async () => {

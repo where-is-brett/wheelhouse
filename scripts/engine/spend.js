@@ -59,12 +59,18 @@ export function runningMinutes(records, now = new Date(), slept = []) {
 const RANK = { reported: 0, estimated: 1, unknown: 2 };
 const figure = (n) => typeof n === 'number' && Number.isFinite(n) && n >= 0;
 const cents = (n) => Math.round(n * 1e6) / 1e6;
+const hundredths = (n) => Math.round(n * 100) / 100;
+
+// What one prompt counts as, in AI credits, at a rate of one (a plan's automatic model pick), for a plan that bills in
+// credits. Its source and calibration are written in the adapter that applies the rate (the column file under scripts/agents). A
+// model's rate multiplies it, and the plan's own figure replaces the estimate once it is read.
+export const CREDITS_PER_PROMPT = 0.25;
 export const TOKEN_KINDS = Object.freeze(['input', 'output', 'cacheRead', 'cacheWrite']);
 
 // A run's cost from its record (the engine's inspect): { tokens, kinds, dollars, floorDollars, premiumRequests,
 // minutes, source, byRole }. Tokens add up what the steps reported or estimated; dollars are null when any step that
-// called a model gave none, with `floorDollars` the known part; `source` is the weakest of the steps'. Requests are
-// the steps' counted requests, whatever became of the run: a cancelled step counted its prompt though it reported no
+// called a model gave none, with `floorDollars` the known part; `source` is the weakest of the steps'. Requests (AI credits for a provider that bills so) are
+// the steps' counted credits, whatever became of the run: a cancelled step counted its prompt though it reported no
 // spend. They are null only when they can't be known: a step of unknown spend that counted none, or a run the engine
 // no longer has. Minutes add up the steps' own running time. A step's row holds its last attempt only, so for a run that
 // resumed the steps read less than the run spent: where the engine gives `totals` ({ tokens, dollars }), which add every
@@ -88,7 +94,7 @@ export function runCost(inspect) {
     if (figure(s.tokens)) tokens += s.tokens;
     if (figure(s.dollars)) floor += s.dollars;
     else unknownDollars = true;
-    if (figure(s.requests)) requests += s.requests;
+    if (figure(s.requests)) requests = hundredths(requests + s.requests);
     else if (stepSource === 'unknown') requestsKnown = false;
     if (figure(s.minutes)) minutes += s.minutes;
     if (s.kinds && typeof s.kinds === 'object') {
@@ -119,9 +125,10 @@ export function runCost(inspect) {
   };
 }
 
-// What a cost (a run's `cost` record, or runCost's answer) adds to the month's requests. A count that can't be known is
-// never 0: it reads as one for each step it names, at least one, until the provider's own figure corrects it.
+// What a cost (a run's `cost` record, or runCost's answer) adds to the month's AI credits (the field keeps the name
+// `premiumRequests`, which older records hold as whole requests). A count that can't be known is never 0: it reads as a
+// prompt's credits for each step it names, at least one prompt, until the provider's own figure corrects it.
 export function countedRequests(cost) {
   if (figure(cost?.premiumRequests)) return cost.premiumRequests;
-  return Math.max(1, Object.keys(cost?.byRole ?? {}).length);
+  return hundredths(Math.max(1, Object.keys(cost?.byRole ?? {}).length) * CREDITS_PER_PROMPT);
 }

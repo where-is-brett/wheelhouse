@@ -6,7 +6,7 @@
 
 ## Question
 
-Spec 15's E6: can each step's tokens and cost be read from Archon's record? And is the spend meter's Copilot estimate within one request of GitHub's own premium-request figure over 20 Copilot steps? The estimate is prompts sent per step (attempts, loop rounds and structured-output re-asks) times the model's multiplier.
+Spec 15's E6: can each step's tokens and cost be read from Archon's record? And is the spend meter's Copilot estimate, in AI credits, never below GitHub's own figure and within a few credits of it over 20 Copilot steps (it first read "within one request" of the premium-request figure; see the 5 November 2026 attempt)? The estimate is prompts sent per step (attempts, loop rounds and structured-output re-asks) times the model's multiplier.
 
 ## Tested on
 
@@ -68,3 +68,4 @@ It reads GitHub's figure (`gh api /copilot_internal/user`, as in check 74) befor
 - **The trial ended:** 17 single Copilot steps completed, the three-round loop's run ended `failed`, and the three Claude steps did not start ("No providers installed"). Each completed step's tokens were in the record (for example 11,704 and 35,090), with cost `unavailable`.
 - **The comparison:** the meter's estimate was 18 requests (one per prompt at `auto`). GitHub's `quota_remaining` fell from 180.4 to 177.9, which is 2.5. The estimate is about seven times too high in this billing, so the meter must count credits, not prompts, before Copilot runs unattended. The within-one-request test cannot pass as worded.
 - The loop's failure was not looked into.
+- **The meter now counts credits.** Each Copilot prompt is estimated at 0.25 AI credits times the model's rate (an unknown model at the Auto rate, never zero), set above the highest cost seen (0.16) so the estimate runs high, not low. On the 17 steps that is 4.25 against GitHub's 2.5. The daily reading takes GitHub's `quota_remaining` with its two decimals as the true figure, and the Logbook says when the two differ by more than one credit. The cap is in AI credits a month. The test is now that the estimate is never below GitHub's and within a few credits of it; run it again over 20 steps to confirm.

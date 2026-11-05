@@ -119,7 +119,7 @@ const canTest = (config) => isText(config?.testCommand) || config?.testsNotCount
 export const NO_TESTS_WORDS = 'Build work waits: Wheelhouse doesn\'t know how to run this project\'s tests, so it couldn\'t tell when a change is done. Setup can add the command.';
 
 // The words of the card for work held for the plan's counted requests, when the engine gives none of its own.
-export const REQUESTS_WORDS = 'Some work would use your AI plan\'s counted requests, and the cap on them is 0, so that work waits until you allow some.';
+export const REQUESTS_WORDS = 'Some work would use your AI plan\'s counted AI credits, and the cap on them is 0, so that work waits until you allow some.';
 
 // The order for one piece of work from its record: the title is its goal; the done checks are the record's own, or
 // the project's tests passing when it has none. `config` is { routing (the pack's bindings), testCommand, pages? };

@@ -37,9 +37,10 @@ test('a cancelled step counts its prompt though its spend is unknown, and only a
 test('a count that can\'t be known is never read as 0', () => {
   assert.equal(countedRequests({ premiumRequests: 0 }), 0);
   assert.equal(countedRequests({ premiumRequests: 3, byRole: { a: {} } }), 3);
-  assert.equal(countedRequests({ premiumRequests: null, byRole: { a: {}, b: {} } }), 2);
-  assert.equal(countedRequests({ premiumRequests: null }), 1);
-  assert.equal(countedRequests({}), 1);
+  assert.equal(countedRequests({ premiumRequests: null, byRole: { a: {}, b: {} } }), 0.5);
+  assert.equal(countedRequests({ premiumRequests: null }), 0.25);
+  assert.equal(countedRequests({}), 0.25);
+  assert.equal(countedRequests({ premiumRequests: 0.16 }), 0.16, 'a fraction of a credit stands');
 });
 
 test('estimated requests make the run estimated, never zero dollars', () => {

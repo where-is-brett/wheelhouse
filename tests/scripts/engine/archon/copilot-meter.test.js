@@ -1,5 +1,5 @@
 // tests/scripts/engine/archon/copilot-meter.test.js
-// The spend meter's premium-request estimate against GitHub's own figure (Archon design, section 10.1; checks 74 and
+// The spend meter's AI-credit estimate against GitHub's own figure (Archon design, section 10.1; checks 74 and
 // 79), on recordings: no Copilot request is sent.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -40,13 +40,13 @@ test('the first check keeps GitHub\'s figure as the starting point, and says not
   assert.equal(got.used, 0);
 });
 
-test('a day later, GitHub\'s count since the start is the true one, and a difference of more than one request is a line', async () => {
+test('a day later, GitHub\'s count since the start is the true one, and a difference of more than one credit is a line', async () => {
   const kept = { at: '2026-10-30T09:00:00.000Z', baseline: 38, estimateAt: 0, resets: '2026-11-01', last: 38 };
   const later = new Date(Date.parse(kept.at) + CHECK_EVERY_MS);
   const read = (used) => async () => ({ used, entitlement: 200, remaining: 200 - used, resets: '2026-11-01' });
   const close = await checkRequests({ read: read(44), estimate: () => 5, kept, now: later });
   assert.equal(close.used, 6, 'GitHub\'s six, not the estimate\'s five');
-  assert.equal(close.line, null, 'within one request');
+  assert.equal(close.line, null, 'within one credit');
   const far = await checkRequests({ read: read(50), estimate: () => 5, kept, now: later });
   assert.equal(far.used, 12);
   assert.match(far.line, /estimated 5/);
@@ -85,9 +85,9 @@ test('each Copilot attempt counts at its model\'s rate from the account\'s list,
   const json = { status: 'completed', nodes: [step('build', 'gpt-included', 'a1'), step('build', 'gpt-included', 'a2'), step('review', 'auto', 'a3'), step('plan', 'big', 'a4')] };
   const rates = requestRates(parseAccountModels({ models: { availableModels: [{ modelId: 'gpt-included', _meta: { copilotUsage: '0x' } }, { modelId: 'big', _meta: { copilotUsage: '10x' } }] } }));
   const got = readRecord(json, { rates });
-  assert.deepEqual(got.steps.map((s) => [s.id, s.requests, s.source]), [['build', 0, 'estimated'], ['build', 0, 'estimated'], ['review', 1, 'estimated'], ['plan', 10, 'estimated']]);
-  // With no list, every Copilot prompt counts one: never zero.
-  assert.deepEqual(readRecord(json).steps.map((s) => s.requests), [1, 1, 1, 1]);
+  assert.deepEqual(got.steps.map((s) => [s.id, s.requests, s.source]), [['build', 0, 'estimated'], ['build', 0, 'estimated'], ['review', 0.25, 'estimated'], ['plan', 2.5, 'estimated']]);
+  // With no list, every Copilot prompt counts a prompt's credits: never zero.
+  assert.deepEqual(readRecord(json).steps.map((s) => s.requests), [0.25, 0.25, 0.25, 0.25]);
 });
 
 test('a figure that can\'t be read is asked for again a day later, not at every look', async () => {
@@ -144,4 +144,31 @@ test('each account has its own file, named by no login, and accounts that can\'t
   assert.doesNotMatch(requestsFile('/e', ann), /ann/);
   assert.equal(accountKey({ last_logged_in_user: { host: 'https://github.com', login: 'ann' } }), accountKey(ann));
   assert.equal(accountKey(null), accountKey({}));
+});
+
+// Check 79, 5 November 2026: GitHub bills in AI credits. `quota_remaining` has two decimals; `credits_used` is whole.
+test('GitHub\'s figure keeps its two decimals, taken from what remains and not from the whole-number credits used', async () => {
+  const body = { quota_reset_date: '2026-12-01', quota_snapshots: { premium_interactions: { entitlement: 200, remaining: 177.9, credits_used: 22, quota_remaining: 177.9 } } };
+  const got = await readGitHubFigure({ run: gh(body) });
+  assert.deepEqual(got, { used: 22.1, entitlement: 200, remaining: 177.9, resets: '2026-12-01' });
+});
+
+test('17 short Auto steps: the estimate runs above GitHub\'s fall of 2.5 credits, and GitHub\'s figure is the one the cap reads', async () => {
+  const rates = requestRates([]);
+  const estimate = Math.round(17 * rates('auto') * 100) / 100;
+  assert.equal(estimate, 4.25);
+  assert.ok(estimate >= 2.5, 'the estimate must not run below what GitHub counted');
+  assert.ok(estimate < 18, 'and it is far nearer than one request a prompt');
+  const kept = { at: '2026-11-05T09:00:00.000Z', baseline: 19.6, estimateAt: 0, resets: '2026-12-01', last: 19.6 };
+  const later = new Date(Date.parse(kept.at) + CHECK_EVERY_MS);
+  const got = await checkRequests({ read: async () => ({ used: 22.1, entitlement: 200, remaining: 177.9, resets: '2026-12-01' }), estimate: () => estimate, kept, now: later });
+  assert.equal(got.used, 2.5);
+  assert.match(got.line, /estimated 4.25 Copilot credits and GitHub counted 2.5/);
+});
+
+test('an unknown model is never counted as nothing', () => {
+  const rates = requestRates(parseAccountModels({ models: { availableModels: [{ modelId: 'gpt-included', _meta: { copilotUsage: '0x' } }] } }));
+  assert.equal(rates('gpt-included'), 0);
+  assert.ok(rates('a-model-not-on-the-list') > 0);
+  assert.ok(rates(null) > 0);
 });

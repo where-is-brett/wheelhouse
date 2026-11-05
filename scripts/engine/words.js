@@ -124,7 +124,7 @@ export function goalSpentWords({ tokens, allowed, points, requests, unknown, rea
   const out = [];
   if (unknown) out.push(tokens === 0 ? 'Unknown: no reading was made.' : `Unknown: part of it wasn't reported, so ${tokenCount(tokens)} were counted against the ${tokenCount(allowed.tokens)} you allowed.`);
   if (points !== null) out.push(`${points} points of this week's allowance${of(allowed.points)}${readAt === null ? '' : `, read at ${readAt}`}.`);
-  if (requests !== null) out.push(`${requests} requests${of(allowed.requests)}.`);
+  if (requests !== null) out.push(`${requests} AI credits${of(allowed.requests)}.`);
   if (!unknown && (points === null || tokens > allowed.tokens)) out.push(`${tokenCount(tokens)}${of(allowed.tokens, tokenCount)}.${points === null && requests === null ? ' The week\'s allowance couldn\'t be read, so these are tokens alone.' : ''}`);
   if (afterEnd !== null) out.push(afterEnd.unknown ? 'The merge queue spent more after the goal ended, and how much is unknown.' : `The merge queue spent ${tokenCount(afterEnd.tokens)} more after the goal ended.`);
   return out.join(' ');
@@ -226,9 +226,9 @@ export const queueStuckWords = (why) => `The merge queue can't start: ${why}. Fi
 export const QUEUE_STUCK_WHY = 'Trouble that doesn\'t pass by itself often needs a person: a connection to sign in to again, or a repository that moved. Whether to be asked again is yours to decide, at level 3.';
 export const QUEUE_PASSED_WORDS = 'The merge queue\'s trouble has passed, so the card about it needs no answer.';
 // Work held for the plan's counted requests, past the words for a cap of none.
-export const requestsUsedWords = (cap) => `Some work would use your AI plan's counted requests, and this month's cap of ${cap} is used up, so that work waits until next month or until you allow more.`;
-export const REQUESTS_UNCONFIRMED_WORDS = 'Some work would use your AI plan\'s counted requests, and Wheelhouse can\'t yet check its count of them against the plan\'s own figure, so that work can\'t run for now, whatever the cap.';
-export const requestsStoppedWords = (title) => `${title} stops here, as you chose; none of it had started and no requests were used.`;
+export const requestsUsedWords = (cap) => `Some work would use your AI plan's counted AI credits, and this month's cap of ${cap} is used up, so that work waits until next month or until you allow more.`;
+export const REQUESTS_UNCONFIRMED_WORDS = 'Some work would use your AI plan\'s counted AI credits, and Wheelhouse can\'t yet check its count of them against the plan\'s own figure, so that work can\'t run for now, whatever the cap.';
+export const requestsStoppedWords = (title) => `${title} stops here, as you chose; none of it had started and no AI credits were used.`;
 export const STOPPED_RESTART_WORDS = (title) => `${title} stays stopped, as you chose; what it has done so far is kept on its branch.`;
 // Said after that line, of a run the engine may have started all the same and Wheelhouse couldn't end.
 export const ORPHAN_LEFT_WORDS = "A run of it may still be going in the build engine; Wheelhouse couldn't end it.";
