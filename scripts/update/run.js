@@ -18,6 +18,7 @@ import { wheelhouseHome } from '../lib/paths.js';
 import { run as defaultRun } from '../lib/run.js';
 import { MARKETPLACE, claudeHome as defaultClaudeHome } from '../lineage/manifest.js';
 import { changeSteps, updateMirror } from './change.js';
+import { signedByDefault } from './routes.js';
 import { helperCardFor, releaseCard } from './cards.js';
 import { ASKING_LINE } from './finish.js';
 import { installRelease } from './install.js';
@@ -108,7 +109,7 @@ export function updateSteps({
   project, folder, plan, client, run = defaultRun, stopped = () => stopState().on, claudeHome = defaultClaudeHome(), mirror = updateMirror(),
   fetch = (tag) => fetchTag({ ref: tag, run, mirror }), check = ({ tag, sha }) => checkTarget({ tag, sha, run, mirror }),
   install = (args) => installRelease({ run, ...args }), finishRun = spawnFinish, raise = (composed) => raiseCard({ client, project, composed }),
-  features = async () => (await client.state.views({ project }))?.views?.features, spawn,
+  features = async () => (await client.state.views({ project }))?.views?.features, spawn, signed = signedByDefault,
 }) {
   const target = { tag: plan.to, sha: plan.sha };
   const put = plan.put === 'undo' ? 'undo' : 'release';
@@ -124,6 +125,8 @@ export function updateSteps({
     features,
     open: (request) => openReleaseChange({ project, projectDir: folder, client, run, ...request }),
     raise: (card) => raise(releaseCard({ previous: card.previous, release: card.release, commit: card.commit })),
+    merge: typeof client.mergeReleasePr === 'function' ? ({ pr }) => client.mergeReleasePr({ project, number: pr, release: target.tag, commit: target.sha, put }) : undefined,
+    approved: () => signed({ project, card: `release-${target.sha}`, label: 'Approve' }),
     prState: async (number) => {
       const got = await client.prState({ project, number });
       if (got?.ok === false) throw new Error(got.refused ?? 'the change could not be read');

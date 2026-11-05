@@ -4,8 +4,10 @@
 // director's main checkout: it opens the change on `wheelhouse-release-<commit>` (or `wheelhouse-undo-<commit>`), which goes
 // through the usual gate. A pins-only release needs Wheelhouse's review and nothing more; any other release needs the
 // director's answer to the card named `release-<commit>`, which is a different click from the one that started the update.
-// Nothing here merges, approves or writes the settings file: the gate (scripts/gate/release-approval.js, the helper's
-// merge) decides, and this reads what it did.
+// Nothing here approves or writes the settings file. The merge is the helper's (scripts/update/merge.js, the helper's
+// /pr/merge-release): once the approval is in, the `merged` step asks it to merge the change in the same run, and it checks
+// everything itself, so an agent that asks it for a merge gets nothing the director has not approved. Where the helper holds the merge
+// back or the host refuses it, the change waits for the usual way in (the gate, scripts/gate/release-approval.js).
 import fs from 'node:fs';
 import path from 'node:path';
 import { wheelhouseHome } from '../lib/paths.js';
@@ -15,6 +17,7 @@ import { RELEASE_FILE, SETTINGS_FILE, canInstall, releaseBranch, releaseChange, 
 import { MARKETPLACE } from '../lineage/manifest.js';
 import { RELEASE_LABEL, releaseLine } from '../state/card-lines.js';
 import { releaseCardName } from '../gate/release-approval.js';
+import { MISMATCH_LINE } from './merge.js';
 
 // The mirror the update fetched the release's tag into, under the Wheelhouse home, which nothing in a session's sandbox
 // can write to.
@@ -132,8 +135,8 @@ export async function waitMerged({ target, projectDir, pr, prState }) {
     try { state = (await prState(pr))?.state ?? null; } catch { state = null; }
   }
   if (state === 'closed') return { closed: `The change naming ${tag} was closed without being merged, so nothing was installed.` };
-  if (state === 'merged') return { waiting: `The change naming ${tag} is merged. Waiting for it to reach your project's folder.` };
-  return { waiting: `Waiting for the change naming ${tag} to be merged.` };
+  if (state === 'merged') return { waiting: `The change naming ${tag} is merged. Waiting for it to reach your project's folder.`, state };
+  return { waiting: `Waiting for the change naming ${tag} to be merged.`, state };
 }
 
 // Whether the computer is free to install: All stop is off and no feature is past `started` (canInstall). Plugins are shared
@@ -148,7 +151,10 @@ export async function waitIdle({ stopped, features }) {
 // The steps `change`, `merged` and `idle` of the update's job (scripts/update/job.js), over the seams above. A wait returns
 // { ok: false, line }, and the next apply carries on from it. A change that was closed stops the job with nothing installed,
 // and the line says so. A journal read as { newer: true } is never read here: the job refuses it before any step runs.
-export function changeSteps({ projectDir, target, previous, put = 'release', open, raise, prState, stopped, features, run = defaultRun, mirror = updateMirror() }) {
+// `approved()` says whether the director's card for a release that is not pins-only is answered (signed), so the helper is not
+// asked to merge before it is. `merge({ pr })` asks the helper to merge the change now, resolving { ok: true, merged: true } or
+// { ok: false, kind: 'mismatch' | 'held', refused }.
+export function changeSteps({ projectDir, target, previous, put = 'release', open, raise, prState, merge, approved, stopped, features, run = defaultRun, mirror = updateMirror() }) {
   return [
     {
       name: 'change',
@@ -164,11 +170,19 @@ export function changeSteps({ projectDir, target, previous, put = 'release', ope
       async run({ data }) {
         const made = data.change ?? {};
         if (made.skipped === 'before-step-7') return { data: { merged: false, skipped: 'before-step-7' } };
-        const got = await waitMerged({ target, projectDir, pr: made.pr ?? undefined, prState });
+        let got = await waitMerged({ target, projectDir, pr: made.pr ?? undefined, prState });
+        let hold = null;
+        if (got.waiting !== undefined && got.state === 'open' && typeof merge === 'function' && Number.isInteger(made.pr)
+          && (made.approval !== 'card' || typeof approved !== 'function' || await approved() === true)) {
+          const tried = await merge({ pr: made.pr });
+          if (tried?.ok === true && tried.merged === true) got = await waitMerged({ target, projectDir, pr: made.pr, prState });
+          else if (tried?.kind === 'mismatch') return { ok: false, line: `${MISMATCH_LINE} (${String(tried.refused ?? 'it differs').replace(/\.$/, '')}.)` };
+          else hold = `Wheelhouse could not merge the change naming ${target.tag} itself (${String(tried?.refused ?? 'no reason was given').replace(/\.$/, '')}), so it waits to be merged the usual way.`;
+        }
         // Approved only when the director's card was the way in; a release that needed Wheelhouse's review alone was not.
         if (got.merged) return { data: { merged: true, ...(made.approval === 'card' ? { approved: true } : made.approval === 'review' ? { approved: false } : {}) } };
         if (got.closed) return { ok: false, line: got.closed };
-        return { ok: false, waiting: true, line: got.waiting };
+        return { ok: false, waiting: true, line: hold ?? got.waiting };
       },
     },
     {

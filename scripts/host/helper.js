@@ -42,7 +42,7 @@ import { queueFolderOf, queueProjectOf } from '../engine/queue-place.js';
 import { unreachableRefusal, certificateRefusal, certificateLine, awayLine, outputKind, companyGitEnv, makeAwayLog, gitlabBaseOf, certificateSetting } from './company-ca.js';
 import { childEnv, readEnv, backendOf } from './connection.js';
 import { localChanges } from './local/changes.js';
-import { FOLDER_REMOTE, bringFolderUp, folderWatch } from './local/folder.js';
+import { FOLDER_REMOTE, bringFolderUp, bringFolderUpBesideOwn, folderTakes, folderWatch } from './local/folder.js';
 import { backUp, backupDue, chooseBackupFolder, noteBackupFolderRefused, pickFolder } from './local/backup.js';
 import { HOSTS, MOVING_LINE, holdsWork, moveWatch, readMove } from './local/move.js';
 import { SAVE_PROMPT, chooseFolder, safekeepingAct } from '../safekeeping/actions.js';
@@ -143,8 +143,9 @@ import { hostApproved, hostApprovalNeeded } from './host-approval.js';
 import { checkOwnFiles, ownFilesLine } from '../health/own-files.js';
 import { listReleases } from '../update/release.js';
 import { lookForLatest, readLatest } from '../update/board.js';
-import { updateLockHeld } from '../update/journal.js';
-import { updateRoutes } from '../update/routes.js';
+import { openJournal, updateLockHeld } from '../update/journal.js';
+import { EXISTING_BRANCH_LINE, RELEASE_PUSH_REFUSAL, decideMerge, releasePushRefusal } from '../update/merge.js';
+import { clickedByDefault, updateRoutes } from '../update/routes.js';
 import { keyRenewalDue, lastKeyRenewal } from '../state/key-renewal.js';
 import { brokerRoutes } from '../engine/broker/routes.js';
 import { lookAtHead, raiseCard, withLocalLock } from '../lib/local-git.js';
@@ -334,7 +335,11 @@ export async function changedPaths({ mirror, host, number, headSha, defaultBranc
       const [before, after] = [await blobAt(must, base, file), await blobAt(must, prRef, file)];
       files[file] = { base: before.text, head: after.text, headMode: after.mode };
     }
-    return { paths, config: await changeConfig(must), files };
+    // The head's shape: its parents, and whether the one parent is on the default branch's history (the tip as just fetched, or
+    // behind it). The update's merge needs a head that is one commit directly on the main version (scripts/update/merge.js).
+    const parents = (await must(['rev-list', '--parents', '-n', '1', prRef], 'reading the head\'s parents')).trim().split(/\s+/).slice(1);
+    const onMain = parents.length === 1 && (await inMirror(['merge-base', '--is-ancestor', parents[0], BASE_REF])).code === 0;
+    return { paths, config: await changeConfig(must), files, shape: { parents, onMain } };
   } finally {
     await inMirror(['update-ref', '-d', prRef]);
   }
@@ -1643,6 +1648,12 @@ export async function startHelper({
     // only that one. Like /pull's, this reads the folder's HEAD, which a session can rewrite, so it
     // keeps a session's commands to their own branch, but holds no hostile agent.
     if (byFolder && branchOf(dir) !== branch) return { ok: false, refused: PUSH_REFUSALS.notOwn };
+    if (RELEASE_BRANCH.test(branch)) {
+      let plan = null;
+      try { plan = JSON.parse(fs.readFileSync(path.join(openJournal(project).folder, 'plan.json'), 'utf8'))?.plan ?? null; } catch { /* none */ }
+      const why = await releasePushRefusal({ git: gitRoute({ run })(dir, { reach: 'local', what: 'the project\'s folder' }), branch, plan }).catch(() => RELEASE_PUSH_REFUSAL);
+      if (why !== null) return { ok: false, refused: why };
+    }
     try {
       if (isPartialClone(dir)) return { ok: false, refused: PUSH_REFUSALS.partialClone };
     } catch {
@@ -1650,7 +1661,7 @@ export async function startHelper({
     }
     if (!(await lockHeld(project, ctx))) return { ok: false, refused: LOCK_REASON };
     const answer = await pushFrom({ project, branch, source: dir, root: recordOf(project).folder, refspec, defaultBranch, ciGuard: true }, ctx);
-    if (answer.rejected === 'non-fast-forward') return { ...answer, refused: PUSH_REFUSALS.movedOn };
+    if (answer.rejected === 'non-fast-forward') return { ...answer, refused: RELEASE_BRANCH.test(branch) ? EXISTING_BRANCH_LINE : PUSH_REFUSALS.movedOn };
     return answer.ok ? { ok: true } : answer;
   }
 
@@ -3454,6 +3465,90 @@ export async function startHelper({
     return commit.stdout.trim();
   }
 
+  // The update's own merge (update design, section 21): the helper merges the reviewed change it opened, in the same run, straight
+  // after the director's approval, and no review stands between. What lets it is read here, never taken from the caller: the
+  // director's signed click on the Update card for the plan on record, the signed card answer for a release that is not pins-only,
+  // the journal's own record of the checks and the change, and the change itself, which must be exactly the update's edit of the
+  // one settings file (decideMerge). A mismatch merges nothing and says so; a hold merges nothing yet; a host that refuses (a
+  // protected branch, a required check) leaves the change open for the usual way. The folder's settings file must hold no change
+  // of the director's before anything merges, and the folder is then brought up beside whatever else they have uncommitted.
+  async function doMergeRelease(body, ctx) {
+    try {
+      return await mergeReleaseAnswer(body, ctx);
+    } finally {
+      if (typeof body?.project === 'string') {
+        await oneAtATime(`mirror:${body.project}`, () => dropRequestRefs(body.project, ctx));
+        tidyAfterAnswer(body.project, ctx);
+      }
+    }
+  }
+
+  async function mergeReleaseAnswer(body, ctx) {
+    if (stopped()) return STOP_REFUSAL;
+    const { project, number, release, commit } = body;
+    const put = body.put === 'undo' ? 'undo' : 'release';
+    if (!Number.isInteger(number) || number < 1) refuse('the change number must be a whole number from 1');
+    if (typeof commit !== 'string' || !FULL_SHA.test(commit)) refuse('the release\'s commit must be written in full');
+    if (typeof release !== 'string' || !RELEASE_TAG.test(release)) refuse('the release must be named by a plain tag');
+    const mismatch = (why) => ({ ok: false, kind: 'mismatch', refused: why });
+    const held = (why) => ({ ok: false, kind: 'held', refused: why });
+    await lookAtState(ctx, project);
+    await lookAtMirror(ctx, project);
+    const adapter = await ctx.adapter();
+    const pr = await adapter.prState(number);
+    const defaultBranch = await defaultBranchOf(project, adapter);
+    let changes = null;
+    try {
+      if (pr?.state === 'open') changes = await readChanges({ project, number, headSha: pr.headSha, defaultBranch }, ctx);
+    } catch (error) {
+      if (error instanceof LookRefusal) throw error;
+      return mismatch('the change could not be read');
+    }
+    await oneAtATime(`state:${project}`, () => ensureStateClone(project, ctx));
+    const enrolled = ownKeyOnly();
+    const skipped = [];
+    const views = buildViews(listEvents(stateDir(project), { report: () => {}, skipped }), enrolled, { damaged: skipped, now });
+    if (skipped.length > 0) return held(STATE_DAMAGED);
+    let pins = { ok: false };
+    let update = { matched: false };
+    if (changes !== null) {
+      try {
+        pins = await isPinsOnlyRelease({ pr, changes }, ctx);
+        update = await isUpdateChange({ project, headRef: pr.headRef, changes, pinsOnly: pins.ok === true, views, enrolled }, ctx);
+      } catch (error) {
+        if (error instanceof LookRefusal) throw error;
+        return mismatch('it could not be checked');
+      }
+    }
+    const journal = openJournal(project);
+    let stored = null;
+    try { stored = JSON.parse(fs.readFileSync(path.join(journal.folder, 'plan.json'), 'utf8')); } catch { /* none */ }
+    const decided = decideMerge({
+      stored,
+      clicked: stored?.plan ? clickedByDefault({ project, stored, label: 'Update' }) : false,
+      journal: journal.read(), number, put, release, commit, pr, defaultBranch, changes, update, pinsOnly: pins.ok === true,
+    });
+    if (!decided.ok) return decided.kind === 'mismatch' ? mismatch(decided.why) : held(decided.why);
+    if (stopped()) return STOP_REFUSAL;
+    const record = recordOf(project);
+    const git = gitRoute({ run });
+    const why = await folderTakes({ folder: record.folder, branch: defaultBranch, file: SETTINGS_FILE, git }).catch(() => 'The project\'s folder could not be read, so the update waits.');
+    if (why !== null) return held(why);
+    const merged = await adapter.merge({ number, sha: pr.headSha });
+    if (merged?.unreachable === true) awayLog.set(project, gitlabBaseOf(record));
+    else if (merged?.merged === true) awayLog.clear(project);
+    if (merged?.merged !== true) return held(merged?.reason || 'the host did not merge the change');
+    let from = null;
+    if (record.host === 'local') {
+      await afterLocalMerge(project, number, merged.commit);
+    } else {
+      await (refreshMirror ?? refreshFetchMirror)(project).catch(() => {});
+      from = { dir: fetchMirrorOf(project), remote: 'origin' };
+    }
+    const up = await bringFolderUpBesideOwn({ project, folder: record.folder, branch: defaultBranch, file: SETTINGS_FILE, git, ...(from === null ? {} : { from }) }).catch(() => ({ line: 'The project\'s folder could not be brought up to date.' }));
+    return { ok: true, merged: true, sha: pr.headSha, ...(up.line === undefined ? {} : { folderLine: up.line }) };
+  }
+
   // `fixCall` only from the fix-main lane's merge route, inside the helper (engineRun's `merge`): /merge never gives it.
   async function doMerge(body, ctx, { fixCall = null } = {}) {
     try {
@@ -4794,6 +4889,7 @@ export async function startHelper({
     '/pull': (body, ctx) => doPull(body, ctx),
     '/base/fetch': (body, ctx) => doFetchBase(body, ctx),
     '/merge': (body, ctx) => oneAtATime(`merge:${body.project}`, () => doMerge(body, ctx)),
+    '/pr/merge-release': (body, ctx) => oneAtATime(`merge:${body.project}`, () => doMergeRelease(body, ctx)),
     '/local/undo': (body) => doLocalUndo(body),
     '/local/move': (body) => askMove(body),
     '/compact-window': (body, ctx) => oneAtATime(`compact:${body.project}`, () => doCompactWindow(body, ctx)),
