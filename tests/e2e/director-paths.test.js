@@ -48,8 +48,8 @@ test('a visible small change: one Approve card, then it starts by itself, builds
     assert.deepEqual(build.checks, { done: 0, protected: 0, control: 0 }, 'the guard checks pass');
     assert.equal(build.head, made.head);
 
-    await w.tick();
-    const asked = await w.desk(['cards']);
+    let asked;
+    await w.tickUntil(async () => { asked = await w.desk(['cards']); return asked.json.questions.length === 1; }, 'the merge card');
     assert.equal(asked.json.questions.length, 1, 'a clean review leads to one merge card');
     assert.match(asked.json.questions[0].question, /pull request #1/);
     await w.press(asked.json.questions[0], 'Approve');
