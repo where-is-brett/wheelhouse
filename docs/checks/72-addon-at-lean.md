@@ -62,7 +62,7 @@ Whether the add-on gives a Lean project its pane, presses and helper in VS Code 
 - The harness check change is done (pull request #318) and re-tested above.
 - The rest of this check on the work laptop, which has no Node.js: the in-process helper, the card's hold and answer, the stale mark, and install with no admin rights.
 
-## The hold, the next turn and the panel, on the Mac, 5 November 2026
+### The hold, the next turn and the panel, on the Mac, 5 November 2026
 
 **Answer:** Yes, once a Lean project's hold was fixed. A live panel holds the chat's cards, a press in the panel reaches the chat on its next turn, and the chat does not ask that card again. Before the fix the hold never applied to a Lean project. The Windows half and the account with no admin rights stay for the work laptop.
 

@@ -67,6 +67,6 @@ Whether a hook can see the answer to a clickable question in Copilot's chat, and
 - A managed hook (5 November: not done, it needs an administrator's password to write Copilot's enterprise-managed settings). The director, on the work laptop where the company manages Copilot (or on this Mac, typing the Mac's admin password themselves): add one `postToolUse` hook to the managed settings, ask one card question in VS Code's chat, click **Approve**, then tell the agent so it reads the hook's log.
 - Signing the pinned CLI in, for the standalone CLI form.
 
-## Hold and next turn, 5 November 2026
+### Hold and next turn, 5 November 2026
 
 See check 72's section of the same date: with the Lean hold fix, `cards` held back while the panel was live, a panel press reached the chat on the next turn, and the card was not asked again.
