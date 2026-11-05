@@ -173,8 +173,8 @@ test('an approval signed by a key not enrolled is left out', async () => {
 
 test('reviews keep the latest verified record per commit, and latestFor spans commits', async () => {
   await withHome(() => {
-    const a1 = ev('review', 1, { pr: 7, commit: 'aaa', result: 'FINDINGS' });
-    const a2 = ev('review', 3, { pr: 7, commit: 'aaa', result: 'CLEAN' });
+    const a1 = ev('review', 1, { pr: 7, commit: 'aaa', verdict: 'FINDINGS', findings: 1, blocking: 0 });
+    const a2 = ev('review', 3, { pr: 7, commit: 'aaa', verdict: 'CLEAN' });
     const b1 = ev('review', 2, { pr: 7, commit: 'bbb', result: 'CLEAN' });
     const forged = { ...a2, id: 'forged', at: T(30), data: { pr: 7, commit: 'bbb', result: 'CLEAN' } };
     const v = build([a1, a2, b1, forged]);
@@ -182,6 +182,10 @@ test('reviews keep the latest verified record per commit, and latestFor spans co
     assert.equal(v.reviews['7'].bbb.id, b1.id);
     assert.equal(latestFor(v.reviews, 7).id, a2.id);
     assert.equal(latestFor(v.reviews, '7').id, a2.id);
+    // A review that holds the head is not replaced by a later one that clears it.
+    const h1 = ev('review', 4, { pr: 9, commit: 'ccc', verdict: 'FINDINGS', findings: 2, blocking: 1 });
+    const h2 = ev('review', 5, { pr: 9, commit: 'ccc', verdict: 'CLEAN' });
+    assert.equal(build([h1, h2]).reviews['9'].ccc.id, h1.id);
     assert.equal(latestFor(v.reviews, 8), null);
     assert.equal(latestFor(undefined, 7), null);
   });

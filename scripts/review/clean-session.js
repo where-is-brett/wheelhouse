@@ -194,7 +194,7 @@ export function readVerdict({ answer, firstLine, number, sha }) {
   if (missing.length > 0) return { ok: false, why: `the Lookout's report is missing or has an invalid: ${missing.join(', ')}` };
   if (fields.pr !== String(number)) return { ok: false, why: `the Lookout's report names another pull request than ${number}` };
   if (fields.commit !== sha) return { ok: false, why: "the Lookout's report names another commit than the head" };
-  return { ok: true, data: { pr: number, commit: sha, verdict: fields.verdict, findings: fields.verdict === 'FINDINGS' ? Number(fields.findings) : 0 } };
+  return { ok: true, data: { pr: number, commit: sha, verdict: fields.verdict, findings: fields.verdict === 'FINDINGS' ? Number(fields.findings) : 0, ...(fields.verdict === 'FINDINGS' && fields.blocking !== undefined ? { blocking: Number(fields.blocking) } : {}) } };
 }
 
 // One review (ruling P7-14). `withChange(build)` is the helper's: inside one fetch of the pull request in its
