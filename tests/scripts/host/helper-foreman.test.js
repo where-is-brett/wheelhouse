@@ -395,3 +395,41 @@ test('the foreman\'s child keeps the sign-in Claude Code uses for Bedrock and Ve
   assert.deepEqual(foremanEnv(env), { PATH: '/bin', ...cloud });
   assert.deepEqual(sessionEnv(foremanEnv(env)), { PATH: '/bin', ...cloud });
 });
+
+const helperRun = { current: null };
+test('the foreman\'s questions are written only with the pass of a foreman command that is running now', async () => {
+  const p = await project();
+  const asked = (id, over = {}) => ({ id, work: 'mine', what: 'What?', why: 'Why', options: [{ label: 'Yes', says: 'act ask' }], recommendation: 'Yes', level: 3, ...over });
+  const results = {};
+  let pass = null;
+  try {
+    await withHelper(p.home, async (client) => {
+      const run = async (file, args, options = {}) => {
+        if (file !== process.execPath) return hostGuard(file, args, options);
+        pass = options.baseEnv.WHEELHOUSE_FOREMAN_RUN;
+        // While the command runs, its own pass writes the foreman's question and a replacing one.
+        results.during = await client.state.write({ project: P, kind: 'question', data: asked('q-mine-1000001'), foreman: pass });
+        results.replacing = await client.state.write({ project: P, kind: 'question', data: asked('q-mine-1000002', { replaces: 'q-mine-1' }), foreman: pass });
+        // Even with the pass, a card the helper raises is never replaced.
+        results.hands = await client.state.write({ project: P, kind: 'question', data: asked('q-by-hand-1000001', { work: 'by-hand', replaces: 'q-by-hand-3' }), foreman: pass });
+        return { code: 0, stdout: '', stderr: '' };
+      };
+      helperRun.current = run;
+      await client.foreman.run({ folder: p.checkout, script: 'act', argv: ['merge', 'export'] });
+      results.none = await client.state.write({ project: P, kind: 'question', data: asked('q-mine-1000003') });
+      results.replace = await client.state.write({ project: P, kind: 'question', data: asked('q-mine-1000004', { replaces: 'q-mine-1' }) });
+      results.after = await client.state.write({ project: P, kind: 'question', data: asked('q-mine-1000005'), foreman: pass });
+      results.own = await client.state.write({ project: P, kind: 'question', data: asked('q-mine-2'), foreman: 'not-a-pass' });
+    }, { run: (...a) => helperRun.current(...a) });
+  } finally { p.remote.cleanup(); }
+  assert.equal(results.during.ok, true, JSON.stringify(results.during));
+  assert.equal(results.replacing.ok, true, JSON.stringify(results.replacing));
+  for (const key of ['none', 'replace', 'after']) {
+    assert.equal(results[key].ok, false, key);
+    assert.match(results[key].refused, /only the Bosun's own command writes its questions/);
+  }
+  assert.equal(results.hands.ok, false);
+  assert.match(results.hands.refused, /replaces only a feature's own question/);
+  assert.equal(results.own.ok, true, 'a feature\'s own question needs no pass');
+});
+

@@ -285,7 +285,7 @@ function context({ project, client, now, run, wakerFor, pluginRoot, makeId, out,
       recordHandled(project, [id], { now });
       let answer;
       try {
-        answer = await client.state.write({ project, kind, data, id });
+        answer = await client.state.write({ project, kind, data, id, ...(process.env.WHEELHOUSE_FOREMAN_RUN ? { foreman: process.env.WHEELHOUSE_FOREMAN_RUN } : {}) });
       } catch {
         answer = null;
       }

@@ -1048,11 +1048,8 @@ test('/state/write refuses `replaces` for every card the helper or the dispatche
       for (const [work, root, id] of attempts) {
         const r = await c.client.state.write({ project: PROJECT, kind: 'question', data: ASKED(id, { work, replaces: root }) });
         assert.equal(r.ok, false, `${root} <- ${id}`);
-        assert.match(r.refused, /replaces only a feature's own question/);
+        assert.match(r.refused, /only the Bosun's own command writes its questions|replaces only a feature's own question/);
       }
-      // A feature's own question may be replaced by the foreman's id of the same work.
-      const ok = await c.client.state.write({ project: PROJECT, kind: 'question', data: ASKED(`q-mine-${F}`, { replaces: 'q-mine-1' }) });
-      assert.equal(ok.ok, true, ok.refused);
     });
   } finally { await c.close(); await repo.cleanup(); }
 });
