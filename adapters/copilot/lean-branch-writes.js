@@ -1,20 +1,20 @@
-// scripts/hooks/lean-branch-writes.js
+// adapters/copilot/lean-branch-writes.js
 // At Lean, before each file-writing tool and each shell command that writes: refuses a write to the product's own files unless
 // the project's folder is on a feature's own copy (HEAD is a `feature/*` branch). Between features the folder is on the main
 // version, or detached at it, and nothing there is changed by the chat: a change, however small, is recorded through Intake and
 // a Crew member builds it on a branch. The Crew member works on that branch in the same folder, so this does not stop it.
 //
 // A Lean project is a folder holding `.git` and the record folder (`.wheelhouse/record`), as the shell guard places it
-// (adapters/copilot/lean-guard.sh). Left alone are the project's Wheelhouse files (`.wheelhouse/`, the Logbook), git's own
+// (./lean-guard.sh). Left alone are the project's Wheelhouse files (`.wheelhouse/`, the Logbook), git's own
 // folder, and the files setup makes on the main version (.gitignore, .vscode/settings.json, .github/copilot-instructions.md),
 // the last three still held by the guards of files that steer an agent. A write outside every Lean project is left alone, as is
 // anything that only reads. Anything the hook cannot read (no HEAD, a folder it cannot place, a command it cannot parse) is
 // let through: it fails open.
 import fs from 'node:fs';
 import path from 'node:path';
-import { answer } from './kit.js';
-import { WRITING, shellChanges } from './front-desk-writes.js';
-import { BOARD_FILE, LEAN_RECORD_DIR } from '../lib/copilot-numbers.js';
+import { answer } from '../../scripts/hooks/kit.js';
+import { WRITING, shellChanges } from '../../scripts/hooks/front-desk-writes.js';
+import { BOARD_FILE, LEAN_RECORD_DIR } from '../../scripts/lib/copilot-numbers.js';
 
 const SHELL = ['Bash', 'PowerShell'];
 // What may be written on the main version, below the project's folder.

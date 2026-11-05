@@ -19,7 +19,7 @@ import { leanHookFile, leanGuardScript, GUARD_SCRIPT, LEAN_HOOK_COMMAND, PLUTIL_
 import { buildHome } from '../../../scripts/agents/copilot/home.js';
 import { glossaryOf, plainWords } from '../../../scripts/frontdesk/glossary.js';
 import { COULD_NOT_RUN, DEADLINE } from '../../../scripts/agents/copilot/hook-entry.js';
-import * as leanBranch from '../../../scripts/hooks/lean-branch-writes.js';
+import * as leanBranch from '../../../adapters/copilot/lean-branch-writes.js';
 
 // Stand-ins for gh, glab, copilot and curl come first on the PATH; the last test asserts none ran.
 const stand = standInTools();

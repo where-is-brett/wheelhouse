@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { tempFolder } from '../../helpers/homes.js';
-import { decide, leanRootOf, branchOf, LEAN_NO_MAIN_WRITES } from '../../../scripts/hooks/lean-branch-writes.js';
+import { decide, leanRootOf, branchOf, LEAN_NO_MAIN_WRITES } from '../../../adapters/copilot/lean-branch-writes.js';
 
 const base = fs.realpathSync.native(tempFolder('wh-branch-writes-'));
 const put = (file, text = 'x\n') => {

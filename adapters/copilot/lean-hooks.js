@@ -19,7 +19,7 @@ import { AGENT_CONTROL, CONTROL_FILE, homeControlFolders } from '../../scripts/l
 import { credentialPaths } from '../../scripts/lib/credentials.js';
 import { GUARD_DEADLINE_MS, GUARD_TIMEOUT_SEC, LEAN_RECORD_DIR } from '../../scripts/lib/copilot-numbers.js';
 import { COULD_NOT_RUN, DEADLINE } from '../../scripts/agents/copilot/hook-entry.js';
-import { LEAN_NO_MAIN_WRITES, LEAN_BRANCH_LEFT } from '../../scripts/hooks/lean-branch-writes.js';
+import { LEAN_NO_MAIN_WRITES, LEAN_BRANCH_LEFT } from './lean-branch-writes.js';
 import tools from './tools.js';
 import { KNOWN_TOOLS, TOOL_MAP, UNKNOWN_TOOL, toGuardInput } from './translate.js';
 
