@@ -129,3 +129,25 @@ test('cli: wait gives up after a minute and a half with the update still running
   await main(['wait'], { cwd: '/p', client: down, out: (t) => { out += t; }, err: () => {}, sleep: async () => {}, now: () => 0 });
   assert.equal(JSON.parse(out).state, 'unreachable');
 });
+
+test('cli: --here marks the next card to be asked in the chat, and asks the helper as before', async () => {
+  const marks = [];
+  const calls = [];
+  const client = { update: { plan: async (body) => { calls.push(body); return { ok: true, lines: ['x'] }; } } };
+  const code = await main(['plan', '--here'], {
+    cwd: '/p', env: { CLAUDE_CODE_SESSION_ID: 'abc' }, client, now: () => 5000, mark: (...args) => marks.push(args), out: () => {}, err: () => {},
+  });
+  assert.equal(code, 0);
+  assert.deepEqual(calls, [{ folder: '/p' }]);
+  assert.deepEqual(marks, [['abc', ['*'], 5000]]);
+});
+
+test('cli: without --here, or without a session, nothing is marked; --here is refused on apply', async () => {
+  const marks = [];
+  const client = { update: { plan: async () => ({ ok: true }), apply: async () => ({ ok: true }) } };
+  const deps = { cwd: '/p', client, mark: (...args) => marks.push(args), out: () => {}, err: () => {} };
+  assert.equal(await main(['plan'], { ...deps, env: { CLAUDE_CODE_SESSION_ID: 'abc' } }), 0);
+  assert.equal(await main(['plan', '--here'], { ...deps, env: {} }), 0);
+  assert.equal(await main(['apply', 'b'.repeat(64), '--here'], { ...deps, env: { CLAUDE_CODE_SESSION_ID: 'abc' } }), 1);
+  assert.deepEqual(marks, []);
+});

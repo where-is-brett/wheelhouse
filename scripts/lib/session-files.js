@@ -88,6 +88,9 @@ function hereMarks(sessionId, now) {
   return kept;
 }
 
+// The mark for every card: a command that doesn't know the ids its cards will be recorded under (the update's) leaves it.
+export const ANY_CARD = '*';
+
 // Marks cards as ones the director wants asked in the chat, for HERE_MS.
 export function markHere(sessionId, cardIds, now) {
   if (!isIds(cardIds) || cardIds.length === 0 || !isTime(now)) return false;
@@ -96,11 +99,13 @@ export function markHere(sessionId, cardIds, now) {
   return writeJson(fileOf(sessionId, HERE), { marks });
 }
 
-// True once, when every id is in an unexpired mark; removes the ids it took.
+// True once, when every id is in an unexpired mark, or the mark for every card is; removes what it took.
 export function takeHere(sessionId, cardIds, now) {
   if (!isIds(cardIds) || cardIds.length === 0 || !isTime(now)) return false;
   const marks = hereMarks(sessionId, now);
-  if (!cardIds.every((id) => Object.hasOwn(marks, id))) return false;
+  const any = Object.hasOwn(marks, ANY_CARD);
+  if (!any && !cardIds.every((id) => Object.hasOwn(marks, id))) return false;
+  if (any) delete marks[ANY_CARD];
   for (const id of cardIds) delete marks[id];
   return writeJson(fileOf(sessionId, HERE), { marks });
 }

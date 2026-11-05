@@ -5,6 +5,7 @@
 // home ahead brings the folder up, fast-forward only. Anything the folder holds that the home doesn't raises one card for
 // each tip, and enters the home only through a local change.
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { CHECK_AND_ADD, LEAVE_THEM_OUT } from '../../state/card-lines.js';
 import { withOwnSection } from '../../lib/compact-section.js';
@@ -192,12 +193,37 @@ export function handMadeCard() {
   };
 }
 
+// What the folder's working tree holds that no commit does (tracked files only, as folderFree reads them), as a short
+// fingerprint of the difference from HEAD, or null when it holds nothing, is off `branch`, or is only Wheelhouse's own section.
+async function uncommittedEdit({ folder, branch, git }) {
+  const here = inFolder(folder, git);
+  const on = await here.call(['symbolic-ref', '-q', 'HEAD']);
+  if (on.code !== 0 || String(on.stdout).trim() !== `refs/heads/${branch}`) return null;
+  const dirty = await here.call(['--no-optional-locks', 'status', '--porcelain', '--untracked-files=no']);
+  if (dirty.code !== 0 || String(dirty.stdout).trim() === '') return null;
+  if (await onlyOwnSection({ folder, base: 'HEAD', tip: null, git })) return null;
+  const diff = await here.call(['--no-optional-locks', 'diff', 'HEAD']);
+  if (diff.code !== 0) return null;
+  return crypto.createHash('sha256').update(String(diff.stdout)).digest('hex').slice(0, 16);
+}
+
+// The working tree's tracked changes as a commit on top of HEAD, made without touching the index, the working tree or any
+// branch, so the changes can go the way a committed one does. Null when there is nothing to commit.
+async function commitUncommitted({ folder, git }) {
+  const { identityOf } = await import('./merge.js');
+  const making = git(folder, { reach: 'local', what: FOLDER_WHAT, env: await identityOf(folder, git) });
+  const saved = String(await making.must(['stash', 'create'], 'The changes made by hand could not be read')).trim();
+  if (saved === '') return null;
+  const head = String(await making.must(['rev-parse', '--verify', 'HEAD^{commit}'], 'The changes made by hand could not be read')).trim();
+  return String(await making.must(['commit-tree', '--no-gpg-sign', `${saved}^{tree}`, '-p', head, '-m', 'Changes made by hand'], 'The changes made by hand could not be set aside')).trim();
+}
+
 const readKept = (file) => {
   try {
     const kept = JSON.parse(fs.readFileSync(file, 'utf8'));
-    return { said: kept?.said ?? null, failed: kept?.failed ?? null, cards: Number.isInteger(kept?.cards) ? kept.cards : 0, tips: kept?.tips ?? {} };
+    return { said: kept?.said ?? null, failed: kept?.failed ?? null, cards: Number.isInteger(kept?.cards) ? kept.cards : 0, tips: kept?.tips ?? {}, seen: kept?.seen ?? null };
   } catch {
-    return { said: null, failed: null, cards: 0, tips: {} };
+    return { said: null, failed: null, cards: 0, tips: {}, seen: null };
   }
 };
 function keep(file, kept) {
@@ -228,6 +254,21 @@ export function folderWatch({ project, folder, branchOf, git = gitRoute(), file,
       const label = entry.done ? null : answerOf(entry.id);
       if (label === LEAVE_THEM_OUT) entry.done = true;
       if (label !== CHECK_AND_ADD) continue;
+      if (entry.edit === true) {
+        // An edit not yet committed: it goes as a commit of its own, while the folder still holds exactly that edit.
+        if (found.state !== 'same' || (await uncommittedEdit({ folder, branch: await branchOf(), git })) !== tip) {
+          entry.done = true;
+          continue;
+        }
+        const made = await commitUncommitted({ folder, git });
+        const got = made === null ? { ok: true } : await add(made, { parted: false });
+        if (got?.ok === true) entry.done = true;
+        else if (kept.failed !== tip) {
+          kept.failed = tip;
+          await note(`The changes made by hand couldn't be added yet: ${got?.refused ?? 'the helper didn\'t say why'}`);
+        }
+        continue;
+      }
       // Anything the folder holds now goes, and an older card's press means the same thing.
       const waiting = found.state === 'folder-ahead' || found.state === 'parted';
       const got = waiting ? await add(found.tip, { parted: found.state === 'parted' }) : { ok: true };
@@ -270,6 +311,20 @@ export function folderWatch({ project, folder, branchOf, git = gitRoute(), file,
       const id = `q-${HAND_MADE_WORK}-${kept.cards}`;
       await card({ id, ...handMadeCard() });
       kept.tips[found.tip] = { id, done: false };
+    } else if (found.state === 'same') {
+      // A tracked file edited by hand and not committed: the same question, once the edit has stood for two ticks (a write
+      // of Wheelhouse's own is gone by then). Its key is the edit itself, so a further edit is a new question.
+      const edit = await uncommittedEdit({ folder, branch, git });
+      if (edit === null) kept.seen = null;
+      else if (kept.tips[edit] === undefined) {
+        if (kept.seen !== edit) kept.seen = edit;
+        else {
+          kept.cards += 1;
+          const id = `q-${HAND_MADE_WORK}-${kept.cards}`;
+          await card({ id, ...handMadeCard() });
+          kept.tips[edit] = { id, done: false, edit: true };
+        }
+      }
     }
     keep(file, kept);
   }
