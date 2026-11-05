@@ -483,7 +483,10 @@ export function setupRoutes({
   // A step's ctx: with every answer the director has given to its run's questions (ruling R31),
   // and when the run started (step 1 reads the session's first message from then, ruling R76).
   // With a one card's Go ahead that still holds, its choices count as answered (design section 15.1).
-  const ctxFor = (folder, n, runId, startedAt) => ({ folder, step: n, runId, startedAt, now, userHome, platform, answers: answersWithConsent(runId).answers });
+  // Whether the request being answered came from a session in the Desktop app (the command says so, only then): a terminal
+  // session has no app to show a window, or to be open.
+  let sessionIsApp = false;
+  const ctxFor = (folder, n, runId, startedAt) => ({ folder, step: n, runId, startedAt, now, userHome, platform, desktop: sessionIsApp, answers: answersWithConsent(runId).answers });
 
   // ---- The one card, Customise and changing an answer (design section 15.1) ----
 
@@ -879,7 +882,7 @@ export function setupRoutes({
     if (!onRunList(found, HEALTH_STEP)) refuse(notOnList(found, HEALTH_STEP));
     const before = healthQueue.get(found.id) ?? Promise.resolve();
     const turn = before.catch(() => {}).then(async () => {
-      const read = (run) => health({ folder: run.folder, run, reported: lines, now });
+      const read = (run) => health({ folder: run.folder, run, reported: lines, now, desktop: sessionIsApp });
       const answerOf = (got) => ({ ok: true, green: got.green, lines: got.lines, board: got.board, trials: got.trials });
       let run = runById(found.id);
       if (healthGreen(run) || stopped()) return answerOf(await read(run));
@@ -919,9 +922,14 @@ export function setupRoutes({
     }
   }
 
-  const routes = {
-    '/setup/plan': plan, '/setup/apply': apply, '/setup/status': status, '/setup/health': healthRoute, '/setup/choices': choicesRoute, '/setup/change': changeRoute,
+  const aware = (route) => (body) => {
+    const { desktop, ...rest } = body ?? {};
+    sessionIsApp = desktop === true;
+    return route(rest);
   };
+  const routes = Object.fromEntries(Object.entries({
+    '/setup/plan': plan, '/setup/apply': apply, '/setup/status': status, '/setup/health': healthRoute, '/setup/choices': choicesRoute, '/setup/change': changeRoute,
+  }).map(([path, route]) => [path, aware(route)]));
   // Whether a setup step is running in this helper now. Not a route, so it is left out of a spread of the routes.
   Object.defineProperty(routes, 'busy', { value: () => inHelper.size > 0, enumerable: false });
   return routes;

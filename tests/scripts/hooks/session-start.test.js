@@ -9,9 +9,10 @@ import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import {
   decide, toolSheetLines, NO_HELPER, NO_USAGE, GUARD_FLOOR, OLD_CLAUDE_CODE, FRONT_DESK_LINE, JOURNAL_UNREADABLE, FOREMAN_HELD_NEWER, FOREMAN_HELD_UNREADABLE,
-  importedLine, importFailedLine, NOT_SET_UP, TITLES, sessionTitle, partWay, REMOVED, REMOVE_PLUGIN, PLUGIN_KEY, NO_LOCK, heldElsewhere, TAKEOVER_ASK,
+  importedLine, importFailedLine, keptLine, NOT_SET_UP, TITLES, sessionTitle, partWay, REMOVED, REMOVE_PLUGIN, PLUGIN_KEY, NO_LOCK, heldElsewhere, TAKEOVER_ASK,
 } from '../../../scripts/hooks/session-start.js';
 import { USAGE_ASK } from '../../../scripts/routing/offer.js';
+import { keepRequest } from '../../../scripts/lib/kept-request.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
 import { recordRole } from '../../../scripts/lib/role.js';
 import { runningModel } from '../../../scripts/lib/front-desk-model.js';
@@ -1647,6 +1648,21 @@ test('in a folder being set up, a journal that can\'t be read gives setup\'s lin
       const out = await setupStart(f, folder);
       assert.equal(withoutSheet(out), JOURNAL_UNREADABLE, journal);
     }
+  });
+});
+
+test('a new session part-way through setup carries on at once and is given the request kept from the earlier one', async () => {
+  await withHome(async () => {
+    const folder = fs.realpathSync.native(tempFolder('wh-kept-start '));
+    const run = startRun({ folder, now: () => new Date('2026-10-19T03:00:00.000Z') });
+    markStep(run.id, 1, 'doneAt', { now: () => new Date('2026-10-19T03:01:00.000Z') });
+    const none = withoutSheet(await setupStart(fake(), folder));
+    assert.equal(none, partWay(2, 'Tools'));
+    assert.match(none, /Carry on with setup at once[^\n]*run `resume`[^\n]*with no question first/);
+    keepRequest(folder, 'I want a tool for tracking tide tables.');
+    const kept = withoutSheet(await setupStart(fake(), folder));
+    assert.deepEqual(kept.split('\n'), [partWay(2, 'Tools'), keptLine('I want a tool for tracking tide tables.')]);
+    assert.match(kept, /hand it to wheelhouse:front-desk/);
   });
 });
 

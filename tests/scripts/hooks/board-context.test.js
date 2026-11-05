@@ -27,6 +27,7 @@ import { courierWake } from '../../../scripts/mod/courier.js';
 import { startRun, markStep, addChanges, newId } from '../../../scripts/setup/journal.js';
 import { SETUP_STEPS } from '../../../scripts/lib/setup-run.js';
 import { NOT_SET_UP, SETUP_FIRST } from '../../../scripts/hooks/session-start.js';
+import { keptRequest } from '../../../scripts/lib/kept-request.js';
 import { deskCore } from '../../../scripts/desk/core.js';
 import { fileSource } from '../../../scripts/desk/file-source.js';
 import { as, shortHome, tempFolder } from '../../helpers/homes.js';
@@ -1098,6 +1099,8 @@ test('while setup is unfinished, every prompt of the director\'s gets the setup-
     assert.equal(contextOf(out), SETUP_FIRST);
     assert.ok(NOT_SET_UP.endsWith(SETUP_FIRST), 'the session start says the same');
     assert.equal(contextOf(await run(fresh, 'What step is next?', NOW)), SETUP_FIRST);
+    // The first request is kept for a new session, as written, and the later prompts leave it as it is.
+    assert.equal(keptRequest(fresh), ask);
     // The mod's own commands and the courier's wake are left alone, as elsewhere.
     assert.equal(await run(fresh, '/wheelhouse-go', NOW), undefined);
     assert.equal(await run(fresh, `${LEADS.courier} wake`, NOW), undefined);

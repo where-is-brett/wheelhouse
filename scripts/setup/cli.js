@@ -75,6 +75,9 @@ import { startedAsScript } from '../lib/started-as-script.js';
 import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
 import { CHOICE_KEY, HEALTH_STEP } from '../lib/setup-run.js';
 
+// Whether this session is the Desktop app's own: CLAUDE_CODE_ENTRYPOINT is set by the app, and a terminal session has another value.
+export const inDesktopApp = (entrypoint) => entrypoint === 'claude-desktop' || entrypoint === 'claude-desktop-3p';
+
 // An error whose message is said to the session as it is.
 export class CliError extends Error {}
 
@@ -88,11 +91,14 @@ const STEP = new RegExp(`^(?:${Object.keys(SETUP_TITLES).join('|')})$`);
 const HASH = /^[0-9a-f]{64}$/;
 const BREAKS = /\s*[\r\n\v\f\u0085\u2028\u2029]+\s*/g;
 
+// Whether the form being run is in the Desktop app's session; every request says so, for the cards that differ there.
+let inApp = false;
+
 // Asks one route and gives its answer when it is ok; otherwise the helper's own words.
 async function ask(route, body) {
   let got;
   try {
-    got = await route(body);
+    got = await route(inApp ? { ...body, desktop: true } : body);
   } catch (error) {
     throw new CliError(`The host helper didn't answer: ${error instanceof Error ? error.message : 'unknown error'}`);
   }
@@ -122,7 +128,9 @@ async function plan(client, folder, step) {
 export async function main(argv, {
   cwd = process.cwd(), client, out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t),
   now = () => Date.now(), sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); }),
+  entrypoint = process.env.CLAUDE_CODE_ENTRYPOINT,
 } = {}) {
+  inApp = inDesktopApp(entrypoint);
   try {
     const [form, ...rest] = argv;
     const json = (value) => out(`${JSON.stringify(value, null, 2)}\n`);

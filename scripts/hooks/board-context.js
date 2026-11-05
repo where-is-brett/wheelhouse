@@ -53,6 +53,7 @@ import { SINCE_LEAD, SINCE_TAIL } from '../cards/panel-words.js';
 import { chatCopy } from '../state/card-lines.js';
 import { readOpen, clearOpen } from '../lib/session-files.js';
 import { featureSlug, SETUP_FIRST } from './session-start.js';
+import { keepRequest } from '../lib/kept-request.js';
 import { briefingModel as realBriefingModel } from '../briefing/model.js';
 import { heldBackLine } from '../board/model.js';
 import { readSeen, readSurveyAt, markSeen, readVisits } from '../briefing/seen.js';
@@ -327,6 +328,8 @@ export async function decide(input, deps = {}) {
     // While setup is unfinished here, setup comes first, whatever the prompt asks.
     const setup = featureSlug(input.cwd) === null && !isOwnPrompt(input.prompt) ? attempt(() => beingSetUp(input.cwd), null) : null;
     const found = projectOf(input.cwd, { dir });
+    // The director's request is kept for the session that carries setup on, should setup need a new one.
+    if (setup !== null && writes && typeof setup.folder === 'string') attempt(() => keepRequest(setup.folder, input.prompt, now), false);
     if (!found) return setup === null ? undefined : answer.context('UserPromptSubmit', SETUP_FIRST);
     const role = sessionRole({ sessionId: input.session_id, env, prompt: input.prompt, cwd: input.cwd });
     const first = writes ? attempt(() => recordRole(input.session_id, role), false) : false;

@@ -29,7 +29,7 @@ after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 const said = (label) => ({ label, text: null, at: NOW.toISOString() });
 const stepFor = (extra = {}) => hostStep({ run: guarded, findGit: async () => ({ ok: true, path: 'git' }), open: async () => {}, sleep: async () => {}, pick: async () => null, ...extra });
-const ctxFor = (folder, extra = {}) => ({ folder, step: 3, now: () => NOW, platform: 'darwin', userHome: folder, answers: {}, ...extra });
+const ctxFor = (folder, extra = {}) => ({ folder, step: 3, now: () => NOW, platform: 'darwin', userHome: folder, answers: {}, desktop: true, ...extra });
 
 const folderOf = (name = 'Shop') => {
   const folder = path.join(fs.realpathSync.native(tempFolder('wh-proj ')), name);
@@ -59,7 +59,7 @@ async function planned(step, ctx, picks = {}) {
   throw new Error('the step kept asking');
 }
 
-async function applied(step, folder, list) {
+async function applied(step, folder, list, extra = {}) {
   const run = startRun({ folder, now: () => NOW });
   const lines = [];
   await step.apply(ctxFor(folder, {
@@ -67,6 +67,7 @@ async function applied(step, folder, list) {
     say: (line) => { lines.push(line); },
     record: (made) => addChanges(run.id, (Array.isArray(made) ? made : [made]).map((c) => ({ ...c, step: 3 }))),
     answers: list.answers,
+    ...extra,
   }), list.changes);
   return lines;
 }
@@ -287,7 +288,8 @@ test('the picked folder is kept, and a typed one on the same disk is asked again
       const folder = await committed(folderOf());
       const step = stepFor({ pick: async () => cloud });
       const got = await planned(step, ctxFor(folder));
-      await applied(step, folder, got);
+      const lines = await applied(step, folder, got);
+      assert.ok(lines.some((l) => /window for the backup folder is open.*closes by itself/.test(l)), 'the window is announced first');
       if (process.platform !== 'win32') assert.equal(readBackup('Shop').folder, cloud);
 
       const other = await committed(folderOf('Mill'));
@@ -299,6 +301,35 @@ test('the picked folder is kept, and a typed one on the same disk is asked again
     } finally {
       process.env.HOME = before;
     }
+  });
+});
+
+test('a window left open or closed picks none, and setup carries on with a plain line', async () => {
+  await withHome(async () => {
+    const folder = await committed(folderOf());
+    const got = await planned(stepFor({ pick: async () => null }), ctxFor(folder));
+    const lines = await applied(stepFor({ pick: async () => null }), folder, got, { desktop: true });
+    assert.ok(lines.some((l) => /No backup folder was chosen.*choose one later, from the Safekeeping row/.test(l)), lines.join('\n'));
+    assert.equal(readBackup('Shop').folder, null);
+    assert.equal(homeReadable('Shop'), true);
+  });
+});
+
+test('a terminal session opens no window: the card asks for a typed path, and the choice stays later', async () => {
+  await withHome(async () => {
+    const folder = await committed(folderOf());
+    const answers = { '3.real-users': said(REAL_USERS.no), '3.kept': said(KEEP_HERE), '3.backup': said(CHOOSE_BACKUP) };
+    const again = await stepFor().plan({ ...ctxFor(folder, { desktop: false }), answers });
+    assert.equal(again.ask.id, 'backup-1');
+    assert.match(again.ask.card.what, /no window to pick a folder in/);
+    assert.match(backupAsk('Shop', { desktop: false }).card.options[0].says, /Type the full path/);
+    const app = await stepFor().plan({ ...ctxFor(folder), answers });
+    assert.equal(app.ask, undefined, 'the Desktop app goes on to the window');
+    const none = { ...answers, '3.backup': said(CHOOSE_BACKUP), '3.backup-1': said(NO_BACKUP) };
+    const got = await stepFor().plan({ ...ctxFor(folder, { desktop: false }), answers: none });
+    const lines = await applied(stepFor({ pick: async () => assert.fail('no window opens') }), folder, { ...got, answers: none }, { desktop: false });
+    assert.equal(readBackup('Shop').folder, null);
+    assert.equal(lines.some((l) => /window/.test(l)), false);
   });
 });
 

@@ -34,7 +34,7 @@ const H = 'ab'.repeat(32);
 async function run(argv, { client, cwd = '/x/Projects/shop', ...rest } = {}) {
   let out = '';
   let err = '';
-  const code = await main(argv, { client, cwd, out: (t) => { out += t; }, err: (t) => { err += t; }, ...rest });
+  const code = await main(argv, { client, cwd, out: (t) => { out += t; }, err: (t) => { err += t; }, entrypoint: 'cli', ...rest });
   return { code, out, err };
 }
 
@@ -115,13 +115,15 @@ test('health hands the trial lines to the helper, as they are, and gives back th
   const lines = ['read .env.local: refused / refused', 'merge with forged approval: refused / MERGED (unexpected)'];
   const answer = { ok: true, green: false, lines: ['Passed: x.'], board: 'The board.', trials: { pr: 12, project: 'o__r' } };
   const c = fakeClient({ health: answer });
-  const got = await run(['health', ...lines], { client: c });
+  const got = await run(['health', ...lines], { client: c, entrypoint: 'cli' });
   assert.equal(got.code, 0, got.err);
   const { ok, ...rest } = answer; // eslint-disable-line no-unused-vars
   assert.deepEqual(JSON.parse(got.out), rest);
-  const none = await run(['health'], { client: c });
+  const none = await run(['health'], { client: c, entrypoint: 'cli' });
+  const app = await run(['health'], { client: c, entrypoint: 'claude-desktop' });
+  assert.equal(app.code, 0, app.err);
   assert.equal(none.code, 0, none.err);
-  assert.deepEqual(c.calls, [['health', { folder: path.resolve('/x/Projects/shop'), lines }], ['health', { folder: path.resolve('/x/Projects/shop'), lines: [] }]]);
+  assert.deepEqual(c.calls, [['health', { folder: path.resolve('/x/Projects/shop'), lines }], ['health', { folder: path.resolve('/x/Projects/shop'), lines: [] }], ['health', { folder: path.resolve('/x/Projects/shop'), lines: [], desktop: true }]]);
   const bad = fakeClient({ health: answer });
   for (const argv of [['health', 'read .env.local: refused / refused; rm -rf x'], ['health', 'not a trial line'], ['health', ...Array.from({ length: 13 }, () => lines[0])]]) {
     const refused = await run(argv, { client: bad });

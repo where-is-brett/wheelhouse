@@ -2050,7 +2050,7 @@ export function hostStep({
       }
       if (host === 'local') {
         const machine = answer('backup') === null && (await timeMachine({ run, platform })).on;
-        const backup = backupChoice({ answer, name: product.name, root: ctx.folder, machine });
+        const backup = backupChoice({ answer, name: product.name, root: ctx.folder, machine, desktop: ctx.desktop === true });
         if (backup.ask) return { ask: backup.ask };
         if (ctx.choicesOnly === true) return { wait: 0, why: 'every choice of step 3 is made' };
         const project = localName(ctx.folder, product.name);
