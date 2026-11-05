@@ -51,3 +51,23 @@ Whether the add-on gives a Lean project its pane, presses and helper in VS Code 
 - A decision on the Lean record gap above.
 - A go for the harness check change (a code change with its own tests).
 - The rest of this check on the work laptop, which has no Node.js: the in-process helper, the card's hold and answer, the stale mark, and install with no admin rights.
+
+## The hold, the next turn and the panel, on the Mac, 5 November 2026
+
+**Answer:** Yes, once a Lean project's hold was fixed. A live panel holds the chat's cards, a press in the panel reaches the chat on its next turn, and the chat does not ask that card again. Before the fix the hold never applied to a Lean project. The Windows half and the account with no admin rights stay for the work laptop.
+
+- **Tested on.** The Mac, VS Code 1.144.1 with its built-in Copilot Chat, in a copy of the sitting's signed-in scratch profile, with its own extensions folder, a scratch `WHEELHOUSE_HOME` and a scratch `COPILOT_HOME`, on a scratch Lean project that `start-helper.js install` registered (the helper ran from this branch). The add-on was the v0.2.8 release `.vsix`, downloaded; its hash matched the release's own `.sha256` file (`bd6e3adf3f9d`). VS Code was started with no `CLAUDE_*` variables in its environment; with them, a card command takes the chat for a Claude Code session and never asks about the panel. The agent clicked the panel's buttons through the page, and sent prompts through the sitting's chat driver (model Auto, GPT-5.6 Luna). 2.8 of the 200 premium requests were used.
+- **Two gaps for a Lean project.** Lean's folder has no `.claude/wheelhouse.json`, so `agentOfProject` always said Claude Code, and the desk's `vscode` read found the folder through `readProject`, which doesn't know a Lean project. So a card command (`cards`) handed the card to the chat with the panel live, and the chat asked it. Both are fixed in this pull request (`scripts/agents/vscode-held.js` reads the Lean record's `agent`; `scripts/desk/file-source.js` finds the folder through `readLean`), with `tests/scripts/lean/vscode-held.test.js`.
+- **The hold.** With the fix, `cards` returned the panel line in place of the questions ("1 card waits in the panel; I can ask it here instead" was what the chat said). Left alone, the model also raised its own question in the chat once, from the earlier session's words; that is the model, not a Wheelhouse card.
+- **Approve in the panel only.** Pressing **Blue** on the first card dropped the count from 12 to 11 and VS Code showed "Recorded: Blue on card 1".
+- **The next turn.** A new chat told to run `views waiting --since <time>` said it saw the card answered in the panel and what was chosen. The command printed "Since your last turn, the director answered: …" and the answered card was no longer in the waiting list. The prompt named the command; whether the front desk's own skill reads it unprompted at the start of a turn was not tried (Lean's kit was not in this scratch project).
+- **`wheelhouse_board` is not used by the chat.** Asked for `#wheelhouseBoard`, the chat searched for it with a tool Wheelhouse refuses (`tool_search_tool`) and ran the front desk command through the terminal instead. The add-on's board tool did not run.
+- **The panel's header** shows the project name ("Wheelhouse proj").
+- **A waiting build question** (the move question) shows as "Question · 12 of 12" with pressable **Move it**, **Leave it**, **Suggest a change…** and **Why?**. It came to the panel once `cards` had composed it into a card. Not pressed.
+- **Themes.** The panel, with that question, drawn in Default Light Modern, Default High Contrast and Default Dark Modern: readable, buttons clear, all stop visible. In the default layout the chat's section takes most of the height, so the card shows only after the chat section is collapsed.
+- **`extensions.allowed`** leaving Wheelhouse out (with the release `.vsix` installed): after a restart the panel and the status-bar item were gone, and the extensions icon showed a warning. Setting it back is a settings change.
+- **Cards come back to the chat.** With the add-on off and the mark more than 45 seconds old, `cards` handed a new card to the chat.
+
+### Needs the director
+
+Nothing for this half. The panel's hold on the Mac needs no person. Still for Windows: the no-admin install and the managed hook (check 59).
