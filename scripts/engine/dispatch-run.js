@@ -1923,7 +1923,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
         { label: KEEP_OFF, says: 'That work keeps waiting, and nothing of the plan\'s requests is used.' },
         unconfirmed
           ? { label: STOP_HERE, says: 'The work held now ends here, and nothing of it starts.' }
-          : { label: ALLOW_SOME, says: 'The settings show how many requests a month the build may use; you choose the number there.' },
+          : { label: ALLOW_SOME, says: 'The settings show how many AI credits a month the build may use; you choose the number there.' },
       ],
       recommendation: KEEP_OFF,
     });
