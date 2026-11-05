@@ -1495,6 +1495,23 @@ function recordAmend(work, change, hash, at) {
   put(makeEvent({ kind: 'action', data: { action: 'amend', question: 'Change it?', label: `Change the approved ${work} to this, ${hash.slice(0, 12)}`, work, hash }, now: () => new Date(at) }));
 }
 
+test('amend refuses work whose feature is closed or whose builder has finished, and writes nothing', () => withHome(async () => {
+  for (const finish of ['closed', 'done']) {
+    const checkout = await project();
+    const views = emptyViews();
+    views.work.mine = workView('mine');
+    const wt = worktree(checkout, 'mine');
+    if (finish === 'done') fs.writeFileSync(featurePaths(wt).status, JSON.stringify({ v: 1, work: 'mine', lane: 'small', phase: 'done', task: null, fixRound: null, waitingOn: null, head: 'a'.repeat(40), pr: null, slice: null, tokens: null, updatedAt: '2026-11-05T18:32:29.284Z' }));
+    views.features.mine = featureView('mine', { step: finish === 'closed' ? 'closed' : 'building', worktree: wt, branch: 'feature/mine', plan: 'p.md', files: ['a.js'] });
+    recordAmend('mine', 'Add a --json flag to list', 'c'.repeat(64), T0 - 60000);
+    const fake = fakeClient({ views });
+    const r = await act(['amend', 'mine', 'c'.repeat(64)], { client: fake.client });
+    assert.notEqual(r.code, 0, finish);
+    assert.match(r.err, /has finished|is closed/, finish);
+    assert.equal(fake.writes.length, 0, finish);
+  }
+}));
+
 test('amend records the amended brief\'s hash before it writes the brief, at the feature\'s own step', () => withHome(async () => {
   const checkout = await project();
   const views = emptyViews();

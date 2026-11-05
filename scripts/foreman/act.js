@@ -117,6 +117,7 @@
 // Git runs only in the main checkout, to bring the default branch up to date
 // and make the worktree, with hooks and fsmonitor off. Everything read from a worktree goes through the safe
 // readers of scripts/feature/files.js and status.js.
+import { builderFinished } from '../desk/work-prs.js';
 import { ASK_HELP, askExample, holdingReview } from './ask-help.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -1139,6 +1140,11 @@ async function amend(ctx, work, rest) {
     ctx.say(`${work} has not started. Nothing to do: the start reads the amended document.`);
     return;
   }
+  // Finished work takes no change: a closed feature, or one whose builder has finished or whose pull request has merged.
+  if (featureOf(views, work)?.step === 'closed') refuse(`${work} has finished; the change becomes a new work, not an amendment of this one. Ask the director: act ask`);
+  let builderDone = false;
+  try { builderDone = builderFinished(worktreeOf(ctx.project, views, work), featureOf(views, work)); } catch { /* an unreadable worktree is not finished */ }
+  if (builderDone) refuse(`${work} has finished (its builder is done or its pull request merged); the change becomes a new work, not an amendment of this one. Ask the director: act ask`);
   const f = liveFeature(views, work);
   const word = amendment.change.trim().split(/\s+/)[0].toLowerCase().replace(/[^a-z]/g, '');
   if (word === 'pause') {
