@@ -249,6 +249,7 @@ export async function runWatcher({
         try {
           recover ??= makeRecovery({ project, client, now });
           const again = await recover.check({
+            config: settings,
             skip: [...events, ...(bundler.held()?.foreman?.events ?? [])].filter((e) => e.type === 'work-ready').map((e) => e.work),
           });
           if (again.length > 0) bundler.add(route(again));
