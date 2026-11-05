@@ -35,12 +35,16 @@ async function handCardRaised(w, { expected = 1 } = {}) {
   assert.equal(asked.json.questions.length, 1, 'the card is asked in the chat');
   return asked.json.questions[0];
 }
-// After the press: the work is carried on as the front desk does, from the request the helper opened for the press.
-async function carriedOn(w) {
-  const tie = w.eventsOf('by-hand').at(-1).data;
-  const got = await w.desk(['carry-on', String(tie.n)]);
-  assert.equal(got.code, 0, got.err);
-  return JSON.parse(got.out);
+// After the press the helper itself records the work, with a brief of its own in plain words: the front desk does nothing.
+// Resolves the work's id and the files its brief lists.
+async function recordedByHelper(w) {
+  // The helper writes the work in the same step as the tie, so none is waited for with further ticks (a tick could start the run before the test has set up its build).
+  assert.equal(w.eventsOf('work').length, 1, 'the helper has recorded the work');
+  assert.equal(w.starts().length, 0, 'nothing has started yet');
+  const [event] = w.eventsOf('work');
+  const brief = fs.readFileSync(path.join(w.folder, event.data.doc.path), 'utf8');
+  const files = /Files changed:\n((?:- .*\n)+)/.exec(brief)?.[1].split('\n').filter(Boolean).map((l) => l.slice(2)) ?? [];
+  return { work: event.data.id, files, event: event.data };
 }
 // The carried-on work builds and merges: the line stays in the main version, and the folder, which holds the same edit,
 // takes the main version and keeps the edit's content.
@@ -62,17 +66,18 @@ async function buildsAndMerges(w, work, { content = { text: readme(w) }, committ
 // terminal tick marked it asked); work recorded visible after "Check and add them" never woke the foreman; it raised a second
 // Approve card; the project folder never took the merged main because the same edit sat uncommitted in it; a later edit's
 // card said the earlier ones were still being checked.
-test('a hand edit, then Check and add them: press, tie, work; one wake, no second Approve card, merged, the folder takes main', { timeout: 120000 }, () => world({ recordings: carryOn() }, async (w) => {
+test('a hand edit, then Check and add them: the front desk does nothing; the helper records the work, one wake, no second Approve card, merged, the folder takes main', { timeout: 120000 }, () => world({ recordings: carryOn() }, async (w) => {
   await w.watch();
   await w.terminalTick();
   fs.appendFileSync(path.join(w.folder, 'README.md'), `${HAND_LINE}\n`);
   const card = await handCardRaised(w);
   await w.press(card, CHECK_AND_ADD);
   await w.tickUntil(() => w.eventsOf('by-hand').length > 0, 'the tie');
-  const from = await carriedOn(w);
-  assert.equal(w.eventsOf('work').length, 0);
-  await w.watch(); // the press and the tie are seen, and their wake is past
-  await record(w, from.work, { lane: 'small', visible: true, title: 'Your edit to the README', from: from.from });
+  // The front desk never runs carry-on or records anything: the helper records the work from the press and the tie.
+  const from = await recordedByHelper(w);
+  assert.equal(from.event.lane, 'small');
+  assert.equal(from.event.visible, true);
+  assert.equal(from.event.from.request, w.eventsOf('by-hand').at(-1).data.n);
   const woken = foremanWakes(await w.watch());
   assert.ok(woken.some((e) => e.type === 'work-ready' && e.work === from.work), `the foreman is woken for the work (${JSON.stringify(woken)})`);
   assert.equal(approveCards(w).length, 0, 'no second Approve card');
@@ -142,10 +147,9 @@ test('a hand commit of a bracketed file name carries only that file and leaves a
   const card = await handCardRaised(w);
   await w.press(card, CHECK_AND_ADD);
   await w.tickUntil(() => w.eventsOf('by-hand').length > 0, 'the tie');
-  const from = await carriedOn(w);
-  assert.deepEqual(from.files.map((f) => f.path), [bracketed], 'the change carries only the committed file');
+  const from = await recordedByHelper(w);
+  assert.deepEqual(from.files, [bracketed], 'the change carries only the committed file');
   assert.equal(await git(['status', '--porcelain', '--untracked-files=all'], w.folder), '?? app/s/page.md', 'app/s/ stays untracked');
-  await record(w, from.work, { lane: 'small', visible: true, title: 'Your page', from: from.from });
   const change = await startsAndMergesShownFirst(w, from.work, { files: { [bracketed]: 'The page.\n' } }, { pr: 2 });
   assert.equal(await git(['show', `${change.mergeCommit}:${bracketed}`], w.gitHome), 'The page.');
   await w.tick();
@@ -167,9 +171,8 @@ test('an uncommitted edit of a bracketed file name is let go for the main versio
     const card = await handCardRaised(w);
     await w.press(card, CHECK_AND_ADD);
     await w.tickUntil(() => w.eventsOf('by-hand').length > 0, 'the tie');
-    const from = await carriedOn(w);
-    assert.deepEqual(from.files.map((f) => f.path), [bracketed], 'the change carries only the edited file');
-    await record(w, from.work, { lane: 'small', visible: true, title: 'Your page', from: from.from });
+    const from = await recordedByHelper(w);
+    assert.deepEqual(from.files, [bracketed], 'the change carries only the edited file');
     const change = await startsAndMergesShownFirst(w, from.work, { files: { [bracketed]: edited } }, { pr: 2 });
     await w.tickUntil(async () => (await w.folderMain()) === change.mergeCommit, 'the folder to take the main version');
     assert.equal(fs.readFileSync(path.join(w.folder, bracketed), 'utf8'), edited, 'the edit is kept');
@@ -183,3 +186,21 @@ test('an uncommitted edit of a bracketed file name is let go for the main versio
 test('nothing told to the director in a terminal speaks of a panel', () => {
   assertNoPanelWords();
 });
+
+// Guards: the front desk, if it still runs carry-on after the helper has recorded the work, makes nothing more: no second
+// work, no second card, and the one change still builds and merges.
+test('a front desk that runs carry-on as well makes no second work', { timeout: 120000 }, () => world({ recordings: carryOn() }, async (w) => {
+  await w.watch();
+  await w.terminalTick();
+  fs.appendFileSync(path.join(w.folder, 'README.md'), `${HAND_LINE}\n`);
+  const card = await handCardRaised(w);
+  await w.press(card, CHECK_AND_ADD);
+  await w.tickUntil(() => w.eventsOf('by-hand').length > 0, 'the tie');
+  const from = await recordedByHelper(w);
+  const again = await w.desk(['carry-on', String(w.eventsOf('by-hand').at(-1).data.n)]);
+  assert.notEqual(again.code, 0);
+  assert.match(again.err, /already being carried on as the work/);
+  assert.equal(w.eventsOf('work').length, 1, 'one work only');
+  assert.equal(approveCards(w).length, 0, 'no Approve card');
+  await buildsAndMerges(w, from.work);
+}));
