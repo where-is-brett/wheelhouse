@@ -46,10 +46,20 @@ Whether the add-on gives a Lean project its pane, presses and helper in VS Code 
 - **`extensions.allowed` works as the panel design expects:** leaving Wheelhouse out disables the add-on at the next start.
 - **The pane reads well in the three themes** in the one state seen.
 
+### Re-test of the harness check, 5 November 2026
+
+**Answer:** Yes. With the harness check now reading `COPILOT_CLI` with `COPILOT_HOOK_DIR` and camelCase input (`harnessOf`, pull request #318), Wheelhouse switches on in VS Code's Copilot chat.
+
+- **Tested on.** The Mac, VS Code 1.144.1 with its built-in Copilot Chat, in the sitting's scratch profile (`~/.wheelhouse-probes/sit/u`, signed in), on a scratch Lean folder registered in a scratch Wheelhouse home. The project's hook file ran Wheelhouse's real hook entry through a wrapper that logged what it saw and printed. Prompts went in through the sitting's chat-driver extension (`workbench.action.chat.open`), model Auto (GPT-5.6 Luna).
+- **What VS Code sets.** `COPILOT_CLI=1`, `COPILOT_HOOK_DIR` (the project's hook folder) and `COPILOT_PROJECT_DIR`; no `COPILOT_CLI_BINARY_VERSION`. The input is camelCase.
+- **A new chat.** The session start gave Wheelhouse's Copilot tool names ("Your clickable-question tool is ask_user (askQuestions in VS Code)"), not "Wheelhouse doesn't run in this kind of chat". The same entry run by hand without the two variables gave the old line.
+- **A guarded call.** Asked to read `.env`, the chat's `preToolUse` hook answered exit 2 with "Wheelhouse does not let an agent read a .env file: ask the helper to do it", and the chat told the person it was not allowed to.
+- **Not tried.** The STOP word from the phone (check 65), and the add-on's own in-process helper in this window.
+
 ## Needs the director
 
 - A decision on the Lean record gap above.
-- A go for the harness check change (a code change with its own tests).
+- The harness check change is done (pull request #318) and re-tested above.
 - The rest of this check on the work laptop, which has no Node.js: the in-process helper, the card's hold and answer, the stale mark, and install with no admin rights.
 
 ## The hold, the next turn and the panel, on the Mac, 5 November 2026

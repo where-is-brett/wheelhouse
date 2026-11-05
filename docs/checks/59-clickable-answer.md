@@ -64,7 +64,7 @@ Whether a hook can see the answer to a clickable question in Copilot's chat, and
 
 ## Needs the director
 
-- A managed hook, on the work laptop if the company sets one.
+- A managed hook (5 November: not done, it needs an administrator's password to write Copilot's enterprise-managed settings). The director, on the work laptop where the company manages Copilot (or on this Mac, typing the Mac's admin password themselves): add one `postToolUse` hook to the managed settings, ask one card question in VS Code's chat, click **Approve**, then tell the agent so it reads the hook's log.
 - Signing the pinned CLI in, for the standalone CLI form.
 
 ## Hold and next turn, 5 November 2026

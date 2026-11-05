@@ -54,15 +54,15 @@ The answers to the checks in section 20 of the design, and to checks 24 to 31 in
 | 54 | VS Code's Claude harness | Yes on the Mac | [54-claude-harness.md](54-claude-harness.md) |
 | 55 | What an add-on's contributions reach | Yes on the Mac: both chat tools reach the chat | [55-addon-contributions.md](55-addon-contributions.md) |
 | 56 | Registration: what Copilot loads, and twice | Yes | [56-registration.md](56-registration.md) |
-| 57 | Copilot's sandbox | Not run yet | None yet |
+| 57 | Copilot's sandbox | Partly on the Mac: five of seven tries refused; `gh auth token` and a token in the environment let through (the CLI gives the sandboxed shell a `GH_TOKEN`); the guard try not judged | [57-copilot-sandbox.md](57-copilot-sandbox.md) |
 | 58 | The guards' input | Partly | [58-hook-input.md](58-hook-input.md) |
-| 59 | Clickable questions: whose answer | Partly on the Mac: the hook sees the answer, in both forms and from the person's hooks folder; managed hook open | [59-clickable-answer.md](59-clickable-answer.md) |
+| 59 | Clickable questions: whose answer | Partly on the Mac: the hook sees the answer, in both forms and from the person's hooks folder; managed hook open (needs an admin password) | [59-clickable-answer.md](59-clickable-answer.md) |
 | 60 | The other hooks | Partly | [60-other-hooks.md](60-other-hooks.md) |
 | 61 | Sessions from a script | Yes, with two gaps | [61-sessions.md](61-sessions.md) |
 | 62 | Setup's tools on Windows, and the timed run | Not run yet | None yet |
 | 63 | Superpowers and Matt Pocock's skills on Copilot | Yes, with two gaps | [63-kits.md](63-kits.md) |
 | 64 | Usage figures | Deferred | [64-usage.md](64-usage.md) |
-| 65 | The phone | Partly on the Mac: phone messages and cards reach a CLI session; no push; STOP not set | [65-phone.md](65-phone.md) |
+| 65 | The phone | Partly on the Mac: phone messages and cards reach a CLI session; no push; STOP not set (the harness check is changed; the phone step is the director's) | [65-phone.md](65-phone.md) |
 | 66 | A clean reviewer session | Yes, on a clean copy of the change only; an untrusted checkout and a trusted folder leak | [66-clean-review.md](66-clean-review.md) |
 | 67 | The pane's place | Yes on the Mac: the add-on can move it and VS Code keeps it | [67-pane-place.md](67-pane-place.md) |
 | 68 | An approval on the host | GitLab routes Deferred, held for the director (H3); GitHub half held for its sitting (S4) | None yet |
@@ -71,12 +71,12 @@ The answers to the checks in section 20 of the design, and to checks 24 to 31 in
 | 71 | GitLab on the company's own servers | Partly, at Free: a commit status posted with the project key can stand in for a pipeline that never ran; Premium's half Deferred, held for the director (H3) | [71-gitlab-self-managed.md](71-gitlab-self-managed.md) |
 | 72 | The add-on at Lean. Sitting S6 also covers the panel: the release `.vsix` fetched, its hash checked and installed with Install from VSIX on an account with no admin rights; the Inset pane in light, dark and high-contrast themes in every state, with screenshots; a card asked in the chat and the panel, to see the hold and the answer reach the chat on the next turn; `extensions.allowed` set to leave Wheelhouse out, so the add-on is disabled, the mark goes stale and cards come back to the chat; and whether the helper in VS Code is the whole computer's helper and how far the inbox reaches | Yes on the Mac (5 November): release `.vsix` installed with its hash checked, themes, `extensions.allowed`, the hold, a panel press reaching the chat on the next turn, a build question with pressable choices (after a Lean-project hold fix); Windows and no-admin install not run | [72-addon-at-lean.md](72-addon-at-lean.md) |
 | 73 | The keychain: does denying the keychain files stop a sandboxed `security` | Yes on the Mac (the denial holds); Windows waits for check 52 | [73-keychain.md](73-keychain.md) |
-| 74 | E1: Copilot through Archon's compiled binary | Deferred: the account has no included Copilot model, and Copilot spend waits for the director's go in the checking session | [74-archon-copilot.md](74-archon-copilot.md) |
+| 74 | E1: Copilot through Archon's compiled binary | Partly: the five items pass on the compiled binary (5 November); small change unrun; billing is in AI credits | [74-archon-copilot.md](74-archon-copilot.md) |
 | 75 | E2: Wheelhouse's guards inside an Archon Claude step | No: the hooks and deny rules hold, but bypass mode turns the sandbox off; the one-line patch is the route | [75-archon-guards.md](75-archon-guards.md) |
 | 76 | E3: the merge path through a broker | Yes, every leg; `--config` cannot carry the maintainers policy | [76-archon-merge.md](76-archon-merge.md) |
-| 77 | E4: skills inside Archon's steps | Partly: nine of eleven; item 7 showed no helpers, item 11 (Copilot) Deferred | [77-archon-skills.md](77-archon-skills.md) |
+| 77 | E4: skills inside Archon's steps | Partly: ten of eleven; item 7 showed no helpers; item 11 (Copilot) passed on 5 November | [77-archon-skills.md](77-archon-skills.md) |
 | 78 | E5: Archon's run control | Partly: no ask lost or doubled over 50 trials; a cancelled run can't be resumed, and a detached process survived a cancel; sleep not yet run | [78-archon-run-control.md](78-archon-run-control.md) |
-| 79 | E6: counting spend under Archon | Deferred: the Claude half reads; the Copilot half waits for the director's go | [79-archon-spend.md](79-archon-spend.md) |
+| 79 | E6: counting spend under Archon | Partly: the Copilot estimate (18 requests) ran seven times above GitHub's figure (2.5 credits); the Claude half did not rerun | [79-archon-spend.md](79-archon-spend.md) |
 | 80 | One real small-lane run (part 4.1) | Yes: work order to a ready pull request on real Archon for $0.72, once six defects were fixed; main's own skills and hooks untested inside the steps | [80-small-lane.md](80-small-lane.md) |
 | 81 | One real two-slice feature run (part 4.4) | Yes: two slices merged in order by the merge queue, then the switch-on, for about $6.30, once seven defects were fixed; the director is asked twice about the switch-on pull request | [81-feature-lane.md](81-feature-lane.md) |
 | 82 | A real Mac app's tests under the check sandbox | Partly: a real project's tests pass by the Swift package row under a tightened, still allow-by-default profile; the draft profile leaks, and hosted Xcode tests can't run sandboxed | [82-check-sandbox.md](82-check-sandbox.md) |

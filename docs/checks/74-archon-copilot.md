@@ -15,6 +15,8 @@ The earlier tries found:
 The real run is the first part of Evidence; the rest of the note is the 29 October one, kept as it was.
 
 
+**Re-run, 5 November 2026.** On a fresh scratch Archon v0.13.0 (the compiled binary), `probes/74-archon-copilot/run.js` with the skill as a project skill passed all five items: the Copilot step completed, the guard refused the planted `.env` read, the record showed 13,541 input and 41 output tokens, and the step quoted the skill's marker. It cost about 0.4 of the allowance. GitHub now bills in AI credits (a short Auto prompt about 0.16), so the "1x" reading above no longer holds and `credits_used` (whole numbers) is too coarse: read `quota_remaining`. The small change and the quick change's last steps are still unrun (about 2 to 3 allowance units now, plus a free trial-repository lock).
+
 ## Question
 
 Spec 15's E1, five items. (1) Does Archon v0.13.0's compiled binary run a Copilot step with the CLI found by `COPILOT_BIN_PATH`, signed in by `copilot login`? (2) Does an included model run with no premium requests used? (3) Do Wheelhouse's guards, registered as the CLI's own hooks in a clean home, fire under Archon (a planted `.env` read refused)? (4) Does the run record show the step's tokens? (5) Does a skill from the clean home load?

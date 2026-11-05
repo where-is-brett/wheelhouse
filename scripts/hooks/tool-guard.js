@@ -224,7 +224,9 @@ function fileRefusal(input, { home, platform, pluginRoot, env, roots, engine }) 
     }
   }
   if (WRITING.includes(tool)) {
-    const guarded = [path.join(home, '.claude'), path.join(homeReal, '.claude'), path.resolve(pluginRoot), resolveReal(pluginRoot, pluginRoot)];
+    // Claude's folder is CLAUDE_CONFIG_DIR where that is set, as well as the home's own .claude.
+    const configured = typeof env?.CLAUDE_CONFIG_DIR === 'string' && path.isAbsolute(env.CLAUDE_CONFIG_DIR) ? [path.resolve(env.CLAUDE_CONFIG_DIR), resolveReal(env.CLAUDE_CONFIG_DIR, env.CLAUDE_CONFIG_DIR)] : [];
+    const guarded = [path.join(home, '.claude'), path.join(homeReal, '.claude'), ...configured, path.resolve(pluginRoot), resolveReal(pluginRoot, pluginRoot)];
     for (const candidate of [absolute, real]) {
       if (guarded.some((g) => inside(fold, g, candidate))) return refuse('change Claude\'s settings or the Wheelhouse plugin');
       const parts = fold(candidate).split(/[\\/]/);

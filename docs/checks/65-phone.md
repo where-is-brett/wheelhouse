@@ -41,4 +41,4 @@ Whether a phone message can reach a Copilot session (Copilot CLI's remote sessio
 
 ## Needs the director
 
-- Nothing more on the Mac until the harness check is changed. Then one STOP from the phone, to see Wheelhouse's STOP set.
+- The harness check is changed (pull request #318) and works in VS Code's chat (check 72's re-test of 5 November). What is left needs the phone: the director starts `copilot` in a Lean project folder on the Mac, types `/remote`, sends STOP from GitHub Mobile to that session, and tells the agent so it reads the STOP state. Not done on 5 November because it needs the phone.

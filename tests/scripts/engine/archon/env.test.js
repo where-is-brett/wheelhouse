@@ -112,3 +112,9 @@ test("each project on the engine has its git reads sent to the helper's fetch mi
   assert.equal(env.GIT_CONFIG_KEY_0, `url.${path.join(engine, 'mirrors', 'tide-tables.git')}.insteadOf`);
   assert.equal(env.GIT_CONFIG_VALUE_0, 'https://github.com/a/tide-tables.git');
 });
+
+test('archonEnv keeps CLAUDE_CONFIG_DIR, so a step\'s Claude starts from the Claude folder the plugin is installed in', () => {
+  const { engine, home, nodeDir } = setup();
+  assert.equal(archonEnv({ engine, home, nodeDir, baseEnv: { HOME: '/h', CLAUDE_CONFIG_DIR: '/scratch/claude' } }).CLAUDE_CONFIG_DIR, '/scratch/claude');
+  assert.equal('CLAUDE_CONFIG_DIR' in archonEnv({ engine, home, nodeDir, baseEnv: { HOME: '/h' } }), false);
+});

@@ -13,8 +13,10 @@ export const TELEMETRY = Object.freeze({ ARCHON_TELEMETRY_DISABLED: '1', DO_NOT_
 // Folders with the system's own tools (git, bash, ps). The caller's PATH is never kept, since it may hold a real gh.
 const SYSTEM_PATH = ['/usr/bin', '/bin', '/usr/sbin', '/sbin'];
 // The few variables kept from the caller's environment. No token or host variable passes. WHEELHOUSE_HOME, where set
-// (an evaluation's home), is kept so a step's hooks use the same Wheelhouse home as the helper.
-const KEPT = ['HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'LC_ALL', 'SHELL', 'TERM', 'WHEELHOUSE_HOME'];
+// (an evaluation's home), is kept so a step's hooks use the same Wheelhouse home as the helper. CLAUDE_CONFIG_DIR, where
+// set, is kept so a step's Claude starts from the same Claude folder as the director's sessions: the plugin installed
+// there, and the sign-in kept there. Without it a step reads ~/.claude and may find no plugin, so no guard loads.
+const KEPT = ['HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'LC_ALL', 'SHELL', 'TERM', 'WHEELHOUSE_HOME', 'CLAUDE_CONFIG_DIR'];
 
 // The plugin's own folder, where the pack's script steps find Wheelhouse's scripts.
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');

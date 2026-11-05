@@ -2,7 +2,7 @@
 
 # Check 79: counting spend under Archon (early check E6)
 
-**Answer:** Deferred. The Claude half passes: each Claude step's tokens and cost are in Archon's record, marked as the provider's. The Copilot half, the estimate against GitHub's figure over 20 steps, needs Copilot requests. The account has no included model (check 74), so it waits for the director's yes on spending part of the allowance.
+**Answer:** Deferred (the Copilot half ran on 5 November 2026 and is recorded below). The Claude half passes: each Claude step's tokens and cost are in Archon's record, marked as the provider's. The Copilot half, the estimate against GitHub's figure over 20 steps, needs Copilot requests. The account has no included model (check 74), so it waits for the director's yes on spending part of the allowance.
 
 ## Question
 
@@ -60,3 +60,11 @@ It reads GitHub's figure (`gh api /copilot_internal/user`, as in check 74) befor
 
 - **A yes to spend part of the Copilot allowance:** the same card as check 74, queued with the main session on 29 October 2026. With it, an agent runs `node probes/79-archon-spend/run.js trial --copilot 20 --allowance 25` after check 74's setup, and this note is rewritten with the comparison.
 - Removed afterwards: the scratch project under `$TMPDIR/wheelhouse-archon-checks/e6`, moved to the Trash.
+
+### The 5 November 2026 attempt
+
+- The trial (`trial --copilot 20 --allowance 10`) was started on the Mac against a fresh scratch Archon. The scratch engine's Claude provider could not be added (`archon provider add claude` failed with no message), so the three Claude steps could not run; that is a gap in the scratch engine, not a fault in the meter.
+- **GitHub now counts in AI credits, not whole requests.** A short Copilot prompt at Auto cost about 0.16 credits (the CLI prints it), and the quota figure fell by about the same. `credits_used` shows whole numbers, so compare `quota_remaining`, which has two decimals. The meter's estimate of one request per prompt at `auto` will run well above GitHub's figure until it counts credits. This changes the comparison this check was set up to make.
+- **The trial ended:** 17 single Copilot steps completed, the three-round loop's run ended `failed`, and the three Claude steps did not start ("No providers installed"). Each completed step's tokens were in the record (for example 11,704 and 35,090), with cost `unavailable`.
+- **The comparison:** the meter's estimate was 18 requests (one per prompt at `auto`). GitHub's `quota_remaining` fell from 180.4 to 177.9, which is 2.5. The estimate is about seven times too high in this billing, so the meter must count credits, not prompts, before Copilot runs unattended. The within-one-request test cannot pass as worded.
+- The loop's failure was not looked into.
