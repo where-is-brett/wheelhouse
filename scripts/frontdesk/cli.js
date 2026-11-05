@@ -132,7 +132,7 @@ export const RECORD_KINDS = Object.freeze([
   'work', 'amendment', 'incident', 'note', 'brief', 'goal',
 ]);
 export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey', 'evidence', 'brief']);
-const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'record', 'similar', 'views', 'explain', 'review', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'end-goal', 'narrow-goal', 'goal-baseline', 'goal-draft', 'goal-card', 'note'];
+const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'record', 'similar', 'views', 'explain', 'review', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'end-goal', 'narrow-goal', 'goal-baseline', 'goal-draft', 'goal-card', 'note'];
 // How long `confirm` waits for the helper: one window at a time on the computer, so it may wait for another's.
 const CONFIRM_WAIT_MS = 3 * WINDOW_MS;
 export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
@@ -791,6 +791,25 @@ export async function suggest({ client, cwd, card: cardId, work: workId, change 
   const got = await write(client, cwd, 'work', data);
   await write(client, cwd, 'card-answer', { question: pressed.data.question, label: SUGGEST, where: 'chat' });
   return { id: got.id, pushed: got.pushed === true, say: SUGGESTED };
+}
+
+// --- drop ---
+
+export const DROPPED = 'Dropped: it will not be built.';
+
+// Ends a piece of work the director asked to drop (a copy of one already queued, or a request they have changed their
+// mind about) with a closed report, so neither engine starts it. Work that has begun building is left alone.
+// Resolves with { work, say }.
+export async function drop({ client, cwd, work: workId }) {
+  const { views } = await viewsOf(client, cwd);
+  if (!isOpen(views, workId)) {
+    const open = Object.keys(isPlain(views.work) ? views.work : {}).filter((id) => isOpen(views, id));
+    throw new CliError(`${workId} isn't open work: the open work is ${open.length ? open.join(', ') : 'none'}`);
+  }
+  const started = (isPlain(views.runs) && Array.isArray(views.runs[workId]) && views.runs[workId].length > 0) || isPlain(views.features?.[workId]?.data);
+  if (started) throw new CliError(`${workId} has already begun building, so it can't be dropped here: say so in one line`);
+  const got = await write(client, cwd, 'report', { work: workId, outcome: 'closed', summary: 'Dropped at the director\'s request before it began.', rulings: [] });
+  return { work: workId, id: got.id, say: DROPPED };
 }
 
 // --- record ---
@@ -1496,6 +1515,9 @@ export async function main(argv, {
     } else if (command === 'suggest') {
       if (rest.length < 3) throw new CliError('Give the card, the work and the change: suggest <card id> <work id> <the change in your own words>');
       json(await suggest({ client: helper, cwd: here, card: rest[0], work: rest[1], change: rest.slice(2).join(' ') }));
+    } else if (command === 'drop') {
+      if (rest.length !== 1 || rest[0] === '') throw new CliError('Give the work to drop: drop <work id>');
+      json(await drop({ client: helper, cwd: here, work: rest[0] }));
     } else if (command === 'record') {
       only(rest, 1, `Give the kind to record: record <kind>, one of ${RECORD_KINDS.join(', ')}`);
       if (!RECORD_KINDS.includes(rest[0])) throw new CliError(`record takes one of: ${RECORD_KINDS.join(', ')}`);

@@ -5266,8 +5266,11 @@ export async function startHelper({
     }
   });
 
+  // Called when the helper starts and again at every look, so a project registered after the helper began (setup
+  // registers it a few minutes in) gets its engine host too, and its work is started.
   function startEngineHosts() {
     for (const { project } of registeredProjects()) {
+      if (engineHosts.some((h) => h.project === project)) continue;
       let engine = null;
       try { engine = engineFor(project); } catch { engine = null; }
       if (!engine) continue;
@@ -5293,7 +5296,7 @@ export async function startHelper({
         // An engine that can't be followed gets no host; the other projects' hosts start all the same.
       }
     }
-    if (engineHosts.length > 0) {
+    if (engineHosts.length > 0 && stopWatch === null) {
       watchStop();
       stopWatch = setInterval(watchStop, stopPollMs);
       stopWatch.unref?.();
@@ -5303,7 +5306,12 @@ export async function startHelper({
         try { room.tend(); } catch { /* tried again with the dispatcher */ }
       }
       sleeping.beat();
+    }
+    if (dispatchWatch === null) {
       dispatchWatch = setInterval(() => {
+        if (closing) return;
+        try { startEngineHosts(); } catch { /* looked at again next time */ }
+        if (engineHosts.length === 0) return;
         sleeping.beat().then(engineTick).catch(() => {});
         sealTick();
         try { room?.tend(); } catch { /* tried again next time */ }

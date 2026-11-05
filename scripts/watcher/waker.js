@@ -210,6 +210,8 @@ export const STARTING_MS = 2 * MINUTE;
 export const BACKOFF_MS = Object.freeze([MINUTE, 5 * MINUTE, 15 * MINUTE]);
 // From this many failures on, each is reported.
 export const FAILURES_REPORTED = 3;
+// The most times a wake the Bosun ended without recording is sent before it is let go.
+export const WAKE_SENDS = 3;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 // A session id a run named itself: a plain word, as a `--resume=` argument takes it.
@@ -890,6 +892,36 @@ export function makeWaker({
     save(kept);
   };
 
+  // The Bosun's session ending cleanly does not settle its wake: only its `wake.js done` record does. A session that
+  // could not read the wake (the helper out of reach, say) ends cleanly all the same, so the wake is sent again, after
+  // the back-off, until it has been recorded or has been sent WAKE_SENDS times, when it is reported and let go.
+  const wakeRecorded = (file) => {
+    if (typeof file !== 'string') return true;
+    const id = path.basename(file, '.json');
+    try {
+      const text = readCapped(path.join(watcherDir(project), 'measures.jsonl'), 64 * 1024 * 1024);
+      return text !== null && text.split('\n').some((line) => {
+        try { return JSON.parse(line)?.wake === id; } catch { return false; }
+      });
+    } catch {
+      return true;
+    }
+  };
+  const settleEnded = (target, entries) => {
+    if (target !== 'foreman') return settle(entries.map((e) => e.id ?? e), 'done');
+    const open = load();
+    const lost = [];
+    const done = [];
+    for (const wanted of entries) {
+      const id = wanted.id ?? wanted;
+      const e = open.find((x) => x.id === id);
+      if (e && e.to === 'foreman' && !wakeRecorded(e.file) && (Number.isInteger(e.failures) ? e.failures : 0) + 1 < WAKE_SENDS) lost.push(id);
+      else done.push(id);
+    }
+    settle(done, 'done');
+    settle(lost, 'failed', 'the Bosun ended without recording the wake');
+  };
+
   // --- What is running (Shape 1) ---
   const targetOf = (work) => (work === undefined ? 'foreman' : `feature-${work}`);
   const maxRunOf = (target) => (target === 'foreman' ? MAX_RUN_MS.foreman : MAX_RUN_MS.feature);
@@ -990,7 +1022,7 @@ export function makeWaker({
       }
     }
     if (target !== 'foreman' && kept.idFromRun === true) keepStartedId(nameOf(target), result?.sessionId ?? null);
-    if (result?.ok === true) settle(entries, 'done');
+    if (result?.ok === true) settleEnded(target, entries);
     else {
       const why = typeof result?.why === 'string' ? result.why : 'its run gave no outcome';
       settle(entries, 'failed', why);
@@ -1150,7 +1182,7 @@ export function makeWaker({
         } else if (kept !== null && typeof adapter.afterRun === 'function') {
           // A record already ended elsewhere (endRecord) has been read there.
           if (mine) await finishRun(adapter, target, kept, code, entries);
-        } else if (code === 0) settle(entries, 'done');
+        } else if (code === 0) settleEnded(target, entries);
         else {
           settle(entries, 'failed', `its session exited with code ${code}`);
           if (entries.length === 0) onError(`The ${target.slice('feature-'.length)} session exited with code ${code}`);
