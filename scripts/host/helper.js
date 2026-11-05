@@ -13,6 +13,10 @@
 // agent's folder into the mirror, with no key, reading nothing but objects
 // from that folder (its config, remote, replace refs and hooks count for
 // nothing). The checks and the push then run in the mirror, with the key.
+import { stuckCardFor, workCardFor } from '../foreman/ask-help.js';
+import { recentStuck } from '../watcher/stuck-cards.js';
+import { worktreeOf } from '../foreman/wake.js';
+import { readPrRecord } from '../feature/status.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -4986,6 +4990,48 @@ export async function startHelper({
     // (ruling F41), for the front desk's `review`, which can't list them. With `answers`, the
     // card-answer events, for the front desk's `views work` to tell a feature the director's Not now
     // holds. Read-only, so STOP lets it through.
+    // A stuck work's card, written for the watcher (scripts/watcher/stuck-cards.js) when the Bosun closed its stuck wake
+    // idle without asking. The helper makes the question from its own reading of the state and holds the pass itself, so
+    // no caller names a foreman question's words or id.
+    '/state/stuck-card': stateRoute(async ({ project, work }, ctx) => {
+      if (typeof work !== 'string' || !SLUG.test(work)) refuse('the work must be named');
+      // The phase and the time come from the watcher's own record of the stuck work, never from the request.
+      const stuck = recentStuck(project, work, { now });
+      if (stuck === null) return { ok: true, skipped: 'the watcher has not recorded this work as stuck' };
+      const events = listEvents(stateDir(project), { report: () => {} });
+      const views = buildViews(events, readEnrolled(), { now });
+      // The work's pull request is the one its worktree keeps; a worktree that can't be read leaves the plain restart option.
+      let pr = null;
+      try { pr = readPrRecord(worktreeOf(project, views, work))?.pr ?? null; } catch { /* none */ }
+      const made = stuckCardFor(views, { work, phase: stuck.phase, still: Math.max(0, Math.min(stuck.still, 1e10)), pr });
+      if (made.skip !== undefined) return { ok: true, skipped: made.skip };
+      const pass = crypto.randomUUID();
+      foremanRuns.set(pass, project);
+      try {
+        return await doWrite({ project, kind: 'question', data: made.data, foreman: pass }, ctx);
+      } finally {
+        foremanRuns.delete(pass);
+      }
+    }, { write: true }),
+    // The question a director's "fix it" or "ship it" about work with an open pull request puts to the Bosun, for the
+    // front desk. The helper checks that the work exists and has an open pull request (the one its worktree keeps) and
+    // makes the question in fixed words from its own reading; the caller supplies no text.
+    '/state/work-card': stateRoute(async ({ project, work }, ctx) => {
+      if (typeof work !== 'string' || !SLUG.test(work)) refuse('the work must be named');
+      const events = listEvents(stateDir(project), { report: () => {} });
+      const views = buildViews(events, readEnrolled(), { now });
+      let pr = null;
+      try { pr = readPrRecord(worktreeOf(project, views, work))?.pr ?? null; } catch { /* none */ }
+      const made = workCardFor(views, { work, pr });
+      if (made.skip !== undefined) return { ok: true, skipped: made.skip };
+      const pass = crypto.randomUUID();
+      foremanRuns.set(pass, project);
+      try {
+        return await doWrite({ project, kind: 'question', data: made.data, foreman: pass }, ctx);
+      } finally {
+        foremanRuns.delete(pass);
+      }
+    }, { write: true }),
     '/state/views': stateRoute(async ({ project, cards, review, answers }) => {
       const views = await writeViews(project, { now });
       const events = cards === true || review === true || answers === true ? listEvents(stateDir(project), { report: () => {} }) : [];

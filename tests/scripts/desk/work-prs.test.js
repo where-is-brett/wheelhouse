@@ -47,3 +47,15 @@ test('prsOfWork reads the pull request from the work\'s own status, only inside 
   const views = { features: { 'todo-cli': { data: { worktree: inside } }, stray: { data: { worktree: outside } } } };
   assert.deepEqual(prsOfWork(views, checkout), { 'todo-cli': { pr: 2, head: HEAD, phase: 'pr-open', waitingOn: null } });
 });
+
+test('ask-bosun says what the helper did, and refuses nothing it was not given', async () => {
+  const { askBosun } = await import('../../../scripts/frontdesk/cli.js');
+  const calls = [];
+  const client = (answer) => ({ state: { workCard: async (body) => { calls.push(body); return answer; } } });
+  const made = await askBosun({ client: client({ ok: true, id: 'abc' }), cwd: '/p', work: 'mine' });
+  assert.deepEqual(calls[0], { cwd: '/p', work: 'mine' });
+  assert.match(made.say, /^Asked: the Bosun decides/);
+  const none = await askBosun({ client: client({ ok: true, skipped: 'the work has no open pull request' }), cwd: '/p', work: 'mine' });
+  assert.equal(none.say, 'Nothing was asked: the work has no open pull request.');
+  await assert.rejects(askBosun({ client: client({ ok: false, refused: 'no' }), cwd: '/p', work: 'mine' }));
+});
