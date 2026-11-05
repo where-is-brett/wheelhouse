@@ -25,6 +25,8 @@ import { stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { guardedCommand, selfTestFile } from '../../../scripts/windows/low.js';
 import { readBaseline, writeBaseline } from '../../../scripts/watcher/control-files.js';
 
+// The running node's folder is on the PATH of every session the waker starts, so these tests' PATH has it.
+const BIN = `${path.dirname(process.execPath)}:/bin`;
 const unix = process.platform !== 'win32';
 // What `wake.js done` leaves for a wake the Bosun has handled: a line in the watcher's measures.
 function recordDone(file) {
@@ -141,7 +143,7 @@ function waker(fake, over = {}) {
     now: clock.now,
     bootedAt: () => 0,
     claude: { kind: 'direct', file: 'claude' },
-    baseEnv: { PATH: '/bin', WHEELHOUSE_ROLE: 'foreman' },
+    baseEnv: { PATH: BIN, WHEELHOUSE_ROLE: 'foreman' },
     print: () => { throw new Error('Shape 1 prints nothing'); },
     ...over,
   });
@@ -182,7 +184,7 @@ test('a foreman bundle starts one fresh foreman with the configured model and mo
   assert.match(fs.readFileSync(path.join(main, '.git', 'info', 'exclude'), 'utf8'), /^\.wheelhouse\/$/m, 'git-ignored through info/exclude');
   assert.equal(call.cwd, main);
   assert.equal(call.env.WHEELHOUSE_ROLE, 'foreman');
-  assert.equal(call.env.PATH, '/bin');
+  assert.equal(call.env.PATH, BIN);
 
   // With no model named, the command line's own default applies, named by its alias, so the front
   // desk's model in the main folder's local settings never reaches the foreman.
@@ -929,25 +931,25 @@ test('every session the waker starts keeps Claude Code\'s sign-in, spelt exactly
     CLAUDE_CODE_OAUTH_TOKEN: 'oauth', CLAUDE_CODE_USE_BEDROCK: '1', CLAUDE_CODE_USE_VERTEX: '1', CLAUDE_CODE_SKIP_VERTEX_AUTH: '1',
     CLAUDE_CODE_USE_FOUNDRY: '1', AWS_PROFILE: 'work', VERTEX_REGION_CLAUDE_MODEL_A: 'us-east5',
   };
-  const host = { PATH: '/bin', ...signIn, CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'x', claude_code_use_bedrock: 'a spelling not kept', ANTHROPIC_BASE_URL: 'http://gateway' };
-  assert.deepEqual(sessionEnv(host), { PATH: '/bin', ...signIn });
+  const host = { PATH: BIN, ...signIn, CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'x', claude_code_use_bedrock: 'a spelling not kept', ANTHROPIC_BASE_URL: 'http://gateway' };
+  assert.deepEqual(sessionEnv(host), { PATH: BIN, ...signIn });
   const fake = fakeRun();
   await waker(fake, { baseEnv: host }).wakeForeman(writeWake(P, bundle('e1')));
-  assert.deepEqual(fake.calls[0].env, { PATH: '/bin', ...signIn, WHEELHOUSE_ROLE: 'foreman', ...FOREGROUND_ONLY });
+  assert.deepEqual(fake.calls[0].env, { PATH: BIN, ...signIn, WHEELHOUSE_ROLE: 'foreman', ...FOREGROUND_ONLY });
   const features = fakeRun();
   await waker(features, { baseEnv: host }).startFeature({ work: 'search-box', worktree: worktree() });
-  assert.deepEqual(features.calls[0].env, { PATH: '/bin', ...signIn, ...FOREGROUND_ONLY });
+  assert.deepEqual(features.calls[0].env, { PATH: BIN, ...signIn, ...FOREGROUND_ONLY });
 }));
 
 test('the foreman, and only the foreman, is told it is the foreman; no session gets the host session\'s variables', () => withHome(async () => {
   checkout();
-  const host = { PATH: '/bin', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'x', claude_lower: 'y', ANTHROPIC_BASE_URL: 'http://gateway', CLAUDE_CONFIG_DIR: '/c', ANTHROPIC_API_KEY_HELPER: 'kept' };
-  assert.deepEqual(sessionEnv({ ...host, WHEELHOUSE_ROLE: 'foreman', wheelhouse_role: 'x' }), { PATH: '/bin', CLAUDE_CONFIG_DIR: '/c', ANTHROPIC_API_KEY_HELPER: 'kept' });
+  const host = { PATH: BIN, CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'x', claude_lower: 'y', ANTHROPIC_BASE_URL: 'http://gateway', CLAUDE_CONFIG_DIR: '/c', ANTHROPIC_API_KEY_HELPER: 'kept' };
+  assert.deepEqual(sessionEnv({ ...host, WHEELHOUSE_ROLE: 'foreman', wheelhouse_role: 'x' }), { PATH: BIN, CLAUDE_CONFIG_DIR: '/c', ANTHROPIC_API_KEY_HELPER: 'kept' });
 
   const fake = fakeRun();
   const record = writeWake(P, bundle('e1'));
   await waker(fake, { baseEnv: host }).wakeForeman(record);
-  assert.deepEqual(fake.calls[0].env, { PATH: '/bin', CLAUDE_CONFIG_DIR: '/c', ANTHROPIC_API_KEY_HELPER: 'kept', WHEELHOUSE_ROLE: 'foreman', ...FOREGROUND_ONLY });
+  assert.deepEqual(fake.calls[0].env, { PATH: BIN, CLAUDE_CONFIG_DIR: '/c', ANTHROPIC_API_KEY_HELPER: 'kept', WHEELHOUSE_ROLE: 'foreman', ...FOREGROUND_ONLY });
   assert.ok(fake.calls[0].args[1].startsWith('Wheelhouse foreman: '));
 
   const dir = worktree();
@@ -957,7 +959,7 @@ test('the foreman, and only the foreman, is told it is the foreman; no session g
   await w.startFeature({ work: 'search-box', worktree: worktree() });
   await w.wakeFeature('login-page', writeWake(P, featureBundle('login-page')));
   assert.equal(features.calls.length, 2);
-  for (const call of features.calls) assert.deepEqual(call.env, { PATH: '/bin', CLAUDE_CONFIG_DIR: '/c', ANTHROPIC_API_KEY_HELPER: 'kept', ...FOREGROUND_ONLY });
+  for (const call of features.calls) assert.deepEqual(call.env, { PATH: BIN, CLAUDE_CONFIG_DIR: '/c', ANTHROPIC_API_KEY_HELPER: 'kept', ...FOREGROUND_ONLY });
 
   // Shape 2 names the same copy the Shape 1 prompt names.
   const lines = [];
@@ -1479,4 +1481,41 @@ test('the rest holds on this computer when its record can\'t be raised, and a wa
   await flush();
   await w.wakeFeature('login-page', writeWake(P, featureBundle('login-page', 'n1')));
   assert.equal(fake.calls.at(-1).output, undefined);
+}));
+
+test('a session is started with the running node on its PATH when the PATH has none', () => withHome(async () => {
+  checkout();
+  const fake = fakeRun();
+  const w = waker(fake, { baseEnv: { PATH: '/nonexistent-bin' }, platform: 'darwin' });
+  await w.wakeForeman(writeWake(P, bundle('e1')));
+  assert.equal(fake.calls.length, 1);
+  assert.equal(fake.calls[0].env.PATH.split(':')[0], path.dirname(process.execPath));
+}));
+
+test('a Bosun that ends twice with nothing recorded leaves a plain note for the director', () => withHome(async () => {
+  checkout();
+  const fake = fakeRun({ exits: true });
+  const raised = [];
+  const w = waker(fake, { raise: async (r) => { raised.push(r); } });
+  await w.wakeForeman(writeWake(P, bundle('e1')));
+  fake.end(fake.calls[0].pid, 0);
+  await flush();
+  assert.deepEqual(raised, [], 'not after the first');
+  w.clock.move(MIN);
+  await w.pump();
+  fake.end(fake.calls[1].pid, 0);
+  await flush();
+  assert.equal(raised.length, 1);
+  assert.equal(raised[0].kind, 'note');
+  assert.match(raised[0].data.words, /Bosun ended twice without recording/);
+}));
+
+test('a Bosun that could not start says why when Node.js was not found', () => withHome(async () => {
+  checkout();
+  const raised = [];
+  const w = waker({ run: () => { throw new Error('spawn node ENOENT: node was not found'); }, alive: () => false }, { raise: async (r) => { raised.push(r); } });
+  await w.wakeForeman(writeWake(P, bundle('e1')));
+  for (const wait of [MIN, 5 * MIN]) { w.clock.move(wait); await w.pump(); }
+  await flush();
+  assert.ok(raised.some((r) => /couldn't start \(Node.js wasn't found\), so approved work is waiting/.test(r.data.words)), JSON.stringify(raised));
 }));

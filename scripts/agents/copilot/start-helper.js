@@ -39,6 +39,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
+import { pathWithNode } from '../../lib/claude.js';
 import { fileURLToPath } from 'node:url';
 import { copilotHome, file as hookFile, writeRegistration } from '../../../adapters/copilot/hooks.js';
 import identity from '../../../adapters/copilot/identity.js';
@@ -260,7 +261,7 @@ export async function startAll({
       fs.mkdirSync(home, { recursive: true });
       // Started in Wheelhouse's own folder, never the project's.
       const child = spawn(process.execPath, [path.join(pluginRoot, 'scripts', 'host', 'helper-main.js')], {
-        cwd: jobFolder(), detached: true, windowsHide: true, stdio: 'ignore', env: { ...env, ...caEnv(home) },
+        cwd: jobFolder(), detached: true, windowsHide: true, stdio: 'ignore', env: pathWithNode({ ...env, ...caEnv(home) }),
       });
       child?.on?.('error', () => {});
       child?.unref?.();

@@ -409,3 +409,17 @@ test('the command line gives the watcher the handled ids and the foreman its too
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0].args.slice(2), ['--permission-mode', 'acceptEdits', '--model', 'model-a', '--effort', 'medium', '--allowedTools', ...foremanTools()]);
 }));
+
+test('approved work whose wake was lost is raised again to the Bosun by the recovery', () => withHome(async () => {
+  checkout();
+  const c = clock();
+  const fake = fakeWaker();
+  let given = false;
+  const recovery = { check: async () => (given ? [] : (given = true, [{ type: 'work-ready', work: 'w1', id: 'recover:w1:x', detail: { recovered: true } }])) };
+  await runWatcher({
+    project: P, config: config(), observe: looker([]).observe, waker: fake, recovery, loops: 12, now: c.now, sleep: c.sleep, log: quiet,
+  });
+  assert.equal(fake.wakes.length, 1);
+  assert.equal(fake.wakes[0][0], 'foreman');
+  assert.deepEqual(readWake(fake.wakes[0][1]).events.map((e) => e.work), ['w1']);
+}));
