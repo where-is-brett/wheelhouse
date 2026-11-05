@@ -392,6 +392,14 @@ const reviewNeededText = (pr, head) => `Wheelhouse checked its record of signed 
 // The same ask once the session has let it stand: said again, firmly, before the Bosun hears of it.
 const reviewAgainText = (pr, head) => `Second notice. Wheelhouse checked its record of signed reviews again: ${head} still has no review, and the pull request cannot merge without one. `
   + `Dispatch wheelhouse:reviewer now with pr: ${pr} on ${head}. Do nothing else first, and don't stop until it has run.`;
+// What the session reads in a findings wake or a review-passed note, decided here from the signed review's counts: it
+// never judges severity itself. A review that holds the merge says to fix every finding; one that leaves only minors
+// says they are deferred.
+const short = (head) => String(head ?? '').slice(0, 7);
+export const findingsText = (head, p) => `Wheelhouse's signed review of ${short(head)} holds the merge (${p.findings ?? 'an unknown number of'} findings; `
+  + `${Number.isInteger(p.blocking) ? `${p.blocking} of them BLOCKER or HIGH` : 'no severity count'}). `
+  + "Fix every finding it lists, push, then dispatch wheelhouse:reviewer on the new head. You can't defer these.";
+export const minorsText = (head) => `The review of ${short(head)} leaves only minor findings; they're deferred and the merge goes ahead; nothing to do.`;
 
 // The PRs this observation names, each against its last known state.
 function prEvents(prev, next, out) {
@@ -402,7 +410,10 @@ function prEvents(prev, next, out) {
     const sameHead = before !== null && before.head === p.head;
     for (const [type, holds] of PR_CONDITIONS) {
       if (holds(p) && !(sameHead && holds(before))) {
-        const detail = type === 'review-needed' ? { head: p.head, next: reviewNeededText(pr, p.head) } : { head: p.head };
+        let detail = { head: p.head };
+        if (type === 'review-needed') detail = { head: p.head, next: reviewNeededText(pr, p.head) };
+        else if (type === 'findings') detail = { head: p.head, next: findingsText(p.head, p), ...(Number.isInteger(p.findings) ? { findings: p.findings } : {}), blocking: Number.isInteger(p.blocking) ? p.blocking : null };
+        else if (type === 'review-passed' && Number.isInteger(p.findings) && p.findings > 0) detail = { head: p.head, next: minorsText(p.head), minors: p.findings };
         out.push({ type, work: p.work, pr, id: `${type}:${p.work}:${p.head}`, detail });
       }
     }

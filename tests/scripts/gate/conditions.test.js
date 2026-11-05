@@ -27,6 +27,9 @@ async function withHome(fn) {
 }
 
 const review = (commit = SHA, verdict = 'CLEAN') => makeEvent({ kind: 'review', data: { pr: 7, commit, verdict } });
+const findings = (findingsCount, blocking, commit = SHA) => makeEvent({
+  kind: 'review', data: { pr: 7, commit, verdict: 'FINDINGS', findings: findingsCount, ...(blocking === undefined ? {} : { blocking }) },
+});
 const approval = (commit = SHA) => makeEvent({ kind: 'approval', data: { pr: 7, commit } });
 
 const input = (extra = {}) => ({
@@ -332,3 +335,51 @@ test('a signed approval naming the proof add-on counts for a project with real u
   const click = { kind: 'card-answer', data: { label: 'Approve', commit: SHA, proof: 'chat-click' } };
   assert.equal(gateDecision(input({ ...taken, approval: click })).allow, false);
 }));
+
+test('a review whose findings are all minor counts; a blocking one, or one that does not say, does not', async () => {
+  await withHome(() => {
+    const allowed = (r) => gateDecision(input({ reviewRequired: true, review: r })).reasons;
+    assert.deepEqual(allowed(findings(3, 0)), [], 'all MEDIUM or LOW');
+    assert.deepEqual(allowed(findings(3, 1)), ['no CLEAN review of abcdef1'], 'a BLOCKER or HIGH holds');
+    assert.deepEqual(allowed(findings(3)), ['no CLEAN review of abcdef1'], 'no blocking count: every finding holds');
+    assert.deepEqual(allowed(findings(0, 0)), ['no CLEAN review of abcdef1'], 'no findings with a FINDINGS verdict is not a clear');
+  });
+});
+
+test('the blocking count of a signed review cannot be lowered after it is signed', async () => {
+  await withHome(() => {
+    const r = findings(3, 2);
+    const lowered = { ...r, data: { ...r.data, blocking: 0 } };
+    assert.deepEqual(gateDecision(input({ reviewRequired: true, review: lowered })).reasons, ['no CLEAN review of abcdef1']);
+    const unsigned = { kind: 'review', data: { pr: 7, commit: SHA, verdict: 'FINDINGS', findings: 3, blocking: 0 } };
+    assert.deepEqual(gateDecision(input({ reviewRequired: true, review: unsigned })).reasons, ['no CLEAN review of abcdef1']);
+  });
+});
+
+test('a review that holds a head stays its review when a clearing one is recorded after it', async () => {
+  await withHome(async () => {
+    const { buildViews } = await import('../../../scripts/state/views.js');
+    let t = Date.parse('2026-11-06T00:00:00.000Z');
+    const made = (data) => { t += 1000; return makeEvent({ kind: 'review', data: { pr: 7, commit: SHA, ...data }, now: () => new Date(t) }); };
+    const viewsOf = (...events) => buildViews(events, readEnrolled());
+    const verdictOf = (v) => v.reviews['7'][SHA].data.verdict;
+    assert.equal(verdictOf(viewsOf(made({ verdict: 'FINDINGS', findings: 3, blocking: 1 }), made({ verdict: 'CLEAN' }))), 'FINDINGS', 'blocking, then clean');
+    assert.equal(verdictOf(viewsOf(made({ verdict: 'FINDINGS', findings: 3 }), made({ verdict: 'CLEAN' }))), 'FINDINGS', 'no count, then clean');
+    assert.equal(verdictOf(viewsOf(made({ verdict: 'FINDINGS', findings: 3, blocking: 0 }), made({ verdict: 'CLEAN' }))), 'CLEAN', 'minor, then clean takes its place');
+  });
+});
+
+test('a review with only minor findings lets the gate merge and raises merge-ready, end to end', async () => {
+  await withHome(async () => {
+    const { buildViews } = await import('../../../scripts/state/views.js');
+    const { diff } = await import('../../../scripts/watcher/core.js');
+    const minor = findings(2, 0);
+    assert.equal(gateDecision(input({ reviewRequired: true, review: minor })).allow, true, 'the gate merges');
+    const views = buildViews([minor], readEnrolled());
+    const verdict = views.reviews['7'][SHA].data;
+    const obs = { prs: { 7: { work: 'w', head: SHA, ci: 'success', mergeable: 'yes', review: 'clean', findings: verdict.findings, blocking: verdict.blocking } }, events: [], features: {}, testMerges: [], stop: false, at: '2026-11-06T00:00:00.000Z' };
+    assert.ok(diff({ prs: {} }, obs, {}).some((e) => e.type === 'merge-ready' && e.pr === 7), 'the watcher raises merge-ready');
+    const blocked = findings(2, 1);
+    assert.equal(gateDecision(input({ reviewRequired: true, review: blocked })).allow, false);
+  });
+});
