@@ -20,7 +20,7 @@ if (process.platform !== 'win32') {
 
 // The person's real launch agents folder is named here, before any test changes HOME, so a write into it fails
 // (scripts/lib/login-start.js) wherever the test's HOME or WHEELHOUSE_HOME points.
-if (process.platform === 'darwin' && !process.env.WHEELHOUSE_TEST_REAL_LAUNCH_AGENTS) {
+if (!process.env.WHEELHOUSE_TEST_REAL_LAUNCH_AGENTS) {
   process.env.WHEELHOUSE_TEST_REAL_LAUNCH_AGENTS = path.join(os.homedir(), 'Library', 'LaunchAgents');
 }
 

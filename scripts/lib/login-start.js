@@ -242,15 +242,22 @@ const inside = (file, dir) => {
 // path that no longer exists, or be under a temporary folder. Anything else (another program, or a start command
 // anywhere else that is still there) is the person's own and is left. Nothing here ever adopts what the agent runs:
 // the file is only replaced, with the entry the caller made from the running install.
+// Whether `script` ends with the same start command, from its `scripts/` folder on, as the entry the caller made.
+function sameStartCommand(script, entry) {
+  const own = [...String(entry?.content ?? '').matchAll(/<string>([^<]*)<\/string>/g)].map((m) => m[1])[2] ?? '';
+  const at = own.indexOf('/scripts/');
+  return at >= 0 && script.endsWith(own.slice(at));
+}
+
 function strayAgent(held, entry) {
   const args = [...String(held).matchAll(/<string>([^<]*)<\/string>/g)].map((m) => m[1].replaceAll('&quot;', '"').replaceAll('&apos;', '\'').replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&amp;', '&'));
   // Label, node, script, `start`, then the two /dev/null paths.
   const [label, node, script, verb] = args;
   if (args.length !== 6 || label !== LAUNCH_AGENT_LABEL || verb !== 'start') return false;
-  if (!path.posix.isAbsolute(node) || !path.posix.isAbsolute(script) || script.split('/').includes('..') || !/\/scripts\/agents\/copilot\/start-helper\.js$/.test(script)) return false;
+  if (!path.posix.isAbsolute(node) || !path.posix.isAbsolute(script) || script.split('/').includes('..') || !sameStartCommand(script, entry)) return false;
   // Byte for byte what this module writes for those two paths, so no extra key (a different program, a keep-alive) rides along.
   if (held !== plist([node, script, 'start'])) return false;
-  if (/\/\.claude\/plugins\/cache\/[^/]+\/wheelhouse\//.test(script) || /\/\.copilot\/wheelhouse\//.test(script)) return true;
+  if (/\/\.claude\/plugins\/cache\/[^/]+\/wheelhouse\//.test(script) || /\/\.[A-Za-z0-9_-]+\/wheelhouse\//.test(script)) return true;
   if (tempFolders().some((dir) => inside(script, dir))) return true;
   return !fs.existsSync(script);
 }
