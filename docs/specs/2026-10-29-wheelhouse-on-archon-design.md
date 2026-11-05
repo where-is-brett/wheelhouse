@@ -34,7 +34,7 @@ The director added one requirement for this redesign: **a UI can be built later 
 | A non-developer runs agents that build their product | The First Mate stays the one point of contact. Archon is installed, pinned and run by Wheelhouse, and the director never types an Archon command (sections 6 and 14) |
 | At most about three cards a day, with previews rather than descriptions | Archon's attention items pass through decision levels before any becomes a card, under a daily card budget. Every card about something visible leads with a preview (sections 8 and 9) |
 | It fits any project as it is, and is adopted gradually | Archon needs nothing in the project to start. One small policy file may be added later by a reviewed change (section 14.3). Wheelhouse moves to Archon one lane at a time, per project (sections 14 and 17) |
-| Copilot ships in the first release, on a Pro plan of about $20 a month or less | Copilot runs as an Archon provider on the plan's included models by default. Wheelhouse counts premium requests and caps them, since Archon doesn't (sections 10 and 13) |
+| Copilot ships in the first release, on a Pro plan of about $20 a month or less | Copilot runs as an Archon provider on the plan's included models by default. Wheelhouse counts AI credits and caps them, since Archon doesn't (sections 10 and 13) |
 | Mac first, Windows later | The first release runs on the Mac. Windows follows once Archon's Windows issues are tried (section 16) |
 | Low running cost | No foreman model sessions: a script dispatches the work. Archon's focused steps cost a third to a sixth of the alternative's. Each review lens runs only where a change touches its area (sections 7 and 10) |
 | A UI can be built later without reworking the core | One small interface, the desk interface, serves every front end. The First Mate in Claude Code is its first client and Copilot's chat its second (section 5) |
@@ -527,7 +527,7 @@ Archon records what providers report and caps almost nothing. Its run budget can
 
 - **Sources.** Each step's spend from Archon's record: tokens, cost where reported, provider and model. Claude Code's telemetry for the front desk (the existing receiver). The mod's weekly allowance reading.
 - **Claude.** Archon reports cost and tokens per step. Within a subscription the figure is the API-equivalent dollar amount, shown as today beside the share of the weekly allowance.
-- **Copilot.** Archon reports tokens only. Copilot's plan counts premium requests: each prompt sent counts once, times the model's multiplier, and the included models count zero. The meter counts the prompts each Copilot step sends (attempts, loop rounds, and structured-output re-asks), times the routing table's multiplier for the model, and marks the figure **estimated**. Where GitHub reports the account's premium-request use, a daily job compares the two and shows GitHub's figure as the true one. An allowance is the account's, so the meter is kept once for each account, over every project on it (after check 74). Early check E6 confirms both. *Designer's call.*
+- **Copilot.** Archon reports tokens only. GitHub bills Copilot in AI credits, not whole premium requests (check 79, 5 November 2026): a short Auto prompt cost about 0.16 credits, so the old count of one request a prompt ran about seven times too high. The meter counts the prompts each Copilot step sends (attempts, loop rounds, and structured-output re-asks), at 0.25 credits each (set above the highest cost seen, so the estimate runs high and never low) times the routing table's multiplier for the model, with an unknown model at the Auto rate and never zero, and marks the figure **estimated**. Where GitHub reports the account's credits (`quota_remaining`, which has two decimals), a daily job compares the two and shows GitHub's figure as the true one. An allowance is the account's, so the meter is kept once for each account, over every project on it (after check 74). Early check E6 confirms both. *Designer's call.*
 - **A cost record per job:** one `cost` event per run, in the private record, with tokens, dollars, premium requests, minutes and each step's share by role. It never goes into a pull request, since repositories may be public.
 
 ### 10.2 The caps
@@ -536,7 +536,7 @@ Archon records what providers report and caps almost nothing. Its run budget can
 |---|---|---|
 | Per run, minutes | quick 20, small 60, slice 120, bug 30 | The adapter cancels the run, keeping its worktree, and raises a `blocked` card: **Give it more** (resumes, skipping finished steps), **Stop**, **Suggest a change…** |
 | Per run, tokens | quick 1M, small 4M, slice 10M, bug 2M | The same |
-| Copilot premium requests, per month | **0 beyond included models.** Using premium models is the director's opt-in, then up to 80% of the plan's allowance | The dispatcher starts no run that would use a premium model, and one card explains |
+| Copilot AI credits, per month | **0 beyond included models.** Using premium models is the director's opt-in, then up to 80% of the plan's allowance | The dispatcher starts no run that would use a premium model, and one card explains |
 | Claude weekly allowance | the director's usage mark (existing) | The usage nudge (main design, section 14.6) |
 | Any money beyond the plan | never, without the director's own Yes | |
 
@@ -674,7 +674,7 @@ Each check is a short trial on the Mac, with an answer note in `docs/checks/`. A
 | **E3, the merge path on GitHub** | A pull request through the broker, CI, Archon's merge gate, a red main line refused, a clash sent back and re-run, a planted test deletion stopped, an unsigned merge refused by the permit. The trial couldn't test merging | Every leg, on a throwaway private repository | The merge stays with the helper's own gate (the broker's permit grows to the full gate), and Archon's merge queue isn't used |
 | **E4, skills in nodes** | Do skills inside steps behave as section 7.1 needs? On a throwaway repository, with a small task that has a done check, twelve items, listed below the table | Items 1 to 9, 11 and 12 as listed, with tokens recorded per step. Item 10 is a nice-to-have | Item by item, below |
 | **E5, run control** | `wake --watch` and the attention stream survive a restart of the helper, a sleep of the computer, and a missed cursor. A cancelled run resumes, skipping finished steps, with its worktree as it was. Cancelling a feature leaves no child run or process alive | No ask lost or answered twice over 50 trials; resume after cancel works for every lane; nothing survives a cancel | The adapter polls `attention --json` every 15 seconds as a backstop. If resume after cancel fails, caps and All stop end the run, and **Carry on** starts the lane again on the same branch with "carry on from what's there" in the order |
-| **E6, counting spend** | Each step's tokens and cost read from the record. Copilot's premium-request estimate against GitHub's own figure | The estimate is within one request of GitHub's on 20 Copilot steps | Copilot runs only on included models until it is |
+| **E6, counting spend** | Each step's tokens and cost read from the record. Copilot's AI-credit estimate against GitHub's own figure | The estimate is never below GitHub's, and within a few credits of it, on 20 Copilot steps | Copilot runs only on included models until it is |
 
 **E4's items.** Each result goes in E4's answer note, with tokens per step, so the counted evaluation starts from real figures.
 
@@ -782,7 +782,7 @@ The director may override any of these.
 14. The card budget is a target with an overflow to the next day, not a hard cap (section 8.3).
 15. Approvals of visible work may be bundled into one card (section 8.3).
 16. A live local preview stays up for 30 minutes after **Show me** (section 9.2).
-17. Copilot's premium requests are estimated from prompts sent, then checked against GitHub's figure (section 10.1).
+17. Copilot's AI credits are estimated from prompts sent, then checked against GitHub's figure (section 10.1).
 18. The caps' starting numbers (section 10.2).
 19. Running Archon's Claude steps in bypass mode behind Wheelhouse's guards, with a patch ready if E2 fails (section 12.1).
 20. Git pushes go through a credential helper that asks the helper (section 12.4).

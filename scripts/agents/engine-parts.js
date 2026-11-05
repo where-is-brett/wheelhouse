@@ -38,8 +38,8 @@ export function agentSetupLine(agent, { allowance = 0, engine = engineDir(), inc
   if (agent !== 'copilot') return null;
   included ??= copilotColumn(readAccountModels(engine)).included;
   if (included) return 'Install the build engine, Archon, with its usage reporting off, and run its steps on Copilot\'s included models.';
-  if (!(allowance > 0)) return 'Install the build engine, Archon, with its usage reporting off, to run its steps on Copilot, with no Copilot requests until you allow some.';
-  return `Install the build engine, Archon, with its usage reporting off, to run its steps on Copilot, using up to ${allowance} of your plan's Copilot requests a month.`;
+  if (!(allowance > 0)) return 'Install the build engine, Archon, with its usage reporting off, to run its steps on Copilot, with no Copilot AI credits until you allow some.';
+  return `Install the build engine, Archon, with its usage reporting off, to run its steps on Copilot, using up to ${allowance} of your plan's Copilot AI credits a month.`;
 }
 
 // Step 2's changes for the engine that a project's agent needs (scripts/setup/engine-parts.js): on Copilot, the CLI at

@@ -31,14 +31,14 @@ test('the Copilot column takes an included model where the plan has one, and Cop
   assert.deepEqual(copilotColumn([]), { model: 'auto', included: false });
 });
 
-test('the rates count every model at its multiplier, an unknown one and Auto at one', () => {
+test('the rates count each model\'s credits by its multiplier, an unknown one and Auto at the Auto rate', () => {
   const rates = requestRates(parseAccountModels(WITH_INCLUDED));
   assert.equal(rates('gpt-included'), 0);
-  assert.equal(rates('big-premium'), 10);
-  assert.equal(rates('auto'), 1);
-  assert.equal(rates('never-heard-of'), 1);
-  assert.equal(requestRates([{ id: 'odd', multiplier: null }])('odd'), 1);
-  assert.equal(requestRates([])('auto'), 1);
+  assert.equal(rates('big-premium'), 2.5);
+  assert.equal(rates('auto'), 0.25);
+  assert.equal(rates('never-heard-of'), 0.25);
+  assert.equal(requestRates([{ id: 'odd', multiplier: null }])('odd'), 0.25);
+  assert.equal(requestRates([])('auto'), 0.25);
 });
 
 test('the list setup read is kept in the engine folder, and one that can\'t be read is none', () => {
@@ -68,8 +68,8 @@ test('a Claude Code project\'s bindings are the column in force, as before', () 
 test('setup\'s engine line for a Copilot project names Copilot and the allowance the director set', () => {
   assert.equal(agentSetupLine('claude-code'), null);
   assert.match(agentSetupLine('copilot', { allowance: 0 }), /Copilot/);
-  assert.match(agentSetupLine('copilot', { allowance: 0 }), /no Copilot requests until you allow some/);
-  assert.match(agentSetupLine('copilot', { allowance: 40 }), /up to 40 of your plan's Copilot requests a month/);
+  assert.match(agentSetupLine('copilot', { allowance: 0 }), /no Copilot AI credits until you allow some/);
+  assert.match(agentSetupLine('copilot', { allowance: 40 }), /up to 40 of your plan's Copilot AI credits a month/);
   assert.match(agentSetupLine('copilot', { allowance: 40, included: true }), /included models/);
 });
 

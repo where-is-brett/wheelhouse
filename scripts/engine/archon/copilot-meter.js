@@ -1,19 +1,21 @@
 // scripts/engine/archon/copilot-meter.js
 // The spend meter's Copilot half (Archon design, section 10.1; checks 74 and 79). Archon reports no cost for a Copilot
-// step, so the meter estimates: each attempt counts once at its model's rate (record.js). Once a day the estimate is
-// checked against GitHub's own figure, the account's premium interactions from `gh api /copilot_internal/user` (the
+// step, so the meter estimates, in AI credits, which is how GitHub bills Copilot now (check 79, 5 November 2026): each
+// attempt counts a set number of credits at its model's rate (record.js, CREDITS_PER_PROMPT in spend.js). Once a day the
+// estimate is checked against GitHub's own figure, the account's premium interactions from `gh api /copilot_internal/user` (the
 // documented billing endpoint needs a scope the sign-in lacks, check 74), and GitHub's count is the true one. GitHub's
 // figure covers the whole account, so the meter keeps the figure it first read each month as its starting point and
-// compares what was used since then; a difference of more than one request is a line for the Logbook. The figure is
+// compares what was used since then; a difference of more than one credit is a line for the Logbook. The figure is
 // the account's, so the meter is too: requestsFile names one file for the account, and every project on it shares it
 // (scripts/engine/request-meter.js).
 import crypto from 'node:crypto';
 import path from 'node:path';
 export const CHECK_EVERY_MS = 24 * 60 * 60 * 1000;
-// How far the estimate may be from GitHub's count before the Logbook says so (spec 15's E6: within one request).
+// How far the estimate may be from GitHub's count, in credits, before the Logbook says so.
 export const WITHIN = 1;
 
-const whole = (n) => Number.isInteger(n) && n >= 0;
+const amount = (n) => typeof n === 'number' && Number.isFinite(n) && n >= 0;
+const hundredths = (n) => Math.round(n * 100) / 100;
 
 // The account signed in to `signIn` (Copilot's config.json keys), as a plain name for a file, or a shared name when it
 // can't be told: projects on accounts that can't be told apart share a count, which reads high, never low.
@@ -27,8 +29,9 @@ export function accountKey(signIn) {
 // The meter's file for `signIn`'s account under the engine's folder.
 export const requestsFile = (engine, signIn) => path.join(engine, 'requests', `${accountKey(signIn)}.json`);
 
-// GitHub's figure: { used, entitlement, remaining, resets } or null when it can't be read. `run` runs `gh` with the
-// director's own sign-in.
+// GitHub's figure: { used, entitlement, remaining, resets } in AI credits, or null when it can't be read. `remaining`
+// has two decimals; `credits_used` is whole numbers, so the used figure is the entitlement less what remains, and
+// `credits_used` only where `remaining` is missing. `run` runs `gh` with the director's own sign-in.
 export async function readGitHubFigure({ run }) {
   let got;
   try {
@@ -40,8 +43,8 @@ export async function readGitHubFigure({ run }) {
   let body;
   try { body = JSON.parse(got.stdout); } catch { return null; }
   const snap = body?.quota_snapshots?.premium_interactions;
-  if (!whole(snap?.entitlement) || !whole(snap?.remaining)) return null;
-  const used = whole(snap.credits_used) ? snap.credits_used : snap.entitlement - snap.remaining;
+  if (!amount(snap?.entitlement) || !amount(snap?.remaining)) return null;
+  const used = hundredths(Math.max(0, snap.entitlement - snap.remaining));
   return { used, entitlement: snap.entitlement, remaining: snap.remaining, resets: typeof body.quota_reset_date === 'string' ? body.quota_reset_date : null };
 }
 
@@ -51,29 +54,29 @@ export async function readGitHubFigure({ run }) {
 // `line` is the Logbook's words, or null.
 export async function checkRequests({ read, estimate, kept = null, now = new Date() }) {
   const ours = await estimate();
-  const started = kept !== null && whole(kept.baseline) && whole(kept.last);
+  const started = kept !== null && amount(kept.baseline) && amount(kept.last);
   // What the meter counted before GitHub's first reading (`estimateAt`) is outside GitHub's count since then, so it is
   // added to it.
   const before = started ? kept.estimateAt ?? 0 : 0;
-  const soFar = started ? Math.max(ours, kept.last - kept.baseline + before) : ours;
+  const soFar = started ? Math.max(ours, hundredths(kept.last - kept.baseline + before)) : ours;
   if (kept && now.getTime() - Date.parse(kept.at) < CHECK_EVERY_MS) return { kept, used: soFar, line: null };
   const figure = await read();
   if (figure === null) {
     // Asked again a day later, not at every look, and said once until a reading works.
     const next = { ...(kept ?? { baseline: null, estimateAt: ours, resets: null, last: null }), at: now.toISOString(), unread: true };
-    return { kept: next, used: soFar, line: kept?.unread === true ? null : 'The meter couldn\'t read GitHub\'s figure for Copilot requests today, so its own estimate stands until it can.' };
+    return { kept: next, used: soFar, line: kept?.unread === true ? null : 'The meter couldn\'t read GitHub\'s figure for Copilot credits today, so its own estimate stands until it can.' };
   }
   // The first look, or a new month (GitHub's reset date moved, or its count went down): GitHub's figure is the
   // starting point.
   if (!started || (figure.resets !== null && figure.resets !== kept.resets) || figure.used < kept.last) {
     const fresh = { at: now.toISOString(), baseline: started ? 0 : figure.used, estimateAt: started ? 0 : ours, resets: figure.resets, last: figure.used };
-    return { kept: fresh, used: Math.max(ours, figure.used - fresh.baseline), line: null };
+    return { kept: fresh, used: Math.max(ours, hundredths(figure.used - fresh.baseline)), line: null };
   }
-  const theirs = Math.max(0, figure.used - kept.baseline);
-  const estimated = ours - (kept.estimateAt ?? 0);
+  const theirs = hundredths(Math.max(0, figure.used - kept.baseline));
+  const estimated = hundredths(ours - (kept.estimateAt ?? 0));
   const line = Math.abs(theirs - estimated) > WITHIN
-    ? `The meter estimated ${estimated} Copilot requests and GitHub counted ${theirs} since ${kept.at.slice(0, 10)}. GitHub's figure is the one that counts, and the cap reads it.`
+    ? `The meter estimated ${estimated} Copilot credits and GitHub counted ${theirs} since ${kept.at.slice(0, 10)}. GitHub's figure is the one that counts, and the cap reads it.`
     : null;
   const { unread: _said, ...reading } = kept;
-  return { kept: { ...reading, at: now.toISOString(), last: figure.used }, used: theirs + before, line };
+  return { kept: { ...reading, at: now.toISOString(), last: figure.used }, used: hundredths(theirs + before), line };
 }
