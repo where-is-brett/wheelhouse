@@ -251,13 +251,19 @@ function stateEvents(next, prs, out) {
   for (const e of list(next.events)) {
     if (!isPlain(e) || typeof e.id !== 'string' || !isPlain(e.data)) continue;
     const { id, kind, data } = e;
+    // The signed tie or press that came after the work: the observer names the work the views now show approved by hand.
+    if (e.verified === true && (kind === 'by-hand' || (kind === 'action' && data.action === 'answer')) && Array.isArray(e.startsWork)) {
+      for (const work of e.startsWork) if (typeof work === 'string') out.push({ type: 'work-ready', work, id: `${id}:${work}`, detail: { byHand: true } });
+    }
     if (kind === 'approval' && e.verified === true) {
       const pr = isPlain(prs[String(data.pr)]) ? prs[String(data.pr)] : null;
       if (pr !== null && typeof pr.head === 'string' && pr.head === data.commit) {
         out.push({ type: 'approval', work: pr.work, pr: Number(data.pr), id, detail: { pr: Number(data.pr), head: pr.head } });
       }
     } else if (kind === 'work') {
-      if (STARTS_UNAPPROVED.includes(data.lane) && data.visible === false) out.push({ type: 'work-ready', work: data.id, id, detail: { lane: data.lane } });
+      // `byHand` is the observer's own mark (scripts/watcher/sources.js), set only when the views show the work approved by the
+      // director's signed press on the by-hand card, as the foreman's start reads it: a `from` in the work's data never sets it.
+      if ((STARTS_UNAPPROVED.includes(data.lane) && data.visible === false) || e.byHand === true) out.push({ type: 'work-ready', work: data.id, id, detail: { lane: data.lane } });
     } else if (kind === 'feature') {
       if (data.step === 'building' && data.brief === undefined && typeof data.work === 'string') out.push({ type: 'build', work: data.work, id, detail: { slice: data.slice ?? null } });
     } else if (kind === 'incident') {

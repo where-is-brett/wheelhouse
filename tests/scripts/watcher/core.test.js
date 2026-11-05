@@ -812,3 +812,20 @@ test('a bug no one is shown first starts as quick work does; a visible one waits
   // Small and feature work still needs its signed approval.
   assert.deepEqual(diff(observation(), observation({ events: [work('a-small', { lane: 'small' }), work('a-feature', { lane: 'feature' })] })), []);
 });
+
+test('work tied to a verified by-hand press starts at once; a plain from field does not', () => {
+  const from = { sha: 'd'.repeat(40), ref: 'refs/wheelhouse/from/carry-on-2', request: 2 };
+  const work = (id, over = {}, top = {}) => ({
+    id: `ev-${id}`, kind: 'work', data: { id, title: id, lane: 'small', visible: true, dependsOn: [], from, ...over }, verified: false, ...top,
+  });
+  const tied = diff(observation(), observation({ events: [work('carry-on-2', {}, { byHand: true })] }), { handled: new Set() });
+  assert.deepEqual(tied.map((e) => [e.type, e.work, e.id]), [['work-ready', 'carry-on-2', 'ev-carry-on-2']]);
+  assert.deepEqual(route(tied).foreman.map((e) => e.work), ['carry-on-2']);
+  // A from field an agent wrote, with no tie made by the observer, wakes nothing; nor does a tie claimed in the data.
+  assert.deepEqual(diff(observation(), observation({ events: [work('carry-on-3', { byHand: true })] }), { handled: new Set() }), []);
+  assert.deepEqual(diff(observation(), observation({ events: [work('carry-on-4')] }), { handled: new Set() }), []);
+  // A signed tie that arrives after the work names the work to start; an unsigned one does nothing.
+  const tie = (verified) => ({ id: 'ev-tie', kind: 'by-hand', data: { question: 'q-by-hand-1', n: 2, head: 'd'.repeat(40) }, verified, startsWork: ['carry-on-2'] });
+  assert.deepEqual(diff(observation(), observation({ events: [tie(true)] }), { handled: new Set() }).map((e) => [e.type, e.work]), [['work-ready', 'carry-on-2']]);
+  assert.deepEqual(diff(observation(), observation({ events: [tie(false)] }), { handled: new Set() }), []);
+});

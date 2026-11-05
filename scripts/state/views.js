@@ -549,7 +549,8 @@ function buildLoopViews(sorted, enrolled) {
     const first = sorted.find((e) => e.kind === 'work' && e.data?.from?.request === tie.n && e.data.from.sha === tie.head);
     const entry = first === undefined ? undefined : work[first.data.id];
     const hash = first?.data.doc?.hash;
-    if (entry === undefined || entry.approved || typeof hash !== 'string' || entry.work.data.doc?.hash !== hash || entry.work.data.from?.request !== tie.n) continue;
+    if (entry === undefined || entry.approved || typeof hash !== 'string' || entry.work.data.doc?.hash !== hash || entry.work.data.from?.request !== tie.n
+      || entry.work.data.from.sha !== tie.head || first.data.lane !== 'small' || entry.work.data.lane !== first.data.lane) continue;
     entry.approved = true;
     entry.approval = { hash, shownFirst: false, lane: entry.work.data.lane, byHand: true };
   }
