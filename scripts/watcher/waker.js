@@ -717,7 +717,7 @@ function readOutput(file, from) {
 export function makeWaker({
   shape,
   project,
-  config,
+  config: givenConfig,
   foremanTools = [],
   run = spawnDetached,
   print = (line) => process.stdout.write(`${line}\n`),
@@ -742,6 +742,9 @@ export function makeWaker({
   beforeCopy = () => {},
 }) {
   if (shape !== 1 && shape !== 2) throw new Error('The watcher shape is 1 or 2');
+  // The configuration from the default branch, as last read: `setConfig` replaces it, so every wake after a change
+  // that merged (a model, a pin, a mode) starts its session by the new one.
+  let config = givenConfig;
   // Every hook of a session is `node ...`, so a session started with a PATH that has no node (a LaunchAgent's) would
   // fail at once: the folder of the node that runs this watcher is put on the PATH of what it starts.
   const baseEnv = pathWithNode(givenEnv, { platform });
@@ -1737,6 +1740,10 @@ export function makeWaker({
           onError(`The sessions' old activity couldn't be pruned: ${error instanceof Error ? error.message : 'unknown error'}`);
         }
       });
+    },
+    // Takes a newer configuration for the wakes that follow. Anything but a configuration is ignored.
+    setConfig(next) {
+      if (isPlain(next)) config = next;
     },
     // The wakes not yet delivered, oldest first.
     waiting() {

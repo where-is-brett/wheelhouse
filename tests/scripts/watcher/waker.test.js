@@ -1519,3 +1519,18 @@ test('a Bosun that could not start says why when Node.js was not found', () => w
   await flush();
   assert.ok(raised.some((r) => /couldn't start \(Node.js wasn't found\), so approved work is waiting/.test(r.data.words)), JSON.stringify(raised));
 }));
+
+test('a configuration set between two wakes changes the model of the second, and a bad one is ignored', () => withHome(async () => {
+  checkout();
+  const fake = fakeRun();
+  const w = waker(fake, { config: config({ routing: { foreman: 'model-a' } }) });
+  const modelOfCall = (call) => call.args[call.args.indexOf('--model') + 1];
+  await w.wakeForeman(writeWake(P, bundle('e1')));
+  assert.equal(modelOfCall(fake.calls[0]), 'model-a');
+  fake.end(fake.calls[0].pid, 0);
+  w.setConfig(config({ routing: { foreman: 'model-b' } }));
+  w.setConfig(null);
+  w.setConfig('not a configuration');
+  await w.wakeForeman(writeWake(P, bundle('e2')));
+  assert.equal(modelOfCall(fake.calls.at(-1)), 'model-b');
+}));

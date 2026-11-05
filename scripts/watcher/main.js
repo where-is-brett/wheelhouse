@@ -194,6 +194,15 @@ export async function runWatcher({
       last = t.getTime();
 
       // No configuration yet: ask again, and do nothing else this loop.
+      // Read again at each loop, so a change that merged to the default branch reaches the wakes after it. One that
+      // can't be read leaves the last good one in force.
+      if (settings !== null && wake !== null) {
+        const fresh = await projectConfig(project, client);
+        if (fresh.config !== null) {
+          settings = { ...fresh.config, watcherShape: settings.watcherShape };
+          wake.setConfig?.(settings);
+        }
+      }
       if (settings === null) {
         const read = await projectConfig(project, client);
         if (read.config === null) fault(`The watcher is waiting for the project's configuration from its default branch: ${read.why}`);
