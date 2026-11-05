@@ -9,7 +9,7 @@ import { test, expect, mock } from 'claude-code/testing'
 const ROOT = '/Users/someone/projects/shop'
 const SESSION = '0b6a4e1c-4f3a-4d7e-9a51-2f3c8d9e1a77'
 const RUN_RESULT = { exitCode: 0, stderr: '', isStdoutTruncated: false, isStderrTruncated: false }
-const CLOSED = 'Answered in the panel; this question is closed'
+const CLOSED = 'Answered elsewhere; this question is closed'
 const CHECK_MS = 1000
 const DIALOG_MS = 600000
 const CARD = 'Put pull request #42 live?\nIt changes what your users see.\nNothing goes live meanwhile.\nTo know more, just ask.\nApprove pull request #42 at commit 3f9c2a7b81d0\nReply code: K7QD'

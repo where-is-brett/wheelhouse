@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { buildViews, writeViews, latestFor, readyColumns, cardOutcomes, signedCardOutcomes } from '../../../scripts/state/views.js';
 import { listEvents, makeEvent, confirmationFor, eventHash, dataHash, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, sign } from '../../../scripts/state/signing.js';
-import { approvalLine, ciPushLine, confirmLine, startGoalLine } from '../../../scripts/state/card-lines.js';
+import { approvalLine, approveWorkLine, amendLine, ciPushLine, confirmLine, startGoalLine } from '../../../scripts/state/card-lines.js';
 import { computerId, profileDir, stateDir } from '../../../scripts/lib/paths.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { readingOf } from '../../../scripts/delegation/seal.js';
@@ -1864,5 +1864,25 @@ test('only the first work for a by-hand change, at the document it first named, 
     const both = [...press, handWork(5), handWork(6, {}, 'carry-on-9')];
     assert.equal(approvedOf(both), true);
     assert.equal(approvedOf(both, 'carry-on-9'), false);
+  });
+});
+
+test('an approve-work card for work that has been dropped or has ended no longer waits', async () => {
+  await withHome(() => {
+    const line = approveWorkLine('export-csv', 'small', A, { shownFirst: true });
+    const other = approveWorkLine('other-work', 'small', B, { shownFirst: true });
+    const card = (n, l, kind = 'approve-work') => ev('card', n, cardData(`Approve this work as written?\n${l}`, { line: l, kind }));
+    const mine = card(1, line);
+    const theirs = card(2, other);
+    const dropped = (n) => reportEv(n, 'closed', { pr: undefined });
+    // Dropped (a closed report after the card): its card is gone, the other work's stays.
+    assert.deepEqual(waitingIds([mine, theirs, dropped(3)]), [theirs.id]);
+    // A merged report ends it too.
+    assert.deepEqual(waitingIds([mine, reportEv(3, 'merged')]), []);
+    // A report from before the card (an earlier life of the work) does not close it.
+    assert.deepEqual(waitingIds([dropped(1), card(2, line)]).length, 1);
+    // A change card for the dropped work goes the same way.
+    const amend = card(2, amendLine('export-csv', B), 'amend');
+    assert.deepEqual(waitingIds([amend, dropped(3)]), []);
   });
 });

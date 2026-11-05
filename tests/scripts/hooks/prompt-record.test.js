@@ -2150,7 +2150,7 @@ test('a Start stops on what the helper\'s checks find at the click, and on a hel
 
 // --- A question the mod closed by itself records no chat click ---
 
-const CLOSED_WORDS = 'Answered in the panel; this question is closed';
+const CLOSED_WORDS = 'Answered elsewhere; this question is closed';
 
 test('a question the mod closed records no chat click, whatever the call carries', async () => {
   await withHome(async () => {

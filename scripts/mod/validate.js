@@ -496,7 +496,7 @@ export function kitPresses(sources) {
 }
 
 // The line the closing hook refuses with, as hooks/mod/numbers.ts writes it.
-const CLOSED_WORDS = 'Answered in the panel; this question is closed';
+const CLOSED_WORDS = 'Answered elsewhere; this question is closed';
 // The registration, written out whole: the matcher, then one arrow that hands the call to the closing function and nothing
 // else, then at most a catch that lets the call run.
 const CLOSE_ON = /on\(\s*'tool\.call'\s*,\s*\{\s*tool:\s*'AskUserQuestion'\s*\}\s*,\s*\(\$,\s*e,\s*next\)\s*=>\s*closeWhenAnswered\(\$,\s*e,\s*next\)\s*\)(?:\s*\.catch\(\(\$,\s*e,\s*next\)\s*=>\s*next\(e\)\s*\))?/g;

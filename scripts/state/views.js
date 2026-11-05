@@ -105,7 +105,10 @@ export function prFinished(reports, { work, pr, at }) {
   return named.some((r) => FINISHED.includes(r?.data?.outcome) && (r.data.pr === pr || (typeof r.at === 'string' && typeof at === 'string' && r.at >= at)));
 }
 
-const APPROVAL_LINE = /^Approve pull request #([1-9][0-9]*) at commit [0-9a-f]{12}$/;
+// The set lines of the cards about a piece of work: its approval ("Approve <work> (<lane> lane) as written, ...") and a
+// change to it ("Change the approved <work> to this, ..."). The work is group 1 or 2.
+const WORK_CARD_LINE = /^(?:Approve ([a-z0-9][a-z0-9-]*) \((?:[a-z-]+) lane\) as written, [0-9a-f]{12}|Change the approved ([a-z0-9][a-z0-9-]*) to this, [0-9a-f]{12})/;
+const APPROVAL_LINE =/^Approve pull request #([1-9][0-9]*) at commit [0-9a-f]{12}$/;
 // The line a gate-asks record's card carries, or null.
 const gateLineOf = (d) => (d.ask === 'approval' ? approvalLine(d.pr, d.sha) : d.ask === 'ci-push' && isPlainKey(d.branch) ? ciPushLine(d.branch, d.sha) : null);
 
@@ -122,6 +125,13 @@ function outdatedBy(sorted, reports) {
   return (card) => {
     const line = card.data?.line;
     if (typeof line !== 'string') return false;
+    // A card about a piece of work (its approval, or a change to it) goes when the work ends: dropped, merged or closed
+    // by a report that came after the card.
+    const about = WORK_CARD_LINE.exec(line);
+    if (about !== null) {
+      const report = reports?.[about[1] ?? about[2]];
+      return FINISHED.includes(report?.data?.outcome) && report.at >= card.at ? 'finished' : false;
+    }
     const approval = APPROVAL_LINE.exec(line);
     const ask = approval ? 'approval' : asks.some((a) => a.line === line && a.e.data.ask === 'ci-push') ? 'ci-push' : null;
     if (ask === null) return false;

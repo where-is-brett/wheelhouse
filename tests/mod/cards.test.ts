@@ -23,7 +23,7 @@ const FAILED = 'That wasn\'t recorded. Try again, or type it in the chat.'
 const OPEN_IN_CHAT = 'Also open in the chat.'
 const OPEN_IN_CHAT_TOAST = 'Counted. The copy in the chat now changes nothing: pick anything or press Skip.'
 const OPEN_IN_CHAT_CLOSES = 'Counted. The copy in the chat closes by itself.'
-const CLOSED_IN_PANEL = 'Answered in the panel; this question is closed'
+const CLOSED_IN_PANEL = 'Answered elsewhere; this question is closed'
 const CANT_ANSWER = 'This card can\'t be answered here: ask the First Mate about it.'
 
 const FIRST = 'Merge the banner change?'
