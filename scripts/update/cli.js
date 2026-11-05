@@ -18,6 +18,8 @@
 //                           approval of a release, the old helper's), the director's click was signed by the prompt record
 //                           or the helper's window; this tells the update to look again at once, and the helper refuses it
 //                           when no signed answer is there.
+//   --here                  after plan, status or wait: the director wants the cards asked in the chat, so the question hook lets the
+//                           next one through even where a pane beside the chat could answer it (once, for two minutes).
 //   bootstrap <folder>      the one update a computer on v0.2.6 or earlier makes, by the director's own hand in Terminal
 //                           (bootstrap.js): it takes the director's typed 1 or 2 from a real terminal, and refuses without one.
 //                           It is the only form that changes anything itself, through the update job.
@@ -25,6 +27,7 @@
 import path from 'node:path';
 import { helperClient } from '../host/helper-client.js';
 import { startedAsScript } from '../lib/started-as-script.js';
+import { ANY_CARD, markHere } from '../lib/session-files.js';
 import { NO_TERMINAL, bootstrap, terminalAsk } from './bootstrap.js';
 
 export class CliError extends Error {}
@@ -58,10 +61,16 @@ async function ask(route, body) {
 const unreached = (got) => got?.ok === false && /could not be reached|did not answer in time/.test(String(got.refused));
 
 export async function main(argv, {
-  cwd = process.cwd(), client, stdin = process.stdin, typedAnswer, bootstrapDeps = {}, sleep = napping, now = Date.now, out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t),
+  cwd = process.cwd(), env = process.env, client, stdin = process.stdin, typedAnswer, bootstrapDeps = {}, sleep = napping, now = Date.now, mark = markHere, out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t),
 } = {}) {
   try {
-    const [form, ...rest] = argv;
+    const [form, ...given] = argv;
+    const here = given.includes('--here');
+    const rest = given.filter((a) => a !== '--here');
+    if (here && !['plan', 'status', 'wait'].includes(form)) throw new CliError(USAGE);
+    // Marked before the card is asked, so the question hook lets it through in the chat.
+    const session = env.CLAUDE_CODE_SESSION_ID;
+    if (here && typeof session === 'string' && session !== '') mark(session, [ANY_CARD], now());
     const json = (value) => out(`${JSON.stringify(value, null, 2)}\n`);
     const folder = path.resolve(cwd);
     const helper = client ?? helperClient();
