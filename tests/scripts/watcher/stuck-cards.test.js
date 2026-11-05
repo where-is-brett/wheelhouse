@@ -8,7 +8,7 @@ import { watcherDir, wakesDir, writeWake } from '../../../scripts/watcher/waker.
 import { recordDone } from '../../../scripts/foreman/wake.js';
 import { withHome } from '../../helpers/homes.js';
 import { questionProblem } from '../../../scripts/cards/compose.js';
-import { stuckQuestion, askExample, stuckCardFor } from '../../../scripts/foreman/ask-help.js';
+import { stuckQuestion, askExample, stuckCardFor, FIX_FINDINGS, RESTART_BUILDER } from '../../../scripts/foreman/ask-help.js';
 
 const P = 'o__p';
 const stuckBundle = (work = 'todo-cli') => ({
@@ -55,4 +55,19 @@ test('the helper makes no card when the Bosun asked already or the work has ende
   assert.equal(stuckCardFor({ features: {} }, { work: 'ghost' }).skip, 'there is no such work');
   assert.equal(stuckCardFor(base, { work: 'todo-cli', phase: 'x"; act close' }).data.what.includes('step called'), false);
   assert.ok(stuckCardFor({ features: { 'todo-cli': { data: { step: 'closed' } } } }, { work: 'todo-cli' }).skip);
+});
+
+test('the stuck card offers a real move: fix the findings when a review holds the pull request, else restart the builder', () => {
+  const base = { features: { 'todo-cli': { data: { step: 'building' } } }, questions: {} };
+  const held = { ...base, reviews: { 7: { abc: { id: 'r', at: 't', data: { pr: 7, commit: 'abc', verdict: 'FINDINGS' } } } } };
+  const labels = (c) => c.data.options.map((o) => o.label);
+  const withFindings = stuckCardFor(held, { work: 'todo-cli', pr: 7 });
+  assert.deepEqual(labels(withFindings).slice(0, 1), [FIX_FINDINGS]);
+  assert.equal(withFindings.data.recommendation, FIX_FINDINGS);
+  assert.equal(withFindings.data.options[0].says, 'act restart todo-cli');
+  for (const [views, pr] of [[held, 8], [held, null], [base, 7], [{ ...held, reviews: { 7: { abc: { id: 'r', at: 't', data: { pr: 7, commit: 'abc', verdict: 'CLEAN' } } } } }, 7]]) {
+    const plain = stuckCardFor(views, { work: 'todo-cli', pr });
+    assert.deepEqual(labels(plain).slice(0, 1), [RESTART_BUILDER]);
+    assert.equal(plain.data.options[0].says, 'act restart todo-cli');
+  }
 });

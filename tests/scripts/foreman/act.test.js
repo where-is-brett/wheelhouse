@@ -2217,3 +2217,45 @@ test('act ask --help says exactly what to type, and a missing flag is answered w
   assert.equal(missing.code, 1);
   assert.match(missing.err, /--why is needed\. Type it on one line, like this: act ask todo-cli --what/);
 });
+
+// --- restart ---
+
+async function restartScene({ review } = {}) {
+  const checkout = await project({ git: true });
+  const views = emptyViews();
+  views.work.mine = workView('mine');
+  views.features.mine = featureView('mine', { step: 'building', worktree: worktree(checkout, 'mine', { pr: { pr: 7, plan: 'a.md' } }) });
+  if (review !== undefined) views.reviews = { 7: { abc123: { id: 'r1', at: T0, data: { pr: 7, commit: 'abc123', verdict: review } } } };
+  const woken = [];
+  const wakerFor = () => ({ wakeFeature: async (work, file) => { woken.push({ work, wake: JSON.parse(fs.readFileSync(file, 'utf8')) }); } });
+  return { fake: fakeClient({ views }), woken, wakerFor };
+}
+
+test('restart wakes the feature to fix the findings when a signed review holds its pull request', () => withHome(async () => {
+  const { fake, woken, wakerFor } = await restartScene({ review: 'FINDINGS' });
+  const r = await act(['restart', 'mine'], { client: fake.client, wakerFor });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(woken.length, 1);
+  assert.equal(woken[0].work, 'mine');
+  const [event] = woken[0].wake.events;
+  assert.equal(event.type, 'findings');
+  assert.equal(event.pr, 7);
+  assert.match(event.detail.next, /Fix every finding.*dispatch wheelhouse:reviewer/);
+  assert.equal(fake.writes.length, 0);
+}));
+
+test('restart wakes the feature to carry on from where it left off when no review holds it', () => withHome(async () => {
+  for (const review of [undefined, 'CLEAN']) {
+    const { fake, woken, wakerFor } = await restartScene({ review });
+    const r = await act(['restart', 'mine'], { client: fake.client, wakerFor });
+    assert.equal(r.code, 0, r.err);
+    assert.equal(woken[0].wake.events[0].type, 'build');
+    assert.match(woken[0].wake.events[0].detail.next, /carry on from where it left off/);
+  }
+}));
+
+test('restart refuses work that is not there', () => withHome(async () => {
+  const { fake, woken, wakerFor } = await restartScene();
+  refusedInOneLine(await act(['restart', 'ghost'], { client: fake.client, wakerFor }));
+  assert.equal(woken.length, 0);
+}));

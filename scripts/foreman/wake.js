@@ -185,6 +185,8 @@ export async function loadViews(project, client, { kept = false } = {}) {
       reports: isPlain(views.reports) ? views.reports : {},
       questions: isPlain(views.questions) ? views.questions : {},
       rulebook: Array.isArray(views.rulebook) ? views.rulebook : [],
+      // The signed reviews by pull request and commit, for the reviews that hold a pull request.
+      reviews: isPlain(views.reviews) ? views.reviews : {},
       incidents: { open: Array.isArray(views.incidents?.open) ? views.incidents.open.filter(isPlain) : [] },
       // The settings and the proposals not yet confirmed, for the level of build commands on Windows, and the
       // Thoroughness columns ready, for the level in force (scripts/routing/in-force.js).

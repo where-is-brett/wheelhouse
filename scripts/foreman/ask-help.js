@@ -5,6 +5,7 @@
 
 import { FOREMAN_QUESTIONS, questionIdOf } from '../lib/build-loop.js';
 import { questionProblem } from '../cards/compose.js';
+import { latestFor } from '../state/views.js';
 
 // A command that runs as it stands, for `work`.
 export function askExample(work = '<work>') {
@@ -20,17 +21,29 @@ export const ASK_HELP = [
 ].join('\n');
 
 // The question for work that has sat still, as `act ask` would put it: `{ what, why, options, recommendation, level }`.
-export function stuckQuestion(work, { phase = null, still = 0 } = {}) {
+export const FIX_FINDINGS = 'Have the builder fix the findings';
+export const RESTART_BUILDER = 'Restart the builder on where it left off';
+
+// The signed review that holds pull request `pr`: its latest verified review, when that one has findings. Null when
+// there is none or it is clean. `{ commit }` names the head it was taken on.
+export function holdingReview(views, pr) {
+  if (!Number.isSafeInteger(pr)) return null;
+  const e = latestFor(views?.reviews, pr);
+  return e?.data?.verdict === 'FINDINGS' && typeof e.data.commit === 'string' ? { commit: e.data.commit } : null;
+}
+
+export function stuckQuestion(work, { phase = null, still = 0, findings = false } = {}) {
+  const move = findings ? FIX_FINDINGS : RESTART_BUILDER;
   const minutes = Math.round((Number(still) || 0) / 60000);
   return {
     what: `${work} has not moved for ${minutes} minutes${phase ? `, at the step called ${phase}` : ''}. What should happen?`,
     why: 'Nothing has moved it on, and no one has asked you about it. It holds its place while it waits.',
     options: [
-      { label: 'Nudge it', says: 'Read where it stands below and take the act command that moves it on; the queue names the next step' },
+      { label: move, says: `act restart ${work}` },
       { label: 'Wait', says: 'Nothing to do now; the watcher raises it again if it stays still' },
       { label: 'Drop it', says: 'Close the work with act close; it will not be built' },
     ],
-    recommendation: 'Nudge it',
+    recommendation: move,
     level: 2,
   };
 }
@@ -40,7 +53,7 @@ export function stuckQuestion(work, { phase = null, still = 0 } = {}) {
 // already, or when the card can't be composed.
 export const PHASE_WORD = /^[a-z-]{1,32}$/;
 
-export function stuckCardFor(views, { work, phase = null, still = 0 }) {
+export function stuckCardFor(views, { work, phase = null, still = 0, pr = null }) {
   if (views?.features?.[work] === undefined) return { skip: 'there is no such work' };
   // Only a plain phase word is worded into the card: anything else is left out.
   if (typeof phase !== 'string' || !PHASE_WORD.test(phase)) phase = null;
@@ -49,7 +62,7 @@ export function stuckCardFor(views, { work, phase = null, still = 0 }) {
   const own = Object.values(views?.questions ?? {}).filter((q) => questionIdOf(q?.question?.data?.id)?.work === work && questionIdOf(q.question.data.id).foreman);
   if (own.some((q) => q.answer === null)) return { skip: 'the Bosun has asked already' };
   const n = Math.max(FOREMAN_QUESTIONS, ...own.map((q) => questionIdOf(q.question.data.id).n)) + 1;
-  const data = { id: `q-${work}-${n}`, work, ...stuckQuestion(work, { phase, still }) };
+  const data = { id: `q-${work}-${n}`, work, ...stuckQuestion(work, { phase, still, findings: holdingReview(views, pr) !== null }) };
   const problem = questionProblem(data);
   return problem === null ? { data } : { skip: `the card can't be composed: ${problem}` };
 }

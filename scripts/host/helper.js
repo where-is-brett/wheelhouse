@@ -15,6 +15,8 @@
 // nothing). The checks and the push then run in the mirror, with the key.
 import { stuckCardFor } from '../foreman/ask-help.js';
 import { recentStuck } from '../watcher/stuck-cards.js';
+import { worktreeOf } from '../foreman/wake.js';
+import { readPrRecord } from '../feature/status.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -4998,7 +5000,10 @@ export async function startHelper({
       if (stuck === null) return { ok: true, skipped: 'the watcher has not recorded this work as stuck' };
       const events = listEvents(stateDir(project), { report: () => {} });
       const views = buildViews(events, readEnrolled(), { now });
-      const made = stuckCardFor(views, { work, phase: stuck.phase, still: Math.max(0, Math.min(stuck.still, 1e10)) });
+      // The work's pull request is the one its worktree keeps; a worktree that can't be read leaves the plain restart option.
+      let pr = null;
+      try { pr = readPrRecord(worktreeOf(project, views, work))?.pr ?? null; } catch { /* none */ }
+      const made = stuckCardFor(views, { work, phase: stuck.phase, still: Math.max(0, Math.min(stuck.still, 1e10)), pr });
       if (made.skip !== undefined) return { ok: true, skipped: made.skip };
       const pass = crypto.randomUUID();
       foremanRuns.set(pass, project);

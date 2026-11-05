@@ -117,7 +117,7 @@
 // Git runs only in the main checkout, to bring the default branch up to date
 // and make the worktree, with hooks and fsmonitor off. Everything read from a worktree goes through the safe
 // readers of scripts/feature/files.js and status.js.
-import { ASK_HELP, askExample } from './ask-help.js';
+import { ASK_HELP, askExample, holdingReview } from './ask-help.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -166,7 +166,7 @@ import { readEnrolled, verify } from '../state/signing.js';
 import { recordHandled } from '../watcher/handled.js';
 import { recordedBriefs } from '../watcher/sources.js';
 import { writeBaseline } from '../watcher/control-files.js';
-import { makeWaker, sessionFile } from '../watcher/waker.js';
+import { makeWaker, sessionFile, writeWake } from '../watcher/waker.js';
 import { guardedCardInput, guardedCommand, readSelfTest } from '../windows/low.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
@@ -1465,10 +1465,46 @@ function queueAgainLine(work, status, lane) {
     + `Next: act ask ${work} --what '${work} ended ${status}: queue it again, or drop it?' --why '${why}' ${options} --recommend ${lanes[0]} --level 2`;
 }
 
+// --- restart ---
+
+// The option a stuck work's card offers: wakes the feature's own session. With a signed review that holds its pull
+// request, the wake tells it to fix every finding, push and dispatch the reviewer; otherwise to carry on from where it
+// left off. The words are fixed here; no caller supplies any.
+async function restart(ctx, work, rest) {
+  flagsOf(rest, [], 'restart');
+  const views = await ctx.views();
+  const f = liveFeature(views, work);
+  refuseDirectorsPause(work, f);
+  ctx.refuseHalted(views, `${work} can't be restarted`, laneOf(views, work));
+  const worktree = worktreeOf(ctx.project, views, work);
+  const kept = readPrRecord(worktree);
+  const held = kept === null || kept.merged ? null : holdingReview(views, kept.pr);
+  const id = `restart:${work}:${ctx.now().getTime()}`;
+  const event = held !== null
+    ? {
+      type: 'findings', work, pr: kept.pr, id, detail: {
+        head: held.commit,
+        next: `Pull request #${kept.pr}'s review at ${held.commit} holds it with findings. Fix every finding (a failing test first, as your instructions say), commit and push, then dispatch wheelhouse:reviewer on the new head.`,
+      },
+    }
+    : {
+      type: 'build', work, id, detail: {
+        next: 'This work stopped moving. Read where it stands (your status, plan and git log), then carry on from where it left off.',
+      },
+    };
+  const file = writeWake(ctx.project, { to: 'feature', work, events: [event], digest: [], dropped: 0 }, { now: ctx.now });
+  try {
+    await ctx.waker(await ctx.config()).wakeFeature(work, file);
+  } catch (error) {
+    refuse(`The ${work} session wasn't woken: ${oneLine(error instanceof Error ? error.message : 'unknown error', 200)}`);
+  }
+  ctx.say(held !== null ? `Woke ${work}'s session to fix the findings of pull request #${kept.pr}.` : `Woke ${work}'s session to carry on from where it left off.`);
+}
+
 // --- The command line ---
 
 const COMMANDS = {
-  start, 'plan-ready': planReady, build, pause, resume, question, 'extra-plan': extraPlan, ask, amend, merge, close,
+  start, 'plan-ready': planReady, build, pause, resume, question, 'extra-plan': extraPlan, ask, amend, merge, close, restart,
 };
 const USAGE = `Commands: ${Object.keys(COMMANDS).join(', ')}, each followed by the work id`;
 
