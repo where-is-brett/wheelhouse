@@ -18,7 +18,24 @@ export async function changeOf({ cwd, base, run = defaultRun }) {
     if (got.code !== 0) throw new Error(`git ${args[0]} failed in the worktree: ${String(got.stderr).trim().split('\n').pop()}`);
     return String(got.stdout);
   };
-  const mergeBase = (await must(['merge-base', base, 'HEAD'])).trim();
+  // A branch name is also read at the remotes' copies of it (a project in git alone keeps the home's main as
+  // refs/remotes/wheelhouse/<name>; a hosted one has origin's). The folder's own copy can be behind them, and a run's
+  // worktree is made from theirs, so the change begins at the nearest of the points they share with the run. A copy
+  // that is missing is left out; the named base alone is what a project with no remotes has.
+  const starts = [(await must(['merge-base', base, 'HEAD'])).trim()];
+  if (/^[A-Za-z0-9_][A-Za-z0-9._-]*(?:\/[A-Za-z0-9._-]+)*$/.test(base) && !base.includes('..')) {
+    for (const remote of ['wheelhouse', 'origin']) {
+      const got = await git(['merge-base', `refs/remotes/${remote}/${base}`, 'HEAD']);
+      if (got.code === 0 && String(got.stdout).trim() !== '') starts.push(String(got.stdout).trim());
+    }
+  }
+  let mergeBase = starts[0];
+  for (const start of starts.slice(1)) {
+    if (start === mergeBase) continue;
+    // The nearer one is the one that has the other behind it.
+    const behind = await git(['merge-base', '--is-ancestor', mergeBase, start]);
+    if (behind.code === 0) mergeBase = start;
+  }
   const listed = (await must(['-c', 'core.quotePath=false', 'diff', '--no-ext-diff', '--no-textconv', '--name-status', '-M', '-z', mergeBase])).split('\0').filter(Boolean);
   const changes = [];
   for (let i = 0; i < listed.length;) {

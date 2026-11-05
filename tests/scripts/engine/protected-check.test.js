@@ -240,3 +240,35 @@ test('a first test script in a package with none is no finding, and nor is a scr
   assert.deepEqual(await protectedFindings([one('package.json', SCRIPTS({ build: 'tsc' }), SCRIPTS({ build: 'tsc', test: 'node a' }))]), []);
   assert.deepEqual(await protectedFindings([one('package.json', SCRIPTS({ test: 'node a', build: 'tsc' }), SCRIPTS({ test: 'node a', build: 'esbuild' }))]), []);
 });
+
+// A project in git alone: the folder's own `main` can sit behind the home's, which the folder keeps as
+// refs/remotes/wheelhouse/main, because the folder had changes of its own when the last change merged. The run's worktree
+// is made from the remote's copy, so that is where the run's change begins.
+function behindFolder() {
+  const dir = repo(BASE);
+  git(dir, 'checkout', '-q', 'main');
+  fs.writeFileSync(path.join(dir, 'jest.config.js'), 'module.exports = { coverageThreshold: { global: { lines: 80 } } };\n');
+  git(dir, 'commit', '-qam', 'merged since');
+  git(dir, 'update-ref', 'refs/remotes/wheelhouse/main', 'HEAD');
+  git(dir, 'reset', '-q', '--hard', 'HEAD~1');
+  git(dir, 'checkout', '-q', 'wh/card-1');
+  git(dir, 'reset', '-q', '--hard', 'refs/remotes/wheelhouse/main');
+  return dir;
+}
+
+test('protected-check reads the run\'s change from where its worktree began, not from a folder main that is behind', async () => {
+  const dir = behindFolder();
+  fs.writeFileSync(path.join(dir, 'src', 'price.js'), 'export const price = () => 13;\n');
+  git(dir, 'commit', '-qam', 'price');
+  const { code, lines } = await check(dir);
+  assert.equal(code, 0, lines.join('\n'));
+});
+
+test('protected-check still refuses a test-settings change made in the run, when the folder main is behind', async () => {
+  const dir = behindFolder();
+  fs.writeFileSync(path.join(dir, 'jest.config.js'), 'module.exports = { coverageThreshold: { global: { lines: 10 } } };\n');
+  git(dir, 'commit', '-qam', 'loosen');
+  const { code, lines } = await check(dir);
+  assert.equal(code, 1);
+  assert.match(lines.join('\n'), /changes the test settings in jest\.config\.js/);
+});
