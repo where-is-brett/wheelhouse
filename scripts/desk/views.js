@@ -11,7 +11,7 @@ import { endedBy, since, NO_PLAN, STARTS_UNAPPROVED } from '../foreman/queue.js'
 import { cardTextOf, hashOf } from '../mod/status.js';
 import { cardButtons } from '../mod/buttons.js';
 import { dataHash } from '../state/events.js';
-import { cardOutcomes } from '../state/views.js';
+import { cardOutcomes, latestFor } from '../state/views.js';
 import { answeredWords, askOf, subjectOf } from '../cards/answered.js';
 import { sinceLine } from '../cards/panel-words.js';
 import { contextText } from './context.js';
@@ -135,12 +135,29 @@ const latestRun = (views, id) => (isPlain(views.runs) && Array.isArray(views.run
 // What each lane is, in words a sentence takes.
 const LANE_WORDS = { quick: 'quick work', small: 'small work', feature: 'a feature', bug: 'a bug fix' };
 
+// What a pull request is waiting on, in words. `known` is the number the record names, which wins; `open` is the work's
+// own status, which only names a pull request when the record has none and gives the head commit as a hint that the
+// newest commit may be newer than its review. The review is the record's latest signed one for the pull request, as the
+// merge gate reads it; nothing else in the status is believed.
+export function prLine(views, open, known) {
+  const n = Number.isSafeInteger(known) && known > 0 ? known : isPlain(open) && Number.isSafeInteger(open.pr) && open.pr > 0 ? open.pr : null;
+  if (n === null) return [];
+  const head = isPlain(open) && typeof open.head === 'string' ? open.head : null;
+  const review = latestFor(views.reviews, n)?.data;
+  const lead = n === known ? [] : [`pull request #${n} is open`];
+  if (!isPlain(review)) return [...lead, 'no signed review yet, so it can\'t merge'];
+  if (head !== null && review.commit !== head) return [...lead, 'its signed review is of an earlier commit, so the newest has none yet and it can\'t merge'];
+  if (review.verdict === 'CLEAN') return [...lead, 'its review is clean; it merges once the checks pass and the director has approved it'];
+  const found = Number.isSafeInteger(review.findings) ? `${review.findings} finding${review.findings === 1 ? '' : 's'} to fix` : 'findings to fix';
+  return [...lead, `its review holds the merge: ${found}`];
+}
+
 // The open work, running work first, each oldest first (then by id): its id, title and lane, whether a feature
 // runs for it, its step or state, the slice in hand and the pull request the gate waits on or its
 // latest report names, either since the work was queued. `answers` are the card-answer events, for
 // the director's Not now. In the glossary's plain words, but for the titles, kept as written: the
 // front desk reads this to tell the director how things stand.
-export function workLines(views, answers, words) {
+export function workLines(views, answers, words, prs = {}) {
   const features = isPlain(views.features) ? views.features : {};
   const questions = isPlain(views.questions) ? views.questions : {};
   const reports = Object.values(isPlain(views.reports) ? views.reports : {}).filter((r) => isPlain(r?.data));
@@ -168,6 +185,7 @@ export function workLines(views, answers, words) {
       state,
       ...(isPlain(slice) && Number.isInteger(slice.n) && Number.isInteger(slice.m) ? [`slice ${slice.n} of ${slice.m}`] : []),
       ...(Number.isSafeInteger(pr) && pr > 0 ? [`pull request #${pr}`] : []),
+      ...(prs[id] === undefined ? [] : prLine(views, prs[id], pr)),
     ].join(', ');
   });
   // Labels, ids and work titles stay as written, as the board keeps titles (design section 21).

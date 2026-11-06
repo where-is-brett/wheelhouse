@@ -32,8 +32,10 @@ function shownBlock(body) {
   assert.ok(start >= 0, 'the instructions show the report block');
   const out = [];
   for (let i = start; i < lines.length && /^(WHEELHOUSE REPORT|[a-z]+:.*)$/.test(lines[i]); i += 1) out.push(lines[i]);
-  const fill = { commit: FULL, verdict: 'FINDINGS', findings: '2' };
-  return out.map((line) => line.replace(/^([a-z]+):\s*<[^>]*>\s*$/, (_, key) => `${key}: ${fill[key] ?? 'text'}`)).join('\n');
+  const fill = { commit: FULL, verdict: 'FINDINGS', findings: '2', blocking: '1' };
+  const block = out.map((line) => line.replace(/^([a-z]+):\s*<[^>]*>\s*$/, (_, key) => `${key}: ${fill[key] ?? 'text'}`)).join('\n');
+  // A reviewer's FINDINGS report also lists a severity line for each finding, which its `blocking` is checked against.
+  return /^role: reviewer$/m.test(block) ? `- HIGH: a case that breaks (src/a.js:1)\n- LOW: a small slip (src/b.js:2)\n${block}` : block;
 }
 
 test('the reviewer can read and cannot write, run commands or start agents', () => {
@@ -79,7 +81,7 @@ test('each agent ends with the report block the report check reads', () => {
     assert.match(body, /`pr: none`/, `${file} tells its block to say pr: none`);
   }
   // A reviewer block also reads as CLEAN with no findings line.
-  const clean = shownBlock(load('reviewer').body).replace('verdict: FINDINGS', 'verdict: CLEAN').replace(/^findings:.*\n?/m, '');
+  const clean = shownBlock(load('reviewer').body).replace('verdict: FINDINGS', 'verdict: CLEAN').replace(/^(findings|blocking):.*\n?/gm, '').replace(/^- (HIGH|LOW):.*\n?/gm, '');
   assert.deepEqual(parseReport(clean, 'reviewer').missing, []);
 });
 
