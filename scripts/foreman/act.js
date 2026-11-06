@@ -1232,6 +1232,7 @@ async function releaseMerged(ctx, pr, merged) {
   await ctx.write('merge', { pr, ...commit, forUsers: merged.briefing });
 }
 
+// Thorough means stricter: only a CLEAN verdict counts here, never findings that are all minor.
 // The verified CLEAN reviews of pull request `pr` at `head` on record, each counted once: by its record's id, which a
 // record sent again (from a session's pending folder, say) keeps, and its signer. Two reviewers' records may hold
 // the same data (the same verdict, model and version), so the data alone never makes two reviews one.

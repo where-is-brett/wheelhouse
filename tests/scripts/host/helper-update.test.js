@@ -347,8 +347,25 @@ test('with no CLEAN review to weigh, /pr/carried reads nothing from the host', a
       assert.deepEqual(await carried(client), { ok: true, review: 'none', upToDate: false, earlier: false });
       await as(home, () => reviewed(pr.head, 'FINDINGS'));
       assert.deepEqual(await carried(client), { ok: true, review: 'none', upToDate: false, earlier: false });
+      // Running the review again until one passes does not clear findings on the same head: the first review of a head stands.
+      await as(home, () => reviewed(pr.head));
+      assert.deepEqual(await carried(client), { ok: true, review: 'none', upToDate: false, earlier: false });
       assert.deepEqual(fetches, []);
-      // A CLEAN review to weigh: the mirror is read.
+    }, { run: counting });
+  } finally { pr.remote.cleanup(); }
+});
+
+test('with a CLEAN review to weigh, /pr/carried reads the mirror', async () => {
+  const pr = await remoteWithPr({ base: { 'app.js': 'one\n' }, change: { 'b.js': 'b\n' } });
+  try {
+    const home = await project(pr.remote);
+    const fetches = [];
+    const counting = (file, args, options) => {
+      if (args.includes('fetch')) fetches.push(args);
+      return hostGuard(file, args, options);
+    };
+    const adapter = fakeAdapter(pr.remote);
+    await withHelper(home, adapter, async (client) => {
       await as(home, () => reviewed(pr.head));
       assert.deepEqual(await carried(client), { ok: true, review: 'clean', upToDate: true, earlier: false });
       assert.ok(fetches.length > 0);
