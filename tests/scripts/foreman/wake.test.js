@@ -6,9 +6,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { main, measures, measuresFile, readWakeLines, recordDone } from '../../../scripts/foreman/wake.js';
+import { clashFor, loadViews, main, measures, measuresFile, readWakeLines, recordDone } from '../../../scripts/foreman/wake.js';
 import { foremanCommands } from '../../../scripts/foreman/tools.js';
-import { briefHash, featurePaths } from '../../../scripts/feature/files.js';
+import { briefHash, featurePaths, writeStatus } from '../../../scripts/feature/files.js';
 import { LANE_APPETITE } from '../../../scripts/lib/build-loop.js';
 import { liftStop, setStop } from '../../../scripts/lib/stop.js';
 import { writeCursor } from '../../../scripts/watcher/core.js';
@@ -247,7 +247,7 @@ test('wake read: while STOP or an incident holds, it says so at the top, and not
   assert.match(text, /^- merge-ready m: pull request #6 at aaaaaaaaaaaa\. It waits: incident site-down is open, and only an incident's fix merges$/m);
   assert.match(text, /^- merge-ready x: pull request #7 at bbbbbbbbbbbb\. Next: act merge x$/m);
   // A feature's end is closed, whatever holds (R94).
-  assert.match(text, /^- report m: it has ended, and its report is written\. Next: act close m$/m);
+  assert.match(text, /^- report m: it has ended, and its report is written\. Next: act close m\. If it says the report was sent back to the feature session, there is nothing to ask the director; only a refusal that says to ask is asked$/m);
   assert.doesNotMatch(text, /Next: act (start|build) /);
 
   // STOP holds everything, a fix's merge too.
@@ -432,8 +432,21 @@ test('wake read: stuck work held on purpose waits with nothing to ask; other stu
   assert.match(text, /^- stuck held: no progress for 20 minutes, at phase ready-to-build; it waits: no building slot is free \(pace\)\. Nothing to do\.$/m);
   assert.match(text, /^- stuck hers: no progress for 20 minutes, at phase ready-to-build; it waits: the director paused it, and only their amendment beginning "Resume" lifts it\. Nothing to do\.$/m);
   assert.match(text, /^- stuck mine: no progress for 20 minutes, at phase ready-to-build; it waits: paused for the five-hour window; the queue below says when it may resume\. Nothing to do\.$/m);
-  assert.match(text, /^- stuck b1: no progress for 20 minutes, at phase ready-to-build\. Ask the director: act ask$/m);
+  assert.match(text, /^- stuck b1: no progress for 20 minutes, at phase ready-to-build\. Ask the director now, in this one command: act ask b1 --what 'b1 has not moved for 20 minutes, at the step called ready-to-build\. What should happen\?' --why '[^']+' --option 'Restart the builder on where it left off=act restart b1' --option 'Wait=[^']+' --recommend 'Restart the builder on where it left off' --level 2\. Do not close this wake as idle first; do not invent other options/m);
+  assert.doesNotMatch(text, /--option '[^']*=act build/);
   assert.doesNotMatch(text, /^- stuck (held|hers|mine):.*act ask/m);
+}));
+
+test('wake read: review-overdue tells the Bosun the review has not come and gives the card to raise', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  views.work.b1 = workView('b1', { since: '2026-10-19T06:00:00.000Z' });
+  views.features.b1 = featureView('b1', { step: 'building', worktree: worktree(checkout, 'b1'), files: [] });
+  const e = { ...ev('review-overdue', 'b1', 'review-overdue:b1:ddd444eeeeee', { head: 'ddd444eeeeee', still: 20 * 60000 }), pr: 7 };
+  const file = wakeFile(path.join(checkout, 'w'), 'one', { events: [e] });
+  const text = (await readWakeLines({ file, project: P, client: fakeClient({ views }).client, now })).lines.join('\n');
+  assert.match(text, /pull request #7 at ddd444eeeeee has had no review for 20 minutes/);
+  assert.match(text, /Ask the director: act ask b1 --what 'The review of pull request #7 for b1 has not come'/);
 }));
 
 test('wake read: during an incident bug work still starts, and all else waits (R101)', () => withHome(async () => {
@@ -595,4 +608,29 @@ test('wake gives work approved by the by-hand card its start with the fixed done
   assert.ok(!line.includes('Ask the director'), line);
   for (const d of HAND_DONE) assert.ok(line.includes(`--done '${d}'`), line);
   assert.ok(line.includes(`--goal '${HAND_GOAL}'`), line);
+}));
+
+test('a merged work whose status reads done, with the host agreeing, holds no file clash while it waits to be closed', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  views.work['todo-cli'] = workView('todo-cli', { lane: 'quick' });
+  const wt = worktree(checkout, 'todo-cli', { pr: { pr: 4, plan: 'p.md', merged: true } });
+  views.features['todo-cli'] = featureView('todo-cli', { step: 'building', worktree: wt, files: ['test/todos.test.js'] });
+  const status = (phase) => ({
+    v: 1, work: 'todo-cli', lane: 'quick', phase, task: null, fixRound: null, waitingOn: null, head: null, pr: 4, slice: null, tokens: null, updatedAt: '2026-11-05T21:57:00.000Z',
+  });
+  const clash = async (answers) => {
+    const { client } = fakeClient({ views, answers });
+    const { views: loaded } = await loadViews(P, client);
+    return clashFor(loaded, { hotFiles: [] }, 'carry-on-4', ['test/todos.test.js']).ok;
+  };
+  const host = (state) => ({ prState: { ok: true, result: { state, headSha: 'b'.repeat(40) } } });
+  writeStatus(featurePaths(wt).status, status('pr-open'));
+  assert.equal(await clash(host('merged')), false, 'not done yet: it still clashes');
+  writeStatus(featurePaths(wt).status, status('done'));
+  assert.equal(await clash(host('merged')), true, 'merged, done and the host agrees: no clash');
+  assert.equal(await clash(host('open')), false, 'the host says it is open: a forged pr.json changes nothing');
+  assert.equal(await clash({ prState: { ok: false, refused: 'no answer' } }), false, 'no word from the host: it still clashes');
+  fs.writeFileSync(featurePaths(wt).pr, `${JSON.stringify({ pr: 4, plan: 'p.md' })}\n`);
+  assert.equal(await clash(host('merged')), false, 'not marked merged: it still clashes');
 }));

@@ -610,6 +610,78 @@ test('an update after an approval with identical pages merges; with a changed pa
   });
 });
 
+test('a merge waits while the director has a question open on its work, and for an answer no newer version carries', async () => {
+  await onComputer(async (world) => {
+    const head = await openPr(world, 7, 'export', { 'src/export.js': 'export const kind = \'csv\';\n' });
+    const { question } = await frontDesk(world, ['card'], approvalCard(7, 'adds the orders export.'));
+    await ask(world, [question], { [question.question]: 'Approve' });
+    // The approval names the head; a question of the director's still open on the same work holds the merge.
+    await buildLoop(world, 'question', EXPORT_QUESTION);
+    const held = await merge(world, 7);
+    assert.equal(held.ok, false);
+    assert.match(held.refused, /question open on export/);
+    assert.deepEqual(world.host.merges, []);
+    assert.equal(held.needs, undefined, 'no card is asked for the merge while the question waits');
+    assert.ok(head);
+  });
+});
+
+// The director answers the open question on the work after the head was reviewed.
+const treeOf = (world, work) => path.join(world.checkout, '.claude', 'worktrees', work);
+async function answeredAfterReview(world) {
+  await building(world, 'export', 'The orders export');
+  await building(world, 'search', 'Searching the menu');
+  const head = await openPr(world, 7, 'export', { 'src/export.js': 'export const kind = \'csv\';\n' });
+  const { question } = await frontDesk(world, ['card'], approvalCard(7, 'adds the orders export.'));
+  await ask(world, [question], { [question.question]: 'Approve' });
+  await buildLoop(world, 'question', EXPORT_QUESTION);
+  world.at(HOUR);
+  const visit = await frontDesk(world, ['cards']);
+  await ask(world, visit.questions, { [visit.questions[0].question]: 'CSV' });
+  return head;
+}
+
+test('an answer that needs no change holds the merge until the session says so, then it merges', async () => {
+  await onComputer(async (world) => {
+    const head = await answeredAfterReview(world);
+    const held = await merge(world, 7);
+    assert.equal(held.ok, false);
+    assert.match(held.refused, /answered a question on export after this version was reviewed/);
+    // Reading the answer clears nothing.
+    assert.equal((await world.client.state.answer({ project: P, questionId: 'q-export-1' })).answer, 'CSV');
+    assert.equal((await merge(world, 7)).ok, false);
+    // Another work's session, no folder, and a folder outside any feature can't say it.
+    const say = (extra) => world.client.state.answer({ project: P, questionId: 'q-export-1', noChange: true, ...extra });
+    assert.equal((await say({ cwd: treeOf(world, 'search') })).ok, false);
+    assert.equal((await say({})).ok, false);
+    assert.equal((await say({ cwd: world.work })).ok, false);
+    assert.equal((await merge(world, 7)).ok, false);
+    // The session says it needs no change.
+    assert.equal((await world.client.state.answer({ project: P, cwd: treeOf(world, 'export'), questionId: 'q-export-1', noChange: true })).ok, true);
+    assert.deepEqual(await merge(world, 7), { ok: true, merged: true, sha: head, guardrailPaths: [], criticalAreas: [], answeredNoChange: ['q-export-1'] });
+  });
+});
+
+test('an answer that needs a change holds the merge until a newer reviewed version carries it', async () => {
+  await onComputer(async (world) => {
+    await answeredAfterReview(world);
+    assert.match((await merge(world, 7)).refused, /after this version was reviewed/);
+    // The session commits the change and pushes it; the new head is reviewed after the answer.
+    writeFiles(world.work, { 'src/export.js': 'export const kind = \'csv\';\nexport const cut = true;\n' });
+    await g(world.work, 'add', '-A');
+    await g(world.work, 'commit', '-q', '-m', 'Cut it');
+    await g(world.work, 'push', '-q', 'origin', 'feature/export');
+    const moved = await g(world.work, 'rev-parse', 'HEAD');
+    world.at(2 * HOUR);
+    const reviewed = await world.client.state.record({
+      project: P, event: makeEvent({ kind: 'review', data: { pr: 7, commit: moved, verdict: 'CLEAN' }, now: world.now }),
+    });
+    assert.equal(reviewed.ok, true, JSON.stringify(reviewed));
+    const out = await world.client.merge({ project: P, number: 7, stop: false, bypass: false, approvalRequired: false });
+    assert.doesNotMatch(out.refused ?? '', /question|answered/);
+  });
+});
+
 test('an approval card steered with Suggest a change… is revised once the change is committed; the old code answers nothing and the click on the revised card lets the gate merge its commit', async () => {
   await onComputer(async (world) => {
     const head = await openPr(world, 7, 'banner', { 'src/home.js': 'export const banner = \'Hot cross buns are back\';\n' });

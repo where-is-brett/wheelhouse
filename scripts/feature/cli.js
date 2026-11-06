@@ -225,9 +225,9 @@ function readBriefOrSay(worktree) {
 
 // The label the director chose, or null while the question has no signed answer. The helper
 // places the project from the worktree's folder.
-export async function answer({ client, worktree, questionId }) {
+export async function answer({ client, worktree, questionId, noChange = false }) {
   if (typeof questionId !== 'string' || !QUESTION_ID.test(questionId)) throw new CliError('Give the id of the question, as ask printed it');
-  const said = await client.state.answer({ cwd: worktree, questionId });
+  const said = await client.state.answer({ cwd: worktree, questionId, ...(noChange ? { noChange: true } : {}) });
   if (said?.ok !== true) throw new CliError(said?.refused ?? 'The host helper gave no answer');
   if (said.answer === null) return { answer: null };
   if (typeof said.answer !== 'string' || said.answer === '') throw new CliError('The host helper gave an answer this could not read');
@@ -448,8 +448,9 @@ export async function main(argv, {
     if (command === 'ask') {
       out(`${(await ask({ worktree, argv: rest, client: helper() })).id}\n`);
     } else if (command === 'answer') {
-      if (rest.length !== 1) throw new CliError('Give the id of the question: answer <questionId>');
-      const { answer: label } = await answer({ client: helper(), worktree, questionId: rest[0] });
+      const noChange = rest.length === 2 && rest[1] === '--no-change';
+      if (rest.length !== 1 && !noChange) throw new CliError('Give the id of the question: answer <questionId>, and --no-change after it when the answer needs no change to the code');
+      const { answer: label } = await answer({ client: helper(), worktree, questionId: rest[0], noChange });
       out(label === null ? 'There is no answer yet.\n' : `${label}\n`);
     } else if (command === 'plan') {
       out(`Recorded the plan: ${recordPlan({ worktree, argv: rest }).plan}\n`);

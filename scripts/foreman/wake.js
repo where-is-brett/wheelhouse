@@ -66,12 +66,13 @@
 //
 // The shared pieces here (ForemanError, the views, the configuration, a
 // feature's worktree and plan, the clash and slot answers) are act.js's too.
+import { holdingReview, stuckAskCommand } from './ask-help.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { clashCheck, fileMapOf, nextWork, since } from './queue.js';
 import { onNewEngine } from '../engine/lanes.js';
 import { PLUGIN_ROOT, foremanCommands } from './tools.js';
-import { briefHash, featurePaths } from '../feature/files.js';
+import { briefHash, featurePaths, readStatus } from '../feature/files.js';
 import {
   loadFeature, readCapped, readPlan, readPrRecord, safeFeatureFolder,
 } from '../feature/status.js';
@@ -177,13 +178,15 @@ export async function loadViews(project, client, { kept = false } = {}) {
   const fresh = views !== null;
   if (views === null && kept) views = keptViews(project);
   if (views === null) refuse(`The views can't be had: ${why}`);
-  return {
+  const out = {
     views: {
       work: isPlain(views.work) ? views.work : {},
       features: isPlain(views.features) ? views.features : {},
       reports: isPlain(views.reports) ? views.reports : {},
       questions: isPlain(views.questions) ? views.questions : {},
       rulebook: Array.isArray(views.rulebook) ? views.rulebook : [],
+      // The signed reviews by pull request and commit, for the reviews that hold a pull request.
+      reviews: isPlain(views.reviews) ? views.reviews : {},
       incidents: { open: Array.isArray(views.incidents?.open) ? views.incidents.open.filter(isPlain) : [] },
       // The settings and the proposals not yet confirmed, for the level of build commands on Windows, and the
       // Thoroughness columns ready, for the level in force (scripts/routing/in-force.js).
@@ -197,6 +200,26 @@ export async function loadViews(project, client, { kept = false } = {}) {
     fresh,
     ...(fresh ? {} : { why }),
   };
+  if (fresh) await markSettled(project, client, out.views);
+  return out;
+}
+
+// Marks (as `settled`, on the view only) each building feature whose work is over: its kept pull request is marked merged
+// for its current plan, its status reads done, and the host says the pull request merged. The files are the
+// session's to write, so the host's word is what counts; with no answer the feature stays unmarked and still clashes.
+async function markSettled(project, client, views) {
+  for (const [work, f] of Object.entries(views.features)) {
+    if (!CHANGING.includes(f?.data?.step)) continue;
+    try {
+      const worktree = worktreeOf(project, views, work);
+      const kept = readPrRecord(worktree);
+      if (kept === null || !kept.merged) continue;
+      if (!NO_PLAN.includes(laneOf(views, work)) && kept.plan !== (typeof f.data.plan === 'string' ? f.data.plan : null)) continue;
+      if (readStatus(featurePaths(worktree).status)?.phase !== 'done') continue;
+      const state = await client.prState({ project, number: kept.pr });
+      if (state?.ok === true && state.result?.state === 'merged') f.settled = true;
+    } catch { /* unreadable: it stays in the clash */ }
+  }
 }
 
 // The configuration on the default branch, through the helper (ruling R50).
@@ -357,7 +380,7 @@ export function openPrWait(worktree) {
 // The features whose recorded files are being changed, other than `work`'s.
 export function runningFiles(views, work) {
   return Object.entries(views.features)
-    .filter(([w, f]) => w !== work && CHANGING.includes(f?.data?.step) && Array.isArray(f.data.files))
+    .filter(([w, f]) => w !== work && CHANGING.includes(f?.data?.step) && Array.isArray(f.data.files) && f.settled !== true)
     .map(([w, f]) => ({ work: w, files: f.data.files.filter((x) => typeof x === 'string') }));
 }
 
@@ -499,11 +522,22 @@ function eventLine(e, ctx) {
       `the director clicked to push ${d.branch} at ${short(d.sha)}, which changes a CI file, for pull request #${d.pr}`,
       'When it is ready to merge, the queue below lists it',
     );
-    case 'report': return said('it has ended, and its report is written', `Next: act close ${work}`);
+    case 'report': return said('it has ended, and its report is written', `Next: act close ${work}. If it says the report was sent back to the feature session, there is nothing to ask the director; only a refusal that says to ask is asked`);
     case 'stuck': {
       const still = `no progress for ${Math.round((Number(d.still) || 0) / 60000)} minutes, at phase ${d.phase ?? 'unknown'}`;
       const held = heldLine(work, ctx);
-      return held !== null ? `${head}: ${oneLine(still)}; ${held}.` : said(still, 'Ask the director: act ask');
+      if (held !== null) return `${head}: ${oneLine(still)}; ${held}.`;
+      // The move offered is the one the helper's own stuck card offers: fixing the findings a review holds, or restarting the builder.
+      let findings = false;
+      try { findings = holdingReview(ctx.views, readPrRecord(worktreeOf(ctx.project, ctx.views, work))?.pr) !== null; } catch { /* no pull request to read */ }
+      const phase = typeof d.phase === 'string' && /^[a-z-]{1,32}$/.test(d.phase) ? d.phase : null;
+      return said(still, `Ask the director now, in this one command: ${stuckAskCommand(work, { phase, still: Number(d.still) || 0, findings })}. Do not close this wake as idle first; do not invent other options (act build refuses work that is building already)`);
+    }
+    // The review of a head was asked for twice and never came: the director is asked, with the whole command given.
+    case 'review-overdue': {
+      const why = 'Wheelhouse asked its session for the review twice and none came, so the change cannot go in.';
+      return said(`pull request #${e.pr} at ${short(d.head)} has had no review for ${Math.round((Number(d.still) || 0) / 60000)} minutes`,
+        `Ask the director: act ask ${work} --what 'The review of pull request #${e.pr} for ${work} has not come' --why '${why}' --option 'wait=Keep waiting for the review.' --option 'drop=Stop this work; nothing of it goes in.' --recommend wait --level 2`);
     }
     case 'over-appetite': return said(`${d.tokens} tokens used against an appetite of ${d.appetite}`, 'Ask the director: act ask');
     case 'brief-tampered': return said(`its brief reads ${short(d.found)}, not the ${short(d.recorded)} recorded`, 'Ask the director: act ask');
