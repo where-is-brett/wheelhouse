@@ -93,7 +93,7 @@ export const SEEN_CAP = 5000;
 export const DIGEST_CAP = 200;
 
 export const FOREMAN_TYPES = Object.freeze([
-  'work-ready', 'amended', 'question', 'extra-plan', 'answer', 'merge-ready', 'stuck',
+  'work-ready', 'amended', 'question', 'extra-plan', 'answer', 'merge-ready', 'stuck', 'review-overdue',
   'over-appetite', 'clash', 'stop', 'incident', 'brief-tampered', 'plan-ready', 'report', 'lift-incident', 'incident-fix',
   'approval', 'ci-push',
 ]);
@@ -355,8 +355,16 @@ function featureEvents(prev, next, settled, out) {
     }
 
     if (s.still >= STUCK_MS && !((pf?.still ?? 0) >= STUCK_MS)) {
-      const id = status ? `stuck:${work}:${status.updatedAt}` : `stuck:${work}:none:${anchor}`;
-      out.push({ type: 'stuck', work, id, detail: { still: s.still, phase: status?.phase ?? null } });
+      const open = status ? next.prs?.[status.pr] : undefined;
+      if (isPlain(open) && reviewNeeded(open) && typeof open.head === 'string') {
+        // Its pull request waits for a review nobody has dispatched: the session is told again, and the Bosun hears of it in
+        // place of a bare stuck.
+        out.push({ type: 'review-needed', work, pr: status.pr, id: `review-needed:${work}:${open.head}:again`, detail: { head: open.head, next: reviewAgainText(status.pr, open.head) } });
+        out.push({ type: 'review-overdue', work, pr: status.pr, id: `review-overdue:${work}:${open.head}`, detail: { head: open.head, still: s.still } });
+      } else {
+        const id = status ? `stuck:${work}:${status.updatedAt}` : `stuck:${work}:none:${anchor}`;
+        out.push({ type: 'stuck', work, id, detail: { still: s.still, phase: status?.phase ?? null } });
+      }
     }
 
     if (isOver(f) && !(isOver(pf) && pf.appetite === f.appetite)) {
@@ -376,10 +384,14 @@ const PR_CONDITIONS = [
   ['ci-running', (p) => p.ci === 'pending'],
 ];
 
-// What the session reads in a review-needed wake: the head is unreviewed because the gate's
-// update merge moved the context its review was taken against (ruling R119).
-const reviewNeededText = (pr, head) => `The gate brought the branch up to date at ${head}, and the review of the earlier commit didn't carry over to it. `
-  + `Pull the branch, then dispatch wheelhouse:reviewer with pr: ${pr} on ${head}. If ${head} already has its review, there is nothing to do.`;
+// What the session reads in a review-needed wake. Wheelhouse has already looked in its own record of signed reviews: the head
+// has none, so there is nothing for the session to check. Its own notes of a review never count (ruling R119: the gate's
+// update merge moved the context the earlier review was taken against).
+const reviewNeededText = (pr, head) => `Wheelhouse checked its record of signed reviews: ${head} has no review yet. The gate brought the branch up to date, and the review of the earlier commit didn't carry over to it. `
+  + `Pull the branch, then dispatch wheelhouse:reviewer now with pr: ${pr} on ${head}. Your own notes of a review don't count, only the reviewer's signed one.`;
+// The same ask once the session has let it stand: said again, firmly, before the Bosun hears of it.
+const reviewAgainText = (pr, head) => `Second notice. Wheelhouse checked its record of signed reviews again: ${head} still has no review, and the pull request cannot merge without one. `
+  + `Dispatch wheelhouse:reviewer now with pr: ${pr} on ${head}. Do nothing else first, and don't stop until it has run.`;
 
 // The PRs this observation names, each against its last known state.
 function prEvents(prev, next, out) {

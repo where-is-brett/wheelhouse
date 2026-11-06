@@ -436,6 +436,18 @@ test('wake read: stuck work held on purpose waits with nothing to ask; other stu
   assert.doesNotMatch(text, /^- stuck (held|hers|mine):.*act ask/m);
 }));
 
+test('wake read: review-overdue tells the Bosun the review has not come and gives the card to raise', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  views.work.b1 = workView('b1', { since: '2026-10-19T06:00:00.000Z' });
+  views.features.b1 = featureView('b1', { step: 'building', worktree: worktree(checkout, 'b1'), files: [] });
+  const e = { ...ev('review-overdue', 'b1', 'review-overdue:b1:ddd444eeeeee', { head: 'ddd444eeeeee', still: 20 * 60000 }), pr: 7 };
+  const file = wakeFile(path.join(checkout, 'w'), 'one', { events: [e] });
+  const text = (await readWakeLines({ file, project: P, client: fakeClient({ views }).client, now })).lines.join('\n');
+  assert.match(text, /pull request #7 at ddd444eeeeee has had no review for 20 minutes/);
+  assert.match(text, /Ask the director: act ask b1 --what 'The review of pull request #7 for b1 has not come'/);
+}));
+
 test('wake read: during an incident bug work still starts, and all else waits (R101)', () => withHome(async () => {
   const checkout = await project();
   const views = emptyViews();
