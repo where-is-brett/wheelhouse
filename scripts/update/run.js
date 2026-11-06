@@ -130,7 +130,8 @@ export function updateSteps({
     prState: async (number) => {
       const got = await client.prState({ project, number });
       if (got?.ok === false) throw new Error(got.refused ?? 'the change could not be read');
-      return got;
+      // The helper's /pr/state answers { ok, result: { state, ... } }; the steps read { state }.
+      return got?.result ?? got;
     },
   });
   return [

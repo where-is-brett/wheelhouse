@@ -54,7 +54,8 @@ async function ready(over = {}) {
         fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), named('v0.2.7'));
         await g(dir, 'commit', '-q', '-am', 'merged');
       }
-      return { ok: true, state: next };
+      // The helper's /pr/state answers { ok, result: { state, ... } }.
+      return { ok: true, result: { state: next } };
     },
     state: { views: async () => ({ ok: true, views: { features: state.features } }) },
   };
@@ -229,3 +230,33 @@ test('lastJson: the last line that is a JSON object, and nothing for anything el
   assert.equal(lastJson(undefined), null);
   assert.equal(typeof startFresh, 'function');
 });
+
+test('run: an open change whose card is approved is handed to the helper to merge, read from the helper\'s own answer shape', () => withHome(async () => {
+  const asked = [];
+  const dir = await project();
+  const client = {
+    push: async () => ({ ok: true }),
+    openReleasePr: async () => ({ ok: true, result: { number: 5 } }),
+    prState: async () => ({ ok: true, result: { state: asked.length === 0 ? 'open' : 'merged' } }),
+    mergeReleasePr: async (b) => {
+      asked.push(b);
+      fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), named('v0.2.7'));
+      await g(dir, 'commit', '-q', '-am', 'merged');
+      return { ok: true, merged: true };
+    },
+    state: { views: async () => ({ ok: true, views: { features: {} } }) },
+  };
+  const claudeHome = tempFolder('wh-claude-');
+  withScript(claudeHome);
+  const steps = updateSteps({
+    project: 'p1', folder: dir, plan, client, stopped: () => false, signed: () => true,
+    fetch: async () => ({ ok: true, sha: NEWER }), check: async () => ({ ok: true }),
+    install: async () => ({ ok: true, line: 'Installed.' }), raise: async () => {},
+    finishRun: async () => ({ code: 0, stdout: `${JSON.stringify({ ok: true, line: 'Done.' })}\n` }),
+    claudeHome, mirror: tempFolder('wh-mirror-'),
+  });
+  const out = await runUpdate({ project: 'p1', plan, steps, ...quick });
+  assert.equal(out.ok, true);
+  assert.equal(asked.length, 1);
+  assert.deepEqual([asked[0].number, asked[0].release, asked[0].commit], [5, 'v0.2.7', NEWER]);
+}));
