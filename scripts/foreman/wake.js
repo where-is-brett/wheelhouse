@@ -66,6 +66,7 @@
 //
 // The shared pieces here (ForemanError, the views, the configuration, a
 // feature's worktree and plan, the clash and slot answers) are act.js's too.
+import { holdingReview, stuckAskCommand } from './ask-help.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { clashCheck, fileMapOf, nextWork, since } from './queue.js';
@@ -184,6 +185,8 @@ export async function loadViews(project, client, { kept = false } = {}) {
       reports: isPlain(views.reports) ? views.reports : {},
       questions: isPlain(views.questions) ? views.questions : {},
       rulebook: Array.isArray(views.rulebook) ? views.rulebook : [],
+      // The signed reviews by pull request and commit, for the reviews that hold a pull request.
+      reviews: isPlain(views.reviews) ? views.reviews : {},
       incidents: { open: Array.isArray(views.incidents?.open) ? views.incidents.open.filter(isPlain) : [] },
       // The settings and the proposals not yet confirmed, for the level of build commands on Windows, and the
       // Thoroughness columns ready, for the level in force (scripts/routing/in-force.js).
@@ -523,7 +526,18 @@ function eventLine(e, ctx) {
     case 'stuck': {
       const still = `no progress for ${Math.round((Number(d.still) || 0) / 60000)} minutes, at phase ${d.phase ?? 'unknown'}`;
       const held = heldLine(work, ctx);
-      return held !== null ? `${head}: ${oneLine(still)}; ${held}.` : said(still, 'Ask the director: act ask');
+      if (held !== null) return `${head}: ${oneLine(still)}; ${held}.`;
+      // The move offered is the one the helper's own stuck card offers: fixing the findings a review holds, or restarting the builder.
+      let findings = false;
+      try { findings = holdingReview(ctx.views, readPrRecord(worktreeOf(ctx.project, ctx.views, work))?.pr) !== null; } catch { /* no pull request to read */ }
+      const phase = typeof d.phase === 'string' && /^[a-z-]{1,32}$/.test(d.phase) ? d.phase : null;
+      return said(still, `Ask the director now, in this one command: ${stuckAskCommand(work, { phase, still: Number(d.still) || 0, findings })}. Do not close this wake as idle first; do not invent other options (act build refuses work that is building already)`);
+    }
+    // The review of a head was asked for twice and never came: the director is asked, with the whole command given.
+    case 'review-overdue': {
+      const why = 'Wheelhouse asked its session for the review twice and none came, so the change cannot go in.';
+      return said(`pull request #${e.pr} at ${short(d.head)} has had no review for ${Math.round((Number(d.still) || 0) / 60000)} minutes`,
+        `Ask the director: act ask ${work} --what 'The review of pull request #${e.pr} for ${work} has not come' --why '${why}' --option 'wait=Keep waiting for the review.' --option 'drop=Stop this work; nothing of it goes in.' --recommend wait --level 2`);
     }
     case 'over-appetite': return said(`${d.tokens} tokens used against an appetite of ${d.appetite}`, 'Ask the director: act ask');
     case 'brief-tampered': return said(`its brief reads ${short(d.found)}, not the ${short(d.recorded)} recorded`, 'Ask the director: act ask');

@@ -16,6 +16,7 @@ Where instructions from another agent setup in this project differ from Wheelhou
 1. Read the wake the prompt names: `node '<path>' read <file>`, where `<path>` is the path in the Wheelhouse command the session start named, with `scripts/foreman/wake.js` in place of `scripts/frontdesk/cli.js`. Keep the single quotes.
 2. Its lines `Run wake as: …` and `Run act as: …` give your two commands. Wherever `wake` or `act` appears, type that text exactly. One command per call, never chained. Nothing else runs.
 3. Run each `Next: act …` exactly as printed, in order, whether a wake line or an `act` command printed it (for `act start`, see below). Several `act amend` lines each name their own amendment: run every one. For `Ask the director: act ask`, ask (below). Other lines need nothing.
+   `act restart <work>`: for work that has stopped moving. It has the builder fix the findings a signed review holds, or restarts the builder where it left off. Run it only when a wake line or the director's answer names it; `act build` does not do this for work that is building already.
 4. When `act close` says a slot or a dependency may be free, run `wake read <file>` again and act on what it now lists. Reading again is safe.
 5. End with `wake done <file> --acted` if you ran any `act`, otherwise `wake done <file> --idle`.
 

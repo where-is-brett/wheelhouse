@@ -117,6 +117,7 @@
 // Git runs only in the main checkout, to bring the default branch up to date
 // and make the worktree, with hooks and fsmonitor off. Everything read from a worktree goes through the safe
 // readers of scripts/feature/files.js and status.js.
+import { ASK_HELP, askExample, holdingReview } from './ask-help.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -1055,16 +1056,28 @@ const foremanNumber = (id, work) => {
   return named !== null && named.work === work && named.foreman ? named.n : null;
 };
 
+// Reads what `ask` takes; a refusal ends with a command that runs.
+function askArguments(work, rest) {
+  try {
+    const found = flagsOf(rest, ['what', 'why', 'option', 'recommend', 'level', 'about'], 'ask');
+    const what = needed(found, 'what');
+    const why = needed(found, 'why');
+    const recommendation = needed(found, 'recommend');
+    const level = needed(found, 'level');
+    if (!/^[1-4]$/.test(level)) refuse('--level is a decision level from 1 to 4');
+    const about = single(found, 'about');
+    if (about !== undefined && about !== 'start') refuse('--about is start, for a question about work that could not start');
+    return { what, why, recommendation, level, about, options: optionsOf(found, recommendation) };
+  } catch (error) {
+    if (error instanceof ForemanError) refuse(`${error.message}. Type it on one line, like this: ${askExample(work)}`);
+    throw error;
+  }
+}
+
 async function ask(ctx, work, rest) {
-  const found = flagsOf(rest, ['what', 'why', 'option', 'recommend', 'level', 'about'], 'ask');
-  const what = needed(found, 'what');
-  const why = needed(found, 'why');
-  const recommendation = needed(found, 'recommend');
-  const level = needed(found, 'level');
-  if (!/^[1-4]$/.test(level)) refuse('--level is a decision level from 1 to 4');
-  const about = single(found, 'about');
-  if (about !== undefined && about !== 'start') refuse('--about is start, for a question about work that could not start');
-  const options = optionsOf(found, recommendation);
+  const {
+    what, why, recommendation, level, about, options,
+  } = askArguments(work, rest);
   const views = await ctx.views();
   if (!isPlain(views.work[work]) && featureOf(views, work) === null) refuse(`There is no work named ${work} in state`);
 
@@ -1232,6 +1245,7 @@ async function releaseMerged(ctx, pr, merged) {
   await ctx.write('merge', { pr, ...commit, forUsers: merged.briefing });
 }
 
+// Thorough means stricter: only a CLEAN verdict counts here, never findings that are all minor.
 // The verified CLEAN reviews of pull request `pr` at `head` on record, each counted once: by its record's id, which a
 // record sent again (from a session's pending folder, say) keeps, and its signer. Two reviewers' records may hold
 // the same data (the same verdict, model and version), so the data alone never makes two reviews one.
@@ -1531,10 +1545,46 @@ function queueAgainLine(work, status, lane) {
     + `Next: act ask ${work} --what '${work} ended ${status}: queue it again, or drop it?' --why '${why}' ${options} --recommend ${lanes[0]} --level 2`;
 }
 
+// --- restart ---
+
+// The option a stuck work's card offers: wakes the feature's own session. With a signed review that holds its pull
+// request, the wake tells it to fix every finding, push and dispatch the reviewer; otherwise to carry on from where it
+// left off. The words are fixed here; no caller supplies any.
+async function restart(ctx, work, rest) {
+  flagsOf(rest, [], 'restart');
+  const views = await ctx.views();
+  const f = liveFeature(views, work);
+  refuseDirectorsPause(work, f);
+  ctx.refuseHalted(views, `${work} can't be restarted`, laneOf(views, work));
+  const worktree = worktreeOf(ctx.project, views, work);
+  const kept = readPrRecord(worktree);
+  const held = kept === null || kept.merged ? null : holdingReview(views, kept.pr);
+  const id = `restart:${work}:${ctx.now().getTime()}`;
+  const event = held !== null
+    ? {
+      type: 'findings', work, pr: kept.pr, id, detail: {
+        head: held.commit,
+        next: `Pull request #${kept.pr}'s review at ${held.commit} holds it with findings. Fix every finding (a failing test first, as your instructions say), commit and push, then dispatch wheelhouse:reviewer on the new head.`,
+      },
+    }
+    : {
+      type: 'build', work, id, detail: {
+        next: 'This work stopped moving. Read where it stands (your status, plan and git log), then carry on from where it left off.',
+      },
+    };
+  const file = writeWake(ctx.project, { to: 'feature', work, events: [event], digest: [], dropped: 0 }, { now: ctx.now });
+  try {
+    await ctx.waker(await ctx.config()).wakeFeature(work, file);
+  } catch (error) {
+    refuse(`The ${work} session wasn't woken: ${oneLine(error instanceof Error ? error.message : 'unknown error', 200)}`);
+  }
+  ctx.say(held !== null ? `Woke ${work}'s session to fix the findings of pull request #${kept.pr}.` : `Woke ${work}'s session to carry on from where it left off.`);
+}
+
 // --- The command line ---
 
 const COMMANDS = {
-  start, 'plan-ready': planReady, build, pause, resume, question, 'extra-plan': extraPlan, ask, amend, merge, close,
+  start, 'plan-ready': planReady, build, pause, resume, question, 'extra-plan': extraPlan, ask, amend, merge, close, restart,
 };
 const USAGE = `Commands: ${Object.keys(COMMANDS).join(', ')}, each followed by the work id`;
 
@@ -1555,6 +1605,10 @@ export async function main(argv, {
 } = {}) {
   try {
     const [command, work, ...rest] = argv;
+    if (command === 'help' || argv.includes('--help') || argv.includes('-h')) {
+      out(`${command === 'ask' || argv[1] === 'ask' ? ASK_HELP : `${USAGE}\nFor the exact form of a command: act ask --help`}\n`);
+      return 0;
+    }
     if (typeof command !== 'string' || !Object.hasOwn(COMMANDS, command)) refuse(USAGE);
     if (typeof work !== 'string' || !SLUG.test(work)) refuse('Give the work id: lower-case letters, digits and hyphens, at most 40');
     const project = given ?? projectHere(cwd);

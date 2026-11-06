@@ -1451,7 +1451,7 @@ test('ask records the foreman\'s own question with an id the feature can never u
     ['ask', 'mine', '--what', 'x', '--why', 'y', '--option', 'a=', '--option', 'b=waiting', '--recommend', 'a', '--level', '2'],
   ]) refusedInOneLine(await act(bad, { client: fake.client }));
   const long = await act(['ask', 'mine', '--what', 'x', '--why', 'y', '--option', `a=act merge ${'m'.repeat(291)}`,'--option', 'b=waiting', '--recommend', 'a', '--level', '2'], { client: fake.client });
-  assert.match(long.err, /^--option "a" must say what it means on one line, with single spaces, in at most 300 characters$/m);
+  assert.match(long.err, /^--option "a" must say what it means on one line, with single spaces, in at most 300 characters\. Type it on one line, like this: act ask mine /m);
   // Exactly 300 is taken.
   const fits = await act(['ask', 'mine', '--what', 'x', '--why', 'y', '--option', `a=act merge ${'m'.repeat(290)}`, '--option', 'b=waiting', '--recommend', 'a', '--level', '2'], { client: fake.client });
   assert.equal(fits.code, 0, fits.err);
@@ -1888,6 +1888,19 @@ test('a merge that waits only for the director\'s click records what it waits fo
   assert.deepEqual(asks(next.writes).map((w) => w.data.sha), [later]);
 }));
 
+test('close is refused for work with an open pull request and no report, and writes nothing', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  views.work.mine = workView('mine');
+  const wt = worktree(checkout, 'mine', { pr: { pr: 12, merged: false } });
+  views.features.mine = featureView('mine', { step: 'building', worktree: wt, branch: 'feature/mine' });
+  const fake = fakeClient({ views, answers: { prState: { ok: true, result: { state: 'open' } } } });
+  const r = await act(['close', 'mine'], { client: fake.client });
+  assert.notEqual(r.code, 0);
+  assert.match(r.err, /report/);
+  assert.equal(fake.writes.length, 0);
+}));
+
 test('close records the report with every ruling, then closes the feature and forgets its session', () => withHome(async () => {
   const checkout = await project();
   const views = emptyViews();
@@ -2240,4 +2253,56 @@ test('the pass the helper gave a foreman command is taken out of the environment
     assert.equal(process.env.WHEELHOUSE_FOREMAN_RUN, undefined, 'removed from the environment');
     assert.equal(fake.writes[0].foreman, 'a-pass', 'but sent with the command\'s own writes');
   } finally { delete process.env.WHEELHOUSE_FOREMAN_RUN; }
+}));
+
+test('act ask --help says exactly what to type, and a missing flag is answered with a command that runs', async () => {
+  const help = await act(['ask', '--help'], {});
+  assert.equal(help.code, 0);
+  assert.match(help.out, /--what .*--why .*--option .*--recommend .*--level/);
+  assert.match(help.out, /act ask <work> --what|act ask todo-cli|act ask <work>/);
+  const missing = await act(['ask', 'todo-cli', '--what', 'Go on?'], { client: fakeClient().client });
+  assert.equal(missing.code, 1);
+  assert.match(missing.err, /--why is needed\. Type it on one line, like this: act ask todo-cli --what/);
+});
+
+// --- restart ---
+
+async function restartScene({ review } = {}) {
+  const checkout = await project({ git: true });
+  const views = emptyViews();
+  views.work.mine = workView('mine');
+  views.features.mine = featureView('mine', { step: 'building', worktree: worktree(checkout, 'mine', { pr: { pr: 7, plan: 'a.md' } }) });
+  if (review !== undefined) views.reviews = { 7: { abc123: { id: 'r1', at: T0, data: { pr: 7, commit: 'abc123', verdict: review } } } };
+  const woken = [];
+  const wakerFor = () => ({ wakeFeature: async (work, file) => { woken.push({ work, wake: JSON.parse(fs.readFileSync(file, 'utf8')) }); } });
+  return { fake: fakeClient({ views }), woken, wakerFor };
+}
+
+test('restart wakes the feature to fix the findings when a signed review holds its pull request', () => withHome(async () => {
+  const { fake, woken, wakerFor } = await restartScene({ review: 'FINDINGS' });
+  const r = await act(['restart', 'mine'], { client: fake.client, wakerFor });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(woken.length, 1);
+  assert.equal(woken[0].work, 'mine');
+  const [event] = woken[0].wake.events;
+  assert.equal(event.type, 'findings');
+  assert.equal(event.pr, 7);
+  assert.match(event.detail.next, /Fix every finding.*dispatch wheelhouse:reviewer/);
+  assert.equal(fake.writes.length, 0);
+}));
+
+test('restart wakes the feature to carry on from where it left off when no review holds it', () => withHome(async () => {
+  for (const review of [undefined, 'CLEAN']) {
+    const { fake, woken, wakerFor } = await restartScene({ review });
+    const r = await act(['restart', 'mine'], { client: fake.client, wakerFor });
+    assert.equal(r.code, 0, r.err);
+    assert.equal(woken[0].wake.events[0].type, 'build');
+    assert.match(woken[0].wake.events[0].detail.next, /carry on from where it left off/);
+  }
+}));
+
+test('restart refuses work that is not there', () => withHome(async () => {
+  const { fake, woken, wakerFor } = await restartScene();
+  refusedInOneLine(await act(['restart', 'ghost'], { client: fake.client, wakerFor }));
+  assert.equal(woken.length, 0);
 }));
