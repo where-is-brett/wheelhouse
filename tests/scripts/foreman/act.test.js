@@ -1980,15 +1980,49 @@ test('close works out the outcome, and refuses a report that is missing or incom
   assert.equal(hostSaysMerged.writes.length, 0);
 
   const n = fake.writes.length;
-  const none = await act(['close', 'none'], { client: fake.client });
+  // A gap in the report goes back to the feature's session; nothing is refused to the Bosun, so no card is asked.
+  const woken = [];
+  const wakerFor = () => ({ wakeFeature: async (work, file) => { woken.push({ work, wake: JSON.parse(fs.readFileSync(file, 'utf8')) }); } });
+  const status = (work) => ({
+    v: 1, work, lane: 'feature', phase: 'done', task: null, fixRound: null, waitingOn: null, head: null, pr: null, slice: null, tokens: null, updatedAt: '2026-11-05T21:57:00.000Z',
+  });
+  // Work with no report yet is refused as before, and nothing is written or woken.
+  const none = await act(['close', 'none'], { client: fake.client, wakerFor });
   refusedInOneLine(none);
-  assert.match(none.err, /report\.md is not there/);
-  const short = await act(['close', 'short'], { client: fake.client });
-  refusedInOneLine(short);
-  assert.match(short.err, /lacks the fields: tests, assumptions, concerns, rulings/);
-  const unruled = await act(['close', 'unruled'], { client: fake.client });
-  refusedInOneLine(unruled);
-  assert.match(unruled.err, /A ruling is missing from the report's rulings: Ruling: kept/);
+  assert.match(none.err, /the report is not written/);
+  assert.equal(woken.length, 0);
+  // Work still building with a pull request open and a report with gaps is refused too: it is not finished.
+  writeStatus(featurePaths(views.features.short.data.worktree).status, { ...status('short'), phase: 'building' });
+  const building = await act(['close', 'short'], { client: fake.client, wakerFor });
+  refusedInOneLine(building);
+  assert.equal(woken.length, 0);
+  // Finished (status done) with gaps goes back to the session.
+  writeStatus(featurePaths(views.features.short.data.worktree).status, status('short'));
+  writeStatus(featurePaths(views.features.unruled.data.worktree).status, status('unruled'));
+  const short = await act(['close', 'short'], { client: fake.client, wakerFor });
+  assert.equal(short.code, 0, short.err);
+  assert.match(short.out, /required fields are missing from the report\. Sent back/);
+  const unruled = await act(['close', 'unruled'], { client: fake.client, wakerFor });
+  assert.equal(unruled.code, 0, unruled.err);
+  assert.match(unruled.out, /1 ruling is missing from the report's rulings\. Sent back/);
+  assert.doesNotMatch(unruled.out, /Ruling: kept/);
+  assert.deepEqual(woken.map((w) => w.work), ['short', 'unruled']);
+  assert.match(woken[1].wake.events[0].detail.next, /1 ruling is missing.*Run the report check/);
+  assert.doesNotMatch(woken[1].wake.events[0].detail.next, /Ruling: kept/);
+  // The host saying the pull request merged also counts as finished.
+  add('hostdone', { pr: { pr: 11, merged: true }, report: '```json\n{"v":1,"work":"hostdone","status":"done"}\n```\n\nText.\n' });
+  const hostDone = fakeClient({ views, answers: { prState: { ok: true, result: { state: 'merged' } } } });
+  const viaHost = await act(['close', 'hostdone'], { client: hostDone.client, wakerFor });
+  assert.equal(viaHost.code, 0, viaHost.err);
+  assert.equal(woken.length, 3);
+  // With no way to wake the session, the gap is still reported and not turned into a card.
+  const unwoken = await act(['close', 'unruled'], { client: fake.client, wakerFor: () => ({ wakeFeature: async () => { throw new Error('no session'); } }) });
+  refusedInOneLine(unwoken);
+  // The same gap again is not sent back a second time: the refusal stands and the Bosun asks the director.
+  const again = await act(['close', 'short'], { client: fake.client, wakerFor });
+  refusedInOneLine(again);
+  assert.match(again.err, /still not whole: ask the director/);
+  assert.equal(woken.length, 3);
   assert.equal(fake.writes.length, n);
 }));
 
