@@ -1,12 +1,12 @@
 89f5d532adf7efb49fe9e47757726b3b44b4e2b8 agents/wheelhouse-builder.agent.md
-dc6f86d7e33a301f2706e5f160d0bfb50eb042fe agents/wheelhouse-foreman.agent.md
+8dfec59e313cbc46c105724e097cd23c83a4d146 agents/wheelhouse-foreman.agent.md
 c934a21bacb7cc511b15360c7a33fd9a493fcac1 agents/wheelhouse-reviewer.agent.md
 87885afb44996047b66a08973884c7e9713d0170 agents/wheelhouse-tester.agent.md
 64c902e3d9d79cf268df2de394b47904ba11f53e plugin.json
 2b9f056d81333d3d126210192782cb7f1bdfa73d skills/wheelhouse-all-stop/SKILL.md
 9de53d1764810d7f282ed66dc061a82c2dd312dc skills/wheelhouse-board/SKILL.md
 9b94e142f4743747476fb3c7b77202d883995f19 skills/wheelhouse-briefing/SKILL.md
-b7a4aab266f706f5c0fd5624d48cc2fa66712fea skills/wheelhouse-front-desk/SKILL.md
+cc96fd7eb2baf891e462ad07a9f3ab89d7425f1b skills/wheelhouse-front-desk/SKILL.md
 94014e3df5d71e94f1439a17ca4cba0c894758b7 skills/wheelhouse-intake/SKILL.md
 ea8cb898a470b56da0a750272d4cc5ad8ea043c8 skills/wheelhouse-lean/SKILL.md
 c847ce4a4fa9e627a9d9ad6e9ceecf51141cf9dd skills/wheelhouse-logbook/SKILL.md

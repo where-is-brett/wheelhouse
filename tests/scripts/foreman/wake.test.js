@@ -432,7 +432,8 @@ test('wake read: stuck work held on purpose waits with nothing to ask; other stu
   assert.match(text, /^- stuck held: no progress for 20 minutes, at phase ready-to-build; it waits: no building slot is free \(pace\)\. Nothing to do\.$/m);
   assert.match(text, /^- stuck hers: no progress for 20 minutes, at phase ready-to-build; it waits: the director paused it, and only their amendment beginning "Resume" lifts it\. Nothing to do\.$/m);
   assert.match(text, /^- stuck mine: no progress for 20 minutes, at phase ready-to-build; it waits: paused for the five-hour window; the queue below says when it may resume\. Nothing to do\.$/m);
-  assert.match(text, /^- stuck b1: no progress for 20 minutes, at phase ready-to-build\. Ask the director: act ask$/m);
+  assert.match(text, /^- stuck b1: no progress for 20 minutes, at phase ready-to-build\. Ask the director now, in this one command: act ask b1 --what 'b1 has not moved for 20 minutes, at the step called ready-to-build\. What should happen\?' --why '[^']+' --option 'Restart the builder on where it left off=act restart b1' --option 'Wait=[^']+' --recommend 'Restart the builder on where it left off' --level 2\. Do not close this wake as idle first; do not invent other options/m);
+  assert.doesNotMatch(text, /--option '[^']*=act build/);
   assert.doesNotMatch(text, /^- stuck (held|hers|mine):.*act ask/m);
 }));
 
