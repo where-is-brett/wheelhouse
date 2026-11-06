@@ -513,6 +513,12 @@ function eventLine(e, ctx) {
       const phase = typeof d.phase === 'string' && /^[a-z-]{1,32}$/.test(d.phase) ? d.phase : null;
       return said(still, `Ask the director now, in this one command: ${stuckAskCommand(work, { phase, still: Number(d.still) || 0, findings })}. Do not close this wake as idle first; do not invent other options (act build refuses work that is building already)`);
     }
+    // The review of a head was asked for twice and never came: the director is asked, with the whole command given.
+    case 'review-overdue': {
+      const why = 'Wheelhouse asked its session for the review twice and none came, so the change cannot go in.';
+      return said(`pull request #${e.pr} at ${short(d.head)} has had no review for ${Math.round((Number(d.still) || 0) / 60000)} minutes`,
+        `Ask the director: act ask ${work} --what 'The review of pull request #${e.pr} for ${work} has not come' --why '${why}' --option 'wait=Keep waiting for the review.' --option 'drop=Stop this work; nothing of it goes in.' --recommend wait --level 2`);
+    }
     case 'over-appetite': return said(`${d.tokens} tokens used against an appetite of ${d.appetite}`, 'Ask the director: act ask');
     case 'brief-tampered': return said(`its brief reads ${short(d.found)}, not the ${short(d.recorded)} recorded`, 'Ask the director: act ask');
     case 'clash': return said(`${d.a} and ${d.b} no longer merge cleanly together`);

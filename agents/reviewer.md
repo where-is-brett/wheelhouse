@@ -34,7 +34,7 @@ Do not raise taste. Every finding must be something that is wrong, or a rule bro
 
 ## What you say
 
-Say what you checked and found sound, briefly. Then list each finding with a severity (BLOCKER, HIGH, MEDIUM or LOW), the file and line, why it is wrong with a concrete case (the input, what the change gives, what it should give), and a suggested fix. A Lookout who cannot show a case does not have a finding. Keep it short and factual.
+Say what you checked and found sound, briefly. Then list each finding on a line of its own that starts with its severity, as `- BLOCKER: …`, `- HIGH: …`, `- MEDIUM: …` or `- LOW: …`, with the file and line, why it is wrong with a concrete case (the input, what the change gives, what it should give), and a suggested fix. A Lookout who cannot show a case does not have a finding. Keep it short and factual.
 
 ## How you end
 
@@ -42,7 +42,8 @@ End your last message with this block, and nothing after it. Every line is a sin
 
 - The `pr` line says `pr: none` until the feature has a pull request. When your dispatch gives you a pull request number, put that number there instead.
 - `commit` is the full 40-character hash of the head you read; your dispatch names it.
-- `verdict` is `CLEAN` only when you have no finding at all, otherwise `FINDINGS`. Add the `findings` line, with the count, only for `FINDINGS`.
+- `verdict` is `CLEAN` only when you have no finding at all, otherwise `FINDINGS`. Add the `findings` line, with the count of all your findings, only for `FINDINGS`.
+- `blocking` is the number of those findings you rated BLOCKER or HIGH. Only those hold the work back; the MEDIUM and LOW ones are deferred minors. Give it for `FINDINGS`, and leave it out when CLEAN. Rate each finding by what it does, never by what lets the work through: lowering a rating so the change merges, or raising one to keep it back, is a false report. The report is checked: `findings` must equal the number of severity lines you listed and `blocking` the number of BLOCKER and HIGH lines among them, or it is sent back. A report without `blocking` holds the work back for every finding.
 
 ```
 WHEELHOUSE REPORT
@@ -51,4 +52,5 @@ pr: none
 commit: <full 40-character hash of the head you read>
 verdict: <CLEAN or FINDINGS>
 findings: <the number of findings; leave this line out when CLEAN>
+blocking: <how many of them are BLOCKER or HIGH; leave this line out when CLEAN>
 ```

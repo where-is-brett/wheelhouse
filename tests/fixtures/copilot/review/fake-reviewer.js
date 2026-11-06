@@ -68,7 +68,7 @@ for (const event of recorded.events) {
   else if (event.type !== 'result') emit(event);
 }
 if (knobs.extraAgent) emit({ type: 'session.custom_agents_updated', data: { agents: [{ name: 'reviewer', source: 'user' }, { name: knobs.extraAgent, source: 'project' }] } });
-const report = ['WHEELHOUSE REPORT', 'role: reviewer', `pr: ${pr}`, `commit: ${commit}`, `verdict: ${knobs.verdict ?? 'CLEAN'}`, ...(knobs.verdict === 'FINDINGS' ? ['findings: 1'] : [])].join('\n');
+const report = [...(knobs.verdict === 'FINDINGS' ? ['- HIGH: a case the change gets wrong'] : []), 'WHEELHOUSE REPORT', 'role: reviewer', `pr: ${pr}`, `commit: ${commit}`, `verdict: ${knobs.verdict ?? 'CLEAN'}`, ...(knobs.verdict === 'FINDINGS' ? ['findings: 1', 'blocking: 1'] : [])].join('\n');
 const answer = knobs.answer === 'none' ? null : `${knobs.answer === 'no-nonce' ? '' : `${nonceLine}\n`}Read the change in the folder.\n${report}`;
 if (answer !== null) emit({ type: 'assistant.message', data: { messageId: 'm2', phase: 'final_answer', content: answer } });
 emit({ type: 'result', sessionId: 'sid-review', exitCode: 0, usage: { premiumRequests: 1 } });

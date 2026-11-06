@@ -372,9 +372,16 @@ test('a head with no signed review of its own counts as reviewed when the helper
   assert.ok(diff(null, obs, { seen: new Set() }).some((e) => e.type === 'merge-ready' && e.work === 'login-page'));
 
   // A head with its own signed review needs no asking.
-  record('review', { pr: 7, commit: HEAD, verdict: 'FINDINGS' }, 2 * SEC);
+  // Findings that are all minor clear the head; a later review with findings and no count replaces it and holds.
+  record('review', { pr: 7, commit: HEAD, verdict: 'FINDINGS', findings: 2, blocking: 0 }, 2 * SEC);
+  const minor = ciIs(fakeClient({ prs: open, carried: { ok: true, review: 'none' } }), 'success');
+  const seenMinor = (await observe({ project: P, client: minor, now: at(2.5 * SEC) })).prs[7];
+  assert.equal(seenMinor.review, 'clean');
+  assert.deepEqual([seenMinor.findings, seenMinor.blocking], [2, 0], 'the counts of the signed record are carried');
+
+  record('review', { pr: 7, commit: HEAD, verdict: 'FINDINGS' }, 3 * SEC);
   const own = ciIs(fakeClient({ prs: open, carried: { ok: true, review: 'clean', upToDate: true } }), 'success');
-  assert.equal((await observe({ project: P, client: own, now: at(3 * SEC) })).prs[7].review, 'findings');
+  assert.equal((await observe({ project: P, client: own, now: at(4 * SEC) })).prs[7].review, 'findings');
   assert.deepEqual(names(own.calls).filter((n) => n === 'carried'), []);
 }));
 
@@ -394,7 +401,7 @@ test('a green head whose earlier CLEAN review did not carry over wakes its sessi
   assert.equal(events.some((e) => e.type === 'merge-ready'), false);
   // Routed to the session, which pulls and dispatches the reviewer on the head.
   assert.deepEqual(route(raised).features['login-page'].map((e) => e.type), ['review-needed']);
-  assert.match(raised[0].detail.next, new RegExp(`wheelhouse:reviewer with pr: 7 on ${HEAD}`));
+  assert.match(raised[0].detail.next, new RegExp(`wheelhouse:reviewer now with pr: 7 on ${HEAD}`));
 }));
 
 test('worktree paths from state are followed only inside the project\'s checkout', () => withHome(async () => {
