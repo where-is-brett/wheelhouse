@@ -39,6 +39,7 @@ End your last message with this block, and nothing after it. Every line is a sin
 - The `pr` line says `pr: none` until the feature has a pull request. When your dispatch gives you a pull request number, put that number there instead.
 - `commit` is the full 40-character hash of the head you tried; your dispatch names it.
 - `verdict` is `CLEAN` only when every line of the done contract held and you found nothing else, otherwise `FINDINGS`. Add the `findings` line, with the count, only for `FINDINGS`.
+- `blocking` is the number of those findings that break a line of the done contract or do real harm to a user; the rest are deferred minors. Give it for `FINDINGS` (it may be 0 or equal `findings`), and leave it out when CLEAN. Rate each finding by what it does, never by what lets the work through.
 
 ```
 WHEELHOUSE REPORT
@@ -47,4 +48,5 @@ pr: none
 commit: <full 40-character hash of the head you tried>
 verdict: <CLEAN or FINDINGS>
 findings: <the number of findings; leave this line out when CLEAN>
+blocking: <how many of them are blocking; leave this line out when CLEAN>
 ```
