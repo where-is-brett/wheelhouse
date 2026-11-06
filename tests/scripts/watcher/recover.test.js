@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeRecovery, recoverable } from '../../../scripts/watcher/recover.js';
+import { withHome } from '../../helpers/homes.js';
 
 const w = (key, data, approved) => ({ key, work: { key, at: '2026-11-03T00:00:00Z', data: { id: key, lane: 'small', ...data } }, approved });
 const views = (over = {}) => ({
@@ -19,7 +20,8 @@ test('work with a feature, or anything under stop or an incident, is not recover
   assert.deepEqual(recoverable(views({ incidents: { open: [{ id: 'i1' }] } }), { stopped: () => false }), []);
 });
 
-test('recovery raises work-ready at once, then only after its time, and not the same work again soon', async () => {
+// The recovery keeps its time in the watcher's folder, so these run in a home of their own.
+test('recovery raises work-ready at once, then only after its time, and not the same work again soon', () => withHome(async () => {
   let t = Date.parse('2026-11-05T09:00:00Z');
   const client = { state: { views: async () => ({ ok: true, views: views() }) } };
   const r = makeRecovery({ project: 'o__p', client, now: () => new Date(t), stopped: () => false });
@@ -32,9 +34,9 @@ test('recovery raises work-ready at once, then only after its time, and not the 
   assert.deepEqual(await r.check(), [], 'raised again no sooner than half an hour');
   t += 25 * 60 * 1000;
   assert.equal((await r.check()).length, 1);
-});
+}));
 
-test('recovery gives nothing when the views can not be had', async () => {
+test('recovery gives nothing when the views can not be had', () => withHome(async () => {
   const r = makeRecovery({ project: 'o__p', client: { state: { views: async () => { throw new Error('no helper'); } } } });
   assert.deepEqual(await r.check(), []);
-});
+}));
