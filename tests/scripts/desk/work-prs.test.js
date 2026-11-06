@@ -52,7 +52,7 @@ test('prsOfWork reads the pull request from the work\'s own status, only inside 
     fs.writeFileSync(path.join(dir, '.wheelhouse', 'feature', 'status.json'), JSON.stringify(status));
   }
   const views = { features: { 'todo-cli': { data: { worktree: inside } }, stray: { data: { worktree: outside } } } };
-  assert.deepEqual(prsOfWork(views, checkout), { 'todo-cli': { pr: 2, head: HEAD, phase: 'pr-open' } });
+  assert.deepEqual(prsOfWork(views, checkout), { 'todo-cli': { pr: 2, head: HEAD, phase: 'pr-open', merged: false } });
 });
 
 test('ask-bosun says what the helper did, and refuses nothing it was not given', async () => {
@@ -65,4 +65,40 @@ test('ask-bosun says what the helper did, and refuses nothing it was not given',
   const none = await askBosun({ client: client({ ok: true, skipped: 'the work has no open pull request' }), cwd: '/p', work: 'mine' });
   assert.equal(none.say, 'Nothing was asked: the work has no open pull request.');
   await assert.rejects(askBosun({ client: client({ ok: false, refused: 'no' }), cwd: '/p', work: 'mine' }));
+});
+
+// ---- finished work takes no amendment, and stranded work is seen ----
+import { FINISHED_WORDS, builderFinished, workFinished } from '../../../scripts/desk/work-prs.js';
+import { isOpen } from '../../../scripts/desk/views.js';
+
+function worktreeWith(status, pr) {
+  const checkout = fs.realpathSync(tempFolder('wh-finished-'));
+  const wt = path.join(checkout, '.claude', 'worktrees', 'todo-cli');
+  fs.mkdirSync(path.join(wt, '.wheelhouse', 'feature'), { recursive: true });
+  fs.writeFileSync(path.join(wt, '.wheelhouse', 'feature', 'status.json'), JSON.stringify({ v: 1, work: 'todo-cli', lane: 'small', phase: 'building', task: null, fixRound: null, waitingOn: null, head: HEAD, pr: null, slice: null, tokens: null, updatedAt: '2026-11-05T18:32:29.284Z', ...status }));
+  if (pr) fs.writeFileSync(path.join(wt, '.wheelhouse', 'feature', 'pr.json'), JSON.stringify(pr));
+  return { checkout, wt };
+}
+const open = (wt) => ({ ...base(), features: { 'todo-cli': { at: '2026-11-05T18:20:00.000Z', data: { work: 'todo-cli', step: 'building', worktree: wt } } } });
+
+test('work whose builder reads done, or whose pull request merged, has finished; one still building has not', () => {
+  const done = worktreeWith({ phase: 'done' });
+  assert.equal(workFinished(open(done.wt), 'todo-cli', done.checkout, isOpen), true);
+  const merged = worktreeWith({ phase: 'pr-open', pr: 2 }, { pr: 2, plan: 'p.md', merged: true });
+  assert.equal(workFinished(open(merged.wt), 'todo-cli', merged.checkout, isOpen), true);
+  const live = worktreeWith({ phase: 'building' });
+  assert.equal(workFinished(open(live.wt), 'todo-cli', live.checkout, isOpen), false);
+  // A merged piece with later pieces to build has not finished.
+  const sliced = open(merged.wt);
+  sliced.features['todo-cli'].data.slice = { n: 1, m: 3 };
+  assert.equal(workFinished(sliced, 'todo-cli', merged.checkout, isOpen), false);
+  assert.equal(builderFinished(path.join(live.checkout, 'nowhere')), false);
+  assert.match(FINISHED_WORDS, /becomes a new work/);
+});
+
+test('a closed work that still has a pull request not recorded as merged is named in views work', () => {
+  const views = { ...base(), features: { 'todo-cli': { at: '2026-11-05T19:00:00.000Z', data: { work: 'todo-cli', step: 'closed' } } } };
+  const text = workLines(views, [], words, { 'todo-cli': { pr: 6, head: HEAD, phase: 'waiting', merged: false } }).join('\n');
+  assert.match(text, /todo-cli: A to-do tool: finished, but pull request #6 is not recorded as merged/);
+  assert.deepEqual(workLines(views, [], words, { 'todo-cli': { pr: 6, merged: true } }), ['No work is open: nothing is running or waiting.']);
 });
