@@ -17,6 +17,7 @@
 //       recordedBefore: string | null, the hash it recorded before that one
 //       appetite: number | null,      the brief's token appetite
 //       report: boolean,
+//       reportHash: string | null,    the report's hash as it is now, so a rewritten report wakes the foreman again
 //       gone: boolean,                the feature's worktree is missing
 //     }>,
 //     prs: Record<pr, { work, head, branch?, ci, mergeable, review } | null>,   null: closed, forget it;
@@ -93,7 +94,7 @@ export const SEEN_CAP = 5000;
 export const DIGEST_CAP = 200;
 
 export const FOREMAN_TYPES = Object.freeze([
-  'work-ready', 'amended', 'question', 'extra-plan', 'answer', 'merge-ready', 'stuck',
+  'work-ready', 'amended', 'question', 'extra-plan', 'answer', 'merge-ready', 'stuck', 'review-overdue',
   'over-appetite', 'clash', 'stop', 'incident', 'brief-tampered', 'plan-ready', 'report', 'lift-incident', 'incident-fix',
   'approval', 'ci-push',
 ]);
@@ -350,13 +351,24 @@ function featureEvents(prev, next, settled, out) {
 
     // A feature's end, merged, blocked or closed with its report (ruling R94):
     // the phase is done now and was not when last seen. The foreman closes it.
-    if (status?.phase === 'done' && ps?.phase !== 'done') {
-      out.push({ type: 'report', work, id: `report:${work}:${anchor}`, detail: { phase: status.phase } });
+    // Also when the report is rewritten while the feature stays done: a report the close refused is sent back to its session.
+    const rewritten = pf !== null && text(pf.reportHash) !== null && text(f.reportHash) !== null && pf.reportHash !== f.reportHash;
+    if (status?.phase === 'done' && (ps?.phase !== 'done' || rewritten)) {
+      // A rewrite is named by its report's hash, so each distinct report raises it once (the cursor remembers the ids).
+      out.push({ type: 'report', work, id: ps?.phase === 'done' ? `report:${work}:rewrite:${f.reportHash}` : `report:${work}:${anchor}`, detail: { phase: status.phase } });
     }
 
     if (s.still >= STUCK_MS && !((pf?.still ?? 0) >= STUCK_MS)) {
-      const id = status ? `stuck:${work}:${status.updatedAt}` : `stuck:${work}:none:${anchor}`;
-      out.push({ type: 'stuck', work, id, detail: { still: s.still, phase: status?.phase ?? null } });
+      const open = status ? next.prs?.[status.pr] : undefined;
+      if (isPlain(open) && reviewNeeded(open) && typeof open.head === 'string') {
+        // Its pull request waits for a review nobody has dispatched: the session is told again, and the Bosun hears of it in
+        // place of a bare stuck.
+        out.push({ type: 'review-needed', work, pr: status.pr, id: `review-needed:${work}:${open.head}:again`, detail: { head: open.head, next: reviewAgainText(status.pr, open.head) } });
+        out.push({ type: 'review-overdue', work, pr: status.pr, id: `review-overdue:${work}:${open.head}`, detail: { head: open.head, still: s.still } });
+      } else {
+        const id = status ? `stuck:${work}:${status.updatedAt}` : `stuck:${work}:none:${anchor}`;
+        out.push({ type: 'stuck', work, id, detail: { still: s.still, phase: status?.phase ?? null } });
+      }
     }
 
     if (isOver(f) && !(isOver(pf) && pf.appetite === f.appetite)) {
@@ -376,10 +388,22 @@ const PR_CONDITIONS = [
   ['ci-running', (p) => p.ci === 'pending'],
 ];
 
-// What the session reads in a review-needed wake: the head is unreviewed because the gate's
-// update merge moved the context its review was taken against (ruling R119).
-const reviewNeededText = (pr, head) => `The gate brought the branch up to date at ${head}, and the review of the earlier commit didn't carry over to it. `
-  + `Pull the branch, then dispatch wheelhouse:reviewer with pr: ${pr} on ${head}. If ${head} already has its review, there is nothing to do.`;
+// What the session reads in a review-needed wake. Wheelhouse has already looked in its own record of signed reviews: the head
+// has none, so there is nothing for the session to check. Its own notes of a review never count (ruling R119: the gate's
+// update merge moved the context the earlier review was taken against).
+const reviewNeededText = (pr, head) => `Wheelhouse checked its record of signed reviews: ${head} has no review yet. The gate brought the branch up to date, and the review of the earlier commit didn't carry over to it. `
+  + `Pull the branch, then dispatch wheelhouse:reviewer now with pr: ${pr} on ${head}. Your own notes of a review don't count, only the reviewer's signed one.`;
+// The same ask once the session has let it stand: said again, firmly, before the Bosun hears of it.
+const reviewAgainText = (pr, head) => `Second notice. Wheelhouse checked its record of signed reviews again: ${head} still has no review, and the pull request cannot merge without one. `
+  + `Dispatch wheelhouse:reviewer now with pr: ${pr} on ${head}. Do nothing else first, and don't stop until it has run.`;
+// What the session reads in a findings wake or a review-passed note, decided here from the signed review's counts: it
+// never judges severity itself. A review that holds the merge says to fix every finding; one that leaves only minors
+// says they are deferred.
+const short = (head) => String(head ?? '').slice(0, 7);
+export const findingsText = (head, p) => `Wheelhouse's signed review of ${short(head)} holds the merge (${p.findings ?? 'an unknown number of'} findings; `
+  + `${Number.isInteger(p.blocking) ? `${p.blocking} of them BLOCKER or HIGH` : 'no severity count'}). `
+  + "Fix every finding it lists, push, then dispatch wheelhouse:reviewer on the new head. You can't defer these.";
+export const minorsText = (head) => `The review of ${short(head)} leaves only minor findings; they're deferred and the merge goes ahead; nothing to do.`;
 
 // The PRs this observation names, each against its last known state.
 function prEvents(prev, next, out) {
@@ -390,7 +414,10 @@ function prEvents(prev, next, out) {
     const sameHead = before !== null && before.head === p.head;
     for (const [type, holds] of PR_CONDITIONS) {
       if (holds(p) && !(sameHead && holds(before))) {
-        const detail = type === 'review-needed' ? { head: p.head, next: reviewNeededText(pr, p.head) } : { head: p.head };
+        let detail = { head: p.head };
+        if (type === 'review-needed') detail = { head: p.head, next: reviewNeededText(pr, p.head) };
+        else if (type === 'findings') detail = { head: p.head, next: findingsText(p.head, p), ...(Number.isInteger(p.findings) ? { findings: p.findings } : {}), blocking: Number.isInteger(p.blocking) ? p.blocking : null };
+        else if (type === 'review-passed' && Number.isInteger(p.findings) && p.findings > 0) detail = { head: p.head, next: minorsText(p.head), minors: p.findings };
         out.push({ type, work: p.work, pr, id: `${type}:${p.work}:${p.head}`, detail });
       }
     }

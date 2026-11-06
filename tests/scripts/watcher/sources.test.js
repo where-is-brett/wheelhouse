@@ -154,12 +154,12 @@ test('observe reads state, feature files and PRs into one observation', () => wi
     recordedBrief: briefHash(brief),
     recordedBefore: briefHash(oldBrief),
     appetite: 400000,
-    report: false,
+    report: false, reportHash: null,
     gone: false,
   });
   assert.deepEqual(first.features['search-box'], {
     status: null, questions: [], extraPlans: [], skipped: 0, briefHash: briefHash(briefText('search-box')),
-    recordedBrief: null, recordedBefore: null, appetite: 400000, report: false, gone: false,
+    recordedBrief: null, recordedBefore: null, appetite: 400000, report: false, reportHash: null, gone: false,
   });
   assert.deepEqual(first.prs, { 7: { work: 'login-page', head: HEAD, branch: 'login-page', ci: 'failure', mergeable: 'yes', review: 'clean' } });
   assert.deepEqual(first.testMerges, [{ a: 'login-page', b: 'search-box', clean: false, conflicts: ['app.js'] }]);
@@ -233,7 +233,7 @@ test('a feature whose worktree is gone is reported, not thrown', () => withHome(
   const obs = await observe({ project: P, client: fakeClient(), now: at(SEC) });
   assert.deepEqual(obs.features['gone-one'], {
     status: null, questions: [], extraPlans: [], skipped: 0, briefHash: null,
-    recordedBrief: 'b'.repeat(64), recordedBefore: null, appetite: null, report: false, gone: true,
+    recordedBrief: 'b'.repeat(64), recordedBefore: null, appetite: null, report: false, reportHash: null, gone: true,
   });
   // A relative path is refused: nothing is read through it, and it is not gone either.
   assert.equal(obs.features.relative.gone, false);
@@ -313,7 +313,7 @@ test('a FIFO at any feature path is refused, not waited on', { skip: !unix }, ()
   const obs = await observe({ project: P, client: fakeClient(), now: at(SEC) });
   assert.deepEqual(obs.features.fifo, {
     status: null, questions: [], extraPlans: [], skipped: 0, briefHash: null,
-    recordedBrief: null, recordedBefore: null, appetite: null, report: false, gone: false,
+    recordedBrief: null, recordedBefore: null, appetite: null, report: false, reportHash: null, gone: false,
   });
 }));
 
@@ -372,9 +372,16 @@ test('a head with no signed review of its own counts as reviewed when the helper
   assert.ok(diff(null, obs, { seen: new Set() }).some((e) => e.type === 'merge-ready' && e.work === 'login-page'));
 
   // A head with its own signed review needs no asking.
-  record('review', { pr: 7, commit: HEAD, verdict: 'FINDINGS' }, 2 * SEC);
+  // Findings that are all minor clear the head; a later review with findings and no count replaces it and holds.
+  record('review', { pr: 7, commit: HEAD, verdict: 'FINDINGS', findings: 2, blocking: 0 }, 2 * SEC);
+  const minor = ciIs(fakeClient({ prs: open, carried: { ok: true, review: 'none' } }), 'success');
+  const seenMinor = (await observe({ project: P, client: minor, now: at(2.5 * SEC) })).prs[7];
+  assert.equal(seenMinor.review, 'clean');
+  assert.deepEqual([seenMinor.findings, seenMinor.blocking], [2, 0], 'the counts of the signed record are carried');
+
+  record('review', { pr: 7, commit: HEAD, verdict: 'FINDINGS' }, 3 * SEC);
   const own = ciIs(fakeClient({ prs: open, carried: { ok: true, review: 'clean', upToDate: true } }), 'success');
-  assert.equal((await observe({ project: P, client: own, now: at(3 * SEC) })).prs[7].review, 'findings');
+  assert.equal((await observe({ project: P, client: own, now: at(4 * SEC) })).prs[7].review, 'findings');
   assert.deepEqual(names(own.calls).filter((n) => n === 'carried'), []);
 }));
 
@@ -394,7 +401,7 @@ test('a green head whose earlier CLEAN review did not carry over wakes its sessi
   assert.equal(events.some((e) => e.type === 'merge-ready'), false);
   // Routed to the session, which pulls and dispatches the reviewer on the head.
   assert.deepEqual(route(raised).features['login-page'].map((e) => e.type), ['review-needed']);
-  assert.match(raised[0].detail.next, new RegExp(`wheelhouse:reviewer with pr: 7 on ${HEAD}`));
+  assert.match(raised[0].detail.next, new RegExp(`wheelhouse:reviewer now with pr: 7 on ${HEAD}`));
 }));
 
 test('worktree paths from state are followed only inside the project\'s checkout', () => withHome(async () => {

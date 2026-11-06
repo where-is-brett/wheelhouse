@@ -35,6 +35,7 @@
 //     already in state is where things stand, not news.
 // `awake`, the milliseconds the watcher ran since its last observation, is
 // the caller's to measure, since only the running process can know it.
+import { reviewClear } from '../lib/review-verdict.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { featurePaths, briefHash, parseBrief, parseReport, readQuestions, readStatus } from '../feature/files.js';
@@ -177,7 +178,7 @@ export function inWorktreesFolder(checkout, worktree) {
 // read with a cap, and refused when it is not a regular file, without
 // waiting on it.
 function readFeature(work, worktree, checkout) {
-  const nothing = { status: null, questions: [], extraPlans: [], skipped: 0, briefHash: null, appetite: null, report: false, gone: false };
+  const nothing = { status: null, questions: [], extraPlans: [], skipped: 0, briefHash: null, appetite: null, report: false, reportHash: null, gone: false };
   if (!plainWorktreePath(worktree) || !isText(checkout)) return nothing;
   const stat = lstatOf(worktree);
   if (stat instanceof Error) {
@@ -197,10 +198,12 @@ function readFeature(work, worktree, checkout) {
     } catch { /* a brief that can't be read has no appetite */ }
   }
   let report = false;
+  let reportHash = null;
   const reportText = readCapped(p.report, REPORT_BYTES);
   if (reportText !== null) {
     try {
       report = parseReport(reportText).fields.work === work;
+      if (report) reportHash = briefHash(reportText);
     } catch { /* a report that can't be read is no report */ }
   }
   return {
@@ -211,6 +214,7 @@ function readFeature(work, worktree, checkout) {
     briefHash: brief === null ? null : briefHash(brief),
     appetite,
     report,
+    reportHash,
     gone: false,
   };
 }
@@ -230,10 +234,18 @@ function spelt(checkout, worktree) {
 
 // The review of the pull request's head, from the signed review records.
 function reviewOf(views, pr, head) {
-  const verdict = views.reviews?.[String(pr)]?.[head]?.data?.verdict;
-  if (verdict === 'CLEAN') return 'clean';
-  if (verdict === 'FINDINGS') return 'findings';
+  const data = views.reviews?.[String(pr)]?.[head]?.data;
+  if (reviewClear(data)) return 'clean';
+  if (data?.verdict === 'FINDINGS') return 'findings';
   return 'none';
+}
+
+// The counts the head's own signed review gives, for the words of its wake: `findings`, and `blocking` (null when the
+// record gives none). Nothing when the head has no review of its own that lists findings.
+function findingsOf(views, pr, head) {
+  const data = views.reviews?.[String(pr)]?.[head]?.data;
+  if (data?.verdict !== 'FINDINGS' || !Number.isInteger(data.findings)) return {};
+  return { findings: data.findings, blocking: Number.isInteger(data.blocking) ? data.blocking : null };
 }
 
 // A head with no signed review of its own counts as reviewed when the helper, by the gate's
@@ -288,6 +300,7 @@ async function readPr({ project, client, number, works, branchOf, views }) {
     ci: ci.result.state,
     mergeable: MERGEABLE.includes(pr.mergeable) ? pr.mergeable : 'unknown',
     review: asked ? await carriedReview({ project, client, number }) : own,
+    ...findingsOf(views, number, pr.headSha),
   };
 }
 
