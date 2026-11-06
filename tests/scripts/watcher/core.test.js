@@ -700,9 +700,12 @@ test('a head the gate brought up to date whose review did not carry over wakes i
   const [e] = routed.features['login-page'];
   assert.deepEqual([routed.features['login-page'].length, e.type, e.id, e.pr], [1, 'review-needed', 'review-needed:login-page:ddd444', 7]);
   assert.equal(e.detail.head, 'ddd444');
-  assert.match(e.detail.next, /brought the branch up to date at ddd444/);
+  assert.match(e.detail.next, /Wheelhouse checked its record of signed reviews: ddd444 has no review yet/);
+  assert.match(e.detail.next, /brought the branch up to date/);
+  assert.match(e.detail.next, /dispatch wheelhouse:reviewer now/);
+  assert.doesNotMatch(e.detail.next, /\bIf\b|already has its review|nothing to do/i, 'nothing is left for the session to judge');
   assert.match(e.detail.next, /pull/i);
-  assert.match(e.detail.next, /wheelhouse:reviewer with pr: 7 on ddd444/);
+  assert.match(e.detail.next, /wheelhouse:reviewer now with pr: 7 on ddd444/);
   assert.deepEqual(routed.foreman, []);
   // Not with CI pending or a conflict.
   for (const over of [{ ci: 'pending' }, { mergeable: 'no' }, { mergeable: 'unknown' }]) {
@@ -722,6 +725,28 @@ test('a head the gate brought up to date whose review did not carry over wakes i
     stuck.push(...r.events.filter((x) => x.type === 'stuck'));
   }
   assert.equal(stuck.length, 1);
+});
+
+test('a head still without a review after the session has let the ask stand is asked again, and the Bosun is told with the command to run', () => {
+  const needed = prState({ head: 'ddd444', ci: 'success', review: 'needed', mergeable: 'yes' });
+  const open = feature({ status: status({ phase: 'pr-open', pr: 7, updatedAt: iso(3) }) });
+  let cursor = { seen: [], prev: observation({ features: { 'login-page': open }, prs: { 7: needed } }) };
+  const events = [];
+  for (let i = 0; i < 3; i += 1) {
+    const r = step(cursor, observation({ awake: 10 * MIN, features: { 'login-page': open }, prs: { 7: needed } }));
+    cursor = r.cursor;
+    events.push(...r.events);
+  }
+  assert.deepEqual(events.filter((x) => x.type === 'stuck'), [], 'a missing review is not a bare stuck');
+  const overdue = events.filter((x) => x.type === 'review-overdue');
+  assert.equal(overdue.length, 1);
+  assert.deepEqual([overdue[0].work, overdue[0].pr, overdue[0].detail.head], ['login-page', 7, 'ddd444']);
+  assert.equal(route(overdue).foreman.length, 1);
+  const again = events.filter((x) => x.type === 'review-needed');
+  assert.equal(again.length, 1);
+  assert.equal(again[0].id, 'review-needed:login-page:ddd444:again');
+  assert.match(again[0].detail.next, /Second notice.*ddd444 still has no review.*Dispatch wheelhouse:reviewer now with pr: 7 on ddd444/);
+  assert.equal(route(again).features['login-page'].length, 1);
 });
 
 test('a feature whose phase arrives at done wakes the foreman once with report, to close it (R94)', () => {
