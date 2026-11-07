@@ -914,18 +914,20 @@ function shownFor(project, input, at, stopState = defaultStopState, carrying = n
 }
 
 // The director's typed reply to a decision shown in the chat (scripts/decisions/answer.js), on UserPromptSubmit. The prompt is
-// the director's own words only in a front-desk session that no script started, which recordAnswer checks. It records, or leaves a
-// note for board-context.js to show; it adds nothing to the turn itself, and a failure here lets the prompt through.
+// the director's own words only in a front-desk session that no script started, which recordAnswer checks. It records, and gives what
+// it made of the reply back as this turn's own context (a hook of the same event runs beside this one, so nothing is left for a
+// later prompt); a failure here lets the prompt through.
 async function decideReply(input, { client, now, find, dir, budget, env }) {
   try {
     if (typeof input.prompt !== 'string') return undefined;
     const found = find(input.cwd, { dir });
     if (!found) return undefined;
-    await recordAnswer({ project: found.project, sessionId: input.session_id, prompt: input.prompt, at: now(), cwd: input.cwd, env, client, budget });
+    const done = await recordAnswer({ project: found.project, sessionId: input.session_id, prompt: input.prompt, at: now(), cwd: input.cwd, env, client, budget });
+    return typeof done.note === 'string' && done.note !== '' ? answer.context('UserPromptSubmit', done.note) : undefined;
   } catch {
     // The reply is not recorded; nothing is decided from it.
+    return undefined;
   }
-  return undefined;
 }
 
 // On an agent whose hooks only read (`writeVia: 'helper'`), nothing here runs: no click is signed, kept or sent,

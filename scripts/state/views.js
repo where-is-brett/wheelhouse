@@ -292,7 +292,9 @@ export function confirmationTimes(events, enrolled) {
 // one, so what an agent could write through the helper's plain route decides nothing here.
 function signedForCard(card, { answeredBy, confirmations }) {
   const question = typeof card.data?.question === 'string' ? card.data.question : card.data?.title;
-  const carried = answeredBy.find((e) => byOrder(card, e) < 0 && e.data.question === question);
+  // A typed reply and the action it earns are made in one moment: the reply decides, so the outcome never depends on their ids.
+  const carried = answeredBy.filter((e) => byOrder(card, e) < 0 && e.data.question === question)
+    .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : (a.kind === 'decision-answer') === (b.kind === 'decision-answer') ? byOrder(a, b) : a.kind === 'decision-answer' ? -1 : 1))[0];
   const confirmed = confirmedAfter(confirmations, card, confirmNamed(typeof card.data?.line === 'string' ? card.data.line : question))?.event;
   return [carried, confirmed].filter(Boolean).sort(byOrder)[0];
 }
@@ -315,7 +317,9 @@ function outcomesOf(sorted, { confirmations, answeredBy }) {
     const answered = mine.find((a) => decides(card, a.data?.label));
     const signed = signedFor(card);
     const first = [answered, signed].filter(Boolean).sort(byOrder)[0];
-    const label = typeof first?.data?.label === 'string' ? first.data.label : null;
+    // A typed reply names the option chosen (or says it was the director's own words), so the card shows that, never its letter.
+    const label = first?.kind === 'decision-answer' ? (first.data.option !== '' ? first.data.option : 'in their own words')
+      : typeof first?.data?.label === 'string' ? first.data.label : null;
     // Where it was given: the deciding plain answer's, or for a signed record the nearest plain answer after it (the
     // click writes the plain answer beside its record). Null for an answer recorded before `where` existed.
     const placed = first === undefined || first === answered ? answered : mine.filter((a) => byOrder(first, a) <= 0 && WHERE_PLACES.includes(a.data?.where)).sort(byOrder)[0];

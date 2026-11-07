@@ -16,7 +16,9 @@ import { LETTERS } from './message.js';
 const none = { kind: 'none' };
 // What may follow a letter that stands on its own: the end, or a mark that ends it. A space and more words does not, so
 // "A lot of this looks fine" is a sentence and not option A.
-const AFTER_LETTER = /^(?:$|[,.;:!])/;
+// The mark may follow the letter straight on, but only when it closes there: "B, but keep it" and "B." are replies, while
+// "a.m." and "A-list" are not.
+const AFTER_LETTER = /^(?:$|[,.;:!](?:\s|$))/;
 const WORDS_LEAD = /^[\s,.;:!]+/;
 
 const countOf = (decision) => Math.min(LETTERS.length, Array.isArray(decision?.options) ? decision.options.length : 0);
@@ -35,7 +37,8 @@ function afterHead(n, rest, pending) {
   const decision = pending.find((d) => d.n === n);
   const text = rest.trim();
   if (text === '') return none;
-  const colon = text.startsWith(':');
+  // The colon that opens the director's own words has a space after it: "2: weekly", never "2:30" or "1:1 with Sam".
+  const colon = /^:\s/.test(text);
   const body = colon ? text.slice(1).trim() : text;
   const found = letterOf(body);
   // A number that names no waiting decision is a refused reply only when what follows is shaped like one.
@@ -50,25 +53,13 @@ function afterHead(n, rest, pending) {
   return none;
 }
 
-// "why", "why 2", "why 2 what about cost" and "2 why ...".
+// Only "why", "why?", "why 2" and "why 2?" (with or without a #): a sentence that happens to start with "why" is the director
+// talking, not a request to be told the reasons.
 function whyOf(text, pending) {
-  let n = null;
-  let words = '';
-  let m = /^why\b[\s,:;-]*(.*)$/is.exec(text);
-  if (m !== null) {
-    const numbered = /^#?([1-9][0-9]{0,2})(?![0-9A-Za-z])[\s,:;-]*(.*)$/s.exec(m[1]);
-    if (numbered !== null) {
-      n = Number(numbered[1]);
-      words = numbered[2].trim();
-    } else {
-      words = m[1].trim();
-    }
-  } else {
-    m = /^#?([1-9][0-9]{0,2})[\s,:;-]*why\b[\s,:;-]*(.*)$/is.exec(text);
-    if (m === null) return null;
-    n = Number(m[1]);
-    words = m[2].trim();
-  }
+  const m = /^why(?:\s+#?([1-9][0-9]{0,2}))?\s*\??$/i.exec(text);
+  if (m === null) return null;
+  const n = m[1] === undefined ? null : Number(m[1]);
+  const words = '';
   if (n === null) {
     if (pending.length === 0) return none;
     if (pending.length > 1) return { kind: 'ambiguous', candidates: pending.map((d) => d.n) };

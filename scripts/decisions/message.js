@@ -58,13 +58,18 @@ export function decisionText(decision) {
 
 // Every "Decision needed" block in a message, each as the text from its first line to its Reply line. A block that
 // never reaches a Reply line runs to the end of the message.
+// A line is read past the Markdown that may wrap it (quote marks, a heading, a bullet or number, bold, a code fence), so a block
+// dressed up that way is still found, and still has to equal the printed text to pass.
+const MARKS = /^\s*(?:(?:>\s?)+|#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|\*\*|__|`{1,3}|~{3})*\s*/;
+const plain = (line) => line.replace(MARKS, '');
+
 export function blocksIn(text) {
   const lines = String(text ?? '').split(/\r\n|[\n\r]/);
   const blocks = [];
   for (let i = 0; i < lines.length; i += 1) {
-    if (!new RegExp(`^${LEAD}\\b`).test(lines[i])) continue;
+    if (!new RegExp(`^${LEAD}\\b`).test(plain(lines[i]))) continue;
     let end = i;
-    while (end < lines.length && !/^Reply\b/.test(lines[end])) end += 1;
+    while (end < lines.length && !/^Reply\b/.test(plain(lines[end]))) end += 1;
     blocks.push(lines.slice(i, Math.min(end + 1, lines.length)).join('\n'));
     i = end;
   }

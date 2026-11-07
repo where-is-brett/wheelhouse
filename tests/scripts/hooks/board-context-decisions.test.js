@@ -4,8 +4,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { decide, cardsDue, DECISIONS_TAIL } from '../../../scripts/hooks/board-context.js';
-import { keepNote, recordAnswer } from '../../../scripts/decisions/answer.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
+import { recordRole } from '../../../scripts/lib/role.js';
 import { markSeen } from '../../../scripts/briefing/seen.js';
 import { wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { inHome, P, raise, typedAnswer } from '../../helpers/decisions-world.js';
@@ -56,27 +56,48 @@ test('no decision waiting adds nothing about decisions', async () => {
   });
 });
 
-test('a refused reply\'s note is shown once', async () => {
+test('a reply that answers a decision leaves it out of the line in that same call', async () => {
   await inHome(async (home) => {
     const repo = register(home);
     raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');
     raise('Which harbour comes first on the map?', '2026-11-08T02:00:00.000Z');
-    // The prompt hook's note for an ambiguous reply, as the hook keeps it.
-    await recordAnswer({ project: P, sessionId: 's-desk', prompt: 'B', at: new Date(NOW), cwd: repo, env: {}, client: {} });
-    const first = contextOf(await ask(repo, 'B'));
-    assert.match(first, /could answer decision 1 or 2\. Nothing was recorded/);
-    const second = contextOf(await ask(repo, 'Anything else?'));
-    assert.ok(!second.includes('Nothing was recorded'));
+    // The prompt hook records "1 B" beside this hook: this call does not list decision 1 as waiting.
+    const line = contextOf(await ask(repo, '1 B'));
+    assert.match(line, /Decisions waiting for the director: 2\. Which harbour comes first on the map\?\./);
+    assert.ok(!line.includes('How often'));
+    // With only one waiting, a lone letter answers it, and nothing is left to list.
+    const alone = await inHome(async (other) => {
+      const folder = register(other);
+      raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');
+      return ask(folder, 'B');
+    });
+    assert.equal(alone, undefined);
   });
 });
 
-test('another session\'s note is left for that session', async () => {
+test('a reply that answers nothing leaves every decision listed', async () => {
   await inHome(async (home) => {
     const repo = register(home);
     raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');
-    keepNote('s-other', 'A note for the other session.');
-    assert.ok(!contextOf(await ask(repo, 'Hello', 's-desk')).includes('A note for the other session'));
-    assert.match(contextOf(await ask(repo, 'Hello', 's-other')), /A note for the other session/);
+    raise('Which harbour comes first on the map?', '2026-11-08T02:00:00.000Z');
+    // Ambiguous with two waiting, a letter beyond the options, and words that are no reply.
+    for (const text of ['B', '1 E', 'looks good', '2 a.m. works']) {
+      const line = contextOf(await ask(repo, text));
+      assert.match(line, /1\. How often should the digest go out\?; 2\. Which harbour comes first on the map\?/, text);
+    }
+  });
+});
+
+test('under the same guards: a script-started or non-front-desk session leaves the decision listed', async () => {
+  await inHome(async (home) => {
+    const repo = register(home);
+    raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');
+    const scripted = decide({ cwd: repo, session_id: 's-desk', hook_event_name: 'UserPromptSubmit', prompt: '1 B' }, { now: at(NOW), env: { CLAUDE_CODE_ENTRYPOINT: 'sdk-cli' }, client });
+    assert.match(contextOf(await scripted), /Decisions waiting for the director: 1\. How often/);
+    // A feature session gets no decisions line at all.
+    recordRole('s-feature', 'feature');
+    const feature = await decide({ cwd: repo, session_id: 's-feature', hook_event_name: 'UserPromptSubmit', prompt: '1 B' }, { now: at(NOW), env: {}, client });
+    assert.equal(feature, undefined);
   });
 });
 
