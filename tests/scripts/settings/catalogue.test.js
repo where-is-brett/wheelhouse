@@ -1,7 +1,7 @@
 // tests/scripts/settings/catalogue.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { SETTINGS, WINDOWS_BUILD_COMMANDS, checkSetting, definitionOf } from '../../../scripts/settings/catalogue.js';
+import { SETTINGS, WINDOWS_BUILD_COMMANDS, RETIRED, RETIRED_PATTERNS, checkSetting, definitionOf, isAllowed, retiredPiece } from '../../../scripts/settings/catalogue.js';
 import { PACE, paceOf } from '../../../scripts/lib/build-loop.js';
 import { BRIEFING_GAP_HOURS, UNUSUAL } from '../../../scripts/lib/core-numbers.js';
 import { DEFAULT_SOURCES } from '../../../scripts/sources/list.js';
@@ -175,4 +175,51 @@ test('paceOf reads the pace setting and falls back to three', () => {
   assert.deepEqual(paceOf({ pace: { value: 1 } }), { building: 1, featureLane: 1 });
   for (const settings of [undefined, null, {}, { pace: { value: 7 } }, { pace: { value: 'many' } }]) assert.deepEqual(paceOf(settings), PACE);
   assert.equal(PACE.building, 3);
+});
+
+// Retired keys (design section 4.1): the catalogue still accepts them, so old records never fail a check.
+const LISTS = {
+  RETIRED: Object.freeze({ capRequests: 'copilot' }),
+  RETIRED_PATTERNS: Object.freeze([{ pattern: /^known:[a-z0-9-]{1,40}$/, piece: 'delegation' }]),
+};
+
+test('the shipped retired lists are frozen and start empty', () => {
+  assert.ok(Object.isFrozen(RETIRED));
+  assert.ok(Object.isFrozen(RETIRED_PATTERNS));
+  assert.deepEqual(RETIRED, {});
+  assert.deepEqual(RETIRED_PATTERNS, []);
+  assert.equal(retiredPiece('presence'), undefined);
+  assert.equal(retiredPiece(42), undefined);
+});
+
+test('retiredPiece names the piece from the key list or from a pattern', () => {
+  assert.equal(retiredPiece('capRequests', LISTS), 'copilot');
+  assert.equal(retiredPiece('known:git', LISTS), 'delegation');
+  assert.equal(retiredPiece('presence', LISTS), undefined);
+  assert.equal(retiredPiece('toString', LISTS), undefined);
+});
+
+test('a retired key is accepted with any value, with or without an end time', () => {
+  for (const key of ['capRequests', 'known:git']) {
+    for (const value of [3, 'x', null, { a: 1 }, [1], false]) {
+      assert.doesNotThrow(() => checkSetting(key, value, undefined, LISTS));
+      assert.doesNotThrow(() => checkSetting(key, value, '2026-11-07T10:00:00Z', LISTS));
+      assert.equal(isAllowed(key, value, LISTS), true);
+    }
+  }
+});
+
+test('a retired key has a retired definition and an unknown key still throws', () => {
+  assert.deepEqual(definitionOf('capRequests', LISTS), { label: 'capRequests', group: 'retired', retired: true, piece: 'copilot', home: 'project' });
+  assert.equal(definitionOf('known:git', LISTS).retired, true);
+  assert.equal(definitionOf('known:git', LISTS).piece, 'delegation');
+  assert.equal(definitionOf('presence', LISTS).retired, undefined);
+  assert.throws(() => checkSetting('nonsense', 1, undefined, LISTS), /Wheelhouse has no setting called nonsense/);
+  assert.equal(isAllowed('nonsense', 1, LISTS), false);
+});
+
+test('a retired key wins over a live entry of the same name', () => {
+  const lists = { RETIRED: Object.freeze({ presence: 'x' }), RETIRED_PATTERNS: Object.freeze([]) };
+  assert.equal(definitionOf('presence', lists).retired, true);
+  assert.doesNotThrow(() => checkSetting('presence', 'whatever', undefined, lists));
 });
