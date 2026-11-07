@@ -8,7 +8,7 @@
 // argument. Every error that leaves here has the key scrubbed out of it, and a fault in reaching GitHub is said
 // in GitHub's name.
 import { run as realRun } from '../lib/run.js';
-import { publicHttps } from '../screens/pages.js';
+import { publicHttps } from '../pictures/pages.js';
 import { MERGE_SECONDS, READ_SECONDS, request } from './curl.js';
 import { adapterFrom, refusalOf, scrub, settle } from './adapter.js';
 import { STATUS_CONTEXT } from '../checks/where.js';

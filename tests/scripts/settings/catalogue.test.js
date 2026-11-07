@@ -27,7 +27,6 @@ test('every setting in design section 14 is in the catalogue, with its default',
     roundCap: ['project', 3],
     compactPrepare: ['project', 200000],
     compactWindow: ['project', 300000],
-    delegationReviewDays: ['project', 14],
     unusualFactor: ['project', UNUSUAL.factor],
     sources: ['project', DEFAULT_SOURCES.map((source) => source.url)],
     engine: ['project', 'wheelhouse'],
@@ -36,7 +35,6 @@ test('every setting in design section 14 is in the catalogue, with its default',
     capMinutes: ['project', { quick: 20, small: 60, slice: 120, bug: 30 }],
     capTokens: ['project', { quick: 1000000, small: 4000000, slice: 10000000, bug: 2000000 }],
     bundleApprovals: ['project', false],
-    blindCards: ['project', true],
     engineRoom: ['project', false],
   };
   assert.deepEqual(Object.keys(SETTINGS).sort(), Object.keys(expected).sort());
@@ -49,8 +47,6 @@ test('every setting in design section 14 is in the catalogue, with its default',
   assert.deepEqual(SETTINGS.autonomy.levels, ['cautious', 'balanced', 'trusting']);
   assert.deepEqual(SETTINGS.pace.levels, [1, 2, 3]);
   assert.deepEqual(SETTINGS.presence.levels, ['here', 'away', 'dnd']);
-  assert.doesNotThrow(() => checkSetting('known:feature-flags', true));
-  assert.doesNotThrow(() => checkSetting('known:feature-flags', false));
 });
 
 test('a level outside a setting\'s list is refused in plain words', () => {
@@ -59,8 +55,6 @@ test('a level outside a setting\'s list is refused in plain words', () => {
   assert.throws(() => checkSetting('pace', '2'), /pace can't be 2/);
   assert.throws(() => checkSetting('nonsense', 'x'), { message: 'Wheelhouse has no setting called nonsense' });
   assert.throws(() => checkSetting('constructor', 'x'), /no setting called constructor/);
-  assert.throws(() => checkSetting('known:Bad Name', true), /no setting called known:Bad Name/);
-  assert.throws(() => checkSetting('known:git', 'yes'), /known:git can't be yes/);
   assert.throws(() => checkSetting('briefingGapHours', 0), /can't be 0/);
   assert.throws(() => checkSetting('briefingGapHours', 25), /can't be 25/);
   assert.throws(() => checkSetting('briefingGapHours', 1.5), /can't be 1.5/);
@@ -72,7 +66,6 @@ test('a level outside a setting\'s list is refused in plain words', () => {
   assert.throws(() => checkSetting('compactWindow', 1000001), /can't be 1000001/);
   assert.throws(() => checkSetting('compactWindow', 320000.5), /can't be 320000.5/);
   assert.doesNotThrow(() => checkSetting('compactWindow', 320000));
-  assert.throws(() => checkSetting('delegationReviewDays', 6), /can't be 6/);
   assert.throws(() => checkSetting('unusualFactor', 11), /can't be 11/);
   assert.throws(() => checkSetting('unusualFactor', 1), /can't be 1/);
 });
@@ -182,8 +175,8 @@ const LISTS = {
 test('the shipped retired lists are frozen and hold what has been lifted out', () => {
   assert.ok(Object.isFrozen(RETIRED));
   assert.ok(Object.isFrozen(RETIRED_PATTERNS));
-  assert.deepEqual(RETIRED, { capRequests: 'copilot' });
-  assert.deepEqual(RETIRED_PATTERNS, []);
+  assert.deepEqual(RETIRED, { capRequests: 'copilot', delegationReviewDays: 'delegation', blindCards: 'delegation' });
+  assert.deepEqual(RETIRED_PATTERNS.map((r) => [r.pattern.source, r.piece]), [['^known:[a-z0-9-]{1,40}$', 'delegation']]);
   assert.equal(retiredPiece('capRequests'), 'copilot');
   assert.equal(retiredPiece('presence'), undefined);
   assert.equal(retiredPiece(42), undefined);
@@ -229,4 +222,22 @@ test('capRequests is retired: any value is accepted, and it is no live setting',
   }
   assert.equal(definitionOf('capRequests').retired, true);
   assert.equal(definitionOf('capRequests').piece, 'copilot');
+});
+
+test('the delegation keys are retired: an old profile or record holding them still checks, and none is a live setting', () => {
+  for (const key of ['delegationReviewDays', 'blindCards']) {
+    assert.equal(Object.hasOwn(SETTINGS, key), false, key);
+    for (const value of [14, true, 'x', null]) {
+      assert.doesNotThrow(() => checkSetting(key, value), key);
+      assert.equal(isAllowed(key, value), true, key);
+    }
+    assert.equal(definitionOf(key).piece, 'delegation');
+  }
+  for (const key of ['known:git', 'known:feature-flags']) {
+    for (const value of [true, false, 'yes']) assert.doesNotThrow(() => checkSetting(key, value), key);
+    assert.equal(definitionOf(key).retired, true);
+    assert.equal(retiredPiece(key), 'delegation');
+  }
+  // A key that only looks like the pattern is still no setting.
+  assert.throws(() => checkSetting('known:Bad Name', true), /no setting called known:Bad Name/);
 });

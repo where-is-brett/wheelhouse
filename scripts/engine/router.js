@@ -1,9 +1,9 @@
 // scripts/engine/router.js
-// The card router (Archon design, section 8.3): each ask from the engine is answered by the fixed table, answered by
-// its recommendation where a delegation lowered it, or becomes a card; a provider's usage limit is only a Logbook line.
+// The card router (Archon design, section 8.3): each ask from the engine is answered by the fixed table or becomes a
+// card; a provider's usage limit is only a Logbook line.
 // The director's cards a day limit what is pushed, never what exists (a target, not a hard cap): what holds up all work, and All stop, ignore it.
-// It decides nothing a model would, and silence is never consent: an ask with no answer the table or a delegation
-// gives waits for the director.
+// It decides nothing a model would, and silence is never consent: an ask with no answer the table gives waits for the
+// director. Every decision at level 3 or 4 is the director's card.
 //
 // A card is one of two shapes, so the signing that already exists signs it:
 //   { approval: { pr, sha, what, why, ... } }   an approval of visible work, signed as any pull request's approval;
@@ -33,10 +33,9 @@ const WHY = {
 // Whether the ask's answer holds up all work (the main line red with no hold, a run that lost its owner).
 const holdsAll = (ask) => ask?.holdsAll === true || ask?.labels?.holds === 'all';
 
-// What to do with one ask (an `ask` EngineEvent as the adapter gives it). `levels` are the project's level records by
-// topic ({ [topic]: { value } }), from which a delegation lowers a level-3 ask to level 2.
+// What to do with one ask (an `ask` EngineEvent as the adapter gives it).
 //   -> { answer: { choice, words? }, line, level } | { card: { approval } | { question }, importance, exempt } | { line }
-export function routeAsk(ask, { levels = {} } = {}) {
+export function routeAsk(ask) {
   if (!isPlain(ask)) return { line: 'The engine sent something that isn\'t a question; nothing was done with it.' };
   const level = [1, 2, 3, 4].includes(ask.level) ? ask.level : 3;
   const optionIds = new Set((ask.options ?? []).map((o) => o?.id));
@@ -46,11 +45,6 @@ export function routeAsk(ask, { levels = {} } = {}) {
     return { answer: { choice: ask.answer }, line: ask.line ?? `The build's question was answered by the standing rule (level ${level}).`, level };
   }
   if (ask.card === false && !isText(ask.answer)) return { line: ask.line ?? 'The build noted something; nothing waits for you.' };
-  // A pack ask at level 3 that a delegation lowered to level 2 is answered by its recommendation.
-  const lowered = level === 3 && isText(ask.topic) && levels?.[ask.topic]?.value === 2;
-  if (lowered && isText(ask.recommend) && optionIds.has(ask.recommend)) {
-    return { answer: { choice: ask.recommend }, line: `The build's question was answered as recommended, under your delegation for ${ask.topic}.`, level: 2 };
-  }
   const importance = importanceOf(ask, level);
   return { card: cardOf(ask, level), importance, exempt: ignoresBudget({ importance }) || holdsAll(ask) };
 }

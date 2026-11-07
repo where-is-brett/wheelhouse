@@ -38,14 +38,12 @@ function reviewKindsOf(i) {
   return Array.isArray(i.reviewKinds) ? i.reviewKinds.filter((k) => typeof k === 'string') : [];
 }
 
-// An approval counts only if it verifies and names the head commit, or is the
-// carried form, as for a review.
+// An approval counts only if it verifies and names the head commit: one of an earlier commit never carries
+// over, so after an update the director approves the head again.
 export function approvalCounts(entry, headSha, enrolled) {
-  const carried = entry?.carried === true;
-  const record = carried ? entry.record : entry;
-  return record?.kind === 'approval'
-    && verify(record, enrolled)
-    && (carried || record.data?.commit === headSha);
+  return entry?.kind === 'approval'
+    && verify(entry, enrolled)
+    && entry.data?.commit === headSha;
 }
 
 // Today's rule: only a signed approval counts.
@@ -56,18 +54,15 @@ const CHAT_PROOFS = ['chat-click'];
 const REAL_USER_PROOFS = ['host', 'window'];
 const NEEDS_WORDS = { host: 'the director\'s approval on the code host', window: 'the director\'s click in Wheelhouse\'s window' };
 
-// An unsigned approval (ruling P5-21): a card-answer labelled Approve naming the head commit, or the carried
-// form, whose proof is a chat click the caller takes, on a project with no real users. Only the chat proofs
+// An unsigned approval (ruling P5-21): a card-answer labelled Approve naming the head commit, whose proof is a chat click the caller takes, on a project with no real users. Only the chat proofs
 // count unsigned (ruling P5-48): the helper alone writes a card-answer naming a proof, but an unsigned record
 // proves nothing more than a chat click, so a window's or the host's proof counts only signed.
 function clickApproves(entry, headSha, proofs, realUsers) {
-  const carried = entry?.carried === true;
-  const record = carried ? entry.record : entry;
-  const proof = record?.data?.proof;
+  const proof = entry?.data?.proof;
   return !realUsers
-    && record?.kind === 'card-answer'
-    && record.data?.label === 'Approve'
-    && (carried || record.data?.commit === headSha)
+    && entry?.kind === 'card-answer'
+    && entry.data?.label === 'Approve'
+    && entry.data?.commit === headSha
     && CHAT_PROOFS.includes(proof) && proofs.includes(proof);
 }
 
@@ -76,7 +71,7 @@ function approvalOf(i, headSha) {
   const proofs = Array.isArray(i.approvalProofs) ? i.approvalProofs : [SIGNED_PROOF];
   const realUsers = i.realUsers === true;
   // A signed approval counts where signed approvals do (today's rule), or where the proof it names is taken.
-  const signedProof = (i.approval?.carried === true ? i.approval.record : i.approval)?.data?.proof;
+  const signedProof = i.approval?.data?.proof;
   const signedTaken = proofs.includes(SIGNED_PROOF) || (typeof signedProof === 'string' && proofs.includes(signedProof) && !(realUsers && CHAT_PROOFS.includes(signedProof)));
   const counts = headSha !== ''
     && ((signedTaken && approvalCounts(i.approval, headSha, i.enrolled)) || clickApproves(i.approval, headSha, proofs, realUsers));

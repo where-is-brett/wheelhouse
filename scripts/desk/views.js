@@ -5,8 +5,8 @@
 import { glanceLine, renderBoard } from '../board/render.js';
 import { heldByNotNow, numberedWaiting } from '../board/model.js';
 import { effectiveSettings, settingsText } from '../settings/effective.js';
-import { KNOWN, SETTINGS } from '../settings/catalogue.js';
-import { glossaryOf, knownConcepts, plainWords, termPattern } from '../frontdesk/glossary.js';
+import { SETTINGS } from '../settings/catalogue.js';
+import { glossaryOf, plainWords, termPattern } from '../frontdesk/glossary.js';
 import { endedBy, since, NO_PLAN, STARTS_UNAPPROVED } from '../foreman/queue.js';
 import { cardTextOf, hashOf } from '../mod/status.js';
 import { cardButtons } from '../mod/buttons.js';
@@ -17,13 +17,11 @@ import { sinceLine } from '../cards/panel-words.js';
 import { contextText } from './context.js';
 import { readStatus } from '../safekeeping/readings.js';
 import { paneFrom } from './mod-pane.js';
-import { goalInForce } from '../engine/goal.js';
-import { endedReport, goalLogbook, goalOpening, goalReportText } from '../engine/goal-report.js';
 import { answeredLines, buildLines, runningLines, shippedLines } from '../engine/words.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const flat = (x) => (typeof x === 'string' ? x.replace(/\s+/g, ' ').trim() : x);
-const LABELS = [...Object.values(SETTINGS), KNOWN].map((setting) => setting.label);
+const LABELS = Object.values(SETTINGS).map((setting) => setting.label);
 export const NO_RECORD = 'This project has no record to show yet';
 
 // How far back "Decided in the last hour:" looks, its lead, and the most lines it lists.
@@ -213,16 +211,16 @@ export function whyNext(views, question, n) {
   return [`Say one sentence and nothing else, ${how}`, `It's like <an everyday comparison>: <what card ${n} decides, in plain words>.`];
 }
 
-// The words the front desk's lines go through: the glossary, the explanations setting, the concepts
-// the director knows, and what stays as written: the settings' names, the titles of the work and the
+// The words the front desk's lines go through: the glossary, the explanations setting, and what stays
+// as written: the settings' names, the titles of the work and the
 // `names` the project goes by. `own` is the director's own settings view.
 export function deskWords(views, own, now, names = []) {
   const settings = effectiveSettings({ project: isPlain(views.settings) ? views.settings : {}, profile: isPlain(own) ? own : {}, now });
   const titles = Object.values(isPlain(views.work) ? views.work : {}).map((w) => flat(w?.work?.data?.title)).filter((t) => typeof t === 'string' && t !== '');
-  return { glossary: glossaryOf(views.glossary), explanations: settings.explanations?.value, known: knownConcepts(settings), protect: [...LABELS, ...titles], names };
+  return { glossary: glossaryOf(views.glossary), explanations: settings.explanations?.value, protect: [...LABELS, ...titles], names };
 }
 
-// The record's views as the helper gives them ({ views, names, stop, cards, answers, review }), or a refusal.
+// The record's views as the helper gives them ({ views, names, stop, cards, answers }), or a refusal.
 async function recordOf(source, args) {
   const got = await source.views(args);
   if (got?.ok !== true || !isPlain(got.views)) return { refused: got?.refused ?? NO_RECORD };
@@ -248,16 +246,6 @@ async function boardOf(source, options) {
 
 const lined = (text) => String(text).split('\n');
 const DAY_MS = 24 * 60 * 60 * 1000;
-
-// A goal's words a text opens or ends with, or none: what `make` gives from the record, and never a reason to lose the text.
-async function goalWords(source, make) {
-  try {
-    const got = await source.views({ cards: true });
-    return got?.ok === true && isPlain(got.views) ? make(got.views, got.cards ?? []) : '';
-  } catch {
-    return '';
-  }
-}
 
 // The briefing's lines from the engine: what shipped since `since`.
 async function engineBriefing(source, { since }) {
@@ -310,9 +298,7 @@ const VIEWS = {
     const at = args.at ? new Date(args.at) : now();
     // The survey the briefing mentions is the record's latest, unless the caller took one again.
     const survey = args.survey !== undefined ? args.survey : ((await source.views({}))?.views?.survey ?? null);
-    // The report on a goal comes first, whole: only the briefing itself is cut to its length.
-    const opening = await goalWords(source, (views, cards) => goalOpening(views, { since: args.since ?? null, cards }));
-    const given = contextText('briefing', inputs, { ...args, survey, project: source.project, at, opening });
+    const given = contextText('briefing', inputs, { ...args, survey, project: source.project, at });
     // The engine's shipped work since the briefing's last, with its cost (Archon design, section 4.1).
     const extra = await engineBriefing(source, { since: args.since ?? new Date(at.getTime() - DAY_MS).toISOString() });
     if (extra.length > 0) given.text = `${given.text}\n${extra.join('\n')}`;
@@ -324,15 +310,11 @@ const VIEWS = {
     const inputs = await boardOf(source, { offline: false });
     if (inputs.refused) return { ok: false, refused: inputs.refused };
     const tab = args.tab ?? inputs.settings?.boardTab?.value;
-    // A goal's report stays on the Logbook until each item in it is settled.
-    const report = tab === 'build' ? '' : await goalWords(source, (views, cards) => goalLogbook(views, { cards }));
     if (args.context) {
-      const given = contextText('board', inputs, { project: source.project, at: now(), tab: args.tab, reserve: (args.reserve ?? 0) + (report === '' ? 0 : report.length + 2) });
-      if (report !== '') given.text = `${given.text}\n\n${report}`;
+      const given = contextText('board', inputs, { project: source.project, at: now(), tab: args.tab, reserve: args.reserve ?? 0 });
       return { ok: true, data: given, lines: lined(given.text) };
     }
     let text = renderBoard(inputs.model, { tab, ...(args.limit ? { limit: args.limit } : {}) });
-    if (report !== '') text = `${text}\n\n${report}`;
     // The build tab shows each run's steps in plain words and its cost.
     if (tab === 'build') {
       const runs = buildLines((await source.views({}))?.views ?? {}, { now: now() });
@@ -341,11 +323,11 @@ const VIEWS = {
     return { ok: true, data: { text }, lines: lined(text) };
   },
 
-  // `cards`, `answers` and `review` ask for what the helper's views give with them. The record's
+  // `cards` and `answers` ask for what the helper's views give with them. The record's
   // other views come with it, for the front desk's own lists (the rulebook, ideas, glossary, levels).
   // With `outcomes: { since }` the decided cards come too (decidedOutcomes), for the front desk's `card` and `views`.
   async waiting(args, source, { now } = {}) {
-    const got = await recordOf(source, { cards: true, answers: args.answers === true, review: args.review === true });
+    const got = await recordOf(source, { cards: true, answers: args.answers === true });
     if (got.refused) return { ok: false, refused: got.refused };
     const numbered = numberedWaiting(got.views, got.cards ?? []);
     const at = typeof now === 'function' ? now() : new Date();
@@ -417,24 +399,6 @@ const VIEWS = {
     return { ok: true, data: { survey: got.views.survey ?? null }, lines: surveyLines(got.views.survey) };
   },
 
-  // The goal asked for by id, or the one in force: its title and the time it stops starting work. A goal that has ended, or with
-  // none in force the latest to end, gives its report, and that is the view's lines.
-  async goal(args, source) {
-    const got = await recordOf(source, { cards: true });
-    if (got.refused) return { ok: false, refused: got.refused };
-    let entry = null;
-    if (typeof args.goal === 'string') {
-      const held = isPlain(got.views.goals) && Object.hasOwn(got.views.goals, args.goal) ? got.views.goals[args.goal] : undefined;
-      if (held !== undefined) entry = { id: args.goal, hash: held.hash, sheet: held.sheet, state: held.ended === null ? 'running' : 'ended', startedAt: held.startedAt, until: held.sheet.until };
-    } else {
-      entry = goalInForce(got.views);
-    }
-    const report = endedReport(got.views, { ...(typeof args.goal === 'string' ? { id: args.goal } : {}), cards: got.cards ?? [], timeZone: args.timeZone });
-    if (report !== null) return { ok: true, data: { goal: entry, report }, lines: lined(goalReportText(report)) };
-    if (entry === null) return { ok: true, data: { goal: null }, lines: ['No goal is running.'] };
-    const lines = [`${entry.sheet.title} (${entry.id})`, `It stops starting work at ${entry.until}.`];
-    return { ok: true, data: { goal: entry }, lines };
-  },
 };
 
 // readView(view, args, source, { now }) -> { ok, view, data, lines } | { ok: false, refused }.

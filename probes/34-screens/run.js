@@ -21,8 +21,8 @@ import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { run } from '../../scripts/lib/run.js';
 import { SCREEN_SIZES, SCREEN_TIMEOUT_MS, SCREEN_SETTLE_MS } from '../../scripts/lib/front-desk.js';
-import { findBrowser, runBrowser, stopsAtPicture, removeProfile } from '../../scripts/screens/shoot.js';
-import { pixelHash } from '../../scripts/screens/png.js';
+import { findBrowser, runBrowser, stopsAtPicture, removeProfile } from '../../scripts/pictures/shoot.js';
+import { pixelHash } from '../../scripts/pictures/png.js';
 
 const SELF = fileURLToPath(import.meta.url);
 

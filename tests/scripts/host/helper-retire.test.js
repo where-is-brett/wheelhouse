@@ -276,7 +276,7 @@ test('All stop, the desk\'s stopping acts and the confirm window go through whil
     assert.equal((await client.retire({ forUpdate: true })).retired, true);
     assert.deepEqual(await client.stop(), { ok: true }, '/stop/set');
     assert.equal((await client.desk.act({ v: 'desk/1', project: 'o__p', command: 'all-stop', args: { by: 'mod' } })).ok, true, 'All stop from the desk');
-    for (const command of ['lift-all-stop', 'end-goal', 'narrow-goal']) {
+    for (const command of ['lift-all-stop']) {
       assert.notEqual((await act(client, command)).refused, UPDATING, command);
     }
     assert.equal((await act(client, 'answer')).refused, UPDATING, 'other acts wait');

@@ -8,9 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fakeEngine } from '../../../scripts/engine/fake.js';
 import { engineRunner } from '../../../scripts/engine/runner.js';
-import { READER_WORK } from '../../../scripts/delegation/reader.js';
-import { alike } from '../../../scripts/delegation/words.js';
-import { decisionKey } from '../../../scripts/delegation/asked.js';
+import { alike } from '../../../scripts/lib/words.js';
 import { makeEvent } from '../../../scripts/state/events.js';
 import { FIX_LANE } from '../../../scripts/engine/fix-main.js';
 import { wayBack, asking as asks, forever, quiet } from '../../helpers/way-back.js';
@@ -938,27 +936,6 @@ test('an answer the engine refuses starts nothing again', async () => {
   } finally { t.cleanup(); }
 });
 
-test('the fresh run asking the question the director answered is answered from that answer, with no second card', async () => {
-  const t = setUp({ recordings: { one: blockedAsk('q1', { options: OWN }), two: blockedAsk('q2', { options: OWN }), three: blockedAsk('q3', { question: 'Another question?', options: OWN }) }, gate: { headOf: async () => 'a'.repeat(40), commitsSince: async () => 0, exclusionsOf: async () => [] } });
-  t.runner.onEnter(() => {});
-  try {
-    const { runId } = await t.ask('one');
-    t.sign('Its own line');
-    ended(t, runId);
-    await t.runner.tick();
-    const cards = () => t.writes.filter((w) => w.kind === 'question').length;
-    assert.equal(cards(), 1);
-    const again = await t.ask('two');
-    assert.equal(cards(), 1, 'no second card for the same question');
-    const answered = acts(t.engine).filter((c) => c.runId === again.runId).map((c) => c.action.answer?.choice);
-    assert.deepEqual(answered, ['own']);
-    assert.ok(t.writes.some((w) => w.kind === 'note' && /Its own line/.test(w.data.words)), 'the Logbook says it was answered from the director\'s answer');
-    await t.ask('three');
-    assert.equal(cards(), 2, 'a new question still comes to the director');
-  } finally { t.cleanup(); }
-});
-
-// The merge queue's question about a pull request, as the adapter gives it, and what its record step says it asked.
 const ASKED_HEAD = 'c'.repeat(40);
 const mergeAsk = (id) => ({ type: 'ask', id, kind: 'question', level: 3, recommend: null, card: true, holdsAll: true, mergeQuestion: { pr: 7 }, reason: 'The merge queue won\'t judge pull request #7 by itself.', options: [{ id: 'go', label: 'Merge at ccc' }, { id: 'back', label: 'Return it' }, { id: 'leave', label: 'Leave it' }] });
 function mergeSetUp({ stop = false, title = 'Switch on the greeting', lane = 'feature', head = ASKED_HEAD, askedHead = ASKED_HEAD, merge = 'go', park = null, signed = true, act, known = true, handBack, file = null, takeBack, notReady, localChange } = {}) {
@@ -1332,76 +1309,6 @@ test('the card is written whether or not onCard throws', async () => {
     await t.ask();
     assert.equal(t.writes.filter((w) => w.kind === 'question').length, 1);
     assert.equal(t.writes.filter((w) => w.kind === 'note' && w.data.about === 'engine').length, 0, 'nothing is said');
-  } finally { t.cleanup(); }
-});
-
-test('a question card is told to the seals after it is written, with its branch and folder', async () => {
-  const seen = [];
-  const t = setUp({
-    recordings: { one: asking('q1', { context: { branch: 'wh/x', folder: '/w/x' } }) },
-    onCard: (card) => { seen.push({ card, written: t.writes.filter((w) => w.kind === 'question').length }); },
-  });
-  try {
-    const { runId } = await t.ask();
-    const q = t.writes.find((w) => w.kind === 'question').data;
-    assert.deepEqual(seen, [{ card: { id: q.id, kind: 'question', work: 'sale-banner', runId, level: 3, branch: 'wh/x', folder: '/w/x' }, written: 1 }]);
-  } finally { t.cleanup(); }
-});
-
-test('a level 4 question is told with its level, and the merge queue\'s and trouble cards by what they are', async () => {
-  const seen = [];
-  const t = setUp({
-    recordings: {
-      one: asking('q1', { level: 4 }),
-      two: asking('q2', { mergeQuestion: { pr: 7 } }),
-      three: asking('q3', { kind: 'trouble', card: true, options: [] }),
-    },
-    onCard: (card) => { seen.push(card); },
-  });
-  try {
-    await t.ask('one');
-    await t.ask('two');
-    await t.ask('three');
-    assert.deepEqual(seen.map((c) => [c.kind, c.level]), [['question', 4], ['merge', 3], ['trouble', seen[2]?.level]]);
-  } finally { t.cleanup(); }
-});
-
-test('an approval card and a cap card are told to the seals', async () => {
-  const seen = [];
-  const t = setUp({
-    recordings: { one: asking('q1', { kind: 'approval', pr: 7, sha: HEAD, approve: 'b' }) },
-    onCard: (card) => { seen.push(card); },
-  });
-  try {
-    const { runId } = await t.ask();
-    await t.runner.capped({ runId, work: 'sale-banner', lane: 'quick', branch: 'wh/x', reached: { cap: 'minutes', limit: 30 } });
-    const kinds = seen.map((c) => c.kind);
-    assert.ok(kinds.includes('cap'));
-    assert.equal(seen.find((c) => c.kind === 'cap').branch, 'wh/x');
-    assert.equal(seen.find((c) => c.kind === 'cap').level, 3);
-  } finally { t.cleanup(); }
-});
-
-test('an ask on a reader\'s run never becomes a card, and goes to the seals', async () => {
-  const told = [];
-  const t = setUp({ workOf: () => ({ work: READER_WORK, lane: 'reader' }), onReaderAsk: (ask) => told.push(ask.id) });
-  try {
-    await t.runner.onAsk({ type: 'ask', runId: 'r-1', at: 't', id: 'r-1:owner-lost', kind: 'trouble', level: 3, work: null, recommend: 'stop', labels: {}, options: [], context: {}, card: true });
-    assert.deepEqual(told, ['r-1:owner-lost']);
-    assert.deepEqual(t.writes, []);
-  } finally { t.cleanup(); }
-});
-
-test('no cap reads a reader\'s run, and the runner writes no cost for it', async () => {
-  const t = setUp({ recordings: { big: spending(2500000) } });
-  try {
-    const { runId } = t.engine.start({ recording: 'big', running: true });
-    t.views.runs = { [READER_WORK]: [{ at: '2026-10-29T12:50:00.000Z', data: { work: READER_WORK, lane: 'reader', engine: 'fake', runId, state: 'started' } }] };
-    await t.runner.tick();
-    t.views.runs[READER_WORK].push({ at: '2026-10-29T12:51:00.000Z', data: { work: READER_WORK, lane: 'reader', engine: 'fake', runId, state: 'ended' } });
-    await t.runner.tick();
-    assert.deepEqual(t.writes.filter((w) => ['cost', 'question', 'card'].includes(w.kind)), []);
-    assert.equal(t.engine.calls.filter((c) => c.action?.cancel).length, 0);
   } finally { t.cleanup(); }
 });
 
@@ -2018,55 +1925,6 @@ const WHERE = { branch: 'wh/a', folder: '/tmp/a' };
 const repeat = (id, over = {}) => asks(id, { reason: 'Which page?', context: WHERE, ...over });
 const again = (first, second = first) => [...repeat('q1', first).slice(0, 3), ...repeat('q2', second).slice(1)];
 
-test('a question records its key and the head it was asked at', async () => {
-  const w = wayBack({ recordings: { a: repeat('q1') }, reads: CLEAR });
-  w.put('a');
-  await w.tick();
-  assert.equal(w.cards()[0].key, decisionKey('a', 'which page'));
-  assert.equal(w.cards()[0].head, AT_HEAD);
-});
-
-test('an ask with no words of its own, the merge queue\'s or trouble has no key', async () => {
-  const w = wayBack({ recordings: { a: asks('q1', { context: WHERE }), b: asks('q2', { kind: 'trouble', reason: 'Which page?' }) }, reads: CLEAR });
-  w.put('a', { place: 0 });
-  w.put('b', { place: 1 });
-  await w.tick(2);
-  assert.deepEqual(w.cards().map((q) => q.key), [undefined, undefined]);
-});
-
-test('a repeat with nothing changed takes the earlier answer, and the note says which', async () => {
-  const w = wayBack({ recordings: { a: again() }, reads: CLEAR });
-  w.put('a');
-  await w.tick();
-  w.answer('a', 'Keep it small');
-  await w.tick(4);
-  assert.deepEqual(w.answers().map((c) => c.action.answer), [{ ask: 'q1', choice: 'a' }, { ask: 'q2', choice: 'a' }]);
-  assert.equal(w.cards().length, 1);
-  assert.ok(w.notes().includes('The build asked again about a, and was given your earlier answer: Keep it small.'));
-});
-
-test('commits since the answer give a card with that answer first, and nothing goes back', async () => {
-  const seen = [];
-  const w = wayBack({ recordings: { a: again() }, reads: { ...CLEAR, commitsSince: async (place, head) => { seen.push([place, head]); return 2; } } });
-  w.put('a');
-  await w.tick();
-  w.answer('a', 'Keep it small');
-  await w.tick(4);
-  assert.deepEqual(w.answers().map((c) => c.action.answer.ask), ['q1']);
-  assert.equal(w.cards()[1].saidBefore, 'Keep it small');
-  assert.deepEqual(seen, [[WHERE, AT_HEAD]]);
-});
-
-test('commits that can\'t be read, or a read that never ends, give a card', async () => {
-  const w = wayBack({ recordings: { a: again() }, reads: { ...CLEAR, commitsSince: async () => { throw new Error('no such branch'); } } });
-  w.put('a');
-  await w.tick();
-  w.answer('a', 'Keep it small');
-  await w.tick(4);
-  assert.equal(w.cards().length, 2);
-  assert.equal(w.cards()[1].saidBefore, 'Keep it small');
-});
-
 test('an exclusion hit gives a card', async () => {
   const w = wayBack({ recordings: { a: again() }, reads: { ...CLEAR, exclusionsOf: async () => ['data-model'] } });
   w.put('a');
@@ -2084,16 +1942,6 @@ test('an earlier answer with no head recorded gives a card', async () => {
   await w.tick(4);
   assert.equal(w.cards().length, 2);
   assert.equal(w.cards()[0].head, undefined);
-});
-
-test('the same words with other options is a card that says what was said', async () => {
-  const w = wayBack({ recordings: { a: again({}, { options: [{ id: 'a', label: 'Keep it small' }, { id: 'c', label: 'A new page' }], recommend: 'c' }) }, reads: CLEAR });
-  w.put('a');
-  await w.tick();
-  w.answer('a', 'Keep it small');
-  await w.tick(4);
-  assert.equal(w.cards()[1].saidBefore, 'Keep it small');
-  assert.equal(w.answers().length, 1);
 });
 
 test('a level 4 repeat is asked plainly, and nothing moves it', async () => {
@@ -2132,77 +1980,8 @@ test('an answer the build never got is not an answer to reuse', async () => {
   assert.equal(w.cards()[1].saidBefore, undefined);
 });
 
-test('a repeat under All stop waits, and is answered once it lifts', async () => {
-  const t = setUp({ recordings: { one: repeat('q1'), two: repeat('q2') }, gate: CLEAR });
-  try {
-    const first = await t.ask('one');
-    t.sign('Keep it small');
-    await t.runner.tick();
-    t.world.stop = true;
-    const second = await t.ask('two');
-    await t.runner.tick();
-    assert.equal(acts(t.engine).filter((c) => c.runId === second.runId).length, 0);
-    assert.notEqual(first.runId, second.runId);
-    t.world.stop = false;
-    await t.runner.tick();
-    assert.deepEqual(acts(t.engine).filter((c) => c.runId === second.runId).map((c) => c.action.answer), [{ ask: 'q2', choice: 'a' }]);
-    assert.equal(t.writes.filter((w) => w.kind === 'question').length, 1);
-  } finally { t.cleanup(); }
-});
-
 const BLOCKS = { kind: 'blocked', recommend: 'pick', options: [{ id: 'stop', label: 'Stop here' }, { id: 'rework', label: 'Send it back' }, { id: 'pick', label: 'Use the first' }] };
 
-test('a blocked ask answered from before starts its rework, and the piece doesn\'t strand', async () => {
-  const w = wayBack({ recordings: { a: again(BLOCKS) }, reads: CLEAR });
-  w.put('a');
-  await w.tick();
-  w.answer('a', 'Use the first');
-  await w.tick(8);
-  assert.deepEqual(w.answers().map((c) => c.action.answer), [{ ask: 'q1', choice: 'pick' }, { ask: 'q2', choice: 'pick' }]);
-  assert.equal(w.runsOf('a').length, 2, 'the piece starts again after the reused answer');
-});
-
-test('an answer is reused once: a piece that asks a third time gets a card, so it can\'t go round for ever', async () => {
-  const t = setUp({ recordings: { one: repeat('q1', BLOCKS), two: repeat('q2', BLOCKS), three: repeat('q3', BLOCKS) }, gate: CLEAR });
-  t.runner.onEnter(() => {});
-  try {
-    await t.ask('one');
-    t.sign('Use the first');
-    await t.runner.tick();
-    await t.ask('two');
-    await t.ask('three');
-    assert.deepEqual(acts(t.engine).map((c) => c.action.answer.ask), ['q1', 'q2']);
-    const cards = t.writes.filter((w) => w.kind === 'question').map((w) => w.data);
-    assert.equal(cards.length, 2);
-    assert.equal(cards[1].saidBefore, 'Use the first');
-  } finally { t.cleanup(); }
-});
-
-test('Stop is never taken from before', async () => {
-  const w = wayBack({ recordings: { a: again(BLOCKS) }, reads: CLEAR });
-  w.put('a');
-  await w.tick();
-  w.answer('a', 'Stop here');
-  await w.tick(4);
-  assert.deepEqual(w.answers().map((c) => c.action.answer.ask), ['q1']);
-  assert.equal(w.cards().length, 2);
-});
-
-test('an engine that refuses the earlier answer leaves a card, with no rework', async () => {
-  const w = wayBack({ recordings: { a: again(BLOCKS) }, reads: CLEAR });
-  w.put('a');
-  await w.tick();
-  w.answer('a', 'Use the first');
-  await w.tick();
-  const act = w.engine.act.bind(w.engine);
-  w.engine.act = (runId, action) => (action.answer?.ask === 'q2' ? { ok: false, refused: 'moved on' } : act(runId, action));
-  await w.tick(4);
-  assert.equal(w.cards().length, 2);
-  assert.equal(w.cards()[1].saidBefore, 'Use the first');
-  assert.equal(w.runsOf('a').length, 1);
-});
-
-// The views as the helper builds them once the first card is on the record.
 const open = (t) => {
   const q = t.writes.find((w) => w.kind === 'question').data;
   t.views.questions[q.id] = { question: { data: q }, answer: null };
@@ -2233,34 +2012,6 @@ test('an open key with other options stays a card of its own', async () => {
   } finally { t.cleanup(); }
 });
 
-test('a lost reply keeps the earlier answer going, with no card, and the piece still starts again', async () => {
-  const t = setUp({ recordings: { one: repeat('q1', BLOCKS), two: repeat('q2', BLOCKS) }, gate: CLEAR });
-  const entered = [];
-  t.runner.onEnter((args) => entered.push(args));
-  try {
-    await t.ask('one');
-    t.sign('Use the first');
-    await t.runner.tick();
-    const act = t.engine.act.bind(t.engine);
-    let lost = 0;
-    t.engine.act = (runId, action) => {
-      if (action.answer?.ask !== 'q2') return act(runId, action);
-      lost += 1;
-      if (lost === 1) { act(runId, action); throw new Error('timed out'); }
-      return { ok: false, refused: 'already answered' };
-    };
-    const second = await t.ask('two');
-    assert.equal(t.writes.filter((w) => w.kind === 'question').length, 1, 'no card for an answer that may have landed');
-    await t.runner.tick();
-    assert.equal(lost, 2, 'tried again on the tick');
-    assert.equal(t.writes.filter((w) => w.kind === 'question').length, 1);
-    assert.ok(t.writes.some((w) => w.kind === 'note' && /your earlier answer: Use the first/.test(w.data.words)));
-    ended(t, second.runId);
-    await t.runner.tick();
-    assert.equal(entered.filter((e) => e.via === 'rework' && e.key === `rework:${second.runId}`).length, 1);
-  } finally { t.cleanup(); }
-});
-
 test('an earlier answer is not sent again under All stop', async () => {
   const t = setUp({ recordings: { one: repeat('q1'), two: repeat('q2') }, gate: CLEAR });
   try {
@@ -2277,50 +2028,6 @@ test('an earlier answer is not sent again under All stop', async () => {
   } finally { t.cleanup(); }
 });
 
-test('a restart while the branch is read routes the ask again, so it is never lost', async () => {
-  let release;
-  const slow = new Promise((resolve) => { release = resolve; });
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-repeat-'));
-  const file = path.join(dir, 'router.json');
-  const engine = fakeEngine({ recordings: { one: repeat('q1'), two: repeat('q2') } });
-  const writes = [];
-  const views = { levels: {}, questions: {}, approvals: {} };
-  const build = (reads) => engineRunner({ engine, file, readViews: () => views, write: async (kind, data) => { writes.push({ kind, data }); }, workOf: () => ({ work: 'sale-banner', lane: 'quick' }), now: () => new Date('2026-10-29T13:00:00.000Z'), ...reads });
-  try {
-    const first = build(CLEAR);
-    engine.start({ recording: 'one' });
-    await first.onAsk(engine.watch('0').events.find((e) => e.type === 'ask' && e.id === 'q1'));
-    const q = writes.find((w) => w.kind === 'question').data;
-    views.questions[q.id] = { question: { data: q }, answer: { label: 'Keep it small', at: '2026-10-29T13:00:00.000Z' } };
-    await first.tick();
-    const gone = build({ ...CLEAR, commitsSince: () => slow });
-    engine.start({ recording: 'two' });
-    const reading = gone.onAsk(engine.watch('0').events.find((e) => e.type === 'ask' && e.id === 'q2'));
-    await new Promise((resolve) => setImmediate(resolve));
-    const again = build(CLEAR);
-    await again.tick();
-    assert.deepEqual(engine.calls.filter((c) => c.call === 'act').map((c) => c.action.answer.ask), ['q1', 'q2']);
-    release(0);
-    await reading;
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
-});
-
-test('a card saying You said this before is never drawn blind', async () => {
-  const settings = { blindCards: false };
-  const t = setUp({ recordings: { one: repeat('q1'), two: repeat('q2') }, gate: CLEAR, blindRoll: () => 0, settings });
-  try {
-    await t.ask('one');
-    t.sign('Keep it small');
-    await t.runner.tick();
-    t.views.incidents = { open: [{ id: 'i1', kind: 'red-main' }] };
-    settings.blindCards = true;
-    await t.ask('two');
-    const last = t.writes.filter((w) => w.kind === 'question').at(-1).data;
-    assert.equal(last.saidBefore, 'Keep it small');
-    assert.equal(last.blind, undefined);
-  } finally { t.cleanup(); }
-});
-
 test('an open incident gives a card, whose answer waits as any answer does', async () => {
   const t = setUp({ recordings: { one: repeat('q1'), two: repeat('q2') }, gate: CLEAR });
   try {
@@ -2330,7 +2037,7 @@ test('an open incident gives a card, whose answer waits as any answer does', asy
     t.views.incidents = { open: [{ id: 'i1', kind: 'red-main' }] };
     await t.ask('two');
     assert.equal(acts(t.engine).filter((c) => c.action.answer.ask === 'q2').length, 0);
-    assert.equal(t.writes.filter((w) => w.kind === 'question').at(-1).data.saidBefore, 'Keep it small');
+    assert.equal(t.writes.filter((w) => w.kind === 'question').length, 2, 'both asks are cards');
   } finally { t.cleanup(); }
 });
 
@@ -2342,7 +2049,7 @@ test('a piece waiting for a place gives a card: nothing wakes it past its pace',
     await t.runner.tick();
     await t.ask('two');
     assert.equal(acts(t.engine).filter((c) => c.action.answer.ask === 'q2').length, 0);
-    assert.equal(t.writes.filter((w) => w.kind === 'question').at(-1).data.saidBefore, 'Keep it small');
+    assert.equal(t.writes.filter((w) => w.kind === 'question').length, 2, 'both asks are cards');
   } finally { t.cleanup(); }
 });
 
@@ -2386,50 +2093,6 @@ const closeViews = (answer = null) => {
 };
 const OPEN = { 'q-w-1': { work: 'w', runId: 'r', ask: { id: 'q-w-1' } }, 'q-w-2': { work: 'w', runId: 'r2', ask: { id: 'q-w-2' } } };
 
-test('a close match records its join, lets a held card go, and sends the engine nothing', async () => {
-  const t = matchRunner({ views: closeViews(), questions: OPEN, held: [{ id: 'q-w-2' }] });
-  await t.runner.onMatch({ card: 'q-w-2', sameAs: 'q-w-1' });
-  assert.deepEqual(t.writes, [{ kind: 'match', data: { card: 'q-w-2', work: 'w', joins: 'q-w-1' } }]);
-  assert.equal(t.state().questions['q-w-2'].joins, 'q-w-1');
-  assert.deepEqual(t.state().questions['q-w-2'].options, { A: 'a', B: 'b' });
-  assert.deepEqual(t.state().held, []);
-  assert.equal(t.state().delivered?.['q-w-2'], undefined);
-});
-
-test('a close match on an answered card records the line alone, and a failed write is the seals\' to try again', async () => {
-  const answered = matchRunner({ views: closeViews({ label: 'B', at: 't' }), questions: OPEN });
-  await answered.runner.onMatch({ card: 'q-w-2', sameAs: 'q-w-1' });
-  assert.deepEqual(answered.writes, [{ kind: 'match', data: { card: 'q-w-2', work: 'w', saidBefore: 'B', from: 'q-w-1' } }]);
-  assert.equal(answered.state().questions['q-w-2'].joins, undefined);
-  const refused = matchRunner({ views: closeViews(), questions: OPEN, write: async () => { throw new Error('no'); } });
-  await assert.rejects(refused.runner.onMatch({ card: 'q-w-2', sameAs: 'q-w-1' }));
-  assert.equal(refused.state().questions['q-w-2'].joins, undefined);
-  const unknown = matchRunner({ views: closeViews(), questions: {} });
-  await unknown.runner.onMatch({ card: 'q-w-2', sameAs: 'q-w-1' });
-  assert.deepEqual(unknown.writes, [], 'a card the router never kept stands');
-});
-
-test('a question drawn blind says so, at most one a day; a joiner and a turned-off setting draw none', async () => {
-  const drawn = (t) => t.writes.filter((w) => w.kind === 'question').map((w) => w.data.blind);
-  const never = setUp();
-  try {
-    await never.ask();
-    assert.deepEqual(drawn(never), [undefined], 'by default nothing is drawn');
-  } finally { never.cleanup(); }
-  const t = setUp({ blindRoll: () => 0, recordings: { one: asking('q1'), two: asking('q2') } });
-  try {
-    await t.ask('one');
-    await t.ask('two');
-    assert.equal(drawn(t)[0], true);
-    assert.equal(drawn(t).filter(Boolean).length, 1, 'one a day');
-  } finally { t.cleanup(); }
-  const off = setUp({ blindRoll: () => 0, settings: { blindCards: false } });
-  try {
-    await off.ask();
-    assert.deepEqual(drawn(off), [undefined]);
-  } finally { off.cleanup(); }
-});
-
 test('a Stop the engine refuses keeps the piece\'s files', async () => {
   const released = [];
   const t = setUp({ recordings: { one: blockedAsk('q1') }, release: (work) => released.push(work) });
@@ -2462,19 +2125,6 @@ test('an answer refused after an unreachable try isn\'t taken from before', asyn
     assert.equal(acts(t.engine).filter((a) => a.action.answer?.ask === 'q2').length, 0, 'it may never have reached the build');
     assert.equal(t.writes.filter((w) => w.kind === 'question').length, 2);
   } finally { t.cleanup(); }
-});
-
-test('a reused blocked rework keeps the files the piece reserved at its first card', async () => {
-  const w = wayBack({ recordings: { a: [again(BLOCKS), forever()], b: quiet() }, pace: 2, reads: CLEAR, branchPaths: async () => ['built.js'] });
-  w.put('a', { place: 0 });
-  await w.tick();
-  w.answer('a', 'Use the first');
-  w.put('b', { place: 1, files: ['built.js'] });
-  for (let n = 0; n < 6; n += 1) {
-    await w.tick();
-    assert.equal(w.runsOf('b').length, 0, `tick ${n}`);
-  }
-  assert.equal(w.runsOf('a').length, 2);
 });
 
 test('a park at a new head takes the place of the card for the old head', async () => {

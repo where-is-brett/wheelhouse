@@ -8,7 +8,6 @@ import { LEVELS as BUILD_LEVELS } from '../protection/windows-builds.js';
 
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
-const CONCEPT = /^known:[a-z0-9-]{1,40}$/;
 const WINDOWS_BUILDS_KEY = /^windowsBuildCommands:[0-9a-f]{8}$/;
 const CHANNELS = ['claude', 'ntfy', 'telegram'];
 
@@ -66,7 +65,6 @@ export const SETTINGS = {
   // 1,000,000 (scripts/protection/settings.js). Wheelhouse starts at 300,000 and offers 200,000 up. It must stay
   // above compactPrepare (scripts/settings/compact-window.js).
   compactWindow: { label: 'Compact the conversation at (context size)', group: 'advanced', check: wholeBetween(200000, 1000000), default: 300000, home: 'project' },
-  delegationReviewDays: { label: 'Days between delegation reviews', group: 'advanced', check: wholeBetween(7, 60), default: 14, home: 'project' },
   unusualFactor: { label: 'Unusual-use factor', group: 'advanced', check: (v) => typeof v === 'number' && Number.isFinite(v) && v >= 2 && v <= 10, default: UNUSUAL.factor, home: 'project' },
   // The addresses of the official pages, checked weekly beside the upstream repositories.
   sources: { label: 'Sources checked weekly', group: 'advanced', check: checkSources, default: DEFAULT_SOURCES.map((source) => source.url), home: 'project' },
@@ -79,13 +77,8 @@ export const SETTINGS = {
   capMinutes: { label: 'Minutes a run may take', group: 'advanced', check: checkCaps, default: { quick: 20, small: 60, slice: 120, bug: 30 }, home: 'project' },
   capTokens: { label: 'Tokens a run may use', group: 'advanced', check: checkCaps, default: { quick: 1000000, small: 4000000, slice: 10000000, bug: 2000000 }, home: 'project' },
   bundleApprovals: { label: 'Bundle approvals', group: 'advanced', levels: [false, true], default: false, home: 'project' },
-  // About one question card in five shows its options before the recommendation (scripts/delegation/blind.js).
-  blindCards: { label: 'Blind cards', group: 'advanced', levels: [false, true], default: true, home: 'project' },
   engineRoom: { label: 'Engine room', group: 'advanced', levels: [false, true], default: false, home: 'project' },
 };
-
-// One per concept the director already knows (a plain-words glossary switch).
-export const KNOWN = { label: 'Concept you know', group: 'everyday', check: (v) => typeof v === 'boolean', default: false, home: 'profile' };
 
 // One per computer (`windowsBuildCommands:<computer>`): the level its build commands run at
 // on Windows (design section 12.2).
@@ -110,9 +103,9 @@ export const OWN_GITHUB_APP = { label: 'Your own GitHub App', group: 'advanced',
 // still hold them; the catalogue accepts any value for them and nothing reads them. A lift-out part
 // retires a key by deleting its SETTINGS entry and adding one line here (or to RETIRED_PATTERNS).
 // RETIRED maps a key to the name of the piece that retired it, for example { someKey: 'some-piece' }.
-export const RETIRED = Object.freeze({ capRequests: 'copilot' });
+export const RETIRED = Object.freeze({ capRequests: 'copilot', delegationReviewDays: 'delegation', blindCards: 'delegation' });
 // Families of retired keys: [{ pattern: RegExp, piece: string }].
-export const RETIRED_PATTERNS = Object.freeze([]);
+export const RETIRED_PATTERNS = Object.freeze([{ pattern: /^known:[a-z0-9-]{1,40}$/, piece: 'delegation' }]);
 const SHIPPED = { RETIRED, RETIRED_PATTERNS };
 
 // The piece that retired a key, or undefined. `lists` is for tests, which pass their own copies.
@@ -131,7 +124,7 @@ export function definitionOf(key, lists = SHIPPED) {
   if (Object.hasOwn(SETTINGS, key)) return SETTINGS[key];
   if (key === OWN_GITHUB_APP_KEY) return OWN_GITHUB_APP;
   if (WINDOWS_BUILDS_KEY.test(key)) return WINDOWS_BUILD_COMMANDS;
-  return CONCEPT.test(key) ? KNOWN : undefined;
+  return undefined;
 }
 
 // How a value reads in a refusal.

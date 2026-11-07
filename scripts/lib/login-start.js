@@ -1,7 +1,7 @@
 // scripts/lib/login-start.js
 // The sign-in start (design section 8.5): what starts Wheelhouse's helper when the person signs in to this
 // computer, for them only and with no admin. On macOS a launch agent in their own LaunchAgents folder, run at
-// load and every minute after, so a helper that dies is back within one (unattended goals design, section 9.4; the
+// load and every minute after, so a helper that dies is back within one (the
 // start command leaves a running helper alone); on Windows a per-user start-up entry under HKCU's Run key, added with
 // `reg add`. The install of the helper
 // writes it (never on a work computer, where the company's endpoint security may treat one as suspicious), and

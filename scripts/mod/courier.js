@@ -46,9 +46,6 @@ const CARRY_ASK = 'Then carry on the change made by hand that `views survey` lis
 // A reminder's ask: the cards it names weren't asked at their wake (its notification wasn't sent),
 // so they are asked now, whatever the notification answers this time.
 const REMIND_ASK = (cards) => `Then ask ${cards === 1 ? 'it' : 'them'} now, once.`;
-// A goal's ending, in set words, as everything a wake says is.
-const GOAL_STOPPED = 'A goal stopped early';
-const GOAL_FINISHED = 'A goal finished';
 // The items that wake at once, inside the gap after the last wake.
 const AT_ONCE = ['stop', 'incident'];
 // The pane's id for a question from the build (the foreman's, or the card for changes made by hand): it blocks running work.
@@ -64,7 +61,7 @@ const list = (value) => (Array.isArray(value) ? value.filter(isRecord) : []);
 // What each presence lets wake the front desk. Inside the quiet hours, as do not disturb.
 export const PRESENCE_LETS = Object.freeze({
   here: () => true,
-  away: (item) => ['stop', 'incident', 'health', 'goal-stopped', 'carry-on'].includes(item.kind) || (['card', 'remind'].includes(item.kind) && item.blocking === true),
+  away: (item) => ['stop', 'incident', 'health', 'carry-on'].includes(item.kind) || (['card', 'remind'].includes(item.kind) && item.blocking === true),
   dnd: (item) => AT_ONCE.includes(item.kind),
 });
 
@@ -77,7 +74,7 @@ export function courierFile(project) {
 // that names it across ticks and sessions: STOP turned on (`stop:<since>`, only when its time can
 // be read), an open incident, a health line at its stop level (`health:<hash of its text>`) that
 // isn't STOP's or an incident's own, each waiting card the front desk hasn't asked (`card:<id>`,
-// with its number and whether it blocks), passing over one the day's budget holds back, each finished feature and the latest goal's ending. What has been woken for is
+// with its number and whether it blocks), passing over one the day's budget holds back, and each finished feature. What has been woken for is
 // courier.json's to say, so an item held back wakes on a later tick; the model as last kept isn't
 // needed.
 export function needsYou({ after } = {}) {
@@ -108,10 +105,6 @@ export function needsYou({ after } = {}) {
   for (const work of Array.isArray(after.finished) ? after.finished : []) {
     if (typeof work === 'string' && work !== '') items.push({ id: `finished:${work}`, kind: 'finished' });
   }
-  // A goal's ending (unattended goals design, section 11): one that stopped early passes Away, as a blocking card does; one that
-  // finished wakes only while the director is here, and otherwise waits in the briefing.
-  const goal = after.goalEnd;
-  if (typeof goal?.id === 'string' && goal.id !== '') items.push({ id: `goal:${goal.id}`, kind: goal.stoppedEarly === true ? 'goal-stopped' : 'goal-finished' });
   const seen = new Set();
   return items.filter((item) => !seen.has(item.id) && seen.add(item.id));
 }
@@ -158,12 +151,6 @@ function presenceAt(presence, quiet, ms, timeZone) {
   const until = typeof presence?.until === 'string' ? Date.parse(presence.until) : Number.NaN;
   if (Number.isFinite(until) && Number.isFinite(ms) && ms >= until) value = 'here';
   return inQuietHours(quiet, ms, timeZone) ? 'dnd' : value;
-}
-
-// How many First Mate sessions have ticked for `project` lately: those the phone can reach, and that can stop a goal from it.
-export function sessionsTicking(project, { now = () => new Date() } = {}) {
-  const t = instantOf(now);
-  return readKept(project).sessions.filter((s) => t - Date.parse(s.at) <= STALE_TICKS * TICK_MS).length;
 }
 
 // What courier.json keeps, or nothing sent when it isn't there or can't be read.
@@ -232,8 +219,6 @@ function whatOf(items) {
   if (count('health') > 0) parts.push(`${plural(count('health'), 'health line', 'health lines')} at its stop level`);
   if (count('carry-on') > 0) parts.push('changes made by hand to carry on');
   if (count('finished') > 0) parts.push(`${plural(count('finished'), 'feature', 'features')} finished`);
-  if (count('goal-stopped') > 0) parts.push(GOAL_STOPPED.toLowerCase());
-  if (count('goal-finished') > 0) parts.push(GOAL_FINISHED.toLowerCase());
   return parts.join('; ');
 }
 
@@ -249,8 +234,6 @@ function sayingOf(items) {
   if (count('health') > 0) parts.push(`${plural(count('health'), 'health line', 'health lines')} at its stop level.`);
   if (count('carry-on') > 0) parts.push('Your changes made by hand are being checked.');
   if (count('finished') > 0) parts.push(`${plural(count('finished'), 'feature', 'features')} finished.`);
-  if (count('goal-stopped') > 0) parts.push(`${GOAL_STOPPED}.`);
-  if (count('goal-finished') > 0) parts.push(`${GOAL_FINISHED}.`);
   return parts.join(' ');
 }
 

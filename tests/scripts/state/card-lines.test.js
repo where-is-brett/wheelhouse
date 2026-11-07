@@ -4,8 +4,8 @@ import assert from 'node:assert/strict';
 import {
   replyCode, replyCodeLine, setLineOf, SET_LINES, CODE_ALPHABET, usageLine, USAGE_LINE, premiumLine, PREMIUM_LINE,
   approvalLine, confirmLine, LIFT_STOP, LIFT_STOP_EARLIER, LIFT_LABEL, LIFT_LABELS, isLiftStopLine, runbookLine, ciPushLine,
-  approveWorkLine, answerLine, blindLine, amendLine, liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, dayOf, TRUST_LINE, takeOverLine, TAKEOVER_LINE, releaseLine, RELEASE_LINE, updateHelperLine, updateLine, pairLine, unpairLine,
-  uninstallLine, UNINSTALL_LINE, UNINSTALL_LABEL, isLineName, keepControlLine, chatCopy, startGoalLine, START_GOAL_LINE,
+  approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, dayOf, TRUST_LINE, takeOverLine, TAKEOVER_LINE, releaseLine, RELEASE_LINE, updateHelperLine, updateLine, pairLine, unpairLine,
+  uninstallLine, UNINSTALL_LINE, UNINSTALL_LABEL, isLineName, keepControlLine, chatCopy,
 } from '../../../scripts/state/card-lines.js';
 
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -68,7 +68,6 @@ const BUILD_LINES = [
   liftIncidentLine('bad-total'),
   incidentFixLine('bad-total', 31),
   keepControlLine('export-csv', FULL),
-  startGoalLine('export-orders', FULL + FULL.slice(0, 24)),
 ];
 
 test('each line the build loop writes is found by setLineOf, and matches exactly one set line pattern', () => {
@@ -79,7 +78,7 @@ test('each line the build loop writes is found by setLineOf, and matches exactly
   }
   // Every set line pattern is used by a line function's output.
   const all = [
-    ...BUILD_LINES, blindLine('q-export-csv-1'), approvalLine(12, FULL), confirmLine({ kind: 'ruling', id: 'x', data: { words: 'w' } }),
+    ...BUILD_LINES, approvalLine(12, FULL), confirmLine({ kind: 'ruling', id: 'x', data: { words: 'w' } }),
     LIFT_STOP, ciPushLine('main', FULL), runbookLine(1), setupLine(10, FULL), confirmAllLine(FULL, 3), baselineLine(FULL),
     trustLine('0a1b2c3d', '2026-10-19T22:30:00.000Z', FULL), takeOverLine('0a1b2c3d', 4), releaseLine('v0.2.6', 'v0.2.7', FULL), updateHelperLine('update-helper-4242-x'), updateLine('v0.2.6', 'v0.2.7', 'release', FULL), pairLine('phone-app', FULL), unpairLine('phone-app', FULL), uninstallLine('o__Cafe-Menu', FULL),
     usageLine('lean', '2026-10-26T01:00:00.000Z'), premiumLine('2026-10-26T01:00:00.000Z'),
@@ -211,14 +210,4 @@ test('chatCopy leaves out a card\'s set line and reply code, and keeps them wher
   const wrong = `Ask.\n${approvalLine(7, FULL)}\n${replyCodeLine('ZZZZ')}`;
   assert.equal(chatCopy(wrong), wrong);
   assert.equal(chatCopy(undefined), undefined);
-});
-
-test('a goal\'s start line names the goal and the twelve characters of its sheet\'s hash', () => {
-  const hash = 'abcdef1234567890'.repeat(4);
-  const line = startGoalLine('export-orders', hash);
-  assert.equal(line, 'Start goal export-orders, abcdef123456');
-  assert.deepEqual(START_GOAL_LINE.exec(line).slice(1), ['export-orders', 'abcdef123456']);
-  assert.equal(setLineOf(`What this is.\n${line}\nReply code: ${replyCode(line)}`), line);
-  assert.equal(SET_LINES.filter((p) => new RegExp(p.source, p.flags).test(line)).length, 1);
-  for (const near of ['Start goal Export, abcdef123456', 'Start goal export-orders, abcdef12345', 'Start goal export-orders abcdef123456']) assert.equal(setLineOf(near), null, near);
 });

@@ -116,8 +116,6 @@ export async function openWorld({ engine: kind = 'fake', recordings = {}, now = 
       return world.put('action', { action: 'answer', question: 'the card as shown', questionId: question.id, questionHash: dataHash(question), label });
     },
     tick: () => helper.engine.tick(),
-    // A goal's checks on the main line, `before` it starts or `last` of all, as the helper's route and its own ending ask.
-    goalCheck: (goal, when) => (when === 'before' ? client.goalBaseline({ project: PROJECT, goal }) : helper.engine.startGoalCheck({ project: PROJECT, goal, when })),
     stop: () => setStop({ by: 'prompt', now }),
     lift: () => liftStop(),
     starts: () => engine.calls.filter((c) => c.call === 'start'),
@@ -159,8 +157,6 @@ export async function openWorld({ engine: kind = 'fake', recordings = {}, now = 
     },
     // `gh` as a run's step calls it, through the broker: { code, stdout, stderr }.
     broker: (argv, { cwd = folder } = {}) => client.broker.gh({ argv, cwd }),
-    // A run's areas, as the tool guard asks the helper for them.
-    areas: (args) => client.engine.areas(args),
     // The work orders the helper kept for the runs it started, oldest run first: what a run's steps are served.
     orders() {
       const dir = path.join(engineDirOf(stateDir(PROJECT)), 'orders');

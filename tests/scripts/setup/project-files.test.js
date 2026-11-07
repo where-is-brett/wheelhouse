@@ -2110,8 +2110,8 @@ Leave out file contents and command output that can be read again. Wheelhouse's 
 `;
 
 test('the section names the ids in play and the session note, and its earlier wordings are held by hash', () => {
-  assert.match(COMPACT_SECTION, /- the ids of the cards, runs and goal pieces in play;\n- the session note's path, if one was written\.\n/);
-  assert.deepEqual(EARLIER_COMPACT_HASHES, [sectionHash(EARLIER_BODY('STOP')), sectionHash(EARLIER_BODY('All stop'))]);
+  assert.match(COMPACT_SECTION, /- the ids of the cards and runs in play;\n- the session note's path, if one was written\.\n/);
+  assert.deepEqual(EARLIER_COMPACT_HASHES, [sectionHash(EARLIER_BODY('STOP')), sectionHash(EARLIER_BODY('All stop')), '3c7f2ab3d44eb50bb413717fbb1a3c577b81034ed77ae490a21a632e6ee0ef14']);
 });
 
 test('a project holding an earlier wording of the section is brought up to the current one, and an edited section is left alone', () => {

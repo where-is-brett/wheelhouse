@@ -15,7 +15,7 @@
 // work, its running features and a feature's question (tests/e2e/build-loop.test.js makes them from
 // a feature session), and the gate's asks (act merge). The watcher runs as runWatcher runs it, its
 // waker in Shape 2, which starts nothing and prints its wakes. Pictures of a preview are taken by a
-// stand-in for scripts/screens/shoot.js, in a browser whose path is Chrome's (ruling F61).
+// stand-in for scripts/pictures/shoot.js, in a browser whose path is Chrome's (ruling F61).
 import { test, before, beforeEach, afterEach, after } from 'node:test';
 import { run as realRun } from '../../scripts/lib/run.js';
 import assert from 'node:assert/strict';
@@ -513,100 +513,24 @@ test('a card answered Not now stays on the board and is not asked on the next vi
   });
 });
 
-test('a concept known after three days is proposed once; Explain more takes it back at once', async () => {
+test('an update after an approval asks again, however the pages look, and the new head\'s card is one click', async () => {
   await onComputer(async (world) => {
-    // A product question whose text uses one glossary term, "preview".
-    const choice = (day) => ({
-      kind: 'question',
-      level: 3,
-      what: `Which photo should the preview of the menu page show first, for week ${day}?`,
-      why: 'It is the first thing customers see on that page.',
-      options: [{ label: 'The cakes', says: 'Colourful, and they sell best.' }, { label: 'The bread', says: 'What the shop is known for.' }],
-      recommend: 'The cakes',
-      because: 'they sell best',
-      meanwhile: 'The page keeps the photo it has.',
-    });
-    const asked = async (day) => (await frontDesk(world, ['card'], choice(day))).question;
+    // A change users see, approved by the director's click on its card.
+    await openPr(world, 7, 'menu', { 'src/menu.js': 'export const menu = [\'Sourdough\'];\n' });
+    const { question } = await frontDesk(world, ['card'], approvalCard(7, 'adds the menu page.'));
+    await ask(world, [question], { [question.question]: 'Approve' });
 
-    // While the director doesn't know it, the card puts it in plain words.
-    const first = await asked(1);
-    assert.match(first.question, /private trial copy/);
-    assert.doesNotMatch(first.question, /\bpreview\b/);
-
-    // Cards using it, answered on three different days without asking for more.
-    for (const day of [0, 1, 2]) {
-      world.at(day * DAY + HOUR);
-      const question = day === 0 ? first : await asked(day + 1);
-      await ask(world, [question], { [question.question]: 'The cakes' });
-    }
-
-    // The next visit's first prompt proposes it as known, once: a profile setting waiting for its
-    // confirmation, and its one-line card, which this visit asks.
-    world.at(3 * DAY + HOUR);
-    assert.ok((await prompt(world, 'Morning')).startsWith(cardsLine(1)));
-    const proposed = eventsOf('setting', profileDir()).filter((e) => e.data.key === 'known:preview');
-    assert.deepEqual(proposed.map((e) => e.data.value), [true]);
-    assert.match((await asked(4)).question, /private trial copy/, 'nothing learnt changes anything until it is confirmed');
-    world.at(3 * DAY + 4 * HOUR);
-    await prompt(world, 'Back again');
-    assert.equal(eventsOf('setting', profileDir()).filter((e) => e.data.key === 'known:preview').length, 1, 'proposed once');
-    assert.equal(eventsOf('card').filter((e) => e.data.line === confirmLine(proposed[0])).length, 1);
-
-    // The director confirms it: from then on the word is kept as it is.
-    const visit = await frontDesk(world, ['cards']);
-    const confirm = visit.questions.find((q, i) => setLineOf(visit.inReply[i]) === confirmLine(proposed[0]));
-    assert.ok(confirm, JSON.stringify(visit));
-    await ask(world, [confirm], { [confirm.question]: 'Confirm' });
-    const known = await asked(5);
-    assert.match(known.question, /\bpreview\b/);
-    assert.doesNotMatch(known.question, /private trial copy/);
-
-    // Explain more on a card using it: the next visit sets it back to not known at once, with no
-    // card to confirm, and the words are plain again.
-    world.at(4 * DAY + HOUR);
-    await ask(world, [known], { [known.question]: 'Explain more' });
-    const cards = eventsOf('card').length;
-    world.at(4 * DAY + 4 * HOUR);
-    assert.ok(!(await prompt(world, 'Morning')).includes('Cards to ask this visit'));
-    assert.deepEqual(eventsOf('setting', profileDir()).filter((e) => e.data.key === 'known:preview').map((e) => e.data.value), [true, false]);
-    assert.equal(eventsOf('card').length, cards, 'no card asks to confirm it');
-    assert.match((await asked(6)).question, /private trial copy/);
-  });
-});
-
-test('an update after an approval with identical pages merges; with a changed page it asks again', async () => {
-  await onComputer(async (world) => {
-    // Two changes users see, each approved by the director's click on its card. Recording an
-    // approval photographs that commit's pages at every size from its preview, in the background.
-    const same = await openPr(world, 7, 'menu', { 'src/menu.js': 'export const menu = [\'Sourdough\'];\n' });
-    const changed = await openPr(world, 8, 'prices', { 'src/prices.js': 'export const prices = { sourdough: 6 };\n' });
-    for (const [pr, what] of [[7, 'adds the menu page.'], [8, 'adds the price list.']]) {
-      const { question } = await frontDesk(world, ['card'], approvalCard(pr, what));
-      await ask(world, [question], { [question.question]: 'Approve' });
-    }
-    for (const sha of [same, changed]) await until(() => Object.keys(keptFor(sha) ?? {}).length === PAGES.length * 2, `the pictures of ${short(sha)}`);
-    assert.ok(world.shots.every((s) => s.browser === CHROME));
-
-    // Another change merges, and each is brought up to date: its head is a new commit no click named.
+    // Another change merges, and the branch is brought up to date: its head is a new commit no click named.
     await mainMoves(world, { 'src/about.js': 'export const about = \'Since 1952\';\n' });
     const updated = await world.client.updateBranch({ project: P, number: 7 });
     assert.equal(updated.ok, true, JSON.stringify(updated));
-    const shots = world.shots.length;
-    assert.deepEqual(await merge(world, 7), { ok: true, merged: true, sha: updated.head, guardrailPaths: [], criticalAreas: [] });
-    // Every page looked the same: the head was photographed at the gate, from its own preview.
-    assert.deepEqual(world.shots.slice(shots).map((s) => s.commit), Array(PAGES.length * 2).fill(updated.head.slice(0, 12)));
-
-    // The second, brought up to date with the first, looks different on one page now.
-    const moved = await world.client.updateBranch({ project: P, number: 8 });
-    assert.equal(moved.ok, true, JSON.stringify(moved));
-    world.changed.add(moved.head.slice(0, 12));
-    assert.deepEqual((await merge(world, 8)).reasons, [`no approval of ${short(moved.head)}`]);
-    assert.deepEqual(world.host.merges, [{ number: 7, sha: updated.head }]);
+    assert.deepEqual((await merge(world, 7)).reasons, [`no approval of ${short(updated.head)}`]);
+    assert.deepEqual(world.host.merges, []);
 
     // The gate asks again: the foreman's merge records it, and the front desk's next card names the new head.
-    await buildLoop(world, 'gate-asks', { work: 'prices', pr: 8, ask: 'approval', sha: moved.head });
+    await buildLoop(world, 'gate-asks', { work: 'menu', pr: 7, ask: 'approval', sha: updated.head });
     const visit = await frontDesk(world, ['cards']);
-    assert.deepEqual(visit.inReply.map(setLineOf), [approvalLine(8, moved.head)]);
+    assert.deepEqual(visit.inReply.map(setLineOf), [approvalLine(7, updated.head)]);
   });
 });
 

@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { NAMES, glossaryOf, termsIn, termMatches, plainWords, knownConcepts, conceptOf } from '../../../scripts/frontdesk/glossary.js';
+import { NAMES, glossaryOf, termsIn, termMatches, plainWords } from '../../../scripts/frontdesk/glossary.js';
 
 const STARTER_TERMS = [
   'pull request', 'CI', 'merge', 'branch', 'commit', 'review', 'slice', 'lane', 'feature flag', 'preview', 'local change',
@@ -73,8 +73,8 @@ test('termMatches gives positions, and the longer term wins an overlap', () => {
   assert.deepEqual(termsIn('a feature flag', g), ['feature flag']);
 });
 
-const PLAIN = { explanations: 'plain', known: [] };
-const SOME = { explanations: 'some-terms', known: [] };
+const PLAIN = { explanations: 'plain' };
+const SOME = { explanations: 'some-terms' };
 
 test('a term inside a name of capitalised words is the name, not the term', () => {
   const g = glossaryOf({});
@@ -111,16 +111,6 @@ test('a term that stays where the text spelt it by an alias is listed with that 
   assert.equal(plainWords('A PR, then a pull request', g, PLAIN).text, `A proposed change, then a pull request\n\nTerms: pull request means ${g['pull request'].plain}.`);
 });
 
-test('a known term is kept as it is, named by its term or its concept', () => {
-  const g = glossaryOf({});
-  const text = "The PR's CI is red on slice 2";
-  assert.equal(plainWords(text, g, { explanations: 'plain', known: ['pull-request'] }).text, "The PR's automatic check run is red on piece 2");
-  assert.equal(plainWords(text, g, { explanations: 'plain', known: new Set(['pull request', 'CI', 'slice']) }).text, text);
-  const some = plainWords(text, g, { explanations: 'some-terms', known: ['ci', 'slice'] });
-  assert.match(some.text, /^The PR's CI is red on slice 2\n\nTerms: pull request \(PR\) means a proposed change/);
-  assert.doesNotMatch(some.text, /CI means|slice means/);
-});
-
 test('with some technical terms, terms are kept with their meanings at the end', () => {
   const g = glossaryOf({});
   const out = plainWords("The PR's CI is red", g, SOME);
@@ -129,7 +119,6 @@ test('with some technical terms, terms are kept with their meanings at the end',
     `The PR's CI is red\n\nTerms: pull request (PR) means ${g['pull request'].plain}; CI means ${g.CI.plain}.`,
   );
   assert.deepEqual(out.terms, ['pull request', 'CI']);
-  assert.equal(plainWords("The PR's CI is red", g, { known: ['pull-request', 'ci'], explanations: 'some-terms' }).text, "The PR's CI is red");
 });
 
 test('without a setting, explanations are plain', () => {
@@ -196,31 +185,6 @@ test('every starter term has words that fit a sentence', () => {
       if (entry[field] !== undefined) assert.deepEqual(termsIn(entry[field], g).filter((t) => t !== term), [], `${term}.${field}`);
     }
   }
-});
-
-test('knownConcepts reads the known:* settings that are true; conceptOf names a term the same way', () => {
-  assert.equal(conceptOf('pull request'), 'pull-request');
-  assert.equal(conceptOf('the helper'), 'the-helper');
-  assert.equal(conceptOf('CI'), 'ci');
-  const settings = {
-    explanations: { value: 'plain', from: 'default' },
-    'known:ci': { value: true, from: 'profile' },
-    'known:slice': { value: false, from: 'profile' },
-    'known:the-helper': { value: true, from: 'profile' },
-  };
-  assert.deepEqual(knownConcepts(settings), ['ci', 'the-helper']);
-  assert.deepEqual(knownConcepts(undefined), []);
-});
-
-test('a concept known under a starter term\'s old name is known under its new one', () => {
-  assert.equal(conceptOf('the Bosun'), 'the-bosun');
-  assert.equal(conceptOf('All stop'), 'all-stop');
-  const settings = { 'known:the-foreman': { value: true, from: 'profile' }, 'known:stop': { value: true, from: 'profile' } };
-  assert.deepEqual(knownConcepts(settings), ['the-foreman', 'stop', 'the-bosun', 'all-stop']);
-  const g = glossaryOf({});
-  const out = plainWords('The Bosun asks; All stop is on.', g, { explanations: 'plain', known: knownConcepts(settings) });
-  assert.equal(out.text, 'The Bosun asks; All stop is on.');
-  assert.deepEqual(knownConcepts({ 'known:the-foreman': { value: false, from: 'profile' } }), []);
 });
 
 test('commands, addresses, branch and file names, quotations and setting names are kept as written', () => {

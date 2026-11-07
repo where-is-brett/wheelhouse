@@ -185,8 +185,6 @@ function buttonsOf(card, preview) {
   // The old helper's card: every option decides, and each is signed as the director's answer to that card.
   if (kind === 'update-helper') return { buttons: [...answers('record'), why], note: null };
   if (kind === 'answer') return { buttons: [...answers('record'), ...askToSuggest, why, ...notNow], note: null };
-  // A blind card's click signs nothing: it goes to the front desk, which asks the answer card next.
-  if (kind === 'blind') return { buttons: [...answers('turn'), ...askToSuggest, why], note: null };
 
   const deciding = offers.find((label) => signsOn(label, text));
   return {

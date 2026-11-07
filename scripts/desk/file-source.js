@@ -9,7 +9,6 @@ import { writeViews } from '../state/views.js';
 import { readProfileViews, writeProfileViews } from '../profile/store.js';
 import { loadBoardInputs } from '../board/inputs.js';
 import { usageFigures, weeklyShare } from '../usage/figures.js';
-import { delegationReview } from '../frontdesk/learning.js';
 import { previewFor } from '../mod/previews.js';
 import { readEnrolled } from '../state/signing.js';
 import { namesOf, readProject } from '../lib/projects.js';
@@ -30,10 +29,10 @@ export function fileSource(project, { cwd, client, now = () => new Date(), fresh
     client,
     events,
     enrolled: () => readEnrolled(),
-    async views({ cards = false, answers = false, review = false } = {}) {
+    async views({ cards = false, answers = false } = {}) {
       const views = fresh ? await writeViews(project, { now }) : localViews(project, null);
       if (views === null || typeof views !== 'object') return { ok: false, refused: 'This project has no record to show yet' };
-      const all = cards || answers || review ? events() : [];
+      const all = cards || answers ? events() : [];
       return {
         ok: true,
         views,
@@ -41,7 +40,6 @@ export function fileSource(project, { cwd, client, now = () => new Date(), fresh
         ...(stopState().on ? { stop: true } : {}),
         ...(cards ? { cards: all.filter((e) => e.kind === 'card') } : {}),
         ...(answers ? { answers: all.filter((e) => e.kind === 'card-answer') } : {}),
-        ...(review ? { review: delegationReview(all, { now, enrolled: readEnrolled(), views }) } : {}),
       };
     },
     async profile() {

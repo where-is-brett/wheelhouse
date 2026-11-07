@@ -28,37 +28,21 @@
 //                   the director's "fix it" or "ship it" about work with an open pull request: the helper puts the
 //                   Bosun's question to them in its own fixed words (fix the findings or restart the builder, or stop the
 //                   work; shipping as it is is never offered while a signed review holds the merge) and prints the line to say
-//   end-goal [--now]
-//                   asks for the running goal to end: it stops starting work, and with --now stops what is running too
-//   goal-baseline <goal>
-//                   runs the goal's checks on the main line with no model, for its card: the result comes later, as
-//                   a `goal-check` record
-//   goal-draft [work ...]
-//                   the pieces a goal's sheet lists, each with its record's hash, and the spend to propose for them; with no
-//                   work named, what the last goal left, for a Carry on's new sheet
-//   goal-card <goal>
-//                   the result of the goal's checks and, once they and the checks before leaving pass, the sheet's card,
-//                   which only this command gives; while the checks run it waits a while, then says they are still running
-//   narrow-goal     narrows the running goal: the change as JSON on standard input, with only `until`, `spend`,
-//                   `areas` or `pieces`, each made smaller; a change that widens anything is refused
 //   record <kind>   records something the front desk decided: one of RECORD_KINDS, the data as JSON;
 //                   for a work event's document and an amendment, it works out the hash and prints it; a work also
-//                   prints `recordHash`, the hash of its record as written, which a goal's sheet names a piece by;
-//                   a goal prints `hash`, the hash of its sheet, which the goal's card and the director's Start name;
+//                   prints `recordHash`, the hash of its record as written;
 //                   an amendment needs its read-back, and prints the route line and the read-back to say
 //   note            asks the host helper to write this session's note, up to 1,200 characters on standard input (four lines: the task, what
 //                   is done, what is next, the decisions open), to <wheelhouse home>/projects/<project>/sessions/<session id>.md,
 //                   beside the context gauge's reading; the session is named by CLAUDE_CODE_SESSION_ID
 //   similar [words] the open work, ideas and rejections that share words with a request: its
 //                   words as the arguments, or its text on standard input
-//   views <name>    one view as short lines: rulebook, waiting, ideas, glossary, settings, levels or
+//   views <name>    one view as short lines: rulebook, waiting, ideas, glossary, settings, levels, brief or
 //                   work (the open work, running and waiting, in the glossary's plain words);
 //                   `views waiting --since <time>` also names the cards answered since then anywhere but the chat
-//   Where a live VS Code panel answers a project's cards, cards, again, pull-cards and review give
+//   Where a live VS Code panel answers a project's cards, cards, again and pull-cards give
 //   { "panel": <a line saying so> } instead of `questions`; --here asks them in the chat once.
 //   explain <term>  the glossary's plain words for a term, with its example
-//   review          the delegation review: each proposal as a level waiting for the director, with
-//                   its confirm card, as AskUserQuestion's input; then records the review as done
 //   preview <n>     the address of pull request n's preview, for "Show me", or a sentence saying
 //                   there is none
 //   carry-on <n>    makes open request n ready to carry on (design section 15, A2): the helper
@@ -82,30 +66,30 @@
 // from the question the build recorded. Every card handed out is recorded as asked, and
 // its words are put in the glossary's plain words. Errors are one line on standard error.
 import { HAND_DONE, HAND_GOAL } from '../lib/by-hand-done.js';
-import { BRIEF_LINES, addFact, briefProblem, briefText, wholeBrief } from '../delegation/brief.js';
+import { BRIEF_LINES, addFact, briefProblem, briefText, wholeBrief } from '../state/brief.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { helperClient } from '../host/helper-client.js';
 import { WINDOW_MS } from '../confirm/window.js';
 import { dataHash } from '../state/events.js';
-import { composeCard, answerInput, blindInput } from '../cards/compose.js';
+import { composeCard, answerInput } from '../cards/compose.js';
 import { confirmWords } from '../state/card-lines.js';
 import { joinersOf } from '../state/joiners.js';
-import { cardsForVisit, existingCard, cardNumbered, asQuestion, importanceOf, IMPORTANCE } from '../cards/visit.js';
+import { cardsForVisit, existingCard, cardNumbered, asQuestion } from '../cards/visit.js';
 import { controlFileInput, controlFilesDue, controlFilesNamed, gateAsksDue, gateInput, holdInput, holdsDue, premiumFailuresDue, stillWaits, withPutBack } from '../cards/build-loop.js';
 import { COMPACT_NAME, COMPACT_WORK } from '../settings/compact-window-pr.js';
 import { SWITCH_NAME, SWITCH_WORK } from '../engine/switch.js';
 import { failedInput } from '../routing/premium.js';
 import { heldByNotNow, numberedWaiting } from '../board/model.js';
-import { glossaryOf, knownConcepts, plainWords, termPattern } from './glossary.js';
+import { glossaryOf, plainWords, termPattern } from './glossary.js';
 import { windowRefusal } from '../settings/compact-window.js';
-import { checkSetting, definitionOf, KNOWN, SETTINGS, WINDOWS_BUILD_COMMANDS, OWN_GITHUB_APP_KEY } from '../settings/catalogue.js';
-import { CARD, OFFER_ASK, WORK_REPORTS } from '../lib/front-desk.js';
-import { effectiveSettings, levelWords, settingsText, settingWords } from '../settings/effective.js';
+import { checkSetting, definitionOf, SETTINGS, WINDOWS_BUILD_COMMANDS, OWN_GITHUB_APP_KEY } from '../settings/catalogue.js';
+import { CARD, WORK_REPORTS } from '../lib/front-desk.js';
+import { effectiveSettings, settingsText, settingWords } from '../settings/effective.js';
 import { similar as similarTo } from '../intake/similar.js';
-import { answerLine, blindLine, chatCopy, ID, keepControlLine } from '../state/card-lines.js';
-import { countsAtOnce, gateTargetOf } from '../state/views.js';
+import { answerLine, chatCopy, ID, keepControlLine } from '../state/card-lines.js';
+import { gateTargetOf } from '../state/views.js';
 import { briefHash } from '../feature/files.js';
 import { endedBy, since, NO_PLAN, STARTS_UNAPPROVED } from '../foreman/queue.js';
 import { startedAsScript } from '../lib/started-as-script.js';
@@ -118,7 +102,6 @@ import { sinceLine } from '../cards/panel-words.js';
 // How far back `views waiting` looks for answers, and its lead (scripts/desk/views.js).
 export { RECENT_MS, RECENT_LEAD };
 import { deskClient } from '../desk/client.js';
-import { checkSheet, sheetHash } from '../engine/goal.js';
 
 // Moved to the desk's views (scripts/desk/views.js); exported here for one release so nothing else breaks.
 export { surveyLines, workLines };
@@ -135,10 +118,10 @@ export class CliError extends Error {}
 // (work, amendment, incident, and the no-blame note when an incident ends).
 export const RECORD_KINDS = Object.freeze([
   'ruling', 'idea', 'rejection', 'glossary', 'decision', 'risk', 'blocker', 'reversal', 'setting',
-  'work', 'amendment', 'incident', 'note', 'brief', 'goal',
+  'work', 'amendment', 'incident', 'note', 'brief',
 ]);
-export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey', 'evidence', 'brief']);
-const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'review', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'end-goal', 'narrow-goal', 'goal-baseline', 'goal-draft', 'goal-card', 'note'];
+export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey', 'brief']);
+const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'note'];
 // How long `confirm` waits for the helper: one window at a time on the computer, so it may wait for another's.
 const CONFIRM_WAIT_MS = 3 * WINDOW_MS;
 export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
@@ -164,7 +147,7 @@ const BREAK = /[\r\n\v\f\u0085\u2028\u2029]/;
 // Every run of line breaks, to put each answered line on one line.
 const BREAKS = /\s*[\r\n\v\f\u0085\u2028\u2029]+\s*/g;
 const HEAD = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
-// A decision topic: a slug, so the delegation review counts it exactly (ruling F40).
+// A decision topic: a slug, counted exactly (ruling F40).
 const TOPIC = new RegExp(`^${ID}$`);
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
@@ -188,10 +171,10 @@ function readyIn(cwd) {
 const deskOf = (client, cwd) => deskClient({ cwd, client, local: 'never' });
 
 // The record as the desk's waiting view gives it (the helper's views, its card events and whether
-// STOP is on), with `review` the delegation review and `answers` the card-answer events; or the
+// STOP is on), with `answers` the card-answer events; or the
 // helper's refusal, thrown as it said it.
-async function recordOf(client, cwd, { answers = false, review = false, since } = {}) {
-  const got = await deskOf(client, cwd).read('waiting', { ...(answers ? { answers: true } : {}), ...(review ? { review: true } : {}), ...(since === undefined ? {} : { outcomes: { since: since.toISOString() } }) });
+async function recordOf(client, cwd, { answers = false, since } = {}) {
+  const got = await deskOf(client, cwd).read('waiting', { ...(answers ? { answers: true } : {}), ...(since === undefined ? {} : { outcomes: { since: since.toISOString() } }) });
   if (got?.ok !== true || !isPlain(got.data?.views)) throw new CliError(said(got, 'The host helper gave no views'));
   return got.data;
 }
@@ -252,20 +235,20 @@ const withProblems = (problems) => (problems.length > 0 ? { problems } : {});
 
 // --- Plain words ---
 
-const LABELS = [...Object.values(SETTINGS), KNOWN].map((setting) => setting.label);
+const LABELS = Object.values(SETTINGS).map((setting) => setting.label);
 // Joins a card's texts so a term can't run from one into the next ("pull" then "request").
 const JOIN = '\n\u0000\n';
 const TERMS = '\n\nTerms: ';
 
 // The words a card's texts go through, as the board-context hook takes them: the glossary from the
-// views, the explanations setting and the concepts the director knows from the settings in force,
+// views, the explanations setting from the settings in force,
 // and what stays as written: the settings' names, the titles of the work and the `names` the project goes by
 // (namesIn). A profile that can't be read gives the defaults.
 async function wordsOf(client, cwd, views, now, names = []) {
   const own = await ownSettings(client, cwd);
   const settings = effectiveSettings({ project: isPlain(views.settings) ? views.settings : {}, profile: own, now });
   const titles = Object.values(isPlain(views.work) ? views.work : {}).map((w) => flat(w?.work?.data?.title)).filter((t) => typeof t === 'string' && t !== '');
-  return { glossary: glossaryOf(views.glossary), explanations: settings.explanations?.value, known: knownConcepts(settings), protect: [...LABELS, ...titles], names };
+  return { glossary: glossaryOf(views.glossary), explanations: settings.explanations?.value, protect: [...LABELS, ...titles], names };
 }
 
 // The composer's input with what the director reads in plain words (design section 5.3): the
@@ -339,8 +322,7 @@ const sameList = (a, b) => a.length === b.length && a.every((x) => b.includes(x)
 // carry the title; the build's ask commands check a question against the card naming the id.
 // A card lists each piece its answer goes to, by title or, where those won't fit, by id. A card already out is re-issued
 // through `revises` once the pieces behind it change; the question it answers, and so its signature, stays as it was.
-// One that follows a blind card says what was picked, or where that won't fit, only that it followed one.
-function answerCard(id, data, views, words, { joiners = [], revises, saidBefore, picked, blind, changed = REISSUED } = {}) {
+function answerCard(id, data, views, words, { joiners = [], revises, saidBefore, changed = REISSUED } = {}) {
   if (!isPlain(data) || data.id !== id) throw new Error('its record can\'t be read');
   const title = (work) => flat(views.work?.[work]?.work?.data?.title);
   const reissue = revises === undefined ? {} : { revises, changed };
@@ -349,32 +331,16 @@ function answerCard(id, data, views, words, { joiners = [], revises, saidBefore,
     for (const titled of [true, false]) {
       const named = joiners.map((j) => ({ id: j.id, name: (titled && title(j.work)) || j.work, words: views.questions?.[j.id]?.question?.data?.what }));
       try {
-        return composePlain({ ...answerInput(data, name, { joiners: named, saidBefore, picked, blind, recorded: true }), ...reissue }, words);
+        return composePlain({ ...answerInput(data, name, { joiners: named, saidBefore, recorded: true }), ...reissue }, words);
       } catch (error) {
         refusal ??= error;
       }
     }
   }
   // Too long to list its pieces: the question is still asked, and they are asked after it, with what was said.
-  if (revises === undefined && (joiners.length > 0 || saidBefore !== undefined || picked !== undefined)) return answerCard(id, data, views, words, { blind });
+  if (revises === undefined && (joiners.length > 0 || saidBefore !== undefined)) return answerCard(id, data, views, words);
   throw refusal;
 }
-
-// The blind card for a question, or null when it can't be one: the ordinary card is then asked in its place.
-function blindCard(id, data, views, words) {
-  const title = flat(views.work?.[data.work]?.work?.data?.title);
-  for (const name of [...new Set([title || data.work, data.work])]) {
-    try {
-      return composePlain(blindInput(data, name), words);
-    } catch {
-      // The next name, or the ordinary card.
-    }
-  }
-  return null;
-}
-
-// Whether a question's blind card, held for now, gives way to its answer card: it has come to hold up all work.
-const blindGivesWay = (id, data, views) => importanceOf({ data: { kind: 'answer', line: answerLine(id), level: data.level } }, views) > IMPORTANCE.LEVEL_3;
 
 // The card for a click the merge gate waits for, naming the work by its title, or by its id when
 // it has none or the card won't carry the title (the first part may name no other pull request or
@@ -501,7 +467,7 @@ async function buildLoopCards({ client, cwd, views, words, now, problems }) {
 
 // This visit's cards: { questions, left }, and `problems` when something couldn't be done. An open
 // question from the build that no waiting card asks gets its answer card first, and the build
-// loop's records theirs (buildLoopCards). A question drawn blind gets its blind card ahead of that. The cards handed out are recorded as asked, so a card
+// loop's records theirs (buildLoopCards). The cards handed out are recorded as asked, so a card
 // dismissed with no answer isn't offered on every turn. A write the helper refuses is a problem,
 // not a failure: the cards waiting are still given. Under STOP the visit's one card is Lift STOP:
 // the helper writes nothing, so no card is made, and the cards waiting stay on the board, counted
@@ -525,24 +491,9 @@ export async function cards({ client, cwd, now, onAsked }) {
     const sayNow = out !== null && typeof line === 'string' && held?.saidBefore !== line;
     if (out !== null && sameJoiners && !sayNow) continue;
     const data = entry.question?.data;
-    const pick = entry.firstPick;
-    if (data?.blind === true && out === null && pick === undefined && !blindGivesWay(id, data, views)) {
-      if (existingCard(views, blindLine(id)) !== null) continue;
-      const blind = blindCard(id, data, views, words);
-      if (blind !== null) {
-        try {
-          await write(client, cwd, 'card', blind.card);
-          made += 1;
-        } catch (error) {
-          problems.push(`The card for question ${id} wasn't recorded: ${error.message}`);
-        }
-        continue;
-      }
-    }
-    const followed = pick === undefined ? {} : { blind: true, ...(pick.typed ? {} : { picked: pick.label }) };
     let card;
     try {
-      ({ card } = answerCard(id, data, views, words, { joiners, saidBefore: line, ...followed, ...(out === null ? {} : { revises: out, ...(sameJoiners ? { changed: SAID_ADDED } : {}) }) }));
+      ({ card } = answerCard(id, data, views, words, { joiners, saidBefore: line, ...(out === null ? {} : { revises: out, ...(sameJoiners ? { changed: SAID_ADDED } : {}) }) }));
     } catch (error) {
       if (!(out !== null && sameJoiners)) problems.push(`Question ${id} couldn't be made a card: ${error.message}`);
       continue;
@@ -559,7 +510,6 @@ export async function cards({ client, cwd, now, onAsked }) {
     const built = await buildLoopCards({ client, cwd, views, words, now: at, problems });
     made += built.made;
     again = built.again;
-    made += await offerRule({ client, cwd, words, problems });
   }
   // A card put back that no longer waits (it was decided) is put back from its card event.
   const decided = [...again].some((id) => !(Array.isArray(views.waiting) ? views.waiting : []).some((c) => c?.id === id));
@@ -580,52 +530,6 @@ export async function pullCards({ client, cwd, now, onAsked }) {
   return cards({ client, cwd, now, onAsked });
 }
 
-// The director's End goal and narrowing, through the desk: neither needs the director's signature, since each only
-// makes less happen.
-export async function endGoal({ client, cwd, now: immediately }) {
-  const got = await deskOf(client, cwd).act('end-goal', { now: immediately === true });
-  if (got?.ok !== true) throw new CliError(said(got, 'The goal wasn\'t ended'));
-  return { asked: true, now: immediately === true };
-}
-
-// Runs the goal's checks on the main line for its card. The result comes later, as a `goal-check` record.
-export async function goalBaseline({ client, cwd, goal }) {
-  const got = await client.goalBaseline({ cwd, goal });
-  if (got?.ok !== true) throw new CliError(said(got, 'The goal\'s checks weren\'t started'));
-  return { started: got.runId !== null, head: got.head };
-}
-
-// What a sheet can list, and the spend to propose.
-export async function goalDraft({ client, cwd, pieces }) {
-  const got = await client.goalDraft({ cwd, pieces });
-  if (got?.ok !== true) throw new CliError(said(got, 'The goal\'s draft wasn\'t made'));
-  const { ok: _ok, ...draft } = got;
-  return draft;
-}
-
-// How long `goal-card` waits for the checks, within a command's usual time limit, and how often it looks.
-const GOAL_CARD_WAIT_MS = 90 * 1000;
-const GOAL_CARD_LOOK_MS = 5 * 1000;
-export const STILL_CHECKING = 'The goal\'s checks are still running on the main line.';
-
-// The sheet's card, once the checks are in: it comes from the helper alone, which records it, and it is marked asked.
-export async function goalCard({ client, cwd, goal, wait = (ms) => new Promise((done) => { setTimeout(done, ms); }), waitMs = GOAL_CARD_WAIT_MS }) {
-  for (let waited = 0; ; waited += GOAL_CARD_LOOK_MS) {
-    const got = await client.goalCard({ cwd, goal });
-    if (got?.ok !== true) throw new CliError(said(got, 'The goal\'s card wasn\'t made'));
-    if (got.offered === true) return { question: got.question, id: got.id, warns: got.warns, results: got.results, ...withProblems(await markAsked(client, cwd, [got.id], false)) };
-    if (got.waiting !== true) return { refused: got.refused, results: got.results };
-    if (waited + GOAL_CARD_LOOK_MS > waitMs) return { waiting: true, say: STILL_CHECKING };
-    await wait(GOAL_CARD_LOOK_MS);
-  }
-}
-
-export async function narrowGoal({ client, cwd, change }) {
-  const got = await deskOf(client, cwd).act('narrow-goal', { change });
-  if (got?.ok !== true) throw new CliError(said(got, 'The goal wasn\'t narrowed'));
-  return { narrowed: true };
-}
-
 // --- card ---
 
 // A card's or a reversal's topic in lower case, refused when it isn't a slug (ruling F40).
@@ -639,7 +543,7 @@ function topicOf(given) {
 // card comes back as it was recorded, so the director is asked the card the state holds, with
 // `alreadyAsked` when a visit has handed it out already. The card handed out is recorded as asked.
 // An approval whose target names only the pull request gets its head commit from the host. A
-// topic is kept in lower case, so the delegation review counts it as one. A revised card names the
+// topic is kept in lower case. A revised card names the
 // card it replaces by `revises`, which must wait now, or have been closed by a later head of its pull
 // request or branch, and be of the card's kind. A card already waiting with its set line comes back
 // only when it is itself a revised card: the gate's plain card for that head is replaced instead.
@@ -647,10 +551,9 @@ function topicOf(given) {
 // An outdated card may be revised only after a suggested change on it that came before the gate's record for the head.
 export async function card({ client, cwd, input, now }) {
   if (!isPlain(input)) throw new CliError('Give the card as a JSON object on standard input');
-  if (input.kind === 'answer' || input.kind === 'blind') throw new CliError('An answer card comes from `cards`, made from the question as the build recorded it');
+  if (input.kind === 'answer') throw new CliError('An answer card comes from `cards`, made from the question as the build recorded it');
   if (input.kind === 'usage') throw new CliError('A usage card comes from the session start, made from the allowance as it reads it');
   if (input.kind === 'premium') throw new CliError('The premium model\'s card comes from `premium-card`, made by the helper');
-  if (input.kind === 'start-goal') throw new CliError('A goal\'s card comes from `goal-card`, made by the helper from its sheet');
   if (input.event !== undefined) throw new CliError('A card for a record of the build\'s comes from `cards`, made once from the record');
   const topic = input.topic === undefined ? undefined : topicOf(input.topic);
   const at = typeof now === 'function' ? now() : new Date(now ?? Date.now());
@@ -846,16 +749,12 @@ function removeBrief(cwd, views, workId) {
 
 // --- record ---
 
-// What a ruling drafted from words typed on a rule's offer holds it to, shown on its card.
-const WIDER_LIMITS = 'It stops short of the usual exclusions, such as secrets and guardrails, and level 4 always comes to you.';
-
-// The confirm card for a ruling, which names the ruling by its id and its words. A `wider` ruling is one the director
-// typed on a rule's offer, so the card shows what still holds it.
-function confirmCard(event, words, { wider = false } = {}) {
+// The confirm card for a ruling, which names the ruling by its id and its words.
+function confirmCard(event, words) {
   return composePlain({
     kind: 'confirm',
     level: 3,
-    what: `A rule you gave, in your words: "${event.data.words}"${wider ? `. ${WIDER_LIMITS}` : ''}`,
+    what: `A rule you gave, in your words: "${event.data.words}"`,
     why: 'A rule is followed only once you confirm it, so it comes to you.',
     options: [{ label: 'Confirm', says: 'The rule goes into the rulebook and is followed from now on.' }],
     recommend: 'Confirm',
@@ -863,49 +762,6 @@ function confirmCard(event, words, { wider = false } = {}) {
     meanwhile: 'The rule is written down, but nothing follows it until you confirm.',
     target: { event },
   }, words);
-}
-
-// Why an answer earned its offer, as the card says it.
-const OFFER_WHY = Object.freeze({
-  like: 'You answered a like question the same way before.',
-  left: 'You chose differently from what was recommended.',
-});
-
-// The confirm card offering a rule, which shows the rule as it would read, with its scope. The event comes from the
-// helper, so the card's line names the rule as it was recorded.
-function offerCard(event, why, words) {
-  return composePlain({
-    kind: 'confirm',
-    level: 3,
-    ask: OFFER_ASK,
-    what: `As a rule it would read: ${confirmWords(event)}.`,
-    why: `${OFFER_WHY[why]} Only you make a rule, so it comes to you.`,
-    options: [{ label: 'Confirm', says: 'The rule is signed. It decides nothing yet: it only records what it would have done, and the usual exclusions stay with you.' }],
-    recommend: 'Confirm',
-    because: 'it keeps the answer you gave, this narrowly',
-    meanwhile: 'Nothing changes until you confirm, and questions like this keep coming to you.',
-    target: { event },
-  }, words);
-}
-
-// The rule a visit offers, its card recorded, or 0. An offer is never worth a problem for the visit: the helper may have
-// none to give, or no route for it, and only a rule recorded with no card is said.
-async function offerRule({ client, cwd, words, problems }) {
-  let offer = null;
-  try {
-    const got = await client.rules.offer({ cwd });
-    offer = got?.ok === true && isPlain(got.offer) ? got.offer : null;
-  } catch {
-    return 0;
-  }
-  if (offer === null) return 0;
-  try {
-    await write(client, cwd, 'card', offerCard(offer.event, offer.why, words).card);
-    return 1;
-  } catch (error) {
-    problems.push(`The rule offered wasn't made a card: ${error.message}`);
-    return 0;
-  }
 }
 
 // The confirm card for a standing brief, which shows all of it as it would stand.
@@ -964,6 +820,8 @@ export async function writeSetting({ client, cwd, data, words, ready, makeId = (
   } catch (error) {
     throw new CliError(error.message);
   }
+  // A setting Wheelhouse has retired is read from old records and never written again.
+  if (definitionOf(data.key)?.retired) throw new CliError(`Wheelhouse no longer has a setting called ${data.key}`);
   // Build commands on Windows are turned on only by the director's click on their own card, never
   // by an agent (design section 12.2); the front desk may write only the off switch, Ask.
   if (definitionOf(data.key) === WINDOWS_BUILD_COMMANDS && data.value !== 'ask') {
@@ -994,11 +852,10 @@ export async function writeSetting({ client, cwd, data, words, ready, makeId = (
     }
   };
   if (definitionOf(data.key).home === 'profile') {
-    const needsCard = !countsAtOnce({ kind: 'setting', data: setting });
-    if (needsCard) settingCard({ kind: 'setting', id: makeId(), data: setting }, words);
+    settingCard({ kind: 'setting', id: makeId(), data: setting }, words);
     const got = await client.profile.write({ kind: 'setting', data: setting });
     if (got?.ok !== true || typeof got.id !== 'string') throw new CliError(said(got, 'The host helper did not record the setting'));
-    return needsCard ? withCard(got) : answered(got);
+    return withCard(got);
   }
   const id = makeId();
   settingCard({ kind: 'setting', id, data: setting }, words);
@@ -1069,15 +926,12 @@ async function withHash(client, cwd, kind, input) {
 
 // Records one event and resolves with { id, pushed }, with `hash` for a work event's document or an
 // amendment, `say` for an amendment (its route line and read-back), and for a ruling or a setting its confirm card, recorded too, as { question, id }. A setting the catalogue refuses is refused here, before
-// the helper is asked; the director's own settings go to their profile, and a concept set to false
-// needs no card (writeSetting). A ruling keeps its words exactly as given: its card is composed
+// the helper is asked; the director's own settings go to their profile (writeSetting). A ruling keeps its words exactly as given: its card is composed
 // first, under the id the ruling is then written with, so a ruling whose words no card can carry
 // is never written. The confirm card is recorded as asked.
 export async function record({ client, cwd, kind, input, now, ready, makeId = () => crypto.randomUUID() }) {
   if (!RECORD_KINDS.includes(kind)) throw new CliError(`record takes one of: ${RECORD_KINDS.join(', ')}`);
   if (!isPlain(input)) throw new CliError(`Give the ${kind} as a JSON object on standard input`);
-  // The delegation review's note is written by `review` alone, so a review is never recorded as done that wasn't.
-  if (kind === 'note' && Object.hasOwn(input, 'review')) throw new CliError('A note with a review field is written by `review` alone; leave the field out');
   const answered = (got) => ({ id: got.id, pushed: got.pushed === true });
   if (kind === 'setting') {
     try {
@@ -1098,15 +952,15 @@ export async function record({ client, cwd, kind, input, now, ready, makeId = ()
     const data = { key: input.key, value: input.value, ...(input.until === undefined ? {} : { until: input.until }),
       // The time of the usage card whose pick this is, which the card's line gives; it ties a return card to this switch.
       ...(typeof input.usageCard === 'string' && !Number.isNaN(Date.parse(input.usageCard)) ? { usageCard: input.usageCard } : {}) };
-    const words = countsAtOnce({ kind: 'setting', data }) ? null : await viewsOf(client, cwd).then((v) => wordsOf(client, cwd, v.views, now, v.names));
+    const words = await viewsOf(client, cwd).then((v) => wordsOf(client, cwd, v.views, now, v.names));
     const got = await writeSetting({ client, cwd, data, words, makeId, ready: ready ?? readyIn(cwd) });
     if (got.card === undefined) return got;
     return { ...got, ...withProblems(await markAsked(client, cwd, [got.card.id], false)) };
   }
-  // A reversal's topic is a slug in lower case, as a card's is, so the delegation review counts them together.
+  // A reversal's topic is a slug in lower case, as a card's is.
   if (kind === 'reversal') return answered(await write(client, cwd, kind, { ...input, topic: topicOf(input.topic) }));
   if (kind === 'work') {
-    // A change users would see goes in the small lane at least, shown first (intake, route 10;
+    // A change users would see goes in the small lane at least, shown first (intake, route 9;
     // scenario 7). Ready-made work carried on (`from`) is shown whatever its lane.
     if (input.lane === 'quick' && input.visible === true && input.from === undefined) {
       throw new CliError('Work users would see goes in the small lane at least, shown to the director first: record it in the small lane, with an approve-work card (shownFirst). The quick lane is for work users won\'t see (visible false)');
@@ -1122,21 +976,14 @@ export async function record({ client, cwd, kind, input, now, ready, makeId = ()
     const data = await withHash(client, cwd, kind, rest);
     return { ...answered(await write(client, cwd, kind, data)), hash: data.hash, say };
   }
-  if (kind === 'goal') {
-    // A goal's sheet is checked before it is written, so a card is never made for one that can't start.
-    const problem = checkSheet(input.sheet, { now: now() });
-    if (problem !== null) throw new CliError(problem);
-    return { ...answered(await write(client, cwd, kind, input)), hash: sheetHash(input.sheet) };
-  }
   if (kind !== 'ruling' && kind !== 'brief') return answered(await write(client, cwd, kind, input));
 
   const { words } = input;
   if (kind === 'ruling' && (typeof words !== 'string' || words.trim() === '' || BREAK.test(words))) throw new CliError('A ruling needs its words, on one line, as the director gave them');
   const { views, names } = await viewsOf(client, cwd);
   const id = makeId();
-  const { wider, ...ruling } = input;
-  const held = kind === 'brief' ? briefToSign(input, views.brief) : ruling;
-  const { question, card: data } = (kind === 'brief' ? briefCard : confirmCard)({ kind, id, data: held }, await wordsOf(client, cwd, views, now, names), { wider: wider === true });
+  const held = kind === 'brief' ? briefToSign(input, views.brief) : input;
+  const { question, card: data } = (kind === 'brief' ? briefCard : confirmCard)({ kind, id, data: held }, await wordsOf(client, cwd, views, now, names));
   const got = await write(client, cwd, kind, held, id);
   if (got.id !== id) throw new CliError(`The ${kind} was recorded as ${got.id}, not under the id its confirm card names`);
   let made;
@@ -1146,89 +993,6 @@ export async function record({ client, cwd, kind, input, now, ready, makeId = ()
     throw new CliError(`The ${kind} was recorded as ${id}, but its confirm card wasn't: ${error.message}`);
   }
   return { ...answered(got), card: { question, id: made.id }, ...withProblems(await markAsked(client, cwd, [made.id], false)) };
-}
-
-// --- review ---
-
-// The confirm card for a level the delegation review proposes, which names the level by its id and
-// its words, and gives the review's reason (ruling F42). Confirm puts the topic into the rulebook
-// at that level (ruling F46); a proposal's card offers Keep as is too (compose.js).
-export function levelCard(event, words) {
-  const lower = event.data.value < 3;
-  return composePlain({
-    kind: 'confirm',
-    level: 3,
-    what: `A change to what I can decide alone, from the regular look at it: ${event.data.words}`,
-    why: 'Only you change what I can decide without you, so it comes to you.',
-    options: [{
-      label: 'Confirm',
-      says: lower
-        ? `It goes into the rulebook at level ${event.data.value}: its questions are decided without a card, and told in the briefing.`
-        : `It goes into the rulebook at level ${event.data.value}: its questions come to you as cards, and wait for your answer.`,
-    }],
-    recommend: 'Confirm',
-    because: event.data.because,
-    meanwhile: 'Nothing changes until you confirm.',
-    target: { event },
-  }, words);
-}
-
-// The delegation review (design section 6): { questions, left }, and `problems` when something
-// couldn't be done. The helper works out the proposals from the project's events; each is written
-// as a `level` event with its words and reason, under the id its confirm card was composed with,
-// then the card. One call's worth of cards is handed out and marked asked; the rest wait on the
-// board, counted in `left`. The review is recorded as done last, even with nothing to propose, so
-// it isn't due again until the next period, but only when every proposal and its card were
-// recorded: otherwise it stays due, and a level whose card wasn't written gets it from the
-// board-context hook on the next visit. Under STOP nothing is written, so it is refused.
-export async function review({ client, cwd, now, makeId = () => crypto.randomUUID() }) {
-  const got = await recordOf(client, cwd, { review: true });
-  if (got.stop === true) throw new CliError('All stop is on, so the review waits until it is lifted');
-  if (!isPlain(got.review) || !Array.isArray(got.review.proposals)) throw new CliError('The host helper gave no review');
-  const words = await wordsOf(client, cwd, got.views, now, namesIn(got));
-  const problems = [];
-  const made = [];
-  for (const proposal of got.review.proposals) {
-    const { topic, to, because } = isPlain(proposal) ? proposal : {};
-    if (typeof topic !== 'string' || !TOPIC.test(topic) || ![1, 2, 3, 4].includes(to) || typeof because !== 'string') {
-      problems.push('A proposal from the helper couldn\'t be read');
-      continue;
-    }
-    const id = makeId();
-    const data = { key: topic, value: to, words: levelWords(topic, to), because };
-    let composed;
-    try {
-      composed = levelCard({ kind: 'level', id, data }, words);
-    } catch (error) {
-      problems.push(`The proposal for ${topic} couldn't be made a card: ${error.message}`);
-      continue;
-    }
-    try {
-      const wrote = await write(client, cwd, 'level', data, id);
-      if (wrote.id !== id) throw new CliError(`it was recorded as ${wrote.id}, not under the id its confirm card names`);
-    } catch (error) {
-      problems.push(`The proposal for ${topic} wasn't recorded: ${error.message}`);
-      continue;
-    }
-    try {
-      made.push({ question: composed.question, id: (await write(client, cwd, 'card', composed.card)).id });
-    } catch (error) {
-      problems.push(`The proposal for ${topic} was recorded as ${id}, but its confirm card wasn't: ${error.message}`);
-    }
-  }
-  const complete = problems.length === 0;
-  const asked = made.slice(0, CARD.questions);
-  problems.push(...await markAsked(client, cwd, asked.map((c) => c.id), false));
-  if (!complete) {
-    problems.push('The review wasn\'t recorded as done, since not every proposal was, so it stays due');
-  } else {
-    try {
-      await write(client, cwd, 'note', { review: 'delegation', at: new Date(typeof now === 'function' ? now() : now).toISOString() });
-    } catch (error) {
-      problems.push(`The review wasn't recorded as done, so it stays due: ${error.message}`);
-    }
-  }
-  return { questions: asked.map((c) => c.question), left: made.length - asked.length, ...withProblems(problems) };
 }
 
 // --- similar ---
@@ -1253,11 +1017,6 @@ export async function view({ client, cwd, name, now, since: from }) {
   const { views, cards: events, answers, outcomes, names } = await viewsOf(client, cwd, {
     cards: name === 'waiting' || name === 'levels', answers: name === 'work', ...(name === 'waiting' ? { since: new Date(Math.min(at.getTime() - RECENT_MS, from?.getTime() ?? Infinity)) } : {}),
   });
-  // Volume only: until the director has set the bars, no result of a seal is shown (delegated decisions design, section 12).
-  if (name === 'evidence') {
-    const { sealed = 0, read = 0, sampled = 0 } = isPlain(views.evidence) ? views.evidence : {};
-    return [`${sealed} ${sealed === 1 ? 'card' : 'cards'} sealed, ${read} read, ${sampled} sampled.`];
-  }
   if (name === 'brief') return views.brief ? [briefText(views.brief.brief)] : ['This project has no signed brief.'];
   if (name === 'rulebook') {
     const rules = (Array.isArray(views.rulebook) ? views.rulebook : []).filter((r) => r?.status !== 'superseded');
@@ -1296,21 +1055,11 @@ export async function view({ client, cwd, name, now, since: from }) {
   return settingsText(effectiveSettings({ project: isPlain(views.settings) ? views.settings : {}, profile: own, now })).split('\n');
 }
 
-// The decision topics, for a card to reuse one: each level in force, each level waiting for the
-// director's confirmation, then the topics on earlier cards with neither, each sorted by topic.
+// The decision topics on earlier cards, for a card to reuse one, sorted by topic. Levels an earlier version confirmed for a
+// topic are left out: nothing acts on them now.
 function levelLines(views, events) {
-  const inForce = Object.values(isPlain(views.levels) ? views.levels : {}).filter((l) => isPlain(l) && TOPIC.test(l.key ?? '') && [1, 2, 3, 4].includes(l.value))
-    .sort((a, b) => a.key.localeCompare(b.key));
-  const waiting = (Array.isArray(views.unconfirmed) ? views.unconfirmed : [])
-    .filter((u) => u?.kind === 'level' && TOPIC.test(u.data?.key ?? '') && [1, 2, 3, 4].includes(u.data?.value))
-    .sort((a, b) => a.data.key.localeCompare(b.data.key));
-  const named = new Set([...inForce.map((l) => l.key), ...waiting.map((u) => u.data.key)]);
-  const onCards = [...new Set(events.map((e) => e.data?.topic).filter((t) => typeof t === 'string' && TOPIC.test(t) && !named.has(t)))].sort();
-  return [
-    ...inForce.map((l) => `${levelWords(l.key, l.value)} (in force)`),
-    ...waiting.map((u) => `${levelWords(u.data.key, u.data.value)} (waiting for the director to confirm it)`),
-    ...onCards.map((t) => `"${t}": on earlier cards`),
-  ];
+  const onCards = [...new Set(events.map((e) => e.data?.topic).filter((t) => typeof t === 'string' && TOPIC.test(t)))].sort();
+  return onCards.map((t) => `"${t}": on earlier cards`);
 }
 
 // --- explain ---
@@ -1491,30 +1240,6 @@ export async function main(argv, {
       json(await pullCards({ client: helper, cwd: here, now, onAsked }));
       return 0;
     }
-    if (command === 'end-goal') {
-      if (rest.length > 1 || (rest.length === 1 && rest[0] !== '--now')) throw new CliError('end-goal takes only --now: end-goal [--now]');
-      json(await endGoal({ client: helper, cwd: here, now: rest[0] === '--now' }));
-      return 0;
-    }
-    if (command === 'goal-baseline') {
-      only(rest, 1, 'goal-baseline takes the goal: goal-baseline <goal>');
-      json(await goalBaseline({ client: helper, cwd: here, goal: rest[0] }));
-      return 0;
-    }
-    if (command === 'goal-draft') {
-      json(await goalDraft({ client: helper, cwd: here, pieces: rest }));
-      return 0;
-    }
-    if (command === 'goal-card') {
-      only(rest, 1, 'goal-card takes the goal: goal-card <goal>');
-      json(await goalCard({ client: helper, cwd: here, goal: rest[0] }));
-      return 0;
-    }
-    if (command === 'narrow-goal') {
-      only(rest, 0, 'narrow-goal takes no arguments: give the change as JSON on standard input');
-      json(await narrowGoal({ client: helper, cwd: here, change: parsed(await stdin()) }));
-      return 0;
-    }
     if (command === 'cards') {
       const { left, onAsked } = await hereMark(rest);
       only(left, 0, 'cards takes no arguments');
@@ -1545,9 +1270,6 @@ export async function main(argv, {
     } else if (command === 'similar') {
       // The request's words as the arguments, which STOP lets through, or its text on standard input.
       json(await similar({ client: helper, cwd: here, text: rest.length > 0 ? rest.join(' ') : await stdin() }));
-    } else if (command === 'review') {
-      only(rest, 0, 'review takes no arguments');
-      json(await review({ client: helper, cwd: here, now, ...(makeId ? { makeId } : {}) }));
     } else if (command === 'preview') {
       if (rest.length !== 1 || !/^[1-9][0-9]{0,8}$/.test(rest[0])) throw new CliError('Give the pull request\'s number: preview <n>');
       lines(await preview({ client: helper, cwd: here, n: Number(rest[0]) }));

@@ -564,22 +564,6 @@ test('queueRuns gives null when the engine can\'t list its runs', async () => {
   assert.equal(await adapter(fakeCli({ 'workflow status': { code: 1, json: null, stdout: '', stderr: 'locked' } })).queueRuns({ folder: '/q' }), null);
 });
 
-test('a reader runs in place in its own folder, with its card and no branch or work', async () => {
-  const cli = fakeCli({ 'workflow run': json('run-detach.json') });
-  const engine = adapter(cli);
-  assert.equal((await engine.start({ work: 'reader', lane: 'reader', card: 'q-w-1', project: '/engine/readers/ab12', bindings: { tiers: { medium: 'm' } } })).ok, true);
-  const { args } = cli.calls[0];
-  assert.deepEqual(args.slice(0, 3), ['workflow', 'run', 'wheelhouse-reader']);
-  assert.equal(args[args.indexOf('--cwd') + 1], '/engine/readers/ab12');
-  assert.ok(args.includes('--folder'));
-  assert.equal(args[args.indexOf('--input') + 1], 'card=q-w-1');
-  assert.equal(args.includes('--branch'), false);
-  assert.equal(args.includes('--project'), false);
-  assert.equal(args.some((a) => a.startsWith('work=')), false);
-  assert.equal((await engine.start({ work: 'reader', lane: 'reader', project: '/engine/readers/ab12' })).ok, false);
-  assert.equal((await engine.start({ work: 'reader', lane: 'reader', card: 'q-w-1' })).ok, false);
-});
-
 test('a start with no reply in time is uncertain, and any other refusal isn\'t', async () => {
   const timedOut = { code: -1, timedOut: true, stdout: '', stderr: '' };
   const got = await adapter(fakeCli({ 'workflow run': timedOut })).start({ work: 'w1', lane: 'quick', project: '/p' });
@@ -587,20 +571,6 @@ test('a start with no reply in time is uncertain, and any other refusal isn\'t',
   assert.equal(got.uncertain, true);
   const refused = await adapter(fakeCli({ 'workflow run': { code: 1, json: { ok: false, error: 'No' }, stdout: '', stderr: '' } })).start({ work: 'w1', lane: 'quick', project: '/p' });
   assert.equal(refused.uncertain, undefined);
-});
-
-test('a goal\'s check run starts in place in its own folder, named by its goal', async () => {
-  const cli = fakeCli({ 'workflow run': json('run-detach.json') });
-  const engine = adapter(cli);
-  assert.equal((await engine.start({ work: 'goal-check-run', lane: 'goal-check', goal: 'orders', project: '/engine/goal-checks/ab12', bindings: {} })).ok, true);
-  const { args } = cli.calls[0];
-  assert.deepEqual(args.slice(0, 3), ['workflow', 'run', 'wheelhouse-goal-check']);
-  assert.equal(args[args.indexOf('--cwd') + 1], '/engine/goal-checks/ab12');
-  assert.ok(args.includes('--folder'));
-  assert.equal(args[args.indexOf('--input') + 1], 'goal=orders');
-  assert.equal(args.some((a) => a.startsWith('work=')), false);
-  assert.equal((await engine.start({ work: 'goal-check-run', lane: 'goal-check', project: '/f' })).ok, false);
-  assert.equal((await engine.start({ work: 'goal-check-run', lane: 'goal-check', goal: 'orders' })).ok, false);
 });
 
 test('liveRunOf tells a run by the work it was given, never by a branch it may not have yet', async () => {

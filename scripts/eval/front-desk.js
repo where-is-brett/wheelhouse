@@ -35,8 +35,6 @@ import { reload, toolSheetLines } from '../hooks/session-start.js';
 import { HEADINGS, briefingIn, cardsDue, cardsLine } from '../hooks/board-context.js';
 import { boardModel } from '../board/model.js';
 import { effectiveSettings } from '../settings/effective.js';
-import { SETTINGS } from '../settings/catalogue.js';
-import { reviewDue } from '../frontdesk/learning.js';
 import { BRIEFING_GAP_HOURS, CONTEXT_CHARS } from '../lib/core-numbers.js';
 import { locateSuperpowers } from './harness.js';
 import { plainEvent, standInViews, startStandInHelper } from './stand-in-helper.js';
@@ -204,10 +202,8 @@ export function promptContext({ views, events, seen, at, usage = null, home }) {
     if (due) {
       const settings = effectiveSettings({ project: views.settings ?? {}, profile: {}, now: () => at });
       const model = boardModel({ project: EVAL_PROJECT, views, events, usage, health: [], settings, sources: null, now: () => at });
-      const days = settings.delegationReviewDays?.value ?? SETTINGS.delegationReviewDays.default;
-      const review = { due: reviewDue({ events, now: at, days }), days };
       const room = CONTEXT_CHARS - HEADINGS.briefing.length - 2 - (cards === null ? 0 : cards.length + 2);
-      const given = briefingIn({ project: EVAL_PROJECT, model, usage, sources: null, settings, since: seen.briefedAt, weeklySince: null, review, at, room });
+      const given = briefingIn({ project: EVAL_PROJECT, model, usage, sources: null, settings, since: seen.briefedAt, weeklySince: null, at, room });
       briefing = `${HEADINGS.briefing}\n\n${given.text}`;
     }
     seen.promptAt = at.toISOString();

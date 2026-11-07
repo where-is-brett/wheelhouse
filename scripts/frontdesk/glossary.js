@@ -12,11 +12,6 @@ const ALIASES = { 'pull request': ['PR'] };
 const FORMS = { merge: ['merged', 'merging'], review: ['reviewed', 'reviewing'], commit: ['committed', 'committing'] };
 // Names, not ordinary words: only the capitalised form counts ("all stop" and "standard" in a sentence don't).
 export const NAMES = Object.freeze(['All stop', 'Standard', 'Locked']);
-// The concepts of starter terms that were renamed, by their old `known:<concept>` names: a setting
-// on disk that names the old concept counts for the new one.
-export const RENAMED_CONCEPTS = Object.freeze({ 'the-foreman': 'the-bosun', stop: 'all-stop' });
-// A concept under its current name.
-export const currentConcept = (concept) => (Object.hasOwn(RENAMED_CONCEPTS, concept) ? RENAMED_CONCEPTS[concept] : concept);
 
 // The words that stand in for a term in a sentence, by how the text spells it. Each is a short
 // phrase that fits where the term stood, with no capital: `phrase` for the term itself, `plural`
@@ -113,20 +108,6 @@ export function termsIn(text, glossary) {
   return [...new Set(termMatches(text, glossary).map((m) => m.term))];
 }
 
-// The name a `known:<concept>` setting gives a term: "pull request" is "pull-request".
-export function conceptOf(term) {
-  return String(term).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-}
-
-// The concepts the director knows, from the effective settings (those `known:*` that are true). A
-// renamed concept known under its old name is known under its new name too.
-export function knownConcepts(settings) {
-  const known = Object.entries(settings ?? {})
-    .filter(([key, held]) => key.startsWith('known:') && held?.value === true)
-    .map(([key]) => key.slice('known:'.length));
-  return [...new Set([...known, ...known.map(currentConcept)])];
-}
-
 // The alias a text spelt a term by ("PR" for "PR's" or "PRs"), or undefined when it used the term's own words.
 function aliasOf(term, word) {
   const w = word.toLowerCase().replace(/\s+/g, ' ');
@@ -185,20 +166,18 @@ function joined(text, index, length) {
   return (after === '.' || after === '-') && wordAt(text, end + 1);
 }
 
-// plainWords(text, glossary, { explanations, known, protect, names }) -> { text, terms }. `terms` are the
+// plainWords(text, glossary, { explanations, protect, names }) -> { text, terms }. `terms` are the
 // glossary terms the text uses, each once, in order. With `plain` explanations (the default), the
-// first mention of each term the director doesn't know is replaced by its plain words. With
+// first mention of each term is replaced by its plain words. With
 // `some-terms` the terms stay. A term mentioned where it stays (a later mention, a spelling the
-// glossary has no words for, a name or another term right after it) and isn't known is given its
-// meaning in a "Terms:" line at the end, so no term is left bare. `known` is the concepts the
-// director knows (see knownConcepts), or terms. Nothing is rewritten inside quotations, backticks,
+// glossary has no words for, a name or another term right after it) is given its
+// meaning in a "Terms:" line at the end, so no term is left bare. Nothing is rewritten inside quotations, backticks,
 // command-, address-, path- or name-like tokens, or the `protect` strings: they are what the
 // director must recognise, type or click, and they are no use of a term. Nor are the `names` the project goes by, in
 // any case or spacing: the project's own name is never glossed. A term that stayed where the
 // text spelt it by an alias is listed with that spelling too: "pull request (PR) means …".
-export function plainWords(text, glossary, { explanations = 'plain', known = [], protect = [], names = [] } = {}) {
+export function plainWords(text, glossary, { explanations = 'plain', protect = [], names = [] } = {}) {
   if (typeof text !== 'string') return { text: '', terms: [] };
-  const knows = new Set((Array.isArray(known) || known instanceof Set ? [...known] : []).map(conceptOf));
   const fenced = protectedRanges(text, Array.isArray(protect) ? protect : [], Array.isArray(names) ? names : []);
   const matches = termMatches(text, glossary).filter((m) => !joined(text, m.index, m.length)
     && !fenced.some(([from, to]) => m.index < to && m.index + m.length > from));
@@ -210,7 +189,6 @@ export function plainWords(text, glossary, { explanations = 'plain', known = [],
   let out = '';
   let at = 0;
   matches.forEach((m, i) => {
-    if (knows.has(conceptOf(m.term))) return;
     const end = m.index + m.length;
     const form = spelling(m.term, text.slice(m.index, end));
     // Two nouns together ("PR review") don't come out right word by word, so both stay.
@@ -265,7 +243,7 @@ export function plainWords(text, glossary, { explanations = 'plain', known = [],
     replaced.add(m.term);
   });
   out += text.slice(at);
-  const listed = terms.filter((t) => stayed.has(t) && !knows.has(conceptOf(t)));
+  const listed = terms.filter((t) => stayed.has(t));
   if (listed.length > 0) {
     out += `\n\nTerms: ${listed.map((t) => `${t}${stayedAs.has(t) ? ` (${stayedAs.get(t)})` : ''} means ${glossary[t].plain.replace(/[.\s]+$/, '')}`).join('; ')}.`;
   }

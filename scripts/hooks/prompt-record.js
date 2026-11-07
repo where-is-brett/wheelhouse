@@ -53,8 +53,6 @@ import { liftStop as defaultLift, stopState as defaultStopState } from '../lib/s
 import { profileDir, stateDir, computerId } from '../lib/paths.js';
 import { readEnrolled, verify } from '../state/signing.js';
 import { makeEvent, listEvents, confirmationFor, dataHash, CONFIRMABLE_KINDS } from '../state/events.js';
-import { sheetHash, startProblem } from '../engine/goal.js';
-import { SHEET_CARD_MINUTES } from '../engine/goal-limits.js';
 import { asQuestion } from '../cards/visit.js';
 import { scanContent } from '../state/secret-scan.js';
 import {
@@ -63,7 +61,7 @@ import {
 } from '../state/card-lines.js';
 import {
   chatCopy, setLineOf, setLinesOf, replyCode, replyCodeLine, setupLine, SETUP_LABEL, SETUP_TITLES, BASELINE_LABEL, BASELINE_WORDS, baselineLine,
-  RELEASE_LABEL, RELEASE_LINE, UPDATE_HELPER_LINE, UPDATE_LABEL, UPDATE_LINE, TRUST_LINE, TAKEOVER_LABEL, TAKEOVER_LINE, PAIR_LINE, UNPAIR_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine, KEEP_CONTROL_LINE, keepControlLine, USAGE_LINE, PREMIUM_LINE, START_GOAL_LINE,
+  RELEASE_LABEL, RELEASE_LINE, UPDATE_HELPER_LINE, UPDATE_LABEL, UPDATE_LINE, TRUST_LINE, TAKEOVER_LABEL, TAKEOVER_LINE, PAIR_LINE, UNPAIR_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine, KEEP_CONTROL_LINE, keepControlLine, USAGE_LINE, PREMIUM_LINE,
 } from '../state/card-lines.js';
 import {
   keepClick, shownHash, keepAnswer, askedFor, claimAnswer, claimedAt, noteClaimed, releaseAnswer, keepUninstallClick, shownUninstall, typedVerdict, typedBefore, keepSetupRecords, sameWords,
@@ -157,11 +155,10 @@ function only(pattern, text) {
 // The deciding labels a reply code can answer with. A reply to an answer card may also use any
 // of the question's own options (scripts/mod/reply.js), which earned checks against the question.
 // Turn on (dangerous) and Use Guarded earn a record from a click alone, by design.
-export const SIGNED_LABELS = ['Approve', SEND_BACK, 'Confirm', 'Lift All stop', 'Lift STOP', 'Do it', 'Push it', 'Change it', 'End it', 'Merge the fix', 'Pair it', 'Unpair it', 'Start'];
+export const SIGNED_LABELS = ['Approve', SEND_BACK, 'Confirm', 'Lift All stop', 'Lift STOP', 'Do it', 'Push it', 'Change it', 'End it', 'Merge the fix', 'Pair it', 'Unpair it'];
 
-// Whether a click on `label` stands to sign something on the card asking `question`. Start signs only on a goal's card, so a
-// plain question that offers an option called Start stays a plain answer.
-export const signsOn = (label, question) => SIGNED_LABELS.includes(label) && (label !== 'Start' || setLinesOf(question).some((line) => START_GOAL_LINE.test(line)));
+// Whether a click on `label` stands to sign something on a card.
+export const signsOn = (label) => SIGNED_LABELS.includes(label);
 
 // The events of one kind that the state holds, oldest first.
 function held(project, kind) {
@@ -188,54 +185,6 @@ function approveWorkOf(project, question, match) {
   const hash = latest?.data?.doc?.hash;
   if (latest?.data?.lane !== lane || typeof hash !== 'string' || !hash.startsWith(h12)) return null;
   return { action: 'approve-work', work, lane, hash, shownFirst };
-}
-
-// The offer that makes this very card a goal's sheet card, as usageOf holds a usage card: a `goal-card` the state holds,
-// signed by this computer's own enrolled key, for this goal, this sheet and this card by its hash. A pane press or the
-// helper's window has no asked card, and shows the card the state keeps, so that is the card it is judged by.
-function goalOfferOf(project, question, shown, { goal, sheet }) {
-  const asked = shown ?? held(project, 'card').filter((e) => e.data?.question === question).map(asQuestion).at(-1);
-  const hash = cardHash(asked);
-  if (hash === null || asked.question !== question) return null;
-  const enrolled = readEnrolled();
-  const own = computerId();
-  return held(project, 'goal-card')
-    .filter((e) => e.data?.goal === goal && e.data?.sheet === sheet && e.data?.hash === hash && e.computer === own && e.sig?.computer === own && verify(e, enrolled))
-    .at(-1) ?? null;
-}
-
-// The record a click on a goal's card earns: the card's goal and twelve characters must name exactly one sheet the state
-// holds for that goal, the card must be the one the helper made from that sheet, not long ago, and the record carries
-// that sheet's whole hash.
-function startGoalOf(project, question, shown, { now, stopState }) {
-  const lines = setLinesOf(question);
-  const m = lines.length === 1 ? START_GOAL_LINE.exec(lines[0]) : null;
-  if (!m) return null;
-  const sheets = new Map(held(project, 'goal')
-    .filter((e) => e.data?.id === m[1] && e.data.sheet !== null && typeof e.data.sheet === 'object')
-    .map((e) => [sheetHash(e.data.sheet), e.data.sheet])
-    .filter(([h]) => h.startsWith(m[2])));
-  if (sheets.size !== 1) return { refused: 'This card doesn\'t name one sheet of the goal: ask the First Mate for a fresh card' };
-  const [[hash, sheet]] = [...sheets];
-  const offer = goalOfferOf(project, question, shown, { goal: m[1], sheet: hash });
-  if (offer === null) return { refused: 'This isn\'t the card made from the goal\'s sheet: ask the First Mate for a fresh one' };
-  if (!(now().getTime() - Date.parse(offer.data.at) < SHEET_CARD_MINUTES * 60000)) return { refused: `Its checks before leaving were read over ${SHEET_CARD_MINUTES} minutes ago: ask the First Mate for a fresh card` };
-  // The same rule the desk's act and the goals view ask (scripts/engine/goal.js), asked before the click is signed.
-  const views = localViews(project, ['goals', 'work', 'goalChecks']) ?? {};
-  const refused = startProblem({ id: m[1], hash, sheet, goals: views.goals ?? {}, work: views.work ?? {}, goalChecks: views.goalChecks ?? {}, stopped: stopState().on === true, now: now() });
-  return refused === null ? { action: 'start-goal', goal: m[1], hash } : { refused };
-}
-
-// What stops the goal now, as the helper reads its checks before leaving at the click: a card can wait, and an incident, a red
-// main line, an unwell engine or a newer sheet may have come since it was made. Null when nothing does. A helper that can't say stops it.
-async function stopsAtStart(client, project, { goal, hash }) {
-  try {
-    const got = await client.goalRecheck({ project, goal, hash });
-    if (got?.ok !== true) return got?.refused ?? 'Its checks before leaving couldn\'t be read';
-    return got.refused.length > 0 ? got.refused.map((line) => line.replace(/\.$/, '')).join('; ') : null;
-  } catch {
-    return 'Its checks before leaving couldn\'t be read';
-  }
 }
 
 // The one full hash of a proposed change that the card's twelve characters name, or null.
@@ -405,8 +354,7 @@ const sameLabels = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length ==
   && a.every((o, i) => (typeof o === 'string' ? o : o?.label) === (typeof b[i] === 'string' ? b[i] : b[i]?.label));
 
 // Works out the signed record a click earns, if any. May ask the helper for a
-// pull request's head. Returns { made, profile?, lift? }, { refused } (a Start the goal's rules refuse, in a sentence;
-// nothing is signed), or null. A Lift STOP earns nothing
+// pull request's head. Returns { made, profile?, lift? } or null. A Lift STOP earns nothing
 // while STOP is off, so an old card's click or reply code can't stand for a later STOP. A reply
 // passes `shownAt`, when its card was shown: its Lift STOP earns a record only when the card was
 // shown after this STOP began, so a code from a card about an earlier STOP can't lift a later one. A usage card's
@@ -423,13 +371,6 @@ export async function earned({ project, question, label, card, client, now, left
   if (setLinesOf(question).some((line) => PREMIUM_LINE.test(line))) return premiumClickOf(project, question, label, card, now, premiumIn);
   if (setLinesOf(question).some((line) => TAKEOVER_LINE.test(line))) return takeOverOf(question, label, card);
   if (setLinesOf(question).some((line) => PAIR_LINE.test(line) || UNPAIR_LINE.test(line))) return pairOf(question, label);
-  if (label === 'Start' && setLinesOf(question).some((line) => START_GOAL_LINE.test(line))) {
-    const record = startGoalOf(project, question, card, { now, stopState });
-    if (record?.refused !== undefined) return { refused: record.refused };
-    if (!record) return null;
-    const stops = await stopsAtStart(client, project, record);
-    return stops === null ? action(record) : { refused: stops };
-  }
   // The card for a Wheelhouse release that is not pins-only (update design, section 6.2): its one set line names the tag and
   // the commit in full, and the click earns an action naming both, which only the release's reviewed change counts.
   // Earned only from the card the update's job raised: the journal, which only Wheelhouse's own processes write, names the
@@ -904,8 +845,6 @@ function noticesOf(out, found, now) {
       lines.push(`Wheelhouse: the director chose ${SUGGEST} on card ${at.card.id} ("${askOf(at.card)}"). Ask "${WHAT_WOULD_YOU_CHANGE}" in one line, `
         + 'and nothing else. Their next message is the change: do with it as for "suggested a change on card n (' + at.card.id + '): <their words>", '
         + 'finding the card\'s number in `views waiting`. Nothing is recorded until then.');
-    } else if (at?.card.data?.kind === 'blind' && !PUT_OFF.includes(click.label)) {
-      lines.push(`Wheelhouse: the director's first pick on card ${at.card.id} is kept and answers nothing yet. Run \`cards\` now and ask the card it gives, with no other words.`);
     }
   }
   return lines.length === 0 ? null : lines.join('\n');
@@ -960,7 +899,7 @@ function shownFor(project, input, at, stopState = defaultStopState, carrying = n
     // A setup card, setup's card of the rules found, a trust card, uninstall's card, a Keep card, a usage card and the
     // premium model's card have no reply code (rulings R36, R80, R90, P7-31; design section 14.6): only the click on
     // the card itself counts.
-    if (line === null || SETUP_LINE.test(line) || CONFIRM_ALL_LINE.test(line) || TRUST_LINE.test(line) || TAKEOVER_LINE.test(line) || UNINSTALL_LINE.test(line) || KEEP_CONTROL_LINE.test(line) || USAGE_LINE.test(line) || PREMIUM_LINE.test(line) || START_GOAL_LINE.test(line)) continue;
+    if (line === null || SETUP_LINE.test(line) || CONFIRM_ALL_LINE.test(line) || TRUST_LINE.test(line) || TAKEOVER_LINE.test(line) || UNINSTALL_LINE.test(line) || KEEP_CONTROL_LINE.test(line) || USAGE_LINE.test(line) || PREMIUM_LINE.test(line)) continue;
     const code = replyCode(line);
     const codes = q.question.split(/\r\n|[\n\r\u2028\u2029]/).filter((l) => l.startsWith('Reply code:'));
     if (codes.length !== 1 || codes[0] !== replyCodeLine(code)) continue;
@@ -1024,7 +963,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
     notices = noticesOf(out, found, at);
     const held = out.filter((click) => found.get(click)?.stale || (found.has(click) && click.label === SUGGEST));
     out.splice(0, out.length, ...out.filter((click) => !held.includes(click)));
-    steered = held.map((click) => found.get(click)).filter((at) => !at.stale && ['answer', 'blind'].includes(at.card.data?.kind)).map((at) => at.card.id);
+    steered = held.map((click) => found.get(click)).filter((at) => !at.stale && at.card.data?.kind === 'answer').map((at) => at.card.id);
   } catch {
     // The state can't be read: the answers are recorded as they were given.
   }
@@ -1037,7 +976,6 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   // after its card's shown record and spends the code.
   const queued = [];
   const takeOvers = [];
-  const refusedQuestions = new Set();
   const clock = () => at;
   const shownAt = new Date(at.getTime() - 1);
   const dropped = new Map();
@@ -1063,12 +1001,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
     if (!click.signable || setupAsked.has(click.question)) continue;
     try {
       const got = await earned({ project, ...click, client: api, now: clock, left, stopState, ...(ready === undefined ? {} : { ready }), ...(premiumIn === undefined ? {} : { premiumIn }) });
-      if (got?.refused !== undefined) {
-        // A refused Start is told and left waiting: no record, and no plain answer to close its card.
-        const line = `The goal wasn't started: ${got.refused}`;
-        notices = notices === null ? line : `${notices}\n${line}`;
-        refusedQuestions.add(click.question);
-      } else if (got) {
+      if (got) {
         queued.push(keepEarned(project, got, { now: clock, liftStop, proof }));
         if (got.takeOver) takeOvers.push(queued.at(-1));
       }
@@ -1084,7 +1017,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   for (const card of steered) await left(api.state.write({ project, kind: 'chat-steer', data: { card } }));
   // Then the plain answers. What cannot be sent in time is kept.
   for (const { question, label } of out) {
-    if (setupAsked.has(question) || refusedQuestions.has(question)) continue;
+    if (setupAsked.has(question)) continue;
     const body = { project, kind: 'card-answer', data: { question, label, where: 'chat' } };
     try {
       const result = await left(api.state.write(body));

@@ -155,7 +155,7 @@ test('the helper refuses a project setting, a plain note, or an unsigned record 
       await refused(c.client.profile.write({ kind: 'setting', data: { key: 'autonomy', value: 'cautious' } }), /project/);
       await refused(c.client.profile.write({ kind: 'setting', data: { key: 'nonsense', value: 1 } }), /no setting called nonsense/);
       await refused(c.client.profile.write({ kind: 'setting', data: { key: 'briefing', value: 'huge' } }), /briefing can't be huge/);
-      assert.equal((await c.client.profile.write({ kind: 'setting', data: { key: 'known:pull-request', value: true } })).ok, true);
+      assert.equal((await c.client.profile.write({ kind: 'setting', data: { key: 'briefing', value: 'short' } })).ok, true);
 
       const setting = listEvents(profileDir(), { report: () => {} }).find((e) => e.kind === 'setting');
       // Unsigned.

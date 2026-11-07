@@ -42,7 +42,6 @@ import { deskCore, checkVersion } from '../desk/core.js';
 import { memorySource } from '../desk/memory-source.js';
 import { DESK_VERSION } from '../desk/vocabulary.js';
 import { CARRIES_BASELINE } from '../lib/measures-clicks.js';
-import { delegationReview } from '../frontdesk/learning.js';
 
 // The commit `ref` names in the repository at `dir`, or null.
 function commitOf(dir, ref) {
@@ -200,7 +199,7 @@ export async function startStandInHelper({ address, answers = {}, state = {}, on
     if (!version.ok) return { ok: false, v: DESK_VERSION, refused: version.refused };
     record({ route: `desk/${op}`, ...(op === 'read' ? { view: body.view } : op === 'act' ? { command: body.command } : {}) });
     const source = memorySource({
-      events: () => events, views, enrolled, review: (built) => delegationReview(events, { now: new Date(), enrolled, views: built }),
+      events: () => events, views, enrolled,
     });
     const recorder = {
       write: async ({ kind, data }) => routes['POST /state/write']({ kind, data }),
@@ -328,13 +327,11 @@ export async function startStandInHelper({ address, answers = {}, state = {}, on
       record({ route: 'state/write', kind, data, id: event.id });
       return { ok: true, id: event.id, pushed: true };
     },
-    // The front desk's reading: { project | cwd, cards?, answers?, review? } -> the views, with
+    // The front desk's reading: { project | cwd, cards?, answers? } -> the views, with
     // `cards: true` the card events too, as the real helper gives them for the board's numbers, with
-    // `answers: true` the card-answer events, for `views work` to tell the director's Not now, and
-    // with `review: true` the delegation review worked out from the events, for the front desk's
-    // `review`, as the real helper works it out (delegationReview). STOP is never on here.
+    // `answers: true` the card-answer events, for `views work` to tell the director's Not now. STOP is never on here.
     'POST /state/views': (body) => {
-      record({ route: 'state/views', ...(body.cards === true ? { cards: true } : {}), ...(body.answers === true ? { answers: true } : {}), ...(body.review === true ? { review: true } : {}) });
+      record({ route: 'state/views', ...(body.cards === true ? { cards: true } : {}), ...(body.answers === true ? { answers: true } : {}) });
       const ofKind = (kind) => events.filter((e) => e.kind === kind).map((e) => structuredClone(e));
       const built = views();
       return {
@@ -342,7 +339,6 @@ export async function startStandInHelper({ address, answers = {}, state = {}, on
         views: built,
         ...(body.cards === true ? { cards: ofKind('card') } : {}),
         ...(body.answers === true ? { answers: ofKind('card-answer') } : {}),
-        ...(body.review === true ? { review: delegationReview(events, { now: new Date(), enrolled, views: built }) } : {}),
       };
     },
     // The desk's three routes (scripts/desk/), over the same events and views: a plain write as /state/write takes

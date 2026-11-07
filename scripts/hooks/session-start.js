@@ -76,7 +76,6 @@ import { TAKEOVER_LABEL, LEAVE_LABEL } from '../state/card-lines.js';
 import { agentOfInput } from '../agents/of-input.js';
 import { readAllowance } from '../usage/figures.js';
 import { weeklyOf } from '../routing/nudge.js';
-import { goalLogbook } from '../engine/goal-report.js';
 import { usageOffer } from '../routing/offer.js';
 import { columnsReadyOf } from '../routing/in-force.js';
 import { TOOL_SHEETS } from '../agents/tool-sheets.js';
@@ -86,6 +85,7 @@ import { helperGrace } from '../lib/helper-grace.js';
 import { keepRunningModel, modelOfInput } from '../lib/front-desk-model.js';
 import { whereDigest, resetEpisode } from './where.js';
 import { keptRequest, clearRequest } from '../lib/kept-request.js';
+import { retiredPiece } from '../settings/catalogue.js';
 
 const SELF = fileURLToPath(import.meta.url);
 // The script that brings this computer's settings for a project up to date, run detached.
@@ -475,6 +475,8 @@ async function ensureWatcher(project, client, { spawn, pluginRoot, env = process
 // A setting for build commands on Windows is confirmed only through its own card, so a proposal
 // of one is never listed as changed without the director's confirmation (as on the board).
 const BUILDS_KEY = settingKey('');
+// A proposal an earlier version made and nothing now acts on: a level from the delegation review, or a retired setting.
+const isRetiredProposal = (u) => u?.kind === 'level' || (u?.kind === 'setting' && [u.key, u.data?.key].some((key) => typeof key === 'string' && retiredPiece(key) !== undefined));
 const isBuildsProposal = (u) => u?.kind === 'setting' && [u.key, u.data?.key].some((key) => typeof key === 'string' && key.startsWith(BUILDS_KEY));
 
 // `lineage` is the lineage check's warning lines, which come first after STOP. `windows` adds the
@@ -500,7 +502,7 @@ export function reload({ views, stop, lineage = [], notes, feature, stateRoot, w
   const title = (d) => show(d?.title ?? d?.question ?? d?.words ?? d?.value ?? '');
   // A proposal kept as is on its card here is no longer waiting for the director (ruling F49).
   const kept = new Set(Array.isArray(views?.keptAsIs) ? views.keptAsIs : []);
-  const unconfirmed = (views?.unconfirmed ?? []).filter((u) => !isBuildsProposal(u) && !kept.has(u?.id)).map((u) => `${u.id} (${u.kind}${u.key ? ` ${u.key}` : ''}): ${title(u.data)}`);
+  const unconfirmed = (views?.unconfirmed ?? []).filter((u) => !isBuildsProposal(u) && !kept.has(u?.id) && !isRetiredProposal(u)).map((u) => `${u.id} (${u.kind}${u.key ? ` ${u.key}` : ''}): ${title(u.data)}`);
   const quoted = (unconfirmed.length > 0 || (views?.waiting ?? []).length > 0 || (views?.rulebook ?? []).some((r) => r.status === 'accepted'));
   if (quoted) lines.push('Titles are quoted as agents wrote them.');
   lines.push(...section('Changed without the director\'s confirmation:', unconfirmed));
@@ -682,13 +684,6 @@ async function readOnlyStart(input, { dir, find, client, helperUp, agent, plugin
     if (got?.ok === true && got.views && typeof got.views === 'object') views = got.views;
   }
   views ??= localViews(project);
-  // An agent that only reads gets no briefing of the hook's, so a goal's report comes here, until each item in it is settled.
-  try {
-    const report = goalLogbook(views ?? {});
-    if (report !== '') notes.push(report);
-  } catch {
-    // The report is only words on top of the start: a fault in it leaves the start as it was.
-  }
   const text = reload({ views, stop: stopOf(), notes, feature: featureSlug(input.cwd), stateRoot: stateDir(project), sheet: sheet() });
   return text === '' ? undefined : answer.context('SessionStart', text);
 }

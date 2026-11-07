@@ -13,8 +13,9 @@ import { confirmLine } from '../state/card-lines.js';
 import { readEnrolled } from '../state/signing.js';
 import { readSurveyAgainAt } from '../briefing/seen.js';
 import { UNDER_WAY_TOPIC, LEAVE_FOR_NOW } from '../survey/words.js';
-import { clickOutcomes, conceptProposals, conceptSetting, settingProposals } from '../frontdesk/learning.js';
-import { levelCard, settingCard, writeSetting } from '../frontdesk/cli.js';
+import { clickOutcomes, settingProposals } from '../frontdesk/learning.js';
+import { settingCard, writeSetting } from '../frontdesk/cli.js';
+import { retiredPiece } from '../settings/catalogue.js';
 import { profileDir, stateDir } from '../lib/paths.js';
 import { BRIEFING_GAP_HOURS } from '../lib/core-numbers.js';
 import { wordsOf } from './context.js';
@@ -51,7 +52,7 @@ export function gapHours(project, at) {
 // profile's and the board commands, written through the helper (`client`). A profile setting, or a
 // level of this project, still waiting for its confirmation, with the words a card names it by, whose
 // confirm line no card in this project carries gets its card first (rulings F37, F45): one whose
-// card wasn't written, learnt, recorded by the front desk or proposed by the delegation review.
+// card wasn't written, learnt, or recorded by the front desk.
 // Each write that fails is left for the next visit, which works it out again.
 export async function visitLearning({ project, cwd, client, at, boardAsks, platform = process.platform }) {
   const events = listEvents(stateDir(project), { report: () => {} });
@@ -73,20 +74,19 @@ export async function visitLearning({ project, cwd, client, at, boardAsks, platf
   };
 
   const lines = new Set(events.filter((e) => e.kind === 'card').map((e) => e.data?.line));
-  const levels = Array.isArray(views.unconfirmed) ? views.unconfirmed.filter((u) => isRecord(u) && u.kind === 'level') : [];
-  for (const entry of [...unconfirmed.filter((u) => u.kind === 'setting'), ...levels]) {
+  // A proposal for a setting that has since been retired (a `known:*` concept, say) gets no card: nothing acts on it.
+  for (const entry of unconfirmed.filter((u) => u.kind === 'setting' && retiredPiece(u.data?.key) === undefined)) {
     if (typeof entry.id !== 'string' || !isRecord(entry.data) || typeof entry.data.words !== 'string') continue;
     const event = { kind: entry.kind, id: entry.id, data: entry.data };
     if (lines.has(confirmLine(event))) continue;
     await tried(async () => {
-      const { card } = entry.kind === 'level' ? levelCard(event, words) : settingCard(event, words);
+      const { card } = settingCard(event, words);
       const got = await client.state.write({ cwd, kind: 'card', data: card });
       if (got?.ok !== true) throw new Error('not written');
     });
   }
   const outcomes = clickOutcomes(events, profile, { enrolled });
   const proposals = [
-    ...conceptProposals(events, profile, { now: at, enrolled, outcomes }).map(conceptSetting),
     ...settingProposals(events, profile, { now: at, outcomes, boardAsks }),
   ];
   for (const data of proposals) await tried(() => writeSetting({ client, cwd, data, words }));

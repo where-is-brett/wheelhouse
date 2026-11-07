@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { needsYou, sessionsTicking, courierWake, courierUnsent, courierContext, courierFile, PRESENCE_LETS, SENT_KEPT, SESSIONS_KEPT, LOCK_WAIT_MS, WAKE_CONTEXT_MS } from '../../../scripts/mod/courier.js';
+import { needsYou, courierWake, courierUnsent, courierContext, courierFile, PRESENCE_LETS, SENT_KEPT, SESSIONS_KEPT, LOCK_WAIT_MS, WAKE_CONTEXT_MS } from '../../../scripts/mod/courier.js';
 import { hashOf } from '../../../scripts/mod/status.js';
 import { COURIER_GAP_MS, LEADS, REMIND_MS, STALE_TICKS, TICK_MS } from '../../../scripts/lib/mod-numbers.js';
 import { withHome } from '../../helpers/homes.js';
@@ -37,7 +37,6 @@ const opened = (fn) => withHome(async () => {
   await wake([], { now: () => at(T0 - DAY) });
   return fn();
 });
-const goalEnd = (stoppedEarly) => model({ goalEnd: { id: 'orders', stoppedEarly } });
 const sentIds = () => JSON.parse(fs.readFileSync(courierFile(P), 'utf8')).sent.map((s) => s.id);
 const lastWakeAt = () => JSON.parse(fs.readFileSync(courierFile(P), 'utf8')).lastWakeAt;
 // The mod's undo of the wake `woke` it couldn't hand on, from session s-1 unless it says otherwise.
@@ -613,39 +612,6 @@ test('the director sees one plain line, and the front desk gets the instructions
   const stop = await wake([{ id: 'stop:s2', kind: 'stop' }, cardItem('c-5', 5)], { now: () => at(T0 + TICK_MS) });
   assert.equal(stop.submit, 'Wheelhouse: All stop is on. 1 waiting on you: card 5.');
   assert.equal(courierContext({ project: P, session, prompt: stop.submit, now: () => at(T0 + TICK_MS) }), stop.context);
-}));
-
-test('a goal that stopped early passes Away, and one that finished wakes only while here', () => opened(async () => {
-  const [stopped] = needsYou({ after: goalEnd(true) });
-  assert.deepEqual(stopped, { id: 'goal:orders', kind: 'goal-stopped' });
-  const [finished] = needsYou({ after: goalEnd(false) });
-  assert.deepEqual(finished, { id: 'goal:orders', kind: 'goal-finished' });
-  assert.equal(PRESENCE_LETS.away(stopped), true);
-  assert.equal(PRESENCE_LETS.away(finished), false);
-  assert.equal(PRESENCE_LETS.here(finished), true);
-  assert.equal(PRESENCE_LETS.dnd(stopped), false);
-
-  const away = { value: 'away', until: '2026-10-19T12:00:00.000Z' };
-  assert.equal((await wake([finished], { presence: away })).submit, null);
-  const woke = await wake([stopped], { presence: away });
-  assert.equal(woke.submit, `${LEADS.wake} A goal stopped early.`);
-  assert.deepEqual(sentIds(), ['goal:orders']);
-  assert.equal((await wake([stopped], { presence: away, now: () => at(T0 + DAY) })).submit, null, 'once');
-}));
-
-test('a goal that finished wakes while here, and no goal in force wakes anything', () => opened(async () => {
-  assert.deepEqual(needsYou({ after: model() }), []);
-  const woke = await wake(needsYou({ after: goalEnd(false) }));
-  assert.equal(woke.submit, `${LEADS.wake} A goal finished.`);
-  assert.match(woke.context, /a goal finished/);
-}));
-
-test('sessionsTicking counts the sessions heard from lately, and none with no record', () => opened(async () => {
-  assert.equal(sessionsTicking(P, { now: () => at(T0) }), 0);
-  const file = courierFile(P);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify({ sent: [], lastWakeAt: null, sessions: [{ id: 'now', at: at(T0).toISOString() }, { id: 'long-gone', at: at(T0 - 24 * 60 * MIN).toISOString() }], wakes: [], cursor: null }));
-  assert.equal(sessionsTicking(P, { now: () => at(T0) }), 1);
 }));
 
 test('the card for changes made by hand wakes the front desk at once, inside the gap after another wake', () => opened(async () => {

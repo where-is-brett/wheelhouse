@@ -29,15 +29,15 @@ export function effectiveSettings({ project = {}, profile = {}, now, retired }) 
   const nowMs = instant(now);
   const gone = (k) => retiredPiece(k, retired) !== undefined;
   const keys = Object.keys(SETTINGS).filter((k) => !gone(k));
-  const concepts = new Set([...Object.keys(project ?? {}), ...Object.keys(profile ?? {})].filter((k) => !Object.hasOwn(SETTINGS, k) && !gone(k) && definitionOf(k, retired)));
+  const others = new Set([...Object.keys(project ?? {}), ...Object.keys(profile ?? {})].filter((k) => !Object.hasOwn(SETTINGS, k) && !gone(k) && definitionOf(k, retired)));
   const out = {};
-  for (const key of [...keys, ...[...concepts].sort()]) {
+  for (const key of [...keys, ...[...others].sort()]) {
     const fromProject = held(own(project, key), nowMs);
     const fromProfile = fromProject ? null : held(own(profile, key), nowMs);
     const found = fromProject ? { ...fromProject, from: 'project' } : fromProfile ? { ...fromProfile, from: 'profile' } : null;
     if (found) out[key] = { value: structuredClone(found.value), from: found.from, ...(found.until === undefined ? {} : { until: found.until }) };
-    else if (!concepts.has(key)) out[key] = { value: structuredClone(SETTINGS[key].default), from: 'default' };
-    // a concept the director knows appears only when set
+    else if (!others.has(key)) out[key] = { value: structuredClone(SETTINGS[key].default), from: 'default' };
+    // a key that is not a catalogue setting (the own GitHub App, a computer's Windows builds) appears only when set
   }
   // Wheelhouse builds on its own engine only (core cut, design 4.3). A stored `archon` stays valid and loads, and the
   // update reads it once, through storedEngine, to move the project off Archon; it is never in force.
@@ -71,7 +71,6 @@ const CAP_NAMES = { quick: 'quick', small: 'small', slice: 'a feature piece', bu
 const PREMIUM_WORDS = { off: 'off', 'within-plan': 'on, within your plan', 'paid-too': 'on, paid credits too' };
 
 export function sayValue(key, value) {
-  if (key.startsWith('known:')) return value ? 'yes' : 'no';
   if (key === 'notifications') {
     const channels = value.channels.length ? value.channels.join(', ') : 'none';
     return value.quiet ? `${channels}, quiet from ${value.quiet.from} to ${value.quiet.to}` : channels;
@@ -79,7 +78,6 @@ export function sayValue(key, value) {
   if (key === 'own-github-app') return value === null ? 'none' : `${value.slug}, on ${value.owner}`;
   if (key === 'hours') return value === null ? 'no set hours' : `${value.days.map((d) => DAYS[d]).join(', ')}, ${value.from} to ${value.to}`;
   if (key === 'briefingGapHours') return `${value} ${value === 1 ? 'hour' : 'hours'}`;
-  if (key === 'delegationReviewDays') return `${value} days`;
   if (key === 'sources') return value.length ? `${value.length} ${value.length === 1 ? 'address' : 'addresses'}` : 'none yet';
   if (key === 'efficiency') return EFFICIENCY_WORDS[value] ?? String(value);
   if (key === 'engine') return ENGINE_WORDS[value] ?? String(value);
@@ -87,7 +85,7 @@ export function sayValue(key, value) {
   if (key === 'cardsPerDay') return `${value} ${value === 1 ? 'card' : 'cards'} a day`;
   if (key === 'capMinutes') return Object.keys(CAP_NAMES).map((k) => `${CAP_NAMES[k]} ${value[k]} minutes`).join(', ');
   if (key === 'capTokens') return Object.keys(CAP_NAMES).map((k) => `${CAP_NAMES[k]} ${value[k].toLocaleString('en-AU')}`).join(', ');
-  if (key === 'bundleApprovals' || key === 'blindCards' || key === 'engineRoom') return value ? 'on' : 'off';
+  if (key === 'bundleApprovals' || key === 'engineRoom') return value ? 'on' : 'off';
   if (key === 'premium') return PREMIUM_WORDS[value] ?? String(value);
   if (key === 'usageMark') return value === 'off' ? 'off' : `at ${value}%`;
   if (typeof value === 'number') return value.toLocaleString('en-AU');
@@ -95,11 +93,9 @@ export function sayValue(key, value) {
 }
 
 // A setting and its value in plain words, on one line: "Availability: away, until 18 October 2026,
-// 18:00 UTC", or "Knows "pull request": yes" for a concept the director knows. A setting's confirm
-// card names it by these words (ruling F30).
+// 18:00 UTC". A setting's confirm card names it by these words (ruling F30).
 export function settingWords(key, value, until) {
-  const label = key.startsWith('known:') ? `Knows "${key.slice('known:'.length).replaceAll('-', ' ')}"` : definitionOf(key).label;
-  return `${label}: ${sayValue(key, value)}${until ? `, until ${sayTime(until)}` : ''}`;
+  return `${definitionOf(key).label}: ${sayValue(key, value)}${until ? `, until ${sayTime(until)}` : ''}`;
 }
 
 // What each decision level lets Wheelhouse do, in plain words (design section 6).

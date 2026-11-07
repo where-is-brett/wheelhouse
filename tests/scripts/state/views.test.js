@@ -9,18 +9,15 @@ import { fileURLToPath } from 'node:url';
 import { buildViews, writeViews, latestFor, readyColumns, cardOutcomes, signedCardOutcomes } from '../../../scripts/state/views.js';
 import { listEvents, makeEvent, confirmationFor, eventHash, dataHash, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, sign } from '../../../scripts/state/signing.js';
-import { approvalLine, approveWorkLine, amendLine, ciPushLine, confirmLine, startGoalLine } from '../../../scripts/state/card-lines.js';
+import { approvalLine, approveWorkLine, amendLine, ciPushLine, confirmLine } from '../../../scripts/state/card-lines.js';
 import { computerId, profileDir, stateDir } from '../../../scripts/lib/paths.js';
 import { tempFolder } from '../../helpers/homes.js';
-import { readingOf } from '../../../scripts/delegation/seal.js';
-import { composeRule } from '../../../scripts/delegation/composer.js';
 import { SUGGEST, WHY } from '../../../scripts/lib/calm-words.js';
-import { sheetHash } from '../../../scripts/engine/goal.js';
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
 const T = (n) => `2026-10-18T02:00:${String(n).padStart(2, '0')}.000Z`;
 const at = (n) => () => new Date(T(n));
-const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'provenance', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'controlFiles', 'survey', 'columnsReady', 'usageCards', 'premium', 'premiumFailures', 'runs', 'asks', 'costs', 'previews', 'lessons', 'engineNotes', 'cardsWaiting', 'evidence', 'rules', 'brief', 'sendBacks', 'slept', 'goals', 'goalChecks', 'goalNotes'];
+const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'provenance', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'controlFiles', 'survey', 'columnsReady', 'usageCards', 'premium', 'premiumFailures', 'runs', 'asks', 'costs', 'previews', 'lessons', 'engineNotes', 'cardsWaiting', 'brief', 'sendBacks', 'slept'];
 const now = () => new Date('2026-10-18T09:00:00.000Z');
 
 async function withHome(fn) {
@@ -309,7 +306,7 @@ test('a confirmation counts only with the confirmed event\'s hash, and only for 
 
     // A signed confirmation pointing at an event of another kind confirms nothing.
     const card = ev('card', 3, cardData('Pick a colour?'));
-    assert.throws(() => confirmationFor(card), /ruling, a level, a setting, a rule or a brief/);
+    assert.throws(() => confirmationFor(card), /ruling, a level, a setting or a brief/);
     const forCard = makeEvent({ kind: 'confirmation', data: { confirms: card.id, confirmsHash: eventHash(card) }, now: at(4) });
     const v = build([card, forCard]);
     assert.deepEqual(v.levels, {});
@@ -563,15 +560,6 @@ test('an accepted setting carries its event\'s computer and the card line of its
     // A level carries neither.
     const l1 = ev('level', 1, { key: 'ui', value: 2 });
     assert.deepEqual(Object.keys(build([l1, conf(2, l1)]).levels.ui).sort(), ['at', 'id', 'key', 'value']);
-  });
-});
-
-test('a known:* setting of false, accepted with no confirmation, carries no signer and no line', async () => {
-  await withHome(() => {
-    const s1 = ev('setting', 1, { key: 'known:branch', value: false });
-    assert.deepEqual(build([s1]).settings['known:branch'], {
-      key: 'known:branch', id: s1.id, at: s1.at, value: false, before: null, computer: s1.computer, confirmedOn: null, line: null, confirmedAt: null,
-    });
   });
 });
 
@@ -1386,55 +1374,6 @@ test('views gather runs by work, latest state last', async () => {
   });
 });
 
-const sealed = (card, extra = {}) => ({ line: 'seal', card, work: 'w', head: null, signed: null, reader: true, candidates: { land: null }, exclusions: { hit: ['data-model'], unread: [] }, stamp: { models: null, pack: null, rule: null, exclusions: null }, at: T(1), hash: 'a'.repeat(64), ...extra });
-
-test('a rule is in the views only once a signed click confirms it', async () => {
-  await withHome(async () => {
-    const rule = composeRule({ answer: { label: 'Keep' }, card: { kind: 'question', level: 3, options: ['Keep', 'Remove'] }, facts: { readable: true, paths: ['a.js'], depsChanged: false, schemaChanged: false, guardrail: false, secrets: false, critical: false }, lane: 'small', project: 'p', now: at(1) });
-    const event = ev('rule', 1, rule);
-    assert.deepEqual(build([]).rules, {});
-    assert.deepEqual(build([event]).rules, {});
-    const click = makeEvent({ ...confirmationFor(event), now: at(2) });
-    assert.deepEqual(build([event, click]).rules, { [rule.id]: { rule, stage: 0, signedAt: T(2) } });
-  });
-});
-
-test('shadow isn\'t in the views an agent reads', async () => {
-  await withHome(async () => {
-    const views = build([ev('shadow', 1, sealed('q-1'))]);
-    assert.deepEqual(views.evidence, { sealed: 1, read: 0, sampled: 0 });
-    assert.ok(!JSON.stringify(views).includes('data-model'));
-    assert.ok(!JSON.stringify(views).includes('candidates'));
-  });
-});
-
-test('the evidence view shows volume, and no match, miss or direction', async () => {
-  await withHome(async () => {
-    const score = { line: 'score', card: 'q-1', work: 'w', seal: 'a'.repeat(64), score: 'miss', at: T(2), hash: 'b'.repeat(64) };
-    const { evidence } = build([ev('shadow', 1, sealed('q-1')), ev('shadow', 2, score)]);
-    assert.deepEqual(Object.keys(evidence).sort(), ['read', 'sampled', 'sealed']);
-    assert.deepEqual(evidence, { sealed: 1, read: 0, sampled: 0 });
-    assert.ok(!JSON.stringify(build([ev('shadow', 2, score)])).includes('miss'));
-  });
-});
-
-test('the evidence view counts a card once, and only a seal this computer can verify', async () => {
-  await withHome(async () => {
-    const one = ev('shadow', 1, sealed('q-1'));
-    const unsigned = { ...ev('shadow', 2, sealed('q-2')), sig: undefined };
-    assert.equal(build([one, ev('shadow', 2, sealed('q-1')), unsigned]).evidence.sealed, 1);
-    assert.equal(build([]).evidence.sealed, 0);
-  });
-});
-
-test('a card counts as read only with a reading, not a reader that gave none', async () => {
-  await withHome(async () => {
-    const line = (card, reader) => ev('shadow', 2, { ...readingOf({ card, work: 'w', why: 'no-start', at: T(1), ...(reader ? { reading: { frame: 'sound', why: 'It fits.', kind: 'can-see', fits: 'no-rule', pick: 'Keep', tags: [] } } : {}) }) });
-    const views = build([ev('shadow', 1, sealed('q-1')), line('q-1', true), line('q-2', false)]);
-    assert.equal(views.evidence.read, 1);
-  });
-});
-
 const LEAD = 'q-lead-500001';
 const JOIN = 'q-other-500001';
 const asked = (n, data = {}) => ev('question', n, {
@@ -1460,82 +1399,6 @@ test('a click covers only what its card showed', async () => {
     assert.equal(got[JOIN].answer, null);
     assert.deepEqual(got[JOIN].saidBefore.label, 'LAST');
     assert.equal(got[JOIN].joins, undefined, 'it is a question of its own again');
-  });
-});
-
-const closeLead = (n) => asked(n, { work: 'lead' });
-const closeOne = (n, data = {}) => asked(n, { id: 'q-lead-500002', what: 'Which page goes first?', ...data });
-const CLOSE = 'q-lead-500002';
-const matched = (n, data = {}) => ev('match', n, { card: CLOSE, work: 'lead', joins: LEAD, ...data });
-
-test('a close match stands a card behind its lead, and a click on a card that listed it answers both', async () => {
-  await withHome(() => {
-    const open = build([closeLead(1), closeOne(2), matched(3)]);
-    assert.equal(open.questions[CLOSE].joins, LEAD);
-    assert.equal(open.questions[CLOSE].answer, null, 'a match answers nothing');
-    const got = build([closeLead(1), closeOne(2), matched(3), answerCard(4, 'lead', [CLOSE]), clickedOn(5, 'lead')]).questions;
-    assert.equal(got[CLOSE].answer.label, 'Last');
-    assert.equal(got[CLOSE].answer.joined, LEAD);
-  });
-});
-
-test('a close match is taken only as this computer signed it, on the same piece and options at level 3', async () => {
-  await withHome(() => {
-    const cases = [
-      [closeOne(2, { options: [{ label: 'First', says: 'One' }, { label: 'Other', says: 'Two' }], recommendation: 'First' }), matched(3)],
-      [closeOne(2, { level: 4, checks: 'None.' }), matched(3)],
-    ];
-    for (const [card, match] of cases) assert.equal(build([closeLead(1), card, match]).questions[CLOSE].joins, undefined);
-    const elsewhere = 'q-other-500002';
-    assert.equal(build([closeLead(1), closeOne(2, { id: elsewhere, work: 'other' }), matched(3, { card: elsewhere, work: 'other' })]).questions[elsewhere].joins, undefined);
-    const { sig, ...unsigned } = matched(3);
-    assert.ok(sig);
-    assert.equal(build([closeLead(1), closeOne(2), unsigned]).questions[CLOSE].joins, undefined);
-  });
-});
-
-test('a click on a card that never listed a close match leaves it open, with what was said', async () => {
-  await withHome(() => {
-    const got = build([closeLead(1), answerCard(2, 'lead'), closeOne(3), matched(4), clickedOn(5, 'lead')]).questions;
-    assert.equal(got[CLOSE].answer, null);
-    assert.equal(got[CLOSE].saidBefore.label, 'Last');
-    assert.equal(got[CLOSE].joins, undefined);
-  });
-});
-
-test('a card of its own leaves the waiting list while its question stands behind another', async () => {
-  await withHome(() => {
-    const own = ev('card', 3, { question: 'close', header: 'Question', options: ['First', 'Last'], kind: 'answer', level: 3, line: `Answer question ${CLOSE}` });
-    assert.equal(build([closeLead(1), closeOne(2), own]).waiting.length, 1);
-    assert.equal(build([closeLead(1), closeOne(2), own, matched(4)]).waiting.length, 0);
-  });
-});
-
-test('a close match on an answered card gives the line, while that answer stands', async () => {
-  await withHome(() => {
-    const line = { card: CLOSE, work: 'lead', saidBefore: 'Last', from: LEAD };
-    const said = ev('match', 5, line);
-    const got = build([closeLead(1), answerCard(2, 'lead'), clickedOn(3, 'lead'), closeOne(4), said]).questions;
-    assert.equal(got[CLOSE].saidBefore.label, 'Last');
-    assert.equal(got[CLOSE].answer, null);
-    const other = ev('match', 5, { ...line, saidBefore: 'First' });
-    assert.equal(build([closeLead(1), answerCard(2, 'lead'), clickedOn(3, 'lead'), closeOne(4), other]).questions[CLOSE].saidBefore, undefined);
-  });
-});
-
-test('a question recorded with what was said before says it in the view', async () => {
-  await withHome(() => {
-    const KEY = 'a'.repeat(64);
-    const SECOND = 'q-lead-500002';
-    const first = asked(1, { key: KEY });
-    const answer = (n, label) => click(n, { action: 'answer', question: 'one', questionId: LEAD, questionHash: dataHash(first.data), label });
-    const repeat = (n, data = {}) => asked(n, { id: SECOND, key: KEY, saidBefore: 'First', ...data });
-    assert.equal(build([first, answer(2, 'First'), repeat(3)]).questions[SECOND].saidBefore.label, 'First');
-    assert.equal(build([asked(1)]).questions[LEAD].saidBefore, undefined);
-    assert.equal(build([first, repeat(3)]).questions[SECOND].saidBefore, undefined, 'no answer stands behind it');
-    assert.equal(build([first, answer(2, 'Last'), repeat(3)]).questions[SECOND].saidBefore, undefined, 'not what the director said');
-    assert.equal(build([first, answer(2, 'First'), repeat(3, { key: 'b'.repeat(64) })]).questions[SECOND].saidBefore, undefined, 'another decision');
-    assert.equal(build([first, answer(2, 'Last'), answer(3, 'First'), repeat(4)]).questions[SECOND].saidBefore, undefined, 'an answer changed since');
   });
 });
 
@@ -1658,77 +1521,28 @@ test('the sleeps on the record are in the views, in order', () => {
   assert.deepEqual(buildViews([]).slept, []);
 });
 
-// --- goals ---
+// --- records from the unattended-goals feature ---
 
-const goalSheet = () => ({
-  title: 'Customers can export their orders',
-  done: [{ command: 'node check.js', expect: 0 }],
-  checksSay: ['The checking script passes.'],
-  pieces: [{ work: 'export-csv', hash: dataHash(workEv(0).data) }],
-  areas: { may: ['src/**'], wontTouch: ['billing/**'] },
-  checkFiles: [],
-  spend: { tokens: 1000000 },
-  until: '2026-10-18T10:00:00.000Z',
-});
-const startClick = (n, id, hash) => click(n, { action: 'start-goal', goal: id, hash, question: `What this is.\n${startGoalLine(id, hash)}`, label: 'Start' });
+// Written by an earlier release; makeEvent no longer takes these kinds, but a record that holds them must still load.
+const oldGoalEvents = () => [
+  { v: 1, id: 'g1', at: T(1), computer: 'aaaaaaaa', kind: 'goal', data: { id: 'export-orders', sheet: { title: 'x', pieces: [] } } },
+  { v: 1, id: 'g2', at: T(2), computer: 'aaaaaaaa', kind: 'goal-check', data: { goal: 'export-orders', hash: 'a'.repeat(64), when: 'before', ok: false } },
+  { v: 1, id: 'g3', at: T(3), computer: 'aaaaaaaa', kind: 'goal-card', data: { goal: 'export-orders', sheet: 'a'.repeat(64), at: T(3), hash: 'b'.repeat(64) } },
+  { v: 1, id: 'g4', at: T(4), computer: 'aaaaaaaa', kind: 'action', data: { action: 'start-goal', goal: 'export-orders', hash: 'a'.repeat(64), question: 'x', label: 'Start' } },
+  { v: 1, id: 'g5', at: T(5), computer: 'aaaaaaaa', kind: 'goal-end', data: { goal: 'export-orders', ending: 'done', at: T(5) } },
+];
 
-test('a baseline counts only signed by the helper, and reaches the view on disk', async () => {
+test('a record from the goals feature still builds the views, and no view shows anything of it', async () => {
   await withHome(() => {
-    const sheet = goalSheet();
     const W = workEv(0);
-    const record = ev('goal', 1, { id: 'export-orders', sheet });
-    const hash = sheetHash(sheet);
-    const data = { goal: 'export-orders', hash, when: 'before', head: 'a'.repeat(40), results: [{ check: sheet.done[0], ok: false }], ok: false };
-    const signed = ev('goal-check', 2, data);
-    const click = startClick(5, 'export-orders', hash);
-    assert.deepEqual(Object.keys(build([W, record, signed, click]).goals), ['export-orders']);
-    assert.deepEqual(build([W, record, signed]).goalChecks['export-orders'], [{ ...data, at: signed.at }]);
-    assert.deepEqual(build([W, record, unsigned(signed), click]).goals, {});
-    assert.deepEqual(build([W, record, click, ev('goal-check', 6, data)]).goals, {}, 'a baseline after the click proves nothing of it');
-  });
-
-  test('goalNotes keeps what a goal\'s report reads from notes, and no other note', () => {
-    const queue = ev('note', 1, { about: 'goal-queue-after', goal: 'g', run: 'r', tokens: 5, unknown: false });
-    const slice = ev('note', 2, { about: 'engine', work: 'w', words: 'x', slice: { n: 1, of: 2, title: 'One', flag: 'f' } });
-    const lost = ev('note', 3, { about: 'engine', work: 'w', words: 'x', lost: true });
-    const other = ev('note', 4, { about: 'engine', words: 'x' });
-    assert.deepEqual(build([queue, slice, lost, other]).goalNotes.map((n) => n.data), [queue.data, slice.data, lost.data]);
-  });
-});
-
-test('a goal is in the views only when a signed click names its id and its sheet\'s hash', async () => {
-  await withHome(() => {
-    const sheet = goalSheet();
-    // The piece's work record, as it stood before the signature.
-    const W = workEv(0);
-    const record = ev('goal', 1, { id: 'export-orders', sheet });
-    assert.deepEqual(build([W, record]).goals, {}, 'a goal alone does nothing');
-    const hash = sheetHash(sheet);
-    const B = ev('goal-check', 1, { goal: 'export-orders', hash, when: 'before', head: 'a'.repeat(40), results: [{ check: sheet.done[0], ok: false }], ok: false });
-    // an unsigned click, a forged one, another hash and another id
-    const forged = { ...startClick(4, 'export-orders', hash), data: { ...startClick(4, 'export-orders', hash).data, goal: 'other' } };
-    assert.deepEqual(build([W, record, B, unsigned(startClick(2, 'export-orders', hash)), forged, startClick(3, 'export-orders', H2)]).goals, {});
-    const signed = startClick(5, 'export-orders', hash);
-    const goals = build([W, record, B, signed]).goals;
-    assert.deepEqual(Object.keys(goals), ['export-orders']);
-    assert.equal(goals['export-orders'].hash, hash);
-    assert.equal(goals['export-orders'].startedAt, signed.at);
-    assert.equal(goals['export-orders'].ended, null);
-    assert.deepEqual(goals['export-orders'].sheet, sheet);
-    // a goal-end from the helper ends it; a narrowing note after the click narrows it
-    const narrow = ev('note', 6, { about: 'narrow-goal', goal: 'export-orders', change: { spend: { tokens: 500 } } });
-    const end = ev('goal-end', 7, { goal: 'export-orders', ending: 'time', at: T(7), spent: { tokens: 1, points: null, requests: null, unknown: 0, shareAtStart: null, queueRuns: 0 } });
-    const after = build([W, record, B, signed, narrow, end]).goals['export-orders'];
-    assert.equal(after.sheet.spend.tokens, 500);
-    assert.equal(after.ended.ending, 'time');
-  });
-});
-
-test('the goals view reaches the views folder on disk', async () => {
-  await withHome(async () => {
-    const out = path.join(tempFolder('wh-goals-'), 'views');
-    await writeViews('o__p', { now, dir: tempFolder('wh-goals-state-'), out });
-    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(out, 'goals.json'), 'utf8')), {});
+    const plain = build([W]);
+    const withOld = build([W, ...oldGoalEvents()]);
+    assert.equal('goals' in withOld, false);
+    assert.equal('goalChecks' in withOld, false);
+    assert.equal('goalNotes' in withOld, false);
+    assert.deepEqual(withOld.work, plain.work);
+    assert.deepEqual(withOld.damaged, plain.damaged);
+    assert.deepEqual(withOld.waiting, plain.waiting);
   });
 });
 

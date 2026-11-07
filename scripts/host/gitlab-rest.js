@@ -7,7 +7,7 @@
 // part) and it travels in the PRIVATE-TOKEN header on `curl`'s standard input, never in an argument. Every
 // error that leaves here has the key scrubbed out of it.
 import { run as realRun } from '../lib/run.js';
-import { publicHttps } from '../screens/pages.js';
+import { publicHttps } from '../pictures/pages.js';
 import { DEFAULT_GITLAB } from './gitlab-base.js';
 import { MERGE_SECONDS, READ_SECONDS, request } from './curl.js';
 import { adapterFrom, refusalOf, scrub, settle } from './adapter.js';

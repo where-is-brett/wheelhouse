@@ -138,7 +138,7 @@ async function helperFacts(project, { client, address, now, offline, clockRead, 
 // `sources` the weekly report, for the briefing and the settings text. `waitMs` (at most
 // HELPER_WAIT_MS, the default, and what a test adds: helper-grace.js) is how long the helper is
 // waited for. `findBrowser` stands in for the helper's way of finding its browser
-// (scripts/screens/browser.js) in tests.
+// (scripts/pictures/browser.js) in tests.
 export async function loadBoardInputs(options = {}) {
   try {
     return await gather(isRecord(options) ? options : {});

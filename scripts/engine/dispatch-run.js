@@ -20,33 +20,24 @@
 // decisions design, section 8.3): an entry stays on `returning` until `dispatch` admits it, and on `admitted`, holding its
 // place, until its run is seen running. The runner wakes a paused run once admitted; a new run is started from here. A
 // start is marked before it is called, so one that timed out or a crash during it is settled before anything starts again.
-// While a goal runs, every start passes one gate (goal.js): one held there keeps its place on the list with `heldBy` and
-// raises no card, until the gate lets it by. A retry the gate would hold isn't kept for it, and comes to its card. Each tick
-// asks what the goal does next (`goalStep`) and carries it out: a wind-down, cancels that keep their worktrees, and last of all
-// the one `goal-end` record. What that needs across a restart is in `file` as `goalRun`.
 import fs from 'node:fs';
 import path from 'node:path';
 import { dispatch, MERGE_WORK, MERGE_QUEUE_EVERY_MS } from './dispatcher.js';
-import { goalRule, goalInForce, gateStart, goalDoneOf, orderGoal, areasOf, fixAreas, goalStep, lastEnded, lastCheckHolds, pieceCovered, unfinishedOf } from './goal.js';
-import { goalMeter, goalRuns, shareAtStart } from './goal-meter.js';
-import { GOAL_CHECK_TRIES } from './goal-limits.js';
-import { goalHeldWords, goalWindingWords, goalEndedWords, goalRedsWords, goalRunLeftWords, goalPieceChangedWords, goalCheckedAgainWords, reservedUnreadWords, LIMIT_HOLD_WORDS, noCardBehindWords, restartRefusedWords, restartCardWords, restartUnsureWords, restartStrandedWords, failedCardWords, prLeftOpenWords, areasInScopeWords, areaCardWords, AREA_CARD_WHY, ALLOW_ONCE_SAYS, areaStoppedWords, wakeLateWords, STOPPED_RESTART_WORDS, ORPHAN_LEFT_WORDS, RESTART_UNSURE_AGAIN, START_ANYWAY, cutOffStoppedWords, cutOffWords, waitsOnItselfWords, startAnywayWords, startRefusedWords, startCardWords, unmarkedPrWords, START_STOP_SAYS, NO_FIX_TESTS, NO_FIX_ORDER, noFixWords, queueStuckWords, QUEUE_STUCK_WHY, QUEUE_PASSED_WORDS } from './words.js';
-import { workOrder, ORDER_LANES } from './order.js';
+import { reservedUnreadWords, LIMIT_HOLD_WORDS, noCardBehindWords, restartRefusedWords, restartCardWords, restartUnsureWords, restartStrandedWords, failedCardWords, prLeftOpenWords, wakeLateWords, STOPPED_RESTART_WORDS, ORPHAN_LEFT_WORDS, RESTART_UNSURE_AGAIN, START_ANYWAY, cutOffStoppedWords, cutOffWords, waitsOnItselfWords, startAnywayWords, startRefusedWords, startCardWords, unmarkedPrWords, START_STOP_SAYS, NO_FIX_TESTS, NO_FIX_ORDER, noFixWords, queueStuckWords, QUEUE_STUCK_WHY, QUEUE_PASSED_WORDS } from './words.js';
+import { workOrder } from './order.js';
 import { limitsFor } from './caps.js';
 import { ENGINE_QUESTIONS } from './router.js';
 import { openRedMain, fixDecision, fixOrder, FIX_LANE } from './fix-main.js';
-import { runCost } from './spend.js';
 import { readSlices, featureProgress, featureNext, currentStep, sliceOrder, finishOrder, featureCap, demoSlice } from './feature.js';
 import { ownWaiting, ownCards, limitedRuns, limitedWork, parkedAtLimit } from './waiting.js';
 import { topCard, holdsUpCount, noCardBehind, deadEnds, waitsOnItself } from './stuck.js';
 import { STOP_LABEL, MORE } from './runner.js';
 import { OWNER_LOST, retryDue, resumeRun, triedList } from './recovery.js';
 import { since, endedBy } from '../foreman/queue.js';
-import { areaAnswer, areaQuestion, ALLOW_ONCE } from './areas.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const isText = (x) => typeof x === 'string' && x.trim() !== '';
-const EMPTY = () => ({ areas: {}, allowed: {}, mergeRun: null, mergeRuns: [], lastStart: null, seenReady: [], queueDue: false, sentBack: {}, acted: {}, clashAsked: {}, reds: {}, redActed: {}, redAsked: {}, redNoted: {}, queueFault: null, unmarkedSeen: {}, noTestsSaid: false, fixes: {}, features: {}, shipped: {}, closedPrs: [], reserved: {}, released: {}, stranded: {}, topCard: null, noCardSaid: {}, quietSeen: {}, owed: {}, cutOffAsked: {}, cutOffFor: {}, waived: {}, returning: [], admitted: [], carryOver: {}, restartCards: 0, limitSaid: false, goalSpend: null, goalQueueRuns: [], goalRun: null, goalCancelled: [] });
+const EMPTY = () => ({ mergeRun: null, mergeRuns: [], lastStart: null, seenReady: [], queueDue: false, sentBack: {}, acted: {}, clashAsked: {}, reds: {}, redActed: {}, redAsked: {}, redNoted: {}, queueFault: null, unmarkedSeen: {}, noTestsSaid: false, fixes: {}, features: {}, shipped: {}, closedPrs: [], reserved: {}, released: {}, stranded: {}, topCard: null, noCardSaid: {}, quietSeen: {}, owed: {}, cutOffAsked: {}, cutOffFor: {}, waived: {}, returning: [], admitted: [], carryOver: {}, restartCards: 0, limitSaid: false });
 // The dispatcher's own questions take numbers from here, apart from the card router's.
 const OWN_QUESTIONS = ENGINE_QUESTIONS + 90000;
 export { MERGE_WORK };
@@ -119,9 +110,8 @@ export const NO_TESTS_WORDS = 'Build work waits: Wheelhouse doesn\'t know how to
 
 // The order for one piece of work from its record: the title is its goal; the done checks are the record's own, or
 // the project's tests passing when it has none. `config` is { routing (the pack's bindings), testCommand, pages? };
-// `answers` the director's answers to the work's earlier questions, from the helper's own record; `goal` what its goal
-// gives the order (`orderGoal`).
-export function orderFor(entry, { settings = {}, raised = false, config = {}, answers = [], tried = [], goal = {} } = {}) {
+// `answers` the director's answers to the work's earlier questions, from the helper's own record.
+export function orderFor(entry, { settings = {}, raised = false, config = {}, answers = [], tried = [] } = {}) {
   const data = entry.work.data;
   const done = Array.isArray(data.done) && data.done.length > 0 ? data.done : config.testsNotCounting === true ? [] : [{ command: config.testCommand, expect: 0 }];
   return workOrder({
@@ -130,12 +120,12 @@ export function orderFor(entry, { settings = {}, raised = false, config = {}, an
     routing: config.routing ?? {},
     caps: limitsFor(data.lane, settings, { raised }),
     answers,
-    extra: { ...(tried.length > 0 ? { tried } : {}), ...(goal.goalId !== undefined ? { goalId: goal.goalId } : {}), ...(goal.waived === true ? { showFirst: false } : {}) },
+    extra: { ...(tried.length > 0 ? { tried } : {}) },
   });
 }
 
 // dispatchRun({ engine, project, folder, file, readViews, settings, stopped, now, start, write, readyOf, mainGreen,
-//   stoppedRuns, fixedRuns, prMerged, designOf, orderOf, repoOf, queueFolder, queuePlace, openedBy, onCard }) -> { tick, workOf, sentBack(work, reason, tail), queueDue, enter, admittedTo, delivered, drop, startAdmitted, onStarted, carryOver, ... }.
+//   stoppedRuns, fixedRuns, prMerged, designOf, orderOf, repoOf, queueFolder, queuePlace, openedBy }) -> { tick, workOf, sentBack(work, reason, tail), queueDue, enter, admittedTo, delivered, drop, startAdmitted, onStarted, carryOver, ... }.
 // - `start({ project, order, branch?, carryOn? })` the helper's own start; `readyOf()` the pull requests marked ready,
 //   { [pr]: { work, head } }; `settings()` the project's settings in force; `write(kind, data)` a record;
 // - `mainGreen()` whether the main line's checks read green: true, false, or null when they can't be read (or are
@@ -155,17 +145,13 @@ export function orderFor(entry, { settings = {}, raised = false, config = {}, an
 //   no host, and `moving()` whether a move to a host is under way, which holds new work as All stop does.
 // - `branchPaths({ runId, branch })` every path a run's branch has changed so far, or null when it can't be read.
 // - `notReady(pr)` takes a pull request off what `readyOf` lists: the director sent it back, so only its rework marks it again.
-// - `areasHeld()` the pull requests a goal's areas hold back, { [pr]: { head, runId, showFirst, work, paths, fix? } }; and
-//   `settleAreas(pr, how)` lets go of one: 'ready' marks it ready, and 'stop', 'fix' and 'gone' only take it off the list.
-// - `goalCheck({ goal, when })` asks for a goal's checks on the main line (goal-check.js); `endRun(runId)` ends a run's process
-//   tree by pid, for a run that won't cancel when its goal ends, as at a cap.
 // - `engine.liveRunOf({ work, since })`, where the engine has it, says of a start that may have happened: { runId },
 //   null for none, undefined when it can't say. Without it the answer is undefined, so a card comes and not a second start.
-export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped: allStop = () => false, moving = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), mainGreen = async () => null, stoppedRuns: stoppedByAll = () => [], fixedRuns = () => [], prMerged = async () => null, prState = null, designOf = () => null, orderOf = () => null, repoOf = () => null, repoName = () => null, queueFolder = async () => ({ ok: false, refused: 'no folder for the merge queue' }), queuePlace = null, openedBy = () => null, localQueue = null, isLocal = () => true, onCard = () => {}, branchPaths = async () => [], notReady = () => {}, areasHeld = () => ({}), settleAreas = () => {}, allowance = () => null, goalStarted = async () => {}, goalCheck = async () => ({ ok: false, refused: 'nothing runs a goal\'s checks here' }), endRun = async () => ({ ended: [], survivors: [] }) } = {}) {
+export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped: allStop = () => false, moving = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), mainGreen = async () => null, stoppedRuns: stoppedByAll = () => [], fixedRuns = () => [], prMerged = async () => null, prState = null, designOf = () => null, orderOf = () => null, repoOf = () => null, repoName = () => null, queueFolder = async () => ({ ok: false, refused: 'no folder for the merge queue' }), queuePlace = null, openedBy = () => null, localQueue = null, isLocal = () => true, branchPaths = async () => [], notReady = () => {}, } = {}) {
   const stopped = () => allStop() || moving();
   let state = readState(file);
-  // The runs All stop cancelled and those a goal's end did: each waits for a Carry on, with no card.
-  const stoppedRuns = () => [...(stoppedByAll() ?? []), ...state.goalCancelled];
+  // The runs All stop cancelled: each waits for a Carry on, with no card.
+  const stoppedRuns = () => [...(stoppedByAll() ?? [])];
   // The pieces with a card of the card router's open, from the runner, which is built after this.
   let routerPieces = () => new Set();
   let parkedPrs = () => ({});
@@ -187,7 +173,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     try { theirs = routerCardsNow(); } catch { /* it reads as none, so a hold shows as having no card */ }
     return [...ownCards({ state, views }), ...theirs];
   };
-  // A question of the dispatcher's own, and then a word to the seals, whose trouble is never the card's. Owed until it is
+  // A question of the dispatcher's own. Owed until it is
   // written, so a record that refuses it costs a tick and never the card (`owedTick`).
   async function askDirector(kind, data) {
     state.owed[data.id] = { kind, data };
@@ -195,7 +181,6 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     await write('question', data);
     delete state.owed[data.id];
     keep();
-    try { onCard({ id: data.id, kind, work: data.work, level: data.level }); } catch { /* it costs a seal, never a card */ }
   }
   async function owedTick() {
     const views = readViews() ?? {};
@@ -251,291 +236,16 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     await write('note', { about: 'engine', words: `${work} failed its tests and couldn't go back to be mended yet: ${got?.refused ?? 'no answer'}. It is tried again shortly.` });
   }
 
-  // The gate at the start of a run of `work`, read now: null, or what holds it.
-  function goalGate(views, { work, lane, via }) {
-    const goal = ruleOf(views);
-    return gateStart({ goal, work, lane, via, state: goal?.state, meter: meterOf(goal), cap: capOf(lane).tokens, now: now() });
-  }
-  const capOf = (lane) => limitsFor(lane, settings() ?? {});
-  const winding = () => state.goalRun?.state === 'winding';
-  const ruleOf = (views) => goalRule(views, now(), { winding: winding() });
-  // The meter's reading for `goal`, kept so a restart holds what it held: none for a goal it hasn't read.
-  const meterOf = (goal) => (state.goalSpend !== null && state.goalSpend.goal === goal?.id ? state.goalSpend.meter : null);
-  // `goalRule`'s answer as `dispatch` takes it: while a goal runs, the lanes its spend leaves no room for, so that a piece held
-  // by spend spends no place and one that fits can start.
-  function goalNow(views) {
-    const goal = ruleOf(views);
-    const meter = meterOf(goal);
-    if (goal?.only !== true || meter === null) return goal;
-    return { ...goal, spendHolds: ORDER_LANES.filter((lane) => typeof meter.reached === 'string' || meter.left < capOf(lane).tokens) };
-  }
-  // A queue run that has ended spends no more, and a goal may run many: each is read until then.
-  const queueRead = new Map();
-  async function readForMeter(runId) {
-    if (queueRead.has(runId)) return queueRead.get(runId);
-    const record = await engine.inspect(runId);
-    if (record?.status === 'ended' && state.goalQueueRuns.includes(runId)) queueRead.set(runId, record);
-    return record;
-  }
-  // Reads the goal's spend, ahead of every start of the tick, and keeps it beside what it was at Start. The share at Start
-  // is taken from the first reading fresh at Start.
-  async function meterTick(views) {
-    const goal = goalInForce(views);
-    if (goal === null) return;
-    if (state.goalSpend?.goal !== goal.id) {
-      state.goalSpend = { goal: goal.id, shareAtStart: null, meter: null };
-      state.goalQueueRuns = [];
-      queueRead.clear();
-    }
-    const kept = state.goalSpend;
-    let reading = null;
-    try { reading = allowance(); } catch { /* the tokens stand alone */ }
-    kept.shareAtStart ??= shareAtStart(reading, goal);
-    const requests = null;
-    kept.meter = await goalMeter({ goal, views, inspect: readForMeter, queueRuns: state.goalQueueRuns, capOf, reading, shareAtStart: kept.shareAtStart, requests, now: now() });
-    kept.readAt = kept.meter.points === null ? null : reading.shareAt;
-    keep();
-  }
-
-  // --- How a goal ends (unattended goals design, section 8) ---
-  const newGoalRun = (id) => ({ goal: id, state: 'running', windingSince: null, windingFor: null, lastStepAt: now().toISOString(), steps: {}, reds: [], unreadSince: null, check: null, closing: null, tries: {}, said: [], after: null, behind: [] });
-
-  // A feature's own run at its switch-on: its review and done checks, the sheet's among them, are behind it.
-  function atSwitchOn(views, work, run) {
-    if (run?.lane !== 'feature' || run.state !== 'paused') return false;
-    return (views.asks?.[work] ?? []).filter((a) => a?.data?.runId === run.runId).at(-1)?.data?.kind === 'approval';
-  }
-  // What one piece of the goal is doing now, as `goalStep` reads it. `onlyFeatures` says a switch-on can stand for the last check.
-  function pieceState(views, goal, work, { ready, onlyFeatures, behind }) {
-    const reports = isPlain(views.reports) ? views.reports : {};
-    if (reports[work]?.data?.outcome === 'merged') return 'merged';
-    const current = views.work?.[work]?.work;
-    if (!isPlain(current) || endedBy(reports, work, current) || !pieceCovered(goal, work, views)) return 'ended';
-    const run = latestRun(views, work);
-    if (atSwitchOn(views, work, run)) return onlyFeatures ? 'passed' : 'waiting';
-    if (waitingNow(views).has(work) || state.returning.some((e) => e.work === work && e.asked)) return 'waiting';
-    if ((run !== null && run.state !== 'ended') || retryFor(views, work) !== null) return 'going';
-    if ([...state.returning, ...state.admitted].some((e) => e.work === work && e.heldBy === undefined)) return 'going';
-    if (Object.values(ready).some((r) => r?.work === work)) return 'going';
-    if (behind.includes(work)) return 'waiting';
-    if (run !== null && (stoppedRuns().includes(run.runId) || stoppedByDirector(views, work, run.runId))) return 'ended';
-    return run?.outcome === 'failed' ? 'failed' : 'queued';
-  }
-  // How many of the goal's pieces, latest first, failed past their retries with nothing merged since.
-  function failedInARow(views, goal, ready) {
-    const outcomes = [];
-    for (const { work } of goal.sheet.pieces) {
-      const report = views.reports?.[work];
-      if (report?.data?.outcome === 'merged') {
-        outcomes.push({ at: Date.parse(report.at), failed: false });
-        continue;
-      }
-      const run = latestRun(views, work);
-      if (run?.outcome !== 'failed' || run.state !== 'ended' || retryFor(views, work) !== null) continue;
-      // Something still moves it on: an answer on its way back, or a pull request with the merge queue.
-      if ((onTheWay(work) && !state.returning.some((e) => e.work === work && e.asked)) || Object.values(ready).some((r) => r?.work === work)) continue;
-      outcomes.push({ at: Date.parse(run.records.at(-1).at), failed: true });
-    }
-    const sorted = outcomes.sort((a, b) => a.at - b.at);
-    const lastGood = sorted.findLastIndex((o) => !o.failed);
-    return sorted.length - lastGood - 1;
-  }
-  // The clock for no step finishing: it stands still only while a run is meant to be working, and one that can't be read says nothing.
-  async function stepsTick(kept, liveRuns) {
-    if (liveRuns.length === 0) {
-      kept.lastStepAt = now().toISOString();
-      return;
-    }
-    let moved = false;
-    for (const runId of liveRuns) {
-      let seen = null;
-      try { seen = await engine.inspect(runId); } catch { seen = null; }
-      const steps = seen?.unread === true ? undefined : seen?.steps?.length;
-      if (!Number.isInteger(steps) || kept.steps[runId] === undefined || steps > kept.steps[runId]) moved = true;
-      if (Number.isInteger(steps)) kept.steps[runId] = steps;
-    }
-    if (moved) kept.lastStepAt = now().toISOString();
-  }
-  // The result of the last check asked for: null while there is none, 'passed' or 'failed'. Every piece merged asks for one, and
-  // a run that gave no result is asked for once more, since a Mac asleep past its limit says nothing of the checks.
-  async function lastCheckTick(views, goal, kept, allMerged) {
-    if (!allMerged) {
-      kept.check = null;
-      return null;
-    }
-    const seen = kept.check === null ? [] : (views.goalChecks?.[goal.id] ?? []).filter((c) => c.when === 'last' && c.hash === goal.hash && Date.parse(c.at) >= Date.parse(kept.check.at));
-    const record = seen.at(-1);
-    if (record?.said !== undefined && kept.check.tries < GOAL_CHECK_TRIES) {
-      kept.check = { ...kept.check, at: now().toISOString(), tries: kept.check.tries + 1 };
-      await askLastCheck(goal.id, kept);
-      return null;
-    }
-    if (record !== undefined) return lastCheckHolds(views.goalChecks, { id: goal.id, hash: goal.hash, head: record.head }) ? 'passed' : 'failed';
-    if (kept.check === null || kept.check.refused === true) await askLastCheck(goal.id, kept);
-    return null;
-  }
-  async function askLastCheck(id, kept) {
-    const at = now().toISOString();
-    let got = null;
-    try { got = await goalCheck({ goal: id, when: 'last' }); } catch { got = { ok: false, busy: true }; }
-    // Busy, the run under way is another's: asked again on the next look, with nothing on the record.
-    if (got?.busy === true) return;
-    // A refusal may leave nothing on the record (All stop, say), so it is asked again until there is a result.
-    kept.check = { at: kept.check?.at ?? at, tries: (kept.check?.tries ?? 0) + (got?.ok === true ? 1 : 0), refused: got?.ok !== true };
-    keep();
-  }
-
-  // Cancels a run for the goal's end, keeping its worktree: whether it has gone. Tried twice, then ended by its processes.
-  async function stopForGoal(runId, kept) {
-    const gone = async () => {
-      try { return (await engine.inspect(runId))?.status === 'ended'; } catch { return false; }
-    };
-    if (await gone()) return true;
-    kept.tries[runId] = (kept.tries[runId] ?? 0) + 1;
-    keep();
-    if (kept.tries[runId] > 2) {
-      const { survivors = [] } = (await endRun(runId)) ?? {};
-      if (survivors.length > 0) await write('note', { about: 'engine', words: goalRunLeftWords((readViews() ?? {}).goals?.[kept.goal]?.sheet?.title ?? kept.goal, survivors) });
-      return true;
-    }
-    let got = null;
-    try { got = await engine.act(runId, { cancel: { reason: 'its goal ended' } }); } catch { got = null; }
-    return got?.ok === true && gone();
-  }
-  // The runs of a goal's own that its end cancels. A fix isn't one: it comes to the fix lane's own card.
-  function markCancelled(views, goal, runIds) {
-    const fixes = new Set(goalRuns(goal, views).filter((r) => r.lane === FIX_LANE).map((r) => r.runId));
-    state.goalCancelled = [...new Set([...state.goalCancelled, ...runIds.filter((id) => !fixes.has(id))])].slice(-200);
-  }
-  // Each run cancelled, and then, last of all, the goal's one record of its end, with what it spent from a last read of the meter.
-  async function closeTick(views, goal, kept) {
-    const { closing } = kept;
-    const left = [];
-    for (const runId of closing.cancel) if (!(await stopForGoal(runId, kept))) left.push(runId);
-    closing.cancel = left;
-    keep();
-    if (left.length > 0) return;
-    await meterTick(readViews() ?? {}).catch(() => {});
-    const { meter, shareAtStart: atStart = null } = state.goalSpend?.goal === goal.id ? state.goalSpend : {};
-    const spent = { tokens: meter?.tokens ?? 0, points: meter?.points ?? null, requests: meter?.requests ?? null, unknown: meter?.unknown ?? true, shareAtStart: atStart, queueRuns: state.goalQueueRuns, readAt: state.goalSpend?.readAt ?? null };
-    await write('goal-end', { goal: goal.id, ending: closing.ending, at: now().toISOString(), spent, ...(kept.reds.length > 0 ? { words: goalRedsWords(kept.reds.length) } : {}) });
-    Object.assign(kept, { state: 'ended', ending: closing.ending, closing: null });
-    keep();
-    await write('note', { about: 'engine', words: goalEndedWords(goal.sheet.title, kept.ending) });
-  }
-
-  // `at` is when this look began: the time goes with the record it is read against, and a sleep during it has no `slept` record yet.
-  async function goalTick(at) {
-    const views = readViews() ?? {};
-    const goal = goalInForce(views);
-    if (goal === null) return afterGoalTick(views);
-    if (state.goalRun?.goal !== goal.id) {
-      state.goalRun = newGoalRun(goal.id);
-      keep();
-      // Once, for a convenience: a start that can't set it goes on all the same.
-      try { await goalStarted(goal); } catch { /* the goal runs whether or not Away was set */ }
-    }
-    const kept = state.goalRun;
-    if (kept.closing !== null) return closeTick(views, goal, kept);
-    const ready = readyOf() ?? {};
-    const lines = goal.sheet.pieces;
-    const onlyFeatures = lines.every(({ work }) => views.work?.[work]?.work?.data?.lane === 'feature');
-    const pieces = Object.fromEntries(lines.map(({ work }) => [work, pieceState(views, goal, work, { ready, onlyFeatures, behind: kept.behind })]));
-    for (const { work } of lines) {
-      if (pieceCovered(goal, work, views) || kept.said.includes(work) || views.reports?.[work] !== undefined) continue;
-      kept.said.push(work);
-      keep();
-      await write('note', { about: 'engine', work, words: goalPieceChangedWords(titleOf(views, work)) });
-    }
-    const red = openRedMain(views);
-    if (red && !kept.reds.includes(red.id)) kept.reds.push(red.id);
-    const runs = goalRuns(goal, views);
-    const parked = new Set(parkedAtLimit(views).map((r) => r.runId));
-    const going = (run) => (views.runs?.[run.work] ?? []).filter((r) => r?.data?.runId === run.runId).at(-1)?.data?.state === 'started' && !waitingNow(views).has(run.work);
-    const liveRuns = runs.filter((r) => r.live && r.lane !== FIX_LANE && !parked.has(r.runId) && going(r)).map((r) => r.runId);
-    const fixRuns = runs.filter((r) => r.live && r.lane === FIX_LANE && going(r)).map((r) => r.runId);
-    await stepsTick(kept, liveRuns);
-    const { meter = null } = state.goalSpend?.goal === goal.id ? state.goalSpend : {};
-    const unread = typeof meter?.reached === 'string' && meter.settled !== true && meter.unread === true;
-    if (!unread) kept.unreadSince = null;
-    else kept.unreadSince ??= now().toISOString();
-    const lastCheck = await lastCheckTick(views, goal, kept, Object.values(pieces).every((p) => p === 'merged'));
-    keep();
-    const step = goalStep({
-      goal, now: at,
-      facts: { pieces, failedInARow: failedInARow(views, goal, ready), reds: kept.reds.length, meter, unreadSince: kept.unreadSince, lastStepAt: kept.lastStepAt, parkedRuns: runs.filter((r) => parked.has(r.runId)).map((r) => r.runId), liveRuns, fixRuns, windingSince: kept.windingSince, windingFor: kept.windingFor, slept: views.slept ?? [], endAsked: views.goals[goal.id].endAsked, allStop: allStop(), lastCheck },
-    });
-    if (step.state === 'ended') {
-      kept.state = 'winding';
-      kept.closing = { ending: step.ending, cancel: step.cancel ?? [] };
-      markCancelled(views, goal, kept.closing.cancel);
-      keep();
-      await closeTick(views, goal, kept);
-    } else if (step.state === 'winding') {
-      const first = kept.windingSince === null;
-      Object.assign(kept, { state: 'winding', windingSince: kept.windingSince ?? at.toISOString(), windingFor: step.ending });
-      markCancelled(views, goal, step.cancel);
-      keep();
-      if (first) await write('note', { about: 'engine', words: goalWindingWords(goal.sheet.title, step.ending) });
-      for (const runId of step.cancel) await stopForGoal(runId, kept);
-    } else if (kept.state !== step.state) {
-      kept.state = step.state;
-      keep();
-    }
-  }
-
-  // After a goal's end: its checks run on the main line once nothing of it is left unfinished, if it didn't end on them, and each
-  // merge-queue run that took its work on after the end is named, for the report, once it has ended.
-  async function afterGoalTick(views) {
-    const goal = lastEnded(views);
-    const kept = state.goalRun;
-    if (goal === null || kept?.goal !== goal.id) return;
-    // A crash after the record went on leaves it to say so here.
-    if (kept.state !== 'ended') {
-      Object.assign(kept, { state: 'ended', closing: null });
-      keep();
-      await write('note', { about: 'engine', words: goalEndedWords(goal.sheet.title, goal.ended.ending) });
-    }
-    await queueAfterTick(goal, kept);
-    if (['done', 'check-failed'].includes(goal.ended.ending) || kept.after?.done === true || unfinishedOf(goal, views).length > 0) return;
-    if (!goal.sheet.pieces.some(({ work }) => views.reports?.[work]?.data?.outcome === 'merged')) return;
-    kept.after ??= { check: null };
-    const passed = await lastCheckTick(views, goal, kept.after, true);
-    if (passed === null) return;
-    kept.after.done = true;
-    keep();
-    await write('note', { about: 'engine', words: goalCheckedAgainWords(goal.sheet.title, passed === 'passed') });
-  }
-  async function queueAfterTick(goal, kept) {
-    for (const runId of kept.queueAfter ?? []) {
-      let seen = null;
-      try { seen = await engine.inspect(runId); } catch { seen = null; }
-      if (seen?.status !== 'ended' || seen.unread === true) continue;
-      const { tokens, source } = runCost(seen);
-      await write('note', { about: 'goal-queue-after', goal: goal.id, run: runId, tokens, unknown: source === 'unknown' });
-      kept.queueAfter = kept.queueAfter.filter((id) => id !== runId);
-      keep();
-    }
-  }
-
-  async function startPiece({ work, lane, via = 'start', branch = null, carryOn = false, raised = false, answers = [], checkTail = null }) {
+  async function startPiece({ work, lane, branch = null, carryOn = false, raised = false, answers = [], checkTail = null }) {
     const views = readViews() ?? {};
     const entry = views.work?.[work];
     if (!isPlain(entry?.work?.data)) return { ok: false, refused: 'there is no such work', gone: true };
-    const held = goalGate(views, { work, lane, via });
-    if (held) return { ok: false, ...held };
     if (!canTest(config())) return { ok: false, refused: 'Wheelhouse doesn\'t know how to run the project\'s tests' };
     if (entry.work.data.lane === 'feature') return startFeature({ views, entry, work, lane, branch, carryOn, raised, answers, checkTail });
     let order;
-    try { order = orderFor({ ...entry, work: { ...entry.work, key: work } }, { settings: settings() ?? {}, raised, config: config() ?? {}, answers, tried: carryOn ? triedBefore(views, work) : [], goal: orderGoal(views, work) }); } catch (error) { return { ok: false, refused: error.message }; }
+    try { order = orderFor({ ...entry, work: { ...entry.work, key: work } }, { settings: settings() ?? {}, raised, config: config() ?? {}, answers, tried: carryOn ? triedBefore(views, work) : [] }); } catch (error) { return { ok: false, refused: error.message }; }
     if (order.lane !== lane) return { ok: false, refused: 'the work\'s lane changed' };
-    return start({ project, order: withAreas(withTail(order, checkTail), views), ...(branch ? { branch } : {}), carryOn });
-  }
-
-  // An order with the areas of the goal its piece belongs to, in the guard's terms and in the run's words.
-  function withAreas(order, views) {
-    const areas = areasOf(views, order.work);
-    return areas === null ? order : { ...order, areas, notInScope: [...order.notInScope, areasInScopeWords(areas)] };
+    return start({ project, order: withTail(order, checkTail), ...(branch ? { branch } : {}), carryOn });
   }
 
   // What this piece's earlier runs failed at, for a fresh run on its branch. An order that can't be read costs only its checks.
@@ -615,9 +325,9 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       }
     }
     let order;
-    const args = { entry: { ...entry, work: { ...entry.work, key: work } }, design, config: config() ?? {}, settings: settings() ?? {}, raised, answers, tried: carryOn ? triedBefore(views, work) : [], goalId: orderGoal(views, work).goalId };
-    try { order = step.finish ? finishOrder({ ...args, progress, goalDone: goalDoneOf(views, work) }) : sliceOrder({ ...args, n: step.slice }); } catch (error) { return { ok: false, refused: error.message }; }
-    const got = await start({ project, order: withAreas(withTail(order, checkTail), views), ...(branch ? { branch } : {}), carryOn });
+    const args = { entry: { ...entry, work: { ...entry.work, key: work } }, design, config: config() ?? {}, settings: settings() ?? {}, raised, answers, tried: carryOn ? triedBefore(views, work) : [] };
+    try { order = step.finish ? finishOrder({ ...args, progress }) : sliceOrder({ ...args, n: step.slice }); } catch (error) { return { ok: false, refused: error.message }; }
+    const got = await start({ project, order: withTail(order, checkTail), ...(branch ? { branch } : {}), carryOn });
     if (got?.ok && typeof got.runId === 'string') {
       kept.started.push(got.runId);
       keep();
@@ -767,7 +477,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     const step = currentStep({ design, progress });
     const runs = step.finish ? progress.finish?.runs ?? [] : progress.slices?.[step.slice]?.runs ?? [];
     const run = runs.at(-1);
-    if (run?.state !== 'ended' || typeof run.runId !== 'string' || state.goalCancelled.includes(run.runId)) return;
+    if (run?.state !== 'ended' || typeof run.runId !== 'string' ) return;
     kept.stalls ??= {};
     const title = entry.work.data.title ?? work;
     const held = kept.stalls[run.runId];
@@ -873,11 +583,10 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   }
   // The try a piece's failed run still has, as `retryDue` gives it, with the run, or null: its failure allows one, and it is
   // still the piece's to take. What only delays a try (a card, the merge queue) doesn't count here, so the piece stays held. A
-  // retry is a start, so one the goal's gate would hold is no try to come: the piece goes to its card, and the runner resumes nothing.
   function retryFor(views, work) {
     const run = runOfOpenWork(views, work);
     const due = run ? retryDue({ records: run.records, now: now() }) : null;
-    if (!due || (stoppedRuns() ?? []).includes(run.runId) || stoppedByDirector(views, work, run.runId) || leftByDirector(views, work) || goalGate(views, { work, lane: run.lane, via: 'retry' })) return null;
+    if (!due || (stoppedRuns() ?? []).includes(run.runId) || stoppedByDirector(views, work, run.runId) || leftByDirector(views, work)) return null;
     return { ...due, run };
   }
   // Every piece with a try to come, or one on its way. Its files stay held, and nothing raises a card over it.
@@ -891,7 +600,6 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   // All stop, an incident or a limit, and the wait runs on; the runner looks at the run before it resumes it. A pull request with the
   // merge queue is left to it: all that can be left of such a run comes after `ready`.
   function retryTick(views) {
-    for (const entry of state.returning.filter((e) => e.via === 'retry')) if (goalGate(views, { work: entry.work, lane: entry.lane, via: 'retry' })) leave(entry);
     if (stopped() || incidentOpen(views) || atLimit(views)) return;
     const ready = readyOf() ?? {};
     for (const work of Object.keys(isPlain(views.work) ? views.work : {})) {
@@ -1017,14 +725,10 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       let order;
       try {
         order = fixOrder(incident, { config: config() ?? {}, settings: settings() ?? {}, revert: decided.revert === true });
-        const areas = fixAreas(views);
-        if (areas !== null) order = { ...order, areas, notInScope: [...order.notInScope, areasInScopeWords(areas)] };
       } catch {
         if (!kept.noFix || toldNoFix === FIX_FORWARD) await noFixCard(incident, kept);
         return;
       }
-      // The fix lane passes every bound but spend, and a goal that reached its spend is about to end.
-      if (goalGate(views, { work: incident.work, lane: order.lane, via: 'start' })) return;
       delete kept.noFix;
       const answered = isPlain(kept.next) ? kept.next : null;
       kept.next = null;
@@ -1104,19 +808,9 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   }
 
   // Keeps a merge-queue run as the project's one queue run.
-  function ownQueueRun(runId, waiting) {
+  function ownQueueRun(runId) {
     state.mergeRun = runId;
     state.mergeRuns = [...state.mergeRuns, runId].slice(-KEPT_MERGE_RUNS);
-    const views = readViews() ?? {};
-    // `mergeRuns` is cut short, and the spend of each of a goal's queue runs counts.
-    if (goalInForce(views) !== null) {
-      if (!state.goalQueueRuns.includes(runId)) state.goalQueueRuns.push(runId);
-      return;
-    }
-    // After the end, one taking the goal's own work on is named in its report.
-    const goal = lastEnded(views);
-    const kept = state.goalRun;
-    if (goal !== null && kept?.goal === goal.id && waiting.some(([, r]) => goal.sheet.pieces.some((p) => p.work === r.work))) kept.queueAfter = [...new Set([...(kept.queueAfter ?? []), runId])];
   }
   // One start at a time, and none beside a live queue run the helper didn't start, which is taken as the queue's run
   // instead: what is due stays due, so a run that started without the project's models is followed once it ends. An
@@ -1137,7 +831,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
         return;
       }
       if (live.length > 0) {
-        ownQueueRun(live[0], waiting);
+        ownQueueRun(live[0]);
         keep();
         await queuePassed();
         return;
@@ -1152,7 +846,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     let got = null;
     try { got = await engine.start({ lane: 'merge', project: where.folder, repo: repoOf() }); } catch { got = { ok: false, refused: 'the build engine gave no clear answer' }; }
     if (got?.ok) {
-      ownQueueRun(got.runId, waiting);
+      ownQueueRun(got.runId);
       state.lastStart = now().toISOString();
       state.seenReady = waiting.map(([pr]) => pr);
       state.queueDue = false;
@@ -1282,9 +976,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   const incidentOpen = (views) => (views.incidents?.open?.length ?? 0) > 0;
   const atLimit = (views) => limitedRuns(views, now()).length > 0;
   const retriesLater = (entry) => Date.parse(entry.retryAt) > now().getTime();
-  // Asks for no place yet: a try still to fall due, a carry-on whose lost run the runner hasn't seen gone, or a start a goal holds.
-  // So too an answer in a wind-down: its run would be cancelled at the end of it, and after the end it is ordinary work.
-  const notYet = (entry) => retriesLater(entry) || entry.cancelling === true || entry.heldBy !== undefined || (winding() && wakes(entry));
+  // Asks for no place yet: a try still to fall due, or a carry-on whose lost run the runner hasn't seen gone.
+  const notYet = (entry) => retriesLater(entry) || entry.cancelling === true;
   // A carry-on that ended with nothing done: the worktree's lock turned it away, and it says so only by that (check 92).
   const turnedAway = (entry, seen) => entry.via === 'carry-on' && seen?.status === 'ended' && seen.outcome === 'cancelled' && (seen.steps ?? []).length === 0 && !(stoppedRuns() ?? []).includes(entry.runId);
   // New work refused at its first start, with nothing of it on record: nothing of it has been done.
@@ -1372,41 +1065,13 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     return { branch: from, carryOn: carryOn || isText(from), answers: [...(carry.answers ?? []).filter((a) => !said.has(JSON.stringify(a))), ...answers] };
   }
 
-  // The way a start came, as the goal's gate reads it. A first start and a carry-on are the director's answer only when a
-  // card made them so, and each keeps the `via` of its kind: `answered` says it was.
-  const viaOf = (entry) => (entry.answered === true ? 'answer' : entry.firstStart === true ? 'start' : entry.via);
-  // Held at a goal's gate: the place goes back, nothing is asked, and it waits on the list until the gate lets it by.
-  async function heldAtGate(entry, got) {
-    delete entry.starting;
-    delete entry.uncertain;
-    state.admitted = state.admitted.filter((e) => e !== entry);
-    if (!state.returning.includes(entry)) state.returning.push(entry);
-    entry.heldBy = got.goal;
-    const said = entry.heldSaid === got.why;
-    entry.heldSaid = got.why;
-    keep();
-    if (!said) await write('note', { about: 'engine', work: entry.work, words: goalHeldWords(titleOf(readViews() ?? {}, entry.work), got.why) });
-  }
-  // Each entry a goal holds is asked again: a new sheet, or the end of the goal, may let it by.
-  function heldTick(views) {
-    for (const entry of state.returning.filter((e) => e.heldBy !== undefined)) {
-      const held = goalGate(views, { work: entry.work, lane: entry.lane, via: viaOf(entry) });
-      if (held) entry.heldBy = held.goal;
-      else {
-        delete entry.heldBy;
-        delete entry.heldSaid;
-      }
-      keep();
-    }
-  }
-
   async function startEntry(entry) {
     Object.assign(entry, { starting: true, startAt: now().toISOString() });
     keep();
     const { work, lane, raised = false, reason } = entry;
     let got;
     try {
-      got = await startPiece({ work, lane, via: viaOf(entry), ...carried(entry), raised, ...(reason === 'red' ? { checkTail: state.reds[work]?.tail } : {}) });
+      got = await startPiece({ work, lane, ...carried(entry), raised, ...(reason === 'red' ? { checkTail: state.reds[work]?.tail } : {}) });
     } catch (error) {
       got = { ok: false, refused: error instanceof Error ? error.message : 'unknown', uncertain: true };
     }
@@ -1425,8 +1090,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       entry.runId = got.runId;
       keep();
       try { carriedBy(got.runId, entry.carried); } catch { /* the spend before it goes uncounted, never the start */ }
-    } else if (got?.goalHeld === true) await heldAtGate(entry, got);
-    else if (got?.capped === true || got?.gone === true) leave(entry); // The feature's cap card, or nothing left to start.
+    } else if (got?.capped === true || got?.gone === true) leave(entry); // The feature's cap card, or nothing left to start.
     else if (got?.uncertain === true) {
       entry.uncertain = true;
       keep();
@@ -1513,7 +1177,6 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
         delete entry.asked;
         delete entry.retryAt;
         entry.refusals = 0;
-        entry.answered = true;
         // A start that couldn't be told: what began is settled first, so nothing starts beside it.
         if (entry.unsure === true) {
           delete entry.unsure;
@@ -1617,7 +1280,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     const queueGoing = queueStatus === 'running' || (queueStatus === 'paused' && cardsNow(views).length === 0);
     return [
       ...decided.live.filter((work) => !restsQuiet(views, work, ready) && !stuck.has(work)), ...started.filter((s) => s.ok === true || s.uncertain === true).map((s) => s.work),
-      ...[...state.admitted, ...state.returning].filter((e) => !e.asked && !retriesLater(e) && e.heldBy === undefined && moving(e.work)).map((e) => e.work),
+      ...[...state.admitted, ...state.returning].filter((e) => !e.asked && !retriesLater(e) && moving(e.work)).map((e) => e.work),
       ...ready.map(([, r]) => r.work).filter((work) => moving(work) && !stuck.has(work) && !leftByDirector(views, work)), ...(queueGoing ? [MERGE_WORK] : []),
       ...retryingWork(views), ...limitedWork(views, now()),
     ];
@@ -1642,8 +1305,6 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       }
       const runs = [...new Map(runsOfWork(views, work).map((r) => [r.data.runId, r.data])).values()];
       const last = runs.at(-1);
-      // A goal's end stopped it, and the report names it. Carry on takes it up.
-      if (state.goalCancelled.includes(last.runId)) continue;
       const key = `stranded:${last.runId}`;
       if (state.stranded[work] === key) continue;
       if (state.quietSeen[work] !== key) {
@@ -1727,84 +1388,13 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     }
   }
 
-  // Each pull request a goal's areas hold back: one card for its head, and then what its answer asks. Allow this once is
-  // answered by a signed record, kept by head, so a new head asks again. The card's id says which head it is for, so an
-  // older card decides nothing here. A fix's own step carries its merge on the answer.
-  async function areaTick(views) {
-    if (stopped()) return;
-    await handAllowed(views);
-    const reports = isPlain(views.reports) ? views.reports : {};
-    const held = areasHeld() ?? {};
-    for (const pr of Object.keys(state.areas)) {
-      if (held[pr] === undefined) {
-        delete state.areas[pr];
-        keep();
-      }
-    }
-    for (const [pr, hold] of Object.entries(held)) {
-      const { work, head, paths, fix } = hold;
-      if (fix !== true && (reports[work]?.data?.outcome === 'merged' || endedBy(reports, work, views.work?.[work]?.work))) {
-        settleAreas(pr, 'gone');
-        continue;
-      }
-      const id = areaQuestion(work, head);
-      if (state.areas[pr]?.id !== id) {
-        state.areas[pr] = { id, work, head };
-        keep();
-      }
-      if (views.questions?.[id] === undefined) {
-        await askDirector('restart', {
-          id, work, level: 3, what: areaCardWords(titleOf(views, work), pr, paths), why: AREA_CARD_WHY,
-          options: [
-            { label: ALLOW_ONCE, says: ALLOW_ONCE_SAYS },
-            { label: STOP_HERE, says: `Nothing of it is added, and its files are free for other work. ${prLeftOpenWords(pr)}` },
-          ],
-          recommendation: STOP_HERE,
-        });
-        continue;
-      }
-      const label = areaAnswer(views, work, head);
-      if (fix === true && [ALLOW_ONCE, STOP_HERE].includes(label)) settleAreas(pr, 'fix');
-      else if (label === STOP_HERE) {
-        const words = areaStoppedWords(titleOf(views, work));
-        if (views.work?.[work]?.work?.data?.lane === 'feature') await endFeature(work, state.features[work] ??= {}, words);
-        else {
-          await write('report', { work, outcome: 'closed', summary: words, rulings: [] });
-          release(work, views);
-        }
-        settleAreas(pr, 'stop');
-      } else if (label === ALLOW_ONCE) {
-        // Kept before it is marked ready, so a crash between the two still hands it over.
-        if (!isLocal()) state.allowed[pr] = { work, said: false };
-        keep();
-        settleAreas(pr, 'ready');
-      }
-    }
-    await handAllowed(views);
-  }
-  // Each pull request allowed on a host goes to the queue again, as an approved parked one does, and is tried on each tick
-  // until the queue takes it or its work has gone, as a marked-ready change the queue never holds would be lost unseen. A
-  // project in git alone needs only its ready record.
-  async function handAllowed(views) {
-    for (const [pr, kept] of Object.entries(state.allowed)) {
-      const got = await handBack({ pr: Number(pr) });
-      if (got?.ok === true || got?.gone === true) delete state.allowed[pr];
-      else if (got?.waiting !== true && !kept.said) {
-        kept.said = true;
-        await write('note', { about: 'engine', work: kept.work, words: `${titleOf(views, kept.work)}: ${got?.refused ?? 'the merge queue didn\'t take it'}. Wheelhouse keeps trying.` });
-      }
-      keep();
-    }
-  }
-
   // Each tick, what stands behind work that can't start (scripts/engine/stuck.js). The note is written when the answer
   // changes; anything that moves or is about to means there is no top card, and All stop or an incident has its own.
   async function topTick(views, decided, going) {
     const cards = cardsNow(views);
     // What a card holds isn't going, so neither a pull request of a piece on a card nor a merge queue paused on one counts.
     const running = goingNow(views, decided, going);
-    // All that is left of a goal waits on the director, so a card holding that up is blocking, whatever else is going.
-    const top = stopped() || incidentOpen(views) ? null : topCard({ hold: decided.hold, running: state.goalRun?.state === 'waiting' ? [] : running, cards });
+    const top = stopped() || incidentOpen(views) ? null : topCard({ hold: decided.hold, running, cards });
     const counts = holdsUpCount({ hold: decided.hold });
     const holding = {};
     for (const { id, work } of cards) if (counts[work] > 0) holding[id] = Math.max(holding[id] ?? 0, counts[work]);
@@ -1899,15 +1489,10 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   }
 
   async function tick() {
-    const lookedAt = now();
-    await meterTick(readViews() ?? {}).catch(() => {});
     await owedTick();
     await fixTick();
-    await goalTick(lookedAt).catch(() => {});
     // Trouble with a reservation or an entry costs a tick nothing: each is looked at again on the next.
     await returnTick(readViews() ?? {}).catch(() => {});
-    await areaTick(readViews() ?? {}).catch(() => {});
-    try { heldTick(readViews() ?? {}); } catch { /* looked at again on the next tick */ }
     try { retryTick(readViews() ?? {}); } catch { /* looked at again on the next tick */ }
     await cutOffAnswers(readViews() ?? {}).catch(() => {});
     await featureTick();
@@ -1935,7 +1520,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       sentBack: [
         ...Object.entries(state.sentBack).filter(([work, times]) => state.acted[work] !== times).map(([work, times]) => ({ work, times })),
         ...Object.entries(state.reds).filter(([work, red]) => state.redActed[work] !== red.times).map(([work, red]) => ({ work, times: red.times, reason: 'red' })),
-      ], waiting: [...waitingNow(views)], reserved: reservedFiles(), returning: state.returning.map((e) => ({ ...e, ...(notYet(e) ? { asked: e.asked ?? e.key } : {}), ...(e.fresh === true ? { filesFree: true } : {}) })), admitted: state.admitted, stoppedFeatures: stoppedFeaturesOf(views, reports), waived: Object.keys(state.waived).filter((work) => state.waived[work] === views.work?.[work]?.work?.at), goal: goalNow(views), now: now(),
+      ], waiting: [...waitingNow(views)], reserved: reservedFiles(), returning: state.returning.map((e) => ({ ...e, ...(notYet(e) ? { asked: e.asked ?? e.key } : {}), ...(e.fresh === true ? { filesFree: true } : {}) })), admitted: state.admitted, stoppedFeatures: stoppedFeaturesOf(views, reports), waived: Object.keys(state.waived).filter((work) => state.waived[work] === views.work?.[work]?.work?.at), now: now(),
     });
     // What it admitted holds its place from here. A piece has one start at a time; each answer of it goes along.
     for (const { work } of decided.admit) {
@@ -2001,12 +1586,10 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       keep();
       const got = await startPiece({ work, lane, ...args });
       if (carry && got?.ok === true) delete state.carryOver[work];
-      // Held at the gate, it is still queued, so it keeps its place there and nothing need come back.
-      if (got?.goalHeld === true) decided.hold.push({ work, why: got.why });
       if (got?.uncertain === true) {
         entry.uncertain = true;
         keep();
-      } else if (got?.ok === true || got?.capped === true || got?.gone === true || got?.goalHeld === true || stopped()) leave(entry);
+      } else if (got?.ok === true || got?.capped === true || got?.gone === true || stopped()) leave(entry);
       else await refusedStart(entry, got);
       started.push({ work, lane, ...got });
     }
@@ -2071,11 +1654,6 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       await startingQueue;
     }
     if (state.queueFault) await queueFaultTick(views, waiting, queueStatus).catch(() => {});
-    // What stands behind a card, for the goal's next look: a piece held so isn't one that can run. Kept, so a restart knows it.
-    if (state.goalRun !== null && state.goalRun.state !== 'ended') {
-      state.goalRun.behind = decided.hold.filter((h) => ['parked', 'clash', 'dependency'].includes(h.why)).map((h) => h.work);
-      keep();
-    }
     const going = { queueStatus, ready: waiting, started };
     await strandedTick(readViews() ?? {}, decided, going).catch(() => {});
     await cutOffTick(readViews() ?? {}, decided, going).catch(() => {});
@@ -2125,8 +1703,6 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       keep();
       return true;
     },
-    // Whether a goal is in force here: the helper holds the Mac awake for its life.
-    goalInForce: () => goalInForce(readViews() ?? {}) !== null,
     // Whether a piece waits for a place. One admitted holds its place.
     comingBack: (work) => state.returning.some((e) => e.work === work),
     // The runner's mark that an answer went back: its entry then waits for the run to be seen running.

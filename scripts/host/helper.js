@@ -38,12 +38,7 @@ import { borrowKey } from './store.js';
 import { checkBaseUrl, gitlabApi } from './gitlab-key.js';
 import { DEFAULT_GITLAB, parseRemote } from './gitlab-base.js';
 import { prepareQueueFolder } from '../engine/queue-folder.js';
-import { prepareGoalFolder } from '../engine/goal-folder.js';
-import { goalCheckHost } from '../engine/goal-check.js';
-import { awayForGoal, paidUsageOf, sheetDesk } from '../engine/goal-start.js';
-import { sessionsTicking } from '../mod/courier.js';
 import { noteFile, noteProblem, writeNoteFile } from '../lib/session-note.js';
-import { stayAwake } from '../engine/stay-awake.js';
 import { queueFolderOf, queueProjectOf } from '../engine/queue-place.js';
 import { unreachableRefusal, certificateRefusal, certificateLine, awayLine, outputKind, companyGitEnv, makeAwayLog, gitlabBaseOf, certificateSetting } from './company-ca.js';
 import { childEnv, readEnv, backendOf } from './connection.js';
@@ -69,7 +64,7 @@ import { takeStartLock } from '../lib/start-lock.js';
 import { reloadLoginStart, renewedEntry } from '../lib/login-start.js';
 import { HELPER_START_SCRIPT } from '../agents/index.js';
 import { tailOf } from '../lib/output-tail.js';
-import { buildViews, cardOutcomes, latestFor, writeViews } from '../state/views.js';
+import { buildViews, latestFor, writeViews } from '../state/views.js';
 import { takeSurvey, shapedSurvey, recordSurvey } from '../survey/take.js';
 import { ReadyRefusal, archiveCommit, carryOn, carryOnPiece, dropRef, fetchInto, folderGit, freeWork, pieceWork, restoreCommit } from '../survey/ready.js';
 import { readyRecordFile, writeReadyRecord } from '../survey/ready-record.js';
@@ -77,8 +72,6 @@ import { reaching, subcommandOf } from '../setup/git.js';
 import { directorGitEnv, directorGitlabApi, hostStep, launchedIn, switchOnAsDirector } from '../setup/host.js';
 import { commitAuthor } from '../setup/project-files.js';
 import { readEnrolled, verify, sign, ownKey } from '../state/signing.js';
-import { delegationReview } from '../frontdesk/learning.js';
-import { answersToOffer, offerDue, sittingSince, sittingSpent } from '../delegation/offer.js';
 import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/lock.js';
 import { namesOf, readProject, isInsideFolder, projectForFolder, registeredProjects } from '../lib/projects.js';
 import { findCommand, hasTestScript } from '../checks/find-command.js';
@@ -95,15 +88,7 @@ import { stopEngine, endRun, stopWords } from '../engine/stop.js';
 import { engineRoutes, engineDirOf } from '../engine/routes.js';
 import { engineRunner } from '../engine/runner.js';
 import { resumesOf, runLive, settlingResume, sleepWatch } from '../engine/recovery.js';
-import { rollOf } from '../delegation/blind.js';
-import { recordOnly, cardContext, historyOf } from '../delegation/record-only.js';
-import { branchHead, cardDiff, cardFacts, commitsAfter, pathsSoFar } from '../delegation/facts.js';
-import { repeatExclusions } from '../delegation/asked.js';
-import { pieceCards, readerView } from '../delegation/view.js';
-import { prepareReaderFolder } from '../delegation/reader.js';
-import { setupStamp } from '../delegation/stamp.js';
-import { ruleSet } from '../delegation/rules.js';
-import { exclusionsHash } from '../delegation/candidates.js';
+import { pathsSoFar } from '../lib/branch-paths.js';
 import { dispatchRun, MERGE_WORK } from '../engine/dispatch-run.js';
 import { PARKED_SEND_BACK_SAYS } from '../engine/words.js';
 import { SEND_BACK } from '../lib/calm-words.js';
@@ -134,9 +119,8 @@ import { writeProfileViews } from '../profile/store.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { pendingDir } from '../hooks/pending.js';
 import { branchOf } from '../hooks/session-start.js';
-import { SLUG, paceOf, questionIdOf } from '../lib/build-loop.js';
+import { SLUG, questionIdOf } from '../lib/build-loop.js';
 import { ROOT as OWN_ROOT } from '../lineage/check.js';
-import { weeklyShare } from '../usage/figures.js';
 import { checkProvenance, removeProvenance, sessionProvenance, engineProvenance } from '../lineage/provenance.js';
 import { brokerDecision } from '../engine/broker/rules.js';
 import { checkOwnFiles, ownFilesLine } from '../health/own-files.js';
@@ -154,10 +138,9 @@ import { RELEASE_BRANCH, RELEASE_WHY, SETTINGS_FILE, briefingLine, checkRelease,
 import { baseRefOf, releaseApproved, updateProvenance } from '../gate/release-approval.js';
 import { RELEASE_TAG } from '../state/card-lines.js';
 import { WHEELHOUSE_URL } from '../lineage/manifest.js';
-import { SCREEN_SIZES, PUT_OFF } from '../lib/front-desk.js';
+import { PUT_OFF } from '../lib/front-desk.js';
 import { CLICK_MS, HELPER_WAIT_MS } from '../lib/core-numbers.js';
-import { compareCommits, photographCommit } from '../screens/compare.js';
-import { findBrowser, shoot as shootPage, stopsAtPicture } from '../screens/shoot.js';
+import { findBrowser, shoot as shootPage, stopsAtPicture } from '../pictures/shoot.js';
 import { FOREMAN_OUTPUT_BYTES, FOREMAN_RUNNER, FOREMAN_RUN_MS, foremanEnv, foremanRequestRefusal } from './foreman-run.js';
 import { setupRoutes, SetupRefusal, STEPS_MODULE } from '../setup/engine.js';
 import { uninstallRoutes } from '../setup/uninstall.js';
@@ -280,10 +263,6 @@ const PLUGIN_VERSION = (() => {
   }
 })();
 
-// A cache file of pictures' hashes not written for this long is cleared out of the project's cache
-// when an approved commit is next photographed.
-const SCREENS_KEPT_MS = 30 * 24 * 60 * 60 * 1000;
-
 const FOLDER_MS = 60 * 1000;
 const HOST_MS = 5 * 60 * 1000;
 
@@ -363,27 +342,8 @@ async function changeConfig(must) {
   return { ...config, plugin: manifest !== '' };
 }
 
-// The pages an approval's screenshots are compared on, from a configuration: none unless it lists some.
-const pagesOf = (config) => (Array.isArray(config?.pages) ? config.pages : []);
-
-// The project's cache of pictures' hashes: beside its mirror, outside the state repository, so
-// never committed or pushed.
+// Beside the project's mirror, outside the state repository, so never committed or pushed.
 const handledDir = (project) => path.join(stateDir(project), '..', 'handled');
-const screensDir = (project) => path.join(stateDir(project), '..', 'screens');
-
-// Removes the files in `dir` not modified for SCREENS_KEPT_MS, by this computer's clock, which is
-// the one that set their times. Best effort.
-function pruneScreens(dir, nowMs = Date.now()) {
-  let names = [];
-  try { names = fs.readdirSync(dir); } catch { return; }
-  for (const name of names) {
-    try {
-      const file = path.join(dir, name);
-      const stat = fs.lstatSync(file);
-      if (stat.isFile() && nowMs - stat.mtimeMs > SCREENS_KEPT_MS) fs.rmSync(file, { force: true });
-    } catch { /* left for next time */ }
-  }
-}
 
 // The paths a branch changes from the default branch (merge base to `sha`),
 // and the project's configuration. `sha` is already in the mirror.
@@ -931,7 +891,7 @@ const PLACED_ROUTES = [
   '/desk/read', '/desk/act', '/desk/watch',
   '/local/undo', '/local/move',
   '/survey/carry-on', '/survey/archive', '/survey/restore', '/premium/card', '/premium/check', '/premium/state', '/premium/failed',
-  '/engine-switch', '/compact-window', '/rules/offer', '/goal-baseline', '/goal-card', '/goal-draft',
+  '/engine-switch', '/compact-window',
 ];
 
 // The marks a session sends (ruling P5-19), each with its fields and what each must be.
@@ -1026,15 +986,6 @@ export async function startHelper({
   // How the helper's own calls to GitLab are made (gitlabApi's run, curl, proxy and caFile; left out, the real ones), the
   // computer's store for keys (keys.js's seam) and the lender of the director's own key. All for tests.
   via = {}, keyDeps, borrow = borrowKey,
-  // Whether the preview's screenshots of the configuration's pages are the same at two commits,
-  // for an approval to carry over an update (design section 12.3): given { project, before, after,
-  // pages }, true only when every page looks the same at every size. By default the helper's own
-  // comparison (scripts/screens/compare.js), photographing with `screens`; a test may give its own.
-  screenshotsMatch = null,
-  // How pictures are taken: `shoot` (scripts/screens/shoot.js's by default) and the browser's path
-  // (null for none), or `findBrowser` to look for one (shoot.js's by default) when pictures are
-  // needed.
-  screens = {},
   // Whether an update job holds the update lock (scripts/update/journal.js): an update's retire is accepted only then. And
   // how long the helper makes way for an update before it serves normally again. Both are for tests.
   updateHeld = updateLockHeld, updateBoundMs = 3 * 60 * 1000,
@@ -1078,8 +1029,6 @@ export async function startHelper({
   // `sleep`, each the real one unless a test gives its own. And how often STOP is looked at, so a STOP set without the
   // helper (the STOP word's hook, the runbook's own) cancels the engine's runs too.
   engineStopWith = {}, stopPollMs = 2000,
-  // What holds the Mac awake for a goal's life (scripts/engine/stay-awake.js).
-  awake = stayAwake(),
   // How often the card router and the dispatcher look again for each project on the engine (scripts/engine/runner.js,
   // dispatch-run.js): answers to send, caps to keep, cost records to write, and work to start.
   dispatchMs = 60 * 1000,
@@ -2346,7 +2295,7 @@ export async function startHelper({
       const home = await homeEarned(project, card.data, label);
       if (home !== undefined) return home;
     }
-    const client = { prState: ({ number }) => routes['/pr/state']({ project, number }, ctx), goalRecheck: (args) => routes['/goal-recheck'](args, ctx) };
+    const client = { prState: ({ number }) => routes['/pr/state']({ project, number }, ctx) };
     let got;
     try {
       got = await earned({ project, question, label, card: askedUpdateCard(question, card.data), client, now, left: (p) => p, shownAt: card.at });
@@ -2468,7 +2417,6 @@ export async function startHelper({
       await freshViews(() => writeViews(project, { now }));
       if (card !== LIFT_STOP_NAME) await doWrite({ project, kind: 'card-answer', data: { card, question: again.event.data.question, label: still.label, where: 'panel' } }, ctx);
       if (still.lift) liftStop();
-      if (event.kind === 'approval') photographApproved(project, event.data?.commit, ctx);
       const action = event.kind === 'action' ? event.data?.action : null;
       const keep = action === 'keep-main' ? { from: event.data.from, to: event.data.to } : null;
       const undo = action === 'undo-merge' ? { merge: event.data.merge } : action === 'undo-main' ? { moved: true } : null;
@@ -2541,7 +2489,6 @@ export async function startHelper({
     // The director's Pair it or Unpair it on an app's card (spec 5.3) enrols the app's key, or removes it.
     if (event.kind === 'action' && event.data?.action === 'pair-client') pairClient({ id: event.data.client }, event, { now });
     if (event.kind === 'action' && event.data?.action === 'unpair-client') unpairClient(event.data.client, event);
-    if (event.kind === 'approval') photographApproved(project, event.data?.commit, ctx);
     return written({ event, result });
   }
 
@@ -2816,15 +2763,6 @@ export async function startHelper({
           if (answer.code !== 0) throw new Error(`${what} failed`);
           return answer.stdout;
         });
-        // An approval that still holds is compared on the pages the configuration at the default
-        // branch (fetched above) lists: none when it can't be read.
-        if (out.approval === true) {
-          try {
-            out.pages = pagesOf(await configHere());
-          } catch {
-            out.pages = [];
-          }
-        }
         return out;
       } finally {
         await git([...NO_HOOKS, 'update-ref', '-d', prRef]);
@@ -2832,71 +2770,8 @@ export async function startHelper({
     }));
   }
 
-  // --- screenshots (design section 12.3; front desk plan, Task 12) ---
-
-  // The browser, looked for when pictures are needed. Only a Chrome that is found is kept: with none,
-  // or only Edge, whose pictures don't count yet, it is looked for again next time, so a Chrome
-  // installed later is used without restarting the helper.
-  let chrome = null;
-  function browserPath() {
-    if (screens.browser !== undefined) return screens.browser;
-    if (chrome !== null) return chrome;
-    const found = (screens.findBrowser ?? findBrowser)();
-    if (stopsAtPicture(found)) chrome = found;
-    return found;
-  }
-
-  // Set when the helper is closing: photographing and comparing stop after the picture under way,
-  // so closing waits for one picture at most, and a comparison cut short answers false.
+  // Set when the helper is closing: what runs in the background stops at its next step.
   let closing = false;
-
-  // How the comparison and the photographing find pictures for one request: the project's cache,
-  // each commit's preview from the request's adapter, and the shoot and browser to use.
-  function picturesFor(project, ctx) {
-    return {
-      dir: screensDir(project),
-      previewUrl: async (sha) => (await ctx.adapter()).previewUrl(sha),
-      shoot: screens.shoot ?? shootPage,
-      browser: browserPath(),
-      run,
-      fetch,
-    };
-  }
-
-  // Whether every page looks the same at both commits (scripts/screens/compare.js's compareCommits,
-  // which photographs only the head: the approved commit's pictures come from the cache written when
-  // its approval was recorded, and any missing answers false). No pages, no comparison: false, and
-  // no browser is opened. One comparison or photographing at a time per project, so pictures of an
-  // approved commit still being taken are in the cache before the gate looks.
-  async function pagesLookSame({ project, before, after, pages }, ctx) {
-    if (!Array.isArray(pages) || pages.length === 0) return false;
-    return oneAtATime(`screens:${project}`, async () => {
-      if (closing) return false;
-      if (screenshotsMatch) return (await screenshotsMatch({ project, before, after, pages })) === true;
-      return (await compareCommits({ before, after, pages, sizes: SCREEN_SIZES, ...picturesFor(project, ctx), keepGoing: () => !closing })) === true;
-    });
-  }
-
-  // The approved commit's pages, photographed at every size into the cache when its approval is
-  // recorded, each with the address it came from. These are the only pictures of it the gate uses:
-  // they are there when an update comes, after the host may have taken that commit's preview down.
-  // In the background: the answer doesn't wait, and nothing is reported. Nothing when the
-  // configuration lists no pages or can't be read, and STOP and closing are read before each picture.
-  function photographApproved(project, commit, ctx) {
-    if (typeof commit !== 'string' || !FULL_SHA.test(commit)) return;
-    oneAtATime(`screens:${project}`, async () => {
-      if (stopped() || closing) return;
-      const adapter = await ctx.adapter();
-      const defaultBranch = await defaultBranchOf(project, adapter);
-      const pages = await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ must }) => {
-        await defaultHistory(must, defaultBranch);
-        return pagesOf(await baseConfig(must));
-      }));
-      if (pages.length === 0 || stopped() || closing) return;
-      pruneScreens(screensDir(project));
-      await photographCommit({ sha: commit, pages, sizes: SCREEN_SIZES, ...picturesFor(project, ctx), keepGoing: () => !stopped() && !closing });
-    }).catch(() => {});
-  }
 
   // The preview of an open pull request's head, for the front desk's "Show me": its address, or
   // null when the pull request isn't open or the host has no successful deployment of its head.
@@ -2910,21 +2785,17 @@ export async function startHelper({
     return { ok: true, url: typeof url === 'string' ? url : null };
   }
 
-  // The review and the approval the gate weighs, and whether the branch is up to date. Each is
-  // the latest signed record for this pull request, in the carried form when it names an
-  // earlier commit and still holds for the head (carryFacts); an approval carries only when the
-  // screenshots of the two commits match too, and they are compared only when `compare` says the
-  // merge needs the approval. Anything the mirror can't say leaves the branch unknown (null, which
-  // the gate refuses with its own reason) and nothing carried. The one rule behind /merge and
-  // /pr/carried.
-  async function gateRecords({ project, number, headSha, views, adapter, withApproval = true, compare = false }, ctx) {
+  // The review and the approval the gate weighs, and whether the branch is up to date. The review is
+  // the latest signed record for this pull request, in the carried form when it names an earlier
+  // commit and still holds for the head (carryFacts). The approval is the latest signed record as it
+  // stands: one for an earlier commit never carries, so after an update the director is asked again.
+  // Anything the mirror can't say leaves the branch unknown (null, which the gate refuses with its
+  // own reason) and nothing carried. The one rule behind /merge and /pr/carried.
+  async function gateRecords({ project, number, headSha, views, adapter, withApproval = true }, ctx) {
     const review = latestFor(views.reviews, number);
     const approval = withApproval ? latestFor(views.approvals, number) : null;
-    const from = {
-      review: reviewClear(review?.data) && review.data.commit !== headSha ? review.data.commit : null,
-      approval: approval !== null && approval.data?.commit !== headSha ? approval.data?.commit : null,
-    };
-    let facts = { upToDate: null, review: false, approval: false };
+    const from = { review: reviewClear(review?.data) && review.data.commit !== headSha ? review.data.commit : null };
+    let facts = { upToDate: null, review: false };
     try {
       const defaultBranch = await defaultBranchOf(project, adapter);
       facts = await carryFacts({ project, number, headSha, defaultBranch, from }, ctx);
@@ -2932,16 +2803,10 @@ export async function startHelper({
       if (error instanceof LookRefusal) throw error;
       /* not readable: not known whether it is up to date, and nothing carries */
     }
-    let shown = false;
-    // With no approval needed, or under STOP, where the gate refuses anyway, nothing is compared
-    // or photographed.
-    if (compare && facts.approval === true && !stopped()) {
-      try { shown = await pagesLookSame({ project, before: from.approval, after: headSha, pages: facts.pages }, ctx); } catch { /* not compared: asked again */ }
-    }
     return {
       upToDate: facts.upToDate === null ? null : facts.upToDate === true,
       review: facts.review === true ? { carried: true, record: review } : review,
-      approval: shown ? { carried: true, record: approval } : approval,
+      approval,
     };
   }
 
@@ -3284,9 +3149,6 @@ export async function startHelper({
     const guarded = touchesGuardrails && !keeping;
     // On a project in git alone a merge by this route answers to the queue's rows too: the sweep is the only other way in.
     if (movingHome(project)) stateReasons.push(MOVING_LINE);
-    // A goal's areas hold on every way in. A fix was held to them by its own route, and a restore has no goal.
-    const outsideReason = fixCall || restore ? null : engineRun.areasRefusal(project, { pr: number, head: headSha, paths: readable ? changes.paths : null });
-    if (outsideReason !== null) stateReasons.push(outsideReason);
     const queueRows = recordOf(project).host === 'local' && !fixCall && !keeping && !restore;
     const queueApproval = queueRows && readable && needsApprovalOf({ paths: changes.paths, config: changes.config });
     const approvalRequired = body.approvalRequired === true || guarded || restore || switching || compacting || shownFirst || queueApproval;
@@ -3304,7 +3166,7 @@ export async function startHelper({
     }
     const byRelease = updateCheck.matched && updateCheck.ok && !pinsOnly;
     const holdsLock = await lockHeld(project, ctx);
-    const { upToDate, review, approval } = await gateRecords({ project, number, headSha, views, adapter, compare: approvalRequired }, ctx);
+    const { upToDate, review, approval } = await gateRecords({ project, number, headSha, views, adapter }, ctx);
     // The director's questions on this work come first: a merge never goes ahead past one still open, or an answer no newer version carries.
     const holdWork = FEATURE_BRANCH.exec(typeof pr.headRef === 'string' ? pr.headRef : '')?.[1];
     const handled = readHandled(handledDir(project), questionsOf(views, holdWork).map((q) => q.id));
@@ -4064,8 +3926,7 @@ export async function startHelper({
   const update = updateRoutes({ now, stopped, userHome, run, spawn, updateHeld, ...updateSeams });
   // --- the desk (scripts/desk/, spec 5): every front end reads and changes Wheelhouse through these three ---
   // The acts that are answered under STOP, beside a signed record, which /state/record takes under STOP too.
-  // Ending or narrowing a goal only makes less happen, and stopping must always be easy, so both are answered under STOP.
-  const DESK_STOP_ACTS = ['all-stop', 'lift-all-stop', 'end-goal', 'narrow-goal'];
+  const DESK_STOP_ACTS = ['all-stop', 'lift-all-stop'];
   const STOP_SETTERS = ['prompt', 'mod', 'helper', 'runbook'];
   function deskOf(project, body, ctx) {
     const folder = typeof body.cwd === 'string' ? body.cwd : readProject(project)?.folder;
@@ -4122,7 +3983,6 @@ export async function startHelper({
   const engineRun = engineRoutes({
     refresh: (project) => (refreshMirror ?? refreshFetchMirror)(project),
     baseOf: (project) => (baseOfMirror ?? baseOfFetchMirror)(project),
-    readerViewOf: (project, card) => engineHosts.find((h) => h.project === project)?.seals.viewFor(card) ?? null,
     briefOf: (project) => buildViews(listEvents(stateDir(project), { report: () => {} }), ownKeyOnly(), { now }).brief,
     projects: () => registeredProjects().map(({ project, record }) => ({ project, folder: record.folder })),
     engineFor: (project) => {
@@ -4193,7 +4053,6 @@ export async function startHelper({
     },
     checkTook: (project, { head, work }) => engineHosts.find((h) => h.project === project)?.checks.took(head, work),
     mainCheck: (project) => mainCheck(project),
-    goalViews: (project) => buildViews(listEvents(stateDir(project), { report: () => {} }), ownKeyOnly(), { now }),
   });
 
   // What a project's checks go by, from the host and the default branch and never from a change or a folder. What the
@@ -4284,35 +4143,6 @@ export async function startHelper({
       return null;
     }
   }
-  // The head of the project's main line, as the host says now, or null when it can't be read.
-  async function mainHeadOf(project) {
-    try {
-      const adapter = await (await contextFor(project)).adapter();
-      return await adapter.branchHead(await defaultBranchOf(project, adapter));
-    } catch {
-      return null;
-    }
-  }
-  // Claude Code's own note of the account, which says whether paid usage is on (check 93); null when it can't be read.
-  function claudeAccount() {
-    try {
-      return JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude.json'), 'utf8'));
-    } catch {
-      return null;
-    }
-  }
-  // A goal's start sets Away until its end, as a convenience (section 11): the setting and its confirmation, as a press of
-  // Availability makes them, since the director's Start is the click that asked for it. Do not disturb and an Away in force stand.
-  const awayFor = (until) => oneAtATime('profile', async () => {
-    await openSettings({ run });
-    const presence = effectiveSettings({ profile: (await writeProfileViews({ now })).settings ?? {}, now: now() }).presence;
-    const setting = awayForGoal({ presence, until, now: now() });
-    if (setting === null) return;
-    const event = makeEvent({ kind: 'setting', data: { ...setting, words: settingWords('presence', 'away', until) }, now });
-    await writeEvent({ event, dir: profileDir(), now });
-    await writeEvent({ event: makeEvent({ ...confirmationFor(event), now }), dir: profileDir(), now });
-    await freshViews(() => writeProfileViews({ now }));
-  });
   // The runs All stop cancelled, from its notes in the project's record.
   function stoppedRunsOf(project) {
     try {
@@ -4329,21 +4159,6 @@ export async function startHelper({
   // rule points git at. The helper fetches the host's branches and pull-request heads into its own mirror with the
   // connection's key, then copies them into the engine's mirror with no key. The engine's mirror names no remote.
   const fetchMirrorOf = (project) => path.join(engineDir(), 'mirrors', `${project}.git`);
-  // A goal's checks run on the main line (goal-folder.js): the fetch mirror brought up to date, or a project in git alone's home.
-  async function ownGoalFolder(project, head) {
-    if (recordOf(project)?.host === 'local') return prepareGoalFolder({ project, source: homeDir(project), head: head ?? null, run });
-    const fresh = await (refreshMirror ?? refreshFetchMirror)(project);
-    if (!fresh?.ok) return { ok: false, refused: fresh?.refused ?? 'the fetch mirror could not be brought up to date' };
-    return prepareGoalFolder({ project, source: fetchMirrorOf(project), head: head ?? null, run });
-  }
-  // Whether the project's own signed check passed clean at `head`, where its checks run on this computer: it stands for the test command.
-  async function cleanCheckAt(project, head) {
-    const facts = await checksFacts(project);
-    if (facts === null || !checksRunHere(project, facts)) return false;
-    const latest = signedChecks(project).filter((e) => e.data?.commit === head && e.data?.command === facts.digest && e.data?.clean === true).at(-1) ?? null;
-    return checkCounts(latest, head, facts.digest, ownKeyOnly());
-  }
-
   // A run's record is trusted only from the installed pack, as a review is.
   const fromInstalledPack = (run) => {
     const installed = packTreeDigest(path.join(engineDir(), 'pack'));
@@ -4436,7 +4251,7 @@ export async function startHelper({
     await oneAtATime(`state:${project}`, () => ensureStateClone(project, ctx));
     const enrolled = ownKeyOnly();
     const views = buildViews(listEvents(stateDir(project), { report: () => {} }), enrolled, { now });
-    const { review, approval } = await gateRecords({ project, number: call.pr, headSha: call.sha, views, adapter, compare: true }, ctx);
+    const { review, approval } = await gateRecords({ project, number: call.pr, headSha: call.sha, views, adapter }, ctx);
     let guardrail = true;
     let paths = null;
     try {
@@ -4446,15 +4261,11 @@ export async function startHelper({
     } catch (error) {
       if (error instanceof LookRefusal) throw error;
     }
-    // Files that can't be read count as outside a goal's areas. A head past them goes back to a card, as the sweep would only try it again.
-    const outside = call.kind === 'merge' ? engineRun.areasOutside(project, { pr: call.pr, paths }) : [];
-    const outsideAreas = (outside === null || outside.length > 0) && !engineRun.areasAllowed(project, call.pr, call.sha);
-    if (outsideAreas && outside !== null) engineRun.holdAreas(project, { pr: call.pr, head: call.sha, paths: outside });
     // Whether the work is shown first comes from the run that opened the pull request; one no run of the helper's
     // opened needs the director's approval, as shown-first work does.
     const opened = engineRun.openedOf(project, call.pr);
     const checked = call.kind === 'merge' ? await checkPermit(project, call.sha) : {};
-    return { ...base, enrolled, review, approval, incident: incidentFor(views, call.pr), shownFirst: opened ? opened.showFirst === true : true, level: opened?.level ?? null, guardrail, outsideAreas, ...checked, stop: stopped() };
+    return { ...base, enrolled, review, approval, incident: incidentFor(views, call.pr), shownFirst: opened ? opened.showFirst === true : true, level: opened?.level ?? null, guardrail, ...checked, stop: stopped() };
   }
   const broker = brokerRoutes({
     placeOf: placeEngineCall,
@@ -4494,12 +4305,6 @@ export async function startHelper({
     '/local/move': (body) => askMove(body),
     '/compact-window': (body, ctx) => oneAtATime(`compact:${body.project}`, () => doCompactWindow(body, ctx)),
     '/engine-switch': (body, ctx) => oneAtATime(`switch:${body.project}`, () => doEngineSwitch(body, ctx)),
-    // The First Mate's ask for a goal's baseline (scripts/engine/goal-check.js). Only a baseline: the last check is the helper's own.
-    '/goal-baseline': ({ project, goal }) => startGoalCheck({ project, goal, when: 'before' }),
-    // The First Mate's goal sheet (scripts/engine/goal-start.js): the bounds to propose, then the card, signed by this computer.
-    '/goal-draft': ({ project, pieces }) => sheetsOf(project).draft({ pieces: Array.isArray(pieces) ? pieces : [] }),
-    '/goal-card': ({ project, goal }) => sheetsOf(project).card({ goal }),
-    '/goal-recheck': ({ project, goal, hash }) => sheetsOf(project).recheck({ goal, hash }),
     '/review/run': async (body, ctx) => {
       try {
         return await doReviewRun(body, ctx);
@@ -4529,9 +4334,7 @@ export async function startHelper({
     '/state/import': stateRoute(doStateImport, { write: true }),
     // With `cards`, the card events too, every one the state holds: the board numbers its list
     // from them, and the front desk's `again <n>` must find the board's card n. `stop` says STOP is
-    // on, for the front desk in the sandbox, which can't read it, to offer the Lift STOP card. With
-    // `review`, the delegation review worked out from the project's events, { due, since, proposals }
-    // (ruling F41), for the front desk's `review`, which can't list them. With `answers`, the
+    // on, for the front desk in the sandbox, which can't read it, to offer the Lift STOP card. With `answers`, the
     // card-answer events, for the front desk's `views work` to tell a feature the director's Not now
     // holds. Read-only, so STOP lets it through.
     // A stuck work's card, written for the watcher (scripts/watcher/stuck-cards.js) when the Bosun closed its stuck wake
@@ -4576,9 +4379,9 @@ export async function startHelper({
         foremanRuns.delete(pass);
       }
     }, { write: true }),
-    '/state/views': stateRoute(async ({ project, cards, review, answers }) => {
+    '/state/views': stateRoute(async ({ project, cards, answers }) => {
       const views = await writeViews(project, { now });
-      const events = cards === true || review === true || answers === true ? listEvents(stateDir(project), { report: () => {} }) : [];
+      const events = cards === true || answers === true ? listEvents(stateDir(project), { report: () => {} }) : [];
       return {
         ok: true,
         views,
@@ -4589,31 +4392,8 @@ export async function startHelper({
         ...(stopped() ? { stop: true } : {}),
         ...(cards === true ? { cards: events.filter((e) => e.kind === 'card') } : {}),
         ...(answers === true ? { answers: events.filter((e) => e.kind === 'card-answer') } : {}),
-        ...(review === true ? { review: delegationReview(events, { now, enrolled: readEnrolled(), views }) } : {}),
       };
     }),
-    // A rule offered after the latest answer that earns it (delegated decisions design, section 11.1). The helper composes it from
-    // its own record and the piece's own change, so nothing a caller sends shapes it, and proposes it as a `rule` record
-    // that decides nothing.
-    '/rules/offer': stateRoute(async ({ project }) => {
-      const events = listEvents(stateDir(project), { report: () => {} });
-      const views = await writeViews(project, { now });
-      const outcomes = cardOutcomes(events, readEnrolled());
-      const sitting = sittingSince({ views, outcomes, now });
-      const piece = engineHosts.find((h) => h.project === project)?.factsOfPiece;
-      const [answer] = typeof piece === 'function' && !sittingSpent({ events, sitting }) ? answersToOffer({ views, outcomes, sitting }) : [];
-      if (answer !== undefined) {
-        const facts = await piece(answer.work, views);
-        if (stopped()) return STOP_REFUSAL;
-        const rule = offerDue({ events, answer, sitting, now, views, outcomes, facts, project });
-        if (rule === null) return { ok: true, offer: null };
-        const event = makeEvent({ kind: 'rule', data: rule, now });
-        await writeEvent({ project, event, now });
-        await freshViews(() => writeViews(project, { now }));
-        return { ok: true, offer: { event, why: answer.why } };
-      }
-      return { ok: true, offer: null };
-    }, { write: true }),
     // The label of a question's verified answer, from the views alone, else null. Reading is free under STOP; saying an answer
     // needs no change (noChange) writes a small marker, so STOP refuses it.
     '/state/answer': stateRoute(async ({ project, questionId, noChange, cwd }) => {
@@ -4924,12 +4704,12 @@ export async function startHelper({
       try { engine = engineFor(project); } catch { engine = null; }
       if (!engine) continue;
       try {
-        const { runner, dispatcher, checks, inStep, seals, goalChecks, factsOfPiece, sheets } = engineDesk(project, engine);
+        const { runner, dispatcher, checks, inStep } = engineDesk(project, engine);
         const host = startEngineHost({
           engine, spawn, now, held: stopped, wake: engineHosts.length === 0,
           write: (kind, data) => engineWrite(project, kind, data),
           cursorFile: path.join(stateDir(project), '..', 'engine', 'cursor.json'),
-          workOf: (runId) => engineRunOf(project, runId) ?? dispatcher.workOf(runId) ?? seals.readerOf(runId) ?? goalChecks.workOf(runId),
+          workOf: (runId) => engineRunOf(project, runId) ?? dispatcher.workOf(runId),
           resumes: (runId) => resumesOf(engineRunRecords(project).filter((e) => e.data.runId === runId)),
           over: (runId) => {
             const records = engineRunRecords(project).filter((e) => e.data.runId === runId);
@@ -4940,7 +4720,7 @@ export async function startHelper({
           prOf: (runId) => engineRun.openedBy(project, runId),
         });
         host.onAsk((event) => { runner.onAsk(event).catch(() => {}); });
-        engineHosts.push({ project, engine, host, runner, dispatcher, checks, inStep, seals, goalChecks, factsOfPiece, sheets });
+        engineHosts.push({ project, engine, host, runner, dispatcher, checks, inStep });
       } catch {
         // An engine that can't be followed gets no host; the other projects' hosts start all the same.
       }
@@ -4962,7 +4742,6 @@ export async function startHelper({
         try { startEngineHosts(); } catch { /* looked at again next time */ }
         if (engineHosts.length === 0) return;
         sleeping.beat().then(engineTick).catch(() => {});
-        sealTick();
         try { room?.tend(); } catch { /* tried again next time */ }
       }, dispatchMs);
       dispatchWatch.unref?.();
@@ -5100,7 +4879,7 @@ export async function startHelper({
   }
 
   // One sweep of the local queue. What was sent back, asked or said is kept for each head, so a change waiting says each once.
-  async function sweepLocal(project, dispatcher, write, onCard) {
+  async function sweepLocal(project, dispatcher, write) {
     const ctx = await contextFor(project);
     const adapter = await ctx.adapter();
     const { folder } = recordOf(project);
@@ -5199,7 +4978,6 @@ export async function startHelper({
             target: { pr: change.n, sha: change.head },
           });
           await write('card', card);
-          onCard({ id: `${change.n}:${change.head}`, kind: 'approval', work: marked.work ?? MERGE_WORK, level, branch: change.branch });
           once(key);
         },
         async wait(change, reason) {
@@ -5357,65 +5135,14 @@ export async function startHelper({
     const write = (kind, data) => engineWrite(project, kind, data);
     const record = registeredProjects().find((p) => p.project === project)?.record;
     const folder = record?.folder;
-    // The seals beside the cards (scripts/delegation/record-only.js), ticked apart from engineTick.
-    const factsOf = async (card) => {
-      const adapter = await adapterNow();
-      return cardFacts({ card, git: gitRoute({ run }), baseCommit: await adapter.branchHead(await defaultBranchOf(project, adapter)) });
-    };
-    const seals = recordOnly({
-      file: path.join(files, 'shadow.json'), write, now, stopped: () => closing || stopped(),
-      factsOf,
-      contextOf: (card) => {
-        const config = engineConfigOf(project, folder);
-        return cardContext({ views: views(), card, testCommand: config?.testsNotCounting ? null : config?.testCommand });
-      },
-      stampOf: () => setupStamp({ bindings: engineConfigOf(project, folder)?.routing, packDigest: packTreeDigest(path.join(engineDir(), 'pack')), exclusionsHash: exclusionsHash() }),
-      rulesOf: () => ruleSet(project, views().rules),
-      history: () => {
-        const events = listEvents(stateDir(project), { report: () => {} });
-        return historyOf({ events, enrolled: ownKeyOnly(), views: buildViews(events, ownKeyOnly(), { now }) });
-      },
-      engine, readViews: views,
-      onMatch: (match) => runner.onMatch(match),
-      viewOf: async (card, facts) => {
-        const asked = views().questions?.[card.id]?.question?.data;
-        return readerView({ question: asked?.what, options: asked?.options, brief: views().brief, diff: await cardDiff({ card, git: gitRoute({ run }), facts }), cards: pieceCards({ views: views(), work: card.work, card: card.id }), seed: card.id });
-      },
-      gate: () => ({ running: engineRunsGoing(project).length, pace: paceOf({ pace: { value: settings().pace } }).building, incident: Boolean(openRedMain(views())) }),
-      startReader: async ({ card }) => {
-        const place = prepareReaderFolder({ project });
-        return place.ok ? engineRun.startReader({ project, card, folder: place.folder, bindings: engineConfigOf(project, folder)?.routing ?? {} }) : place;
-      },
-      trusted: fromInstalledPack,
-    });
-    // A goal's checks: nothing starts one but an ask (scripts/engine/goal-check.js), and what it gives is signed as a review is.
-    const goalChecks = goalCheckHost({
-      file: path.join(files, 'goal-checks.json'), write, engine, now, stopped, trusted: fromInstalledPack, readViews: views,
-      events: () => listEvents(stateDir(project), { report: () => {} }),
-      config: () => engineConfigOf(project, folder),
-      designOf: (work) => (typeof folder === 'string' ? approvedDocument({ checkout: folder, views: views(), work }) : null),
-      signedClean: (head) => cleanCheckAt(project, head),
-      folderAt: (head) => ownGoalFolder(project, head),
-      startRun: ({ order, folder: place }) => engineRun.startGoalCheck({ project, order, folder: place }),
-    });
-    const ownCard = (kind) => async (data) => {
-      await write('question', data);
-      seals.onCard({ id: data.id, kind, work: data.work, level: data.level });
-    };
     let sweepTrouble = null;
     const dispatcher = dispatchRun({
-      engine, project, folder, file: path.join(files, 'dispatch.json'), readViews: views, settings, stopped, now, write, onCard: seals.onCard,
+      engine, project, folder, file: path.join(files, 'dispatch.json'), readViews: views, settings, stopped, now, write,
       config: () => engineConfigOf(project, folder),
       start: (args) => engineRun.start(args),
       readyOf: () => engineRun.readyAll(project),
-      areasHeld: () => engineRun.areasHeld(project),
-      settleAreas: (pr, how) => engineRun.settleAreas(project, pr, how),
-      allowance: () => weeklyShare({ now: now() }),
-      goalStarted: (goal) => awayFor(goal.until),
       mainGreen: () => mainGreen(project),
       stoppedRuns: () => stoppedRunsOf(project),
-      goalCheck: (args) => goalChecks.start(args),
-      endRun: async (runId) => endRun({ engine, run: { id: runId, folder: (await engine.inspect(runId))?.folder ?? null }, ...engineStopWith }),
       fixedRuns: () => engineRun.fixedRuns(project),
       prState: async (pr) => {
         try {
@@ -5444,7 +5171,7 @@ export async function startHelper({
       isLocal: () => readProject(project)?.host === 'local',
       localQueue: async () => {
         try {
-          await oneAtATime(`merge:${project}`, () => sweepLocal(project, dispatcher, write, seals.onCard));
+          await oneAtATime(`merge:${project}`, () => sweepLocal(project, dispatcher, write));
           sweepTrouble = null;
         } catch (error) {
           const line = error instanceof Error ? error.message : 'the helper didn\'t say why';
@@ -5454,8 +5181,8 @@ export async function startHelper({
       },
     });
     const runner = engineRunner({
-      engine, file: path.join(files, 'router.json'), readViews: views, write, stopped, now, settings, noteSleep: () => sleeping.beat(), onCard: seals.onCard, onReaderAsk: seals.onReaderAsk, blindRoll: rollOf,
-      workOf: (runId) => engineRunOf(project, runId) ?? dispatcher.workOf(runId) ?? seals.readerOf(runId) ?? goalChecks.workOf(runId),
+      engine, file: path.join(files, 'router.json'), readViews: views, write, stopped, now, settings, noteSleep: () => sleeping.beat(),
+      workOf: (runId) => engineRunOf(project, runId) ?? dispatcher.workOf(runId),
       titleOf: (work) => (work === MERGE_WORK ? 'the changes waiting to be added' : views().work?.[work]?.work?.data?.title ?? work),
       endRun: async (runId) => endRun({ engine, run: { id: runId, folder: (await engine.inspect(runId))?.folder ?? null }, ...engineStopWith }),
       openedOf: (pr) => engineRun.openedOf(project, pr),
@@ -5464,7 +5191,6 @@ export async function startHelper({
       prTitleOf: async (pr) => (await (await contextFor(project)).adapter().then((adapter) => adapter.prState(pr))).title ?? null,
       release: (work) => dispatcher.release(work),
       admittedTo: (work, key) => dispatcher.admittedTo(work, key),
-      comingBack: (work) => dispatcher.comingBack(work),
       retrying: (runId) => dispatcher.retrying(runId),
       retriesAdmitted: () => dispatcher.retriesAdmitted(),
       delivered: (work, key) => dispatcher.delivered(work, key),
@@ -5475,9 +5201,6 @@ export async function startHelper({
       takeBack: (args) => dispatcher.takeBack(args),
       notReady: (pr) => dispatcher.notReady(pr),
       localChange: (pr) => dispatcher.localChange(pr),
-      headOf: (place) => branchHead({ card: place, git: gitRoute({ run }) }),
-      commitsSince: (place, head) => commitsAfter({ card: place, git: gitRoute({ run }), head }),
-      exclusionsOf: async (place) => repeatExclusions(await factsOf(place)),
       endLeft: (folder) => endRun({ engine, run: { folder }, ...engineStopWith }),
       lostCleared: (work, key) => dispatcher.lostCleared(work, key),
       stoppedRuns: () => stoppedRunsOf(project),
@@ -5528,7 +5251,7 @@ export async function startHelper({
       note: (words) => write('note', { about: 'engine', words }),
       record: (kind, data) => engineWrite(project, kind, data),
       states: () => signedOf(project, 'checks-state').map((e) => e.data),
-      card: ownCard('checks'),
+      card: (data) => write('question', data),
       answerOf: (id) => views().questions?.[id]?.answer?.label ?? null,
       // A fix's work is its incident's, and no piece of the queue: it has ended when the incident has.
       ended: (work) => {
@@ -5563,7 +5286,7 @@ export async function startHelper({
       const watch = folderWatch({
         project, folder, file: path.join(files, 'folder.json'), stopped, git: gitRoute({ run }),
         branchOf: async () => defaultBranchOf(project, await adapterNow()),
-        card: ownCard('folder'),
+        card: (data) => write('question', data),
         answerOf: (id) => views().questions?.[id]?.answer?.label ?? null,
         stuck: (id) => { const asked = views().questions?.[id]?.question?.data; return asked !== null && typeof asked === 'object' && questionProblem(asked, { recorded: true }) !== null; },
         note: (words) => write('note', { about: 'engine', words }),
@@ -5602,32 +5325,7 @@ export async function startHelper({
         }
       };
     })();
-    // A piece's change as its latest run left it, for a rule's scope; a run the engine can't place gives nothing to read.
-    const factsOfPiece = async (work, seen) => {
-      const seenRun = await Promise.resolve().then(() => engine.inspect(seen.runs?.[work]?.at(-1)?.data?.runId)).catch(() => null);
-      return factsOf({ branch: seenRun?.branch, folder: seenRun?.folder });
-    };
-    const sheets = sheetDesk({
-      views: () => ({ ...views(), engineOn: engineReady(project) }),
-      events: () => listEvents(stateDir(project), { report: () => {} }),
-      health: () => engine.health(),
-      config: () => engineConfigOf(project, folder),
-      settings,
-      designOf: (work) => (typeof folder === 'string' ? approvedDocument({ checkout: folder, views: views(), work }) : null),
-      mainGreen: () => mainGreen(project),
-      mainHead: () => mainHeadOf(project),
-      stopped,
-      reading: () => weeklyShare({ now: now() }),
-      paid: () => paidUsageOf(claudeAccount()),
-      sessions: () => sessionsTicking(project, { now }),
-      offer: async (kind, data) => {
-        const event = makeEvent({ kind, data, now });
-        await checkWrite(project, event);
-        return event.id;
-      },
-      now,
-    });
-    return { runner, dispatcher, checks, inStep, seals, goalChecks, factsOfPiece, sheets };
+    return { runner, dispatcher, checks, inStep };
   }
   // --- safekeeping (spec 8.2): what would be lost with this computer, for every project, engine or none ---
 
@@ -5796,17 +5494,12 @@ export async function startHelper({
   let ticking = null;
   function engineTick() {
     ticking ??= (async () => {
-      for (const { runner, dispatcher, checks, inStep, goalChecks } of engineHosts) {
+      for (const { runner, dispatcher, checks, inStep } of engineHosts) {
         if (closing) break;
         await runner.tick().catch(() => {});
         await dispatcher.tick().catch(() => {});
         await inStep?.().catch(() => {});
         await checks.tick().catch(() => {});
-        await goalChecks.tick().catch(() => {});
-      }
-      // A goal in force on any project holds the Mac awake, and each look says so again, so a helper started again takes it up.
-      if (!closing) {
-        try { awake.set(engineHosts.some(({ dispatcher }) => dispatcher.goalInForce())); } catch { /* looked at again on the next tick */ }
       }
     })().finally(() => { ticking = null; });
     return ticking;
@@ -5831,21 +5524,6 @@ export async function startHelper({
     await Promise.allSettled(engineHosts.map(({ project }) => engineWrite(project, 'note', { about: 'engine', words })));
   }
 
-  // A goal's checks on the main line, `before` it starts or `last` of all (scripts/engine/goal-check.js).
-  const startGoalCheck = ({ project, goal, when, head }) => {
-    const found = engineHosts.find((h) => h.project === project);
-    return found ? found.goalChecks.start({ goal, when, head }) : Promise.resolve({ ok: false, refused: 'that project doesn\'t use the build engine' });
-  };
-
-  // The First Mate's sheet for a project on the engine, or a refusal for one that isn't.
-  const sheetsOf = (project) => {
-    const found = engineHosts.find((h) => h.project === project);
-    if (!found) refuse('that project doesn\'t use the build engine');
-    return found.sheets;
-  };
-
-  // The seals' look for every project, never awaited by a tick of the engine: a hang there stops no delivery.
-  const sealTick = () => Promise.all(engineHosts.map(({ seals }) => seals.tick()));
 
   // Waits, too, for work queued after an answer (the mirror's tidy): on Windows a folder
   // a git process is working in can't be removed. Photographing and comparing stop after the
@@ -5860,11 +5538,10 @@ export async function startHelper({
       await lookingAround?.catch(() => {});
       await sleeping.beat();
       await ticking?.catch(() => {});
-      awake.set(false);
       await renewing;
       await engineStopping?.catch(() => {});
       await Promise.race([
-        Promise.allSettled([...engineHosts.map(({ checks }) => checks.stop()), ...engineHosts.map(({ seals }) => seals.settled())]),
+        Promise.allSettled(engineHosts.map(({ checks }) => checks.stop())),
         new Promise((resolve) => { setTimeout(resolve, CHECK_END_MS).unref?.(); }),
       ]);
       await Promise.allSettled(engineHosts.map(({ host }) => host.stop()));
@@ -5947,7 +5624,6 @@ export async function startHelper({
       for (const { project, dispatcher, checks } of engineHosts) {
         if (checks.running()) return 'a check is running';
         if (engineRunsAtWork(project).length > 0) return 'a build run is going';
-        if (dispatcher.goalInForce()) return 'a goal is in force';
       }
       return null;
     } catch {
@@ -5963,7 +5639,7 @@ export async function startHelper({
   const UPDATING = 'Wheelhouse is updating; try again in a minute';
   const UPDATE_POLL_MS = 100;
 
-  // Closes the helper once the requests being answered have been answered. A goal in force or a run at work does not hold
+  // Closes the helper once the requests being answered have been answered. A run at work does not hold
   // it: the next helper reads its state from disk. The bound in the retire route is what ends a wait that never ends.
   function closeWhenIdle() {
     const look = () => {
@@ -6031,7 +5707,7 @@ export async function startHelper({
     }
     if (url.pathname === '/helper/retire') {
       // A session of a newer copy of the plugin asks this helper to make way. It stops only when idle: no setup step, push,
-      // merge, engine run or goal under way. Otherwise it says what keeps it, and goes on.
+      // merge or engine run under way. Otherwise it says what keeps it, and goes on.
       // An update (`forUpdate: true`) makes way whatever is under way: it refuses new work at once, lets what is running
       // finish, and closes when nothing is. Only the boolean true counts.
       if (body.forUpdate === true) {
@@ -6157,5 +5833,5 @@ export async function startHelper({
   safekeepingWatch.unref?.();
 
   // `engine.start` is the helper's own way to start a run (the dispatcher's): no route starts one.
-  return { address, close, engine: { start: (args) => engineRun.start(args), tick: () => engineTick(), seal: () => sealTick(), startGoalCheck }, safekeeping: { tick: () => safekeepingRound() }, move: { tick: () => moveRound() } };
+  return { address, close, engine: { start: (args) => engineRun.start(args), tick: () => engineTick() }, safekeeping: { tick: () => safekeepingRound() }, move: { tick: () => moveRound() } };
 }

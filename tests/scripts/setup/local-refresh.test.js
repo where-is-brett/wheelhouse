@@ -139,7 +139,7 @@ test('only the exact rules Wheelhouse writes for its commands, under another fol
 });
 
 // The section as Wheelhouse wrote it before the ids and the note were named.
-const EARLIER_SECTION = COMPACT_SECTION.replace(";\n- the ids of the cards, runs and goal pieces in play;\n- the session note's path, if one was written.", '.');
+const EARLIER_SECTION = COMPACT_SECTION.replace(";\n- the ids of the cards and runs in play;\n- the session note's path, if one was written.", '.');
 
 test('the Compact instructions section is brought up to date where it still holds an earlier wording, and an edited one is left alone', () => {
   const p = project();

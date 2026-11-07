@@ -171,7 +171,6 @@ function chatLines(data, card, label, at) {
 // The one prompt a turn hands the front desk: the card's number, its id and its own label,
 // nothing else.
 function promptOf(kind, label, n, id) {
-  if (kind === 'blind' && !PUT_OFF.includes(label)) return `${LEADS.pane} the director picked "${label}" first on card ${n} (${id}). Run \`cards\` and ask the card it gives.`;
   return kind === 'question' && !PUT_OFF.includes(label)
     ? `${LEADS.pane} the director chose "${label}" on card ${n} (${id}).`
     : `${LEADS.pane} the director pressed ${label} on card ${n} (${id}).`;
@@ -300,11 +299,6 @@ async function signed({ project, card, hash, data, question, label, what, meanwh
   } catch {
     release(held);
     return no(SAYS.failed);
-  }
-  if (got?.refused !== undefined) {
-    // A Start the goal's rules refuse: nothing is written, the card is let go, and the pane says why.
-    release(held);
-    return no(`The goal wasn't started: ${got.refused}`);
   }
   if (!got) {
     // Nothing was recorded, so the card is let go and can be pressed again.

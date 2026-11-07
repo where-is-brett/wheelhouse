@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { computerId, stateDir } from '../lib/paths.js';
 import { readConfig } from '../gate/guardrails.js';
-import { findBrowser as realFindBrowser, isChrome } from '../screens/browser.js';
+import { findBrowser as realFindBrowser, isChrome } from '../pictures/browser.js';
 import { readSmallText } from '../hooks/kit.js';
 import { WINDOWS_LINE, UNATTENDED_LINE, GUARDED_LINE, LOCKED_UNATTENDED_LINE, LOCKED_WOULD_LINE } from '../lib/platform-lines.js';
 import { HELPER_WAIT_MS, HOST_FACTS_MAX_AGE_MS } from '../lib/core-numbers.js';

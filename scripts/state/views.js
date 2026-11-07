@@ -5,9 +5,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { wheelhouseHome, profileDir, stateDir } from '../lib/paths.js';
 import { listEvents, eventHash, dataHash, CONFIRMABLE_KINDS, PIN_NAMES, READY_COLUMNS } from './events.js';
-import { ruleStands, stageOf } from '../delegation/rules.js';
-import { briefStands } from '../delegation/brief.js';
-import { answerLine, approvalLine, BLIND_LINE, CHECK_AND_ADD, chatCopy, ciPushLine } from './card-lines.js';
+import { briefStands } from './brief.js';
+import { answerLine, approvalLine, CHECK_AND_ADD, chatCopy, ciPushLine } from './card-lines.js';
 import { joinQuestions } from './joiners.js';
 import { verify, readEnrolled } from './signing.js';
 import { mayReplace } from '../lib/build-loop.js';
@@ -15,7 +14,6 @@ import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 import { KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
 import { SUGGEST, WHY } from '../lib/calm-words.js';
 import { premiumState } from '../routing/premium.js';
-import { goalsView } from '../engine/goal.js';
 
 // The places a plain card answer can say it was given (the state keeps clear of the card words, so it has its own copy).
 const WHERE_PLACES = ['panel', 'chat', 'reply'];
@@ -174,12 +172,11 @@ export function gateTargetOf(card) {
 function revisedBy(sorted) {
   const cards = sorted.filter((e) => e.kind === 'card');
   const sameGate = (card, later) => !['approval', 'ci-push'].includes(card.data?.kind) || (gateTargetOf(card) !== null && gateTargetOf(card) === gateTargetOf(later));
-  // A question's answer card takes the place of its blind card: one that went out without waiting for the pick.
-  const closesBlind = (card, later) => card.data?.kind === 'blind' && later.data?.kind === 'answer' && later.data.line === answerLine(BLIND_LINE.exec(String(card.data.line))?.[1]);
-  return (card) => cards.some((later) => byOrder(card, later) < 0 && (closesBlind(card, later) || (later.data?.kind === card.data?.kind && (
+  // A card of a kind an earlier version wrote and nothing writes now (the blind card) is closed: nothing waits on it.
+  return (card) => card.data?.kind === 'blind' || cards.some((later) => byOrder(card, later) < 0 && (later.data?.kind === card.data?.kind && (
     (later.data.revises === card.id && sameGate(card, later))
     || (typeof later.data.revises === 'string' && ['approval', 'ci-push'].includes(card.data?.kind)
-      && typeof card.data?.line === 'string' && later.data.line === card.data.line && sameGate(card, later))))));
+      && typeof card.data?.line === 'string' && later.data.line === card.data.line && sameGate(card, later)))));
 }
 
 // The ids of the lineage holds a later lineage-lift names: a lift closes only the holds it names, so
@@ -229,7 +226,7 @@ function uniqueSorted(events) {
   return { sorted: events.filter((e) => counts.get(e.id) === 1).sort(byOrder), repeated };
 }
 
-// A confirmation counts only for a ruling, level, setting, rule or brief whose id it names and whose content
+// A confirmation counts only for a ruling, level, setting or brief whose id it names and whose content
 // hash it names, so it confirms that exact event alone. { confirmed: ids, confirmations: [{ target, event }] }.
 function confirmationsOf(sorted, enrolled) {
   const byId = new Map(sorted.map((e) => [e.id, e]));
@@ -266,7 +263,7 @@ const sendBacksOf = (sorted, enrolled) => sorted.filter((e) => e.kind === 'actio
 // The verified approvals and actions that carry the question they were clicked on.
 const answeredByOf = (sorted, enrolled) => sorted.filter((e) => (e.kind === 'approval' || e.kind === 'action') && typeof e.data?.question === 'string' && verify(e, enrolled));
 
-// The time each ruling, level, setting, rule or brief came into force by a verified confirmation of its own
+// The time each ruling, level, setting or brief came into force by a verified confirmation of its own
 // hash: id -> the time of the first such confirmation.
 export function confirmationTimes(events, enrolled) {
   const { confirmations } = confirmationsOf(uniqueSorted(events).sorted, enrolled);
@@ -310,8 +307,7 @@ function outcomesOf(sorted, { confirmations, answeredBy }) {
     ? a.data.card === card.id && (a.data.hash === undefined || (typeof questionOf(card) === 'string' && namesText(a.data.hash, questionOf(card))))
     : (a.data?.card === undefined || a.data?.card === null) && typeof a.data?.question === 'string' && a.data.question === questionOf(card)
       && (card.data?.kind !== 'approval' || byOrder(card, a) < 0)));
-  // Words typed on a blind card decide it too: they stand in for its pick, and its answer card follows.
-  const decides = (card, label) => !PUT_OFF.includes(label) && (card.data?.kind === 'blind' || !Array.isArray(card.data?.options) || card.data.options.includes(label));
+  const decides = (card, label) => !PUT_OFF.includes(label) && (!Array.isArray(card.data?.options) || card.data.options.includes(label));
   const signedFor = (card) => signedForCard(card, { answeredBy, confirmations });
   return sorted.filter((e) => e.kind === 'card').map((card) => {
     const mine = answersTo(card);
@@ -361,10 +357,6 @@ export function signedCardOutcomes(events, enrolled) {
     return { ...o, signed: record === undefined ? null : { at: record.at, label: typeof record.data?.label === 'string' ? record.data.label : null } };
   });
 }
-
-// A `known:<concept>` setting of false counts without a confirmation: it only makes explanations
-// longer, so forgetting a concept fails safe (design section 5.3).
-export const countsAtOnce = (e) => e.kind === 'setting' && typeof e.data?.key === 'string' && e.data.key.startsWith('known:') && e.data.value === false;
 
 // The most of the card router's Logbook lines the views keep.
 const ENGINE_NOTES = 30;
@@ -470,10 +462,7 @@ function buildLoopViews(sorted, enrolled) {
   };
   const first = new Map();
   for (const e of sorted) if (e.kind === 'question' && !first.has(e.data?.id)) first.set(e.data?.id, e.data);
-  const matches = new Map();
-  for (const e of sorted) if (e.kind === 'match' && verify(e, enrolled) && !matches.has(e.data?.card)) matches.set(e.data?.card, e.data);
   joinQuestions(questions, {
-    matched: (id) => matches.get(id) ?? null,
     shown(lead) {
       const click = clickOn.get(lead);
       if (click === undefined) return [];
@@ -511,10 +500,6 @@ function buildLoopViews(sorted, enrolled) {
     for (const e of sorted) if (e.kind === kind && isPlainKey(e.data?.work)) (out[e.data.work] ??= []).push(mark(e));
     return out;
   };
-  const goalChecks = {};
-  for (const e of sorted) {
-    if (e.kind === 'goal-check' && isPlainKey(e.data?.goal) && verify(e, enrolled)) (goalChecks[e.data.goal] ??= []).push({ ...e.data, at: e.at });
-  }
   // The card for changes made by hand ties to the one change the helper opened for it (a signed `by-hand`), at the commit pressed on.
   const hand = {};
   for (const e of sorted) {
@@ -559,12 +544,6 @@ function buildLoopViews(sorted, enrolled) {
     runs: byWork('run'), asks: byWork('ask'), costs: byWork('cost'), previews: byWork('preview'), lessons: byWork('lesson'),
     // When the computer slept: a run's minutes leave these out (scripts/engine/spend.js).
     slept: sorted.filter((e) => e.kind === 'slept').map((e) => ({ from: e.data.from, to: e.data.to })),
-    // Each signed goal, with what was narrowed and how it ended (scripts/engine/goal.js): only a verified start-goal makes one.
-    goals: goalsView(sorted, actions('start-goal'), goalChecks),
-    // Each goal's signed check results, oldest first (scripts/engine/goal-check.js): a card and a start read its baseline from these.
-    goalChecks,
-    // What a goal's report reads from notes (scripts/engine/goal-report.js): the merge queue's spend after its end, a slice added, a run lost.
-    goalNotes: sorted.filter((e) => e.kind === 'note' && (e.data?.about === 'goal-queue-after' || e.data?.slice !== undefined || e.data?.lost === true)).map(mark),
     // The card router's Logbook lines, the latest last, and how many of its cards wait for another day.
     engineNotes: sorted.filter((e) => e.kind === 'note' && e.data?.about === 'engine' && typeof e.data.words === 'string').slice(-ENGINE_NOTES).map(mark),
     cardsWaiting: cardsWaitingOf(sorted),
@@ -592,27 +571,7 @@ export function cardsWaitingOf(sorted) {
 // `profile` is the profile's events, when these are a project's: a confirm card in the project for a
 // profile setting closes on the profile's verified confirmation, whichever project's card was
 // clicked (ruling F47). The project's levels, settings and unconfirmed stay its own.
-// How many cards are sealed, read and sampled, and no more: until the director has set the bars, what a seal says stays
-// in the private record, read by nothing but scripts/delegation/.
-function evidenceOf(sorted, enrolled) {
-  const lines = sorted.filter((e) => e.kind === 'shadow' && typeof e.data?.card === 'string' && verify(e, enrolled));
-  const cards = (line) => new Set(lines.filter((e) => e.data.line === line && e.data.reader !== 'none').map((e) => e.data.card)).size;
-  return { sealed: cards('seal'), read: cards('reading'), sampled: 0 };
-}
-
-// The rules in force: id -> { rule, stage, signedAt }. Only a signed confirmation of the record itself counts, never a
-// click in the chat, and of a rule signed more than once the newest record stands. Nothing reads these to decide yet.
-function rulesInForce(confirmations, now) {
-  const latest = new Map();
-  for (const { target, event } of confirmations) {
-    if (target.kind !== 'rule' || !ruleStands(target.data)) continue;
-    const kept = latest.get(target.data.id);
-    if (!kept || byOrder(kept.target, target) < 0) latest.set(target.data.id, { target, event });
-  }
-  return Object.fromEntries([...latest.values()].map(({ target, event }) => [target.data.id, { rule: target.data, stage: stageOf(target.data, { now }), signedAt: event.at }]));
-}
-
-// The standing brief in force: { brief, signedAt }, or null. As for a rule, only a signed confirmation of the record itself
+// The standing brief in force: { brief, signedAt }, or null. Only a signed confirmation of the record itself
 // counts, and of the versions signed the newest record stands, so an old draft signed late takes nothing back.
 function briefInForce(confirmations) {
   const newest = confirmations.filter(({ target }) => target.kind === 'brief' && briefStands(target.data)).sort((a, b) => byOrder(a.target, b.target)).at(-1);
@@ -643,8 +602,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
     status: superseded.has(r.id) ? 'superseded' : inForce(r.id) ? 'accepted' : 'proposed',
   }));
 
-  // Levels and settings: accepted value per key, plus proposals newer than it. A `known:*` setting
-  // of false counts as accepted without a confirmation.
+  // Levels and settings: accepted value per key, plus proposals newer than it.
   const unconfirmed = rulebook.filter((r) => r.status === 'proposed')
     .map((r) => ({ kind: 'ruling', id: r.id, at: r.at, data: rulings.find((x) => x.id === r.id).data }));
   // The latest confirmation of each event, in time order.
@@ -655,7 +613,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
     // The premium model is allowed only by a click on its own card (design section 14.6), whose setting names that card:
     // a premium setting that allows it and names none counts for nothing, however it was confirmed.
     const ownCard = (e) => kind !== 'setting' || e.data.key !== 'premium' || e.data.value === 'off' || typeof e.data.premiumCard === 'string';
-    const accepts = (e) => (confirmed.has(e.id) || countsAtOnce(e)) && ownCard(e);
+    const accepts = (e) => confirmed.has(e.id) && ownCard(e);
     for (const e of all) {
       if (!accepts(e)) continue;
       const entry = { key: e.data.key, id: e.id, at: e.at, value: e.data.value };
@@ -671,8 +629,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
         // The computer its event was written on, the computer that signed its latest confirmation
         // (null when that isn't the computer the confirmation names), and the card line that
         // confirmation carries, if any: build commands on Windows count a level only where the
-        // click was made, and Unattended only from its own line. A setting counted without a
-        // confirmation (countsAtOnce) has neither.
+        // click was made, and Unattended only from its own line.
         const last = lastConfirmation.get(e.id);
         const line = last?.data?.line;
         entry.computer = e.computer;
@@ -711,12 +668,6 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   const handedOut = sorted.filter((e) => e.kind === 'asked' && Array.isArray(e.data?.cards));
   const outcomes = outcomesOf(sorted, { confirmations: closing, answeredBy });
   stampSteers(loop.questions, outcomes, sorted);
-  // What the director took on a question's blind card, before any recommendation. It answers nothing, and a click on
-  // a card its answer card has replaced is no such thing: they may have seen the recommendation by then.
-  for (const { card, decided } of outcomes) {
-    const entry = card.data?.kind === 'blind' && decided !== null && !revised(card) ? loop.questions[BLIND_LINE.exec(String(card.data.line))?.[1]] : undefined;
-    if (entry !== undefined) entry.firstPick ??= { label: decided.label, at: decided.at, typed: !card.data.options.includes(decided.label) };
-  }
   const waiting = [];
   // A question that stands behind another's card, or took its answer, is that card's now: a card of its own says nothing more.
   const behindCards = new Set(Object.entries(loop.questions).filter(([, q]) => q.joins !== undefined || q.answer?.joined !== undefined).map(([id]) => answerLine(id)));
@@ -821,8 +772,6 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   const lastMerge = merges.length > 0 ? { at: merges.at(-1).at, data: merges.at(-1).data } : null;
 
   return {
-    evidence: evidenceOf(sorted, enrolled),
-    rules: rulesInForce(confirmations, now),
     brief: briefInForce(confirmations),
     sendBacks: sendBacksOf(sorted, enrolled),
     rulebook,

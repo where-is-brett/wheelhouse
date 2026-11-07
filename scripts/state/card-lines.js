@@ -233,12 +233,6 @@ export function answerLine(questionId) {
   return `Answer question ${questionId}`;
 }
 
-// The line on a blind card (scripts/delegation/blind.js): a click on it is kept and answers nothing.
-export function blindLine(questionId) {
-  return `First pick on question ${questionId}`;
-}
-export const BLIND_LINE = new RegExp(`^First pick on question (${QUESTION_ID})$`);
-
 // The line that asks the director to change approved work to a proposed change.
 export function amendLine(work, hash) {
   return `Change the approved ${work} to this, ${sha12(hash)}`;
@@ -261,13 +255,6 @@ export function keepControlLine(work, hash) {
   return `Keep the files that steer agents in ${work}'s folder as they are, ${sha12(hash)}`;
 }
 export const KEEP_CONTROL_LINE = new RegExp(`^Keep the files that steer agents in (${ID})'s folder as they are, ([0-9a-f]{12})$`);
-
-// The line on a goal's sheet card (unattended goals design, section 5): its Start signs the goal's sheet, the hash the
-// twelve characters name, as the click that lets the goal run.
-export function startGoalLine(goal, hash) {
-  return `Start goal ${goal}, ${sha12(hash)}`;
-}
-export const START_GOAL_LINE = new RegExp(`^Start goal (${ID}), ([0-9a-f]{12})$`);
 
 // The line on a usage card (design section 14.6): the Thoroughness level its switch option sets and
 // the time the card was offered, which its usage-card record keeps, so the click on that option
@@ -307,7 +294,7 @@ const literal = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // approval, confirmation, lift-STOP, CI-push and runbook lines, the build loop's five:
 // approve work, answer a question, change approved work, end an incident and merge its fix,
 // setup's line for a step, its line for the rules found, the baseline card's line, the trust
-// card's line, the take-over card's line, uninstall's line, the line keeping a feature's files that steer agents, a goal's start line, a usage card's line and the
+// card's line, the take-over card's line, uninstall's line, the line keeping a feature's files that steer agents, a usage card's line and the
 // premium model card's line.
 export const SET_LINES = [
   /^Approve pull request #[1-9][0-9]* at commit [0-9a-f]{12}$/m,
@@ -317,7 +304,6 @@ export const SET_LINES = [
   new RegExp(`^Runbook step (?:${Object.entries(RUNBOOK_TITLES).map(([step, title]) => `${step}: ${literal(title)}`).join('|')})(?:, to commit [0-9a-f]{12})?$`, 'm'),
   new RegExp(`^Approve ${ID} \\((?:${LANES}) lane\\) as written, [0-9a-f]{12}(?:, and show it to me before it merges)?$`, 'm'),
   new RegExp(`^Answer question ${QUESTION_ID}$`, 'm'),
-  new RegExp(BLIND_LINE.source, 'm'),
   new RegExp(`^Change the approved ${ID} to this, [0-9a-f]{12}$`, 'm'),
   new RegExp(`^End incident ${ID} and let merges carry on$`, 'm'),
   new RegExp(`^Merge pull request #[1-9][0-9]* as the fix for incident ${ID}$`, 'm'),
@@ -333,7 +319,6 @@ export const SET_LINES = [
   new RegExp(UNPAIR_LINE.source, 'm'),
   new RegExp(UNINSTALL_LINE.source, 'm'),
   new RegExp(KEEP_CONTROL_LINE.source, 'm'),
-  new RegExp(START_GOAL_LINE.source, 'm'),
   new RegExp(USAGE_LINE.source, 'm'),
   new RegExp(PREMIUM_LINE.source, 'm'),
 ];

@@ -260,10 +260,11 @@ test('a carried CLEAN review of an earlier commit counts', async () => {
   });
 });
 
-test('a carried approval of an earlier commit counts', async () => {
+test('an approval of an earlier commit never counts, carried or not: the director approves the head again', async () => {
   await withHome(() => {
-    const d = gateDecision(input({ approvalRequired: true, approval: { carried: true, record: approval(OLD) } }));
-    assert.deepEqual(d, { allow: true, reasons: [] });
+    for (const given of [{ carried: true, record: approval(OLD) }, approval(OLD)]) {
+      assert.deepEqual(gateDecision(input({ approvalRequired: true, approval: given })).reasons, ['no approval of abcdef1']);
+    }
   });
 });
 
@@ -273,10 +274,6 @@ test('a carried record that does not verify does not count', async () => {
     const forged = { ...r, data: { ...r.data, verdict: 'CLEAN', pr: 8 } };
     assert.deepEqual(gateDecision(input({ reviewRequired: true, review: { carried: true, record: forged } })).reasons,
       ['no CLEAN review of abcdef1']);
-    const a = approval(OLD);
-    const forgedA = { ...a, data: { ...a.data, pr: 8 } };
-    assert.deepEqual(gateDecision(input({ approvalRequired: true, approval: { carried: true, record: forgedA } })).reasons,
-      ['no approval of abcdef1']);
     assert.equal(gateDecision(input({ reviewRequired: true, review: { carried: true, record: review(OLD) }, enrolled: [] })).allow, false);
   });
 });
@@ -286,7 +283,6 @@ test('a carried review that is not CLEAN, or a carried record of the wrong kind,
     assert.deepEqual(gateDecision(input({ reviewRequired: true, review: { carried: true, record: review(OLD, 'ISSUES') } })).reasons,
       ['no CLEAN review of abcdef1']);
     assert.equal(gateDecision(input({ reviewRequired: true, review: { carried: true, record: approval(OLD) } })).allow, false);
-    assert.equal(gateDecision(input({ approvalRequired: true, approval: { carried: true, record: review(OLD) } })).allow, false);
   });
 });
 
@@ -305,7 +301,7 @@ test('a carried form that is malformed does not count, and a plain record still 
 test('a carried review does not stand in for an approval, nor the reverse', async () => {
   await withHome(() => {
     const d = gateDecision(input({ reviewRequired: true, approvalRequired: true,
-      review: { carried: true, record: approval(OLD) }, approval: { carried: true, record: review(OLD) } }));
+      review: { carried: true, record: approval(OLD) }, approval: review(OLD) }));
     assert.deepEqual(d.reasons, ['no CLEAN review of abcdef1', 'no approval of abcdef1']);
   });
 });

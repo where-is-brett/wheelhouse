@@ -3,7 +3,6 @@
 // words, and the lines the work view, the Logbook's build tab and the briefing show for runs and their cost. No line
 // holds a run id, a step id or the engine's own words; the director never sees them.
 import { runningMinutes } from './spend.js';
-import { tokenWords as tokenCount } from '../board/model.js';
 
 // The merge queue's question, for a card: its pull request by number and title, as far as they are known.
 // The pane's lines about a project's checks (spec 4.3 and 4.8).
@@ -43,110 +42,6 @@ export function noCardBehindWords(title, why, by) {
 // The Logbook's line when a usage limit holds other work: it clears by itself, so nothing is asked of the director.
 export const LIMIT_HOLD_WORDS = 'A run is waiting for a usage limit to reset, so nothing new starts and work coming back waits until it does. Any mending of the main line and the merge queue carry on.';
 
-// The Logbook's line for a start a goal held, which raises no card: it keeps its place in the list.
-const GOAL_HELD = {
-  goal: 'isn\'t part of the goal that is running, so it waits for that goal to end',
-  time: 'waits: the goal\'s time is up, so nothing more of it starts',
-  'winding-down': 'waits: the goal is winding down, so nothing more of it starts',
-  spend: 'waits: the goal has reached its spend, so nothing more of it starts',
-  'goal-ended': 'waits: its goal has ended, so nothing more of it starts until a new sheet lists it',
-  'goal-unsigned': 'waits: it belongs to a goal that hasn\'t started',
-};
-export const goalHeldWords = (title, why) => `${title} ${GOAL_HELD[why] ?? GOAL_HELD.goal}.`;
-
-// The Logbook's lines for how a goal goes: what started it winding down, how it ended, and a piece that left it.
-const GOAL_WINDING = {
-  time: 'its time is up',
-  stuck: 'it has stopped getting anywhere',
-  'end-goal': 'you ended it',
-};
-const GOAL_ENDED = {
-  done: 'is done',
-  'waiting-for-you': 'has ended with work waiting for you',
-  'check-failed': 'has ended, and its last check failed, so it isn\'t done',
-  time: 'has ended: its time is up',
-  spend: 'has ended: it reached its spend, so what was running was stopped and kept on its branch',
-  stuck: 'has ended: it stopped getting anywhere',
-  'end-goal': 'has ended, as you asked',
-  'all-stop': 'has ended with All stop. Lifting All stop doesn\'t start it again: Carry on offers a new sheet for what\'s left',
-};
-export const goalWindingWords = (title, why) => `${title} is winding down because ${GOAL_WINDING[why] ?? GOAL_WINDING.time}: nothing new starts, and work under way gets up to an hour to finish.`;
-export const goalEndedWords = (title, ending) => `${title} ${GOAL_ENDED[ending] ?? GOAL_ENDED.time}.`;
-export const goalRunLeftWords = (title, survivors) => `${title} has ended, but part of a run it stopped couldn't be stopped and may still be spending: ${survivors.join(', ')}.`;
-export const goalPieceChangedWords = (title) => `${title} changed since the goal's sheet was signed, so the goal won't build it. A new sheet can list it.`;
-// What a goal's report on return says (unattended goals design, section 10), in a set form. Each line reads the record and
-// nothing else, so none of them says more than the record does: "Nothing was lost" is the design's example, and no script can know it.
-const andNames = (names) => (names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`);
-const FAILED_AFTER = { connection: 'a dropped connection', provider: 'the AI service failed', host: 'the build stopped on this computer', limit: 'a usage limit', 'resume-refused': 'the build engine refused', other: 'a failed step' };
-export const goalHeadlineWords = (title, { ending, switchOn }) => (ending === 'done' ? `${title} is ${switchOn ? 'ready for your switch-on' : 'done'}.` : goalEndedWords(title, ending));
-export function goalInsideWords({ time, spend }) {
-  if (time && spend === 'inside') return 'inside its time and spend';
-  const said = { inside: 'inside its spend', over: 'over its spend', unknown: 'with its spend unknown' }[spend];
-  if (spend === 'tokens') return `${time ? 'inside its time' : 'past its time'} and its token limit; its other limit couldn't be read`;
-  return `${time ? 'inside its time' : 'past its time'}, ${said}`;
-}
-export const goalLineWords = (ending, clock, within) => (ending === 'done' ? `Done at ${clock}, ${goalInsideWords(within)}.` : `Ended at ${clock}.`);
-export const leftUndoneWords = (names) => `Left undone: ${andNames(names)}.`;
-export const closedPiecesWords = (names) => `Closed without being added: ${andNames(names)}.`;
-export const checksFailedWords = (names) => `Failed: ${andNames(names)}.`;
-export const checksUnrunWords = (names) => `Couldn't run: ${andNames(names)}.`;
-export const checkedAgainWords = (ok) => `The goal's checks ran again once the work waiting for you had merged, and ${ok ? 'they all passed' : 'they didn\'t all pass'}.`;
-export const addedTailWords = (flag, checks) => {
-  if (typeof flag === 'string') return `All behind \`${flag}\`${checks ? ', all checks passing' : ''}.`;
-  return checks ? 'All checks passing.' : '';
-};
-export const WALKED_WORDS = 'A page check was walked when its piece was built, and not again at the end.';
-export const moreWaitingWords = (names) => `And ${names.length} more: ${andNames(names)}. ${SHOW_THEM}`;
-const durationWords = (minutes) => {
-  const hours = Math.floor(minutes / 60);
-  const left = Math.floor(minutes % 60);
-  const part = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
-  return [hours > 0 ? part(hours, 'hour') : '', left > 0 || hours === 0 ? part(left, 'minute') : ''].filter(Boolean).join(' ');
-};
-export const sleptWords = (minutes, clock) => `The computer slept for ${durationWords(minutes)} at ${clock}.`;
-export const sleptOftenWords = (times, minutes) => `The computer slept ${times} times, for ${durationWords(minutes)} in all.`;
-export const limitHeldWords = (minutes) => `A usage limit held work for ${durationWords(minutes)}.`;
-export const retriedWords = (n, kind) => `${n === 1 ? 'One run was tried again' : `Runs were tried again ${n} times`} after ${FAILED_AFTER[kind] ?? FAILED_AFTER.other}.`;
-export const lostCarriedOnWords = (names) => `${names.length === 1 ? 'One run lost its process and was' : `${names.length} runs lost their process and were`} carried on: ${andNames(names)}.`;
-export const goalRedsWords = (n) => `The main line went red ${n === 1 ? 'once' : n === 2 ? 'twice' : `${n} times`}.`;
-export const goalStoppedAtEndWords = (title) => `${title} was stopped at the end, and what it did is kept on its branch.`;
-export const goalPieceFailedWords = (title, kind) => `${title} failed: ${FAILED_BECAUSE[kind] ?? FAILED_BECAUSE.other}.`;
-export const goalPieceLeftWords = (title) => `${title} changed after you signed, so the goal left it.`;
-const PIECE_WAITS = {
-  approval: (title) => `${title} is built and waits for your approval.`,
-  switch: (title) => `Switch on ${title}, once you've looked.`,
-  other: (title) => `${title} waits for your answer.`,
-};
-export const pieceWaitsWords = (title, kind) => (PIECE_WAITS[kind] ?? PIECE_WAITS.other)(title);
-export const allowedOnceWords = (title) => `You allowed ${title} outside its areas, once.`;
-export function goalSpentWords({ tokens, allowed, points, requests, unknown, readAt, afterEnd }) {
-  const of = (limit, say = (x) => x) => (limit === undefined ? '' : `, of the ${say(limit)} you allowed`);
-  const out = [];
-  if (unknown) out.push(tokens === 0 ? 'Unknown: no reading was made.' : `Unknown: part of it wasn't reported, so ${tokenCount(tokens)} were counted against the ${tokenCount(allowed.tokens)} you allowed.`);
-  if (points !== null) out.push(`${points} points of this week's allowance${of(allowed.points)}${readAt === null ? '' : `, read at ${readAt}`}.`);
-  if (requests !== null) out.push(`${requests} AI credits${of(allowed.requests)}.`);
-  if (!unknown && (points === null || tokens > allowed.tokens)) out.push(`${tokenCount(tokens)}${of(allowed.tokens, tokenCount)}.${points === null && requests === null ? ' The week\'s allowance couldn\'t be read, so these are tokens alone.' : ''}`);
-  if (afterEnd !== null) out.push(afterEnd.unknown ? 'The merge queue spent more after the goal ended, and how much is unknown.' : `The merge queue spent ${tokenCount(afterEnd.tokens)} more after the goal ended.`);
-  return out.join(' ');
-}
-export const goalReportLinkWords = (title, n) => `The report on ${title} stays on the Logbook, with ${n} ${n === 1 ? 'thing' : 'things'} still to settle.`;
-const FRACTIONS = [[1 / 10, 'a tenth'], [1 / 4, 'a quarter'], [1 / 3, 'a third'], [1 / 2, 'half'], [2 / 3, 'two thirds'], [3 / 4, 'three quarters']];
-// The share in a word, the next one up, so a spend never reads as less than it is.
-export function shareWords(ratio) {
-  if (ratio <= 0) return 'none';
-  if (ratio >= 1) return 'all';
-  return FRACTIONS.find(([share]) => ratio <= share + 1e-9)?.[1] ?? 'nearly all';
-}
-const hoursLeftWords = (ms) => {
-  const hours = Math.floor(ms / 3600000);
-  if (hours >= 1) return `${hours} ${hours === 1 ? 'hour' : 'hours'} left`;
-  const minutes = Math.floor(ms / 60000);
-  return minutes >= 1 ? `${minutes} ${minutes === 1 ? 'minute' : 'minutes'} left` : 'time up';
-};
-const GOAL_PANE_STATE = { winding: 'winding down', waiting: 'waiting for you' };
-export const goalPaneWords = ({ added, of, state, msLeft, spend }) => `Goal: ${added} of ${of} added, ${GOAL_PANE_STATE[state] ?? hoursLeftWords(msLeft)}, ${spend}.`;
-export const goalCheckedAgainWords = (title, ok) => `The goal's checks ran again once the work waiting for you had merged: ${title} ${ok ? 'passes them all' : 'doesn\'t pass them all'}.`;
-
 // The card for a run still parked well past the reset, which holds nothing more.
 export const limitLateWords = (title) => `${title} should have carried on once its usage limit reset, and hasn't, so other work no longer waits for it. It spends nothing while it waits. What it has done so far is kept.`;
 export const limitLateOverWords = (title) => `${title} moved on by itself after all, so your card about it no longer decides anything.`;
@@ -180,7 +75,7 @@ const FAILED_BECAUSE = {
   other: 'one of its steps failed',
 };
 export const failedCardWords = (title, kind) => `${title} stopped before it was finished: ${FAILED_BECAUSE[kind] ?? FAILED_BECAUSE.other}. What it did so far is kept on its branch, and nothing more of it starts until you say.`;
-// A run that lost its process (unattended goals design, section 9.5).
+// A run that lost its process.
 export const lostCarriedWords = (title) => `The process running ${title} stopped before it finished, so Wheelhouse ended the run, keeping what it had done, and starts it again from there, once.`;
 const LOST_BECAUSE = {
   again: (title) => `${title} has lost its process twice, so Wheelhouse has stopped it rather than start it again by itself.`,
@@ -202,17 +97,6 @@ export const cutOffWords = (title, by) => `${title} depends on ${named(by)}, whi
 export const waitsOnItselfWords = (title, by) => `${title} and ${named(by)} wait on each other, so none of them can start by itself. It waits until you say.`;
 export const startAnywayWords = (by) => `It takes its turn without ${named(by)}. What it was to build on isn't there, so it may fail or need redoing. This holds for this queueing only: queued again, it waits as before.`;
 export const unmarkedPrWords = (title, pr) => `${title} finished with pull request #${pr} open, but nothing has marked it ready to add, so it keeps its place and other work waits. It moves on once that pull request is added or closed.`;
-// A goal's areas (unattended goals design, section 6), in an order's words and on the card for a change that left them.
-export const areasInScopeWords = ({ may, wontTouch }) => `Anything outside the goal's areas.${Array.isArray(may) ? ` You may change only ${may.join(', ')}.` : ''}${wontTouch.length > 0 ? ` You won't touch ${wontTouch.join(', ')}.` : ''}`;
-const MOST_PATHS_SHOWN = 5;
-export function areaCardWords(title, pr, paths) {
-  const shown = paths.slice(0, MOST_PATHS_SHOWN).join(', ');
-  const left = paths.length - MOST_PATHS_SHOWN;
-  return `${title}, pull request #${pr}, changes files outside the areas you set for this goal: ${shown}${left > 0 ? ` and ${left} more` : ''}. It waits, and isn't added.`;
-}
-export const AREA_CARD_WHY = 'A change beyond the bounds you signed is yours to allow, at level 3, and Wheelhouse never decides it for you.';
-export const ALLOW_ONCE_SAYS = 'This version goes on to be added. If it changes again, you are asked again.';
-export const areaStoppedWords = (title) => `${title} stops here, as you chose, since it changed files outside the goal's areas.`;
 export const prLeftOpenWords = (pr) => `Pull request #${pr} stays open, and nothing of it is added.`;
 // Work that has never run, whose start was refused: said once, tried once more, then a card.
 export const startRefusedWords = (title, why) => `${title} couldn't start: ${why}. It keeps its turn, and it is tried once more shortly.`;

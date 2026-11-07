@@ -113,7 +113,6 @@
       "usage": null,
       "finished": [],
       "carryOn": [],
-      "goalEnd": null,
       "incidents": [],
       "watcher": "running",
       "missing": [
@@ -267,7 +266,6 @@
       "usage": null,
       "finished": [],
       "carryOn": [],
-      "goalEnd": null,
       "incidents": [],
       "watcher": "running",
       "missing": [
@@ -434,7 +432,6 @@
       "usage": null,
       "finished": [],
       "carryOn": [],
-      "goalEnd": null,
       "incidents": [],
       "watcher": "running",
       "missing": [
@@ -565,7 +562,6 @@
       "usage": null,
       "finished": [],
       "carryOn": [],
-      "goalEnd": null,
       "incidents": [],
       "watcher": "running",
       "missing": [

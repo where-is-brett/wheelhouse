@@ -8,7 +8,7 @@ import { replyRecord, repliedDir, claim } from '../../../scripts/mod/reply.js';
 import { hashOf } from '../../../scripts/mod/status.js';
 import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { pendingDir } from '../../../scripts/hooks/pending.js';
-import { answerInput, blindInput, composeCard } from '../../../scripts/cards/compose.js';
+import { answerInput, composeCard } from '../../../scripts/cards/compose.js';
 import { makeEvent, eventPath, listEvents, dataHash } from '../../../scripts/state/events.js';
 import { buildViews } from '../../../scripts/state/views.js';
 import { makeSigningKey, enrol, verify, readEnrolled } from '../../../scripts/state/signing.js';
@@ -17,7 +17,6 @@ import { computerId, profileDir, stateDir } from '../../../scripts/lib/paths.js'
 import { BUILD_QUESTION_LABELS, BUILD_QUESTION_OPTIONS, USE_GUARDED, settingKey, UNATTENDED_CARD } from '../../../scripts/protection/windows-builds.js';
 import { unattendedCardData } from '../../../scripts/foreman/act.js';
 import { withHome } from '../../helpers/homes.js';
-import { sheetHash } from '../../../scripts/engine/goal.js';
 import { clicksDir } from '../../../scripts/lib/setup-clicks.js';
 import { cardHash } from '../../../scripts/lib/measures-clicks.js';
 import { asQuestion } from '../../../scripts/cards/visit.js';
@@ -70,7 +69,6 @@ function fake({ pr = { ok: true, result: { headSha: FULL, state: 'open' } }, tak
   const no = { ok: false, refused: 'no' };
   return {
     calls,
-    goalRecheck: async () => ({ ok: true, refused: [] }),
     prState: async (b) => { calls.prState.push(b); calls.order.push('prState'); return pr; },
     state: {
       write: async (b) => {
@@ -727,17 +725,6 @@ test('press refuses Why? and Suggest a change…', () => withKey(async () => {
   assert.deepEqual(pendingFiles(), []);
 }));
 
-test('a press on a blind card signs nothing, closes it, keeps the pick and tells the front desk to ask the answer card', () => withKey(async () => {
-  keepEvent(makeEvent({ kind: 'question', data: { ...QUESTION, blind: true, level: 3 }, now: () => NOW }));
-  const card = putCard(composeCard(blindInput({ ...QUESTION, level: 3 }, 'Export')).card);
-  const client = fake();
-  const got = await press(card, client, 'Tab');
-  assert.equal(got.made, true);
-  assert.match(got.submit[0], /picked "Tab" first on card 1 .*Run `cards`/);
-  assert.deepEqual(signed(client), []);
-  assert.deepEqual(client.calls.write.map((w) => [w.kind, w.data.label]), [['card-answer', 'Tab']]);
-}));
-
 const parkedCard = (pr = 16) => composeCard({ ...common, kind: 'approval', parked: true, recommend: 'Approve', what: `Pull request #${pr} changes the wording on the sign-in page.`, options: [says('Approve'), says('Send it back')], target: { pr, sha: FULL } }).card;
 
 test('Send it back on the pane signs its click, and closes the card', async () => {
@@ -777,32 +764,6 @@ test('under All stop Send it back is still signed and closes its card', async ()
     }
   });
 });
-
-test('a refused Start says why and writes nothing', () => withKey(async (home) => {
-  const piece = { id: 'export-csv', title: 'Export', lane: 'feature', visible: true, dependsOn: [] };
-  const sheet = {
-    title: 'Customers can export their orders', done: [{ command: 'node check.js', expect: 0 }], checksSay: ['The checking script passes.'],
-    pieces: [{ work: 'export-csv', hash: dataHash(piece) }], areas: { may: ['src/**'], wontTouch: ['billing/**'] }, spend: { tokens: 1000000 }, until: '2026-10-19T12:00:00.000Z',
-  };
-  keepEvent(makeEvent({ kind: 'goal', data: { id: 'orders-export', sheet }, now: () => NOW }));
-  // The piece changed since the sheet was made.
-  const views = path.join(home, 'projects', P, 'views');
-  fs.mkdirSync(views, { recursive: true });
-  fs.writeFileSync(path.join(views, 'work.json'), JSON.stringify({ 'export-csv': { work: { data: { ...piece, title: 'Changed' } } } }));
-  const card = putCard(composeCard({
-    ...common, kind: 'start-goal', recommend: 'Start', what: 'The goal orders-export is ready to run.', options: [says('Start')],
-    target: { goal: 'orders-export', hash: sheetHash(sheet) },
-  }).card);
-  // A press has no asked card, so the offer is judged against the card the state keeps.
-  keepEvent(makeEvent({ kind: 'goal-card', data: { goal: 'orders-export', sheet: sheetHash(sheet), at: LATER.toISOString(), hash: cardHash(asQuestion({ data: card.data })) }, now: () => LATER }));
-  const client = fake();
-  const out = await press(card, client, 'Start');
-  assert.equal(out.made, false);
-  assert.match(out.says, /The goal wasn't started: The work export-csv changed/);
-  assert.equal(untouched(client), 0);
-  assert.deepEqual(pendingFiles(), []);
-  assert.deepEqual(waitingIds(), [card.id], 'the card stays waiting');
-}));
 
 // A press answer without the chat lines, for tests of the rest of it.
 const plain = ({ notice, note, ...rest }) => rest;
