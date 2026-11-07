@@ -36,11 +36,9 @@ function runsOf(runs, id, entry) {
 // The work the merge queue's own runs stand for, which no work record names: their asks are routed under it.
 export const MERGE_WORK = 'merge-queue';
 
-// dispatch({ work, runs, reports, features, settings, stop, incident, capsReached, limited?, mergeQueue, requests?, sentBack?, waiting?, reserved?, returning?, admitted?, stoppedFeatures?, waived?, goal?, now })
+// dispatch({ work, runs, reports, features, settings, stop, incident, capsReached, limited?, mergeQueue, sentBack?, waiting?, reserved?, returning?, admitted?, stoppedFeatures?, waived?, goal?, now })
 //   -> { start: [{ work, lane }], hold: [{ work, why, by? }], admit: [{ work, via }], startMergeQueue, requeue: [{ work, lane, branch, reason? }], clashCards: [{ work }], redCards: [{ work }], live: [work] }
 // `work`, `runs` and `reports` are the record's views; `mergeQueue` is { running, lastStart, waiting, newReady };
-// `requests` is { counts(workId), used, cap, confirmed }: whether a piece's run would use the plan's counted requests,
-// how many this month's runs used, the most the director allows, and whether the engine's count of them is confirmed;
 // `sentBack` is [{ work, times, reason? }], the pull requests sent back: for a clash by the merge gate, and with reason
 // `red` by the check runner; `waiting` the pieces that wait on the director; `reserved` { [work]: paths } the files held
 // for a piece until its work ends. A hold's `by` names what holds it, where that can be named: the clash's pieces, the
@@ -174,7 +172,6 @@ export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeat
   }
   const start = [];
   const hold = [];
-  let used = Number.isFinite(requests?.used) ? requests.used : 0;
   // A piece going back is already in `requeue`, so it counts there alone.
   const parkedAt = PARKED_TIMES * pace.building;
   const waitingNow = waits.map(([id]) => id).filter((id) => !requeue.some((r) => r.work === id));
@@ -195,10 +192,6 @@ export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeat
       why = 'dependency';
       by = unmerged;
     }
-    if (!why && requests && requests.counts?.(id) === true) {
-      if (requests.confirmed !== true) why = 'requests-unconfirmed';
-      else if (!(Number.isFinite(requests.cap) && used < requests.cap)) why = 'requests';
-    }
     if (!why && !hasRoom(lane === FEATURE)) why = 'pace';
     if (!why && waitingNow.length + building + others >= parkedAt) {
       why = 'parked';
@@ -218,7 +211,6 @@ export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeat
     start.push({ work: id, lane });
     building += 1;
     if (lane === FEATURE) features += 1;
-    if (requests?.counts?.(id) === true) used += 1;
     running.push({ work: id, files: e.files ?? [] });
   }
 

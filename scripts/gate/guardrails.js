@@ -60,7 +60,6 @@
 import { matchGlob } from './glob.js';
 import { AGENT_CONTROL } from '../lib/agent-control.js';
 import { isPage } from '../screens/pages.js';
-import { AGENTS } from '../agents/names.js';
 
 // The Claude Code settings, the Wheelhouse configuration inside .claude/,
 // CLAUDE.md, and .mcp.json (it names the connectors agents get), then every file that steers an
@@ -133,7 +132,8 @@ function withDefaults(c) {
   };
 }
 
-// The agent whose column is `routing` itself, so `agentRouting` never holds one for it (review Minor 8).
+// The agent whose column is `routing` itself, so `agentRouting` never holds one for it (review Minor 8). Columns for
+// other agents, a parked agent's among them, are accepted and ignored, so an older record still loads.
 const COMMAND_LINE_AGENT = 'claude-code';
 // One agent's column: an object of roles, each a model or null.
 const columnOk = (column) => isObject(column) && Object.entries(column).every(([role, model]) => ROLES.includes(role) && modelOk(model));
@@ -145,7 +145,7 @@ const tiersOk = (t) => isObject(t) && Object.keys(t).length === 1 && isObject(t.
 function buildLoopOk(c) {
   if (c.tiers !== undefined && !tiersOk(c.tiers)) return false;
   if (c.routing !== undefined && !(isObject(c.routing) && Object.values(c.routing).every(modelOk))) return false;
-  if (c.agentRouting !== undefined && !(isObject(c.agentRouting) && Object.entries(c.agentRouting).every(([agent, column]) => AGENTS.includes(agent) && agent !== COMMAND_LINE_AGENT && columnOk(column)))) return false;
+  if (c.agentRouting !== undefined && !(isObject(c.agentRouting) && Object.entries(c.agentRouting).every(([agent, column]) => typeof agent === 'string' && agent !== COMMAND_LINE_AGENT && columnOk(column)))) return false;
   if (c.sessionMode !== undefined && !SESSION_MODES.includes(c.sessionMode)) return false;
   if (c.buildCommands !== undefined && !(Array.isArray(c.buildCommands) && c.buildCommands.every(isBuildCommand))) return false;
   if (c.watcherShape !== undefined && !WATCHER_SHAPES.includes(c.watcherShape)) return false;

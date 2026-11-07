@@ -15,7 +15,6 @@ import { goalFolderOf, prepareGoalFolder } from '../../../scripts/engine/goal-fo
 import { engineRoutes } from '../../../scripts/engine/routes.js';
 import { checkOrder, orderStore } from '../../../scripts/engine/order.js';
 import { TICKET_FILE } from '../../../scripts/engine/ticket.js';
-import { workflowFor } from '../../../scripts/engine/archon/adapter.js';
 
 const NOW = new Date('2026-11-01T10:00:00.000Z');
 const HEAD = 'a'.repeat(40);
@@ -490,11 +489,6 @@ test('a stand-in order holds what a check run needs, and no other run is passed 
   assert.match(checkOrder({ ...standIn, goal: undefined }), /goal/);
   assert.match(checkOrder({ ...standIn, work: 'other' }), /goal/);
   assert.match(checkOrder({ ...standIn, done: 'x' }), /goal/);
-});
-
-test('a goal check needs no twin on Copilot', () => {
-  const tiers = { small: 'copilot:a', medium: 'copilot:a', large: 'copilot:a' };
-  assert.deepEqual(workflowFor('wheelhouse-goal-check', { tiers }), { workflow: 'wheelhouse-goal-check' });
 });
 
 test('no piece of work can have the goal check\'s work name', () => {

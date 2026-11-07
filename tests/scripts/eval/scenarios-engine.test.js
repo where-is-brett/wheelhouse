@@ -23,7 +23,7 @@ test('--engine takes the fake or real Archon, and goes with scenario numbers, --
   assert.equal(parseArgs(['--suite', 'build-loop', '--engine', 'archon']).engine, 'archon');
   assert.throws(() => parseArgs(['42', '--engine', 'orchestrator']), /--engine takes fake or archon, not orchestrator/);
   assert.throws(() => parseArgs(['--again', '--engine', 'fake']), /give it no --ready, --again, --agent or --level/);
-  assert.throws(() => parseArgs(['42', '--engine', 'fake', '--agent', 'copilot']), /give it no/);
+  assert.throws(() => parseArgs(['42', '--engine', 'fake', '--agent', 'claude-code']), /give it no/);
 });
 
 for (const id of ENGINE_SCENARIOS) {

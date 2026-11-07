@@ -15,8 +15,7 @@ import {
 } from '../../../scripts/lib/login-start.js';
 import { uninstallPlan } from '../../../scripts/setup/uninstall.js';
 import { applyUninstall } from '../../../scripts/setup/uninstall-run.js';
-import { START_SCRIPT, startCommand, planInstall, install } from '../../../scripts/agents/copilot/start-helper.js';
-import { readLean } from '../../../scripts/lean/project.js';
+import { START_SCRIPT } from '../../../scripts/host/start-helper.js';
 
 const shims = standInTools();
 const hostLog = [];
@@ -29,12 +28,12 @@ after(() => shims.restore());
 
 const T0 = new Date('2026-10-23T01:00:00.000Z');
 const MAC_NODE = '/Users/Ann O\'Neil/.local/node/bin/node';
-const MAC_ROOT = '/Users/Ann O\'Neil/.copilot/wheelhouse/v1.0.0';
+const MAC_ROOT = '/Users/Ann O\'Neil/.wheelhouse/plugin/v1.0.0';
 // A Mac's sign-in start written into a real folder needs a Mac's paths for it, so on Windows those
 // tests are left to the Mac's run.
 const onMacPaths = { skip: process.platform === 'win32' ? 'a Mac\'s launch agent is written into a real folder here' : false };
 const WIN_NODE = 'C:\\Program Files\\nodejs\\node.exe';
-const WIN_ROOT = 'C:\\Users\\Ann O\'Neil\\.copilot\\wheelhouse\\v1.0.0';
+const WIN_ROOT = 'C:\\Users\\Ann O\'Neil\\.wheelhouse\\plugin\\v1.0.0';
 
 // A stand-in for `run` that answers `reg` as a registry holding `values` would, and records every call; nothing
 // real runs.
@@ -71,7 +70,7 @@ test('the plist runs start-helper with full paths', onMacPaths, async () => {
   // The program and its arguments, each a full path in a string of its own: no shell reads them, so the space and
   // the apostrophe stay as they are.
   const strings = [...entry.content.matchAll(/<string>([^<]*)<\/string>/g)].map((m) => m[1].replaceAll('&apos;', '\'').replaceAll('&amp;', '&'));
-  assert.deepEqual(strings.slice(0, 4), ['dev.wheelhouse.helper', MAC_NODE, `${MAC_ROOT}/scripts/agents/copilot/start-helper.js`, 'start']);
+  assert.deepEqual(strings.slice(0, 4), ['dev.wheelhouse.helper', MAC_NODE, `${MAC_ROOT}/scripts/host/start-helper.js`, 'start']);
   assert.match(entry.content, /<key>RunAtLoad<\/key>\s*<true\/>/);
   // The helper it starts outlives the start command, so launchd must not end it when the command exits.
   assert.match(entry.content, /<key>AbandonProcessGroup<\/key>\s*<true\/>/);
@@ -95,8 +94,6 @@ test('the plist runs start-helper with full paths', onMacPaths, async () => {
     assert.deepEqual(kept, { kind: 'launch-agent', path: entry.path, content: entry.content, at: T0.toISOString() });
     assert.ok(made === undefined || made.every((dir) => entry.path.startsWith(dir)));
   });
-  // The start command the playbook gives is the same pair the plist runs.
-  assert.equal(startCommand({ node: MAC_NODE, root: MAC_ROOT, platform: 'darwin' }), `"${MAC_NODE}" "${MAC_ROOT}/scripts/agents/copilot/start-helper.js"`);
 });
 
 test('the Windows entry quotes a path with spaces', async () => {
@@ -105,7 +102,7 @@ test('the Windows entry quotes a path with spaces', async () => {
   assert.equal(RUN_KEY, 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run');
   assert.equal(RUN_NAME, 'Wheelhouse helper');
   assert.equal(entry.path, `${RUN_KEY}\\${RUN_NAME}`);
-  assert.equal(entry.content, `"${WIN_NODE}" "${WIN_ROOT}\\scripts\\agents\\copilot\\start-helper.js" start`);
+  assert.equal(entry.content, `"${WIN_NODE}" "${WIN_ROOT}\\scripts\\host\\start-helper.js" start`);
   // A path a quote can't keep whole is refused.
   assert.throws(() => loginEntry({ platform: 'win32', node: 'C:\\odd"name\\node.exe', root: WIN_ROOT, script: START_SCRIPT }), /safely/);
   assert.throws(() => loginEntry({ platform: 'win32', node: WIN_NODE, root: 'C:\\two\nlines', script: START_SCRIPT }), /safely/);
@@ -122,58 +119,6 @@ test('the Windows entry quotes a path with spaces', async () => {
     // A `reg add` that fails is said, and nothing is claimed.
     const failing = async () => ({ code: 1, stdout: '', stderr: 'ERROR: Access is denied.' });
     await assert.rejects(installLoginStart({ entry, run: failing, now: () => T0 }), /start-up entry could not be added/);
-  });
-});
-
-// A git repository on main with one commit, in a folder of its own: a project folder for install.
-const GIT_ENV = {
-  GIT_CONFIG_GLOBAL: process.platform === 'win32' ? 'NUL' : '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
-  GIT_AUTHOR_NAME: 'Ann', GIT_AUTHOR_EMAIL: 'ann@example.com', GIT_COMMITTER_NAME: 'Ann', GIT_COMMITTER_EMAIL: 'ann@example.com',
-};
-async function git(cwd, args) {
-  const got = await run('git', args, { cwd, baseEnv: withoutGitVars(), env: GIT_ENV });
-  if (got.code !== 0) throw new Error(`git ${args.join(' ')} failed: ${got.stderr}`);
-  return got.stdout.trim();
-}
-async function projectFolder(parent) {
-  const folder = path.join(fs.realpathSync.native(parent), 'shop');
-  fs.mkdirSync(folder);
-  await git(folder, ['init', '-q', '-b', 'main']);
-  fs.writeFileSync(path.join(folder, 'README.md'), 'shop\n');
-  await git(folder, ['add', '-A']);
-  await git(folder, ['commit', '-q', '-m', 'Start']);
-  return folder;
-}
-
-test('no entry on a work computer', onMacPaths, async () => {
-  const home = shortHome();
-  const userHome = shortHome();
-  const folder = await projectFolder(shortHome());
-  await as(home, async () => {
-    const reg = fakeReg();
-    const started = [];
-    const deps = {
-      run: hostGuard, regRun: reg.run, userHome, platform: 'darwin', env: { COPILOT_HOME: path.join(userHome, '.copilot') }, now: () => T0,
-      start: async () => { started.push(true); return { ok: true, line: 'Wheelhouse\'s helper is running' }; },
-    };
-    const answers = { workComputer: true, realUsers: false, test: null };
-    const plan = await planInstall({ folder, ...answers }, deps);
-    assert.ok(plan.lines.some((l) => /No start-up entry/.test(l) && /work computer/.test(l)), plan.lines.join('\n'));
-    assert.ok(!plan.lines.some((l) => /LaunchAgents/.test(l)));
-    const done = await install({ folder, hash: plan.hash, ...answers }, deps);
-    assert.equal(done.ok, true, done.lines.join('\n'));
-    assert.deepEqual(started, [true], 'the helper is started by the command itself');
-    assert.equal(fs.existsSync(path.join(userHome, 'Library', 'LaunchAgents')), false, 'no launch agent');
-    assert.deepEqual(reg.calls, [], 'no registry call');
-    assert.equal(loginStartRecord(), null, 'no sign-in start recorded');
-    // The hook file and the project are still installed.
-    assert.equal(fs.existsSync(path.join(userHome, '.copilot', 'hooks', 'wheelhouse.json')), true);
-    assert.equal(readLean('shop').agent, 'copilot');
-
-    // Not a work computer on Windows: the start-up entry is added, through `reg` alone.
-    const plan2 = await planInstall({ folder, workComputer: false, realUsers: false, test: null }, { ...deps, platform: 'win32', node: WIN_NODE, root: WIN_ROOT });
-    assert.notEqual(plan2.hash, plan.hash, 'the answer is in the hash');
-    assert.ok(plan2.lines.some((l) => /start-up entry named Wheelhouse helper/.test(l)), plan2.lines.join('\n'));
   });
 });
 

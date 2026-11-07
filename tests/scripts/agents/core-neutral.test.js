@@ -7,22 +7,18 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
-// Folders that may name Copilot: the adapters, the agents' folder, the editor add-on, the probes, the tests and the docs,
-// and the Archon engine's adapter, which hands Archon the Copilot CLI's path as a provider adapter does.
-const ALLOWED_FOLDERS = ['adapters/', 'scripts/agents/', 'scripts/engine/archon/', 'vscode/', 'probes/', 'tests/', 'docs/'];
+// Folders that may name Copilot: the adapters, the agents' folder, the probes, the tests and the docs, and the Archon
+// engine's folder, whose build patch still names Copilot's resolver.
+const ALLOWED_FOLDERS = ['adapters/', 'scripts/agents/', 'scripts/engine/archon/', 'probes/', 'tests/', 'docs/'];
 // Tooling folders that are not the product.
 const TOOLING_FOLDERS = ['node_modules/', '.git/', '.superpowers/', '.claude/'];
 // Core files that name Copilot, each with why.
 const ALLOWED_CORE_FILES = {
-  'scripts/lib/copilot-numbers.js': 'the numbers of the Copilot design, named once',
+  'scripts/settings/catalogue.js': 'the retired-keys list names the piece that retired each key, so an old record still loads (design section 4.1)',
   'scripts/lib/agent-control.js': 'the guardrail list names the folders and files that steer each agent, Copilot\'s among them (design section 6.5)',
-  'package.json': 'the copilot-home script, which builds the Lean kit for Copilot',
-  'scripts/state/lean-record.js': 'reads Lean\'s record with the Copilot design\'s numbers, named once in copilot-numbers.js',
   'README.md': 'the README\'s section "On GitHub Copilot" gives the one request line that sets Wheelhouse up in VS Code with Copilot',
-  'scripts/audit/report.js': 'imports the levels, proofs and review kinds from the design\'s numbers file, copilot-numbers.js, and names no agent otherwise',
   'scripts/health/own-files.js': 'the weekly look at the files that guard the project names Copilot\'s own folders in the person\'s home, and never reads its sign-in',
   'HANDOVER.md': 'the handover says where the work stands, the Copilot build among it',
-  'lineage/manifest.json': 'the manifest records the Copilot CLI version Wheelhouse is pinned to (its `agents`, ruling P8-18), written by buildManifest from scripts/agents/pins.js',
 };
 
 function trackedFiles() {

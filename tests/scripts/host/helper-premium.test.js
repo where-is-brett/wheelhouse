@@ -259,7 +259,7 @@ test('the premium model\'s pass is recorded only on the pin the helper\'s check 
   } finally { c.cleanup(); }
 });
 
-test('on Copilot, where no hook signs a click, the card isn\'t offered', async () => {
+test('a configuration that still names a parked agent is read, and the card is offered as for Claude Code', async () => {
   const c = await computer();
   try {
     await c.withHelper(async (client) => {
@@ -269,9 +269,8 @@ test('on Copilot, where no hook signs a click, the card isn\'t offered', async (
       const id = await as(c.home, () => computerId());
       fs.writeFileSync(file, JSON.stringify({ ...config, agents: { [id]: 'copilot' } }));
       const got = await client.premium.card({ project: P });
-      assert.equal(got.offered, false);
-      assert.match(got.why, /only from Claude Code/);
-      assert.deepEqual(await c.events('premium-card'), []);
+      assert.equal(got.offered, true);
+      assert.equal((await c.events('premium-card')).length, 1);
     });
   } finally { c.cleanup(); }
 });

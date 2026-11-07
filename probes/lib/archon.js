@@ -33,9 +33,9 @@ const SYSTEM_PATH = ['/usr/bin', '/bin', '/usr/sbin', '/sbin'];
 // The few variables kept from the caller's environment. No token or host variable passes.
 const KEPT = ['HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'LC_ALL', 'SHELL', 'TERM'];
 
-// The full environment of spec 6.3. `ghDir` (E3's broker) and `nodeDir` (the Node the Copilot CLI runs on) are
+// The full environment of spec 6.3. `ghDir` (E3's broker) and `nodeDir` (the Node a step runs on) are
 // added to PATH only when passed.
-export function archonEnv({ home, bunDir, claudeBin, copilotBin, ghDir, nodeDir, extra = {}, baseEnv = process.env } = {}) {
+export function archonEnv({ home, bunDir, claudeBin, ghDir, nodeDir, extra = {}, baseEnv = process.env } = {}) {
   if (!home || !bunDir) throw new Error('archonEnv needs the scratch home and the Bun folder');
   const env = {};
   for (const name of KEPT) if (baseEnv[name] !== undefined) env[name] = baseEnv[name];
@@ -45,7 +45,6 @@ export function archonEnv({ home, bunDir, claudeBin, copilotBin, ghDir, nodeDir,
   env.PATH = [...dirs, ...SYSTEM_PATH].join(path.delimiter);
   env.ARCHON_HOME = home;
   if (claudeBin) env.CLAUDE_BIN_PATH = claudeBin;
-  if (copilotBin) env.COPILOT_BIN_PATH = copilotBin;
   return { ...env, ...extra, ...TELEMETRY };
 }
 

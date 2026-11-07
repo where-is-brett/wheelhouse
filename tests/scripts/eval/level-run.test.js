@@ -57,7 +57,6 @@ test('--level without the pins in the shell is refused in plain words, before an
   const run = async () => { calls.push('ran'); return {}; };
   await assert.rejects(main(['20', '--variant', 'with', '--level', 'lean'], { root: suite({ '20-a.js': scenarioSource(20) }), home: tempFolder('eval-home-'), print: quiet, run, env: {} }), new RegExp(`needs ${PINS_VARIABLE} set in the shell`));
   assert.deepEqual(calls, []);
-  await assert.rejects(main(['20', '--level', 'lean', '--agent', 'copilot'], { root: suite({ '20-a.js': scenarioSource(20) }), home: tempFolder('eval-home-'), print: quiet, run, env: pinsEnv }), /Claude Code/);
 });
 
 test('a level\'s run gives each trial the column, and its records name the level, the pins and each trial file\'s hash', async () => {

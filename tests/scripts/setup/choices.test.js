@@ -184,10 +184,6 @@ test('the recommended card names no build engine: setup installs Archon on no co
   assert.doesNotMatch(withTwo.card.question, /build engine|Archon/);
   assert.deepEqual(withTwo.card.options, without.card.options);
   assert.deepEqual(withTwo.choices, without.choices);
-  // Nor for a project on another agent, whatever line that agent gives.
-  const agentLine = 'Install the build engine, Archon, with its usage reporting off, to run its steps on another agent.';
-  const agent = oneCard({ folder: '/x/tide-tables', list: newProductChoices(), product, platform: 'darwin', toRun: [2, 3, 6, 7, 10], count: 0, agentLine });
-  assert.doesNotMatch(agent.card.question, /build engine/);
 });
 
 test('the backup question waits for where the project is kept, and comes once a local project says so', () => {

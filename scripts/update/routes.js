@@ -28,6 +28,7 @@ import { listEvents } from '../state/events.js';
 import { readEnrolled, verify } from '../state/signing.js';
 import { claudeHome as claudeHomeDir } from '../lineage/manifest.js';
 import { retiredInstalls } from './install.js';
+import { addonInstalled } from './addon.js';
 import { accountCatalogue } from './account-settings.js';
 import { runningVersion } from './board.js';
 import { releaseKind, updateMirror } from './change.js';
@@ -45,7 +46,6 @@ export const STOP_FIRST = 'Lift All stop first.';
 export const UNDER_WAY = 'An update is already under way on this computer.';
 export const NOT_SET_UP = 'Wheelhouse isn\'t set up on this folder, so there is nothing to update here. Set Wheelhouse up first.';
 export const FEATURE_REFUSAL = 'Updating Wheelhouse is the director\'s own command: run it in the project\'s main folder, not in a feature session.';
-export const LEAN_REFUSAL = 'This project runs at Lean, which updates by its own skill; ask for "update Wheelhouse" in the agent\'s chat.';
 export const NOT_THE_PLAN = 'That is not the plan on the card last shown. Ask for the plan again.';
 export const NO_SUCH_CARD = 'No card of the update has that name.';
 export const NOT_CLICKED = 'The director has not clicked Update on the card for this plan, so nothing was started. Show the card and wait for the click.';
@@ -72,7 +72,7 @@ const realOf = (folder) => {
 };
 
 // The project this folder is the main checkout of. A feature session's folder is a worktree inside it, which is refused,
-// and so is a folder in no project or in a Lean project. The folder is the caller's own account of where it runs: the helper
+// and so is a folder in no project. The folder is the caller's own account of where it runs: the helper
 // is reached over a local socket from a sandbox and has no way to tell which session is calling, so (as for the foreman's
 // commands) a caller that names another folder is believed. What stops a feature session starting an update is therefore not
 // this check but the director's signed click, which only the card shown in the director's own session earns.
@@ -82,7 +82,6 @@ function placeProject(folder) {
   if (real === null) refuse('the folder was not found');
   const found = projectForFolder(real);
   if (!found) refuse(NOT_SET_UP);
-  if (found.lean) refuse(LEAN_REFUSAL);
   const main = realOf(found.record.folder);
   const same = (a, b) => (process.platform === 'win32' || process.platform === 'darwin' ? a.toLowerCase() === b.toLowerCase() : a === b);
   if (main === null || !same(main, real)) refuse(FEATURE_REFUSAL);
@@ -166,7 +165,7 @@ function milestones(steps, tag) {
 export function updateRoutes({
   now = () => new Date(), stopped = () => false, updateHeld = updateLockHeld, from = runningVersion, userHome = os.homedir(),
   run = realRun, spawn = nodeSpawn, list, fetch, check, kind, locked, requirements, claudeVersion = async () => null, signed = signedByDefault, clicked = clickedByDefault,
-  startRunner, account, retired,
+  startRunner, account, retired, addon,
 } = {}) {
   const listing = list ?? (() => listReleases({ run }));
   const fetching = fetch ?? ((tag) => fetchTag({ ref: tag, run, mirror: updateMirror() }));
@@ -205,7 +204,10 @@ export function updateRoutes({
     });
     if (made.plan === undefined) return { ok: true, lines: made.lines };
     const removes = (retired ?? ((where) => retiredInstalls({ claudeHome: claudeHomeDir(), ...where })))({ projectDir: folder });
-    const planned = removes.length > 0 ? { ...made.plan, removes } : made.plan;
+    // Where VS Code lists the add-on, the card says the update removes it; the plan names it, so only that click removes it.
+    let addonHere = false;
+    try { addonHere = (await (addon ?? (() => addonInstalled({ run })))()) === true; } catch { addonHere = false; }
+    const planned = { ...made.plan, ...(removes.length > 0 ? { removes } : {}), ...(addonHere ? { addon: true } : {}) };
     const hash = hashOf(project, planned);
     const card = updateCard({ ...planned, hash });
     writeAtomic(planFile(project), { hash, project, folder, at: now().toISOString(), plan: planned, card });

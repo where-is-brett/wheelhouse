@@ -6,23 +6,27 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { withoutBom } from '../gate/guardrails.js';
 
-export const AGENTS = Object.freeze(['claude-code', 'copilot']);
-// The agents whose steps read Wheelhouse's own skill copies rather than the kits, so a project's hold goes by those
-// copies (Archon design, section 7.1).
-const READ_OWN_COPIES = Object.freeze(['copilot']);
-export const readsOwnCopies = (agent) => READ_OWN_COPIES.includes(agent);
+export const AGENTS = Object.freeze(['claude-code']);
+// The agents whose steps read Wheelhouse's own skill copies rather than the kits: none, now that Claude Code is the only agent.
+export const readsOwnCopies = () => false;
 
 const isMap = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
-// The agent this computer runs, from the `agents` map of a project's configuration ({ "<computer id>":
-// "copilot" }). No map, or no entry for the computer, gives 'claude-code'.
-export function agentOfConfig(config, { computerId: id } = {}) {
+// The agent a project runs: Claude Code, whatever the `agents` map of its configuration holds. A project that was
+// set to run on a parked agent keeps its map, which is read only by parkedAgentOf and is otherwise ignored.
+export function agentOfConfig() {
+  return 'claude-code';
+}
+
+// The name of a parked agent the configuration's `agents` map gives this computer (for example 'copilot'), or null.
+// Only the update reads it, to tell the director that agent is parked.
+export function parkedAgentOf(config, { computerId: id } = {}) {
   const agents = config?.agents;
   if (isMap(agents) && typeof id === 'string' && Object.hasOwn(agents, id)) {
     const name = agents[id];
-    if (typeof name === 'string' && name !== '') return name;
+    if (typeof name === 'string' && name !== '' && !AGENTS.includes(name)) return name;
   }
-  return 'claude-code';
+  return null;
 }
 
 // The configuration in a project's folder (`folder`'s .claude/wheelhouse.json), or null when it is missing or can't
@@ -51,8 +55,13 @@ export function agentsNamedAbove(folder) {
 // For a caller that holds no configuration from the default branch (setup). A missing or unreadable file gives
 // 'claude-code'. The waker and the foreman's start never use this: they take the agent from the default
 // branch's configuration, as they take the mode and the models, never from the working copy.
-export function agentOfProject(project, options = {}) {
-  return agentOfConfig(folderConfig(project), options);
+export function agentOfProject() {
+  return 'claude-code';
+}
+
+// The same for a folder's own configuration: the parked agent's name, or null.
+export function parkedAgentOfProject(project, options = {}) {
+  return parkedAgentOf(folderConfig(project), options);
 }
 
 // The agent the project in `folder` runs on this computer, as its working copy's configuration names it, or null

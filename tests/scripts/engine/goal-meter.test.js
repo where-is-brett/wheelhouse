@@ -155,7 +155,7 @@ test('a reset time that moves a little within one week is no reset', async () =>
   assert.equal((await meter({ reading: reading(41, '2026-11-01T11:50:00.000Z', '2026-11-03T00:00:30.000Z'), shareAtStart: atStart })).points, 1);
 });
 
-test('a Copilot project reads counted requests', async () => {
+test('a count of requests given to the meter is read', async () => {
   const got = await meter({ goal: goalOf({ tokens: 100, requests: 12 }), requests: 12 });
   assert.equal(got.requests, 12);
   assert.equal(got.reached, 'requests');

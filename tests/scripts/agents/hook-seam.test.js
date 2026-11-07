@@ -65,25 +65,6 @@ test('READ_TOOLS, HALT_TOOLS and NOTIFY_TOOLS keep their values', () => {
   assert.deepEqual([...tools.shell], ['Bash', 'PowerShell']);
 });
 
-// A Copilot-shaped input with no folder: the Copilot translation can't place it, so it is not translated.
-const COPILOT_SHAPED = { toolName: 'bash', sessionId: 's' };
-
-test('an input shaped like another agent\'s that its translation cannot read makes a guard refuse in that agent\'s shape', async () => {
-  let called = false;
-  const h = harness(COPILOT_SHAPED);
-  await hookMain(() => { called = true; }, { failClosed: true, event: 'PreToolUse' }, h.io);
-  assert.equal(called, false);
-  assert.deepEqual(h.out, [`${JSON.stringify(TRANSLATORS.copilot.translate.fromGuardAnswer(answer.deny('Wheelhouse\'s check could not run'), 'PreToolUse'))}\n`]);
-});
-
-test('an input shaped like another agent\'s that its translation cannot read makes an informing hook write nothing', async () => {
-  let called = false;
-  const h = harness(COPILOT_SHAPED);
-  await hookMain(() => { called = true; }, { failClosed: false, event: 'SessionStart' }, h.io);
-  assert.equal(called, false);
-  assert.deepEqual(h.out, []);
-});
-
 test('every agent has a kit translation, and it is the adapter\'s own', () => {
   for (const name of AGENTS) {
     assert.ok(Object.hasOwn(TRANSLATORS, name), `the kit has no translation for ${name}`);

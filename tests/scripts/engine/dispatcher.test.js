@@ -91,16 +91,6 @@ test('an overlapping piece holds for the clash', () => {
   assert.deepEqual(got.hold, [{ work: 'b', why: 'clash', by: ['a'] }]);
 });
 
-test('work that would use the plan\'s counted requests holds when the cap allows none', () => {
-  const work = Object.fromEntries([piece('a', { place: 0 }), piece('b', { place: 1 })]);
-  const requests = { counts: (id) => id === 'a', used: 0, cap: 0, confirmed: true };
-  const got = dispatch(base({ work, requests }));
-  assert.deepEqual(got.start.map((s) => s.work), ['b']);
-  assert.deepEqual(got.hold, [{ work: 'a', why: 'requests' }]);
-  assert.deepEqual(dispatch(base({ work, requests: { ...requests, cap: 50, confirmed: false } })).hold, [{ work: 'a', why: 'requests-unconfirmed' }]);
-  assert.equal(dispatch(base({ work, requests: { ...requests, cap: 50 } })).start.length, 2);
-});
-
 test('the merge queue starts when a pull request is newly ready, and again every 15 minutes while any wait', () => {
   assert.equal(dispatch(base({ mergeQueue: { running: false, lastStart: null, waiting: 1, newReady: true } })).startMergeQueue, true);
   const ago = (ms) => new Date(NOW.getTime() - ms).toISOString();

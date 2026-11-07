@@ -502,86 +502,6 @@ test('an answer Archon gave no reply to is unreachable, so it is tried again; on
   assert.equal(stale.unreachable, undefined);
 });
 
-test('a run whose models are all on Copilot starts the workflow\'s Copilot twin, and a run that mixes providers is refused', async () => {
-  const cli = fakeCli({ 'workflow run': json('run-detach.json') });
-  const engine = adapter(cli, { copilotProblem: () => null });
-  const all = { tiers: { small: 'copilot/auto', medium: 'copilot/auto', large: 'copilot/auto' } };
-  assert.equal((await engine.start({ work: 'card-14', lane: 'small', branch: 'b', bindings: all })).ok, true);
-  assert.deepEqual(cli.calls[0].args.slice(0, 3), ['workflow', 'run', 'wheelhouse-small-copilot']);
-  assert.equal((await engine.start({ work: 'card-14', lane: 'quick', branch: 'b' })).ok, true);
-  assert.deepEqual(cli.calls[1].args.slice(0, 3), ['workflow', 'run', 'wheelhouse-quick'], 'no bindings, the Claude form');
-  const mixed = await engine.start({ work: 'card-14', lane: 'quick', branch: 'b', bindings: { tiers: { small: 'copilot/auto', medium: 'claude-model', large: 'copilot/auto' } } });
-  assert.equal(mixed.ok, false);
-  assert.match(mixed.refused, /one provider/);
-  // A Copilot run binds every tier: an unbound one would fall back to Claude's own model.
-  const part = await engine.start({ work: 'card-14', lane: 'quick', branch: 'b', bindings: { tiers: { medium: 'copilot/auto' } } });
-  assert.equal(part.ok, false);
-  assert.match(part.refused, /every tier/);
-  assert.equal(cli.calls.length, 2);
-  // The merge queue is Archon's own workflow, with no twin, and is told the repository it merges in (check 81).
-  assert.equal((await engine.start({ lane: 'merge', bindings: all, repo: { host: 'github.com', path: 'o/p' } })).ok, true);
-  assert.deepEqual(cli.calls[2].args.slice(0, 3), ['workflow', 'run', 'archon-merge-queue']);
-  const inputs = cli.calls[2].args.flatMap((a, i, all) => (a === '--input' ? [all[i + 1]] : []));
-  assert.deepEqual(inputs, ['repo_host=github.com', 'repo_path=o/p']);
-  assert.equal(cli.calls[2].args.includes('--project'), false, 'started in no folder of its own, it binds no project');
-  // Started in Wheelhouse's own checkout, it is bound to the project the runs registered, named after its fetch mirror.
-  assert.equal((await engine.start({ lane: 'merge', project: '/engine/queues/o__p', repo: { host: 'github.com', path: 'o/p' } })).ok, true);
-  const bound = cli.calls[3].args;
-  assert.equal(bound[bound.indexOf('--cwd') + 1], '/engine/queues/o__p');
-  assert.equal(bound[bound.indexOf('--project') + 1], 'mirrors/o__p');
-  // With no repository, its first step would fail every time: nothing starts.
-  const bare = await engine.start({ lane: 'merge' });
-  assert.equal(bare.ok, false);
-  assert.match(bare.refused, /repository/);
-  assert.equal(cli.calls.length, 4);
-});
-
-test('a Copilot run doesn\'t start while Copilot\'s program or its clean home isn\'t in the engine as it should be: its guards would not stand', async () => {
-  const all = { tiers: { small: 'copilot/auto', medium: 'copilot/auto', large: 'copilot/auto' } };
-  // An engine folder with neither: refused, and Archon is never asked.
-  const cli = fakeCli({ 'workflow run': json('run-detach.json') });
-  const bare = adapter(cli, { engine: tempFolder('wh-archon-copilot-') });
-  const got = await bare.start({ work: 'card-14', lane: 'quick', branch: 'b', bindings: all });
-  assert.equal(got.ok, false);
-  assert.match(got.refused, /Copilot's command-line program isn't in the build engine's folder/);
-  assert.equal(cli.calls.length, 0);
-  // The program there but the home gone or stale: refused with the home's own reason.
-  const stale = adapter(cli, { copilotProblem: () => 'Wheelhouse\'s guards aren\'t registered in Copilot\'s clean home as they should be, so no Copilot step can start' });
-  assert.match((await stale.start({ work: 'card-14', lane: 'quick', branch: 'b', bindings: all })).refused, /guards aren't registered/);
-  assert.equal(cli.calls.length, 0);
-  // A Claude run never asks.
-  const claude = adapter(cli, { copilotProblem: () => assert.fail('not asked for a Claude run') });
-  assert.equal((await claude.start({ work: 'card-14', lane: 'quick', branch: 'b' })).ok, true);
-});
-
-test('a Copilot run says the level it ran at: the sandbox only while a test stands', async () => {
-  const cli = fakeCli({ 'workflow run': json('run-detach.json') });
-  const all = { tiers: { small: 'copilot/auto', medium: 'copilot/auto', large: 'copilot/auto' } };
-  const order = { work: 'card-14', lane: 'small', branch: 'b', bindings: all };
-  const held = await adapter(cli, { copilotProblem: () => null, copilotLevel: () => 'sandbox' }).start(order);
-  assert.equal(held.level, 'sandbox');
-  const open = await adapter(cli, { copilotProblem: () => null, copilotLevel: () => null }).start(order);
-  assert.equal(open.level, null);
-  // A Claude run says no level of Copilot's.
-  const claude = await adapter(cli, { copilotLevel: () => assert.fail('not asked for a Claude run') }).start({ work: 'card-14', lane: 'quick', branch: 'b' });
-  assert.equal('level' in claude, false);
-});
-
-test('a Copilot run doesn\'t start on an engine built without the Copilot patch: the SDK\'s own runtime would run, not the pinned program', async () => {
-  const { copilotEngineProblem } = await import('../../../../scripts/engine/archon/adapter.js');
-  const { CLI_PATCH_MARK } = await import('../../../../scripts/engine/archon/build.js');
-  const { copilotCliPaths } = await import('../../../../scripts/engine/archon/copilot-cli.js');
-  const engine = builtEngine();
-  const { bin } = copilotCliPaths(engine);
-  fs.mkdirSync(path.dirname(bin), { recursive: true });
-  fs.writeFileSync(bin, 'copilot', { mode: 0o755 });
-  const resolver = enginePaths(engine).cliResolver;
-  fs.mkdirSync(path.dirname(resolver), { recursive: true });
-  fs.writeFileSync(resolver, '  if (!BUNDLED_IS_BINARY) return undefined;\n');
-  assert.match(copilotEngineProblem(engine), /built before Wheelhouse's Copilot patch/);
-  fs.writeFileSync(resolver, `  // ${CLI_PATCH_MARK}\n  if (!BUNDLED_IS_BINARY && !process.env.COPILOT_BIN_PATH) return undefined;\n`);
-  assert.doesNotMatch(copilotEngineProblem(engine) ?? '', /Copilot patch/, 'past the patch, the clean home is what is checked next');
-});
 
 // What the merge queue's record step asked, as Archon keeps it.
 const recordOutput = (asked) => ({ 'workflow get': { code: 0, json: { ok: true, events: [{ event_type: 'node_completed', step_name: 'record', data: { node_output: JSON.stringify({ merged: [], summary: '', attention: 'a', options: [], class: 'pr', asked }) } }] }, stdout: '', stderr: '' } });
@@ -642,26 +562,6 @@ test('queueRuns lists the live merge-queue runs in the project\'s queue folder, 
 
 test('queueRuns gives null when the engine can\'t list its runs', async () => {
   assert.equal(await adapter(fakeCli({ 'workflow status': { code: 1, json: null, stdout: '', stderr: 'locked' } })).queueRuns({ folder: '/q' }), null);
-});
-
-test('a run on Copilot names the agent whose steps read Wheelhouse\'s own copies; a Claude run names none', () => {
-  const engine = adapter(fakeCli({}));
-  const tiers = (model) => ({ tiers: { small: model, medium: model, large: model } });
-  assert.equal(engine.stepAgent(tiers('copilot/auto')), 'copilot');
-  assert.equal(engine.stepAgent(tiers('claude-big')), null);
-  assert.equal(engine.stepAgent({ tiers: { small: 'copilot/auto', medium: 'claude-big', large: 'claude-big' } }), null, 'a mixed run starts nothing');
-  assert.equal(engine.stepAgent(undefined), null);
-});
-
-test('the meter\'s file is one for the account signed in to the engine\'s clean home', () => {
-  const engine = tempFolder('wh-archon-meter-');
-  const unknown = adapter(fakeCli({}), { engine }).requestsFile();
-  const home = path.join(engine, 'copilot', 'home');
-  fs.mkdirSync(home, { recursive: true });
-  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ lastLoggedInUser: { host: 'https://github.com', login: 'ann' } }));
-  const ann = adapter(fakeCli({}), { engine }).requestsFile();
-  assert.notEqual(ann, unknown);
-  assert.equal(path.dirname(ann), path.join(engine, 'requests'));
 });
 
 test('a reader runs in place in its own folder, with its card and no branch or work', async () => {

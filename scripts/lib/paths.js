@@ -87,7 +87,7 @@ export function stateDir(project) {
   return path.join(projectFolder(project), 'record');
 }
 
-// Where Wheelhouse v0.1.x kept the project's state: a clone of the state branch, or a Lean project's
+// Where Wheelhouse v0.1.x kept the project's state: a clone of the state branch, or a project's
 // own repository. Read only by the import (scripts/state/import.js), never written or removed.
 export function oldStateDir(project) {
   return path.join(projectFolder(project), 'state');

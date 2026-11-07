@@ -1,6 +1,6 @@
 // scripts/lib/local-git.js
-// What a project's own commands run in on this computer, shared by a Lean project's merge and the check runner, and the
-// git steps shared by Lean's store and a project's home.
+// What a project's own commands run in on this computer, shared by the check runner and a project's home, and the
+// git steps of a project's home.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -27,7 +27,7 @@ export function shellFor(command, { platform = process.platform, env = process.e
 }
 
 // --- git on a repository only the helper writes ---
-// Lifted from Lean's store (spec 5.1), so the home of a project in git alone shares it. Each step takes the repository and
+// The home of a project in git alone shares these. Each step takes the repository and
 // the branch in place of a project and `main`, and refuses with a code: the caller keeps its own words for each.
 
 // The longest a change waits for another.

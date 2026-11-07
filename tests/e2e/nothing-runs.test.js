@@ -1,14 +1,14 @@
 // tests/e2e/nothing-runs.test.js
 // When nothing can run, the director is told (delegated decisions plan, invariant 6), on the fake engine: a start refused,
-// a red main line with no test command, a merge queue that can't start, and work held for the plan's counted requests.
+// a red main line with no test command, and a merge queue that can't start.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { wayBack, quiet, forever } from '../helpers/way-back.js';
 import { redMainIncident } from '../../scripts/engine/fix-main.js';
-import { TRY_AGAIN, STOP_HERE, LEAVE_IT, KEEP_OFF, ALLOW_SOME, FIX_FORWARD, LEAVE_RED, REFUSED_RETRY_MS, QUEUE_FAULT_MS } from '../../scripts/engine/dispatch-run.js';
-import { REQUESTS_UNCONFIRMED_WORDS, startRefusedWords, startCardWords, QUEUE_PASSED_WORDS, cutOffStoppedWords, unmarkedPrWords } from '../../scripts/engine/words.js';
+import { TRY_AGAIN, STOP_HERE, LEAVE_IT, FIX_FORWARD, LEAVE_RED, REFUSED_RETRY_MS, QUEUE_FAULT_MS } from '../../scripts/engine/dispatch-run.js';
+import { startRefusedWords, startCardWords, QUEUE_PASSED_WORDS, cutOffStoppedWords, unmarkedPrWords } from '../../scripts/engine/words.js';
 
 const MINUTE = 60 * 1000;
 const ended = (over) => { const run = quiet(); run[1] = { ...run[1], ...over }; return run; };
@@ -287,125 +287,6 @@ test('Try again on the queue\'s card gives the fault its time again; Leave it as
   assert.equal(w.cards().length, 2);
 });
 
-// --- Work held for the plan's counted requests ---
-
-function counted({ confirmed, cap = 0, recordings }) {
-  const settings = { capRequests: cap };
-  const w = wayBack({ recordings, pace: 2, settings });
-  w.engine.countsRequests = () => true;
-  w.engine.requestsConfirmed = confirmed;
-  return { w, settings };
-}
-
-test('a later hold on requests brings a card of its own, in words that fit the cap', async () => {
-  const { w, settings } = counted({ confirmed: true, recordings: { a: quiet(), b: quiet() } });
-  w.put('a', { place: 0 });
-  await w.tick(3);
-  assert.deepEqual(labels(w.cardOf('a')), [KEEP_OFF, ALLOW_SOME]);
-  w.answer('a', ALLOW_SOME);
-  settings.capRequests = 5;
-  await w.tick(3);
-  assert.equal(w.runsOf('a').length, 1);
-  assert.equal(openCards(w).length, 0);
-  settings.capRequests = 0;
-  w.put('b', { place: 1 });
-  await w.tick(3);
-  assert.equal(w.cards().length, 2);
-  assert.equal(w.cardOf('b').work, 'b');
-});
-
-test('requests held at the cap after Allow some: a new card, and the words say the cap', async () => {
-  let used = 0;
-  const settings = { capRequests: 0 };
-  const w = wayBack({ recordings: { a: quiet(), b: quiet() }, pace: 2, settings, dispatchExtra: { spentThisMonth: () => used } });
-  w.engine.countsRequests = () => true;
-  w.engine.requestsConfirmed = true;
-  w.put('a', { place: 0 });
-  await w.tick(3);
-  w.answer('a', ALLOW_SOME);
-  settings.capRequests = 5;
-  await w.tick(3);
-  used = 5;
-  w.put('b', { place: 1 });
-  await w.tick(5);
-  assert.equal(w.cards().length, 2);
-  const card = openCards(w)[0];
-  assert.equal(card.work, 'b');
-  assert.match(card.what, /5/);
-});
-
-test('Keep it off stays heard while the same hold goes on', async () => {
-  const { w } = counted({ confirmed: true, recordings: { a: quiet(), b: quiet() } });
-  w.put('a', { place: 0 });
-  await w.tick(3);
-  w.answer('a', KEEP_OFF);
-  await w.tick(5);
-  w.put('b', { place: 1 });
-  await w.tick(5);
-  assert.equal(w.cards().length, 1);
-});
-
-test('All stop ends no hold, so no second card follows it', async () => {
-  const { w } = counted({ confirmed: true, recordings: { a: quiet() } });
-  w.put('a');
-  await w.tick(3);
-  w.answer('a', KEEP_OFF);
-  await w.tick(2);
-  w.stop = true;
-  await w.tick(2);
-  w.stop = false;
-  await w.tick(3);
-  assert.equal(w.cards().length, 1);
-});
-
-test('with the count unconfirmed the card promises nothing a cap can do, and a cap brings no second card', async () => {
-  const { w, settings } = counted({ confirmed: false, recordings: { a: quiet() } });
-  w.put('a');
-  await w.tick(3);
-  const card = w.cardOf('a');
-  assert.ok(!labels(card).includes(ALLOW_SOME));
-  assert.deepEqual(labels(card), [KEEP_OFF, STOP_HERE]);
-  assert.doesNotMatch(card.what, /until you allow/);
-  settings.capRequests = 50;
-  await w.tick(5);
-  assert.equal(w.cards().length, 1);
-  assert.equal(w.starts.length, 0);
-});
-
-test('the engine\'s own words go on the unconfirmed card', async () => {
-  const { w } = counted({ confirmed: false, recordings: { a: quiet() } });
-  w.engine.words = { requestsUnconfirmed: 'In the engine\'s own words.' };
-  w.put('a');
-  await w.tick(2);
-  assert.equal(w.cardOf('a').what, 'In the engine\'s own words.');
-});
-
-test('Stop here with the count unconfirmed ends the work held', async () => {
-  const { w } = counted({ confirmed: false, recordings: { a: quiet(), b: quiet() } });
-  w.put('a', { place: 0 });
-  w.put('b', { place: 1 });
-  await w.tick(3);
-  w.answer('a', STOP_HERE);
-  await w.tick(3);
-  assert.equal(w.reports.a.data.outcome, 'closed');
-  assert.equal(w.reports.b.data.outcome, 'closed');
-  assert.equal(w.starts.length, 0);
-  assert.equal(w.written.filter((x) => x.kind === 'report').length, 2);
-});
-
-test('the count confirmed later brings a card that can be acted on', async () => {
-  const { w } = counted({ confirmed: false, recordings: { a: quiet() } });
-  w.put('a');
-  await w.tick(3);
-  w.answer('a', KEEP_OFF);
-  w.engine.requestsConfirmed = true;
-  await w.tick(3);
-  assert.equal(w.cards().length, 2);
-  assert.deepEqual(labels(openCards(w)[0]), [KEEP_OFF, ALLOW_SOME]);
-});
-
-// --- A pull request nothing marked ready ---
-
 test('a finished slice\'s pull request never marked ready gets a Logbook line, once, when other work waits for its place', async () => {
   const w = wayBack({ recordings: { f: ended({ pr: 7 }), b: quiet() }, pace: 1, designOf: slices });
   w.put('f', { lane: 'feature', place: 0 });
@@ -434,34 +315,6 @@ test('a refused piece on its card keeps no other work off its files', async () =
   w.put('b', { place: 1, files: ['one.js'] });
   await w.tick(3);
   assert.equal(w.runsOf('b').length, 1);
-});
-
-test('a card from the version before, whatever its answer, doesn\'t stand for an unconfirmed count', async () => {
-  for (const answer of [ALLOW_SOME, null]) {
-    const { w } = counted({ confirmed: false, recordings: { a: quiet() } });
-    w.put('a');
-    fs.writeFileSync(path.join(w.dir, 'dispatch.json'), JSON.stringify({ requestsAsked: 'q-a-90000' }));
-    w.questions['q-a-90000'] = { question: { data: { id: 'q-a-90000', work: 'a', what: 'old', options: [] } }, ...(answer ? { answer: { label: answer } } : {}) };
-    w.restart();
-    await w.tick(3);
-    assert.equal(w.cards().length, 1, 'one new card');
-    assert.equal(w.cards()[0].what, REQUESTS_UNCONFIRMED_WORDS);
-  }
-});
-
-test('a cap changed under an open card brings a card with the true words', async () => {
-  let used = 0;
-  const settings = { capRequests: 0 };
-  const w = wayBack({ recordings: { a: quiet() }, pace: 2, settings, dispatchExtra: { spentThisMonth: () => used } });
-  w.engine.countsRequests = () => true;
-  w.engine.requestsConfirmed = true;
-  w.put('a');
-  await w.tick(2);
-  settings.capRequests = 5;
-  used = 5;
-  await w.tick(3);
-  assert.equal(w.cards().length, 2);
-  assert.match(w.cards()[1].what, /cap of 5/);
 });
 
 test('the last ready pull request leaving is no sign the queue can start', async () => {

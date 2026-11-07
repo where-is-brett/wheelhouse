@@ -33,9 +33,9 @@ test('readRecord reads reported spend from each step, and skips steps that only 
 test('readRecord marks unavailable cost as unknown with null dollars', () => {
   const { steps, totals } = readRecord(fixture());
   const review = steps.find((s) => s.id === 'review');
-  // A Copilot step: no cost reported, its request counted as an estimate.
-  assert.equal(review.source, 'estimated');
-  assert.equal(review.requests, 0.25);
+  // A step with no cost reported: its dollars are unknown, and it counts no request.
+  assert.equal(review.source, 'unknown');
+  assert.equal(review.requests, 0);
   assert.equal(review.dollars, null);
   assert.equal(review.tokens, 20800);
   assert.equal(review.model, 'model-review');
@@ -44,10 +44,10 @@ test('readRecord marks unavailable cost as unknown with null dollars', () => {
   assert.deepEqual(totals, { dollars: 0.1285, tokens: null });
 });
 
-test('a cancelled Copilot step counts its prompt with its spend unknown, and a step with no provider on record counts nothing it can\'t know', () => {
+test('a cancelled step has its spend unknown, and a step with no provider on record counts nothing it can\'t know', () => {
   const node = (provider) => ({ nodeId: 'build', execution: { binding: { provider, model: { requested: 'auto' } }, spend: { tokens: { source: 'unavailable', reason: 'cancelled' }, costUsd: { source: 'unavailable', reason: 'cancelled' } } } });
-  const { steps } = readRecord({ status: 'cancelled', nodes: [node('copilot'), node('claude'), node(undefined)] });
-  assert.deepEqual(steps.map((s) => [s.source, s.requests]), [['unknown', 0.25], ['unknown', 0], ['unknown', null]]);
+  const { steps } = readRecord({ status: 'cancelled', nodes: [node('claude'), node(undefined)] });
+  assert.deepEqual(steps.map((s) => [s.source, s.requests]), [['unknown', 0], ['unknown', null]]);
 });
 
 test('readRecord maps the run states the engine reports', () => {
@@ -138,18 +138,9 @@ test('a provider that reports no cache keeps its whole figure, and a run with no
     metadata: { total_tokens_in: 900, total_tokens_out: 100 },
     nodes: [{
       nodeId: 'implement',
-      execution: { accounting: 'node', binding: { provider: 'copilot' }, timing: {}, spend: { tokens: { source: 'provider', value: { input: 900, output: 100 } } } },
+      execution: { accounting: 'node', binding: { provider: 'claude' }, timing: {}, spend: { tokens: { source: 'provider', value: { input: 900, output: 100 } } } },
     }],
   });
   assert.equal(steps[0].tokens, 1000);
   assert.equal(totals.tokens, 1000);
-});
-
-test('a Copilot step counts each prompt it sent as a quarter of an AI credit at the Auto rate, as an estimate (checks 74, 79)', () => {
-  const copilot = (attempt) => ({
-    nodeId: 'implement',
-    execution: { accounting: 'node', attempt: { id: attempt }, binding: { provider: 'copilot', model: { requested: 'auto' } }, timing: {}, spend: { tokens: { source: 'provider', value: { input: 1000, output: 200 } }, costUsd: { source: 'unavailable', reason: 'not_reported' } } },
-  });
-  const { steps } = readRecord({ status: 'completed', metadata: {}, nodes: [copilot('a1'), copilot('a2')] });
-  assert.deepEqual(steps.map((s) => [s.requests, s.dollars, s.source]), [[0.25, null, 'estimated'], [0.25, null, 'estimated']]);
 });

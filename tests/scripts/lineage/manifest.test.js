@@ -7,7 +7,6 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { CLAUDE_CODE_FLOOR } from '../../../scripts/lib/build-loop.js';
 import { skillCopyNames } from '../../../scripts/lineage/copies.js';
-import { COPILOT_VERSION } from '../../../scripts/lib/copilot-numbers.js';
 import {
   MANIFEST_PATH, MODELS, UPSTREAMS, buildManifest, checkInstalled, claudeHome, fetchUpstream, locateInstalled, readManifest, verifyManifest, writeManifest,
 } from '../../../scripts/lineage/manifest.js';
@@ -66,7 +65,7 @@ test('the manifest names each upstream folder and file with its fingerprint, and
     copies: manifest.copies,
     claudeCode: { floor: CLAUDE_CODE_FLOOR },
     node: { floor: '22.0.0' },
-    agents: { copilot: { cli: COPILOT_VERSION } },
+    agents: {},
     models: MODELS,
   });
   assert.equal(CLAUDE_CODE_FLOOR, '2.1.299');

@@ -16,13 +16,9 @@
 // Setup writes it. The helper reads it: the lock's and the mirror's repository comes from
 // here, never from a request.
 //
-// A Lean project has no host, so no project.json: its record is lean.json beside where project.json
-// would be (scripts/lean/project.js). readProject and registeredProjects never read it;
-// projectForFolder does, so a Lean folder is placed.
 import fs from 'node:fs';
 import path from 'node:path';
 import { stateDir, projectsDir } from './paths.js';
-import { readLean } from '../lean/project.js';
 
 const REPO = /^[A-Za-z0-9_.][A-Za-z0-9_.-]*(\/[A-Za-z0-9_.][A-Za-z0-9_.-]*)+$/;
 const caseBlind = process.platform === 'win32' || process.platform === 'darwin';
@@ -94,7 +90,7 @@ export function readProject(project) {
 export function namesOf(project) {
   let record = null;
   try {
-    record = readProject(project) ?? readLean(project);
+    record = readProject(project);
   } catch {
     return [];
   }
@@ -161,8 +157,7 @@ const keyOf = (p) => (caseBlind ? p.toLowerCase() : p);
 
 // The project whose folder contains `folder` (real paths, so a link or a
 // different spelling is followed; case is ignored where the system ignores it).
-// The nearest folder wins when projects nest. A Lean project (no project.json, a lean.json) is
-// `{ project, record: { folder }, lean: true }`; where both records are there, project.json's wins.
+// The nearest folder wins when projects nest.
 export function projectForFolder(folder) {
   if (typeof folder !== 'string' || folder === '') return null;
   const target = realPath(folder);
@@ -176,22 +171,16 @@ export function projectForFolder(folder) {
   }
   let best = null;
   for (const project of names) {
-    let record = readProject(project);
-    let lean = false;
-    if (!record) {
-      const leanRecord = readLean(project);
-      if (!leanRecord) continue;
-      record = { folder: leanRecord.folder };
-      lean = true;
-    }
+    const record = readProject(project);
+    if (!record) continue;
     const root = realPath(record.folder);
     if (root === null) continue;
     const base = keyOf(root);
     const contains = inside === base || inside.startsWith(base.endsWith(path.sep) ? base : base + path.sep);
-    if (contains && (best === null || base.length > best.length)) best = { project, record, lean, length: base.length };
+    if (contains && (best === null || base.length > best.length)) best = { project, record, length: base.length };
   }
   if (!best) return null;
-  return best.lean ? { project: best.project, record: best.record, lean: true } : { project: best.project, record: best.record };
+  return { project: best.project, record: best.record };
 }
 
 // Whether `dir` is `folder` or inside it (real paths; case is ignored where the system ignores it).

@@ -35,7 +35,6 @@ test('every setting in design section 14 is in the catalogue, with its default',
     cardsPerDay: ['project', 3],
     capMinutes: ['project', { quick: 20, small: 60, slice: 120, bug: 30 }],
     capTokens: ['project', { quick: 1000000, small: 4000000, slice: 10000000, bug: 2000000 }],
-    capRequests: ['project', 0],
     bundleApprovals: ['project', false],
     blindCards: ['project', true],
     engineRoom: ['project', false],
@@ -163,9 +162,6 @@ test('the caps take positive whole numbers for each kind of work and nothing els
   assert.throws(() => checkSetting('capMinutes', { quick: 20, small: 60, slice: 120 }), /capMinutes can't be/);
   assert.throws(() => checkSetting('capTokens', { quick: 1, small: 2, slice: 3, bug: 4, feature: 5 }), /capTokens can't be/);
   assert.throws(() => checkSetting('capTokens', { quick: 1.5, small: 2, slice: 3, bug: 4 }), /capTokens can't be/);
-  assert.doesNotThrow(() => checkSetting('capRequests', 50));
-  assert.throws(() => checkSetting('capRequests', -1), /capRequests can't be/);
-  assert.throws(() => checkSetting('capRequests', 2.5), /capRequests can't be/);
   assert.throws(() => checkSetting('bundleApprovals', 'yes'), /bundleApprovals can't be yes/);
   assert.throws(() => checkSetting('engineRoom', 1), /engineRoom can't be 1/);
 });
@@ -183,11 +179,12 @@ const LISTS = {
   RETIRED_PATTERNS: Object.freeze([{ pattern: /^known:[a-z0-9-]{1,40}$/, piece: 'delegation' }]),
 };
 
-test('the shipped retired lists are frozen and start empty', () => {
+test('the shipped retired lists are frozen and hold what has been lifted out', () => {
   assert.ok(Object.isFrozen(RETIRED));
   assert.ok(Object.isFrozen(RETIRED_PATTERNS));
-  assert.deepEqual(RETIRED, {});
+  assert.deepEqual(RETIRED, { capRequests: 'copilot' });
   assert.deepEqual(RETIRED_PATTERNS, []);
+  assert.equal(retiredPiece('capRequests'), 'copilot');
   assert.equal(retiredPiece('presence'), undefined);
   assert.equal(retiredPiece(42), undefined);
 });
@@ -222,4 +219,14 @@ test('a retired key wins over a live entry of the same name', () => {
   const lists = { RETIRED: Object.freeze({ presence: 'x' }), RETIRED_PATTERNS: Object.freeze([]) };
   assert.equal(definitionOf('presence', lists).retired, true);
   assert.doesNotThrow(() => checkSetting('presence', 'whatever', undefined, lists));
+});
+
+test('capRequests is retired: any value is accepted, and it is no live setting', () => {
+  assert.equal(Object.hasOwn(SETTINGS, 'capRequests'), false);
+  for (const value of [50, -1, 2.5, 'x', null]) {
+    assert.doesNotThrow(() => checkSetting('capRequests', value));
+    assert.equal(isAllowed('capRequests', value), true);
+  }
+  assert.equal(definitionOf('capRequests').retired, true);
+  assert.equal(definitionOf('capRequests').piece, 'copilot');
 });

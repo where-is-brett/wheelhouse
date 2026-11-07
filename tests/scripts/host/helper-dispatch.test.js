@@ -367,7 +367,7 @@ test('an agent written before this part is loaded again once when the helper sta
   try {
     await as(p.home, async () => {
       const user = shortHome();
-      const entry = loginEntry({ platform: 'darwin', node: '/opt/node', root: '/opt/wheelhouse', script: 'scripts/agents/copilot/start-helper.js', home: user });
+      const entry = loginEntry({ platform: 'darwin', node: '/opt/node', root: '/opt/wheelhouse', script: 'scripts/host/start-helper.js', home: user });
       const older = { ...entry, content: entry.content.replace('  <key>StartInterval</key>\n  <integer>60</integer>\n', '') };
       await installLoginStart({ entry: older, run });
       calls.length = 0;

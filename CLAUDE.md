@@ -14,7 +14,7 @@ Wheelhouse is a Claude Code plugin: skills, agents, hooks, scripts and a mod. It
 
 - **Built, and released by tag.** The design is approved; its rulings are in section 22 of the design. New work follows a build plan (`superpowers:writing-plans`) or comes through Wheelhouse's own intake.
 - **The repository is public.** Wheelhouse's records (its state, cards, briefs, the board and transcripts) never go into it, and nor does anything about the director's other projects.
-- **Testing.** Run the test files a change touches. The whole suite (`npm test`) takes about 40 minutes on the Mac and runs under two git setups, so leave it to CI unless a change touches many parts. A change under `vscode/` or to the scripts the add-on carries changes the `.vsix`'s hash, so run `node scripts/addon/hash.js --write` and commit the result, or CI's check fails.
+- **Testing.** Run the test files a change touches. The whole suite (`npm test`) takes about 40 minutes on the Mac and runs under two git setups, so leave it to CI unless a change touches many parts.
 - **Each project stays separate.** The first project Wheelhouse will be used on keeps its own rules in its own repository, not here.
 
 ## Conventions

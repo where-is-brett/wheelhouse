@@ -323,17 +323,20 @@ test('missing or malformed flags fail safe and nothing throws', async () => {
   });
 });
 
-// The add-on's button (design for other agents, section 6.3): a signed approval naming the proof add-on counts for a
-// project with real users where that proof is taken, and a signed approval naming none does not.
-test('a signed approval naming the proof add-on counts for a project with real users', () => withHome(() => {
-  const add = makeEvent({ kind: 'approval', data: { pr: 7, commit: SHA, proof: 'add-on' } });
+// The window's click: a signed approval naming the proof window counts for a project with real users where that
+// proof is taken, and a signed approval naming none does not.
+test('a signed approval naming the proof window counts for a project with real users', () => withHome(() => {
+  const added = makeEvent({ kind: 'approval', data: { pr: 7, commit: SHA, proof: 'window' } });
   const plain = approval();
-  const taken = { approvalRequired: true, realUsers: true, approvalProofs: ['add-on', 'chat-click'] };
-  assert.equal(gateDecision(input({ ...taken, approval: add })).allow, true);
+  const taken = { approvalRequired: true, realUsers: true, approvalProofs: ['window', 'chat-click'] };
+  assert.equal(gateDecision(input({ ...taken, approval: added })).allow, true);
   assert.equal(gateDecision(input({ ...taken, approval: plain })).allow, false);
   // A chat click never stands in for it.
   const click = { kind: 'card-answer', data: { label: 'Approve', commit: SHA, proof: 'chat-click' } };
   assert.equal(gateDecision(input({ ...taken, approval: click })).allow, false);
+  // A click recorded under a proof no longer taken counts for nothing.
+  const gone = { kind: 'card-answer', data: { label: 'Approve', commit: SHA, proof: 'hook-click' } };
+  assert.equal(gateDecision(input({ approvalRequired: true, approvalProofs: ['chat-click'], approval: gone })).allow, false);
 }));
 
 test('a review whose findings are all minor counts; a blocking one, or one that does not say, does not', async () => {

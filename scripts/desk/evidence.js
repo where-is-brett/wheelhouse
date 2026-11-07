@@ -19,9 +19,8 @@ import { computerId } from '../lib/paths.js';
 
 export const CLIENT_WINDOW_MS = 5 * 60 * 1000;
 export const EVIDENCE_FORMS = Object.freeze(['signed', 'window', 'chat-click', 'client']);
-// The cards a click in the chat may decide, which the helper's own route checks again: a merge
-// card, and a guardrail card at Lean.
-const CHAT_DECIDES = /^(?:merge|guardrail)-/;
+// The cards a click in the chat may decide, which the helper's own route checks again: a merge card.
+const CHAT_DECIDES = /^merge-/;
 const CARD_COMMANDS = ['answer', 'suggest', 'not-now'];
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);

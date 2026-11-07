@@ -14,15 +14,17 @@ import { readHelperRecord } from '../host/helper-record.js';
 import { MARKETPLACE, claudeHome as defaultClaudeHome } from '../lineage/manifest.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { compareVersions } from '../lib/versions.js';
-import { helperAddress, jobFolder, stateDir, wheelhouseHome } from '../lib/paths.js';
+import { computerId, helperAddress, jobFolder, stateDir, wheelhouseHome } from '../lib/paths.js';
 import { registeredProjects } from '../lib/projects.js';
 import { run as defaultRun } from '../lib/run.js';
 import { fileHash, recordUpdate } from '../health/own-files.js';
 import {
   RESTART_LINE, defaultCacheRoot, findByAddress, pidAlive, proveRecorded, reprove, stopProved, waitForQuiet,
 } from './old-helper.js';
-import { refreshAgentHome } from '../agents/refresh-home.js';
+import { planNamedAddon, removeAddon } from './addon.js';
+import { parkedAgentOfProject } from '../agents/names.js';
 import { openJournal, updateLockHeld } from './journal.js';
+import { raiseParked } from './parked.js';
 import { verify, readEnrolled } from '../state/signing.js';
 import { listEvents } from '../state/events.js';
 import { startWatcher, stopWatcher, watcherRunning } from '../foreman/start.js';
@@ -41,7 +43,6 @@ export const ASK_AGAIN_MS = 10 * 1000;
 export const NEW_HELPER_MS = 20 * 1000;
 export const WAITING_LINE = 'Waiting for the old helper to finish what it\'s doing';
 export const ASKING_LINE = 'Waiting for your answer about the old helper.';
-export const ADDON_LINE = 'This release carries a newer VS Code add-on. Install it by hand in VS Code.';
 export const FOREMAN_LINE = 'Restart the foreman\'s terminal session so it runs the new version.';
 export const NOT_RUNNING_LINE = 'The new helper did not answer yet. It starts with the next session.';
 
@@ -127,7 +128,7 @@ export function helperCard({ kind, version, canStop, id }) {
 
 // The refreshes of section 6.5, as the seams a real run uses. Each gives null when it does not apply here, { ok: true,
 // wrote: [files] } when it made them, or { ok: false, line } for what is left.
-export function realRefreshes({ project, folder, newRoot, claudeHome, platform, lockedDir, run = defaultRun, address = helperAddress({ platform }), writeHome }) {
+export function realRefreshes({ project, folder, newRoot, claudeHome, platform, lockedDir, run = defaultRun, address = helperAddress({ platform }) }) {
   return {
     async local() {
       if (typeof folder !== 'string') return null;
@@ -154,9 +155,6 @@ export function realRefreshes({ project, folder, newRoot, claudeHome, platform, 
       if (!named) return null;
       const got = await updateLocked({ project: named.project, platform, run, dir, address });
       return /^Locked is up to date/.test(String(got?.line)) ? { ok: true, wrote: [] } : { ok: false, line: `Locked was not brought up to date: ${got?.line ?? 'no reason given'}.` };
-    },
-    async agent() {
-      return refreshAgentHome({ folder, newRoot, writeHome });
     },
   };
 }
@@ -242,7 +240,7 @@ export async function finish({
   project, journal, answer = null, events, enrolled, newRoot = PLUGIN_ROOT, folder, claudeHome = defaultClaudeHome(), platform = process.platform,
   to, from, client = helperClient(), refresh, old, say = () => {}, now = Date.now, sleep = pause, startHelper, hash = fileHash, record = recordUpdate,
   readRecord = readHelperRecord, startTimeOf = processStartTime, alive = pidAlive, address = helperAddress({ platform }), run = defaultRun,
-  user, cacheRoot = defaultCacheRoot(), kill, watcher, shape, addonNewer, heldNow = updateLockHeld, move = realMove,
+  user, cacheRoot = defaultCacheRoot(), kill, watcher, shape, heldNow = updateLockHeld, move = realMove, addon = realAddon, parked = realParked,
 }) {
   // Only the job's own step runs this: the update lock is held and the journal has the finish step running. It never takes
   // the lock itself, and it runs only from the plugin cache folder of the tag the journal names.
@@ -264,7 +262,7 @@ export async function finish({
 
     // 1. The refreshes of section 6.5.
     const fresh = [];
-    for (const name of ['local', 'locked', 'agent']) {
+    for (const name of ['local', 'locked']) {
       if (progress.refreshed[name] === 'done') continue;
       let got;
       try { got = await refreshes[name](); } catch (error) { got = { ok: false, line: String(error?.message ?? error).replace(/\s+/g, ' ') }; }
@@ -321,6 +319,15 @@ export async function finish({
       if (moved && moved.done !== true) left.push(...moved.lines);
     }
 
+    // 3c. The pieces parked in the core cut, once the new helper is up: the VS Code add-on, removed only where the card the
+    // director clicked named it, and the card about a parked agent. They inform: a line each, never a stop for the update.
+    const said = [];
+    if (handing.done) {
+      for (const step of [addon, parked]) {
+        try { said.push(...((await step({ project, folder: dir, journal, progress, save, client, run, platform }))?.lines ?? [])); } catch { /* it informs */ }
+      }
+    }
+
     // 4. The watcher, restarted from the new folder, only through stopWatcher and startWatcher.
     const lines = [];
     if (handing.done && handing.stays !== true && progress.watcher !== 'done') {
@@ -340,14 +347,23 @@ export async function finish({
     lines.push(`Wheelhouse ${version} is installed. Start a new session on this folder to use it.`);
     if (handing.line) lines.push(handing.line);
     if (moved?.done === true) lines.push(...moved.lines);
-    let newer = false;
-    try { newer = (await addonNewer?.()) === true; } catch { newer = false; }
-    if (newer) lines.push(ADDON_LINE);
+    lines.push(...said);
     let two = false;
     try { two = (await (shape ? shape() : defaultShape(project, client))) === 2; } catch { two = false; }
     if (two) lines.push(FOREMAN_LINE);
     return { ok: true, line: lines.join(' ') };
   }
+}
+
+// The add-on's removal, for a plan whose card named it; null when it did not.
+async function realAddon({ journal, progress, save, run, platform }) {
+  if (!planNamedAddon(journal)) return null;
+  return removeAddon({ run, platform, progress, save });
+}
+
+// The card about a parked agent, for the project's folder, with the real state.
+function realParked({ project, folder, client, progress, save }) {
+  return raiseParked({ project, folder, client, progress, save, parked: (where) => parkedAgentOfProject(where, { computerId: computerId() }) });
 }
 
 // The move off Archon with the real helper, settings and connector. Archon's connector is built only for a project that

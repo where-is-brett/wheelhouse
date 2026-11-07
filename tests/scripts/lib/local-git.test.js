@@ -1,5 +1,5 @@
 // tests/scripts/lib/local-git.test.js
-// The git steps Lean's store and a project's home share (spec 5.1): each takes the repository and the branch, and refuses
+// The git steps of a project's home (spec 5.1): each takes the repository and the branch, and refuses
 // with a code.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

@@ -170,3 +170,10 @@ test('a stored Archon engine loads without an error, reads as Wheelhouse in forc
   assert.equal(storedEngine({ project: {}, profile: { engine: { key: 'engine', value: 'archon' } } }), 'archon');
   assert.equal(storedEngine({}), null);
 });
+
+test('an older project record holding capRequests loads, and the setting is not in force or shown', () => {
+  const e = effectiveSettings({ project: view(entry('capRequests', 5), entry('briefing', 'short')), profile: {}, now: NOON });
+  assert.equal(Object.hasOwn(e, 'capRequests'), false);
+  assert.deepEqual(e.briefing, { value: 'short', from: 'project' });
+  assert.equal(/credits/i.test(settingsText(e)), false);
+});

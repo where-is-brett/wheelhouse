@@ -196,28 +196,6 @@ test('work started again carries the director\'s answers in its order, and no ot
   assert.deepEqual(t.starts[1].order.answers, []);
 });
 
-test('work routed to a provider that counts requests waits while the count the cap reads, given in its own time, is at the cap', async () => {
-  const dir = tempFolder('wh-dr-');
-  const starts = [];
-  const engine = { ...fakeEngine(), countsRequests: () => true, requestsConfirmed: true };
-  let used = 0;
-  const d = dispatchRun({
-    engine, project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'), readViews: views,
-    config: () => ({ routing: { tiers: { medium: 'counted/model' } }, testCommand: 'node --test' }),
-    settings: () => ({ capRequests: 5 }),
-    // The provider's own figure is read in its own time, so the count may come as a promise.
-    spentThisMonth: async () => used,
-    start: async (args) => { starts.push(args); return { ok: true, runId: `run-${starts.length}` }; },
-    now: () => new Date('2026-10-29T10:00:00.000Z'),
-  });
-  used = 5;
-  await d.tick();
-  assert.equal(starts.length, 0, 'at the cap');
-  used = 4;
-  await d.tick();
-  assert.equal(starts.length, 1);
-});
-
 test("the merge queue starts in the folder the helper gives it, never the project's, and not at all when that folder can't be made (check 81)", async () => {
   for (const [given, want] of [[{ ok: true, folder: '/engine/queues/p' }, '/engine/queues/p'], [{ ok: false, refused: 'no mirror' }, null]]) {
     const dir = tempFolder('wh-dr-');
@@ -368,19 +346,22 @@ test('each card the dispatcher writes is told to the seals, after it is written,
   const dir = tempFolder('wh-dr-');
   const written = [];
   const told = [];
-  const held = { ...fakeEngine(), countsRequests: () => true, requestsConfirmed: true };
   const d = dispatchRun({
-    engine: held, project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'), readViews: views,
+    engine: fakeEngine(), project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'), readViews: ranOnce,
     config: () => ({ routing: {}, testCommand: 'node --test' }), settings: () => ({ engineLanes: ['quick'] }),
-    start: async () => ({ ok: true, runId: 'run-1' }), spentThisMonth: () => 0,
+    start: async () => ({ ok: true, runId: 'run-1' }),
     write: async (kind, data) => { written.push({ kind, data }); },
     onCard: (card) => { told.push({ ...card, written: written.some((w) => w.kind === 'question' && w.data.id === card.id) }); throw new Error('the seal broke'); },
     now: () => new Date('2026-10-29T10:00:00.000Z'),
   });
+  d.sentBack('card-1', 'red', 'one');
+  await d.tick();
+  d.sentBack('card-1', 'red', 'two');
+  await d.tick();
   await d.tick();
   const card = written.find((w) => w.kind === 'question');
-  assert.ok(card, 'the requests card is written');
-  assert.deepEqual(told, [{ id: card.data.id, kind: 'requests', work: 'card-1', level: 3, written: true }]);
+  assert.ok(card, 'the red card is written');
+  assert.deepEqual(told, [{ id: card.data.id, kind: 'red', work: 'card-1', level: 3, written: true }]);
 });
 
 test('waitingWork joins the card router\'s pieces and the dispatcher\'s own cards', async () => {
@@ -1257,30 +1238,6 @@ test('the Logbook says once that a limit holds new work, and again for a later l
   assert.equal(held(w), 2, 'a helper started again doesn\'t say it twice');
 });
 
-test('a limit hides a requests hold and ends none, so an answered card isn\'t asked again', async () => {
-  const world = { limited: false };
-  const dir = tempFolder('wh-dr-');
-  const written = [];
-  const questions = {};
-  const work = { 'card-1': { work: { id: 'w-1', at: '2026-10-29T08:00:00.000Z', data: { id: 'card-1', title: 'The sale banner', lane: 'quick', visible: false, dependsOn: [] } }, approved: false, since: '2026-10-29T08:00:00.000Z' } };
-  const limited = { runs: { other: [{ at: '2026-10-29T09:00:00.000Z', data: { work: 'other', runId: 'r1', lane: 'quick', state: 'paused' } }] }, asks: { other: [{ at: '2026-10-29T09:00:00.000Z', data: { id: 'lim', runId: 'r1', work: 'other', kind: 'usage-limit', level: 1, options: [] } }] } };
-  const d = dispatchRun({
-    engine: { ...fakeEngine(), countsRequests: () => true, requestsConfirmed: true }, project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'),
-    readViews: () => ({ work, runs: {}, questions, reports: {}, ...(world.limited ? limited : {}) }),
-    config: () => ({ routing: {}, testCommand: 'node --test' }), settings: () => ({ engineLanes: ['quick'] }), spentThisMonth: () => 0,
-    start: async () => ({ ok: false, refused: 'not here' }), write: async (kind, data) => { written.push({ kind, data }); if (kind === 'question') questions[data.id] = { question: { data } }; },
-    now: () => new Date('2026-10-29T10:00:00.000Z'),
-  });
-  await d.tick();
-  const asked = written.filter((x) => x.kind === 'question');
-  assert.equal(asked.length, 1);
-  questions[asked[0].data.id].answer = { label: 'Keep it off' };
-  world.limited = true;
-  await d.tick();
-  world.limited = false;
-  await d.tick();
-  assert.equal(written.filter((x) => x.kind === 'question').length, 1);
-});
 
 // A goal in force, and the gate every start passes (unattended goals design, section 6; build plan, choice 9).
 const MINUTE = 60 * 1000;
@@ -1573,47 +1530,6 @@ test('a new goal starts its meter afresh', async () => {
   goalOver(w, ['a'], { id: 'g2' });
   await w.tick(1);
   assert.equal(keptOf(w).goalSpend.goal, 'g2');
-});
-
-test('counted requests are those since Start, and a new month starts from what it has', async () => {
-  let used = 200;
-  const w = goalBack({ spentThisMonth: () => used });
-  w.engine.countsRequests = () => true;
-  w.engine.requestsConfirmed = true;
-  w.put('a');
-  goalOver(w, ['a'], { spend: { tokens: 100000000, requests: 10 } });
-  await w.tick(1);
-  assert.equal(keptOf(w).goalSpend.meter.requests, 0);
-  used = 207;
-  await w.tick(1);
-  assert.equal(keptOf(w).goalSpend.meter.requests, 7);
-  used = 4;
-  await w.tick(1);
-  assert.equal(keptOf(w).goalSpend.meter.requests, 4);
-  used = 300;
-  await w.tick(1);
-  assert.equal(keptOf(w).goalSpend.meter.requests, 300, 'the new month counts from its start');
-});
-
-test('a count of requests that can\'t be read leaves the tokens still counting', async () => {
-  let asked = 0;
-  const w = goalBack({ spentThisMonth: () => { asked += 1; if (asked === 1) throw new Error('no answer'); return 0; } });
-  w.engine.countsRequests = () => true;
-  w.put('a');
-  goalOver(w, ['a'], { spend: { tokens: 1000 } });
-  spent(w, 'gone', 400);
-  await w.tick(1);
-  const { meter } = keptOf(w).goalSpend;
-  assert.equal(meter.tokens, 400);
-  assert.equal(meter.requests, null);
-});
-
-test('a project that counts no requests reads none', async () => {
-  const w = goalBack();
-  w.put('a');
-  goalOver(w, ['a']);
-  await w.tick(1);
-  assert.equal(keptOf(w).goalSpend.meter.requests, null);
 });
 
 test('with no goal in force nothing is metered', async () => {

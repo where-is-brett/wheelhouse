@@ -110,23 +110,19 @@ import { SEND_BACK } from '../lib/calm-words.js';
 import { FIX_LANE, openRedMain, redMainIncident } from '../engine/fix-main.js';
 import { endedBy } from '../foreman/queue.js';
 import { packTreeDigest } from '../engine/pack-build.js';
-import { readLean, leanState, LEAN_NO_HOST } from '../lean/project.js';
 import { deskCore, checkVersion } from '../desk/core.js';
 import { fileSource } from '../desk/file-source.js';
 import { askToPair, pairClient, pairedClients, unpairClient } from '../desk/clients.js';
 import { DESK_VERSION, needsEvidence } from '../desk/vocabulary.js';
 import { helperClient } from './helper-client.js';
-import {
-  mergeApproved, undoMerge, copyNow, keepMain, leanStatus, storeHead, mergeOnMain, windowClick, LeanRefusal, LEAN_APPROVE, MAIN_MOVED_LINE, UNDO_LINE, UNDO_NEEDS_WINDOW,
-  SIGNED_LEAN_PROOFS, sameCard, approvalCard, mainMovedCard, undoCards,
-} from '../lean/store.js';
+import { windowClick, undoCards, UNDO_LINE, UNDO_NEEDS_WINDOW } from './local/undo.js';
 import { CHAT_PROOFS, CONFIRMED_STEPS, hashRefusal } from '../agents/chat-clicks.js';
 import { earned, signsOn, askedUpdateCard } from '../hooks/prompt-record.js';
 import { askInWindow, NOT_NOW } from '../confirm/window.js';
 import { composeCard, questionProblem } from '../cards/compose.js';
 import { LIFT_STOP_CARD } from '../frontdesk/cli.js';
 import { matchGlob } from '../gate/glob.js';
-import { chatCopy, ciPushLine } from '../state/card-lines.js';
+import { ciPushLine } from '../state/card-lines.js';
 import { checkSetting, definitionOf } from '../settings/catalogue.js';
 import { READY_LEVELS, PREMIUM_LEVEL, barFailures, readiness, samePins } from '../routing/column-ready.js';
 import { PREMIUM_ASK, PREMIUM_DO, checkRefusal, foundPremium, offeredFrom, premiumInput, premiumRefusal, premiumPinOf } from '../routing/premium.js';
@@ -139,13 +135,10 @@ import { canonicalJson } from '../lib/canonical.js';
 import { pendingDir } from '../hooks/pending.js';
 import { branchOf } from '../hooks/session-start.js';
 import { SLUG, paceOf, questionIdOf } from '../lib/build-loop.js';
-import { ROOT as OWN_ROOT, recheckCopies } from '../lineage/check.js';
-import { requestMeter, requestsThisMonth } from '../engine/request-meter.js';
+import { ROOT as OWN_ROOT } from '../lineage/check.js';
 import { weeklyShare } from '../usage/figures.js';
 import { checkProvenance, removeProvenance, sessionProvenance, engineProvenance } from '../lineage/provenance.js';
 import { brokerDecision } from '../engine/broker/rules.js';
-import { hostApprovalReady } from './approval-ready.js';
-import { hostApproved, hostApprovalNeeded } from './host-approval.js';
 import { checkOwnFiles, ownFilesLine } from '../health/own-files.js';
 import { listReleases } from '../update/release.js';
 import { lookForLatest, readLatest } from '../update/board.js';
@@ -154,7 +147,7 @@ import { EXISTING_BRANCH_LINE, RELEASE_PUSH_REFUSAL, decideMerge, releasePushRef
 import { clickedByDefault, updateRoutes } from '../update/routes.js';
 import { keyRenewalDue, lastKeyRenewal } from '../state/key-renewal.js';
 import { brokerRoutes } from '../engine/broker/routes.js';
-import { lookAtHead, raiseCard, withLocalLock } from '../lib/local-git.js';
+import { MAIN_MOVED_LINE, lookAtHead, mainMovedCard, raiseCard, sameCard, withLocalLock } from '../lib/local-git.js';
 import { queueCall } from '../engine/broker/queue.js';
 import { toolPath } from '../lib/host-tools.js';
 import { RELEASE_BRANCH, RELEASE_WHY, SETTINGS_FILE, briefingLine, checkRelease, fetchTag, pinsOnlyChange, releaseBranch, undoBranch } from '../lineage/release.js';
@@ -169,15 +162,9 @@ import { FOREMAN_OUTPUT_BYTES, FOREMAN_RUNNER, FOREMAN_RUN_MS, foremanEnv, forem
 import { setupRoutes, SetupRefusal, STEPS_MODULE } from '../setup/engine.js';
 import { uninstallRoutes } from '../setup/uninstall.js';
 import { baselineRoutes } from '../measures/baseline.js';
-import { NO_CLEAN_REVIEW } from '../gate/conditions.js';
-import { runReview } from '../review/clean-session.js';
-import { reviewsFor } from '../agents/reviews.js';
 import { ALLOWANCE_LABELS, allowanceWindowLines, isBuildQuestion } from '../protection/windows-builds.js';
-import { agentOfConfig } from '../agents/project-agent.js';
-import { agentInFolder } from '../agents/names.js';
 import { routingInForce } from '../routing/in-force.js';
-import { orderStore } from '../engine/order.js';
-import { engineRouting } from '../agents/engine-parts.js';
+import { bindingsOf, orderStore } from '../engine/order.js';
 import { approvedDocument } from '../feature/approved.js';
 import { SWITCH_BRANCH, SWITCH_WORK, engineChosen, engineReady, switchBranch } from '../engine/switch.js';
 import { COMPACT_BRANCH, COMPACT_NAME, COMPACT_TITLE, COMPACT_WORK, chosenWindow, compactBody, compactBranch, compactChange, changedText } from '../settings/compact-window-pr.js';
@@ -186,11 +173,10 @@ import { SWITCH_TITLE, switchBody, switchChange, switchTexts } from '../engine/s
 import { COMMAND_BODY, COMMAND_TITLE, COMMAND_WORK, commandBranch, commandChange, commandText } from '../engine/command-pr.js';
 import { ARCHON_CONFIG_FILE, ENGINE_FILES, POLICY_FILE, mirrorRulesFile } from '../engine/parts.js';
 import { maintainersText } from '../setup/engine-parts.js';
-import { briefHash, featurePaths } from '../feature/files.js';
+import { briefHash } from '../feature/files.js';
 import { HAND_DONE, HAND_GOAL } from '../lib/by-hand-done.js';
 import { writeInside } from '../lib/write-inside.js';
 import { tieNamesWork } from '../lib/by-hand-tie.js';
-import { readCapped } from '../feature/status.js';
 
 export const STATE_BRANCH = 'wheelhouse-state';
 // The adapter's refusal of a merge by a key GitLab does not let merge (adapter.js), and what the
@@ -916,7 +902,6 @@ function placeMainCheckout(folder) {
     }
   };
   const record = readProject(project);
-  if (record === null && readLean(project) !== null) refuse(LEAN_NO_HOST);
   const here = real(folder);
   if (here === null || typeof record?.folder !== 'string' || here !== real(record.folder)) refuse(NOT_MAIN_CHECKOUT);
   return project;
@@ -944,22 +929,10 @@ const FALL_BACK_ROUTES = ['/pr/state', '/state/record', '/foreman/run'];
 const PLACED_ROUTES = [
   '/state/views', '/state/write', '/pr/state', '/pr/preview', '/session/mark', '/session/note', '/cards/chat-click', '/confirm',
   '/desk/read', '/desk/act', '/desk/watch',
-  '/lean/status', '/lean/merge', '/lean/undo', '/lean/copy', '/local/undo', '/local/move',
+  '/local/undo', '/local/move',
   '/survey/carry-on', '/survey/archive', '/survey/restore', '/premium/card', '/premium/check', '/premium/state', '/premium/failed',
   '/engine-switch', '/compact-window', '/rules/offer', '/goal-baseline', '/goal-card', '/goal-draft',
 ];
-
-// A Lean project (ruling P5-9) has no code host and no connection: only these routes serve it, on
-// its local state repository, before any connection is made. Every other route refuses it.
-const LEAN_ROUTES = [
-  '/state/write', '/state/views', '/state/answer', '/state/record', '/state/sync', '/state/import', '/session/mark', '/session/note', '/cards/chat-click', '/confirm',
-  '/lean/status', '/lean/merge', '/lean/undo', '/lean/copy',
-  // A Lean project has a desk too.
-  '/desk/read', '/desk/act', '/desk/watch',
-];
-// The Lean project's own routes (scripts/lean/store.js), served for a Lean project only.
-const LEAN_ONLY = 'that project is not a Lean project';
-const isLean = (project) => readProject(project) === null && readLean(project) !== null;
 
 // The marks a session sends (ruling P5-19), each with its fields and what each must be.
 const MARK_TEXT_CHARS = 200;
@@ -974,8 +947,6 @@ const CHAT_TEXT_CHARS = 500;
 const CHAT_WORDS_CHARS = 4000;
 // The option that hands the builder the director's own words (ruling P5-27 k): the only click that carries them.
 const SUGGEST = 'Suggest a change…';
-// A ruling's confirm card, as a click in the chat names it at Lean (ruling P5-52): `ruling-` and the card's id.
-const RULING_CARD = /^ruling-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
 // The fields of a card-answer that only the helper's click routes write.
 const CLICK_FIELDS = ['proof', 'commit', 'hash', 'text'];
 
@@ -1048,15 +1019,6 @@ function readBody(req, res) {
   });
 }
 
-// `spawn` with the running program (VS Code's own, inside the editor) refused.
-export const EDITOR_NO_NODE = 'the helper inside VS Code starts no Node.js';
-export function editorSpawn(spawn) {
-  return (file, ...rest) => {
-    if (file === process.execPath) throw new Error(EDITOR_NO_NODE);
-    return spawn(file, ...rest);
-  };
-}
-
 export async function startHelper({
   // `connectHost` and `protectHost` stand in for setup's host steps and protection in the move to a host; tests give their own.
   connectHost, protectHost,
@@ -1089,7 +1051,7 @@ export async function startHelper({
   mirrorAddress = (record) => record.remoteUrl,
   // Setup's steps (a module exporting STEPS), the user's own home, whose Projects folder setup may
   // act in, and how a long step's own process is started (scripts/setup/engine.js).
-  setupSteps = STEPS_MODULE, userHome = os.homedir(), spawn: spawnGiven = nodeSpawn,
+  setupSteps = STEPS_MODULE, userHome = os.homedir(), spawn = nodeSpawn,
   // The evaluations folder whose records a Thoroughness level's readiness is read from (scripts/eval/run.js).
   evalsFolder = path.join(userHome, '.wheelhouse-evals'),
   // What the helper does once the last uninstall on this computer has finished (scripts/setup/
@@ -1103,11 +1065,6 @@ export async function startHelper({
   // How the helper's own window is opened (scripts/confirm/window.js): given { title, lines, options }, it resolves
   // with { choice }. By default askInWindow on this system, with the helper's `run`.
   askWindow = (card) => askInWindow({ ...card, run }),
-  // Each agent's review module, for the signed review in a clean session (scripts/agents/reviews.js): given an
-  // agent's name, its module, or null where its reviews aren't the helper's. A test may give its own.
-  reviewModules = reviewsFor,
-  // Whether the person's approval on the host is ready to be asked for (host-approval.js); a test may give its own.
-  approvalReady = hostApprovalReady,
   // What Claude Code's premium alias stands for on this computer (scripts/setup/best-model.js), asked only after the
   // director's Yes on the premium model's card allows it (/premium/check): a model name, or null. A test gives its own.
   premiumAlias = () => aliasModel(STRONGEST_ALIAS, { run }),
@@ -1138,13 +1095,7 @@ export async function startHelper({
   // The folder the merge queue runs in, Wheelhouse's own checkout of the project's fetch mirror (queue-folder.js),
   // unless a test whose engine reads no mirror gives its own: (project) -> { ok, folder } or { ok: false, refused }.
   queueFolder = null,
-  // True when the helper runs inside VS Code's own process (vscode/lean.cjs), where no Node.js can be started: the
-  // foreman's route, which starts one, refuses.
-  inEditor = false,
 } = {}) {
-  // Inside VS Code no program is started as Node.js: setup's step runs, the uninstall, the watcher and the engine's wake all
-  // start `process.execPath` through this, and it refuses that one program (the others go on as they were given).
-  const spawn = inEditor ? editorSpawn(spawnGiven) : spawnGiven;
   if (typeof adapterFor !== 'function') throw new Error('The helper needs an adapterFor function');
   if (typeof envFor !== 'function') throw new Error('The helper needs an envFor function');
   const pipe = PIPE.test(address);
@@ -1226,22 +1177,6 @@ export async function startHelper({
         adapter ??= Promise.resolve(adapterFor(project, { env, envFor: async () => env, now, write: ({ event }) => checkWrite(project, event) }));
         return adapter;
       },
-    };
-  }
-
-  // A Lean project's request: no connection, no secret, no transport beyond this computer, and no
-  // adapter (ruling P5-9). Its state's git calls carry no key.
-  function leanContext() {
-    return {
-      lean: true,
-      mode: 'lean',
-      env: {},
-      signedOut: false,
-      looked: new Map(),
-      gitEnv: {},
-      reach: 'https',
-      secrets: [],
-      adapter: async () => refuse(LEAN_NO_HOST),
     };
   }
 
@@ -1849,15 +1784,11 @@ export async function startHelper({
   const gitEnvOf = (mode, env, host, remoteUrl) => ({ ...(host === 'local' ? {} : mode === 'narrow' || (mode === 'as-is' && env?.GIT_CONFIG_COUNT !== undefined) ? env : directorSignIn(hostOf(host))), ...reachEnv(remoteUrl) });
 
   // The project's private record (design section 24.1), opened, never cloned: its events are
-  // committed and never pushed, for every project as for a Lean one.
+  // committed and never pushed, for every project.
   async function ensureStateClone(project, ctx) {
-    // A Lean project's record is looked at by its own opener, which words a refusal for Lean.
-    if (ctx.lean) await leanState(project, { run });
-    else {
-      recordOf(project); // a project not set up here gets no record made for it
-      await lookAtState(ctx, project);
-      await openProjectRecord(project, { run });
-    }
+    recordOf(project); // a project not set up here gets no record made for it
+    await lookAtState(ctx, project);
+    await openProjectRecord(project, { run });
     // v0.1.x's records come in before anything reads this one (design section 24.5 step 2).
     await stateImport(project, ctx);
     return stateDir(project);
@@ -2059,13 +1990,6 @@ export async function startHelper({
   // the prompt record counts a click only on this very card; the front desk is handed the card to ask, as it is.
   // Called in the state's queue, refused under STOP.
   async function doPremiumCard({ project }, ctx) {
-    if (ctx.lean) refuse('a Lean project runs on the session\'s own model');
-    // Only Claude Code's hooks sign a click on the card; on another agent it could never count, so it isn't offered.
-    let agent = 'claude-code';
-    try {
-      agent = agentOfConfig(readConfig(fs.readFileSync(path.join(recordOf(project).folder, ...CONFIG_FILE.split('/')), 'utf8')), { computerId: computerId() });
-    } catch { /* an unreadable configuration names no other agent */ }
-    if (agent !== 'claude-code') return { ok: true, offered: false, why: 'The premium model can be allowed only from Claude Code, where your click on its card can be recorded.' };
     const views = viewsNow(project);
     const why = premiumRefusal({ level: levelIn(views), view: views.premium });
     if (why !== null) return { ok: true, offered: false, why };
@@ -2097,7 +2021,6 @@ export async function startHelper({
   // the Yes's premium-check, signed here, which no caller can write: the model it found is the premium pin, and the
   // premium alias naming the most capable model means the account doesn't have it. Refused under STOP.
   async function doPremiumCheck({ project }, ctx) {
-    if (ctx.lean) refuse('a Lean project runs on the session\'s own model');
     if (stopped()) return STOP_REFUSAL;
     const before = await oneAtATime(`state:${project}`, async () => {
       await ensureStateClone(project, ctx);
@@ -2336,8 +2259,8 @@ export async function startHelper({
   }
 
   // A click in the chat (ruling P5-17): an unsigned card-answer naming its proof, never signed. A label that
-  // decides a signed step is taken only on a card a chat click may decide: a merge card, or a guardrail card at
-  // Lean; never one of the confirmed steps (a card named for the step, or `<step>-…`), which need the window.
+  // decides a signed step is taken only on a card a chat click may decide: a merge card;
+  // never one of the confirmed steps (a card named for the step, or `<step>-…`), which need the window.
   // Suggest a change… (ruling P5-27 k) carries the director's own words as `text`, and no other click does.
   async function doChatClick({ project, card, hash, label, proof, commit, text }, ctx) {
     if (!CHAT_PROOFS.includes(proof)) refuse(`a click in the chat is recorded as ${CHAT_PROOFS.join(' or ')}`);
@@ -2350,25 +2273,7 @@ export async function startHelper({
     const confirmed = CONFIRMED_STEPS.some((step) => card === step || card.startsWith(`${step}-`));
     const asked = listEvents(stateDir(project), { report: () => {} }).find((e) => e.kind === 'card' && e.id === card)?.data?.question ?? card;
     if (confirmed && signsOn(label, asked)) refuse('that step is confirmed outside the chat, never by a click in it');
-    // A ruling's confirm card at Lean (rulings P5-52, P5-53): one click in the chat, unsigned, with proof chat-click,
-    // on the card named `ruling-<its id>`, when the state holds that card as a ruling's confirm card, the click names
-    // its text as the state holds it, the label is one of its options and nothing has answered it yet. Confirm puts the
-    // ruling in force in a Lean project's rulebook; Not now or Suggest a change… (with the new words) closes the card.
-    // On any other project Confirm stays signed and is refused below.
-    const rulingCard = RULING_CARD.exec(card);
-    if (ctx.lean === true && rulingCard) {
-      if (proof !== 'chat-click') refuse('a click on a ruling\'s card is recorded as chat-click');
-      if (commit !== undefined) refuse('a click on a ruling\'s card names no commit');
-      const events = listEvents(stateDir(project), { report: () => {} });
-      const held = events.find((e) => e.id === rulingCard[1] && e.kind === 'card');
-      if (!held || held.data?.kind !== 'confirm' || !/^Confirm ruling \S+: "/.test(held.data?.line ?? '') || typeof held.data?.question !== 'string') refuse('that is not a ruling\'s confirm card in this project');
-      const shown = [held.data.question, chatCopy(held.data.question)].map((t) => crypto.createHash('sha256').update(t).digest('hex'));
-      if (!shown.includes(hash)) refuse('the click must name the card\'s text as the state holds it, or as the chat showed it');
-      if (!Array.isArray(held.data.options) || !held.data.options.includes(label)) refuse('that label isn\'t one of the card\'s options');
-      if (events.some((e) => e.kind === 'card-answer' && e.data?.card === held.id)) refuse('that ruling\'s card has been answered already');
-      return doWrite({ project, kind: 'card-answer', data: { card: held.id, label, hash, proof, tier: 'lean', where: 'chat', ...(text === undefined ? {} : { text }) } }, ctx, { own: true });
-    }
-    const mayDecide = /^merge-/.test(card) || (ctx.lean === true && /^guardrail-/.test(card));
+    const mayDecide = /^merge-/.test(card);
     if (signsOn(label, asked) && !mayDecide) refuse('a click in the chat can\'t decide that card');
     const data = { question: card, label, hash, ...(commit === undefined ? {} : { commit }), ...(text === undefined ? {} : { text }), proof, where: 'chat' };
     return doWrite({ project, kind: 'card-answer', data }, ctx, { own: true });
@@ -2379,8 +2284,8 @@ export async function startHelper({
   // The step a signed record decides, when it is one the window confirms, else null: Lift STOP, a runbook step or
   // a CI push (an action), Unattended (the confirmation of a level or setting proposing it), or an approval, which
   // is how a guardrail change and a real-user merge are decided.
-  // Keep it, on the card about a Lean project's main version moved outside the helper (ruling P5-27 f), is confirmed
-  // here too, and so are a Lean undo and Undo it, which are runbook steps (ruling P5-50).
+  // Keep it, on the card about a main version moved outside the helper (ruling P5-27 f), is confirmed
+  // here too, and so are an undo and Undo it, which are runbook steps (ruling P5-50).
   const ACTION_STEPS = {
     'lift-stop': 'lift-stop', runbook: 'runbook-step', 'ci-push': 'ci-push', 'keep-main': 'keep-main', 'undo-merge': 'runbook-step', 'undo-main': 'runbook-step',
     'keep-control-files': 'guardrail-change', // keeping a feature's files that steer agents as they are (ruling P7-31)
@@ -2399,11 +2304,11 @@ export async function startHelper({
     // only by the update's apply. Its Not now is signed the same way (windowEarned).
     'update-click': 'update',
   };
-  // The steps the window serves while STOP is on: Lift STOP, and a Lean undo, as the runbook's local steps carry on.
+  // The steps the window serves while STOP is on: Lift STOP, and an undo, as the runbook's local steps carry on.
   // The update's steps: their window names no default button, so a stray Return or Enter chooses nothing.
   const NO_DEFAULT_STEPS = ['update', 'release-approval', 'update-helper'];
   const UNDER_STOP = ['lift-stop', 'undo-merge', 'undo-main'];
-  // The labels of Lean's cards a project in git alone answers the same way, on its home. Its approval is a pull request's, as any.
+  // The labels of the cards a project in git alone answers on its home. Its approval is a pull request's, as any.
   const HOME_ANSWERS = ['Keep it', 'Undo it', 'Undo'];
   const servedUnderStop = (deciding) => deciding.filter((d) => d.made.kind === 'action' && UNDER_STOP.includes(d.made.data?.action));
   // What /confirm's `card` is for the Lift STOP card, which has no id in the state.
@@ -2437,9 +2342,9 @@ export async function startHelper({
     // The Update card's Not now is the one put-off the window signs: a decline of that plan, earned as the panel's press earns it.
     const declines = label === NOT_NOW && askedUpdateCard(question, card.data) !== undefined;
     if (typeof question !== 'string' || (PUT_OFF.includes(label) && !declines)) return null;
-    if (ctx.lean || (readProject(project)?.host === 'local' && HOME_ANSWERS.includes(label))) {
-      const lean = await leanEarned(project, card.data, label);
-      if (lean !== undefined) return lean;
+    if (readProject(project)?.host === 'local' && HOME_ANSWERS.includes(label)) {
+      const home = await homeEarned(project, card.data, label);
+      if (home !== undefined) return home;
     }
     const client = { prState: ({ number }) => routes['/pr/state']({ project, number }, ctx), goalRecheck: (args) => routes['/goal-recheck'](args, ctx) };
     let got;
@@ -2453,36 +2358,24 @@ export async function startHelper({
     return step === null ? null : { made: got.made, step, lift: got.lift === true };
   }
 
-  // What a click in the window on a Lean card's Approve, Keep it, Undo it or Undo records (scripts/lean/store.js), or
-  // null; undefined for any other label. Each card is the helper's own, word for word: its question, options and
-  // header equal the card the helper composes from the line's values (ruling P5-50), so a card anyone wrote with the
-  // right line but other words is never signed. Approve: the card names a feature's branch and its head in full,
-  // and the store's branch is still at that head, so the approval is for that code and no other. Keep it and Undo
-  // it: the card names the main version's move, and the record and the store still say so. Undo: the card names a
-  // merge on the main version.
-  async function leanEarned(project, data, label) {
+  // What a click in the window on a home card's Keep it, Undo it or Undo records, or null; undefined for any other label.
+  // Each card is the helper's own, word for word: its question, options and header equal the card the helper composes
+  // from the line's values (ruling P5-50), so a card anyone wrote with the right line but other words is never signed.
+  // Keep it and Undo it: the card names the main version's move, and the record and the home still say so. Undo: the card
+  // names a merge on the main version.
+  async function homeEarned(project, data, label) {
     const question = data?.question;
     const one = (pattern) => {
       const lines = typeof question === 'string' ? [...question.matchAll(pattern)] : [];
       return lines.length === 1 ? lines[0] : null;
     };
-    if (label === 'Approve') {
-      const line = one(LEAN_APPROVE);
-      if (line === null) return null;
-      const [, branch, commit] = line;
-      if (!sameCard(data, approvalCard(branch, commit, readLean(project)?.test ?? null))) return null;
-      if ((await storeHead({ project, branch, run })) !== commit) return null;
-      const made = { kind: 'approval', data: { branch, commit, words: 'Approve', question } };
-      return { made, step: 'approval', lift: false };
-    }
     if (label === 'Keep it' || label === 'Undo it') {
       const line = one(MAIN_MOVED_LINE);
       if (line === null) return null;
       const [, from, to] = line;
       if (!sameCard(data, mainMovedCard(from, to))) return null;
-      const onHome = readProject(project)?.host === 'local';
-      const held = onHome ? seenMain(project) : readLean(project)?.main;
-      const stands = onHome ? await homeGit(project, gitRoute({ run })).must(['rev-parse', '--verify', '-q', 'HEAD^{commit}'], 'unread') : await storeHead({ project, branch: 'main', run });
+      const held = seenMain(project);
+      const stands = await homeGit(project, gitRoute({ run })).must(['rev-parse', '--verify', '-q', 'HEAD^{commit}'], 'unread');
       if (held !== from || stands !== to) return null;
       const action = label === 'Keep it' ? 'keep-main' : 'undo-main';
       const made = { kind: 'action', data: { action, from, to, question, label } };
@@ -2493,8 +2386,7 @@ export async function startHelper({
       if (line === null) return null;
       const [, merge] = line;
       if (!undoCards(merge).some((card) => sameCard(data, card))) return null;
-      const onMain = readProject(project)?.host === 'local' ? await homeGit(project, gitRoute({ run })).ok(['merge-base', '--is-ancestor', merge, 'HEAD']) : await mergeOnMain({ project, merge, run });
-      if (!onMain) return null;
+      if (!(await homeGit(project, gitRoute({ run })).ok(['merge-base', '--is-ancestor', merge, 'HEAD']))) return null;
       const made = { kind: 'action', data: { action: 'undo-merge', merge, question, label } };
       return { made, step: ACTION_STEPS['undo-merge'], lift: false };
     }
@@ -2535,16 +2427,16 @@ export async function startHelper({
   // with proof `window`, as the record the step already has: an approval, a confirmation or an action. The card is
   // looked at again after the click, so a card decided or changed meanwhile records nothing. A confirmed Lift STOP
   // lifts STOP: the window is the one place a click lifts it on an agent whose hooks only read. Not now, or no click
-  // before the window closes, records nothing. Under STOP only the Lift STOP card and a Lean undo are served, with only
+  // before the window closes, records nothing. Under STOP only the Lift STOP card and an undo are served, with only
   // their undo offered (rulings P5-49 and P5-50). A card
   // in the state gets the plain card-answer beside its signed record, as a hook that signs writes one, so the card
   // no longer waits.
   async function doConfirm({ project, card, hash }, ctx) {
     if (card !== LIFT_STOP_NAME && (typeof card !== 'string' || !RANDOM_UUID.test(card))) refuse('the card must be named by its id, or be lift-stop');
     if (card !== LIFT_STOP_NAME && (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash))) refuse('the card\'s hash must be its sha256, in lower case');
-    // Under STOP a card of a project that isn't Lean is refused before it is looked up (no read of the code host);
-    // a Lean card is looked at, and only its undo offered.
-    if (card !== LIFT_STOP_NAME && stopped() && !ctx.lean && readProject(project)?.host !== 'local') return STOP_REFUSAL;
+    // Under STOP a card of a project that isn't kept at home is refused before it is looked up (no read of the code host);
+    // a home card is looked at, and only its undo offered.
+    if (card !== LIFT_STOP_NAME && stopped() && readProject(project)?.host !== 'local') return STOP_REFUSAL;
     const look = () => stateRoute((body) => windowCard(body, ctx))({ project, card, hash }, ctx);
     const shown = await look();
     if (card !== LIFT_STOP_NAME && stopped()) {
@@ -2576,7 +2468,7 @@ export async function startHelper({
       await freshViews(() => writeViews(project, { now }));
       if (card !== LIFT_STOP_NAME) await doWrite({ project, kind: 'card-answer', data: { card, question: again.event.data.question, label: still.label, where: 'panel' } }, ctx);
       if (still.lift) liftStop();
-      if (event.kind === 'approval' && !ctx.lean) photographApproved(project, event.data?.commit, ctx);
+      if (event.kind === 'approval') photographApproved(project, event.data?.commit, ctx);
       const action = event.kind === 'action' ? event.data?.action : null;
       const keep = action === 'keep-main' ? { from: event.data.from, to: event.data.to } : null;
       const undo = action === 'undo-merge' ? { merge: event.data.merge } : action === 'undo-main' ? { moved: true } : null;
@@ -2584,56 +2476,15 @@ export async function startHelper({
     })({ project, card, hash }, ctx);
     const { keep = null, undo = null, ...said } = answer;
     // Keep it: the record's main version becomes the one the card named, if nothing moved it since. Undo and Undo it:
-    // the undo is made now, on the record just signed. Both outside the state's queue, since the store's lock is taken
+    // the undo is made now, on the record just signed. Both outside the state's queue, since the project's lock is taken
     // before it by a merge.
-    if (!ctx.lean && readProject(project)?.host === 'local') {
+    if (readProject(project)?.host === 'local') {
       if (keep !== null) return { ...said, kept: await localKeepMain(project, keep) };
       if (undo !== null) return { ...said, undone: await doLocalUndo({ project, ...undo }) };
       return said;
     }
-    if (keep !== null) return { ...said, kept: await keepMain({ project, ...keep, run, now }) };
-    if (undo !== null) return { ...said, undone: await leanAnswer(() => undoMerge({ project, ...undo, now, run, record: leanRecorder(ctx) })) };
     return said;
   }
-
-  // --- a Lean project's git store (scripts/lean/store.js, rulings P5-24 to P5-27) ---
-
-  // How the store records: a plain event written through this helper's state queue, so it takes its turn with
-  // every other write. A merge or an undo whose proof is the window's is signed here (ruling P5-24): it is made as
-  // doWrite makes a plain event, and signed by this computer before it is written. Gives the event's id.
-  const leanRecorder = (ctx) => (project, kind, data, { signed = false } = {}) => oneAtATime(`state:${project}`, async () => {
-    await leanState(project, { run });
-    if (!signed) return (await doWrite({ project, kind, data }, ctx)).id;
-    if (!PLAIN_KINDS.includes(kind) || !data || typeof data !== 'object' || Array.isArray(data)) refuse('only a plain record is signed this way');
-    const event = sign(makeEvent({ kind, data, now }));
-    await writeEvent({ project, event, now });
-    await freshViews(() => writeViews(project, { now }));
-    return event.id;
-  });
-  // The store's answer, or its refusal in the helper's shape with what it adds (`card`, `needs`, `reasons`).
-  async function leanAnswer(fn) {
-    try {
-      return { ok: true, ...(await fn()) };
-    } catch (error) {
-      if (error instanceof LeanRefusal) return { ok: false, refused: error.message, ...error.extra };
-      throw error;
-    }
-  }
-  // POST /lean/status { project | cwd }: how the store stands, raising the card when the main version moved
-  // outside the helper. Answered under STOP.
-  const doLeanStatus = ({ project }, ctx) => leanAnswer(() => leanStatus({ project, run, now, record: leanRecorder(ctx) }));
-  // POST /lean/merge { project | cwd, branch, commit }: the approved commit of `feature/<slug>` merged, after its
-  // tests pass. The proofs taken are the chat's own and the window's.
-  const doLeanMerge = ({ project, branch, commit }, ctx) => leanAnswer(() => mergeApproved({
-    project, branch, commit, now, run, record: leanRecorder(ctx), approvalProofs: [...CHAT_PROOFS, ...SIGNED_LEAN_PROOFS],
-  }));
-  // POST /lean/undo { project | cwd, merge } or { project | cwd, moved: true }: a merge undone, or the main version's
-  // changes made outside the helper undone, each on the director's click.
-  const doLeanUndo = ({ project, merge, moved }, ctx) => leanAnswer(() => undoMerge({
-    project, merge, moved: moved === true, now, run, record: leanRecorder(ctx),
-  }));
-  // POST /lean/copy { project | cwd }: the main version and the state's branch pushed to the copy folder.
-  const doLeanCopy = ({ project }, ctx) => leanAnswer(() => copyNow({ project, now, run, record: leanRecorder(ctx) }));
 
   const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
   const TARGET_KEYS = ['v', 'id', 'at', 'computer', 'kind', 'data'];
@@ -2690,8 +2541,7 @@ export async function startHelper({
     // The director's Pair it or Unpair it on an app's card (spec 5.3) enrols the app's key, or removes it.
     if (event.kind === 'action' && event.data?.action === 'pair-client') pairClient({ id: event.data.client }, event, { now });
     if (event.kind === 'action' && event.data?.action === 'unpair-client') unpairClient(event.data.client, event);
-    // A Lean project has no preview to photograph.
-    if (event.kind === 'approval' && !ctx.lean) photographApproved(project, event.data?.commit, ctx);
+    if (event.kind === 'approval') photographApproved(project, event.data?.commit, ctx);
     return written({ event, result });
   }
 
@@ -2931,9 +2781,8 @@ export async function startHelper({
   // when its patch-id (against its merge base with the default branch) is the head's, and every
   // commit after it on the head's first-parent line is a clean update merge. A commit of the
   // feature's own after it, or an update merge whose resolution changed code, needs the head
-  // signed again. With `withConfig`, the default branch's configuration as fetched here too (`config`, undefined
-  // when it can't be read). Read-only toward the host. Throws when the mirror cannot say.
-  function carryFacts({ project, number, headSha, defaultBranch, from, withConfig = false }, ctx) {
+  // signed again. Read-only toward the host. Throws when the mirror cannot say.
+  function carryFacts({ project, number, headSha, defaultBranch, from }, ctx) {
     if (!plainBranch(defaultBranch)) throw new Error('the default branch is not known');
     if (typeof headSha !== 'string' || !FULL_SHA.test(headSha)) throw new Error('the head commit is not known');
     return oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ mirror, keyed }) => {
@@ -2974,13 +2823,6 @@ export async function startHelper({
             out.pages = pagesOf(await configHere());
           } catch {
             out.pages = [];
-          }
-        }
-        if (withConfig) {
-          try {
-            out.config = await configHere();
-          } catch {
-            out.config = undefined;
           }
         }
         return out;
@@ -3074,9 +2916,8 @@ export async function startHelper({
   // screenshots of the two commits match too, and they are compared only when `compare` says the
   // merge needs the approval. Anything the mirror can't say leaves the branch unknown (null, which
   // the gate refuses with its own reason) and nothing carried. The one rule behind /merge and
-  // /pr/carried. With `withConfig`, it gives the default branch's configuration read in the same fetch too
-  // (`config`, undefined when it can't be read).
-  async function gateRecords({ project, number, headSha, views, adapter, withApproval = true, compare = false, withConfig = false }, ctx) {
+  // /pr/carried.
+  async function gateRecords({ project, number, headSha, views, adapter, withApproval = true, compare = false }, ctx) {
     const review = latestFor(views.reviews, number);
     const approval = withApproval ? latestFor(views.approvals, number) : null;
     const from = {
@@ -3086,7 +2927,7 @@ export async function startHelper({
     let facts = { upToDate: null, review: false, approval: false };
     try {
       const defaultBranch = await defaultBranchOf(project, adapter);
-      facts = await carryFacts({ project, number, headSha, defaultBranch, from, withConfig }, ctx);
+      facts = await carryFacts({ project, number, headSha, defaultBranch, from }, ctx);
     } catch (error) {
       if (error instanceof LookRefusal) throw error;
       /* not readable: not known whether it is up to date, and nothing carries */
@@ -3101,7 +2942,6 @@ export async function startHelper({
       upToDate: facts.upToDate === null ? null : facts.upToDate === true,
       review: facts.review === true ? { carried: true, record: review } : review,
       approval: shown ? { carried: true, record: approval } : approval,
-      ...(withConfig ? { config: facts.config } : {}),
     };
   }
 
@@ -3122,91 +2962,11 @@ export async function startHelper({
     // With no CLEAN review as the latest, nothing counts and nothing can carry: the mirror is not
     // read, so the watcher's poll costs no fetch, and upToDate is not known (false).
     if (!reviewClear(latestFor(views.reviews, number)?.data)) return { ok: true, review: 'none', upToDate: false, earlier: cleanEarlier.length > 0 };
-    const found = await gateRecords({ project, number, headSha: pr.headSha, views, adapter, withApproval: false, withConfig: true }, ctx);
-    // Only a review of a kind the gate counts for the agent this computer runs (ruling P8-14), from the default
-    // branch's configuration as the merge reads it (here from the same fetch, so the poll costs no second one): null,
-    // today's rule, counts any kind. A configuration that can't be read leaves the agent unknown, so no kind counts
-    // ([]): no CLEAN is reported, and the watcher wakes no one for a merge the gate would weigh afresh.
-    const config = found.config !== undefined ? found.config : await defaultConfig(project, adapter, ctx);
-    const kinds = config === undefined ? [] : reviewKindsOf(config);
-    const counted = (record) => kinds === null || kinds.includes(record?.data?.reviewKind);
-    const earlier = cleanEarlier.some(counted);
+    const found = await gateRecords({ project, number, headSha: pr.headSha, views, adapter, withApproval: false }, ctx);
     const record = found.review?.carried === true ? found.review.record : found.review;
     const own = found.review?.data?.commit === pr.headSha && reviewClear(found.review?.data);
-    const clean = (found.review?.carried === true || own) && counted(record);
-    return { ok: true, review: clean ? 'clean' : 'none', upToDate: found.upToDate === true, earlier };
-  }
-
-  // --- the signed review in a clean session (rulings P7-14 to P7-18) ---
-
-  // The review module of the agent this computer runs for the project whose default-branch configuration is
-  // `config`: `{ module }`, the module or null (an agent whose reviews aren't the helper's), or `{ unknown: true }`
-  // when which agent runs here can't be told (the computer's id can't be read while the configuration names an
-  // agent per computer, or the name is no agent's).
-  function reviewModuleOf(config) {
-    let id;
-    try {
-      id = computerId();
-    } catch {
-      const agents = config?.agents;
-      if (agents !== null && typeof agents === 'object' && !Array.isArray(agents)) return { unknown: true };
-    }
-    try {
-      return { module: reviewModules(agentOfConfig(config, { computerId: id })) };
-    } catch {
-      return { unknown: true };
-    }
-  }
-
-  // The default branch's configuration, read by itself in the mirror, or undefined when it can't be read. A refusal
-  // of the mirror's settings ends the request, as elsewhere.
-  async function defaultConfig(project, adapter, ctx) {
-    try {
-      const defaultBranch = await defaultBranchOf(project, adapter);
-      return await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ must }) => {
-        await defaultHistory(must, defaultBranch);
-        return baseConfig(must);
-      }));
-    } catch (error) {
-      if (error instanceof LookRefusal) throw error;
-      return undefined;
-    }
-  }
-
-  // The account whose review of a pull request stands as the director's approval on GitHub: the connection's recorded person,
-  // else the owner of the project's repository.
-  const approvalPersonOf = (record) => record.connection?.person ?? String(record.repo ?? '').split('/')[0];
-  // The person's approval on GitHub for a merge of `sha`: undefined where the project doesn't need it (a Claude project, no
-  // real users, GitHub's route not ready, another host), else whether it is there. A configuration that can't be read
-  // needs the approval, and a review that can't be read as no approval. Both merge routes build it (Task B1).
-  async function hostApprovalOf(project, adapter, { number, sha, config }) {
-    const record = recordOf(project);
-    if (record.host !== 'github' || approvalReady({ host: 'github' }) !== true) return undefined;
-    let agent = null;
-    const read = typeof config === 'function' ? await config() : config;
-    if (read !== undefined) {
-      try {
-        agent = agentOfConfig(read, { computerId: computerId() });
-      } catch {
-        agent = null;
-      }
-    }
-    if (!hostApprovalNeeded({ agent, realUsers: launchedIn(project), host: 'github' }, { ready: approvalReady })) return undefined;
-    return hostApproved({ adapter, number, sha, person: approvalPersonOf(record) });
-  }
-
-  // The review kinds the gate counts (ruling P7-15): null, today's rule, for an agent with no review module; the
-  // module's own kinds; none where the agent can't be told or the module can't say.
-  function reviewKindsOf(config) {
-    const found = reviewModuleOf(config);
-    if (found.unknown === true) return [];
-    if (found.module === null) return null;
-    try {
-      const kinds = found.module.kinds();
-      return Array.isArray(kinds) ? kinds : [];
-    } catch {
-      return [];
-    }
+    const clean = found.review?.carried === true || own;
+    return { ok: true, review: clean ? 'clean' : 'none', upToDate: found.upToDate === true, earlier: cleanEarlier.length > 0 };
   }
 
   // The work whose recorded worktree holds `folder`, from the state's feature records; null when none or more than one does.
@@ -3220,215 +2980,6 @@ export async function startHelper({
     };
     const here = [...latest].filter(([, root]) => path.isAbsolute(root) && inside(root)).map(([work]) => work);
     return here.length === 1 ? here[0] : null;
-  }
-
-  // The most of a brief the reviewer is given.
-  const BRIEF_BYTES = 64 * 1024;
-  // The feature's brief as the state records it: the brief file in the worktree of the feature whose branch is the
-  // pull request's head, taken only when its hash is the latest one the state records for that feature. Null
-  // otherwise: the reviewer is then told no brief is recorded.
-  function recordedBrief(project, headRef) {
-    if (typeof headRef !== 'string' || headRef === '') return null;
-    const found = new Map();
-    const events = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'feature').sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
-    for (const e of events) {
-      if (typeof e.data?.work !== 'string') continue;
-      const f = found.get(e.data.work) ?? {};
-      if (typeof e.data.branch === 'string') f.branch = e.data.branch;
-      if (typeof e.data.worktree === 'string') f.worktree = e.data.worktree;
-      if (typeof e.data.brief === 'string') f.brief = e.data.brief;
-      found.set(e.data.work, f);
-    }
-    for (const f of found.values()) {
-      if (f.branch !== headRef || typeof f.worktree !== 'string' || typeof f.brief !== 'string' || !path.isAbsolute(f.worktree)) continue;
-      const text = readCapped(featurePaths(f.worktree).brief, BRIEF_BYTES);
-      if (text !== null && briefHash(text) === f.brief) return text;
-    }
-    return null;
-  }
-
-  // The rules files the reviewer is given, read from the default branch's commit in the mirror (BASE_REF), never
-  // from the pull request.
-  const RULES_FILES = ['CLAUDE.md', 'AGENTS.md'];
-  const RULES_BYTES = 256 * 1024;
-
-  // Inside one fetch of the pull request in the mirror (ruling P7-16), `build({ files, read, diff, rules })`, for
-  // runReview: each changed path's mode and size at the head (mode null when the change deletes it), a reader of a
-  // path's bytes at the head, the diff from the merge base, and the rules files from the default branch. The pull
-  // request's ref is removed after.
-  function withChange({ project, number, headSha, defaultBranch }, ctx) {
-    return (build) => oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ mirror, keyed }) => {
-      const git = local(mirror);
-      const refusal = await mirrorRefusal(mirror, keyed);
-      if (refusal) throw new Error(refusal);
-      const prRef = `refs/wheelhouse/pr/${number}`;
-      const must = async (args, what, options = {}) => {
-        const answer = await git([...NO_HOOKS, ...args], options);
-        if (answer.code !== 0) throw new Error(`${what} failed`);
-        return answer.stdout;
-      };
-      try {
-        await fetchPr({ mirror, keyed, git, number, headSha, defaultBranch, project });
-        const base = (await must(['merge-base', BASE_REF, headSha], 'finding the merge base')).trim();
-        const paths = (await must(['diff', '--name-only', '-z', '--no-renames', base, headSha], 'listing the changed files')).split('\0').filter((p) => p !== '');
-        const files = [];
-        for (const file of paths) {
-          const listed = await must(['--literal-pathspecs', 'ls-tree', '-l', '-z', headSha, '--', file], 'looking for a changed file');
-          const entry = /^(\d{6}) (\w+) [0-9a-f]+ +(-|\d+)\t([^\0]*)\0/.exec(listed);
-          // Only the entry for this very path counts; any other answer is read as the path being absent at the head.
-          files.push(entry && entry[4] === file ? { path: file, mode: entry[1], size: entry[3] === '-' ? null : Number(entry[3]) } : { path: file, mode: null, size: null });
-        }
-        const read = (file) => must(['cat-file', 'blob', `${headSha}:${file}`], 'reading a changed file', { encoding: 'buffer' });
-        const diff = await must(['diff', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', base, headSha], 'working out the diff');
-        const rules = [];
-        for (const file of RULES_FILES) {
-          const listed = await must(['ls-tree', '-l', '-z', BASE_REF, '--', file], 'looking for a rules file');
-          const entry = /^100\d{3} blob [0-9a-f]+ +(\d+)\t/.exec(listed);
-          if (entry && Number(entry[1]) <= RULES_BYTES) rules.push({ path: file, text: await must(['cat-file', 'blob', `${BASE_REF}:${file}`], 'reading a rules file') });
-        }
-        return await build({ files, read, diff, rules });
-      } finally {
-        await git([...NO_HOOKS, 'update-ref', '-d', prRef]);
-      }
-    }));
-  }
-
-  // A plain note about a review, through the state's queue. Nothing is written under STOP.
-  async function reviewNote(project, text, ctx) {
-    if (stopped()) return;
-    try {
-      await oneAtATime(`state:${project}`, async () => {
-        await ensureStateClone(project, ctx);
-        if (stopped()) return;
-        await doWrite({ project, kind: 'note', data: { text } }, ctx);
-      });
-    } catch { /* a note is not worth failing for */ }
-  }
-
-  // The review itself, in the background (ruling P7-18): the folder, the session, and the signed `review` record
-  // with `reviewKind`, written when the session ran clean, its verdict counts, the head hasn't moved and STOP is
-  // off; otherwise a plain note naming the reason.
-  async function reviewJob({ project, number, pr, defaultBranch, module }, ctx) {
-    const headSha = pr.headSha;
-    const short = headSha.slice(0, 7);
-    let outcome;
-    try {
-      const adapter = await ctx.adapter();
-      const ci = await adapter.ciState(headSha);
-      outcome = await runReview({
-        number, sha: headSha, review: module, brief: recordedBrief(project, pr.headRef), ci, stopped,
-        withChange: withChange({ project, number, headSha, defaultBranch }, ctx),
-      });
-      // A STOP raised after the route answered starts no agent, and nothing is written.
-      if (outcome.stopped === true) return;
-      if (outcome.ok) {
-        const still = await adapter.prState(number);
-        if (still?.state !== 'open' || still.headSha !== headSha) outcome = { ok: false, why: 'the head moved, or the pull request closed, while it was reviewed' };
-      }
-    } catch (error) {
-      outcome = { ok: false, why: clean(error instanceof Error ? error.message : '', ctx.secrets) || 'the review could not be run' };
-    }
-    if (!outcome.ok) {
-      // Counted first, by the helper's own record, so a run whose note can't be written still counts (ruling P8-31).
-      try { recordFailedReview(project, headSha); } catch { /* an unwritten count leaves the record as it was */ }
-      await reviewNote(project, `${NO_CLEAN_REVIEW(short)}: ${outcome.why}.`, ctx);
-      return;
-    }
-    if (stopped()) return;
-    try {
-      await oneAtATime(`state:${project}`, async () => {
-        await ensureStateClone(project, ctx);
-        if (stopped()) return;
-        const event = makeEvent({ kind: 'review', data: outcome.data, now });
-        await writeEvent({ project, event, now });
-        await freshViews(() => writeViews(project, { now }));
-      });
-    } catch {
-      await reviewNote(project, `The clean review of ${short} passed, but its signed record could not be written.`, ctx);
-    }
-  }
-
-  // The most failed runs of the helper's review a head may have (ruling P8-14).
-  const MOST_FAILED_REVIEWS = 3;
-  // The helper's own count of failed review runs by head commit (ruling P8-31): beside the project's mirror, outside
-  // the state repository, so no note the front desk or an agent writes counts, and a run counts whether or not its
-  // note was written. `{ <sha>: runs }`; null when the file is there but can't be read.
-  const failedReviewsFile = (project) => path.join(stateDir(project), '..', 'review-failures.json');
-  function readFailedReviews(project) {
-    let text;
-    try {
-      text = fs.readFileSync(failedReviewsFile(project), 'utf8');
-    } catch (error) {
-      return error?.code === 'ENOENT' ? {} : null;
-    }
-    try {
-      const read = JSON.parse(text);
-      return read !== null && typeof read === 'object' && !Array.isArray(read) ? read : null;
-    } catch {
-      return null;
-    }
-  }
-  // Adds one failed run for `headSha`, written whole. A record that can't be read is left as it is: it already
-  // refuses every review.
-  function recordFailedReview(project, headSha) {
-    const failed = readFailedReviews(project);
-    if (failed === null) return;
-    const runs = Number.isInteger(failed[headSha]) && failed[headSha] > 0 ? failed[headSha] : 0;
-    const file = failedReviewsFile(project);
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    const temp = `${file}.${process.pid}.tmp`;
-    try {
-      fs.writeFileSync(temp, `${JSON.stringify({ ...failed, [headSha]: runs + 1 }, null, 2)}\n`);
-      fs.renameSync(temp, file);
-    } catch (error) {
-      fs.rmSync(temp, { force: true });
-      throw error;
-    }
-  }
-  // Why the head `headSha` of pull request `number` gets no further review from the helper (ruling P8-14), or null:
-  // a signed `review` record of it, whatever its verdict or kind, or MOST_FAILED_REVIEWS failed runs in the helper's
-  // own count (refused too when that count can't be read). So a commit is reviewed once, and a run that fails is
-  // tried again only up to the limit: a fix needs a new commit.
-  function reviewSpent(project, number, headSha) {
-    // Only a review the gate would count spends the head: one signed by this computer's own key.
-    const views = buildViews(listEvents(stateDir(project), { report: () => {} }), ownKeyOnly(), { damaged: [], now });
-    const short = headSha.slice(0, 7);
-    if (views.reviews?.[String(number)]?.[headSha] !== undefined) return `${short} has a signed review already`;
-    const failed = readFailedReviews(project);
-    if (failed === null) return "the helper's count of failed reviews can't be read";
-    const runs = Number.isInteger(failed[headSha]) ? failed[headSha] : 0;
-    return runs >= MOST_FAILED_REVIEWS ? `the review of ${short} has failed ${runs} times` : null;
-  }
-
-  // POST /review/run { project, number } (ruling P7-18): the helper's own reviewer, in a clean session, of the open
-  // pull request's head. Refused under STOP (it starts an agent), for an agent whose reviews aren't the helper's,
-  // while the agent's clean session isn't switched on, and for a head that has had its review (reviewSpent: one review
-  // per commit). One review at a time per project: answered at once with
-  // `started`, or `running` when one is under way; the review finishes in the background.
-  async function doReviewRun({ project, number }, ctx) {
-    if (stopped()) return STOP_REFUSAL;
-    if (!Number.isInteger(number) || number < 1) refuse('the pull request number must be a whole number from 1');
-    const key = `review:${project}`;
-    if (queues.has(key)) return { ok: true, running: true };
-    const adapter = await ctx.adapter();
-    const pr = await adapter.prState(number);
-    if (pr?.state !== 'open') return { ok: false, refused: `pull request ${number} is not open` };
-    if (typeof pr.headSha !== 'string' || !/^[0-9a-f]{40}$/.test(pr.headSha)) refuse('the head commit is not known');
-    const defaultBranch = await defaultBranchOf(project, adapter);
-    const config = await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ must }) => {
-      await defaultHistory(must, defaultBranch);
-      return baseConfig(must);
-    }));
-    const found = reviewModuleOf(config);
-    if (found.unknown === true) return { ok: false, refused: "which agent this project runs on this computer can't be told, so no review is started" };
-    if (found.module === null) return { ok: false, refused: "this project's agent reviews in its own session, not the helper's" };
-    if (found.module.ready() !== true) return { ok: false, refused: "the helper's clean review session isn't switched on for this agent yet" };
-    const spent = reviewSpent(project, number, pr.headSha);
-    if (spent !== null) return { ok: false, refused: `${spent}; one review per commit: a fix needs a new commit` };
-    if (stopped()) return STOP_REFUSAL;
-    if (queues.has(key)) return { ok: true, running: true };
-    oneAtATime(key, () => reviewJob({ project, number, pr, defaultBranch, module: found.module }, ctx)).catch(() => {});
-    return { ok: true, started: true };
   }
 
   // Brings an open pull request's branch up to date with the default branch (design section 12):
@@ -3761,14 +3312,6 @@ export async function startHelper({
     // The answers the session said needed no change, which the merge went ahead on: said again where the merge is told.
     const noChangeIds = questionsOf(views, holdWork).filter((q) => q.answered && handled[q.id] === q.at).map((q) => q.id);
     if (hold !== null) stateReasons.push(hold);
-    // The kinds of review that count for the agent this computer runs, from the default branch's configuration:
-    // null, today's rule, unless the agent's review module names them (ruling P7-15). The configuration doesn't
-    // depend on the pull request's files, so when those couldn't be read it is read by itself; only when the
-    // default branch's configuration itself can't be read does today's rule stand (the approval is then needed
-    // anyway, since unreadable changes count as touching the guardrails).
-    const mergeConfig = changes?.config ?? await defaultConfig(project, adapter, ctx);
-    const reviewKinds = reviewKindsOf(mergeConfig);
-    const hostApproval = await hostApprovalOf(project, adapter, { number, sha: headSha, config: mergeConfig });
     // Where a project's checks run here, a fix passes the condition the broker asks of every other merge.
     let checkWaiting = false;
     if (fixCall || keeping || recordOf(project).host === 'local') {
@@ -3797,8 +3340,6 @@ export async function startHelper({
       approvalRequired,
       touchesGuardrails: guarded,
       review,
-      reviewKinds,
-      hostApproval,
       approval,
       ...(byRelease ? { release: { previous: updateCheck.previous, release: updateCheck.release, commit: updateCheck.commit, approved: updateCheck.approved === true } } : {}),
       enrolled,
@@ -4527,7 +4068,7 @@ export async function startHelper({
   const DESK_STOP_ACTS = ['all-stop', 'lift-all-stop', 'end-goal', 'narrow-goal'];
   const STOP_SETTERS = ['prompt', 'mod', 'helper', 'runbook'];
   function deskOf(project, body, ctx) {
-    const folder = typeof body.cwd === 'string' ? body.cwd : (readProject(project)?.folder ?? readLean(project)?.folder);
+    const folder = typeof body.cwd === 'string' ? body.cwd : readProject(project)?.folder;
     const source = fileSource(project, { cwd: folder, client: helperClient({ address, timeout: HELPER_WAIT_MS }), now, fresh: true });
     const tried = (fn) => async (arg) => {
       try {
@@ -4592,18 +4133,6 @@ export async function startHelper({
     held: stopped,
     moving: holdsWork,
     now,
-    // Which agent the project runs on this computer, by its default branch's configuration and its main checkout's.
-    projectAgents: async (project, folder) => {
-      const context = await contextFor(project);
-      const config = await defaultConfig(project, await context.adapter(), context);
-      const id = computerId();
-      return { branch: config === undefined ? null : agentOfConfig(config, { computerId: id }), checkout: agentInFolder(folder, { computerId: id }) };
-    },
-    recheckCopies: (project, folder) => recheckCopies({
-      project, projectDir: folder, computer: computerId(), now,
-      views: buildViews(listEvents(stateDir(project), { report: () => {} }), ownKeyOnly(), { now }),
-      write: (kind, data) => engineWrite(project, kind, data),
-    }),
     // A run's review is trusted only from the installed pack: the one built into the engine's folder, against the
     // copy Archon froze for the run, under its `project` folder.
     digests: { installed: () => packTreeDigest(path.join(engineDir(), 'pack')), captured: (root) => packTreeDigest(path.join(root, 'project')) },
@@ -4910,12 +4439,10 @@ export async function startHelper({
     const { review, approval } = await gateRecords({ project, number: call.pr, headSha: call.sha, views, adapter, compare: true }, ctx);
     let guardrail = true;
     let paths = null;
-    let permitConfig;
     try {
       const changes = await readChanges({ project, number: call.pr, headSha: call.sha, defaultBranch }, ctx);
       guardrail = classifyChange({ paths: changes.paths, config: changes.config }).touchesGuardrails;
       ({ paths } = changes);
-      permitConfig = changes.config;
     } catch (error) {
       if (error instanceof LookRefusal) throw error;
     }
@@ -4927,8 +4454,7 @@ export async function startHelper({
     // opened needs the director's approval, as shown-first work does.
     const opened = engineRun.openedOf(project, call.pr);
     const checked = call.kind === 'merge' ? await checkPermit(project, call.sha) : {};
-    const hostApproval = call.kind === 'merge' ? await hostApprovalOf(project, adapter, { number: call.pr, sha: call.sha, config: () => permitConfig ?? defaultConfig(project, adapter, ctx) }) : undefined;
-    return { ...base, ...(hostApproval === undefined ? {} : { hostApproval }), enrolled, review, approval, incident: incidentFor(views, call.pr), shownFirst: opened ? opened.showFirst === true : true, level: opened?.level ?? null, guardrail, outsideAreas, ...checked, stop: stopped() };
+    return { ...base, enrolled, review, approval, incident: incidentFor(views, call.pr), shownFirst: opened ? opened.showFirst === true : true, level: opened?.level ?? null, guardrail, outsideAreas, ...checked, stop: stopped() };
   }
   const broker = brokerRoutes({
     placeOf: placeEngineCall,
@@ -4989,11 +4515,6 @@ export async function startHelper({
     '/cards/chat-click': stateRoute(doChatClick, { write: true }),
     // One window at a time on this computer: a second request waits for the first window to close.
     '/confirm': (body, ctx) => oneAtATime('window', () => doConfirm(body, ctx)),
-    // A Lean project's store: one change at a time, by the store's own lock.
-    '/lean/status': doLeanStatus,
-    '/lean/merge': doLeanMerge,
-    '/lean/undo': doLeanUndo,
-    '/lean/copy': doLeanCopy,
     '/state/record': signedIn(stateRoute(doRecord)),
     '/desk/read': deskRoute('read'),
     '/desk/act': deskRoute('act'),
@@ -5073,8 +4594,7 @@ export async function startHelper({
     }),
     // A rule offered after the latest answer that earns it (delegated decisions design, section 11.1). The helper composes it from
     // its own record and the piece's own change, so nothing a caller sends shapes it, and proposes it as a `rule` record
-    // that decides nothing. A Lean project has no route here: only a signed confirmation puts a rule in force, so its
-    // Confirm could sign nothing.
+    // that decides nothing.
     '/rules/offer': stateRoute(async ({ project }) => {
       const events = listEvents(stateDir(project), { report: () => {} });
       const views = await writeViews(project, { now });
@@ -5266,7 +4786,6 @@ export async function startHelper({
     // sooner) waits its turn, then finds what the first did. The key is the foreman's own, so it
     // never waits on the state:, merge:, mirror: or push: queues the child's own calls take.
     '/foreman/run': ({ project, script, argv }) => oneAtATime(`foreman:${project}`, async () => {
-      if (inEditor) refuse(EDITOR_NO_NODE);
       const why = foremanRequestRefusal({ script, argv });
       if (why !== null) refuse(why);
       let result;
@@ -5299,7 +4818,7 @@ export async function startHelper({
   // Only the first keeps the wake process, since the engine's wake carries on every project's answered runs. Each
   // writes its project's `run` and `ask` records, and keeps the stream's cursor beside the record.
   const engineHosts = [];
-  const engineCtx = () => ({ lean: false, mode: 'quick', env: {}, signedOut: false, looked: new Map(), gitEnv: {}, secrets: [] });
+  const engineCtx = () => ({ mode: 'quick', env: {}, signedOut: false, looked: new Map(), gitEnv: {}, secrets: [] });
   function engineWrite(project, kind, data) {
     return oneAtATime(`state:${project}`, async () => {
       await ensureStateClone(project, engineCtx());
@@ -5349,8 +4868,6 @@ export async function startHelper({
   // ended or left. One at a time: a second All stop while one runs shares it. Lifting All stop starts no run; the wake starts again by itself.
   let engineStopping = null;
   let stopSeen = false;
-  // One request meter for each account, whichever projects share it.
-  const requestMeters = new Map();
   function stopEngines(reason = 'All stop') {
     if (engineHosts.length === 0) return Promise.resolve(null);
     // Not waited for: a check waiting its turn behind another process's runs on until that one ends.
@@ -5465,8 +4982,7 @@ export async function startHelper({
     } catch {
       return null;
     }
-    const agent = agentOfConfig(config, { computerId: computerId() });
-    const routing = engineRouting({ config, agent, inForce: () => routingInForce(project, config, { now }).roles });
+    const routing = bindingsOf(routingInForce(project, config, { now }).roles);
     const found = keptCommand(signedOf(project, 'checks-found').map((e) => e.data));
     const holding = notCounting(signedOf(project, 'checks-state').map((e) => e.data));
     return { routing, testCommand: config.testCommand ?? found?.testCommand ?? npmTestOf(folder), prepare: config.checks?.prepare ?? found?.prepare ?? null, ...(holding ? { testsNotCounting: true } : {}), pages: config.pages ?? [] };
@@ -5841,28 +5357,6 @@ export async function startHelper({
     const write = (kind, data) => engineWrite(project, kind, data);
     const record = registeredProjects().find((p) => p.project === project)?.record;
     const folder = record?.folder;
-    const month = () => now().toISOString().slice(0, 7);
-    const costsOf = (name) => Object.values(buildViews(listEvents(stateDir(name), { report: () => {} }), ownKeyOnly(), { now }).costs ?? {}).flat();
-    const counts = (name, where) => engine.countsRequests?.(engineConfigOf(name, where)?.routing ?? {}) === true;
-    // The other projects on this computer whose runs count requests: an allowance is the account's, not a project's.
-    const others = () => registeredProjects().filter((p) => p.project !== project && engineHosts.some((h) => h.project === p.project) && counts(p.project, p.record?.folder));
-    const counted = (name) => ({ costs: () => costsOf(name), going: () => engineRunsGoing(name) });
-    const estimated = () => requestsThisMonth({ projects: [counted(project), ...others().map((p) => counted(p.project))], month: month(), inspect: (id) => engine.inspect(id) });
-    // This month's counted requests, for the cap: the account's estimate, or, where the engine checks it against the
-    // provider's own figure once a day (its checkRequests), that figure; a difference is a Logbook line. Only for a
-    // project whose runs count requests.
-    async function requestsUsed() {
-      if (!counts(project, folder)) return requestsThisMonth({ projects: [{ costs: () => costsOf(project), going: () => [] }], month: month() });
-      if (typeof engine.checkRequests !== 'function' || typeof engine.requestsFile !== 'function') return estimated();
-      const file = engine.requestsFile();
-      if (!requestMeters.has(file)) {
-        requestMeters.set(file, requestMeter({
-          file, estimate: estimated, note: (words) => write('note', { about: 'engine', words }),
-          look: ({ kept, estimate }) => engine.checkRequests({ estimate, kept, run, now: now() }),
-        }));
-      }
-      return requestMeters.get(file).used();
-    }
     // The seals beside the cards (scripts/delegation/record-only.js), ticked apart from engineTick.
     const factsOf = async (card) => {
       const adapter = await adapterNow();
@@ -5887,7 +5381,7 @@ export async function startHelper({
         const asked = views().questions?.[card.id]?.question?.data;
         return readerView({ question: asked?.what, options: asked?.options, brief: views().brief, diff: await cardDiff({ card, git: gitRoute({ run }), facts }), cards: pieceCards({ views: views(), work: card.work, card: card.id }), seed: card.id });
       },
-      gate: () => ({ running: engineRunsGoing(project).length, pace: paceOf({ pace: { value: settings().pace } }).building, counted: counts(project, folder), incident: Boolean(openRedMain(views())) }),
+      gate: () => ({ running: engineRunsGoing(project).length, pace: paceOf({ pace: { value: settings().pace } }).building, incident: Boolean(openRedMain(views())) }),
       startReader: async ({ card }) => {
         const place = prepareReaderFolder({ project });
         return place.ok ? engineRun.startReader({ project, card, folder: place.folder, bindings: engineConfigOf(project, folder)?.routing ?? {} }) : place;
@@ -5916,12 +5410,7 @@ export async function startHelper({
       readyOf: () => engineRun.readyAll(project),
       areasHeld: () => engineRun.areasHeld(project),
       settleAreas: (pr, how) => engineRun.settleAreas(project, pr, how),
-      spentThisMonth: () => requestsUsed(),
-      // The allowance read is Claude's: a project on another agent has no share of it (ruling P8-32).
-      allowance: () => {
-        const agent = agentInFolder(folder, { computerId: computerId() });
-        return typeof agent === 'string' && agent !== 'claude-code' ? null : weeklyShare({ now: now() });
-      },
+      allowance: () => weeklyShare({ now: now() }),
       goalStarted: (goal) => awayFor(goal.until),
       mainGreen: () => mainGreen(project),
       stoppedRuns: () => stoppedRunsOf(project),
@@ -6118,10 +5607,6 @@ export async function startHelper({
       const seenRun = await Promise.resolve().then(() => engine.inspect(seen.runs?.[work]?.at(-1)?.data?.runId)).catch(() => null);
       return factsOf({ branch: seenRun?.branch, folder: seenRun?.folder });
     };
-    const onClaude = () => {
-      const agent = agentInFolder(folder, { computerId: computerId() });
-      return !(typeof agent === 'string' && agent !== 'claude-code');
-    };
     const sheets = sheetDesk({
       views: () => ({ ...views(), engineOn: engineReady(project) }),
       events: () => listEvents(stateDir(project), { report: () => {} }),
@@ -6132,8 +5617,8 @@ export async function startHelper({
       mainGreen: () => mainGreen(project),
       mainHead: () => mainHeadOf(project),
       stopped,
-      reading: () => (onClaude() ? weeklyShare({ now: now() }) : null),
-      paid: () => (onClaude() ? paidUsageOf(claudeAccount()) : false),
+      reading: () => weeklyShare({ now: now() }),
+      paid: () => paidUsageOf(claudeAccount()),
       sessions: () => sessionsTicking(project, { now }),
       offer: async (kind, data) => {
         const event = makeEvent({ kind, data, now });
@@ -6266,9 +5751,7 @@ export async function startHelper({
         if (protectHost !== undefined) return protectHost({ host, repo });
         const api = host === 'gitlab' ? await directorGitlabApi({ run, via }) : undefined;
         const realUsers = launchedIn(project);
-        // A project on an agent other than Claude Code with real users, once GitHub's route is ready, asks the person for their own approval (Task B1).
-        const hostApproval = host === 'github' && approvalReady({ host }) === true && hostApprovalNeeded({ agent: agentInFolder(recordOf(project).folder, { computerId: computerId() }), realUsers, host }, { ready: approvalReady });
-        return switchOnAsDirector({ host, repo, run, api, realUsers, hostApproval });
+        return switchOnAsDirector({ host, repo, run, api, realUsers });
       },
       lock: async () => {
         const ctx = await contextFor(project);
@@ -6629,14 +6112,7 @@ export async function startHelper({
         ctx = await profileContext();
       } else {
         const project = checkProject(body.project);
-        // A Lean project is served before any connection is made, on its state routes alone.
-        if (isLean(project)) {
-          if (!LEAN_ROUTES.includes(url.pathname)) refuse(LEAN_NO_HOST);
-          ctx = leanContext();
-        } else {
-          if (url.pathname.startsWith('/lean/')) refuse(LEAN_ONLY);
-          ctx = await contextFor(project, { fallBack: runbookRoute || FALL_BACK_ROUTES.includes(url.pathname) });
-        }
+        ctx = await contextFor(project, { fallBack: runbookRoute || FALL_BACK_ROUTES.includes(url.pathname) });
       }
       onArrive(url.pathname); // for tests: the request is about to enter its queue
       const answer = await route(body, ctx);
@@ -6676,8 +6152,7 @@ export async function startHelper({
     releaseStart();
   }
   startEngineHosts();
-  // Not inside VS Code: the entry it would write runs `process.execPath`, which there is VS Code's own program.
-  const renewing = inEditor ? Promise.resolve() : renewLoginStart();
+  const renewing = renewLoginStart();
   const safekeepingWatch = setInterval(() => { safekeepingRound().catch(() => {}); moveRound().catch(() => {}); }, dispatchMs);
   safekeepingWatch.unref?.();
 
