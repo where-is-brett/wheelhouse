@@ -261,7 +261,8 @@ const sendBacksOf = (sorted, enrolled) => sorted.filter((e) => e.kind === 'actio
   .map((e) => ({ id: e.id, at: e.at, pr: e.data.pr, sha: e.data.sha }));
 
 // The verified approvals and actions that carry the question they were clicked on.
-const answeredByOf = (sorted, enrolled) => sorted.filter((e) => (e.kind === 'approval' || e.kind === 'action') && typeof e.data?.question === 'string' && verify(e, enrolled));
+// A decision-answer, the director's typed reply to a decision shown in the chat, decides the card whose question it carries.
+const answeredByOf = (sorted, enrolled) => sorted.filter((e) => (e.kind === 'approval' || e.kind === 'action' || e.kind === 'decision-answer') && typeof e.data?.question === 'string' && verify(e, enrolled));
 
 // The time each ruling, level, setting or brief came into force by a verified confirmation of its own
 // hash: id -> the time of the first such confirmation.
@@ -318,7 +319,7 @@ function outcomesOf(sorted, { confirmations, answeredBy }) {
     // Where it was given: the deciding plain answer's, or for a signed record the nearest plain answer after it (the
     // click writes the plain answer beside its record). Null for an answer recorded before `where` existed.
     const placed = first === undefined || first === answered ? answered : mine.filter((a) => byOrder(first, a) <= 0 && WHERE_PLACES.includes(a.data?.where)).sort(byOrder)[0];
-    const where = WHERE_PLACES.includes(placed?.data?.where) ? placed.data.where : null;
+    const where = first?.kind === 'decision-answer' ? 'chat' : WHERE_PLACES.includes(placed?.data?.where) ? placed.data.where : null;
     const decided = first === undefined ? null : { at: first.at, label, where };
     const explained = mine.filter((a) => a.data?.label === 'Explain more' || a.data?.label === WHY).map((a) => a.at);
     return { card, answers: mine, decided, explained, steered: mine.filter((a) => a.data?.label === SUGGEST && byOrder(card, a) < 0).at(-1)?.at ?? null };

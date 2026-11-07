@@ -294,7 +294,7 @@ test('hooks.json names a script that exists for every hook', () => {
   assert.deepEqual(file, {
     hooks: {
       SessionStart: [{ matcher: 'startup|resume|compact|clear|fork', hooks: [cmd('session-start')] }],
-      UserPromptSubmit: [{ hooks: [cmd('stop-word'), cmd('context-gauge'), cmd('board-context')] }],
+      UserPromptSubmit: [{ hooks: [cmd('stop-word'), cmd('context-gauge'), cmd('prompt-record'), cmd('board-context')] }],
       PreToolUse: [
         { matcher: '*', hooks: [{ ...cmd('stop-guard'), onFailure: 'block' }, { ...cmd('lineage-hold'), onFailure: 'block' }] },
         { matcher: 'Read|Edit|Write|MultiEdit|NotebookEdit|Grep|Glob|Bash|PowerShell|Monitor|WebFetch|ListMcpResourcesTool|ReadMcpResourceTool|mcp__.*', hooks: [{ ...cmd('tool-guard'), onFailure: 'block' }] },
@@ -304,7 +304,7 @@ test('hooks.json names a script that exists for every hook', () => {
       ],
       PostToolUse: [{ matcher: 'AskUserQuestion', hooks: [cmd('prompt-record')] }, { matcher: '*', hooks: [cmd('feature-status')] }],
       SubagentStop: [{ matcher: '^wheelhouse:(builder|reviewer)$', hooks: [cmd('report-check')] }, { hooks: [cmd('feature-status')] }],
-      Stop: [{ hooks: [cmd('feature-status')] }],
+      Stop: [{ hooks: [cmd('card-check'), cmd('feature-status')] }],
       SessionEnd: [{ hooks: [cmd('stop-guard')] }],
     },
   });

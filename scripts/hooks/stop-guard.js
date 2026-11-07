@@ -82,7 +82,7 @@ function isFeatureRead(command, pluginRoots, platform) {
 }
 
 // The front desk's commands that only read (scripts/frontdesk/cli.js), by their exact words:
-// `cards`, `similar`, `similar <the request's words>` (see REQUEST), `again <n>`, `views <name>`,
+// `cards`, `decision list`, `decision show <n>`, `similar`, `similar <the request's words>` (see REQUEST), `again <n>`, `views <name>`,
 // `explain <term>` (one to four words of letters and digits, a word's parts joined by hyphens) and
 // `preview <pull request>`. `cards` and `again` record which cards they handed out, and under STOP
 // the helper refuses that write, so the cards are still given. `card` and `record` write, so they
@@ -101,6 +101,7 @@ export function isFrontDeskRead(command, pluginRoots, platform) {
   if (name === 'similar') return rest.length === 0 || REQUEST.test(rest.join(' '));
   if (name === 'again' || name === 'preview') return rest.length === 1 && COUNT.test(rest[0]);
   if (name === 'views') return rest.length === 1 && VIEW_NAMES.includes(rest[0]);
+  if (name === 'decision') return (rest.length === 1 && rest[0] === 'list') || (rest.length === 2 && rest[0] === 'show' && COUNT.test(rest[1]));
   if (name === 'explain') {
     const term = rest.join(' ');
     return rest.length > 0 && TERM.test(term) && term.split(' ').length <= 4;

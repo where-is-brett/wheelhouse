@@ -9,6 +9,9 @@
 //                   each lineage hold. Under STOP, the Lift STOP card alone. With --here (the director
 //                   asked to answer in the chat) the cards given are marked, for two minutes, to be
 //                   asked in the chat once
+//   decision list   the decisions waiting for the director, by number and question, after making a card of each open question from the
+//                   build that has none; decision show <n> prints decision n as the chat message it is, to copy word for word. A decision
+//                   is shown in the chat and answered by the director's typed reply, never through the question picker
 //   card            composes one card from the composer's input and records it ({ question, id });
 //                   with `revises`, the id of a card of its kind waiting now or closed by a later
 //                   head, and `changed`, one line saying what changed, it is a revised card that
@@ -74,6 +77,8 @@ import { helperClient } from '../host/helper-client.js';
 import { WINDOW_MS } from '../confirm/window.js';
 import { dataHash } from '../state/events.js';
 import { composeCard, answerInput } from '../cards/compose.js';
+import { decisionText } from '../decisions/message.js';
+import { isDecisionCard } from '../decisions/pending.js';
 import { confirmWords } from '../state/card-lines.js';
 import { joinersOf } from '../state/joiners.js';
 import { cardsForVisit, existingCard, cardNumbered, asQuestion } from '../cards/visit.js';
@@ -121,7 +126,7 @@ export const RECORD_KINDS = Object.freeze([
   'work', 'amendment', 'incident', 'note', 'brief',
 ]);
 export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey', 'brief']);
-const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'note'];
+const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'note', 'decision'];
 // How long `confirm` waits for the helper: one window at a time on the computer, so it may wait for another's.
 const CONFIRM_WAIT_MS = 3 * WINDOW_MS;
 export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
@@ -465,19 +470,9 @@ async function buildLoopCards({ client, cwd, views, words, now, problems }) {
   return { made, again };
 }
 
-// This visit's cards: { questions, left }, and `problems` when something couldn't be done. An open
-// question from the build that no waiting card asks gets its answer card first, and the build
-// loop's records theirs (buildLoopCards). The cards handed out are recorded as asked, so a card
-// dismissed with no answer isn't offered on every turn. A write the helper refuses is a problem,
-// not a failure: the cards waiting are still given. Under STOP the visit's one card is Lift STOP:
-// the helper writes nothing, so no card is made, and the cards waiting stay on the board, counted
-// in `left`, for the visit after STOP is lifted.
-export async function cards({ client, cwd, now, onAsked }) {
-  const problems = [];
-  let { views, stop, names } = await viewsOf(client, cwd);
-  const words = await wordsOf(client, cwd, views, now, names);
-  const lift = stop ? composePlain(LIFT_STOP_CARD, words).question : null;
-  const at = typeof now === 'function' ? now() : new Date(now ?? Date.now());
+// An answer card for each open question from the build that no waiting card asks yet, or whose joiners changed: how many were
+// recorded. What could not be made or recorded goes into `problems`. Under STOP none is made. Both `cards` and `decision list` make them.
+async function questionCards({ client, cwd, views, words, stop, problems }) {
   let made = 0;
   for (const [id, entry] of Object.entries(isPlain(views.questions) && !stop ? views.questions : {})) {
     // A joiner is answered by its lead's card, which is re-issued when the pieces behind it change.
@@ -505,6 +500,23 @@ export async function cards({ client, cwd, now, onAsked }) {
       problems.push(`The card for question ${id} wasn't recorded: ${error.message}`);
     }
   }
+  return made;
+}
+
+// This visit's cards: { questions, left }, and `problems` when something couldn't be done. An open
+// question from the build that no waiting card asks gets its answer card first, and the build
+// loop's records theirs (buildLoopCards). The cards handed out are recorded as asked, so a card
+// dismissed with no answer isn't offered on every turn. A write the helper refuses is a problem,
+// not a failure: the cards waiting are still given. Under STOP the visit's one card is Lift STOP:
+// the helper writes nothing, so no card is made, and the cards waiting stay on the board, counted
+// in `left`, for the visit after STOP is lifted.
+export async function cards({ client, cwd, now, onAsked }) {
+  const problems = [];
+  let { views, stop, names } = await viewsOf(client, cwd);
+  const words = await wordsOf(client, cwd, views, now, names);
+  const lift = stop ? composePlain(LIFT_STOP_CARD, words).question : null;
+  const at = typeof now === 'function' ? now() : new Date(now ?? Date.now());
+  let made = await questionCards({ client, cwd, views, words, stop, problems });
   let again = new Set();
   if (!stop) {
     const built = await buildLoopCards({ client, cwd, views, words, now: at, problems });
@@ -515,10 +527,42 @@ export async function cards({ client, cwd, now, onAsked }) {
   const decided = [...again].some((id) => !(Array.isArray(views.waiting) ? views.waiting : []).some((c) => c?.id === id));
   let events = [];
   if (made > 0 || decided) ({ views, cards: events } = await viewsOf(client, cwd, { cards: decided }));
-  const chosen = cardsForVisit(withPutBack(views, again, events), { room: lift === null ? CARD.questions : 0 });
+  // A decision is shown as a chat message (`decision list`), never through the question picker, so no visit hands one out.
+  const forVisit = withPutBack(views, again, events);
+  const chosen = cardsForVisit({ ...forVisit, waiting: (Array.isArray(forVisit.waiting) ? forVisit.waiting : []).filter((c) => !isDecisionCard(c?.data)) }, { room: lift === null ? CARD.questions : 0 });
   problems.push(...await markAsked(client, cwd, chosen.ids, stop));
   if (typeof onAsked === 'function') await onAsked(chosen.ids);
   return { questions: [...(lift === null ? [] : [lift]), ...chosen.questions], left: chosen.left, ...(chosen.heldBack > 0 ? { heldBack: chosen.heldBack } : {}), ...withProblems(problems) };
+}
+
+// --- decisions ---
+
+// A decision is a plain chat message (scripts/decisions/), not a card for the question picker. The waiting decisions, as the desk's
+// waiting view gives them: { pending, answered, next }.
+async function decisionsOf(client, cwd) {
+  const got = await recordOf(client, cwd);
+  if (!isPlain(got.decisions) || !Array.isArray(got.decisions.pending)) throw new CliError('The host helper gave no decisions');
+  return got.decisions;
+}
+
+// The decisions waiting, one line each. First each open question from the build that no card asks yet is made a card, which is what a
+// decision is made from; under STOP none is made, and the decisions already waiting are listed.
+export async function decisionList({ client, cwd, now }) {
+  const problems = [];
+  const { views, stop, names } = await viewsOf(client, cwd);
+  const words = await wordsOf(client, cwd, views, now, names);
+  await questionCards({ client, cwd, views, words, stop, problems });
+  const { pending } = await decisionsOf(client, cwd);
+  const lines = pending.length === 0 ? ['No decision is waiting.'] : pending.map((d) => `${d.n}. ${d.question}${d.work === null || d.work === undefined ? '' : ` (holds up: ${d.work})`}`);
+  return [...lines, ...problems];
+}
+
+// One decision's message, to print word for word. Refused when none waits by that number.
+export async function decisionShow({ client, cwd, n }) {
+  const { pending } = await decisionsOf(client, cwd);
+  const found = pending.find((d) => d.n === n);
+  if (found === undefined) throw new CliError(`Decision ${n} isn't waiting${pending.length === 0 ? '' : `: ${pending.map((d) => d.n).join(', ')} are`}. Run decision list.`);
+  return decisionText(found);
 }
 
 // The director's Show them: the cards held back are named as pulled, which spends none of the day's budget, then this
@@ -1244,6 +1288,11 @@ export async function main(argv, {
       const { left, onAsked } = await hereMark(rest);
       only(left, 0, 'cards takes no arguments');
       json(await cards({ client: helper, cwd: here, now, onAsked }));
+    } else if (command === 'decision') {
+      const usage = 'Give decision list, or decision show <n> with the decision\'s number';
+      if (rest[0] === 'list' && rest.length === 1) lines(await decisionList({ client: helper, cwd: here, now }));
+      else if (rest[0] === 'show' && rest.length === 2 && /^[1-9][0-9]{0,2}$/.test(rest[1])) out(`${await decisionShow({ client: helper, cwd: here, n: Number(rest[1]) })}\n`);
+      else throw new CliError(usage);
     } else if (command === 'card') {
       only(rest, 0, 'card takes no arguments: give the card as JSON on standard input');
       json(await card({ client: helper, cwd: here, input: parsed(await stdin()), now }));

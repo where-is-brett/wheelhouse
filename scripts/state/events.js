@@ -38,9 +38,12 @@ export const PLAIN_KINDS = [
 // reads a run that happened, never a status anyone could post. `checks-state` says whether the project's tests count, which
 // lets merges pass with none, and `checks-found` is the command the finder found, which a check runs: both the helper's.
 // `change` is a local change as it stands (spec 7.1), the helper's too: it names the head the local queue merges.
+// `decision-answer` is the director's own typed reply to a decision shown as a chat message (scripts/decisions/answer.js):
+// the question, its number, the letter chosen (or `own` for their own words) and their words. Signed, so only the prompt
+// hook of a front-desk session the director typed in can make one; nothing an agent writes counts.
 // `by-hand` ties the director's answer on the card for changes made by hand to the one local change the helper opened for it,
 // at the commit that was pressed on: signed, so only the helper's own tie lets that answer approve work (scripts/state/views.js).
-export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file', 'usage-card', 'premium-card', 'premium-check', 'premium-failed', 'provenance', 'check', 'checks-state', 'checks-found', 'change', 'by-hand'];
+export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file', 'usage-card', 'premium-card', 'premium-check', 'premium-failed', 'provenance', 'check', 'checks-state', 'checks-found', 'change', 'by-hand', 'decision-answer'];
 // Plain kinds only the helper itself records, from what it read itself: no caller writes one
 // through /state/write. The survey (design section 15, ruling A1) is taken and recorded in the
 // helper, when setup finishes and when it is taken again. A column-ready record (design section 14.6) is the
@@ -837,6 +840,21 @@ function checkChecksFound(data) {
   if (!isPlain(data) || !command(data.testCommand) || !(data.prepare === null || command(data.prepare)) || typeof data.why !== 'string') throw new Error('A checks-found event needs its command, its prepare or null, and why');
 }
 
+// The director's typed reply to a decision: the decision's question as the state holds it, its number, the letter they
+// chose (A to D) or `own` when they answered in their own words, those words (empty when the letter stood alone) and
+// the place, always the chat.
+function checkDecisionAnswer(data) {
+  const bad = (why) => { throw new Error(`A decision-answer event ${why}`); };
+  const keys = isPlain(data) ? Object.keys(data).sort().join() : '';
+  if (keys !== 'label,n,question,where,words') bad('needs its question, number, label, words and where');
+  if (typeof data.question !== 'string' || data.question === '') bad('needs the decision\'s question');
+  if (!Number.isInteger(data.n) || data.n < 1) bad('needs the decision\'s number');
+  if (typeof data.label !== 'string' || !/^(?:[A-D]|own)$/.test(data.label)) bad('needs its label to be A to D, or own');
+  if (typeof data.words !== 'string' || data.words.length > 2000) bad('needs words, empty when there are none, of at most 2000 characters');
+  if (data.label === 'own' && data.words.trim() === '') bad('needs the director\'s words when it is their own');
+  if (data.where !== 'chat') bad('needs where to be chat');
+}
+
 // What a shown record must carry: the reply code, the question put to the director
 // and the labels of the options offered (two to six).
 function checkShown(data) {
@@ -861,6 +879,7 @@ export function makeEvent({ kind, data, now = () => new Date() }) {
   if (kind === 'checks-found') checkChecksFound(data);
   if (kind === 'change') checkChange(data);
   if (kind === 'by-hand') checkByHand(data);
+  if (kind === 'decision-answer') checkDecisionAnswer(data);
   if (Object.hasOwn(PLAIN_SHAPES, kind)) checkPlain(kind, data);
   const event = {
     v: 1,

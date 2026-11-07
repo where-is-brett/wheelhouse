@@ -17,7 +17,7 @@ import { runScenario, runSession, sessionIdOf } from '../../../scripts/eval/harn
 import { standInViews, startStandInHelper } from '../../../scripts/eval/stand-in-helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { FRONT_DESK_LINE, reload, toolSheetLines } from '../../../scripts/hooks/session-start.js';
-import { HEADINGS, cardsLine, decide } from '../../../scripts/hooks/board-context.js';
+import { HEADINGS, cardsLine, decide, DECISIONS_TAIL } from '../../../scripts/hooks/board-context.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { eventPath } from '../../../scripts/state/events.js';
@@ -128,16 +128,17 @@ test('promptContext gives the cards line and, after the gap, the briefing the bo
   const { ago } = clock();
   const seed = seed9(ago);
   const views = standInViews(seed);
+  const toCome = `Decisions not shown yet: 1. ${DECISIONS_TAIL}`;
   const seen = { promptAt: ago(180), briefedAt: null };
   const at = new Date();
   const text = promptContext({ views, events: seed, seen, at, usage: USAGE, home });
-  assert.ok(text.startsWith(`${cardsLine(1)}\n\n${HEADINGS.briefing}\n\n`), text);
+  assert.ok(text.startsWith(`${toCome}\n\n${HEADINGS.briefing}\n\n`), text);
   assert.match(text, /Waiting on you:\n1\. Should Christmas pre-orders close on 18 December or 20 December\?/);
   assert.match(text, /Usage this week: 1\.2M tokens/);
   assert.equal(seen.promptAt, at.toISOString());
   assert.equal(seen.briefedAt, at.toISOString());
   // A prompt soon after brings no briefing; the line stays while the card isn't handed out.
-  assert.equal(promptContext({ views, events: seed, seen, at: new Date(at.getTime() + 60000), usage: USAGE, home }), cardsLine(1));
+  assert.equal(promptContext({ views, events: seed, seen, at: new Date(at.getTime() + 60000), usage: USAGE, home }), toCome);
   // Nothing waiting and no gap: nothing.
   assert.equal(promptContext({ views: standInViews([]), events: [], seen: { promptAt: at.toISOString(), briefedAt: null }, at, home }), null);
   // The functions read the evaluation's home for that moment only.
@@ -145,7 +146,7 @@ test('promptContext gives the cards line and, after the gap, the briefing the bo
   // The gap runs from the later of the last prompt and the last briefing, as decide has it: a
   // briefing given half an hour ago (by /digest, say) brings none, however old the last prompt.
   const briefed = { promptAt: ago(180), briefedAt: ago(30) };
-  assert.equal(promptContext({ views, events: seed, seen: briefed, at: new Date(), usage: USAGE, home }), cardsLine(1));
+  assert.equal(promptContext({ views, events: seed, seen: briefed, at: new Date(), usage: USAGE, home }), toCome);
   assert.equal(briefed.briefedAt, ago(30), 'no briefing given, so none marked');
 });
 
@@ -268,7 +269,7 @@ test('scenario 5\'s state gives the answer card on the first visit, once', async
     const cli = (...args) => runNode([path.join(plugin, 'scripts', 'frontdesk', 'cli.js'), ...args], { cwd: project.dir, env: context.env });
     const first = await cli('cards');
     assert.equal(first.code, 0, first.err);
-    assert.equal(JSON.parse(first.out).questions.length, 1);
+    assert.equal(JSON.parse(first.out).questions.length, 0, 'a decision is asked in chat, not on the picker');
     const again = await cli('cards');
     assert.deepEqual(JSON.parse(again.out).questions, [], 'handed out once');
     assert.ok(context.helper.events().some((e) => e.kind === 'card' && e.data.line === answerLine(QUESTION)));

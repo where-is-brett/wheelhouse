@@ -373,7 +373,10 @@ function offered(kind, given, { build = false, target, suggest = true, parked = 
     seen.add(label);
     // A put-off button may leave out what it says: the card then uses the usual words.
     const optional = (PUT_OFF.includes(label) || label === KEEP_AS_IS) && kind !== 'answer' && kind !== 'question' && kind !== 'usage' && kind !== 'premium';
-    return { label, says: optional && o.says === undefined ? undefined : words(kind, 'options', o.says) };
+    // A decision's option may say what it costs and whether it can be undone, which the chat message prints (scripts/decisions/message.js).
+    const extra = (kind === 'answer' || kind === 'question')
+      ? Object.fromEntries(['cost', 'undo'].filter((k) => o[k] !== undefined).map((k) => [k, words(kind, 'options', o[k])])) : {};
+    return { label, says: optional && o.says === undefined ? undefined : words(kind, 'options', o.says), ...extra };
   });
   // A usage card offers its own two options, the switch first (design section 14.6).
   if (kind === 'usage' && list.length !== 2) fail(kind, 'options', 'must be its switch and its stay option');
@@ -501,7 +504,8 @@ export function composeCard(input) {
     what,
     small: [size, why].filter(Boolean).join(' · '),
     recommendation: `${recommend}, because ${clause(because)}.`,
-    options: buttons.map((b) => ({ label: b.label, says: b.says, recommended: b.label === recommend })),
+    options: buttons.map((b) => ({ label: b.label, says: b.says, ...(b.cost === undefined ? {} : { cost: b.cost }), ...(b.undo === undefined ? {} : { undo: b.undo }), recommended: b.label === recommend })),
+    because: clause(because),
     why,
     meanwhile,
     ...(checks === undefined ? {} : { checks }),

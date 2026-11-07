@@ -63,6 +63,9 @@ import { HELPER_WAIT_MS } from '../lib/core-numbers.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { HEADINGS, NOT_CHECKED, NONE_CHANGED, briefingIn } from '../desk/context.js';
 import { deskClient, unreached } from '../desk/client.js';
+import { isDecisionCard } from '../decisions/pending.js';
+import { takeNote } from '../decisions/answer.js';
+import { isBuildQuestion } from '../protection/windows-builds.js';
 import { gapHours, visitLearning, earlierSurvey, offerAgainDue, OFFER_AGAIN_MS } from '../desk/visit.js';
 
 export { HEADINGS, NOT_CHECKED, NONE_CHANGED, briefingIn, OFFER_AGAIN_MS };
@@ -134,14 +137,37 @@ async function cardsToAsk(desk, at) {
 // The count cardsToAsk gives, from the views given (with STOP off).
 export function cardsDue(views, at) {
   const waiting = Array.isArray(views.waiting) ? views.waiting.filter(isRecord) : [];
-  const fresh = new Set(waiting.filter((card) => (card.asked === null || card.asked === undefined) && !heldBackLine(card.data?.line, views)).map((card) => card.id));
+  // A decision is shown as a chat message, so it is no card to ask (see decisionsLine).
+  const fresh = new Set(waiting.filter((card) => (card.asked === null || card.asked === undefined) && !heldBackLine(card.data?.line, views) && !isDecisionCard(card.data)).map((card) => card.id));
   const questions = Object.entries(isRecord(views.questions) ? views.questions : {})
     .filter(([id, entry]) => isRecord(entry) && !entry.answer && entry.joins === undefined && existingCard({ waiting }, answerLine(id)) === null && !heldBackLine(answerLine(id), views)
-      && questionProblem(entry.question?.data, { recorded: true }) === null).length;
+      && isBuildQuestion(entry.question?.data) && questionProblem(entry.question?.data, { recorded: true }) === null).length;
   const gate = gateAsksDue(views, at);
   for (const due of gate) if (due.again !== undefined) fresh.add(due.again);
   const made = gate.filter((due) => due.make).length + holdsDue(views).length + controlFilesDue(views).length + premiumFailuresDue(views).length;
   return Math.min(CARD.questions, fresh.size + questions + made);
+}
+
+// The line for the decisions waiting, which are shown as chat messages and never through the question picker: each by its number and
+// question, and how to show it. A question from the build that has no card yet is a decision to come: `decision list` makes it. Null
+// when none waits.
+export const decisionsLead = (waiting) => `Decisions waiting for the director: ${waiting}.`;
+export const DECISIONS_TAIL = 'Run `decision list`, then print each one exactly as `decision show <n>` prints it, in a message of its own. The director answers by typing a reply, and only their typed reply decides: never answer for them.';
+export function decisionsLine(views, pending) {
+  const listed = (Array.isArray(pending) ? pending : []).filter(isRecord);
+  const waiting = isRecord(views) ? views.waiting : [];
+  const cards = Array.isArray(waiting) ? waiting.filter(isRecord) : [];
+  const toCome = Object.entries(isRecord(views?.questions) ? views.questions : {})
+    .filter(([id, entry]) => isRecord(entry) && !entry.answer && entry.joins === undefined && existingCard({ waiting: cards }, answerLine(id)) === null
+      && !isBuildQuestion(entry.question?.data) && questionProblem(entry.question?.data, { recorded: true }) === null).length;
+  if (listed.length === 0 && toCome === 0) return null;
+  const said = listed.map((d) => `${d.n}. ${d.question}`).join('; ');
+  return [listed.length === 0 ? null : decisionsLead(said), toCome === 0 ? null : `Decisions not shown yet: ${toCome}.`, DECISIONS_TAIL].filter(Boolean).join(' ');
+}
+
+async function decisionLineOf(desk) {
+  const got = await desk.read('waiting');
+  return got?.ok === true && isRecord(got.data?.views) ? decisionsLine(got.data.views, got.data.decisions?.pending) : null;
 }
 
 // What the director answered since the First Mate's last turn, and how the cards of a question that was stopped stand now.
@@ -345,7 +371,10 @@ export async function decide(input, deps = {}) {
     const sessionId = typeof input.session_id === 'string' ? input.session_id : null;
     const open = sessionId === null ? null : attempt(() => readOpen(sessionId), null);
     if (writes && sessionId !== null) attempt(() => clearOpen(sessionId));
-    const notes = ((await within(() => cardNotes({ project, input, since: seen.promptAt, at, desk, open }), waitMs)) ?? []).filter((line) => typeof line === 'string');
+    // What the prompt hook made of a reply (scripts/decisions/answer.js) is told once, ahead of the decisions that wait.
+    const replyNote = writes && sessionId !== null ? attempt(() => takeNote(sessionId), null) : null;
+    const decisionLine = await within(() => decisionLineOf(desk), waitMs);
+    const notes = [replyNote, decisionLine, ...((await within(() => cardNotes({ project, input, since: seen.promptAt, at, desk, open }), waitMs)) ?? [])].filter((line) => typeof line === 'string');
     const reserve = (cards === null ? 0 : cards.length + 2) + notes.reduce((sum, line) => sum + line.length + 2, 0);
     // A survey not worked out in time is left to the briefing view, which takes the record's latest.
     const survey = want === 'briefing' ? (await within(() => surveyOf({ project, client, desk }), learnWaitMs)) ?? undefined : null;

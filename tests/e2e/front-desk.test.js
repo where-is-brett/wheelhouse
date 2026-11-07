@@ -265,6 +265,14 @@ async function ask(world, questions, answers) {
 
 const labelsOf = (question) => question.options.map((o) => o.label);
 
+// The director's typed reply, as the prompt record hook sees it: a decision is answered in chat, never on the picker.
+async function reply(world, text) {
+  await promptRecord(
+    { session_id: 'front-desk', cwd: world.checkout, hook_event_name: 'UserPromptSubmit', prompt: text },
+    { client: world.client, now: world.now, dir: NO_MANAGED, env: {} },
+  );
+}
+
 // A record the build loop writes through the helper.
 async function buildLoop(world, kind, data) {
   const written = await world.client.state.write({ project: P, kind, data });
@@ -380,28 +388,26 @@ async function watch(world) {
 
 // --- The tests ---
 
-test('a feature\'s question becomes a composed card, a click answers it, and only that session wakes', async () => {
+test('a feature\'s question becomes a decision in chat, a typed reply answers it, and only that session wakes', async () => {
   await onComputer(async (world) => {
     await building(world, 'export', 'The orders export');
     await building(world, 'search', 'Searching the menu');
     await watch(world); // the watcher's first look: what is in state already is not news
     await buildLoop(world, 'question', EXPORT_QUESTION);
 
-    // The director's next prompt: the hook says a card waits that no visit has asked.
+    // The director's next prompt: the hook says a decision waits that is not shown yet.
     world.at(HOUR);
-    assert.ok((await prompt(world, 'Morning')).startsWith(cardsLine(1)));
-    const visit = await frontDesk(world, ['cards']);
-    assert.equal(visit.questions.length, 1);
-    assert.equal(visit.left, 0);
-    const [card] = visit.questions;
-    // Composed from the question as the build recorded it: its own options, and its set line.
-    assert.deepEqual(labelsOf(card), ['CSV', 'Excel', 'Suggest a change…']);
-    assert.equal(setLineOf(visit.inReply[0]), answerLine('q-export-1'));
-    assert.equal(setLineOf(card.question), null, 'the chat is given the card without its set line');
-    assert.match(card.question, /^Should the orders export download as CSV or as an Excel workbook\?\n/);
-    assert.match(card.options[0].description, /^Recommended:/);
+    assert.match(await prompt(world, 'Morning'), /^Decisions not shown yet: 1\./);
+    // Cards makes the card the decision is made from and hands none to the picker.
+    assert.deepEqual(await frontDesk(world, ['cards']), { questions: [], left: 0 });
+    assert.equal(eventsOf('card')[0].data.line, answerLine('q-export-1'));
+    // The message is composed from the question as the build recorded it: its own options.
+    const shown = await frontDesk(world, ['decision', 'show', '1']);
+    assert.match(shown, /^Decision needed \(1\): Should the orders export download as CSV or as an Excel workbook\?/);
+    assert.match(shown, /^A\. CSV \(recommended\)\. A plain file any spreadsheet opens\./m);
+    assert.match(shown, /^B\. Excel\. A workbook with the columns already sized\./m);
 
-    await ask(world, visit.questions, { [card.question]: 'CSV' });
+    await reply(world, '1 A');
     const answers = eventsOf('action').filter((e) => e.data.action === 'answer');
     assert.deepEqual(answers.map((e) => [e.data.questionId, e.data.label]), [['q-export-1', 'CSV']]);
     assert.equal(typeof answers[0].sig?.value, 'string', 'the answer is signed');
@@ -441,37 +447,33 @@ test('a gate-asks becomes an approval card, and the click on it lets the gate me
 });
 
 // scenario 5, its deterministic half
-test('a card answered Not now stays on the board and is not asked on the next visit', async () => {
+test('a decision no reply has answered stays waiting, is told again, and decides nothing', async () => {
   await onComputer(async (world) => {
     await building(world, 'export', 'The orders export');
     await watch(world);
     await buildLoop(world, 'question', EXPORT_QUESTION);
 
     world.at(HOUR);
-    assert.ok((await prompt(world, 'Morning')).startsWith(cardsLine(1)));
-    const visit = await frontDesk(world, ['cards']);
-    const [card] = visit.questions;
-    await ask(world, visit.questions, { [card.question]: 'Not now' });
+    assert.match(await prompt(world, 'Morning'), /^Decisions not shown yet: 1\./);
+    assert.deepEqual(await frontDesk(world, ['cards']), { questions: [], left: 0 });
+    // Words that are no reply to it, and a reply that names no decision waiting, record nothing.
+    await reply(world, 'What about the menu prices?');
+    await reply(world, '5 A');
+    await reply(world, 'Not now');
 
     // Nothing was decided: no answer, and no session is woken.
     assert.equal(eventsOf('action').length, 0);
+    assert.equal(eventsOf('decision-answer').length, 0);
     assert.equal((await viewsOf(world)).questions['q-export-1'].answer, null);
     assert.deepEqual((await watch(world)).works, []);
 
-    // Later in the visit, and on the next one, the card is not asked again.
-    world.at(HOUR + 10 * MINUTE);
-    assert.equal(await prompt(world, 'What about the menu prices?'), '');
+    // On the next visit it is still waiting, on the board and in the prompt's reminder, by its number.
     world.at(5 * HOUR);
     const next = await prompt(world, 'Back again');
-    assert.ok(next.startsWith(HEADINGS.briefing), next);
-    assert.ok(!next.includes('Cards to ask this visit'), next);
-    assert.deepEqual(await frontDesk(world, ['cards']), { questions: [], left: 0 });
-
-    // It stays on the board, waiting on the director, where they can ask for it by its number.
+    assert.match(next, /Decisions waiting for the director: 1\. Should the orders export download as CSV or as an Excel workbook\?/);
     const board = await prompt(world, '/wheelhouse:board');
     assert.match(board, /^### Waiting on you\n- 1\\\. Should the orders export download as CSV or as an Excel workbook\?/m, board);
-    const again = await frontDesk(world, ['again', '1']);
-    assert.deepEqual(again.questions.map((q) => q.question), [card.question]);
+    assert.match(await frontDesk(world, ['decision', 'show', '1']), /^Decision needed \(1\): /);
   });
 });
 
@@ -522,8 +524,8 @@ async function answeredAfterReview(world) {
   await ask(world, [question], { [question.question]: 'Approve' });
   await buildLoop(world, 'question', EXPORT_QUESTION);
   world.at(HOUR);
-  const visit = await frontDesk(world, ['cards']);
-  await ask(world, visit.questions, { [visit.questions[0].question]: 'CSV' });
+  await frontDesk(world, ['cards']);
+  await reply(world, '1 A');
   return head;
 }
 
