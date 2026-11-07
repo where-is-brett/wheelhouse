@@ -5,8 +5,8 @@
 // standard input. Commands that would otherwise ask for confirmation get --yes.
 import { gitlabHistory } from './gitlab-history.js';
 import {
-  stateOf, mergedResults as mergedResultsOf, prStateOf, requestOf, issueOf, fileOf, subjectsOf, previewOf,
-  approvalRefusal, approvalsLeft, statusIn, MERGE_KEY_REFUSED,
+  stateOf, mergedResults as mergedResultsOf, prStateOf, requestOf, branchRequestOf, issueOf, fileOf, subjectsOf, previewOf,
+  approvalRefusal, approvalsLeft, statusIn, MERGE_KEY_REFUSED, publicOf,
 } from './gitlab-shared.js';
 
 const MR_ADDRESS = /(https?:\/\/\S+\/-\/merge_requests\/(\d+))/;
@@ -145,6 +145,13 @@ export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal
       return requests.map(requestOf);
     },
 
+    // The merge requests with this source branch, in any state.
+    async requestsOn(branch) {
+      const requests = await ask(['api', `${project}/merge_requests?state=all&source_branch=${encodeURIComponent(branch)}&per_page=20`]);
+      if (!Array.isArray(requests)) throw new Error('GitLab did not list the merge requests of the branch');
+      return requests.map(branchRequestOf);
+    },
+
     // The files a merge request changes, with lines counted from each diff, and its commits'
     // subjects, oldest first (GitLab lists them newest first).
     async requestDetails(number) {
@@ -162,6 +169,11 @@ export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal
     // Archon's merge queue reads its verdict from a GitHub comment; there is none to post on GitLab.
     async verdictComment() {
       throw new Error('The merge queue\'s verdict comment is for GitHub only');
+    },
+
+    // Whether the project is public: its `visibility` (public, internal or private), never a guess.
+    async isPublic() {
+      return publicOf(await ask(['api', project]));
     },
 
     // The merge queue's policy names a GitHub login; there is none to name on GitLab.

@@ -124,6 +124,15 @@ export function incidentReason(incident) {
     : 'an incident is open or could not be checked, so only its fix may merge';
 }
 
+// Whether a change touches only the project's decision records (design section 6.6 of the director's way of working): every
+// changed path is a Markdown file directly under docs/decisions/, and there is at least one. Narrow on purpose: the general
+// rule for work that is internal only comes later (step 8), and this one names a folder and nothing else.
+const DECISION_RECORD = /^docs\/decisions\/[^/]+\.md$/;
+export function decisionsOnly(paths) {
+  if (!Array.isArray(paths) || paths.length === 0) return false;
+  return paths.every((p) => typeof p === 'string' && DECISION_RECORD.test(p.replace(/\\/g, '/')) && !p.split(/[\\/]/).includes('..'));
+}
+
 // Pure. Takes what the caller gathered and says whether the merge may go ahead,
 // with one plain reason for each condition that fails. Missing or malformed
 // input fails the condition it belongs to: `stop` must be exactly false,
@@ -135,6 +144,9 @@ export function incidentReason(incident) {
 // today's rule: only a signed approval counts. With 'chat-click' among them, an unsigned
 // card-answer labelled Approve naming the head counts too, unless `realUsers` is true: then only a signed
 // approval naming a 'window' or 'host' proof counts, and the answer's `needs` names which one.
+//
+// `batch` (true only for the helper's own decision-records change, which it has verified) with `changedPaths` all decision records
+// (decisionsOnly) lowers the approval condition and nothing else.
 //
 // `hostApproval` is undefined where the person's approval on GitHub isn't needed, and otherwise passes only when exactly
 // true (a review that couldn't be read is false).
@@ -161,7 +173,12 @@ export function gateDecision(input) {
 
   const guardrails = i.touchesGuardrails === true;
   const needReview = i.reviewRequired === true || guardrails;
-  const needApproval = i.approvalRequired === true || guardrails;
+  // The helper's own change that adds the day's decision records asks for no approval: `batch` is true only where the helper
+  // verified it (its branch, the head it kept, the default branch as base), and its `changedPaths` are all decision records. The
+  // paths alone never lower the bar: decision files on a feature branch go through the gate with the rest of the piece. A
+  // guardrail, a release's card and every other condition stand.
+  const recordsOnly = i.batch === true && !guardrails && !isRelease(i.release) && decisionsOnly(i.changedPaths);
+  const needApproval = (i.approvalRequired === true && !recordsOnly) || guardrails;
 
   const kinds = reviewKindsOf(i);
   if (needReview && !(headSha !== '' && reviewCounts(i.review, headSha, i.enrolled, kinds))) {

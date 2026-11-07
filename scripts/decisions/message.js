@@ -11,6 +11,7 @@
 // Recommended because: <two or three lines, in product terms>
 //
 // Meanwhile: <what the agent does while it waits>
+// (public project only) This project is public. Add "private" after your letter ("<n> B private") to ...
 // Reply <n> A, <n> B, "why <n>", or "<n>: your own words".
 //
 // The cost and the undo line are printed when the option has them; step 3 of the director's way of working makes them
@@ -40,7 +41,14 @@ export function replyLine(n, count) {
   return `Reply ${letters}, "why ${n}", or "${n}: your own words".`;
 }
 
-// decisionText({ n, question, work, why, options, recommend, because, meanwhile }) -> the message.
+// The line that offers "private", on a public project's decision only (design section 6.6): the answer is then kept in the
+// private record and no file goes into the project. It sits just above the Reply line.
+export function privateLine(n) {
+  return `This project is public. Add "private" after your letter ("${n} B private") to keep this answer out of the project's files.`;
+}
+
+// decisionText({ n, question, work, why, options, recommend, because, meanwhile, canPrivate }) -> the message. `canPrivate` is
+// true for a decision on a public project (or one whose visibility isn't known), which adds the private line.
 export function decisionText(decision) {
   const options = Array.isArray(decision.options) ? decision.options.slice(0, LETTERS.length) : [];
   const holdsUp = flat(decision.holds) !== '' ? flat(decision.holds) : flat(decision.work) === '' ? 'nothing else' : flat(decision.work);
@@ -52,6 +60,7 @@ export function decisionText(decision) {
     `Recommended because: ${bare(decision.because)}.`,
     '',
     `Meanwhile: ${flat(decision.meanwhile)}`,
+    ...(decision.canPrivate === true ? [privateLine(decision.n)] : []),
     replyLine(decision.n, options.length),
   ].join('\n');
 }

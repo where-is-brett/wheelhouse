@@ -30,7 +30,11 @@ import { computerId, helperAddress, profileDir, oldProfileDir, stateDir, oldStat
 import { stopState, setStop, liftStop } from '../lib/stop.js';
 import { bypassActive } from '../lib/bypass.js';
 import { run as realRun, withoutGitVars } from '../lib/run.js';
-import { approvalCounts, checkCounts, gateDecision, reviewCounts } from '../gate/conditions.js';
+import { approvalCounts, checkCounts, decisionsOnly, gateDecision, reviewCounts } from '../gate/conditions.js';
+import { decisionsFrom } from '../decisions/pending.js';
+import { BATCH_BRANCH, batchChange } from '../decisions/batch.js';
+import { DECISIONS_DIR, dayOf } from '../decisions/record-file.js';
+import { writePublic } from '../decisions/visibility.js';
 import { decisionsWaiting, questionsOf, readHandled, markHandled, markAnswerHead, readAnswerHeads } from '../gate/open-questions.js';
 import { setDecisionStatus } from './decision-status.js';
 import { classifyChange, dataModelPaths, readConfig, isModelName, CI_FILES, PLUGIN_MANIFEST } from '../gate/guardrails.js';
@@ -113,7 +117,7 @@ import { askInWindow, NOT_NOW } from '../confirm/window.js';
 import { composeCard, questionProblem } from '../cards/compose.js';
 import { LIFT_STOP_CARD } from '../frontdesk/cli.js';
 import { matchGlob } from '../gate/glob.js';
-import { ciPushLine } from '../state/card-lines.js';
+import { ciPushLine, answerLine } from '../state/card-lines.js';
 import { checkSetting, definitionOf } from '../settings/catalogue.js';
 import { READY_LEVELS, PREMIUM_LEVEL, barFailures, readiness, samePins } from '../routing/column-ready.js';
 import { PREMIUM_ASK, PREMIUM_DO, checkRefusal, foundPremium, offeredFrom, premiumInput, premiumRefusal, premiumPinOf } from '../routing/premium.js';
@@ -3240,6 +3244,19 @@ export async function startHelper({
         if (error instanceof LookRefusal) throw error;
       }
     }
+    // The day's decision records the helper made itself (design section 6.6 of the director's way of working): the branch is
+    // the helper's own, the head is the very commit it made and kept, and the change touches docs/decisions/ and nothing else.
+    // Every byte is the helper's, so there is no review and no provenance to check. It needs its check like any other.
+    let batching = false;
+    if (readable && !restore && BATCH_BRANCH.test(typeof pr.headRef === 'string' ? pr.headRef : '')) {
+      const kept = readBatches(project).open;
+      try {
+        batching = kept !== null && kept.pr === number && kept.head === headSha && decisionsOnly(changes.paths)
+          && pr.baseRef === await defaultBranchOf(project, adapter);
+      } catch (error) {
+        if (error instanceof LookRefusal) throw error;
+      }
+    }
     // A restore is a release that passed review before; the director's approval stands in for it.
     const touchesGuardrails = (!restore && !pinsOnly && !switching && !compacting && classified.touchesGuardrails) || body.touchesGuardrails === true;
     const found = { guardrailPaths: classified.guardrailPaths, criticalAreas: classified.criticalAreas };
@@ -3320,7 +3337,9 @@ export async function startHelper({
       headSha,
       ci,
       // Every merge needs a review; the caller may only add the approval and guardrail conditions.
-      reviewRequired: !restore && !switching && !compacting && !keeping,
+      reviewRequired: !restore && !switching && !compacting && !keeping && !batching,
+      // Only the helper's own, verified decision-records change lowers the approval condition (decisionsOnly in the gate).
+      ...(batching ? { batch: true, changedPaths: changes.paths } : {}),
       approvalRequired,
       touchesGuardrails: guarded,
       review,
@@ -3333,7 +3352,7 @@ export async function startHelper({
       // What /pr/open recorded built the pull request's branch, from the signed state, against this
       // Wheelhouse's own manifest (a pull request opened before that record names it in its body). A
       // verified restore has none: it puts back a release that merged before (Ruling 105).
-      provenance: restore || switching || compacting || keeping ? { ok: true }
+      provenance: restore || switching || compacting || keeping || batching ? { ok: true }
         : updateCheck.matched ? (updateCheck.ok ? { ok: true } : { ok: false, why: updateCheck.why })
           : checkProvenance({ recorded: views.provenance?.[pr.headRef], body: pr.body, root: pluginRoot }),
     });
@@ -3660,6 +3679,151 @@ export async function startHelper({
     // Where the project's checks run on this computer, the new head is queued for them, as the found command's is.
     await engineHosts.find((h) => h.project === project)?.checks.took(made.commit, COMPACT_WORK);
     return { ok: true, step: 'opened', pr: opened.number, head: made.commit };
+  }
+
+  // --- the day's decision records (design section 6.6 of the director's way of working) ---
+  // A decision about a piece is committed on the piece's branch by its session. One with no piece, or whose piece was dropped, has
+  // no branch to ride on: each call takes the next step of one change a day that adds those records under docs/decisions/ and
+  // touches nothing else. The change is made here, in the helper's own mirror, and merges through the gate as a change of
+  // decision records only (decisionsOnly). The record of it, kept beside the engine's own, is
+  // { batched: [card id, ...], declined: [card id, ...], open: { pr, head, base, branch, ids } | null,
+  //   pending: { head, base, branch, ids } | null }: what was batched, what was in a change that was turned down (never batched
+  // again), the change now open, and a change pushed whose pull request is not yet known (opened, or found by its branch, next call).
+  const batchesFile = (project) => path.join(engineDirOf(stateDir(project)), 'decision-batches.json');
+  function readBatches(project) {
+    try {
+      const kept = JSON.parse(fs.readFileSync(batchesFile(project), 'utf8'));
+      const open = kept?.open;
+      const good = open !== null && typeof open === 'object' && Number.isInteger(open.pr) && FULL_SHA.test(open.head ?? '') && Array.isArray(open.ids);
+      const wait = kept?.pending;
+      const waiting = wait !== null && typeof wait === 'object' && FULL_SHA.test(wait.head ?? '') && BATCH_BRANCH.test(wait.branch ?? '') && Array.isArray(wait.ids);
+      const names = (x) => (Array.isArray(x) ? x.filter((y) => typeof y === 'string') : []);
+      return { batched: names(kept?.batched), declined: names(kept?.declined), open: good ? open : null, pending: waiting ? wait : null };
+    } catch {
+      return { batched: [], declined: [], open: null, pending: null };
+    }
+  }
+  const keepBatches = (project, kept) => writeWhole(batchesFile(project), kept);
+  const DECISION_TITLE = (day) => `Keep the decisions of ${day}`;
+  const DECISION_BODY = `This adds the decisions the director answered, as short files under ${DECISIONS_DIR}/, so agents and people read the same record.\n\nIt touches nothing else. Wheelhouse wrote it and merges it once its checks pass.`;
+
+  async function doDecisionBatch({ project, date }, ctx) {
+    if (stopped()) return STOP_REFUSAL;
+    const adapter = await ctx.adapter();
+    const defaultBranch = await defaultBranchOf(project, adapter);
+    const say = (words) => doWrite({ project, kind: 'note', data: { about: 'engine', words } }, ctx, { own: true }).catch(() => {});
+    let kept = readBatches(project);
+    // A change pushed whose pull request was never recorded (the host refused, or the helper stopped after the push): the pull
+    // request is found by its branch and adopted when its head is the commit that was kept, or opened now when there is none.
+    // A merge still checks the head and the files again, so adopting takes nothing on trust.
+    // A pull request that was opened and then turned down before its number was kept is not opened again: the host is asked for
+    // every request on the branch, in any state. A host that can only list the open ones can't rule that out, so there a change
+    // with no open pull request is declined, not made again: the records stay in the signed record, and a duplicate that brings
+    // back what the director turned down is the worse of the two.
+    const decline = async (ids, words) => {
+      kept = { ...kept, declined: [...new Set([...kept.declined, ...ids])], pending: null };
+      keepBatches(project, kept);
+      await say(words);
+    };
+    if (kept.open === null && kept.pending !== null) {
+      const wait = kept.pending;
+      const listed = await adapter.requestsOn(wait.branch);
+      const on = (listed ?? (await adapter.openRequests()).map((r) => ({ ...r, state: 'open' }))).filter((r) => r.branch === wait.branch && !r.fork);
+      const ours = on.filter((r) => r.head === wait.head);
+      let number;
+      if (on.some((r) => r.state === 'unknown')) {
+        return { ok: true, step: 'waiting', why: 'the host would not say what became of the change that keeps the decision records' };
+      } else if (ours.some((r) => r.state === 'merged')) {
+        kept = { ...kept, batched: [...new Set([...kept.batched, ...wait.ids])], pending: null };
+        keepBatches(project, kept);
+      } else if (ours.some((r) => r.state === 'closed')) {
+        await decline(wait.ids, 'The change that kept the decisions of an earlier day was closed, so those decision records will not be added again.');
+      } else if (ours.some((r) => r.state === 'open')) {
+        number = ours.find((r) => r.state === 'open').number;
+      } else if (on.some((r) => r.state === 'open')) {
+        await decline(wait.ids, `A change that keeps decision records (${wait.branch}) was found with other work in it, so it was left alone and its records will not be batched again.`);
+      } else if (listed === null) {
+        await decline(wait.ids, 'A change that keeps decision records was pushed but its pull request was never recorded, and this host cannot say whether it was turned down, so those decision records will not be added again.');
+      } else {
+        number = (await adapter.openPr({ head: wait.branch, base: defaultBranch, title: DECISION_TITLE(wait.branch.slice(-10)), body: DECISION_BODY })).number;
+      }
+      if (number !== undefined) {
+        kept = { ...kept, open: { pr: number, head: wait.head, base: wait.base, branch: wait.branch, ids: wait.ids }, pending: null };
+        keepBatches(project, kept);
+        await engineHosts.find((h) => h.project === project)?.checks.took(wait.head, 'decision-records');
+      }
+    }
+    // The change still open: merged (its records are in the project), turned down, or yet to merge.
+    if (kept.open !== null) {
+      const pr = await adapter.prState(kept.open.pr);
+      if (pr?.state === 'merged') {
+        kept = { ...kept, batched: [...new Set([...kept.batched, ...kept.open.ids])], open: null };
+        keepBatches(project, kept);
+      } else if (pr?.state === 'open') {
+        const merged = await oneAtATime(`merge:${project}`, () => doMerge({ project, number: kept.open.pr }, ctx));
+        if (merged?.ok === true && merged.merged === true) {
+          keepBatches(project, { ...kept, batched: [...new Set([...kept.batched, ...kept.open.ids])], open: null });
+          return { ok: true, step: 'merged', pr: kept.open.pr };
+        }
+        return { ok: true, step: 'waiting', pr: kept.open.pr, why: merged?.refused ?? 'the gate gave no answer' };
+      } else if (pr?.state === 'closed') {
+        // Closed without merging: the director or the host turned it down, so its records are not batched again. A note says so;
+        // it makes no card.
+        kept = { ...kept, declined: [...new Set([...kept.declined, ...kept.open.ids])], open: null };
+        keepBatches(project, kept);
+        await say('The change that kept the decisions of an earlier day was closed, so those decision records will not be added again.');
+      } else {
+        // Any other answer (the host's 'unknown', or none) is not a turning down: the change is asked about again later.
+        return { ok: true, step: 'waiting', pr: kept.open.pr, why: 'the host would not say what became of the change' };
+      }
+    }
+    const day = typeof date === 'string' && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(date) ? date : dayOf(new Date(now().getTime() - 24 * 60 * 60 * 1000));
+    const events = listEvents(stateDir(project), { report: () => {} });
+    const enrolled = ownKeyOnly();
+    const views = buildViews(events, enrolled, { now });
+    const dropped = Object.entries(views.reports ?? {}).filter(([, r]) => r?.data?.outcome === 'closed').map(([work]) => work);
+    const due = decisionsFrom(events, enrolled).record
+      .filter((r) => !kept.batched.includes(r.id) && !kept.declined.includes(r.id) && r.answer.private !== true
+        && Number.isFinite(Date.parse(r.answer.at)) && dayOf(r.answer.at) <= day);
+    if (due.length === 0) return { ok: true, step: 'none' };
+    await lookAtMirror(ctx, project);
+    const base = await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ must }) => {
+      const { head } = await defaultHistory(must, defaultBranch);
+      const listed = await must(['ls-tree', '-r', '-z', '--name-only', BASE_REF, '--', `${DECISIONS_DIR}/`], 'listing the decision records');
+      const dated = (await must(['log', '--no-walk', '--format=%ct', head], 'reading the default branch\'s date')).trim();
+      return { head, existing: listed.split('\0').filter(Boolean), at: `${dated} +0000` };
+    }));
+    const items = due.map((r) => ({
+      id: r.id,
+      decision: { question: r.question, work: r.workId, options: r.options, recommend: r.recommend },
+      answer: { at: r.answer.at, option: r.answer.option, words: r.answer.words },
+    }));
+    const change = batchChange({ existing: base.existing }, items, { date: day, dropped });
+    if (change.files.length === 0) return { ok: true, step: 'none' };
+    const taken = change.ids;
+    const files = Object.fromEntries(change.files.map((f) => [f.path, f.text]));
+    const made = await ownChange(project, ctx, { branch: change.branch, base, files, title: DECISION_TITLE(day), defaultBranch });
+    if (made.refused) return { ok: false, refused: made.refused };
+    // Kept before the pull request is asked for: if that fails, or this stops, the next call finds the branch and carries on.
+    keepBatches(project, { ...kept, pending: { head: made.commit, base: base.head, branch: change.branch, ids: taken } });
+    const opened = await adapter.openPr({ head: change.branch, base: defaultBranch, title: DECISION_TITLE(day), body: DECISION_BODY });
+    keepBatches(project, { ...kept, open: { pr: opened.number, head: made.commit, base: base.head, branch: change.branch, ids: taken }, pending: null });
+    await engineHosts.find((h) => h.project === project)?.checks.took(made.commit, 'decision-records');
+    return { ok: true, step: 'opened', pr: opened.number, head: made.commit, files: change.files.length };
+  }
+
+  // Reads whether the repository is public from the host and keeps the answer where the hooks read it (scripts/decisions/visibility.js),
+  // so a decision message offers "private" only on a public project. A host that can't say is no answer: nothing is kept, and the
+  // project stays one that is offered "private".
+  async function doHostPublic({ project }, ctx) {
+    let isPublic;
+    try {
+      isPublic = await (await ctx.adapter()).isPublic();
+    } catch {
+      return { ok: true, public: null };
+    }
+    writePublic(project, isPublic, { now });
+    return { ok: true, public: isPublic };
   }
 
   // --- the runbook (design section 12.7) ---
@@ -4454,6 +4618,8 @@ export async function startHelper({
     '/local/undo': (body) => doLocalUndo(body),
     '/local/move': (body) => askMove(body),
     '/compact-window': (body, ctx) => oneAtATime(`compact:${body.project}`, () => doCompactWindow(body, ctx)),
+    '/decisions/batch': (body, ctx) => oneAtATime(`decisions:${body.project}`, () => doDecisionBatch(body, ctx)),
+    '/host/public': (body, ctx) => doHostPublic(body, ctx),
     '/engine-switch': (body, ctx) => oneAtATime(`switch:${body.project}`, () => doEngineSwitch(body, ctx)),
     '/review/run': async (body, ctx) => {
       try {
@@ -4598,7 +4764,18 @@ export async function startHelper({
           if (found !== null) await markDecisionStatus({ project, adapter: found.adapter, sha: found.pr.headSha, work: own, views, waiting: decisionsHolding(project, views, own, null) });
         } catch { /* the gate holds the merge whatever the host shows */ }
       }
-      return { ok: true, answer: typeof label === 'string' ? label : null };
+      // How the director answered, for the decision record the piece keeps (design section 6.6): `option` is the label chosen
+      // ('' for their own words), `private` the mark that keeps it out of the project. Read from the signed record alone, and
+      // only on a plain read: marking an answer applied or needing no change says nothing more.
+      let decision = null;
+      if (!marking) {
+        try {
+          const line = answerLine(questionId);
+          const found = decisionsFrom(listEvents(stateDir(project), { report: () => {} }), ownKeyOnly()).record.find((d) => d.line === line);
+          if (found !== undefined) decision = { at: found.answer.at, option: found.answer.option, words: found.answer.words, private: found.answer.private === true };
+        } catch { /* no record is made from what can't be read */ }
+      }
+      return { ok: true, answer: typeof label === 'string' ? label : null, ...(decision === null ? {} : { decision }) };
     }),
     // Opens the settings record, making it the first time.
     '/profile/clone': profileRoute(async () => ({ ok: true })),

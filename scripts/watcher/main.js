@@ -15,6 +15,8 @@
 //      capped at twice the shortest interval, so a computer that slept counts
 //      as at most one loop and no feature is called stuck for it;
 //   4. diffs and routes (core.js) and gives what it found to the bundler;
+//   (also, on the first loop after local midnight, it asks the helper to batch the previous day's decision records that belong
+//   to no piece, scripts/watcher/decision-batch.js);
 //   5. writes each bundle that is due as a wake and hands it to the waker
 //      (waker.js), then lets the waker deliver what was waiting. A bundle
 //      whose wake can never be written is reported and dropped, so it never
@@ -48,6 +50,7 @@ import { INTERVALS, LOOKBACK_MS, observe } from './sources.js';
 import { makeRecovery } from './recover.js';
 import { findLostSessions, resumeLost } from './resume.js';
 import { raiseStuckCards } from './stuck-cards.js';
+import { makeDecisionBatcher } from './decision-batch.js';
 import { makeWaker, watcherDir, watcherFolder, writeJsonFile, writeWake } from './waker.js';
 import { foremanTools } from '../foreman/tools.js';
 import { readConfig } from '../gate/guardrails.js';
@@ -174,6 +177,7 @@ export async function runWatcher({
     let shape = settings?.watcherShape ?? null;
     let wake = null;
     let recover = recovery;
+    const batcher = makeDecisionBatcher({ project, client, now, log });
 
     let cursor = readCursor(project);
     let bundler = makeBundler({ now, held: cursor.held });
@@ -294,6 +298,12 @@ export async function runWatcher({
           await raiseStuckCards({ project, client });
         } catch (error) {
           log(`A stuck work's card couldn't be raised: ${error.message}`);
+        }
+        // The first tick after local midnight batches the previous day's decision records that belong to no piece.
+        try {
+          await batcher.tick();
+        } catch (error) {
+          log(`The day's decision records couldn't be looked after: ${error.message}`);
         }
         const written = { ...next, held: bundler.held() };
         writeCursor(project, written);
