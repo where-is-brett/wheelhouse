@@ -145,8 +145,8 @@ export function decisionsOnly(paths) {
 // card-answer labelled Approve naming the head counts too, unless `realUsers` is true: then only a signed
 // approval naming a 'window' or 'host' proof counts, and the answer's `needs` names which one.
 //
-// `changedPaths` is the list of files the change touches, where the caller has read it; when every one is a decision record
-// (decisionsOnly) the approval a piece's shown-first wish or the project's queue would have asked for is not asked.
+// `batch` (true only for the helper's own decision-records change, which it has verified) with `changedPaths` all decision records
+// (decisionsOnly) lowers the approval condition and nothing else.
 //
 // `hostApproval` is undefined where the person's approval on GitHub isn't needed, and otherwise passes only when exactly
 // true (a review that couldn't be read is false).
@@ -173,9 +173,11 @@ export function gateDecision(input) {
 
   const guardrails = i.touchesGuardrails === true;
   const needReview = i.reviewRequired === true || guardrails;
-  // A change that touches only the decision records (`changedPaths`, as the caller read them) asks for no approval of its own,
-  // whatever else raised one for the piece; a guardrail, a release's card and every other condition stand.
-  const recordsOnly = !guardrails && !isRelease(i.release) && decisionsOnly(i.changedPaths);
+  // The helper's own change that adds the day's decision records asks for no approval: `batch` is true only where the helper
+  // verified it (its branch, the head it kept, the default branch as base), and its `changedPaths` are all decision records. The
+  // paths alone never lower the bar: decision files on a feature branch go through the gate with the rest of the piece. A
+  // guardrail, a release's card and every other condition stand.
+  const recordsOnly = i.batch === true && !guardrails && !isRelease(i.release) && decisionsOnly(i.changedPaths);
   const needApproval = (i.approvalRequired === true && !recordsOnly) || guardrails;
 
   const kinds = reviewKindsOf(i);

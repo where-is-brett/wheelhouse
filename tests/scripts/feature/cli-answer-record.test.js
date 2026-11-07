@@ -101,6 +101,49 @@ test('a second record with the same question on the same day is kept as -2', asy
   assert.equal(git(tree, 'rev-list', '--count', 'HEAD'), '3');
 });
 
+const run = async (tree, id, client) => {
+  let heard = '';
+  const code = await main(['answer', id], { cwd: tree, client, find: () => ({ root: tree }), out: (t) => { heard += t; }, err: (t) => { heard += t; } });
+  return { code, heard };
+};
+
+test('a private reply, end to end through the command, prints the answer, writes no file and makes no commit', async () => {
+  const { tree, id } = await piece();
+  const { code, heard } = await run(tree, id, helper(said({ private: true })));
+  assert.equal(code, 0);
+  assert.equal(heard, 'Show them\nThe director kept this answer private: no file was written in the project.\n');
+  assert.equal(fs.existsSync(path.join(tree, 'docs')), false);
+  assert.equal(git(tree, 'rev-list', '--count', 'HEAD'), '1');
+  assert.equal(git(tree, 'status', '--porcelain', '--', 'docs'), '');
+});
+
+test('on a folder with no branch the record is written but not committed, and it says so', async () => {
+  const { tree, id } = await piece();
+  git(tree, 'checkout', '-q', '--detach');
+  const { code, heard } = await run(tree, id, helper(said()));
+  assert.equal(code, 0);
+  assert.match(heard, /^Show them\nKept the decision as docs\/decisions\/.*\.md, but it was not committed: this folder is on no branch\./);
+  assert.ok(!/committed on this branch/.test(heard));
+  assert.equal(git(tree, 'rev-list', '--count', 'HEAD'), '1');
+  assert.equal(fs.existsSync(path.join(tree, FILE)), true);
+  const got = await answer({ client: helper(said()), worktree: tree, questionId: id });
+  assert.deepEqual(got, { answer: 'Show them', record: { path: FILE, committed: false } });
+});
+
+test('a record that cannot be kept is a warning beside the answer, never a failure of it', async () => {
+  const { tree, id } = await piece();
+  const elsewhere = real(tempFolder('wh-answer-elsewhere-'));
+  fs.symlinkSync(elsewhere, path.join(tree, 'docs'));
+  const got = await answer({ client: helper(said()), worktree: tree, questionId: id });
+  assert.equal(got.answer, 'Show them');
+  assert.equal(got.record, undefined);
+  assert.match(got.warning, /docs is a link, so no decision record was kept in it/);
+  const { code, heard } = await run(tree, id, helper(said()));
+  assert.equal(code, 0);
+  assert.match(heard, /^Show them\nNo decision record was kept: docs is a link/);
+  assert.deepEqual(fs.readdirSync(elsewhere), []);
+});
+
 test('marking an answer applied or needing no change keeps no record', async () => {
   const { tree, id } = await piece();
   const code = await main(['answer', id, '--applied'], { cwd: tree, client: helper(said()), find: () => ({ root: tree }), out: () => {}, err: () => {} });

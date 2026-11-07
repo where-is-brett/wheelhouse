@@ -59,6 +59,19 @@ test('a change still opening or waiting is looked at again later, not every tick
   assert.equal(batches(s.calls).length, 2, 'ten minutes on, it is asked again');
 });
 
+test('a change still waiting is asked about again later the same day, with no midnight between', async () => {
+  const s = stand({ batch: { ok: true, step: 'waiting', pr: 8, why: 'CI has not passed' } });
+  s.at(at(2026, 11, 8, 10, 0));
+  await s.batcher.tick();
+  s.at(at(2026, 11, 8, 10, 5));
+  await s.batcher.tick();
+  assert.equal(batches(s.calls).length, 1, 'five minutes on, it is left alone');
+  s.at(at(2026, 11, 8, 10, 11));
+  await s.batcher.tick();
+  assert.equal(batches(s.calls).length, 2, 'eleven minutes on, the same day, it is asked again');
+  assert.deepEqual(batches(s.calls).map((b) => b.date), ['2026-11-07', '2026-11-07']);
+});
+
 test('a refusal, an error or a helper that is down is noted and tried again later, never taken as done', async () => {
   for (const batch of [{ ok: false, refused: 'All stop is on' }, () => { throw new Error('the helper could not be reached'); }]) {
     const s = stand({ batch });

@@ -5,8 +5,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseReply } from '../../../scripts/decisions/reply.js';
 import { decisionText, blocksIn } from '../../../scripts/decisions/message.js';
+import fs from 'node:fs';
+import path from 'node:path';
 import { makeEvent } from '../../../scripts/state/events.js';
-import { inHome } from '../../helpers/decisions-world.js';
+import { readDecisions } from '../../../scripts/decisions/pending.js';
+import { readPublic, writePublic } from '../../../scripts/decisions/visibility.js';
+import { stateDir } from '../../../scripts/lib/paths.js';
+import { inHome, P, raise } from '../../helpers/decisions-world.js';
 
 const options = [{ label: 'Daily' }, { label: 'Weekly' }, { label: 'Monthly' }];
 const decision = (n, code) => ({ n, code, options });
@@ -66,5 +71,30 @@ test('a decision-answer may carry private: true, and nothing else extra', async 
   assert.throws(() => makeEvent({ kind: 'decision-answer', data: { ...data, public: true }, now }), /decision-answer/);
   // The director's own words never carry the mark: it follows a letter.
   assert.throws(() => makeEvent({ kind: 'decision-answer', data: { ...data, label: 'own', option: '', words: 'x', private: true }, now }), /decision-answer/);
+  });
+});
+
+test('a project whose visibility is not known counts as public: the private line is shown', async () => {
+  await inHome(() => {
+    raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');
+    // Nothing kept: offered.
+    assert.equal(readPublic(P), null);
+    const [unknown] = readDecisions(P).pending;
+    assert.equal(unknown.canPrivate, true);
+    assert.match(decisionText(unknown), /This project is public\. Add "private" after your letter/);
+    // A file that cannot be read is no answer either.
+    const file = path.join(stateDir(P), '..', 'visibility.json');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, '{ not json');
+    assert.equal(readDecisions(P).pending[0].canPrivate, true);
+    fs.writeFileSync(file, JSON.stringify({ public: 'maybe' }));
+    assert.equal(readDecisions(P).pending[0].canPrivate, true);
+    // Only a project known to be private leaves the line out.
+    writePublic(P, false);
+    const [known] = readDecisions(P).pending;
+    assert.equal(known.canPrivate, undefined);
+    assert.ok(!/private/i.test(decisionText(known)));
+    writePublic(P, true);
+    assert.equal(readDecisions(P).pending[0].canPrivate, true);
   });
 });

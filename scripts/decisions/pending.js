@@ -117,7 +117,10 @@ export function decisionsFrom(events, enrolled, { canPrivate = false } = {}) {
   for (const card of cards) {
     steps.push({ at: card.at, order: 0, card, raise: true });
     const decided = outcomes.get(card.id)?.decided ?? null;
-    const typedAnswer = typed.find((e) => e.data.question === card.data.question && byOrder(card, e) < 0);
+    // The typed reply that closed this card: it carries the card's question and was made at the moment the card was decided (a
+    // typed reply is the signed record that decides, so a later reply to a card of the same words is another card's).
+    const typedAnswer = decided === null ? undefined
+      : typed.find((e) => e.data.question === card.data.question && byOrder(card, e) < 0 && e.at === decided.at);
     const closedAt = [decided?.at, revisedAt.get(card.id)].filter((t) => typeof t === 'string').sort()[0];
     if (closedAt !== undefined) {
       const revised = decided === null || revisedAt.get(card.id) === closedAt;
@@ -141,6 +144,7 @@ export function decisionsFrom(events, enrolled, { canPrivate = false } = {}) {
       waiting.set(step.card.id, step.card);
     } else if (waiting.delete(step.card.id) && step.answered) {
       const answer = step.typedAnswer;
+      numbered.get(step.card.id).typed = answer;
       numbered.get(step.card.id).answer = {
         at: step.at,
         label: answer?.data.label ?? step.decided?.label ?? null,
@@ -157,7 +161,7 @@ export function decisionsFrom(events, enrolled, { canPrivate = false } = {}) {
   // words have none.
   const record = cards.filter((c) => numbered.get(c.id).answer !== null).map((c) => {
     const answer = numbered.get(c.id).answer;
-    const typedAnswer = typed.find((e) => e.data.question === c.data.question && byOrder(c, e) < 0);
+    const typedAnswer = numbered.get(c.id).typed;
     const option = typedAnswer !== undefined ? typedAnswer.data.option : typeof answer.label === 'string' ? answer.label : '';
     return {
       ...decisionOf(c, numbered.get(c.id).n, all),

@@ -347,8 +347,14 @@ export async function answer({ client, worktree, questionId, noChange = false, a
   if (!noChange && !applied && decision !== null && typeof decision === 'object' && !Array.isArray(decision)) {
     if (decision.private === true) kept.private = true;
     else {
-      const made = await keepRecord({ worktree, questionId, decision });
-      if (made !== null) kept.record = made;
+      // The answer is the point: a record that could not be kept is said as a warning beside it, never in its place.
+      try {
+        const made = await keepRecord({ worktree, questionId, decision });
+        if (made !== null) kept.record = made;
+      } catch (error) {
+        if (!(error instanceof CliError)) throw error;
+        kept.warning = error.message;
+      }
     }
     if (label === null && typeof decision.words === 'string' && decision.words !== '' && decision.option === '') kept.own = decision.words;
   }
@@ -408,6 +414,9 @@ async function keepRecord({ worktree, questionId, decision }) {
   const status = await git(['status', '--porcelain', '--', target]);
   if (status.code !== 0) throw new CliError(`git could not read the decision record: ${firstLine(status.stderr)}`);
   if (status.stdout.trim() !== '') {
+    // A folder that is on no branch has none to commit to: the file stays written, and it says so.
+    const onBranch = await git(['symbolic-ref', '-q', 'HEAD']);
+    if (onBranch.code !== 0) return { path: target, committed: false };
     const added = await git(['add', '--', target]);
     if (added.code !== 0) throw new CliError(`git could not add the decision record: ${firstLine(added.stderr)}`);
     const committed = await git(['commit', '-q', '--no-verify', '--no-gpg-sign', '-m', `Keep the decision ${questionId}`, '--', target]);
@@ -751,6 +760,40 @@ function proofFor({ worktree, checked, facts }) {
   });
 }
 
+const plainWords = (x) => String(x ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+
+// The decisions of this piece the director answered "private": each question's id and its words, as the piece asked it. What a
+// decision was is the director's to keep out of the project, so nothing the pull request carries may name one. The helper's
+// record says which; a question it can't be asked about is not counted private here.
+async function privateOnes({ worktree, client }) {
+  if (typeof client?.state?.answer !== 'function') return new Set();
+  const hidden = new Set();
+  const asked = readQuestions(featurePaths(worktree).questions, { maxBytes: QUESTIONS_BYTES }).questions.filter((q) => q.kind === 'question');
+  for (const q of asked) {
+    try {
+      const said = await client.state.answer({ cwd: worktree, questionId: q.id });
+      if (said?.ok === true && said.decision?.private === true) {
+        hidden.add(plainWords(q.id));
+        hidden.add(plainWords(q.what));
+      }
+    } catch { /* not asked of a helper that is down: the brief tells the session to leave them out too */ }
+  }
+  return hidden;
+}
+
+// The report's fields without any `followed` or `rework` entry about a private decision.
+function withoutPrivate(fields, hidden) {
+  if (hidden.size === 0) return fields;
+  const out = { ...fields };
+  if (Array.isArray(fields.followed)) out.followed = fields.followed.filter((f) => !hidden.has(plainWords(f.question)));
+  if (fields.rework !== undefined) {
+    const kept = reworksIn(fields).filter((r) => !hidden.has(plainWords(r.question)));
+    if (kept.length === 0) delete out.rework;
+    else out.rework = kept;
+  }
+  return out;
+}
+
 // Opens the pull request from the worktree's branch against the default branch (the helper
 // takes a missing base for it) and keeps its number in pr.json, with the plan it was opened for
 // (ruling R88). A pull request kept already is not opened again until the foreman's merge marks
@@ -772,7 +815,8 @@ export async function openPr({ client, worktree, argv, dataClient = client, data
   const session = keptSession(p.session);
   // The host opens a pull request only from a branch it holds.
   await push({ client, worktree });
-  const note = proofFor({ worktree, checked, facts: await dataFacts({ client: dataClient, worktree, branch: head, declared: checked.fields.data !== undefined, dataMs, localChange }) });
+  const hidden = await privateOnes({ worktree, client });
+  const note = proofFor({ worktree, checked: { ...checked, fields: withoutPrivate(checked.fields, hidden) }, facts: await dataFacts({ client: dataClient, worktree, branch: head, declared: checked.fields.data !== undefined, dataMs, localChange }) });
   const opened = await client.openPr({ cwd: worktree, head, title, body: note, ...(session ? { session } : {}) });
   if (opened?.ok !== true) throw new CliError(opened?.refused ?? 'The host helper did not open the pull request');
   const number = opened.result?.number;
@@ -825,7 +869,9 @@ export async function main(argv, {
       const got = await answer({ client: helper(), worktree, questionId: rest[0], noChange, applied });
       if (got.answer === null && got.own === undefined) out('There is no answer yet.\n');
       else out(got.answer === null ? `The director answered in their own words: ${got.own}\n` : `${got.answer}\n`);
-      if (got.record !== undefined) out(`Kept the decision as ${got.record.path}, committed on this branch.\n`);
+      if (got.record?.committed === true) out(`Kept the decision as ${got.record.path}, committed on this branch.\n`);
+      else if (got.record !== undefined) out(`Kept the decision as ${got.record.path}, but it was not committed: this folder is on no branch. Commit it once it is.\n`);
+      if (got.warning !== undefined) out(`No decision record was kept: ${got.warning}\n`);
       if (got.private === true) out('The director kept this answer private: no file was written in the project.\n');
     } else if (command === 'plan') {
       out(`Recorded the plan: ${recordPlan({ worktree, argv: rest }).plan}\n`);

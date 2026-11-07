@@ -20,6 +20,19 @@ test('a dropped piece\'s decision goes into the day\'s batch', () => {
   ]);
 });
 
+test('the change names the cards it took, in the order of its files, with an empty work id as no piece', () => {
+  const change = batchChange({ existing: [] }, [
+    { id: 'c-1', ...item('Which provider?', null) },
+    { id: 'c-2', ...item('Which colour?', 'w-tide-1') },
+    { id: 'c-3', ...item('Which font?', '') },
+    { id: 'c-4', ...item('Which map?', '  ') },
+    { id: 'c-5', ...item('Keep it quiet?', undefined, { private: true }) },
+    { id: 'c-6', ...item('Which logo?', 'w-tide-2') },
+  ], { date: '2026-11-07', dropped: ['w-tide-2'] });
+  assert.deepEqual(change.ids, ['c-1', 'c-3', 'c-4', 'c-6']);
+  assert.equal(change.files.length, change.ids.length);
+});
+
 test('the batch touches only docs/decisions/', () => {
   const change = batchChange({ existing: ['docs/decisions/2026-11-07-which-provider.md'] }, [
     item('Which provider?', null),
