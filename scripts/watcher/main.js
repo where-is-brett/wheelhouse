@@ -285,7 +285,7 @@ export async function runWatcher({
           if (resume !== null) await resume({ wake });
           else if (typeof wake.resumeFeature === 'function') {
             await resumeLost({
-              project, lost: findLostSessions({ project, now }), now, resume: wake.resumeFeature, client, log,
+              project, lost: await findLostSessions({ project, now }), now, resume: wake.resumeFeature, client, log,
             });
           }
         } catch (error) {

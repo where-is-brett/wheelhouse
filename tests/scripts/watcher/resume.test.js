@@ -73,24 +73,24 @@ function fakes({ cards = [], answers = [] } = {}) {
   return { resumed, writes, resume, client };
 }
 
-const tick = async (f) => resumeLost({ project: P, lost: findLostSessions({ project: P, now, alive, bootAt }), now, resume: f.resume, client: f.client });
+const tick = async (f) => resumeLost({ project: P, lost: await findLostSessions({ project: P, now, alive, bootAt }), now, resume: f.resume, client: f.client });
 
-test('a session whose process still runs is not lost', () => withHome(() => {
+test('a session whose process still runs is not lost', () => withHome(async () => {
   started(featureWorktree(), { pid: LIVE });
-  assert.deepEqual(findLostSessions({ project: P, now, alive, bootAt }), []);
+  assert.deepEqual(await findLostSessions({ project: P, now, alive, bootAt }), []);
 }));
 
-test('a session that wrote its report is not lost, even when its process has gone', () => withHome(() => {
+test('a session that wrote its report is not lost, even when its process has gone', () => withHome(async () => {
   const worktree = featureWorktree();
   started(worktree);
   fs.writeFileSync(featurePaths(worktree).report, '# Report\n');
-  assert.deepEqual(findLostSessions({ project: P, now, alive, bootAt }), []);
+  assert.deepEqual(await findLostSessions({ project: P, now, alive, bootAt }), []);
 }));
 
 test('a session with neither is lost, and is resumed by its session id with the ticked tasks and the commits', () => withHome(async () => {
   const worktree = featureWorktree();
   started(worktree);
-  const lost = findLostSessions({ project: P, now, alive, bootAt });
+  const lost = await findLostSessions({ project: P, now, alive, bootAt });
   assert.equal(lost.length, 1);
   assert.equal(lost[0].work, WORK);
   assert.equal(lost[0].sessionId, 'sess-1');
@@ -108,16 +108,16 @@ test('a session with neither is lost, and is resumed by its session id with the 
   assert.doesNotMatch(prompt, /Base of the project/, 'commits before the branch began are not named');
 }));
 
-test('a process that ended while the watcher was away, before the computer restarted, counts as gone', () => withHome(() => {
+test('a process that ended while the watcher was away, before the computer restarted, counts as gone', () => withHome(async () => {
   started(featureWorktree(), { pid: LIVE, runAt: '2026-10-30T00:00:00Z' });
-  assert.equal(findLostSessions({ project: P, now, alive, bootAt }).length, 1);
+  assert.equal((await findLostSessions({ project: P, now, alive, bootAt })).length, 1);
 }));
 
-test('a session that died while the watcher ran leaves a lost marker that is found the same way', () => withHome(() => {
+test('a session that died while the watcher ran leaves a lost marker that is found the same way', () => withHome(async () => {
   const worktree = featureWorktree();
   writeJson(sessionFile(P, WORK), { sessionId: 'sess-1', worktree, at: at(0) });
   writeJson(lostFile(P, WORK), { at: at(5), why: 'exited', code: 1 });
-  const lost = findLostSessions({ project: P, now, alive, bootAt });
+  const lost = await findLostSessions({ project: P, now, alive, bootAt });
   assert.equal(lost.length, 1);
   assert.equal(lost[0].runAt, at(5));
 }));
@@ -199,10 +199,10 @@ test('a resume the waker can not start is not counted, and is tried at the next 
   let fail = true;
   const f = fakes();
   const resume = async (args) => { if (fail) throw new Error('STOP is on'); return f.resume(args); };
-  const lost = () => findLostSessions({ project: P, now, alive, bootAt });
-  const out = await resumeLost({ project: P, lost: lost(), now, resume, client: f.client, log: () => {} });
+  const lost = async () => findLostSessions({ project: P, now, alive, bootAt });
+  const out = await resumeLost({ project: P, lost: await lost(), now, resume, client: f.client, log: () => {} });
   assert.deepEqual(out, [{ work: WORK, outcome: 'held' }]);
   fail = false;
-  assert.deepEqual(await resumeLost({ project: P, lost: lost(), now, resume, client: f.client }), [{ work: WORK, outcome: 'resumed' }]);
+  assert.deepEqual(await resumeLost({ project: P, lost: await lost(), now, resume, client: f.client }), [{ work: WORK, outcome: 'resumed' }]);
   assert.equal(JSON.parse(fs.readFileSync(path.join(watcherDir(P), 'resumes.json'), 'utf8'))[WORK].count, 1);
 }));

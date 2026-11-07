@@ -7,8 +7,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { SLUG } from '../lib/build-loop.js';
+import { safeGit } from '../lib/safe-git.js';
 import { featurePaths } from '../feature/files.js';
 import { planIn, readBrief, readCapped, readPlan } from '../feature/status.js';
 import {
@@ -59,11 +59,13 @@ const isDir = (dir) => {
   }
 };
 
-function gitText(cwd, args) {
+// One read-only git call in `cwd` by the shared route: its trimmed output, or null when git fails or can't be run.
+async function gitText(cwd, args) {
   try {
-    return execFileSync('git', args, {
-      cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10000, windowsHide: true,
-    }).trim();
+    const got = await safeGit({
+      cwd, look: 'never', list: 'project', timeoutMs: 10000, env: { GIT_OPTIONAL_LOCKS: '0' },
+    })(args);
+    return got.code === 0 ? String(got.stdout ?? '').trim() : null;
   } catch {
     return null;
   }
@@ -75,7 +77,7 @@ const dropMarker = (project, work) => fs.rmSync(lostFile(project, work), { force
 // A running record is gone when its process id no longer runs, or when it began before the computer last started (the
 // id may since belong to another process); a lost marker is what the waker leaves for a session that died while it
 // watched. `runAt` is when the lost run began, so one death is counted once.
-export function findLostSessions({
+export async function findLostSessions({
   project, now = () => new Date(), alive = pidAlive, bootAt = now().getTime() - os.uptime() * 1000,
 }) {
   const found = new Map();
@@ -109,7 +111,7 @@ export function findLostSessions({
       dropMarker(project, work);
       continue;
     }
-    const branch = gitText(s.worktree, ['rev-parse', '--abbrev-ref', 'HEAD']);
+    const branch = await gitText(s.worktree, ['rev-parse', '--abbrev-ref', 'HEAD']);
     out.push({
       work, sessionId: s.sessionId, branch: branch || null, worktree: s.worktree, runAt,
     });
@@ -144,11 +146,11 @@ export function tickedTasks(worktree) {
 }
 
 // The subjects of the branch's commits since it left its base, oldest first.
-export function branchCommits(worktree) {
+export async function branchCommits(worktree) {
   for (const base of ['origin/HEAD', 'origin/main', 'origin/master', 'main', 'master']) {
-    const fork = gitText(worktree, ['merge-base', base, 'HEAD']);
+    const fork = await gitText(worktree, ['merge-base', base, 'HEAD']);
     if (!fork) continue;
-    const log = gitText(worktree, ['log', '--reverse', '--format=%s', `${fork}..HEAD`]);
+    const log = await gitText(worktree, ['log', '--reverse', '--format=%s', `${fork}..HEAD`]);
     if (log === null) continue;
     return log.split('\n').map((s) => s.trim()).filter(Boolean).map(clip);
   }
@@ -312,7 +314,7 @@ export async function resumeLost({
       }
       continue;
     }
-    const prompt = resumePrompt({ ticked: tickedTasks(l.worktree), commits: branchCommits(l.worktree) });
+    const prompt = resumePrompt({ ticked: tickedTasks(l.worktree), commits: await branchCommits(l.worktree) });
     let started = null;
     try {
       started = await resume({ work, prompt });
