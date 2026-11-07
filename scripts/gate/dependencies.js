@@ -23,11 +23,13 @@ function fromPackageJson(text) {
   return found;
 }
 
-const REQUIREMENT = /^([A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\])?\s*(?:(?:===|==|~=|>=|<=|!=|>|<)\s*([^\s;,#]+))?/;
+// A name, its extras, then the whole version specifier (`>=1.0,<2.0` stays whole, so a wide range reads as not plain), and
+// no environment marker.
+const REQUIREMENT = /^([A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\])?\s*([^;#]*)/;
 
 function requirement(text, found) {
   const m = REQUIREMENT.exec(text.trim());
-  if (m !== null) found.set(m[1].toLowerCase().replaceAll('_', '-'), m[2] ?? '');
+  if (m !== null) found.set(m[1].toLowerCase().replaceAll('_', '-'), m[2].trim());
 }
 
 function fromRequirements(text) {
@@ -40,14 +42,12 @@ function fromRequirements(text) {
   return found;
 }
 
-const unquote = (s) => s.trim().replace(/^["']|["']$/g, '');
-
 // The sections of a TOML file as `{ name, body: [line] }`; a line outside a section is in the section named "".
 function sections(text) {
   const out = [{ name: '', body: [] }];
   for (const raw of lines(text)) {
     const line = raw.replace(/^\s*#.*$/, '');
-    const head = /^\s*\[([^\][]+)\]\s*$/.exec(line);
+    const head = /^\s*\[([^\][]+)\]\s*(?:#.*)?$/.exec(line);
     if (head !== null) out.push({ name: head[1].trim(), body: [] });
     else out.at(-1).body.push(line);
   }
@@ -60,21 +60,49 @@ function tableDependencies(body, found, skip = []) {
     const m = /^\s*([A-Za-z0-9_.-]+)\s*=\s*(.*?)\s*$/.exec(line);
     if (m === null || skip.includes(m[1])) continue;
     const inline = /version\s*=\s*["']([^"']*)["']/.exec(m[2]);
-    found.set(m[1], inline !== null ? inline[1] : /^["']/.test(m[2]) ? unquote(m[2]) : '');
+    const plain = /^(["'])(.*?)\1/.exec(m[2]);
+    found.set(m[1], inline !== null ? inline[1] : plain !== null ? plain[2] : '');
   }
+}
+
+// Whether a section is one of a product's runtime dependencies: its name ends in `dependencies` (so `dependencies`,
+// `workspace.dependencies`, `target.<x>.dependencies`, `tool.poetry.dependencies`), and no part of it says dev, build or test.
+const NOT_RUNTIME = /^(dev|build|test|tests|docs|lint)$/;
+const runtimeSection = (name) => /(^|\.)dependencies$/.test(name) && !name.split('.').some((part) => NOT_RUNTIME.test(part.trim()));
+
+// The quoted strings of the array whose text follows its opening `[`, up to the first `]` outside quotes. Comments are
+// skipped. Throws when the array isn't closed, so the manifest can't be read cleanly.
+function arrayStrings(rest) {
+  const out = [];
+  let i = 0;
+  while (i < rest.length) {
+    const ch = rest[i];
+    if (ch === '"' || ch === "'") {
+      const close = rest.indexOf(ch, i + 1);
+      if (close < 0) throw new Error('an unclosed string');
+      out.push(rest.slice(i + 1, close));
+      i = close + 1;
+    } else if (ch === '#') {
+      const nl = rest.indexOf('\n', i);
+      i = nl < 0 ? rest.length : nl + 1;
+    } else if (ch === ']') {
+      return out;
+    } else {
+      i += 1;
+    }
+  }
+  throw new Error('an unclosed list');
 }
 
 function fromPyproject(text) {
   const found = new Map();
   for (const { name, body } of sections(text)) {
-    if (name === 'tool.poetry.dependencies') tableDependencies(body, found, ['python']);
+    if (name.startsWith('tool.poetry') && runtimeSection(name)) tableDependencies(body, found, ['python']);
     if (name !== 'project') continue;
     const joined = body.join('\n');
     const start = /^\s*dependencies\s*=\s*\[/m.exec(joined);
     if (start === null) continue;
-    const rest = joined.slice(start.index + start[0].length);
-    const end = rest.indexOf(']');
-    for (const m of (end < 0 ? rest : rest.slice(0, end)).matchAll(/["']([^"']+)["']/g)) requirement(m[1], found);
+    for (const dep of arrayStrings(joined.slice(start.index + start[0].length))) requirement(dep, found);
   }
   return found;
 }
@@ -82,11 +110,11 @@ function fromPyproject(text) {
 function fromCargo(text) {
   const found = new Map();
   for (const { name, body } of sections(text)) {
-    if (name === 'dependencies') tableDependencies(body, found);
-    const sub = /^dependencies\.(.+)$/.exec(name);
-    if (sub !== null) {
+    if (runtimeSection(name)) tableDependencies(body, found);
+    const sub = /^(.*\.)?dependencies\.(.+)$/.exec(name);
+    if (sub !== null && runtimeSection(`${sub[1] ?? ''}dependencies`)) {
       const version = body.map((l) => /^\s*version\s*=\s*["']([^"']*)["']/.exec(l)?.[1]).find((v) => v !== undefined);
-      found.set(sub[1].trim(), version ?? '');
+      found.set(sub[2].trim(), version ?? '');
     }
   }
   return found;
@@ -136,12 +164,26 @@ const READERS = Object.freeze({
 
 export const isManifest = (file) => Object.hasOwn(READERS, base(file));
 
-const majorOf = (version) => {
-  const m = /\d+/.exec(version);
-  return m === null ? null : Number(m[0]);
-};
+// A plain version range: one optional comparator and one version, such as `1.2.3`, `^1.2`, `~> 1.2`, `>=2.0.0`, `v1.4.0` or
+// `1.x`. Anything else (more than one comparator, `||`, a git address, an alias, a path, a tarball, `*`, `latest`) isn't plain.
+const PLAIN = /^(?:===|==|~=|~>|>=|<=|!=|[\^~<>=])?\s*v?(\d+)(?:\.(\d+|[xX*]))?(?:\.(\d+|[xX*]))?(?:[-+][\w.+-]+)?$/;
 
-// Whether a dependency's version moved a major version (or can't be told).
+// What counts as the major of a plain range: where its first non-zero part is, and its value, so below 1.0 the minor is the
+// major (`0.3` and `0.4` differ). Null when no part is non-zero or the text isn't a plain range.
+function majorOf(version) {
+  const m = PLAIN.exec(String(version).trim());
+  if (m === null) return null;
+  const parts = [];
+  for (const p of m.slice(1, 4)) {
+    if (p === undefined || !/^\d+$/.test(p)) break;
+    parts.push(Number(p));
+  }
+  const at = parts.findIndex((n) => n > 0);
+  return at < 0 ? null : `${at}:${parts[at]}`;
+}
+
+// Whether a dependency's version moved a major version. Text that changed and isn't a plain range on both sides counts as
+// moved, as does a version with no non-zero part.
 function movedMajor(was, now) {
   if (was === now) return false;
   const a = majorOf(was);
