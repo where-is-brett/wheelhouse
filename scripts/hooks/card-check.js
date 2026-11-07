@@ -31,7 +31,7 @@ import { whatProblem, NO_REPLY_CODE } from '../cards/compose.js';
 import { TO_KNOW_MORE, TO_CHANGE_IT, SUGGEST, SHOW_ME, NOT_NOW, SEND_BACK } from '../lib/calm-words.js';
 import { CARD } from '../lib/front-desk.js';
 import {
-  chatCopy, setLinesOf, setLineOf, replyCode, replyCodeLine, runbookLine, isLiftStopLine, BLIND_LINE, RUNBOOK_TITLES, SETUP_TITLES, ID, LANES, TRUST_LINE, TAKEOVER_LINE, PAIR_LINE, UNINSTALL_LINE, KEEP_CONTROL_LINE, USAGE_LINE, PREMIUM_LINE, START_GOAL_LINE, RELEASE_LINE, UPDATE_HELPER_LINE, UPDATE_LINE,
+  chatCopy, setLinesOf, setLineOf, replyCode, replyCodeLine, runbookLine, isLiftStopLine, BLIND_LINE, RUNBOOK_TITLES, SETUP_TITLES, ID, LANES, TRUST_LINE, TAKEOVER_LINE, PAIR_LINE, UNINSTALL_LINE, KEEP_CONTROL_LINE, USAGE_LINE, PREMIUM_LINE, RELEASE_LINE, UPDATE_HELPER_LINE, UPDATE_LINE,
 } from '../state/card-lines.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { cardOutcomes } from '../state/views.js';
@@ -80,7 +80,6 @@ function targetOf(line) {
   if ((m = PAIR_LINE.exec(line))) return { kind: 'pair', target: { client: m[1], fingerprint: m[2] } };
   if ((m = UNINSTALL_LINE.exec(line))) return { kind: 'uninstall', target: { project: m[1], hash: m[2] } };
   if ((m = KEEP_CONTROL_LINE.exec(line))) return { kind: 'keep-control-files', target: { work: m[1], hash: m[2] } };
-  if ((m = START_GOAL_LINE.exec(line))) return { kind: 'start-goal', target: { goal: m[1], hash: m[2] } };
   if ((m = USAGE_LINE.exec(line))) return { kind: 'usage', target: { to: m[1], at: m[2] } };
   if ((m = PREMIUM_LINE.exec(line))) return { kind: 'premium', target: { at: m[1] } };
   if ((m = RELEASE_LINE.exec(line))) return { kind: 'release', target: { previous: m[1], release: m[2], commit: m[3] } };

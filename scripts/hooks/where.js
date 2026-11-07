@@ -3,13 +3,12 @@
 // its reload when a session starts from a compaction (design: docs/specs/2026-11-03-compaction-design.md,
 // section 3.1). It is made from records that already exist, so no model writes it: the session's role,
 // the feature's ledger, the branch, last commit and uncommitted files (git, one second in all), the
-// open cards that carry this session's id (else the waiting list), the running goal, and the session
+// open cards that carry this session's id (else the waiting list), and the session
 // note (part 4 writes it) with its age. A piece that can't be read is left out, and nothing here throws.
 import fs from 'node:fs';
 import path from 'node:path';
 import { safeGit } from '../lib/safe-git.js';
 import { sessionRole } from '../lib/role.js';
-import { goalInForce } from '../engine/goal.js';
 import { sessionFile, readSession, updateSession } from './context-gauge.js';
 
 export const WHERE_CHARS = 1500;
@@ -110,10 +109,6 @@ export async function whereDigest({ project, input = {}, views, feature = null, 
   await piece(() => `Where you were, before the compaction (role: ${sessionRole({ sessionId: input.session_id, env, cwd: input.cwd })}):`);
   await piece(() => gitLine(input.cwd, { run }));
   await piece(() => (feature && stateRoot ? `Feature ledger: ${path.join(stateRoot, 'features', feature, 'ledger.md')}` : null));
-  await piece(() => {
-    const goal = goalInForce(views);
-    return goal === null ? null : `Goal running: ${oneLine(goal.id, 60)}${goal.sheet?.title ? ` (${oneLine(goal.sheet.title, 60)})` : ''}; its report is in the Logbook`;
-  });
   await piece(() => cardLine(views, input.session_id));
   await piece(() => noteLines(project, input.session_id, now));
   if (lines.length <= 1) return '';

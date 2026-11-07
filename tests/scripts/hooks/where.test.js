@@ -55,16 +55,15 @@ test('a git that has used the second leaves the rest out', async () => {
 
 const input = { session_id: 's1', cwd };
 
-test('the digest names the role, git, ledger, goal and cards', () => withHome(async (home) => {
+test('the digest names the role, git, ledger and cards', () => withHome(async (home) => {
   const views = {
     waiting: [{ id: 'c1', data: { title: 'Mine', session_id: 's1' } }, { id: 'c2', data: { title: 'Theirs', session_id: 's2' } }],
-    goals: { g1: { ended: null, hash: 'h', startedAt: 'x', sheet: { until: 'y', title: 'Tidy up' } } },
   };
   const text = await whereDigest({ project: 'p', input, views, feature: 'x', stateRoot: path.join(home, 'state'), run: fakeGit(GOOD), env: {} });
   assert.match(text, /^Where you were, before the compaction \(role: front-desk\):/);
   assert.match(text, /Git: branch feature\/x/);
   assert.ok(text.includes(`Feature ledger: ${path.join(home, 'state', 'features', 'x', 'ledger.md')}`));
-  assert.match(text, /Goal running: g1 \(Tidy up\)/);
+  assert.doesNotMatch(text, /Goal running/);
   assert.match(text, /Your open cards: c1: Mine$/m);
   assert.doesNotMatch(text, /Theirs/);
 }));

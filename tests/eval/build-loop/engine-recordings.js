@@ -13,15 +13,6 @@ const started = (work, lane = 'quick') => ({ type: 'run-started', at: at(0), wor
 const step = (minute, id, spend, extra = {}) => ({ type: 'step-finished', at: at(minute), step: id, role: ['implement', 'plan', 'fix', 'reproduce'].includes(id) ? 'implementer' : 'reviewer', provider: 'claude', model: 'mid', minutes: 2, spend, ...extra });
 const ended = (minute, outcome = 'completed', pr = null) => ({ type: 'run-ended', at: at(minute), outcome, pr });
 
-// A goal's check run, its one step giving `results`, as the helper's order lists them, with what it read on the main line.
-export function goalChecked(goal, results) {
-  return [
-    { type: 'run-started', at: at(0), work: goal, lane: 'goal-check', branch: null },
-    { type: 'step-finished', at: at(1), step: 'checks', role: 'reviewer', provider: 'none', model: 'none', minutes: 1, spend: { tokens: 0, dollars: 0, source: 'reported' }, output: JSON.stringify({ results }) },
-    ended(2),
-  ];
-}
-
 // A run that asks one question of `level`, then finishes once it is answered.
 export function asking(work, { level = 3, id = `${work}:ask:1`, topic = null, card = true, answer, line, what = 'How much of the page should change?' } = {}) {
   return [

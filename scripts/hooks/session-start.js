@@ -76,7 +76,6 @@ import { TAKEOVER_LABEL, LEAVE_LABEL } from '../state/card-lines.js';
 import { agentOfInput } from '../agents/of-input.js';
 import { readAllowance } from '../usage/figures.js';
 import { weeklyOf } from '../routing/nudge.js';
-import { goalLogbook } from '../engine/goal-report.js';
 import { usageOffer } from '../routing/offer.js';
 import { columnsReadyOf } from '../routing/in-force.js';
 import { TOOL_SHEETS } from '../agents/tool-sheets.js';
@@ -682,13 +681,6 @@ async function readOnlyStart(input, { dir, find, client, helperUp, agent, plugin
     if (got?.ok === true && got.views && typeof got.views === 'object') views = got.views;
   }
   views ??= localViews(project);
-  // An agent that only reads gets no briefing of the hook's, so a goal's report comes here, until each item in it is settled.
-  try {
-    const report = goalLogbook(views ?? {});
-    if (report !== '') notes.push(report);
-  } catch {
-    // The report is only words on top of the start: a fault in it leaves the start as it was.
-  }
   const text = reload({ views, stop: stopOf(), notes, feature: featureSlug(input.cwd), stateRoot: stateDir(project), sheet: sheet() });
   return text === '' ? undefined : answer.context('SessionStart', text);
 }

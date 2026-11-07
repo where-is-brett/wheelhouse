@@ -96,12 +96,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     },
     merge: post('/merge'), //        { project, number, stop, bypass, reviewRequired?, approvalRequired?, touchesGuardrails? } -> a refusal's needs?: { approval: { pr, commit } } names the director's approval it lacks, and releaseApproval? says why a release pull request needs it (not one of the reasons)
     // The build engine's runs (scripts/engine/routes.js). A step names its run, never its project.
-    goalBaseline: post('/goal-baseline'), // { project | cwd, goal } -> { ok, runId, head }: starts the run of a goal's checks on the main line; its `goal-check` record says how it went
-    goalDraft: post('/goal-draft'), // { project | cwd, pieces } -> { ok, pieces: [{ work, hash }], left?, spend?, says? }: the pieces a goal's sheet lists, or what the last goal left, and the spend to propose
-    goalRecheck: post('/goal-recheck'), // { project, goal, hash } -> { ok, refused: [line] }: a goal's checks before leaving, again, as the director clicks Start
-    goalCard: post('/goal-card'), //   { project | cwd, goal } -> { ok, offered, question?, id?, warns?, waiting?, refused?, results? }: the sheet's card, composed and offered by the helper, once its checks before leaving pass
     engine: {
-      areas: post('/engine/areas'), // { runId } -> { ok, areas }: the areas of the goal the run's order belongs to, or null, for the tool guard
       protectedFiles: post('/engine/protected-files'), // { runId } -> { ok, protectedFiles }: the test files the run's order lists, for the protected-tests guard; refused for a run it didn't start
       order: post('/engine/order'), // { runId } -> { ok, order }: the run's work order as the helper keeps it; refused for a run it didn't start
       review: post('/engine/review'), // { runId, step } -> { ok, ran, verdict?, posted? }: signs the review step from the engine's record and posts the merge queue's verdict once every lens that ran is CLEAN

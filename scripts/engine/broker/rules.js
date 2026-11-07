@@ -288,7 +288,6 @@ const refuse = (reason) => ({ allow: false, reason: `Wheelhouse's broker refused
 // redMain (whether a red-main incident is open), runBranch (the branch of the run a rerun names, as the host says),
 // checksHere (whether the project's checks run on this computer), check (the signed check of the call's head, or null),
 // digest (the command now on the default branch), notCounting (whether the project's tests aren't counting yet),
-// outsideAreas (whether the change reaches outside its goal's areas, with no Allow this once at this head),
 // hostApproval (undefined where the person's approval on GitHub isn't needed, else whether it is there) }.
 export function brokerDecision(call, ctx = {}) {
   if (!call || call.kind === 'other') {
@@ -316,7 +315,6 @@ export function brokerDecision(call, ctx = {}) {
   // A merge: the permit.
   const incident = incidentReason(ctx.incident);
   if (incident) return refuse(incident);
-  if (ctx.outsideAreas === true) return refuse(`the change at ${head.slice(0, 7)} reaches outside its goal's areas`);
   if (!reviewed) return refuse(`there is no signed CLEAN review of ${head.slice(0, 7)}`);
   const needsApproval = ctx.shownFirst === true || ctx.level === 4 || ctx.guardrail === true;
   // `releaseApproved` is the helper's finding that this is the update's own reviewed change and that the director's signed

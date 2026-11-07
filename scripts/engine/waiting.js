@@ -2,8 +2,7 @@
 // Which pieces wait on the director (delegated decisions design, section 8.1), from what the runner and the dispatcher's
 // runner know and never from a run's `paused` record, which a usage limit writes too. The two sets stay apart, so neither
 // module reads the other's file. A feature between slices has no card open, so it waits on a merge, not on the director.
-// A run parked at a usage limit waits on no one, and holds back what would meet the same limit (unattended goals design,
-// section 9.3): that is read from the record, so a helper started again keeps it.
+// A run parked at a usage limit waits on no one, and holds back what would meet the same limit: that is read from the record, so a helper started again keeps it.
 import { MERGE_WORK } from './dispatcher.js';
 import { since } from '../foreman/queue.js';
 import { LIMIT_LATE_MINUTES, LIMIT_NO_RESET_HOURS } from './recovery.js';
@@ -110,7 +109,6 @@ function ownOpen({ state, views }) {
   for (const asked of [state?.clashAsked, state?.redAsked, state?.cutOffAsked]) {
     for (const [work, id] of entriesOf(asked)) if (open(id)) found.push({ id, work });
   }
-  for (const held of Object.values(state?.areas ?? {})) if (open(held?.id)) found.push({ id: held.id, work: held.work });
   for (const entry of Array.isArray(state?.returning) ? state.returning : []) if (open(entry?.asked)) found.push({ id: entry.asked, work: entry.work });
   // A merge queue that can't start: every piece it would take waits on the one card.
   if (open(state?.queueFault?.asked)) for (const work of state.queueFault.works) found.push({ id: state.queueFault.asked, work });

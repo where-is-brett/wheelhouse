@@ -10,7 +10,7 @@
 // a trust card is composed by the session start, which hands it to the front desk as it is, and
 // uninstall's card by the helper, for setup's playbook to ask as it is.
 import {
-  approvalLine, confirmLine, confirmWords, LIFT_STOP, LIFT_LABEL, runbookLine, ciPushLine, approveWorkLine, answerLine, blindLine, amendLine, startGoalLine,
+  approvalLine, confirmLine, confirmWords, LIFT_STOP, LIFT_LABEL, runbookLine, ciPushLine, approveWorkLine, answerLine, blindLine, amendLine,
   liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, takeOverLine, TAKEOVER_LABEL, LEAVE_LABEL, pairLine, PAIR_LABEL, APP_ID, uninstallLine, keepControlLine, usageLine, premiumLine, releaseLine, updateHelperLine, updateLine, UPDATE_LABEL, RELEASE_LABEL, RELEASE_TAG, isLineName, dayOf, replyCode, replyCodeLine, setLineOf, SET_LINES,
   RUNBOOK_TITLES, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, CORRECT_SOME_LABEL, BASELINE_LABEL, BASELINE_HEADER, TRUST_LABEL, UNINSTALL_LABEL, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
@@ -48,7 +48,6 @@ export const HEADERS = Object.freeze({
   'keep-control-files': 'Agent files',
   usage: 'Thoroughness',
   premium: 'Premium',
-  'start-goal': 'Start goal',
   release: 'Release',
   'update-helper': 'Old helper',
   update: 'Update',
@@ -74,7 +73,6 @@ export const DECIDING = Object.freeze({
   pair: PAIR_LABEL,
   uninstall: UNINSTALL_LABEL,
   'keep-control-files': 'Confirm',
-  'start-goal': 'Start',
   release: RELEASE_LABEL,
   update: UPDATE_LABEL,
 });
@@ -90,8 +88,7 @@ export const DECIDING = Object.freeze({
 // once, so only the click on the card the session start offered counts.
 // So is the premium model's card (design section 14.6): only the click on the card the helper offered counts.
 // So is a blind card: its click signs nothing, so a code would make a shown record that is never spent.
-// So is a start-goal card: a goal starts only on the click on the card itself.
-export const NO_REPLY_CODE = Object.freeze(['setup', 'confirm-all', 'trust', 'take-over', 'uninstall', 'keep-control-files', 'usage', 'premium', 'pair', 'blind', 'start-goal', 'release', 'update-helper', 'update']);
+export const NO_REPLY_CODE = Object.freeze(['setup', 'confirm-all', 'trust', 'take-over', 'uninstall', 'keep-control-files', 'usage', 'premium', 'pair', 'blind', 'release', 'update-helper', 'update']);
 
 // The buttons a kind's card offers after its deciding label, in the order they are shown, where it
 // isn't the usual Suggest a change…, Show me and Not now (design section 23.4). All stop is lifted or it
@@ -110,8 +107,6 @@ const OFFERED_AFTER = Object.freeze({
   pair: Object.freeze([NOT_NOW]),
   uninstall: Object.freeze([NOT_NOW]),
   'keep-control-files': Object.freeze([SHOW_ME, NOT_NOW]),
-  // A goal's sheet has no preview to show: a change to it makes a new sheet, with its own check.
-  'start-goal': Object.freeze([SUGGEST, NOT_NOW]),
   // The release's approval can be put off: the update then waits and nothing is installed.
   release: Object.freeze([NOT_NOW]),
   update: Object.freeze([NOT_NOW]),
@@ -154,7 +149,6 @@ const ASKS = Object.freeze({
   'keep-control-files': () => 'Keep these files as they are?',
   'take-over': () => 'Move the First Mate to this computer?',
   pair: () => 'Pair this app?',
-  'start-goal': () => 'Start this goal?',
   release: (t) => `Move this project to Wheelhouse ${t.release}?`,
   'update-helper': () => 'What should the update do about the old helper?',
   update: (t) => (t.put === 'undo' ? `Put Wheelhouse back to ${t.to}?` : `Update Wheelhouse to ${t.to}?`),
@@ -235,10 +229,6 @@ function lineFor(kind, target) {
   if (kind === 'approve-work') {
     if (!slug(t.work) || !LANES.split('|').includes(t.lane) || !HEX.test(t.hash)) bad('needs a work id, a lane and a document hash');
     return approveWorkLine(t.work, t.lane, t.hash, { shownFirst: t.shownFirst === true });
-  }
-  if (kind === 'start-goal') {
-    if (!slug(t.goal) || !HEX.test(t.hash)) bad('needs a goal id and a sheet hash');
-    return startGoalLine(t.goal, t.hash);
   }
   if (kind === 'answer') {
     if (typeof t.questionId !== 'string' || !new RegExp(`^${QUESTION_ID}$`).test(t.questionId)) bad('needs the question id, such as q-export-csv-1');
@@ -355,7 +345,6 @@ export function whatProblem(kind, what, target, { abbreviated = false } = {}) {
   if (kind === 'confirm-all') need = [new RegExp(`(?<![0-9])${target.count} rules?\\b`, 'i').test(what), `how many rules it lists, ${target.count}`];
   if (kind === 'trust') need = [nameId(target.computer), `the computer ${target.computer}`];
   if (kind === 'take-over') need = [nameId(target.holder), `the computer ${target.holder}`];
-  if (kind === 'start-goal') need = [nameId(target.goal), `the goal ${target.goal}`];
   if (kind === 'pair') need = [nameId(target.client), `the app ${target.client}`];
   if (kind === 'uninstall') need = [nameId(target.project), `the project ${target.project}`];
   if (kind === 'update') need = [nameId(target.to), `the release ${target.to}`];
@@ -480,9 +469,7 @@ export function composeCard(input) {
   // The premium model's Yes writes its pin into the routing, a guardrail change (design section 14.6), so its card is level 4.
   if (kind === 'premium' && level !== 4) fail(kind, 'level', 'must be 4: its Yes changes the routing table');
   const said = input.said === undefined ? undefined : flat(words(kind, 'said', input.said));
-  // A goal's sheet is one bound to a line, each read on its own.
-  const whatWords = () => (kind === 'start-goal' && typeof input.what === 'string' ? input.what.split('\n').map((line) => words(kind, 'what', line)).join('\n') : words(kind, 'what', input.what));
-  const what = said === undefined ? whatWords() : `You said: ${said.replace(/[.\s]+$/, '')}. ${SAID_ASKS} ${words(kind, 'what', input.what)}`;
+  const what = said === undefined ? words(kind, 'what', input.what) : `You said: ${said.replace(/[.\s]+$/, '')}. ${SAID_ASKS} ${words(kind, 'what', input.what)}`;
   const why = words(kind, 'why', input.why);
   const blind = kind === 'blind';
   if (input.blind !== undefined && input.blind !== true) fail(kind, 'blind', 'must be true or left off');

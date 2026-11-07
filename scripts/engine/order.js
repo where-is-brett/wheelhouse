@@ -8,7 +8,7 @@
 //             caps: { minutes, tokens }, protectedFiles: [path], preview: { pages, styleGuide } | null,
 //             showFirst, level, testCommand, bindings: { tiers?, aliases? },
 //             slice?: { n, of, title }, flag?: { name, file } | { name, how }, demo?, feature?: { slices: [Slice] },
-//             tried?: [{ run, step, failure, checks }], areas?: { goal, since?, may?, wontTouch } }
+//             tried?: [{ run, step, failure, checks }] }
 //   Slice = { n, title, pr, head }: a slice of the feature that merged (its head null when the host didn't say), for the feature's own run (its whole-feature
 //   review and switch-on). `slice` and `demo` are a feature's slice run's; `flag` is the switch a feature's work sits
 //   behind, in a file the core can flip or in the project's own way, given in words.
@@ -25,7 +25,6 @@ import path from 'node:path';
 import { SLUG } from '../lib/build-loop.js';
 import { READER_LANE, READER_WORK } from '../delegation/reader.js';
 import { MOST_TRIED, MOST_TRIED_CHECKS, TRIED_CHARS } from './recovery.js';
-import { GOAL_CHECK_LANE, GOAL_WORK } from './goal-limits.js';
 
 export const ORDER_VERSION = 1;
 export const ORDER_LANES = Object.freeze(['quick', 'small', 'slice', 'feature', 'bug', 'fix-main']);
@@ -129,17 +128,11 @@ const isTried = (t) => isObject(t) && Object.keys(t).sort().join() === 'checks,f
 const isAnswer = (a) => isObject(a) && Object.keys(a).sort().join() === 'answer,question'
   && isText(a.question) && isText(a.answer) && a.question.length <= ANSWER_CHARS && a.answer.length <= ANSWER_CHARS;
 
-// A goal's areas on an order (scripts/engine/goal.js, areasOf and fixAreas).
-const areasFit = (a) => isObject(a) && isText(a.goal) && Array.isArray(a.wontTouch) && texts(a.wontTouch)
-  && (a.may === undefined || (Array.isArray(a.may) && texts(a.may))) && (a.since === undefined || isText(a.since));
-
 // Why `order` isn't a well-formed order, or null.
 export function checkOrder(order) {
   if (!isObject(order) || order.v !== ORDER_VERSION) return 'a work order must be a version 1 record';
   // A reader has no work: its stand-in names the card it reads, so the helper can place its run and give it its view.
   if (order.lane === READER_LANE) return order.work === READER_WORK && isText(order.card) ? null : 'a reader\'s stand-in order names its card';
-  // Nor has a goal's check run: its stand-in names the goal and sheet it checks, and the checks it runs.
-  if (order.lane === GOAL_CHECK_LANE) return order.work === GOAL_WORK && isText(order.goal) && isText(order.hash) && Array.isArray(order.done) ? null : 'a goal check\'s stand-in order names its goal, its sheet and its checks';
   // The work names folders (previews/<work>/), so it is a plain slug.
   if (typeof order.work !== 'string' || !SLUG.test(order.work)) return 'a work order needs its work, as a short slug';
   if (!ORDER_LANES.includes(order.lane)) return 'a work order needs its lane';
@@ -168,9 +161,7 @@ export function checkOrder(order) {
   if (order.answers !== undefined && !(Array.isArray(order.answers) && order.answers.length <= MOST_ANSWERS && order.answers.every(isAnswer))) {
     return 'a work order\'s answers are each a question and its answer, in short text';
   }
-  if (order.areas !== undefined && !areasFit(order.areas)) return 'a work order\'s areas name their goal and what won\'t be touched, and may say what may be';
   if (order.tried !== undefined && !(Array.isArray(order.tried) && order.tried.length <= MOST_TRIED && order.tried.every(isTried))) return 'a work order\'s tried list is earlier runs, each its run, step, failure and checks, in short text';
-  if (order.goalId !== undefined && !(typeof order.goalId === 'string' && SLUG.test(order.goalId))) return 'a work order names its goal as a short slug';
   // A fix for a red main line names its incident (section 7.7); no other lane does.
   if (order.checkTail !== undefined && !(typeof order.checkTail === 'string' && order.checkTail.length <= MOST_CHECK_TAIL)) return 'a work order\'s check tail is text, 4 KB at most';
   if (order.incident !== undefined && !(order.lane === 'fix-main' && typeof order.incident === 'string' && SLUG.test(order.incident))) return 'only a fix-main order names an incident, as a short slug';
@@ -196,7 +187,7 @@ export function bindingsOf(roles) {
 // settings as `config` ({ pages?, styleGuide?, testCommand? }); `caps` ({ minutes, tokens }) in place of the lane's own, as
 // the project's settings give them; `answers` ([{ question, answer }]) the director's answers to the work's earlier
 // questions, from the helper's own record; `extra` a feature's fields ({ slice, flag, demo, feature, showFirst }), from
-// the core's reading of the approved design, with `showFirst` in place of the work's own, and `goalId`, the goal it is for. Throws, in plain words, on
+// the core's reading of the approved design, with `showFirst` in place of the work's own. Throws, in plain words, on
 // anything an order can't be.
 export function workOrder({ work, rulings = [], routing = {}, config = {}, caps = null, answers = [], extra = {} } = {}) {
   if (!isObject(work)) throw new Error('A work order needs the work it is for');
@@ -223,7 +214,7 @@ export function workOrder({ work, rulings = [], routing = {}, config = {}, caps 
       answer: typeof a?.answer === 'string' ? a.answer.slice(0, ANSWER_CHARS) : a?.answer,
     })),
   };
-  for (const key of ['slice', 'flag', 'demo', 'feature', 'tried', 'goalId']) if (extra?.[key] !== undefined) order[key] = structuredClone(extra[key]);
+  for (const key of ['slice', 'flag', 'demo', 'feature', 'tried']) if (extra?.[key] !== undefined) order[key] = structuredClone(extra[key]);
   if (typeof extra?.showFirst === 'boolean') order.showFirst = extra.showFirst;
   const problem = checkOrder(order);
   if (problem) throw new Error(problem.charAt(0).toUpperCase() + problem.slice(1));

@@ -28,23 +28,9 @@
 //                   the director's "fix it" or "ship it" about work with an open pull request: the helper puts the
 //                   Bosun's question to them in its own fixed words (fix the findings or restart the builder, or stop the
 //                   work; shipping as it is is never offered while a signed review holds the merge) and prints the line to say
-//   end-goal [--now]
-//                   asks for the running goal to end: it stops starting work, and with --now stops what is running too
-//   goal-baseline <goal>
-//                   runs the goal's checks on the main line with no model, for its card: the result comes later, as
-//                   a `goal-check` record
-//   goal-draft [work ...]
-//                   the pieces a goal's sheet lists, each with its record's hash, and the spend to propose for them; with no
-//                   work named, what the last goal left, for a Carry on's new sheet
-//   goal-card <goal>
-//                   the result of the goal's checks and, once they and the checks before leaving pass, the sheet's card,
-//                   which only this command gives; while the checks run it waits a while, then says they are still running
-//   narrow-goal     narrows the running goal: the change as JSON on standard input, with only `until`, `spend`,
-//                   `areas` or `pieces`, each made smaller; a change that widens anything is refused
 //   record <kind>   records something the front desk decided: one of RECORD_KINDS, the data as JSON;
 //                   for a work event's document and an amendment, it works out the hash and prints it; a work also
-//                   prints `recordHash`, the hash of its record as written, which a goal's sheet names a piece by;
-//                   a goal prints `hash`, the hash of its sheet, which the goal's card and the director's Start name;
+//                   prints `recordHash`, the hash of its record as written;
 //                   an amendment needs its read-back, and prints the route line and the read-back to say
 //   note            asks the host helper to write this session's note, up to 1,200 characters on standard input (four lines: the task, what
 //                   is done, what is next, the decisions open), to <wheelhouse home>/projects/<project>/sessions/<session id>.md,
@@ -118,7 +104,6 @@ import { sinceLine } from '../cards/panel-words.js';
 // How far back `views waiting` looks for answers, and its lead (scripts/desk/views.js).
 export { RECENT_MS, RECENT_LEAD };
 import { deskClient } from '../desk/client.js';
-import { checkSheet, sheetHash } from '../engine/goal.js';
 
 // Moved to the desk's views (scripts/desk/views.js); exported here for one release so nothing else breaks.
 export { surveyLines, workLines };
@@ -135,10 +120,10 @@ export class CliError extends Error {}
 // (work, amendment, incident, and the no-blame note when an incident ends).
 export const RECORD_KINDS = Object.freeze([
   'ruling', 'idea', 'rejection', 'glossary', 'decision', 'risk', 'blocker', 'reversal', 'setting',
-  'work', 'amendment', 'incident', 'note', 'brief', 'goal',
+  'work', 'amendment', 'incident', 'note', 'brief',
 ]);
 export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey', 'evidence', 'brief']);
-const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'review', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'end-goal', 'narrow-goal', 'goal-baseline', 'goal-draft', 'goal-card', 'note'];
+const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'review', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'note'];
 // How long `confirm` waits for the helper: one window at a time on the computer, so it may wait for another's.
 const CONFIRM_WAIT_MS = 3 * WINDOW_MS;
 export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
@@ -580,52 +565,6 @@ export async function pullCards({ client, cwd, now, onAsked }) {
   return cards({ client, cwd, now, onAsked });
 }
 
-// The director's End goal and narrowing, through the desk: neither needs the director's signature, since each only
-// makes less happen.
-export async function endGoal({ client, cwd, now: immediately }) {
-  const got = await deskOf(client, cwd).act('end-goal', { now: immediately === true });
-  if (got?.ok !== true) throw new CliError(said(got, 'The goal wasn\'t ended'));
-  return { asked: true, now: immediately === true };
-}
-
-// Runs the goal's checks on the main line for its card. The result comes later, as a `goal-check` record.
-export async function goalBaseline({ client, cwd, goal }) {
-  const got = await client.goalBaseline({ cwd, goal });
-  if (got?.ok !== true) throw new CliError(said(got, 'The goal\'s checks weren\'t started'));
-  return { started: got.runId !== null, head: got.head };
-}
-
-// What a sheet can list, and the spend to propose.
-export async function goalDraft({ client, cwd, pieces }) {
-  const got = await client.goalDraft({ cwd, pieces });
-  if (got?.ok !== true) throw new CliError(said(got, 'The goal\'s draft wasn\'t made'));
-  const { ok: _ok, ...draft } = got;
-  return draft;
-}
-
-// How long `goal-card` waits for the checks, within a command's usual time limit, and how often it looks.
-const GOAL_CARD_WAIT_MS = 90 * 1000;
-const GOAL_CARD_LOOK_MS = 5 * 1000;
-export const STILL_CHECKING = 'The goal\'s checks are still running on the main line.';
-
-// The sheet's card, once the checks are in: it comes from the helper alone, which records it, and it is marked asked.
-export async function goalCard({ client, cwd, goal, wait = (ms) => new Promise((done) => { setTimeout(done, ms); }), waitMs = GOAL_CARD_WAIT_MS }) {
-  for (let waited = 0; ; waited += GOAL_CARD_LOOK_MS) {
-    const got = await client.goalCard({ cwd, goal });
-    if (got?.ok !== true) throw new CliError(said(got, 'The goal\'s card wasn\'t made'));
-    if (got.offered === true) return { question: got.question, id: got.id, warns: got.warns, results: got.results, ...withProblems(await markAsked(client, cwd, [got.id], false)) };
-    if (got.waiting !== true) return { refused: got.refused, results: got.results };
-    if (waited + GOAL_CARD_LOOK_MS > waitMs) return { waiting: true, say: STILL_CHECKING };
-    await wait(GOAL_CARD_LOOK_MS);
-  }
-}
-
-export async function narrowGoal({ client, cwd, change }) {
-  const got = await deskOf(client, cwd).act('narrow-goal', { change });
-  if (got?.ok !== true) throw new CliError(said(got, 'The goal wasn\'t narrowed'));
-  return { narrowed: true };
-}
-
 // --- card ---
 
 // A card's or a reversal's topic in lower case, refused when it isn't a slug (ruling F40).
@@ -650,7 +589,6 @@ export async function card({ client, cwd, input, now }) {
   if (input.kind === 'answer' || input.kind === 'blind') throw new CliError('An answer card comes from `cards`, made from the question as the build recorded it');
   if (input.kind === 'usage') throw new CliError('A usage card comes from the session start, made from the allowance as it reads it');
   if (input.kind === 'premium') throw new CliError('The premium model\'s card comes from `premium-card`, made by the helper');
-  if (input.kind === 'start-goal') throw new CliError('A goal\'s card comes from `goal-card`, made by the helper from its sheet');
   if (input.event !== undefined) throw new CliError('A card for a record of the build\'s comes from `cards`, made once from the record');
   const topic = input.topic === undefined ? undefined : topicOf(input.topic);
   const at = typeof now === 'function' ? now() : new Date(now ?? Date.now());
@@ -1106,7 +1044,7 @@ export async function record({ client, cwd, kind, input, now, ready, makeId = ()
   // A reversal's topic is a slug in lower case, as a card's is, so the delegation review counts them together.
   if (kind === 'reversal') return answered(await write(client, cwd, kind, { ...input, topic: topicOf(input.topic) }));
   if (kind === 'work') {
-    // A change users would see goes in the small lane at least, shown first (intake, route 10;
+    // A change users would see goes in the small lane at least, shown first (intake, route 9;
     // scenario 7). Ready-made work carried on (`from`) is shown whatever its lane.
     if (input.lane === 'quick' && input.visible === true && input.from === undefined) {
       throw new CliError('Work users would see goes in the small lane at least, shown to the director first: record it in the small lane, with an approve-work card (shownFirst). The quick lane is for work users won\'t see (visible false)');
@@ -1121,12 +1059,6 @@ export async function record({ client, cwd, kind, input, now, ready, makeId = ()
     const say = readBackLine(readBack);
     const data = await withHash(client, cwd, kind, rest);
     return { ...answered(await write(client, cwd, kind, data)), hash: data.hash, say };
-  }
-  if (kind === 'goal') {
-    // A goal's sheet is checked before it is written, so a card is never made for one that can't start.
-    const problem = checkSheet(input.sheet, { now: now() });
-    if (problem !== null) throw new CliError(problem);
-    return { ...answered(await write(client, cwd, kind, input)), hash: sheetHash(input.sheet) };
   }
   if (kind !== 'ruling' && kind !== 'brief') return answered(await write(client, cwd, kind, input));
 
@@ -1489,30 +1421,6 @@ export async function main(argv, {
       const { left, onAsked } = await hereMark(rest);
       only(left, 0, 'pull-cards takes no arguments');
       json(await pullCards({ client: helper, cwd: here, now, onAsked }));
-      return 0;
-    }
-    if (command === 'end-goal') {
-      if (rest.length > 1 || (rest.length === 1 && rest[0] !== '--now')) throw new CliError('end-goal takes only --now: end-goal [--now]');
-      json(await endGoal({ client: helper, cwd: here, now: rest[0] === '--now' }));
-      return 0;
-    }
-    if (command === 'goal-baseline') {
-      only(rest, 1, 'goal-baseline takes the goal: goal-baseline <goal>');
-      json(await goalBaseline({ client: helper, cwd: here, goal: rest[0] }));
-      return 0;
-    }
-    if (command === 'goal-draft') {
-      json(await goalDraft({ client: helper, cwd: here, pieces: rest }));
-      return 0;
-    }
-    if (command === 'goal-card') {
-      only(rest, 1, 'goal-card takes the goal: goal-card <goal>');
-      json(await goalCard({ client: helper, cwd: here, goal: rest[0] }));
-      return 0;
-    }
-    if (command === 'narrow-goal') {
-      only(rest, 0, 'narrow-goal takes no arguments: give the change as JSON on standard input');
-      json(await narrowGoal({ client: helper, cwd: here, change: parsed(await stdin()) }));
       return 0;
     }
     if (command === 'cards') {

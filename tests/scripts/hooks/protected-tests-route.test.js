@@ -37,7 +37,6 @@ async function setup() {
     incidentOf: () => null,
     changesOf: async () => ({ paths: [], config: {} }),
     merge: async () => ({ ok: true }),
-    goalViews: () => ({}),
   });
   const order = workOrder({ work: { id: 'card-1', lane: 'quick', goal: 'A goal', done: [{ test: 'x' }], protectedFiles: ['tests/old.test.js'] } });
   await made.start({ project: 'p', order });

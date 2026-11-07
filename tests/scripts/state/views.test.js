@@ -9,18 +9,17 @@ import { fileURLToPath } from 'node:url';
 import { buildViews, writeViews, latestFor, readyColumns, cardOutcomes, signedCardOutcomes } from '../../../scripts/state/views.js';
 import { listEvents, makeEvent, confirmationFor, eventHash, dataHash, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, sign } from '../../../scripts/state/signing.js';
-import { approvalLine, approveWorkLine, amendLine, ciPushLine, confirmLine, startGoalLine } from '../../../scripts/state/card-lines.js';
+import { approvalLine, approveWorkLine, amendLine, ciPushLine, confirmLine } from '../../../scripts/state/card-lines.js';
 import { computerId, profileDir, stateDir } from '../../../scripts/lib/paths.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { readingOf } from '../../../scripts/delegation/seal.js';
 import { composeRule } from '../../../scripts/delegation/composer.js';
 import { SUGGEST, WHY } from '../../../scripts/lib/calm-words.js';
-import { sheetHash } from '../../../scripts/engine/goal.js';
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
 const T = (n) => `2026-10-18T02:00:${String(n).padStart(2, '0')}.000Z`;
 const at = (n) => () => new Date(T(n));
-const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'provenance', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'controlFiles', 'survey', 'columnsReady', 'usageCards', 'premium', 'premiumFailures', 'runs', 'asks', 'costs', 'previews', 'lessons', 'engineNotes', 'cardsWaiting', 'evidence', 'rules', 'brief', 'sendBacks', 'slept', 'goals', 'goalChecks', 'goalNotes'];
+const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'provenance', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'controlFiles', 'survey', 'columnsReady', 'usageCards', 'premium', 'premiumFailures', 'runs', 'asks', 'costs', 'previews', 'lessons', 'engineNotes', 'cardsWaiting', 'evidence', 'rules', 'brief', 'sendBacks', 'slept'];
 const now = () => new Date('2026-10-18T09:00:00.000Z');
 
 async function withHome(fn) {
@@ -1658,77 +1657,28 @@ test('the sleeps on the record are in the views, in order', () => {
   assert.deepEqual(buildViews([]).slept, []);
 });
 
-// --- goals ---
+// --- records from the unattended-goals feature ---
 
-const goalSheet = () => ({
-  title: 'Customers can export their orders',
-  done: [{ command: 'node check.js', expect: 0 }],
-  checksSay: ['The checking script passes.'],
-  pieces: [{ work: 'export-csv', hash: dataHash(workEv(0).data) }],
-  areas: { may: ['src/**'], wontTouch: ['billing/**'] },
-  checkFiles: [],
-  spend: { tokens: 1000000 },
-  until: '2026-10-18T10:00:00.000Z',
-});
-const startClick = (n, id, hash) => click(n, { action: 'start-goal', goal: id, hash, question: `What this is.\n${startGoalLine(id, hash)}`, label: 'Start' });
+// Written by an earlier release; makeEvent no longer takes these kinds, but a record that holds them must still load.
+const oldGoalEvents = () => [
+  { v: 1, id: 'g1', at: T(1), computer: 'aaaaaaaa', kind: 'goal', data: { id: 'export-orders', sheet: { title: 'x', pieces: [] } } },
+  { v: 1, id: 'g2', at: T(2), computer: 'aaaaaaaa', kind: 'goal-check', data: { goal: 'export-orders', hash: 'a'.repeat(64), when: 'before', ok: false } },
+  { v: 1, id: 'g3', at: T(3), computer: 'aaaaaaaa', kind: 'goal-card', data: { goal: 'export-orders', sheet: 'a'.repeat(64), at: T(3), hash: 'b'.repeat(64) } },
+  { v: 1, id: 'g4', at: T(4), computer: 'aaaaaaaa', kind: 'action', data: { action: 'start-goal', goal: 'export-orders', hash: 'a'.repeat(64), question: 'x', label: 'Start' } },
+  { v: 1, id: 'g5', at: T(5), computer: 'aaaaaaaa', kind: 'goal-end', data: { goal: 'export-orders', ending: 'done', at: T(5) } },
+];
 
-test('a baseline counts only signed by the helper, and reaches the view on disk', async () => {
+test('a record from the goals feature still builds the views, and no view shows anything of it', async () => {
   await withHome(() => {
-    const sheet = goalSheet();
     const W = workEv(0);
-    const record = ev('goal', 1, { id: 'export-orders', sheet });
-    const hash = sheetHash(sheet);
-    const data = { goal: 'export-orders', hash, when: 'before', head: 'a'.repeat(40), results: [{ check: sheet.done[0], ok: false }], ok: false };
-    const signed = ev('goal-check', 2, data);
-    const click = startClick(5, 'export-orders', hash);
-    assert.deepEqual(Object.keys(build([W, record, signed, click]).goals), ['export-orders']);
-    assert.deepEqual(build([W, record, signed]).goalChecks['export-orders'], [{ ...data, at: signed.at }]);
-    assert.deepEqual(build([W, record, unsigned(signed), click]).goals, {});
-    assert.deepEqual(build([W, record, click, ev('goal-check', 6, data)]).goals, {}, 'a baseline after the click proves nothing of it');
-  });
-
-  test('goalNotes keeps what a goal\'s report reads from notes, and no other note', () => {
-    const queue = ev('note', 1, { about: 'goal-queue-after', goal: 'g', run: 'r', tokens: 5, unknown: false });
-    const slice = ev('note', 2, { about: 'engine', work: 'w', words: 'x', slice: { n: 1, of: 2, title: 'One', flag: 'f' } });
-    const lost = ev('note', 3, { about: 'engine', work: 'w', words: 'x', lost: true });
-    const other = ev('note', 4, { about: 'engine', words: 'x' });
-    assert.deepEqual(build([queue, slice, lost, other]).goalNotes.map((n) => n.data), [queue.data, slice.data, lost.data]);
-  });
-});
-
-test('a goal is in the views only when a signed click names its id and its sheet\'s hash', async () => {
-  await withHome(() => {
-    const sheet = goalSheet();
-    // The piece's work record, as it stood before the signature.
-    const W = workEv(0);
-    const record = ev('goal', 1, { id: 'export-orders', sheet });
-    assert.deepEqual(build([W, record]).goals, {}, 'a goal alone does nothing');
-    const hash = sheetHash(sheet);
-    const B = ev('goal-check', 1, { goal: 'export-orders', hash, when: 'before', head: 'a'.repeat(40), results: [{ check: sheet.done[0], ok: false }], ok: false });
-    // an unsigned click, a forged one, another hash and another id
-    const forged = { ...startClick(4, 'export-orders', hash), data: { ...startClick(4, 'export-orders', hash).data, goal: 'other' } };
-    assert.deepEqual(build([W, record, B, unsigned(startClick(2, 'export-orders', hash)), forged, startClick(3, 'export-orders', H2)]).goals, {});
-    const signed = startClick(5, 'export-orders', hash);
-    const goals = build([W, record, B, signed]).goals;
-    assert.deepEqual(Object.keys(goals), ['export-orders']);
-    assert.equal(goals['export-orders'].hash, hash);
-    assert.equal(goals['export-orders'].startedAt, signed.at);
-    assert.equal(goals['export-orders'].ended, null);
-    assert.deepEqual(goals['export-orders'].sheet, sheet);
-    // a goal-end from the helper ends it; a narrowing note after the click narrows it
-    const narrow = ev('note', 6, { about: 'narrow-goal', goal: 'export-orders', change: { spend: { tokens: 500 } } });
-    const end = ev('goal-end', 7, { goal: 'export-orders', ending: 'time', at: T(7), spent: { tokens: 1, points: null, requests: null, unknown: 0, shareAtStart: null, queueRuns: 0 } });
-    const after = build([W, record, B, signed, narrow, end]).goals['export-orders'];
-    assert.equal(after.sheet.spend.tokens, 500);
-    assert.equal(after.ended.ending, 'time');
-  });
-});
-
-test('the goals view reaches the views folder on disk', async () => {
-  await withHome(async () => {
-    const out = path.join(tempFolder('wh-goals-'), 'views');
-    await writeViews('o__p', { now, dir: tempFolder('wh-goals-state-'), out });
-    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(out, 'goals.json'), 'utf8')), {});
+    const plain = build([W]);
+    const withOld = build([W, ...oldGoalEvents()]);
+    assert.equal('goals' in withOld, false);
+    assert.equal('goalChecks' in withOld, false);
+    assert.equal('goalNotes' in withOld, false);
+    assert.deepEqual(withOld.work, plain.work);
+    assert.deepEqual(withOld.damaged, plain.damaged);
+    assert.deepEqual(withOld.waiting, plain.waiting);
   });
 });
 

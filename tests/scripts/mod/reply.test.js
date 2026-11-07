@@ -40,7 +40,6 @@ function fake({ pr = { ok: true, result: { headSha: FULL, state: 'open' } }, ref
   const no = { ok: false, refused: 'no' };
   return {
     calls,
-    goalRecheck: async () => ({ ok: true, refused: [] }),
     prState: async (b) => { calls.prState.push(b); return pr; },
     state: {
       write: async (b) => { calls.write.push(b); return refuse ? no : { ok: true }; },

@@ -38,12 +38,7 @@ import { borrowKey } from './store.js';
 import { checkBaseUrl, gitlabApi } from './gitlab-key.js';
 import { DEFAULT_GITLAB, parseRemote } from './gitlab-base.js';
 import { prepareQueueFolder } from '../engine/queue-folder.js';
-import { prepareGoalFolder } from '../engine/goal-folder.js';
-import { goalCheckHost } from '../engine/goal-check.js';
-import { awayForGoal, paidUsageOf, sheetDesk } from '../engine/goal-start.js';
-import { sessionsTicking } from '../mod/courier.js';
 import { noteFile, noteProblem, writeNoteFile } from '../lib/session-note.js';
-import { stayAwake } from '../engine/stay-awake.js';
 import { queueFolderOf, queueProjectOf } from '../engine/queue-place.js';
 import { unreachableRefusal, certificateRefusal, certificateLine, awayLine, outputKind, companyGitEnv, makeAwayLog, gitlabBaseOf, certificateSetting } from './company-ca.js';
 import { childEnv, readEnv, backendOf } from './connection.js';
@@ -136,7 +131,6 @@ import { pendingDir } from '../hooks/pending.js';
 import { branchOf } from '../hooks/session-start.js';
 import { SLUG, paceOf, questionIdOf } from '../lib/build-loop.js';
 import { ROOT as OWN_ROOT } from '../lineage/check.js';
-import { weeklyShare } from '../usage/figures.js';
 import { checkProvenance, removeProvenance, sessionProvenance, engineProvenance } from '../lineage/provenance.js';
 import { brokerDecision } from '../engine/broker/rules.js';
 import { checkOwnFiles, ownFilesLine } from '../health/own-files.js';
@@ -907,7 +901,7 @@ const PLACED_ROUTES = [
   '/desk/read', '/desk/act', '/desk/watch',
   '/local/undo', '/local/move',
   '/survey/carry-on', '/survey/archive', '/survey/restore', '/premium/card', '/premium/check', '/premium/state', '/premium/failed',
-  '/engine-switch', '/compact-window', '/rules/offer', '/goal-baseline', '/goal-card', '/goal-draft',
+  '/engine-switch', '/compact-window', '/rules/offer',
 ];
 
 // The marks a session sends (ruling P5-19), each with its fields and what each must be.
@@ -1045,8 +1039,6 @@ export async function startHelper({
   // `sleep`, each the real one unless a test gives its own. And how often STOP is looked at, so a STOP set without the
   // helper (the STOP word's hook, the runbook's own) cancels the engine's runs too.
   engineStopWith = {}, stopPollMs = 2000,
-  // What holds the Mac awake for a goal's life (scripts/engine/stay-awake.js).
-  awake = stayAwake(),
   // How often the card router and the dispatcher look again for each project on the engine (scripts/engine/runner.js,
   // dispatch-run.js): answers to send, caps to keep, cost records to write, and work to start.
   dispatchMs = 60 * 1000,
@@ -2313,7 +2305,7 @@ export async function startHelper({
       const home = await homeEarned(project, card.data, label);
       if (home !== undefined) return home;
     }
-    const client = { prState: ({ number }) => routes['/pr/state']({ project, number }, ctx), goalRecheck: (args) => routes['/goal-recheck'](args, ctx) };
+    const client = { prState: ({ number }) => routes['/pr/state']({ project, number }, ctx) };
     let got;
     try {
       got = await earned({ project, question, label, card: askedUpdateCard(question, card.data), client, now, left: (p) => p, shownAt: card.at });
@@ -3167,9 +3159,6 @@ export async function startHelper({
     const guarded = touchesGuardrails && !keeping;
     // On a project in git alone a merge by this route answers to the queue's rows too: the sweep is the only other way in.
     if (movingHome(project)) stateReasons.push(MOVING_LINE);
-    // A goal's areas hold on every way in. A fix was held to them by its own route, and a restore has no goal.
-    const outsideReason = fixCall || restore ? null : engineRun.areasRefusal(project, { pr: number, head: headSha, paths: readable ? changes.paths : null });
-    if (outsideReason !== null) stateReasons.push(outsideReason);
     const queueRows = recordOf(project).host === 'local' && !fixCall && !keeping && !restore;
     const queueApproval = queueRows && readable && needsApprovalOf({ paths: changes.paths, config: changes.config });
     const approvalRequired = body.approvalRequired === true || guarded || restore || switching || compacting || shownFirst || queueApproval;
@@ -3947,8 +3936,7 @@ export async function startHelper({
   const update = updateRoutes({ now, stopped, userHome, run, spawn, updateHeld, ...updateSeams });
   // --- the desk (scripts/desk/, spec 5): every front end reads and changes Wheelhouse through these three ---
   // The acts that are answered under STOP, beside a signed record, which /state/record takes under STOP too.
-  // Ending or narrowing a goal only makes less happen, and stopping must always be easy, so both are answered under STOP.
-  const DESK_STOP_ACTS = ['all-stop', 'lift-all-stop', 'end-goal', 'narrow-goal'];
+  const DESK_STOP_ACTS = ['all-stop', 'lift-all-stop'];
   const STOP_SETTERS = ['prompt', 'mod', 'helper', 'runbook'];
   function deskOf(project, body, ctx) {
     const folder = typeof body.cwd === 'string' ? body.cwd : readProject(project)?.folder;
@@ -4076,7 +4064,6 @@ export async function startHelper({
     },
     checkTook: (project, { head, work }) => engineHosts.find((h) => h.project === project)?.checks.took(head, work),
     mainCheck: (project) => mainCheck(project),
-    goalViews: (project) => buildViews(listEvents(stateDir(project), { report: () => {} }), ownKeyOnly(), { now }),
   });
 
   // What a project's checks go by, from the host and the default branch and never from a change or a folder. What the
@@ -4167,35 +4154,6 @@ export async function startHelper({
       return null;
     }
   }
-  // The head of the project's main line, as the host says now, or null when it can't be read.
-  async function mainHeadOf(project) {
-    try {
-      const adapter = await (await contextFor(project)).adapter();
-      return await adapter.branchHead(await defaultBranchOf(project, adapter));
-    } catch {
-      return null;
-    }
-  }
-  // Claude Code's own note of the account, which says whether paid usage is on (check 93); null when it can't be read.
-  function claudeAccount() {
-    try {
-      return JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude.json'), 'utf8'));
-    } catch {
-      return null;
-    }
-  }
-  // A goal's start sets Away until its end, as a convenience (section 11): the setting and its confirmation, as a press of
-  // Availability makes them, since the director's Start is the click that asked for it. Do not disturb and an Away in force stand.
-  const awayFor = (until) => oneAtATime('profile', async () => {
-    await openSettings({ run });
-    const presence = effectiveSettings({ profile: (await writeProfileViews({ now })).settings ?? {}, now: now() }).presence;
-    const setting = awayForGoal({ presence, until, now: now() });
-    if (setting === null) return;
-    const event = makeEvent({ kind: 'setting', data: { ...setting, words: settingWords('presence', 'away', until) }, now });
-    await writeEvent({ event, dir: profileDir(), now });
-    await writeEvent({ event: makeEvent({ ...confirmationFor(event), now }), dir: profileDir(), now });
-    await freshViews(() => writeProfileViews({ now }));
-  });
   // The runs All stop cancelled, from its notes in the project's record.
   function stoppedRunsOf(project) {
     try {
@@ -4212,21 +4170,6 @@ export async function startHelper({
   // rule points git at. The helper fetches the host's branches and pull-request heads into its own mirror with the
   // connection's key, then copies them into the engine's mirror with no key. The engine's mirror names no remote.
   const fetchMirrorOf = (project) => path.join(engineDir(), 'mirrors', `${project}.git`);
-  // A goal's checks run on the main line (goal-folder.js): the fetch mirror brought up to date, or a project in git alone's home.
-  async function ownGoalFolder(project, head) {
-    if (recordOf(project)?.host === 'local') return prepareGoalFolder({ project, source: homeDir(project), head: head ?? null, run });
-    const fresh = await (refreshMirror ?? refreshFetchMirror)(project);
-    if (!fresh?.ok) return { ok: false, refused: fresh?.refused ?? 'the fetch mirror could not be brought up to date' };
-    return prepareGoalFolder({ project, source: fetchMirrorOf(project), head: head ?? null, run });
-  }
-  // Whether the project's own signed check passed clean at `head`, where its checks run on this computer: it stands for the test command.
-  async function cleanCheckAt(project, head) {
-    const facts = await checksFacts(project);
-    if (facts === null || !checksRunHere(project, facts)) return false;
-    const latest = signedChecks(project).filter((e) => e.data?.commit === head && e.data?.command === facts.digest && e.data?.clean === true).at(-1) ?? null;
-    return checkCounts(latest, head, facts.digest, ownKeyOnly());
-  }
-
   // A run's record is trusted only from the installed pack, as a review is.
   const fromInstalledPack = (run) => {
     const installed = packTreeDigest(path.join(engineDir(), 'pack'));
@@ -4329,15 +4272,11 @@ export async function startHelper({
     } catch (error) {
       if (error instanceof LookRefusal) throw error;
     }
-    // Files that can't be read count as outside a goal's areas. A head past them goes back to a card, as the sweep would only try it again.
-    const outside = call.kind === 'merge' ? engineRun.areasOutside(project, { pr: call.pr, paths }) : [];
-    const outsideAreas = (outside === null || outside.length > 0) && !engineRun.areasAllowed(project, call.pr, call.sha);
-    if (outsideAreas && outside !== null) engineRun.holdAreas(project, { pr: call.pr, head: call.sha, paths: outside });
     // Whether the work is shown first comes from the run that opened the pull request; one no run of the helper's
     // opened needs the director's approval, as shown-first work does.
     const opened = engineRun.openedOf(project, call.pr);
     const checked = call.kind === 'merge' ? await checkPermit(project, call.sha) : {};
-    return { ...base, enrolled, review, approval, incident: incidentFor(views, call.pr), shownFirst: opened ? opened.showFirst === true : true, level: opened?.level ?? null, guardrail, outsideAreas, ...checked, stop: stopped() };
+    return { ...base, enrolled, review, approval, incident: incidentFor(views, call.pr), shownFirst: opened ? opened.showFirst === true : true, level: opened?.level ?? null, guardrail, ...checked, stop: stopped() };
   }
   const broker = brokerRoutes({
     placeOf: placeEngineCall,
@@ -4377,12 +4316,6 @@ export async function startHelper({
     '/local/move': (body) => askMove(body),
     '/compact-window': (body, ctx) => oneAtATime(`compact:${body.project}`, () => doCompactWindow(body, ctx)),
     '/engine-switch': (body, ctx) => oneAtATime(`switch:${body.project}`, () => doEngineSwitch(body, ctx)),
-    // The First Mate's ask for a goal's baseline (scripts/engine/goal-check.js). Only a baseline: the last check is the helper's own.
-    '/goal-baseline': ({ project, goal }) => startGoalCheck({ project, goal, when: 'before' }),
-    // The First Mate's goal sheet (scripts/engine/goal-start.js): the bounds to propose, then the card, signed by this computer.
-    '/goal-draft': ({ project, pieces }) => sheetsOf(project).draft({ pieces: Array.isArray(pieces) ? pieces : [] }),
-    '/goal-card': ({ project, goal }) => sheetsOf(project).card({ goal }),
-    '/goal-recheck': ({ project, goal, hash }) => sheetsOf(project).recheck({ goal, hash }),
     '/review/run': async (body, ctx) => {
       try {
         return await doReviewRun(body, ctx);
@@ -4807,12 +4740,12 @@ export async function startHelper({
       try { engine = engineFor(project); } catch { engine = null; }
       if (!engine) continue;
       try {
-        const { runner, dispatcher, checks, inStep, seals, goalChecks, factsOfPiece, sheets } = engineDesk(project, engine);
+        const { runner, dispatcher, checks, inStep, seals, factsOfPiece } = engineDesk(project, engine);
         const host = startEngineHost({
           engine, spawn, now, held: stopped, wake: engineHosts.length === 0,
           write: (kind, data) => engineWrite(project, kind, data),
           cursorFile: path.join(stateDir(project), '..', 'engine', 'cursor.json'),
-          workOf: (runId) => engineRunOf(project, runId) ?? dispatcher.workOf(runId) ?? seals.readerOf(runId) ?? goalChecks.workOf(runId),
+          workOf: (runId) => engineRunOf(project, runId) ?? dispatcher.workOf(runId) ?? seals.readerOf(runId),
           resumes: (runId) => resumesOf(engineRunRecords(project).filter((e) => e.data.runId === runId)),
           over: (runId) => {
             const records = engineRunRecords(project).filter((e) => e.data.runId === runId);
@@ -4823,7 +4756,7 @@ export async function startHelper({
           prOf: (runId) => engineRun.openedBy(project, runId),
         });
         host.onAsk((event) => { runner.onAsk(event).catch(() => {}); });
-        engineHosts.push({ project, engine, host, runner, dispatcher, checks, inStep, seals, goalChecks, factsOfPiece, sheets });
+        engineHosts.push({ project, engine, host, runner, dispatcher, checks, inStep, seals, factsOfPiece });
       } catch {
         // An engine that can't be followed gets no host; the other projects' hosts start all the same.
       }
@@ -5271,16 +5204,6 @@ export async function startHelper({
       },
       trusted: fromInstalledPack,
     });
-    // A goal's checks: nothing starts one but an ask (scripts/engine/goal-check.js), and what it gives is signed as a review is.
-    const goalChecks = goalCheckHost({
-      file: path.join(files, 'goal-checks.json'), write, engine, now, stopped, trusted: fromInstalledPack, readViews: views,
-      events: () => listEvents(stateDir(project), { report: () => {} }),
-      config: () => engineConfigOf(project, folder),
-      designOf: (work) => (typeof folder === 'string' ? approvedDocument({ checkout: folder, views: views(), work }) : null),
-      signedClean: (head) => cleanCheckAt(project, head),
-      folderAt: (head) => ownGoalFolder(project, head),
-      startRun: ({ order, folder: place }) => engineRun.startGoalCheck({ project, order, folder: place }),
-    });
     const ownCard = (kind) => async (data) => {
       await write('question', data);
       seals.onCard({ id: data.id, kind, work: data.work, level: data.level });
@@ -5291,14 +5214,8 @@ export async function startHelper({
       config: () => engineConfigOf(project, folder),
       start: (args) => engineRun.start(args),
       readyOf: () => engineRun.readyAll(project),
-      areasHeld: () => engineRun.areasHeld(project),
-      settleAreas: (pr, how) => engineRun.settleAreas(project, pr, how),
-      allowance: () => weeklyShare({ now: now() }),
-      goalStarted: (goal) => awayFor(goal.until),
       mainGreen: () => mainGreen(project),
       stoppedRuns: () => stoppedRunsOf(project),
-      goalCheck: (args) => goalChecks.start(args),
-      endRun: async (runId) => endRun({ engine, run: { id: runId, folder: (await engine.inspect(runId))?.folder ?? null }, ...engineStopWith }),
       fixedRuns: () => engineRun.fixedRuns(project),
       prState: async (pr) => {
         try {
@@ -5338,7 +5255,7 @@ export async function startHelper({
     });
     const runner = engineRunner({
       engine, file: path.join(files, 'router.json'), readViews: views, write, stopped, now, settings, noteSleep: () => sleeping.beat(), onCard: seals.onCard, onReaderAsk: seals.onReaderAsk, blindRoll: rollOf,
-      workOf: (runId) => engineRunOf(project, runId) ?? dispatcher.workOf(runId) ?? seals.readerOf(runId) ?? goalChecks.workOf(runId),
+      workOf: (runId) => engineRunOf(project, runId) ?? dispatcher.workOf(runId) ?? seals.readerOf(runId),
       titleOf: (work) => (work === MERGE_WORK ? 'the changes waiting to be added' : views().work?.[work]?.work?.data?.title ?? work),
       endRun: async (runId) => endRun({ engine, run: { id: runId, folder: (await engine.inspect(runId))?.folder ?? null }, ...engineStopWith }),
       openedOf: (pr) => engineRun.openedOf(project, pr),
@@ -5490,27 +5407,7 @@ export async function startHelper({
       const seenRun = await Promise.resolve().then(() => engine.inspect(seen.runs?.[work]?.at(-1)?.data?.runId)).catch(() => null);
       return factsOf({ branch: seenRun?.branch, folder: seenRun?.folder });
     };
-    const sheets = sheetDesk({
-      views: () => ({ ...views(), engineOn: engineReady(project) }),
-      events: () => listEvents(stateDir(project), { report: () => {} }),
-      health: () => engine.health(),
-      config: () => engineConfigOf(project, folder),
-      settings,
-      designOf: (work) => (typeof folder === 'string' ? approvedDocument({ checkout: folder, views: views(), work }) : null),
-      mainGreen: () => mainGreen(project),
-      mainHead: () => mainHeadOf(project),
-      stopped,
-      reading: () => weeklyShare({ now: now() }),
-      paid: () => paidUsageOf(claudeAccount()),
-      sessions: () => sessionsTicking(project, { now }),
-      offer: async (kind, data) => {
-        const event = makeEvent({ kind, data, now });
-        await checkWrite(project, event);
-        return event.id;
-      },
-      now,
-    });
-    return { runner, dispatcher, checks, inStep, seals, goalChecks, factsOfPiece, sheets };
+    return { runner, dispatcher, checks, inStep, seals, factsOfPiece };
   }
   // --- safekeeping (spec 8.2): what would be lost with this computer, for every project, engine or none ---
 
@@ -5679,17 +5576,12 @@ export async function startHelper({
   let ticking = null;
   function engineTick() {
     ticking ??= (async () => {
-      for (const { runner, dispatcher, checks, inStep, goalChecks } of engineHosts) {
+      for (const { runner, dispatcher, checks, inStep } of engineHosts) {
         if (closing) break;
         await runner.tick().catch(() => {});
         await dispatcher.tick().catch(() => {});
         await inStep?.().catch(() => {});
         await checks.tick().catch(() => {});
-        await goalChecks.tick().catch(() => {});
-      }
-      // A goal in force on any project holds the Mac awake, and each look says so again, so a helper started again takes it up.
-      if (!closing) {
-        try { awake.set(engineHosts.some(({ dispatcher }) => dispatcher.goalInForce())); } catch { /* looked at again on the next tick */ }
       }
     })().finally(() => { ticking = null; });
     return ticking;
@@ -5714,19 +5606,6 @@ export async function startHelper({
     await Promise.allSettled(engineHosts.map(({ project }) => engineWrite(project, 'note', { about: 'engine', words })));
   }
 
-  // A goal's checks on the main line, `before` it starts or `last` of all (scripts/engine/goal-check.js).
-  const startGoalCheck = ({ project, goal, when, head }) => {
-    const found = engineHosts.find((h) => h.project === project);
-    return found ? found.goalChecks.start({ goal, when, head }) : Promise.resolve({ ok: false, refused: 'that project doesn\'t use the build engine' });
-  };
-
-  // The First Mate's sheet for a project on the engine, or a refusal for one that isn't.
-  const sheetsOf = (project) => {
-    const found = engineHosts.find((h) => h.project === project);
-    if (!found) refuse('that project doesn\'t use the build engine');
-    return found.sheets;
-  };
-
   // The seals' look for every project, never awaited by a tick of the engine: a hang there stops no delivery.
   const sealTick = () => Promise.all(engineHosts.map(({ seals }) => seals.tick()));
 
@@ -5743,7 +5622,6 @@ export async function startHelper({
       await lookingAround?.catch(() => {});
       await sleeping.beat();
       await ticking?.catch(() => {});
-      awake.set(false);
       await renewing;
       await engineStopping?.catch(() => {});
       await Promise.race([
@@ -5830,7 +5708,6 @@ export async function startHelper({
       for (const { project, dispatcher, checks } of engineHosts) {
         if (checks.running()) return 'a check is running';
         if (engineRunsAtWork(project).length > 0) return 'a build run is going';
-        if (dispatcher.goalInForce()) return 'a goal is in force';
       }
       return null;
     } catch {
@@ -5846,7 +5723,7 @@ export async function startHelper({
   const UPDATING = 'Wheelhouse is updating; try again in a minute';
   const UPDATE_POLL_MS = 100;
 
-  // Closes the helper once the requests being answered have been answered. A goal in force or a run at work does not hold
+  // Closes the helper once the requests being answered have been answered. A run at work does not hold
   // it: the next helper reads its state from disk. The bound in the retire route is what ends a wait that never ends.
   function closeWhenIdle() {
     const look = () => {
@@ -5914,7 +5791,7 @@ export async function startHelper({
     }
     if (url.pathname === '/helper/retire') {
       // A session of a newer copy of the plugin asks this helper to make way. It stops only when idle: no setup step, push,
-      // merge, engine run or goal under way. Otherwise it says what keeps it, and goes on.
+      // merge or engine run under way. Otherwise it says what keeps it, and goes on.
       // An update (`forUpdate: true`) makes way whatever is under way: it refuses new work at once, lets what is running
       // finish, and closes when nothing is. Only the boolean true counts.
       if (body.forUpdate === true) {
@@ -6040,5 +5917,5 @@ export async function startHelper({
   safekeepingWatch.unref?.();
 
   // `engine.start` is the helper's own way to start a run (the dispatcher's): no route starts one.
-  return { address, close, engine: { start: (args) => engineRun.start(args), tick: () => engineTick(), seal: () => sealTick(), startGoalCheck }, safekeeping: { tick: () => safekeepingRound() }, move: { tick: () => moveRound() } };
+  return { address, close, engine: { start: (args) => engineRun.start(args), tick: () => engineTick(), seal: () => sealTick() }, safekeeping: { tick: () => safekeepingRound() }, move: { tick: () => moveRound() } };
 }

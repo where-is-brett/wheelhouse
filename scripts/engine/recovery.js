@@ -1,6 +1,6 @@
 // scripts/engine/recovery.js
-// The rules of recovery (unattended goals design, section 9): pure, used by the helper and the runner, and the same
-// with or without a goal, with `resumeRun`, the one way a failed run resumes, beside them. Nothing here reads a goal.
+// The rules of recovery: pure, used by the helper and the runner, with `resumeRun`, the one way a failed run resumes,
+// beside them.
 
 // The helper's tick fires each minute, so a gap longer than this means the computer slept.
 export const SLEEP_GAP_MINUTES = 3;

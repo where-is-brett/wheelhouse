@@ -63,10 +63,6 @@ const INPUTS = {
     ...common, kind: 'pair', recommend: 'Pair it',
     what: 'The app phone-app asks to read Wheelhouse and decide through it, with its key abcdef012345.', options: [says('Pair it')], target: { client: 'phone-app', fingerprint: 'abcdef012345' },
   },
-  'start-goal': {
-    ...common, kind: 'start-goal', recommend: 'Start', what: 'The goal tidy-up has 2 pieces of work and a check that proves each is done.',
-    options: [says('Start')], target: { goal: 'tidy-up', hash: DOC },
-  },
   update: {
     ...common, kind: 'update', recommend: 'Update', what: 'Update Wheelhouse v0.2.6 to v0.2.7.',
     options: [says('Update')], target: { from: 'v0.2.6', to: 'v0.2.7', put: 'release', hash: DOC },
@@ -127,8 +123,7 @@ test('a card that decides something gets its deciding answer filled, Suggest a c
         ...(['lift-stop', 'keep-control-files'].includes(kind) ? [] : [SUGGEST_BUTTON]),
         NOT_NOW_BUTTON,
         WHY_BUTTON,
-        // A goal's card says all it has: what to look at comes before it.
-        ...(kind === 'start-goal' ? [] : [SHOW_ME_BUTTON]),
+        SHOW_ME_BUTTON,
       ],
       note: null,
     }, kind);
@@ -241,7 +236,7 @@ test('a card is judged by the card check\'s own tests, for every kind with a set
       lines.filter((l) => l !== TO_KNOW_MORE).join('\n'),
       // A setup card, a trust card, uninstall's and a Keep card have no reply code line to take away (rulings R36,
       // R80, R90, P7-31).
-      ...([...SETUP_KINDS, 'trust', 'take-over', 'pair', 'uninstall', 'keep-control-files', 'start-goal', ...UPDATE_KINDS].includes(kind) ? [] : [lines.filter((l) => !l.startsWith('Reply code:')).join('\n')]),
+      ...([...SETUP_KINDS, 'trust', 'take-over', 'pair', 'uninstall', 'keep-control-files', ...UPDATE_KINDS].includes(kind) ? [] : [lines.filter((l) => !l.startsWith('Reply code:')).join('\n')]),
       `${data.question}\nReply code: ${replyCode('another line')}`,
       `${data.question}\n${data.line}`,
       // Without its reason and its meanwhile, a card has too few plain lines.
