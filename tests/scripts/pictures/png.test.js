@@ -1,9 +1,9 @@
-// tests/scripts/screens/png.test.js
+// tests/scripts/pictures/png.test.js
 // A page's pixels as one hash: how the PNG was written must not matter, and a PNG the reader does
 // not fully understand is refused rather than hashed.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pixelHash } from '../../../scripts/screens/png.js';
+import { pixelHash } from '../../../scripts/pictures/png.js';
 import { encodePng, solid, chunk } from '../../fixtures/screens/encode.js';
 
 // A picture with some variety, so every filter has something to predict.

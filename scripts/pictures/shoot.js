@@ -1,4 +1,4 @@
-// scripts/screens/shoot.js
+// scripts/pictures/shoot.js
 // Photographing one page of a preview in a hidden browser. The browser only ever opens the host's
 // preview deployment (an https address on a public host), never a project's own files or a page on
 // this computer or its local network, and each run has a fresh profile folder that is removed

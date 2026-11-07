@@ -8,7 +8,7 @@
 import { githubCommands } from './github.js';
 import { gitlabCommands } from './gitlab.js';
 import { toolPath } from '../lib/host-tools.js';
-import { publicHttps } from '../screens/pages.js';
+import { publicHttps } from '../pictures/pages.js';
 import { parseRemote, listed, isDefaultHost, DEFAULT_GITLAB } from './gitlab-base.js';
 import { hostFailure, outputKind, lineFor, timedOut } from './company-ca.js';
 
@@ -81,7 +81,7 @@ export function refusalOf(output, fallback) {
 }
 
 // A preview's address as the host gave it, or null unless it is an https address on a public host
-// (scripts/screens/pages.js): the helper's browser opens only the host's preview deployment, never
+// (scripts/pictures/pages.js): the helper's browser opens only the host's preview deployment, never
 // a page on this computer or its local network.
 const httpsOnly = publicHttps;
 

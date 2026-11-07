@@ -1,4 +1,4 @@
-// tests/scripts/screens/pages.test.js
+// tests/scripts/pictures/pages.test.js
 // Where the helper's browser may be pointed: a plain page path, on a preview's https address on a
 // public host. Anything on this computer or its local network is refused, however it is spelt.
 import { test } from 'node:test';
@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isPage, publicHttps } from '../../../scripts/screens/pages.js';
+import { isPage, publicHttps } from '../../../scripts/pictures/pages.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 
@@ -77,8 +77,8 @@ test('the gate\'s configuration check loads neither the browser runner nor the c
   };
   visit(path.join(ROOT, 'scripts/gate/guardrails.js'));
   const names = [...reached].map((file) => path.relative(ROOT, file).split(path.sep).join('/'));
-  assert.ok(names.includes('scripts/screens/pages.js'), names.join(', '));
-  for (const heavy of ['scripts/screens/shoot.js', 'scripts/screens/compare.js', 'scripts/screens/png.js', 'scripts/lib/run.js']) {
+  assert.ok(names.includes('scripts/pictures/pages.js'), names.join(', '));
+  for (const heavy of ['scripts/pictures/shoot.js', 'scripts/pictures/compare.js', 'scripts/pictures/png.js', 'scripts/lib/run.js']) {
     assert.equal(names.includes(heavy), false, heavy);
   }
 });

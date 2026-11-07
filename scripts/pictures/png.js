@@ -1,4 +1,4 @@
-// scripts/screens/png.js
+// scripts/pictures/png.js
 // A picture's pixels as one hash, so two screenshots compare by what they show and not by how the
 // PNG was written: metadata chunks, how the data was split and compressed, and the filters drop out.
 // Only the PNGs a browser's screenshot gives are read (8 bits, RGB or RGBA, not interlaced); any

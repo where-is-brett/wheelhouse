@@ -1,4 +1,4 @@
-// scripts/screens/browser.js
+// scripts/pictures/browser.js
 // Finding the browser the helper photographs pages with, and telling Chrome from Edge. It imports
 // only fs and path, so the board's health line can ask whether Chrome is here without loading the
 // browser runner (shoot.js).

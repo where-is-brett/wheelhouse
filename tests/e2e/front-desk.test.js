@@ -15,7 +15,7 @@
 // work, its running features and a feature's question (tests/e2e/build-loop.test.js makes them from
 // a feature session), and the gate's asks (act merge). The watcher runs as runWatcher runs it, its
 // waker in Shape 2, which starts nothing and prints its wakes. Pictures of a preview are taken by a
-// stand-in for scripts/screens/shoot.js, in a browser whose path is Chrome's (ruling F61).
+// stand-in for scripts/pictures/shoot.js, in a browser whose path is Chrome's (ruling F61).
 import { test, before, beforeEach, afterEach, after } from 'node:test';
 import { run as realRun } from '../../scripts/lib/run.js';
 import assert from 'node:assert/strict';

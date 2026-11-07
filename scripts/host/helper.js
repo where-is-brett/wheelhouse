@@ -154,10 +154,9 @@ import { RELEASE_BRANCH, RELEASE_WHY, SETTINGS_FILE, briefingLine, checkRelease,
 import { baseRefOf, releaseApproved, updateProvenance } from '../gate/release-approval.js';
 import { RELEASE_TAG } from '../state/card-lines.js';
 import { WHEELHOUSE_URL } from '../lineage/manifest.js';
-import { SCREEN_SIZES, PUT_OFF } from '../lib/front-desk.js';
+import { PUT_OFF } from '../lib/front-desk.js';
 import { CLICK_MS, HELPER_WAIT_MS } from '../lib/core-numbers.js';
-import { compareCommits, photographCommit } from '../screens/compare.js';
-import { findBrowser, shoot as shootPage, stopsAtPicture } from '../screens/shoot.js';
+import { findBrowser, shoot as shootPage, stopsAtPicture } from '../pictures/shoot.js';
 import { FOREMAN_OUTPUT_BYTES, FOREMAN_RUNNER, FOREMAN_RUN_MS, foremanEnv, foremanRequestRefusal } from './foreman-run.js';
 import { setupRoutes, SetupRefusal, STEPS_MODULE } from '../setup/engine.js';
 import { uninstallRoutes } from '../setup/uninstall.js';
@@ -280,10 +279,6 @@ const PLUGIN_VERSION = (() => {
   }
 })();
 
-// A cache file of pictures' hashes not written for this long is cleared out of the project's cache
-// when an approved commit is next photographed.
-const SCREENS_KEPT_MS = 30 * 24 * 60 * 60 * 1000;
-
 const FOLDER_MS = 60 * 1000;
 const HOST_MS = 5 * 60 * 1000;
 
@@ -363,27 +358,8 @@ async function changeConfig(must) {
   return { ...config, plugin: manifest !== '' };
 }
 
-// The pages an approval's screenshots are compared on, from a configuration: none unless it lists some.
-const pagesOf = (config) => (Array.isArray(config?.pages) ? config.pages : []);
-
-// The project's cache of pictures' hashes: beside its mirror, outside the state repository, so
-// never committed or pushed.
+// Beside the project's mirror, outside the state repository, so never committed or pushed.
 const handledDir = (project) => path.join(stateDir(project), '..', 'handled');
-const screensDir = (project) => path.join(stateDir(project), '..', 'screens');
-
-// Removes the files in `dir` not modified for SCREENS_KEPT_MS, by this computer's clock, which is
-// the one that set their times. Best effort.
-function pruneScreens(dir, nowMs = Date.now()) {
-  let names = [];
-  try { names = fs.readdirSync(dir); } catch { return; }
-  for (const name of names) {
-    try {
-      const file = path.join(dir, name);
-      const stat = fs.lstatSync(file);
-      if (stat.isFile() && nowMs - stat.mtimeMs > SCREENS_KEPT_MS) fs.rmSync(file, { force: true });
-    } catch { /* left for next time */ }
-  }
-}
 
 // The paths a branch changes from the default branch (merge base to `sha`),
 // and the project's configuration. `sha` is already in the mirror.
@@ -1026,15 +1002,6 @@ export async function startHelper({
   // How the helper's own calls to GitLab are made (gitlabApi's run, curl, proxy and caFile; left out, the real ones), the
   // computer's store for keys (keys.js's seam) and the lender of the director's own key. All for tests.
   via = {}, keyDeps, borrow = borrowKey,
-  // Whether the preview's screenshots of the configuration's pages are the same at two commits,
-  // for an approval to carry over an update (design section 12.3): given { project, before, after,
-  // pages }, true only when every page looks the same at every size. By default the helper's own
-  // comparison (scripts/screens/compare.js), photographing with `screens`; a test may give its own.
-  screenshotsMatch = null,
-  // How pictures are taken: `shoot` (scripts/screens/shoot.js's by default) and the browser's path
-  // (null for none), or `findBrowser` to look for one (shoot.js's by default) when pictures are
-  // needed.
-  screens = {},
   // Whether an update job holds the update lock (scripts/update/journal.js): an update's retire is accepted only then. And
   // how long the helper makes way for an update before it serves normally again. Both are for tests.
   updateHeld = updateLockHeld, updateBoundMs = 3 * 60 * 1000,
@@ -2468,7 +2435,6 @@ export async function startHelper({
       await freshViews(() => writeViews(project, { now }));
       if (card !== LIFT_STOP_NAME) await doWrite({ project, kind: 'card-answer', data: { card, question: again.event.data.question, label: still.label, where: 'panel' } }, ctx);
       if (still.lift) liftStop();
-      if (event.kind === 'approval') photographApproved(project, event.data?.commit, ctx);
       const action = event.kind === 'action' ? event.data?.action : null;
       const keep = action === 'keep-main' ? { from: event.data.from, to: event.data.to } : null;
       const undo = action === 'undo-merge' ? { merge: event.data.merge } : action === 'undo-main' ? { moved: true } : null;
@@ -2541,7 +2507,6 @@ export async function startHelper({
     // The director's Pair it or Unpair it on an app's card (spec 5.3) enrols the app's key, or removes it.
     if (event.kind === 'action' && event.data?.action === 'pair-client') pairClient({ id: event.data.client }, event, { now });
     if (event.kind === 'action' && event.data?.action === 'unpair-client') unpairClient(event.data.client, event);
-    if (event.kind === 'approval') photographApproved(project, event.data?.commit, ctx);
     return written({ event, result });
   }
 
@@ -2816,15 +2781,6 @@ export async function startHelper({
           if (answer.code !== 0) throw new Error(`${what} failed`);
           return answer.stdout;
         });
-        // An approval that still holds is compared on the pages the configuration at the default
-        // branch (fetched above) lists: none when it can't be read.
-        if (out.approval === true) {
-          try {
-            out.pages = pagesOf(await configHere());
-          } catch {
-            out.pages = [];
-          }
-        }
         return out;
       } finally {
         await git([...NO_HOOKS, 'update-ref', '-d', prRef]);
@@ -2832,71 +2788,8 @@ export async function startHelper({
     }));
   }
 
-  // --- screenshots (design section 12.3; front desk plan, Task 12) ---
-
-  // The browser, looked for when pictures are needed. Only a Chrome that is found is kept: with none,
-  // or only Edge, whose pictures don't count yet, it is looked for again next time, so a Chrome
-  // installed later is used without restarting the helper.
-  let chrome = null;
-  function browserPath() {
-    if (screens.browser !== undefined) return screens.browser;
-    if (chrome !== null) return chrome;
-    const found = (screens.findBrowser ?? findBrowser)();
-    if (stopsAtPicture(found)) chrome = found;
-    return found;
-  }
-
-  // Set when the helper is closing: photographing and comparing stop after the picture under way,
-  // so closing waits for one picture at most, and a comparison cut short answers false.
+  // Set when the helper is closing: what runs in the background stops at its next step.
   let closing = false;
-
-  // How the comparison and the photographing find pictures for one request: the project's cache,
-  // each commit's preview from the request's adapter, and the shoot and browser to use.
-  function picturesFor(project, ctx) {
-    return {
-      dir: screensDir(project),
-      previewUrl: async (sha) => (await ctx.adapter()).previewUrl(sha),
-      shoot: screens.shoot ?? shootPage,
-      browser: browserPath(),
-      run,
-      fetch,
-    };
-  }
-
-  // Whether every page looks the same at both commits (scripts/screens/compare.js's compareCommits,
-  // which photographs only the head: the approved commit's pictures come from the cache written when
-  // its approval was recorded, and any missing answers false). No pages, no comparison: false, and
-  // no browser is opened. One comparison or photographing at a time per project, so pictures of an
-  // approved commit still being taken are in the cache before the gate looks.
-  async function pagesLookSame({ project, before, after, pages }, ctx) {
-    if (!Array.isArray(pages) || pages.length === 0) return false;
-    return oneAtATime(`screens:${project}`, async () => {
-      if (closing) return false;
-      if (screenshotsMatch) return (await screenshotsMatch({ project, before, after, pages })) === true;
-      return (await compareCommits({ before, after, pages, sizes: SCREEN_SIZES, ...picturesFor(project, ctx), keepGoing: () => !closing })) === true;
-    });
-  }
-
-  // The approved commit's pages, photographed at every size into the cache when its approval is
-  // recorded, each with the address it came from. These are the only pictures of it the gate uses:
-  // they are there when an update comes, after the host may have taken that commit's preview down.
-  // In the background: the answer doesn't wait, and nothing is reported. Nothing when the
-  // configuration lists no pages or can't be read, and STOP and closing are read before each picture.
-  function photographApproved(project, commit, ctx) {
-    if (typeof commit !== 'string' || !FULL_SHA.test(commit)) return;
-    oneAtATime(`screens:${project}`, async () => {
-      if (stopped() || closing) return;
-      const adapter = await ctx.adapter();
-      const defaultBranch = await defaultBranchOf(project, adapter);
-      const pages = await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ must }) => {
-        await defaultHistory(must, defaultBranch);
-        return pagesOf(await baseConfig(must));
-      }));
-      if (pages.length === 0 || stopped() || closing) return;
-      pruneScreens(screensDir(project));
-      await photographCommit({ sha: commit, pages, sizes: SCREEN_SIZES, ...picturesFor(project, ctx), keepGoing: () => !stopped() && !closing });
-    }).catch(() => {});
-  }
 
   // The preview of an open pull request's head, for the front desk's "Show me": its address, or
   // null when the pull request isn't open or the host has no successful deployment of its head.
@@ -2910,21 +2803,17 @@ export async function startHelper({
     return { ok: true, url: typeof url === 'string' ? url : null };
   }
 
-  // The review and the approval the gate weighs, and whether the branch is up to date. Each is
-  // the latest signed record for this pull request, in the carried form when it names an
-  // earlier commit and still holds for the head (carryFacts); an approval carries only when the
-  // screenshots of the two commits match too, and they are compared only when `compare` says the
-  // merge needs the approval. Anything the mirror can't say leaves the branch unknown (null, which
-  // the gate refuses with its own reason) and nothing carried. The one rule behind /merge and
-  // /pr/carried.
-  async function gateRecords({ project, number, headSha, views, adapter, withApproval = true, compare = false }, ctx) {
+  // The review and the approval the gate weighs, and whether the branch is up to date. The review is
+  // the latest signed record for this pull request, in the carried form when it names an earlier
+  // commit and still holds for the head (carryFacts). The approval is the latest signed record as it
+  // stands: one for an earlier commit never carries, so after an update the director is asked again.
+  // Anything the mirror can't say leaves the branch unknown (null, which the gate refuses with its
+  // own reason) and nothing carried. The one rule behind /merge and /pr/carried.
+  async function gateRecords({ project, number, headSha, views, adapter, withApproval = true }, ctx) {
     const review = latestFor(views.reviews, number);
     const approval = withApproval ? latestFor(views.approvals, number) : null;
-    const from = {
-      review: reviewClear(review?.data) && review.data.commit !== headSha ? review.data.commit : null,
-      approval: approval !== null && approval.data?.commit !== headSha ? approval.data?.commit : null,
-    };
-    let facts = { upToDate: null, review: false, approval: false };
+    const from = { review: reviewClear(review?.data) && review.data.commit !== headSha ? review.data.commit : null };
+    let facts = { upToDate: null, review: false };
     try {
       const defaultBranch = await defaultBranchOf(project, adapter);
       facts = await carryFacts({ project, number, headSha, defaultBranch, from }, ctx);
@@ -2932,16 +2821,10 @@ export async function startHelper({
       if (error instanceof LookRefusal) throw error;
       /* not readable: not known whether it is up to date, and nothing carries */
     }
-    let shown = false;
-    // With no approval needed, or under STOP, where the gate refuses anyway, nothing is compared
-    // or photographed.
-    if (compare && facts.approval === true && !stopped()) {
-      try { shown = await pagesLookSame({ project, before: from.approval, after: headSha, pages: facts.pages }, ctx); } catch { /* not compared: asked again */ }
-    }
     return {
       upToDate: facts.upToDate === null ? null : facts.upToDate === true,
       review: facts.review === true ? { carried: true, record: review } : review,
-      approval: shown ? { carried: true, record: approval } : approval,
+      approval,
     };
   }
 
@@ -3304,7 +3187,7 @@ export async function startHelper({
     }
     const byRelease = updateCheck.matched && updateCheck.ok && !pinsOnly;
     const holdsLock = await lockHeld(project, ctx);
-    const { upToDate, review, approval } = await gateRecords({ project, number, headSha, views, adapter, compare: approvalRequired }, ctx);
+    const { upToDate, review, approval } = await gateRecords({ project, number, headSha, views, adapter }, ctx);
     // The director's questions on this work come first: a merge never goes ahead past one still open, or an answer no newer version carries.
     const holdWork = FEATURE_BRANCH.exec(typeof pr.headRef === 'string' ? pr.headRef : '')?.[1];
     const handled = readHandled(handledDir(project), questionsOf(views, holdWork).map((q) => q.id));
@@ -4436,7 +4319,7 @@ export async function startHelper({
     await oneAtATime(`state:${project}`, () => ensureStateClone(project, ctx));
     const enrolled = ownKeyOnly();
     const views = buildViews(listEvents(stateDir(project), { report: () => {} }), enrolled, { now });
-    const { review, approval } = await gateRecords({ project, number: call.pr, headSha: call.sha, views, adapter, compare: true }, ctx);
+    const { review, approval } = await gateRecords({ project, number: call.pr, headSha: call.sha, views, adapter }, ctx);
     let guardrail = true;
     let paths = null;
     try {

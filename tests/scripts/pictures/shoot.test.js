@@ -1,12 +1,12 @@
-// tests/scripts/screens/shoot.test.js
+// tests/scripts/pictures/shoot.test.js
 // Finding the browser and photographing one page with it, against a fake browser and a fake
 // fetch: no real browser runs here.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { findBrowser, browserArgs, shoot, stopsAtPicture, removeProfile, PROFILE_LEFT_MS } from '../../../scripts/screens/shoot.js';
-import { pixelHash } from '../../../scripts/screens/png.js';
+import { findBrowser, browserArgs, shoot, stopsAtPicture, removeProfile, PROFILE_LEFT_MS } from '../../../scripts/pictures/shoot.js';
+import { pixelHash } from '../../../scripts/pictures/png.js';
 import { SCREEN_TIMEOUT_MS, SCREEN_SETTLE_MS } from '../../../scripts/lib/front-desk.js';
 import { encodePng, solid } from '../../fixtures/screens/encode.js';
 import { tempFolder } from '../../helpers/homes.js';

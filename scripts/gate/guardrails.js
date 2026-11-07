@@ -59,7 +59,7 @@
 // looks the same at every commit. No pages, the default, and an approval never carries over.
 import { matchGlob } from './glob.js';
 import { AGENT_CONTROL } from '../lib/agent-control.js';
-import { isPage } from '../screens/pages.js';
+import { isPage } from '../pictures/pages.js';
 
 // The Claude Code settings, the Wheelhouse configuration inside .claude/,
 // CLAUDE.md, and .mcp.json (it names the connectors agents get), then every file that steers an

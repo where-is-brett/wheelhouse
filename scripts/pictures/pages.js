@@ -1,4 +1,4 @@
-// scripts/screens/pages.js
+// scripts/pictures/pages.js
 // Where the helper's browser may be pointed: the plain page paths a project's configuration lists
 // (`pages`), on a preview's https address on a public host, never on this computer or its local
 // network. It imports nothing, so the gate's configuration check reads pages without loading the
