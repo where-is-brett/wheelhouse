@@ -15,7 +15,7 @@ import { setStop } from '../../../scripts/lib/stop.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
 import { eventPath, listEvents, makeEvent } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
-import { hashOf, cardTextOf } from '../../../scripts/mod/status.js';
+import { hashOf, cardTextOf } from '../../../scripts/desk/card-text.js';
 import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress } from '../../helpers/homes.js';
 import { CARD } from '../desk/fixture.js';
@@ -160,7 +160,7 @@ test('a press the status offers is recorded and done, and one it doesn\'t offer 
   offer(P, ['ask-save'], null);
   const done = await pressRow(client, 'ask-save', safekeepingPress('ask-save', 6));
   assert.equal(done.ok, true);
-  assert.match(done.submit[0], /^Wheelhouse pane: /);
+  assert.match(done.submit[0], /^the director pressed /);
   assert.equal(listEvents(stateDir(P)).filter((e) => e.data?.action === 'safekeeping').length, 2, 'each press is on the record');
 }));
 

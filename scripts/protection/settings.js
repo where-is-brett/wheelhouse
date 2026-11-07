@@ -435,51 +435,13 @@ export function withoutKeychainDenial(settings) {
   return copy;
 }
 
-// The command that runs the status line: the Node that is running this, and the script in the
-// plugin. Both paths are quoted, since either may hold spaces.
-export function statusLineCommand({ node, pluginRoot }) {
-  return `"${node}" "${path.join(pluginRoot, 'scripts', 'statusline.js')}"`;
-}
-
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
-// Whether a status line is the one Wheelhouse sets: its command names scripts/statusline.js.
+// Whether a status line is the one an earlier Wheelhouse set: its command names that release's status-line script.
+// The update takes it out of the project's local settings (scripts/update/status-line.js) and leaves any other.
 export function isOwnStatusLine(statusLine) {
   return isObject(statusLine) && typeof statusLine.command === 'string'
     && /scripts[\\/]statusline\.js/.test(statusLine.command);
-}
-
-// The existing local settings, ready to merge: Wheelhouse's own status line is taken out when
-// the director has one of their own (`director`, from directorStatusLine), since the local file
-// outranks the user and project files and would hide theirs. Ours is kept when they have none,
-// and a status line that is not ours is never touched. The input is not changed.
-export function withoutOwnStatusLine(existingLocal, { director = null } = {}) {
-  const copy = isObject(existingLocal) ? structuredClone(existingLocal) : {};
-  if (director && Object.hasOwn(copy, 'statusLine') && isOwnStatusLine(copy.statusLine)) delete copy.statusLine;
-  return copy;
-}
-
-// The status line in the director's own settings, or null: the user settings, the project's
-// shared settings, then this computer's local settings. A status line that names
-// scripts/statusline.js is Wheelhouse's own from an earlier setup, so it is not the director's.
-// A file that is missing or damaged names none.
-export function directorStatusLine({ claudeHome, projectDir }) {
-  const files = [
-    path.join(claudeHome, 'settings.json'),
-    path.join(projectDir, '.claude', 'settings.json'),
-    path.join(projectDir, '.claude', 'settings.local.json'),
-  ];
-  for (const file of files) {
-    let parsed;
-    try {
-      parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
-    } catch {
-      continue;
-    }
-    const line = isObject(parsed) && Object.hasOwn(parsed, 'statusLine') ? parsed.statusLine : null;
-    if (line !== null && line !== undefined && !isOwnStatusLine(line)) return line;
-  }
-  return null;
 }
 
 // The one flag a plugin script's command may carry between `node` and the script. Claude Code sets
@@ -553,24 +515,19 @@ export function socketSpellings(socket) {
 }
 
 // The socket's path names this computer's home folder, so it stays out of the
-// shared file. The status line is added only when `node` and `pluginRoot` are given and the
-// director has none of their own (`ownStatusLine`, from directorStatusLine); otherwise theirs
-// stays and the share comes from the mod alone. With `pluginRoot`, the front desk's command and
+// shared file. With `pluginRoot`, the front desk's command and
 // setup's are allowed by their full paths, so the director's session isn't asked each time it
 // composes a card, records a decision or asks setup for a step; the paths name this computer's
 // folders too. Beside the front desk's, writing the one file the front desk gives that command its
 // input from when its session has no scratchpad (FRONT_DESK_INPUT, ruling F85), and the work's
 // reports it writes for `record work` (WORK_REPORTS_RULE: Markdown files directly in .wheelhouse/work/),
 // by the project-relative form, and nothing else in the project.
-export function localSettings({ address, node, pluginRoot, ownStatusLine = null, platform = process.platform, model = null }) {
+export function localSettings({ address, node, pluginRoot, platform = process.platform, model = null }) {
   const settings = { sandbox: { network: { allowUnixSockets: socketSpellings(address) } } };
   // The front desk's model, pinned in the routing table (design section 8). This file is never
   // committed; the worktrees inside the folder read it too, so the foreman's and the feature
   // sessions' calls always name their own model (adapters/claude-code/sessions.js).
   if (model) settings.model = model;
-  if (node && pluginRoot && !ownStatusLine) {
-    settings.statusLine = { type: 'command', command: statusLineCommand({ node, pluginRoot }) };
-  }
   // Written on Windows too, unlike the build commands' rules: each reaches only one of Wheelhouse's
   // own cli.js files, by its full path, never `node` itself.
   const frontDesk = pluginRoot ? allowRule(frontDeskCommand(pluginRoot, { platform })) : null;

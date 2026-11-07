@@ -44,7 +44,7 @@ test('every set word is one line of British English with no exclamation mark', (
     ...Object.entries(words.SETUP_DONE).map(([key, value]) => [`SETUP_DONE.${key}`, value]),
     ...Object.entries(words.SETUP_GOING).map(([key, value]) => [`SETUP_GOING.${key}`, value]),
   );
-  assert.equal(lines.length, 110, 'every word is held');
+  assert.equal(lines.length, 104, 'every word is held');
   for (const [name, line] of lines) {
     assert.ok(line.trim() === line && line !== '', `${name} is not empty or padded`);
     assert.ok(!/[\r\n]/.test(line), `${name} is one line`);
@@ -115,20 +115,12 @@ test('a deciding toast is the label in the past, then what happens where the car
   assert.equal(words.awayToast('Here', false), 'Here.');
 });
 
-test('no message in the mod or the bridge has an exclamation mark, Oops or Great news', () => {
+test('no set message has an exclamation mark, Oops or Great news', () => {
   const root = path.resolve(import.meta.dirname, '..', '..', '..');
-  const files = [];
-  const walk = (dir) => {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) walk(full);
-      // validate.js is the mod's checker for its maintainers: its source is regular expressions and code patterns, not messages.
-      else if (/\.(js|ts|tsx)$/.test(entry.name) && entry.name !== 'validate.js') files.push(full);
-    }
-  };
-  walk(path.join(root, 'hooks'));
-  walk(path.join(root, 'scripts', 'mod'));
-  assert.ok(files.length > 14, 'the mod and the bridge are read');
+  // The files that hold the director's set words.
+  const files = ['calm-words.js'].map((name) => path.join(root, 'scripts', 'lib', name))
+    .concat(['panel-words.js', 'answered.js'].map((name) => path.join(root, 'scripts', 'cards', name)));
+  assert.ok(files.every((file) => fs.existsSync(file)), 'the word files are read');
   for (const file of files) {
     const text = fs.readFileSync(file, 'utf8');
     assert.doesNotMatch(text, /\b(?:oops|great news)\b/i, `${file} has no Oops or Great news`);

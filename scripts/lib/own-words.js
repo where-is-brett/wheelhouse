@@ -4,8 +4,7 @@
 // "stop" or a reply code is no longer at the start. This reads past whole leading reminder blocks,
 // each with its tags on lines of their own, and returns what follows. It only ever reads past the
 // app's text before the director's line, never after it, and it says nothing about who typed:
-// that is the origin's alone. The mod keeps its own copy (hooks/mod/messages.ts), since it can't
-// import scripts; tests/scripts/mod/validate.test.js keeps the two patterns in step.
+// that is the origin's alone.
 const BLOCKS = /^(?:<system-reminder>\n(?:(?:(?!<\/system-reminder>)[\s\S])*\n)?<\/system-reminder>(?:\n|$)\n*)*/;
 
 // The text after any leading reminder blocks, or null when what is left still holds a reminder

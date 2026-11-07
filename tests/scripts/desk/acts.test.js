@@ -6,7 +6,7 @@ import { checkEvidence } from '../../../scripts/desk/evidence.js';
 import { needsEvidence } from '../../../scripts/desk/vocabulary.js';
 import { makeEvent, confirmationFor, dataHash } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
-import { hashOf, cardTextOf } from '../../../scripts/mod/status.js';
+import { hashOf, cardTextOf } from '../../../scripts/desk/card-text.js';
 import { as, shortHome } from '../../helpers/homes.js';
 import { CARD, now } from './fixture.js';
 

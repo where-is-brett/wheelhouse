@@ -1,7 +1,7 @@
 // tests/scripts/hooks/node-floor.test.js
 // The check every hook is started through (scripts/hooks/node-floor.cjs): it hands over to the
 // hook at Wheelhouse's Node.js floor, says plainly what to install below it, and keeps its words
-// and floor in step with setup's and the mod's.
+// and floor in step with setup's.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -70,11 +70,9 @@ test('the event is read from the hook\'s input', () => {
   assert.equal(floor.eventOf('null'), null);
 });
 
-test('the mod\'s words for no Node.js at all are the check\'s', () => {
-  const numbers = fs.readFileSync(path.join(ROOT, 'hooks', 'mod', 'numbers.ts'), 'utf8');
-  const held = /export const NODE_MISSING = '((?:[^'\\]|\\.)*)'/.exec(numbers)?.[1].replaceAll("\\'", "'");
-  assert.equal(held, floor.missingMessage());
-  assert.match(held, /doesn't have it/);
+test('the words for no Node.js at all say what to install and that the computer doesn\'t have it', () => {
+  assert.match(floor.missingMessage(), /doesn't have it/);
+  assert.match(floor.missingMessage(), new RegExp(`version ${floor.FLOOR_MAJOR} or later`));
 });
 
 test('at the floor the hook runs as though started directly, with its input and exit code', () => {

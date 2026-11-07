@@ -915,8 +915,10 @@ test('finishSetup starts Shape 1\'s watcher by start.js\'s own start, and gives 
     assert.equal(typeof done.briefing, 'string');
     assert.ok(done.briefing.length > 0);
     const shape2 = await finishSetup({ project: SLUG, client: { ...client, config: async () => ({ ok: true, config: { ...CONFIG, watcherShape: 2 } }) }, spawn, now: () => T0, look: async () => EMPTY_SURVEY });
-    assert.equal(spawned.length, 1, 'Shape 2\'s foreman is a terminal session the helper can\'t open');
-    assert.match(shape2.started, /terminal/);
+    // A project whose configuration still says Shape 2 is started the same way: the watcher, nothing else.
+    assert.equal(spawned.length, 2, 'the watcher is started for Shape 2 as for Shape 1');
+    assert.ok(spawned[1].args[0].endsWith(path.join('scripts', 'watcher', 'main.js')));
+    assert.match(shape2.started, /watcher is started/);
   });
 });
 

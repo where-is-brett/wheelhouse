@@ -7,9 +7,8 @@
 //     file call into the Wheelhouse home fails the test;
 //   - `press(card, label)`: the director's click on a card, through the card check and the prompt record, the hooks a
 //     click goes through in a terminal, which sign it with this computer's key;
-//   - `watch()`: one observation of the watcher, its waker in Shape 2, which starts nothing and prints its wakes;
-//   - `tick()`: the helper's dispatcher and card router, one tick;
-//   - `terminalTick()`: the mod's tick for a terminal session, which is how the courier wakes the front desk.
+//   - `watch()`: one observation of the watcher, its waker printing its wakes and starting nothing;
+//   - `tick()`: the helper's dispatcher and card router, one tick.
 // An agent's decisions (the front desk recording work, the foreman acting) are the same commands their sessions run,
 // called here by the script; the fake engine stands in for the model that would build.
 import fs from 'node:fs';
@@ -20,7 +19,6 @@ import { helperAddress, stateDir } from '../../scripts/lib/paths.js';
 import { main as cli } from '../../scripts/frontdesk/cli.js';
 import { decide as cardCheck } from '../../scripts/hooks/card-check.js';
 import { decide as promptRecord } from '../../scripts/hooks/prompt-record.js';
-import { handle as bridge } from '../../scripts/mod/bridge.js';
 import { runWatcher, projectConfig, lockFile } from '../../scripts/watcher/main.js';
 import { makeWaker } from '../../scripts/watcher/waker.js';
 import { readHandled } from '../../scripts/watcher/handled.js';
@@ -103,12 +101,12 @@ export async function openDirectorWorld({ recordings = {}, says, lanes = ['quick
       }, { client, now, dir: NO_MANAGED });
     },
     // One observation of the watcher, as the process runs it: what it saw, then a minute's wait for the bundle, then what
-    // was gathered goes out. Resolves with the wake lines the waker printed (Shape 2 prints; it starts nothing).
+    // was gathered goes out. Resolves with the wake lines the waker printed (this waker prints; it starts nothing).
     async watch() {
       const from = lines.length;
       const read = await projectConfig(PROJECT, client);
       if (read.config === null) throw new Error(`no configuration for the watcher: ${read.why}`);
-      const config = { ...read.config, watcherShape: 2 };
+      const config = { ...read.config, watcherShape: 1 };
       const waker = makeWaker({ shape: 2, project: PROJECT, config, print: (line) => lines.push(line), now });
       const result = await runWatcher({
         project: PROJECT, client, config, waker, now,
@@ -118,16 +116,6 @@ export async function openDirectorWorld({ recordings = {}, says, lanes = ['quick
       });
       if (result.started !== true) throw new Error(`the watcher did not start (${JSON.stringify(result)}, lock ${fs.existsSync(lockFile(PROJECT)) ? fs.readFileSync(lockFile(PROJECT), 'utf8').trim() : 'none'} mine ${process.pid})`);
       return lines.slice(from);
-    },
-    // The mod's tick for a terminal session in the project's folder: { submit, woken } when the courier wakes the front desk.
-    async terminalTick(extra = {}) {
-      const got = await bridge({ cmd: 'tick', session: session.id, cwd: world.folder, idle: true, surface: 'terminal', ...extra }, {
-        now,
-        // The tick starts a watcher process of its own when none runs; this world's watcher is the one `watch` runs.
-        watchTick: async () => ({ watcher: 'running', submit: [] }),
-      });
-      world.told.push(...(got.submit ?? []), got.status ?? '', got.pane?.verdict ?? '', ...(got.pane?.cards ?? []).map((c) => c.text));
-      return got;
     },
     // The fake build of a run the dispatcher started for `work`: its change committed in a worktree (the line `add` added
     // to README.md, which the project's own test reads), the run's three guard checks run as the pack runs them against

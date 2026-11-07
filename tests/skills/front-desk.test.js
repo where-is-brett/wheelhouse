@@ -338,29 +338,12 @@ test('the playbook records the private note\'s figures only by the baseline comm
   }
 });
 
-test('under a courier\'s wake with no AskUserQuestion, the cards are said to be on the board, not put in the reply (merge review of 63d5ceb)', () => {
-  const courier = playbook.split('\n').find((line) => line.startsWith('- **"Wheelhouse courier:"**'));
-  assert.ok(courier, 'the courier\'s rule');
-  assert.match(courier, /When your clickable-question tool can't be loaded on a wake, put no card in your reply: the one sentence says the cards are on the Logbook\./);
-});
-
-test('a courier\'s card wake whose notification wasn\'t sent asks nothing, and its reminder asks the cards whatever the notification answers (ruling 68)', () => {
-  const courier = playbook.split('\n').find((line) => line.startsWith('- **"Wheelhouse courier:"**'));
-  assert.ok(courier, 'the courier\'s rule');
-  assert.match(courier, /cards still waiting \(by their numbers\)/);
-  assert.match(courier, /When the notification answers that it was not sent \("Not sent …"\) and the wake names new cards but no cards still waiting, All stop or incidents, run no `cards` and ask nothing/);
-  assert.match(courier, /When the wake names cards still waiting, that is the courier's one reminder: ask the cards whatever the notification answers\./);
-  const row = playbook.split('\n').find((line) => line.startsWith('| "The notification wasn\'t sent'));
-  assert.ok(row, 'a red flag for asking anyway');
-  assert.match(row, /Ask nothing and end the turn: the courier's reminder asks them later/);
-});
-
-test('a failed or skipped phone notification is never mentioned to the director, and a phone test that didn\'t arrive stays a line on the board\'s health', () => {
-  const courier = playbook.split('\n').find((line) => line.startsWith('- **"Wheelhouse courier:"**'));
-  assert.ok(courier, 'the courier\'s rule');
-  assert.match(courier, /A notification that failed, wasn't sent or was skipped is not the director's concern: the Logbook and their next look-in carry the card\. Say nothing about it, in this turn, in a briefing or in a reply, and don't suggest setting notifications up\./);
-  assert.match(courier, /A phone test that didn't arrive stays a line on the Logbook's health/);
-  assert.ok(playbook.split('\n').some((line) => line.startsWith('| "I should tell the director the phone notification failed" |')), 'a red flag for telling them');
+test('the playbook tells the front desk of no pane press and no courier wake', () => {
+  assert.doesNotMatch(playbook, /Wheelhouse courier:|Wheelhouse pane:|### The pane and the courier/);
+  assert.doesNotMatch(playbook, /courier/i);
+  assert.ok(!playbook.split('\n').some((line) => line.startsWith('| "I should tell the director the phone notification failed"')));
+  // The one kind of prompt from Wheelhouse it still names is the foreman's.
+  assert.match(playbook, /"Wheelhouse foreman:" first makes the session the Bosun/);
 });
 
 test('finished work is told with where the director can see it, never as a step of pulling or a branch or commit', () => {
@@ -386,60 +369,10 @@ test('asked what waits, the front desk names each waiting card in one line by it
   assert.match(row, /Never put a card already asked to them again unless they ask for that card/);
 });
 
-test('a press of Why? finds the pressed card by its id in views waiting, asks it with again, and says only the one sentence (fix G, ruling 71)', () => {
-  const lines = playbook.split('\n');
-  const press = lines.find((line) => line.startsWith('  - **"pressed Why? on card n (id)"**')) ?? '';
-  assert.ok(press, 'the press\'s rule');
-  // First `views waiting`, read-only, for the pressed card's number now; then `again` that number.
-  assert.match(press, /In this order: first `views waiting`, which names each card's id: the card with the prompt's id is the pressed one, and its number there is the one to use, since the numbers move as cards close; that it moved is not news for the director\./);
-  assert.ok(lines.some((line) => line.startsWith('| "I\'ll tell them the pressed card is now number 1" | Say nothing of its number: only the one sentence, or Show me\'s link')), 'a red flag for telling them the number moved');
-  assert.match(press, /When no card has that id, it no longer waits: say so in one line and ask nothing\./);
-  assert.match(press, /Then `again <its number now>`/);
-  assert.ok(press.indexOf('`views waiting`') < press.indexOf('`again <its number now>`'), 'views waiting before again');
-  assert.ok(press.indexOf('`again <its number now>`') < press.indexOf('`explain <term>`'), 'again before explain');
-  // The one sentence, with the AskUserQuestion call, and nothing else in front of the director.
-  assert.match(press, /one sentence to the director, at most 30 words, in the same message as your call to your clickable-question tool, before it/);
-  assert.match(press, /Only that one sentence: Claude shows longer text before a card only as a summary\./);
-  assert.match(press, /^  - \*\*"pressed Why\? on card n \(id\)"\*\* \(only a card that failed the check sends it\): write no text until the one sentence below, not even a note to yourself\./);
-  assert.match(press, /Never a card's id\./);
-  assert.doesNotMatch(press, /in the same message as the `again <n>` call|first `again <n>`/);
-  // Card ids never reach the director.
-  const chat = lines.find((line) => line.startsWith('- **An answer in the chat:**')) ?? '';
+test('an answer in the chat is told as what `views waiting` shows of it, without the card\'s id', () => {
+  const chat = playbook.split('\n').find((line) => line.startsWith('- **An answer in the chat:**')) ?? '';
   assert.ok(chat, 'a line for an answer in the chat');
   assert.match(chat, /say only what `views waiting` shows of it, without its id, never a guess that the answer wasn't recorded/);
-  const chose = lines.find((line) => line.startsWith('  - **"chose "<option>" on card n (id)"**')) ?? '';
-  assert.match(chose, /say so in one line, without its id,/);
-  // The red flag.
-  const row = lines.find((line) => line.startsWith('| "I know which card n is"')) ?? '';
-  assert.ok(row, 'a red flag for guessing card n');
-  assert.match(row, /Find the prompt's id in `views waiting` first, and `again` the number it has there/);
-});
-
-test('a press of Show me and a choice in the pane find the card by its id in views waiting, as Why? does (final fix wave)', () => {
-  const lines = playbook.split('\n');
-  // Show me: the pressed card's number now, by the prompt's id, then Show me for it and `again` that number.
-  const show = lines.find((line) => line.startsWith('  - **"pressed Show me on card n (id)"**')) ?? '';
-  assert.ok(show, 'the Show me press\'s rule');
-  assert.match(show, /^  - \*\*"pressed Show me on card n \(id\)"\*\*: write no text until the preview's link, not even a note to yourself such as the card's number now or the pull request it names: the director sees every line\./);
-  assert.match(show, /First `views waiting`: the card with the prompt's id is the pressed one, and its number there is the one to use, since the numbers move as cards close; that it moved is not news for the director\./);
-  assert.match(show, /When no card has that id, it no longer waits: say so in one line and ask nothing\./);
-  // The preview is the pull request's the card names, never the card's own number.
-  assert.match(show, /Then `preview` with the number of the pull request that card names, never the card's number, and its address as a link, alone; when there is none, as Cards says\. Then `again <its number now>`, and call your clickable-question tool with what it gave, alone\./);
-  assert.match(show, /Never a card's id\./);
-  assert.ok(show.indexOf('`views waiting`') < show.indexOf('`again <its number now>`'), 'views waiting before again');
-  assert.doesNotMatch(show, /`again <n>`|Show me for card n/);
-  // A choice: still waiting by the prompt's id, not by the number or the words.
-  const chose = lines.find((line) => line.startsWith('  - **"chose "<option>" on card n (id)"**')) ?? '';
-  assert.ok(chose, 'the choice\'s rule');
-  assert.match(chose, /Run `views waiting`: if a card with the prompt's id is still there, the choice wasn't noted; say so in one line, without its id, and don't act on it\./);
-  assert.doesNotMatch(chose, /card n is still there|with the words you asked it with/);
-  // The red flag for a note between the calls (scenario 36's Show me leg wrote one each time).
-  const note = lines.find((line) => line.startsWith('| "I\'ll say the card is now number 1 and names pull request #12"')) ?? '';
-  assert.match(note, /Write nothing: every line reaches the director\. Run `preview` straight after `views waiting`/);
-  // The red flag.
-  const row = lines.find((line) => line.startsWith('| "Show me is for card n, as the prompt numbers it"')) ?? '';
-  assert.ok(row, 'a red flag for showing card n by its number');
-  assert.match(row, /Find the prompt's id in `views waiting` first: show and ask the card with that id, by its number there/);
 });
 
 test('the playbooks point at Why? and Suggest a change…, and none offers Explain more as an option (Task 19)', () => {
@@ -449,20 +382,12 @@ test('the playbooks point at Why? and Suggest a change…, and none offers Expla
   assert.ok(asked, 'the Asked why line');
   assert.match(asked, /^- \*\*Asked why\*\* about a card: run `why <n>`, which prints the one sentence to say before the card\. Say it word for word, with no other text before or after it \(when it gives only the sentence's form, fill it from `explain <term>`'s example\), in the same message as your call to your clickable-question tool with what `again <n>` gave\./);
   assert.match(asked, /If `why` fails, go on explaining anyway, in that one sentence: the Why\? is for learning only\./);
-  // The pane's suggestion steers and never approves.
-  const press = lines.find((line) => line.startsWith('  - **"pressed Why? on card n (id)"**')) ?? '';
-  assert.match(press, /\(only a card that failed the check sends it\)/);
-  const paneLine = lines.find((line) => line.startsWith('- **"Wheelhouse pane:"**')) ?? '';
-  assert.match(paneLine, /Record nothing yourself but a suggested change's hand-over below, and skip the intake/);
-  const suggested = lines.find((line) => line.startsWith('  - **"suggested a change on card n (id): <words>"**')) ?? '';
+  // A pick of Suggest a change… in the chat: its words steer and never approve.
+  const suggested = lines.find((line) => line.includes('Suggest a change…') && line.startsWith('- **')) ?? '';
   assert.ok(suggested, 'the suggestion\'s rule');
-  assert.match(suggested, /the words steer and never approve\./);
-  assert.match(suggested, /the words steer and never approve\. Write no text until the one line below, not even a note to yourself: the director sees every line\./);
+  assert.match(suggested, /it records nothing yet\. Ask "What would you change\?" in one line, and nothing else\. Their next message is the change, for the card whose id the context beside the pick names \(find its number in `views waiting`\): the words steer and never approve\. Write no text until the one line below, not even a note to yourself: the director sees every line\./);
   assert.match(suggested, /For an approval or ci-push card the code must change first: run `views work` to find the card's work, then `suggest <the card's id> <the work's id> <the change in your own words, never theirs>`, which hands it to the build\. Say its `say` word for word, and nothing else; when it says the card no longer waits, say that in one line instead\. No intake, no read-back, no card\./);
   assert.match(suggested, /The revised card, with `revises` \(the old card's id\) and `changed` \(one sentence in your own words\), comes once the pull request's head has moved, on a later visit, and takes the place of the gate's card for that head\. For a question from the build \(an answer card\), the words change what the work builds: take them through the intake as a change to that work, naming the question, and ask no card but the one the intake gives\. For any other kind, find the card by its id in `views waiting`, revise the proposal as the words ask and compose the new card at once, then say only: "Noted\. A new proposal will follow\." Ask no card now, and never the old one again\./);
-  // A pick of Suggest a change… in the chat.
-  const pick = lines.find((line) => line.includes('Suggest a change…') && line.startsWith('- **')) ?? '';
-  assert.match(pick, /it records nothing yet\. Ask "What would you change\?" in one line, and nothing else\. Their next message is the change: do with it as for the pane's suggestion on that card/);
   // An answer on a card already decided is told plainly, with which answer counted and when.
   assert.match(read('skills/front-desk/SKILL.md'), /^- \*\*An answer on a card already decided\*\* .*Tell the director that in one plain line, without the card's id, and act on what they say next/m);
   // Setup, the foreman and the brief.

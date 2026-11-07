@@ -16,7 +16,7 @@ import { borrowKey } from './store.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { archonAdapter, ENGINE_PACK_FORMS } from '../engine/archon/adapter.js';
 import { buildPack } from '../engine/pack-build.js';
-import { settingsViews } from '../desk/mod-records.js';
+import { settingsViews } from '../desk/settings-views.js';
 import { effectiveSettings } from '../settings/effective.js';
 import { engineReady } from '../engine/switch.js';
 import { engineWanted } from '../engine/parts.js';

@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { FRONT_DESK_INPUT, WORK_REPORTS_RULE } from '../../../scripts/lib/front-desk.js';
-import { projectSettings, localSettings, directorStatusLine, isOwnStatusLine, withoutOwnStatusLine, mergeSettings, writeSettings, sandboxFlag, featureAllowRules, featureFileRules, frontDeskCommand, setupCommand, updateCommand, pluginScriptCommand, claudeCodeSettings, ATTRIBUTION_OFF, SWITCHED_OFF_PLUGINS, KEYCHAINS, HOST_TOKENS, withoutKeychainDenial, compactionRules, compactionLine, archonDenyRules, ownRunRules, readRule, ENGINE_HOME } from '../../../scripts/protection/settings.js';
+import { projectSettings, localSettings, isOwnStatusLine, mergeSettings, writeSettings, sandboxFlag, featureAllowRules, featureFileRules, frontDeskCommand, setupCommand, updateCommand, pluginScriptCommand, claudeCodeSettings, ATTRIBUTION_OFF, SWITCHED_OFF_PLUGINS, KEYCHAINS, HOST_TOKENS, withoutKeychainDenial, compactionRules, compactionLine, archonDenyRules, ownRunRules, readRule, ENGINE_HOME } from '../../../scripts/protection/settings.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { credentialPaths } from '../../../scripts/lib/credentials.js';
 import { helperAddress, archonHome } from '../../../scripts/lib/paths.js';
@@ -202,20 +202,6 @@ test('mergeSettings looks at own keys only and keeps constructor and __proto__ a
   assert.deepEqual(mergeSettings({ toString: ['a'] }, { toString: ['b'] }).toString, ['a', 'b']);
 });
 
-test('the local settings name the status line only when the director has none of their own', () => {
-  const address = '/h/.wheelhouse/helper.sock';
-  const base = { address, node: '/usr/local/bin/node', pluginRoot: '/plugins/wheelhouse' };
-  // The script's path is joined as this system joins it.
-  const command = `"/usr/local/bin/node" "${path.join('/plugins/wheelhouse', 'scripts', 'statusline.js')}"`;
-  assert.deepEqual(localSettings({ ...base, ownStatusLine: null }).statusLine, { type: 'command', command });
-  assert.deepEqual(localSettings(base).statusLine, { type: 'command', command });
-  assert.equal(localSettings({ ...base, ownStatusLine: { type: 'command', command: 'my-line.sh' } }).statusLine, undefined);
-  // Without a node and a plugin root there is nothing to name.
-  assert.equal(localSettings({ address }).statusLine, undefined);
-  // The socket stays as it was.
-  assert.deepEqual(localSettings(base).sandbox, { network: { allowUnixSockets: [address] } });
-});
-
 test('the local settings allow the command by its full path', () => {
   const address = '/h/.wheelhouse/helper.sock';
   const root = '/plugins/Zoë wheel house';
@@ -241,8 +227,8 @@ test('the local settings allow the command by its full path', () => {
   const reports = WORK_REPORTS_RULE;
   assert.equal(reports, 'Edit(/.wheelhouse/work/*.md)');
   assert.deepEqual(localSettings({ address, pluginRoot: root, platform: 'darwin' }).permissions, { allow: [rule, flagged, input, reports, setupRule, setupFlagged, updateRule, updateFlagged] });
-  // With the status line or without it, and beside the socket.
-  const full = localSettings({ address, node: '/usr/local/bin/node', pluginRoot: root, ownStatusLine: { type: 'command', command: 'x' }, platform: 'linux' });
+  // On another system, and beside the socket.
+  const full = localSettings({ address, node: '/usr/local/bin/node', pluginRoot: root, platform: 'linux' });
   assert.deepEqual(full.permissions, { allow: [rule, flagged, input, reports, setupRule, setupFlagged, updateRule, updateFlagged] });
   assert.deepEqual(full.sandbox, { network: { allowUnixSockets: [address] } });
   // On Windows the path is written with forward slashes after its drive letter, as node and Git Bash take it.
@@ -266,59 +252,14 @@ test('the local settings allow the command by its full path', () => {
   assert.ok(allowed.every((r) => r.endsWith('scripts/update/cli.js":*)')));
 });
 
-test('the director\'s own status line is found in their user, project or local settings, and Wheelhouse\'s own is not theirs', () => {
-  const root = tempFolder('wh-statusline-settings-');
-  const claudeHome = path.join(root, 'home', '.claude');
-  const project = path.join(root, 'project');
-  const put = (file, value) => {
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, typeof value === 'string' ? value : JSON.stringify(value));
-  };
-  const find = () => directorStatusLine({ claudeHome, projectDir: project });
-  assert.equal(find(), null); // nothing there at all
-  put(path.join(claudeHome, 'settings.json'), '{not json');
-  assert.equal(find(), null); // damaged file
-  put(path.join(claudeHome, 'settings.json'), { model: 'x' });
-  assert.equal(find(), null);
-  put(path.join(project, '.claude', 'settings.local.json'), { statusLine: { type: 'command', command: '"/usr/bin/node" "/p/scripts/statusline.js"' } });
-  assert.equal(find(), null); // Wheelhouse's own, from an earlier setup
-  put(path.join(project, '.claude', 'settings.local.json'), { statusLine: { type: 'command', command: '"C:\\Program Files\\node.exe" "C:\\p\\scripts\\statusline.js"' } });
-  assert.equal(find(), null); // the same on Windows
-  put(path.join(project, '.claude', 'settings.local.json'), { statusLine: { type: 'command', command: 'theirs.sh' } });
-  assert.deepEqual(find(), { type: 'command', command: 'theirs.sh' });
-  fs.rmSync(path.join(project, '.claude', 'settings.local.json'));
-  put(path.join(project, '.claude', 'settings.json'), { statusLine: { type: 'command', command: 'project.sh' } });
-  assert.deepEqual(find(), { type: 'command', command: 'project.sh' });
-  fs.rmSync(path.join(project, '.claude', 'settings.json'));
-  put(path.join(claudeHome, 'settings.json'), { statusLine: { type: 'command', command: 'user.sh' } });
-  assert.deepEqual(find(), { type: 'command', command: 'user.sh' });
-});
-
-test('Wheelhouse\'s status line is recognised as its own', () => {
+test('a status line an earlier Wheelhouse set is recognised as its own, so the update can take it out', () => {
+  // The local settings no longer write a status line of any kind.
+  assert.equal(localSettings({ address: '/h/.wheelhouse/helper.sock', node: '/usr/local/bin/node', pluginRoot: '/plugins/wheelhouse' }).statusLine, undefined);
   assert.equal(isOwnStatusLine({ type: 'command', command: '"/n" "/p/scripts/statusline.js"' }), true);
   assert.equal(isOwnStatusLine({ type: 'command', command: '"C:\\n.exe" "C:\\p\\scripts\\statusline.js"' }), true);
   assert.equal(isOwnStatusLine({ type: 'command', command: 'theirs.sh' }), false);
   assert.equal(isOwnStatusLine(null), false);
   assert.equal(isOwnStatusLine('scripts/statusline.js'), false);
-});
-
-test('our status line is taken out of the local settings once the director has their own, and never theirs', () => {
-  const ours = { type: 'command', command: '"/n" "/p/scripts/statusline.js"' };
-  const theirs = { type: 'command', command: 'theirs.sh' };
-  const local = { sandbox: { network: { allowUnixSockets: ['/s'] } }, statusLine: ours };
-  const before = JSON.stringify(local);
-  // ours present, the director adds theirs: ours goes, the rest stays
-  assert.deepEqual(withoutOwnStatusLine(local, { director: theirs }), { sandbox: { network: { allowUnixSockets: ['/s'] } } });
-  assert.equal(JSON.stringify(local), before); // the input is not changed
-  // ours present, no line of theirs: ours stays
-  assert.deepEqual(withoutOwnStatusLine(local, { director: null }), local);
-  assert.deepEqual(withoutOwnStatusLine(local), local);
-  // theirs in the local file: never removed
-  const mine = { statusLine: theirs, model: 'x' };
-  assert.deepEqual(withoutOwnStatusLine(mine, { director: theirs }), mine);
-  assert.deepEqual(withoutOwnStatusLine(mine, { director: null }), mine);
-  // no existing file
-  assert.deepEqual(withoutOwnStatusLine(null, { director: theirs }), {});
 });
 
 test('feature sessions may run the build\'s usual commands: one allow rule for each', () => {

@@ -13,7 +13,7 @@ import path from 'node:path';
 import { refreshLocalSettings, refreshCompactSection, refreshed, staleRule, keyEdits } from '../../../scripts/setup/local-refresh.js';
 import { startRun, markStep, addChanges, applyJsonKey, reverseChange, readJournal, closeRun } from '../../../scripts/setup/journal.js';
 import { COMPACT_SECTION } from '../../../scripts/setup/project-files.js';
-import { localSettings, mergeSettings, frontDeskCommand, setupCommand, statusLineCommand } from '../../../scripts/protection/settings.js';
+import { localSettings, mergeSettings, frontDeskCommand, setupCommand } from '../../../scripts/protection/settings.js';
 import { WORK_REPORTS_RULE, FRONT_DESK_INPUT } from '../../../scripts/lib/front-desk.js';
 
 const CACHE = '/Users/a-director/.claude/plugins/cache/wheelhouse/wheelhouse';
@@ -42,7 +42,7 @@ function project({ mine = { permissions: { allow: OWN_RULES }, env: { MINE: '1' 
   } else {
     const own = statusLine === null ? mine : { ...mine, statusLine };
     fs.writeFileSync(file, `${JSON.stringify(own, null, 2)}\n`);
-    const step7 = localSettings({ address: ADDRESS, node: NODE, pluginRoot: OLD, platform: 'darwin', model: 'claude-opus-5-5', ownStatusLine: statusLine });
+    const step7 = localSettings({ address: ADDRESS, node: NODE, pluginRoot: OLD, platform: 'darwin', model: 'claude-opus-5-5' });
     step7.permissions.allow = step7.permissions.allow.filter((r) => r !== WORK_REPORTS_RULE);
     for (const { key, value } of keyEdits(own, mergeSettings(own, step7))) {
       applyJsonKey({ file, key, value, step: 7, record: (c) => addChanges(run.id, [c]) });
@@ -67,14 +67,14 @@ test('an update from 0.1.1 to 0.1.2 names 0.1.2\'s folder, takes out the rules W
     assert.deepEqual(after.permissions.allow, [...OWN_RULES, INPUT, ...localSettings({ address: ADDRESS, pluginRoot: NEW, platform: 'darwin' }).permissions.allow.filter((r) => r !== INPUT)]);
     assert.ok(after.permissions.allow.includes(WORK_REPORTS_RULE));
     assert.ok(!after.permissions.allow.some((r) => r.includes('/0.1.1/')));
-    // The status line names 0.1.2's script; the pin, the socket and the director's env stay.
-    assert.equal(after.statusLine.command, statusLineCommand({ node: NODE, pluginRoot: NEW }));
+    // No status line is written; the pin, the socket and the director's env stay.
+    assert.equal(Object.hasOwn(after, 'statusLine'), false);
     assert.equal(after.model, 'claude-opus-5-5');
     assert.deepEqual(after.sandbox.network.allowUnixSockets, [ADDRESS]);
     assert.deepEqual(after.env, { MINE: '1' });
     // Recorded as step 7's, each key's before what step 7 wrote.
     const made = changesOf(p.run).slice(recorded);
-    assert.deepEqual(made.map((c) => [c.step, c.kind, c.key.join('.')]).sort(), [[7, 'json-key', 'permissions.allow'], [7, 'json-key', 'statusLine.command']]);
+    assert.deepEqual(made.map((c) => [c.step, c.kind, c.key.join('.')]).sort(), [[7, 'json-key', 'permissions.allow']]);
     assert.deepEqual(made.find((c) => c.key.join('.') === 'permissions.allow').before, before.permissions.allow);
     // Again, with nothing to do: nothing written or recorded.
     const text = fs.readFileSync(p.file, 'utf8');

@@ -8,15 +8,14 @@ import { effectiveSettings, settingsText } from '../settings/effective.js';
 import { SETTINGS } from '../settings/catalogue.js';
 import { glossaryOf, plainWords, termPattern } from '../frontdesk/glossary.js';
 import { endedBy, since, NO_PLAN, STARTS_UNAPPROVED } from '../foreman/queue.js';
-import { cardTextOf, hashOf } from '../mod/status.js';
-import { cardButtons } from '../mod/buttons.js';
+import { cardTextOf, hashOf } from './card-text.js';
+import { cardButtons } from '../cards/buttons.js';
 import { dataHash } from '../state/events.js';
 import { cardOutcomes, latestFor } from '../state/views.js';
 import { answeredWords, askOf, subjectOf } from '../cards/answered.js';
 import { sinceLine } from '../cards/panel-words.js';
 import { contextText } from './context.js';
 import { readStatus } from '../safekeeping/readings.js';
-import { paneFrom } from './mod-pane.js';
 import { answeredLines, buildLines, runningLines, shippedLines } from '../engine/words.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
@@ -276,14 +275,7 @@ function cardOf(got, id, preview) {
 }
 
 const VIEWS = {
-  // With `pane` (and `helperUp`, `at`, `timeZone`), data.pane is the mod's pane model (mod-pane.js), built
-  // at `at` (now without one), whose glance is the view's line; it is given even when the inputs can't be read.
   async glance(args, source, { now }) {
-    if (args.pane === true) {
-      const at = typeof args.at === 'string' && Number.isFinite(Date.parse(args.at)) ? new Date(args.at) : now();
-      const pane = await paneFrom(source, { now: () => at, helperUp: typeof args.helperUp === 'boolean' ? args.helperUp : undefined, timeZone: args.timeZone });
-      return { ok: true, data: { glance: pane.glance, pane }, lines: [pane.glance] };
-    }
     const inputs = await boardOf(source, { offline: true });
     if (inputs.refused) return { ok: false, refused: inputs.refused };
     const glance = glanceLine(inputs.model);

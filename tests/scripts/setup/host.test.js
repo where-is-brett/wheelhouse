@@ -343,6 +343,10 @@ test('the plan asks about real users, then Locked on a Mac only, then the host, 
     const win = await answerAll(step, ctxFor(folder, { platform: 'win32' }), choose({ realUsers: REAL_USERS.yes }));
     assert.deepEqual(win.asked.map((a) => a.id.replace(/-[0-9a-f]{10}$/, '')), ['real-users', 'host', 'connection']);
     assert.ok(win.asked[2].card.options.some((o) => o.label === WAYS.quick));
+    // Standard is what Windows gets even from an old Locked answer: the connection is never made for Locked there.
+    const stale = await answerAll(step, ctxFor(folder, { platform: 'win32' }), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.locked, way: WAYS.own }));
+    assert.ok(!stale.asked.some((x) => x.id.startsWith('locked')));
+    assert.notEqual(stale.changes.find((c) => c.action === 'connection')?.locked, true);
     // Standard on a Mac keeps Quick.
     const standard = await answerAll(step, ctxFor(folder), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.standard }));
     assert.ok(standard.asked[3].card.options.some((o) => o.label === WAYS.quick));

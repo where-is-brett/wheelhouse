@@ -4,8 +4,7 @@
 // behind a stand-in for gh and glab, the project's main checkout cloned from it, and the director's
 // profile on a bare repository of its own. The hooks' `decide` functions are called with what
 // Claude Code sends: the board-context hook on each prompt of the director's, the card check before
-// each AskUserQuestion call, and the prompt record after the director's click. The mod's bridge
-// takes a reply code from the phone.
+// each AskUserQuestion call, and the prompt record after the director's click.
 //
 // The front desk's command (scripts/frontdesk/cli.js) runs as a sandboxed command does: every file
 // call it makes into the Wheelhouse home fails the test, so it reaches state and the profile only
@@ -14,7 +13,7 @@
 // The build loop's side starts from its records, as the foreman writes them through the helper: the
 // work, its running features and a feature's question (tests/e2e/build-loop.test.js makes them from
 // a feature session), and the gate's asks (act merge). The watcher runs as runWatcher runs it, its
-// waker in Shape 2, which starts nothing and prints its wakes. Pictures of a preview are taken by a
+// waker printing its wakes and starting nothing. Pictures of a preview are taken by a
 // stand-in for scripts/pictures/shoot.js, in a browser whose path is Chrome's (ruling F61).
 import { test, before, beforeEach, afterEach, after } from 'node:test';
 import { run as realRun } from '../../scripts/lib/run.js';
@@ -22,18 +21,16 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { Readable } from 'node:stream';
 import { main as cli } from '../../scripts/frontdesk/cli.js';
 import { decide as boardContext, cardsLine, HEADINGS } from '../../scripts/hooks/board-context.js';
 import { decide as cardCheck } from '../../scripts/hooks/card-check.js';
 import { decide as promptRecord } from '../../scripts/hooks/prompt-record.js';
-import { runBridge } from '../../scripts/mod/bridge.js';
 import { startHelper } from '../../scripts/host/helper.js';
 import { helperClient } from '../../scripts/host/helper-client.js';
 import { BUNDLE_MS } from '../../scripts/lib/build-loop.js';
 import { profileDir, stateDir, wheelhouseHome } from '../../scripts/lib/paths.js';
 import { writeProject } from '../../scripts/lib/projects.js';
-import { answerLine, approvalLine, confirmLine, replyCode, setLineOf } from '../../scripts/state/card-lines.js';
+import { answerLine, approvalLine, confirmLine, setLineOf } from '../../scripts/state/card-lines.js';
 import { listEvents, makeEvent } from '../../scripts/state/events.js';
 import { enrol, makeSigningKey } from '../../scripts/state/signing.js';
 import { readHandled } from '../../scripts/watcher/handled.js';
@@ -67,8 +64,8 @@ const BODY = matchingBody();
 // The pages whose pictures let an approval carry over an update, and a browser named as Chrome is.
 const PAGES = ['/', '/pricing'];
 const CHROME = '/fake/Google Chrome';
-// The project's configuration on its default branch: the watcher in Shape 2, and the pages.
-const CONFIG = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [], watcherShape: 2, pages: PAGES };
+// The project's configuration on its default branch: the watcher's shape, and the pages.
+const CONFIG = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [], watcherShape: 1, pages: PAGES };
 // A folder that is never created, so no managed copy of the hooks is found.
 const NO_MANAGED = path.join(tempFolder('wh-no-managed-'), 'absent');
 // The hook's own limit is 2 seconds; a test machine running every file at once is given longer.
@@ -419,41 +416,6 @@ test('a feature\'s question becomes a composed card, a click answers it, and onl
   });
 });
 
-test('an approval card answered by its reply code from the phone lets the gate merge', async () => {
-  await onComputer(async (world) => {
-    const head = await openPr(world, 7, 'banner', { 'src/home.js': 'export const banner = \'Hot cross buns are back\';\n' });
-    assert.deepEqual((await merge(world, 7)).reasons, [`no approval of ${short(head)}`]);
-
-    // The front desk composes the approval card from the pull request's number; the command
-    // fills in its head from the host, so the card's words and its set line name one commit.
-    world.at(MINUTE);
-    const { question, id, inReply } = await frontDesk(world, ['card'], approvalCard(7, 'changes the banner on the shop\'s home page.'));
-    assert.equal(setLineOf(inReply[0]), approvalLine(7, head));
-    const code = replyCode(approvalLine(7, head));
-    assert.ok(inReply[0].includes(code), 'the card carries its reply code');
-    assert.ok(!question.question.includes(code), 'the chat is given it without the code, which the pane shows');
-    assert.deepEqual(labelsOf(question), ['Approve', 'Suggest a change…', 'Show me', 'Not now']);
-    // At the computer, the director puts it off; the card's code is now on record.
-    await ask(world, [question], { [question.question]: 'Not now' });
-    assert.equal(eventsOf('shown').length, 1);
-    assert.equal(eventsOf('approval').length, 0);
-    assert.ok((await viewsOf(world)).waiting.some((c) => c.id === id), 'Not now keeps it waiting');
-
-    // Later, from the phone: the mod hands the bridge the code and an option.
-    world.at(2 * HOUR);
-    const said = JSON.parse(await runBridge({
-      stdin: Readable.from([JSON.stringify({ cmd: 'reply', origin: 'bridge', text: `${code.toLowerCase()} approve`, cwd: world.checkout })]),
-      deps: { client: world.client, now: world.now },
-    }));
-    assert.deepEqual(said, { ok: true, says: 'Recorded: Approve pull request #7' });
-    assert.deepEqual(eventsOf('approval').map((e) => [e.data.pr, e.data.commit]), [[7, head]]);
-    assert.ok(!(await viewsOf(world)).waiting.some((c) => c.id === id), 'the approval closes the card');
-
-    assert.deepEqual(await merge(world, 7), { ok: true, merged: true, sha: head, guardrailPaths: [], criticalAreas: [] });
-    assert.deepEqual(world.host.merges, [{ number: 7, sha: head }]);
-  });
-});
-
 test('a gate-asks becomes an approval card, and the click on it lets the gate merge', async () => {
   await onComputer(async (world) => {
     await building(world, 'banner', 'The Easter banner');
@@ -606,12 +568,11 @@ test('an answer that needs a change holds the merge until a newer reviewed versi
   });
 });
 
-test('an approval card steered with Suggest a change… is revised once the change is committed; the old code answers nothing and the click on the revised card lets the gate merge its commit', async () => {
+test('an approval card steered with Suggest a change… is revised once the change is committed, and the click on the revised card lets the gate merge its commit', async () => {
   await onComputer(async (world) => {
     const head = await openPr(world, 7, 'banner', { 'src/home.js': 'export const banner = \'Hot cross buns are back\';\n' });
     world.at(MINUTE);
     const { question, id } = await frontDesk(world, ['card'], approvalCard(7, 'changes the banner on the shop\'s home page.'));
-    const oldCode = replyCode(approvalLine(7, head));
     // The director asks for a change; the words are not a decision, so nothing is approved and the card waits.
     await ask(world, [question], { [question.question]: 'Suggest a change…' });
     assert.deepEqual(eventsOf('approval'), []);
@@ -644,14 +605,6 @@ test('an approval card steered with Suggest a change… is revised once the chan
     assert.ok(!waiting.some((c) => c.id === id), 'the old card is closed');
     assert.ok(waiting.some((c) => c.id === revised.id));
 
-    // The old card's code answers nothing.
-    const reply = JSON.parse(await runBridge({
-      stdin: Readable.from([JSON.stringify({ cmd: 'reply', origin: 'bridge', text: `${oldCode.toLowerCase()} approve`, cwd: world.checkout })]),
-      deps: { client: world.client, now: world.now },
-    }));
-    assert.deepEqual(reply, { ok: false, says: 'That card\'s answer can\'t be recorded now' });
-    assert.deepEqual(eventsOf('approval'), []);
-
     // The click on the revised card signs its own commit, and the gate merges that.
     await ask(world, [revised.question], { [revised.question.question]: 'Approve' });
     assert.deepEqual(eventsOf('approval').map((e) => [e.data.pr, e.data.commit]), [[7, head2]]);
@@ -659,7 +612,7 @@ test('an approval card steered with Suggest a change… is revised once the chan
   });
 });
 
-test('a gate\'s approval card steered with Suggest a change… is revised at the head the gate asks about next: one revised card waits for it, the old code answers nothing and the click signs the new head', async () => {
+test('a gate\'s approval card steered with Suggest a change… is revised at the head the gate asks about next: one revised card waits for it and the click signs the new head', async () => {
   await onComputer(async (world) => {
     await building(world, 'banner', 'The Easter banner');
     const head = await openPr(world, 7, 'banner', { 'src/home.js': 'export const banner = \'Hot cross buns are back\';\n' });
@@ -670,7 +623,6 @@ test('a gate\'s approval card steered with Suggest a change… is revised at the
     const [card] = asked.questions;
     assert.equal(setLineOf(asked.inReply[0]), approvalLine(7, head));
     const { id } = (await viewsOf(world)).waiting.find((c) => c.data.line === approvalLine(7, head));
-    const oldCode = replyCode(approvalLine(7, head));
     await ask(world, [card], { [card.question]: 'Suggest a change…' });
     assert.deepEqual(eventsOf('approval'), []);
     // The pick records nothing until the director says what they would change; the front desk hands their words on
@@ -707,14 +659,6 @@ test('a gate\'s approval card steered with Suggest a change… is revised at the
     world.at(3 * HOUR);
     await frontDesk(world, ['cards']);
     assert.deepEqual((await viewsOf(world)).waiting.map((c) => c.id), [revised.id]);
-
-    // The old card's code answers nothing.
-    const reply = JSON.parse(await runBridge({
-      stdin: Readable.from([JSON.stringify({ cmd: 'reply', origin: 'bridge', text: `${oldCode.toLowerCase()} approve`, cwd: world.checkout })]),
-      deps: { client: world.client, now: world.now },
-    }));
-    assert.deepEqual(reply, { ok: false, says: 'That card\'s answer can\'t be recorded now' });
-    assert.deepEqual(eventsOf('approval'), []);
 
     // Approve on the revised card signs the new head, and the gate merges it.
     await ask(world, [revised.question], { [revised.question.question]: 'Approve' });

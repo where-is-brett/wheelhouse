@@ -44,7 +44,7 @@ import { spawn as nodeSpawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { answer, runAndExit, projectOf, pluginRoots, isInside, managedDir, managedMarker, readTailEntries, readSmallText, beingSetUp, removedFrom } from './kit.js';
 import { keep, sendPending, withinBudget } from './pending.js';
-import { startWatcher, watcherRunning } from '../foreman/start.js';
+import { keepWatcherAlive } from '../watcher/keep-alive.js';
 import { recordClaudePath } from '../lib/claude.js';
 import { helperClient } from '../host/helper-client.js';
 import { isOlder } from '../host/retire-helper.js';
@@ -465,10 +465,7 @@ async function ensureWatcher(project, client, { spawn, pluginRoot, env = process
   // This session has the PATH that finds claude; keep the full path for a watcher that is started with a bare one.
   try { recordClaudePath({ env, inside: folder }); } catch { /* the watcher looks in the usual places */ }
   try {
-    if (watcherRunning(project) || typeof client.config !== 'function') return;
-    const read = await projectConfig(project, client);
-    // As the start script reads the shape: anything but 2 is Shape 1.
-    if (read.config !== null && read.config.watcherShape !== 2) startWatcher(project, { spawn, pluginRoot, env });
+    await keepWatcherAlive(project, { client, spawn, pluginRoot, env });
   } catch { /* the session carries on without it */ }
 }
 

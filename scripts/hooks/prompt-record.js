@@ -8,7 +8,7 @@
 // start sends what is left. A confirmation of a setting in the director's
 // profile goes to the profile; the answer itself still goes to the project.
 // A card carrying one set line and its reply code also gets a signed shown record,
-// so a later reply with that code (scripts/mod/reply.js) can count as the click.
+// so a later reply with that code can count as the click.
 // A Go ahead on a setup card becomes a signed setup action kept in
 // <wheelhouseHome()>/setup/clicks/, where the helper reads it, since there may be no state to
 // record it in yet (Task 13 copies the clicks into the state). An answer to a question a setup
@@ -153,7 +153,7 @@ function only(pattern, text) {
 }
 
 // The deciding labels a reply code can answer with. A reply to an answer card may also use any
-// of the question's own options (scripts/mod/reply.js), which earned checks against the question.
+// of the question's own options, which earned checks against the question.
 // Turn on (dangerous) and Use Guarded earn a record from a click alone, by design.
 export const SIGNED_LABELS = ['Approve', SEND_BACK, 'Confirm', 'Lift All stop', 'Lift STOP', 'Do it', 'Push it', 'Change it', 'End it', 'Merge the fix', 'Pair it', 'Unpair it'];
 

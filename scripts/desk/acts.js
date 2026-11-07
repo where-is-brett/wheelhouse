@@ -6,7 +6,7 @@
 import crypto from 'node:crypto';
 import { cardOutcomes } from '../state/views.js';
 import { dataHash } from '../state/events.js';
-import { cardTextOf, hashOf } from '../mod/status.js';
+import { cardTextOf, hashOf } from './card-text.js';
 import { NOT_NOW, SUGGEST } from '../lib/calm-words.js';
 import { composeCard } from '../cards/compose.js';
 import { PAIR_LABEL } from '../state/card-lines.js';

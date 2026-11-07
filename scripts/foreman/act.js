@@ -594,7 +594,7 @@ async function start(ctx, work, rest) {
   const again = existing !== null && queuedAgain(views, work);
   if (existing !== null && !again) {
     // Recorded, but stopped before its session began (STOP, say): start the session only.
-    if (existing.step === 'started' && config.watcherShape !== 2 && lstatOf(sessionFile(ctx.project, work)) === null) {
+    if (existing.step === 'started' && lstatOf(sessionFile(ctx.project, work)) === null) {
       const worktree = worktreeOf(ctx.project, views, work);
       ctx.say(`${work} was started already, but its session had not begun.`);
       await startSession(ctx, work, worktree, config);
@@ -878,7 +878,7 @@ async function question(ctx, work, rest) {
 // the level.
 function windowsBuildsOf(ctx, views, config) {
   if (ctx.platform !== 'win32') return null;
-  const shape = config?.watcherShape === 2 ? 2 : 1;
+  const shape = 1;
   let runner = null;
   try {
     runner = guardedCommand({ home: wheelhouseHome(), pluginRoot: ctx.pluginRoot, platform: ctx.platform });
@@ -1602,7 +1602,7 @@ export async function main(argv, {
     if (typeof command !== 'string' || !Object.hasOwn(COMMANDS, command)) refuse(USAGE);
     if (typeof work !== 'string' || !SLUG.test(work)) refuse('Give the work id: lower-case letters, digits and hyphens, at most 40');
     const project = given ?? projectHere(cwd);
-    const waker = wakerFor ?? ((cfg, print) => makeWaker({ shape: cfg.watcherShape, project, config: cfg, print }));
+    const waker = wakerFor ?? ((cfg, print) => makeWaker({ shape: 1, project, config: cfg, print }));
     const ctx = context({ project, client, now, run, wakerFor: waker, pluginRoot, makeId, out, platform, isLocked, foremanPass });
     await COMMANDS[command](ctx, work, rest);
     return 0;

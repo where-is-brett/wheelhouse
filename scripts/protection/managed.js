@@ -5,18 +5,20 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+// Locked runs on macOS. Anywhere else there is no managed folder (null): Windows runs Standard with the Guarded
+// build commands.
 export function managedDir(platform = process.platform) {
   if (platform === 'darwin') return '/Library/Application Support/ClaudeCode';
-  if (platform === 'win32') return path.win32.join(process.env.ProgramFiles ?? 'C:\\Program Files', 'ClaudeCode');
   // Wheelhouse is not offered on Linux; the hooks still read the folder there (CI runs on it).
   if (platform === 'linux') return '/etc/claude-code';
-  throw new Error('Wheelhouse runs on macOS and Windows only');
+  return null;
 }
 
 // The main folders of the Locked projects: the JSON array in
 // <dir>/wheelhouse/locked-projects.json. Empty when the file is missing or
-// does not read as a list of full paths; anything else is dropped.
+// does not read as a list of full paths; anything else is dropped. None where there is no managed folder.
 export function lockedProjects({ dir = managedDir() } = {}) {
+  if (dir === null) return [];
   try {
     const kept = JSON.parse(fs.readFileSync(path.join(dir, 'wheelhouse', 'locked-projects.json'), 'utf8'));
     return Array.isArray(kept) ? kept.filter((folder) => typeof folder === 'string' && path.isAbsolute(folder)) : [];

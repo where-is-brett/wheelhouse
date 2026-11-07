@@ -126,7 +126,7 @@ import { sameRemote } from '../state/git.js';
 import { PROFILE_BRANCH } from '../profile/store.js';
 import { readConfig, isModelName, ROLES } from '../gate/guardrails.js';
 import { aliasModel, FRONT_DESK_ALIAS, MID_SIZED_ALIAS, soleModelAlias } from './best-model.js';
-import { projectSettings, localSettings, mergeSettings, directorStatusLine, withoutKeychainDenial, compactionRules } from '../protection/settings.js';
+import { projectSettings, localSettings, mergeSettings, withoutKeychainDenial, compactionRules } from '../protection/settings.js';
 import { protectionStatus as realProtectionStatus } from '../host/protection.js';
 import { projectPath } from '../host/gitlab-key.js';
 import { COMPACT_HEADING, COMPACT_SECTION, EARLIER_COMPACT_HASHES, sectionHash, withCurrentSection, withSection, hasSection, withOwnSection } from '../lib/compact-section.js';
@@ -404,8 +404,7 @@ function targetsFor({ folder, config, release, claudeHome = null }) {
 // The changes to the project's files (`folder`), for `config`, the starter configuration, and
 // `release` ({ ref } or null): .claude/settings.json merged with projectSettings, the
 // configuration, .claude/settings.local.json merged with localSettings (`local`: { address, node,
-// pluginRoot, platform, claudeHome }, the status line left out where the director has one of their
-// own), and CLAUDE.md's "Compact instructions" section, added once. Each JSON file key by key.
+// pluginRoot, platform, claudeHome }), and CLAUDE.md's "Compact instructions" section, added once. Each JSON file key by key.
 export function projectFilesChange({ folder, config, release = null, local }) {
   if (!isObject(local)) throw new Error('projectFilesChange needs this computer\'s local settings: { address, node, pluginRoot, platform, claudeHome }');
   const at = (rel) => path.join(folder, ...rel.split('/'));
@@ -429,8 +428,7 @@ export function projectFilesChange({ folder, config, release = null, local }) {
 export function localFilesChange({ folder, local }) {
   const file = path.join(folder, ...LOCAL.split('/'));
   const text = readText(file);
-  const ownStatusLine = local.claudeHome ? directorStatusLine({ claudeHome: local.claudeHome, projectDir: folder }) : null;
-  const ours = localSettings({ address: local.address, node: local.node, pluginRoot: local.pluginRoot, platform: local.platform, ownStatusLine, model: local.model ?? null });
+  const ours = localSettings({ address: local.address, node: local.node, pluginRoot: local.pluginRoot, platform: local.platform, model: local.model ?? null });
   return jsonChanges(file, objectIn(LOCAL, text), mergeSettings(objectIn(LOCAL, text) ?? {}, ours));
 }
 

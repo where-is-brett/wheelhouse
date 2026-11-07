@@ -37,7 +37,7 @@ test('no skill names AskUserQuestion, PushNotification, ToolSearch, SendMessage 
 
 test('the playbooks use the general words the tool sheet answers', () => {
   const all = SKILLS.map(playbookOf).join('\n');
-  for (const phrase of ['your clickable-question tool', 'your notification tool', 'your tool-search tool, if you have one', 'the Wheelhouse command the session start named']) {
+  for (const phrase of ['your clickable-question tool', 'your tool-search tool, if you have one', 'the Wheelhouse command the session start named']) {
     assert.ok(all.includes(phrase), phrase);
   }
 });

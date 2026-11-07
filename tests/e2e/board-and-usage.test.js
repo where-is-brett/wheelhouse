@@ -3,8 +3,7 @@
 // WHEELHOUSE_HOME, a real helper on a socket (a named pipe on Windows), the
 // project's state and the director's profile each on a bare repository, gh and
 // glab as a fake adapter, and a fake fetch for the official sources. The hooks'
-// `decide` functions and the mod's bridge are called with what Claude Code and
-// the mod send; the usage receiver runs as its own process, as a session start
+// `decide` functions are called with what Claude Code sends; the usage receiver runs as its own process, as a session start
 // starts it.
 import { test, before, beforeEach, afterEach, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,27 +11,23 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
-import { Readable } from 'node:stream';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { startHelper } from '../../scripts/host/helper.js';
 import { helperClient } from '../../scripts/host/helper-client.js';
 import { decide as boardContext, HEADINGS, cardsLine } from '../../scripts/hooks/board-context.js';
 import { decide as promptRecord } from '../../scripts/hooks/prompt-record.js';
-import { pendingDir } from '../../scripts/hooks/pending.js';
-import { runBridge, SAYS } from '../../scripts/mod/bridge.js';
 import { runWeekly } from '../../scripts/jobs/weekly.js';
 import { DEFAULT_SOURCES } from '../../scripts/sources/list.js';
-import { addPoints, recordSession } from '../../scripts/usage/store.js';
+import { addPoints, recordModReading, recordSession } from '../../scripts/usage/store.js';
 import { wasRaised } from '../../scripts/usage/figures.js';
 import { profileDir, stateDir, usageDir, wheelhouseHome } from '../../scripts/lib/paths.js';
 import { writeProject } from '../../scripts/lib/projects.js';
 import { run } from '../../scripts/lib/run.js';
-import { stopState } from '../../scripts/lib/stop.js';
 import { BRIEFING_WORDS } from '../../scripts/lib/core-numbers.js';
-import { listEvents, makeEvent } from '../../scripts/state/events.js';
+import { listEvents } from '../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../scripts/state/signing.js';
-import { approvalLine, confirmLine, replyCode, replyCodeLine } from '../../scripts/state/card-lines.js';
+import { confirmLine } from '../../scripts/state/card-lines.js';
 import { makeBareRemote, g } from '../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../helpers/homes.js';
 import { standInTools, guardedRun } from '../helpers/host-stand-ins.js';
@@ -192,12 +187,6 @@ function cardAnswer(c, { question, options, label }) {
 }
 const click = (c, card) => c.act(() => promptRecord(cardAnswer(c, card), { client: c.client, dir: NO_MANAGED, now: c.now }));
 
-// What the mod sends the bridge: one JSON request on standard input, one JSON line back.
-async function bridge(c, request) {
-  const line = await c.act(() => runBridge({ stdin: Readable.from([JSON.stringify(request)]), deps: { client: c.client, now: c.now } }));
-  return JSON.parse(line);
-}
-
 async function write(c, kind, data) {
   const written = await c.act(() => c.client.state.write({ project: PROJECT, kind, data }));
   assert.equal(written.ok, true, JSON.stringify(written));
@@ -275,11 +264,12 @@ test('telemetry posted to the receiver shows as this week\'s usage on the board 
     assert.doesNotMatch(kept, /example\.invalid|org-1/, 'counts are kept, never the account\'s details');
     assert.match(kept, /"source":"subagent"/, 'the one word for where the tokens went is kept');
 
-    // The mod's reading: the session's dollars and the weekly allowance, 34% used, resetting in three days.
-    const reading = await bridge(c, {
-      cmd: 'usage', session: 'sess-front', cwd: c.folder, usd: 84, windows: [{ kind: 'seven_day', percentUsed: 34, resetsAt: Math.floor((T0 + 3 * DAY) / 1000) }],
+    // The session's dollars and the weekly allowance, 34% used, resetting in three days.
+    await c.act(() => {
+      const at = c.now();
+      recordModReading({ session: 'sess-front', usd: 84, windows: [{ kind: 'seven_day', percentUsed: 34, resetsAt: Math.floor((T0 + 3 * DAY) / 1000) }], at });
+      recordSession({ session: 'sess-front', project: PROJECT, role: 'front-desk', at, by: 'mod' });
     });
-    assert.deepEqual(reading, { ok: true });
 
     const board = await prompt(c, '/wheelhouse:board');
     assert.ok(board.startsWith(`${HEADINGS.board}\n\n`), board);
@@ -430,86 +420,6 @@ test('a profile setting confirmed by a click changes the briefing\'s length; a p
     assert.deepEqual(numbered(detailed), titles.map((title, i) => `${i + 1}. ${title}`));
     assert.doesNotMatch(detailed, /and \d+ more/);
     assert.match(bodyOf(await prompt(c, '/wheelhouse:settings')), /^Briefing length: detailed \(this project\)$/m);
-  } finally {
-    await c.close();
-  }
-});
-
-test('a reply code sent through the bridge as the phone records an approval the gate accepts', async () => {
-  const c = await setUp({ prFiles: { 'src/sign-in.js': 'export const signIn = true;\n' } });
-  try {
-    const short = c.head.slice(0, 7);
-    const merge = () => c.act(() => c.client.merge({ project: PROJECT, number: PR, stop: false, bypass: false, approvalRequired: true }));
-    await c.act(async () => {
-      assert.equal((await c.client.lock.take({ project: PROJECT })).result.taken, true);
-      const review = makeEvent({ kind: 'review', data: { pr: PR, commit: c.head, verdict: 'CLEAN' }, now: () => new Date(T0 + 1000) });
-      assert.equal((await c.client.state.record({ project: PROJECT, event: review })).ok, true);
-    });
-    assert.deepEqual((await merge()).reasons, [`no approval of ${short}`]);
-
-    // The front desk's card, with its reply code; the director puts it off at the computer.
-    const line = approvalLine(PR, c.head);
-    const code = replyCode(line);
-    const question = `Pull request #${PR} adds the sign-in page.\n${line}\n${replyCodeLine(code)}`;
-    c.time(MINUTE);
-    await click(c, { question, options: ['Approve', 'Explain more', 'Not now'], label: 'Not now' });
-    assert.equal(await c.act(() => eventsOf('shown').length), 1, 'the card\'s code is on record');
-
-    // Later, from the phone: the mod sees the code and an option, from the bridge, and asks the bridge.
-    c.time(2 * HOUR);
-    assert.deepEqual(
-      await bridge(c, { cmd: 'reply', origin: 'bridge', text: `${code.toLowerCase()} approve.`, cwd: c.folder }),
-      { ok: true, says: `Recorded: Approve pull request #${PR}` },
-    );
-    const approvals = await c.act(() => eventsOf('approval'));
-    assert.equal(approvals.length, 1);
-    assert.deepEqual({ pr: approvals[0].data.pr, commit: approvals[0].data.commit }, { pr: PR, commit: c.head });
-    // The signed record is the helper's; the plain card-answer beside it may be kept for later under
-    // load, which is harmless, since the record has already closed the card.
-    const keptRecords = await c.act(() => fs.readdirSync(pendingDir(PROJECT)).filter((n) => n.endsWith('.json'))
-      .map((n) => JSON.parse(fs.readFileSync(path.join(pendingDir(PROJECT), n), 'utf8')).route)
-      .filter((route) => route === 'record' || route === 'profile-record'));
-    assert.deepEqual(keptRecords, [], 'the helper took the record');
-
-    // The code is good once.
-    assert.deepEqual(await bridge(c, { cmd: 'reply', origin: 'bridge', text: `${code} Approve`, cwd: c.folder }), { ok: false, says: 'That code has been used' });
-
-    const merged = await merge();
-    assert.deepEqual(merged, { ok: true, merged: true, sha: c.head, guardrailPaths: [], criticalAreas: [] });
-    assert.deepEqual(c.adapter.merges, [{ number: PR, sha: c.head }]);
-  } finally {
-    await c.close();
-  }
-});
-
-test('under STOP, /go from the bridge lifts it and the board shows STOP off', async () => {
-  const c = await setUp();
-  try {
-    // "stop" from the phone: the mod sends it to the bridge, which sets STOP.
-    c.time(MINUTE);
-    assert.deepEqual(await bridge(c, { cmd: 'stop', origin: 'bridge', cwd: c.folder }), { ok: true, says: SAYS.stopOn });
-    assert.deepEqual(await c.act(() => stopState()), { on: true, by: 'mod', at: new Date(T0 + MINUTE).toISOString() });
-    // The board still answers under STOP, and says so.
-    assert.match(await prompt(c, '/wheelhouse:board'), /\n- All stop \(the emergency stop\) is on, since 19 October 2026\n/);
-
-    // /go run by anything but the director leaves STOP on.
-    c.time(10 * MINUTE);
-    assert.deepEqual(await bridge(c, { cmd: 'go', origin: 'sdk', cwd: c.folder }), { ok: false, says: SAYS.goNotDirector });
-    assert.equal(await c.act(() => stopState().on), true);
-
-    // The director's /go lifts it, with a signed record of the lift.
-    assert.deepEqual(await bridge(c, { cmd: 'go', origin: 'composer', cwd: c.folder }), { ok: true, says: `All stop is off. ${SAYS.nothingBuilding}` });
-    assert.equal(await c.act(() => stopState().on), false);
-    const lifts = await c.act(() => eventsOf('action').filter((e) => e.data.action === 'lift-stop'));
-    assert.deepEqual(lifts.map((e) => e.data.label), ['/wheelhouse-go']);
-    assert.ok(lifts[0].sig, 'the lift is signed');
-    assert.deepEqual(await c.act(() => fs.readdirSync(pendingDir(PROJECT)).filter((n) => n.endsWith('.json'))), [], 'the helper took it');
-
-    const board = await prompt(c, '/wheelhouse:board');
-    assert.doesNotMatch(board, /All stop is on/);
-    // A second /go says STOP isn't on and records nothing more.
-    assert.deepEqual(await bridge(c, { cmd: 'go', origin: 'composer', cwd: c.folder }), { ok: true, says: SAYS.stopOff });
-    assert.equal(await c.act(() => eventsOf('action').length), 1);
   } finally {
     await c.close();
   }

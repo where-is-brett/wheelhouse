@@ -235,7 +235,8 @@ test('each loop writes health.json with the pid, the time, the shape, and the la
   const c = clock();
   await runWatcher({ project: P, config: config({ watcherShape: 2 }), observe: looker([]).observe, waker: fakeWaker(), loops: 3, now: c.now, sleep: c.sleep, log: quiet });
   const health = JSON.parse(fs.readFileSync(healthFile(P), 'utf8'));
-  assert.deepEqual(health, { pid: process.pid, at: new Date(T0 + 30 * SEC).toISOString(), shape: 2, lastOk: new Date(T0 + 15 * SEC).toISOString() });
+  // A configuration that says Shape 2 is read as Shape 1.
+  assert.deepEqual(health, { pid: process.pid, at: new Date(T0 + 30 * SEC).toISOString(), shape: 1, lastOk: new Date(T0 + 15 * SEC).toISOString() });
 
   let n = 0;
   const failing = async (args) => { n += 1; if (n === 2) throw new Error('the clone is busy'); return looker([]).observe(args); };
@@ -312,7 +313,7 @@ test('under STOP the loop observes and records, but starts and wakes nothing unt
   assert.equal(calls[0].env.WHEELHOUSE_ROLE, 'foreman');
 }));
 
-test('Shape 1 starts a foreman for a due bundle; Shape 2 prints its line', () => withHome(async () => {
+test('a foreman is started for a due bundle, and a configuration that says Shape 2 starts it the same', () => withHome(async () => {
   checkout();
   const { calls, wakerOptions } = starter();
   const lines = [];
@@ -325,9 +326,8 @@ test('Shape 1 starts a foreman for a due bundle; Shape 2 prints its line', () =>
 
   fs.rmSync(path.dirname(healthFile(P)), { recursive: true });
   await runWatcher({ project: P, config: config({ watcherShape: 2 }), observe: looker().observe, wakerOptions, loops: 5, now: c.now, sleep: c.sleep, log: quiet });
-  assert.equal(calls.length, 1, 'Shape 2 starts nothing');
-  assert.equal(lines.length, 1);
-  assert.match(lines[0], /^WAKE foreman .+\.json$/);
+  assert.equal(calls.length, 2, 'Shape 2 is read as Shape 1: the foreman is started again');
+  assert.deepEqual(lines, []);
 }));
 
 test('the configuration comes from the default branch through the helper, never the working copy', () => withHome(async () => {
@@ -351,7 +351,7 @@ test('the configuration comes from the default branch through the helper, never 
 
   const c = clock();
   await runWatcher({ project: P, client: client({ ok: true, config: branch }), observe: looker([]).observe, waker: fakeWaker(), loops: 1, now: c.now, sleep: c.sleep, log: quiet });
-  assert.equal(JSON.parse(fs.readFileSync(healthFile(P), 'utf8')).shape, 2);
+  assert.equal(JSON.parse(fs.readFileSync(healthFile(P), 'utf8')).shape, 1, 'a Shape 2 configuration is read as Shape 1');
   assert.equal(fs.existsSync(lockFile(P)), false);
 }));
 

@@ -4,8 +4,7 @@
 # so a problem only the Mac shows up straight after the merge. A run started by hand (Actions, CI,
 # Run workflow) adds macOS or Windows where ticked. A pull request that changes only the design
 # documents or the build plans passes the test jobs without running the tests
-# (.github/scripts/plan.js). Checks the mod (validator, source, bridge imports and
-# the mod's tests), and checks the lineage manifest against fresh copies of the upstream skills.
+# (.github/scripts/plan.js). Checks the lineage manifest against fresh copies of the upstream skills.
 # all-checks passes only when every other job has, and is the one check the rule on main requires.
 name: CI
 
@@ -85,21 +84,6 @@ jobs:
       - if: needs.plan.outputs.tests == 'run' && matrix.os == 'windows-latest'
         run: node --test --import ./tests/helpers/test-home.js --test-timeout=1500000 "tests/**/*.test.js"
 
-  validate:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 22
-      # Pins the version of Claude Code the mod's checks run on: the floor, lineage/manifest.json's
-      # claudeCode.floor. The mod's bridge call lives in hooks/mod/ask.ts, which releases before
-      # 2.1.299 refuse to follow (check 40 has the table of releases).
-      # tests/scripts/lib/claude-code-floor.test.js holds the pin to CLAUDE_CODE_FLOOR.
-      - run: npm install --global @anthropic-ai/claude-code@2.1.299
-      - run: npm run mod-check
-
   # Fetches each upstream shallow at the manifest's commit and checks the fingerprints, the
   # register's anchors and carried text, and the marketplace's pins.
   lineage:
@@ -115,7 +99,7 @@ jobs:
   # The test jobs' names change with the number of parts, so main's rule requires this job instead.
   # always() runs it even when a job it needs failed or was skipped, so it fails rather than skips.
   all-checks:
-    needs: [plan, test, validate, lineage]
+    needs: [plan, test, lineage]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -124,4 +108,5 @@ jobs:
           RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
           echo "Results: $RESULTS"
-          [ "$RESULTS" = "success success success success" ]
+          [ -n "$RESULTS" ] || exit 1
+          for r in $RESULTS; do [ "$r" = success ] || exit 1; done

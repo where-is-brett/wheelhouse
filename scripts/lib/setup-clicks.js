@@ -3,8 +3,8 @@
 // are kept): keeping a signed click in <wheelhouseHome()>/setup/clicks/ and a signed answer in
 // setup/answers/, and finding the card setup showed, in setup/shown/, or asked, in setup/asked/,
 // that a click was on. Uninstall's click (ruling R90) is kept the same way: its card's shown record
-// in setup/shown/, one per folder, and the director's Remove it in setup/clicks/. It lives apart from scripts/setup/ so the prompt record, which the mod's
-// bridge imports, reaches nothing there (scripts/mod/validate.js, bridgeImports). It writes only
+// in setup/shown/, one per folder, and the director's Remove it in setup/clicks/. It lives apart from scripts/setup/ so the
+// prompt record reaches nothing there. It writes only
 // the click and answer files, and setup/dropped.log, which says why an answer on a card setup asked
 // was not kept; it never writes Claude Code's settings or setup's journal.
 import crypto from 'node:crypto';

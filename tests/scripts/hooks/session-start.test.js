@@ -900,6 +900,25 @@ test('in a Shape 1 project the session start starts the watcher when it isn\'t r
   });
 });
 
+test('a project whose record says watcherShape 2 gets the same watcher keep-alive as any other: Shape 2 is read as Shape 1', async () => {
+  await withHome(async (home) => {
+    const f = fake();
+    f.client.health = async () => ({ ok: true });
+    f.client.config = async () => shapeConfig(2);
+    const spawn = f.spawn;
+    f.spawn = (file, args, opts) => {
+      const child = spawn(file, args, opts);
+      fs.mkdirSync(path.join(home, 'projects', P, 'watcher'), { recursive: true });
+      fs.writeFileSync(path.join(home, 'projects', P, 'watcher', 'watcher.lock'), `${process.pid}\n`);
+      return child;
+    };
+    await run(f);
+    const started = watcherStarts(f);
+    assert.equal(started.length, 1);
+    assert.deepEqual(started[0].args, [path.join(PLUGIN_ROOT, 'scripts', 'watcher', 'main.js'), P]);
+  });
+});
+
 test('the session start records where claude is, and starts the watcher with a PATH that holds it', async () => {
   await withHome(async (home) => {
     const bin = fs.realpathSync.native(tempFolder('wh-claude-bin '));
@@ -1074,10 +1093,9 @@ test('in a registered folder whose setup journal can\'t be read, the session sta
   });
 });
 
-test('the session start leaves the watcher alone in Shape 2, and fails open when the configuration can\'t be had', async () => {
+test('the session start fails open when the configuration can\'t be had', async () => {
   await withHome(async () => {
     const answers = [
-      async () => shapeConfig(2),
       async () => ({ ok: false, refused: 'the helper could not be reached' }),
       async () => { throw new Error('boom'); },
       () => new Promise(() => {}),

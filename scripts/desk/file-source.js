@@ -9,7 +9,7 @@ import { writeViews } from '../state/views.js';
 import { readProfileViews, writeProfileViews } from '../profile/store.js';
 import { loadBoardInputs } from '../board/inputs.js';
 import { usageFigures, weeklyShare } from '../usage/figures.js';
-import { previewFor } from '../mod/previews.js';
+import { previewFor } from './previews.js';
 import { readEnrolled } from '../state/signing.js';
 import { namesOf, readProject } from '../lib/projects.js';
 import { stateDir } from '../lib/paths.js';

@@ -181,7 +181,7 @@ async function put({ list, dir, run, now, nodeSource, address, line }) {
 const REGISTERED_LATER = 'A project registered later needs Locked updated.';
 
 function setUp({ project, platform = process.platform, dir, nodePath = process.execPath, address = helperAddress(), mdmPlist = MDM_PLIST }) {
-  if (platform === 'win32') return { refusal: { installed: false, line: MAC_ONLY } };
+  if (managedDir(platform) === null) return { refusal: { installed: false, line: MAC_ONLY } };
   const record = readProject(project);
   if (!record) return { refusal: { installed: false, line: 'The project is not set up' } };
   if (record.connection?.mode === 'quick') return { refusal: { installed: false, line: NEEDS_NARROW } };
@@ -209,7 +209,7 @@ export function updateLocked(args) {
 }
 
 export async function leaveLocked({ project, platform = process.platform, run, now = () => new Date(), dir, nodePath = process.execPath, address = helperAddress() }) {
-  if (platform === 'win32') return { installed: false, line: MAC_ONLY };
+  if (managedDir(platform) === null) return { installed: false, line: MAC_ONLY };
   const record = readProject(project);
   if (!record) return { installed: false, line: 'The project is not set up' };
   const where = dir ?? managedDir(platform);

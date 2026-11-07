@@ -90,6 +90,7 @@ test('readConfig: the build loop\'s keys are kept as given, and the missing ones
   };
   assert.deepEqual(readConfig(JSON.stringify(given)), {
     ...given,
+    watcherShape: 1,
     hotFiles: DEFAULTS.hotFiles,
     flagFiles: [],
     routing: { ...ROUTING_NONE, foreman: 'model-a', reviewer: 'model-b', custom: 'model-c' },
@@ -99,6 +100,14 @@ test('readConfig: the build loop\'s keys are kept as given, and the missing ones
   for (const mode of ['acceptEdits', 'auto', 'default', 'dontAsk', 'plan']) {
     assert.equal(readConfig(JSON.stringify({ ...base, sessionMode: mode })).sessionMode, mode);
   }
+});
+
+test('readConfig: watcherShape 2 is accepted and read as Shape 1; 1 stays 1; anything else is still refused', () => {
+  const base = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [] };
+  assert.equal(readConfig(JSON.stringify({ ...base, watcherShape: 2 })).watcherShape, 1);
+  assert.equal(readConfig(JSON.stringify({ ...base, watcherShape: 1 })).watcherShape, 1);
+  assert.equal(readConfig(JSON.stringify(base)).watcherShape, 1);
+  for (const bad of [0, 3, '1', 1.5, null]) assert.throws(() => readConfig(JSON.stringify({ ...base, watcherShape: bad })));
 });
 
 test('readConfig: bypass mode, a model that reads as a flag, and a command a rule cannot hold are refused', () => {
@@ -244,7 +253,7 @@ test('Wheelhouse\'s own configuration reads, and its safety checks need the dire
   const own = readConfig(fs.readFileSync(new URL('../../../.claude/wheelhouse.json', import.meta.url), 'utf8'));
   const config = { ...own, plugin: true };
   for (const file of ['scripts/hooks/tool-guard.js', 'scripts/gate/conditions.js', 'scripts/host/helper.js', 'scripts/protection/settings.js',
-    'scripts/setup/host.js', 'scripts/state/events.js', 'scripts/lib/projects.js', 'scripts/briefing/text.js', 'adapters/copilot/lean-guard.sh', 'hooks/register.ts', 'hooks/hooks.json', 'agents/reviewer.md',
+    'scripts/setup/host.js', 'scripts/state/events.js', 'scripts/lib/projects.js', 'scripts/briefing/text.js', 'adapters/copilot/lean-guard.sh', 'hooks/hooks.json', 'agents/reviewer.md',
     'skills/setup/SKILL.md', '.claude-plugin/plugin.json', 'lineage/manifest.json']) {
     assert.equal(classifyChange({ paths: [file], config }).touchesGuardrails, true, file);
   }

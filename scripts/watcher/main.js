@@ -37,10 +37,8 @@
 // configuration that reads but leaves keys out has the defaults for those.
 //
 // Shape 1: started detached and hidden by the foreman's start script, and by
-// the session start when it isn't running (Task 19), and by the front desk's
-// tick on the mod's timer. Shape 2: one loop at each tick of the mod's timer
-// in the foreman's session (scripts/mod/watch.js), with a printer that
-// collects the wake lines; run from the command line, stdout carries the wake
+// the session start when it isn't running (Task 19). Run with a printer that
+// collects the wake lines, or from the command line, stdout carries the wake
 // lines and nothing else, and messages go to stderr.
 import fs from 'node:fs';
 import path from 'node:path';

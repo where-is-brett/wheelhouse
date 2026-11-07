@@ -23,14 +23,9 @@ const handCards = (w) => w.records('question').filter((q) => q.data.work === 'by
 const readme = (w) => fs.readFileSync(path.join(w.folder, 'README.md'), 'utf8');
 const carryOn = () => ({ 'carry-on-1': running('carry-on-1') });
 
-// The by-hand card is raised within a few ticks and the front desk is woken for it, in a terminal, where no pane holds it.
+// The by-hand card is raised within a few ticks and is asked in the chat, in a terminal, where no pane holds it.
 async function handCardRaised(w, { expected = 1 } = {}) {
   await w.tickUntil(() => handCards(w).length >= expected, 'the by-hand card');
-  // Past the courier's gap since its last wake, which holds a second wake back for a while.
-  w.at(60 * 60 * 1000);
-  const woke = await w.terminalTick();
-  assert.ok((woke.woken ?? []).includes(`card:q:${handCards(w).at(-1).data.id}`), `a wake reaches the front desk (${JSON.stringify(woke.woken)})`);
-  assert.match(woke.submit?.[0] ?? '', /waiting on you/);
   const asked = await w.desk(['cards']);
   assert.equal(asked.json.questions.length, 1, 'the card is asked in the chat');
   return asked.json.questions[0];
@@ -68,7 +63,6 @@ async function buildsAndMerges(w, work, { content = { text: readme(w) }, committ
 // card said the earlier ones were still being checked.
 test('a hand edit, then Check and add them: the front desk does nothing; the helper records the work, one wake, no second Approve card, merged, the folder takes main', { timeout: 120000 }, () => world({ recordings: carryOn() }, async (w) => {
   await w.watch();
-  await w.terminalTick();
   fs.appendFileSync(path.join(w.folder, 'README.md'), `${HAND_LINE}\n`);
   const card = await handCardRaised(w);
   await w.press(card, CHECK_AND_ADD);
@@ -95,7 +89,6 @@ test('a hand edit, then Check and add them: the front desk does nothing; the hel
 // is left to ask the director as any work does.
 test('a hand edit, work recorded by another hand first, then press and tie: only the helper\'s own work is approved and woken', { timeout: 120000 }, () => world({ recordings: { ...carryOn(), 'carry-on-1-2': running('carry-on-1-2') } }, async (w) => {
   await w.watch();
-  await w.terminalTick();
   fs.appendFileSync(path.join(w.folder, 'README.md'), `${HAND_LINE}\n`);
   await git([...HAND, 'commit', '-q', '-am', 'A hand commit'], w.folder);
   const tip = await git(['rev-parse', 'HEAD'], w.folder);
@@ -116,7 +109,6 @@ test('a hand edit, work recorded by another hand first, then press and tie: only
 
 // Guards: "Leave them out" is the director's answer for good: the card was asked again at every tick after it.
 test('a hand edit, then Leave them out: the choice is kept and the card is not asked again', { timeout: 120000 }, () => world({}, async (w) => {
-  await w.terminalTick();
   fs.appendFileSync(path.join(w.folder, 'README.md'), `${HAND_LINE}\n`);
   const card = await handCardRaised(w);
   await w.press(card, LEAVE_THEM_OUT);
@@ -125,8 +117,7 @@ test('a hand edit, then Leave them out: the choice is kept and the card is not a
   for (let tick = 0; tick < 6; tick += 1) {
     await w.tick();
     w.at(60 * 1000);
-    await w.terminalTick();
-  }
+    }
   assert.equal(handCards(w).length, 1, 'no second card');
   assert.deepEqual((await w.desk(['cards'])).json.questions, [], 'nothing is asked again');
   assert.equal(w.eventsOf('by-hand').length, 0, 'nothing was tied');
@@ -137,7 +128,6 @@ test('a hand edit, then Leave them out: the choice is kept and the card is not a
 // Guards: a file name read as a glob. A hand commit of app/[slug]/page.md beside an untracked app/s/page.md: the pattern
 // [slug] matched the untracked file, which was carried into the change or lost when the folder let go of its edits.
 test('a hand commit of a bracketed file name carries only that file and leaves app/s/ untracked', { timeout: 120000 }, () => world({ recordings: carryOn() }, async (w) => {
-  await w.terminalTick();
   const bracketed = 'app/[slug]/page.md';
   fs.mkdirSync(path.join(w.folder, 'app', '[slug]'), { recursive: true });
   fs.mkdirSync(path.join(w.folder, 'app', 's'), { recursive: true });
@@ -164,8 +154,7 @@ test('a hand commit of a bracketed file name carries only that file and leaves a
 test('an uncommitted edit of a bracketed file name is let go for the main version and app/s/ stays untracked', { timeout: 120000 }, () => {
   const bracketed = 'app/[slug]/page.md';
   return world({ recordings: carryOn(), files: { [bracketed]: 'The page.\n' } }, async (w) => {
-    await w.terminalTick();
-    fs.mkdirSync(path.join(w.folder, 'app', 's'), { recursive: true });
+      fs.mkdirSync(path.join(w.folder, 'app', 's'), { recursive: true });
     fs.writeFileSync(path.join(w.folder, 'app', 's', 'page.md'), 'Not committed.\n');
     const edited = 'The page.\nWritten by hand in the folder.\n';
     fs.writeFileSync(path.join(w.folder, bracketed), edited);
@@ -192,7 +181,6 @@ test('nothing told to the director in a terminal speaks of a panel', () => {
 // work, no second card, and the one change still builds and merges.
 test('a front desk that runs carry-on as well makes no second work', { timeout: 120000 }, () => world({ recordings: carryOn() }, async (w) => {
   await w.watch();
-  await w.terminalTick();
   fs.appendFileSync(path.join(w.folder, 'README.md'), `${HAND_LINE}\n`);
   const card = await handCardRaised(w);
   await w.press(card, CHECK_AND_ADD);

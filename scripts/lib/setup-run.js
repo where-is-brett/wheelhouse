@@ -2,8 +2,7 @@
 // Where a setup run stands, read without changing anything: setup's journal file and its reader
 // (scripts/setup/journal.js holds its writers and says what a journal holds), and the first step
 // of a run not yet done. The hooks read these to tell a folder being set up; they live apart from
-// scripts/setup/ so the hooks, which the mod's bridge imports, reach nothing there
-// (scripts/mod/validate.js, bridgeImports). Nothing here writes a file.
+// scripts/setup/ so the hooks reach nothing there. Nothing here writes a file.
 import fs from 'node:fs';
 import path from 'node:path';
 import { wheelhouseHome } from './paths.js';

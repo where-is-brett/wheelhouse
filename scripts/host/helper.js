@@ -15,6 +15,8 @@
 // nothing). The checks and the push then run in the mirror, with the key.
 import { stuckCardFor, workCardFor } from '../foreman/ask-help.js';
 import { recentStuck } from '../watcher/stuck-cards.js';
+import { keepAllAlive } from '../watcher/keep-alive.js';
+import { readProgress as uninstallProgress } from '../setup/uninstall.js';
 import { worktreeOf } from '../foreman/wake.js';
 import { readPrRecord } from '../feature/status.js';
 import { reviewClear } from '../lib/review-verdict.js';
@@ -47,7 +49,6 @@ import { FOLDER_REMOTE, bringFolderUp, bringFolderUpBesideOwn, folderTakes, fold
 import { backUp, backupDue, chooseBackupFolder, noteBackupFolderRefused, pickFolder } from './local/backup.js';
 import { HOSTS, MOVING_LINE, holdsWork, moveWatch, readMove } from './local/move.js';
 import { SAVE_PROMPT, chooseFolder, safekeepingAct } from '../safekeeping/actions.js';
-import { LEADS } from '../lib/mod-numbers.js';
 import { readReadings, readStatus, safekeepingTick } from '../safekeeping/readings.js';
 import { gitRoute, homeDir, homeGit, homeReadable, isBranchName, projectFolder } from './local/home.js';
 import { HAND_MADE_BRANCH, carriesFolderWork, cleanMerged, dropNextMain, finishMerge, heldByMain, keepSeenMain, mergeChange, revertOnHome, seenMain } from './local/merge.js';
@@ -5381,7 +5382,7 @@ export async function startHelper({
         }).catch(() => {});
       },
       look: (how) => lookAtSafekeeping(project, how),
-      prompt: `${LEADS.pane} ${SAVE_PROMPT}`,
+      prompt: SAVE_PROMPT,
     });
     await lookAtSafekeeping(project).catch(() => {});
     return got.refused === undefined ? got : { ok: false, refused: got.refused };
@@ -5829,9 +5830,26 @@ export async function startHelper({
   }
   startEngineHosts();
   const renewing = renewLoginStart();
-  const safekeepingWatch = setInterval(() => { safekeepingRound().catch(() => {}); moveRound().catch(() => {}); }, dispatchMs);
+  // The watcher's keep-alive: each project's watcher is started again when it has stopped. The configuration is read from the
+  // project's folder, for whether the project is set up; no shape is read from it (every project is Shape 1).
+  async function watcherRound() {
+    const projects = registeredProjects();
+    const folders = new Map(projects.map(({ project, record }) => [project, record?.folder]));
+    await keepAllAlive({
+      projects: [...folders.keys()],
+      skip: (project) => uninstallProgress(folders.get(project))?.state === 'running',
+      clientFor: (project) => ({
+        config: async () => {
+          const file = path.join(String(folders.get(project)), ...CONFIG_FILE.split('/'));
+          return fs.existsSync(file) ? { ok: true, config: JSON.parse(fs.readFileSync(file, 'utf8')) } : { ok: false };
+        },
+      }),
+      pluginRoot,
+    });
+  }
+  const safekeepingWatch = setInterval(() => { safekeepingRound().catch(() => {}); moveRound().catch(() => {}); watcherRound().catch(() => {}); }, dispatchMs);
   safekeepingWatch.unref?.();
 
   // `engine.start` is the helper's own way to start a run (the dispatcher's): no route starts one.
-  return { address, close, engine: { start: (args) => engineRun.start(args), tick: () => engineTick() }, safekeeping: { tick: () => safekeepingRound() }, move: { tick: () => moveRound() } };
+  return { address, close, engine: { start: (args) => engineRun.start(args), tick: () => engineTick() }, safekeeping: { tick: () => safekeepingRound() }, watcher: { tick: () => watcherRound() }, move: { tick: () => moveRound() } };
 }

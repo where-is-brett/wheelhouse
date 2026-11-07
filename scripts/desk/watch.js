@@ -6,7 +6,7 @@
 // or is from another version, counts as none: the whole state comes back as events, never an error.
 import crypto from 'node:crypto';
 import { DESK_VERSION } from './vocabulary.js';
-import { cardTextOf } from '../mod/status.js';
+import { cardTextOf } from './card-text.js';
 import { dataHash } from '../state/events.js';
 import { isOpen, readView } from './views.js';
 
@@ -15,7 +15,7 @@ const hashText = (text) => crypto.createHash('sha256').update(String(text)).dige
 
 // snapshotOf({ glance, waiting, work, stop, notices }) -> the state watch compares: `glance` the glance's
 // text, `waiting` the waiting cards, `work` each open item's state by id, `stop` STOP's time or null, and
-// `notices` [{ id, lines }], whose ids are the courier's (incident:<id>, health:<hash>, finished:<work>).
+// `notices` [{ id, lines }], whose ids read incident:<id>, health:<hash> or finished:<work>.
 export function snapshotOf({ glance = '', waiting = [], work = {}, stop = null, notices = [] } = {}) {
   const cards = {};
   for (const card of Array.isArray(waiting) ? waiting : []) {

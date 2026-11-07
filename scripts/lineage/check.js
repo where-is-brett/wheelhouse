@@ -8,7 +8,7 @@
 // installed Wheelhouse's manifest, Claude Code's record of installs and the project's configuration,
 // never the Wheelhouse home (a sandboxed command can't), says what still differs, and changes nothing.
 // A hold's card leaves once its hold file is gone: recordLift puts one lineage-lift event in the
-// state for each standing hold, from the session start or the mod's tick (scripts/mod/bridge.js).
+// state for each standing hold, from the session start.
 // Reads files only: never git.
 //   node scripts/lineage/check.js [projectDir]
 import crypto from 'node:crypto';
