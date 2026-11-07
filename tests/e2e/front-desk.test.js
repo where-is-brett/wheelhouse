@@ -31,7 +31,7 @@ import { BUNDLE_MS } from '../../scripts/lib/build-loop.js';
 import { profileDir, stateDir, wheelhouseHome } from '../../scripts/lib/paths.js';
 import { writeProject } from '../../scripts/lib/projects.js';
 import { answerLine, approvalLine, confirmLine, setLineOf } from '../../scripts/state/card-lines.js';
-import { listEvents, makeEvent } from '../../scripts/state/events.js';
+import { listEvents, makeEvent, confirmationFor } from '../../scripts/state/events.js';
 import { enrol, makeSigningKey } from '../../scripts/state/signing.js';
 import { readHandled } from '../../scripts/watcher/handled.js';
 import { projectConfig, runWatcher } from '../../scripts/watcher/main.js';
@@ -265,6 +265,15 @@ async function ask(world, questions, answers) {
 
 const labelsOf = (question) => question.options.map((o) => o.label);
 
+// Typed replies are off until the director rules: the setting, written and confirmed as the director's confirmation would.
+async function typedRepliesOn(world) {
+  const written = await world.client.state.write({ project: P, kind: 'setting', data: { key: 'typedReplies', value: true, words: 'Answer decisions by typing' } });
+  assert.equal(written.ok, true, JSON.stringify(written));
+  const setting = eventsOf('setting').find((e) => e.data.key === 'typedReplies');
+  const recorded = await world.client.state.record({ project: P, event: makeEvent({ ...confirmationFor(setting), now: world.now }) });
+  assert.equal(recorded.ok, true, JSON.stringify(recorded));
+}
+
 // The director's typed reply, as the prompt record hook sees it: a decision is answered in chat, never on the picker.
 async function reply(world, text) {
   await promptRecord(
@@ -390,6 +399,7 @@ async function watch(world) {
 
 test('a feature\'s question becomes a decision in chat, a typed reply answers it, and only that session wakes', async () => {
   await onComputer(async (world) => {
+    await typedRepliesOn(world);
     await building(world, 'export', 'The orders export');
     await building(world, 'search', 'Searching the menu');
     await watch(world); // the watcher's first look: what is in state already is not news
@@ -449,6 +459,7 @@ test('a gate-asks becomes an approval card, and the click on it lets the gate me
 // scenario 5, its deterministic half
 test('a decision no reply has answered stays waiting, is told again, and decides nothing', async () => {
   await onComputer(async (world) => {
+    await typedRepliesOn(world);
     await building(world, 'export', 'The orders export');
     await watch(world);
     await buildLoop(world, 'question', EXPORT_QUESTION);
@@ -517,6 +528,7 @@ test('a merge waits while the director has a question open on its work, and for 
 // The director answers the open question on the work after the head was reviewed.
 const treeOf = (world, work) => path.join(world.checkout, '.claude', 'worktrees', work);
 async function answeredAfterReview(world) {
+  await typedRepliesOn(world);
   await building(world, 'export', 'The orders export');
   await building(world, 'search', 'Searching the menu');
   const head = await openPr(world, 7, 'export', { 'src/export.js': 'export const kind = \'csv\';\n' });

@@ -78,6 +78,9 @@ export const SETTINGS = {
   capTokens: { label: 'Tokens a run may use', group: 'advanced', check: checkCaps, default: { quick: 1000000, small: 4000000, slice: 10000000, bug: 2000000 }, home: 'project' },
   bundleApprovals: { label: 'Bundle approvals', group: 'advanced', levels: [false, true], default: false, home: 'project' },
   engineRoom: { label: 'Engine room', group: 'advanced', levels: [false, true], default: false, home: 'project' },
+  // Whether a decision is answered by typing a reply in the chat (scripts/decisions/switch.js). Off until the director rules
+  // on the typed-reply source gap (design section 6.1); off, decisions go through the question picker as before.
+  typedReplies: { label: 'Answer decisions by typing', group: 'advanced', levels: [false, true], default: false, home: 'project' },
 };
 
 // One per computer (`windowsBuildCommands:<computer>`): the level its build commands run at

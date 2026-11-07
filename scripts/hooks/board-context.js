@@ -65,6 +65,7 @@ import { HEADINGS, NOT_CHECKED, NONE_CHANGED, briefingIn } from '../desk/context
 import { deskClient, unreached } from '../desk/client.js';
 import { isDecisionCard } from '../decisions/pending.js';
 import { startedByScript } from '../decisions/answer.js';
+import { typedRepliesIn } from '../decisions/switch.js';
 import { parseReply } from '../decisions/reply.js';
 import { ownWords } from '../lib/own-words.js';
 import { isBuildQuestion } from '../protection/windows-builds.js';
@@ -139,11 +140,12 @@ async function cardsToAsk(desk, at) {
 // The count cardsToAsk gives, from the views given (with STOP off).
 export function cardsDue(views, at) {
   const waiting = Array.isArray(views.waiting) ? views.waiting.filter(isRecord) : [];
-  // A decision is shown as a chat message, so it is no card to ask (see decisionsLine).
-  const fresh = new Set(waiting.filter((card) => (card.asked === null || card.asked === undefined) && !heldBackLine(card.data?.line, views) && !isDecisionCard(card.data)).map((card) => card.id));
+  // With typed replies on, a decision is shown as a chat message, so it is no card to ask (see decisionsLine); off, it is a card.
+  const typed = typedRepliesIn(views.settings);
+  const fresh = new Set(waiting.filter((card) => (card.asked === null || card.asked === undefined) && !heldBackLine(card.data?.line, views) && !(typed && isDecisionCard(card.data))).map((card) => card.id));
   const questions = Object.entries(isRecord(views.questions) ? views.questions : {})
     .filter(([id, entry]) => isRecord(entry) && !entry.answer && entry.joins === undefined && existingCard({ waiting }, answerLine(id)) === null && !heldBackLine(answerLine(id), views)
-      && isBuildQuestion(entry.question?.data) && questionProblem(entry.question?.data, { recorded: true }) === null).length;
+      && (!typed || isBuildQuestion(entry.question?.data)) && questionProblem(entry.question?.data, { recorded: true }) === null).length;
   const gate = gateAsksDue(views, at);
   for (const due of gate) if (due.again !== undefined) fresh.add(due.again);
   const made = gate.filter((due) => due.make).length + holdsDue(views).length + controlFilesDue(views).length + premiumFailuresDue(views).length;
@@ -155,16 +157,19 @@ export function cardsDue(views, at) {
 // when none waits.
 export const decisionsLead = (waiting) => `Decisions waiting for the director: ${waiting}.`;
 export const DECISIONS_TAIL = 'Run `decision list`, then print each one exactly as `decision show <n>` prints it, in a message of its own. The director answers by typing a reply, and only their typed reply decides: never answer for them.';
+export const DECISIONS_TAIL_OFF = 'Typed replies are switched off: run `decision list`, print each one exactly as `decision show <n>` prints it, then ask it through the question picker (`cards` hands it out). A typed reply decides nothing: never answer for them.';
 export function decisionsLine(views, pending) {
+  const typed = typedRepliesIn(isRecord(views) ? views.settings : undefined);
   const listed = (Array.isArray(pending) ? pending : []).filter(isRecord);
   const waiting = isRecord(views) ? views.waiting : [];
   const cards = Array.isArray(waiting) ? waiting.filter(isRecord) : [];
-  const toCome = Object.entries(isRecord(views?.questions) ? views.questions : {})
+  // Off, a question with no card yet is counted by the cards line instead, as it always was.
+  const toCome = !typed ? 0 : Object.entries(isRecord(views?.questions) ? views.questions : {})
     .filter(([id, entry]) => isRecord(entry) && !entry.answer && entry.joins === undefined && existingCard({ waiting: cards }, answerLine(id)) === null
       && !isBuildQuestion(entry.question?.data) && questionProblem(entry.question?.data, { recorded: true }) === null).length;
   if (listed.length === 0 && toCome === 0) return null;
   const said = listed.map((d) => `${d.n}. ${d.question}`).join('; ');
-  return [listed.length === 0 ? null : decisionsLead(said), toCome === 0 ? null : `Decisions not shown yet: ${toCome}.`, DECISIONS_TAIL].filter(Boolean).join(' ');
+  return [listed.length === 0 ? null : decisionsLead(said), toCome === 0 ? null : `Decisions not shown yet: ${toCome}.`, typed ? DECISIONS_TAIL : DECISIONS_TAIL_OFF].filter(Boolean).join(' ');
 }
 
 // `typed` is the director's own words in this prompt. A decision that reply answers is left out, as the prompt hook records it
@@ -173,7 +178,7 @@ async function decisionLineOf(desk, typed) {
   const got = await desk.read('waiting');
   if (got?.ok !== true || !isRecord(got.data?.views)) return null;
   const pending = Array.isArray(got.data.decisions?.pending) ? got.data.decisions.pending : [];
-  const reply = typeof typed === 'string' ? parseReply(typed, pending) : { kind: 'none' };
+  const reply = typeof typed === 'string' && typedRepliesIn(got.data.views.settings) ? parseReply(typed, pending) : { kind: 'none' };
   return decisionsLine(got.data.views, reply.kind === 'answer' ? pending.filter((d) => d.n !== reply.n) : pending);
 }
 
