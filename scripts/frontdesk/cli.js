@@ -20,9 +20,13 @@
 //                   what counted and where ("Already approved in the panel at 10:34")
 //   again <n> [--here]
 //                   the card the board numbers n, with its id, to ask again
-//   why <n>         notes that the director asked why about the card the board numbers n, and
+//   why decision <n> [words]
+//                   the session copy's answer for decision n of `decision list`, noting nothing
+//   why <n> [words] notes that the director asked why about the card the board numbers n, and
 //                   prints the one sentence to say before the card; it never gives the card again:
-//                   say it, then run `again <n>`
+//                   say it, then run `again <n>`. When the card is a waiting decision, the answer of a
+//                   read-only copy of the session that raised it follows (scripts/decisions/why.js), to
+//                   say as it is; `words` is what the director asked, and each question goes to the copy
 //   suggest <card id> <work id> <the change>
 //                   hands a change the director suggested on a waiting approval or CI push card to
 //                   the build: the work re-stated with the change, in the front desk's own words, as
@@ -82,6 +86,7 @@ import { dataHash } from '../state/events.js';
 import { composeCard, answerInput } from '../cards/compose.js';
 import { decisionText } from '../decisions/message.js';
 import { isDecisionCard } from '../decisions/pending.js';
+import { askWhy } from '../decisions/why.js';
 import { typedRepliesIn } from '../decisions/switch.js';
 import { confirmWords } from '../state/card-lines.js';
 import { joinersOf } from '../state/joiners.js';
@@ -701,7 +706,7 @@ function keepAnswer(cwd, body) {
 // question as it was shown, written as a click's plain answer is, kept in pending/ when the helper
 // doesn't take it. It decides nothing, so the card still waits. Under STOP nothing is written, and
 // the line says so. The front desk explains, then runs `again`; the card isn't given here.
-export async function why({ client, cwd, n }) {
+export async function why({ client, cwd, n, words = '', ask = askCopyIn }) {
   const { views, stop, cards: events } = await viewsOf(client, cwd, { cards: true });
   const found = cardNumbered(views, n, { events });
   if (found === null) throw new CliError(`The Logbook has no card ${n} to note a why about`);
@@ -716,7 +721,43 @@ export async function why({ client, cwd, n }) {
     got = null;
   }
   if (!taken(got) && !keepAnswer(cwd, body)) throw new CliError(`The ${WHY} about card ${n} wasn't noted: ${said(got, 'the host helper did not answer')}`);
-  return [`Noted that you asked why about card ${n}.`, ...whyNext(views, question, n)];
+  return [`Noted that you asked why about card ${n}.`, ...whyNext(views, question, n), ...await copyAnswer({ client, cwd, id: found.id, words, ask })];
+}
+
+// Asks the copy of the session behind decision `id` of the project `cwd` is in (scripts/decisions/why.js).
+async function askCopyIn({ cwd, id, words }) {
+  const found = projectOf(cwd);
+  if (found === null) return { fallback: "This folder isn't a Wheelhouse project, so there is no session to ask." };
+  return askWhy({ project: found.project, id, words });
+}
+
+// The copy's answer for waiting decision `n` of `decision list`, without noting a Why? on any card: the way a typed "why 2" is
+// answered (typed replies on), and the same copy that the card's Why? asks (typed replies off). It records nothing.
+export async function whyDecision({ client, cwd, n, words = '', ask = askCopyIn }) {
+  const { pending } = await decisionsOf(client, cwd);
+  const found = pending.find((d) => d.n === n);
+  if (found === undefined) throw new CliError(`Decision ${n} isn't waiting${pending.length === 0 ? '' : `: ${pending.map((d) => d.n).join(', ')} are`}. Run decision list.`);
+  return copyAnswer({ client, cwd, id: found.id, words, ask });
+}
+
+// The lines of a read-only session copy's answer when card `id` is a waiting decision, else none. It only explains: nothing here
+// records an answer. A copy that can't be asked says so in one line and the card's own reasons follow; the Why? still works.
+async function copyAnswer({ client, cwd, id, words, ask }) {
+  let decision;
+  try {
+    decision = (await decisionsOf(client, cwd)).pending.find((d) => d.id === id);
+  } catch {
+    return [];
+  }
+  if (decision === undefined) return [];
+  try {
+    const got = await ask({ cwd, id: decision.id, words });
+    return typeof got?.answer === 'string'
+      ? ["The session that raised this decision answers (it only explains, and changes nothing):", got.answer]
+      : [typeof got?.fallback === 'string' ? got.fallback : "The session that raised this decision couldn't be asked."];
+  } catch (error) {
+    return [`The session that raised this decision couldn't be asked: ${error?.message ?? error}`];
+  }
 }
 
 // --- suggest ---
@@ -1296,7 +1337,7 @@ export function inChatWords(value, whole = null) {
 }
 
 export async function main(argv, {
-  cwd = process.cwd(), env = process.env, client, input, now = () => new Date(), makeId, columnsReady,
+  cwd = process.cwd(), env = process.env, client, input, now = () => new Date(), makeId, columnsReady, ask,
   out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t),
 } = {}) {
   try {
@@ -1347,9 +1388,12 @@ export async function main(argv, {
       const { left, onAsked } = await hereMark(rest);
       if (left.length !== 1 || !/^[1-9][0-9]{0,8}$/.test(left[0])) throw new CliError('Give the card\'s number in the Logbook: again <n> [--here]');
       json(await again({ client: helper, cwd: here, n: Number(left[0]), onAsked }));
+    } else if (command === 'why' && rest[0] === 'decision') {
+      if (rest.length < 2 || !/^[1-9][0-9]{0,2}$/.test(rest[1])) throw new CliError('Give the decision\'s number from decision list, then what to ask if you like: why decision <n> [words]');
+      lines(await whyDecision({ client: helper, cwd: here, n: Number(rest[1]), words: rest.slice(2).join(' '), ...(ask ? { ask } : {}) }));
     } else if (command === 'why') {
-      if (rest.length !== 1 || !/^[1-9][0-9]{0,8}$/.test(rest[0])) throw new CliError('Give the card\'s number in the Logbook: why <n>');
-      lines(await why({ client: helper, cwd: here, n: Number(rest[0]) }));
+      if (rest.length < 1 || !/^[1-9][0-9]{0,8}$/.test(rest[0])) throw new CliError('Give the card\'s number in the Logbook, then what to ask if you like: why <n> [words]');
+      lines(await why({ client: helper, cwd: here, n: Number(rest[0]), words: rest.slice(1).join(' '), ...(ask ? { ask } : {}) }));
     } else if (command === 'suggest') {
       if (rest.length < 3) throw new CliError('Give the card, the work and the change: suggest <card id> <work id> <the change in your own words>');
       json(await suggest({ client: helper, cwd: here, card: rest[0], work: rest[1], change: rest.slice(2).join(' ') }));
@@ -1418,5 +1462,8 @@ export async function main(argv, {
 }
 
 if (startedAsScript(import.meta.url)) {
-  process.exitCode = await main(process.argv.slice(2));
+  const code = await main(process.argv.slice(2));
+  process.exitCode = code;
+  // `why` may leave a child of the session copy behind; the command ends once its lines are written, whatever still runs.
+  if (process.argv[2] === 'why') process.stdout.write('', () => process.exit(code));
 }

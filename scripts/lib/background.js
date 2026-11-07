@@ -52,6 +52,8 @@ function within(ms, promise, fallback) {
 function recordPart({ session, project, cwd, env, now }) {
   try {
     const role = sessionRole({ sessionId: session, env, cwd });
+    // A why session is not a part of the project's work, whatever folder it runs in.
+    if (role === 'why') return;
     // A session in a feature worktree is feature work, whatever role was recorded, unless it is the foreman.
     const feature = role === 'foreman' ? null : featureSlug(cwd);
     recordSession({ session, project, role: feature ? 'feature' : role, ...(feature ? { work: feature } : {}), at: now() });

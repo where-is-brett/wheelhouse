@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { answer, runAndExit, projectOf, registeredByPath, beingSetUp, worktreeRoot } from './kit.js';
+import { answer, runAndExit, projectOf, registeredByPath, beingSetUp, worktreeRoot, isWhy, WHY_TOOLS } from './kit.js';
 import { segmentsWithOperators } from './shell-words.js';
 import { AGENT_CONTROL, CONTROL_FILE, GIT_SETTINGS, gitSettingsFiles, homeControlFolders } from '../lib/agent-control.js';
 import { credentialPaths } from '../lib/credentials.js';
@@ -1006,6 +1006,8 @@ function queuePlace(cwd) {
 
 export async function decide(input, { dir, projectOf: find = projectOf, home = os.homedir(), platform = process.platform, pluginRoot = PLUGIN_ROOT, entrypoint = process.env.CLAUDE_CODE_ENTRYPOINT, projectDir = process.env.CLAUDE_PROJECT_DIR, env = process.env, engineHome = archonHome() } = {}) {
   const tool = input.tool_name;
+  // A why session is read-only: every tool but reading and searching is refused, wherever it runs.
+  if (isWhy(env) && !WHY_TOOLS.includes(tool)) return answer.deny(`A why session only explains: it reads and searches, and ${tool} is not one of those. Say what you found instead.`);
   const isConnector = typeof tool === 'string' && (tool.startsWith('mcp__') || RESOURCE_TOOLS.includes(tool));
   if (!isConnector && !SHELL_TOOLS.includes(tool) && !FILE_TOOLS.includes(tool)) return undefined;
   // A step that reads only (read-only-shell.js), wherever it runs: its shell may only read.

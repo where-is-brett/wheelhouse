@@ -42,7 +42,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { answer, runAndExit, projectOf, pluginRoots, isInside, managedDir, managedMarker, readTailEntries, readSmallText, beingSetUp, removedFrom } from './kit.js';
+import { answer, runAndExit, projectOf, pluginRoots, isInside, managedDir, managedMarker, readTailEntries, readSmallText, beingSetUp, removedFrom, isWhy } from './kit.js';
 import { keep, sendPending, withinBudget } from './pending.js';
 import { keepWatcherAlive } from '../watcher/keep-alive.js';
 import { recordClaudePath } from '../lib/claude.js';
@@ -708,6 +708,8 @@ export function sessionTitle(input, { dir, projectOf: find = projectOf, env = pr
 }
 
 export async function decide(input, deps = {}) {
+  // A why session starts in the builder's worktree and is nothing to record, manage or refresh there.
+  if (isWhy(deps.env ?? process.env)) return undefined;
   const out = await started(input, deps);
   if (deps.writeVia !== undefined && deps.writeVia !== 'self') return out;
   let title = null;

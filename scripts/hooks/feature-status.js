@@ -16,7 +16,7 @@
 // It informs: on PostToolUse it may add the prepare warning from context-gauge.js, and otherwise prints nothing; a failure anywhere is passed over. Every
 // write refuses a symlink. It never runs git; the root is found with fs.
 import path from 'node:path';
-import { runAndExit, worktreeRoot } from './kit.js';
+import { runAndExit, worktreeRoot, isWhy } from './kit.js';
 import { featureSlug } from './session-start.js';
 import { featurePaths, readStatus, writeStatus } from '../feature/files.js';
 import {
@@ -88,6 +88,8 @@ export function sameStatus(a, b) {
 // The prepare warning rides on this PostToolUse hook, so a tool call costs one process; the rest is the
 // feature status, which does its own work in a feature worktree only.
 export async function decide(input, options = {}) {
+  // A why session works in the builder's worktree and keeps nothing there: its id is not the builder's session.
+  if (isWhy(options.env ?? process.env)) return undefined;
   const warning = input.hook_event_name === 'PostToolUse' ? prepareOnToolUse(input, { dir: options.dir, now: options.now }) : undefined;
   await keepStatus(input, options);
   return warning;
