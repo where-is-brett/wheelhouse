@@ -803,7 +803,7 @@ test('a survey record carries every part of the survey, each in its own shape', 
     assert.equal(PLAIN_KINDS.includes('survey'), true);
     assert.equal(PROTECTED_KINDS.includes('survey'), false);
     // Only the helper itself records a survey or a column's readiness: no caller writes one.
-    assert.deepEqual(HELPER_ONLY_KINDS, ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'by-hand', 'slept']);
+    assert.deepEqual(HELPER_ONLY_KINDS, ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'by-hand', 'slept', 'self-merged']);
     assert.deepEqual(makeEvent({ kind: 'survey', data: SURVEY }).data, SURVEY);
     // Taken again (ruling P3), it says so.
     assert.deepEqual(makeEvent({ kind: 'survey', data: { ...SURVEY, again: true } }).data.again, true);
@@ -992,4 +992,16 @@ test('a slept record holds two times in order, and only the helper writes one', 
   assert.throws(() => makeEvent({ kind: 'slept', data: { from: to, to: from } }), /after/);
   assert.throws(() => makeEvent({ kind: 'slept', data: { from: 'soon', to } }), /time/);
   assert.throws(() => makeEvent({ kind: 'slept', data: { from, to, why: 'lid' } }));
+});
+
+test('a self-merged record names the change that merged by itself, and only the helper writes one', () => {
+  const commit = 'a'.repeat(40);
+  assert.equal(PLAIN_KINDS.includes('self-merged'), true);
+  assert.equal(HELPER_ONLY_KINDS.includes('self-merged'), true);
+  makeEvent({ kind: 'self-merged', data: { pr: 7, commit, reason: 'internal', work: 'w-tide-1', title: 'Tidy the tides', paths: 2 } });
+  makeEvent({ kind: 'self-merged', data: { pr: 8, commit, reason: 'decision-records' } });
+  for (const data of [
+    { pr: 0, commit, reason: 'internal' }, { pr: 7, commit: 'abc', reason: 'internal' }, { pr: 7, commit, reason: 'visible' },
+    { pr: 7, commit, reason: 'internal', work: 'Not A Slug' }, { pr: 7, commit, reason: 'internal', paths: -1 }, { pr: 7, commit, reason: 'internal', extra: 1 },
+  ]) assert.throws(() => makeEvent({ kind: 'self-merged', data }), undefined, JSON.stringify(data));
 });
