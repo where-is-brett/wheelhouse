@@ -57,6 +57,15 @@ function record(kind, data, ms) {
   return event;
 }
 
+// A record of a kind an earlier release wrote and makeEvent no longer takes: written as the earlier release did.
+function oldRecord(kind, data, ms) {
+  const event = { ...makeEvent({ kind: 'note', data: { words: 'x' }, now: at(ms) }), kind, data };
+  const file = path.join(stateDir(P), eventPath(event));
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(event, null, 2)}\n`);
+  return event;
+}
+
 // A worktree with the feature folder and the given files in it.
 // The project's main checkout, recorded for the home in use; feature worktrees are made in its .claude/worktrees/.
 function checkout() {
@@ -538,7 +547,7 @@ test('a chat-question count and a chat-steer never reach the watcher: they wake 
   record('incident', { id: 'one', what: 'x' }, 0);
   const first = await observe({ project: P, client: fakeClient(), now: at(SEC) });
   const prev = step({ seen: [], prev: null }, first).cursor.prev;
-  const lines = [record('chat-question', { at: new Date(0).toISOString() }, 2 * SEC), record('chat-steer', { card: 'a-card' }, 2 * SEC)];
+  const lines = [oldRecord('chat-question', { at: new Date(0).toISOString() }, 2 * SEC), record('chat-steer', { card: 'a-card' }, 2 * SEC)];
   const next = await observe({ project: P, client: fakeClient(), now: at(3 * SEC), prev });
   for (const line of lines) {
     assert.equal(next.stateIds.includes(line.id), false);
@@ -552,7 +561,7 @@ test('a rule never reaches the watcher: it is sent to no session', () => withHom
   const first = await observe({ project: P, client: fakeClient(), now: at(SEC) });
   const prev = step({ seen: [], prev: null }, first).cursor.prev;
   const rule = { id: `rule-${'a'.repeat(12)}`, words: 'Keep it small', literal: null, conditions: [], exclusions: [], answer: {}, project: 'p', paths: [], lanes: [], stage: 0, review: new Date(0).toISOString(), hash: 'a'.repeat(64) };
-  const line = record('rule', rule, 2 * SEC);
+  const line = oldRecord('rule', rule, 2 * SEC);
   const next = await observe({ project: P, client: fakeClient(), now: at(3 * SEC), prev });
   assert.equal(next.stateIds.includes(line.id), false);
 }));
@@ -563,7 +572,7 @@ test('a seal never reaches the watcher: it is sent to no session', () => withHom
   const first = await observe({ project: P, client: fakeClient(), now: at(SEC) });
   const prev = step({ seen: [], prev: null }, first).cursor.prev;
   const seal = { line: 'seal', card: 'q-1', work: 'w', head: null, signed: null, reader: true, candidates: {}, exclusions: { hit: [], unread: [] }, stamp: {}, at: new Date(0).toISOString(), hash: 'a'.repeat(64) };
-  const line = record('shadow', seal, 2 * SEC);
+  const line = oldRecord('shadow', seal, 2 * SEC);
   const next = await observe({ project: P, client: fakeClient(), now: at(3 * SEC), prev });
   assert.equal(next.stateIds.includes(line.id), false);
   assert.equal((next.state ?? []).some((e) => e.kind === 'shadow'), false);

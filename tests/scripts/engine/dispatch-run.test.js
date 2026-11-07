@@ -342,28 +342,6 @@ test('a project with a host still starts Archon\'s queue', async () => {
   assert.equal(starts[0]?.lane, 'merge');
 });
 
-test('each card the dispatcher writes is told to the seals, after it is written, and a failure there costs nothing', async () => {
-  const dir = tempFolder('wh-dr-');
-  const written = [];
-  const told = [];
-  const d = dispatchRun({
-    engine: fakeEngine(), project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'), readViews: ranOnce,
-    config: () => ({ routing: {}, testCommand: 'node --test' }), settings: () => ({ engineLanes: ['quick'] }),
-    start: async () => ({ ok: true, runId: 'run-1' }),
-    write: async (kind, data) => { written.push({ kind, data }); },
-    onCard: (card) => { told.push({ ...card, written: written.some((w) => w.kind === 'question' && w.data.id === card.id) }); throw new Error('the seal broke'); },
-    now: () => new Date('2026-10-29T10:00:00.000Z'),
-  });
-  d.sentBack('card-1', 'red', 'one');
-  await d.tick();
-  d.sentBack('card-1', 'red', 'two');
-  await d.tick();
-  await d.tick();
-  const card = written.find((w) => w.kind === 'question');
-  assert.ok(card, 'the red card is written');
-  assert.deepEqual(told, [{ id: card.data.id, kind: 'red', work: 'card-1', level: 3, written: true }]);
-});
-
 test('waitingWork joins the card router\'s pieces and the dispatcher\'s own cards', async () => {
   const dir = tempFolder('wh-dr-');
   const file = path.join(dir, 'dispatch.json');

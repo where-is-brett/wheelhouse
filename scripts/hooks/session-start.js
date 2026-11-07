@@ -236,7 +236,7 @@ export function featureSlug(cwd) {
 // While views are being replaced the old ones sit in `views.old` for a moment (or for good
 // after a crash), so that folder is read when `views` is not there. `names` null reads
 // every view there (the board's inputs).
-export function localViews(project, names = ['rulebook', 'waiting', 'unconfirmed', 'keptAsIs', 'damaged']) {
+export function localViews(project, names = ['rulebook', 'levels', 'waiting', 'unconfirmed', 'keptAsIs', 'damaged']) {
   const base = path.join(wheelhouseHome(), 'projects', project, 'views');
   const dir = fs.existsSync(base) ? base : `${base}.old`;
   const out = {};
@@ -510,6 +510,8 @@ export function reload({ views, stop, lineage = [], notes, feature, stateRoot, w
   const rules = (views?.rulebook ?? []).filter((r) => r.status === 'accepted')
     .map((r) => `${r.id} (accepted): ${show(r.words ?? '').split('\n')[0]}`);
   lines.push(...section('Rulebook (accepted):', rules));
+  const levels = Object.values(views?.levels ?? {}).map((l) => `${l.key}: ${show(l.value)}`);
+  lines.push(...section('Levels:', levels));
   if (feature) lines.push(`Your feature's ledger: ${path.join(stateRoot, 'features', feature, 'ledger.md')}`);
   let text = lines.join('\n');
   if (text.length > MAX_CHARS) text = `${text.slice(0, MAX_CHARS - 1)}…`;

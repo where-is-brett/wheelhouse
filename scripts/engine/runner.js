@@ -119,6 +119,9 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   const keep = () => saveState(file, state);
   const note = (words, extra = {}) => write('note', { about: 'engine', words, ...extra });
   const titled = (work) => inSentence(String(titleOf(work) ?? work));
+  const letGo = (work) => {
+    try { release(work); } catch { /* the files stay held, which only holds new work back */ }
+  };
   const placeOf = (ask) => ({ branch: ask?.context?.branch ?? null, folder: ask?.context?.folder ?? null });
 
   let enter = () => {};
@@ -1300,7 +1303,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   // Asks held while All stop was on are routed again once it is lifted, and a held run's once its hold is.
   async function again() {
     if (stopped() || state.later.length === 0) return;
-    const later = state.later.filter((ask) => !held(ask.runId) && !reading.has(ask.id));
+    const later = state.later.filter((ask) => !held(ask.runId));
     if (later.length === 0) return;
     state.later = state.later.filter((ask) => !later.includes(ask));
     for (const ask of later) delete state.routed[ask.id];

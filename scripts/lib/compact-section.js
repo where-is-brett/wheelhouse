@@ -24,6 +24,7 @@ Leave out file contents and command output that can be read again. Wheelhouse's 
 export const EARLIER_COMPACT_HASHES = Object.freeze([
   '262378b54935486b0e2f24f9a918d44828968d95b292865301353b1c4c1bc800',
   '8a1fbab63343f98a17e20d403038890133a4aa1f432c78d337ad8bb3fbaa7119',
+  '3c7f2ab3d44eb50bb413717fbb1a3c577b81034ed77ae490a21a632e6ee0ef14',
 ]);
 export const sectionHash = (text) => crypto.createHash('sha256').update(text.replace(/\r\n/g, '\n').trim()).digest('hex');
 // The section in a file: from its heading to the next heading or the end.

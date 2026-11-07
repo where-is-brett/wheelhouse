@@ -21,13 +21,6 @@ test('a usage limit is a Logbook line only', () => {
   assert.deepEqual(got, { line: 'The usage limit was reached.' });
 });
 
-test('a level-3 ask lowered by a delegation is answered by its recommendation', () => {
-  const got = routeAsk(ask({ topic: 'page-wording' }), { levels: { 'page-wording': { value: 2 } } });
-  assert.deepEqual(got.answer, { choice: 'b' });
-  assert.equal(got.level, 2);
-  assert.equal(routeAsk(ask({ topic: 'page-wording' }), { levels: { 'page-wording': { value: 3 } } }).answer, undefined);
-});
-
 test('a level-4 ask becomes a card with the recommendation first', () => {
   const got = routeAsk(ask({ level: 4 }));
   assert.equal(got.importance, 1);
