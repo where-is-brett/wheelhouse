@@ -9,7 +9,7 @@ import { main } from '../../../scripts/foreman/act.js';
 import { featurePaths, questionTrail } from '../../../scripts/feature/files.js';
 import { withHome } from '../../helpers/homes.js';
 import {
-  P, T0, HASH, emptyViews, fakeClient, featureView, project, workView, worktree,
+  P, T0, HASH, emptyViews, fakeClient, featureView, project, recordInState, workView, worktree,
 } from '../../helpers/foreman.js';
 
 const now = () => new Date(T0);
@@ -87,6 +87,27 @@ test('after three sent back in a row the wake says to send one plain stuck messa
   assert.doesNotMatch(first, /stuck/);
   assert.match(third, /3 tries in a row that failed: stop trying and send one plain message with `stuck --why/);
   assert.equal(questionTrail(featurePaths(wt).questions).failures, 3);
+}));
+
+const STUCK = { stuck: true, at: '2026-11-08T08:00:00.000Z', why: 'The meanwhile line keeps failing' };
+
+test('act stuck-note records the session\'s stuck line as one note, and not again', async () => withHome(async () => {
+  const { views } = await scene([WHOLE, STUCK]);
+  const fake = fakeClient({ views });
+  const r = await act(['stuck-note', 'mine', STUCK.at], { client: fake.client });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(fake.writes.length, 1);
+  assert.equal(fake.writes[0].kind, 'note');
+  assert.deepEqual(fake.writes[0].data, { about: 'stuck', work: 'mine', at: STUCK.at, words: STUCK.why });
+  // Once it is in the record, a second pass writes nothing.
+  recordInState('note', fake.writes[0].data, T0);
+  const again = fakeClient({ views });
+  const second = await act(['stuck-note', 'mine', STUCK.at], { client: again.client });
+  assert.equal(second.code, 0, second.err);
+  assert.match(second.out, /already noted/);
+  assert.deepEqual(again.writes, []);
+  // A time the session never wrote is refused.
+  assert.equal((await act(['stuck-note', 'mine', '2026-11-08T07:00:00.000Z'], { client: fake.client })).code, 1);
 }));
 
 test('a session that cannot be woken is told so, and nothing is recorded', async () => withHome(async () => {

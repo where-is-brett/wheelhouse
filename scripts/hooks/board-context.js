@@ -64,6 +64,8 @@ import { startedAsScript } from '../lib/started-as-script.js';
 import { HEADINGS, NOT_CHECKED, NONE_CHANGED, briefingIn } from '../desk/context.js';
 import { deskClient, unreached } from '../desk/client.js';
 import { isDecisionCard } from '../decisions/pending.js';
+import { listEvents } from '../state/events.js';
+import { stateDir } from '../lib/paths.js';
 import { startedByScript } from '../decisions/answer.js';
 import { parseReply } from '../decisions/reply.js';
 import { ownWords } from '../lib/own-words.js';
@@ -175,6 +177,20 @@ async function decisionLineOf(desk, typed) {
   const pending = Array.isArray(got.data.decisions?.pending) ? got.data.decisions.pending : [];
   const reply = typeof typed === 'string' ? parseReply(typed, pending) : { kind: 'none' };
   return decisionsLine(got.data.views, reply.kind === 'answer' ? pending.filter((d) => d.n !== reply.n) : pending);
+}
+
+// The most stuck messages one line names.
+const STUCK_NOTES = 3;
+
+// A feature session's own plain message that it is stuck (the note `act stuck-note` records), told once: those recorded since the
+// First Mate's last turn began, or in the last day when there was none. Null when there are none.
+export function stuckLine(project, since, at) {
+  const from = Number.isFinite(Date.parse(since)) ? Date.parse(since) : at.getTime() - 24 * HOUR_MS;
+  const notes = listEvents(stateDir(project), { report: () => {} })
+    .filter((e) => e.kind === 'note' && e.data?.about === 'stuck' && typeof e.data.work === 'string' && typeof e.data.words === 'string' && Date.parse(e.at) > from)
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).slice(0, STUCK_NOTES);
+  if (notes.length === 0) return null;
+  return notes.map((e) => `${e.data.work} is stuck: its session says "${e.data.words.replace(/\s+/g, ' ').trim()}" (sent ${e.data.at}).`).join(' ');
 }
 
 // What the director answered since the First Mate's last turn, and how the cards of a question that was stopped stand now.
@@ -382,7 +398,8 @@ export async function decide(input, deps = {}) {
     // reply is only read, under the same guards, to leave out the decision it answers.
     const typed = !writes || startedByScript(env) ? null : attempt(() => ownWords(input.prompt), null);
     const decisionLine = await within(() => decisionLineOf(desk, typed), waitMs);
-    const notes = [decisionLine, ...((await within(() => cardNotes({ project, input, since: seen.promptAt, at, desk, open }), waitMs)) ?? [])].filter((line) => typeof line === 'string');
+    const stuck = attempt(() => stuckLine(project, seen.promptAt, at), null);
+    const notes = [decisionLine, stuck, ...((await within(() => cardNotes({ project, input, since: seen.promptAt, at, desk, open }), waitMs)) ?? [])].filter((line) => typeof line === 'string');
     const reserve = (cards === null ? 0 : cards.length + 2) + notes.reduce((sum, line) => sum + line.length + 2, 0);
     // A survey not worked out in time is left to the briefing view, which takes the record's latest.
     const survey = want === 'briefing' ? (await within(() => surveyOf({ project, client, desk }), learnWaitMs)) ?? undefined : null;

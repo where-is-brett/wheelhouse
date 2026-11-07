@@ -880,6 +880,24 @@ async function question(ctx, work, rest) {
   await offerUnattended(ctx, views, work, { ...data, at });
 }
 
+// Records the session's own plain "stuck" message (cli.js stuck: a line in its questions.jsonl, named here by the time it was
+// written) as one note in the state, which the front desk shows once. A message already noted is not written again.
+async function stuckNote(ctx, work, rest) {
+  const [at, ...more] = rest;
+  if (typeof at !== 'string' || more.length > 0) refuse('Give the time the wake names: stuck-note <work> <time>');
+  const views = await ctx.views();
+  liveFeature(views, work);
+  const line = questionTrail(featurePaths(worktreeOf(ctx.project, views, work)).questions).stuck.find((n) => n.at === at);
+  if (line === undefined) refuse(`${work}'s questions file has no stuck message written at ${oneLine(at, 40)}`);
+  const noted = stateEvents(ctx.project).some((e) => e.kind === 'note' && e.data?.about === 'stuck' && e.data.work === work && e.data.at === at);
+  if (noted) {
+    ctx.say(`${work}'s stuck message of ${at} is already noted.`);
+    return;
+  }
+  await ctx.write('note', { about: 'stuck', work, at, words: line.why });
+  ctx.say(`Noted that ${work}'s session says it is stuck: ${oneLine(line.why, 200)}`);
+}
+
 // Sends a decision that fails its shape back to the session that raised it, on its next wake: what is missing, and, after
 // STUCK_AFTER failed tries in a row (counted in the session's questions.jsonl), to say it is stuck. Nothing reaches state.
 async function sendQuestionBack(ctx, views, work, q, problems) {
@@ -1612,7 +1630,7 @@ async function restart(ctx, work, rest) {
 // --- The command line ---
 
 const COMMANDS = {
-  start, 'plan-ready': planReady, build, pause, resume, question, 'extra-plan': extraPlan, ask, amend, merge, close, restart,
+  start, 'plan-ready': planReady, build, pause, resume, question, 'extra-plan': extraPlan, 'stuck-note': stuckNote, ask, amend, merge, close, restart,
 };
 const USAGE = `Commands: ${Object.keys(COMMANDS).join(', ')}, each followed by the work id`;
 

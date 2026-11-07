@@ -38,7 +38,7 @@
 import { reviewClear } from '../lib/review-verdict.js';
 import fs from 'node:fs';
 import path from 'node:path';
-import { featurePaths, briefHash, parseBrief, parseReport, readQuestions, readStatus } from '../feature/files.js';
+import { featurePaths, briefHash, parseBrief, parseReport, questionTrail, readQuestions, readStatus } from '../feature/files.js';
 import { readCapped, safeFeatureFolder } from '../feature/status.js';
 import { SLUG } from '../lib/build-loop.js';
 import { stateDir } from '../lib/paths.js';
@@ -191,6 +191,7 @@ function readFeature(work, worktree, checkout) {
   const p = featurePaths(worktree);
   const status = readStatus(p.status);
   const asked = readQuestions(p.questions);
+  const stuckNotes = questionTrail(p.questions).stuck;
   const brief = readCapped(p.brief, BRIEF_BYTES);
   let appetite = null;
   if (brief !== null) {
@@ -212,6 +213,8 @@ function readFeature(work, worktree, checkout) {
     questions: asked.questions.filter((q) => q.kind !== 'extra-plan').map((q) => q.id),
     extraPlans: asked.questions.filter((q) => q.kind === 'extra-plan').map((q) => q.id),
     skipped: asked.skipped,
+    // The session's own plain "stuck" messages (cli.js stuck), left out when it sent none.
+    ...(stuckNotes.length === 0 ? {} : { stuckNotes }),
     briefHash: brief === null ? null : briefHash(brief),
     appetite,
     report,
