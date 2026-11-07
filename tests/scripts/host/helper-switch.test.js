@@ -129,7 +129,7 @@ async function switching(fn) {
 const gateAsks = () => listEvents(stateDir('o__p'), { report: () => {} }).filter((e) => e.kind === 'gate-asks');
 const engineOn = async (client) => (await client.state.views({ project: 'o__p' })).engineOn;
 
-test('a project set up already gets it by an approved pull request', async () => {
+test('a project set up already gets it by an approved pull request', { skip: 'Archon is no longer in force from core cut part 3B; this goes with the code it tests in a later part' }, async () => {
   await switching(async ({ client, adapter, remote, base }) => {
     // Before the director confirms the switch, nothing is opened.
     assert.deepEqual(await client.engineSwitch({ project: 'o__p' }), { ok: true, step: 'off' });
@@ -171,7 +171,7 @@ test('a project set up already gets it by an approved pull request', async () =>
   });
 });
 
-test('a switch merged by hand on the host turns the engine on at the next step', async () => {
+test('a switch merged by hand on the host turns the engine on at the next step', { skip: 'Archon is no longer in force from core cut part 3B; this goes with the code it tests in a later part' }, async () => {
   await switching(async ({ client, adapter, remote }) => {
     confirmSwitch();
     const opened = await client.engineSwitch({ project: 'o__p' });
@@ -182,7 +182,7 @@ test('a switch merged by hand on the host turns the engine on at the next step',
   });
 });
 
-test('a switch whose default branch moved on is made again on its new head, and asks the approval for that', async () => {
+test('a switch whose default branch moved on is made again on its new head, and asks the approval for that', { skip: 'Archon is no longer in force from core cut part 3B; this goes with the code it tests in a later part' }, async () => {
   await switching(async ({ client, adapter, remote }) => {
     confirmSwitch();
     const opened = await client.engineSwitch({ project: 'o__p' });
@@ -211,7 +211,7 @@ test('a switch whose default branch moved on is made again on its new head, and 
   });
 });
 
-test('a switch closed on the host stays closed, and the engine off', async () => {
+test('a switch closed on the host stays closed, and the engine off', { skip: 'Archon is no longer in force from core cut part 3B; this goes with the code it tests in a later part' }, async () => {
   await switching(async ({ client, adapter }) => {
     confirmSwitch();
     const opened = await client.engineSwitch({ project: 'o__p' });
