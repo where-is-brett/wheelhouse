@@ -14,7 +14,7 @@ import { readHelperRecord } from '../host/helper-record.js';
 import { MARKETPLACE, claudeHome as defaultClaudeHome } from '../lineage/manifest.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { compareVersions } from '../lib/versions.js';
-import { computerId, engineDir, helperAddress, jobFolder, stateDir, wheelhouseHome } from '../lib/paths.js';
+import { helperAddress, jobFolder, stateDir, wheelhouseHome } from '../lib/paths.js';
 import { registeredProjects } from '../lib/projects.js';
 import { run as defaultRun } from '../lib/run.js';
 import { fileHash, recordUpdate } from '../health/own-files.js';
@@ -158,16 +158,6 @@ export function realRefreshes({ project, folder, newRoot, claudeHome, platform, 
     async agent() {
       return refreshAgentHome({ folder, newRoot, writeHome });
     },
-    async engine() {
-      const { engineChanges, applyEngine } = await import('../setup/engine-parts.js');
-      if (!fs.existsSync(engineDir())) return null;
-      const { agentOfProject } = await import('../agents/names.js');
-      const agent = typeof folder === 'string' ? agentOfProject(folder, { computerId: computerId() }) : null;
-      const changes = engineChanges({ node: process.execPath, root: newRoot, agent }).filter((c) => c.action !== 'agent-engine' || c.part === 'cli');
-      if (changes.length === 0) return null;
-      await applyEngine(changes, { record: () => {}, run: defaultRun, node: process.execPath, root: newRoot, platform });
-      return { ok: true, wrote: changes.filter((c) => c.kind === 'file').map((c) => c.target) };
-    },
   };
 }
 
@@ -252,7 +242,7 @@ export async function finish({
   project, journal, answer = null, events, enrolled, newRoot = PLUGIN_ROOT, folder, claudeHome = defaultClaudeHome(), platform = process.platform,
   to, from, client = helperClient(), refresh, old, say = () => {}, now = Date.now, sleep = pause, startHelper, hash = fileHash, record = recordUpdate,
   readRecord = readHelperRecord, startTimeOf = processStartTime, alive = pidAlive, address = helperAddress({ platform }), run = defaultRun,
-  user, cacheRoot = defaultCacheRoot(), kill, watcher, shape, addonNewer, heldNow = updateLockHeld,
+  user, cacheRoot = defaultCacheRoot(), kill, watcher, shape, addonNewer, heldNow = updateLockHeld, move = realMove,
 }) {
   // Only the job's own step runs this: the update lock is held and the journal has the finish step running. It never takes
   // the lock itself, and it runs only from the plugin cache folder of the tag the journal names.
@@ -274,7 +264,7 @@ export async function finish({
 
     // 1. The refreshes of section 6.5.
     const fresh = [];
-    for (const name of ['local', 'locked', 'agent', 'engine']) {
+    for (const name of ['local', 'locked', 'agent']) {
       if (progress.refreshed[name] === 'done') continue;
       let got;
       try { got = await refreshes[name](); } catch (error) { got = { ok: false, line: String(error?.message ?? error).replace(/\s+/g, ' ') }; }
@@ -323,6 +313,14 @@ export async function finish({
       save();
     }
 
+    // 3b. The move off Archon (core cut, design 6 item 1), at the quiet point the hand-over gives: the old helper has
+    // gone and the new one tends no Archon run. A move that must be tried again holds the update's last line.
+    let moved = null;
+    if (handing.done) {
+      try { moved = await move({ project, folder: dir, journal, progress, save, client }); } catch (error) { moved = { done: false, lines: [`The move off Archon stopped: ${String(error?.message ?? error).replace(/\s+/g, ' ')}`] }; }
+      if (moved && moved.done !== true) left.push(...moved.lines);
+    }
+
     // 4. The watcher, restarted from the new folder, only through stopWatcher and startWatcher.
     const lines = [];
     if (handing.done && handing.stays !== true && progress.watcher !== 'done') {
@@ -341,6 +339,7 @@ export async function finish({
     if (left.length > 0) return { ok: false, line: left.join(' ') };
     lines.push(`Wheelhouse ${version} is installed. Start a new session on this folder to use it.`);
     if (handing.line) lines.push(handing.line);
+    if (moved?.done === true) lines.push(...moved.lines);
     let newer = false;
     try { newer = (await addonNewer?.()) === true; } catch { newer = false; }
     if (newer) lines.push(ADDON_LINE);
@@ -349,6 +348,29 @@ export async function finish({
     if (two) lines.push(FOREMAN_LINE);
     return { ok: true, line: lines.join(' ') };
   }
+}
+
+// The move off Archon with the real helper, settings and connector. Archon's connector is built only for a project that
+// still stores Archon, and Archon on the computer is archived only once no other registered project stores it.
+async function realMove({ project, folder, journal, progress, save, client }) {
+  const [{ moveOffArchon }, { storedEngine }, { settingsViews }] = await Promise.all([
+    import('./engine-move.js'), import('../settings/effective.js'), import('../desk/mod-records.js'),
+  ]);
+  const stored = () => storedEngine(settingsViews(project));
+  if (progress.engine === undefined && stored() !== 'archon') return null;
+  const { packedArchon } = await import('../host/helper-main.js');
+  return moveOffArchon({
+    project,
+    folder,
+    journal,
+    progress,
+    save,
+    stored,
+    views: async () => (await client.state.views({ project }))?.views ?? null,
+    connector: packedArchon(),
+    client,
+    othersOnArchon: () => registeredProjects().some((p) => p.project !== project && storedEngine(settingsViews(p.project)) === 'archon'),
+  });
 }
 
 async function defaultShape(project, client) {

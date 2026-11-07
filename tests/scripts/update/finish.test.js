@@ -8,6 +8,7 @@ import {
   finish, helperCard, main, realRefreshes, STOP_IT, LEAVE_IT, WAIT_LONGER, ASK_AGAIN_MS,
 } from '../../../scripts/update/finish.js';
 import { openJournal } from '../../../scripts/update/journal.js';
+import { moveOffArchon } from '../../../scripts/update/engine-move.js';
 import { RESTART_LINE } from '../../../scripts/update/old-helper.js';
 import { readOwnFilesState } from '../../../scripts/health/own-files.js';
 import { startRun, markStep, addChanges, applyJsonKey } from '../../../scripts/setup/journal.js';
@@ -65,7 +66,7 @@ const oldStandIn = ({ proof = PROOF } = {}) => ({
   reprove: async () => proof,
 });
 
-const quietRefresh = () => ({ local: async () => null, locked: async () => null, agent: async () => null, engine: async () => null });
+const quietRefresh = () => ({ local: async () => null, locked: async () => null, agent: async () => null });
 
 // The job's state when it runs finish: the checks done and the finish step running.
 function setUp(name = 'proj') {
@@ -108,6 +109,7 @@ function deps(h, extra = {}) {
       old: oldStandIn(),
       heldNow: () => true,
       shape: async () => 1,
+      move: async () => null,
       watcher: {
         stopWatcher: async (project) => { watcherCalls.push(['stop', project]); return { stopped: false, why: 'not running' }; },
         startWatcher: (project, o) => { watcherCalls.push(['start', project, o.pluginRoot]); return { started: true }; },
@@ -196,16 +198,15 @@ test('finish: a refresh that fails is left, the others stand, and a second run d
     local: async () => { ran.push('local'); return { ok: true, wrote: [] }; },
     locked: async () => { ran.push('locked'); return ran.filter((r) => r === 'locked').length === 1 ? { ok: false, line: 'Locked\'s password was refused.' } : { ok: true, wrote: [] }; },
     agent: async () => { ran.push('agent'); return null; },
-    engine: async () => { ran.push('engine'); return null; },
   };
   const { options } = deps(h, { refresh });
   const first = await finish({ ...options, journal });
   assert.equal(first.ok, false);
   assert.match(first.line, /password was refused/);
-  assert.deepEqual(ran, ['local', 'locked', 'agent', 'engine']);
+  assert.deepEqual(ran, ['local', 'locked', 'agent']);
   const second = await finish({ ...options, journal });
   assert.equal(second.ok, true, second.line);
-  assert.deepEqual(ran.slice(4), ['locked'], 'only the refresh left ran again');
+  assert.deepEqual(ran.slice(3), ['locked'], 'only the refresh left ran again');
 }));
 
 test('finish: a current helper is not asked to retire, and the watcher is restarted from the new folder', () => withHome(async () => {
@@ -481,4 +482,34 @@ test('finish: the files written in Copilot\'s clean home are recorded with their
     assert.deepEqual(record.wrote.map((w) => w.file).sort(), [...written].sort());
     assert.ok(record.wrote.every((w) => typeof w.hash === 'string' && w.hash !== ''));
   } finally { fs.rmSync(folder, { recursive: true, force: true }); }
+}));
+
+test('finish: a project on Archon moves to the own engine after the hand-over, and a second run cancels and queues nothing again', () => withHome(async () => {
+  const journal = setUp();
+  const h = helper({ version: '0.2.7' });
+  const cancels = [];
+  const writes = [];
+  const connector = { inspect: async () => ({ status: 'running', branch: 'feature/x' }), act: async (runId, how) => { cancels.push([runId, how]); return { ok: true }; } };
+  const views = async () => ({ runs: { x: [{ kind: 'run', data: { runId: 'r1', state: 'running', work: 'x', engine: 'archon' } }] }, asks: {}, questions: {} });
+  const client = { state: { write: async (body) => { writes.push(body); return { ok: true }; } } };
+  const move = (args) => moveOffArchon({ ...args, client, stored: () => 'archon', views, connector, othersOnArchon: () => true });
+  const { options } = deps(h, { move });
+  const first = await finish({ ...options, journal });
+  assert.equal(first.ok, true, first.line);
+  assert.match(first.line, /own engine/);
+  assert.deepEqual(cancels, [['r1', { cancel: true }]]);
+  assert.equal(writes.filter((w) => w.kind === 'card').length, 1);
+  await finish({ ...options, journal });
+  assert.equal(cancels.length, 1, 'not cancelled twice');
+  assert.equal(writes.filter((w) => w.kind === 'card').length, 1, 'one removal card');
+}));
+
+test('finish: a move Archon does not answer holds the update until it runs again', () => withHome(async () => {
+  const journal = setUp();
+  const h = helper({ version: '0.2.7' });
+  const move = async () => ({ done: false, lines: ['Archon did not answer about run r1, so the move waits: run the update again.'] });
+  const { options } = deps(h, { move });
+  const got = await finish({ ...options, journal });
+  assert.equal(got.ok, false);
+  assert.match(got.line, /did not answer/);
 }));

@@ -39,7 +39,17 @@ export function effectiveSettings({ project = {}, profile = {}, now, retired }) 
     else if (!concepts.has(key)) out[key] = { value: structuredClone(SETTINGS[key].default), from: 'default' };
     // a concept the director knows appears only when set
   }
+  // Wheelhouse builds on its own engine only (core cut, design 4.3). A stored `archon` stays valid and loads, and the
+  // update reads it once, through storedEngine, to move the project off Archon; it is never in force.
+  if (out.engine) out.engine = { value: 'wheelhouse', from: 'default' };
   return out;
+}
+
+// The `engine` value a project or the profile still stores, ended values given way as above, or null: what the update
+// reads to know a project was on Archon before this release.
+export function storedEngine({ project = {}, profile = {}, now = Date.now() } = {}) {
+  const nowMs = instant(now);
+  return held(own(project, 'engine'), nowMs)?.value ?? held(own(profile, 'engine'), nowMs)?.value ?? null;
 }
 
 const SOURCE_WORDS = { profile: 'yours', project: 'this project', default: 'the default' };

@@ -177,33 +177,17 @@ test('step 4 settles again when live data or Apple signing now say otherwise', (
   assert.equal(stepFourDrift(undefined, live(LIVE_DATA.no)), false);
 });
 
-test('the recommended card gains the engine line and nothing else is asked', async () => {
-  const { engineLine } = await import('../../../scripts/setup/engine-parts.js');
+test('the recommended card names no build engine: setup installs Archon on no computer', () => {
   const product = { isNew: true, host: null, repo: null, name: 'tide-tables' };
   const without = oneCard({ folder: '/x/tide-tables', list: newProductChoices(), product, platform: 'darwin', toRun: [3, 6, 7, 10], count: 0 });
-  const withEngine = oneCard({ folder: '/x/tide-tables', list: newProductChoices(), product, platform: 'darwin', toRun: [2, 3, 6, 7, 10], count: 0 });
-  const lines = (c) => c.card.question.split('\n');
-  assert.deepEqual(lines(withEngine).filter((l) => !lines(without).includes(l)), [`- ${engineLine()}`]);
-  assert.match(engineLine(), /^Install the build engine, Archon, with its usage reporting off/);
-  assert.deepEqual(withEngine.card.options, without.card.options);
-  assert.deepEqual(withEngine.choices, without.choices);
-  // Windows has no engine yet, so no line.
-  const win = oneCard({ folder: '/x/t', list: [], product: { isNew: true, name: 't' }, platform: 'win32', toRun: [2, 3], count: 1 }).card.question;
-  assert.doesNotMatch(win, /build engine/);
-  // Nor on a Mac whose projects are all on GitLab: the engine builds on GitHub only.
-  const gitlab = oneCard({ folder: '/x/t', list: [], product: { isNew: false, host: 'gitlab', repo: 'a/t', name: 't' }, platform: 'darwin', toRun: [2, 3], count: 1, hosts: ['gitlab'] }).card.question;
-  assert.doesNotMatch(gitlab, /build engine/);
-});
-
-test('a project on another agent gets that agent\'s engine line in place of the core\'s', () => {
-  const product = { isNew: true, host: null, repo: null, name: 'tide-tables' };
+  const withTwo = oneCard({ folder: '/x/tide-tables', list: newProductChoices(), product, platform: 'darwin', toRun: [2, 3, 6, 7, 10], count: 0 });
+  assert.doesNotMatch(withTwo.card.question, /build engine|Archon/);
+  assert.deepEqual(withTwo.card.options, without.card.options);
+  assert.deepEqual(withTwo.choices, without.choices);
+  // Nor for a project on another agent, whatever line that agent gives.
   const agentLine = 'Install the build engine, Archon, with its usage reporting off, to run its steps on another agent.';
-  const card = oneCard({ folder: '/x/tide-tables', list: newProductChoices(), product, platform: 'darwin', toRun: [2, 3, 6, 7, 10], count: 0, agentLine });
-  const lines = card.card.question.split('\n').filter((l) => /build engine/.test(l));
-  assert.deepEqual(lines, [`- ${agentLine}`]);
-  // No engine step left, no line, whatever the agent.
-  const none = oneCard({ folder: '/x/tide-tables', list: newProductChoices(), product, platform: 'darwin', toRun: [3, 6, 7, 10], count: 0, agentLine });
-  assert.doesNotMatch(none.card.question, /build engine/);
+  const agent = oneCard({ folder: '/x/tide-tables', list: newProductChoices(), product, platform: 'darwin', toRun: [2, 3, 6, 7, 10], count: 0, agentLine });
+  assert.doesNotMatch(agent.card.question, /build engine/);
 });
 
 test('the backup question waits for where the project is kept, and comes once a local project says so', () => {

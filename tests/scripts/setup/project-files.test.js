@@ -1475,7 +1475,7 @@ test('a joining computer\'s step 7 lists only this computer\'s files and pins, w
   });
 });
 
-test('a second Mac joining a project on the engine gets its fetch mirror rule; a computer off the Mac does not', async () => {
+test('a second Mac joining a project on the engine gets its fetch mirror rule; a computer off the Mac does not', { skip: 'Archon is no longer in force from core cut part 3B; this goes with the code it tests in a later part' }, async () => {
   const { mirrorRulesFile } = await import('../../../scripts/setup/engine-parts.js');
   await withHome(async () => {
     const w = await world({ engine: 'archon' });

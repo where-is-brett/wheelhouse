@@ -285,7 +285,7 @@ test('stayAwake is on for exactly a goal\'s life', async () => {
   } finally { p.cleanup(); }
 });
 
-test('through the helper: the draft, the sheet\'s card, and a click on that card that earns the start', async () => {
+test('through the helper: the draft, the sheet\'s card, and a click on that card that earns the start', { skip: 'Archon is no longer in force from core cut part 3B; this goes with the code it tests in a later part' }, async () => {
   const p = await setUp();
   const engine = fakeEngine({ artefacts: p.artefacts });
   const at = '2026-11-01T01:00:00.000Z';

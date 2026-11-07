@@ -4,7 +4,6 @@
 // step 3's, tested in host.test.js). The first answer records the product's glossary entry and its
 // phase, which the prompt record signs from the click (rulings R38, R59); live data reaches step 7
 // through the answers; the step settles with no Go ahead.
-import { ENGINE_WRITES } from '../../../scripts/setup/questions.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -38,9 +37,6 @@ function answerStep3(folder, { realUsers, locked, at = T0 }) {
   if (locked) keepOne('locked', [LEVELS.locked, LEVELS.standard], locked);
   return answersFor(run.id);
 }
-
-// The records an answer sends, without the engine's settings, which a Mac's answer adds (ENGINE_WRITES).
-const noEngine = (list) => list.filter((s) => !['engine', 'engineLanes'].includes(s.body?.target?.data?.key));
 
 test('step 4 waits until step 3 has set up the project\'s records, and asks nothing meanwhile', async () => {
   await withProject(async ({ folder, plan, home }) => {
@@ -78,8 +74,7 @@ test('each answer writes its setting or configuration key, checked by the catalo
       const settings = [...Object.values(productAsk.writes.labels).flat(), ...productAsk.writes.typed].filter((w) => w.kind === 'setting');
       assert.ok(settings.length >= 3);
       for (const w of settings) {
-        if (w.data.key === 'phase') assert.deepEqual(w.data, { key: 'phase', value: phase });
-        else assert.ok(ENGINE_WRITES.some((e) => JSON.stringify(e) === JSON.stringify(w)), 'beside the phase, only the engine\'s settings');
+        assert.deepEqual(w.data, { key: 'phase', value: phase }, 'the phase only: setup starts no project on Archon');
         assert.doesNotThrow(() => checkSetting(w.data.key, w.data.value));
       }
       // No configuration key for real users (ruling R38): the phase is the one place it is kept.
@@ -94,7 +89,7 @@ test('each answer writes its setting or configuration key, checked by the catalo
       // The director types what the product is: the click records the glossary entry, and the
       // phase with its confirmation, in the project's state, then the answer.
       const sent = await answer(asked.ask.card, 'A menu for a small café, read by its regulars.');
-      assert.deepEqual(noEngine(sent).map((s) => s.route), ['write', 'record']);
+      assert.deepEqual(sent.map((s) => s.route), ['write', 'record']);
       const [entry, phased] = sent;
       assert.deepEqual(entry.body.kind, 'glossary');
       assert.deepEqual(entry.body.data, { term: 'Cafe-Menu', plain: 'A menu for a small café, read by its regulars.' });
@@ -154,7 +149,7 @@ test('the README\'s words, still taking shape, or a description left for later, 
     const asked = await plan(4);
     assert.deepEqual(asked.ask.card.options.map((o) => o.label), [PRODUCT.shaping, PRODUCT.later]);
     const later = await answer(asked.ask.card, PRODUCT.later);
-    assert.deepEqual(noEngine(later).map((s) => [s.route, s.body.target?.data.value]), [['record', 'before-launch']]);
+    assert.deepEqual(later.map((s) => [s.route, s.body.target?.data.value]), [['record', 'before-launch']]);
     // Suggest a change… records nothing and is no answer.
     assert.deepEqual(await answer(asked.ask.card, 'Suggest a change…'), []);
   });
@@ -194,7 +189,7 @@ test('a typed answer the engine refuses records nothing and claims nothing, so t
     assert.deepEqual(await answer(asked.ask.card, 'Tide tables for sailors?', { at: at(2) }), [], 'a first question records nothing');
     assert.equal(answersFor(findRun(folder).id)['4.product-before-launch'], undefined);
     const again = await answer(asked.ask.card, 'Tide tables for sailors?', { at: at(3) });
-    assert.deepEqual(noEngine(again).map((s) => [s.route, s.body.data?.plain ?? s.body.target?.data.value]), [['write', 'Tide tables for sailors?'], ['record', 'before-launch']]);
+    assert.deepEqual(again.map((s) => [s.route, s.body.data?.plain ?? s.body.target?.data.value]), [['write', 'Tide tables for sailors?'], ['record', 'before-launch']]);
     assert.equal(answersFor(findRun(folder).id)['4.product-before-launch'].text, 'Tide tables for sailors?');
     assert.equal((await plan(4)).ask.id, 'live-data', 'the first question answered');
   });
@@ -205,7 +200,7 @@ test('a typed answer the engine refuses records nothing and claims nothing, so t
     assert.deepEqual(await answer(asked.ask.card, 'Not sure.', { at: at(1) }), []);
     assert.deepEqual(await answer(asked.ask.card, 'you decide?', { at: at(2) }), [], 'a hand-back is refused every time');
     const later = await answer(asked.ask.card, PRODUCT.later, { at: at(3) });
-    assert.deepEqual(noEngine(later).map((s) => [s.route, s.body.target?.data.value]), [['record', 'before-launch']]);
+    assert.deepEqual(later.map((s) => [s.route, s.body.target?.data.value]), [['record', 'before-launch']]);
     assert.equal(answersFor(findRun(folder).id)['4.product-before-launch'].label, PRODUCT.later);
   });
 });
@@ -311,13 +306,13 @@ test('every card step 4 can ask, in every state it is built in, offers two to fo
   }
 });
 
-test('on a Mac, the product answer starts the project on the new engine for quick changes; elsewhere it does not', async () => {
+test('the product answer writes only the phase, on every platform: setup starts no project on Archon', async () => {
   await withProject(async ({ folder }) => {
     const step3 = answerStep3(folder, { realUsers: REAL_USERS.no });
-    for (const [platform, engine] of [['darwin', true], ['linux', false], ['win32', false]]) {
+    for (const platform of ['darwin', 'linux', 'win32']) {
       const asked = (await questionsStep().plan({ folder, answers: step3, platform })).ask;
       const settings = [...Object.values(asked.writes.labels), asked.writes.typed].map((list) => list.filter((w) => w.kind === 'setting').map((w) => w.data.key));
-      for (const keys of settings) assert.deepEqual(keys, engine ? ['phase', 'engine', 'engineLanes'] : ['phase'], platform);
+      for (const keys of settings) assert.deepEqual(keys, ['phase'], platform);
     }
   });
 });

@@ -628,7 +628,7 @@ test('on a Mac, an installer window not seen for two minutes of looks fails the 
   });
 });
 
-test('step 2 lists the engine folder, Archon\'s settings and the broker', async () => {
+test('step 2 lists the engine folder, Archon\'s settings and the broker', { skip: 'Archon is no longer in force from core cut part 3B; this goes with the code it tests in a later part' }, async () => {
   const { engineChanges, applyEngine, brokerLauncher, brokerText, engineWanted } = await import('../../../scripts/setup/engine-parts.js');
   const { engineDir, archonHome } = await import('../../../scripts/lib/paths.js');
   const { archonSettingsFile } = await import('../../../scripts/engine/archon/build.js');
@@ -668,7 +668,7 @@ test('step 2 lists the engine folder, Archon\'s settings and the broker', async 
   });
 });
 
-test('a refused engine install fails step 2 with its plain reason', async () => {
+test('a refused engine install fails step 2 with its plain reason', { skip: 'Archon is no longer in force from core cut part 3B; this goes with the code it tests in a later part' }, async () => {
   const { engineChanges, applyEngine, engineWanted } = await import('../../../scripts/setup/engine-parts.js');
   await withHome(async () => {
     const folder = fs.realpathSync.native(tempFolder('wh-proj '));
@@ -679,7 +679,7 @@ test('a refused engine install fails step 2 with its plain reason', async () => 
   });
 });
 
-test('a Mac whose projects are all on GitLab gets no engine in step 2', async () => {
+test('a Mac whose projects are all on GitLab gets no engine in step 2', { skip: 'Archon is no longer in force from core cut part 3B; this goes with the code it tests in a later part' }, async () => {
   const { engineChanges, applyEngine, engineWanted } = await import('../../../scripts/setup/engine-parts.js');
   // The engine builds on GitHub only: a project whose host isn't chosen yet may be on GitHub.
   assert.equal(engineWanted({ platform: 'darwin', hosts: ['gitlab'] }), false);

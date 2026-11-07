@@ -12,10 +12,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { engineDir, archonHome } from '../lib/paths.js';
 import { archonSettingsFile, archonSettingsOk, writeArchonSettings } from '../engine/archon/build.js';
-import { engineWanted, engineInstalled, POLICY_FILE, ARCHON_CONFIG_FILE, ENGINE_FILES, WORKTREE_PATH, mirrorRulesFile } from '../engine/parts.js';
+import { engineInstalled, POLICY_FILE, ARCHON_CONFIG_FILE, ENGINE_FILES, WORKTREE_PATH, mirrorRulesFile } from '../engine/parts.js';
 
 // What only reads, kept in scripts/engine/parts.js so the mod's bridge can reach it without setup's writers.
-export { engineWanted, engineInstalled, POLICY_FILE, ARCHON_CONFIG_FILE, ENGINE_FILES, WORKTREE_PATH, mirrorRulesFile };
+// Setup installs Archon on no computer and starts no project on it: from core cut part 3B the own engine is the only
+// engine (design 6 item 1). The parts below stay for the update's move and uninstall until part 4 lifts them out.
+export const engineWanted = () => false;
+export { engineInstalled, POLICY_FILE, ARCHON_CONFIG_FILE, ENGINE_FILES, WORKTREE_PATH, mirrorRulesFile };
 import { installEngine } from '../engine/install.js';
 import { agentEngineChanges, applyAgentEngine } from '../agents/engine-parts.js';
 import { newId } from './journal.js';

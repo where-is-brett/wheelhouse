@@ -1,7 +1,7 @@
 // tests/scripts/settings/effective.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { effectiveSettings, settingsText, settingWords, sayValue } from '../../../scripts/settings/effective.js';
+import { effectiveSettings, settingsText, settingWords, sayValue, storedEngine } from '../../../scripts/settings/effective.js';
 import { buildViews } from '../../../scripts/state/views.js';
 
 const entry = (key, value, extra = {}) => ({ key, id: `id-${key}`, at: '2026-10-18T08:00:00.000Z', value, before: null, ...extra });
@@ -159,4 +159,14 @@ test('the settings list never shows a retired key', () => {
 test('a key that is neither live nor retired is still ignored', () => {
   const e = effectiveSettings({ project: view(entry('nonsense', 1)), profile: {}, now: NOON, retired: RETIRED_LISTS });
   assert.equal(Object.hasOwn(e, 'nonsense'), false);
+});
+
+test('a stored Archon engine loads without an error, reads as Wheelhouse in force, and storedEngine still names it', () => {
+  const project = { engine: { key: 'engine', value: 'archon' } };
+  const got = effectiveSettings({ project, profile: {}, now: '2026-11-07T00:00:00Z' });
+  assert.deepEqual(got.engine, { value: 'wheelhouse', from: 'default' });
+  assert.match(settingsText(got), /Wheelhouse/);
+  assert.equal(storedEngine({ project, profile: {}, now: '2026-11-07T00:00:00Z' }), 'archon');
+  assert.equal(storedEngine({ project: {}, profile: { engine: { key: 'engine', value: 'archon' } } }), 'archon');
+  assert.equal(storedEngine({}), null);
 });

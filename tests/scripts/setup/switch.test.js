@@ -45,7 +45,7 @@ test('a piece mid-build on the old engine finishes there after the switch', () =
   assert.ok(!queueToStart(v, { now: NOW }).hold.some((h) => h.work === 'old'));
 });
 
-test('new quick work goes to the new engine after the switch', () => {
+test('new quick work goes to the new engine after the switch', { skip: 'Archon is no longer in force from core cut part 3B; this goes with the code it tests in a later part' }, () => {
   const before = views();
   assert.equal(onNewEngine(before, 'fresh', { now: NOW }), false);
   assert.ok(queueToStart(before, { now: NOW }).start.includes('fresh'), 'before the switch the old engine takes it');
@@ -57,7 +57,7 @@ test('new quick work goes to the new engine after the switch', () => {
   assert.equal(onNewEngine(after, 'planned', { now: NOW }), false);
 });
 
-test('a switched project stays on the old engine until its pull request merges', () => {
+test('a switched project stays on the old engine until its pull request merges', { skip: 'Archon is no longer in force from core cut part 3B; this goes with the code it tests in a later part' }, () => {
   // Confirmed, but the engine can't build the project yet: the old engine takes new quick work, and the new one has
   // none to start, since the helper gives the dispatcher no engine for the project before then.
   const waiting = views(ON_ARCHON, { engineOn: false });
@@ -70,7 +70,7 @@ test('a switched project stays on the old engine until its pull request merges',
   assert.ok(!queueToStart(on, { now: NOW }).start.includes('fresh'));
 });
 
-test('the engine is on for a project once its fetch-mirror rule is in the engine folder\'s list', () => {
+test('the engine is on for a project once its fetch-mirror rule is in the engine folder\'s list', { skip: 'Archon is no longer in force from core cut part 3B; this goes with the code it tests in a later part' }, () => {
   const engine = tempFolder('wh-engine ');
   assert.equal(engineReady('o__p', { engine }), false);
   fs.mkdirSync(path.join(engine, 'mirrors'), { recursive: true });
@@ -120,7 +120,7 @@ test("the switch's approval card is the merge gate's own, naming the switch", ()
   assert.match(card.question, /Pull request #8 for the switch to the new build engine has everything else it needs to merge/);
 });
 
-test("each visit asks the helper for the switch's next step, until the engine can build the project", async () => {
+test("each visit asks the helper for the switch's next step, until the engine can build the project", { skip: 'Archon is no longer in force from core cut part 3B; this goes with the code it tests in a later part' }, async () => {
   await withHome(async () => {
     writeProject('o__p', { folder: tempFolder('wh-p '), remoteUrl: 'https://github.com/o/p.git', host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
     const { computer, publicKey } = makeSigningKey();
@@ -161,14 +161,14 @@ test("each visit asks the helper for the switch's next step, until the engine ca
   });
 });
 
-test('off the Mac, a project on the engine is given no engine, so its health has no engine checks', () => {
+test('off the Mac, a project on the engine is given no engine, so its health has no engine checks', { skip: 'Archon is no longer in force from core cut part 3B; this goes with the code it tests in a later part' }, () => {
   const engineFor = (platform) => engineForProject({ adapter: () => ({ name: 'archon' }), views: () => ({ project: ON_ARCHON, profile: {} }), ready: () => true, platform })('o__p');
   assert.equal(engineFor('darwin').name, 'archon');
   assert.equal(engineFor('win32'), null);
   assert.equal(engineFor('linux'), null);
 });
 
-test('setup writes the fetch mirror\'s rule only where the engine runs', async () => {
+test('setup writes the fetch mirror\'s rule only where the engine runs', { skip: 'Archon is no longer in force from core cut part 3B; this goes with the code it tests in a later part' }, async () => {
   const { mirrorWanted } = await import('../../../scripts/setup/project-files.js');
   const on = { host: 'github', engine: 'archon', remoteUrl: 'https://github.com/o/p.git', platform: 'darwin' };
   assert.equal(mirrorWanted(on), true);
