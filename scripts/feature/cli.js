@@ -361,17 +361,13 @@ export async function answer({ client, worktree, questionId, noChange = false, a
   return { answer: label, ...kept };
 }
 
-const AUTHOR = {
-  GIT_AUTHOR_NAME: 'Wheelhouse', GIT_AUTHOR_EMAIL: 'wheelhouse@invalid', GIT_COMMITTER_NAME: 'Wheelhouse', GIT_COMMITTER_EMAIL: 'wheelhouse@invalid',
-};
-
 // The text of a record without its path comment, which is the one line that changes with the name it is kept under.
 const withoutPathLine = (text) => text.split('\n').slice(1).join('\n');
 const escaped = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-// Keeps the decision as a file in the worktree and commits it with `git commit -- <path>`, so nothing else staged goes in. Where
-// the very same record is already there it is not written again (only committed, if it was left uncommitted). Resolves with
-// { path, committed: true }, or null when the question can't be read from this piece's questions.
+// Writes the decision as a file in the worktree and nothing more: the session commits it with its next commit on the piece's
+// branch. Where the very same record is already there it is not written again. Resolves with { path }, or null when the question
+// can't be read from this piece's questions.
 async function keepRecord({ worktree, questionId, decision }) {
   if (typeof decision.at !== 'string' || Number.isNaN(Date.parse(decision.at)) || typeof decision.option !== 'string' || typeof decision.words !== 'string') {
     throw new CliError('The host helper gave a decision this could not keep as a record');
@@ -400,29 +396,14 @@ async function keepRecord({ worktree, questionId, decision }) {
   const same = taken.find((p) => named.test(p) && withoutPathLine(fs.readFileSync(path.join(worktree, ...p.split('/')), 'utf8')) === withoutPathLine(made.text));
   const target = same ?? made.path;
   if (same === undefined) {
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(worktree, ...target.split('/')), made.text);
-  }
-  const fenced = safeGit({ cwd: worktree, reach: 'local', look: 'each', list: 'project', timeoutMs: 30 * 1000, caller: 'feature' });
-  const git = async (args) => {
     try {
-      return await fenced(args, { env: { ...AUTHOR, GIT_TERMINAL_PROMPT: '0' }, input: '' });
-    } catch (e) {
-      throw new CliError(e.message);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(worktree, ...target.split('/')), made.text);
+    } catch (error) {
+      throw new CliError(`the decision record could not be written: ${error.message}`);
     }
-  };
-  const status = await git(['status', '--porcelain', '--', target]);
-  if (status.code !== 0) throw new CliError(`git could not read the decision record: ${firstLine(status.stderr)}`);
-  if (status.stdout.trim() !== '') {
-    // A folder that is on no branch has none to commit to: the file stays written, and it says so.
-    const onBranch = await git(['symbolic-ref', '-q', 'HEAD']);
-    if (onBranch.code !== 0) return { path: target, committed: false };
-    const added = await git(['add', '--', target]);
-    if (added.code !== 0) throw new CliError(`git could not add the decision record: ${firstLine(added.stderr)}`);
-    const committed = await git(['commit', '-q', '--no-verify', '--no-gpg-sign', '-m', `Keep the decision ${questionId}`, '--', target]);
-    if (committed.code !== 0) throw new CliError(`git could not commit the decision record: ${firstLine(committed.stderr)}. It is written as ${target}; commit it with git commit -- ${target}`);
   }
-  return { path: target, committed: true };
+  return { path: target };
 }
 
 // --- wait-for ---
@@ -872,8 +853,7 @@ export async function main(argv, {
       const got = await answer({ client: helper(), worktree, questionId: rest[0], noChange, applied });
       if (got.answer === null && got.own === undefined) out('There is no answer yet.\n');
       else out(got.answer === null ? `The director answered in their own words: ${got.own}\n` : `${got.answer}\n`);
-      if (got.record?.committed === true) out(`Kept the decision as ${got.record.path}, committed on this branch.\n`);
-      else if (got.record !== undefined) out(`Kept the decision as ${got.record.path}, but it was not committed: this folder is on no branch. Commit it once it is.\n`);
+      if (got.record !== undefined) out(`The decision record was written at ${got.record.path}. Commit it with your work on this branch.\n`);
       if (got.warning !== undefined) out(`No decision record was kept: ${got.warning}\n`);
       if (got.private === true) out('The director kept this answer private: no file was written in the project.\n');
     } else if (command === 'plan') {

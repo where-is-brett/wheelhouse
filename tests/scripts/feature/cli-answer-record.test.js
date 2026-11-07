@@ -1,6 +1,6 @@
 // tests/scripts/feature/cli-answer-record.test.js
-// `answer` keeps each answered decision as a file under docs/decisions/ on the piece's own branch (design section 6.6 of the
-// director's way of working), committed by itself with only that file in the commit. A private answer writes no file.
+// `answer` writes each answered decision as a file under docs/decisions/ in the piece's folder (design section 6.6 of the
+// director's way of working) and commits nothing: the session commits it with its work. A private answer writes no file.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -45,31 +45,32 @@ const helper = (decision, label = 'Show them') => ({ state: { answer: async () =
 const said = (extra = {}) => ({ at: ANSWERED, option: 'Show them', words: '', private: false, ...extra });
 const FILE = 'docs/decisions/2026-11-07-should-the-harbour-map-show-tide-times.md';
 
-test('answer writes and commits the record on the piece\'s branch', async () => {
+test('answer writes the record in the folder and commits nothing', async () => {
   const { tree, id } = await piece();
-  // Something else staged and something else changed: neither goes in the commit.
   put(path.join(tree, 'other.txt'), 'staged\n');
   git(tree, 'add', 'other.txt');
-  put(path.join(tree, 'loose.txt'), 'loose\n');
+  const head = git(tree, 'rev-parse', 'HEAD');
 
   const got = await answer({ client: helper(said()), worktree: tree, questionId: id });
-  assert.deepEqual(got, { answer: 'Show them', record: { path: FILE, committed: true } });
+  assert.deepEqual(got, { answer: 'Show them', record: { path: FILE } });
   const text = fs.readFileSync(path.join(tree, FILE), 'utf8');
   assert.match(text, /^<!-- docs\/decisions\/2026-11-07-should-the-harbour-map-show-tide-times\.md -->\n# Should the harbour map show tide times\?\n/);
   assert.match(text, /- \*\*Piece:\*\* w-tide-1\n/);
   assert.match(text, /- \*\*Options:\*\* A\. Tide times sit under each harbour \(A day; Can be undone\) · B\. The map stays as it is \(Nothing; Can be undone\)\n/);
   assert.match(text, /- \*\*Recommended:\*\* Show them\n- \*\*Chosen:\*\* Show them\n- \*\*The director's words:\*\* none\n$/);
   assert.equal(git(tree, 'rev-parse', '--abbrev-ref', 'HEAD'), 'feature/w-tide-1');
-  assert.deepEqual(git(tree, 'show', '--name-only', '--format=', 'HEAD').split('\n'), [FILE]);
+  // Nothing committed or staged by Wheelhouse: the file is untracked and the session commits it with its work.
+  assert.equal(git(tree, 'rev-parse', 'HEAD'), head);
   assert.equal(git(tree, 'diff', '--cached', '--name-only'), 'other.txt');
-  assert.equal(git(tree, 'status', '--porcelain', '--', FILE), '');
-  assert.ok(!/Co-Authored|Generated/i.test(git(tree, 'log', '-1', '--format=%B')));
+  assert.match(git(tree, 'status', '--porcelain', '--', 'docs'), /^\?\? docs\//);
 
-  // Reading it again keeps nothing twice.
+  // Reading it again finds the identical record and does not write it again.
+  const before = fs.statSync(path.join(tree, FILE)).mtimeMs;
   const again = await answer({ client: helper(said()), worktree: tree, questionId: id });
-  assert.deepEqual(again, { answer: 'Show them', record: { path: FILE, committed: true } });
-  assert.equal(git(tree, 'rev-list', '--count', 'HEAD'), '2');
+  assert.deepEqual(again, { answer: 'Show them', record: { path: FILE } });
+  assert.equal(fs.statSync(path.join(tree, FILE)).mtimeMs, before);
   assert.deepEqual(fs.readdirSync(path.join(tree, 'docs', 'decisions')), [path.basename(FILE)]);
+  assert.equal(git(tree, 'rev-parse', 'HEAD'), head);
 });
 
 test('the director\'s own words are kept as their own words', async () => {
@@ -98,7 +99,7 @@ test('a second record with the same question on the same day is kept as -2', asy
   const second = await ask({ worktree: tree, argv: ASK });
   const got = await answer({ client: helper(said({ option: 'Leave them out' }), 'Leave them out'), worktree: tree, questionId: second.id });
   assert.equal(got.record.path, FILE.replace('.md', '-2.md'));
-  assert.equal(git(tree, 'rev-list', '--count', 'HEAD'), '3');
+  assert.equal(git(tree, 'rev-list', '--count', 'HEAD'), '1');
 });
 
 const run = async (tree, id, client) => {
@@ -117,17 +118,25 @@ test('a private reply, end to end through the command, prints the answer, writes
   assert.equal(git(tree, 'status', '--porcelain', '--', 'docs'), '');
 });
 
-test('on a folder with no branch the record is written but not committed, and it says so', async () => {
+test('the command says where the record was written and to commit it with the work, on a branch or off one', async () => {
+  for (const detach of [false, true]) {
+    const { tree, id } = await piece();
+    if (detach) git(tree, 'checkout', '-q', '--detach');
+    const { code, heard } = await run(tree, id, helper(said()));
+    assert.equal(code, 0);
+    assert.equal(heard, `Show them\nThe decision record was written at ${FILE}. Commit it with your work on this branch.\n`);
+    assert.equal(fs.existsSync(path.join(tree, FILE)), true);
+    assert.equal(git(tree, 'rev-list', '--count', 'HEAD'), '1');
+  }
+});
+
+test('a record that cannot be written is a warning after the answer', async () => {
   const { tree, id } = await piece();
-  git(tree, 'checkout', '-q', '--detach');
+  // docs is a file, so the folder for the record can't be made.
+  put(path.join(tree, 'docs'), 'not a folder\n');
   const { code, heard } = await run(tree, id, helper(said()));
   assert.equal(code, 0);
-  assert.match(heard, /^Show them\nKept the decision as docs\/decisions\/.*\.md, but it was not committed: this folder is on no branch\./);
-  assert.ok(!/committed on this branch/.test(heard));
-  assert.equal(git(tree, 'rev-list', '--count', 'HEAD'), '1');
-  assert.equal(fs.existsSync(path.join(tree, FILE)), true);
-  const got = await answer({ client: helper(said()), worktree: tree, questionId: id });
-  assert.deepEqual(got, { answer: 'Show them', record: { path: FILE, committed: false } });
+  assert.match(heard, /^Show them\nNo decision record was kept: the decision record could not be written/);
 });
 
 test('a record that cannot be kept is a warning beside the answer, never a failure of it', async () => {
