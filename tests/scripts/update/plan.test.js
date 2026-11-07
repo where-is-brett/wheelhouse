@@ -34,3 +34,12 @@ test('plan: the release the checks step recorded comes first, and the installed 
   assert.equal((await carryOn(recorded)).plan.from, 'v0.2.6');
   assert.equal((await carryOn(journal({}, tempFolder('wh-jour-')))).plan.from, 'v0.2.7');
 });
+
+test('plan: a carry-on carries the account line the way a fresh plan does', async () => {
+  const j = journal({}, tempFolder('wh-jour-'));
+  const make = (account) => makePlan({ from: 'v0.2.7', journal: j, list: never, fetch: never, check: never, kind: never, account });
+  assert.deepEqual((await make(() => ({ ref: 'v0.2.9' }))).plan.account, { from: 'v0.2.9', to: 'v0.2.7' });
+  assert.equal((await make(() => ({ ref: 'v0.2.7' }))).plan.account, null, 'already at the target: no line');
+  assert.equal((await make(() => null)).plan.account, null, 'no declaration: no line');
+  assert.deepEqual((await make(() => ({ refused: 'not ours' }))).lines, ['not ours']);
+});

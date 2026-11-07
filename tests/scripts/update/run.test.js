@@ -260,3 +260,17 @@ test('run: an open change whose card is approved is handed to the helper to merg
   assert.equal(asked.length, 1);
   assert.deepEqual([asked[0].number, asked[0].release, asked[0].commit], [5, 'v0.2.7', NEWER]);
 }));
+
+test('run: the checks step records the release the project\'s own settings name as the one the update moves from, not the computer\'s', () => withHome(async () => {
+  // The computer runs v0.2.9 (so the plan's from is v0.2.9) while the project's settings name v0.2.6.
+  const dir = await project();
+  const steps = updateSteps({ project: 'p1', folder: dir, plan: { ...plan, from: 'v0.2.9' }, client: {}, fetch: async () => ({ ok: true, sha: NEWER }), check: async () => ({ ok: true }), claudeHome: tempFolder('wh-claude-'), mirror: tempFolder('wh-mirror-') });
+  const out = await steps[0].run();
+  assert.deepEqual(out.data, { tag: 'v0.2.7', sha: NEWER, from: 'v0.2.6', put: 'release' });
+}));
+
+test('run: where the project\'s settings name no release, the checks step keeps the plan\'s from', () => withHome(async () => {
+  const dir = tempFolder('wh-ur-');
+  const steps = updateSteps({ project: 'p1', folder: dir, plan: { ...plan, from: 'v0.2.9' }, client: {}, fetch: async () => ({ ok: true, sha: NEWER }), check: async () => ({ ok: true }), claudeHome: tempFolder('wh-claude-'), mirror: tempFolder('wh-mirror-') });
+  assert.equal((await steps[0].run()).data.from, 'v0.2.9');
+}));

@@ -97,6 +97,13 @@ export function approvalCard({ previous, release, commit }) {
   };
 }
 
+// The release the project's own settings name, read as the change reads them (the main version's file, else the working copy):
+// the release the update moves the project from, which may differ from the one this computer runs. Null when they name none.
+export async function projectRelease({ projectDir, run = defaultRun, committed = () => committedSettings({ projectDir, run }) }) {
+  const held = typeof committed === 'function' ? await committed() : [];
+  return namedRef(held[0] ?? readSettings(projectDir));
+}
+
 // Opens the project's reviewed change. `put` is 'release' (the update) or 'undo' (putting back `previous`). `projectDir` is the
 // project's main checkout, read and never written. `open({ branch, file, text, title, body, release, commit })` is how the change
 // is opened (it pushes the branch and calls the helper's /pr/open-release), resolving { ok, number } or { ok: false, refused }.
