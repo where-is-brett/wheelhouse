@@ -4,8 +4,7 @@
 # so a problem only the Mac shows up straight after the merge. A run started by hand (Actions, CI,
 # Run workflow) adds macOS or Windows where ticked. A pull request that changes only the design
 # documents or the build plans passes the test jobs without running the tests
-# (.github/scripts/plan.js). Checks the mod (validator, source, bridge imports and
-# the mod's tests), and checks the lineage manifest against fresh copies of the upstream skills.
+# (.github/scripts/plan.js). Checks the lineage manifest against fresh copies of the upstream skills.
 # all-checks passes only when every other job has, and is the one check the rule on main requires.
 name: CI
 
@@ -109,4 +108,5 @@ jobs:
           RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
           echo "Results: $RESULTS"
-          [ "$RESULTS" = "success success success success" ]
+          [ -n "$RESULTS" ] || exit 1
+          for r in $RESULTS; do [ "$r" = success ] || exit 1; done
