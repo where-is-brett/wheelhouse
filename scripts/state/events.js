@@ -16,13 +16,14 @@ import { SETUP_QUESTION_ID } from '../lib/setup-clicks.js';
 import { SEND_BACK } from '../lib/calm-words.js';
 import { WHERE } from '../cards/answered.js';
 import { isModelName } from '../gate/guardrails.js';
+import { AGENT_KINDS } from '../decisions/line.js';
 
 export const PLAIN_KINDS = [
   'request', 'ruling', 'level', 'glossary', 'idea', 'rejection', 'card', 'card-answer',
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
   'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey', 'column-ready', 'premium-rest', 'chat-steer',
-  'run', 'ask', 'cost', 'preview', 'lesson', 'incident-closed', 'reproduced', 'brief', 'slept',
+  'run', 'ask', 'cost', 'preview', 'lesson', 'incident-closed', 'reproduced', 'brief', 'slept', 'agent-call',
 ];
 // `control-file` is the watcher's own finding (ruling P7-33): signed, so no session can write one. So is `usage-card`,
 // the front desk's session start's offer (design section 14.6): a click on its card's switch is the director's
@@ -388,6 +389,10 @@ const PLAIN_SHAPES = {
   preview: { must: ['work', 'head', 'folder', 'pages'], may: [] },
   // A lesson a work taught, for the next run to read.
   lesson: { must: ['work', 'text'], may: [] },
+  // A call a session made on its own side of the decision line (design section 5 of the director's way of working), from its
+  // decision log: when it was logged (`at`), what it decided, the options it saw, why, and its kind (one of the agents').
+  // Unsigned: it informs the digest and the director's pull-back, and decides nothing.
+  'agent-call': { must: ['work', 'at', 'decided', 'options', 'why', 'kind'], may: [] },
   // The end of a red-main incident: the incident and why it ended.
   'incident-closed': { must: ['incident', 'why'], may: [] },
   // A bug's reproduction, kept once for its work: the commit that proved it red, its done check and its test files.
@@ -542,6 +547,12 @@ function checkPlain(kind, data) {
   } else if (kind === 'lesson') {
     slug('work');
     text('text');
+  } else if (kind === 'agent-call') {
+    slug('work');
+    for (const k of ['decided', 'why']) text(k);
+    if (!ISO_TIME.test(data.at)) bad('needs at to be a time such as 2026-11-08T01:00:00.000Z');
+    if (!Array.isArray(data.options) || data.options.length < 2 || !data.options.every(isText)) bad('needs options to be a list of two or more');
+    if (!AGENT_KINDS.includes(data.kind)) bad(`needs kind to be one of ${AGENT_KINDS.join(', ')}: any other kind is the director's to decide`);
   } else if (kind === 'question') {
     slug('work');
     const named = typeof data.id === 'string' ? questionIdOf(data.id) : null;

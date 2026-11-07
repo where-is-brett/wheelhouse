@@ -2,6 +2,7 @@
 // The commands a feature session runs, as `node "<pluginRoot>/scripts/feature/cli.js" <command> …`:
 //   ask      writes a question for the director and prints its id; with --kind build-command,
 //            asks for build commands on Windows (design section 12.2)
+//   log      adds one call you made on your own side of the decision line to the piece's log (decisions.jsonl)
 //   answer   prints the director's answer to a question, once it is signed
 //   plan     records the plan just written, in plan.json, for the status and the foreman
 //   report   checks report.md and that it holds every ruling kept, then stamps it with what built it
@@ -33,6 +34,7 @@ import { REPORT_WORDS } from '../lib/build-loop.js';
 import { readConfig } from '../gate/guardrails.js';
 import { BUILD_QUESTION_LABELS, BUILD_QUESTION_OPTIONS, isConfiguredBuildCommand } from '../protection/windows-builds.js';
 import { startedAsScript } from '../lib/started-as-script.js';
+import { appendCall } from '../decisions/log.js';
 
 // An error whose message is said to the session as it is.
 export class CliError extends Error {}
@@ -143,7 +145,7 @@ function buildWhat(worktree, commands) {
 // session's, and each command must be local git or one of the configuration's build commands,
 // as the helper reads it from the default branch, never the working copy.
 async function buildQuestion(found, { worktree, client }) {
-  for (const flag of ['what', 'option', 'recommend', 'level', 'plan']) {
+  for (const flag of ['what', 'option', 'recommend', 'level', 'plan', 'about']) {
     if (found[flag] !== undefined) throw new CliError(`--${flag} is not given for a build-command question: Wheelhouse writes it`);
   }
   const commands = [...new Set((found.command ?? []).map((c) => c.trim()))];
@@ -180,10 +182,14 @@ async function buildQuestion(found, { worktree, client }) {
 // (by the composer's own rules: at most four options, none a button that puts a card off but a
 // build-command question's own Not now, words that fit the card) is refused, so it never waits unasked.
 export async function ask({ worktree, argv, client }) {
-  const found = flagsOf(argv, ['kind', 'what', 'why', 'option', 'recommend', 'level', 'plan', 'command']);
+  const found = flagsOf(argv, ['kind', 'what', 'why', 'option', 'recommend', 'level', 'plan', 'command', 'about']);
   const kind = single(found, 'kind') ?? 'question';
   if (!QUESTION_KINDS.includes(kind)) throw new CliError(`--kind is ${QUESTION_KINDS.join(', ')}`);
   const why = needed(found, 'why');
+  // The kind of call the question is about (the decision line): a director's kind, or one the line doesn't know, comes at level 3 or 4.
+  const about = single(found, 'about')?.trim();
+  if (found.about !== undefined && about === '') throw new CliError('--about needs the kind of call this is about');
+  if (about !== undefined && kind !== 'question') throw new CliError('--about is only for a plain question');
   const asked = kind === 'build-command' ? await buildQuestion(found, { worktree, client }) : plainQuestion(found, kind);
 
   const brief = readBriefOrSay(worktree);
@@ -192,7 +198,7 @@ export async function ask({ worktree, argv, client }) {
   const id = nextQuestionId(p.questions, brief.work);
   const { what, ...rest } = asked;
   const question = { id, kind, what, why, ...rest };
-  const problem = kind === 'extra-plan' ? null : questionProblem({ ...question, work: brief.work });
+  const problem = kind === 'extra-plan' ? null : questionProblem({ ...question, work: brief.work, ...(about === undefined ? {} : { decides: about }) });
   if (problem !== null) throw new CliError(`This question can't be put to the director as a card, so it wasn't asked: ${problem}`);
   const kept = readCapped(p.questions, QUESTIONS_BYTES);
   // A file that is there but can't be read (a link, a folder) must not be replaced.
@@ -232,6 +238,19 @@ export async function answer({ client, worktree, questionId, noChange = false })
   if (said.answer === null) return { answer: null };
   if (typeof said.answer !== 'string' || said.answer === '') throw new CliError('The host helper gave an answer this could not read');
   return { answer: said.answer };
+}
+
+// --- log ---
+
+// Adds one call to the piece's log: what the session decided on its own side of the decision line, the options it saw and
+// why. A director's kind is refused, with the words to ask instead. Returns the line kept.
+export function log({ worktree, argv, now }) {
+  const found = flagsOf(argv, ['decided', 'option', 'why', 'kind']);
+  const fail = (message) => { throw new CliError(message); };
+  return appendCall({
+    worktree, decided: single(found, 'decided'), options: found.option, why: single(found, 'why'), kind: single(found, 'kind'), fail,
+    ...(now === undefined ? {} : { now }),
+  });
 }
 
 // --- report ---
@@ -431,7 +450,7 @@ export async function openPr({ client, worktree, argv }) {
 
 // --- The command line ---
 
-const COMMANDS = ['ask', 'answer', 'plan', 'report', 'push', 'pull', 'open-pr'];
+const COMMANDS = ['ask', 'log', 'answer', 'plan', 'report', 'push', 'pull', 'open-pr'];
 
 // Runs a command and resolves with the exit code. `out` and `err` take text to show.
 export async function main(argv, {
@@ -447,6 +466,9 @@ export async function main(argv, {
 
     if (command === 'ask') {
       out(`${(await ask({ worktree, argv: rest, client: helper() })).id}\n`);
+    } else if (command === 'log') {
+      log({ worktree, argv: rest });
+      out('Logged.\n');
     } else if (command === 'answer') {
       const noChange = rest.length === 2 && rest[1] === '--no-change';
       if (rest.length !== 1 && !noChange) throw new CliError('Give the id of the question: answer <questionId>, and --no-change after it when the answer needs no change to the code');

@@ -9,7 +9,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { featurePaths, openRegular, parseBrief, parseReport, readQuestions } from './files.js';
+import { featurePaths, openRegular, parseBrief, parseReport, readCalls, readQuestions } from './files.js';
 import { findRepoRoot } from '../hooks/kit.js';
 import { projectForFolder } from '../lib/projects.js';
 import { wheelhouseHome } from '../lib/paths.js';
@@ -475,4 +475,38 @@ export function captureRulings({ worktree, feature }) {
   const lead = kept.text === '' || kept.text.endsWith('\n') ? '' : '\n';
   writeWhole(file, `${kept.text}${lead}${added.map((r) => JSON.stringify(r)).join('\n')}\n`);
   return added;
+}
+
+// --- The decision log's calls ---
+
+// How many of decisions.jsonl's calls the project's record already holds, kept as a number in decisions.sent, so a call
+// reaches the record once and a later status pass sends only what was logged since. Unreadable reads as none sent.
+function sentCalls(file) {
+  const text = readCapped(file, SMALL_BYTES);
+  return text !== null && /^\d+\s*$/.test(text) ? Number(text) : 0;
+}
+
+// Sends the calls in decisions.jsonl that the record doesn't hold yet, oldest first, each as an `agent-call` event written
+// through `write(data) -> Promise<boolean>` (the helper's state write: the sandbox can't write the record itself). A call
+// is counted sent only once `write` says it was taken, and the first one not taken ends the pass, so none is skipped or
+// repeated. The worktree is removed after the merge, so the record is where the calls last. Returns the calls sent.
+export async function captureCalls({ worktree, work, write }) {
+  if (!safeFeatureFolder(worktree)) return [];
+  const p = featurePaths(worktree);
+  const marker = path.join(p.dir, 'decisions.sent');
+  const calls = readCalls(p.decisions).calls;
+  let sent = sentCalls(marker);
+  const done = [];
+  while (sent < calls.length) {
+    const { v: _v, ...call } = calls[sent];
+    let taken = false;
+    try {
+      taken = (await write({ work, ...call })) === true;
+    } catch { /* not taken: the next pass tries again */ }
+    if (!taken) break;
+    sent += 1;
+    done.push(calls[sent - 1]);
+    writeWhole(marker, `${sent}\n`);
+  }
+  return done;
 }

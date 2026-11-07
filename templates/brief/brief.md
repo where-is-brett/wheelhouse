@@ -46,6 +46,26 @@ Turn each line into a test before any code. When those tests pass, the work is d
 - **Build commands on Windows.** Here a build command is allowed only by a click in this session itself, so no card can grant one. Before your first build command, ask once with the `ask` below, naming the commands and telling the director to open this session ({{work}}) and click Allow there when it asks; then end your turn. When woken, run them, and never ask again for a command you have asked about.
 <!-- builds:end -->
 
+# The decision line
+
+Anything that shapes what the product does, costs money or is hard to undo is the director's. How it is built is yours.
+
+| The director's: ask first, with `--about <kind>` | Yours: decide, and log it |
+|---|---|
+| `behaviour`: what users see, get or can do | `structure`: internal structure, refactors, naming |
+| `algorithm`: how things are ranked, scored, summarised, priced, chosen or matched, even deep in the code | `bug-fix`: a fix that changes no behaviour |
+| `cost`: a new paid service, API or infrastructure | `tests`: the test approach |
+| `data-model`: database or schema changes, any migration of real data | `performance`: work that changes no result |
+| `security`: auth, permissions, secrets | `minor-dependency`: patch and minor updates |
+| `public-interface`: public APIs, command-line flags, file formats, data contracts | `library-in-stack`: a library inside the stack already in use |
+| `major-dependency`: a new major dependency or framework, or swapping one | `tooling`: tooling, CI and build changes |
+| `deletion`: deleting data or removing a feature | |
+| `rewrite`: a large rewrite, or a new service or app | |
+
+- **When unsure, it is the director's: ask.** A call you can't place on the right side is the director's.
+- A director's call is always a question at decision level 3 or 4: `{{cli}} ask --about <kind> …` refuses a lower level.
+- **Log every call you make on your own side** with `{{cli}} log --decided "<what you decided>" --option "<an option you saw>" --option "<another>" --why "<why>" --kind <one of the right-hand kinds>`. Give two or more options. `log` refuses a director's kind. The director reads the log and can pull a call back.
+
 # How to ask the director
 
 Nobody reads this chat. Never use `AskUserQuestion`. To ask, write a question and pause:

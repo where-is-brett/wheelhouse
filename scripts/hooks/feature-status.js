@@ -20,12 +20,16 @@ import { runAndExit, worktreeRoot } from './kit.js';
 import { featureSlug } from './session-start.js';
 import { featurePaths, readStatus, writeStatus } from '../feature/files.js';
 import {
-  buildStatus, captureRulings, findLedger, loadFeature, planIn, readBrief, readCapped, safeFeatureFolder, writeWhole, SMALL_BYTES,
+  buildStatus, captureCalls, captureRulings, findLedger, loadFeature, planIn, readBrief, readCapped, safeFeatureFolder, writeWhole, SMALL_BYTES,
 } from '../feature/status.js';
 import { prepareOnToolUse } from './context-gauge.js';
 import { startedAsScript } from '../lib/started-as-script.js';
+import { helperClient } from '../host/helper-client.js';
+import { withinBudget } from './pending.js';
 
 export const THROTTLE_MS = 5000;
+// How long one call waits for the helper to take it.
+const CALL_BUDGET_MS = 3000;
 const SESSION_ID = /^[A-Za-z0-9_-]{1,128}$/;
 
 const checkedFile = (p) => path.join(p.dir, 'checked.json');
@@ -89,7 +93,7 @@ export async function decide(input, options = {}) {
   return warning;
 }
 
-async function keepStatus(input, { now = () => new Date(), answered, slice } = {}) {
+async function keepStatus(input, { now = () => new Date(), answered, slice, writeCall } = {}) {
   const found = featureWorktree(input.cwd);
   if (found === null) return undefined;
   const { root, brief } = found;
@@ -120,6 +124,17 @@ async function keepStatus(input, { now = () => new Date(), answered, slice } = {
       if (!sameStatus(readStatus(p.status), next)) writeStatus(p.status, next);
     });
     after.at = nowMs;
+  }
+  // The decision log's calls go to the project's record, since the worktree is removed after the merge. Nothing is asked of the
+  // helper unless a call is waiting to go; one that can't go now goes at a later pass.
+  if (due || input.hook_event_name !== 'PostToolUse') {
+    const send = writeCall ?? (async (data) => {
+      const got = await withinBudget(Date.now() + CALL_BUDGET_MS)(helperClient().state.write({ cwd: root, kind: 'agent-call', data }));
+      return got?.ok === true;
+    });
+    try {
+      await captureCalls({ worktree: root, work: brief.work, write: send });
+    } catch { /* a later pass sends them */ }
   }
   attempt(() => writeJson(checkedFile(p), after));
   return undefined;

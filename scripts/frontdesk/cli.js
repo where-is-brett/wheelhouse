@@ -27,6 +27,9 @@
 //                   hands a change the director suggested on a waiting approval or CI push card to
 //                   the build: the work re-stated with the change, in the front desk's own words, as
 //                   its title; prints the one line to say
+//   pull-back <call id> [--change]
+//                   the director's "I'd have wanted to decide that" about a call an agent logged on its own side of the decision line:
+//                   it becomes a ruling (with its confirm card), and with --change an intake request to change what was built as well
 //   ask-bosun <work>
 //                   the director's "fix it" or "ship it" about work with an open pull request: the helper puts the
 //                   Bosun's question to them in its own fixed words (fix the findings or restart the builder, or stop the
@@ -126,7 +129,7 @@ export const RECORD_KINDS = Object.freeze([
   'work', 'amendment', 'incident', 'note', 'brief',
 ]);
 export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey', 'brief']);
-const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'note', 'decision'];
+const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'note', 'decision', 'pull-back'];
 // How long `confirm` waits for the helper: one window at a time on the computer, so it may wait for another's.
 const CONFIRM_WAIT_MS = 3 * WINDOW_MS;
 export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
@@ -752,6 +755,41 @@ export async function askBosun({ client, cwd, work }) {
   return { work, id: got.id, say: 'Asked: the Bosun decides what happens to its pull request. Run cards and ask the card it gives.' };
 }
 
+// --- pull-back ---
+
+const PULL_WORDS = 160;
+
+// The director's "I'd have wanted to decide that" about a call an agent made on its own side of the decision line (the
+// decision log, design section 5). The call is named by its id, or the start of it (six characters or more). It becomes a ruling
+// for the future, which waits for the director's confirm card like any ruling, and with `change` an intake request to change
+// what was built as well. Resolves with { call, ruling, card, request?, say }.
+export async function pullBack({ client, cwd, call, change = false, now, makeId }) {
+  if (typeof call !== 'string' || !/^[0-9a-f-]{6,36}$/.test(call)) throw new CliError('Give the call by its id, or at least its first six characters: pull-back <call id> [--change]');
+  const got = await deskOf(client, cwd).read('waiting', { calls: true });
+  if (got?.ok !== true || !Array.isArray(got.data?.calls)) throw new CliError(said(got, 'The host helper gave no calls'));
+  const found = got.data.calls.filter((c) => c.id === call || c.id.startsWith(call));
+  if (found.length === 0) throw new CliError(`No logged call starts with ${call}`);
+  if (found.length > 1) throw new CliError(`More than one logged call starts with ${call}: give more of its id`);
+  const [chosen] = found;
+  const mark = `[call ${chosen.id.slice(0, 8)}]`;
+  const { views } = await viewsOf(client, cwd);
+  if ((Array.isArray(views.rulebook) ? views.rulebook : []).some((r) => typeof r?.words === 'string' && r.words.includes(mark))) {
+    throw new CliError(`That call was pulled back already ${mark}`);
+  }
+  const decided = flat(chosen.decided).slice(0, PULL_WORDS);
+  const words = `Pulled back ${mark}: "${decided}" (${chosen.work}, ${chosen.kind}). A call like this is the director's to decide first.`;
+  const made = await record({ client, cwd, kind: 'ruling', input: { words, reason: 'The director pulled back a call from the decision log', scope: 'project' }, now, ...(makeId ? { makeId } : {}) });
+  const out = { call: chosen.id, ruling: made.id, card: made.card };
+  if (change) {
+    const request = await write(client, cwd, 'request', { words: `Change what ${chosen.work} built: it decided "${decided}" on its own, and the director pulled that call back.`, via: 'chat' });
+    out.request = request.id;
+  }
+  out.say = change
+    ? 'Pulled back, and a request to change what was built is with the intake. The ruling waits for your confirmation.'
+    : 'Pulled back. The ruling waits for your confirmation, and calls like this come to you first from now on.';
+  return out;
+}
+
 export const DROPPED = 'Dropped: it will not be built.';
 
 // Ends a piece of work the director asked to drop (a copy of one already queued, or a request they have changed their
@@ -1309,6 +1347,10 @@ export async function main(argv, {
     } else if (command === 'drop') {
       if (rest.length !== 1 || rest[0] === '') throw new CliError('Give the work to drop: drop <work id>');
       json(await drop({ client: helper, cwd: here, work: rest[0] }));
+    } else if (command === 'pull-back') {
+      const change = rest.length === 2 && rest[1] === '--change';
+      if ((rest.length !== 1 && !change) || rest[0] === '') throw new CliError('Give the call: pull-back <call id>, and --change after it to change what was built as well');
+      json(await pullBack({ client: helper, cwd: here, call: rest[0], change, now, ...(makeId ? { makeId } : {}) }));
     } else if (command === 'ask-bosun') {
       if (rest.length !== 1 || rest[0] === '') throw new CliError('Give the work: ask-bosun <work id>');
       json(await askBosun({ client: helper, cwd: here, work: rest[0] }));

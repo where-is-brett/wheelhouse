@@ -13,6 +13,7 @@ import { cardButtons } from '../cards/buttons.js';
 import { dataHash } from '../state/events.js';
 import { cardOutcomes, latestFor } from '../state/views.js';
 import { decisionsFrom } from '../decisions/pending.js';
+import { callsFrom } from '../decisions/calls.js';
 import { answeredWords, askOf, subjectOf } from '../cards/answered.js';
 import { sinceLine } from '../cards/panel-words.js';
 import { contextText } from './context.js';
@@ -333,7 +334,9 @@ const VIEWS = {
       ? { outcomes: decidedOutcomes(source.events(), source.enrolled?.() ?? [], new Date(args.outcomes.since)) } : {};
     // The decisions waiting and answered, numbered as the chat shows them (scripts/decisions/pending.js).
     const decisions = typeof source.events === 'function' ? { decisions: decisionsFrom(source.events(), source.enrolled?.() ?? []) } : {};
-    return { ok: true, data: { ...got, numbered, ...given, ...decisions }, lines };
+    // With `calls: true`, the calls the agents logged on their own side of the decision line, for the director to pull one back.
+    const calls = args.calls === true && typeof source.events === 'function' ? { calls: callsFrom(source.events()) } : {};
+    return { ok: true, data: { ...got, numbered, ...given, ...decisions, ...calls }, lines };
   },
 
   async card(args, source) {

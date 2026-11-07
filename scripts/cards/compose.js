@@ -22,6 +22,7 @@ import { glossaryOf, termsIn } from '../frontdesk/glossary.js';
 import { normaliseWords } from '../lib/words.js';
 import { BUILD_QUESTION_OPTIONS } from '../protection/windows-builds.js';
 import { baselineWording } from '../lib/measures-clicks.js';
+import { DIRECTOR_LEVEL, sideOf } from '../decisions/line.js';
 
 // The kind in plain words, at most CARD.header characters; the director reads these.
 export const HEADERS = Object.freeze({
@@ -462,6 +463,13 @@ export function composeCard(input) {
   if (kind === 'uninstall' && level !== 4) fail(kind, 'level', 'must be 4: it removes the checks that guard the project');
   // The premium model's Yes writes its pin into the routing, a guardrail change (design section 14.6), so its card is level 4.
   if (kind === 'premium' && level !== 4) fail(kind, 'level', 'must be 4: its Yes changes the routing table');
+  // A call on the director's side of the decision line (design section 5) is always a card at level 3 or 4. `decides` names
+  // the kind of call a question or answer card is about; a kind the line doesn't know is the director's.
+  if (input.decides !== undefined) {
+    if (kind !== 'answer' && kind !== 'question') fail(kind, 'decides', 'belongs to a question or an answer card only');
+    if (typeof input.decides !== 'string' || input.decides.trim() === '') fail(kind, 'decides', 'must be the kind of call it is about');
+    if (sideOf(input.decides) === 'director' && level < DIRECTOR_LEVEL) fail(kind, 'level', `must be 3 or 4: "${input.decides}" is a call the director decides`);
+  }
   const said = input.said === undefined ? undefined : flat(words(kind, 'said', input.said));
   const what = said === undefined ? words(kind, 'what', input.what) : `You said: ${said.replace(/[.\s]+$/, '')}. ${SAID_ASKS} ${words(kind, 'what', input.what)}`;
   const why = words(kind, 'why', input.why);
@@ -623,6 +631,7 @@ function plainAnswerInput(data, work, { joiners = [], saidBefore = null } = {}) 
     // A build-command question's commands, so its own Not now is offered (see offered).
     ...(Array.isArray(data.commands) && data.commands.length > 0 ? { commands: data.commands } : {}),
     ...(joiners.length === 0 ? {} : { joiners: joiners.map((j) => j.id) }),
+    ...(typeof data.decides === 'string' ? { decides: data.decides } : {}),
     ...(said === null ? {} : { saidBefore: said }),
   };
 }
