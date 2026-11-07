@@ -2,6 +2,8 @@
 
 # Wheelhouse: the build loop and lineage
 
+> **Parked or reversed on 7 November 2026,** see `docs/specs/2026-11-07-core-cut-design.md`. Changed: "Superpowers' and Matt Pocock's skills used as they are" becomes Superpowers alone, with Wheelhouse's copies of the skills Superpowers lacks (core cut, section 5). What is parked, and how it comes back, is in `docs/parked.md`.
+
 **Status:** approved by the director on 18 October 2026. It completes the main design, `docs/specs/2026-10-17-wheelhouse-design.md`, which left open how the foreman runs work from approval to merged code. Where the two differ, this document wins; the main design's sections 4, 5.4, 7, 8, 10 and 12.4 point here.
 
 **What it covers:**

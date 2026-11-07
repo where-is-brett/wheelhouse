@@ -2,6 +2,8 @@
 
 # Unattended goals: design
 
+> **Parked or reversed on 7 November 2026,** see `docs/specs/2026-11-07-core-cut-design.md`. Parked. Goals come back later on the own engine, with their own design (core cut, section 4.2). What is parked, and how it comes back, is in `docs/parked.md`.
+
 **Status:** approved by the director on 1 November 2026, who took every recommendation in section 15. Decision 1 is replaced by decisions 4 and 5 of `docs/specs/2026-11-01-delegated-decisions-design.md` (the delegated decisions design). Its build plan is `docs/superpowers/plans/2026-11-01-unattended-goals.md`. Nothing of a goal is built yet.
 
 **What it adds.** The director hands Wheelhouse one well-defined goal with its bounds, leaves for about 8 hours, and comes back to a report. Where this design differs from `docs/specs/2026-10-17-wheelhouse-design.md` (the main design) or `docs/specs/2026-10-29-wheelhouse-on-archon-design.md` (the Archon design), this one wins. It builds on `docs/specs/2026-10-31-local-checks-and-git-alone-design.md` and changes nothing in it. Where it differs from the delegated decisions design, that one wins, as its section 14 states; the text below has been brought into line with it.
