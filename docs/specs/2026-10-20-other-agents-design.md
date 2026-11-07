@@ -2,6 +2,8 @@
 
 # Wheelhouse with other coding agents, starting with GitHub Copilot: design
 
+> **Parked or reversed on 7 November 2026,** see `docs/specs/2026-11-07-core-cut-design.md`. Reversed: Copilot and Lean are parked, and Claude Code is the only agent. The agent seam stays (core cut, section 4.2). What is parked, and how it comes back, is in `docs/parked.md`.
+
 **Status:** approved by the director on 21 October 2026. Lean, the add-on and the host-independent parts are built; the Middle and Full tiers and GitLab on a company's servers were replaced or lost when Wheelhouse moved onto Archon (`docs/specs/2026-10-29-wheelhouse-on-archon-design.md`), which wins where the two differ. Section 15 records what became of them and the calls the build of 2 November 2026 made. The director will test it in real use and may revisit any ruling then. The add-on's look (section 8.6) is the director's ruling of 20 October 2026.
 
 **What it covers:** how Wheelhouse runs with a coding agent other than Claude Code, starting with GitHub Copilot in VS Code, and how the same seam leaves room for Codex, Cursor and Gemini CLI later, without designing those now.

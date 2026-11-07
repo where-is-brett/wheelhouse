@@ -2,6 +2,8 @@
 
 # Wheelhouse on Archon: design
 
+> **Parked or reversed on 7 November 2026,** see `docs/specs/2026-11-07-core-cut-design.md`. Reversed: Wheelhouse's own engine is the only engine, and Archon is parked, with a date to look again (core cut, section 4.3). What is parked, and how it comes back, is in `docs/parked.md`.
+
 **Status:** draft for the director's approval, 29 October 2026. Nothing in it is built.
 
 **What it changes.** Wheelhouse stops running its own build engine. Archon, an open-source workflow engine, runs the builds: sessions, worktrees, review loops, retries, the merge gate and merging. Wheelhouse becomes the director's seat on top of it. Where this design and `docs/specs/2026-10-17-wheelhouse-design.md` (the main design) or `docs/specs/2026-10-18-build-loop-design.md` (the build-loop design) differ, this one wins once approved. Section 4 says part by part what stays.

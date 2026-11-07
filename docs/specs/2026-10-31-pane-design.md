@@ -2,6 +2,8 @@
 
 # The pane's visual design
 
+> **Parked or reversed on 7 November 2026,** see `docs/specs/2026-11-07-core-cut-design.md`. Parked, with the mod. Calm's words and card shape stay in the chat (core cut, section 4.2). What is parked, and how it comes back, is in `docs/parked.md`.
+
 31 October 2026. Design notes for the pane's first real design pass. **The director chose A, Inset,** on 31 October 2026. The choice is recorded here and in section 23 of the design.
 
 Calm (design section 23) settled what the pane says and in what order. It was built as far as the drawing kit knew how, and never had a look of its own. The director found the cards "ugly" and hard to read on 20 October 2026. These notes keep Calm's order, words and rules, and change how it looks.
