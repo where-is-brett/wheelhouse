@@ -58,7 +58,13 @@ export async function makePlan({
   if (held) return said('An update is already under way on this computer.');
   if (part !== null && (tag === null || tag === part.tag || part.installing)) {
     if (tag !== null && tag !== part.tag) return said(`The update to ${part.tag} is part-way. Finish it with /wheelhouse:update before naming another release.`);
-    const plan = { from: part.from ?? from, to: part.tag, sha: part.sha, put: part.put, approval: 'review', says: null, locked: false, others: [], carryOn: true };
+    // The account line is read now, as a fresh plan reads it, so the install compares the account's settings with what they say today.
+    const named = account({ to: part.tag });
+    if (named?.refused) return said(named.refused);
+    const plan = {
+      from: part.from ?? from, to: part.tag, sha: part.sha, put: part.put, approval: 'review', says: null, locked: false, others: [], carryOn: true,
+      account: typeof named?.ref === 'string' && named.ref !== part.tag ? { from: named.ref, to: part.tag } : null,
+    };
     return { lines: [], plan };
   }
 

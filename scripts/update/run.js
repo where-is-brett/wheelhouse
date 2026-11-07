@@ -17,7 +17,7 @@ import { stopState } from '../lib/stop.js';
 import { wheelhouseHome } from '../lib/paths.js';
 import { run as defaultRun } from '../lib/run.js';
 import { MARKETPLACE, claudeHome as defaultClaudeHome } from '../lineage/manifest.js';
-import { changeSteps, updateMirror } from './change.js';
+import { changeSteps, projectRelease, updateMirror } from './change.js';
 import { signedByDefault } from './routes.js';
 import { helperCardFor, releaseCard } from './cards.js';
 import { ASKING_LINE } from './finish.js';
@@ -143,7 +143,9 @@ export function updateSteps({
         if (fetched?.ok !== true || fetched.sha !== plan.sha) return { ok: false, line: checksOutLine(plan.to) };
         const looked = await check(target);
         if (looked?.ok !== true) return { ok: false, line: checksOutLine(plan.to) };
-        return { data: { tag: plan.to, sha: plan.sha, from: plan.from, put } };
+        // The release moved from is the one the project's settings name (the change's base), not the one this computer runs.
+        const before = await projectRelease({ projectDir: folder, run });
+        return { data: { tag: plan.to, sha: plan.sha, from: before ?? plan.from, put } };
       },
     },
     ...mine,
