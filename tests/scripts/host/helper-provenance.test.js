@@ -349,7 +349,7 @@ test('a feature session\'s commands work through the helper where the Wheelhouse
         try {
           assert.equal(projectOf(tree), null, 'the command could not place its project itself');
           assert.equal(stopState().on, true, 'nor tell whether STOP is on');
-          assert.equal(await run('ask', '--what', 'Which provider?', '--why', 'It decides what users see', '--option', 'A=Use A', '--option', 'B=Use B', '--recommend', 'A', '--level', '3'), 0, said.err);
+          assert.equal(await run('ask', '--what', 'Which provider?', '--why', 'It decides what users see', '--option', 'A=Use A', '--option', 'B=Use B', '--cost', 'A=An hour', '--cost', 'B=A day', '--undo', 'A=yes', '--undo', 'B=yes', '--recommend', 'A', '--because', 'It is simpler', '--meanwhile', 'I build the parts that do not depend on it', '--level', '3'), 0, said.err);
           assert.equal(await run('answer', 'q-login-page-1'), 0, said.err);
           assert.equal(await run('report'), 0, said.err);
           assert.equal(await run('open-pr', '--title', 'Add the sign-in page'), 0, said.err);

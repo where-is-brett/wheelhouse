@@ -78,7 +78,7 @@ test('the log command prints a line and the main command line runs it', async ()
   assert.match(err, /ask --about rewrite/);
 });
 
-const ASK = ['--what', 'Which order do the tide times show in?', '--why', 'It decides what visitors see', '--option', 'Soonest=Soonest first', '--option', 'Latest=Latest first', '--recommend', 'Soonest'];
+const ASK = ['--what', 'Which order do the tide times show in?', '--why', 'It decides what visitors see', '--option', 'Soonest=Soonest first', '--option', 'Latest=Latest first', '--cost', 'Soonest=An hour', '--cost', 'Latest=An hour', '--undo', 'Soonest=yes', '--undo', 'Latest=yes', '--recommend', 'Soonest', '--because', 'Visitors plan from the next tide', '--meanwhile', 'I build the parts that do not depend on it'];
 
 test('ask --about algorithm refuses a level below 3', async () => {
   const tree = feature();

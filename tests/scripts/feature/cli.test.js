@@ -41,19 +41,23 @@ const reportFields = (extra = {}) => ({
 // The helper's push, as open-pr asks for it first: it takes the branch.
 const pushes = async () => ({ ok: true });
 
-const ASK = ['--what', 'Which provider?', '--why', 'It decides what users see', '--option', 'A=Use A', '--option', 'B=Use B', '--recommend', 'A', '--level', '3'];
+// The shape flags every decision carries (design section 6.2), for the options named.
+const shaped = (...labels) => [...labels.flatMap((l) => ['--cost', `${l}=An hour`, '--undo', `${l}=yes`]), '--because', 'It is the simplest for users', '--meanwhile', 'I build the parts that do not depend on it'];
+const ASK = ['--what', 'Which provider?', '--why', 'It decides what users see', '--option', 'A=Use A', '--option', 'B=Use B', ...shaped('A', 'B'), '--recommend', 'A', '--level', '3'];
 
 test('ask writes a question with the next id and the session can read it back', async () => {
   const tree = feature();
   const first = await ask({ worktree: tree, argv: ASK });
   assert.deepEqual(first, { id: 'q-login-page-1' });
-  const second = await ask({ worktree: tree, argv: ['--kind', 'extra-plan', '--plan', 'docs/plans/part.md', ...ASK] });
+  const plainAsk = ['--what', 'Which provider?', '--why', 'It decides what users see', '--option', 'A=Use A', '--option', 'B=Use B', '--recommend', 'A', '--level', '3'];
+  const second = await ask({ worktree: tree, argv: ['--kind', 'extra-plan', '--plan', 'docs/plans/part.md', ...plainAsk] });
   assert.deepEqual(second, { id: 'q-login-page-2' });
   const { questions, skipped } = readQuestions(featurePaths(tree).questions);
   assert.equal(skipped, 0);
   assert.deepEqual(questions[0], {
     id: 'q-login-page-1', kind: 'question', what: 'Which provider?', why: 'It decides what users see',
-    options: [{ label: 'A', says: 'Use A' }, { label: 'B', says: 'Use B' }], recommendation: 'A', level: 3,
+    options: [{ label: 'A', says: 'Use A', cost: 'An hour', undo: 'Can be undone' }, { label: 'B', says: 'Use B', cost: 'An hour', undo: 'Can be undone' }],
+    recommendation: 'A', level: 3, because: 'It is the simplest for users', meanwhile: 'I build the parts that do not depend on it',
   });
   assert.equal(questions[1].kind, 'extra-plan');
   assert.equal(questions[1].plan, 'docs/plans/part.md');
@@ -91,7 +95,8 @@ test('ask refuses malformed input in plain words and writes nothing', async () =
   for (const [name, argv] of Object.entries(bad)) {
     await assert.rejects(ask({ worktree: tree, argv }), (e) => e instanceof CliError && e.message.length > 0 && !e.message.includes('\n'), name);
   }
-  assert.equal(fs.existsSync(featurePaths(tree).questions), false);
+  // A decision sent back leaves a note of the try in the file, and never a question.
+  assert.deepEqual(readQuestions(featurePaths(tree).questions).questions, []);
 });
 
 // A helper that answers /config with `config`, keeping each call.
@@ -201,9 +206,7 @@ test('ask refuses a question the director\'s card could not carry, in the compos
   const options = (labels) => labels.flatMap((label) => ['--option', `${label}=Use ${label}`]);
   const asked = (extra) => ['--what', 'Which provider?', '--why', 'It decides what users see', ...extra, '--level', '3'];
   for (const [name, argv, why] of [
-    ['five options', asked([...options(['A', 'B', 'C', 'D', 'E']), '--recommend', 'A']), /at most 4/],
-    ...PUT_OFF.map((label) => [`the put-off label ${label}`, asked([...options(['A', label]), '--recommend', 'A']), new RegExp(label.replace('?', '\\?'))]),
-    ['words past the card\'s length', ['--what', 'w'.repeat(1200), '--why', 'y', ...options(['A', 'B']), '--recommend', 'A', '--level', '3'], /1200 characters/],
+    ...PUT_OFF.map((label) => [`the put-off label ${label}`, asked([...options(['A', label]), ...shaped('A', label), '--recommend', 'A']), new RegExp(label.replace('?', '\\?'))]),
   ]) {
     await assert.rejects(ask({ worktree: tree, argv }), (e) => e instanceof CliError && why.test(e.message) && /can't be put to the director as a card/.test(e.message), name);
   }

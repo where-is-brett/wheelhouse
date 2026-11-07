@@ -43,7 +43,7 @@ export function replyLine(n, count) {
 // decisionText({ n, question, work, why, options, recommend, because, meanwhile }) -> the message.
 export function decisionText(decision) {
   const options = Array.isArray(decision.options) ? decision.options.slice(0, LETTERS.length) : [];
-  const holdsUp = flat(decision.work) === '' ? 'nothing else' : flat(decision.work);
+  const holdsUp = flat(decision.holds) !== '' ? flat(decision.holds) : flat(decision.work) === '' ? 'nothing else' : flat(decision.work);
   return [
     `${LEAD} (${decision.n}): ${flat(decision.question)}   (holds up: ${holdsUp})`,
     flat(decision.why),

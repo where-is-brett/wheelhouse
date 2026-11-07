@@ -2,6 +2,7 @@
 // The commands a feature session runs, as `node "<pluginRoot>/scripts/feature/cli.js" <command> …`:
 //   ask      writes a question for the director and prints its id; with --kind build-command,
 //            asks for build commands on Windows (design section 12.2)
+//   stuck    says, once, that a decision can't be put into its shape (after three sent back in a row)
 //   log      adds one call you made on your own side of the decision line to the piece's log (decisions.jsonl)
 //   answer   prints the director's answer to a question, once it is signed
 //   plan     records the plan just written, in plan.json, for the status and the foreman
@@ -22,11 +23,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { safeGit } from '../lib/safe-git.js';
-import { QUESTION_ID, QUESTION_KINDS, featurePaths, parseReport, readQuestions } from './files.js';
+import { QUESTION_ID, QUESTION_KINDS, featurePaths, parseReport, questionTrail, readQuestions } from './files.js';
 import {
   planIn, planInside, readBrief, readCapped, readPlan, readPrRecord, safeFeatureFolder, writeWhole, SMALL_BYTES,
 } from './status.js';
-import { questionProblem } from '../cards/compose.js';
+import { questionProblem, shapeProblems } from '../cards/compose.js';
 import { featureWorktree } from '../hooks/feature-status.js';
 import { branchOf } from '../hooks/session-start.js';
 import { helperClient } from '../host/helper-client.js';
@@ -38,6 +39,19 @@ import { appendCall } from '../decisions/log.js';
 
 // An error whose message is said to the session as it is.
 export class CliError extends Error {}
+
+// A decision that failed the shape (design section 6.2): it goes back to the session, never to the director. `problems` is one
+// sentence each; the command line prints them one to a line and exits with code 2.
+export class SentBack extends CliError {
+  constructor(problems, failures) {
+    super(problems.join(' '));
+    this.problems = problems;
+    this.failures = failures;
+  }
+}
+
+// How many failed tries in a row make the session stop and say it is stuck.
+export const STUCK_AFTER = 3;
 
 const FOLDER = "The feature's folder isn't a real folder inside this worktree";
 const SESSION_ID = /^[A-Za-z0-9_-]{1,128}$/;
@@ -91,17 +105,38 @@ function nextQuestionId(file, work) {
   return `q-${work}-${highest + 1}`;
 }
 
+// The words each answer to --undo stands for.
+const UNDO_WORDS = Object.freeze({ yes: 'Can be undone', no: 'Cannot be undone', partly: 'Can be partly undone' });
+
+// The values of a repeated "<label>=<value>" flag, by label; a malformed one, or one naming a label twice, is put in `problems`.
+function byLabel(found, flag, problems) {
+  const values = new Map();
+  for (const text of found[flag] ?? []) {
+    const at = text.indexOf('=');
+    const label = at < 0 ? '' : text.slice(0, at).trim();
+    const value = at < 0 ? '' : text.slice(at + 1).trim();
+    if (label === '' || value === '') problems.push(`--${flag} "${text}" is written as "<option label>=<value>".`);
+    else if (values.has(label)) problems.push(`--${flag} names "${label}" twice.`);
+    else values.set(label, value);
+  }
+  return values;
+}
+
 // What a question or an extra plan asks, with the options, recommendation and level the
-// session gives it.
+// session gives it. A plain question is a decision: its shape is judged by the caller (shapeProblems), and what is wrong
+// with the flags that spell the shape comes back as `problems`.
 function plainQuestion(found, kind) {
   if (found.command !== undefined) throw new CliError('--command is only for --kind build-command');
   const what = needed(found, 'what');
-  const recommendation = needed(found, 'recommend');
   const levelText = needed(found, 'level');
   if (!/^[1-4]$/.test(levelText)) throw new CliError('--level is a decision level from 1 to 4');
   const plan = single(found, 'plan')?.trim();
   if (kind === 'extra-plan' && !plan) throw new CliError('An extra-plan needs --plan, the path of the plan being handed back');
   if (kind !== 'extra-plan' && found.plan !== undefined) throw new CliError('--plan is only for --kind extra-plan');
+  const decision = kind === 'question';
+  for (const flag of ['cost', 'undo', 'holds', 'meanwhile', 'because']) {
+    if (!decision && found[flag] !== undefined) throw new CliError(`--${flag} is only for a plain question`);
+  }
 
   const options = (found.option ?? []).map((text) => {
     const at = text.indexOf('=');
@@ -109,10 +144,36 @@ function plainQuestion(found, kind) {
     if (label === '') throw new CliError(`--option "${text}" is written as "<label>=<what it means>"`);
     return { label, says: text.slice(at + 1).trim() };
   });
-  if (options.length < 2) throw new CliError('Give two or more options, each with --option "<label>=<what it means>"');
   if (new Set(options.map((o) => o.label)).size !== options.length) throw new CliError('Each option needs its own label');
-  if (!options.some((o) => o.label === recommendation)) throw new CliError(`--recommend must be the label of one option (${options.map((o) => o.label).join(', ')})`);
-  return { what, options, recommendation, level: Number(levelText), ...(kind === 'extra-plan' ? { plan } : {}) };
+  const problems = [];
+  const recommendation = decision ? single(found, 'recommend')?.trim() : needed(found, 'recommend');
+  if (!decision) {
+    if (options.length < 2) throw new CliError('Give two or more options, each with --option "<label>=<what it means>"');
+    if (!options.some((o) => o.label === recommendation)) throw new CliError(`--recommend must be the label of one option (${options.map((o) => o.label).join(', ')})`);
+    return { what, options, recommendation, level: Number(levelText), problems, ...(kind === 'extra-plan' ? { plan } : {}) };
+  }
+
+  // A decision's options carry what each costs and whether it can be undone (design section 6.2).
+  const costs = byLabel(found, 'cost', problems);
+  const undos = byLabel(found, 'undo', problems);
+  for (const [flag, labelled] of [['cost', costs], ['undo', undos]]) {
+    for (const label of labelled.keys()) if (!options.some((o) => o.label === label)) problems.push(`--${flag} names "${label}", which is not one of the options.`);
+  }
+  for (const [label, answer] of undos) {
+    if (!Object.hasOwn(UNDO_WORDS, answer)) problems.push(`--undo "${label}" must be yes, no or partly.`);
+  }
+  const holds = single(found, 'holds')?.trim();
+  const meanwhile = single(found, 'meanwhile')?.trim();
+  const because = single(found, 'because')?.trim();
+  const full = options.map((o) => ({
+    ...o,
+    ...(costs.has(o.label) ? { cost: costs.get(o.label) } : {}),
+    ...(Object.hasOwn(UNDO_WORDS, undos.get(o.label)) ? { undo: UNDO_WORDS[undos.get(o.label)] } : {}),
+  }));
+  return {
+    what, options: full, recommendation, level: Number(levelText), problems,
+    ...(because === undefined ? {} : { because }), ...(holds === undefined ? {} : { holds }), ...(meanwhile === undefined ? {} : { meanwhile }),
+  };
 }
 
 const PACKAGE_BYTES = 1024 * 1024;
@@ -182,7 +243,7 @@ async function buildQuestion(found, { worktree, client }) {
 // (by the composer's own rules: at most four options, none a button that puts a card off but a
 // build-command question's own Not now, words that fit the card) is refused, so it never waits unasked.
 export async function ask({ worktree, argv, client }) {
-  const found = flagsOf(argv, ['kind', 'what', 'why', 'option', 'recommend', 'level', 'plan', 'command', 'about']);
+  const found = flagsOf(argv, ['kind', 'what', 'why', 'option', 'recommend', 'level', 'plan', 'command', 'about', 'cost', 'undo', 'holds', 'meanwhile', 'because']);
   const kind = single(found, 'kind') ?? 'question';
   if (!QUESTION_KINDS.includes(kind)) throw new CliError(`--kind is ${QUESTION_KINDS.join(', ')}`);
   const why = needed(found, 'why');
@@ -196,8 +257,13 @@ export async function ask({ worktree, argv, client }) {
   if (!safeFeatureFolder(worktree)) throw new CliError(FOLDER);
   const p = featurePaths(worktree);
   const id = nextQuestionId(p.questions, brief.work);
-  const { what, ...rest } = asked;
+  const { what, problems: flagProblems = [], ...rest } = asked;
   const question = { id, kind, what, why, ...rest };
+  // A decision that fails its shape goes back to this session; the director never sees it (design section 6.2).
+  if (kind === 'question') {
+    const problems = [...flagProblems, ...shapeProblems({ what, why, ...rest })];
+    if (problems.length > 0) sendBack(p.questions, problems);
+  }
   const problem = kind === 'extra-plan' ? null : questionProblem({ ...question, work: brief.work, ...(about === undefined ? {} : { decides: about }) });
   if (problem !== null) throw new CliError(`This question can't be put to the director as a card, so it wasn't asked: ${problem}`);
   const kept = readCapped(p.questions, QUESTIONS_BYTES);
@@ -207,6 +273,21 @@ export async function ask({ worktree, argv, client }) {
   const lead = before === '' || before.endsWith('\n') ? '' : '\n';
   writeWhole(p.questions, `${before}${lead}${JSON.stringify(question)}\n`);
   return { id };
+}
+
+// Writes the failed try into questions.jsonl, which counts the tries in a row, and sends the problems back to the session. On the
+// third failure in a row it also says to stop trying and send one plain message (`stuck`).
+function sendBack(file, problems) {
+  const kept = readCapped(file, QUESTIONS_BYTES);
+  if (kept === null && exists(file)) throw new CliError("questions.jsonl can't be added to");
+  const before = kept ?? '';
+  const lead = before === '' || before.endsWith('\n') ? '' : '\n';
+  const failures = questionTrail(file, { maxBytes: QUESTIONS_BYTES }).failures + 1;
+  writeWhole(file, `${before}${lead}${JSON.stringify({ sentBack: true, at: new Date().toISOString(), problems })}\n`);
+  const said = failures >= STUCK_AFTER
+    ? [...problems, `That is ${failures} tries in a row that failed. Stop trying: send one plain message with \`stuck --why "<what keeps failing>"\`, then carry on with what does not depend on the answer.`]
+    : problems;
+  throw new SentBack(said, failures);
 }
 
 // Whether anything is at `file`, a link included.
@@ -225,6 +306,25 @@ function readBriefOrSay(worktree) {
   } catch {
     throw new CliError("The brief can't be read, so this isn't a feature session's folder");
   }
+}
+
+// --- stuck ---
+
+// Says, once and in plain words, that the session can't get a decision into its shape. It is one line in questions.jsonl; the
+// count of failed tries starts again after it. Returns the line kept.
+export function stuck({ worktree, argv, now = () => new Date() }) {
+  const found = flagsOf(argv, ['why']);
+  const why = needed(found, 'why');
+  readBriefOrSay(worktree);
+  if (!safeFeatureFolder(worktree)) throw new CliError(FOLDER);
+  const file = featurePaths(worktree).questions;
+  const kept = readCapped(file, QUESTIONS_BYTES);
+  if (kept === null && exists(file)) throw new CliError("questions.jsonl can't be added to");
+  const before = kept ?? '';
+  const lead = before === '' || before.endsWith('\n') ? '' : '\n';
+  const line = { stuck: true, at: now().toISOString(), why };
+  writeWhole(file, `${before}${lead}${JSON.stringify(line)}\n`);
+  return line;
 }
 
 // --- answer ---
@@ -450,7 +550,7 @@ export async function openPr({ client, worktree, argv }) {
 
 // --- The command line ---
 
-const COMMANDS = ['ask', 'log', 'answer', 'plan', 'report', 'push', 'pull', 'open-pr'];
+const COMMANDS = ['ask', 'stuck', 'log', 'answer', 'plan', 'report', 'push', 'pull', 'open-pr'];
 
 // Runs a command and resolves with the exit code. `out` and `err` take text to show.
 export async function main(argv, {
@@ -466,6 +566,9 @@ export async function main(argv, {
 
     if (command === 'ask') {
       out(`${(await ask({ worktree, argv: rest, client: helper() })).id}\n`);
+    } else if (command === 'stuck') {
+      stuck({ worktree, argv: rest });
+      out('Noted: the director will be told you are stuck. Carry on with what does not depend on the answer.\n');
     } else if (command === 'log') {
       log({ worktree, argv: rest });
       out('Logged.\n');
@@ -499,6 +602,10 @@ export async function main(argv, {
     }
     return 0;
   } catch (error) {
+    if (error instanceof SentBack) {
+      err(`${error.problems.join('\n')}\n`);
+      return 2;
+    }
     err(`${error instanceof CliError ? error.message : `That did not work: ${error instanceof Error ? error.message : 'unknown error'}`}\n`);
     return 1;
   }

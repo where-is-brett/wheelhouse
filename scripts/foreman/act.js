@@ -127,12 +127,12 @@ import {
   ForemanError, NO_PLAN, PLANS_WHILE_HELD, SAYS_CHARS, TamperedBrief, checkoutOf, clashFor, featureOf, haltFor, haltOf, laneOf, loadConfig, loadViews, oneLine,
   builderCapOf, openPrWait, pausedBy, planOf, projectHere, queueToStart, queuedAgain, recordedBriefOf, slotFor, stateEvents, waitText, whyText, worktreeOf,
 } from './wake.js';
-import { questionProblem } from '../cards/compose.js';
+import { questionProblem, shapeProblems } from '../cards/compose.js';
 import { amendBrief, renderBrief } from '../feature/brief.js';
 import { approvedDocument, placeApproved } from '../feature/approved.js';
-import { report as reportCheck } from '../feature/cli.js';
+import { report as reportCheck, STUCK_AFTER } from '../feature/cli.js';
 import {
-  briefHash, ensureIgnored, featurePaths, parseBrief, parseReport, readQuestions, readStatus, writeStatus,
+  briefHash, ensureIgnored, featurePaths, parseBrief, parseReport, questionTrail, readQuestions, readStatus, writeStatus,
 } from '../feature/files.js';
 import {
   buildStatus, loadFeature, readCapped, readPrRecord, safeFeatureFolder, validSlice, writeWhole,
@@ -844,6 +844,9 @@ async function question(ctx, work, rest) {
   // A build-command question carries the commands it asks for, which a grant reads from state.
   const data = {
     id: q.id, work, what: q.what, why: q.why, options: q.options, recommendation: q.recommendation, level: q.level,
+    ...(q.because === undefined ? {} : { because: q.because }),
+    ...(q.holds === undefined ? {} : { holds: q.holds }),
+    ...(q.meanwhile === undefined ? {} : { meanwhile: q.meanwhile }),
     ...(q.kind === 'build-command' ? { commands: q.commands } : {}),
   };
   // The question as it stands now: the one recorded under this id, or the latest that replaced it.
@@ -851,6 +854,14 @@ async function question(ctx, work, rest) {
     .sort((a, b) => String(a.question.at).localeCompare(String(b.question.at))).at(-1);
   const { replaces, ...keptBody } = kept?.question?.data ?? {};
   let at;
+  // A decision that doesn't fit the shape is never recorded, so the director never sees it: it goes back to the session that raised
+  // it, with what is missing (design section 6.2). One already on file is left as it is.
+  const onFile = kept !== undefined && same(keptBody, kept.question.data.id === q.id ? data : { ...data, id: kept.question.data.id });
+  const problems = q.kind === 'question' && !onFile ? shapeProblems(q) : [];
+  if (problems.length > 0) {
+    await sendQuestionBack(ctx, views, work, q, problems);
+    return;
+  }
   if (kept !== undefined && same(keptBody, kept.question.data.id === q.id ? data : { ...data, id: kept.question.data.id })) {
     ctx.say(`Question ${q.id} is recorded already.`);
     at = kept.question.at;
@@ -867,6 +878,33 @@ async function question(ctx, work, rest) {
     at = ctx.now().toISOString();
   }
   await offerUnattended(ctx, views, work, { ...data, at });
+}
+
+// Sends a decision that fails its shape back to the session that raised it, on its next wake: what is missing, and, after
+// STUCK_AFTER failed tries in a row (counted in the session's questions.jsonl), to say it is stuck. Nothing reaches state.
+async function sendQuestionBack(ctx, views, work, q, problems) {
+  const worktree = worktreeOf(ctx.project, views, work);
+  const file = featurePaths(worktree).questions;
+  const kept = readCapped(file, 8 * 1024 * 1024);
+  if (kept === null && lstatOf(file) !== null) refuse(`${work}'s questions file can't be added to`);
+  const before = kept ?? '';
+  const failures = questionTrail(file).failures + 1;
+  const lead = before === '' || before.endsWith('\n') ? '' : '\n';
+  writeWhole(file, `${before}${lead}${JSON.stringify({ sentBack: true, at: ctx.now().toISOString(), problems })}\n`);
+  const stuck = failures >= STUCK_AFTER
+    ? ` That is ${failures} tries in a row that failed: stop trying and send one plain message with \`stuck --why "<what keeps failing>"\`.`
+    : ' Ask it again with the shape put right.';
+  const id = `shape-back:${work}:${q.id}:${ctx.now().getTime()}`;
+  const event = {
+    type: 'build', work, id, detail: { next: `Your question ${q.id} wasn't put to the director: ${problems.join(' ')}${stuck}` },
+  };
+  const wake = writeWake(ctx.project, { to: 'feature', work, events: [event], digest: [], dropped: 0 }, { now: ctx.now });
+  try {
+    await ctx.waker(await ctx.config()).wakeFeature(work, wake);
+  } catch (error) {
+    refuse(`Question ${q.id} fails its shape (${oneLine(problems.join(' '), 300)}) and ${work}'s session wasn't woken: ${oneLine(error instanceof Error ? error.message : 'unknown error', 200)}`);
+  }
+  ctx.say(`Question ${q.id} wasn't recorded: it fails its shape. Sent back to ${work}'s session: ${oneLine(problems.join(' '), 300)}`);
 }
 
 // --- Build commands on Windows (design section 12.2) ---
