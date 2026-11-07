@@ -18,6 +18,7 @@ import { pieceWork } from '../survey/ready.js';
 import { readyRecordFile, writeReadyRecord } from '../survey/ready-record.js';
 import { archonHome, engineDir, stateDir, wheelhouseHome } from '../lib/paths.js';
 import { run as defaultRun } from '../lib/run.js';
+import { safeGit } from '../lib/safe-git.js';
 import { backup } from './journal.js';
 
 export const REMOVE_THEM = 'Remove them';
@@ -116,9 +117,15 @@ export function removalCard() {
   };
 }
 
+// git in the director's project by the shared route, its settings looked at by the project list first. A refusal reads as
+// a failed call, which the step behind it tries again on the next update.
 async function gitIn(run, folder, args) {
-  const got = await run('git', ['-C', folder, ...args]);
-  return { code: got?.code ?? 1, stdout: String(got?.stdout ?? '').trim() };
+  try {
+    const got = await safeGit({ run, cwd: folder, look: 'each', list: 'project' })(args);
+    return { code: got?.code ?? 1, stdout: String(got?.stdout ?? '').trim() };
+  } catch {
+    return { code: 1, stdout: '' };
+  }
 }
 
 // A work id for the carry-on that no branch, ref or ready record here holds yet.
