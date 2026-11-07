@@ -342,8 +342,11 @@ test('open-pr opens against the default branch and keeps the number', async () =
   assert.deepEqual(opened, { number: 7, already: false });
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0], {
-    cwd: tree, head: 'feature/login-page', title: 'Add the sign-in page', body: 'Shipped the sign-in page.', session: 'sess-abc_1',
+    cwd: tree, head: 'feature/login-page', title: 'Add the sign-in page', body: calls[0].body, session: 'sess-abc_1',
   });
+  // The body is the proof note (scripts/proof/note.js), which carries the report's words and the brief's goal.
+  assert.ok(calls[0].body.startsWith('## What changed\n\nShipped the sign-in page.'));
+  assert.ok(calls[0].body.includes('Let people sign in'));
   assert.equal('base' in calls[0], false, 'the helper takes a missing base as the default branch');
   // The branch went up first, through the helper, which places the project from the folder.
   assert.deepEqual(pushed, [{ cwd: tree, dir: tree, refspec: 'feature/login-page' }]);
@@ -419,11 +422,11 @@ test('open-pr is refused while the report is missing or incomplete, and the host
   assert.equal(calls.length, 0);
   assert.equal(fs.existsSync(p.pr), false);
 
-  // Once the report passes, its text is the body.
+  // Once the report passes, its text is in the body, which is the proof note.
   write(p.report, `${fence(reportFields({ rulings: ['Ruling: use A'] }))}\n  Shipped it.  \n`);
   assert.deepEqual(await open(), { number: 7, already: false });
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].body, 'Shipped it.');
+  assert.ok(calls[0].body.startsWith('## What changed\n\nShipped it.\n'));
 });
 
 test('open-pr sends no session when there is none, and a refusal or an odd answer keeps nothing', async () => {
@@ -433,7 +436,7 @@ test('open-pr sends no session when there is none, and a refusal or an odd answe
   const calls = [];
   const refusing = { push: pushes, openPr: async (args) => { calls.push(args); return { ok: false, refused: 'STOP is on' }; } };
   await assert.rejects(openPr({ client: refusing, worktree: tree, argv: ['--title', 't'] }), /STOP is on/);
-  assert.equal(calls[0].body, 'Shipped.');
+  assert.ok(calls[0].body.startsWith('## What changed\n\nShipped.\n'));
   assert.equal('session' in calls[0], false);
   assert.equal(fs.existsSync(p.pr), false);
 

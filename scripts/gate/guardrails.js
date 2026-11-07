@@ -166,6 +166,11 @@ const checksOk = (c) => isObject(c) && Object.keys(c).every((k) => CHECKS_KEYS.i
   && (c.prepare === undefined || testCommandOk(c.prepare))
   && (c.minutes === undefined || positiveWhole(c.minutes))
   && (c.network === undefined || typeof c.network === 'boolean');
+// The project's one read-only command that prints its tables as JSON (scripts/proof/data.js), and which data it may run on:
+// `test` (the default) or `real`, which runs only once the director has approved the route (scripts/host/data-route.js).
+const DATA_CHECK_KEYS = ['command', 'route'];
+const dataCheckOk = (d) => isObject(d) && Object.keys(d).every((k) => DATA_CHECK_KEYS.includes(k))
+  && testCommandOk(d.command) && (d.route === undefined || ['test', 'real'].includes(d.route));
 const SAFEKEEPING_KEYS = ['days', 'hereDays'];
 const safekeepingOk = (s) => isObject(s) && Object.keys(s).every((k) => SAFEKEEPING_KEYS.includes(k))
   && (s.days === undefined || positiveWhole(s.days)) && (s.hereDays === undefined || positiveWhole(s.hereDays));
@@ -188,6 +193,7 @@ function shapeOk(c) {
   if (c.testCommand !== undefined && !testCommandOk(c.testCommand)) return false;
   if (c.checks !== undefined && !checksOk(c.checks)) return false;
   if (c.safekeeping !== undefined && !safekeepingOk(c.safekeeping)) return false;
+  if (c.dataCheck !== undefined && !dataCheckOk(c.dataCheck)) return false;
   return buildLoopOk(c);
 }
 

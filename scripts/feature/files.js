@@ -398,13 +398,24 @@ export function readCalls(file, { maxBytes = 8 * 1024 * 1024 } = {}) {
 
 // --- The report ---
 
-const REPORT_KEYS = ['v', 'work', 'status', 'pr', 'head', 'tests', 'assumptions', 'concerns', 'rulings', 'rework'];
+const REPORT_KEYS = ['v', 'work', 'status', 'pr', 'head', 'tests', 'assumptions', 'concerns', 'rulings', 'rework', 'followed', 'data'];
 const REWORK_KEYS = ['question', 'chose', 'recommended', 'cost'];
 
 // What the rework after a decision answered with something other than the recommendation cost (design section 6.4): one
 // { question, chose, recommended, cost }, or a list of them where several decisions were answered otherwise.
 const validRework = (r) => isPlain(r) && hasOnly(r, REWORK_KEYS) && REWORK_KEYS.every((k) => isText(r[k]));
 const reworkOf = (f) => (Array.isArray(f.rework) ? f.rework : [f.rework]);
+
+// The decisions of the director's the piece followed (design section 7): a list of { question, answer }, the question as asked
+// and the answer chosen, each with the words of how it was followed if wanted.
+const FOLLOWED_KEYS = ['question', 'answer', 'how'];
+const validFollowed = (r) => isPlain(r) && hasOnly(r, FOLLOWED_KEYS) && isText(r.question) && isText(r.answer) && (r.how === undefined || isText(r.how));
+
+// What the piece says of the data (design section 7): the tables its change is meant to move (`expect`), or why it has no
+// data comparison (`none`). Not both: a piece either expects a move or has no comparison.
+const validData = (d) => isPlain(d) && hasOnly(d, ['expect', 'none'])
+  && (d.expect === undefined || (Array.isArray(d.expect) && d.expect.every(isText))) && (d.none === undefined || isText(d.none))
+  && !(d.expect !== undefined && d.none !== undefined);
 
 function validReport(f) {
   return hasOnly(f, REPORT_KEYS)
@@ -418,7 +429,9 @@ function validReport(f) {
     && isTexts(f.assumptions)
     && isTexts(f.concerns)
     && isTexts(f.rulings)
-    && (f.rework === undefined || (reworkOf(f).length > 0 && reworkOf(f).every(validRework)));
+    && (f.rework === undefined || (reworkOf(f).length > 0 && reworkOf(f).every(validRework)))
+    && (f.followed === undefined || (Array.isArray(f.followed) && f.followed.every(validFollowed)))
+    && (f.data === undefined || validData(f.data));
 }
 
 // The rework entries a report's fields carry, as a list (none when it has none).

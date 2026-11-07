@@ -13,7 +13,8 @@
 //   push     pushes the worktree's branch to the host, through the helper (after a fix)
 //   pull     brings the host's copy of the worktree's branch into it, through the helper (when
 //            the host's has moved on, as when the gate brought it up to date)
-//   open-pr  pushes the branch, opens the feature's pull request and keeps its number with its plan
+//   open-pr  pushes the branch, opens the feature's pull request, whose body is the proof note (scripts/proof/note.js), and
+//            keeps its number with its plan
 // Each command's core is an exported function that takes the helper's client and
 // the worktree, so tests use a fake helper. Files are read and written only in the
 // feature folder, through the safe readers and writers of status.js; the head
@@ -38,7 +39,10 @@ import { REPORT_WORDS } from '../lib/build-loop.js';
 import { readConfig } from '../gate/guardrails.js';
 import { BUILD_QUESTION_LABELS, BUILD_QUESTION_OPTIONS, isConfiguredBuildCommand } from '../protection/windows-builds.js';
 import { startedAsScript } from '../lib/started-as-script.js';
-import { appendCall } from '../decisions/log.js';
+import { appendCall, readLog } from '../decisions/log.js';
+import { touchedPages } from '../engine/preview.js';
+import { proofNote } from '../proof/note.js';
+import { compareSnapshots } from '../proof/data.js';
 
 // An error whose message is said to the session as it is.
 export class CliError extends Error {}
@@ -574,6 +578,52 @@ function keptSession(file) {
   }
 }
 
+// What the helper makes of the pushed branch for the proof note (design section 7 of the director's way of working): whether the
+// change is data work and, where the project names a read-only data command, the data before and after. A check the helper
+// can't make never stops the pull request: the note says so, and the merge gate judges the change's files itself.
+async function dataFacts({ client, worktree, branch }) {
+  if (typeof client?.dataCheck !== 'function') return { made: false, silent: true };
+  try {
+    const got = await client.dataCheck({ cwd: worktree, branch });
+    if (got?.ok !== true) return { made: false, why: got?.refused ?? 'the helper gave no answer' };
+    return { made: true, ...got };
+  } catch (error) {
+    return { made: false, why: String(error?.message ?? error).slice(0, 200) };
+  }
+}
+
+// The proof note for the piece: the report's words, the calls it logged, the decisions it followed, the pages it touches and,
+// for data work, the data before and after. Throws a CliError when the change is data work (the helper says so, or the report
+// says its change moves data) and there is neither a comparison nor a reason in the report's `data`.
+function proofFor({ worktree, checked, facts }) {
+  const { fields, body } = checked;
+  const data = fields.data;
+  const declared = data !== undefined;
+  const comparable = facts.made && facts.ran === true;
+  if ((facts.dataWork === true || declared) && !comparable && data?.none === undefined) {
+    throw new CliError('The pull request is not opened: this change is data work and no before-and-after of the data could be made'
+      + `${facts.why ? ` (${facts.why})` : ''}. Add "data": { "none": "<why there is nothing to compare>" } to report.md, `
+      + 'or { "expect": ["<the tables this change is meant to move>"] } where the project\'s data command can run.');
+  }
+  let note = null;
+  if (facts.dataWork === true || declared) {
+    const route = facts.route === 'real' ? 'real' : 'test';
+    note = comparable
+      ? { route, comparison: compareSnapshots(facts.before, facts.after, { expect: data?.expect ?? [] }), ...(facts.realRefused ? { realRefused: facts.realRefused } : {}) }
+      : { route, none: data.none, ...(facts.realRefused ? { realRefused: facts.realRefused } : {}) };
+  }
+  const pages = touchedPages(Array.isArray(facts.changes) ? facts.changes : []);
+  return proofNote({
+    report: { fields, body, goal: readBrief(worktree).goal },
+    calls: readLog(worktree),
+    followed: fields.followed ?? [],
+    review: null,
+    previews: pages.map((page) => ({ page })),
+    data: note,
+    notes: facts.made || facts.silent ? [] : [`The data check could not be made${facts.why ? `: ${facts.why}` : ''}.`],
+  });
+}
+
 // Opens the pull request from the worktree's branch against the default branch (the helper
 // takes a missing base for it) and keeps its number in pr.json, with the plan it was opened for
 // (ruling R88). A pull request kept already is not opened again until the foreman's merge marks
@@ -595,7 +645,8 @@ export async function openPr({ client, worktree, argv }) {
   const session = keptSession(p.session);
   // The host opens a pull request only from a branch it holds.
   await push({ client, worktree });
-  const opened = await client.openPr({ cwd: worktree, head, title, body: checked.body, ...(session ? { session } : {}) });
+  const note = proofFor({ worktree, checked, facts: await dataFacts({ client, worktree, branch: head }) });
+  const opened = await client.openPr({ cwd: worktree, head, title, body: note, ...(session ? { session } : {}) });
   if (opened?.ok !== true) throw new CliError(opened?.refused ?? 'The host helper did not open the pull request');
   const number = opened.result?.number;
   if (!Number.isSafeInteger(number) || number < 1) throw new CliError('The host opened a pull request but gave no number for it');

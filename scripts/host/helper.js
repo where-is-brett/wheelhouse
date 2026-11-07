@@ -33,7 +33,7 @@ import { run as realRun, withoutGitVars } from '../lib/run.js';
 import { approvalCounts, checkCounts, gateDecision, reviewCounts } from '../gate/conditions.js';
 import { decisionsWaiting, questionsOf, readHandled, markHandled } from '../gate/open-questions.js';
 import { setDecisionStatus } from './decision-status.js';
-import { classifyChange, readConfig, isModelName, CI_FILES, PLUGIN_MANIFEST } from '../gate/guardrails.js';
+import { classifyChange, classifyDiff, readConfig, isModelName, CI_FILES, PLUGIN_MANIFEST } from '../gate/guardrails.js';
 import { scrub } from './adapter.js';
 import { hide, cleanDeep } from '../lib/clean.js';
 import { findKey } from './keys.js';
@@ -80,6 +80,8 @@ import { findCommand, hasTestScript } from '../checks/find-command.js';
 import { keptCommand, notCounting } from '../checks/not-counting.js';
 import { commandDigest } from '../checks/record.js';
 import { runCheck } from '../checks/run.js';
+import { dataComparison } from './data-route.js';
+import { parseSnapshot } from '../proof/data.js';
 import { checkRunner } from '../checks/runner.js';
 import { checksConfig, checksSettings } from '../checks/settings.js';
 import { keepQueue, readQueue, whereNow } from '../checks/standing.js';
@@ -844,7 +846,7 @@ function placeFolder(cwd) {
 // Beside the runbook's routes, the routes a feature session's commands (scripts/feature/cli.js)
 // call. Those commands, like runbook.js, run inside the sandbox, which cannot read
 // ~/.wheelhouse: each sends its folder as `cwd`, and the project is placed here.
-const FOLDER_ROUTES = ['/state/answer', '/pr/open', '/config', '/push', '/pull'];
+const FOLDER_ROUTES = ['/state/answer', '/pr/open', '/config', '/push', '/pull', '/data/check'];
 
 // Why a premium setting that allows the model is refused anywhere but from its own card's click.
 const PREMIUM_OWN_CARD = 'the premium model is allowed only by a click on its own card; anything else can only set it back to off';
@@ -2701,8 +2703,50 @@ export async function startHelper({
     }));
   }
 
+  // The data before and after of a pushed feature branch (design section 7 of the director's way of working): `{ cwd, branch }`.
+  // Reads the default branch's configuration and what the branch changed in the fetch mirror, no key and no session in either,
+  // and says whether the change is data work (a migration or schema file). Where the project names a read-only data command, it
+  // runs at the merge base and at the branch's head in the checks' own sandbox on test data (data-route.js), or on the real
+  // route only once the director's signed approval names that command and only where this computer holds read-only access,
+  // which no code here sets up. Gives { ok, dataWork, changes, ran, route?, before?, after?, why?, realRefused? }. Refused under STOP.
+  async function doDataCheck({ project, branch }, ctx) {
+    if (stopped()) return STOP_REFUSAL;
+    if (!plainBranch(branch) || !FEATURE_BRANCH.test(branch)) return { ok: false, refused: 'the branch must be a feature branch' };
+    const configured = await doConfig({ project }, ctx);
+    if (configured?.ok !== true) return { ok: false, refused: configured?.refused ?? 'the default branch\'s configuration could not be read' };
+    const refreshed = await refreshFetchMirror(project);
+    if (refreshed?.ok === false) return { ok: false, refused: refreshed.refused };
+    const mirror = fetchMirrorOf(project);
+    const inFetchMirror = local(mirror);
+    const adapter = await ctx.adapter();
+    const defaultBranch = await defaultBranchOf(project, adapter);
+    if (!plainBranch(defaultBranch)) return { ok: false, refused: PUSH_REFUSALS.unknownDefault };
+    const head = (await inFetchMirror([...NO_HOOKS, 'rev-parse', '--verify', '-q', `refs/heads/${branch}^{commit}`])).stdout.trim();
+    if (!FULL_SHA.test(head)) return { ok: false, refused: 'the branch is not on the host yet' };
+    const merged = await inFetchMirror([...NO_HOOKS, 'merge-base', `refs/heads/${defaultBranch}`, head]);
+    const base = merged.stdout.trim();
+    if (merged.code !== 0 || !FULL_SHA.test(base)) return { ok: false, refused: 'the branch shares no history with the default branch' };
+    const listed = await inFetchMirror([...NO_HOOKS, 'diff', '--name-status', '-z', '--no-renames', '--no-ext-diff', base, head]);
+    if (listed.code !== 0) return { ok: false, refused: 'the change could not be read' };
+    const parts = listed.stdout.split('\0');
+    const changes = [];
+    for (let i = 0; i + 1 < parts.length; i += 2) changes.push({ status: parts[i], path: parts[i + 1] });
+    const dataWork = classifyDiff({ paths: changes.map((c) => c.path), read: () => null, config: configured.config }).directorLevel.some((d) => d.kind === 'data-model');
+    if (configured.config.dataCheck === undefined) return { ok: true, dataWork, changes, ran: false, why: 'this project names no data command' };
+    const runTest = async (commit, command) => {
+      const got = await check({
+        project, commit, main: false, work: `data-${branch}`, source: mirror, settings: { testCommand: command, prepare: null, minutes: 5, network: false },
+      });
+      if (got.result !== 'passed') throw new Error(got.result === 'timed-out' ? 'it ran out of time' : `it ${got.result === 'could-not-run' ? 'could not run' : 'failed'}`);
+      return parseSnapshot(got.tail);
+    };
+    // No read-only credential is set up by any code here, so the real route has no runner and is refused in plain words.
+    const compared = await dataComparison({ config: configured.config, approvals: signedOf(project, 'data-route-approved'), runTest, runReal: null, base, head });
+    return { ok: true, dataWork, changes, ...compared };
+  }
+
   // git in the mirror with no key, no system or user configuration and no system attributes.
-  const local = (mirror) => (args, options = {}) => unkeyed('git', args, {
+  const local = (mirror) =>(args, options = {}) => unkeyed('git', args, {
     cwd: mirror, input: '', ...options, env: { GIT_ATTR_NOSYSTEM: '1', ...options.env },
   });
 
@@ -4587,6 +4631,7 @@ export async function startHelper({
     // Read-only, so STOP lets it through.
     '/pr/preview': doPreview,
     // Read-only, so STOP lets it through.
+    '/data/check': (body, ctx) => oneAtATime(`data:${body.project}`, () => doDataCheck(body, ctx)),
     '/config': async (body, ctx) => {
       try {
         return await doConfig(body, ctx);
