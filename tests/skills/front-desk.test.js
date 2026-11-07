@@ -585,3 +585,36 @@ test('the playbook gives the approve-work card plain words and says why a visibl
   assert.match(playbook, /Wheelhouse builds it and tests it, then shows you the result/);
   assert.match(playbook, /this one starts the building, and the later "Put pull request #n live\?" card/);
 });
+
+// The pane hands the front desk "the director wants to change <label>" for every Change… it draws: each must have a path
+// the playbook names, and a row with no path must not draw one (hooks/mod/settings.tsx, scripts/mod/settings-pane.js).
+test('every Change… row the settings pane offers has a path the playbook names', async () => {
+  const { settingsGroups } = await import('../../scripts/mod/settings-pane.js');
+  const { effectiveSettings } = await import('../../scripts/settings/effective.js');
+  const { checkSetting } = await import('../../scripts/settings/catalogue.js');
+  const now = () => new Date('2026-11-07T05:00:00.000Z');
+  const labels = new Set();
+  for (const level of ['balanced', 'thorough']) {
+    const effective = effectiveSettings({ project: { efficiency: { key: 'efficiency', value: level, id: 'a', at: '2026-11-01T00:00:00.000Z', before: null } }, now });
+    for (const local of [true, false]) {
+      for (const group of settingsGroups({ effective, now, timeZone: 'Australia/Sydney', local, locked: true, windows: 'guarded' })) {
+        for (const row of group.rows) if (row.kind === 'change') labels.add(row.label);
+      }
+    }
+  }
+  assert.deepEqual([...labels].sort(), ['Advanced settings', 'Hours before a new briefing', 'Notifications', 'Premium model', 'Where it is kept', 'Working hours']);
+  const section = playbook.split('**"wants to change <row>"**')[1]?.split('\n- **"Wheelhouse courier:"**')[0] ?? '';
+  assert.notEqual(section, '', 'the playbook has a section for the pane\'s Change… prompt');
+  for (const label of labels) assert.ok(section.includes(`- **${label}**:`), `the playbook names a path for ${label}`);
+  // Protection is chosen in setup, which can't run again once finished: the pane offers no Change… and the playbook says so.
+  assert.ok(!labels.has('Protection'));
+  assert.match(section, /Protection \(Standard or Locked\) is chosen in setup and has no Change…/);
+  // The values the playbook's examples set are ones the catalogue accepts.
+  checkSetting('briefingGapHours', 3);
+  checkSetting('hours', { days: [1, 2, 3, 4, 5], from: '09:00', to: '17:00' });
+  checkSetting('notifications', { channels: ['claude'], quiet: { from: '22:00', to: '07:00' } });
+  assert.ok(section.includes('{"days":[1,2,3,4,5],"from":"09:00","to":"17:00"}'));
+  for (const command of ['premium-card', 'move github', 'record setting', 'views settings', 'plan 9']) assert.ok(section.includes(command) || playbook.includes(command), command);
+  // Before the First Mate says a request is unstarted, it reads the work.
+  assert.match(playbook, /Before you say anything about those changes[^.]*run `views work`/);
+});

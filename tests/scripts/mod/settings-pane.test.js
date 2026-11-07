@@ -332,10 +332,11 @@ test('protection, notifications and working hours offer no choice and say where 
   });
   for (const locked of [true, false, undefined]) {
     const rows = settingsRows({ effective, now, timeZone: SYDNEY, locked });
-    for (const key of ['protection', 'notifications', 'hours', 'briefingGapHours']) {
+    for (const key of ['notifications', 'hours', 'briefingGapHours']) {
       const row = rowOf(rows, key);
       assert.deepEqual([row.choices, row.here, row.why], [[], false, 'Changed by asking the First Mate'], key);
     }
+    assert.deepEqual([rowOf(rows, 'protection').choices, rowOf(rows, 'protection').here, rowOf(rows, 'protection').why], [[], false, 'Chosen in setup']);
     assert.equal(rowOf(rows, 'protection').current, locked === true ? 'Locked' : locked === false ? 'Standard' : 'Ask the First Mate');
   }
   const rows = settingsRows({ effective, now, timeZone: SYDNEY });
@@ -593,7 +594,7 @@ test('the groups come in order, with their notes word for word', () => {
   const groups = groupsAt('2026-10-19T05:00:00.000Z');
   assert.deepEqual(groups.map((g) => [g.id, g.title]), [['stop', 'All stop'], ['project', 'This project'], ['you', 'You, in every project'], ['advanced', 'Advanced settings']]);
   assert.equal(groups[0].note, 'All stop halts the whole Crew at once. Only you can lift it.');
-  assert.equal(groups[1].note, 'Only for this project. A pick changes it at once and counts as your confirmation; Undo stays for a minute. Protection and build commands need your password or a careful yes, so the First Mate asks for them.');
+  assert.equal(groups[1].note, 'Only for this project. A pick changes it at once and counts as your confirmation; Undo stays for a minute. Protection is chosen in setup, and build commands on Windows are allowed only on their own card, so both are shown here and not changed here.');
   assert.equal(groups[2].note, 'These follow you to every project. Notifications and working hours are changed with the First Mate, which checks them with you.');
   assert.deepEqual(groups[1].rows.map((r) => r.label), [
     'Autonomy', 'Show before building', 'Feature milestones', 'Crew at once', 'Thoroughness', 'Product phase', 'Cards a day', 'Build commands on Windows', 'Budget', 'Protection',
@@ -621,11 +622,12 @@ test('a setting with levels is a select with its options and the value in force'
   assert.equal(availability.options[3].label, 'Away until 09:00 tomorrow');
 });
 
-test('Protection, Build commands on Windows, Notifications, Working hours and the briefing gap offer Change…', () => {
+test('Notifications, Working hours and the briefing gap offer Change…; Protection and Build commands on Windows show a value alone', () => {
   const groups = groupsAt('2026-10-19T05:00:00.000Z', { windows: 'guarded', locked: true });
-  for (const key of ['protection', 'windowsBuildCommands', 'notifications', 'hours', 'briefingGapHours', 'advanced']) {
+  for (const key of ['notifications', 'hours', 'briefingGapHours', 'advanced']) {
     assert.equal(groupRow(groups, key).kind, 'change', key);
   }
+  for (const key of ['protection', 'windowsBuildCommands']) assert.equal(groupRow(groups, key).kind, 'value', key);
   assert.equal(groupRow(groups, 'protection').value, 'Locked');
   assert.equal(groupRow(groups, 'windowsBuildCommands').value, 'Guarded');
   assert.equal(groupRow(groupsAt('2026-10-19T05:00:00.000Z'), 'windowsBuildCommands').value, 'Ask');

@@ -35,6 +35,7 @@ import { PREMIUM_ON } from '../routing/premium.js';
 
 export const ADVANCED = 'Advanced settings: ask the First Mate';
 const ASK = 'Changed by asking the First Mate';
+const SETUP_WHY = 'Chosen in setup';
 const BUDGET_WHY = 'The other budget levels come with the budget design';
 // The helper's refusal under All stop, in its words before and after the ship's-crew names.
 const STOP_REFUSED = new Set(['All stop is on', 'STOP is on']);
@@ -96,7 +97,7 @@ const PANE = {
   hours: { label: 'Working hours', kind: 'none', why: ASK },
   phase: { label: 'Product phase', kind: 'levels' },
   cardsPerDay: { label: 'Cards a day', kind: 'none', why: ASK },
-  protection: { label: 'Protection', kind: 'none', why: ASK },
+  protection: { label: 'Protection', kind: 'none', why: SETUP_WHY },
 };
 
 // Thoroughness levels whose columns are ready whatever the state says; Lean and Lightest are
@@ -296,11 +297,11 @@ function rowOf(key, { effective, changes, nowMs, timeZone, locked, ready }) {
 
 // --- the groups ---
 
-const PROJECT_NOTE = 'Only for this project. A pick changes it at once and counts as your confirmation; Undo stays for a minute. Protection and build commands need your password or a careful yes, so the First Mate asks for them.';
+const PROJECT_NOTE = 'Only for this project. A pick changes it at once and counts as your confirmation; Undo stays for a minute. Protection is chosen in setup, and build commands on Windows are allowed only on their own card, so both are shown here and not changed here.';
 const YOU_NOTE = 'These follow you to every project. Notifications and working hours are changed with the First Mate, which checks them with you.';
 const WINDOWS_LEVELS = { ask: 'Ask', guarded: 'Guarded', unattended: 'Unattended' };
-// The settings the front desk changes: a value and Change….
-const CHANGE_KEYS = ['protection', 'premium', 'briefingGapHours', 'notifications', 'hours'];
+// The settings the front desk changes: a value and Change…. Each has a path the front desk's playbook names (tests/skills/front-desk.test.js).
+const CHANGE_KEYS = ['premium', 'briefingGapHours', 'notifications', 'hours'];
 
 // A pane row as a group's row: a select for a setting with levels, a change for one the front desk
 // changes, else a value alone. `changed` goes with it while the change can still be undone.
@@ -336,7 +337,7 @@ export function settingsGroups({ effective, changes, now = () => new Date(), tim
   const sinceMs = halted && typeof stop.at === 'string' ? Date.parse(stop.at) : NaN;
   const builders = !halted ? 'Working' : Number.isFinite(sinceMs) ? `Halted since ${hhmmOf(sinceMs, timeZone)}` : 'Halted';
   const kept = { key: 'whereKept', label: 'Where it is kept', value: 'On this computer', kind: 'change' };
-  const build = { key: 'windowsBuildCommands', label: 'Build commands on Windows', value: WINDOWS_LEVELS[windows] ?? WINDOWS_LEVELS.ask, kind: 'change' };
+  const build = { key: 'windowsBuildCommands', label: 'Build commands on Windows', value: WINDOWS_LEVELS[windows] ?? WINDOWS_LEVELS.ask, kind: 'value' };
   return [
     { id: 'stop', title: 'All stop', note: `All stop ${lower(STOP_HALTS)} ${ONLY_YOU_LIFT}`, rows: [{ key: 'builders', label: 'Crew', value: builders, kind: 'value' }] },
     {

@@ -230,3 +230,25 @@ test('goal refuses when the project has no record', async () => {
   const got = await readView('goal', {}, { project: 'p', async views() { return { ok: false, refused: 'This project has no record to show yet' }; } }, { now });
   assert.equal(got.ok, false);
 });
+
+// A request the survey listed when setup finished stays on that snapshot; the lines say which are being carried on now.
+test('survey lines show a request already being carried on, by its work', () => {
+  const survey = { data: { requests: [{ number: 5, title: 'Tidy the header' }, { number: 6, title: 'Your changes made by hand' }, { number: 7, title: 'Add search' }] } };
+  const views = {
+    work: { 'carry-on-6': { work: { key: 'carry-on-6', id: 'e1', data: { id: 'carry-on-6', from: { sha: 'abc', ref: 'refs/wheelhouse/from/carry-on-6', request: 6 } } } } },
+    questions: { 'q-by-hand-1': { byHand: { n: 5, head: 'def', work: 'carry-on-5', doc: 'h' } } },
+  };
+  const lines = surveyLines(survey, views);
+  assert.ok(lines.includes('- number 5: Tidy the header (already being carried on as carry-on-5: do not carry it on again)'), lines.join('\n'));
+  assert.ok(lines.includes('- number 6: Your changes made by hand (already being carried on as carry-on-6: do not carry it on again)'), lines.join('\n'));
+  assert.ok(lines.includes('- number 7: Add search'));
+  assert.ok(lines.includes('Changes waiting to be merged: 3'));
+  // With no views to check against, the lines are the snapshot's.
+  assert.ok(surveyLines(survey).includes('- number 6: Your changes made by hand'));
+});
+
+test('survey lines name a by-hand tie with no work yet as being checked', () => {
+  const survey = { data: { requests: [{ number: 6, title: 'Your changes made by hand' }] } };
+  const lines = surveyLines(survey, { work: {}, questions: { q: { byHand: { n: 6, head: 'abc' } } } });
+  assert.ok(lines.includes('- number 6: Your changes made by hand (already being carried on: do not carry it on again)'), lines.join('\n'));
+});
