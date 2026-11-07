@@ -43,7 +43,7 @@ import { subjectOf, answeredWords } from '../cards/answered.js';
 import { PANE_LEAD, paneLine } from '../cards/panel-words.js';
 import { paneLive, takeHere, markOpen, HOLD_FOR_PANE } from '../lib/session-files.js';
 import { sessionRole } from '../lib/role.js';
-import { cardButtons } from '../mod/buttons.js';
+import { cardButtons } from '../cards/buttons.js';
 import { standing } from './prompt-record.js';
 
 const SHA12 = '([0-9a-f]{12})';

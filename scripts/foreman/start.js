@@ -50,8 +50,6 @@ const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 // How long the watcher's lock or health record counts as fresh.
 export const WATCHER_FRESH_MS = 10 * 60 * 1000;
 export const FOREMAN_PROMPT_LEAD = 'Wheelhouse foreman:';
-// What the Shape 2 start says about how the session is woken.
-export const MONITOR_NOTE = "The mod in this session hands it the watcher's wakes.";
 
 class StartError extends Error {}
 const refuse = (message) => { throw new StartError(message); };
@@ -219,11 +217,6 @@ export async function main(argv, {
     const read = await projectConfig(project, client);
     if (read.config === null) refuse(`The project's configuration can't be read from its default branch: ${read.why}`);
     const config = read.config;
-    if (config.watcherShape === 2) {
-      const session = foremanSession({ project, config, pluginRoot, platform, env, claude, say: (line) => err(`${line}\n`) });
-      err(`${MONITOR_NOTE}\n`);
-      return await launch(session.file, session.args, session.options);
-    }
     const { started } = startWatcher(project, {
       spawn, pluginRoot, alive, now, env, exists,
     });

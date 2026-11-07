@@ -36,13 +36,6 @@
 // wasn't written gets it then too (rulings F37, F45). Learning adds no text, and a failure or a
 // late helper leaves the rest for next visit.
 //
-// Two kinds of prompt are left alone, recording no time and adding nothing: the mod's own commands
-// (/wheelhouse-go, /wheelhouse-digest, /wheelhouse), whose answer starts no turn, so a briefing added to one would be
-// lost (a classic hook isn't shown a mod command's typed line, so this is a second line of
-// defence), and the courier's wake, which is not the director arriving: its line, which brings the wake's
-// instructions as context (courierContext), or a prompt in the earlier form (LEADS.courier). A pane
-// press (LEADS.pane) is the director's, as their press made it, and is handled like any prompt.
-//
 // A command is matched as typed, in any case, with white space around it ignored:
 // /wheelhouse:logbook or /wheelhouse:board (optionally "build" or "director"), /wheelhouse:briefing,
 // /wheelhouse:settings and /wheelhouse:sources. The short forms (/board) are left to whoever owns them.
@@ -66,8 +59,6 @@ import { answerLine } from '../state/card-lines.js';
 import { helperClient } from '../host/helper-client.js';
 import { stopState } from '../lib/stop.js';
 import { CARD } from '../lib/front-desk.js';
-import { LEADS } from '../lib/mod-numbers.js';
-import { courierContext } from '../mod/courier.js';
 import { HELPER_WAIT_MS } from '../lib/core-numbers.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { HEADINGS, NOT_CHECKED, NONE_CHANGED, briefingIn } from '../desk/context.js';
@@ -91,9 +82,6 @@ export const FOREMAN_LINE = 'This session is the Bosun, not the First Mate. Foll
 // The line that tells the front desk to ask the cards waiting, after the briefing, in Claude Code's words.
 export const cardsLine = (n) => `Cards to ask this visit: ${n}. Run \`cli.js cards\` and ask them in one AskUserQuestion call, after the briefing.`;
 const TABS = ['director', 'build'];
-// The mod's own commands, whose answer starts no turn.
-const MOD_COMMAND = /^\/(?:wheelhouse-go|wheelhouse-digest|wheelhouse)(?:[ \t]+.*)?$/i;
-
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
 function attempt(read, fallback = null) {
@@ -112,12 +100,6 @@ export function commandOf(prompt) {
   const name = match[1].toLowerCase();
   // /wheelhouse:logbook is the Logbook's own name; /wheelhouse:board, its earlier one, still works. Both are 'board' here.
   return { name: name === 'logbook' ? 'board' : name, tab: TABS.includes(word) ? word : undefined };
-}
-
-// Whether the prompt isn't the director arriving: one of the mod's commands, or the courier's wake.
-function isOwnPrompt(prompt) {
-  const text = prompt.replace(/\p{Cf}/gu, '').trim();
-  return MOD_COMMAND.test(text) || text.startsWith(LEADS.courier);
 }
 
 // The clock as a Date; one that can't be read gives an invalid Date.
@@ -325,7 +307,7 @@ export async function decide(input, deps = {}) {
     if (!isRecord(input) || typeof input.cwd !== 'string' || typeof input.prompt !== 'string') return undefined;
     // While setup is unfinished here, setup comes first, whatever the prompt asks. A step the build engine started is
     // not the director arriving, so setup never comes first for it (the health trial runs in an unfinished folder).
-    const setup = featureSlug(input.cwd) === null && !isOwnPrompt(input.prompt) && env?.WHEELHOUSE_ENGINE_RUN !== '1' ? attempt(() => beingSetUp(input.cwd), null) : null;
+    const setup = featureSlug(input.cwd) === null && env?.WHEELHOUSE_ENGINE_RUN !== '1' ? attempt(() => beingSetUp(input.cwd), null) : null;
     const found = projectOf(input.cwd, { dir });
     // The director's request is kept for the session that carries setup on, should setup need a new one.
     if (setup !== null && writes && typeof setup.folder === 'string') attempt(() => keepRequest(setup.folder, input.prompt, now), false);
@@ -336,11 +318,6 @@ export async function decide(input, deps = {}) {
     if (role === 'foreman' && first && env?.WHEELHOUSE_ROLE !== 'foreman') return answer.context('UserPromptSubmit', FOREMAN_LINE);
     if (setup !== null && role === 'front-desk') return answer.context('UserPromptSubmit', SETUP_FIRST);
     if (role !== 'front-desk' || featureSlug(input.cwd) !== null) return undefined;
-    // The courier's line (design section 17.1): the director sees one plain line, and its instructions reach the front
-    // desk here, as context, never in the chat.
-    const woke = attempt(() => courierContext({ project: found.project, session: input.session_id, prompt: input.prompt, now }), null);
-    if (woke !== null) return answer.context('UserPromptSubmit', woke);
-    if (isOwnPrompt(input.prompt)) return undefined;
     const { project } = found;
     const at = clockOf(now);
     const seen = readSeen(project, { now: at });

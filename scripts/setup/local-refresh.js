@@ -30,13 +30,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { localSettings, mergeSettings, directorStatusLine, NO_SYSTEM_CA } from '../protection/settings.js';
+import { localSettings, mergeSettings, NO_SYSTEM_CA } from '../protection/settings.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { readJournal, addChanges, applyJsonKey, newId } from './journal.js';
 import { withCurrentSection } from './project-files.js';
 import { helperAddress } from '../lib/paths.js';
 import { projectForFolder } from '../lib/projects.js';
-import { claudeHome as defaultClaudeHome } from '../lineage/manifest.js';
 import { pluginRoots } from '../hooks/kit.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
@@ -94,9 +93,9 @@ function runFor(folder, journal) {
 
 // Refreshes the file in `folder`, the project's main folder as setup's run names it, for this computer:
 // `address` the helper's socket, `node` this Node.js, `pluginRoot` the folder the Wheelhouse command is
-// named from, `claudeHome` Claude Code's own folder (for a status line of the director's own). Returns
+// named from, Returns
 // the number of keys it wrote.
-export function refreshLocalSettings({ folder, address, node, pluginRoot, platform = process.platform, claudeHome, journal = readJournal }) {
+export function refreshLocalSettings({ folder, address, node, pluginRoot, platform = process.platform, journal = readJournal }) {
   const file = path.join(folder, LOCAL);
   let existing;
   try {
@@ -105,8 +104,7 @@ export function refreshLocalSettings({ folder, address, node, pluginRoot, platfo
     return 0;
   }
   if (!isObject(existing)) return 0;
-  const ownStatusLine = claudeHome ? directorStatusLine({ claudeHome, projectDir: folder }) : null;
-  const ours = localSettings({ address, node, pluginRoot, platform, ownStatusLine });
+  const ours = localSettings({ address, node, pluginRoot, platform });
   const edits = keyEdits(existing, refreshed(existing, ours));
   if (edits.length === 0) return 0;
   const run = runFor(folder, journal());
@@ -154,7 +152,7 @@ export function main([folder] = [], { platform = process.platform, self = SELF, 
   }
   if (found?.record?.folder !== folder || found.lean === true) return null;
   const wrote = refreshLocalSettings({
-    folder, address: helperAddress({ platform }), node: process.execPath, pluginRoot: pluginRoots(dir, self, pluginRoot).at(-1), platform, claudeHome: defaultClaudeHome(),
+    folder, address: helperAddress({ platform }), node: process.execPath, pluginRoot: pluginRoots(dir, self, pluginRoot).at(-1), platform,
   });
   try {
     refreshCompactSection({ folder, project: found.project });

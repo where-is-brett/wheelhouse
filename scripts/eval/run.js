@@ -25,8 +25,7 @@
 // scenario it marked, only in the variant that marked it. After either, the
 // report (scripts/eval/summary.js) is printed and kept beside the run record,
 // as <time>.md. The build loop's scenarios (20 to 35) are in tests/eval/build-loop/,
-// the front desk's (1 to 19) in tests/eval/front-desk/ and the mod's (36 and 37) in
-// tests/eval/mod/, a file's number read without its leading zero (01-…).
+// the front desk's (1 to 19) in tests/eval/front-desk/, a file's number read without its leading zero (01-…).
 // `--agent <name>` runs the sessions on that agent, through its adapter's evaluation runner
 // (adapterFor(name).evalRunner.run); without it they run through runSession, as they always have.
 // A scenario whose `agents` lists the agents it runs on is left out of a run on any other (no

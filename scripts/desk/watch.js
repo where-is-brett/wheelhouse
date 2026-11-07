@@ -6,7 +6,7 @@
 // or is from another version, counts as none: the whole state comes back as events, never an error.
 import crypto from 'node:crypto';
 import { DESK_VERSION } from './vocabulary.js';
-import { cardTextOf } from '../mod/status.js';
+import { cardTextOf } from './card-text.js';
 import { dataHash } from '../state/events.js';
 import { isOpen, readView } from './views.js';
 

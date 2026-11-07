@@ -25,6 +25,7 @@ import { planNamedAddon, removeAddon } from './addon.js';
 import { parkedAgentOfProject } from '../agents/names.js';
 import { openJournal, updateLockHeld } from './journal.js';
 import { raiseParked } from './parked.js';
+import { statusLineStep } from './status-line.js';
 import { verify, readEnrolled } from '../state/signing.js';
 import { listEvents } from '../state/events.js';
 import { startWatcher, stopWatcher, watcherRunning } from '../foreman/start.js';
@@ -43,7 +44,6 @@ export const ASK_AGAIN_MS = 10 * 1000;
 export const NEW_HELPER_MS = 20 * 1000;
 export const WAITING_LINE = 'Waiting for the old helper to finish what it\'s doing';
 export const ASKING_LINE = 'Waiting for your answer about the old helper.';
-export const FOREMAN_LINE = 'Restart the foreman\'s terminal session so it runs the new version.';
 export const NOT_RUNNING_LINE = 'The new helper did not answer yet. It starts with the next session.';
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -240,7 +240,7 @@ export async function finish({
   project, journal, answer = null, events, enrolled, newRoot = PLUGIN_ROOT, folder, claudeHome = defaultClaudeHome(), platform = process.platform,
   to, from, client = helperClient(), refresh, old, say = () => {}, now = Date.now, sleep = pause, startHelper, hash = fileHash, record = recordUpdate,
   readRecord = readHelperRecord, startTimeOf = processStartTime, alive = pidAlive, address = helperAddress({ platform }), run = defaultRun,
-  user, cacheRoot = defaultCacheRoot(), kill, watcher, shape, heldNow = updateLockHeld, move = realMove, addon = realAddon, parked = realParked,
+  user, cacheRoot = defaultCacheRoot(), kill, watcher, heldNow = updateLockHeld, move = realMove, addon = realAddon, parked = realParked, statusLine = statusLineStep,
 }) {
   // Only the job's own step runs this: the update lock is held and the journal has the finish step running. It never takes
   // the lock itself, and it runs only from the plugin cache folder of the tag the journal names.
@@ -320,10 +320,10 @@ export async function finish({
     }
 
     // 3c. The pieces parked in the core cut, once the new helper is up: the VS Code add-on, removed only where the card the
-    // director clicked named it, and the card about a parked agent. They inform: a line each, never a stop for the update.
+    // director clicked named it, the card about a parked agent, and Wheelhouse's own status line taken out of the local settings. They inform: a line each, never a stop for the update.
     const said = [];
     if (handing.done) {
-      for (const step of [addon, parked]) {
+      for (const step of [addon, parked, statusLine]) {
         try { said.push(...((await step({ project, folder: dir, journal, progress, save, client, run, platform }))?.lines ?? [])); } catch { /* it informs */ }
       }
     }
@@ -348,9 +348,6 @@ export async function finish({
     if (handing.line) lines.push(handing.line);
     if (moved?.done === true) lines.push(...moved.lines);
     lines.push(...said);
-    let two = false;
-    try { two = (await (shape ? shape() : defaultShape(project, client))) === 2; } catch { two = false; }
-    if (two) lines.push(FOREMAN_LINE);
     return { ok: true, line: lines.join(' ') };
   }
 }
@@ -370,7 +367,7 @@ function realParked({ project, folder, client, progress, save }) {
 // still stores Archon, and Archon on the computer is archived only once no other registered project stores it.
 async function realMove({ project, folder, journal, progress, save, client }) {
   const [{ moveOffArchon }, { storedEngine }, { settingsViews }] = await Promise.all([
-    import('./engine-move.js'), import('../settings/effective.js'), import('../desk/mod-records.js'),
+    import('./engine-move.js'), import('../settings/effective.js'), import('../desk/settings-views.js'),
   ]);
   const stored = () => storedEngine(settingsViews(project));
   if (progress.engine === undefined && stored() !== 'archon') return null;
@@ -387,11 +384,6 @@ async function realMove({ project, folder, journal, progress, save, client }) {
     client,
     othersOnArchon: () => registeredProjects().some((p) => p.project !== project && storedEngine(settingsViews(p.project)) === 'archon'),
   });
-}
-
-async function defaultShape(project, client) {
-  const read = await projectConfig(project, client);
-  return read?.config?.watcherShape ?? null;
 }
 
 // Starts the helper from the new folder, as the session start does: detached, hidden, in Wheelhouse's own folder.

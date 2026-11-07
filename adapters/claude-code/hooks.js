@@ -3,9 +3,6 @@
 // plugin loader reads. The object is held here as well, and tests/scripts/agents/claude-registration.test.js
 // fails when the two differ, so a change to either must change both. Each call gives a copy.
 const REGISTRATION = {
-  "modules": [
-    "./register.ts"
-  ],
   "hooks": {
     "SessionStart": [
       {

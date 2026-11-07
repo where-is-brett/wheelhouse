@@ -117,7 +117,8 @@ function withDefaults(c) {
     routing,
     sessionMode: c.sessionMode ?? DEFAULT_SESSION_MODE,
     buildCommands: c.buildCommands ?? [...DEFAULT_BUILD_COMMANDS],
-    watcherShape: c.watcherShape ?? 1,
+    // Shape 2 is parked with the mod: it is accepted in a record and read as Shape 1.
+    watcherShape: 1,
     hotFiles: c.hotFiles ?? [...DEFAULT_HOT_FILES],
     flagFiles: c.flagFiles ?? [],
   };

@@ -14,7 +14,7 @@ If you've found a way round Wheelhouse's protections, report it privately instea
 
 Open an issue before starting anything large, so we can agree the shape of it first. By contributing, you agree that your work is licensed under the [Apache License 2.0](LICENSE).
 
-You need Node.js 22 or later. Wheelhouse has no npm dependencies, so there is nothing to install. Change the mod, and you also need Claude Code for `npm run mod-check`.
+You need Node.js 22 or later. Wheelhouse has no npm dependencies, so there is nothing to install.
 
 Run the test files your change touches:
 
