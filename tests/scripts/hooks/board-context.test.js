@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { loadBoardInputs } from '../../../scripts/board/inputs.js';
 import { NOTE_LEAD } from '../../../scripts/cards/answered.js';
-import { decide, HEADINGS, WAIT_MS, LEARN_WAIT_MS, briefingIn, cardsDue, cardsLine, FOREMAN_LINE, SINCE_LEAD, STOPPED_LEAD } from '../../../scripts/hooks/board-context.js';
+import { decide, HEADINGS, WAIT_MS, LEARN_WAIT_MS, briefingIn, cardsDue, cardsLine, FOREMAN_LINE, SINCE_LEAD, STOPPED_LEAD, DECISIONS_TAIL } from '../../../scripts/hooks/board-context.js';
 import { FOREMAN_PROMPT_LEAD } from '../../../scripts/foreman/start.js';
 import { roleFile } from '../../../scripts/lib/role.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
@@ -537,11 +537,11 @@ test('the hook as a process prints nothing for input it cannot read, and exits 0
   }
 });
 
-test('hooks.json runs it on every prompt, after the STOP word and the gauge', () => {
+test('hooks.json runs it on every prompt, after the STOP word, the gauge and the reply record', () => {
   const file = fileURLToPath(new URL('../../../hooks/hooks.json', import.meta.url));
   const commands = JSON.parse(fs.readFileSync(file, 'utf8')).hooks.UserPromptSubmit.flatMap((group) => group.hooks).map((hook) => hook.command);
   const names = commands.map((command) => /scripts\/hooks\/([a-z-]+)\.js/.exec(command)[1]);
-  assert.deepEqual(names, ['stop-word', 'context-gauge', 'board-context']);
+  assert.deepEqual(names, ['stop-word', 'context-gauge', 'prompt-record', 'board-context']);
 });
 
 test('each command asks only for what the hook added', () => {
@@ -653,10 +653,15 @@ test('the count is at most one call\'s worth, and counts a question from the bui
       'q-wide-4': { question: { data: { ...question('q-wide-4'), options: ['A', 'B', 'C', 'D', 'E'].map((label) => ({ label, says: label })), recommendation: 'A' } } },
       'q-unread-5': { question: { data: { id: 'q-unread-5' } } },
     });
+    // Typed replies are off by default: the question with no card yet is a card to ask, as it always was.
     assert.equal(contextOf(await run(repo, 'Hi', NOW)), cardsLine(1));
     // A board command gives the line, then the board.
     const board = contextOf(await run(repo, '/wheelhouse:board', NOW));
     assert.ok(board.startsWith(`${cardsLine(1)}\n\n${HEADINGS.board}`), board);
+    // Switched on, that question is a decision shown as a chat message: no card to ask.
+    put(viewFile('settings'), { typedReplies: { key: 'typedReplies', id: 's1', at: '2026-10-01T00:00:00.000Z', value: true } });
+    const toCome = `Decisions not shown yet: 1. ${DECISIONS_TAIL}`;
+    assert.equal(contextOf(await run(repo, 'Hi again', NOW)), toCome);
   });
 });
 
@@ -665,6 +670,9 @@ test('cardsDue counts from the views it is given, as the hook counts from the vi
   assert.equal(cardsDue({ waiting: [...unasked(2), { id: 'c1', at: '2026-10-18T09:00:00.000Z', data: { title: 'Old' }, asked: ASKED }] }, now), 2);
   assert.equal(cardsDue({ waiting: unasked(6) }, now), 4, 'one call\'s worth at most');
   assert.equal(cardsDue({ waiting: [], questions: { 'q-export-1': { question: { data: question('q-export-1') } } } }, now), 1);
+  // With typed replies on, a question from the build is a decision, so no card.
+  const on = { typedReplies: { key: 'typedReplies', id: 's1', at: '2026-10-01T00:00:00.000Z', value: true } };
+  assert.equal(cardsDue({ waiting: [], settings: on, questions: { 'q-export-1': { question: { data: question('q-export-1') } } } }, now), 0, 'a decision is no card');
   assert.equal(cardsDue({}, now), 0);
 });
 

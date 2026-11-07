@@ -105,6 +105,8 @@ This changes the core cut, which asks cards through the chat's question picker (
 - **Only the director's own words decide.** A reply is recorded from what the director typed, captured by the prompt hook (`scripts/hooks/prompt-record.js`), and signed into the record as clicks are today. Text an agent wrote never counts, however it is worded. Reply codes already count in the chat today; they become the main way to answer.
 - **One decision, one answer.** An answered decision isn't asked again, and a second answer to it is refused.
 
+**A known gap in typed replies.** The prompt hook can't tell the director's typing from text another session sends into the director's own front desk, so such text would be signed as their answer. Replies count only in a front-desk session that no script started, which closes the common paths; the gap stays open until the client marks where a prompt came from, and a check of the prompt's source is planned for when that mark exists. *Builder's call, put to the director on 7 November 2026; their answer may change it.* Typed replies are switched off by default, as the project setting `typedReplies`, until the director decides: off, a decision is asked through the question picker as before, and the decision message and its check still apply.
+
 ### 6.2 The shape, checked before it is shown
 
 ```

@@ -60,6 +60,7 @@
 import { matchGlob } from './glob.js';
 import { AGENT_CONTROL } from '../lib/agent-control.js';
 import { isPage } from '../pictures/pages.js';
+import { changesDependencies, isManifest } from './dependencies.js';
 
 // The Claude Code settings, the Wheelhouse configuration inside .claude/,
 // CLAUDE.md, and .mcp.json (it names the connectors agents get), then every file that steers an
@@ -226,4 +227,27 @@ export function classifyChange({ paths, config }) {
     .filter((area) => paths.some((file) => matchesAny(area.paths, file)))
     .map((area) => area.name);
   return { touchesGuardrails: guardrailPaths.length > 0, guardrailPaths, criticalAreas };
+}
+
+// --- The decision line, read from a change (design section 5 of the director's way of working) ---
+
+// The files whose change is a database or schema change, and those that say what others depend on (a described API, a
+// data contract, the command line's own options). These are the facts a change carries by its files alone.
+const DATA_MODEL_FILES = Object.freeze(['**/migrations/**', '**/migrate/**', '**/schema.prisma', '**/schema.rb', '**/structure.sql']);
+const PUBLIC_INTERFACE_FILES = Object.freeze([
+  '**/openapi.json', '**/openapi.yaml', '**/openapi.yml', '**/swagger.json', '**/swagger.yaml', '**/swagger.yml',
+  '**/*.proto', '**/*.graphql', 'bin/**', '**/cli.*', '**/cli/**',
+]);
+
+// What the change is at the director's level of the decision line, on top of classifyChange: `directorLevel` lists each
+// kind a change shows (a kind of scripts/decisions/line.js's DIRECTOR_KINDS) with the changed paths that show it, in the
+// order given. `read(path, 'base' | 'head')` gives a file's text before and after the change, or null where it isn't
+// there; it is asked only for dependency manifests. A manifest that can't be read counts as a dependency change.
+export function classifyDiff({ paths, read, config = readConfig(null) }) {
+  const found = [];
+  const add = (kind, files) => { if (files.length > 0) found.push({ kind, paths: files }); };
+  add('major-dependency', paths.filter((file) => isManifest(file) && changesDependencies(file, read)));
+  add('data-model', paths.filter((file) => matchesAny(DATA_MODEL_FILES, file)));
+  add('public-interface', paths.filter((file) => matchesAny(PUBLIC_INTERFACE_FILES, file)));
+  return { ...classifyChange({ paths, config }), directorLevel: found };
 }

@@ -9,6 +9,9 @@
 //                   each lineage hold. Under STOP, the Lift STOP card alone. With --here (the director
 //                   asked to answer in the chat) the cards given are marked, for two minutes, to be
 //                   asked in the chat once
+//   decision list   the decisions waiting for the director, by number and question, after making a card of each open question from the
+//                   build that has none; decision show <n> prints decision n as the chat message it is, to copy word for word. A decision
+//                   is shown in the chat and answered by the director's typed reply, never through the question picker
 //   card            composes one card from the composer's input and records it ({ question, id });
 //                   with `revises`, the id of a card of its kind waiting now or closed by a later
 //                   head, and `changed`, one line saying what changed, it is a revised card that
@@ -24,6 +27,9 @@
 //                   hands a change the director suggested on a waiting approval or CI push card to
 //                   the build: the work re-stated with the change, in the front desk's own words, as
 //                   its title; prints the one line to say
+//   pull-back <call id> [--change]
+//                   the director's "I'd have wanted to decide that" about a call an agent logged on its own side of the decision line:
+//                   it becomes a ruling (with its confirm card), and with --change an intake request to change what was built as well
 //   ask-bosun <work>
 //                   the director's "fix it" or "ship it" about work with an open pull request: the helper puts the
 //                   Bosun's question to them in its own fixed words (fix the findings or restart the builder, or stop the
@@ -74,6 +80,9 @@ import { helperClient } from '../host/helper-client.js';
 import { WINDOW_MS } from '../confirm/window.js';
 import { dataHash } from '../state/events.js';
 import { composeCard, answerInput } from '../cards/compose.js';
+import { decisionText } from '../decisions/message.js';
+import { isDecisionCard } from '../decisions/pending.js';
+import { typedRepliesIn } from '../decisions/switch.js';
 import { confirmWords } from '../state/card-lines.js';
 import { joinersOf } from '../state/joiners.js';
 import { cardsForVisit, existingCard, cardNumbered, asQuestion } from '../cards/visit.js';
@@ -121,7 +130,7 @@ export const RECORD_KINDS = Object.freeze([
   'work', 'amendment', 'incident', 'note', 'brief',
 ]);
 export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey', 'brief']);
-const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'note'];
+const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'note', 'decision', 'pull-back'];
 // How long `confirm` waits for the helper: one window at a time on the computer, so it may wait for another's.
 const CONFIRM_WAIT_MS = 3 * WINDOW_MS;
 export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
@@ -465,19 +474,9 @@ async function buildLoopCards({ client, cwd, views, words, now, problems }) {
   return { made, again };
 }
 
-// This visit's cards: { questions, left }, and `problems` when something couldn't be done. An open
-// question from the build that no waiting card asks gets its answer card first, and the build
-// loop's records theirs (buildLoopCards). The cards handed out are recorded as asked, so a card
-// dismissed with no answer isn't offered on every turn. A write the helper refuses is a problem,
-// not a failure: the cards waiting are still given. Under STOP the visit's one card is Lift STOP:
-// the helper writes nothing, so no card is made, and the cards waiting stay on the board, counted
-// in `left`, for the visit after STOP is lifted.
-export async function cards({ client, cwd, now, onAsked }) {
-  const problems = [];
-  let { views, stop, names } = await viewsOf(client, cwd);
-  const words = await wordsOf(client, cwd, views, now, names);
-  const lift = stop ? composePlain(LIFT_STOP_CARD, words).question : null;
-  const at = typeof now === 'function' ? now() : new Date(now ?? Date.now());
+// An answer card for each open question from the build that no waiting card asks yet, or whose joiners changed: how many were
+// recorded. What could not be made or recorded goes into `problems`. Under STOP none is made. Both `cards` and `decision list` make them.
+async function questionCards({ client, cwd, views, words, stop, problems }) {
   let made = 0;
   for (const [id, entry] of Object.entries(isPlain(views.questions) && !stop ? views.questions : {})) {
     // A joiner is answered by its lead's card, which is re-issued when the pieces behind it change.
@@ -505,6 +504,23 @@ export async function cards({ client, cwd, now, onAsked }) {
       problems.push(`The card for question ${id} wasn't recorded: ${error.message}`);
     }
   }
+  return made;
+}
+
+// This visit's cards: { questions, left }, and `problems` when something couldn't be done. An open
+// question from the build that no waiting card asks gets its answer card first, and the build
+// loop's records theirs (buildLoopCards). The cards handed out are recorded as asked, so a card
+// dismissed with no answer isn't offered on every turn. A write the helper refuses is a problem,
+// not a failure: the cards waiting are still given. Under STOP the visit's one card is Lift STOP:
+// the helper writes nothing, so no card is made, and the cards waiting stay on the board, counted
+// in `left`, for the visit after STOP is lifted.
+export async function cards({ client, cwd, now, onAsked }) {
+  const problems = [];
+  let { views, stop, names } = await viewsOf(client, cwd);
+  const words = await wordsOf(client, cwd, views, now, names);
+  const lift = stop ? composePlain(LIFT_STOP_CARD, words).question : null;
+  const at = typeof now === 'function' ? now() : new Date(now ?? Date.now());
+  let made = await questionCards({ client, cwd, views, words, stop, problems });
   let again = new Set();
   if (!stop) {
     const built = await buildLoopCards({ client, cwd, views, words, now: at, problems });
@@ -515,10 +531,44 @@ export async function cards({ client, cwd, now, onAsked }) {
   const decided = [...again].some((id) => !(Array.isArray(views.waiting) ? views.waiting : []).some((c) => c?.id === id));
   let events = [];
   if (made > 0 || decided) ({ views, cards: events } = await viewsOf(client, cwd, { cards: decided }));
-  const chosen = cardsForVisit(withPutBack(views, again, events), { room: lift === null ? CARD.questions : 0 });
+  // With typed replies on, a decision is shown as a chat message (`decision list`), never through the question picker, so no
+  // visit hands one out. Off, it is a card like any other.
+  const typed = typedRepliesIn(views.settings);
+  const forVisit = withPutBack(views, again, events);
+  const chosen = cardsForVisit({ ...forVisit, waiting: (Array.isArray(forVisit.waiting) ? forVisit.waiting : []).filter((c) => !typed || !isDecisionCard(c?.data)) }, { room: lift === null ? CARD.questions : 0 });
   problems.push(...await markAsked(client, cwd, chosen.ids, stop));
   if (typeof onAsked === 'function') await onAsked(chosen.ids);
   return { questions: [...(lift === null ? [] : [lift]), ...chosen.questions], left: chosen.left, ...(chosen.heldBack > 0 ? { heldBack: chosen.heldBack } : {}), ...withProblems(problems) };
+}
+
+// --- decisions ---
+
+// A decision is a plain chat message (scripts/decisions/), not a card for the question picker. The waiting decisions, as the desk's
+// waiting view gives them: { pending, answered, next }.
+async function decisionsOf(client, cwd) {
+  const got = await recordOf(client, cwd);
+  if (!isPlain(got.decisions) || !Array.isArray(got.decisions.pending)) throw new CliError('The host helper gave no decisions');
+  return got.decisions;
+}
+
+// The decisions waiting, one line each. First each open question from the build that no card asks yet is made a card, which is what a
+// decision is made from; under STOP none is made, and the decisions already waiting are listed.
+export async function decisionList({ client, cwd, now }) {
+  const problems = [];
+  const { views, stop, names } = await viewsOf(client, cwd);
+  const words = await wordsOf(client, cwd, views, now, names);
+  await questionCards({ client, cwd, views, words, stop, problems });
+  const { pending } = await decisionsOf(client, cwd);
+  const lines = pending.length === 0 ? ['No decision is waiting.'] : pending.map((d) => `${d.n}. ${d.question}${d.work === null || d.work === undefined ? '' : ` (holds up: ${d.work})`}`);
+  return [...lines, ...problems];
+}
+
+// One decision's message, to print word for word. Refused when none waits by that number.
+export async function decisionShow({ client, cwd, n }) {
+  const { pending } = await decisionsOf(client, cwd);
+  const found = pending.find((d) => d.n === n);
+  if (found === undefined) throw new CliError(`Decision ${n} isn't waiting${pending.length === 0 ? '' : `: ${pending.map((d) => d.n).join(', ')} are`}. Run decision list.`);
+  return decisionText(found);
 }
 
 // The director's Show them: the cards held back are named as pulled, which spends none of the day's budget, then this
@@ -706,6 +756,47 @@ export async function askBosun({ client, cwd, work }) {
   if (got?.ok !== true) throw new CliError(said(got, 'The helper could not ask the Bosun'));
   if (typeof got.skipped === 'string') return { work, say: `Nothing was asked: ${got.skipped}.` };
   return { work, id: got.id, say: 'Asked: the Bosun decides what happens to its pull request. Run cards and ask the card it gives.' };
+}
+
+// --- pull-back ---
+
+const PULL_WORDS = 160;
+const MOST_CALLS = 200;
+const callMark = (id) => `[call ${id.slice(0, 8)}]`;
+
+// The director's "I'd have wanted to decide that" about a call an agent made on its own side of the decision line (the
+// decision log, design section 5). The call is named by its id, or the start of it (six characters or more). It becomes a ruling
+// for the future, which waits for the director's confirm card like any ruling, and with `change` an intake request to change
+// what was built as well. Resolves with { call, ruling, card, request?, say }.
+export async function pullBack({ client, cwd, call, change = false, now, makeId }) {
+  if (typeof call !== 'string' || !/^[0-9a-f-]{6,36}$/.test(call)) throw new CliError('Give the call by its id, or at least its first six characters: pull-back <call id> [--change]');
+  const got = await deskOf(client, cwd).read('waiting', { calls: true });
+  if (got?.ok !== true || !Array.isArray(got.data?.calls)) throw new CliError(said(got, 'The host helper gave no calls'));
+  const found = got.data.calls.filter((c) => c.id === call || c.id.startsWith(call));
+  if (found.length === 0) throw new CliError(`No call starting with ${call} is among the recent calls (the latest ${MOST_CALLS} are kept in view)`);
+  if (found.length > 1) throw new CliError(`More than one recent call starts with ${call}: give more of its id`);
+  const [chosen] = found;
+  const mark = callMark(chosen.id);
+  // A ruling for the call stands once; a request to change what was built is filed once. With a ruling already, `change` files
+  // only the request.
+  if (chosen.ruled === true && !change) throw new CliError(`That call was pulled back already ${mark}`);
+  if (change && chosen.requested === true) throw new CliError(`A request to change what that call built was filed already ${mark}`);
+  const decided = flat(chosen.decided).slice(0, PULL_WORDS);
+  const out = { call: chosen.id };
+  if (chosen.ruled !== true) {
+    const words = `Pulled back ${mark}: "${decided}" (${chosen.work}, ${chosen.kind}). A call like this is the director's to decide first.`;
+    const made = await record({ client, cwd, kind: 'ruling', input: { words, reason: 'The director pulled back a call from the decision log', scope: 'project' }, now, ...(makeId ? { makeId } : {}) });
+    out.ruling = made.id;
+    out.card = made.card;
+  }
+  if (change) {
+    const request = await write(client, cwd, 'request', { words: `Change what ${chosen.work} built ${mark}: it decided "${decided}" on its own, and the director pulled that call back.`, via: 'chat' });
+    out.request = request.id;
+  }
+  out.say = change
+    ? 'Pulled back, and a request to change what was built is with the intake. The ruling waits for your confirmation.'
+    : 'Pulled back. The ruling waits for your confirmation, and calls like this come to you first from now on.';
+  return out;
 }
 
 export const DROPPED = 'Dropped: it will not be built.';
@@ -1244,6 +1335,11 @@ export async function main(argv, {
       const { left, onAsked } = await hereMark(rest);
       only(left, 0, 'cards takes no arguments');
       json(await cards({ client: helper, cwd: here, now, onAsked }));
+    } else if (command === 'decision') {
+      const usage = 'Give decision list, or decision show <n> with the decision\'s number';
+      if (rest[0] === 'list' && rest.length === 1) lines(await decisionList({ client: helper, cwd: here, now }));
+      else if (rest[0] === 'show' && rest.length === 2 && /^[1-9][0-9]{0,2}$/.test(rest[1])) out(`${await decisionShow({ client: helper, cwd: here, n: Number(rest[1]) })}\n`);
+      else throw new CliError(usage);
     } else if (command === 'card') {
       only(rest, 0, 'card takes no arguments: give the card as JSON on standard input');
       json(await card({ client: helper, cwd: here, input: parsed(await stdin()), now }));
@@ -1260,6 +1356,10 @@ export async function main(argv, {
     } else if (command === 'drop') {
       if (rest.length !== 1 || rest[0] === '') throw new CliError('Give the work to drop: drop <work id>');
       json(await drop({ client: helper, cwd: here, work: rest[0] }));
+    } else if (command === 'pull-back') {
+      const change = rest.length === 2 && rest[1] === '--change';
+      if ((rest.length !== 1 && !change) || rest[0] === '') throw new CliError('Give the call: pull-back <call id>, and --change after it to change what was built as well');
+      json(await pullBack({ client: helper, cwd: here, call: rest[0], change, now, ...(makeId ? { makeId } : {}) }));
     } else if (command === 'ask-bosun') {
       if (rest.length !== 1 || rest[0] === '') throw new CliError('Give the work: ask-bosun <work id>');
       json(await askBosun({ client: helper, cwd: here, work: rest[0] }));

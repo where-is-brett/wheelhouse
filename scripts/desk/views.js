@@ -12,6 +12,8 @@ import { cardTextOf, hashOf } from './card-text.js';
 import { cardButtons } from '../cards/buttons.js';
 import { dataHash } from '../state/events.js';
 import { cardOutcomes, latestFor } from '../state/views.js';
+import { decisionsFrom } from '../decisions/pending.js';
+import { callsFrom } from '../decisions/calls.js';
 import { answeredWords, askOf, subjectOf } from '../cards/answered.js';
 import { sinceLine } from '../cards/panel-words.js';
 import { contextText } from './context.js';
@@ -330,7 +332,11 @@ const VIEWS = {
     const lines = [...(numbered.length === 0 ? ['Nothing is waiting for the director.'] : numbered.map((item) => `${item.n}. ${item.what}`)), ...recentLines(decided, at), ...(told === null ? [] : [told])];
     const given = isPlain(args.outcomes) && typeof args.outcomes.since === 'string' && typeof source.events === 'function'
       ? { outcomes: decidedOutcomes(source.events(), source.enrolled?.() ?? [], new Date(args.outcomes.since)) } : {};
-    return { ok: true, data: { ...got, numbered, ...given }, lines };
+    // The decisions waiting and answered, numbered as the chat shows them (scripts/decisions/pending.js).
+    const decisions = typeof source.events === 'function' ? { decisions: decisionsFrom(source.events(), source.enrolled?.() ?? []) } : {};
+    // With `calls: true`, the calls the agents logged on their own side of the decision line, for the director to pull one back.
+    const calls = args.calls === true && typeof source.events === 'function' ? { calls: callsFrom(source.events()) } : {};
+    return { ok: true, data: { ...got, numbered, ...given, ...decisions, ...calls }, lines };
   },
 
   async card(args, source) {

@@ -32,7 +32,8 @@ import { helperAddress } from '../lib/paths.js';
 import { FRONT_DESK_INPUT, WORK_REPORTS_RULE } from '../lib/front-desk.js';
 import { briefHash } from '../feature/files.js';
 import { reload, toolSheetLines } from '../hooks/session-start.js';
-import { HEADINGS, briefingIn, cardsDue, cardsLine } from '../hooks/board-context.js';
+import { HEADINGS, briefingIn, cardsDue, cardsLine, decisionsLine } from '../hooks/board-context.js';
+import { decisionsFrom } from '../decisions/pending.js';
 import { boardModel } from '../board/model.js';
 import { effectiveSettings } from '../settings/effective.js';
 import { BRIEFING_GAP_HOURS, CONTEXT_CHARS } from '../lib/core-numbers.js';
@@ -198,17 +199,20 @@ export function promptContext({ views, events, seen, at, usage = null, home }) {
     const due = Number.isNaN(last) || at.getTime() - last >= BRIEFING_GAP_HOURS * 60 * 60 * 1000;
     const count = cardsDue(views, at);
     const cards = count > 0 ? cardsLine(count) : null;
+    // The decisions that wait are told as the hook tells them, ahead of the cards line; an answer is read as signed only by the
+    // stand-in's own events, which carry none.
+    const decisions = decisionsLine(views, decisionsFrom(events, []).pending);
     let briefing = null;
     if (due) {
       const settings = effectiveSettings({ project: views.settings ?? {}, profile: {}, now: () => at });
       const model = boardModel({ project: EVAL_PROJECT, views, events, usage, health: [], settings, sources: null, now: () => at });
-      const room = CONTEXT_CHARS - HEADINGS.briefing.length - 2 - (cards === null ? 0 : cards.length + 2);
+      const room = CONTEXT_CHARS - HEADINGS.briefing.length - 2 - (cards === null ? 0 : cards.length + 2) - (decisions === null ? 0 : decisions.length + 2);
       const given = briefingIn({ project: EVAL_PROJECT, model, usage, sources: null, settings, since: seen.briefedAt, weeklySince: null, at, room });
       briefing = `${HEADINGS.briefing}\n\n${given.text}`;
     }
     seen.promptAt = at.toISOString();
     if (briefing !== null) seen.briefedAt = seen.promptAt;
-    const text = [cards, briefing].filter((part) => part !== null).join('\n\n');
+    const text = [decisions, cards, briefing].filter((part) => part !== null).join('\n\n');
     return text === '' ? null : text;
   } finally {
     if (was === undefined) delete process.env.WHEELHOUSE_HOME;

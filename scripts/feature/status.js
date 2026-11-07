@@ -9,7 +9,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { featurePaths, openRegular, parseBrief, parseReport, readQuestions } from './files.js';
+import { featurePaths, openRegular, parseBrief, parseReport, readCalls, readQuestions } from './files.js';
 import { findRepoRoot } from '../hooks/kit.js';
 import { projectForFolder } from '../lib/projects.js';
 import { wheelhouseHome } from '../lib/paths.js';
@@ -475,4 +475,53 @@ export function captureRulings({ worktree, feature }) {
   const lead = kept.text === '' || kept.text.endsWith('\n') ? '' : '\n';
   writeWhole(file, `${kept.text}${lead}${added.map((r) => JSON.stringify(r)).join('\n')}\n`);
   return added;
+}
+
+// --- The decision log's calls ---
+
+const SENT_BYTES = 4 * 1024 * 1024;
+
+// A call's stable key: a hash of the piece and the call's normalised line, so the same call has the same key on every pass
+// and in the record, whatever its place in the log.
+export function callKey(work, call) {
+  const line = JSON.stringify([work, call.at, call.decided, call.options, call.why, call.kind]);
+  return crypto.createHash('sha256').update(line).digest('hex').slice(0, 24);
+}
+
+// The keys of the calls the project's record already holds, kept in decisions.sent as a JSON list, so a call reaches the
+// record once, and a line deleted or edited in the log never makes a later call skip or repeat. Unreadable reads as none.
+function sentKeys(file) {
+  try {
+    const list = JSON.parse(readCapped(file, SENT_BYTES) ?? 'null');
+    return new Set(Array.isArray(list) ? list.filter((k) => typeof k === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+
+// Sends the calls in decisions.jsonl that the record doesn't hold yet, oldest first, each as an `agent-call` event, with its
+// `key`, written through `write(data) -> Promise<boolean>` (the helper's state write: the sandbox can't write the record
+// itself). A call's key is kept only once `write` says it was taken, and the first call not taken ends the pass, so none is
+// skipped. A repeat that two runs at once send is dropped on reading (scripts/decisions/calls.js). The worktree is removed
+// after the merge, so the record is where the calls last. Returns the calls sent.
+export async function captureCalls({ worktree, work, write }) {
+  if (!safeFeatureFolder(worktree)) return [];
+  const p = featurePaths(worktree);
+  const marker = path.join(p.dir, 'decisions.sent');
+  const sent = sentKeys(marker);
+  const done = [];
+  for (const logged of readCalls(p.decisions).calls) {
+    const key = callKey(work, logged);
+    if (sent.has(key)) continue;
+    const { v: _v, ...call } = logged;
+    let taken = false;
+    try {
+      taken = (await write({ work, ...call, key })) === true;
+    } catch { /* not taken: the next pass tries again */ }
+    if (!taken) break;
+    sent.add(key);
+    done.push(logged);
+    writeWhole(marker, `${JSON.stringify([...sent])}\n`);
+  }
+  return done;
 }

@@ -11,6 +11,7 @@ import path from 'node:path';
 import { LANES, SLUG } from '../lib/build-loop.js';
 import { BEGIN as PROVENANCE, removeProvenance } from '../lineage/provenance.js';
 import { isBuildQuestion } from '../protection/windows-builds.js';
+import { AGENT_KINDS } from '../decisions/line.js';
 
 export const FEATURE_DIR = '.wheelhouse/feature';
 
@@ -31,6 +32,7 @@ export function featurePaths(worktree) {
     questions: path.join(dir, 'questions.jsonl'),
     report: path.join(dir, 'report.md'),
     rulings: path.join(dir, 'rulings.jsonl'),
+    decisions: path.join(dir, 'decisions.jsonl'),
     session: path.join(dir, 'session.json'),
     pr: path.join(dir, 'pr.json'),
     plan: path.join(dir, 'plan.json'),
@@ -270,6 +272,59 @@ export function readQuestions(file, { maxBytes = READ_BYTES } = {}) {
     }
   }
   return { questions, skipped, truncated: cut };
+}
+
+// --- The decision log ---
+
+// One line of decisions.jsonl: a call the session made on its own side of the decision line (design section 5), with the
+// time it was logged, what it decided, the options it saw (two or more), why, and its kind, one of the agents'.
+const CALL_KEYS = ['v', 'at', 'decided', 'options', 'why', 'kind'];
+
+export function validCall(c) {
+  return isPlain(c)
+    && hasOnly(c, CALL_KEYS)
+    && CALL_KEYS.every((k) => k in c)
+    && c.v === 1
+    && isTime(c.at)
+    && isText(c.decided)
+    && Array.isArray(c.options) && c.options.length >= 2 && c.options.every(isText)
+    && isText(c.why)
+    && AGENT_KINDS.includes(c.kind);
+}
+
+// The calls in `file`, one JSON object per line, and how many lines it holds and how many of them were not a call. A
+// missing file holds none, and no more than `maxBytes` of it is read (whole lines only).
+export function readCalls(file, { maxBytes = 8 * 1024 * 1024 } = {}) {
+  const fd = openRegular(file);
+  if (fd === null) return { calls: [], skipped: 0, lines: 0 };
+  let text;
+  let cut = false;
+  try {
+    const size = fs.fstatSync(fd).size;
+    const buffer = Buffer.alloc(Math.min(size, maxBytes));
+    text = buffer.toString('utf8', 0, fs.readSync(fd, buffer, 0, buffer.length, 0));
+    cut = size > maxBytes;
+  } catch {
+    return { calls: [], skipped: 0, lines: 0 };
+  } finally {
+    fs.closeSync(fd);
+  }
+  if (cut) text = text.slice(0, text.lastIndexOf('\n') + 1);
+  const calls = [];
+  let skipped = 0;
+  let lines = 0;
+  for (const line of text.split('\n')) {
+    if (line.trim() === '') continue;
+    lines += 1;
+    try {
+      const c = JSON.parse(line);
+      if (validCall(c)) calls.push(c);
+      else skipped += 1;
+    } catch {
+      skipped += 1;
+    }
+  }
+  return { calls, skipped, lines };
 }
 
 // --- The report ---

@@ -168,6 +168,12 @@ const QUESTION = {
   options: [{ label: 'Comma', says: 'Commas between values; opens in any spreadsheet.' }, { label: 'Tab', says: 'Tabs between values.' }],
   recommendation: 'Tab', level: 2,
 };
+// Typed replies are off by default; the tests of a decision asked in chat hold the setting confirmed on.
+// Made inside a test, once its home has a signing key.
+const typedOn = () => {
+  const setting = makeEvent({ kind: 'setting', data: { key: 'typedReplies', value: true, words: 'Answer decisions by typing' }, now: () => T(0) });
+  return [setting, makeEvent({ ...confirmationFor(setting), now: () => new Date(T(0).getTime() + 1) })];
+};
 const questionEvent = (data = QUESTION, n = 5) => makeEvent({ kind: 'question', data, now: () => T(n) });
 
 test('cards gives at most four questions and says how many are left', async () => {
@@ -206,22 +212,25 @@ test('the foreman\'s own question shows its options by their labels, never the c
       ],
       recommendation: 'Try again', level: 3,
     };
-    const helper = fakeHelper({ events: [questionEvent(own)] });
+    const helper = fakeHelper({ events: [...typedOn(), questionEvent(own)] });
     const got = await run(helper, ['cards']);
     assert.equal(got.code, 0, got.err);
-    const [asked] = got.json.questions;
-    assert.deepEqual(asked.options.slice(0, 2).map((o) => o.description), [
-      'Recommended: Try again, because the agent that runs the building recommends it for export-csv.',
-      'Nothing more happens until you choose again',
-    ]);
-    assert.doesNotMatch(JSON.stringify(asked), /act start|--goal|appetite-tokens|session building/);
+    // A question from the build is a decision: no picker card is handed out, and its message is shown by `decision show`.
+    assert.deepEqual(got.json.questions, []);
+    const shown = await run(helper, ['decision', 'show', '1']);
+    assert.equal(shown.code, 0, shown.err);
+    assert.match(shown.out, /B\. Wait\. Nothing more happens until you choose again/);
+    assert.doesNotMatch(shown.out, /act start|--goal|appetite-tokens|session building/);
   });
 });
 
 const heldNote = (ids, n = 7) => makeEvent({ kind: 'note', data: { about: 'cards-waiting', count: ids.length, ids }, now: () => T(n) });
 
+// A question that asks to run commands stays a card on the picker; every other question from the build is a decision in chat.
+const BUILD_ASK = { ...QUESTION, options: BUILD_QUESTION_OPTIONS.map((o) => ({ ...o })), recommendation: BUILD_QUESTION_LABELS.once, level: 3, commands: ['npm test'] };
+
 test('the front desk\'s cards pass over a held card until it is pulled', async () => {
-  const question = questionEvent();
+  const question = questionEvent(BUILD_ASK);
   const helper = fakeHelper({ events: [EXPORT, question, heldNote([question.data.id])] });
   const held = await run(helper, ['cards']);
   assert.equal(held.code, 0);
@@ -249,7 +258,7 @@ test('cards turns an open feature question into one answer card, once', async ()
       kind: 'action', now: () => T(7),
       data: { action: 'answer', question: 'as shown', questionId: 'q-login-1', questionHash: dataHash(answered), label: 'Comma' },
     });
-    const helper = fakeHelper({ events: [questionEvent(), questionEvent(answered, 6), answer] });
+    const helper = fakeHelper({ events: [...typedOn(), questionEvent(), questionEvent(answered, 6), answer] });
     const first = await run(helper, ['cards']);
     assert.equal(first.code, 0, first.err);
     const cards = helper.writes().filter((w) => w.kind === 'card');
@@ -258,13 +267,13 @@ test('cards turns an open feature question into one answer card, once', async ()
     assert.equal(card.kind, 'answer');
     assert.equal(card.line, answerLine('q-export-csv-1'));
     assert.equal(card.level, 2);
-    // Its options are the question's own, with what each says, and its recommendation the question's.
-    const [asked] = first.json.questions;
-    assert.equal(asked.question, chatCopy(card.question));
-    assert.deepEqual(asked.options.slice(0, 2).map((o) => o.label), ['Comma', 'Tab']);
-    assert.equal(asked.options[0].description, 'Commas between values; opens in any spreadsheet.');
-    assert.match(asked.options[1].description, /^Recommended: Tabs between values, because the session building .* recommends it\.$/);
-    assert.deepEqual(asked.options.map((o) => o.label).at(-1), 'Suggest a change…');
+    // It is a decision: nothing goes to the picker, and its message carries the question's own options and recommendation.
+    assert.deepEqual(first.json.questions, []);
+    const shown = await run(helper, ['decision', 'show', '1']);
+    assert.equal(shown.code, 0, shown.err);
+    assert.match(shown.out, /A\. Comma\. Commas between values; opens in any spreadsheet\./);
+    assert.match(shown.out, /B\. Tab \(recommended\)\. Tabs between values\./);
+    assert.match(shown.out, /Recommended because: the session building .* recommends it\./);
     const rows = card.question.split('\n');
     assert.deepEqual(rows.slice(0, 2), ['The export needs to know which separator to use.', 'It changes the file people download.']);
     assert.equal(rows[2], MEANWHILE);
@@ -272,8 +281,8 @@ test('cards turns an open feature question into one answer card, once', async ()
     assert.equal(card.parts.what, 'The export needs to know which separator to use.');
     assert.equal(card.parts.recommendation.startsWith('Tab, because '), true);
     assert.equal(MEANWHILE, 'Meanwhile that work waits, and the rest carries on.');
-    assert.deepEqual(helper.writes().at(-1), { cwd: CWD, kind: 'asked', data: { cards: [helper.held.find((e) => e.kind === 'card').id] } });
-    // The next visit makes no second card for it: one is waiting, and it was asked.
+    assert.equal(helper.writes().filter((w) => w.kind === 'asked').length, 0, 'a decision is shown in chat: no card is handed out as asked');
+    // The next visit makes no second card for it: one is waiting.
     const again = await run(helper, ['cards']);
     assert.equal(helper.writes().filter((w) => w.kind === 'card').length, 1);
     assert.deepEqual(again.json, { questions: [], left: 0 });
@@ -390,10 +399,10 @@ test('card, record and similar refuse at once when nothing is on standard input'
 test('cards says which questions it could not make a card of, and asks the rest', async () => {
   await inHome(async () => {
     const tooMany = { ...QUESTION, id: 'q-export-csv-2', options: ['A', 'B', 'C', 'D', 'E'].map((label) => ({ label, says: label })), recommendation: 'A' };
-    const helper = fakeHelper({ events: [questionEvent(), questionEvent(tooMany, 6)] });
+    const helper = fakeHelper({ events: [...typedOn(), questionEvent(), questionEvent(tooMany, 6)] });
     const out = await run(helper, ['cards']);
     assert.equal(out.code, 0);
-    assert.equal(out.json.questions.length, 1);
+    assert.equal(out.json.questions.length, 0, 'the one that could be made is a decision, asked in chat');
     assert.equal(out.json.problems.length, 1);
     assert.match(out.json.problems[0], /q-export-csv-2/);
   });
@@ -1802,11 +1811,11 @@ const PLAIN_QUESTION = {
 
 test('a card\'s words are in the glossary\'s plain words; what must be recognised stays as written', async () => {
   await inHome(async () => {
-    const helper = fakeHelper({ events: [questionEvent(PLAIN_QUESTION)] });
+    const helper = fakeHelper({ events: [...typedOn(), questionEvent(PLAIN_QUESTION)] });
     const out = await run(helper, ['cards']);
     assert.equal(out.code, 0, out.err);
     const card = helper.writes().find((w) => w.kind === 'card').data;
-    assert.equal(out.json.questions[0].question, chatCopy(card.question));
+    assert.deepEqual(out.json.questions, [], 'a decision is asked in chat, not on the picker');
     // Each term the director doesn't know is put in plain words where it is first used in the card.
     assert.match(card.question, /^The proposed change for piece 2 needs an independent check before it can go on\.$/m);
     // A quotation and a command are kept as written.
@@ -1833,12 +1842,12 @@ test('a card the plain words would take past its length is composed as written',
     while (fits(n + 1)) n += 1;
     const long = { ...base, why: `It needs ${'w'.repeat(n)}.` };
     assert.ok(plainWords('The pull request is ready.', glossaryOf({})).text.length > 'The pull request is ready.'.length);
-    const helper = fakeHelper({ events: [questionEvent(long)] });
+    const helper = fakeHelper({ events: [...typedOn(), questionEvent(long)] });
     const out = await run(helper, ['cards']);
     assert.equal(out.code, 0, out.err);
     assert.equal(out.json.problems, undefined);
-    assert.equal(out.json.questions[0].question, chatCopy(composeCard(answerInput(long, 'export-csv')).card.question));
-    assert.ok(out.json.questions[0].question.length <= CARD.chars);
+    assert.deepEqual(out.json.questions, [], 'a decision is asked in chat, not on the picker');
+    assert.equal(helper.writes().filter((w) => w.kind === 'card').length, 1);
   });
 });
 
@@ -2008,7 +2017,7 @@ test('an unknown command, or a helper that can\'t be reached, is one line on sta
     const helper = fakeHelper();
     const unknown = await run(helper, ['show', '7']);
     assert.equal(unknown.code, 1);
-    assert.match(unknown.err, /^Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note\n$/);
+    assert.match(unknown.err, /^Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note, decision, pull-back\n$/);
     const away = { client: { desk: { read: async () => ({ ok: false, refused: 'the host helper could not be reached: is it running?' }) } } };
     const out = await run(away, ['cards']);
     assert.equal(out.code, 1);
@@ -2068,7 +2077,7 @@ test('through the real helper, the command places the project from its folder an
 test('run as a script, an unknown command is refused with the list of commands', async () => {
   const done = spawnSync(process.execPath, [SCRIPT, 'nonsense'], { encoding: 'utf8' });
   assert.equal(done.status, 1);
-  assert.equal(done.stderr, 'Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note\n');
+  assert.equal(done.stderr, 'Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note, decision, pull-back\n');
   assert.equal(done.stdout, '');
 });
 
@@ -2144,26 +2153,38 @@ test('the project\'s own name, as the helper gives it, is never put in plain wor
   });
 });
 
+test('typed replies off, the default: cards hands an open question out as an answer card, once, as it always did', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper({ events: [questionEvent()] });
+    const first = await run(helper, ['cards']);
+    assert.equal(first.code, 0, first.err);
+    assert.equal(first.json.questions.length, 1);
+    assert.deepEqual(first.json.questions[0].options.map((o) => o.label), ['Comma', 'Tab', 'Suggest a change…']);
+    assert.deepEqual(helper.writes().at(-1), { cwd: CWD, kind: 'asked', data: { cards: [helper.held.find((e) => e.kind === 'card').id] } });
+    assert.deepEqual((await run(helper, ['cards'])).json, { questions: [], left: 0 });
+  });
+});
+
 const LEVEL_3 = { ...QUESTION, level: 3 };
 const joinerOf = (lead) => questionEvent({ ...LEVEL_3, id: 'q-login-500001', work: 'login', joins: lead.data.id }, 6);
 
 test('a joiner has no number and no wake of its own', async () => {
   await inHome(async () => {
     const lead = questionEvent(LEVEL_3);
-    const helper = fakeHelper({ events: [EXPORT, lead, joinerOf(lead)] });
+    const helper = fakeHelper({ events: [...typedOn(), EXPORT, lead, joinerOf(lead)] });
     assert.equal(numberedWaiting(helper.views(), []).length, 1);
-    assert.equal(cardsDue(helper.views(), NOW), 1);
+    assert.equal(cardsDue(helper.views(), NOW), 0, 'a decision is shown in chat, so no card is due');
     const made = await run(helper, ['cards']);
-    assert.equal(made.json.questions.length, 1);
+    assert.equal(made.json.questions.length, 0);
     assert.deepEqual(helper.writes().filter((w) => w.kind === 'card').map((c) => c.data.joiners), [['q-login-500001']]);
-    assert.match(made.json.questions[0].question, /and login/);
+    assert.match(helper.writes().find((w) => w.kind === 'card').data.question, /and login/);
   });
 });
 
 test('a card already out is re-issued listing the joiner, and the lead\'s signature stands', async () => {
   await inHome(async () => {
     const lead = questionEvent(LEVEL_3);
-    const helper = fakeHelper({ events: [EXPORT, lead] });
+    const helper = fakeHelper({ events: [...typedOn(), EXPORT, lead] });
     await run(helper, ['cards']);
     const first = helper.held.filter((e) => e.kind === 'card').at(-1);
     helper.held.push(joinerOf(lead));
@@ -2173,7 +2194,7 @@ test('a card already out is re-issued listing the joiner, and the lead\'s signat
     assert.equal(cards[1].data.revises, first.id);
     assert.equal(cards[1].data.line, first.data.line);
     assert.deepEqual(cards[1].data.joiners, ['q-login-500001']);
-    assert.equal(again.json.questions.length, 1);
+    assert.equal(again.json.questions.length, 0);
     await run(helper, ['cards']);
     assert.equal(helper.held.filter((e) => e.kind === 'card').length, 2, 'once');
     assert.deepEqual(helper.views().waiting.map((c) => c.id), [cards[1].id], 'the first card is closed');
@@ -2184,10 +2205,10 @@ test('a joiner still open after the click is a card of its own, saying You said 
   await inHome(async () => {
     const lead = questionEvent(LEVEL_3);
     const signed = makeEvent({ kind: 'action', now: () => T(7), data: { action: 'answer', question: 'an older card', questionId: lead.data.id, questionHash: dataHash(lead.data), label: 'Tab' } });
-    const helper = fakeHelper({ events: [EXPORT, lead, joinerOf(lead), signed] });
+    const helper = fakeHelper({ events: [...typedOn(), EXPORT, lead, joinerOf(lead), signed] });
     const made = await run(helper, ['cards']);
-    assert.equal(made.json.questions.length, 1);
-    assert.match(made.json.questions[0].question, /You said this before: Tab\./);
+    assert.equal(made.json.questions.length, 0);
+    assert.match(helper.writes().filter((w) => w.kind === 'card').at(-1).data.question, /You said this before: Tab\./);
   });
 });
 
@@ -2196,9 +2217,9 @@ test('a card too long to list its pieces still comes, and they are asked after i
     const long = { ...LEVEL_3, what: 'x '.repeat(490).trim() };
     const lead = questionEvent(long);
     const joiner = questionEvent({ ...long, id: 'q-login-500001', work: 'login', joins: lead.data.id }, 6);
-    const helper = fakeHelper({ events: [EXPORT, lead, joiner] });
+    const helper = fakeHelper({ events: [...typedOn(), EXPORT, lead, joiner] });
     const made = await run(helper, ['cards']);
-    assert.equal(made.json.questions.length, 1);
+    assert.equal(made.json.questions.length, 0);
     assert.equal(helper.held.filter((e) => e.kind === 'card').at(-1).data.joiners, undefined);
   });
 });

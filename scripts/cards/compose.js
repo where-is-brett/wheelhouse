@@ -22,6 +22,7 @@ import { glossaryOf, termsIn } from '../frontdesk/glossary.js';
 import { normaliseWords } from '../lib/words.js';
 import { BUILD_QUESTION_OPTIONS } from '../protection/windows-builds.js';
 import { baselineWording } from '../lib/measures-clicks.js';
+import { DIRECTOR_LEVEL, sideOf } from '../decisions/line.js';
 
 // The kind in plain words, at most CARD.header characters; the director reads these.
 export const HEADERS = Object.freeze({
@@ -373,7 +374,10 @@ function offered(kind, given, { build = false, target, suggest = true, parked = 
     seen.add(label);
     // A put-off button may leave out what it says: the card then uses the usual words.
     const optional = (PUT_OFF.includes(label) || label === KEEP_AS_IS) && kind !== 'answer' && kind !== 'question' && kind !== 'usage' && kind !== 'premium';
-    return { label, says: optional && o.says === undefined ? undefined : words(kind, 'options', o.says) };
+    // A decision's option may say what it costs and whether it can be undone, which the chat message prints (scripts/decisions/message.js).
+    const extra = (kind === 'answer' || kind === 'question')
+      ? Object.fromEntries(['cost', 'undo'].filter((k) => o[k] !== undefined).map((k) => [k, words(kind, 'options', o[k])])) : {};
+    return { label, says: optional && o.says === undefined ? undefined : words(kind, 'options', o.says), ...extra };
   });
   // A usage card offers its own two options, the switch first (design section 14.6).
   if (kind === 'usage' && list.length !== 2) fail(kind, 'options', 'must be its switch and its stay option');
@@ -459,6 +463,13 @@ export function composeCard(input) {
   if (kind === 'uninstall' && level !== 4) fail(kind, 'level', 'must be 4: it removes the checks that guard the project');
   // The premium model's Yes writes its pin into the routing, a guardrail change (design section 14.6), so its card is level 4.
   if (kind === 'premium' && level !== 4) fail(kind, 'level', 'must be 4: its Yes changes the routing table');
+  // A call on the director's side of the decision line (design section 5) is always a card at level 3 or 4. `decides` names
+  // the kind of call a question or answer card is about; a kind the line doesn't know is the director's.
+  if (input.decides !== undefined) {
+    if (kind !== 'answer' && kind !== 'question') fail(kind, 'decides', 'belongs to a question or an answer card only');
+    if (typeof input.decides !== 'string' || input.decides.trim() === '') fail(kind, 'decides', 'must be the kind of call it is about');
+    if (sideOf(input.decides) === 'director' && level < DIRECTOR_LEVEL) fail(kind, 'level', `must be 3 or 4: "${input.decides}" is a call the director decides`);
+  }
   const said = input.said === undefined ? undefined : flat(words(kind, 'said', input.said));
   const what = said === undefined ? words(kind, 'what', input.what) : `You said: ${said.replace(/[.\s]+$/, '')}. ${SAID_ASKS} ${words(kind, 'what', input.what)}`;
   const why = words(kind, 'why', input.why);
@@ -501,7 +512,8 @@ export function composeCard(input) {
     what,
     small: [size, why].filter(Boolean).join(' · '),
     recommendation: `${recommend}, because ${clause(because)}.`,
-    options: buttons.map((b) => ({ label: b.label, says: b.says, recommended: b.label === recommend })),
+    options: buttons.map((b) => ({ label: b.label, says: b.says, ...(b.cost === undefined ? {} : { cost: b.cost }), ...(b.undo === undefined ? {} : { undo: b.undo }), recommended: b.label === recommend })),
+    because: clause(because),
     why,
     meanwhile,
     ...(checks === undefined ? {} : { checks }),
@@ -619,6 +631,7 @@ function plainAnswerInput(data, work, { joiners = [], saidBefore = null } = {}) 
     // A build-command question's commands, so its own Not now is offered (see offered).
     ...(Array.isArray(data.commands) && data.commands.length > 0 ? { commands: data.commands } : {}),
     ...(joiners.length === 0 ? {} : { joiners: joiners.map((j) => j.id) }),
+    ...(typeof data.decides === 'string' ? { decides: data.decides } : {}),
     ...(said === null ? {} : { saidBefore: said }),
   };
 }

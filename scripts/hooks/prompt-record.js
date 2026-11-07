@@ -84,6 +84,7 @@ import { PUT_OFF } from '../lib/front-desk.js';
 import { whenSaid, askOf, countedOf } from '../cards/answered.js';
 import { settingKey, UNATTENDED_CARD, USE_GUARDED } from '../protection/windows-builds.js';
 import { startedAsScript } from '../lib/started-as-script.js';
+import { recordAnswer } from '../decisions/answer.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 const SHA12 = '([0-9a-f]{12})(?![0-9a-fA-F])';
@@ -912,11 +913,29 @@ function shownFor(project, input, at, stopState = defaultStopState, carrying = n
   return out;
 }
 
+// The director's typed reply to a decision shown in the chat (scripts/decisions/answer.js), on UserPromptSubmit. The prompt is
+// the director's own words only in a front-desk session that no script started, which recordAnswer checks. It records, and gives what
+// it made of the reply back as this turn's own context (a hook of the same event runs beside this one, so nothing is left for a
+// later prompt); a failure here lets the prompt through.
+async function decideReply(input, { client, now, find, dir, budget, env }) {
+  try {
+    if (typeof input.prompt !== 'string') return undefined;
+    const found = find(input.cwd, { dir });
+    if (!found) return undefined;
+    const done = await recordAnswer({ project: found.project, sessionId: input.session_id, prompt: input.prompt, at: now(), cwd: input.cwd, env, client, budget });
+    return typeof done.note === 'string' && done.note !== '' ? answer.context('UserPromptSubmit', done.note) : undefined;
+  } catch {
+    // The reply is not recorded; nothing is decided from it.
+    return undefined;
+  }
+}
+
 // On an agent whose hooks only read (`writeVia: 'helper'`), nothing here runs: no click is signed, kept or sent,
 // and `earned` is never asked. Such an agent's chat click is recorded by the helper (/cards/chat-click), unsigned
 // and naming its proof (rulings P5-12, P5-17).
-export async function decide(input, { client, now = () => new Date(), projectOf: find = projectOf, dir, budget = BUDGET_MS + helperGrace(), liftStop = defaultLift, stopState, ready, premiumIn, writeVia = 'self', proof } = {}) {
+export async function decide(input, { client, now = () => new Date(), projectOf: find = projectOf, dir, budget = BUDGET_MS + helperGrace(), liftStop = defaultLift, stopState, ready, premiumIn, writeVia = 'self', proof, env = process.env } = {}) {
   if (writeVia !== 'self') return undefined;
+  if (input.hook_event_name === 'UserPromptSubmit') return decideReply(input, { client, now, find, dir, budget, env });
   if (input.tool_name !== tools.ask) return undefined;
   const answered = clicks(input);
   // The chat question this session had open is answered: nothing is left open for the next prompt to tell.

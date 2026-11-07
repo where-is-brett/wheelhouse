@@ -10,6 +10,10 @@
 // recommended, and none Explain more. The prompt record is what refuses a wrong click, so this
 // only informs: it refuses nothing it can't read, and a failure of its own lets the card through.
 // A card that doesn't come from scripts/cards/compose.js can fail it; one that does cannot.
+// A decision (an answer card or a product question, scripts/decisions/pending.js) is shown as a chat message, never through the
+// question picker: the picker is refused for one, saying to print `decision show <n>`. On Stop, in a front-desk session, every
+// "Decision needed" block in the First Mate's last message must be exactly one waiting decision's text (checkShown), or the
+// turn is sent back with the reason. That check blocks by design and fails open: a record that can't be read lets the message go.
 // Before the form check, in a project's folder, two more refusals (one card, one answer): a question whose card the
 // director has already decided is refused with what counted and where, and, for the front desk with a live pane beside
 // it, a card the pane gives buttons to is held back unless the director asked for it in the chat. A call that goes
@@ -25,7 +29,7 @@
 // the figures waiting for the click is refused too, saying to leave them out; elsewhere no record of
 // an answer is written, so that is let be. A card merely headed Baseline is not refused.
 import tools from '../../adapters/claude-code/tools.js';
-import { runAndExit, answer, projectOf, beingSetUp } from './kit.js';
+import { runAndExit, answer, projectOf, beingSetUp, readTailEntries } from './kit.js';
 import { looksLikeBaseline, holdsFigures, cardHash, readShown, cardText, sweepStale } from '../lib/measures-clicks.js';
 import { whatProblem, NO_REPLY_CODE } from '../cards/compose.js';
 import { TO_KNOW_MORE, TO_CHANGE_IT, SUGGEST, SHOW_ME, NOT_NOW, SEND_BACK } from '../lib/calm-words.js';
@@ -45,6 +49,9 @@ import { paneLive, takeHere, markOpen, HOLD_FOR_PANE } from '../lib/session-file
 import { sessionRole } from '../lib/role.js';
 import { cardButtons } from '../cards/buttons.js';
 import { standing } from './prompt-record.js';
+import { isDecisionCard, readDecisions } from '../decisions/pending.js';
+import { decisionText, blocksIn } from '../decisions/message.js';
+import { startedByScript, typedRepliesOn } from '../decisions/answer.js';
 
 const SHA12 = '([0-9a-f]{12})';
 // The plain lines a card needs before its last: the question, why it is the director's and what happens meanwhile. A
@@ -162,6 +169,7 @@ function baselineFaults(questions, now, { figures = true } = {}) {
 }
 
 export const DECIDED_LEAD = 'The director has already answered: ';
+export const DECISION_IN_CHAT = 'A decision is shown as a message in the chat, not through the question picker. Run `decision list`, then print each decision exactly as `decision show <n>` prints it, and ask nothing else for it. The director answers by typing.';
 export { PANE_LEAD };
 
 // The cards the questions are, as `standing` matches them: for each question, { card } while it waits or
@@ -232,6 +240,8 @@ function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere:
   const found = cardsOf(questions, project, outcomes);
   const decided = decidedDeny(found, at);
   if (decided !== undefined) return { deny: decided };
+  // The picker is for a decision only while typed replies are off, so on it a decision is answered by typing instead.
+  if (typedRepliesOn(project) && found.some((f) => f && !f.stale && isDecisionCard(f.card.data))) return { deny: DECISION_IN_CHAT };
   // The Lift All stop question is composed on each visit and never recorded as a card, so the state can't say it is
   // decided: STOP being off is what says so.
   const lifts = questions.map(isLiftQuestion);
@@ -281,10 +291,56 @@ export async function decideRepeat(input, { projectOf: find = projectOf, dir, no
   }
 }
 
+// --- Decisions shown in the chat ---
+
+// What the First Mate's turn ended on: the hook's own field, else the text of the last assistant entry of the transcript's tail.
+function lastMessageOf(input) {
+  if (typeof input.last_assistant_message === 'string') return input.last_assistant_message;
+  const entries = readTailEntries(input.transcript_path);
+  const last = Array.isArray(entries) ? entries.findLast((e) => e?.type === 'assistant' && e.isSidechain !== true && Array.isArray(e.message?.content)
+    && e.message.content.some((b) => b?.type === 'text' && typeof b.text === 'string' && b.text !== '')) : undefined;
+  return last === undefined ? '' : last.message.content.filter((b) => b?.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('\n');
+}
+
+const trimmed = (text) => text.split(/\r\n|[\n\r]/).map((l) => l.trimEnd()).join('\n').trim();
+
+// checkShown(lastMessage, pending) -> { ok: true } | { ok: false, reason }. Every "Decision needed" block in the message must equal
+// one waiting decision's text exactly, as `decision show <n>` prints it.
+export function checkShown(lastMessage, pending) {
+  const waiting = Array.isArray(pending) ? pending : [];
+  for (const block of blocksIn(lastMessage)) {
+    if (waiting.some((d) => trimmed(block) === trimmed(decisionText(d)))) continue;
+    const named = Number(/^Decision needed \(([1-9][0-9]*)\)/.exec(block)?.[1]);
+    const meant = waiting.find((d) => d.n === named) ?? (waiting.length === 1 ? waiting[0] : undefined);
+    if (meant !== undefined) return { ok: false, reason: `Show decision ${meant.n} exactly as printed: run \`decision show ${meant.n}\` and copy its text word for word, with nothing added inside it.` };
+    return { ok: false, reason: waiting.length === 0
+      ? 'No decision is waiting, so a "Decision needed" block is not shown. Take it out; a decision is raised through the intake, and `decision list` says what waits.'
+      : `That "Decision needed" block is not a waiting decision. Waiting: ${waiting.map((d) => d.n).join(', ')}. Show one exactly as \`decision show <n>\` prints it.` };
+  }
+  return { ok: true };
+}
+
+// The Stop check: a front-desk session's last message with a decision block that is not a waiting decision's exact text is sent
+// back. A turn already sent back once is let go, and any failure lets the message through.
+export async function decideStop(input, { projectOf: find = projectOf, dir, role = sessionRole, env = process.env, decisions } = {}) {
+  try {
+    if (input.stop_hook_active === true || startedByScript(env)) return undefined;
+    const message = lastMessageOf(input);
+    if (blocksIn(message).length === 0) return undefined;
+    const found = find(input.cwd, { dir });
+    if (!found || role({ sessionId: input.session_id, env, cwd: input.cwd }) !== 'front-desk') return undefined;
+    const checked = checkShown(message, (decisions ?? readDecisions(found.project)).pending);
+    return checked.ok ? undefined : answer.block(checked.reason);
+  } catch {
+    return undefined;
+  }
+}
+
 export async function decide(input, {
   projectOf: find = projectOf, dir, now = () => new Date(), outcomes, paneLive: live = paneLive, takeHere: take = takeHere,
-  markOpen: open = markOpen, holdForPane = HOLD_FOR_PANE, role = sessionRole, stop = stopState,
+  markOpen: open = markOpen, holdForPane = HOLD_FOR_PANE, role = sessionRole, stop = stopState, env = process.env, decisions,
 } = {}) {
+  if (input.hook_event_name === 'Stop') return decideStop(input, { projectOf: find, dir, role, env, decisions });
   if (input.tool_name !== tools.ask) return undefined;
   const questions = input.tool_input?.questions;
   if (!Array.isArray(questions)) return undefined;

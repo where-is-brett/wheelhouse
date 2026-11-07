@@ -16,13 +16,14 @@ import { SETUP_QUESTION_ID } from '../lib/setup-clicks.js';
 import { SEND_BACK } from '../lib/calm-words.js';
 import { WHERE } from '../cards/answered.js';
 import { isModelName } from '../gate/guardrails.js';
+import { AGENT_KINDS } from '../decisions/line.js';
 
 export const PLAIN_KINDS = [
   'request', 'ruling', 'level', 'glossary', 'idea', 'rejection', 'card', 'card-answer',
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
   'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey', 'column-ready', 'premium-rest', 'chat-steer',
-  'run', 'ask', 'cost', 'preview', 'lesson', 'incident-closed', 'reproduced', 'brief', 'slept',
+  'run', 'ask', 'cost', 'preview', 'lesson', 'incident-closed', 'reproduced', 'brief', 'slept', 'agent-call',
 ];
 // `control-file` is the watcher's own finding (ruling P7-33): signed, so no session can write one. So is `usage-card`,
 // the front desk's session start's offer (design section 14.6): a click on its card's switch is the director's
@@ -38,9 +39,12 @@ export const PLAIN_KINDS = [
 // reads a run that happened, never a status anyone could post. `checks-state` says whether the project's tests count, which
 // lets merges pass with none, and `checks-found` is the command the finder found, which a check runs: both the helper's.
 // `change` is a local change as it stands (spec 7.1), the helper's too: it names the head the local queue merges.
+// `decision-answer` is the director's own typed reply to a decision shown as a chat message (scripts/decisions/answer.js):
+// the question, its number, the letter chosen (or `own` for their own words) and their words. Signed, so only the prompt
+// hook of a front-desk session the director typed in can make one; nothing an agent writes counts.
 // `by-hand` ties the director's answer on the card for changes made by hand to the one local change the helper opened for it,
 // at the commit that was pressed on: signed, so only the helper's own tie lets that answer approve work (scripts/state/views.js).
-export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file', 'usage-card', 'premium-card', 'premium-check', 'premium-failed', 'provenance', 'check', 'checks-state', 'checks-found', 'change', 'by-hand'];
+export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file', 'usage-card', 'premium-card', 'premium-check', 'premium-failed', 'provenance', 'check', 'checks-state', 'checks-found', 'change', 'by-hand', 'decision-answer'];
 // Plain kinds only the helper itself records, from what it read itself: no caller writes one
 // through /state/write. The survey (design section 15, ruling A1) is taken and recorded in the
 // helper, when setup finishes and when it is taken again. A column-ready record (design section 14.6) is the
@@ -385,6 +389,11 @@ const PLAIN_SHAPES = {
   preview: { must: ['work', 'head', 'folder', 'pages'], may: [] },
   // A lesson a work taught, for the next run to read.
   lesson: { must: ['work', 'text'], may: [] },
+  // A call a session made on its own side of the decision line (design section 5 of the director's way of working), from its
+  // decision log: when it was logged (`at`), what it decided, the options it saw, why, and its kind (one of the agents').
+  // Unsigned: it informs the digest and the director's pull-back, and decides nothing.
+  // `key`: the call's stable key (a hash of its line), so a call sent twice is read once.
+  'agent-call': { must: ['work', 'at', 'decided', 'options', 'why', 'kind'], may: ['key'] },
   // The end of a red-main incident: the incident and why it ended.
   'incident-closed': { must: ['incident', 'why'], may: [] },
   // A bug's reproduction, kept once for its work: the commit that proved it red, its done check and its test files.
@@ -539,6 +548,13 @@ function checkPlain(kind, data) {
   } else if (kind === 'lesson') {
     slug('work');
     text('text');
+  } else if (kind === 'agent-call') {
+    slug('work');
+    for (const k of ['decided', 'why']) text(k);
+    if (!ISO_TIME.test(data.at)) bad('needs at to be a time such as 2026-11-08T01:00:00.000Z');
+    if (!Array.isArray(data.options) || data.options.length < 2 || !data.options.every(isText)) bad('needs options to be a list of two or more');
+    if (data.key !== undefined && !(typeof data.key === 'string' && /^[0-9a-f]{24}$/.test(data.key))) bad('needs key to be 24 hex characters');
+    if (!AGENT_KINDS.includes(data.kind)) bad(`needs kind to be one of ${AGENT_KINDS.join(', ')}: any other kind is the director's to decide`);
   } else if (kind === 'question') {
     slug('work');
     const named = typeof data.id === 'string' ? questionIdOf(data.id) : null;
@@ -837,6 +853,24 @@ function checkChecksFound(data) {
   if (!isPlain(data) || !command(data.testCommand) || !(data.prepare === null || command(data.prepare)) || typeof data.why !== 'string') throw new Error('A checks-found event needs its command, its prepare or null, and why');
 }
 
+// The director's typed reply to a decision: the decision's question as the state holds it, its number, the letter they
+// chose (A to D) or `own` when they answered in their own words, the label of the option that letter stands for (empty for
+// their own words), those words (empty when the letter stood alone) and
+// the place, always the chat.
+function checkDecisionAnswer(data) {
+  const bad = (why) => { throw new Error(`A decision-answer event ${why}`); };
+  const keys = isPlain(data) ? Object.keys(data).sort().join() : '';
+  if (keys !== 'label,n,option,question,where,words') bad('needs its question, number, label, option, words and where');
+  if (typeof data.question !== 'string' || data.question === '') bad('needs the decision\'s question');
+  if (!Number.isInteger(data.n) || data.n < 1) bad('needs the decision\'s number');
+  if (typeof data.label !== 'string' || !/^(?:[A-D]|own)$/.test(data.label)) bad('needs its label to be A to D, or own');
+  if (typeof data.option !== 'string' || data.option.length > 200) bad('needs the label of the option chosen, of at most 200 characters');
+  if ((data.label === 'own') !== (data.option === '')) bad('needs an option for a letter and none for the director\'s own words');
+  if (typeof data.words !== 'string' || data.words.length > 2000) bad('needs words, empty when there are none, of at most 2000 characters');
+  if (data.label === 'own' && data.words.trim() === '') bad('needs the director\'s words when it is their own');
+  if (data.where !== 'chat') bad('needs where to be chat');
+}
+
 // What a shown record must carry: the reply code, the question put to the director
 // and the labels of the options offered (two to six).
 function checkShown(data) {
@@ -861,6 +895,7 @@ export function makeEvent({ kind, data, now = () => new Date() }) {
   if (kind === 'checks-found') checkChecksFound(data);
   if (kind === 'change') checkChange(data);
   if (kind === 'by-hand') checkByHand(data);
+  if (kind === 'decision-answer') checkDecisionAnswer(data);
   if (Object.hasOwn(PLAIN_SHAPES, kind)) checkPlain(kind, data);
   const event = {
     v: 1,
