@@ -719,11 +719,11 @@ export async function why({ client, cwd, n, words = '', ask = askCopyIn }) {
   return [`Noted that you asked why about card ${n}.`, ...whyNext(views, question, n), ...await copyAnswer({ client, cwd, id: found.id, words, ask })];
 }
 
-// Asks the copy of the session behind decision `n` of the project `cwd` is in (scripts/decisions/why.js).
-async function askCopyIn({ cwd, n, words }) {
+// Asks the copy of the session behind decision `id` of the project `cwd` is in (scripts/decisions/why.js).
+async function askCopyIn({ cwd, id, words }) {
   const found = projectOf(cwd);
   if (found === null) return { fallback: "This folder isn't a Wheelhouse project, so there is no session to ask." };
-  return askWhy({ project: found.project, n, words });
+  return askWhy({ project: found.project, id, words });
 }
 
 // The lines of a read-only session copy's answer when card `id` is a waiting decision, else none. It only explains: nothing here
@@ -737,7 +737,7 @@ async function copyAnswer({ client, cwd, id, words, ask }) {
   }
   if (decision === undefined) return [];
   try {
-    const got = await ask({ cwd, n: decision.n, words });
+    const got = await ask({ cwd, id: decision.id, words });
     return typeof got?.answer === 'string'
       ? ["The session that raised this decision answers (it only explains, and changes nothing):", got.answer]
       : [typeof got?.fallback === 'string' ? got.fallback : "The session that raised this decision couldn't be asked."];
@@ -1439,5 +1439,8 @@ export async function main(argv, {
 }
 
 if (startedAsScript(import.meta.url)) {
-  process.exitCode = await main(process.argv.slice(2));
+  const code = await main(process.argv.slice(2));
+  process.exitCode = code;
+  // `why` may leave a child of the session copy behind; the command ends once its lines are written, whatever still runs.
+  if (process.argv[2] === 'why') process.stdout.write('', () => process.exit(code));
 }

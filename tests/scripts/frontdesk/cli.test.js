@@ -1248,7 +1248,11 @@ test('why n [words] adds a read-only session copy\'s answer when the card is a w
     assert.match(lines[1], /^Say /, 'the instant answer comes first');
     assert.match(lines.at(-2), /^The session that raised this decision answers/);
     assert.equal(lines.at(-1), 'It read the sample file and found no row names.');
-    assert.deepEqual(asked, [{ cwd: CWD, n: 1, words: 'Why headers?' }]);
+    assert.equal(asked.length, 1);
+    assert.equal(asked[0].cwd, CWD);
+    assert.equal(asked[0].words, 'Why headers?');
+    assert.match(asked[0].id, /^[0-9a-z-]+$/, 'the decision is named by its id');
+    assert.equal('n' in asked[0], false);
     // It only explains: the decision still waits.
     const shown = await run(helper, ['decision', 'show', '1']);
     assert.equal(shown.code, 0, shown.err);

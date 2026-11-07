@@ -145,12 +145,14 @@ export function featureResumeCall({ sessionId, ...rest }) {
 
 // The tools a "why" session may use: it reads and searches, and nothing else.
 export const WHY_TOOLS = 'Read,Grep,Glob';
+// The connector configuration a why session is given: none.
+const WHY_NO_MCP = '{"mcpServers":{}}';
 const WHY_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 // A "why" session (design section 6.3): a read-only fork of the session `sessionId`, run in the same `worktree`, asked `question`.
 // It is always `--resume <id> --fork-session`, so the session it copies carries on undisturbed and is never resumed directly;
-// a follow-up passes the copy's own id. Four guards keep it read-only: the fork, `--permission-mode plan`, `--allowedTools`
-// of reading tools alone, and the `why` role that the tool guard enforces. Returns { command, file, args, cwd, env, input, verbatim }.
+// a follow-up passes the copy's own id. Five guards keep it read-only: the fork, `--permission-mode plan`, `--tools` and
+// `--allowedTools` of reading tools alone (with no connector), and the `why` role that the hooks enforce for every tool. Returns { command, file, args, cwd, env, input, verbatim }.
 export function whyCall({
   sessionId, worktree, question, config = null, platform = process.platform, env = process.env, claude = null, model: chosen = null,
 }) {
@@ -161,7 +163,12 @@ export function whyCall({
     '--output-format', 'json',
     '--permission-mode', 'plan',
     ...(model ? ['--model', model] : []),
+    // Only these tools exist in the session at all, and no connector server is started: --tools takes the others away
+    // (a task, an agent, the web, a skill, the schedule), and an empty strict MCP configuration takes the connectors.
+    '--tools', WHY_TOOLS,
     '--allowedTools', WHY_TOOLS,
+    '--strict-mcp-config', '--mcp-config', WHY_NO_MCP,
+    '--disable-slash-commands',
   ];
   const call = invocation(claude ?? resolveClaude({ platform, env }), ['--resume', sessionId, '--fork-session'], args, question);
   return { ...call, command: call.file, cwd: worktree, env: { ...sessionEnv(env), [ROLE_VARIABLE]: 'why', ...FOREGROUND_ONLY } };

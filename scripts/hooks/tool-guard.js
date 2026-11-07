@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { answer, runAndExit, projectOf, registeredByPath, beingSetUp, worktreeRoot } from './kit.js';
+import { answer, runAndExit, projectOf, registeredByPath, beingSetUp, worktreeRoot, isWhy, WHY_TOOLS } from './kit.js';
 import { segmentsWithOperators } from './shell-words.js';
 import { AGENT_CONTROL, CONTROL_FILE, GIT_SETTINGS, gitSettingsFiles, homeControlFolders } from '../lib/agent-control.js';
 import { credentialPaths } from '../lib/credentials.js';
@@ -1003,13 +1003,6 @@ function queuePlace(cwd) {
     return null;
   }
 }
-
-// The tools a "why" session may use (adapters/claude-code/sessions.js whyCall): the copy that explains a decision reads and
-// searches, and nothing else.
-const WHY_TOOLS = ['Read', 'Grep', 'Glob'];
-// Whether the session is a "why" copy, by the role variable in any spelling: the call that starts one sets it, and a
-// session started any other way has it taken out (sessionEnv).
-const isWhy = (env) => Object.entries(env ?? {}).some(([name, value]) => name.toUpperCase() === 'WHEELHOUSE_ROLE' && value === 'why');
 
 export async function decide(input, { dir, projectOf: find = projectOf, home = os.homedir(), platform = process.platform, pluginRoot = PLUGIN_ROOT, entrypoint = process.env.CLAUDE_CODE_ENTRYPOINT, projectDir = process.env.CLAUDE_PROJECT_DIR, env = process.env, engineHome = archonHome() } = {}) {
   const tool = input.tool_name;

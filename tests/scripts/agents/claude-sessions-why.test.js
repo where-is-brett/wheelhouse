@@ -34,6 +34,16 @@ test('whyCall allows only read-only tools', () => {
   assert.deepEqual(tools, []);
 });
 
+test('whyCall limits which tools exist at all and starts no connector', () => {
+  const c = call();
+  const t = c.args.indexOf('--tools');
+  assert.equal(c.args[t + 1], 'Read,Grep,Glob');
+  assert.ok(c.args.includes('--strict-mcp-config'));
+  const m = c.args.indexOf('--mcp-config');
+  assert.deepEqual(JSON.parse(c.args[m + 1]), { mcpServers: {} });
+  assert.ok(c.args.includes('--disable-slash-commands'));
+});
+
 test('the role variable of the host session is replaced, never passed on', () => {
   const c = call({ env: { [ROLE_VARIABLE]: 'foreman', PATH: '/bin' } });
   assert.equal(c.env[ROLE_VARIABLE], 'why');
