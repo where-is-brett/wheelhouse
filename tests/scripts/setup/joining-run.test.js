@@ -47,7 +47,7 @@ const JOIN_STEPS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..',
 const USER = 'a-director';
 const REPO = `${USER}/Cafe-Menu`;
 const INSTALLED = '{"enabledPlugins":{"wheelhouse@wheelhouse":true}}\n';
-const SHA = { superpowers: 'a'.repeat(40), 'mattpocock-skills': 'b'.repeat(40) };
+const SHA = { superpowers: 'a'.repeat(40) };
 
 // The first computer's project on the stand-in host: main with its committed files, and the state
 // branch.
@@ -79,7 +79,7 @@ async function seedProject(dir) {
 // The pinned kits, and a stand-in install that puts them where Claude Code would and rewrites the
 // project's settings in a layout of its own.
 function kits(root) {
-  const upstreams = ['superpowers', 'mattpocock-skills'].map((name) => ({
+  const upstreams = ['superpowers'].map((name) => ({
     name, plugin: name, repo: `https://example.invalid/${name}.git`, ref: 'v1.0.0', sha: SHA[name], folders: ['skills/one'], files: ['LICENSE'],
   }));
   const roots = {};
@@ -246,7 +246,7 @@ test('a second computer runs steps 1, 2, 3, 6, 7 (this computer\'s files only), 
     assert.match((await status()).lines.at(-1), /Every step is done/);
     assert.equal(readProject('a-director__Cafe-Menu').folder, folder);
     assert.ok(fs.existsSync(path.join(stateDir('a-director__Cafe-Menu'), '.git')));
-    assert.deepEqual(calls.filter((c) => c[0] === 'claude').map((c) => c[3]), [`superpowers@${MARKETPLACE}`, `mattpocock-skills@${MARKETPLACE}`]);
+    assert.deepEqual(calls.filter((c) => c[0] === 'claude').map((c) => c[3]), [`superpowers@${MARKETPLACE}`]);
     delete globalThis.wheelhouseJoiningWorld;
   }, { files: { '.claude/settings.json': INSTALLED }, connected: false });
 });

@@ -22,7 +22,7 @@ const textOf = (name) => fs.readdirSync(path.join(ROOT, 'skills', name)).filter(
 test('the copies are the folders with a SOURCE.md, and the build steps\' own skills are among them', () => {
   const names = skillCopyNames();
   assert.deepEqual([...names].sort(), copies.map((c) => c.name).sort());
-  for (const name of ['codebase-design', 'pr', 'review-standards', 'review-spec', 'frontend-design']) assert.ok(names.includes(name), name);
+  for (const name of ['codebase-design', 'pr', 'review-standards', 'review-spec', 'domain-modeling', 'prototype', 'frontend-design']) assert.ok(names.includes(name), name);
   for (const own of ['foreman', 'front-desk', 'intake', 'setup']) assert.ok(!names.includes(own), own);
 });
 
@@ -104,6 +104,24 @@ test('the manifest pins each copy\'s upstream version', () => {
       assert.deepEqual({ repo: source.repo, version: source.version, commit: source.commit }, pin, `${copy.name}: ${source.upstream}`);
     }
   }
+});
+
+test('the copies of Matt Pocock\'s skills are pinned by COPY_SOURCES, which names each, and the plugin is not a kit', () => {
+  const matt = COPY_SOURCES.find((s) => s.name === 'mattpocock-skills');
+  assert.ok(matt);
+  assert.deepEqual([...matt.copies].sort(), ['codebase-design', 'domain-modeling', 'pr', 'prototype', 'review-spec', 'review-standards']);
+  assert.ok(!UPSTREAMS.some((u) => u.name === 'mattpocock-skills'));
+  const taken = copies.filter((c) => c.sources.some((s) => s.upstream === 'mattpocock-skills')).map((c) => c.name);
+  assert.deepEqual(taken.sort(), [...matt.copies].sort());
+});
+
+test('the intake names the copies of domain-modeling and prototype, not the retired plugin', () => {
+  const intake = fs.readFileSync(path.join(ROOT, 'skills', 'intake', 'SKILL.md'), 'utf8');
+  const line = intake.split('\n').find((l) => l.startsWith('**Alongside any route:**'));
+  assert.ok(line, 'the intake has its "alongside any route" line');
+  assert.match(line, /`wheelhouse:domain-modeling`/);
+  assert.match(line, /`wheelhouse:prototype`/);
+  assert.doesNotMatch(intake, /mattpocock/i);
 });
 
 test('the pull request copy keeps private records out', () => {

@@ -121,15 +121,7 @@
       "scenario": 34
     }
   ],
-  "carried": [
-    {
-      "id": "implement",
-      "upstream": "mattpocock-skills",
-      "file": "skills/engineering/implement/SKILL.md",
-      "hash": "8aa412ff29385a4593b3f821e1dc5def63f0fc48fbcac294f1378ba84a3cfa85",
-      "text": "Implement the work described by the user in the spec or tickets.\n\nUse /tdd where possible, at pre-agreed seams.\n\nRun typechecking regularly, single test files regularly, and the full test suite once at the end.\n\nOnce done, use /code-review to review the work.\n\nCommit your work to the current branch."
-    }
-  ],
+  "carried": [],
   "assumptions": [
     {
       "id": "no-model-start",

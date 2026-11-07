@@ -59,6 +59,15 @@ test('plan: a newer release gives the card and a 64-character hash, and keeps wh
   assert.equal(JSON.parse(fs.readFileSync(path.join(openJournal('p1').folder, 'plan.json'), 'utf8')).hash, got.hash);
 }));
 
+test('plan: a project with the dropped plugin installed at project scope has the removal on the card and in the plan', () => withHome(async () => {
+  const t = setup({ retired: ({ projectDir }) => (projectDir === undefined ? [] : ["Matt Pocock's skills"]) });
+  const got = await t.routes['/update/plan']({ folder: t.folder });
+  assert.match(got.card.question, /Matt Pocock's skills is installed for this project; the update removes it/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(openJournal('p1').folder, 'plan.json'), 'utf8')).plan.removes, ["Matt Pocock's skills"]);
+  const none = setup({ retired: () => [] });
+  assert.doesNotMatch((await none.routes['/update/plan']({ folder: none.folder })).card.question, /removes it/);
+}));
+
 test('plan: with nothing newer it gives the one line and no card', () => withHome(async () => {
   const t = setup({ from: () => 'v0.2.7' });
   const got = await t.routes['/update/plan']({ folder: t.folder });

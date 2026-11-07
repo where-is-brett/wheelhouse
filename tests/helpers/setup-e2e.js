@@ -76,7 +76,7 @@ const UNINSTALL_RUN = fileURLToPath(new URL('../../scripts/setup/uninstall-run.j
 
 // The director's account on the host.
 const GH_USER = { login: 'a-director', id: 4242, name: 'A Director' };
-const SHA = { superpowers: 'a'.repeat(40), 'mattpocock-skills': 'b'.repeat(40) };
+const SHA = { superpowers: 'a'.repeat(40) };
 // The install line declares Wheelhouse's marketplace at its release in the user's Claude settings
 // (check 37), and switches the plugin on in the product folder's own settings.
 const RELEASE = 'v1.4.0';
@@ -253,7 +253,7 @@ export function standInHost({ shims = null } = {}) {
 // A small copy of each pinned kit, and the manifest naming them, for the stand-in `claude` to
 // install and step 10 to check.
 function kits(root) {
-  const upstreams = ['superpowers', 'mattpocock-skills'].map((name) => ({
+  const upstreams = ['superpowers'].map((name) => ({
     name, plugin: name, repo: `https://example.invalid/${name}.git`, ref: 'v1.0.0', sha: SHA[name], folders: ['skills/one'], files: ['LICENSE'],
   }));
   const roots = {};

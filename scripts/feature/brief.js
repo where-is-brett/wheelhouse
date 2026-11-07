@@ -28,18 +28,6 @@ function fill(text, values) {
   });
 }
 
-// --- /implement's five lines ---
-
-const IMPLEMENT_BLOCK = /<!-- implement:begin -->\n([\s\S]*?)\n<!-- implement:end -->\n?/;
-const evenLines = (text) => String(text).replace(/\r\n?/g, '\n').trim();
-
-// The five lines of Matt Pocock's /implement, as the quick lane's template carries them.
-export function implementLines() {
-  const match = IMPLEMENT_BLOCK.exec(template('lanes', 'quick.md'));
-  if (!match) throw new Error("The quick lane's template has no /implement lines");
-  return evenLines(match[1]);
-}
-
 // --- Rendering ---
 
 // The subagent roles, in the order the wake's prompt lists them (scripts/routing/in-force.js, SUBAGENT_ROLES).
@@ -113,31 +101,22 @@ function appetiteLine({ sessions, tokens }) {
 // The brief's text for `fields`: its JSON block, then the override, the goal and
 // done contract, the appetite, the rulings, the lane's loop, how to ask, how to
 // finish and the subagent roles. `pluginRoot` is put into the commands the brief
-// names, so the session can run them as written. `implementText`, when given, is
-// the installed /implement skill's text after its front matter; it must hold the
-// same five lines as the quick lane's template, or this throws. `windowsBuilds` is null off
+// names, so the session can run them as written. `windowsBuilds` is null off
 // Windows, else `{ level, guardedCommand, shape }`: at Ask the brief says to ask for every build
 // command at once, at Unattended to ask the same way if one is refused, at Guarded to run each
 // through `guardedCommand`, and at watcher Shape 2 (`shape` 2) to ask once for the director to
 // click Allow in the session itself.
-export function renderBrief({ fields, pluginRoot, implementText, windowsBuilds = null } = {}) {
+export function renderBrief({ fields, pluginRoot, windowsBuilds = null } = {}) {
   if (typeof pluginRoot !== 'string' || pluginRoot === '' || /["\r\n\0]/.test(pluginRoot)) {
     throw new Error("The plugin root can't be put into the brief");
   }
   const block = `\`\`\`json\n${JSON.stringify(fields, null, 2)}\n\`\`\`\n`;
   const { fields: f } = parseBrief(block);
 
-  // Only the lanes that carry the five lines read them, and check them against the installed copy.
-  const carries = f.lane === 'quick' || f.lane === 'bug';
-  const lines = carries ? implementLines() : null;
-  if (carries && implementText !== undefined && evenLines(implementText) !== lines) {
-    throw new Error("The installed /implement text differs from the five lines the quick lane carries");
-  }
-
   const cli = `node "${path.join(pluginRoot, 'scripts', 'feature', 'cli.js')}"`;
-  const shared = { cli, featureDir: FEATURE_DIR, fixRounds: String(FIX_ROUNDS), reportWords: String(REPORT_WORDS), work: f.work, lane: f.lane, ...(carries ? { implementLines: lines } : {}) };
+  const shared = { cli, featureDir: FEATURE_DIR, fixRounds: String(FIX_ROUNDS), reportWords: String(REPORT_WORDS), work: f.work, lane: f.lane };
   const laneTemplate = template('lanes', `${f.lane}.md`);
-  const laneText = fill(carries ? laneTemplate.replace(IMPLEMENT_BLOCK, `${lines}\n`) : laneTemplate, shared).trim();
+  const laneText = fill(laneTemplate, shared).trim();
 
   const level = buildsLevelOf(windowsBuilds);
   const text = fill(withBuildsBlock(template('brief.md'), level), {

@@ -22,8 +22,9 @@ test('options: defaults do the full run, and bad options are refused', () => {
   assert.equal(options.dryRun, false);
   assert.equal(options.only, null);
   assert.deepEqual(selectRuns(options.only), ID_ORDER);
-  assert.equal(ID_ORDER.length, 6);
-  assert.deepEqual(selectRuns(['tdd-matt', 'writing-plans']), ['writing-plans', 'tdd-matt']);
+  assert.equal(ID_ORDER.length, 5);
+  assert.ok(!ID_ORDER.includes('tdd-matt'), 'the dropped plugin has no run');
+  assert.deepEqual(selectRuns(['tdd-superpowers', 'writing-plans']), ['writing-plans', 'tdd-superpowers']);
   assert.throws(() => parseOptions(['--nope']), /Unknown option/);
   assert.throws(() => parseOptions(['--timeout-ms', 'x']), /milliseconds/);
   assert.throws(() => parseOptions(['--only', 'made-up']), /no such run/);
@@ -50,7 +51,7 @@ test('the pins come from the manifest, and every skill the manifest lists is one
   const manifest = readManifest();
   assert.deepEqual(kits.map((k) => [k.name, k.sha]), manifest.upstreams.map((u) => [u.name, u.sha]));
   const names = kits.flatMap((k) => k.folders.map((f) => path.basename(f.path)));
-  for (const skill of ['brainstorming', 'writing-plans', 'subagent-driven-development', 'executing-plans', 'test-driven-development', 'tdd']) assert.ok(names.includes(skill), skill);
+  for (const skill of ['brainstorming', 'writing-plans', 'subagent-driven-development', 'executing-plans', 'test-driven-development']) assert.ok(names.includes(skill), skill);
   assert.equal(new Set(names).size, names.length);
 });
 
@@ -101,7 +102,7 @@ t('--dry-run makes every run, writes the results and logs, and undoes everything
   assert.equal(results.error, null);
   assert.equal(file, path.join(resultsDir, `${CHECK}.dry-run.json`));
   assert.deepEqual(results.runs.map((run) => run.id), ID_ORDER);
-  assert.match(printed[0], /6 model run/);
+  assert.match(printed[0], /5 model run/);
   assert.match(printed.join('\n'), /Debug logs: /);
   assert.equal(printed.find((line) => line.startsWith('Raw results')), `Raw results: ${file}`);
   assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).runs.map((run) => run.id), ID_ORDER);
@@ -114,7 +115,7 @@ t('--dry-run makes every run, writes the results and logs, and undoes everything
   }
   assert.ok(!fs.existsSync(path.dirname(results.bin)));
   assert.ok(results.kits.length >= 6 && results.kits.every((k) => k.matchesManifest === false));
-  assert.ok(results.skillList.includes('brainstorming') && results.skillList.includes('tdd'));
+  assert.ok(results.skillList.includes('brainstorming') && results.skillList.includes('test-driven-development'));
 });
 
 t('the dry run reads hand-offs, failed subagent dispatch and the project the way the real run will', async () => {
@@ -129,7 +130,7 @@ t('the dry run reads hand-offs, failed subagent dispatch and the project the way
   assert.equal(sdd.project.greetingStillWorks, true);
   assert.equal(sdd.project.testsPass, true);
   assert.equal(sdd.project.uncommittedFiles, 2);
-  assert.deepEqual(byId(results, 'tdd-matt').subagentCalls, []);
+  assert.deepEqual(byId(results, 'tdd-superpowers').subagentCalls, []);
   const text = summarise(results);
   assert.match(text, /subagent dispatches: task:failure/);
   assert.match(text, /--version works/);

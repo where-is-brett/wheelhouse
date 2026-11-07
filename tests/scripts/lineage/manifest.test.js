@@ -187,7 +187,7 @@ test('the Claude folder is CLAUDE_CONFIG_DIR when it is set, else .claude in the
   assert.equal(claudeHome({}), path.join(os.homedir(), '.claude'));
 });
 
-test('the manifest in the repository lists Superpowers and Matt\'s skills at check 24\'s commits', () => {
+test('the manifest in the repository lists Superpowers alone at check 24\'s commit', () => {
   const manifest = readManifest();
   assert.equal(manifest.wheelhouse.version, JSON.parse(fs.readFileSync(new URL('../../../.claude-plugin/plugin.json', import.meta.url), 'utf8')).version);
   assert.deepEqual(manifest.claudeCode, { floor: '2.1.299' });
@@ -195,17 +195,16 @@ test('the manifest in the repository lists Superpowers and Matt\'s skills at che
   assert.equal(manifest.models, MODELS);
   assert.deepEqual(manifest.upstreams.map(({ name, plugin, repo, ref, sha }) => ({ name, plugin, repo, ref, sha })), [
     { name: 'superpowers', plugin: 'superpowers', repo: 'https://github.com/obra/superpowers.git', ref: 'v7.0.0', sha: 'bb92a77741419a4ab5f06e711a283343f1ada0c3' },
-    { name: 'mattpocock-skills', plugin: 'mattpocock-skills', repo: 'https://github.com/mattpocock/skills.git', ref: 'v1.3.1', sha: '24fe0ef7737efae15c87225755e9f6f5965e4888' },
   ]);
-  const [superpowers, matt] = manifest.upstreams;
+  const [superpowers] = manifest.upstreams;
   assert.deepEqual(superpowers.folders.map((f) => f.path), [
     'brainstorming', 'using-git-worktrees', 'writing-plans', 'subagent-driven-development', 'executing-plans', 'test-driven-development',
     'systematic-debugging', 'dispatching-parallel-agents', 'requesting-code-review', 'receiving-code-review', 'verification-before-completion',
     'finishing-a-development-branch', 'using-superpowers',
   ].map((skill) => `skills/${skill}`));
   assert.deepEqual(superpowers.files.map((f) => f.path), ['hooks/session-start', 'hooks/hooks.json', 'LICENSE']);
-  assert.deepEqual(matt.folders.map((f) => f.path), ['tdd', 'code-review', 'prototype', 'domain-modeling', 'implement'].map((s) => `skills/engineering/${s}`));
-  assert.deepEqual(matt.files.map((f) => f.path), ['LICENSE']);
+  assert.equal(manifest.upstreams.length, 1);
+  assert.ok(!UPSTREAMS.some((u) => u.name === 'mattpocock-skills'));
   for (const upstream of manifest.upstreams) for (const { hash } of [...upstream.folders, ...upstream.files]) assert.match(hash, /^[0-9a-f]{64}$/);
   assert.deepEqual(UPSTREAMS.map((u) => u.sha), manifest.upstreams.map((u) => u.sha));
 });

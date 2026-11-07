@@ -101,3 +101,12 @@ test('cards: the update card names the account settings entry it changes, in one
   assert.deepEqual(cardProblems(card), []);
   assert.doesNotMatch(updateCard({ hash: HASH, from: 'v0.2.6', to: 'v0.2.7', says: 'x' }).question, /account settings/);
 });
+
+test('the card says in plain words that the project-scope install of the dropped plugin is removed, and an account-level one is left', () => {
+  const card = updateCard({ hash: HASH, from: 'v0.2.6', to: 'v0.3.0', says: 'x', removes: ["Matt Pocock's skills"] });
+  const text = JSON.stringify(card);
+  assert.match(text, /Matt Pocock's skills is installed for this project; the update removes it/);
+  assert.match(text, /Wheelhouse carries the two skills it needs/);
+  assert.match(text, /One you installed for your whole account is left/);
+  assert.doesNotMatch(JSON.stringify(updateCard({ hash: HASH, from: 'v0.2.6', to: 'v0.3.0', says: 'x' })), /is installed for this project/);
+});
