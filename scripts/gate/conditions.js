@@ -7,6 +7,15 @@ import { holdSentence } from './open-questions.js';
 // The reason a merge gives, in the answer's `hold`, while a decision on the piece is unanswered or answered but not yet applied.
 export const WAITING_ON_DECISION = 'waiting-on-decision';
 
+// The plain reason a merge waits on a decision, or null. `decisions` is { work, waiting } (what decisionsWaiting gave), or
+// undefined where none is asked (a restore or a fix); given but unreadable, it holds, as the gate and the broker's permit both read it.
+export function decisionReason(decisions) {
+  if (decisions === undefined) return null;
+  const waiting = decisions !== null && typeof decisions === 'object' && Array.isArray(decisions.waiting) ? decisions.waiting : null;
+  if (waiting === null) return 'whether a decision is waiting on this work could not be checked';
+  return waiting.length === 0 ? null : holdSentence(waiting, typeof decisions.work === 'string' && decisions.work !== '' ? decisions.work : 'this work');
+}
+
 // A review counts only if it verifies and clears the head (CLEAN, or findings none of which is a BLOCKER or HIGH: reviewClear). A plain record must also
 // name the head commit. The carried form, { carried: true, record }, is a review
 // of an earlier commit that the caller has already judged still counts (the
@@ -181,17 +190,9 @@ export function gateDecision(input) {
   if (incident) reasons.push(incident);
   // The decisions on the piece (design section 6.4), asked only where the caller gives them, so a merge that has none to ask (a
   // restore) leaves them out. Given but unreadable, it refuses.
-  let hold = null;
-  if (i.decisions !== undefined) {
-    const waiting = i.decisions !== null && typeof i.decisions === 'object' && Array.isArray(i.decisions.waiting) ? i.decisions.waiting : null;
-    if (waiting === null) {
-      reasons.push('whether a decision is waiting on this work could not be checked');
-      hold = WAITING_ON_DECISION;
-    } else if (waiting.length > 0) {
-      reasons.push(holdSentence(waiting, typeof i.decisions.work === 'string' ? i.decisions.work : 'this work'));
-      hold = WAITING_ON_DECISION;
-    }
-  }
+  const decisionHold = decisionReason(i.decisions);
+  const hold = decisionHold === null ? null : WAITING_ON_DECISION;
+  if (decisionHold !== null) reasons.push(decisionHold);
 
   // `approvalMissing` marks the one condition a director's click on the head can meet, so the
   // caller can ask for that approval by name rather than by reading the reasons.

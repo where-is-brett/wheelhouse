@@ -72,7 +72,7 @@ import path from 'node:path';
 import { clashCheck, fileMapOf, nextWork, since } from './queue.js';
 import { onNewEngine } from '../engine/lanes.js';
 import { PLUGIN_ROOT, foremanCommands } from './tools.js';
-import { briefHash, featurePaths, readStatus } from '../feature/files.js';
+import { briefHash, featurePaths, readStatus, waitingFor } from '../feature/files.js';
 import {
   loadFeature, readCapped, readPlan, readPrRecord, safeFeatureFolder,
 } from '../feature/status.js';
@@ -205,14 +205,17 @@ export async function loadViews(project, client, { kept = false } = {}) {
   return out;
 }
 
-// Marks (as `stopped`, on the view only) each building feature whose own status says it waits on a decision (`wait-for`): it has
-// reached a step it can't undo and has nothing else to do, so the queue gives its slot up (design section 6.4). A piece that
-// has only asked is still building and keeps its slot. `find(work)` gives the work's worktree, or throws.
+// Marks (as `stopped`, on the view only) each open feature that has said it waits on a decision (`wait-for`, a line in its own
+// questions.jsonl) whose question the director has not answered, at whatever step it is on: it has reached a step it can't undo
+// and has nothing else to do, so the queue gives its slot up (design section 6.4). The questions view says whether the question is
+// answered, so a stale status file never keeps a slot shut. A piece that has only asked is still building and keeps its slot.
+// `find(work)` gives the work's worktree, or throws.
 export function markStopped(views, find) {
-  for (const [work, f] of Object.entries(views.features)) {
-    if (f?.data?.step !== 'building') continue;
+  for (const [work, f] of Object.entries(views.features ?? {})) {
+    if (!isPlain(f?.data) || f.data.step === 'closed') continue;
     try {
-      if (readStatus(featurePaths(find(work)).status)?.waitingOn === 'decision') f.stopped = true;
+      const waits = waitingFor(featurePaths(find(work)).questions);
+      if (waits.some((id) => !(Object.hasOwn(views.questions ?? {}, id) && views.questions[id]?.answer))) f.stopped = true;
     } catch { /* unreadable: it keeps its slot */ }
   }
 }

@@ -4284,7 +4284,24 @@ export async function startHelper({
     // opened needs the director's approval, as shown-first work does.
     const opened = engineRun.openedOf(project, call.pr);
     const checked = call.kind === 'merge' ? await checkPermit(project, call.sha) : {};
-    return { ...base, enrolled, review, approval, incident: incidentFor(views, call.pr), shownFirst: opened ? opened.showFirst === true : true, level: opened?.level ?? null, guardrail, ...checked, stop: stopped() };
+    // The director's decisions on the piece hold a merge here as at the gate (design section 6.4). Read from the pull request's
+    // branch as the host says; one that can't be read is `null`, which the rules refuse. A restore is exempt, as in doMerge.
+    let decisions;
+    if (call.kind === 'merge') {
+      decisions = null;
+      try {
+        const pr = await adapter.prState(call.pr);
+        if (typeof pr?.headRef === 'string') {
+          if (RESTORE_BRANCH.test(pr.headRef)) decisions = undefined;
+          else {
+            const work = FEATURE_BRANCH.exec(pr.headRef)?.[1] ?? (typeof opened?.work === 'string' ? opened.work : undefined);
+            const handled = readHandled(handledDir(project), questionsOf(views, work).map((q) => q.id));
+            decisions = { work: work ?? '', waiting: decisionsWaiting({ views, work, review, handled }) };
+          }
+        }
+      } catch { /* unreadable: the rules refuse */ }
+    }
+    return { ...base, enrolled, review, approval, incident: incidentFor(views, call.pr), shownFirst: opened ? opened.showFirst === true : true, level: opened?.level ?? null, guardrail, ...checked, ...(decisions === undefined ? {} : { decisions }), stop: stopped() };
   }
   const broker = brokerRoutes({
     placeOf: placeEngineCall,
@@ -4441,9 +4458,13 @@ export async function startHelper({
         // The pull request no longer waits on this decision on the host, if nothing else holds it. The host's word is a hint only.
         try {
           const adapter = await ctx.adapter();
-          const kept = readPrRecord(worktreeOf(project, views, own));
+          const worktree = worktreeOf(project, views, own);
+          const kept = readPrRecord(worktree);
           const pr = kept?.pr === undefined ? null : await adapter.prState(kept.pr);
-          if (pr?.state === 'open') {
+          // Only the piece's own pull request is marked: the number is the session's word, so the host's branch for it must be
+          // the piece's feature branch, whose worktree sits where the state records it.
+          const branch = branchOf(worktree);
+          if (pr?.state === 'open' && branch !== null && pr.headRef === branch && FEATURE_BRANCH.exec(pr.headRef)?.[1] === own) {
             const handled = readHandled(handledDir(project), questionsOf(views, own).map((q) => q.id));
             await markDecisionStatus({ project, adapter, sha: pr.headSha, work: own, views, waiting: decisionsWaiting({ views, work: own, review: null, handled }) });
           }

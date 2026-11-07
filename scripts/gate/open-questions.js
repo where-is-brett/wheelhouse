@@ -36,8 +36,8 @@ export function questionsOf(views, work) {
 
 // The decisions on `work` that hold its merge, each { id, why }:
 //   open       no answer yet;
-//   unapplied  answered with something other than the recommendation the piece was built on, and the session has not said the
-//              rework is in (`answer <id> --applied`): a review of the head after the answer does not stand in for that;
+//   unapplied  answered with something other than the recommendation the piece was built on, unless the session has said the
+//              rework is in (`answer <id> --applied`) and the head has a review later than the answer: neither alone lifts it;
 //   late       answered with the recommendation after the head was reviewed, and not said to need no change.
 // `review` is the head's review as the gate holds it (a record, or { carried, record }); its time is when the head was last
 // judged. `handled` is what readHandled gives: an answer the session said is dealt with covers that answer's time only, so a
@@ -49,7 +49,9 @@ export function decisionsWaiting({ views, work, review, handled = {} }) {
   for (const q of questionsOf(views, work)) {
     const dealt = q.at !== null && handled?.[q.id] === q.at;
     if (!q.answered) waiting.push({ id: q.id, why: 'open' });
-    else if (q.differs && !dealt) waiting.push({ id: q.id, why: 'unapplied' });
+    // A different answer is applied only when it is marked so AND the head has been reviewed since it: the rework is a new head,
+    // and a mark alone (the session's word) never lifts the hold. A review whose time can't be read counts as none.
+    else if (q.differs && !(dealt && Number.isFinite(reviewed) && q.at !== null && Date.parse(q.at) < reviewed)) waiting.push({ id: q.id, why: 'unapplied' });
     else if (!dealt && Number.isFinite(reviewed) && q.at !== null && Date.parse(q.at) > reviewed) waiting.push({ id: q.id, why: 'late' });
   }
   return waiting;

@@ -324,3 +324,31 @@ test('a project with no host gets the engine and its dispatcher without a mirror
   const merged = await ticksUntil(helper, () => (changeOf(n).state === 'merged' ? changeOf(n) : null), 'the merge');
   assert.equal(await headIn(home, 'refs/heads/main'), merged.mergeCommit);
 }, { check: checks(), realEngineFor: true }));
+
+// Design section 6.4: a decision of the director's on the piece holds its merge by the sweep and at the broker's permit too.
+test('a decision open on a git-only piece, or answered otherwise and not applied, holds it in the sweep', { timeout: 180000 }, () => gitAloneWorld(async (world) => {
+  const { helper, client, home } = world;
+  const main = await headIn(home, 'refs/heads/main');
+  const { n } = await readyChange(world, 'card-4', 'export const price = () => 4;\n');
+  const data = {
+    id: 'q-card-4-1', work: 'card-4', what: 'How many decimals?', why: 'It decides what prices show',
+    options: [{ label: 'Two', says: 'Two decimals' }, { label: 'None', says: 'Whole numbers' }], recommendation: 'Two', level: 3,
+  };
+  const planted = makeEvent({ kind: 'question', data });
+  const file = path.join(stateDir(P), eventPath(planted));
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(planted, null, 2)}\n`);
+  // (A project with no host has no broker route to try: the sweep asks the same permit, which brokerDecision answers.)
+
+  // Open: the sweep's permit refuses it.
+  await ticks(helper, 6);
+  assert.equal(changeOf(n).state, 'open');
+  assert.equal(await headIn(home, 'refs/heads/main'), main);
+
+  // Answered with another option, the rework not applied: still held.
+  const signed = await client.state.record({ project: P, event: makeEvent({ kind: 'action', data: { action: 'answer', question: `Answer question ${data.id}\nHow many decimals?`, questionId: data.id, label: 'None', questionHash: dataHash(data) } }) });
+  assert.equal(signed.ok, true, JSON.stringify(signed));
+  await ticks(helper, 6);
+  assert.equal(changeOf(n).state, 'open');
+  assert.equal(await headIn(home, 'refs/heads/main'), main);
+}, { check: checks() }));

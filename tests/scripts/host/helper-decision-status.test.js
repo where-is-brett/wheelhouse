@@ -44,6 +44,41 @@ test('an answered, unapplied decision keeps its number, and nothing waiting clea
   assert.equal(calls.length, 1);
 });
 
+// An adapter whose head carries `contexts`, as the host reports them.
+const hosting = (contexts) => {
+  const { calls, adapter } = recording();
+  return { calls, adapter: { ...adapter, checkContexts: async () => contexts } };
+};
+
+test('a pending status the head carries is cleared when nothing holds, however the decision went (withdrawn, joined) and whatever the helper remembers', async () => {
+  const pending = [{ name: DECISION_CONTEXT, state: 'pending' }, { name: STATUS_CONTEXT, state: 'success' }];
+  // The question was withdrawn: no decision holds, the piece has none now (`any` false), and the helper restarted (a fresh memory).
+  const { calls, adapter } = hosting(pending);
+  const got = await setDecisionStatus({ adapter, sha: SHA, waiting: [], any: false, events: () => [], enrolled: [], posted: new Map() });
+  assert.deepEqual(got, { state: 'success', description: CLEARED_WORDS });
+  assert.deepEqual(calls, [{ sha: SHA, state: 'success', description: CLEARED_WORDS, context: DECISION_CONTEXT }]);
+  // A decision that joined another one is no longer the piece's own: nothing waits, the same.
+  const joined = hosting(pending);
+  assert.equal((await setDecisionStatus({ adapter: joined.adapter, sha: SHA, waiting: [], any: true, events: () => [], enrolled: [], posted: new Map([[SHA, 'q-w-tide-1-1']]) }))?.state, 'success');
+  // A failed one counts as not success too.
+  const failed = hosting([{ name: DECISION_CONTEXT, state: 'failure' }]);
+  assert.equal((await setDecisionStatus({ adapter: failed.adapter, sha: SHA, waiting: [], any: false, events: () => [], enrolled: [], posted: new Map() }))?.state, 'success');
+});
+
+test('nothing is posted when the head carries no decision status, or one already success, whatever `any` says', async () => {
+  for (const contexts of [[], [{ name: STATUS_CONTEXT, state: 'pending' }], [{ name: DECISION_CONTEXT, state: 'success' }]]) {
+    const { calls, adapter } = hosting(contexts);
+    assert.equal(await setDecisionStatus({ adapter, sha: SHA, waiting: [], any: true, events: () => [], enrolled: [], posted: new Map() }), null);
+    assert.deepEqual(calls, []);
+  }
+});
+
+test('a host that cannot say what the head carries is posted to only for a piece that has decisions', async () => {
+  const unreadable = { setStatus: async () => ({ ok: true }), checkContexts: async () => { throw new Error('no'); } };
+  assert.equal(await setDecisionStatus({ adapter: unreadable, sha: SHA, waiting: [], any: false, events: () => [], enrolled: [], posted: new Map() }), null);
+  assert.equal((await setDecisionStatus({ adapter: unreadable, sha: SHA, waiting: [], any: true, events: () => [], enrolled: [], posted: new Map() }))?.state, 'success');
+});
+
 test('the words name several decisions, and fall back to the question\'s own number', () => {
   const numbers = new Map([['q-w-tide-1-1', 2], ['q-w-tide-1-2', 3]]);
   assert.equal(waitingWords(['q-w-tide-1-1'], numbers), 'Waiting on decision 2');
