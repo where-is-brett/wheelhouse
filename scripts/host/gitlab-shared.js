@@ -108,6 +108,11 @@ export const requestOf = (r) => ({
   draft: r.draft === true, fork: r.source_project_id !== r.target_project_id,
 });
 
+// A merge request of a branch, in any state: its number, branch, head, whether it is from another copy, and its state.
+export const branchRequestOf = (r) => ({
+  number: r.iid, branch: r.source_branch, head: r.sha, fork: r.source_project_id !== r.target_project_id, state: STATE[r.state] ?? 'unknown',
+});
+
 export const issueOf = (i) => ({
   number: i.iid, title: i.title, body: i.description ?? '', url: i.web_url,
   labels: i.labels ?? [], state: i.state === 'opened' ? 'open' : 'closed',
@@ -162,4 +167,11 @@ export function approvalRefusal(status, output) {
 export function approvalsLeft(answer) {
   if (!Number.isInteger(answer?.approvals_left) || answer.approvals_left < 0) throw new Error('GitLab did not say how many approvals the merge request still needs');
   return answer.approvals_left;
+}
+
+// Whether a project's answer says it is public: `visibility` is public, internal or private. One that says none of them is an error.
+export function publicOf(answer) {
+  const visibility = typeof answer?.visibility === 'string' ? answer.visibility.toLowerCase() : null;
+  if (visibility === null) throw new Error('GitLab did not say whether the project is public');
+  return visibility === 'public';
 }

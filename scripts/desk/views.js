@@ -13,6 +13,7 @@ import { cardButtons } from '../cards/buttons.js';
 import { dataHash } from '../state/events.js';
 import { cardOutcomes, latestFor } from '../state/views.js';
 import { decisionsFrom } from '../decisions/pending.js';
+import { canPrivate as canPrivateIn } from '../decisions/visibility.js';
 import { callsFrom } from '../decisions/calls.js';
 import { answeredWords, askOf, subjectOf } from '../cards/answered.js';
 import { sinceLine } from '../cards/panel-words.js';
@@ -341,7 +342,7 @@ const VIEWS = {
     const given = isPlain(args.outcomes) && typeof args.outcomes.since === 'string' && typeof source.events === 'function'
       ? { outcomes: decidedOutcomes(source.events(), source.enrolled?.() ?? [], new Date(args.outcomes.since)) } : {};
     // The decisions waiting and answered, numbered as the chat shows them (scripts/decisions/pending.js).
-    const decisions = typeof source.events === 'function' ? { decisions: decisionsFrom(source.events(), source.enrolled?.() ?? []) } : {};
+    const decisions = typeof source.events === 'function' ? { decisions: decisionsFrom(source.events(), source.enrolled?.() ?? [], { canPrivate: typeof source.project === 'string' && canPrivateIn(source.project) }) } : {};
     // With `calls: true`, the calls the agents logged on their own side of the decision line, for the director to pull one back.
     const calls = args.calls === true && typeof source.events === 'function' ? { calls: callsFrom(source.events()) } : {};
     // With `stuck: true`, the notes recording that a feature session sent its plain "stuck" message (`act stuck-note`), oldest first.

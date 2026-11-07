@@ -127,6 +127,27 @@ test('the card shows the option\'s words, whichever of the reply and the action 
   });
 });
 
+test('a typed reply belongs to the card it closed, not to an earlier card of the same words that a click closed', async () => {
+  await inHome(() => {
+    const ask = 'How often should the digest go out?';
+    const first = raiseBuildQuestion('q-w-tide-1-1', '2026-11-08T01:00:00.000Z', { ask, labels: ['Daily', 'Weekly'], recommend: 'Weekly' });
+    // The first card is closed by a click, with no typed reply of its own.
+    const click = makeEvent({ kind: 'action', data: { action: 'answer', question: first.data.question, questionId: 'q-w-tide-1-1', questionHash: 'a'.repeat(64), label: 'Daily' }, now: () => new Date('2026-11-08T02:00:00.000Z') });
+    keep(click);
+    // The same question (its id and so its words) is asked again, and the director's typed reply to it says "private".
+    const second = raiseBuildQuestion('q-w-tide-1-1', '2026-11-08T03:00:00.000Z', { ask, labels: ['Daily', 'Weekly'], recommend: 'Weekly' });
+    typedAnswer(second, { n: 1, label: 'B', private: true }, '2026-11-08T04:00:00.000Z');
+    assert.equal(first.data.question, second.data.question);
+
+    const { record } = readDecisions(P);
+    const byId = Object.fromEntries(record.map((r) => [r.id, r]));
+    assert.equal(byId[first.id].answer.private, undefined, 'the click\'s card is not made private by a later reply');
+    assert.equal(byId[first.id].answer.option, 'Daily');
+    assert.equal(byId[second.id].answer.private, true);
+    assert.equal(byId[second.id].answer.option, 'Weekly');
+  });
+});
+
 test('click-only kinds and build-command questions are not decisions', () => {
   const { card: setup } = composeCard({
     kind: 'setup', level: 3, what: 'Set up step 4 as listed.', why: 'It changes the project.', because: 'it is the next step.', meanwhile: 'Nothing else changes.',

@@ -48,6 +48,9 @@ export const cases = [
   // ---- reads ----
   { name: 'defaultBranch', call: (a) => a.defaultBranch(), ...both([{ stdout: ghFile('repo-view.json') }], [ok({ default_branch: 'main' })]), expect: 'main' },
   { name: 'branchHead', call: (a) => a.branchHead('feature/x'), ...same({ name: 'feature/x', commit: { sha: SHA } }), expect: SHA },
+  { name: 'isPublic is true for a public repository', call: (a) => a.isPublic(), ...same({ visibility: 'public', private: false }), expect: true },
+  { name: 'isPublic is false for a private or internal repository', call: async (a) => [await a.isPublic()], ...same({ visibility: 'internal', private: true }), expect: [false] },
+  { name: 'isPublic with no visibility given is an error, never a guess', call: (a) => a.isPublic(), ...same({ name: 'product' }), throws: /did not say whether/ },
   { name: 'login', call: (a) => a.login(), ...same({ login: 'a-director-bot' }), expect: 'a-director-bot' },
 
   // ---- opening, changing and closing ----
@@ -163,6 +166,21 @@ export const cases = [
     expect: [
       { number: 4, title: 'First', body: 'Words', branch: 'one', head: SHA, draft: false, fork: false },
       { number: 9, title: 'Second', body: '', branch: 'two', head: MOVED, draft: true, fork: true },
+    ] },
+  { name: 'requestsOn lists the requests of a branch in any state, sorted, and says unknown for a state it does not know', call: (a) => a.requestsOn('wheelhouse/decisions-2026-11-07'),
+    ...both([{ stdout: text([
+      { number: 9, headRefName: 'wheelhouse/decisions-2026-11-07', headRefOid: MOVED, isCrossRepository: false, state: 'CLOSED' },
+      { number: 4, headRefName: 'wheelhouse/decisions-2026-11-07', headRefOid: SHA, isCrossRepository: false, state: 'MERGED' },
+      { number: 11, headRefName: 'wheelhouse/decisions-2026-11-07', headRefOid: SHA, isCrossRepository: true, state: 'SOMETHING' },
+    ]) }], [ok([
+      pull({ number: 9, state: 'closed', head: { sha: MOVED, ref: 'wheelhouse/decisions-2026-11-07', repo: { full_name: REPO } } }),
+      pull({ number: 4, state: 'closed', merged_at: '2026-11-07T01:00:00Z', head: { sha: SHA, ref: 'wheelhouse/decisions-2026-11-07', repo: { full_name: REPO } } }),
+      pull({ number: 11, state: 'weird', head: { sha: SHA, ref: 'wheelhouse/decisions-2026-11-07', repo: { full_name: 'someone/product' } } }),
+    ])]),
+    expect: [
+      { number: 4, branch: 'wheelhouse/decisions-2026-11-07', head: SHA, fork: false, state: 'merged' },
+      { number: 9, branch: 'wheelhouse/decisions-2026-11-07', head: MOVED, fork: false, state: 'closed' },
+      { number: 11, branch: 'wheelhouse/decisions-2026-11-07', head: SHA, fork: true, state: 'unknown' },
     ] },
   { name: 'requestDetails gives files and commit subjects, oldest first', call: (a) => a.requestDetails(4),
     ...both([{ stdout: text({ files: [{ path: 'src/a.js', additions: 2, deletions: 1 }, { path: 'README.md', additions: 1, deletions: 1 }], commits: [{ messageHeadline: 'First change' }, { messageHeadline: 'Second change' }] }) }],

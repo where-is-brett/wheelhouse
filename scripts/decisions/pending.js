@@ -16,6 +16,7 @@ import { readEnrolled, verify } from '../state/signing.js';
 import { stateDir } from '../lib/paths.js';
 import { PUT_OFF } from '../lib/front-desk.js';
 import { BUILD_QUESTION_LABELS } from '../protection/windows-builds.js';
+import { canPrivate as canPrivateIn } from './visibility.js';
 
 // The card kind a decision is made from: an answer card, the card for a question an agent raised (its set line is
 // "Answer question q-..."). A product question and the many cards Wheelhouse raises about itself share the `question` kind
@@ -55,19 +56,25 @@ function becauseOf(data) {
   return m === null ? flat(data.parts?.recommendation) : m[1];
 }
 
-// What the question's work is called, or null: an answer card names its question in its set line, and the question names the work.
-function workOf(data, events) {
+// The id of the work a decision's question is about, or null: an answer card names its question in its set line, and the question
+// names the work.
+function workIdOf(data, events) {
   const id = new RegExp(`^Answer question (${QUESTION_ID})$`).exec(String(data.line ?? ''))?.[1];
   if (id === undefined) return null;
   const asked = events.filter((e) => e.kind === 'question' && e.data?.id === id).sort(byOrder).at(-1);
-  const work = asked?.data?.work;
-  if (typeof work !== 'string') return null;
+  return typeof asked?.data?.work === 'string' ? asked.data.work : null;
+}
+
+// What the question's work is called, or null.
+function workOf(data, events) {
+  const work = workIdOf(data, events);
+  if (work === null) return null;
   const titled = events.filter((e) => e.kind === 'work' && e.data?.id === work).sort(byOrder).at(-1)?.data?.title;
   const title = flat(titled);
   return title !== '' && title.length <= 80 ? title : work;
 }
 
-function decisionOf(card, n, events) {
+function decisionOf(card, n, events, canPrivate = false) {
   const data = card.data;
   const parts = isPlain(data.parts) ? data.parts : {};
   return {
@@ -78,11 +85,13 @@ function decisionOf(card, n, events) {
     options: optionsOf(data),
     recommend: typeof data.recommend === 'string' ? data.recommend : null,
     work: workOf(data, events),
+    workId: workIdOf(data, events),
     holds: flat(parts.holds),
     why: flat(parts.why),
     because: becauseOf(data),
     meanwhile: flat(parts.meanwhile),
     raisedAt: card.at,
+    ...(canPrivate ? { canPrivate: true } : {}),
     line: typeof data.line === 'string' ? data.line : null,
     text: data.question,
   };
@@ -92,10 +101,13 @@ function decisionOf(card, n, events) {
 //   pending:  the waiting decisions, oldest first, each as decisionOf gives it
 //   answered: the decisions of the current numbering that an answer closed, each { n, id, text, at, label, words, where }
 //   next:     the number the next decision raised will have
-export function decisionsFrom(events, enrolled) {
+//   record:   every decision an answer closed, in any numbering, each as decisionOf gives it with `answer` ({ at, label, option,
+//             words, private, where }): what the project's decision records are made from
+// `canPrivate` marks each pending decision as one the director may answer "private" (a public project's).
+export function decisionsFrom(events, enrolled, { canPrivate = false } = {}) {
   const all = Array.isArray(events) ? events : [];
   const cards = all.filter((e) => e.kind === 'card' && isDecisionCard(e.data)).sort(byOrder);
-  if (cards.length === 0) return { pending: [], answered: [], next: 1 };
+  if (cards.length === 0) return { pending: [], answered: [], next: 1, record: [] };
   const outcomes = new Map(cardOutcomes(all, enrolled).map((o) => [o.card.id, o]));
   const typed = all.filter((e) => e.kind === 'decision-answer' && verify(e, enrolled)).sort(byOrder);
   // A card a later card revises is closed by it, not answered.
@@ -105,7 +117,10 @@ export function decisionsFrom(events, enrolled) {
   for (const card of cards) {
     steps.push({ at: card.at, order: 0, card, raise: true });
     const decided = outcomes.get(card.id)?.decided ?? null;
-    const typedAnswer = typed.find((e) => e.data.question === card.data.question && byOrder(card, e) < 0);
+    // The typed reply that closed this card: it carries the card's question and was made at the moment the card was decided (a
+    // typed reply is the signed record that decides, so a later reply to a card of the same words is another card's).
+    const typedAnswer = decided === null ? undefined
+      : typed.find((e) => e.data.question === card.data.question && byOrder(card, e) < 0 && e.at === decided.at);
     const closedAt = [decided?.at, revisedAt.get(card.id)].filter((t) => typeof t === 'string').sort()[0];
     if (closedAt !== undefined) {
       const revised = decided === null || revisedAt.get(card.id) === closedAt;
@@ -129,6 +144,7 @@ export function decisionsFrom(events, enrolled) {
       waiting.set(step.card.id, step.card);
     } else if (waiting.delete(step.card.id) && step.answered) {
       const answer = step.typedAnswer;
+      numbered.get(step.card.id).typed = answer;
       numbered.get(step.card.id).answer = {
         at: step.at,
         label: answer?.data.label ?? step.decided?.label ?? null,
@@ -138,10 +154,21 @@ export function decisionsFrom(events, enrolled) {
     }
   }
 
-  const pending = [...waiting.values()].map((card) => decisionOf(card, numbered.get(card.id).n, all));
+  const pending = [...waiting.values()].map((card) => decisionOf(card, numbered.get(card.id).n, all, canPrivate));
   const answered = cards.filter((c) => numbered.get(c.id).epoch === epoch && numbered.get(c.id).answer !== null)
     .map((c) => ({ n: numbered.get(c.id).n, id: c.id, text: c.data.question, code: typeof c.data.code === 'string' ? c.data.code : null, options: optionsOf(c.data), ...numbered.get(c.id).answer }));
-  return { pending, answered, next: counter + 1 };
+  // An answer's option is the label of what was chosen: a typed reply names it, a click's label is it, and the director's own
+  // words have none.
+  const record = cards.filter((c) => numbered.get(c.id).answer !== null).map((c) => {
+    const answer = numbered.get(c.id).answer;
+    const typedAnswer = numbered.get(c.id).typed;
+    const option = typedAnswer !== undefined ? typedAnswer.data.option : typeof answer.label === 'string' ? answer.label : '';
+    return {
+      ...decisionOf(c, numbered.get(c.id).n, all),
+      answer: { at: answer.at, label: answer.label, option, words: answer.words, where: answer.where, ...(typedAnswer?.data.private === true ? { private: true } : {}) },
+    };
+  });
+  return { pending, answered, next: counter + 1, record };
 }
 
 const quiet = { report: () => {} };
@@ -149,7 +176,7 @@ const quiet = { report: () => {} };
 // The record of a project, read here, for a hook (which runs outside the sandbox).
 export function readDecisions(project, { events, enrolled } = {}) {
   const held = events ?? listEvents(stateDir(project), quiet);
-  return decisionsFrom(held, enrolled ?? readEnrolled());
+  return decisionsFrom(held, enrolled ?? readEnrolled(), { canPrivate: canPrivateIn(project) });
 }
 
 // pendingDecisions(project) -> the waiting decisions, each { n, question, code, options, recommend, work, raisedAt, ... }.

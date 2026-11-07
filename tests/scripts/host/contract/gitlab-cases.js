@@ -31,6 +31,9 @@ export const cases = [
   // ---- reads ----
   { name: 'defaultBranch', call: (a) => a.defaultBranch(), ...answers(same('project.json')), expect: 'main' },
   { name: 'branchHead', call: (a) => a.branchHead('feature/x'), ...answers(json(text({ name: 'feature/x', commit: { id: SHA } }))), expect: SHA },
+  { name: 'isPublic is true for a public project', call: (a) => a.isPublic(), ...answers(json(text({ visibility: 'public' }))), expect: true },
+  { name: 'isPublic is false for a private or internal project', call: async (a) => [await a.isPublic()], ...answers(json(text({ visibility: 'internal' }))), expect: [false] },
+  { name: 'isPublic with no visibility given is an error, never a guess', call: (a) => a.isPublic(), ...answers(json(text({ id: 3 }))), throws: /did not say whether/ },
 
   // ---- opening, changing and closing ----
   { name: 'openPr gives the number and the address', call: (a) => a.openPr({ head: 'wheelhouse/welcome-page', base: 'main', title: 'Add the welcome page', body: 'Words' }),
@@ -106,6 +109,17 @@ export const cases = [
     expect: [
       { number: 4, title: 'First', body: 'Words', branch: 'one', head: '46322a2e182ab8e1bcace1b058b1818f5c93f61f', draft: false, fork: false },
       { number: 9, title: 'Second', body: '', branch: 'two', head: SHA, draft: true, fork: true },
+    ] },
+  { name: 'requestsOn lists the requests of a branch in any state, sorted, and says unknown for a state it does not know', call: (a) => a.requestsOn('wheelhouse/decisions-2026-11-07'),
+    ...answers(json(text([
+      { iid: 9, source_branch: 'wheelhouse/decisions-2026-11-07', sha: SHA, source_project_id: 1, target_project_id: 1, state: 'closed' },
+      { iid: 4, source_branch: 'wheelhouse/decisions-2026-11-07', sha: SHA, source_project_id: 1, target_project_id: 1, state: 'merged' },
+      { iid: 11, source_branch: 'wheelhouse/decisions-2026-11-07', sha: SHA, source_project_id: 2, target_project_id: 1, state: 'locked' },
+    ]))),
+    expect: [
+      { number: 4, branch: 'wheelhouse/decisions-2026-11-07', head: SHA, fork: false, state: 'merged' },
+      { number: 9, branch: 'wheelhouse/decisions-2026-11-07', head: SHA, fork: false, state: 'closed' },
+      { number: 11, branch: 'wheelhouse/decisions-2026-11-07', head: SHA, fork: true, state: 'unknown' },
     ] },
   { name: 'requestDetails counts lines and orders commits oldest first', call: (a) => a.requestDetails(4),
     ...answers([{ stdout: rs('mr-changes.json') }, { status: 200, body: rs('mr-diffs.json') }], json(rs('mr-commits.json'))),

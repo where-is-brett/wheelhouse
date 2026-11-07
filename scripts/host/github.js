@@ -107,6 +107,13 @@ export function approvalRefusal(status, output) {
 export const PR_ADDRESS = /(https:\/\/\S+\/pull\/(\d+))/;
 export const ISSUE_ADDRESS = /(https:\/\/\S+\/issues\/(\d+))/;
 
+// Whether a repository's answer says it is public: `visibility` is public, private or internal. One that says neither is an error.
+export function publicOf(answer) {
+  const visibility = typeof answer?.visibility === 'string' ? answer.visibility.toLowerCase() : null;
+  if (visibility === null) throw new Error('GitHub did not say whether the repository is public');
+  return visibility === 'public';
+}
+
 export function githubCommands({ call, attempt, json, repo, fromAddress, refusal, settle, httpsOnly }) {
   const [owner, name] = repo.split('/');
   const R = ['--repo', repo];
@@ -265,6 +272,13 @@ export function githubCommands({ call, attempt, json, repo, fromAddress, refusal
       }));
     },
 
+    // The pull requests with this head branch, in any state, as the adapter's request values with a state.
+    async requestsOn(branch) {
+      const requests = await ask(['pr', 'list', ...R, '--state', 'all', '--head', branch, '--json', 'number,headRefName,headRefOid,isCrossRepository,state', '--limit', '20']);
+      if (!Array.isArray(requests)) throw new Error('GitHub did not list the pull requests of the branch');
+      return requests.map((r) => ({ number: r.number, branch: r.headRefName, head: r.headRefOid, fork: r.isCrossRepository === true, state: STATE[r.state] ?? 'unknown' }));
+    },
+
     // The files a pull request changes and its commits' subjects, oldest first.
     async requestDetails(number) {
       const pr = await ask(['pr', 'view', String(number), ...R, '--json', 'files,commits']);
@@ -302,6 +316,11 @@ export function githubCommands({ call, attempt, json, repo, fromAddress, refusal
         if (got.length < 100) break;
       }
       return all.map(reviewOf);
+    },
+
+    // Whether the repository is public: its `visibility`, never a guess. Private and internal are not public.
+    async isPublic() {
+      return publicOf(await ask(['api', `repos/${repo}`]));
     },
 
     // The login of the account the connection posts as: the one the merge queue's policy names (part 3f).

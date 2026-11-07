@@ -140,6 +140,8 @@ function localCommands({ project, git, run, write, now, folder }) {
     pullRef: (number) => `refs/pull/${number}/head`,
     // The local queue reads the signed review itself, so there is no comment to keep: the number given back is only a place.
     verdictComment: async ({ number, id }) => ({ id: id ?? number }),
+    // A local project lives on this computer and nowhere else: always private.
+    isPublic: async () => false,
     login: async () => THIS_COMPUTER,
     issue: {
       create: async () => { throw new Error(NO_ISSUES); },

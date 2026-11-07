@@ -863,11 +863,14 @@ function checkChecksFound(data) {
 // The director's typed reply to a decision: the decision's question as the state holds it, its number, the letter they
 // chose (A to D) or `own` when they answered in their own words, the label of the option that letter stands for (empty for
 // their own words), those words (empty when the letter stood alone) and
-// the place, always the chat.
+// the place, always the chat. `private: true` follows a letter the director marked "private".
 function checkDecisionAnswer(data) {
   const bad = (why) => { throw new Error(`A decision-answer event ${why}`); };
   const keys = isPlain(data) ? Object.keys(data).sort().join() : '';
-  if (keys !== 'label,n,option,question,where,words') bad('needs its question, number, label, option, words and where');
+  // A letter may be followed by "private" (design section 6.6): the answer is then kept in the private record alone.
+  const marked = keys === 'label,n,option,private,question,where,words';
+  if (keys !== 'label,n,option,question,where,words' && !marked) bad('needs its question, number, label, option, words and where');
+  if (marked && (data.private !== true || data.label === 'own')) bad('may be marked private only with a letter, and only as true');
   if (typeof data.question !== 'string' || data.question === '') bad('needs the decision\'s question');
   if (!Number.isInteger(data.n) || data.n < 1) bad('needs the decision\'s number');
   if (typeof data.label !== 'string' || !/^(?:[A-D]|own)$/.test(data.label)) bad('needs its label to be A to D, or own');
