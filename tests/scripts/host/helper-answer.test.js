@@ -13,6 +13,7 @@ import { helperClient } from '../../../scripts/host/helper-client.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { setStop } from '../../../scripts/lib/stop.js';
+import { readAnswerHeads } from '../../../scripts/gate/open-questions.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
 import { dataHash, eventPath, makeEvent } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
@@ -136,6 +137,35 @@ test('--applied marks the decision status only on the pull request whose branch 
       });
     } finally { p.cleanup(); fs.rmSync(folder, { recursive: true, force: true }); }
   }
+});
+
+test('the work\'s own session reading an answer keeps the head its pull request had then, once, and no one else\'s read does', async () => {
+  const folder = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-answer-')));
+  const p = await project({ folder });
+  try {
+    await as(p.home, async () => {
+      const tree = featureTree(folder);
+      keep(makeEvent({ kind: 'feature', data: { work: 'export-csv', step: 'building', worktree: tree }, now: at(0) }));
+      keep(asked());
+      keep(click(2, { label: 'Tab' }));
+      let sha = 'a'.repeat(40);
+      const adapter = { defaultBranch: async () => 'main', prState: async () => ({ state: 'open', headRef: 'feature/export-csv', headSha: sha }) };
+      const kept = () => readAnswerHeads(path.join(stateDir('o__p'), '..', 'answer-heads'), [ID])[ID];
+      const helper = await startHelper({ run: hostGuard, address: testAddress(process.env.WHEELHOUSE_HOME), adapterFor: async () => adapter, envFor: async () => ({}) });
+      try {
+        const client = helperClient({ address: helper.address });
+        // A read with no folder keeps nothing.
+        assert.equal((await client.state.answer({ project: 'o__p', questionId: ID })).answer, 'Tab');
+        assert.equal(kept(), undefined);
+        assert.equal((await client.state.answer({ cwd: tree, questionId: ID })).answer, 'Tab');
+        assert.equal(kept()?.sha, 'a'.repeat(40));
+        // The rework is pushed: a later read keeps the first head, so a review of the old one never shows the new.
+        sha = 'b'.repeat(40);
+        await client.state.answer({ cwd: tree, questionId: ID });
+        assert.equal(kept()?.sha, 'a'.repeat(40));
+      } finally { await helper.close(); }
+    });
+  } finally { p.cleanup(); fs.rmSync(folder, { recursive: true, force: true }); }
 });
 
 test('/state/answer is answered under STOP', async () => {

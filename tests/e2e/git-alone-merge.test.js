@@ -8,6 +8,7 @@ import path from 'node:path';
 import { LOCAL_COMMAND, LOCAL_P as P, gitAloneWorld } from '../helpers/engine-e2e.js';
 import { waitLongerOnTheHelper, until } from '../helpers/until.js';
 import { commandDigest } from '../../scripts/checks/record.js';
+import { markHandled } from '../../scripts/gate/open-questions.js';
 import { FIX_LANE } from '../../scripts/engine/fix-main.js';
 import { workOrder } from '../../scripts/engine/order.js';
 import { withTicket } from '../../scripts/engine/ticket.js';
@@ -329,7 +330,7 @@ test('a project with no host gets the engine and its dispatcher without a mirror
 test('a decision open on a git-only piece, or answered otherwise and not applied, holds it in the sweep', { timeout: 180000 }, () => gitAloneWorld(async (world) => {
   const { helper, client, home } = world;
   const main = await headIn(home, 'refs/heads/main');
-  const { n } = await readyChange(world, 'card-4', 'export const price = () => 4;\n');
+  const { n, head } = await readyChange(world, 'card-4', 'export const price = () => 4;\n');
   const data = {
     id: 'q-card-4-1', work: 'card-4', what: 'How many decimals?', why: 'It decides what prices show',
     options: [{ label: 'Two', says: 'Two decimals' }, { label: 'None', says: 'Whole numbers' }], recommendation: 'Two', level: 3,
@@ -351,4 +352,19 @@ test('a decision open on a git-only piece, or answered otherwise and not applied
   await ticks(helper, 6);
   assert.equal(changeOf(n).state, 'open');
   assert.equal(await headIn(home, 'refs/heads/main'), main);
+
+  // The session says the rework is in (`answer --applied`, which keeps this mark): a mark alone still holds, since no review of
+  // the head was made after the answer.
+  const answeredAt = records('action').find((e) => e.data.questionId === data.id).at;
+  assert.equal(markHandled(path.join(stateDir(P), '..', 'handled'), data.id, answeredAt), true);
+  await ticks(helper, 6);
+  assert.equal(changeOf(n).state, 'open', 'the mark alone does not lift the hold');
+  assert.equal(await headIn(home, 'refs/heads/main'), main);
+
+  // The head reviewed again after the answer, with the mark: the hold lifts and the change merges.
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const again = await client.state.record({ project: P, event: makeEvent({ kind: 'review', data: { pr: n, commit: head, verdict: 'CLEAN' } }) });
+  assert.equal(again.ok, true, JSON.stringify(again));
+  const merged = await ticksUntil(helper, () => (changeOf(n).state === 'merged' ? changeOf(n) : null), 'the merge once the hold lifts');
+  assert.equal(await headIn(home, 'refs/heads/main'), merged.mergeCommit);
 }, { check: checks() }));
