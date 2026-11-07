@@ -2759,9 +2759,9 @@ export async function startHelper({
   }
 
   // The last lines of a command's output, for the director to see why it failed: at most 10 lines and 600 characters, joined on
-  // one line, with backticks neutralised.
-  function tailOf(text) {
-    const lines = String(text ?? '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(-10);
+  // one line, with backticks neutralised. It goes into a pull request body, so any line the secret scan matches is hidden first.
+  function failureTailOf(text) {
+    const lines = tailOf(String(text ?? ''), 4000).split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(-10);
     const joined = lines.join(' | ').replace(/`/g, "'");
     return joined.length > 600 ? `…${joined.slice(-599)}` : joined;
   }
@@ -2792,7 +2792,7 @@ export async function startHelper({
         // All stop ended it part way: that is a stop, not a failure of the command.
         if (signal.aborted || stopped()) throw Object.assign(new Error('stopped by All stop'), { stopped: true });
         if (got.result !== 'passed') {
-          throw Object.assign(new Error(got.result === 'timed-out' ? 'it ran out of time' : `it ${got.result === 'could-not-run' ? 'could not run' : 'failed'}`), { tail: tailOf(got.tail) });
+          throw Object.assign(new Error(got.result === 'timed-out' ? 'it ran out of time' : `it ${got.result === 'could-not-run' ? 'could not run' : 'failed'}`), { tail: failureTailOf(got.tail) });
         }
         return parseSnapshot(got.tail);
       };
