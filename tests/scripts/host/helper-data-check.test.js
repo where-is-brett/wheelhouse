@@ -196,6 +196,18 @@ test('a failing command gives the last ten lines of its output, capped, with bac
   });
 });
 
+test('the tail of a failing command hides any line that looks like a secret, since it goes into the pull request body', async () => {
+  await withHelper(async ({ client, control }) => {
+    control.result = 'failed';
+    control.tail = `connecting\ntoken ghp_${'a'.repeat(36)}\nerror: no database`;
+    const got = await client.dataCheck({ project: 'o__p', branch: 'feature/w-tide-1' });
+    assert.equal(got.failed, true);
+    assert.doesNotMatch(JSON.stringify(got), /ghp_a/);
+    assert.match(got.tail, /hidden/);
+    assert.ok(got.tail.endsWith('error: no database'), got.tail);
+  });
+});
+
 test('a run All stop ends part way comes back as stopped, not as a failed command', async () => {
   await withHelper(async ({ client, control }) => {
     control.result = 'could-not-run';
