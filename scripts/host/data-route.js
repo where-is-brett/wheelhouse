@@ -46,6 +46,11 @@ export async function dataComparison({ config, approvals = [], runTest, runReal 
     const after = await run(head, check.command);
     return { ran: true, route, before, after, ...(realRefused === undefined ? {} : { realRefused }) };
   } catch (error) {
-    return { ran: false, failed: true, why: `the data command could not be run: ${String(error?.message ?? error).slice(0, 200)}`, ...(realRefused === undefined ? {} : { realRefused }) };
+    const refused = realRefused === undefined ? {} : { realRefused };
+    if (error?.stopped === true) return { ran: false, stopped: true, why: 'stopped by All stop', ...refused };
+    return {
+      ran: false, failed: true, why: `the data command could not be run: ${String(error?.message ?? error).slice(0, 200)}`,
+      ...(typeof error?.tail === 'string' && error.tail !== '' ? { tail: error.tail } : {}), ...refused,
+    };
   }
 }

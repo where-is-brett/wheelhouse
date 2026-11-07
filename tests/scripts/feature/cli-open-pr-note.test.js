@@ -178,6 +178,12 @@ test('a data command that failed is printed as a failure beside the session\'s r
   const body = calls.opened[0].body;
   assert.ok(body.includes('The data command failed: the data command could not be run: it failed'));
   assert.ok(body.includes("The session's reason: It only adds a column"));
+  // The end of its output is shown as code, so the director sees why.
+  const tailed = feature();
+  withReport(tailed, { data: { none: 'It only adds a column' } });
+  const withTail = helper({ ...failed, tail: "migration 002 | error in 'boats'" });
+  await open(withTail.client, tailed);
+  assert.ok(withTail.calls.opened[0].body.includes("Its last lines: `migration 002 | error in 'boats'`"));
   // Without a reason it is refused, and says it failed.
   const bare = feature();
   withReport(bare, {});
@@ -188,6 +194,21 @@ test('a data command that failed is printed as a failure beside the session\'s r
   const ran = helper({ ok: true, dataWork: true, changes: [], ran: true, route: 'test', before: snap(3), after: snap(3) });
   await open(ran.client, ranTree);
   assert.ok(!ran.calls.opened[0].body.includes('ignored'));
+});
+
+test('the helper is told whether the report declares data, and the files that cannot be read here are said', async () => {
+  const tree = feature();
+  withReport(tree, { data: { none: 'The migration only adds a column' } });
+  const seen = [];
+  const bodies = [];
+  const client = { push: async () => ({ ok: true }), openPr: async (a) => { bodies.push(a.body); return { ok: true, result: { number: 7 } }; }, dataCheck: async (args) => { seen.push(args); return { ok: false, refused: 'All stop is on' }; } };
+  await open(client, tree);
+  assert.ok(bodies[0].includes('could not be made: All stop is on, and the changed files could not be read here either'));
+  assert.equal(seen.at(-1).declared, true);
+  const plain = feature();
+  withReport(plain, {});
+  await open(client, plain);
+  assert.equal(seen.at(-1).declared, false);
 });
 
 test('the report reads `followed` and `data`, and refuses them in a wrong shape', () => {

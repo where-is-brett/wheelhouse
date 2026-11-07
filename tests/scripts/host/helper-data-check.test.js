@@ -17,6 +17,7 @@ import { makeBareRemote, g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 import { writeSessionProvenance } from '../../helpers/provenance.js';
 import { DATA_HEADING } from '../../../scripts/proof/note.js';
+import { stopDataRuns } from '../../../scripts/checks/data-run.js';
 
 // No host tool runs for real, and the log stays empty.
 const hostLog = [];
@@ -73,7 +74,7 @@ async function withHelper(fn) {
   const home = shortHome();
   const runs = [];
   const adapterCalls = [];
-  const control = { result: 'passed' };
+  const control = { result: 'passed', tail: 'no', hold: null, after: null };
   try {
     return await as(home, async () => {
       writeProject('o__p', {
@@ -86,12 +87,14 @@ async function withHelper(fn) {
       const adapter = { defaultBranch: async () => 'main', openPr: async (args) => { adapterCalls.push(args); return { number: 7 }; } };
       const check = async (args) => {
         runs.push(args);
-        if (control.result !== 'passed') return { result: control.result, tail: 'no' };
+        if (control.hold) await control.hold(args);
+        if (control.after) control.after();
+        if (control.result !== 'passed') return { result: control.result, tail: control.tail };
         return { result: 'passed', tail: `Preparing...\n${JSON.stringify(snap(args.commit === r.base ? 3 : 4))}\n` };
       };
       const helper = await startHelper({ run: hostGuard, address: testAddress(home), adapterFor: async () => adapter, envFor: async () => ({}), check });
       try {
-        return await fn({ client: helperClient({ address: helper.address }), r, runs, adapterCalls, control });
+        return await fn({ client: helperClient({ address: helper.address }), address: helper.address, r, runs, adapterCalls, control });
       } finally {
         await helper.close();
       }
@@ -144,6 +147,7 @@ test('/data/check gives a failing command as no comparison with its why, and run
     assert.equal(failed.ran, false);
     assert.equal(failed.failed, true);
     assert.match(failed.why, /could not be run: it failed/);
+    assert.equal(failed.tail, 'no', 'the end of its output is given');
     assert.equal(runs.length, 1, 'the base run failed, so the head was not run, and nothing was repeated');
     control.result = 'timed-out';
     assert.match((await client.dataCheck({ project: 'o__p', branch: 'feature/w-tide-1' })).why, /ran out of time/);
@@ -164,5 +168,72 @@ test('/pr/open refuses data work whose body has no data section, and opens it wi
     assert.equal((await open('feature/w-tide-2', 'Shipped it.')).ok, true);
     assert.equal((await open('feature/w-tide-9', 'Shipped it.')).ok, true);
     assert.equal(adapterCalls.length, 3);
+  });
+});
+
+test('/data/check runs nothing for a change that is not data work, unless the report declares data', async () => {
+  await withHelper(async ({ client, runs }) => {
+    const plain = await client.dataCheck({ project: 'o__p', branch: 'feature/w-tide-2' });
+    assert.deepEqual([plain.ok, plain.dataWork, plain.ran, plain.why], [true, false, false, 'this change is not data work']);
+    assert.equal(runs.length, 0, 'no prepare and no run, and no turn taken');
+    const declared = await client.dataCheck({ project: 'o__p', branch: 'feature/w-tide-2', declared: true });
+    assert.equal(declared.ran, true);
+    assert.equal(runs.length, 2);
+  });
+});
+
+test('a failing command gives the last ten lines of its output, capped, with backticks neutralised', async () => {
+  await withHelper(async ({ client, control }) => {
+    control.result = 'failed';
+    control.tail = `${Array.from({ length: 30 }, (_, i) => `line ${i}`).join('\n')}\nerror in \`boats\``;
+    const got = await client.dataCheck({ project: 'o__p', branch: 'feature/w-tide-1' });
+    assert.equal(got.failed, true);
+    assert.ok(got.tail.startsWith('line 21 | '), got.tail);
+    assert.ok(got.tail.endsWith("error in 'boats'"));
+    assert.equal(got.tail.split(' | ').length, 10);
+    control.tail = 'x'.repeat(5000);
+    assert.ok((await client.dataCheck({ project: 'o__p', branch: 'feature/w-tide-1' })).tail.length <= 600);
+  });
+});
+
+test('a run All stop ends part way comes back as stopped, not as a failed command', async () => {
+  await withHelper(async ({ client, control }) => {
+    control.result = 'could-not-run';
+    control.after = () => stopDataRuns('o__p');
+    const got = await client.dataCheck({ project: 'o__p', branch: 'feature/w-tide-1' });
+    assert.deepEqual(got, { ok: false, refused: 'All stop is on' });
+  });
+});
+
+test('/pr/open answers at once while a data run of the project is under way', async () => {
+  await withHelper(async ({ client, runs, control, adapterCalls }) => {
+    let release;
+    // Held for the first run only: the head's run then goes straight through.
+    control.hold = () => { control.hold = null; return new Promise((resolve) => { release = resolve; }); };
+    const slow = client.dataCheck({ project: 'o__p', branch: 'feature/w-tide-1' });
+    for (let i = 0; i < 400 && runs.length === 0; i += 1) await new Promise((resolve) => { setTimeout(resolve, 25); });
+    assert.equal(runs.length, 1, 'the data run is under way');
+    const quick = (value) => Promise.race([value, new Promise((resolve) => { setTimeout(() => resolve('waited'), 5000); })]);
+    const open = (branch, body) => client.openPr({ project: 'o__p', head: branch, title: 't', body, session: 'sess-1' });
+    assert.equal((await quick(open('feature/w-tide-2', 'Shipped it.'))).ok, true, 'another branch\'s pull request');
+    const refused = await quick(open('feature/w-tide-1', 'Shipped it.'));
+    assert.equal(refused.ok, false, 'a data pull request is judged, not held up');
+    assert.match(refused.refused, /Add "data"/);
+    assert.equal(adapterCalls.length, 1);
+    release();
+    assert.equal((await slow).ran, true);
+  });
+});
+
+test('a data run is ended when the caller gives up on it', async () => {
+  await withHelper(async ({ address, runs, control }) => {
+    let signal = null;
+    control.hold = (args) => new Promise((resolve) => { signal = args.signal; args.signal.addEventListener('abort', resolve, { once: true }); });
+    const impatient = helperClient({ address, timeout: 4000 });
+    const got = await impatient.dataCheck({ project: 'o__p', branch: 'feature/w-tide-1' });
+    assert.match(got.refused, /did not answer in time/);
+    for (let i = 0; i < 200 && !signal?.aborted; i += 1) await new Promise((resolve) => { setTimeout(resolve, 25); });
+    assert.equal(runs.length >= 1, true);
+    assert.equal(signal.aborted, true, 'the helper ended the run when the connection closed');
   });
 });

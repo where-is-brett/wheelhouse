@@ -75,7 +75,10 @@ function looks(previews, k) {
 function dataSection(data, k) {
   const out = [];
   if (data.comparison === undefined) {
-    if (typeof data.failure === 'string') out.push(`The data command failed: ${line(data.failure, Math.max(4, Math.round(30 * k)))}`);
+    if (typeof data.failure === 'string') {
+      out.push(`The data command failed: ${line(data.failure, Math.max(4, Math.round(30 * k)))}`);
+      if (typeof data.failureTail === 'string') out.push(`Its last lines: ${code(line(data.failureTail, Math.max(6, Math.round(50 * k))))}`);
+    }
     else if (typeof data.unavailable === 'string') out.push(`The data check could not be made: ${line(data.unavailable, Math.max(4, Math.round(30 * k)))}`);
     if (typeof data.none === 'string') out.push(`${data.failure !== undefined || data.unavailable !== undefined ? "The session's reason" : 'No comparison was made'}: ${line(data.none, Math.max(4, Math.round(30 * k)))}`);
     else if (data.failure === undefined && data.unavailable === undefined) out.push('No comparison was made.');
@@ -114,7 +117,7 @@ function build({ report, calls, followed, review, previews, data, notes }, k) {
 // - `followed`: the decisions of the director's it followed, each { question, answer };
 // - `review`: the independent review's { verdict, findings, blocking, lenses? }, or null while none has run;
 // - `previews`: the pages whose pictures are kept, each { page };
-// - `data`: null with no data work; else { route: 'test' | 'real', comparison?, none?, failure?, unavailable?, realRefused? }:
+// - `data`: null with no data work; else { route: 'test' | 'real', comparison?, none?, failure?, failureTail?, unavailable?, realRefused? }:
 //   `failure` is why the helper's data command failed, `unavailable` why the check could not be made, `none` the session's reason;
 // - `notes`: lines for "How it was checked" about a check that couldn't be made.
 // Within REPORT_WORDS words: when the parts run over, each is cut shorter until the note fits.

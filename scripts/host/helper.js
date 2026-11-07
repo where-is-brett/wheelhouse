@@ -2749,13 +2749,21 @@ export async function startHelper({
   async function dataSectionMissing({ project, branch, body }, ctx) {
     let read;
     try {
-      read = await oneAtATime(`data:${project}`, () => readChange({ project, branch }, ctx));
+      read = await readChange({ project, branch }, ctx);
     } catch {
       return null;
     }
     if (read?.ok !== true || read.dataWork !== true) return null;
     if (typeof body === 'string' && body.includes(`## ${DATA_HEADING}`)) return null;
-    return `this change is data work (${dataModelPaths(read.changes.map((c) => c.path), read.config).slice(0, 3).join(', ')}), so its pull request needs the data before and after, or the reason there is none: open it with the feature command open-pr`;
+    return `this change is data work (${dataModelPaths(read.changes.map((c) => c.path), read.config).slice(0, 3).join(', ')}), so its pull request needs the data before and after, or the reason there is none. Add "data": { "expect": ["<the tables it moves>"] } or "data": { "none": "<the reason>" } to report.md, and run open-pr again`;
+  }
+
+  // The last lines of a command's output, for the director to see why it failed: at most 10 lines and 600 characters, joined on
+  // one line, with backticks neutralised.
+  function tailOf(text) {
+    const lines = String(text ?? '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(-10);
+    const joined = lines.join(' | ').replace(/`/g, "'");
+    return joined.length > 600 ? `…${joined.slice(-599)}` : joined;
   }
 
   // The data before and after of a pushed feature branch (design section 7 of the director's way of working): `{ cwd, branch }`.
@@ -2765,21 +2773,27 @@ export async function startHelper({
   // ended by All stop. The real route runs only once the director's signed approval names that command and only where this
   // computer holds read-only access, which no code here sets up. Gives
   // { ok, dataWork, changes, ran, failed?, route?, before?, after?, why?, realRefused? }. Refused under STOP.
-  async function doDataCheck({ project, branch }, ctx) {
+  async function doDataCheck({ project, branch, declared, gone }, ctx) {
     if (stopped()) return STOP_REFUSAL;
     const read = await readChange({ project, branch }, ctx);
     if (read.ok !== true) return read;
     const { config, head, base, changes, dataWork, mirror } = read;
     if (config.dataCheck === undefined) return { ok: true, dataWork, changes, ran: false, why: 'this project names no data command' };
+    // The command costs two prepares, two runs and the computer-wide turn: only for data work, or a report that says it has some.
+    if (!dataWork && declared !== true) return { ok: true, dataWork, changes, ran: false, why: 'this change is not data work' };
     const work = `data-${branch}`;
     const named = checksSettings(config);
-    const compared = await withDataRun({ project, work, stopped }, ({ signal }) => {
+    const compared = await withDataRun({ project, work, stopped, abortOn: gone }, ({ signal }) => {
       const runTest = async (commit, command) => {
         const got = await check({
           project, commit, main: false, work, source: mirror, signal,
           settings: { testCommand: command, prepare: named.prepare, minutes: DATA_RUN_MINUTES, network: false, once: true },
         });
-        if (got.result !== 'passed') throw new Error(got.result === 'timed-out' ? 'it ran out of time' : `it ${got.result === 'could-not-run' ? 'could not run' : 'failed'}`);
+        // All stop ended it part way: that is a stop, not a failure of the command.
+        if (signal.aborted || stopped()) throw Object.assign(new Error('stopped by All stop'), { stopped: true });
+        if (got.result !== 'passed') {
+          throw Object.assign(new Error(got.result === 'timed-out' ? 'it ran out of time' : `it ${got.result === 'could-not-run' ? 'could not run' : 'failed'}`), { tail: tailOf(got.tail) });
+        }
         return parseSnapshot(got.tail);
       };
       // No read-only credential is set up by any code here, so the real route has no runner and is refused in plain words.
@@ -2787,7 +2801,8 @@ export async function startHelper({
       // and what it runs, with the network limited to the database. Until then it stays null.
       return dataComparison({ config, approvals: signedOf(project, 'data-route-approved'), runTest, runReal: null, base, head });
     });
-    if (compared === null) return STOP_REFUSAL;
+    if (compared === null) return gone?.aborted ? { ok: false, refused: 'the request was dropped, so the data check was ended' } : STOP_REFUSAL;
+    if (compared.stopped === true) return STOP_REFUSAL;
     return { ok: true, dataWork, changes, ...compared };
   }
 
@@ -4725,7 +4740,8 @@ export async function startHelper({
     // Read-only, so STOP lets it through.
     '/pr/preview': doPreview,
     // Read-only, so STOP lets it through.
-    '/data/check': (body, ctx) => oneAtATime(`data:${body.project}`, () => doDataCheck(body, ctx)),
+    // Serialised per branch only: no other request waits behind a data run (a pull request opening, another branch's run).
+    '/data/check': (body, ctx) => oneAtATime(`data:${body.project}:${body.branch}`, () => doDataCheck(body, ctx)),
     '/config': async (body, ctx) => {
       try {
         return await doConfig(body, ctx);
@@ -5959,6 +5975,12 @@ export async function startHelper({
       // runbook.js, a feature session's commands and the front desk run inside the sandbox, which
       // cannot read ~/.wheelhouse: they send their folder, and the project is placed here.
       if ((runbookRoute || FOLDER_ROUTES.includes(url.pathname) || PLACED_ROUTES.includes(url.pathname)) && body.cwd !== undefined) body = placed(body);
+      // A data check is ended when the caller gives up: its connection closing before the answer goes out.
+      if (url.pathname === '/data/check') {
+        const gone = new AbortController();
+        res.once('close', () => { if (!res.writableFinished) gone.abort(); });
+        body = { ...body, gone: gone.signal };
+      }
       // Whether a push was placed by its folder is the helper's to say, never the caller's.
       if (url.pathname === '/push') body = { ...body, byFolder: body.cwd !== undefined };
       // The foreman's commands send their folder, which must be the main checkout (ruling R156).

@@ -85,7 +85,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     ci: post('/ci'), //              { project, sha }
     testMerge: post('/test-merge'), // { project, a, b } -> { ok, clean, conflicts }: read-only, answered under STOP
     config: post('/config'), //      { project | cwd } -> { ok, config }: the default branch's, read-only, answered under STOP
-    dataCheck: post('/data/check'), // { cwd, branch } -> { ok, dataWork, changes: [{ status, path }], ran, route?, before?, after?, why?, realRefused? }: whether a pushed feature branch's change is data work, and the project's read-only data command run at the merge base and the head (test data, or the real route only on the director's signed approval of that command); refused under STOP
+    dataCheck: post('/data/check'), // { cwd, branch, declared? } -> (declared: the report says the change has data work; without it the command runs only for data work; the run ends when this connection closes) { ok, dataWork, changes: [{ status, path }], ran, route?, before?, after?, why?, realRefused? }: whether a pushed feature branch's change is data work, and the project's read-only data command run at the merge base and the head (test data, or the real route only on the director's signed approval of that command); refused under STOP
     host: {
       facts: post('/host/facts'), // { project } -> { ok, protection: 'on' | 'none' | 'unknown', ci: 'present' | 'none' | 'unknown', plan?, gaps? } (the last two on GitLab)
     },

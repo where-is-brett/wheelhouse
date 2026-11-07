@@ -63,3 +63,24 @@ test('All stop ends a data run\'s signal, and a run stopped before its turn neve
   assert.equal(await late, null);
   assert.equal(started, false);
 });
+
+test('a run aborted while it waits for its turn gives null at once, and gives its place up when the turn comes', async () => {
+  let open;
+  const waiting = new Promise((resolve) => { open = resolve; });
+  const turn = async (fn) => { await waiting; return fn(); };
+  const caller = new AbortController();
+  let started = false;
+  const run = withDataRun({ project: 'p', work: 'data-feature/w', turn, abortOn: caller.signal }, () => { started = true; });
+  assert.deepEqual(dataWorksInUse('p'), ['data-feature/w']);
+  caller.abort();
+  assert.equal(await run, null, 'answered without the turn');
+  open();
+  await new Promise((resolve) => { setImmediate(resolve); });
+  await new Promise((resolve) => { setImmediate(resolve); });
+  assert.equal(started, false);
+  assert.deepEqual(dataWorksInUse('p'), []);
+  // Aborted before it begins: the same.
+  const early = AbortSignal.abort();
+  assert.equal(await withDataRun({ project: 'p', work: 'data-feature/w', turn: async (fn) => fn(), abortOn: early }, () => { started = true; }), null);
+  assert.equal(started, false);
+});

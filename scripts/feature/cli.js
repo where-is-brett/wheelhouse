@@ -589,7 +589,7 @@ async function localChangeOf(worktree) {
   const git = (args) => fenced(args, { env: { GIT_TERMINAL_PROMPT: '0' }, input: '' });
   try {
     let base = null;
-    for (const ref of ['origin/HEAD', 'origin/main', 'origin/master']) {
+    for (const ref of ['origin/HEAD', 'origin/main', 'origin/master', 'origin/trunk', 'origin/develop']) {
       const got = await git(['merge-base', 'HEAD', ref]);
       if (got.code === 0 && /^[0-9a-f]{40,64}$/.test(got.stdout.trim())) {
         base = got.stdout.trim();
@@ -616,7 +616,7 @@ async function localChangeOf(worktree) {
 // change is data work and, where the project names a read-only data command, the data before and after. A check the helper
 // can't make (it refuses, fails, is not there or takes too long) never stops the pull request, but the session then reads the
 // change's files itself, so data work is still found and still needs its comparison or its reason.
-async function dataFacts({ client, worktree, branch, dataMs, localChange }) {
+async function dataFacts({ client, worktree, branch, declared, dataMs, localChange }) {
   let why;
   if (typeof client?.dataCheck !== 'function') {
     why = "the helper's data check is not there";
@@ -624,7 +624,7 @@ async function dataFacts({ client, worktree, branch, dataMs, localChange }) {
     let timer;
     try {
       const got = await Promise.race([
-        client.dataCheck({ cwd: worktree, branch }),
+        client.dataCheck({ cwd: worktree, branch, declared }),
         new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('it took too long')), dataMs); }),
       ]);
       if (got?.ok === true) return { made: true, ...got };
@@ -636,7 +636,8 @@ async function dataFacts({ client, worktree, branch, dataMs, localChange }) {
     }
   }
   const local = await localChange(worktree);
-  return { made: false, why, ...(local === null ? {} : local) };
+  // Where the files can't be read here either, the note says so rather than passing quietly.
+  return { made: false, why: local === null ? `${why}, and the changed files could not be read here either` : why, ...(local === null ? {} : local) };
 }
 
 // The proof note for the piece: the report's words, the calls it logged, the decisions it followed, the pages it touches and,
@@ -649,6 +650,7 @@ function proofFor({ worktree, checked, facts }) {
   const data = fields.data;
   const comparable = facts.made && facts.ran === true;
   const failure = facts.made && facts.ran === false && facts.failed === true ? facts.why : undefined;
+  const failureTail = failure !== undefined && typeof facts.tail === 'string' ? facts.tail : undefined;
   const unavailable = facts.made ? undefined : facts.why;
   const isData = facts.dataWork === true || data !== undefined;
   if (isData && !comparable && data?.none === undefined) {
@@ -663,7 +665,7 @@ function proofFor({ worktree, checked, facts }) {
     const refused = facts.realRefused ? { realRefused: facts.realRefused } : {};
     note = comparable
       ? { route, comparison: compareSnapshots(facts.before, facts.after, { expect: data?.expect ?? [] }), ...refused }
-      : { route, none: data.none, ...(failure === undefined ? {} : { failure }), ...(unavailable === undefined ? {} : { unavailable }), ...refused };
+      : { route, none: data.none, ...(failure === undefined ? {} : { failure, ...(failureTail === undefined ? {} : { failureTail }) }), ...(unavailable === undefined ? {} : { unavailable }), ...refused };
   }
   const pages = touchedPages(Array.isArray(facts.changes) ? facts.changes : []);
   return proofNote({
@@ -684,7 +686,7 @@ function proofFor({ worktree, checked, facts }) {
 // nothing is opened until the report passes the `report` check. The branch is pushed first,
 // through the helper, since the host opens a pull request only from a branch it holds. The
 // helper places the project from the worktree's folder.
-export async function openPr({ client, worktree, argv, dataMs = DATA_CHECK_MS, localChange = localChangeOf }) {
+export async function openPr({ client, worktree, argv, dataClient = client, dataMs = DATA_CHECK_MS, localChange = localChangeOf }) {
   const found = flagsOf(argv, ['title']);
   const title = needed(found, 'title');
   if (!safeFeatureFolder(worktree)) throw new CliError(FOLDER);
@@ -698,7 +700,7 @@ export async function openPr({ client, worktree, argv, dataMs = DATA_CHECK_MS, l
   const session = keptSession(p.session);
   // The host opens a pull request only from a branch it holds.
   await push({ client, worktree });
-  const note = proofFor({ worktree, checked, facts: await dataFacts({ client, worktree, branch: head, dataMs, localChange }) });
+  const note = proofFor({ worktree, checked, facts: await dataFacts({ client: dataClient, worktree, branch: head, declared: checked.fields.data !== undefined, dataMs, localChange }) });
   const opened = await client.openPr({ cwd: worktree, head, title, body: note, ...(session ? { session } : {}) });
   if (opened?.ok !== true) throw new CliError(opened?.refused ?? 'The host helper did not open the pull request');
   const number = opened.result?.number;
@@ -770,7 +772,7 @@ export async function main(argv, {
       else if (pulled.merged) out(`Brought in the host's ${pulled.branch}: merged with this branch at ${pulled.sha.slice(0, 12)}\n`);
       else out(`Brought in the host's ${pulled.branch}: this branch is now at ${pulled.sha.slice(0, 12)}\n`);
     } else {
-      const { number, already } = await openPr({ client: helper(), worktree, argv: rest });
+      const { number, already } = await openPr({ client: helper(), worktree, argv: rest, dataClient: client ?? helperClient({ timeout: DATA_CHECK_MS }) });
       out(already ? `The pull request is open already: #${number}\n` : `Opened pull request #${number}\n`);
     }
     return 0;

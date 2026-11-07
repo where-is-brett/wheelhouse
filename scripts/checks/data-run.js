@@ -16,27 +16,38 @@ export function dataWorksInUse(project) {
   return [...(inUse.get(project)?.keys() ?? [])];
 }
 
-// Runs `fn({ signal })` for `work` of `project` once it has the turn. `signal` is aborted by All stop (`stopDataRuns`) and when
-// `stopped()` says so; `fn` is not started when that is already so. Gives what `fn` gives, or null when it never started.
-export async function withDataRun({ project, work, stopped = () => false, turn = withCheckTurn }, fn) {
+// Runs `fn({ signal })` for `work` of `project` once it has the turn. `signal` is aborted by All stop (`stopDataRuns`), when
+// `stopped()` says so, and when `abortOn` (a caller's own signal, as its connection closing) aborts. `fn` is not started when
+// that is already so. Gives what `fn` gives, or null when it never started: a run still waiting for its turn when it is aborted
+// gives null at once, and gives its place in the queue up when the turn comes, rather than holding the caller.
+export function withDataRun({ project, work, stopped = () => false, turn = withCheckTurn, abortOn = null }, fn) {
   const controller = new AbortController();
-  controllers.add({ project, controller });
+  const entry = { project, controller };
+  controllers.add(entry);
   const mine = inUse.get(project) ?? new Map();
   mine.set(work, (mine.get(work) ?? 0) + 1);
   inUse.set(project, mine);
-  const entry = [...controllers].find((c) => c.controller === controller);
-  try {
-    return await turn(async () => {
-      if (controller.signal.aborted || stopped()) return null;
-      return fn({ signal: controller.signal });
-    });
-  } finally {
+  if (abortOn?.aborted) controller.abort();
+  else abortOn?.addEventListener('abort', () => controller.abort(), { once: true });
+  let started = false;
+  const running = turn(async () => {
+    if (controller.signal.aborted || stopped()) return null;
+    started = true;
+    return fn({ signal: controller.signal });
+  }).finally(() => {
     controllers.delete(entry);
     const left = (mine.get(work) ?? 1) - 1;
     if (left <= 0) mine.delete(work);
     else mine.set(work, left);
-    if (mine.size === 0) inUse.delete(project);
-  }
+    if (mine.size === 0 && inUse.get(project) === mine) inUse.delete(project);
+  });
+  running.catch(() => {});
+  const early = new Promise((resolve) => {
+    const unstarted = () => { if (!started) resolve(null); };
+    if (controller.signal.aborted) unstarted();
+    else controller.signal.addEventListener('abort', unstarted, { once: true });
+  });
+  return Promise.race([running, early]);
 }
 
 // All stop: ends every data run, of `project` or of all projects.
