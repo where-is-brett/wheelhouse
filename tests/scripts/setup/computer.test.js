@@ -218,7 +218,7 @@ test('each weakening setting is named with what it does, and left as it is', asy
   const theirs = {
     sandbox: { excludedCommands: ['docker', 'rm'] },
     enabledPlugins: {
-      'wheelhouse@wheelhouse': true, 'superpowers@wheelhouse': true, 'mattpocock-skills@wheelhouse': true,
+      'wheelhouse@wheelhouse': true, 'superpowers@wheelhouse': true,
       'helper@their-market': true, 'off@their-market': false, 'superpowers@claude-plugins-official': false,
     },
     extraKnownMarketplaces: { wheelhouse: { source: { source: 'github', repo: 'x/y' } }, 'their-market': { source: { source: 'github', repo: 'a/b' } } },

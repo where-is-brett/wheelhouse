@@ -78,41 +78,6 @@
           "hash": "4db25212d883d94f148fb29dc737e796c0e0f3338a5f41753903b8f3a5b01076"
         }
       ]
-    },
-    {
-      "name": "mattpocock-skills",
-      "plugin": "mattpocock-skills",
-      "repo": "https://github.com/mattpocock/skills.git",
-      "ref": "v1.3.1",
-      "sha": "24fe0ef7737efae15c87225755e9f6f5965e4888",
-      "folders": [
-        {
-          "path": "skills/engineering/tdd",
-          "hash": "1289fe8710521503a953e2940792bf3fc3a6231a7a2c1347e58bf80267263748"
-        },
-        {
-          "path": "skills/engineering/code-review",
-          "hash": "c52c28f43ca4820ca7330d0baaba39cbe57865dd4b0c2220d0c4e0ac1bbf4b08"
-        },
-        {
-          "path": "skills/engineering/prototype",
-          "hash": "e86eb0efd570ab11acc4bfe064888e3a1ab56d956404edc27f19645b69b29a7e"
-        },
-        {
-          "path": "skills/engineering/domain-modeling",
-          "hash": "c25c0fbd89c5df79a01e7c820e2a7b2ae894f6c44206a50b0cb90e0db5613eb9"
-        },
-        {
-          "path": "skills/engineering/implement",
-          "hash": "379dc7f7c6a3aca41f7743ba8b564500d3c847cd2e8b4957e9156c5eea0fefb6"
-        }
-      ],
-      "files": [
-        {
-          "path": "LICENSE",
-          "hash": "0e3ae739482876652a589f038d2a261c72748932c870a2794db495aa28e80e83"
-        }
-      ]
     }
   ],
   "copies": [
@@ -121,12 +86,20 @@
       "hash": "4e9eae0fa51fbfe6f8c12718d93df62251e71bc609cae5baaec81c980787838f"
     },
     {
+      "path": "skills/domain-modeling",
+      "hash": "23927b296553cf53ac0ce59c03e67e0eb7b4bc6da3d73ae20a0497f526263166"
+    },
+    {
       "path": "skills/frontend-design",
       "hash": "867f24588deb35dbf31f243e53f5f0f4b0185a0334d12b22773667ec18a2afc1"
     },
     {
       "path": "skills/pr",
       "hash": "1b7d235d271fc59aa7764e5e3c28d99b35bc7975a27e10f7b411bcb950ab31c7"
+    },
+    {
+      "path": "skills/prototype",
+      "hash": "e782ce057b3df326ec81ded4126cd2e483c41003ac5783469e6af5e2c916f6ea"
     },
     {
       "path": "skills/review-spec",

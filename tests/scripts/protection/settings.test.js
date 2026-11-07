@@ -404,11 +404,9 @@ test('the project settings switch on the pinned copies and off every other copy'
   assert.deepEqual(enabledPlugins, {
     'superpowers@claude-plugins-official': false,
     'superpowers@synced': false,
-    'mattpocock-skills@synced': false,
     'superpowers@wheelhouse': true,
-    'mattpocock-skills@wheelhouse': true,
   });
-  assert.deepEqual(SWITCHED_OFF_PLUGINS, ['superpowers@claude-plugins-official', 'superpowers@synced', 'mattpocock-skills@synced']);
+  assert.deepEqual(SWITCHED_OFF_PLUGINS, ['superpowers@claude-plugins-official', 'superpowers@synced']);
   // The same with a release, and with the one-argument call.
   assert.deepEqual(projectSettings(config, { release: { ref: 'v1.0.0' } }).enabledPlugins, enabledPlugins);
 });

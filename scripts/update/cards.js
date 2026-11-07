@@ -23,8 +23,8 @@ const flat = (text) => String(text).replace(/\s+/g, ' ').trim();
 // change when it is ready) and 'review' when Wheelhouse's review is enough. `put` is 'undo' for a put-back; `carryOn` for an
 // update part-way. `locked` says this computer has Locked, which shows a password window; `others` are the other projects
 // whose Locked stays on an older release. `account` is { from, to } when the account's settings name the catalogue at an old release,
-// which the update changes (one line, named on the card). `hash` is the full hash of the plan the card is for.
-export function updateCard({ from, to, says, approval = 'review', locked = false, others = [], put = 'release', carryOn = false, account = null, hash }) {
+// which the update changes (one line, named on the card). `removes` names the dropped plugins installed for this project, which the update removes. `hash` is the full hash of the plan the card is for.
+export function updateCard({ from, to, says, approval = 'review', locked = false, others = [], put = 'release', carryOn = false, account = null, removes = [], hash }) {
   const back = put === 'undo';
   const title = carryOn ? `Carry on with the update to ${to}` : back ? `Put Wheelhouse back to ${to} \u00b7 ${from} \u2192 ${to}` : `Update Wheelhouse \u00b7 ${from} \u2192 ${to}`;
   const happens = [
@@ -33,6 +33,9 @@ export function updateCard({ from, to, says, approval = 'review', locked = false
   ];
   if (account !== null && account !== undefined) {
     happens.push(`Your account settings name Wheelhouse at ${account.from}; the update changes that one entry to ${account.to}.`);
+  }
+  for (const name of removes) {
+    happens.push(`${name} is installed for this project; the update removes it, since Wheelhouse carries the two skills it needs. One you installed for your whole account is left.`);
   }
   if (approval === 'card') {
     happens.push(`${to} changes more than its pins, so once the change is ready you approve it, as you approve any change to the safety rules (a card here in Claude Code, the helper's window with another agent). Update starts it; it is not that approval.`);

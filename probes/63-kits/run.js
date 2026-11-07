@@ -1,8 +1,8 @@
 // probes/63-kits/run.js
-// Check 63: do the pinned kits (Superpowers and Matt Pocock's skills) run under Copilot with the Wheelhouse override first?
-// The probe fetches each kit at its pinned commit (lineage/manifest.json; the same shallow fetch lineage uses), checks the
+// Check 63: does the pinned kit (Superpowers) run under Copilot with the Wheelhouse override first?
+// The probe fetches the kit at its pinned commit (lineage/manifest.json; the same shallow fetch lineage uses), checks the
 // copies against the manifest's fingerprints, and copies the skills Wheelhouse uses into a scratch Copilot home's skills/
-// folder (the place Copilot reads personal skills from; `copilot skill list` is run to show what it sees). Then six model
+// folder (the place Copilot reads personal skills from; `copilot skill list` is run to show what it sees). Then five model
 // runs, each a fresh headless Copilot in its own scratch project (a 20-line Node.js script, package.json, one test), each
 // with the override (templates/brief/override.md) first in the prompt, then the toy brief, then the stage:
 //   brainstorm-to-plan  brainstorming, then wherever it hands off to, stopping when a plan is written (nothing is built)
@@ -10,7 +10,6 @@
 //   subagent-driven     subagent-driven-development alone, from a hand-made plan (the likely break: dispatching subagents)
 //   executing-plans     executing-plans alone, from the same plan
 //   tdd-superpowers     test-driven-development
-//   tdd-matt            Matt Pocock's tdd
 // Every run uses --allow-all-tools --no-ask-user, in its scratch project. --disallow-temp-dir is NOT used: the home that
 // holds the skills (and their companion prompt files) is under the temporary folder, so shutting the folder off would
 // stop a skill reading its own files. Judged from Copilot's own tool events (name, success, failure code), with the
@@ -21,7 +20,7 @@
 // Options: --bin <path>, --timeout-ms <n> (one run, default 900000; subagent-driven gets double), --only <id,id>,
 //          --results-dir <dir>
 //
-// Model runs: 6. Everything it makes is under the temporary folder and is removed when it ends (also on Ctrl-C), except
+// Model runs: 5. Everything it makes is under the temporary folder and is removed when it ends (also on Ctrl-C), except
 // the debug logs, copied into <results-dir>/63-kits.logs/. It never reads or writes the real ~/.copilot or ~/.wheelhouse.
 import fs from 'node:fs';
 import os from 'node:os';
@@ -37,7 +36,7 @@ import { fetchUpstream, readManifest } from '../../scripts/lineage/manifest.js';
 export const CHECK = '63-kits';
 const FAKE = fileURLToPath(new URL('./fake-copilot.js', import.meta.url));
 const REPO = fileURLToPath(new URL('../..', import.meta.url));
-export const ID_ORDER = ['brainstorm-to-plan', 'writing-plans', 'subagent-driven', 'executing-plans', 'tdd-superpowers', 'tdd-matt'];
+export const ID_ORDER = ['brainstorm-to-plan', 'writing-plans', 'subagent-driven', 'executing-plans', 'tdd-superpowers'];
 
 // ------------------------------------------------------------------ options
 
@@ -158,10 +157,6 @@ const STAGES = {
   'tdd-superpowers': {
     skill: 'test-driven-development',
     prompt: `${BRIEF}\n\nUse the test-driven-development skill to build it.`,
-  },
-  'tdd-matt': {
-    skill: 'tdd',
-    prompt: `${BRIEF}\n\nUse the tdd skill to build it.`,
   },
 };
 

@@ -172,11 +172,9 @@ test("the pinned skill kits are installed for the world's project before its fir
   const calls = fs.readFileSync(log, 'utf8').trim().split('\n');
   assert.deepEqual(calls, [
     `${folder} plugin install superpowers@wheelhouse --scope project`,
-    `${folder} plugin install mattpocock-skills@wheelhouse --scope project`,
     `${folder} plugin marketplace add ${path.join(world.root, 'marketplace')}`,
     `${folder} plugin install wheelhouse@${market} --scope project`,
     `${folder} plugin uninstall superpowers@wheelhouse --scope project`,
-    `${folder} plugin uninstall mattpocock-skills@wheelhouse --scope project`,
     `${folder} plugin uninstall wheelhouse@${market} --scope project`,
     `${folder} plugin marketplace remove ${market}`,
   ]);
@@ -292,7 +290,8 @@ test("the sweep takes back only the kits a world left installed: a world gone or
   const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-aws-')));
   const config = path.join(tmp, 'claude-config');
   const at = (name) => path.join(tmp, name, 'project');
-  const [kit, other] = KITS;
+  const [kit] = KITS;
+  assert.equal(KITS.length, 1, 'Superpowers is the one pinned kit');
   for (const name of ['wh-aw-left', 'wh-aw-open']) fs.mkdirSync(at(name), { recursive: true });
   fs.writeFileSync(path.join(tmp, 'wh-aw-left', '.world-owner'), '424242\n');
   fs.writeFileSync(path.join(tmp, 'wh-aw-open', '.world-owner'), `${process.pid}\n`);
@@ -304,7 +303,6 @@ test("the sweep takes back only the kits a world left installed: a world gone or
       { scope: 'project', projectPath: path.join(tmp, 'someone-else', 'project') },
       { scope: 'user' },
     ],
-    [other]: [{ scope: 'project', projectPath: at('wh-aw-gone') }],
     'another-plugin@somewhere': [{ scope: 'project', projectPath: at('wh-aw-gone') }],
   };
   fs.mkdirSync(path.join(config, 'plugins'), { recursive: true });
@@ -315,10 +313,9 @@ test("the sweep takes back only the kits a world left installed: a world gone or
   assert.deepEqual(calls.map((c) => [c.args.join(' '), c.cwd, c.there]), [
     [`plugin uninstall ${kit} --scope project`, at('wh-aw-gone'), true],
     [`plugin uninstall ${kit} --scope project`, at('wh-aw-left'), true],
-    [`plugin uninstall ${other} --scope project`, at('wh-aw-gone'), true],
   ]);
   assert.ok(calls.every((c) => c.bin === '/c/claude'));
-  assert.equal(taken.length, 3);
+  assert.equal(taken.length, 2);
   // The folder made for a world that was gone goes again; a left-behind world's folder is left as it was found.
   assert.equal(fs.existsSync(path.join(tmp, 'wh-aw-gone')), false);
   assert.equal(fs.existsSync(at('wh-aw-left')), true);

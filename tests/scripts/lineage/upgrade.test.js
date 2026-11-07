@@ -227,10 +227,8 @@ test('a candidate cannot reach outside its folder or pass off a link as a listed
 // --- Resolving and fetching ---
 
 test('--to words name one candidate per upstream, with a plain tag', () => {
-  assert.deepEqual(parseTo(['superpowers=v7.1.0', `mattpocock-skills=v1.4.0@${NEW_SHA}`]), [
-    { name: 'superpowers', tag: 'v7.1.0', sha: null },
-    { name: 'mattpocock-skills', tag: 'v1.4.0', sha: NEW_SHA },
-  ]);
+  assert.deepEqual(parseTo(['superpowers=v7.1.0']), [{ name: 'superpowers', tag: 'v7.1.0', sha: null }]);
+  assert.deepEqual(parseTo([`superpowers=v7.1.0@${NEW_SHA}`]), [{ name: 'superpowers', tag: 'v7.1.0', sha: NEW_SHA }]);
   for (const bad of [[], ['superpowers'], ['superpowers=--upload-pack=x'], ['superpowers=v1', 'superpowers=v2'], ['Superpowers=v1'], ['superpowers=v1@abc']]) {
     assert.throws(() => parseTo(bad), undefined, JSON.stringify(bad));
   }

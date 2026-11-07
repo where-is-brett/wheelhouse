@@ -17,9 +17,12 @@ const RELEASES = {
   'v1.1.1': { sha: 'c'.repeat(40), upstream: '2'.repeat(40), versions: { wheelhouse: '1.1.0', superpowers: '7.0.0' } },
 };
 const DIRECT = { kind: 'direct', file: 'claude' };
+// The plugin the cut drops: installed before it, listed by the earlier release's catalogue and not by the later ones.
+const RETIRED = 'mattpocock-skills';
+const RETIRED_SHA = '3'.repeat(40);
 
 let counter = 0;
-function computer({ account = true, extraProjects = 0 } = {}) {
+function computer({ account = true, extraProjects = 0, retired = [] } = {}) {
   counter += 1;
   const projectDir = tempFolder('wh-inst-project-');
   const claudeHome = tempFolder('wh-inst-claude-');
@@ -31,7 +34,7 @@ function computer({ account = true, extraProjects = 0 } = {}) {
   const localFile = path.join(projectDir, '.claude', 'settings.local.json');
   const accountFile = path.join(claudeHome, 'settings.json');
   const calls = [];
-  const state = { at: null, failUpdates: false, refuseAdd: false };
+  const state = { at: null, failUpdates: false, refuseAdd: false, failRetiredUninstall: false };
 
   const point = (tag) => {
     state.at = tag;
@@ -40,15 +43,17 @@ function computer({ account = true, extraProjects = 0 } = {}) {
       plugins: [
         { name: 'wheelhouse', source: './' },
         { name: 'superpowers', source: { source: 'url', url: 'https://example.invalid/sp.git', ref: tag, sha: RELEASES[tag].upstream } },
+        // The retired plugin is in the catalogue of the earlier release only.
+        ...(tag === 'v1.0.0' && retired.length > 0 ? [{ name: RETIRED, source: { source: 'url', url: 'https://example.invalid/kit.git', ref: '1.3.1', sha: RETIRED_SHA } }] : []),
       ],
     });
   };
-  const pinOf = (plugin) => (plugin === 'wheelhouse' ? RELEASES[state.at].sha : RELEASES[state.at].upstream);
+  const pinOf = (plugin) => (plugin === RETIRED ? RETIRED_SHA : plugin === 'wheelhouse' ? RELEASES[state.at].sha : RELEASES[state.at].upstream);
   const records = () => readJson(file('installed_plugins.json'));
   const installsOfPlugin = (plugin) => records().plugins[`${plugin}@wheelhouse`] ?? [];
   const recordAt = (plugin, scope, folder = projectDir) => installsOfPlugin(plugin).find((i) => i.scope === scope && (scope === 'user' || i.projectPath === folder)) ?? null;
   const install = (plugin, scope, folder = projectDir) => {
-    const version = RELEASES[state.at].versions[plugin];
+    const version = plugin === RETIRED ? '1.3.1' : RELEASES[state.at].versions[plugin];
     const installPath = file('cache', 'wheelhouse', plugin, `${version}-${pinOf(plugin).slice(0, 4)}`);
     fs.mkdirSync(installPath, { recursive: true });
     const all = records();
@@ -67,6 +72,7 @@ function computer({ account = true, extraProjects = 0 } = {}) {
   else writeJson(accountFile, { model: 'mine' });
   point('v1.0.0');
   for (const plugin of ['wheelhouse', 'superpowers']) { install(plugin, 'project'); install(plugin, 'user'); }
+  for (const scope of retired) install(RETIRED, scope);
   const others = [];
   for (let i = 0; i < extraProjects; i += 1) {
     const folder = tempFolder('wh-inst-other-');
@@ -112,11 +118,12 @@ function computer({ account = true, extraProjects = 0 } = {}) {
     const scope = scopeOf(rest);
     if (verb === 'update') {
       if (state.failUpdates) return bad;
-      if (recordAt(plugin, scope)?.version === RELEASES[state.at].versions[plugin]) return ok('already at the latest version');
+      if (recordAt(plugin, scope)?.version === (plugin === RETIRED ? '1.3.1' : RELEASES[state.at].versions[plugin])) return ok('already at the latest version');
       install(plugin, scope);
       return ok();
     }
     if (verb === 'uninstall') {
+      if (plugin === RETIRED && state.failRetiredUninstall) return bad;
       const all = records();
       all.plugins[id] = all.plugins[id].filter((i) => !(i.scope === scope && (scope === 'user' || i.projectPath === projectDir)));
       writeJson(file('installed_plugins.json'), all);
@@ -290,6 +297,48 @@ test('install: run again after a stop it carries on and keeps the first earlier 
   assert.equal(claudeCalls(pc).filter((c) => /plugin (update|install|uninstall) /.test(c)).length, 0, 'nothing is installed twice');
   assert.ok(!claudeCalls(pc).some((c) => c.includes('marketplace add')), 'the catalogue is not added twice');
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(journal.folder, 'install.json'), 'utf8')).previous, noted.previous);
+});
+
+test('install: the project-scope install of the retired plugin is removed, and the account\'s own is left', async () => {
+  const pc = computer({ retired: ['project', 'user'] });
+  const done = await installRelease({ ...common(pc), target: target('v1.1.0'), projects: [pc.projectDir] });
+  assert.equal(done.ok, true, done.line);
+  assert.equal(pc.recordAt(RETIRED, 'project'), null, 'the project\'s install is gone');
+  assert.notEqual(pc.recordAt(RETIRED, 'user'), null, 'the director\'s own install at user scope stays');
+  assert.deepEqual(claudeCalls(pc).filter((c) => c.includes(RETIRED)), [`claude plugin uninstall ${RETIRED}@wheelhouse --scope project --json`]);
+  assert.match(done.line, /removed from this project/);
+  assert.match(done.line, /its two skills Wheelhouse still needs are part of Wheelhouse now/);
+});
+
+test('install: with no project-scope install of the retired plugin nothing is uninstalled and nothing is said', async () => {
+  for (const retired of [[], ['user']]) {
+    const pc = computer({ retired });
+    const done = await installRelease({ ...common(pc), target: target('v1.1.0'), projects: [pc.projectDir] });
+    assert.equal(done.ok, true, done.line);
+    assert.ok(!claudeCalls(pc).some((c) => c.includes(RETIRED)), JSON.stringify(retired));
+    assert.doesNotMatch(done.line, /removed from this project/);
+    assert.equal(pc.recordAt(RETIRED, 'user') !== null, retired.includes('user'));
+  }
+});
+
+test('install: run again after the removal it removes nothing twice', async () => {
+  const pc = computer({ retired: ['project'] });
+  const journal = journalFor();
+  const first = await installRelease({ ...common(pc), journal, target: target('v1.1.0'), projects: [pc.projectDir] });
+  assert.equal(first.ok, true, first.line);
+  const second = await installRelease({ ...common(pc), journal, target: target('v1.1.0'), projects: [pc.projectDir] });
+  assert.equal(second.ok, true, second.line);
+  assert.equal(claudeCalls(pc).filter((c) => c.includes('plugin uninstall') && c.includes(RETIRED)).length, 1);
+});
+
+test('install: a removal that fails puts the computer back, with the retired plugin installed again for the project', async () => {
+  const pc = computer({ retired: ['project'] });
+  pc.state.failRetiredUninstall = true;
+  const done = await installRelease({ ...common(pc), target: target('v1.1.0'), projects: [pc.projectDir] });
+  assert.equal(done.ok, false);
+  assert.match(done.line, /was put back to v1\.0\.0/);
+  assert.equal(pc.state.at, 'v1.0.0');
+  assert.notEqual(pc.recordAt(RETIRED, 'project'), null, 'the earlier release has it, so it is as it was');
 });
 
 test('catalogue: a refused add falls back to the recorded ref and a marketplace update', async () => {

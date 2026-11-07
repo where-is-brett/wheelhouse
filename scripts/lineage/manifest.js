@@ -48,20 +48,18 @@ export const UPSTREAMS = Object.freeze([
     ].map((skill) => `skills/${skill}`),
     files: ['hooks/session-start', 'hooks/hooks.json', 'LICENSE'],
   },
+]);
+
+// The sources of skill copies (skills/*/SOURCE.md), pinned the same way as the kits above but never installed or
+// fingerprinted for a project. `copies`, where given, names the copies taken from that source.
+export const COPY_SOURCES = Object.freeze([
   {
     name: 'mattpocock-skills',
-    plugin: 'mattpocock-skills',
     repo: 'https://github.com/mattpocock/skills.git',
     ref: 'v1.3.1',
     sha: '24fe0ef7737efae15c87225755e9f6f5965e4888',
-    folders: ['tdd', 'code-review', 'prototype', 'domain-modeling', 'implement'].map((skill) => `skills/engineering/${skill}`),
-    files: ['LICENSE'],
+    copies: ['codebase-design', 'pr', 'review-standards', 'review-spec', 'domain-modeling', 'prototype'],
   },
-]);
-
-// The sources of skill copies (skills/*/SOURCE.md) that aren't among the kits above, pinned the same way. A copy
-// taken from a kit is pinned by the kit's own entry. These are never installed or fingerprinted for a project.
-export const COPY_SOURCES = Object.freeze([
   {
     name: 'frontend-design',
     repo: 'https://github.com/anthropics/claude-plugins-official.git',
