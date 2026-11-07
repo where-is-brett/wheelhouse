@@ -44,7 +44,7 @@
           "text": "**Rulings, not stalls.**"
         }
       ],
-      "rule": "Anything at decision level 3 or 4 (what users see, settings, the guardrails) is a question for the director, and you pause on it.",
+      "rule": "Anything at decision level 3 or 4 (what users see, settings, the guardrails) is a question for the director.",
       "why": "The skills tell an agent to rule on every conflict itself; matters the director owns must reach them.",
       "scenario": 22
     },

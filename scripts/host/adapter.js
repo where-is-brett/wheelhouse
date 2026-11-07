@@ -5,6 +5,7 @@
 // key travels, never in an argument), and parses the answer. Arguments are
 // checked here, before anything runs; github.js and gitlab.js hold the command
 // lines and the mappings.
+import { DECISION_CONTEXT } from '../checks/where.js';
 import { githubCommands } from './github.js';
 import { gitlabCommands } from './gitlab.js';
 import { toolPath } from '../lib/host-tools.js';
@@ -188,9 +189,11 @@ export function adapterFrom(c) {
     ciState: async (sha) => c.ciState(commit(sha)),
     // Reports a check at the commit under Wheelhouse's own context: { ok }, or { refused }, with 'permission' for a key
     // that may not. A refusal is never thrown.
-    setStatus: async ({ sha, state, description } = {}) => {
+    // `context` is Wheelhouse's own check by default; the one other it may post is the decision's (design section 6.4).
+    setStatus: async ({ sha, state, description, context } = {}) => {
       if (!STATUS_STATES.includes(state)) throw new Error('The state must be pending, success or failure');
-      return c.setStatus({ sha: commit(sha), state, description: text(description, 'description').slice(0, MOST_STATUS_WORDS) });
+      if (context !== undefined && context !== DECISION_CONTEXT) throw new Error('The context must be Wheelhouse\'s own decision status');
+      return c.setStatus({ sha: commit(sha), state, description: text(description, 'description').slice(0, MOST_STATUS_WORDS), ...(context === undefined ? {} : { context }) });
     },
     // What reports on the commit, by name: [{ name, state, startedAt, app }].
     checkContexts: async (sha) => c.checkContexts(commit(sha)),

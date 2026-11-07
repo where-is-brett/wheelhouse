@@ -99,7 +99,10 @@ export function nextWork({ work, features, reports, now, fiveHourTight, builderC
   const most = Number.isInteger(builderCap) && builderCap >= 1 ? Math.min(PACE.building, builderCap) : PACE.building;
   const laneOf = (id) => work?.[id]?.work?.data?.lane;
   const stepOf = (id) => features?.[id]?.data?.step;
-  const holdsSlot = (id) => stepOf(id) === 'building' || (stepOf(id) === 'started' && NO_PLAN.includes(laneOf(id)));
+  // A piece that asked still builds on its recommendation, so it keeps its slot. Only one that has reached a step it can't undo
+  // and said so (`wait-for`: marked `stopped` on the view by wake.js's markStopped) gives its slot up (design section 6.4).
+  const stopped = (id) => features?.[id]?.stopped === true;
+  const holdsSlot = (id) => !stopped(id) && (stepOf(id) === 'building' || (stepOf(id) === 'started' && NO_PLAN.includes(laneOf(id))));
   const closed = (w) => stepOf(w.key) === 'closed' && since(features[w.key], w);
 
   const slots = Object.keys(features ?? {}).filter(holdsSlot);
@@ -108,7 +111,7 @@ export function nextWork({ work, features, reports, now, fiveHourTight, builderC
 
   const candidates = Object.values(work ?? {})
     .map((w) => w.work)
-    .filter((w) => !holdsSlot(w.key) && !closed(w) && !endedBy(reports, w.key, w))
+    .filter((w) => !holdsSlot(w.key) && !stopped(w.key) && !closed(w) && !endedBy(reports, w.key, w))
     .map((w) => ({ ...w, since: work[w.key].since ?? w.at }))
     .sort((a, b) => {
       const pa = a.data.place;

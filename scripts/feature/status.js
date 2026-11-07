@@ -9,7 +9,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { featurePaths, openRegular, parseBrief, parseReport, readCalls, readQuestions } from './files.js';
+import { featurePaths, openRegular, parseBrief, parseReport, readCalls, readQuestions, waitingFor } from './files.js';
 import { findRepoRoot } from '../hooks/kit.js';
 import { projectForFolder } from '../lib/projects.js';
 import { wheelhouseHome } from '../lib/paths.js';
@@ -393,9 +393,14 @@ export function buildStatus({ worktree, now = () => new Date(), tokens = null, a
     building = read.any;
   }
 
-  const asked = readQuestions(p.questions).questions.filter((q) => q.kind !== 'extra-plan');
-  const done = asked.length > 0 ? answered(worktree) : new Set();
-  const waiting = asked.some((q) => !done.has(q.id));
+  // What the piece waits on. A decision it asked (a plain question) leaves it building on its recommendation: it waits only once
+  // it says so with `wait-for` (design section 6.4). A build-command question has nothing to build on, so asking it is waiting.
+  const builds = readQuestions(p.questions).questions.filter((q) => q.kind === 'build-command');
+  const waits = waitingFor(p.questions);
+  const done = builds.length + waits.length > 0 ? answered(worktree) : new Set();
+  const waitingOnBuild = builds.some((q) => !done.has(q.id));
+  const waitingOnDecision = waits.some((id) => !done.has(id));
+  const waiting = waitingOnBuild || waitingOnDecision;
   const kept = readPrRecord(worktree);
   const pr = kept?.pr ?? null;
   const currentSlice = slice(worktree, brief.work);
@@ -423,7 +428,7 @@ export function buildStatus({ worktree, now = () => new Date(), tokens = null, a
     phase,
     task,
     fixRound,
-    waitingOn: waiting ? 'question' : null,
+    waitingOn: waitingOnBuild ? 'question' : waitingOnDecision ? 'decision' : null,
     head: gitHead(worktree),
     pr,
     slice: currentSlice,

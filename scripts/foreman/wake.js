@@ -201,7 +201,20 @@ export async function loadViews(project, client, { kept = false } = {}) {
     ...(fresh ? {} : { why }),
   };
   if (fresh) await markSettled(project, client, out.views);
+  markStopped(out.views, (work) => worktreeOf(project, out.views, work));
   return out;
+}
+
+// Marks (as `stopped`, on the view only) each building feature whose own status says it waits on a decision (`wait-for`): it has
+// reached a step it can't undo and has nothing else to do, so the queue gives its slot up (design section 6.4). A piece that
+// has only asked is still building and keeps its slot. `find(work)` gives the work's worktree, or throws.
+export function markStopped(views, find) {
+  for (const [work, f] of Object.entries(views.features)) {
+    if (f?.data?.step !== 'building') continue;
+    try {
+      if (readStatus(featurePaths(find(work)).status)?.waitingOn === 'decision') f.stopped = true;
+    } catch { /* unreadable: it keeps its slot */ }
+  }
 }
 
 // Marks (as `settled`, on the view only) each building feature whose work is over: its kept pull request is marked merged

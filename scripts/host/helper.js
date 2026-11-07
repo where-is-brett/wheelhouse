@@ -31,7 +31,8 @@ import { stopState, setStop, liftStop } from '../lib/stop.js';
 import { bypassActive } from '../lib/bypass.js';
 import { run as realRun, withoutGitVars } from '../lib/run.js';
 import { approvalCounts, checkCounts, gateDecision, reviewCounts } from '../gate/conditions.js';
-import { questionHold, questionsOf, readHandled, markHandled } from '../gate/open-questions.js';
+import { decisionsWaiting, questionsOf, readHandled, markHandled } from '../gate/open-questions.js';
+import { setDecisionStatus } from './decision-status.js';
 import { classifyChange, readConfig, isModelName, CI_FILES, PLUGIN_MANIFEST } from '../gate/guardrails.js';
 import { scrub } from './adapter.js';
 import { hide, cleanDeep } from '../lib/clean.js';
@@ -82,7 +83,7 @@ import { runCheck } from '../checks/run.js';
 import { checkRunner } from '../checks/runner.js';
 import { checksConfig, checksSettings } from '../checks/settings.js';
 import { keepQueue, readQueue, whereNow } from '../checks/standing.js';
-import { STATUS_CONTEXT } from '../checks/where.js';
+import { isOwnContext } from '../checks/where.js';
 import { startEngineHost } from '../engine/host.js';
 import { engineRoom } from '../engine/room.js';
 import { stopEngine, endRun, stopWords } from '../engine/stop.js';
@@ -1079,6 +1080,15 @@ export async function startHelper({
   const companyGit = (env, record) => companyGitEnv(env, { host: record?.host, base: gitlabBaseOf(record) ?? undefined });
   // Where GitLab was lately out of reach, by project, for the board (served on /health).
   const awayLog = makeAwayLog({ now });
+  // The commit status that marks a pull request as waiting on a decision, said once for a commit and what it waits on.
+  const decisionPosted = new Map();
+  const markDecisionStatus = ({ project, adapter, sha, work, views, waiting }) => {
+    if (!decisionPosted.has(project)) decisionPosted.set(project, new Map());
+    return setDecisionStatus({
+      adapter, sha, waiting, any: questionsOf(views, work).length > 0,
+      events: () => listEvents(stateDir(project), { report: () => {} }), enrolled: ownKeyOnly(), posted: decisionPosted.get(project),
+    });
+  };
 
   // Each request reads the environment once, before anything else, keeps its
   // secrets for scrubbing that request's answer, and gives that same
@@ -3129,7 +3139,7 @@ export async function startHelper({
     const touchesGuardrails = (!restore && !pinsOnly && !switching && !compacting && classified.touchesGuardrails) || body.touchesGuardrails === true;
     const found = { guardrailPaths: classified.guardrailPaths, criticalAreas: classified.criticalAreas };
     const release = pinsOnly ? { release: { kind: 'pins-only', ref: releaseCheck.ref, sha: releaseCheck.sha } } : {};
-    const ci = await adapter.ciState(headSha);
+    let ci = await adapter.ciState(headSha);
     // The private record is read here, as it stands: it has no remote to bring it up to date from
     // (design section 24.3 item 1). Only this computer's own signed clicks count, checked against its
     // own key, so a record another computer signed, or one committed to main, counts for nothing.
@@ -3168,13 +3178,19 @@ export async function startHelper({
     const byRelease = updateCheck.matched && updateCheck.ok && !pinsOnly;
     const holdsLock = await lockHeld(project, ctx);
     const { upToDate, review, approval } = await gateRecords({ project, number, headSha, views, adapter }, ctx);
-    // The director's questions on this work come first: a merge never goes ahead past one still open, or an answer no newer version carries.
+    // The director's decisions on this work come first (design section 6.4): a merge never goes ahead past one still open, one
+    // answered otherwise than the recommendation the piece was built on until the rework is marked applied, or an answer no newer
+    // version carries. The gate gives the refusal; the pull request is also marked as waiting on the host.
     const holdWork = FEATURE_BRANCH.exec(typeof pr.headRef === 'string' ? pr.headRef : '')?.[1];
     const handled = readHandled(handledDir(project), questionsOf(views, holdWork).map((q) => q.id));
-    const hold = restore || fixCall ? null : questionHold({ views, work: holdWork, review, handled });
+    const waitingDecisions = restore || fixCall ? [] : decisionsWaiting({ views, work: holdWork, review, handled });
     // The answers the session said needed no change, which the merge went ahead on: said again where the merge is told.
     const noChangeIds = questionsOf(views, holdWork).filter((q) => q.answered && handled[q.id] === q.at).map((q) => q.id);
-    if (hold !== null) stateReasons.push(hold);
+    if (!restore && !fixCall && holdWork !== undefined) {
+      const posted = await markDecisionStatus({ project, adapter, sha: headSha, work: holdWork, views, waiting: waitingDecisions });
+      // Clearing the status is what lets the host's own reading of the head pass: read it again.
+      if (posted?.state === 'success') ci = await adapter.ciState(headSha);
+    }
     // Where a project's checks run here, a fix passes the condition the broker asks of every other merge.
     let checkWaiting = false;
     if (fixCall || keeping || recordOf(project).host === 'local') {
@@ -3204,6 +3220,7 @@ export async function startHelper({
       touchesGuardrails: guarded,
       review,
       approval,
+      ...(restore || fixCall ? {} : { decisions: { work: holdWork ?? '', waiting: waitingDecisions } }),
       ...(byRelease ? { release: { previous: updateCheck.previous, release: updateCheck.release, commit: updateCheck.commit, approved: updateCheck.approved === true } } : {}),
       enrolled,
       upToDate,
@@ -3232,6 +3249,7 @@ export async function startHelper({
         reasons,
         ...(releaseLine === null ? {} : { releaseApproval: releaseLine }),
         ...needs,
+        ...(decision.hold === undefined ? {} : { hold: decision.hold }),
         ...(checkWaiting ? { waiting: true } : {}),
         ...found,
         ...release,
@@ -4087,7 +4105,7 @@ export async function startHelper({
     const settings = keptOnly ? { ...named, testCommand: found.testCommand, prepare: named.prepare ?? found.prepare } : named;
     const contexts = await adapter.checkContexts(read.main);
     // The rules matter only once something else reports or the setting says the host: until then the checks run here whatever they say.
-    const ownOnly = settings.where !== 'host' && !read.hasWorkflows && contexts.every((c) => c.name === STATUS_CONTEXT);
+    const ownOnly = settings.where !== 'host' && !read.hasWorkflows && contexts.every((c) => isOwnContext(c.name));
     const required = ownOnly ? [] : await adapter.requiredChecks(defaultBranch).catch(() => null);
     return {
       setting: settings.where, host, contexts, hasWorkflows: read.hasWorkflows, required, main: read.main, settings, digest: commandDigest(settings.testCommand),
@@ -4397,19 +4415,39 @@ export async function startHelper({
     }),
     // The label of a question's verified answer, from the views alone, else null. Reading is free under STOP; saying an answer
     // needs no change (noChange) writes a small marker, so STOP refuses it.
-    '/state/answer': stateRoute(async ({ project, questionId, noChange, cwd }) => {
+    '/state/answer': stateRoute(async ({ project, questionId, noChange, applied, cwd }, ctx) => {
       if (typeof questionId !== 'string' || questionId === '') refuse('the question id must be text');
-      if (noChange === true && stopped()) return STOP_REFUSAL;
-      const { questions } = await writeViews(project, { now });
+      const marking = noChange === true || applied === true;
+      if (noChange === true && applied === true) refuse('say the answer is applied or needs no change, not both');
+      if (marking && stopped()) return STOP_REFUSAL;
+      const views = await writeViews(project, { now });
+      const { questions } = views;
       const label = Object.hasOwn(questions ?? {}, questionId) ? questions[questionId]?.answer?.label : undefined;
-      // The session says the answer needs no change: the merge's hold on that answer lets go (scripts/gate/open-questions.js).
-      if (noChange === true) {
+      // The session says the answer needs no change, or that the change it asks for is pushed: the merge's hold on that answer
+      // lets go (scripts/gate/open-questions.js).
+      if (marking) {
         // Only the work's own session may say so: the work is placed from the folder the state records for a feature, never
         // from the request's word.
         const own = typeof cwd === 'string' ? workOfFolder(project, cwd) : null;
-        if (own === null || questions?.[questionId]?.question?.data?.work !== own) refuse('only the session working on this question\'s work can say its answer needs no change');
+        if (own === null || questions?.[questionId]?.question?.data?.work !== own) refuse('only the session working on this question\'s work can say its answer is applied or needs no change');
         const at = Object.hasOwn(questions ?? {}, questionId) ? questions[questionId]?.answer?.at : undefined;
-        if (typeof label !== 'string' || !markHandled(handledDir(project), questionId, at)) refuse('there is no answer to that question to mark as needing no change');
+        if (typeof label !== 'string') refuse('there is no answer to that question to mark as applied');
+        // An answer other than the recommendation the piece was built on always asks for rework: it is marked once that is pushed.
+        const recommended = questions?.[questionId]?.question?.data?.recommendation;
+        if (noChange === true && typeof recommended === 'string' && label !== recommended) {
+          refuse(`the director chose "${label}", not your recommendation "${recommended}", so its answer is marked with --applied once the rework is pushed, never as needing no change`);
+        }
+        if (!markHandled(handledDir(project), questionId, at)) refuse('there is no answer to that question to mark as applied');
+        // The pull request no longer waits on this decision on the host, if nothing else holds it. The host's word is a hint only.
+        try {
+          const adapter = await ctx.adapter();
+          const kept = readPrRecord(worktreeOf(project, views, own));
+          const pr = kept?.pr === undefined ? null : await adapter.prState(kept.pr);
+          if (pr?.state === 'open') {
+            const handled = readHandled(handledDir(project), questionsOf(views, own).map((q) => q.id));
+            await markDecisionStatus({ project, adapter, sha: pr.headSha, work: own, views, waiting: decisionsWaiting({ views, work: own, review: null, handled }) });
+          }
+        } catch { /* the gate holds the merge whatever the host shows */ }
       }
       return { ok: true, answer: typeof label === 'string' ? label : null };
     }),

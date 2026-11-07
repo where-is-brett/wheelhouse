@@ -233,16 +233,20 @@ test('a fix round in progress is read from the ledger', () => {
   assert.deepEqual(s.task, { n: 2, m: 4 });
 });
 
-test('an unanswered question means waiting on a question', async () => {
+test('an unanswered decision leaves the piece building; it waits once it says wait-for', async () => {
   const tree = feature();
   ledger(tree, 'this', ['Task 1: complete']);
   const p = featurePaths(tree);
   write(p.questions, `${JSON.stringify(question(1))}\n${JSON.stringify(question(2, { kind: 'extra-plan', plan: 'docs/plans/more.md' }))}\nnot json\n`);
   let s = status(tree);
-  assert.equal(s.phase, 'waiting');
-  assert.equal(s.waitingOn, 'question');
+  assert.equal(s.phase, 'building');
+  assert.equal(s.waitingOn, null);
 
-  // Answered in the questions view: no longer waiting. An extra plan is queued, never waited on.
+  // Having said wait-for, it waits on the decision until it is answered. An extra plan is queued, never waited on.
+  fs.appendFileSync(p.questions, `${JSON.stringify({ waitFor: 'q-login-page-1', at: NOW.toISOString() })}\n`);
+  s = status(tree);
+  assert.equal(s.phase, 'waiting');
+  assert.equal(s.waitingOn, 'decision');
   s = status(tree, { answered: () => new Set(['q-login-page-1']) });
   assert.equal(s.phase, 'building');
   assert.equal(s.waitingOn, null);
@@ -256,10 +260,10 @@ test('an unanswered question means waiting on a question', async () => {
     const { main, tree: wt } = makeRepo();
     register(main);
     feature({ dir: wt });
-    write(featurePaths(wt).questions, `${JSON.stringify(question(1))}\n`);
+    write(featurePaths(wt).questions, `${JSON.stringify(question(1))}\n${JSON.stringify({ waitFor: 'q-login-page-1', at: NOW.toISOString() })}\n`);
     const view = path.join(home, 'projects', 'owner__name', 'views', 'questions.json');
     write(view, JSON.stringify({ 'q-login-page-1': { question: { key: 'q-login-page-1' }, answer: null } }));
-    assert.equal(buildStatus({ worktree: wt, now: () => NOW }).waitingOn, 'question');
+    assert.equal(buildStatus({ worktree: wt, now: () => NOW }).waitingOn, 'decision');
     write(view, JSON.stringify({ 'q-login-page-1': { question: { key: 'q-login-page-1' }, answer: { label: 'A', at: NOW.toISOString() } } }));
     assert.equal(buildStatus({ worktree: wt, now: () => NOW }).waitingOn, null);
   });
@@ -318,8 +322,10 @@ test('a kept pull request not yet merged is open, even with a report; merged, wi
   assert.equal(buildStatus({ worktree: tree, now: () => NOW, answered: none, slice: () => ({ n: 1, m: 3 }) }).phase, 'planning');
   assert.equal(buildStatus({ worktree: tree, now: () => NOW, answered: none, slice: () => ({ n: 3, m: 3 }) }).phase, 'done');
 
-  // An unanswered question comes before everything else.
+  // A decision waited on (wait-for) comes before everything else; one only asked does not.
   write(p.questions, `${JSON.stringify(question(1))}\n`);
+  assert.equal(status(tree).phase, 'done');
+  fs.appendFileSync(p.questions, `${JSON.stringify({ waitFor: 'q-login-page-1', at: NOW.toISOString() })}\n`);
   assert.equal(status(tree).phase, 'waiting');
 });
 

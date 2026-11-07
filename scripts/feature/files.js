@@ -16,7 +16,7 @@ import { AGENT_KINDS } from '../decisions/line.js';
 export const FEATURE_DIR = '.wheelhouse/feature';
 
 export const PHASES = Object.freeze(['planning', 'ready-to-build', 'building', 'pr-open', 'waiting', 'done']);
-export const WAITING_ON = Object.freeze(['question', 'clash', 'pace', 'dependency', 'ci', 'review', 'merge']);
+export const WAITING_ON = Object.freeze(['question', 'decision', 'clash', 'pace', 'dependency', 'ci', 'review', 'merge']);
 export const QUESTION_KINDS = Object.freeze(['question', 'extra-plan', 'build-command']);
 export const REPORT_STATUSES = Object.freeze(['done', 'blocked', 'partial']);
 
@@ -237,6 +237,8 @@ function validQuestion(q) {
 // failed its shape and went back to the session (design section 6.2), and `{ stuck: true, at, why }`, the session's one plain
 // message that it can't get the shape right. Neither is skipped. `failures` is how many sent-back lines come in a row at the end of
 // the file, after the last question or stuck message: a question that passes, or a stuck message, starts the count again.
+// A third, `{ waitFor: <question id>, at }`, is the session saying it has reached a step it can't undo and has nothing else to do
+// until that decision is answered (`wait-for`, design section 6.4); it is neither skipped nor a question.
 //
 // The questions in `file`, one JSON object per line. Lines that are not a valid
 // question are skipped and counted. No more than `maxBytes` of the file is read;
@@ -246,7 +248,7 @@ function scanQuestions(file, { maxBytes = READ_BYTES } = {}) {
   let text;
   let cut = false;
   const fd = openRegular(file);
-  if (fd === null) return { questions: [], skipped: 0, truncated: false, failures: 0, stuck: [] };
+  if (fd === null) return { questions: [], skipped: 0, truncated: false, failures: 0, stuck: [], waits: [] };
   try {
     try {
       const size = fs.fstatSync(fd).size;
@@ -258,7 +260,7 @@ function scanQuestions(file, { maxBytes = READ_BYTES } = {}) {
       fs.closeSync(fd);
     }
   } catch {
-    return { questions: [], skipped: 0, truncated: false, failures: 0, stuck: [] };
+    return { questions: [], skipped: 0, truncated: false, failures: 0, stuck: [], waits: [] };
   }
   let skipped = 0;
   if (cut) {
@@ -270,12 +272,16 @@ function scanQuestions(file, { maxBytes = READ_BYTES } = {}) {
   }
   const questions = [];
   const stuck = [];
+  const waits = [];
   let failures = 0;
   for (const line of text.split('\n')) {
     if (line.trim() === '') continue;
     try {
       const q = JSON.parse(line);
-      if (isPlain(q) && q.sentBack === true && hasOnly(q, ['sentBack', 'at', 'problems'])) failures += 1;
+      if (isPlain(q) && q.waitFor !== undefined) {
+        if (hasOnly(q, ['waitFor', 'at']) && isQuestionId(q.waitFor) && isTime(q.at)) waits.push(q.waitFor);
+        else skipped += 1;
+      } else if (isPlain(q) && q.sentBack === true && hasOnly(q, ['sentBack', 'at', 'problems'])) failures += 1;
       else if (isPlain(q) && q.stuck === true && hasOnly(q, ['stuck', 'at', 'why']) && isText(q.why)) {
         stuck.push({ at: q.at, why: q.why });
         failures = 0;
@@ -288,7 +294,7 @@ function scanQuestions(file, { maxBytes = READ_BYTES } = {}) {
       skipped += 1;
     }
   }
-  return { questions, skipped, truncated: cut, failures, stuck };
+  return { questions, skipped, truncated: cut, failures, stuck, waits };
 }
 
 export function readQuestions(file, opts) {
@@ -324,6 +330,11 @@ export function appendLine(file, object) {
   } finally {
     fs.closeSync(fd);
   }
+}
+
+// The decisions the session has said it is waiting on (`wait-for`), by question id, each once, in the order they were said.
+export function waitingFor(file, opts) {
+  return [...new Set(scanQuestions(file, opts).waits)];
 }
 
 // The tries of a session that failed the shape: `failures` in a row at the end of the file, and the `stuck` messages it sent.
@@ -387,7 +398,13 @@ export function readCalls(file, { maxBytes = 8 * 1024 * 1024 } = {}) {
 
 // --- The report ---
 
-const REPORT_KEYS = ['v', 'work', 'status', 'pr', 'head', 'tests', 'assumptions', 'concerns', 'rulings'];
+const REPORT_KEYS = ['v', 'work', 'status', 'pr', 'head', 'tests', 'assumptions', 'concerns', 'rulings', 'rework'];
+const REWORK_KEYS = ['question', 'chose', 'recommended', 'cost'];
+
+// What the rework after a decision answered with something other than the recommendation cost (design section 6.4): one
+// { question, chose, recommended, cost }, or a list of them where several decisions were answered otherwise.
+const validRework = (r) => isPlain(r) && hasOnly(r, REWORK_KEYS) && REWORK_KEYS.every((k) => isText(r[k]));
+const reworkOf = (f) => (Array.isArray(f.rework) ? f.rework : [f.rework]);
 
 function validReport(f) {
   return hasOnly(f, REPORT_KEYS)
@@ -400,8 +417,12 @@ function validReport(f) {
     && typeof f.tests === 'string'
     && isTexts(f.assumptions)
     && isTexts(f.concerns)
-    && isTexts(f.rulings);
+    && isTexts(f.rulings)
+    && (f.rework === undefined || (reworkOf(f).length > 0 && reworkOf(f).every(validRework)));
 }
+
+// The rework entries a report's fields carry, as a list (none when it has none).
+export const reworksIn = (fields) => (fields?.rework === undefined ? [] : reworkOf(fields));
 
 // The report's fields, the text after its JSON block and that text's word count. The block
 // `report` stamps saying what built it is not part of that text. A body over REPORT_WORDS

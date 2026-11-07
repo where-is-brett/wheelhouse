@@ -10,9 +10,10 @@ import path from 'node:path';
 const QUESTION_ID = /^q-([a-z0-9-]+)-[0-9]+$/;
 const isRecord = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 
-// The open-able questions of `work` in the build loop's views, each { id, answered, at } where `at` is when it was answered. Only
-// a plain question the work's own session raised counts (an id q-<work>-<n>): not an engine question, one that joins another
-// or is gone, one asked again that the director had answered, or one tied to a change made by hand.
+// The open-able questions of `work` in the build loop's views, each { id, answered, at, differs } where `at` is when it was
+// answered and `differs` says the answer is not the recommendation the piece was built on. Only a plain question the work's own
+// session raised counts (an id q-<work>-<n>): not an engine question, one that joins another or is gone, one asked again that
+// the director had answered, or one tied to a change made by hand.
 export function questionsOf(views, work) {
   if (typeof work !== 'string' || !isRecord(views?.questions)) return [];
   return Object.entries(views.questions)
@@ -21,22 +22,55 @@ export function questionsOf(views, work) {
       && e.question.data.engine === undefined && e.question.data.key === undefined
       && e.joins === undefined && e.gone !== true && e.byHand === undefined
       && !(e.answer === null && e.saidBefore !== undefined))
-    .map(([id, e]) => ({ id, answered: isRecord(e.answer), at: isRecord(e.answer) && typeof e.answer.at === 'string' ? e.answer.at : null }));
+    .map(([id, e]) => {
+      const recommended = e.question.data.recommendation;
+      const label = isRecord(e.answer) ? e.answer.label : undefined;
+      return {
+        id,
+        answered: isRecord(e.answer),
+        at: isRecord(e.answer) && typeof e.answer.at === 'string' ? e.answer.at : null,
+        differs: typeof recommended === 'string' && typeof label === 'string' && label !== recommended,
+      };
+    });
 }
 
-// One plain reason a merge of `work` must wait, or null. `review` is the head's review as the gate holds it (a record, or
-// { carried, record }); its time is when the head was last judged.
-export function questionHold({ views, work, review, handled = {} }) {
-  const found = questionsOf(views, work);
-  const open = found.filter((q) => !q.answered);
-  if (open.length > 0) return `the director has ${open.length === 1 ? 'a question' : `${open.length} questions`} open on ${work}, so it is not merged until ${open.length === 1 ? 'it is' : 'they are'} answered and acted on`;
+// The decisions on `work` that hold its merge, each { id, why }:
+//   open       no answer yet;
+//   unapplied  answered with something other than the recommendation the piece was built on, and the session has not said the
+//              rework is in (`answer <id> --applied`): a review of the head after the answer does not stand in for that;
+//   late       answered with the recommendation after the head was reviewed, and not said to need no change.
+// `review` is the head's review as the gate holds it (a record, or { carried, record }); its time is when the head was last
+// judged. `handled` is what readHandled gives: an answer the session said is dealt with covers that answer's time only, so a
+// changed answer is a new time and holds again. Pure; never throws.
+export function decisionsWaiting({ views, work, review, handled = {} }) {
   const record = review?.carried === true ? review.record : review;
   const reviewed = typeof record?.at === 'string' ? Date.parse(record.at) : NaN;
-  if (!Number.isFinite(reviewed)) return null;
-  // An answer the feature session said needs no change (markHandled) is acted on; a changed answer is a new time and holds again.
-  const late = found.filter((q) => q.at !== null && Date.parse(q.at) > reviewed && handled?.[q.id] !== q.at);
-  return late.length === 0 ? null
-    : `the director answered ${late.length === 1 ? 'a question' : `${late.length} questions`} on ${work} after this version was reviewed, and no newer version carries the answer yet`;
+  const waiting = [];
+  for (const q of questionsOf(views, work)) {
+    const dealt = q.at !== null && handled?.[q.id] === q.at;
+    if (!q.answered) waiting.push({ id: q.id, why: 'open' });
+    else if (q.differs && !dealt) waiting.push({ id: q.id, why: 'unapplied' });
+    else if (!dealt && Number.isFinite(reviewed) && q.at !== null && Date.parse(q.at) > reviewed) waiting.push({ id: q.id, why: 'late' });
+  }
+  return waiting;
+}
+
+const some = (n, one) => (n === 1 ? `a ${one}` : `${n} ${one}s`);
+
+// The plain sentence for `waiting` (what decisionsWaiting gave) on `work`, or null when nothing waits.
+export function holdSentence(waiting, work) {
+  if (!Array.isArray(waiting) || waiting.length === 0) return null;
+  const count = (why) => waiting.filter((w) => w?.why === why).length;
+  const open = count('open');
+  if (open > 0) return `the director has ${some(open, 'question')} open on ${work}, so it is not merged until ${open === 1 ? 'it is' : 'they are'} answered and acted on`;
+  const unapplied = count('unapplied');
+  if (unapplied > 0) return `the director chose something other than what ${work} was built on in ${some(unapplied, 'decision')}, and the change that answer asks for is not marked applied yet`;
+  return `the director answered ${some(count('late'), 'question')} on ${work} after this version was reviewed, and no newer version carries the answer yet`;
+}
+
+// One plain reason a merge of `work` must wait, or null.
+export function questionHold({ views, work, review, handled = {} }) {
+  return holdSentence(decisionsWaiting({ views, work, review, handled }), work);
 }
 
 // The answers a feature session has said need no change, kept as one small file per question in `dir` (named by the question's
