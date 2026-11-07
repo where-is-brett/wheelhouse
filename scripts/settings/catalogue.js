@@ -109,9 +109,28 @@ const checkOwnApp = (v) => v === null || (isObject(v) && onlyKeys(v, ['clientId'
   && typeof v.owner === 'string' && LOGIN.test(v.owner));
 export const OWN_GITHUB_APP = { label: 'Your own GitHub App', group: 'advanced', check: checkOwnApp, default: null, home: 'profile' };
 
-// The catalogue entry for a key, or undefined when Wheelhouse has no such setting.
-export function definitionOf(key) {
+// Retired keys: settings a parked piece owned (design section 4.1). Old records and profiles may
+// still hold them; the catalogue accepts any value for them and nothing reads them. A lift-out part
+// retires a key by deleting its SETTINGS entry and adding one line here (or to RETIRED_PATTERNS).
+// RETIRED maps a key to the name of the piece that retired it, for example { someKey: 'some-piece' }.
+export const RETIRED = Object.freeze({});
+// Families of retired keys: [{ pattern: RegExp, piece: string }].
+export const RETIRED_PATTERNS = Object.freeze([]);
+const SHIPPED = { RETIRED, RETIRED_PATTERNS };
+
+// The piece that retired a key, or undefined. `lists` is for tests, which pass their own copies.
+export function retiredPiece(key, lists = SHIPPED) {
   if (typeof key !== 'string') return undefined;
+  if (Object.hasOwn(lists.RETIRED, key)) return lists.RETIRED[key];
+  return lists.RETIRED_PATTERNS.find((r) => r.pattern.test(key))?.piece;
+}
+
+// The catalogue entry for a key, or undefined when Wheelhouse has no such setting. A retired key
+// has a stand-in entry that accepts any value, whether or not a live entry of the name remains.
+export function definitionOf(key, lists = SHIPPED) {
+  if (typeof key !== 'string') return undefined;
+  const piece = retiredPiece(key, lists);
+  if (piece !== undefined) return { label: key, group: 'retired', retired: true, piece, home: 'project' };
   if (Object.hasOwn(SETTINGS, key)) return SETTINGS[key];
   if (key === OWN_GITHUB_APP_KEY) return OWN_GITHUB_APP;
   if (WINDOWS_BUILDS_KEY.test(key)) return WINDOWS_BUILD_COMMANDS;
@@ -126,6 +145,7 @@ export function say(value) {
 }
 
 function allowed(def, value) {
+  if (def.retired) return true;
   if (def.levels && !def.levels.includes(value)) return false;
   if (def.only && !def.only.includes(value)) return false;
   if (def.check) {
@@ -136,18 +156,18 @@ function allowed(def, value) {
 
 // Throws, in plain words, when the key or value is not allowed. `until` (an end time) is
 // allowed only on a temporary setting.
-export function checkSetting(key, value, until) {
-  const def = definitionOf(key);
+export function checkSetting(key, value, until, lists = SHIPPED) {
+  const def = definitionOf(key, lists);
   if (!def) throw new Error(`Wheelhouse has no setting called ${say(key)}`);
   if (!allowed(def, value)) throw new Error(`${key} can't be ${say(value)}`);
   if (until !== undefined && until !== null) {
-    if (!def.temporary) throw new Error(`${key} can't have an end time`);
+    if (!def.temporary && !def.retired) throw new Error(`${key} can't have an end time`);
     if (typeof until !== 'string' || !ISO_TIME.test(until) || Number.isNaN(Date.parse(until))) throw new Error(`${key} can't end at ${say(until)}`);
   }
 }
 
 // True when checkSetting would accept the value.
-export function isAllowed(key, value) {
-  const def = definitionOf(key);
+export function isAllowed(key, value, lists = SHIPPED) {
+  const def = definitionOf(key, lists);
   return def !== undefined && allowed(def, value);
 }

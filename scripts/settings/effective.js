@@ -1,6 +1,6 @@
 // scripts/settings/effective.js
 // The value in force for each setting, and those values in plain words.
-import { SETTINGS, definitionOf, isAllowed } from './catalogue.js';
+import { SETTINGS, definitionOf, isAllowed, retiredPiece } from './catalogue.js';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
@@ -22,12 +22,14 @@ function held(entry, nowMs) {
 
 const own = (view, key) => (view && Object.hasOwn(view, key) ? view[key] : undefined);
 
+// `retired` is for tests, which pass their own retired lists. Retired keys are never returned.
 // project and profile are `settings` views. The project wins over the profile; a value that
 // has ended gives way to the one before it, then to the next layer down, then to the default.
-export function effectiveSettings({ project = {}, profile = {}, now }) {
+export function effectiveSettings({ project = {}, profile = {}, now, retired }) {
   const nowMs = instant(now);
-  const keys = Object.keys(SETTINGS);
-  const concepts = new Set([...Object.keys(project ?? {}), ...Object.keys(profile ?? {})].filter((k) => !Object.hasOwn(SETTINGS, k) && definitionOf(k)));
+  const gone = (k) => retiredPiece(k, retired) !== undefined;
+  const keys = Object.keys(SETTINGS).filter((k) => !gone(k));
+  const concepts = new Set([...Object.keys(project ?? {}), ...Object.keys(profile ?? {})].filter((k) => !Object.hasOwn(SETTINGS, k) && !gone(k) && definitionOf(k, retired)));
   const out = {};
   for (const key of [...keys, ...[...concepts].sort()]) {
     const fromProject = held(own(project, key), nowMs);
@@ -106,12 +108,12 @@ export function levelWords(topic, level) {
 }
 
 // One line per setting, everyday then advanced: "Availability: away, until 18 October 2026, 18:00 UTC (yours)".
-export function settingsText(effective) {
+export function settingsText(effective, retired) {
   const lines = [];
   for (const group of ['everyday', 'advanced']) {
     for (const [key, held_] of Object.entries(effective ?? {})) {
-      const def = definitionOf(key);
-      if (!def || def.group !== group) continue;
+      const def = definitionOf(key, retired);
+      if (!def || def.retired || def.group !== group) continue;
       lines.push(`${settingWords(key, held_.value, held_.until)} (${SOURCE_WORDS[held_.from] ?? held_.from})`);
     }
   }

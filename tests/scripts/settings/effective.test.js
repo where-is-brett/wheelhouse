@@ -125,3 +125,38 @@ test('the Thoroughness, premium and usage nudge values are said in plain words',
   assert.deepEqual(['off', 50, 75, 90].map((v) => sayValue('usageMark', v)), ['off', 'at 50%', 'at 75%', 'at 90%']);
   assert.equal(settingWords('usageMark', 75), 'Usage nudge: at 75%');
 });
+
+// Retired keys are kept in old records but never in force or shown (design section 4.1).
+const RETIRED_LISTS = {
+  RETIRED: Object.freeze({ capRequests: 'copilot' }),
+  RETIRED_PATTERNS: Object.freeze([{ pattern: /^known:[a-z0-9-]{1,40}$/, piece: 'delegation' }]),
+};
+
+test('effective settings leave retired keys out, from the project and from the profile', () => {
+  const project = view(entry('capRequests', 5), entry('briefing', 'short'));
+  const profile = view(entry('known:git', true), entry('explanations', 'some-terms'));
+  const e = effectiveSettings({ project, profile, now: NOON, retired: RETIRED_LISTS });
+  assert.equal(Object.hasOwn(e, 'capRequests'), false);
+  assert.equal(Object.hasOwn(e, 'known:git'), false);
+  assert.deepEqual(e.briefing, { value: 'short', from: 'project' });
+  assert.deepEqual(e.explanations, { value: 'some-terms', from: 'profile' });
+});
+
+test('a live setting retired by a lift-out is not shown, even before its default is deleted', () => {
+  const e = effectiveSettings({ project: {}, profile: {}, now: NOON, retired: { RETIRED: Object.freeze({ presence: 'x' }), RETIRED_PATTERNS: Object.freeze([]) } });
+  assert.equal(Object.hasOwn(e, 'presence'), false);
+  assert.ok(Object.hasOwn(e, 'briefing'));
+});
+
+test('the settings list never shows a retired key', () => {
+  const profile = view(entry('known:git', true));
+  const e = effectiveSettings({ project: view(entry('capRequests', 5)), profile, now: NOON, retired: RETIRED_LISTS });
+  assert.equal(/capRequests|known/i.test(settingsText(e)), false);
+  // text built from an effective map that still holds a retired key (an old caller) leaves it out too
+  assert.equal(/Knows/.test(settingsText({ 'known:git': { value: true, from: 'profile' } }, RETIRED_LISTS)), false);
+});
+
+test('a key that is neither live nor retired is still ignored', () => {
+  const e = effectiveSettings({ project: view(entry('nonsense', 1)), profile: {}, now: NOON, retired: RETIRED_LISTS });
+  assert.equal(Object.hasOwn(e, 'nonsense'), false);
+});
