@@ -68,8 +68,19 @@ export function isOpen(views, id) {
 // and title, each piece of unfinished work by its name (for `carry-on --line`), its newest subject
 // and how many changes it holds, the other setup's files, and the rules found, numbered, each with
 // its source, so the front desk can confirm one when it first matters. A part with nothing in it
-// is left out.
-export function surveyLines(survey) {
+// is left out. The survey is the snapshot taken then, so `views` (the record's, when given) says which of its requests are being
+// carried on now: a work whose `from.request` names the request, or a change-by-hand tie on it.
+export function carriedOnBy(views, number) {
+  const work = isPlain(views?.work) ? Object.values(views.work) : [];
+  const own = work.map((w) => w?.work?.data).find((d) => isPlain(d) && isPlain(d.from) && d.from.request === number);
+  if (own !== undefined) return { work: own.id };
+  const ties = isPlain(views?.questions) ? Object.values(views.questions).map((q) => q?.byHand).filter(isPlain) : [];
+  const tie = ties.find((t) => t.n === number);
+  if (tie === undefined) return null;
+  return typeof tie.work === 'string' ? { work: tie.work } : { work: null };
+}
+
+export function surveyLines(survey, views) {
   const data = isPlain(survey?.data) ? survey.data : null;
   if (data === null) return ['No survey has been taken.'];
   const list = (value) => (Array.isArray(value) ? value.filter(isPlain) : []);
@@ -84,7 +95,11 @@ export function surveyLines(survey) {
   if (data.hostReached === false) out.push('The host could not be looked at.');
   if (requests.length > 0) {
     out.push(`Changes waiting to be merged: ${requests.length}`);
-    for (const r of requests) out.push(`- number ${r.number}: ${flat(r.title)}${r.draft === true ? ' (a draft)' : ''}`);
+    for (const r of requests) {
+      const carried = carriedOnBy(views, r.number);
+      const note = carried === null ? '' : ` (already being carried on${carried.work === null ? '' : ` as ${carried.work}`}: do not carry it on again)`;
+      out.push(`- number ${r.number}: ${flat(r.title)}${r.draft === true ? ' (a draft)' : ''}${note}`);
+    }
   }
   const pieces = (items) => items.map((i) => {
     const saved = Number.isInteger(i.commits) && i.commits > 0 ? ` (${i.commits} ${i.commits === 1 ? 'change' : 'changes'} saved)` : '';
@@ -420,7 +435,7 @@ const VIEWS = {
   async survey(args, source) {
     const got = await recordOf(source, {});
     if (got.refused) return { ok: false, refused: got.refused };
-    return { ok: true, data: { survey: got.views.survey ?? null }, lines: surveyLines(got.views.survey) };
+    return { ok: true, data: { survey: got.views.survey ?? null }, lines: surveyLines(got.views.survey, got.views) };
   },
 
   // The goal asked for by id, or the one in force: its title and the time it stops starting work. A goal that has ended, or with
