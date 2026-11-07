@@ -49,6 +49,14 @@ test('a change needing an approval it lacks raises it, and one it has goes on', 
   assert.equal(decide({ needsApproval: true, approval: true }).act, 'merge');
 });
 
+test('a decision waiting holds a change before any approval is raised, whatever the change needs', () => {
+  const held = { allow: false, reason: 'the director has a question open on w-1', hold: 'waiting-on-decision' };
+  assert.deepEqual(decide({ needsApproval: true, approval: false, permit: held }), { act: 'wait', reason: held.reason });
+  assert.deepEqual(decide({ release: { ok: true, pinsOnly: false, approved: false }, permit: held }), { act: 'wait', reason: held.reason });
+  // A refusal that is no decision's still lets the approval be asked first.
+  assert.equal(decide({ needsApproval: true, approval: false, permit: { allow: false, reason: 'x' } }).act, 'raise');
+});
+
 test('a refused permit waits and says why', () => {
   assert.deepEqual(decide({ permit: { allow: false, reason: 'the broker refused' } }), { act: 'wait', reason: 'the broker refused' });
   assert.equal(decide({ permit: undefined }).act, 'wait');

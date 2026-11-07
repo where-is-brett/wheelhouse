@@ -76,3 +76,29 @@ test('wait-for marks a piece, at any step, whose questions file says it waits on
   assert.equal(features['w-tide-4'].stopped, undefined, 'answered: it builds on');
   assert.equal(features['w-tide-5'].stopped, undefined, 'a closed piece is never marked');
 });
+
+test('a wait on a question that was replaced or joined follows it to the question that took its place', () => {
+  const works = ['w-tide-1', 'w-tide-2', 'w-tide-3'];
+  const dirs = Object.fromEntries(works.map((w) => [w, fs.realpathSync.native(tempFolder('wh-stopped-'))]));
+  for (const w of works) {
+    fs.mkdirSync(featurePaths(dirs[w]).dir, { recursive: true });
+    fs.writeFileSync(featurePaths(dirs[w]).questions, `${JSON.stringify({ waitFor: `q-${w}-1`, at: T(1) })}\n`);
+  }
+  const features = Object.fromEntries(works.map((w, n) => [w, building(w, n + 1)]));
+  const views = {
+    features,
+    questions: {
+      // w-tide-1's question was asked again changed: the first is gone, its replacement answered.
+      'q-w-tide-1-2': { question: { data: { replaces: 'q-w-tide-1-1' } }, answer: { label: 'Daily', at: T(9) } },
+      // w-tide-2's question joins a card that is answered.
+      'q-w-tide-2-1': { question: { data: {} }, answer: null, joins: 'q-other-1' },
+      'q-other-1': { question: { data: {} }, answer: { label: 'Weekly', at: T(9) } },
+      // w-tide-3's was replaced by one still open.
+      'q-w-tide-3-2': { question: { data: { replaces: 'q-w-tide-3-1' } }, answer: null },
+    },
+  };
+  markStopped(views, (work) => dirs[work]);
+  assert.equal(features['w-tide-1'].stopped, undefined, 'its replacement is answered');
+  assert.equal(features['w-tide-2'].stopped, undefined, 'the card it joins is answered');
+  assert.equal(features['w-tide-3'].stopped, true, 'its replacement is still open');
+});

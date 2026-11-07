@@ -5,7 +5,7 @@
 // rules: never the default branch, the lock held, All stop off. A comment, or a pull request's text edited, that reads
 // as the merge queue's verdict passes only with a signed CLEAN review of that head. A merge passes only with the permit. Anything not on the list
 // is refused, with a plain reason, and never forwarded.
-import { reviewCounts, approvalCounts, incidentReason, checkCounts, decisionReason } from '../../gate/conditions.js';
+import { reviewCounts, approvalCounts, incidentReason, checkCounts, decisionReason, WAITING_ON_DECISION } from '../../gate/conditions.js';
 import { NO_HOST_APPROVAL } from '../../host/host-approval.js';
 
 // The merge queue's verdict comment carries this marker (check 76).
@@ -317,9 +317,11 @@ export function brokerDecision(call, ctx = {}) {
   const incident = incidentReason(ctx.incident);
   if (incident) return refuse(incident);
   // A decision of the director's still open on the piece, or answered otherwise and not yet applied, holds its merge here as at
-  // the gate (design section 6.4). `decisions` is left out only for a restore; one that can't be read refuses.
+  // the gate (design section 6.4). `decisions` is left out only for a restore. One that can't be read refuses too, but after
+  // every other condition, so a refusal for the approval or the check still names it.
   const decision = decisionReason(ctx.decisions);
-  if (decision !== null) return refuse(decision);
+  const unreadable = decision !== null && !(Array.isArray(ctx.decisions?.waiting) && ctx.decisions.waiting.length > 0);
+  if (decision !== null && !unreadable) return { ...refuse(decision), hold: WAITING_ON_DECISION };
   if (!reviewed) return refuse(`there is no signed CLEAN review of ${head.slice(0, 7)}`);
   const needsApproval = ctx.shownFirst === true || ctx.level === 4 || ctx.guardrail === true;
   // `releaseApproved` is the helper's finding that this is the update's own reviewed change and that the director's signed
@@ -328,5 +330,6 @@ export function brokerDecision(call, ctx = {}) {
   if (ctx.hostApproval !== undefined && ctx.hostApproval !== true) return refuse(NO_HOST_APPROVAL(head.slice(0, 7)));
   // The host's green status gets a change past Archon's gate; on a project with no CI the signed record gets it past here.
   if (ctx.checksHere === true && !checkCounts(ctx.check, head, ctx.digest, ctx.enrolled, { notCounting: ctx.notCounting === true })) return refuse(`there is no passing check on this computer of ${head.slice(0, 7)}`);
+  if (unreadable) return { ...refuse(decision), hold: WAITING_ON_DECISION };
   return { allow: true };
 }

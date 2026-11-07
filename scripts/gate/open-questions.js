@@ -42,16 +42,21 @@ export function questionsOf(views, work) {
 // `review` is the head's review as the gate holds it (a record, or { carried, record }); its time is when the head was last
 // judged. `handled` is what readHandled gives: an answer the session said is dealt with covers that answer's time only, so a
 // changed answer is a new time and holds again. Pure; never throws.
-export function decisionsWaiting({ views, work, review, handled = {} }) {
+export function decisionsWaiting({ views, work, review, handled = {}, answerHeads = {} }) {
   const record = review?.carried === true ? review.record : review;
   const reviewed = typeof record?.at === 'string' ? Date.parse(record.at) : NaN;
+  const reviewedHead = typeof record?.data?.commit === 'string' ? record.data.commit : null;
   const waiting = [];
   for (const q of questionsOf(views, work)) {
     const dealt = q.at !== null && handled?.[q.id] === q.at;
+    // The head the pull request had when this answer was recorded, if the helper saw it then: the rework's review has to be of
+    // another head. Older answers have none, and keep the rule of the review's time alone.
+    const was = q.at !== null && answerHeads?.[q.id]?.at === q.at ? answerHeads[q.id].sha : null;
+    const newHead = was === null || (reviewedHead !== null && reviewedHead !== was);
     if (!q.answered) waiting.push({ id: q.id, why: 'open' });
     // A different answer is applied only when it is marked so AND the head has been reviewed since it: the rework is a new head,
     // and a mark alone (the session's word) never lifts the hold. A review whose time can't be read counts as none.
-    else if (q.differs && !(dealt && Number.isFinite(reviewed) && q.at !== null && Date.parse(q.at) < reviewed)) waiting.push({ id: q.id, why: 'unapplied' });
+    else if (q.differs && !(dealt && newHead && Number.isFinite(reviewed) && q.at !== null && Date.parse(q.at) < reviewed)) waiting.push({ id: q.id, why: 'unapplied' });
     else if (!dealt && Number.isFinite(reviewed) && q.at !== null && Date.parse(q.at) > reviewed) waiting.push({ id: q.id, why: 'late' });
   }
   return waiting;
@@ -88,6 +93,35 @@ export function readHandled(dir, ids) {
     } catch { /* none kept */ }
   }
   return out;
+}
+
+// The head a pull request had when an answer was recorded, one small file per question in `dir`: { at, sha }. Kept once for an
+// answer's time, so a later read of the same answer never replaces the head it had then.
+export function readAnswerHeads(dir, ids) {
+  const out = {};
+  for (const id of ids) {
+    if (!QUESTION_ID.test(id)) continue;
+    try {
+      const file = path.join(dir, id);
+      if (path.dirname(file) !== dir || !fs.lstatSync(file).isFile()) continue;
+      const kept = JSON.parse(fs.readFileSync(file, 'utf8'));
+      if (typeof kept?.at === 'string' && typeof kept.sha === 'string' && kept.sha !== '') out[id] = { at: kept.at, sha: kept.sha };
+    } catch { /* none kept */ }
+  }
+  return out;
+}
+
+// Returns whether a head was kept now: false for a time already kept, or input that is no head.
+export function markAnswerHead(dir, id, at, sha) {
+  if (!QUESTION_ID.test(id) || typeof at !== 'string' || at === '' || typeof sha !== 'string' || sha === '') return false;
+  if (readAnswerHeads(dir, [id])[id]?.at === at) return false;
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, id);
+  if (path.dirname(file) !== dir) return false;
+  const temp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(temp, `${JSON.stringify({ at, sha })}\n`);
+  fs.renameSync(temp, file);
+  return true;
 }
 
 export function markHandled(dir, id, at) {

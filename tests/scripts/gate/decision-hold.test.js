@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { gateDecision, WAITING_ON_DECISION } from '../../../scripts/gate/conditions.js';
-import { decisionsWaiting, markHandled, readHandled } from '../../../scripts/gate/open-questions.js';
+import { decisionsWaiting, markAnswerHead, markHandled, readAnswerHeads, readHandled } from '../../../scripts/gate/open-questions.js';
 
 const SHA = 'abcdef1234567890abcdef1234567890abcdef12';
 const WORK = 'w-tide-1';
@@ -85,6 +85,37 @@ test('marking the rework applied does not lift the hold without a review of the 
     assert.deepEqual(decisionsWaiting({ views, work: WORK, review: review('2026-11-08T10:00:00.000Z'), handled }), []);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a review of the head the answer was recorded on does not lift the hold, marked applied or not; one of a new head does', () => {
+  const dir = handledDir();
+  const heads = handledDir();
+  try {
+    const at = '2026-11-08T09:00:00.000Z';
+    const views = viewsOf(answered('Daily', at));
+    markHandled(dir, ID, at);
+    assert.equal(markAnswerHead(heads, ID, at, 'a'.repeat(40)), true);
+    assert.equal(markAnswerHead(heads, ID, at, 'b'.repeat(40)), false, 'kept once for an answer\'s time');
+    const handled = readHandled(dir, [ID]);
+    const answerHeads = readAnswerHeads(heads, [ID]);
+    assert.deepEqual(answerHeads, { [ID]: { at, sha: 'a'.repeat(40) } });
+    const reviewOf = (commit, when) => ({ kind: 'review', at: when, data: { verdict: 'CLEAN', commit } });
+    const held = [{ id: ID, why: 'unapplied' }];
+    // The old head, reviewed after the answer, and the mark made: still held.
+    assert.deepEqual(decisionsWaiting({ views, work: WORK, review: reviewOf('a'.repeat(40), '2026-11-08T10:00:00.000Z'), handled, answerHeads }), held);
+    // A review that names no head can't show a new one.
+    assert.deepEqual(decisionsWaiting({ views, work: WORK, review: review('2026-11-08T10:00:00.000Z'), handled, answerHeads }), held);
+    // The rework's head, reviewed after the answer: allowed. Without a recorded head (an older answer) the review's time alone rules.
+    assert.deepEqual(decisionsWaiting({ views, work: WORK, review: reviewOf('b'.repeat(40), '2026-11-08T10:00:00.000Z'), handled, answerHeads }), []);
+    assert.deepEqual(decisionsWaiting({ views, work: WORK, review: reviewOf('a'.repeat(40), '2026-11-08T10:00:00.000Z'), handled }), []);
+    // A head kept for an earlier answer says nothing of a changed one.
+    const changed = viewsOf(answered('Monthly', '2026-11-08T09:30:00.000Z'));
+    markHandled(dir, ID, '2026-11-08T09:30:00.000Z');
+    assert.deepEqual(decisionsWaiting({ views: changed, work: WORK, review: reviewOf('a'.repeat(40), '2026-11-08T10:00:00.000Z'), handled: readHandled(dir, [ID]), answerHeads }), []);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(heads, { recursive: true, force: true });
   }
 });
 
