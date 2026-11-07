@@ -409,7 +409,7 @@ test('a question goes from the feature file to state, a click answers it, and on
     const s = sessions.export;
     await watch(world); // the work and the starts are where things stand now
 
-    // 1. The session writes the question, and pauses that feature.
+    // 1. The session writes the question and carries on building; only wait-for, at a step it can't undo, pauses that feature.
     const asked = await session(world, s, [
       'ask', '--what', 'Export as CSV or as Excel?', '--why', 'It decides what users download',
       '--option', 'CSV=A CSV file', '--option', 'Excel=An Excel workbook', '--cost', 'CSV=An hour', '--cost', 'Excel=Two days', '--undo', 'CSV=yes', '--undo', 'Excel=partly',
@@ -418,8 +418,12 @@ test('a question goes from the feature file to state, a click answers it, and on
     assert.equal(asked.code, 0, asked.err);
     const id = asked.out.trim();
     assert.equal(id, 'q-export-1');
+    const asking = await statusHook(world, s);
+    assert.deepEqual([asking.phase, asking.waitingOn], ['planning', null], 'asking leaves the feature going');
+    const stopped = await session(world, s, ['wait-for', id]);
+    assert.equal(stopped.code, 0, stopped.err);
     const waiting = await statusHook(world, s);
-    assert.deepEqual([waiting.phase, waiting.waitingOn], ['waiting', 'question']);
+    assert.deepEqual([waiting.phase, waiting.waitingOn], ['waiting', 'decision']);
     assert.deepEqual(await session(world, s, ['answer', id]), { code: 0, out: 'There is no answer yet.\n', err: '' });
 
     // 2. The watcher wakes the foreman, and no session; the foreman records the question in state.

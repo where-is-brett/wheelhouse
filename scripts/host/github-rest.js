@@ -168,8 +168,8 @@ export function githubRestCommands({ send, repo }) {
 
     // Reports a check on the commit. A refusal is an answer: a connection set up before Wheelhouse asked for this
     // permission reads 'permission'.
-    async setStatus({ sha, state, description }) {
-      const { status, body } = await send('POST', `${project}/statuses/${sha}`, { state, context: STATUS_CONTEXT, description });
+    async setStatus({ sha, state, description, context = STATUS_CONTEXT }) {
+      const { status, body } = await send('POST', `${project}/statuses/${sha}`, { state, context, description });
       if (ok(status)) return { ok: true };
       if (/rate limit/i.test(messageOf(body))) return { refused: 'GitHub is limiting how fast it takes reports' };
       return { refused: status === 403 || /not accessible/i.test(messageOf(body)) ? 'permission' : 'GitHub did not take the report' };

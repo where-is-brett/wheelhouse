@@ -2,6 +2,7 @@
 // The local queue (spec 7.4): the one place a Wheelhouse piece stands in for Archon, whose merge queue needs a forge (A6). A
 // script: no model and no tokens, since with every fact exact what the sweep decides is a table. With no host this is the last
 // gate before the main line. The rows copy Archon's gate, and the monthly upgrade reads the files GATE_ROWS names for changes.
+import { WAITING_ON_DECISION } from '../../gate/conditions.js';
 import { classifyChange } from '../../gate/guardrails.js';
 import { withLocalLock } from '../../lib/local-git.js';
 import { projectFolder } from './home.js';
@@ -40,6 +41,9 @@ export function sweepDecision({ main, stopped, incident, check, review, clashes,
   if (check !== 'green') return answer('check-waiting');
   if (review !== true) return answer('review-stale', 'stale');
   if (clashes === true) return answer('clash');
+  // A decision of the director's holds the change before anything is asked of them: its head may yet be reworked, so an approval
+  // card for it would ask them to approve what may change.
+  if (permit?.allow !== true && permit?.hold === WAITING_ON_DECISION) return answer('permit', permit.reason ?? 'a decision is waiting');
   if (release !== undefined && release !== null) {
     if (release.ok !== true) return answer('permit', 'the change is not what the update says it is');
     if (release.pinsOnly !== true && release.approved !== true) return answer('approval', 'release');

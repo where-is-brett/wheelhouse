@@ -13,6 +13,7 @@ import { helperClient } from '../../../scripts/host/helper-client.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { setStop } from '../../../scripts/lib/stop.js';
+import { readAnswerHeads } from '../../../scripts/gate/open-questions.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
 import { dataHash, eventPath, makeEvent } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
@@ -34,12 +35,12 @@ const QUESTION = {
 
 const fakeAdapter = () => ({ defaultBranch: async () => 'main' });
 
-async function project() {
+async function project({ folder = os.tmpdir() } = {}) {
   const remote = await makeBareRemote({ repo: 'o/p' });
   const home = shortHome();
   await as(home, async () => {
     writeProject('o__p', {
-      folder: os.tmpdir(), remoteUrl: remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' },
+      folder, remoteUrl: remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' },
     });
     const { computer, publicKey } = makeSigningKey();
     enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
@@ -96,6 +97,75 @@ test('/state/answer gives a label only from a verified answer to the question as
       });
     });
   } finally { p.cleanup(); }
+});
+
+// A feature worktree made by hand inside the project's folder: a .git folder on feature/export-csv, and the folder the feature files live in.
+function featureTree(folder, branch = 'feature/export-csv') {
+  const tree = path.join(folder, '.claude', 'worktrees', 'export-csv');
+  fs.mkdirSync(path.join(tree, '.git'), { recursive: true });
+  fs.writeFileSync(path.join(tree, '.git', 'HEAD'), `ref: refs/heads/${branch}\n`);
+  fs.mkdirSync(path.join(tree, '.wheelhouse', 'feature'), { recursive: true });
+  fs.writeFileSync(path.join(tree, '.wheelhouse', 'feature', 'pr.json'), `${JSON.stringify({ pr: 9 })}\n`);
+  return tree;
+}
+
+test('--applied marks the decision status only on the pull request whose branch is the piece\'s own', async () => {
+  // The last: a pull request named for the piece, but the worktree sits on another branch, so the number is not the piece's.
+  for (const [headRef, posted, branch] of [['feature/export-csv', true], ['feature/someone-elses', false], ['main', false], ['feature/export-csv', false, 'feature/export-csv-again']]) {
+    const folder = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-answer-')));
+    const p = await project({ folder });
+    try {
+      await as(p.home, async () => {
+        const tree = featureTree(folder, branch);
+        keep(makeEvent({ kind: 'feature', data: { work: 'export-csv', step: 'building', worktree: tree }, now: at(0) }));
+        keep(asked());
+        keep(click(2, { label: 'Tab' }));
+        const statuses = [];
+        const adapter = {
+          defaultBranch: async () => 'main',
+          prState: async () => ({ state: 'open', headRef, headSha: 'a'.repeat(40) }),
+          checkContexts: async () => [],
+          setStatus: async (args) => { statuses.push(args); return { ok: true }; },
+        };
+        const helper = await startHelper({ run: hostGuard, address: testAddress(process.env.WHEELHOUSE_HOME), adapterFor: async () => adapter, envFor: async () => ({}) });
+        try {
+          const client = helperClient({ address: helper.address });
+          assert.deepEqual(await client.state.answer({ cwd: tree, questionId: ID, applied: true }), { ok: true, answer: 'Tab' });
+        } finally { await helper.close(); }
+        // Marked applied but not yet reviewed in a new head, the answer still holds: the status is pending, and only on the piece's own pull request.
+        assert.deepEqual(statuses.map((s) => s.state), posted ? ['pending'] : [], headRef);
+      });
+    } finally { p.cleanup(); fs.rmSync(folder, { recursive: true, force: true }); }
+  }
+});
+
+test('the work\'s own session reading an answer keeps the head its pull request had then, once, and no one else\'s read does', async () => {
+  const folder = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-answer-')));
+  const p = await project({ folder });
+  try {
+    await as(p.home, async () => {
+      const tree = featureTree(folder);
+      keep(makeEvent({ kind: 'feature', data: { work: 'export-csv', step: 'building', worktree: tree }, now: at(0) }));
+      keep(asked());
+      keep(click(2, { label: 'Tab' }));
+      let sha = 'a'.repeat(40);
+      const adapter = { defaultBranch: async () => 'main', prState: async () => ({ state: 'open', headRef: 'feature/export-csv', headSha: sha }) };
+      const kept = () => readAnswerHeads(path.join(stateDir('o__p'), '..', 'answer-heads'), [ID])[ID];
+      const helper = await startHelper({ run: hostGuard, address: testAddress(process.env.WHEELHOUSE_HOME), adapterFor: async () => adapter, envFor: async () => ({}) });
+      try {
+        const client = helperClient({ address: helper.address });
+        // A read with no folder keeps nothing.
+        assert.equal((await client.state.answer({ project: 'o__p', questionId: ID })).answer, 'Tab');
+        assert.equal(kept(), undefined);
+        assert.equal((await client.state.answer({ cwd: tree, questionId: ID })).answer, 'Tab');
+        assert.equal(kept()?.sha, 'a'.repeat(40));
+        // The rework is pushed: a later read keeps the first head, so a review of the old one never shows the new.
+        sha = 'b'.repeat(40);
+        await client.state.answer({ cwd: tree, questionId: ID });
+        assert.equal(kept()?.sha, 'a'.repeat(40));
+      } finally { await helper.close(); }
+    });
+  } finally { p.cleanup(); fs.rmSync(folder, { recursive: true, force: true }); }
 });
 
 test('/state/answer is answered under STOP', async () => {

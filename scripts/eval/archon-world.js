@@ -101,6 +101,8 @@ async function makeProject({ root, folder, git, place = null, files = {}, before
 const standInHost = () => ({
   defaultBranch: async () => 'main',
   branchHead: async () => null,
+  // A pull request of no branch the stand-in knows: the broker finds no decision waiting on it unless the run's own record names its work.
+  prState: async (number) => ({ number, state: 'open', headRef: null, baseRef: 'main', headSha: null, mergeable: 'yes' }),
   checkContexts: async () => [{ name: 'ci', state: 'success', startedAt: '2026-10-31T00:00:00.000Z' }],
   requiredChecks: async () => [],
 });

@@ -3,8 +3,11 @@
 //   ask      writes a question for the director and prints its id; with --kind build-command,
 //            asks for build commands on Windows (design section 12.2)
 //   stuck    says, once, that a decision can't be put into its shape (after three sent back in a row)
+//   wait-for says the piece has reached a step it can't undo and has nothing else to do until a decision is answered; only
+//            this sets the waiting phase and gives the slot up (asking leaves the piece building on its recommendation)
 //   log      adds one call you made on your own side of the decision line to the piece's log (decisions.jsonl)
-//   answer   prints the director's answer to a question, once it is signed
+//   answer   prints the director's answer to a question, once it is signed; --applied says the change it asks for is pushed
+//            and --no-change that it asks for none, either of which lets the merge's hold on the decision go
 //   plan     records the plan just written, in plan.json, for the status and the foreman
 //   report   checks report.md and that it holds every ruling kept, then stamps it with what built it
 //   push     pushes the worktree's branch to the host, through the helper (after a fix)
@@ -23,7 +26,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { safeGit } from '../lib/safe-git.js';
-import { QUESTION_ID, QUESTION_KINDS, appendLine, featurePaths, parseReport, questionTrail, readQuestions } from './files.js';
+import { QUESTION_ID, QUESTION_KINDS, appendLine, featurePaths, parseReport, questionTrail, readQuestions, reworksIn, waitingFor } from './files.js';
 import {
   planIn, planInside, readBrief, readCapped, readPlan, readPrRecord, safeFeatureFolder, writeWhole, SMALL_BYTES,
 } from './status.js';
@@ -325,14 +328,36 @@ export function stuck({ worktree, argv, now = () => new Date() }) {
 // --- answer ---
 
 // The label the director chose, or null while the question has no signed answer. The helper
-// places the project from the worktree's folder.
-export async function answer({ client, worktree, questionId, noChange = false }) {
+// places the project from the worktree's folder. `applied` says the change the answer asks for is pushed, and `noChange` that it
+// asks for none; either lets the merge's hold on the decision go (a different answer from the recommendation needs `applied`).
+export async function answer({ client, worktree, questionId, noChange = false, applied = false }) {
   if (typeof questionId !== 'string' || !QUESTION_ID.test(questionId)) throw new CliError('Give the id of the question, as ask printed it');
-  const said = await client.state.answer({ cwd: worktree, questionId, ...(noChange ? { noChange: true } : {}) });
+  if (noChange && applied) throw new CliError('Say --applied or --no-change, not both');
+  const said = await client.state.answer({ cwd: worktree, questionId, ...(noChange ? { noChange: true } : {}), ...(applied ? { applied: true } : {}) });
   if (said?.ok !== true) throw new CliError(said?.refused ?? 'The host helper gave no answer');
   if (said.answer === null) return { answer: null };
   if (typeof said.answer !== 'string' || said.answer === '') throw new CliError('The host helper gave an answer this could not read');
   return { answer: said.answer };
+}
+
+// --- wait-for ---
+
+// Says the piece has reached a step it can't undo (migrating real data, deleting anything, spending money, going live) or has
+// nothing else to do, and waits for the director's answer to `questionId`: only this sets the `waiting` phase and gives the
+// piece's slot up (design section 6.4). One line in questions.jsonl, kept once. A decision already answered doesn't wait.
+// Returns `{ waiting: true }`, or `{ waiting: false, answer }` when the answer is there.
+export async function waitFor({ client, worktree, questionId, now = () => new Date() }) {
+  if (typeof questionId !== 'string' || !QUESTION_ID.test(questionId)) throw new CliError('Give the id of the decision, as ask printed it');
+  readBriefOrSay(worktree);
+  if (!safeFeatureFolder(worktree)) throw new CliError(FOLDER);
+  const file = featurePaths(worktree).questions;
+  const asked = readQuestions(file, { maxBytes: QUESTIONS_BYTES }).questions.find((q) => q.id === questionId);
+  if (asked === undefined || asked.kind !== 'question') throw new CliError(`${questionId} is not a decision this piece asked`);
+  const said = await client.state.answer({ cwd: worktree, questionId });
+  if (said?.ok !== true) throw new CliError(said?.refused ?? 'The host helper gave no answer');
+  if (typeof said.answer === 'string' && said.answer !== '') return { waiting: false, answer: said.answer };
+  if (!waitingFor(file, { maxBytes: QUESTIONS_BYTES }).includes(questionId)) addLine(file, { waitFor: questionId, at: now().toISOString() });
+  return { waiting: true };
 }
 
 // --- log ---
@@ -404,12 +429,51 @@ function inspect(worktree) {
       if (!reported.has(ruling.trim())) missing.push(`A ruling is missing from the report's rulings: ${quoted(ruling)}`);
     }
   }
-  return { missing, body: missing.length === 0 ? parsed.body.trim() : null };
+  return { missing, body: missing.length === 0 ? parsed.body.trim() : null, fields: parsed.fields };
+}
+
+// What the report lacks on the decisions the director answered with something other than the piece's recommendation (design
+// section 6.4): a `rework` entry for each, naming the question, the answer chosen and the recommendation, and what the change
+// cost. The answers come from the helper; one it can't give leaves its decision unchecked here, since the gate keeps holding the
+// merge until that answer is applied.
+async function reworkMissing({ worktree, client, fields }) {
+  if (typeof client?.state?.answer !== 'function') return [];
+  const decisions = readQuestions(featurePaths(worktree).questions, { maxBytes: QUESTIONS_BYTES }).questions.filter((q) => q.kind === 'question');
+  const entries = reworksIn(fields);
+  const missing = [];
+  for (const q of decisions) {
+    let said;
+    try {
+      said = await client.state.answer({ cwd: worktree, questionId: q.id });
+    } catch {
+      continue;
+    }
+    if (said?.ok !== true || typeof said.answer !== 'string' || said.answer === '' || said.answer === q.recommendation) continue;
+    const covered = entries.some((e) => (e.question === q.id || e.question === q.what) && e.chose === said.answer && e.recommended === q.recommendation);
+    if (!covered) {
+      missing.push(`report.md needs a "rework" field for ${q.id}: the director chose "${said.answer}", not your recommendation "${q.recommendation}". `
+        + `Add "rework": { "question": "${q.id}", "chose": "${said.answer}", "recommended": "${q.recommendation}", "cost": "<what the change cost>" } (a list of them for several)`);
+    }
+  }
+  return missing;
+}
+
+// `inspect`, and with a `client` the rework check too.
+async function inspectWithAnswers(worktree, client) {
+  const checked = inspect(worktree);
+  if (checked.missing.length > 0 || checked.fields === undefined) return checked;
+  const rework = await reworkMissing({ worktree, client, fields: checked.fields });
+  return rework.length === 0 ? checked : { ...checked, missing: rework, body: null };
 }
 
 // What report.md lacks, as `{ missing: [text] }`; empty when it is whole.
 export function report({ worktree }) {
   return { missing: inspect(worktree).missing };
+}
+
+// `report`, and with a `client` that can read the director's answers, the rework a different answer needs to have reported.
+export async function reportChecked({ worktree, client }) {
+  return { missing: (await inspectWithAnswers(worktree, client)).missing };
 }
 
 // --- plan ---
@@ -526,7 +590,7 @@ export async function openPr({ client, worktree, argv }) {
   if (already !== null && !already.merged) return { number: already.pr, already: true };
   const head = branchOf(worktree);
   if (head === null) throw new CliError("This worktree isn't on a branch, so there is nothing to open a pull request from");
-  const checked = inspect(worktree);
+  const checked = await inspectWithAnswers(worktree, client);
   if (checked.missing.length > 0) throw new CliError(`The pull request is not opened until the report passes. ${checked.missing.join(' ')}`);
   const session = keptSession(p.session);
   // The host opens a pull request only from a branch it holds.
@@ -545,7 +609,7 @@ export async function openPr({ client, worktree, argv }) {
 
 // --- The command line ---
 
-const COMMANDS = ['ask', 'stuck', 'log', 'answer', 'plan', 'report', 'push', 'pull', 'open-pr'];
+const COMMANDS = ['ask', 'stuck', 'wait-for', 'log', 'answer', 'plan', 'report', 'push', 'pull', 'open-pr'];
 
 // Runs a command and resolves with the exit code. `out` and `err` take text to show.
 export async function main(argv, {
@@ -564,19 +628,29 @@ export async function main(argv, {
     } else if (command === 'stuck') {
       stuck({ worktree, argv: rest });
       out('Noted: the director will be told you are stuck. Carry on with what does not depend on the answer.\n');
+    } else if (command === 'wait-for') {
+      if (rest.length !== 1) throw new CliError('Give the id of the decision: wait-for <questionId>');
+      const got = await waitFor({ client: helper(), worktree, questionId: rest[0] });
+      out(got.waiting
+        ? 'Waiting for the director: your slot is free. End your turn; the answer wakes you.\n'
+        : `That decision is answered already: ${got.answer}. Read it with \`answer ${rest[0]}\` and carry on.\n`);
     } else if (command === 'log') {
       log({ worktree, argv: rest });
       out('Logged.\n');
     } else if (command === 'answer') {
-      const noChange = rest.length === 2 && rest[1] === '--no-change';
-      if (rest.length !== 1 && !noChange) throw new CliError('Give the id of the question: answer <questionId>, and --no-change after it when the answer needs no change to the code');
-      const { answer: label } = await answer({ client: helper(), worktree, questionId: rest[0], noChange });
+      const flag = rest.length === 2 ? rest[1] : null;
+      const noChange = flag === '--no-change';
+      const applied = flag === '--applied';
+      if (rest.length !== 1 && !noChange && !applied) {
+        throw new CliError('Give the id of the question: answer <questionId>, then --applied once the change the answer asks for is pushed, or --no-change when it asks for none');
+      }
+      const { answer: label } = await answer({ client: helper(), worktree, questionId: rest[0], noChange, applied });
       out(label === null ? 'There is no answer yet.\n' : `${label}\n`);
     } else if (command === 'plan') {
       out(`Recorded the plan: ${recordPlan({ worktree, argv: rest }).plan}\n`);
     } else if (command === 'report') {
       if (rest.length > 0) throw new CliError('report takes no arguments');
-      const { missing } = report({ worktree });
+      const { missing } = await reportChecked({ worktree, client: helper() });
       if (missing.length > 0) {
         err(`${missing.join('\n')}\n`);
         return 1;

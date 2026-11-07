@@ -2,9 +2,14 @@
 // Where a project's checks run (spec 4.1), worked out and shown, never asked, and when the host's own checks have stopped
 // reporting. Wheelhouse's own status isn't CI: once it is posted, a project with no CI must still read as having none.
 export const STATUS_CONTEXT = 'wheelhouse/checks';
+// Wheelhouse's other status, pending while a decision on the change waits (design section 6.4). Like the check's, it isn't CI.
+export const DECISION_CONTEXT = 'wheelhouse/decision';
 const STUCK_MS = 30 * 60 * 1000;
 
-const others = (contexts) => (Array.isArray(contexts) ? contexts : []).filter((c) => c?.name !== STATUS_CONTEXT);
+// The contexts Wheelhouse itself posts.
+export const isOwnContext = (name) => name === STATUS_CONTEXT || name === DECISION_CONTEXT;
+
+const others = (contexts) => (Array.isArray(contexts) ? contexts : []).filter((c) => !isOwnContext(c?.name));
 
 // Whether the default branch's rules name our check: `required` what the host's rules say now, null when they can't be read,
 // and `recorded` what setup wrote into them, null when it wrote none. Null when neither can tell.

@@ -72,7 +72,7 @@ import path from 'node:path';
 import { clashCheck, fileMapOf, nextWork, since } from './queue.js';
 import { onNewEngine } from '../engine/lanes.js';
 import { PLUGIN_ROOT, foremanCommands } from './tools.js';
-import { briefHash, featurePaths, readStatus } from '../feature/files.js';
+import { briefHash, featurePaths, readStatus, waitingFor } from '../feature/files.js';
 import {
   loadFeature, readCapped, readPlan, readPrRecord, safeFeatureFolder,
 } from '../feature/status.js';
@@ -201,7 +201,42 @@ export async function loadViews(project, client, { kept = false } = {}) {
     ...(fresh ? {} : { why }),
   };
   if (fresh) await markSettled(project, client, out.views);
+  markStopped(out.views, (work) => worktreeOf(project, out.views, work));
   return out;
+}
+
+// Marks (as `stopped`, on the view only) each open feature that has said it waits on a decision (`wait-for`, a line in its own
+// questions.jsonl) whose question the director has not answered, at whatever step it is on: it has reached a step it can't undo
+// and has nothing else to do, so the queue gives its slot up (design section 6.4). The questions view says whether the question is
+// answered, so a stale status file never keeps a slot shut. A piece that has only asked is still building and keeps its slot.
+// `find(work)` gives the work's worktree, or throws.
+export function markStopped(views, find) {
+  for (const [work, f] of Object.entries(views.features ?? {})) {
+    if (!isPlain(f?.data) || f.data.step === 'closed') continue;
+    try {
+      const waits = waitingFor(featurePaths(find(work)).questions);
+      if (waits.some((id) => !answeredQuestion(views.questions, id))) f.stopped = true;
+    } catch { /* unreadable: it keeps its slot */ }
+  }
+}
+
+// Whether the director has answered the question `id` the session waits on, following it to the question that took its place: one
+// asked again changed (`replaces`, the old one gone from the views) or one that joins another's card (`joins`). A question the
+// views don't have at all is not answered.
+function answeredQuestion(questions, id) {
+  const all = isPlain(questions) ? questions : {};
+  let at = id;
+  for (let hops = 0; hops < 8; hops += 1) {
+    const e = Object.hasOwn(all, at) ? all[at] : undefined;
+    if (e === undefined) {
+      const next = Object.entries(all).find(([, q]) => q?.question?.data?.replaces === at);
+      if (next === undefined) return false;
+      [at] = next;
+    } else if (isPlain(e.answer)) return true;
+    else if (typeof e.joins === 'string') at = e.joins;
+    else return false;
+  }
+  return false;
 }
 
 // Marks (as `settled`, on the view only) each building feature whose work is over: its kept pull request is marked merged
