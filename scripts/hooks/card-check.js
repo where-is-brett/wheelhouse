@@ -52,7 +52,7 @@ import { cardButtons } from '../cards/buttons.js';
 import { standing } from './prompt-record.js';
 import { isDecisionCard, readDecisions } from '../decisions/pending.js';
 import { decisionText, blocksIn } from '../decisions/message.js';
-import { startedByScript } from '../decisions/answer.js';
+import { startedByScript, typedRepliesOn } from '../decisions/answer.js';
 
 const SHA12 = '([0-9a-f]{12})';
 // The plain lines a card needs before its last: the question, why it is the director's and what happens meanwhile. A
@@ -241,7 +241,8 @@ function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere:
   const found = cardsOf(questions, project, outcomes);
   const decided = decidedDeny(found, at);
   if (decided !== undefined) return { deny: decided };
-  if (found.some((f) => f && !f.stale && isDecisionCard(f.card.data))) return { deny: DECISION_IN_CHAT };
+  // The picker is for a decision only while typed replies are off, so on it a decision is answered by typing instead.
+  if (typedRepliesOn(project) && found.some((f) => f && !f.stale && isDecisionCard(f.card.data))) return { deny: DECISION_IN_CHAT };
   // The Lift All stop question is composed on each visit and never recorded as a card, so the state can't say it is
   // decided: STOP being off is what says so.
   const lifts = questions.map(isLiftQuestion);

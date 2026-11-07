@@ -82,6 +82,7 @@ import { dataHash } from '../state/events.js';
 import { composeCard, answerInput } from '../cards/compose.js';
 import { decisionText } from '../decisions/message.js';
 import { isDecisionCard } from '../decisions/pending.js';
+import { typedRepliesIn } from '../decisions/switch.js';
 import { confirmWords } from '../state/card-lines.js';
 import { joinersOf } from '../state/joiners.js';
 import { cardsForVisit, existingCard, cardNumbered, asQuestion } from '../cards/visit.js';
@@ -530,9 +531,11 @@ export async function cards({ client, cwd, now, onAsked }) {
   const decided = [...again].some((id) => !(Array.isArray(views.waiting) ? views.waiting : []).some((c) => c?.id === id));
   let events = [];
   if (made > 0 || decided) ({ views, cards: events } = await viewsOf(client, cwd, { cards: decided }));
-  // A decision is shown as a chat message (`decision list`), never through the question picker, so no visit hands one out.
+  // With typed replies on, a decision is shown as a chat message (`decision list`), never through the question picker, so no
+  // visit hands one out. Off, it is a card like any other.
+  const typed = typedRepliesIn(views.settings);
   const forVisit = withPutBack(views, again, events);
-  const chosen = cardsForVisit({ ...forVisit, waiting: (Array.isArray(forVisit.waiting) ? forVisit.waiting : []).filter((c) => !isDecisionCard(c?.data)) }, { room: lift === null ? CARD.questions : 0 });
+  const chosen = cardsForVisit({ ...forVisit, waiting: (Array.isArray(forVisit.waiting) ? forVisit.waiting : []).filter((c) => !typed || !isDecisionCard(c?.data)) }, { room: lift === null ? CARD.questions : 0 });
   problems.push(...await markAsked(client, cwd, chosen.ids, stop));
   if (typeof onAsked === 'function') await onAsked(chosen.ids);
   return { questions: [...(lift === null ? [] : [lift]), ...chosen.questions], left: chosen.left, ...(chosen.heldBack > 0 ? { heldBack: chosen.heldBack } : {}), ...withProblems(problems) };
@@ -758,6 +761,8 @@ export async function askBosun({ client, cwd, work }) {
 // --- pull-back ---
 
 const PULL_WORDS = 160;
+const MOST_CALLS = 200;
+const callMark = (id) => `[call ${id.slice(0, 8)}]`;
 
 // The director's "I'd have wanted to decide that" about a call an agent made on its own side of the decision line (the
 // decision log, design section 5). The call is named by its id, or the start of it (six characters or more). It becomes a ruling
@@ -768,20 +773,24 @@ export async function pullBack({ client, cwd, call, change = false, now, makeId 
   const got = await deskOf(client, cwd).read('waiting', { calls: true });
   if (got?.ok !== true || !Array.isArray(got.data?.calls)) throw new CliError(said(got, 'The host helper gave no calls'));
   const found = got.data.calls.filter((c) => c.id === call || c.id.startsWith(call));
-  if (found.length === 0) throw new CliError(`No logged call starts with ${call}`);
-  if (found.length > 1) throw new CliError(`More than one logged call starts with ${call}: give more of its id`);
+  if (found.length === 0) throw new CliError(`No call starting with ${call} is among the recent calls (the latest ${MOST_CALLS} are kept in view)`);
+  if (found.length > 1) throw new CliError(`More than one recent call starts with ${call}: give more of its id`);
   const [chosen] = found;
-  const mark = `[call ${chosen.id.slice(0, 8)}]`;
-  const { views } = await viewsOf(client, cwd);
-  if ((Array.isArray(views.rulebook) ? views.rulebook : []).some((r) => typeof r?.words === 'string' && r.words.includes(mark))) {
-    throw new CliError(`That call was pulled back already ${mark}`);
-  }
+  const mark = callMark(chosen.id);
+  // A ruling for the call stands once; a request to change what was built is filed once. With a ruling already, `change` files
+  // only the request.
+  if (chosen.ruled === true && !change) throw new CliError(`That call was pulled back already ${mark}`);
+  if (change && chosen.requested === true) throw new CliError(`A request to change what that call built was filed already ${mark}`);
   const decided = flat(chosen.decided).slice(0, PULL_WORDS);
-  const words = `Pulled back ${mark}: "${decided}" (${chosen.work}, ${chosen.kind}). A call like this is the director's to decide first.`;
-  const made = await record({ client, cwd, kind: 'ruling', input: { words, reason: 'The director pulled back a call from the decision log', scope: 'project' }, now, ...(makeId ? { makeId } : {}) });
-  const out = { call: chosen.id, ruling: made.id, card: made.card };
+  const out = { call: chosen.id };
+  if (chosen.ruled !== true) {
+    const words = `Pulled back ${mark}: "${decided}" (${chosen.work}, ${chosen.kind}). A call like this is the director's to decide first.`;
+    const made = await record({ client, cwd, kind: 'ruling', input: { words, reason: 'The director pulled back a call from the decision log', scope: 'project' }, now, ...(makeId ? { makeId } : {}) });
+    out.ruling = made.id;
+    out.card = made.card;
+  }
   if (change) {
-    const request = await write(client, cwd, 'request', { words: `Change what ${chosen.work} built: it decided "${decided}" on its own, and the director pulled that call back.`, via: 'chat' });
+    const request = await write(client, cwd, 'request', { words: `Change what ${chosen.work} built ${mark}: it decided "${decided}" on its own, and the director pulled that call back.`, via: 'chat' });
     out.request = request.id;
   }
   out.say = change

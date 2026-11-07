@@ -9,7 +9,10 @@ import { pendingDir } from '../../../scripts/hooks/pending.js';
 import { recordRole } from '../../../scripts/lib/role.js';
 import { readEnrolled, verify } from '../../../scripts/state/signing.js';
 import { FOREMAN_PROMPT_LEAD } from '../../../scripts/foreman/start.js';
-import { inHome, P, raise, raiseBuildQuestion, typedAnswer } from '../../helpers/decisions-world.js';
+import { inHome as inHomeOff, turnOn, P, raise, raiseBuildQuestion, typedAnswer } from '../../helpers/decisions-world.js';
+// Typed replies are off until the director rules; these tests are of the behaviour with them on, and say so where they mean off.
+const inHome = (fn) => inHomeOff(async (home) => { turnOn(); return fn(home); });
+
 
 const NOW = new Date('2026-11-08T10:00:00.000Z');
 
@@ -98,6 +101,7 @@ test('a letter earns the build\'s signed answer, so the piece goes on, and the d
     assert.deepEqual(kinds(c), ['decision-answer']);
     c.calls.record.length = 0;
     fs.rmSync(stateDir(P), { recursive: true, force: true });
+    turnOn();
     raiseBuildQuestion('q-w-tide-1-1', '2026-11-08T01:00:00.000Z');
     await run(c, 'A');
     assert.deepEqual(kinds(c), ['decision-answer', 'action']);
@@ -226,5 +230,32 @@ test('a fault before anything is kept lets the prompt through with nothing said'
   await inHome(async () => {
     raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');
     assert.equal(await decide(typed('B'), { client: fake(), now: () => NOW, projectOf: () => { throw new Error('no project'); }, env: {} }), undefined);
+  });
+});
+
+test('typed replies off, the default: "1 A" records nothing and the note says the decision still waits', async () => {
+  await inHomeOff(async () => {
+    raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');
+    const c = fake();
+    const out = await run(c, '1 A');
+    assert.deepEqual(c.calls.record, []);
+    assert.deepEqual(c.calls.write, []);
+    assert.match(noteOf(out), /Typed replies are switched off, so nothing was recorded and the decision still waits/);
+    assert.match(noteOf(out), /question picker/);
+    // Words that are no answer say nothing.
+    assert.equal(await run(c, 'looks fine to me'), undefined);
+    assert.deepEqual(c.calls.record, []);
+  });
+});
+
+test('the same reply records once typed replies are switched on', async () => {
+  await inHomeOff(async () => {
+    raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');
+    const c = fake();
+    await run(c, '1 A');
+    assert.deepEqual(c.calls.record, []);
+    turnOn();
+    await run(c, '1 A');
+    assert.equal(c.calls.record[0].event.kind, 'decision-answer');
   });
 });
