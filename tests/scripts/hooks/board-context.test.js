@@ -653,12 +653,15 @@ test('the count is at most one call\'s worth, and counts a question from the bui
       'q-wide-4': { question: { data: { ...question('q-wide-4'), options: ['A', 'B', 'C', 'D', 'E'].map((label) => ({ label, says: label })), recommendation: 'A' } } },
       'q-unread-5': { question: { data: { id: 'q-unread-5' } } },
     });
-    // The one question with no card yet is a decision, shown as a chat message: no card to ask.
-    const toCome = `Decisions not shown yet: 1. ${DECISIONS_TAIL}`;
-    assert.equal(contextOf(await run(repo, 'Hi', NOW)), toCome);
+    // Typed replies are off by default: the question with no card yet is a card to ask, as it always was.
+    assert.equal(contextOf(await run(repo, 'Hi', NOW)), cardsLine(1));
     // A board command gives the line, then the board.
     const board = contextOf(await run(repo, '/wheelhouse:board', NOW));
-    assert.ok(board.startsWith(`${toCome}\n\n${HEADINGS.board}`), board);
+    assert.ok(board.startsWith(`${cardsLine(1)}\n\n${HEADINGS.board}`), board);
+    // Switched on, that question is a decision shown as a chat message: no card to ask.
+    put(viewFile('settings'), { typedReplies: { key: 'typedReplies', id: 's1', at: '2026-10-01T00:00:00.000Z', value: true } });
+    const toCome = `Decisions not shown yet: 1. ${DECISIONS_TAIL}`;
+    assert.equal(contextOf(await run(repo, 'Hi again', NOW)), toCome);
   });
 });
 
@@ -666,7 +669,10 @@ test('cardsDue counts from the views it is given, as the hook counts from the vi
   const now = new Date(NOW);
   assert.equal(cardsDue({ waiting: [...unasked(2), { id: 'c1', at: '2026-10-18T09:00:00.000Z', data: { title: 'Old' }, asked: ASKED }] }, now), 2);
   assert.equal(cardsDue({ waiting: unasked(6) }, now), 4, 'one call\'s worth at most');
-  assert.equal(cardsDue({ waiting: [], questions: { 'q-export-1': { question: { data: question('q-export-1') } } } }, now), 0, 'a decision is no card');
+  assert.equal(cardsDue({ waiting: [], questions: { 'q-export-1': { question: { data: question('q-export-1') } } } }, now), 1);
+  // With typed replies on, a question from the build is a decision, so no card.
+  const on = { typedReplies: { key: 'typedReplies', id: 's1', at: '2026-10-01T00:00:00.000Z', value: true } };
+  assert.equal(cardsDue({ waiting: [], settings: on, questions: { 'q-export-1': { question: { data: question('q-export-1') } } } }, now), 0, 'a decision is no card');
   assert.equal(cardsDue({}, now), 0);
 });
 

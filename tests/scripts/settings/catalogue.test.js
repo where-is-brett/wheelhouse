@@ -36,6 +36,7 @@ test('every setting in design section 14 is in the catalogue, with its default',
     capTokens: ['project', { quick: 1000000, small: 4000000, slice: 10000000, bug: 2000000 }],
     bundleApprovals: ['project', false],
     engineRoom: ['project', false],
+    typedReplies: ['project', false],
   };
   assert.deepEqual(Object.keys(SETTINGS).sort(), Object.keys(expected).sort());
   for (const [key, [home, def]] of Object.entries(expected)) {

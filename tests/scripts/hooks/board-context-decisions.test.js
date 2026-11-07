@@ -8,7 +8,10 @@ import { writeProject } from '../../../scripts/lib/projects.js';
 import { recordRole } from '../../../scripts/lib/role.js';
 import { markSeen } from '../../../scripts/briefing/seen.js';
 import { wheelhouseHome } from '../../../scripts/lib/paths.js';
-import { inHome, P, raise, typedAnswer } from '../../helpers/decisions-world.js';
+import { inHome as inHomeOff, turnOn, P, raise, typedAnswer } from '../../helpers/decisions-world.js';
+// Typed replies are off until the director rules; these tests are of the behaviour with them on, and say so where they mean off.
+const inHome = (fn) => inHomeOff(async (home) => { turnOn(); return fn(home); });
+
 
 const NOW = '2026-11-08T12:00:00.000Z';
 const at = (iso) => () => new Date(iso);
@@ -18,11 +21,13 @@ const put = (file, value) => {
 };
 
 // A registered project of the made-up kind, whose main folder is on `main`, and a director who wrote a minute ago.
-function register(home) {
+function register(home, { on = true } = {}) {
   const repo = path.join(home, 'repo');
   put(path.join(repo, '.git', 'HEAD'), 'ref: refs/heads/main\n');
   writeProject(P, { folder: repo, remoteUrl: 'https://example.com/owner/harbour-demo.git', host: 'github', repo: 'owner/harbour-demo', connection: {} });
   put(path.join(wheelhouseHome(), 'projects', P, 'views', 'waiting.json'), []);
+  // The settings view the helper keeps: typed replies confirmed on, or no setting at all (the default, off).
+  if (on) put(path.join(wheelhouseHome(), 'projects', P, 'views', 'settings.json'), { typedReplies: { key: 'typedReplies', id: 's1', at: '2026-11-01T01:00:00.000Z', value: true } });
   markSeen(P, { promptAt: new Date('2026-11-08T11:59:00.000Z') });
   return repo;
 }
@@ -103,7 +108,22 @@ test('under the same guards: a script-started or non-front-desk session leaves t
 
 test('a decision is no card to ask: the count of cards leaves it out', () => {
   const card = { id: 'c1', at: '2026-11-08T01:00:00.000Z', asked: null, data: { kind: 'answer', line: 'Answer question q-w-tide-1-1', question: 'How often?', options: ['Daily', 'Weekly'] } };
-  assert.equal(cardsDue({ waiting: [card] }, new Date(NOW)), 0);
+  const on = { typedReplies: { key: 'typedReplies', id: 's1', at: '2026-11-01T01:00:00.000Z', value: true } };
+  assert.equal(cardsDue({ waiting: [card], settings: on }, new Date(NOW)), 0);
   const approval = { id: 'c2', at: '2026-11-08T01:00:00.000Z', asked: null, data: { kind: 'approval', question: 'Put it live?', options: ['Approve', 'Not now'] } };
-  assert.equal(cardsDue({ waiting: [card, approval] }, new Date(NOW)), 1);
+  assert.equal(cardsDue({ waiting: [card, approval], settings: on }, new Date(NOW)), 1);
+  // Off, the default: the decision's card is a card to ask through the picker, as on main.
+  assert.equal(cardsDue({ waiting: [card] }, new Date(NOW)), 1);
+  assert.equal(cardsDue({ waiting: [card, approval] }, new Date(NOW)), 2);
+});
+
+test('typed replies off: the decisions are still listed, a typed reply hides none, and the cards line counts them', async () => {
+  await inHomeOff(async (home) => {
+    const repo = register(home, { on: false });
+    raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');
+    const line = contextOf(await ask(repo, '1 B'));
+    assert.match(line, /Decisions waiting for the director: 1\. How often should the digest go out\?\./);
+    assert.match(line, /Typed replies are switched off/);
+    assert.ok(!line.includes('not shown yet'));
+  });
 });

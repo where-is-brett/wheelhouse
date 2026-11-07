@@ -23,6 +23,11 @@ import { helperGrace } from '../lib/helper-grace.js';
 import { withinBudget, pendingDir, BUDGET_MS } from '../hooks/pending.js';
 import { earned, keepEarned, sendKept } from '../hooks/prompt-record.js';
 import { whenSaid } from '../cards/answered.js';
+import { buildViews } from '../state/views.js';
+import { listEvents } from '../state/events.js';
+import { readEnrolled } from '../state/signing.js';
+import { stateDir } from '../lib/paths.js';
+import { typedRepliesIn } from './switch.js';
 import { readDecisions } from './pending.js';
 import { parseReply } from './reply.js';
 import { LETTERS } from './message.js';
@@ -38,6 +43,16 @@ export function startedByScript(env = process.env) {
   const entry = env?.CLAUDE_CODE_ENTRYPOINT;
   if (typeof entry === 'string' && SCRIPT_ENTRYPOINT.test(entry)) return true;
   return STARTER_VARIABLES.some((name) => typeof env?.[name] === 'string' && env[name] !== '');
+}
+
+// Whether typed replies are on for the project, from the settings the local record builds (as the session start's fallback
+// builds them), so the switch counts the moment it is confirmed. Off when unreadable.
+export function typedRepliesOn(project) {
+  try {
+    return typedRepliesIn(buildViews(listEvents(stateDir(project), { report: () => {} }), readEnrolled()).settings);
+  } catch {
+    return false;
+  }
 }
 
 // --- Answers kept to send ---
@@ -89,7 +104,7 @@ function alreadyNote(n, answer, now) {
 // recordAnswer({ project, sessionId, prompt, at, cwd, env, client, budget }) -> { recorded, note?, why? }
 // `why` is { n, words } when the reply asks why of a decision, which records nothing.
 export async function recordAnswer({
-  project, sessionId, prompt, at = new Date(), cwd, env = process.env, client, budget = BUDGET_MS + helperGrace(), decisions,
+  project, sessionId, prompt, at = new Date(), cwd, env = process.env, client, budget = BUDGET_MS + helperGrace(), decisions, on,
 }) {
   const now = at instanceof Date ? at : new Date(at);
   if (typeof prompt !== 'string' || typeof project !== 'string') return { recorded: false };
@@ -99,6 +114,13 @@ export async function recordAnswer({
   if (typed === null) return { recorded: false };
 
   const held = decisions ?? readDecisions(project);
+  // Off (the default until the director rules on the typed-reply source gap): nothing typed is recorded. Words that read as an
+  // answer to a waiting decision are told, so the First Mate asks it the other way.
+  if (!(on ?? typedRepliesOn(project))) {
+    const read = parseReply(typed, held.pending);
+    if (read.kind !== 'answer') return { recorded: false };
+    return { recorded: false, note: `The director typed what reads as an answer to decision ${read.n}. Typed replies are switched off, so nothing was recorded and the decision still waits. Ask it through the question picker (\`cards\` hands it out) and say so in one plain line.` };
+  }
   // An answer kept to send counts as given: its decision no longer waits, and a second reply to it meets "already answered".
   const kept = keptAnswers(project);
   const keptFor = (d) => kept.find((k) => k.text === d.text);
