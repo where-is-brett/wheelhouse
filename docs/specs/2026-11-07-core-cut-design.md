@@ -2,7 +2,7 @@
 
 # The core cut: design (7 November 2026)
 
-**Status:** draft, for the director's approval. The director answered its open questions on 7 November 2026 (section 9); the design as a whole still awaits their approval. Design only: nothing is built, and no build plan is written, until then.
+**Status:** approved by the director on 7 November 2026, with its open questions answered the same day (section 9). A build plan follows.
 
 ## 1. In plain words
 
@@ -220,5 +220,3 @@ The director answered the design's open questions on 7 November 2026, each as re
 2. **Locked on Windows is parked.** Windows stays at Standard, with the Guarded build commands (section 4.2).
 3. **Unattended goals are parked** with Archon and delegation, and come back later on the own engine with their own design (section 4.2).
 4. **The own engine learns to resume after a crash,** built as part of the core cut (section 4.3, and part 3 of section 8).
-
-The design as a whole still awaits the director's approval.
