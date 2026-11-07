@@ -1,13 +1,15 @@
-// scripts/delegation/brief.js
-// The standing brief (delegated decisions design, sections 6 and 11.1): the director's intent for a project, one signed
+// scripts/state/brief.js
+// The standing brief: the director's intent for a project, one signed
 // record in the private record. Agents read it through the helper and can't write it: a draft is no brief, and only the
 // director's click on its confirm card puts one in force (views.brief). A blank line is allowed and means only that more
 // questions park. `words` is a version mark made from the record's lines, which the confirm line carries, while the card
-// shows the lines themselves once (briefText); a record whose mark isn't its lines' stands for nothing. Nothing here
-// decides anything yet.
+// shows the lines themselves once (briefText); a record whose mark isn't its lines' stands for nothing.
 import crypto from 'node:crypto';
 import { scanContent } from '../state/secret-scan.js';
-import { BRIEF_EXAMPLES_MOST, BRIEF_WORDS_MOST } from './limits.js';
+
+// The most examples of right and wrong a brief takes, and the most of it a confirm card can show.
+export const BRIEF_EXAMPLES_MOST = 3;
+export const BRIEF_WORDS_MOST = 800;
 
 export const BRIEF_LINES = Object.freeze(['for', 'now', 'noGos', 'examples', 'facts']);
 const BREAK = /[\r\n\v\f\u0085\u2028\u2029]/;

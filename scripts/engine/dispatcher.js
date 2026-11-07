@@ -14,7 +14,8 @@
 // limit; the merge queue goes on, and the fix lane never comes through here.
 import { paceOf, PACE } from '../lib/build-loop.js';
 import { clashCheck, endedBy, since, STARTS_UNAPPROVED } from '../foreman/queue.js';
-import { PARKED_TIMES } from '../delegation/limits.js';
+// How many pieces may wait on the director, as a multiple of `pace`.
+const PARKED_TIMES = 2;
 import { startedOnOldEngine } from './lanes.js';
 
 export const MERGE_QUEUE_EVERY_MS = 15 * 60 * 1000;

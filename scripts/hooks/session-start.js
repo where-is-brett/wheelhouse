@@ -85,6 +85,7 @@ import { helperGrace } from '../lib/helper-grace.js';
 import { keepRunningModel, modelOfInput } from '../lib/front-desk-model.js';
 import { whereDigest, resetEpisode } from './where.js';
 import { keptRequest, clearRequest } from '../lib/kept-request.js';
+import { retiredPiece } from '../settings/catalogue.js';
 
 const SELF = fileURLToPath(import.meta.url);
 // The script that brings this computer's settings for a project up to date, run detached.
@@ -235,7 +236,7 @@ export function featureSlug(cwd) {
 // While views are being replaced the old ones sit in `views.old` for a moment (or for good
 // after a crash), so that folder is read when `views` is not there. `names` null reads
 // every view there (the board's inputs).
-export function localViews(project, names = ['rulebook', 'levels', 'waiting', 'unconfirmed', 'keptAsIs', 'damaged']) {
+export function localViews(project, names = ['rulebook', 'waiting', 'unconfirmed', 'keptAsIs', 'damaged']) {
   const base = path.join(wheelhouseHome(), 'projects', project, 'views');
   const dir = fs.existsSync(base) ? base : `${base}.old`;
   const out = {};
@@ -474,6 +475,8 @@ async function ensureWatcher(project, client, { spawn, pluginRoot, env = process
 // A setting for build commands on Windows is confirmed only through its own card, so a proposal
 // of one is never listed as changed without the director's confirmation (as on the board).
 const BUILDS_KEY = settingKey('');
+// A proposal an earlier version made and nothing now acts on: a level from the delegation review, or a retired setting.
+const isRetiredProposal = (u) => u?.kind === 'level' || (u?.kind === 'setting' && [u.key, u.data?.key].some((key) => typeof key === 'string' && retiredPiece(key) !== undefined));
 const isBuildsProposal = (u) => u?.kind === 'setting' && [u.key, u.data?.key].some((key) => typeof key === 'string' && key.startsWith(BUILDS_KEY));
 
 // `lineage` is the lineage check's warning lines, which come first after STOP. `windows` adds the
@@ -499,7 +502,7 @@ export function reload({ views, stop, lineage = [], notes, feature, stateRoot, w
   const title = (d) => show(d?.title ?? d?.question ?? d?.words ?? d?.value ?? '');
   // A proposal kept as is on its card here is no longer waiting for the director (ruling F49).
   const kept = new Set(Array.isArray(views?.keptAsIs) ? views.keptAsIs : []);
-  const unconfirmed = (views?.unconfirmed ?? []).filter((u) => !isBuildsProposal(u) && !kept.has(u?.id)).map((u) => `${u.id} (${u.kind}${u.key ? ` ${u.key}` : ''}): ${title(u.data)}`);
+  const unconfirmed = (views?.unconfirmed ?? []).filter((u) => !isBuildsProposal(u) && !kept.has(u?.id) && !isRetiredProposal(u)).map((u) => `${u.id} (${u.kind}${u.key ? ` ${u.key}` : ''}): ${title(u.data)}`);
   const quoted = (unconfirmed.length > 0 || (views?.waiting ?? []).length > 0 || (views?.rulebook ?? []).some((r) => r.status === 'accepted'));
   if (quoted) lines.push('Titles are quoted as agents wrote them.');
   lines.push(...section('Changed without the director\'s confirmation:', unconfirmed));
@@ -507,8 +510,6 @@ export function reload({ views, stop, lineage = [], notes, feature, stateRoot, w
   const rules = (views?.rulebook ?? []).filter((r) => r.status === 'accepted')
     .map((r) => `${r.id} (accepted): ${show(r.words ?? '').split('\n')[0]}`);
   lines.push(...section('Rulebook (accepted):', rules));
-  const levels = Object.values(views?.levels ?? {}).map((l) => `${l.key}: ${show(l.value)}`);
-  lines.push(...section('Levels:', levels));
   if (feature) lines.push(`Your feature's ledger: ${path.join(stateRoot, 'features', feature, 'ledger.md')}`);
   let text = lines.join('\n');
   if (text.length > MAX_CHARS) text = `${text.slice(0, MAX_CHARS - 1)}…`;

@@ -1,6 +1,6 @@
 // tests/scripts/frontdesk/cli.test.js
 // The front desk's one command, against a fake helper that keeps its events in memory and builds
-// the views from them as the real one does (the delegation review too).
+// the views from them as the real one does.
 import { test, after } from 'node:test';
 import { guardedRun } from '../../helpers/host-stand-ins.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
@@ -15,11 +15,8 @@ import { cardsDue } from '../../../scripts/hooks/board-context.js';
 import { numberedWaiting } from '../../../scripts/board/model.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { buildViews } from '../../../scripts/state/views.js';
-import { briefText, wholeBrief } from '../../../scripts/delegation/brief.js';
-import { BRIEF_WORDS_MOST } from '../../../scripts/delegation/limits.js';
+import { briefText, wholeBrief, BRIEF_WORDS_MOST } from '../../../scripts/state/brief.js';
 import { makeEvent, dataHash, listEvents, confirmationFor, PROTECTED_KINDS } from '../../../scripts/state/events.js';
-import { composeRule } from '../../../scripts/delegation/composer.js';
-import { delegationReview } from '../../../scripts/frontdesk/learning.js';
 import { deskCore } from '../../../scripts/desk/core.js';
 import { levelWords } from '../../../scripts/settings/effective.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
@@ -75,7 +72,7 @@ async function inHome(fn) {
 // a function read on each request) every write is refused and the views say STOP is on, as the
 // helper does under STOP. A pull request is open at `head`, unless `pr` answers for it. A write is
 // made at `writeAt(n)`, the nth write's time. The desk's reads are the real desk's, over what is held.
-function fakeHelper({ events = [], stop = false, head = FULL, pr, profile = {}, writeAt = T, names, offer } = {}) {
+function fakeHelper({ events = [], stop = false, head = FULL, pr, profile = {}, writeAt = T, names } = {}) {
   const held = [...events];
   const stopped = () => (typeof stop === 'function' ? stop() : stop);
   const calls = [];
@@ -87,7 +84,7 @@ function fakeHelper({ events = [], stop = false, head = FULL, pr, profile = {}, 
     held.push(event);
     return { ok: true, id: event.id, pushed: true };
   };
-  // The views as the helper gives them, with the card events, the card answers and the review when asked.
+  // The views as the helper gives them, with the card events and the card answers when asked.
   const viewsAnswer = (body) => {
     const built = views();
     return {
@@ -97,7 +94,6 @@ function fakeHelper({ events = [], stop = false, head = FULL, pr, profile = {}, 
       ...(stopped() ? { stop: true } : {}),
       ...(body.cards === true ? { cards: held.filter((e) => e.kind === 'card') } : {}),
       ...(body.answers === true ? { answers: held.filter((e) => e.kind === 'card-answer') } : {}),
-      ...(body.review === true ? { review: delegationReview(held, { now: NOW, enrolled: readEnrolled(), views: built }) } : {}),
     };
   };
   const source = {
@@ -125,15 +121,6 @@ function fakeHelper({ events = [], stop = false, head = FULL, pr, profile = {}, 
         if (stopped()) return STOP;
         if (PROTECTED_KINDS.includes(body.kind)) return { ok: false, refused: 'a signed kind is recorded through /state/record, never written here' };
         return writeAs(body.kind, body.data, body.id);
-      },
-    },
-    rules: {
-      offer: async (body) => {
-        if (offer === undefined) return { ok: true, offer: null };
-        calls.push(['rules.offer', body]);
-        const given = offer();
-        if (given?.event) held.push(given.event);
-        return { ok: true, offer: given };
       },
     },
     profile: {
@@ -1094,7 +1081,7 @@ test('a setting the catalogue refuses is refused before it reaches the helper', 
   });
 });
 
-test('record setting records its confirm card and marks it asked, except a concept set to false', async () => {
+test('record setting records its confirm card and marks it asked, and refuses a concept setting', async () => {
   await inHome(async () => {
     const helper = fakeHelper();
     // The director's own setting: written to the profile, then its card, naming the id the profile gave it.
@@ -1110,13 +1097,11 @@ test('record setting records its confirm card and marks it asked, except a conce
     assert.ok(card.data.question.includes('Logbook opens on: build'));
     assert.deepEqual(asked.data, { cards: [tab.json.card.id] });
 
-    // A concept set to false counts at once (explanations get longer), so it needs no card.
+    // A concept setting an earlier version kept is no setting now: it is refused, and nothing is written.
     const before = helper.writes().length;
     const known = await run(helper, ['record', 'setting'], JSON.stringify({ key: 'known:ci', value: false }));
-    assert.equal(known.code, 0, known.err);
-    assert.deepEqual(helper.calls.at(-1), ['profile.write', { kind: 'setting', data: { key: 'known:ci', value: false, words: 'Knows "ci": no' } }]);
+    assert.equal(known.code, 1);
     assert.equal(helper.writes().length, before);
-    assert.equal(known.json.card, undefined);
 
     // A project's setting is written under the id its card was composed with.
     const pace = await main(['record', 'setting'], {
@@ -1158,114 +1143,6 @@ const approvedOn = (pr, n, topic = 'copy-changes') => {
 };
 const reversalOf = (topic, n) => makeEvent({ kind: 'reversal', data: { topic, what: 'The director undid a change made alone' }, now: () => T(n) });
 
-test('review asks each proposal as a confirm card for a level, and records the review last', async () => {
-  await inHome(async () => {
-    const events = [...[1, 2, 3, 4, 5].flatMap((pr) => approvedOn(pr, pr * 2)), reversalOf('colours', 20)];
-    const helper = fakeHelper({ events });
-    let made = 0;
-    const review = async () => {
-      let out = '';
-      let err = '';
-      const code = await main(['review'], { cwd: CWD, client: helper.client, now: () => NOW, makeId: () => `level-${(made += 1)}`, out: (t) => { out += t; }, err: (t) => { err += t; } });
-      assert.equal(code, 0, err);
-      return JSON.parse(out);
-    };
-    const first = await review();
-    assert.deepEqual(helper.calls[0], ['desk.read', { cwd: CWD, view: 'waiting', args: { review: true } }]);
-    const writes = helper.writes();
-    assert.deepEqual(writes.map((w) => w.kind), ['level', 'card', 'level', 'card', 'asked', 'note']);
-    // Each proposal is a level event under the id its card was composed with, with its words and its reason.
-    const [up, upCard, down, downCard, asked, note] = writes;
-    assert.equal(up.id, 'level-1');
-    assert.deepEqual({ ...up.data, because: undefined }, { key: 'colours', value: 3, words: levelWords('colours', 3), because: undefined });
-    assert.match(up.data.because, /^you undid a decision/);
-    assert.deepEqual({ ...down.data, because: undefined }, { key: 'copy-changes', value: 2, words: '"copy-changes": decide alone and tell you (level 2)', because: undefined });
-    assert.match(down.data.because, /^you chose what I recommended 5 times/);
-    assert.equal(upCard.data.line, confirmLine({ kind: 'level', id: 'level-1', data: up.data }));
-    assert.equal(downCard.data.line, confirmLine({ kind: 'level', id: 'level-2', data: down.data }));
-    assert.equal(downCard.data.kind, 'confirm');
-    // Each card offers Keep as is, and says what a confirmed level does.
-    assert.deepEqual(downCard.data.options, ['Confirm', 'Suggest a change…', 'Keep as is', 'Not now']);
-    assert.deepEqual(upCard.data.options, ['Confirm', 'Suggest a change…', 'Keep as is', 'Not now']);
-    assert.match(downCard.data.descriptions[0], /rulebook at level 2/);
-    assert.match(downCard.data.descriptions[0], /without a card/);
-    assert.match(downCard.data.descriptions[0], /briefing/);
-    assert.doesNotMatch(downCard.data.question, /I decide these myself/);
-    // The cards are asked as composed, marked asked, and the review is recorded after them.
-    assert.deepEqual(first.questions.map((q) => q.question), [upCard.data.question, downCard.data.question].map(chatCopy));
-    assert.ok(first.questions[1].options[0].description.includes(down.data.because.replace(/[.!?]+$/, '')), 'the reason is on the recommended option');
-    assert.equal(first.left, 0);
-    assert.equal(first.problems, undefined);
-    const cardIds = helper.held.filter((e) => e.kind === 'card' && e.data.kind === 'confirm').map((e) => e.id);
-    assert.deepEqual(asked.data, { cards: cardIds });
-    assert.deepEqual(note.data, { review: 'delegation', at: NOW.toISOString() });
-    // Straight after, nothing is due and each proposal waits for the director: no cards, the review recorded again.
-    const again = await review();
-    assert.deepEqual(again, { questions: [], left: 0 });
-    assert.deepEqual(helper.writes().slice(writes.length).map((w) => w.kind), ['note']);
-    // The levels view lists both, waiting for the director.
-    const levels = await run(helper, ['views', 'levels']);
-    assert.equal(levels.code, 0, levels.err);
-    assert.deepEqual(levels.out.trim().split('\n'), [
-      `${levelWords('colours', 3)} (waiting for the director to confirm it)`,
-      `${levelWords('copy-changes', 2)} (waiting for the director to confirm it)`,
-    ]);
-  });
-});
-
-test('review gives one call\'s worth of cards and leaves the rest waiting on the board', async () => {
-  await inHome(async () => {
-    const topics = ['alpha', 'bravo', 'charlie', 'delta', 'echo'];
-    const helper = fakeHelper({ events: topics.map((topic, i) => reversalOf(topic, i + 1)) });
-    const out = await run(helper, ['review']);
-    assert.equal(out.code, 0, out.err);
-    assert.equal(out.json.questions.length, CARD.questions);
-    assert.equal(out.json.left, 1);
-    assert.equal(helper.views().waiting.length, 5);
-    assert.equal(helper.writes().find((w) => w.kind === 'asked').data.cards.length, CARD.questions);
-    assert.equal(helper.writes().at(-1).kind, 'note');
-  });
-});
-
-test('review records itself as done only when every proposal and its card were recorded', async () => {
-  await inHome(async () => {
-    const events = [reversalOf('alpha', 1), reversalOf('bravo', 2)];
-    // The second level's card is refused: the review stays due, and the problem says so.
-    const helper = fakeHelper({ events });
-    const write = helper.client.state.write;
-    let cards = 0;
-    helper.client.state.write = async (body) => (body.kind === 'card' && (cards += 1) === 2 ? { ok: false, refused: 'the disk is full' } : write(body));
-    const out = await run(helper, ['review']);
-    assert.equal(out.code, 0, out.err);
-    assert.equal(out.json.questions.length, 1);
-    assert.ok(out.json.problems.some((p) => /bravo.*confirm card wasn't.*the disk is full/.test(p)), out.json.problems);
-    assert.ok(out.json.problems.some((p) => /stays due/.test(p)), out.json.problems);
-    // Both levels and the first card are held, and the card handed out is marked asked; no note.
-    assert.deepEqual(helper.held.map((e) => e.kind), ['reversal', 'reversal', 'level', 'card', 'level', 'asked']);
-    // A level whose write is refused does the same.
-    const refusing = fakeHelper({ events });
-    const writeLevel = refusing.client.state.write;
-    refusing.client.state.write = async (body) => (body.kind === 'level' ? { ok: false, refused: 'no' } : writeLevel(body));
-    const none = await run(refusing, ['review']);
-    assert.equal(none.code, 0, none.err);
-    assert.deepEqual(none.json.questions, []);
-    assert.equal(refusing.held.some((e) => e.kind === 'note'), false);
-  });
-});
-
-test('record refuses a note that says it is the delegation review', async () => {
-  await inHome(async () => {
-    const helper = fakeHelper();
-    const out = await run(helper, ['record', 'note'], JSON.stringify({ review: 'delegation', at: NOW.toISOString() }));
-    assert.equal(out.code, 1);
-    assert.match(out.err, /review/);
-    assert.deepEqual(helper.writes(), []);
-    const other = await run(helper, ['record', 'note'], JSON.stringify({ review: 'anything' }));
-    assert.equal(other.code, 1);
-    assert.deepEqual(helper.writes(), []);
-  });
-});
-
 test('card takes a topic as a slug, in lower case, and refuses one that is not', async () => {
   await inHome(async () => {
     const helper = fakeHelper();
@@ -1294,21 +1171,12 @@ test('record reversal keeps its topic as a slug in lower case, as a card does', 
   });
 });
 
-test('views levels lists the topics: their levels in force, those waiting, and those on earlier cards', async () => {
+test('views levels lists the topics on earlier cards', async () => {
   await inHome(async () => {
-    const level = (key, value, n) => makeEvent({ kind: 'level', data: { key, value, words: levelWords(key, value) }, now: () => T(n) });
-    const inForce = level('copy-changes', 2, 1);
-    const events = [
-      inForce, makeEvent({ ...confirmationFor(inForce), now: () => T(2) }), level('colours', 3, 3),
-      cardEvent({ ...PRODUCT(1), topic: 'pricing' }, 4), cardEvent({ ...PRODUCT(2), topic: 'copy-changes' }, 5),
-    ];
+    const events = [cardEvent({ ...PRODUCT(1), topic: 'pricing' }, 4), cardEvent({ ...PRODUCT(2), topic: 'copy-changes' }, 5)];
     const out = await run(fakeHelper({ events }), ['views', 'levels']);
     assert.equal(out.code, 0, out.err);
-    assert.deepEqual(out.out.trim().split('\n'), [
-      `${levelWords('copy-changes', 2)} (in force)`,
-      `${levelWords('colours', 3)} (waiting for the director to confirm it)`,
-      '"pricing": on earlier cards',
-    ]);
+    assert.deepEqual(out.out.trim().split('\n'), ['"copy-changes": on earlier cards', '"pricing": on earlier cards']);
     assert.equal((await run(fakeHelper(), ['views', 'levels'])).out, 'No decision topics yet.\n');
   });
 });
@@ -1751,17 +1619,6 @@ test('views waiting lists the last hour\'s answers, and leaves the lead out when
   });
 });
 
-test('views evidence says how many cards were sealed, read and sampled, and nothing of what they say', async () => {
-  await inHome(async () => {
-    const line = { line: 'seal', card: 'q-1', work: 'w', head: null, signed: null, reader: true, candidates: { land: null }, exclusions: { hit: ['data-model'], unread: [] }, stamp: { models: null, pack: null, rule: null, exclusions: null }, at: T(1).toISOString(), hash: 'a'.repeat(64) };
-    const { out } = await run(fakeHelper({ events: [makeEvent({ kind: 'shadow', data: line, now: () => T(1) })] }), ['views', 'evidence']);
-    assert.match(out, /1 card sealed/);
-    assert.match(out, /0 read/);
-    assert.match(out, /0 sampled/);
-    assert.doesNotMatch(out, /data-model|land/);
-  });
-});
-
 test('views and explain answer in short lines, and similar finds work that shares words', async () => {
   await inHome(async () => {
     const ruling = makeEvent({ kind: 'ruling', data: { words: 'Money is shown in dollars' }, now: () => T(1) });
@@ -1883,10 +1740,6 @@ test('under STOP the reading commands run and record is refused', async () => {
     assert.equal(again.code, 0);
     assert.equal(again.json.problems, undefined);
     for (const name of ['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work']) assert.equal((await run(helper, ['views', name])).code, 0, name);
-    // The review writes, so it waits until STOP is lifted.
-    const review = await run(helper, ['review']);
-    assert.equal(review.code, 1);
-    assert.match(review.err, /All stop/);
     assert.equal((await run(helper, ['explain', 'merge'])).code, 0);
     assert.equal((await run(helper, ['similar'], 'export a report')).code, 0);
     assert.equal((await run(helper, ['similar', 'export', 'a', 'report'])).code, 0);
@@ -1989,7 +1842,7 @@ test('a card the plain words would take past its length is composed as written',
   });
 });
 
-test('the explanations setting and the concepts the director knows decide what is put in plain words', async () => {
+test('the explanations setting alone decides what is put in plain words, and a concept an old record calls known changes nothing', async () => {
   await inHome(async () => {
     const setting = (key, value) => ({ key, id: key, at: '2026-10-01T00:00:00.000Z', value, before: null });
     const some = fakeHelper({ events: [questionEvent(PLAIN_QUESTION)], profile: { explanations: setting('explanations', 'some-terms') } });
@@ -1999,7 +1852,7 @@ test('the explanations setting and the concepts the director knows decide what i
     assert.match(kept, / Terms: pull request means /);
     const known = fakeHelper({ events: [questionEvent(PLAIN_QUESTION)], profile: { 'known:pull-request': setting('known:pull-request', true) } });
     await run(known, ['cards']);
-    assert.match(known.writes().find((w) => w.kind === 'card').data.question, /^The pull request for piece 2 needs an independent check before it can go on\.$/m);
+    assert.match(known.writes().find((w) => w.kind === 'card').data.question, /^The proposed change for piece 2 needs an independent check before it can go on\.$/m);
   });
 });
 
@@ -2155,7 +2008,7 @@ test('an unknown command, or a helper that can\'t be reached, is one line on sta
     const helper = fakeHelper();
     const unknown = await run(helper, ['show', '7']);
     assert.equal(unknown.code, 1);
-    assert.match(unknown.err, /^Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, review, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note\n$/);
+    assert.match(unknown.err, /^Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note\n$/);
     const away = { client: { desk: { read: async () => ({ ok: false, refused: 'the host helper could not be reached: is it running?' }) } } };
     const out = await run(away, ['cards']);
     assert.equal(out.code, 1);
@@ -2215,7 +2068,7 @@ test('through the real helper, the command places the project from its folder an
 test('run as a script, an unknown command is refused with the list of commands', async () => {
   const done = spawnSync(process.execPath, [SCRIPT, 'nonsense'], { encoding: 'utf8' });
   assert.equal(done.status, 1);
-  assert.equal(done.stderr, 'Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, review, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note\n');
+  assert.equal(done.stderr, 'Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note\n');
   assert.equal(done.stdout, '');
 });
 
@@ -2294,42 +2147,6 @@ test('the project\'s own name, as the helper gives it, is never put in plain wor
 const LEVEL_3 = { ...QUESTION, level: 3 };
 const joinerOf = (lead) => questionEvent({ ...LEVEL_3, id: 'q-login-500001', work: 'login', joins: lead.data.id }, 6);
 
-test('a close match re-issues the lead\'s card with both wordings, and an answered match adds its line', async () => {
-  await inHome(async () => {
-    const lead = questionEvent(LEVEL_3);
-    const [work] = lead.data.id.match(/(?<=^q-).*(?=-\d+$)/);
-    const close = questionEvent({ ...LEVEL_3, id: `q-${work}-500009`, what: 'Should the file go out as a spreadsheet?' }, 6);
-    const helper = fakeHelper({ events: [EXPORT, lead, close] });
-    await run(helper, ['cards']);
-    assert.equal(helper.held.filter((e) => e.kind === 'card').length, 2);
-    helper.held.push(makeEvent({ kind: 'match', data: { card: close.data.id, work, joins: lead.data.id }, now: () => T(7) }));
-    await run(helper, ['cards']);
-    const issued = helper.held.filter((e) => e.kind === 'card').at(-1);
-    assert.deepEqual(issued.data.joiners, [close.data.id]);
-    assert.match(issued.data.question, /Should the file go out as a spreadsheet\?/);
-    assert.equal(issued.data.revises !== undefined, true);
-    assert.equal(numberedWaiting(helper.views(), []).length, 1, 'the two cards are one');
-  });
-  await inHome(async () => {
-    const lead = questionEvent(LEVEL_3);
-    const [work] = lead.data.id.match(/(?<=^q-).*(?=-\d+$)/);
-    const label = LEVEL_3.options[0].label;
-    const signed = makeEvent({ kind: 'action', data: { action: 'answer', question: 'shown', questionId: lead.data.id, questionHash: dataHash(lead.data), label }, now: () => T(6) });
-    const close = questionEvent({ ...LEVEL_3, id: `q-${work}-500009`, what: 'Should the file go out as a spreadsheet?' }, 7);
-    const helper = fakeHelper({ events: [EXPORT, lead, signed, close] });
-    await run(helper, ['cards']);
-    helper.held.push(makeEvent({ kind: 'match', data: { card: close.data.id, work, saidBefore: label, from: lead.data.id }, now: () => T(8) }));
-    await run(helper, ['cards']);
-    const issued = helper.held.filter((e) => e.kind === 'card').at(-1);
-    assert.equal(issued.data.saidBefore, label);
-    assert.match(issued.data.question, /You said this before/);
-    assert.equal(typeof issued.data.revises, 'string');
-    const count = helper.held.filter((e) => e.kind === 'card').length;
-    await run(helper, ['cards']);
-    assert.equal(helper.held.filter((e) => e.kind === 'card').length, count, 'once');
-  });
-});
-
 test('a joiner has no number and no wake of its own', async () => {
   await inHome(async () => {
     const lead = questionEvent(LEVEL_3);
@@ -2383,195 +2200,6 @@ test('a card too long to list its pieces still comes, and they are asked after i
     const made = await run(helper, ['cards']);
     assert.equal(made.json.questions.length, 1);
     assert.equal(helper.held.filter((e) => e.kind === 'card').at(-1).data.joiners, undefined);
-  });
-});
-
-const offered = () => ({
-  event: makeEvent({ kind: 'rule', data: composeRule({
-    answer: { label: 'Replace' }, card: { kind: 'question', level: 3, options: [{ label: 'Keep' }, { label: 'Replace' }] },
-    facts: { readable: true, paths: ['src/a.js'], depsChanged: false, schemaChanged: false, guardrail: false, secrets: false, critical: false },
-    lane: 'small', project: 'o__p', now: () => NOW,
-  }) }),
-  why: 'left',
-});
-
-test('the card shows the rule as it would read, and its scope', () => inHome(async () => {
-  const helper = fakeHelper({ offer: offered });
-  const { json } = await run(helper, ['cards']);
-  assert.equal(json.questions.length, 1);
-  const [card] = json.questions;
-  assert.match(card.question, /^Same answer for this kind of thing from now on\?/);
-  assert.match(card.question, /When the options are exactly Keep, Replace, take Replace/);
-  assert.match(card.question, /in the small lane, for src\/a\.js/);
-  assert.deepEqual(card.options.map((o) => o.label), ['Confirm', 'Suggest a change…', 'Keep as is', 'Not now']);
-  const held = helper.held.find((e) => e.kind === 'card');
-  assert.equal(held.data.line, confirmLine(helper.held.find((e) => e.kind === 'rule')));
-  assert.deepEqual(cardProblems(held.data.question), []);
-  assert.deepEqual(helper.views().rules, {});
-}));
-
-test('a card that doesn\'t show the scope is refused by the card check', () => inHome(async () => {
-  const helper = fakeHelper({ offer: offered });
-  await run(helper, ['cards']);
-  const held = helper.held.find((e) => e.kind === 'card');
-  const line = held.data.line;
-  assert.ok(cardProblems(`Same answer for this kind of thing from now on?\nKeep this answer.\n${line}\nReply code: AAAA`).length > 0);
-}));
-
-test('a visit offers nothing under All stop, and an offer that fails costs the visit nothing', () => inHome(async () => {
-  const stopped = fakeHelper({ stop: true, offer: offered });
-  await run(stopped, ['cards']);
-  assert.equal(stopped.calls.some(([name]) => name === 'rules.offer'), false);
-  const broken = fakeHelper({ offer: () => { throw new Error('no route'); } });
-  const { json } = await run(broken, ['cards']);
-  assert.deepEqual(json.questions, []);
-  assert.equal(json.problems, undefined);
-}));
-
-test('a typed wider rule becomes a ruling draft in the director\'s words, with a confirm card', () => inHome(async () => {
-  const helper = fakeHelper();
-  const words = 'Always land finished work';
-  const { json } = await run(helper, ['record', 'ruling'], JSON.stringify({ words, wider: true }));
-  const [ruling, card] = helper.writes();
-  assert.deepEqual(ruling.data, { words });
-  assert.equal(card.data.kind, 'confirm');
-  assert.ok(card.data.question.includes(`"${words}"`));
-  assert.match(card.data.question, /usual exclusions/);
-  assert.match(card.data.question, /level 4 always comes to you/);
-  assert.equal(json.card.id, helper.held.find((e) => e.kind === 'card').id);
-}));
-
-// A question drawn blind, through `cards` to the answer card that follows.
-const BLIND_QUESTION = {
-  id: 'q-export-csv-2', work: 'export-csv', what: 'The export needs to know which separator to use.', why: 'It changes the file people download.',
-  options: [{ label: 'Comma', says: 'Commas between values; opens in any spreadsheet.' }, { label: 'Tab', says: 'Tabs between values.' }, { label: 'Semicolon', says: 'Semicolons between values.' }],
-  recommendation: 'Tab', level: 3, blind: true,
-};
-// Another open piece, so the question's work doesn't hold up all there is.
-const WORKS = [EXPORT, makeEvent({ kind: 'work', data: { id: 'login', title: 'Sign in', lane: 'feature', visible: true, dependsOn: [] }, now: () => T(2) })];
-const pickOn = (card, label, n = 150) => makeEvent({ kind: 'card-answer', data: { question: card.question, label }, now: () => T(n) });
-const blindWrites = (helper) => cardWrites(helper).filter((c) => c.kind === 'blind');
-
-test('a blind card shows the thing being decided, in full, and holds back only the recommendation', async () => {
-  await inHome(async () => {
-    const helper = fakeHelper({ events: [...WORKS, questionEvent(BLIND_QUESTION)] });
-    const { json } = await run(helper, ['cards']);
-    const [asked] = json.questions;
-    assert.equal(asked.header, 'First pick');
-    assert.equal(asked.question.split('\n')[0], BLIND_QUESTION.what);
-    assert.ok(asked.question.includes(BLIND_QUESTION.why));
-    for (const { label, says: words } of BLIND_QUESTION.options) {
-      assert.equal(asked.options.find((o) => o.label === label)?.description, words);
-    }
-    assert.equal(asked.options.at(-1).label, 'Suggest a change…');
-    assert.ok(!JSON.stringify(asked).includes('Recommended'), 'nothing marks an option');
-    const [card] = blindWrites(helper);
-    assert.equal(card.recommend, undefined);
-    assert.equal(card.parts.recommendation, undefined);
-    assert.ok(card.parts.options.every((o) => o.recommended === false));
-    assert.deepEqual(cardProblems(asked), []);
-    assert.equal(cardWrites(helper).length, 1, 'the answer card waits for the pick');
-    await run(helper, ['cards']);
-    assert.equal(cardWrites(helper).length, 1, 'made once');
-  });
-});
-
-test('the blind click answers nothing: the question stays open and its answer card follows', async () => {
-  await inHome(async () => {
-    const helper = fakeHelper({ events: [...WORKS, questionEvent(BLIND_QUESTION)] });
-    await run(helper, ['cards']);
-    const [blind] = blindWrites(helper);
-    helper.held.push(pickOn(blind, 'Comma'));
-    const entry = helper.views().questions[BLIND_QUESTION.id];
-    assert.equal(entry.answer, null);
-    assert.equal(entry.firstPick.label, 'Comma');
-    const { json } = await run(helper, ['cards']);
-    const [asked] = json.questions;
-    assert.equal(asked.question.split('\n')[0], `You picked Comma first. ${BLIND_QUESTION.what}`);
-    assert.match(asked.options[1].description, /^Recommended: /);
-    const card = cardWrites(helper).at(-1);
-    assert.equal(card.kind, 'answer');
-    assert.equal(card.blind, true);
-    assert.equal(card.line, answerLine(BLIND_QUESTION.id));
-    assert.equal(helper.views().questions[BLIND_QUESTION.id].answer, null);
-  });
-});
-
-test('a typed answer on the blind card closes it, and the answer card follows naming no pick', async () => {
-  await inHome(async () => {
-    const helper = fakeHelper({ events: [...WORKS, questionEvent(BLIND_QUESTION)] });
-    await run(helper, ['cards']);
-    helper.held.push(pickOn(blindWrites(helper)[0], 'Neither, ask the supplier'));
-    assert.ok(!helper.views().waiting.some((c) => c.data.kind === 'blind'));
-    assert.equal(helper.views().questions[BLIND_QUESTION.id].firstPick.typed, true);
-    await run(helper, ['cards']);
-    const card = cardWrites(helper).at(-1);
-    assert.equal(card.kind, 'answer');
-    assert.equal(card.blind, true);
-    assert.ok(!card.question.includes('You picked'));
-  });
-});
-
-test('Suggest a change… and Why? leave a blind card waiting', async () => {
-  await inHome(async () => {
-    const helper = fakeHelper({ events: [...WORKS, questionEvent(BLIND_QUESTION)] });
-    await run(helper, ['cards']);
-    const [blind] = blindWrites(helper);
-    helper.held.push(pickOn(blind, 'Suggest a change…'), pickOn(blind, 'Why?', 151));
-    assert.ok(helper.views().waiting.some((c) => c.data.kind === 'blind'));
-    assert.equal(helper.views().questions[BLIND_QUESTION.id].firstPick, undefined);
-  });
-});
-
-test('a card that comes to hold up all work drops its blind form', async () => {
-  await inHome(async () => {
-    const top = makeEvent({ kind: 'note', data: { about: 'top-card', id: BLIND_QUESTION.id, holdsUp: 2 }, now: () => T(200) });
-    // Before any blind card is out, the ordinary card goes straight out.
-    const fresh = fakeHelper({ events: [...WORKS, questionEvent(BLIND_QUESTION), top] });
-    await run(fresh, ['cards']);
-    assert.deepEqual(cardWrites(fresh).map((c) => c.kind), ['answer']);
-    assert.equal(cardWrites(fresh)[0].blind, undefined, 'a card that showed its recommendation counts as any other');
-
-    // With one out, the answer card takes its place.
-    const helper = fakeHelper({ events: [...WORKS, questionEvent(BLIND_QUESTION)] });
-    await run(helper, ['cards']);
-    helper.held.push(top);
-    const { json } = await run(helper, ['cards']);
-    assert.deepEqual(cardWrites(helper).map((c) => c.kind), ['blind', 'answer']);
-    assert.deepEqual(helper.views().waiting.map((c) => c.data.kind), ['answer']);
-    assert.match(json.questions[0].options[1].description, /^Recommended: /);
-    // A late click on the card it replaced, seen with the recommendation out, is no blind pick.
-    helper.held.push(pickOn(blindWrites(helper)[0], 'Comma', 300));
-    assert.equal(helper.views().questions[BLIND_QUESTION.id].firstPick, undefined);
-  });
-});
-
-test('the day\'s budget holds a blind card back as it would the question, and the board numbers it once', async () => {
-  await inHome(async () => {
-    const helper = fakeHelper({ events: [...WORKS, questionEvent(BLIND_QUESTION), heldNote([BLIND_QUESTION.id])] });
-    const { json } = await run(helper, ['cards']);
-    assert.deepEqual(json.questions, []);
-    assert.equal(json.heldBack, 1);
-    assert.equal(blindWrites(helper).length, 1);
-    const board = await run(helper, ['views', 'waiting']);
-    assert.equal(board.code, 0, board.err);
-  });
-});
-
-test('a blind card that can\'t be made leaves the ordinary card, never no card', async () => {
-  await inHome(async () => {
-    const says = { ...BLIND_QUESTION, what: 'I recommend tabs here, so which separator should it be?' };
-    const helper = fakeHelper({ events: [...WORKS, questionEvent(says)] });
-    await run(helper, ['cards']);
-    assert.deepEqual(cardWrites(helper).map((c) => c.kind), ['answer']);
-  });
-});
-
-test('card refuses a blind card: only `cards` makes one', async () => {
-  await inHome(async () => {
-    const got = await run(fakeHelper(), ['card'], JSON.stringify({ kind: 'blind', level: 3 }));
-    assert.notEqual(got.code, 0);
-    assert.match(got.err, /comes from `cards`/);
   });
 });
 

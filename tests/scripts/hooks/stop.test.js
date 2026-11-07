@@ -812,14 +812,6 @@ test('the managed copy lets the plugin\'s runbook through under STOP, by the roo
   });
 });
 
-test('views evidence is a read the guard lets through under STOP', async () => {
-  await withHome(async () => {
-    const desk = `${PLUGIN}/scripts/frontdesk/cli.js`;
-    assert.equal(isFrontDeskRead(`node ${desk} views evidence`, [PLUGIN], 'linux'), true);
-    assert.equal(isFrontDeskRead(`node ${desk} views seals`, [PLUGIN], 'linux'), false);
-  });
-});
-
 test('scriptArguments takes the one flag that turns the system certificate store off between node and the script, and no other', () => {
   const roots = [PLUGIN];
   const desk = `${PLUGIN}/scripts/frontdesk/cli.js`;

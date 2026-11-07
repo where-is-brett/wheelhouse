@@ -4,10 +4,6 @@
 // AskUserQuestion's limits: questions per call, options per question, the header's length, and
 // the most characters a card's question may have.
 export const CARD = Object.freeze({ questions: 4, options: 4, fewestOptions: 2, header: 12, chars: 1200 });
-// How many cards on different days, answered without Explain more, before a concept is proposed as known.
-export const KNOWN_AFTER = 3;
-// How many times a level 3 topic is approved unchanged before it is proposed for level 2.
-export const DELEGATE_AFTER = 5;
 // The page sizes a preview is photographed at, and how long one page may take.
 export const SCREEN_SIZES = Object.freeze([Object.freeze({ width: 1280, height: 800 }), Object.freeze({ width: 390, height: 844 })]);
 export const SCREEN_TIMEOUT_MS = 30000;
@@ -28,7 +24,6 @@ export const WORK_REPORTS_RULE = `Edit(/${WORK_REPORTS}*.md)`;
 // the private note's figures back (scripts/measures/baseline.js); the helper composes it, and it
 // is never a card event in the state. A trust card asks to trust another of the director's
 // computers here (ruling R80); the session start composes it, and its click is kept on this computer.
-// A blind card shows a question's options first, with no recommendation (scripts/delegation/blind.js).
 // A take-over card asks to take the lock from another computer that holds it (design section 9); the session start
 // composes it, and its click is the director's Take over here, which the helper acts on.
 // Uninstall's card asks to remove Wheelhouse from a project (ruling R90); the helper composes it, and
@@ -41,13 +36,11 @@ export const WORK_REPORTS_RULE = `Edit(/${WORK_REPORTS}*.md)`;
 export const CARD_KINDS = Object.freeze([
   'approval', 'confirm', 'lift-stop', 'ci-push', 'runbook', 'approve-work', 'answer', 'amend',
   'lift-incident', 'incident-fix', 'setup', 'confirm-all', 'baseline', 'trust', 'take-over', 'uninstall', 'question',
-  'keep-control-files', 'usage', 'premium', 'pair', 'blind', 'release', 'update-helper', 'update',
+  'keep-control-files', 'usage', 'premium', 'pair', 'release', 'update-helper', 'update',
 ]);
 // Labels that ask for more or put a card off: a click on one never answers it.
 // Why? and Suggest a change… only steer the front desk; the director's own words never sign anything.
 export const PUT_OFF = Object.freeze(['Not now', 'Explain more', 'Show me', 'Why?', 'Suggest a change…']);
-// What the card offering a rule asks (delegated decisions design, section 11.1).
-export const OFFER_ASK = 'Same answer for this kind of thing from now on?';
 // The option a confirm card for a proposal offers in place of Show me (ruling F48): it decides the
 // card, signs nothing, and holds the proposal back for a while.
 export const KEEP_AS_IS = 'Keep as is';

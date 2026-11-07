@@ -7,16 +7,13 @@ import { renderBoard, unlinked } from '../board/render.js';
 import { briefingModel as realBriefingModel } from '../briefing/model.js';
 import { briefingParts } from '../briefing/text.js';
 import { settingsText } from '../settings/effective.js';
-import { KNOWN, SETTINGS } from '../settings/catalogue.js';
+import { SETTINGS } from '../settings/catalogue.js';
 import { sourcesText } from '../sources/check.js';
-import { glossaryOf, knownConcepts, plainWords } from '../frontdesk/glossary.js';
+import { glossaryOf, plainWords } from '../frontdesk/glossary.js';
 import { isBriefingLine } from '../lib/release-line.js';
 import { localViews } from '../hooks/session-start.js';
 import { readSafekeepingSaid } from '../briefing/seen.js';
 import { namesOf, readProject } from '../lib/projects.js';
-import { listEvents } from '../state/events.js';
-import { reviewDue } from '../frontdesk/learning.js';
-import { stateDir } from '../lib/paths.js';
 import { BRIEFING_WORDS, CONTEXT_CHARS } from '../lib/core-numbers.js';
 
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -50,7 +47,7 @@ export function fitLines(text, limit) {
   return { text: text.slice(0, limit).replace(/[\uD800-\uDBFF]$/, ''), cut: true };
 }
 
-const LABELS = [...Object.values(SETTINGS), KNOWN].map((setting) => setting.label);
+const LABELS = Object.values(SETTINGS).map((setting) => setting.label);
 
 // The titles the director finds work by (a feature's or a pull request's), which stay as written.
 function titlesOf(model) {
@@ -72,7 +69,7 @@ function releaseLinesOf(model) {
 }
 
 // The words every text it adds goes through: the starter glossary with the project's over it, the
-// explanations setting, the concepts the director knows, and what stays as written: the settings'
+// explanations setting, and what stays as written: the settings'
 // names, the titles of the work, a release's line and the names the project goes by. What can't be read gives
 // the defaults.
 export function wordsOf(project, settings, model) {
@@ -81,7 +78,6 @@ export function wordsOf(project, settings, model) {
     protect: [...LABELS, ...attempt(() => titlesOf(model), []), ...attempt(() => releaseLinesOf(model), [])],
     glossary: attempt(() => glossaryOf(isRecord(view) ? view : {}), attempt(() => glossaryOf({}), {})),
     explanations: settings?.explanations?.value,
-    known: attempt(() => knownConcepts(settings), []),
     names: attempt(() => namesOf(project), []),
   };
 }
@@ -112,15 +108,15 @@ const wordsIn = (text) => text.split(/\s+/).filter(Boolean).length;
 // order of what goes first: the most words that keep to the limit in plain words, found by halving.
 // What is marked as shown is what that cut kept.
 // `settings` are the settings in force, `weeklySince` the last briefing that showed the weekly
-// lines and `review` the delegation review's { due, days } (reviewOf). `survey`, `surveyAt`, `host`,
+// lines `survey`, `surveyAt`, `host`,
 // `leaveOut`, `carrying` and `earlier` are the briefing model's: what the survey found is mentioned once, and `surveyShown`
 // is the id of the survey whose lines the text showed whole (none when it was cut), or whose every
 // line the caller said itself. Throws when it can't be built.
 export function briefingIn({
-  project, model, usage, sources, settings, since, weeklySince, review, at, briefingModel = realBriefingModel, room, survey, surveyAt, host, leaveOut, carrying, earlier, holdLocked,
+  project, model, usage, sources, settings, since, weeklySince, at, briefingModel = realBriefingModel, room, survey, surveyAt, host, leaveOut, carrying, earlier, holdLocked,
 }) {
   const safekeepingSaid = attempt(() => readSafekeepingSaid(project), null);
-  const briefing = briefingModel({ model, usage, sources, since, weeklySince, now: at, review, survey, surveyAt, host, leaveOut, carrying, earlier, holdLocked, safekeepingSaid });
+  const briefing = briefingModel({ model, usage, sources, since, weeklySince, now: at, survey, surveyAt, host, leaveOut, carrying, earlier, holdLocked, safekeepingSaid });
   const length = settings?.briefing?.value;
   const limit = Object.hasOwn(BRIEFING_WORDS, length) ? BRIEFING_WORDS[length] : BRIEFING_WORDS.standard;
   const words = wordsOf(project, settings, model);
@@ -156,14 +152,6 @@ export function briefingIn({
 }
 
 
-// Whether the delegation review is due (ruling F43), from the project's events on disk and the
-// `delegationReviewDays` in force: { due, days }, or null when the state can't be read.
-export function reviewOf(project, settings, at) {
-  const value = settings?.delegationReviewDays?.value;
-  const days = Number.isInteger(value) && value > 0 ? value : SETTINGS.delegationReviewDays.default;
-  return attempt(() => ({ due: reviewDue({ events: listEvents(stateDir(project), { report: () => {} }), now: at, days }), days }));
-}
-
 // The text the board-context hook adds for `want` ('briefing', 'board', 'settings' or 'sources'),
 // heading and all, from the board's `inputs` (loadBoardInputs'), and the unusual items it showed.
 // Throws when it can't be built.
@@ -172,11 +160,10 @@ export function contextText(want, inputs, { project, at, tab, since, weeklySince
   const { model, usage, sources, settings } = inputs;
   const room = CONTEXT_CHARS - HEADINGS[want].length - 2 - reserve;
   if (want === 'briefing') {
-    const review = reviewOf(project, settings, at);
     const host = attempt(() => readProject(project)?.host ?? null, null);
     // At Trusting the work in flight is being carried on, and its line says so (ruling A9).
     const carrying = settings?.autonomy?.value === 'trusting';
-    const given = briefingIn({ project, model, usage, sources, settings, since, weeklySince, review, at, briefingModel, room, survey, surveyAt, host, leaveOut, carrying, earlier });
+    const given = briefingIn({ project, model, usage, sources, settings, since, weeklySince, at, briefingModel, room, survey, surveyAt, host, leaveOut, carrying, earlier });
     return { text: `${HEADINGS.briefing}\n\n${given.text}`, raise: given.raise, weeklyShown: given.weeklyShown, surveyShown: given.surveyShown, safekeeping: given.safekeeping };
   }
   let body;

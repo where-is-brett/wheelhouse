@@ -6,7 +6,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { CODE_ALPHABET, takeOverLine, TAKEOVER_LABEL, approvalLine } from '../../../scripts/state/card-lines.js';
 import { PUT_OFF } from '../../../scripts/lib/front-desk.js';
-import { readingOf } from '../../../scripts/delegation/seal.js';
 import { makeEvent, eventPath, writeEvent, listEvents, checkRecord, PLAIN_KINDS, PROTECTED_KINDS, HELPER_ONLY_KINDS } from '../../../scripts/state/events.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
@@ -804,7 +803,7 @@ test('a survey record carries every part of the survey, each in its own shape', 
     assert.equal(PLAIN_KINDS.includes('survey'), true);
     assert.equal(PROTECTED_KINDS.includes('survey'), false);
     // Only the helper itself records a survey or a column's readiness: no caller writes one.
-    assert.deepEqual(HELPER_ONLY_KINDS, ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'by-hand', 'shadow', 'match', 'rule', 'slept']);
+    assert.deepEqual(HELPER_ONLY_KINDS, ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'by-hand', 'slept']);
     assert.deepEqual(makeEvent({ kind: 'survey', data: SURVEY }).data, SURVEY);
     // Taken again (ruling P3), it says so.
     assert.deepEqual(makeEvent({ kind: 'survey', data: { ...SURVEY, again: true } }).data.again, true);
@@ -946,50 +945,21 @@ test('a run event can\'t be written through /state/write', () => {
   for (const kind of ['lesson']) assert.equal(HELPER_ONLY_KINDS.includes(kind), false, kind);
 });
 
-test('a caller can\'t write a shadow line', async () => {
-  const home = tempFolder('wh-shadow-');
-  const before = process.env.WHEELHOUSE_HOME;
-  process.env.WHEELHOUSE_HOME = home;
-  try {
-    const { computer, publicKey } = makeSigningKey();
-    enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
-    assert.ok(PROTECTED_KINDS.includes('shadow'));
-    assert.ok(HELPER_ONLY_KINDS.includes('shadow'));
-    const data = { line: 'seal', card: 'q-1', work: 'w', head: null, signed: null, reader: true, candidates: {}, exclusions: { hit: [], unread: [] }, stamp: {}, at: '2026-11-01T02:00:00.000Z', hash: 'a'.repeat(64) };
-    assert.match(checkRecord(makeEvent({ kind: 'shadow', data }), { enrolled: readEnrolled() }), /only the helper/);
-  } finally {
-    if (before === undefined) delete process.env.WHEELHOUSE_HOME;
-    else process.env.WHEELHOUSE_HOME = before;
+test('the kinds an earlier version wrote for delegation are no longer written', () => {
+  // Records written before the cut may still hold them: the record reader checks no kinds, so they load, and the views
+  // ignore them (tests/scripts/state/old-records.test.js). Nothing can make a new one.
+  for (const kind of ['shadow', 'match', 'rule', 'chat-question']) {
+    assert.equal(PLAIN_KINDS.includes(kind) || PROTECTED_KINDS.includes(kind) || HELPER_ONLY_KINDS.includes(kind), false, kind);
+    assert.throws(() => makeEvent({ kind, data: {} }), /Unknown event kind/, kind);
   }
 });
 
-test('a reading line carries its fields, and a line with no reading has no pick', async () => {
-  const home = tempFolder('wh-shadow-');
-  const before = process.env.WHEELHOUSE_HOME;
-  process.env.WHEELHOUSE_HOME = home;
-  try {
-    const { computer, publicKey } = makeSigningKey();
-    enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
-    const at = '2026-11-01T02:00:00.000Z';
-    const reading = { frame: 'sound', why: 'It fits.', kind: 'can-see', fits: 'no-rule', pick: 'Keep', tags: [] };
-    assert.equal(makeEvent({ kind: 'shadow', data: readingOf({ card: 'q-1', work: 'w', reading, at }) }).data.pick, 'Keep');
-    assert.equal(makeEvent({ kind: 'shadow', data: readingOf({ card: 'q-1', work: 'w', why: 'lost', at }) }).data.pick, null);
-    assert.throws(() => makeEvent({ kind: 'shadow', data: { ...readingOf({ card: 'q-1', work: 'w', why: 'lost', at }), pick: 'Keep' } }), /whether it read/);
-    assert.throws(() => makeEvent({ kind: 'shadow', data: { ...readingOf({ card: 'q-1', work: 'w', why: 'lost', at }), more: 'x' } }), /no others/);
-  } finally {
-    if (before === undefined) delete process.env.WHEELHOUSE_HOME;
-    else process.env.WHEELHOUSE_HOME = before;
-  }
-});
-
-test('a question carries its decision key, the head it was asked at, and what was said before', () => {
+test('a question no longer carries a decision key, a head, a said-before line or a blind mark', () => {
   const data = { id: 'q-b-500001', work: 'b', what: 'Which?', why: 'It matters.', options: [{ label: 'One', says: 'x' }], recommendation: 'One', level: 3 };
-  const got = makeEvent({ kind: 'question', data: { ...data, key: 'a'.repeat(64), head: 'b'.repeat(40), saidBefore: 'One' } }).data;
-  assert.deepEqual([got.key, got.head, got.saidBefore], ['a'.repeat(64), 'b'.repeat(40), 'One']);
-  assert.throws(() => makeEvent({ kind: 'question', data: { ...data, key: 'short' } }), /key/);
-  assert.throws(() => makeEvent({ kind: 'question', data: { ...data, head: 'main' } }), /head/);
-  assert.throws(() => makeEvent({ kind: 'question', data: { ...data, saidBefore: '' } }), /said before/);
-  assert.throws(() => makeEvent({ kind: 'question', data: { ...data, level: 4, checks: 'None.', saidBefore: 'One' } }), /said before/);
+  assert.deepEqual(makeEvent({ kind: 'question', data }).data, data);
+  for (const extra of [{ key: 'a'.repeat(64) }, { head: 'b'.repeat(40) }, { saidBefore: 'One' }, { blind: true }]) {
+    assert.throws(() => makeEvent({ kind: 'question', data: { ...data, ...extra } }), /has a field it should not/, JSON.stringify(extra));
+  }
 });
 
 test('a question joins a card only at level 3, by another question\'s id', () => {

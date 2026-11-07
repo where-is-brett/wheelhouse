@@ -269,7 +269,6 @@ test('the reload lists ids and titles, not whole files', async () => {
       waiting: many,
       unconfirmed: [{ kind: 'ruling', id: 'r9', data: { words: 'Do it this way' } }],
       rulebook: [{ id: 'r1', status: 'accepted', words: 'First line\nsecond line is long and private', reason: 'secret reason' }],
-      levels: { deploy: { key: 'deploy', value: 'ask' } },
     } });
     const t = text(await run(f));
     assert.match(t, /c0: Card 0/);
@@ -278,7 +277,7 @@ test('the reload lists ids and titles, not whole files', async () => {
     assert.match(t, /r9 \(ruling\): Do it this way/);
     assert.match(t, /r1 \(accepted\): First line/);
     assert.doesNotMatch(t, /second line|secret reason/);
-    assert.match(t, /deploy: ask/);
+    assert.doesNotMatch(t, /Levels:/);
     assert.ok(t.length < 10000);
   });
 });
@@ -533,18 +532,6 @@ test('the STOP line is made one short line', async () => {
     assert.ok(first.length < 500);
     assert.match(first, /^All stop is on \(set by a b/);
     assert.match(first, /at x y\)$/);
-  });
-});
-
-test('an object value shows as JSON', async () => {
-  await withHome(async () => {
-    const f = fake({ views: { ...VIEWS,
-      unconfirmed: [{ kind: 'level', id: 'l1', key: 'k', data: { key: 'k', value: { a: 1 } } }],
-      levels: { k: { key: 'k', value: { b: 2 } } } } });
-    const t = text(await run(f));
-    assert.doesNotMatch(t, /\[object Object\]/);
-    assert.match(t, /\{"a":1\}/);
-    assert.match(t, /\{"b":2\}/);
   });
 });
 

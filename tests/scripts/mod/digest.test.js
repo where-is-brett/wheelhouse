@@ -7,7 +7,7 @@ import { makeEvent, eventPath } from '../../../scripts/state/events.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { digestText, UNBUILT } from '../../../scripts/mod/digest.js';
 import { loadBoardInputs } from '../../../scripts/board/inputs.js';
-import { briefingIn, reviewOf, INPUTS_WAIT_MS } from '../../../scripts/hooks/board-context.js';
+import { briefingIn, INPUTS_WAIT_MS } from '../../../scripts/hooks/board-context.js';
 import { CONTEXT_CHARS } from '../../../scripts/lib/core-numbers.js';
 import { handle, BRIDGE_MS } from '../../../scripts/mod/bridge.js';
 import { NOT_A_PROJECT } from '../../../scripts/board/inputs.js';
@@ -87,7 +87,7 @@ test('/digest marks the briefing given, so the next gap starts from it', () => w
   assert.deepEqual(since, [NOW]);
 }));
 
-test('/digest carries the weekly lines and the delegation review as the hook does, and marks the weekly lines given only when shown', () => withProject(async ({ repo }) => {
+test('/digest carries the weekly lines as the hook does, and marks the weekly lines given only when shown', () => withProject(async ({ repo }) => {
   markSeen(P, { briefedAt: new Date('2026-10-18T09:00:00.000Z'), weeklyAt: new Date('2026-10-12T09:00:00.000Z') });
   const inputs = [];
   const raised = [];
@@ -97,7 +97,6 @@ test('/digest carries the weekly lines and the delegation review as the hook doe
   };
   await digestText({ cwd: repo, now: at(NOW), client: upClient, briefingModel: weekly(['Unattended is on for build commands', 'Unusual use: a lot']), markRaised: (ids) => raised.push(...ids) });
   assert.equal(inputs[0].weeklySince, '2026-10-12T09:00:00.000Z');
-  assert.deepEqual(inputs[0].review, { due: false, days: 14 });
   // The weekly line opens what to watch, so the unusual use after it is the one raised.
   assert.deepEqual(raised, ['u1']);
   assert.equal(readSeen(P, { now: at(NOW) }).weeklyAt, NOW);
@@ -179,7 +178,7 @@ test('/digest gives the same briefing the hook builds after a gap', () => withPr
   const seen = readSeen(P, { now: at12 });
   const hook = briefingIn({
     project: inputs.project, model: inputs.model, usage: inputs.usage, sources: inputs.sources, settings: inputs.settings,
-    since: seen.briefedAt, weeklySince: seen.weeklyAt, review: reviewOf(inputs.project, inputs.settings, at12), at: at12, room: CONTEXT_CHARS,
+    since: seen.briefedAt, weeklySince: seen.weeklyAt, at: at12, room: CONTEXT_CHARS,
   });
   const got = await digestText({ cwd: repo, now: at(NOW), client: upClient });
   assert.equal(got.text, hook.text);

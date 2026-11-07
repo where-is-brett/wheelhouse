@@ -171,7 +171,6 @@ function chatLines(data, card, label, at) {
 // The one prompt a turn hands the front desk: the card's number, its id and its own label,
 // nothing else.
 function promptOf(kind, label, n, id) {
-  if (kind === 'blind' && !PUT_OFF.includes(label)) return `${LEADS.pane} the director picked "${label}" first on card ${n} (${id}). Run \`cards\` and ask the card it gives.`;
   return kind === 'question' && !PUT_OFF.includes(label)
     ? `${LEADS.pane} the director chose "${label}" on card ${n} (${id}).`
     : `${LEADS.pane} the director pressed ${label} on card ${n} (${id}).`;

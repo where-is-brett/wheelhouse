@@ -1,6 +1,6 @@
 // scripts/engine/runner.js
 // The helper's side of the card router (Archon design, sections 8.3 and 8.4), for one project on the engine. Each new
-// ask is routed: the table's answers and a delegation's go back at once, with a Logbook line; the rest become cards,
+// ask is routed: the table's answers go back at once, with a Logbook line; the rest become cards,
 // written at once, the director's cards a day limiting which are pushed. A card is a build question (its answer card is signed by its question
 // line) or a pull request's approval (signed as any approval is), so the signing that exists signs it. Each tick, the
 // director's signed answers go back to the engine, once each; one the engine refuses closes with one plain line.
@@ -24,7 +24,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { composeCard } from '../cards/compose.js';
-import { blindDue } from '../delegation/blind.js';
 import { routeAsk, cardBudget, bundleApprovals, answerFor, dayOf, ignoresBudget, ENGINE_QUESTIONS } from './router.js';
 import { runCost, runningMinutes } from './spend.js';
 import { LOST_CARRY_ONS, LOST_TRIES, OWNER_LOST, RESUME_SETTLE_MINUTES, ownerLostAsk, resumeRun, resumesOf, unsettled } from './recovery.js';
@@ -35,16 +34,13 @@ import { MERGE_WORK } from './dispatcher.js';
 import { routerWaiting, routerCards, overtaken, approvalAnswers, limitedRuns, parkedAtLimit } from './waiting.js';
 import { endedBy } from '../foreman/queue.js';
 import { gateTargetOf } from '../state/views.js';
-import { READER_WORK } from '../delegation/reader.js';
-import { alike, normaliseWords } from '../delegation/words.js';
-import { closeMatch, decisionKey, earlierAnswer, reuse, spokenSince } from '../delegation/asked.js';
-import { REPEAT_READ_MS } from '../delegation/limits.js';
+import { alike } from '../lib/words.js';
 import { mergeQuestionWords, parkedWords, PARKED_WHY, PARKED_BECAUSE, PARKED_MEANWHILE, PARKED_APPROVE_SAYS, PARKED_SEND_BACK_SAYS, PARKED_CHANGED, SENT_BACK_ANSWER, sentBackWords, sentBackGoneWords, sentBackApprovedWords, sentBackMovedWords, sentBackNoPieceWords, limitLateWords, limitLateOverWords, LIMIT_LATE_WHY, LIMIT_LATE_MORE_SAYS, lostCarriedWords, lostCardWords, lostStoppedWords, lostStopLeftWords, lostNotNeededWords, lostAllStopWords, LOST_CARRY_SAYS, LOST_STOP_SAYS } from './words.js';
 import { SEND_BACK } from '../lib/calm-words.js';
 import { parkChoice } from './archon/asks.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
-const EMPTY = () => ({ routed: {}, waiting: [], held: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, tries: {}, later: [], next: {}, noted: null, capped: {}, capsOwed: {}, costed: {}, reviewsKept: {}, carried: {}, reworks: {}, answers: {}, sending: {}, parked: {}, reused: {}, repeats: {}, unsure: {}, sentBack: {}, resumedAt: {}, limitSeen: {}, lost: {}, losses: {}, lostFixes: {} });
+const EMPTY = () => ({ routed: {}, waiting: [], held: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, tries: {}, later: [], next: {}, noted: null, capped: {}, capsOwed: {}, costed: {}, reviewsKept: {}, carried: {}, reworks: {}, answers: {}, sending: {}, parked: {}, unsure: {}, sentBack: {}, resumedAt: {}, limitSeen: {}, lost: {}, losses: {}, lostFixes: {} });
 // The failed tries after which the director is told an answer hasn't reached the build yet.
 const UNREACHABLE_SAID = 3;
 // The cap card's options: Give it more carries the work on with the cap raised once; Stop leaves it stopped.
@@ -85,29 +81,23 @@ function saveState(file, state) {
 // A title inside a sentence: its first letter small, unless it is a name.
 const inSentence = (title) => (/^[A-Z][a-z]/.test(title) ? title.charAt(0).toLowerCase() + title.slice(1) : title);
 
-// engineRunner({ engine, file, readViews, write, stopped, now, settings, workOf, titleOf, endRun }) -> { onAsk, onMatch, tick, file }.
+// engineRunner({ engine, file, readViews, write, stopped, now, settings, workOf, titleOf, endRun }) -> { onAsk, tick, file }.
 // - `readViews()` the project's views (questions, approvals, levels), as the helper builds them;
 // - `write(kind, data)` a record in the project's history; `stopped()` whether All stop is on;
 // - `settings()` { cardsPerDay, bundleApprovals }; `workOf(runId)` { work, lane } from the project's run records;
-// - `onCard(card)` tells the seals of a card once it is written (scripts/delegation/record-only.js); `onReaderAsk(ask)`
-//   tells them of an ask on a reader's run, which never becomes a card;
 // - `titleOf(work)` the work's title; `endRun(runId)` ends a run's process tree by pid, as All stop does, for a run the
 //   engine wouldn't stop at its cap ({ ended, survivors });
 // - `openedOf(pr)` the helper's own record of what opened a pull request ({ lane, work, ... }), or null; `prOf(runId)` the
 //   pull request a run opened, by the same record, or null; `prTitleOf(pr)`
 //   its title from the host, or null; `keepReviews(runId)` keeps what an ended run's task reviews last said, in the
 //   helper's own record, true once done;
-// - `blindRoll(id)` a number in [0, 1) for a question, which draws its blind card (scripts/delegation/blind.js); by default none is;
 // - `release(work)` ends a piece's reservation (dispatch-run.js), for an end that writes no report: the director's Stop
 //   and a bug that moves lane;
 // - `admittedTo(work)` whether the dispatcher has given a piece its place; `delivered(work, key)` and `drop(work, key)` tell
 //   it an answer went back or was refused or not used; `startAdmitted(args)` starts a run on the place already held;
 //   `carryOver(work, { branch, answers })` keeps what Carry on needs of an answer All stop kept from being used.
-// - `comingBack(work)` whether a piece waits for a place, so no answer may wake it from here;
 // - `retrying(runId)` whether a failed run may yet be resumed, so what ran isn't settled; `retriesAdmitted()` the retries given
 //   a place, [{ work, key, runId, delivered }], which this resumes, each after a look at its run;
-// - `headOf(place)` a piece's head, `commitsSince(place, head)` its commits after that head and `exclusionsOf(place)` the
-//   common exclusions it hits, `place` being { branch, folder }; each null when it can't be read, and none may hold up a tick.
 // - `handBack({ pr })` hands a parked pull request the director approved to the merge queue again
 //   (dispatch-run.js): { ok }, { ok: false, waiting } or { ok: false, refused }.
 // - `takeBack({ pr, work })` says whether a pull request the director sent back can go to its piece: { ok }, { ok: false, gone }
@@ -124,18 +114,11 @@ const inSentence = (title) => (/^[A-Z][a-z]/.test(title) ? title.charAt(0).toLow
 // The card's other answer is Send it back (`sendBacks`): the park ends, and the piece is reworked on its own branch as a
 // blocked exit's Send it back is. `sentBack` keeps which signed clicks have been acted on, so each counts once. On a project in
 // git alone nothing parks: the local queue raises the same card, and the change marked ready stands in for the park.
-export function engineRunner({ engine, file, readViews, write, stopped = () => false, now = () => new Date(), settings = () => ({}), noteSleep = async () => true, workOf = () => null, titleOf = (work) => work, endRun = async () => ({ ended: [], survivors: [] }), openedOf = () => null, prOf = () => null, prTitleOf = async () => null, keepReviews = async () => true, onCard = () => {}, onReaderAsk = () => {}, blindRoll = () => 1, release = () => {}, handBack = async () => ({ ok: false, refused: 'nothing hands work to the merge queue here' }), admittedTo = () => true, delivered = () => {}, drop = () => {}, takeBack = async () => ({ ok: false }), notReady = () => {}, localChange = () => null, startAdmitted = async () => ({ ok: false, refused: 'nothing starts runs here' }), carryOver = () => {}, comingBack = () => false, retrying = () => true, retriesAdmitted = () => [], headOf = async () => null, commitsSince = async () => null, exclusionsOf = async () => null, endLeft = async () => ({ ended: [], survivors: [] }), lostCleared = () => {}, stoppedRuns = () => [] } = {}) {
+export function engineRunner({ engine, file, readViews, write, stopped = () => false, now = () => new Date(), settings = () => ({}), noteSleep = async () => true, workOf = () => null, titleOf = (work) => work, endRun = async () => ({ ended: [], survivors: [] }), openedOf = () => null, prOf = () => null, prTitleOf = async () => null, keepReviews = async () => true, release = () => {}, handBack = async () => ({ ok: false, refused: 'nothing hands work to the merge queue here' }), admittedTo = () => true, delivered = () => {}, drop = () => {}, takeBack = async () => ({ ok: false }), notReady = () => {}, localChange = () => null, startAdmitted = async () => ({ ok: false, refused: 'nothing starts runs here' }), carryOver = () => {}, retrying = () => true, retriesAdmitted = () => [], endLeft = async () => ({ ended: [], survivors: [] }), lostCleared = () => {}, stoppedRuns = () => [] } = {}) {
   let state = readState(file);
   const keep = () => saveState(file, state);
   const note = (words, extra = {}) => write('note', { about: 'engine', words, ...extra });
   const titled = (work) => inSentence(String(titleOf(work) ?? work));
-  // A card has been written: the seals' trouble is never the card's.
-  const sealCard = (card) => {
-    try { onCard(card); } catch { /* it costs a seal, never a card */ }
-  };
-  const letGo = (work) => {
-    try { release(work); } catch { /* the files stay held, which only holds new work back */ }
-  };
   const placeOf = (ask) => ({ branch: ask?.context?.branch ?? null, folder: ask?.context?.folder ?? null });
 
   let enter = () => {};
@@ -336,10 +319,6 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       return;
     }
     const found = workOf(ask.runId);
-    if (found?.work === READER_WORK) {
-      try { onReaderAsk(ask); } catch { /* it costs a reading, never a card */ }
-      return;
-    }
     // A merge-queue run the helper didn't start, not yet seen by the dispatcher, still waits on an answer.
     const work = found?.work ?? ask.work ?? (isPlain(ask.mergeQuestion) ? MERGE_WORK : null);
     if (typeof work !== 'string') return;
@@ -385,7 +364,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
         if (await leaveAlone(ask, asked, choice, work)) return;
       }
     }
-    const routed = routeAsk(ask, { levels: views.levels ?? {} });
+    const routed = routeAsk(ask);
     if (routed.answer) {
       if (stopped()) {
         // Answered once All stop is lifted, never under it.
@@ -405,135 +384,13 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       await note(routed.line, { work });
       return;
     }
-    const asked = routed.card.question ? await askedBefore(ask, work, routed.card.question) : null;
-    if (asked?.answer !== undefined) {
-      if (stopped()) {
-        // Answered once All stop is lifted, never under it.
-        state.later.push(ask);
-        keep();
-        return;
-      }
-      takeEarlier(ask, work, routed.card.question, asked);
-      await sendEarlier(ask.id);
-      return;
-    }
-    await raise(routed, ask, work, asked?.earlier);
+    await raise(routed, ask, work);
   }
 
-  async function raise(routed, ask, work, earlier = null) {
-    if (earlier && routed.card.question.level === 3) routed.card.question.saidBefore = earlier.answer;
+  async function raise(routed, ask, work) {
     state.waiting.push({ importance: routed.importance, exempt: routed.exempt === true, card: routed.card, work, runId: ask.runId, ask });
     keep();
     await show();
-  }
-
-  // The key of a decision: an ask in the build's own words, never the merge queue's or trouble.
-  const keyOf = (ask, work) => (cardKind(ask) === 'question' && questionOf(ask) !== null && work !== MERGE_WORK ? decisionKey(work, questionOf(ask)) : null);
-  // A look at a piece's branch, which gives null when it can't be read or doesn't answer in time.
-  function lookAt(read) {
-    return new Promise((resolve) => {
-      const timer = setTimeout(() => resolve(null), REPEAT_READ_MS);
-      timer.unref?.();
-      safely(read).then((got) => {
-        clearTimeout(timer);
-        resolve(got ?? null);
-      });
-    });
-  }
-
-  // Whether the director has answered this decision on this piece (delegated decisions design, section 7.4), as `reuse`
-  // says with `earlier` beside it, or null. An answer is taken once, so a piece that keeps asking comes to a card and can't
-  // go round on its own. Nothing that ends or moves a piece is taken from before. A piece with another card open has given
-  // up its place, one coming back has none yet, and under an incident answers wait, so each comes as a card, which
-  // waits by the ordinary rules. The ask is kept on `later` while its branch is read: a helper started again routes it
-  // anew, since nothing else names it yet. Everything but the branch is read after that, so a click meanwhile counts.
-  const reading = new Set();
-  async function askedBefore(ask, work, question) {
-    const key = keyOf(ask, work);
-    const settled = (id) => state.delivered[id] === 'answered' && state.unsure[id] !== true;
-    const first = key === null ? null : earlierAnswer({ views: viewsNow(), work, key, settled });
-    if (first === null) return null;
-    const place = placeOf(ask);
-    reading.add(ask.id);
-    state.later.push(ask);
-    keep();
-    const [commits, exclusions] = await Promise.all([
-      typeof first.head === 'string' ? lookAt(() => commitsSince(place, first.head)) : null,
-      lookAt(() => exclusionsOf(place)),
-    ]);
-    reading.delete(ask.id);
-    state.later = state.later.filter((a) => a.id !== ask.id);
-    const views = viewsNow();
-    const earlier = earlierAnswer({ views, work, key, settled });
-    if (earlier === null) return null;
-    const label = optionNamed(question, earlier.answer);
-    const ends = STOPS_WORK.has(earlier.answer) || STOPS_WORK.has(label) || question.engine.options[label] === STOP || ask.topic === BIGGER;
-    const got = reuse({
-      ask: { kind: ask.kind, level: question.level, options: question.options }, earlier, commitsSince: earlier.id === first.id ? commits : null, exclusions,
-      spokenSince: spokenSince({ views, work, earlier }), changed: earlier.changed,
-      asksAgain: state.reused[earlier.id] === true || ends || typeof earlier.words === 'string' || held(ask.runId) || waitingOn().has(work)
-        || comingBack(work) === true || (views.incidents?.open?.length ?? 0) > 0,
-    });
-    return got && { ...got, earlier };
-  }
-  // A close match from the reader (asked.js, closeMatch). It is signed, since a build's own record can't join a card in other
-  // words, and it answers nothing: the lead's card is issued again with both wordings, and a card held back has no more to wait for.
-  async function onMatch({ card, sameAs }) {
-    const kept = state.questions[card];
-    if (!kept || state.delivered[card]) return;
-    const views = viewsNow();
-    const got = closeMatch({ card, sameAs, views });
-    if (got === null) return;
-    await write('match', { card, work: kept.work, ...(got.join ? { joins: got.join } : { saidBefore: got.line, from: sameAs }) });
-    if (got.join) {
-      state.questions[card] = { ...kept, joins: got.join, options: views.questions[card].question.data.engine?.options ?? {} };
-      state.held = state.held.filter((h) => h.id !== card);
-      keep();
-    }
-  }
-  const optionNamed = (question, label) => question.options.find((o) => normaliseWords(o.label) === normaliseWords(label))?.label;
-
-  // Marks the director's earlier answer as going to the build. A blocked ask's run ends on it as on any answer, so the
-  // piece starts again; that is marked first, so a crash after the answer leaves no piece stranded.
-  function takeEarlier(ask, work, question, { earlier }) {
-    const label = optionNamed(question, earlier.answer);
-    const answer = answerFor(question.engine, label);
-    if (startsAgain({ ask, work, runId: ask.runId }, laneOf({ work, runId: ask.runId }, viewsNow()))) {
-      state.reworks[ask.runId] = { work, answer: answer.choice !== REWORK ? { question: questionOf(ask), answer: label } : null };
-    }
-    state.reused[earlier.id] = true;
-    state.repeats[ask.id] = { ask, work, label, answer, earlier: earlier.id };
-    keep();
-  }
-
-  // Sends an earlier answer, as `deliver` sends any: an engine that couldn't be heard from is tried again on the next tick,
-  // and one that refuses after a try that may have landed took it the first time. One that refuses it outright has moved
-  // on from what the answer was for, so the director is asked.
-  async function sendEarlier(id) {
-    const entry = state.repeats[id];
-    if (!entry || stopped() || held(entry.ask.runId)) return;
-    const sentBefore = entry.sent === true;
-    entry.sent = true;
-    keep();
-    let got = await answerEngine(entry.ask.runId, entry.answer);
-    if (!got.ok && got.unreachable !== true && sentBefore) got = { ok: true };
-    if (!got.ok && got.unreachable === true) {
-      entry.tries = (entry.tries ?? 0) + 1;
-      keep();
-      if (entry.tries === UNREACHABLE_SAID) await note(`The build couldn't take your answer about ${titled(entry.work)} yet; it keeps trying.`, { work: entry.work });
-      return;
-    }
-    delete state.repeats[id];
-    if (got.ok) {
-      keep();
-      await note(`The build asked again about ${titled(entry.work)}, and was given your earlier answer: ${entry.label}.`, { work: entry.work, level: 3 });
-      return;
-    }
-    delete state.reused[entry.earlier];
-    delete state.reworks[entry.ask.runId];
-    const routed = routeAsk(entry.ask, { levels: viewsNow().levels ?? {} });
-    if (routed.card?.question) await raise(routed, entry.ask, entry.work, { answer: entry.label });
-    else keep();
   }
 
   // Writes every waiting card at once (delegated decisions design, section 8.5); the day's budget says only which are
@@ -644,7 +501,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     }
   }
 
-  async function writeCard({ id, card, work, runId, ask, joins, exempt }) {
+  async function writeCard({ id, card, work, runId, ask, joins }) {
     if (card.approval) {
       const a = card.approval;
       // A park at a new head: this card takes the place of the old head's, which nothing would close.
@@ -670,29 +527,16 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       }
       await write('card', composed);
       state.approvals[id] = { runId, ask, approve: a.engine.approve, work, ...(a.parked ? { parked: true } : {}) };
-      sealCard({ id, kind: 'approval', work, runId, level: a.level === 4 ? 4 : 3, ...placeOf(ask) });
       return;
     }
     const q = card.question;
-    const key = keyOf(ask, work);
-    const head = key === null ? null : await lookAt(() => headOf(placeOf(ask)));
-    // A joiner raises no card, so it has nothing to show blind, and a card saying what was said before asks for one click.
-    const day = dayOf(now());
-    const blind = typeof joins !== 'string' && typeof q.saidBefore !== 'string' && blindDue({ ask, card: { level: q.level, exempt }, day, lastDay: state.blindDay, roll: blindRoll(id), off: settings()?.blindCards === false });
     await write('question', {
       id, work, what: q.what, why: q.why, options: q.options, recommendation: q.recommendation ?? q.options[0]?.label, level: q.level,
       ...(q.level === 4 ? { checks: 'It changes no checks: the build still checks its work before it is added.' } : {}),
       engine: { runId, ask: ask.id, options: q.engine.options },
       ...(typeof joins === 'string' ? { joins } : {}),
-      ...(key === null ? {} : { key }),
-      ...(typeof head === 'string' ? { head } : {}),
-      ...(typeof q.saidBefore === 'string' ? { saidBefore: q.saidBefore } : {}),
-      ...(blind ? { blind: true } : {}),
     });
-    if (blind) state.blindDay = day;
     state.questions[id] = { runId, ask, work, options: q.engine.options, ...(typeof joins === 'string' ? { joins } : {}) };
-    // A joiner raises no card, so it has none to seal.
-    if (typeof joins !== 'string') sealCard({ id, kind: cardKind(ask), work, runId, level: q.level, ...placeOf(ask) });
   }
 
   function waitingOn() {
@@ -936,7 +780,6 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     delete state.capsOwed[id];
     keep();
     const { branch } = state.questions[id] ?? {};
-    sealCard({ id, kind: 'cap', work, runId, level: 3, branch: branch ?? null, folder: null });
   }
   async function owedCaps() {
     const { questions } = viewsNow();
@@ -1277,7 +1120,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     if (stopped()) return;
     const { asks } = viewsNow();
     for (const [work, list] of Object.entries(isPlain(asks) ? asks : {})) {
-      if (work === READER_WORK || !Array.isArray(list)) continue;
+      if (!Array.isArray(list)) continue;
       for (const { data } of list) {
         if (data?.id !== `${data?.runId}:${OWNER_LOST}` || state.routed[data.id] || state.later.some((a) => a.id === data.id)) continue;
         if (runRecords(work, data.runId).at(-1)?.data.state === 'paused') await onAsk(ownerLostAsk(data.runId, now().toISOString()));
@@ -1344,8 +1187,6 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     const at = now();
     const { capMinutes = {}, capTokens = {} } = settings() ?? {};
     for (const [work, list] of Object.entries(isPlain(v.runs) ? v.runs : {})) {
-      // A reader's limits are its own (scripts/delegation/record-only.js): no cap reads them, and no piece pays for them.
-      if (work === READER_WORK) continue;
       const byRun = new Map();
       for (const e of Array.isArray(list) ? list : []) if (typeof e?.data?.runId === 'string') (byRun.get(e.data.runId) ?? byRun.set(e.data.runId, []).get(e.data.runId)).push(e);
       for (const [runId, records] of byRun) {
@@ -1474,13 +1315,11 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   return {
     file,
     onAsk,
-    onMatch,
     capped,
     async tick() {
       await deliver();
       await sendBacks();
       await reworks();
-      for (const id of Object.keys(state.repeats)) await sendEarlier(id);
       await again();
       await parks();
       await owedCaps();

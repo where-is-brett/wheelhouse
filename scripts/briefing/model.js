@@ -203,15 +203,6 @@ function safekeepingNews(health, said, nowMs) {
   return Number.isNaN(since) || !Number.isFinite(nowMs) || nowMs - since >= MONTH_MS ? { level, line: `Safekeeping is still to watch: ${words}` } : null;
 }
 
-// The watch line for a delegation review that is due (ruling F43), or null. `review` is
-// { due, days }, worked out by the caller from the state: `days` between reviews.
-function reviewLine(review) {
-  if (!isRecord(review) || review.due !== true) return null;
-  const { days } = review;
-  if (!Number.isInteger(days) || days <= 0 || days === 14) return 'The fortnightly look at what I can decide alone is due';
-  return `The look at what I can decide alone is due (every ${days} days)`;
-}
-
 // "Usage this week: 1.2M tokens, about $84 at API prices, 34% of your weekly allowance.", each
 // part left out when it isn't known; null when none is.
 function usageLine(usage) {
@@ -242,12 +233,11 @@ function waitingEntry(w) {
   return entry;
 }
 
-// briefingModel({ model, usage, sources, since, now, wasRaised, timeZone, weeklySince, review, survey, surveyAt, host, leaveOut, carrying, earlier, holdLocked }) -> Briefing.
+// briefingModel({ model, usage, sources, since, now, wasRaised, timeZone, weeklySince, survey, surveyAt, host, leaveOut, carrying, earlier, holdLocked }) -> Briefing.
 // `model` is boardModel's, `usage` usageFigures', `sources` the sources report, `since` the time of
 // the last briefing, `weeklySince` the time of the last briefing that showed the weekly lines.
 // `wasRaised(id)` says whether an unusual item was raised already (the usage store's by default).
-// `timeZone` is the director's, this computer's own by default. `review` is { due, days }: whether
-// the delegation review is due, and the days between reviews, as the caller worked it out from the state.
+// `timeZone` is the director's, this computer's own by default.
 // `survey` is the latest survey as the views give it ({ id, data }), `surveyAt` the id of the one a
 // briefing last mentioned, `host` the project's ('github', 'gitlab' or null) and `leaveOut` the
 // survey's lines (see briefingLines) the caller says itself; `carrying` is briefingLines' own, and
@@ -272,7 +262,7 @@ function foundLines(survey, surveyAt, host, leaveOut, carrying, earlier) {
   return { found: said(list(leaveOut)), id: survey.id };
 }
 
-function build({ model, usage, sources, since, now, wasRaised = realWasRaised, timeZone, weeklySince, review, survey, surveyAt, host = null, leaveOut = [], carrying = false, earlier = null, holdLocked = false, safekeepingSaid = null }) {
+function build({ model, usage, sources, since, now, wasRaised = realWasRaised, timeZone, weeklySince, survey, surveyAt, host = null, leaveOut = [], carrying = false, earlier = null, holdLocked = false, safekeepingSaid = null }) {
   const briefing = EMPTY();
   const board = isRecord(model) ? model : {};
   const director = isRecord(board.director) ? board.director : {};
@@ -311,13 +301,12 @@ function build({ model, usage, sources, since, now, wasRaised = realWasRaised, t
   const report = isRecord(sources) && (Number.isNaN(sinceMs) || msOf(sources.at) > sinceMs) ? sources : null;
   const fromSources = report ? part(() => sourceLines(report), []) : [];
   const damaged = part(() => list(board.missing).filter((line) => typeof line === 'string' && DAMAGED.test(line)), []);
-  const dueReview = part(() => reviewLine(review), null);
   const blocked = part(() => blockedLines({ build: isRecord(board.build) ? board.build : {} }), []);
   // The weekly lines and unusual use are news and the other health lines stand from one briefing
-  // to the next, so the news comes first and is the last of `watch` to be cut for length; a review
-  // that is due follows it, then the pull requests that are blocked.
+  // to the next, so the news comes first and is the last of `watch` to be cut for length; the pull
+  // requests that are blocked follow it.
   const kept = part(() => safekeepingNews(director.health, safekeepingSaid, nowMs), null);
-  briefing.watch = [...weekly, ...unusual.map((u) => u.line), ...(kept === null ? [] : [kept.line]), ...(dueReview === null ? [] : [dueReview]), ...blocked, ...health, ...fromSources, ...damaged];
+  briefing.watch = [...weekly, ...unusual.map((u) => u.line), ...(kept === null ? [] : [kept.line]), ...blocked, ...health, ...fromSources, ...damaged];
   briefing.safekeeping = kept === null ? null : { level: kept.level, at: weekly.length + unusual.length };
   briefing.raise = unusual.map((u) => u.id);
   briefing.weekly = weekly.length;

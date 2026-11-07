@@ -1,15 +1,14 @@
-// tests/scripts/delegation/brief.test.js
+// tests/scripts/state/brief.test.js
 // The standing brief: what may be in it, that only the director's signed click puts one in force, and that a build step
 // reads it through the helper and has no way to write it.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { addFact, briefLines, briefProblem, briefStands, briefText, briefWords, wholeBrief } from '../../../scripts/delegation/brief.js';
-import { BRIEF_EXAMPLES_MOST, BRIEF_WORDS_MOST } from '../../../scripts/delegation/limits.js';
+import { addFact, briefLines, briefProblem, briefStands, briefText, briefWords, wholeBrief, BRIEF_EXAMPLES_MOST, BRIEF_WORDS_MOST } from '../../../scripts/state/brief.js';
 import { engineRoutes } from '../../../scripts/engine/routes.js';
-import { orderStore } from '../../../scripts/engine/order.js';
-import { TICKET_FILE } from '../../../scripts/engine/ticket.js';
+import { orderStore, workOrder } from '../../../scripts/engine/order.js';
+import { newTicket, ticketHash } from '../../../scripts/engine/ticket.js';
 import { buildViews } from '../../../scripts/state/views.js';
 import { confirmationFor, CONFIRMABLE_KINDS, HELPER_ONLY_KINDS, makeEvent, PLAIN_KINDS, PROTECTED_KINDS } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
@@ -138,13 +137,14 @@ test('a build step reads it through the helper and can\'t write it', async () =>
   const written = [];
   const engine = { name: 'fake', artefactsOf: (runId) => path.join(dir, 'run', runId), start: async () => ({ ok: true, runId: 'reader-1' }) };
   const inForce = { current: { brief: wholeBrief(LINES), signedAt: '2026-11-01T02:00:00.000Z' } };
-  const { routes, startReader } = engineRoutes({
+  const { routes } = engineRoutes({
     projects: () => [{ project: 'p', folder: path.join(dir, 'project') }], engineFor: () => engine, ordersDir: () => orders, filesDir: () => path.join(dir, 'engine'), held: () => false,
     write: async (project, kind) => { written.push(kind); }, briefOf: () => inForce.current,
   });
-  await startReader({ project: 'p', card: 'q-w-1', folder: '/f', bindings: {} });
-  assert.equal(orderStore(orders).load('reader-1').card, 'q-w-1');
-  const ticket = fs.readFileSync(path.join(dir, 'run', 'reader-1', TICKET_FILE), 'utf8').trim();
+  // A run the helper started: its order kept under its id, and the hash of its ticket beside it.
+  const ticket = newTicket();
+  orderStore(orders).save('reader-1', workOrder({ work: { id: 'w-1', lane: 'bug', goal: 'Stop the calls to support.', done: [{ command: 'node --test', expect: 0 }] } }));
+  fs.writeFileSync(path.join(orders, 'reader-1.ticket'), `${ticketHash(ticket)}\n`);
   const read = routes['/engine/brief'];
   assert.deepEqual(await read({ runId: 'reader-1', ticket }), { ok: true, brief: LINES });
   assert.equal((await read({ runId: 'reader-1' })).ok, false, 'it asks for the run\'s ticket');

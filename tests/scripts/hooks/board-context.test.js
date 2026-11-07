@@ -430,17 +430,16 @@ test('a work title is kept as written, and the words around it go through', asyn
   });
 });
 
-test('some-terms keeps the terms with their meanings, and a known term is left alone', async () => {
+test('some-terms keeps the terms with their meanings, and a known setting from an old record changes nothing', async () => {
   await withProject(async ({ repo }) => {
     waitingOn(LABELS);
     setProfile({ explanations: 'some-terms', 'known:ci': true });
     const text = contextOf(await run(repo, '/wheelhouse:board', NOW));
     assert.match(text, /The PR's CI is red on slice 2/);
-    assert.match(text, /\n\nTerms: pull request \(PR\) means a proposed change[^]*; slice means one finished piece[^]*\.$/);
-    assert.doesNotMatch(text, /CI means/);
+    assert.match(text, /\n\nTerms: pull request \(PR\) means a proposed change[^]*; CI means [^]*; slice means one finished piece[^]*\.$/);
 
     setProfile({ explanations: 'plain', 'known:pull-request': true });
-    assert.match(contextOf(await run(repo, '/wheelhouse:board', NOW)), /The PR's automatic check run is red on piece 2/);
+    assert.match(contextOf(await run(repo, '/wheelhouse:board', NOW)), /The proposed change's automatic check run is red on piece 2/);
   });
 });
 
@@ -792,34 +791,27 @@ function learningClient() {
 test('the hook runs learning once a visit and records each proposal as one waiting card', async () => {
   await withProject(async ({ repo }) => {
     assert.equal(LEARN_WAIT_MS, 3000);
-    // Three cards about pull requests answered on three days; Explain more on a card about CI, which the director knows.
-    const cards = [15, 16, 17].map((d) => learnCard(d, ['pull request']));
-    const ci = learnCard(18, ['CI']);
-    store(stateDir(P), [...cards, ...cards.map((card, i) => clicked(card, 'Plain', 15 + i)), ci, clicked(ci, 'Explain more', 18)]);
-    store(profileDir(), [makeEvent({ kind: 'setting', data: { key: 'known:ci', value: true, words: 'Knows "ci": yes' }, now: () => new Date(noon(1)) })]);
-    setProfile({ 'known:ci': true });
     // The build tab asked for on three visits running.
     for (const d of [15, 16, 17]) markSeen(P, { boardAsk: { at: noon(d), tab: 'build', visit: noon(d) } });
 
     const { learnt, profileWrites, stateWrites } = learningClient();
     const out = contextOf(await run(repo, 'Hello', NOW, { client: learnt }));
-    // known:ci false counts at once, with no card; each other proposal is one waiting card.
-    assert.deepEqual(profileWrites.map((w) => [w.data.key, w.data.value]), [['known:ci', false], ['known:pull-request', true], ['boardTab', 'build']]);
+    // The proposal is one waiting card.
+    assert.deepEqual(profileWrites.map((w) => [w.data.key, w.data.value]), [['boardTab', 'build']]);
     assert.ok(profileWrites.every((w) => w.kind === 'setting' && typeof w.data.because === 'string' && typeof w.data.words === 'string'));
     assert.deepEqual(stateWrites.map((w) => [w.kind, w.cwd, w.data.line]), [
-      ['card', repo, confirmLine({ kind: 'setting', id: 'p-2', data: profileWrites[1].data })],
-      ['card', repo, confirmLine({ kind: 'setting', id: 'p-3', data: profileWrites[2].data })],
+      ['card', repo, confirmLine({ kind: 'setting', id: 'p-1', data: profileWrites[0].data })],
     ]);
     // They reach the director with this visit's cards, and learning adds no text of its own.
-    assert.ok(out.startsWith(`${cardsLine(2)}\n\n${HEADINGS.briefing}`), out);
+    assert.ok(out.startsWith(`${cardsLine(1)}\n\n${HEADINGS.briefing}`), out);
     assert.equal(readVisits(P, { now: at(NOW) }).visitAt, NOW);
 
     // Later in the same visit, nothing more is learnt.
     await run(repo, 'And then?', '2026-10-19T12:10:00.000Z', { client: learnt });
-    assert.equal(profileWrites.length, 3);
+    assert.equal(profileWrites.length, 1);
     // A command after a gap learns nothing either; the visit's first prompt does.
     await run(repo, '/wheelhouse:board build', '2026-10-19T18:00:00.000Z', { client: learnt });
-    assert.equal(profileWrites.length, 3);
+    assert.equal(profileWrites.length, 1);
     const asks = readVisits(P, { now: at('2026-10-19T18:00:00.000Z') }).boardAsks;
     assert.deepEqual(asks.at(-1), { at: '2026-10-19T18:00:00.000Z', tab: 'build', visit: '2026-10-19T18:00:00.000Z' });
   });
@@ -827,8 +819,7 @@ test('the hook runs learning once a visit and records each proposal as one waiti
 
 test('learning never runs under STOP, and a helper that never answers holds the prompt LEARN_WAIT_MS at most', async () => {
   await withProject(async ({ repo }) => {
-    const cards = [15, 16, 17].map((d) => learnCard(d, ['pull request']));
-    store(stateDir(P), [...cards, ...cards.map((card, i) => clicked(card, 'Plain', 15 + i))]);
+    for (const d of [15, 16, 17]) markSeen(P, { boardAsk: { at: noon(d), tab: 'build', visit: noon(d) } });
     const { learnt, profileWrites } = learningClient();
     setStop({ by: 'prompt' });
     await run(repo, 'Hello', NOW, { client: learnt });
@@ -849,7 +840,7 @@ test('learning never runs under STOP, and a helper that never answers holds the 
     assert.ok(out.startsWith(HEADINGS.briefing), out);
     // What wasn't written is worked out again on the next visit.
     await run(repo, 'Hello', '2026-10-20T09:00:00.000Z', { client: learnt });
-    assert.deepEqual(profileWrites.map((w) => w.data.key), ['known:pull-request']);
+    assert.deepEqual(profileWrites.map((w) => w.data.key), ['boardTab']);
   });
 });
 
@@ -876,54 +867,19 @@ test('a setting waiting for its confirmation whose card was not written gets its
   });
 });
 
-test('a level waiting for its confirmation whose card was not written gets its card on the next visit', async () => {
+test('a level or a known setting waiting from an old record gets no card, and nothing is written for it', async () => {
   await withProject(async ({ repo }) => {
     const data = { key: 'copy-changes', value: 2, words: '"copy-changes": decide alone and tell you (level 2)', because: 'you chose what I recommended 5 times so far' };
+    const known = { key: 'known:ci', value: true, words: 'Knows "ci": yes', because: 'you have read about it on 3 days' };
     put(viewFile('unconfirmed'), [
       { kind: 'level', id: 'l-old', at: '2026-10-18T09:00:00.000Z', key: 'copy-changes', data },
-      // One with no words, which no card can name, and a ruling, whose card `record ruling` writes.
-      { kind: 'level', id: 'l-bare', at: '2026-10-18T09:00:00.000Z', key: 'colours', data: { key: 'colours', value: 3 } },
       { kind: 'ruling', id: 'r-1', at: '2026-10-18T09:00:00.000Z', data: { words: 'Totals to the cent' } },
     ]);
-    const { learnt, stateWrites } = learningClient();
+    put(path.join(profileViewsDir(), 'unconfirmed.json'), [{ kind: 'setting', id: 'p-known', at: '2026-10-18T09:00:00.000Z', key: 'known:ci', data: known }]);
+    const { learnt, profileWrites, stateWrites } = learningClient();
     await run(repo, 'Hello', NOW, { client: learnt });
-    assert.deepEqual(stateWrites.map((w) => w.data.line), [confirmLine({ kind: 'level', id: 'l-old', data })]);
-    assert.equal(stateWrites[0].cwd, repo);
-    assert.deepEqual(stateWrites[0].data.options, ['Confirm', 'Suggest a change…', 'Keep as is', 'Not now']);
-    assert.ok(stateWrites[0].data.descriptions[0].includes(data.because.replace(/[.!?]+$/, '')), 'the reason is on the recommended option');
-    // Once a card in this project carries its line, none is written again.
-    store(stateDir(P), stateWrites.map((w) => makeEvent({ kind: 'card', data: w.data, now: () => new Date(NOW) })));
-    await run(repo, 'Hello again', '2026-10-19T18:00:00.000Z', { client: learnt });
-    assert.equal(stateWrites.length, 1);
-  });
-});
-
-test('the briefing says when the delegation review is due, worked out from the state on disk', async () => {
-  await withProject(async ({ repo }) => {
-    const given = [];
-    const briefing = (options) => {
-      given.push(options.review);
-      return { first: [], waiting: [], changed: [], progress: [], watch: [], usage: null, raise: [] };
-    };
-    // No events: nothing to review.
-    await run(repo, 'Hello', NOW, { briefingModel: briefing });
-    assert.deepEqual(given.at(-1), { due: false, days: 14 });
-    // The project's first event was 18 days ago, and there has been no review.
-    store(stateDir(P), [makeEvent({ kind: 'idea', data: { key: 'x', title: 'An idea' }, now: () => new Date(noon(1)) })]);
-    await run(repo, 'Hello', '2026-10-19T15:00:00.000Z', { briefingModel: briefing });
-    assert.deepEqual(given.at(-1), { due: true, days: 14 });
-    const out = await run(repo, 'Hello', '2026-10-19T18:00:00.000Z');
-    assert.match(contextOf(out), /^- The fortnightly look at what I can decide alone is due$/m);
-    // A review six days ago: not due again yet.
-    store(stateDir(P), [makeEvent({ kind: 'note', data: { review: 'delegation', at: noon(13) }, now: () => new Date(noon(13)) })]);
-    await run(repo, 'Hello', '2026-10-19T21:00:00.000Z', { briefingModel: briefing });
-    assert.deepEqual(given.at(-1), { due: false, days: 14 });
-    // The project's setting in force decides the days.
-    put(viewFile('settings'), { delegationReviewDays: { key: 'delegationReviewDays', id: 's1', at: noon(1), value: 7, before: null } });
-    await run(repo, 'Hello', '2026-10-19T23:30:00.000Z', { briefingModel: briefing });
-    assert.deepEqual(given.at(-1), { due: false, days: 7 });
-    await run(repo, 'Hello', '2026-10-20T12:00:00.000Z', { briefingModel: briefing });
-    assert.deepEqual(given.at(-1), { due: true, days: 7 });
+    assert.deepEqual(stateWrites.map((w) => w.data.line), []);
+    assert.deepEqual(profileWrites, []);
   });
 });
 
@@ -1117,15 +1073,6 @@ test('while setup is unfinished, every prompt of the director\'s gets the setup-
     addChanges(setupRun.id, [{ id: newId('chg'), step: 10, kind: 'answer', target: 'step 10', before: null, after: { green: new Date(T + 11 * 60000).toISOString() } }]);
     assert.ok(contextOf(await run(repo, ask, NOW)).startsWith(HEADINGS.briefing));
   });
-});
-
-test('a blind card asked and left is due no more than its question is: nothing makes a card of it', () => {
-  const data = { id: 'q-w-1', work: 'w', what: 'Which?', why: 'It matters.', level: 3, recommendation: 'A', options: [{ label: 'A', says: 'a' }, { label: 'B', says: 'b' }], blind: true };
-  const questions = { 'q-w-1': { question: { data }, answer: null } };
-  const blind = { id: 'c1', at: '2026-10-18T09:00:00.000Z', data: { kind: 'blind', line: 'First pick on question q-w-1' } };
-  const now = new Date('2026-10-18T10:00:00.000Z');
-  assert.equal(cardsDue({ waiting: [{ ...blind, asked: null }], questions }, now), 1);
-  assert.equal(cardsDue({ waiting: [{ ...blind, asked: { at: '2026-10-18T09:30:00.000Z', label: null } }], questions }, now), 0);
 });
 
 // --- One card: what the First Mate is told next (design sections 4.4 and 6) ---

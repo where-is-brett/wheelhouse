@@ -110,7 +110,6 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       preview: post('/engine/preview'), // { runId } -> { ok, folder, pictures }: copies the run's pictures and notes from its own artefacts into previews/<work>/<head>/ and records a preview
       taskHolds: post('/engine/task-holds'), // { runId } -> { ok, tasks }: the tasks of the run's slice whose review last held, in this run or one before it, from the helper's own record and the engine's
       brief: post('/engine/brief'), // { runId } -> { ok, brief }: the project's standing brief in force, or null, to read and never to write
-      readerView: post('/engine/reader-view'), // { runId } -> { ok, view }: the view built when the card was sealed, to the reader run named by its ticket and no other
       lesson: post('/engine/lesson'), // { runId } -> { ok, written }: writes the lesson the run's lesson step gave, read from the engine's record; at most one a run, none when it is empty
     },
     // The broker (scripts/engine/broker/): every gh call Archon makes, and the fetch mirror Archon's git reads.
@@ -132,13 +131,9 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       record: post('/state/record'), // { project, event, target? }: a signed event made by this computer's hook; a confirmation may carry the plain ruling or setting it confirms
       sync: post('/state/sync'), //     { project } -> { ok, pulled: 0, unpushed: 0 }: the record has no remote, so nothing to do
       import: post('/state/import'), // { project } -> { ok, done, at?, imported, held, unsigned, unreadable }: v0.1.x's state clone imported once (design section 24.5); refused under STOP
-      views: post('/state/views'), //   { project, cards?, review?, answers? } -> { ok, views, cards?, review?, answers? }: with cards: true, the card events too; with review: true, the delegation review, { due, since, proposals }; with answers: true, the card-answer events; `cwd` may stand for `project`
+      views: post('/state/views'), //   { project, cards?, answers? } -> { ok, views, cards?, answers? }: with cards: true, the card events too; with answers: true, the card-answer events; `cwd` may stand for `project`
       answer: post('/state/answer'), // { project | cwd, questionId } -> { ok, answer: label | null }: a verified answer only, read-only, answered under STOP
       columnReady: post('/state/column-ready'), // { project, column, pins, records } -> { ok, id, pushed }: a Thoroughness level ready (lean or lightest) or the premium model's pass (premium), recorded only when the helper's own read of the evaluation's records finds the whole bar passed on the project's pins now; refused under STOP
-    },
-    // A rule offered after an answer that earns it (scripts/delegation/offer.js); `cwd` may stand for `project`.
-    rules: {
-      offer: post('/rules/offer'), // { project | cwd } -> { ok, offer: { event, why } | null }: the helper composes the rule from its own record and proposes it; a caller gives no part of it; refused under STOP
     },
     // The premium model's opt-in (design section 14.6, scripts/routing/premium.js); `cwd` may stand for `project`.
     premium: {

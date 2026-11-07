@@ -298,7 +298,7 @@ test('hooks.json names a script that exists for every hook', () => {
       ],
       PostToolUse: [{ matcher: 'AskUserQuestion', hooks: [cmd('prompt-record')] }, { matcher: '*', hooks: [cmd('feature-status')] }],
       SubagentStop: [{ matcher: '^wheelhouse:(builder|reviewer)$', hooks: [cmd('report-check')] }, { hooks: [cmd('feature-status')] }],
-      Stop: [{ hooks: [cmd('feature-status'), cmd('chat-question')] }],
+      Stop: [{ hooks: [cmd('feature-status')] }],
       SessionEnd: [{ hooks: [cmd('stop-guard')] }],
     },
   });

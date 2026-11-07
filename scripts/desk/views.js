@@ -5,8 +5,8 @@
 import { glanceLine, renderBoard } from '../board/render.js';
 import { heldByNotNow, numberedWaiting } from '../board/model.js';
 import { effectiveSettings, settingsText } from '../settings/effective.js';
-import { KNOWN, SETTINGS } from '../settings/catalogue.js';
-import { glossaryOf, knownConcepts, plainWords, termPattern } from '../frontdesk/glossary.js';
+import { SETTINGS } from '../settings/catalogue.js';
+import { glossaryOf, plainWords, termPattern } from '../frontdesk/glossary.js';
 import { endedBy, since, NO_PLAN, STARTS_UNAPPROVED } from '../foreman/queue.js';
 import { cardTextOf, hashOf } from '../mod/status.js';
 import { cardButtons } from '../mod/buttons.js';
@@ -21,7 +21,7 @@ import { answeredLines, buildLines, runningLines, shippedLines } from '../engine
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const flat = (x) => (typeof x === 'string' ? x.replace(/\s+/g, ' ').trim() : x);
-const LABELS = [...Object.values(SETTINGS), KNOWN].map((setting) => setting.label);
+const LABELS = Object.values(SETTINGS).map((setting) => setting.label);
 export const NO_RECORD = 'This project has no record to show yet';
 
 // How far back "Decided in the last hour:" looks, its lead, and the most lines it lists.
@@ -211,16 +211,16 @@ export function whyNext(views, question, n) {
   return [`Say one sentence and nothing else, ${how}`, `It's like <an everyday comparison>: <what card ${n} decides, in plain words>.`];
 }
 
-// The words the front desk's lines go through: the glossary, the explanations setting, the concepts
-// the director knows, and what stays as written: the settings' names, the titles of the work and the
+// The words the front desk's lines go through: the glossary, the explanations setting, and what stays
+// as written: the settings' names, the titles of the work and the
 // `names` the project goes by. `own` is the director's own settings view.
 export function deskWords(views, own, now, names = []) {
   const settings = effectiveSettings({ project: isPlain(views.settings) ? views.settings : {}, profile: isPlain(own) ? own : {}, now });
   const titles = Object.values(isPlain(views.work) ? views.work : {}).map((w) => flat(w?.work?.data?.title)).filter((t) => typeof t === 'string' && t !== '');
-  return { glossary: glossaryOf(views.glossary), explanations: settings.explanations?.value, known: knownConcepts(settings), protect: [...LABELS, ...titles], names };
+  return { glossary: glossaryOf(views.glossary), explanations: settings.explanations?.value, protect: [...LABELS, ...titles], names };
 }
 
-// The record's views as the helper gives them ({ views, names, stop, cards, answers, review }), or a refusal.
+// The record's views as the helper gives them ({ views, names, stop, cards, answers }), or a refusal.
 async function recordOf(source, args) {
   const got = await source.views(args);
   if (got?.ok !== true || !isPlain(got.views)) return { refused: got?.refused ?? NO_RECORD };
@@ -323,11 +323,11 @@ const VIEWS = {
     return { ok: true, data: { text }, lines: lined(text) };
   },
 
-  // `cards`, `answers` and `review` ask for what the helper's views give with them. The record's
+  // `cards` and `answers` ask for what the helper's views give with them. The record's
   // other views come with it, for the front desk's own lists (the rulebook, ideas, glossary, levels).
   // With `outcomes: { since }` the decided cards come too (decidedOutcomes), for the front desk's `card` and `views`.
   async waiting(args, source, { now } = {}) {
-    const got = await recordOf(source, { cards: true, answers: args.answers === true, review: args.review === true });
+    const got = await recordOf(source, { cards: true, answers: args.answers === true });
     if (got.refused) return { ok: false, refused: got.refused };
     const numbered = numberedWaiting(got.views, got.cards ?? []);
     const at = typeof now === 'function' ? now() : new Date();

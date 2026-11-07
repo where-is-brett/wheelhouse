@@ -60,7 +60,7 @@ import { DENIED as STOP_DENIED } from '../hooks/stop-guard.js';
 import { TRIAL_MARKER, UNREACHED } from '../health/trials.js';
 import { loadBoardInputs } from '../board/inputs.js';
 import { renderBoard } from '../board/render.js';
-import { briefingIn, reviewOf } from '../hooks/board-context.js';
+import { briefingIn } from '../hooks/board-context.js';
 import { readSeen, readSurveyAt, markSeen } from '../briefing/seen.js';
 import { CONTEXT_CHARS } from '../lib/core-numbers.js';
 import { startWatcher } from '../foreman/start.js';
@@ -891,7 +891,7 @@ async function firstBriefing(project, { client, now, load, survey, autonomy }) {
   const seen = readSeen(project, { now: at });
   const { model, usage, sources } = inputs;
   const given = briefingIn({
-    project, model, usage, sources, settings, since: seen.briefedAt, weeklySince: seen.weeklyAt, review: reviewOf(project, settings, at), at, room: CONTEXT_CHARS,
+    project, model, usage, sources, settings, since: seen.briefedAt, weeklySince: seen.weeklyAt, at, room: CONTEXT_CHARS,
     survey, surveyAt: readSurveyAt(project), host, carrying, leaveOut: card === null ? [] : ['inFlight'],
     // Locked was just chosen or passed over at setup: its weekly line waits for the next week's first
     // briefing, which this briefing starts the count for.

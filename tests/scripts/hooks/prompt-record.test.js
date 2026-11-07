@@ -1893,23 +1893,6 @@ test('a take-over whose record the helper refused does not ask it to take the lo
   });
 });
 
-test('a chat pick on a blind card signs nothing and says to ask the card that follows; Suggest a change… marks its score', async () => {
-  await withHome(async () => {
-    const question = 'Which colour shall the build use?\nFirst pick on question q-w-1';
-    const kept = makeEvent({ kind: 'card', data: { question, header: 'First pick', kind: 'blind', level: 3, line: 'First pick on question q-w-1', options: ['Blue', 'Red', SUGGEST] }, now: () => NOW });
-    keepEvent(kept);
-    const options = [{ label: 'Blue' }, { label: 'Red' }, { label: SUGGEST }];
-    const c = fake();
-    const got = await decide(copyClick({ question, options }, 'Blue'), deps(c));
-    assert.deepEqual(c.calls.record, []);
-    assert.deepEqual(c.calls.write.map((w) => [w.kind, w.data.label]), [['card-answer', 'Blue']]);
-    assert.match(contextOf(got), /first pick .* Run `cards` now/);
-    const steered = fake();
-    await decide(copyClick({ question, options }, SUGGEST), deps(steered));
-    assert.deepEqual(steered.calls.write.map((w) => [w.kind, w.data]), [['chat-steer', { card: kept.id }]]);
-  });
-});
-
 const PARKED_OPTIONS = ['Approve', 'Send it back', 'Suggest a change…', 'Show me'].map((label) => ({ label, description: `${label} does this.` }));
 const SENT = (question) => input({ [question]: 'Send it back' }, { options: PARKED_OPTIONS });
 

@@ -161,7 +161,6 @@ import { noteAsked, noteUninstallShown, uninstallShownFor, freshUninstallClicks,
 import { admitFolder, SetupRefusal } from './engine.js';
 import { setupGit } from './git.js';
 import { OTHER_SETUP_PATHS } from '../lib/agent-control.js';
-import { readerFolderOf } from '../delegation/reader.js';
 import { matchGlob } from '../gate/glob.js';
 import { toolsStatus } from './tools.js';
 
@@ -985,9 +984,9 @@ export async function uninstallPlan({
     // too, Wheelhouse's own (ruling R86).
     for (const p of [clicksDir(), usedDir(), shownDir(), askedDir(), answersDir(), answeredDir(), recordsDir(), droppedFile(), trustDir(), seenFile()]) remove(p, 'last');
   } else {
-    // The project's own fetch mirror, merge queue folder and reader's folder in the engine folder (the helper makes them
+    // The project's own fetch mirror, merge queue folder and the folder an earlier version kept for a reader, in the engine folder (the helper makes them
     // before a run starts), which nothing else reads once the project is gone; the engine and the other projects' stay.
-    const own = slug === null ? [] : [path.join(engineDir(), 'mirrors', `${slug}.git`), path.join(engineDir(), 'queues', slug), path.join(engineDir(), 'checks', slug), readerFolderOf(slug)];
+    const own = slug === null ? [] : [path.join(engineDir(), 'mirrors', `${slug}.git`), path.join(engineDir(), 'queues', slug), path.join(engineDir(), 'checks', slug), path.join(engineDir(), 'readers', crypto.createHash('sha256').update(String(slug)).digest('hex').slice(0, 16))];
     for (const p of own) if (exists(p)) remove(p, 'last');
     kept('Wheelhouse\'s helper, telemetry, tools, your settings and this computer\'s signing key', `another project on this computer, or one being set up, still uses them${deferred > 0 ? ` (${deferred} change${deferred === 1 ? '' : 's'} of this computer's)` : ''}`);
   }

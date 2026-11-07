@@ -5,12 +5,12 @@
 // stand-in's state as it is then.
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 
-export function memorySource({ project = 'stand-in', events, views, enrolled = [], profile = {}, review } = {}) {
+export function memorySource({ project = 'stand-in', events, views, enrolled = [], profile = {} } = {}) {
   return {
     project,
     events: () => events(),
     enrolled: () => enrolled,
-    async views({ cards = false, answers = false, review: withReview = false } = {}) {
+    async views({ cards = false, answers = false } = {}) {
       const built = views();
       const ofKind = (kind) => events().filter((e) => e.kind === kind).map((e) => structuredClone(e));
       return {
@@ -18,7 +18,6 @@ export function memorySource({ project = 'stand-in', events, views, enrolled = [
         views: built,
         ...(cards ? { cards: ofKind('card') } : {}),
         ...(answers ? { answers: ofKind('card-answer') } : {}),
-        ...(withReview && typeof review === 'function' ? { review: review(built) } : {}),
       };
     },
     async profile() {

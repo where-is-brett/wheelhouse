@@ -64,7 +64,7 @@ import { takeStartLock } from '../lib/start-lock.js';
 import { reloadLoginStart, renewedEntry } from '../lib/login-start.js';
 import { HELPER_START_SCRIPT } from '../agents/index.js';
 import { tailOf } from '../lib/output-tail.js';
-import { buildViews, cardOutcomes, latestFor, writeViews } from '../state/views.js';
+import { buildViews, latestFor, writeViews } from '../state/views.js';
 import { takeSurvey, shapedSurvey, recordSurvey } from '../survey/take.js';
 import { ReadyRefusal, archiveCommit, carryOn, carryOnPiece, dropRef, fetchInto, folderGit, freeWork, pieceWork, restoreCommit } from '../survey/ready.js';
 import { readyRecordFile, writeReadyRecord } from '../survey/ready-record.js';
@@ -72,8 +72,6 @@ import { reaching, subcommandOf } from '../setup/git.js';
 import { directorGitEnv, directorGitlabApi, hostStep, launchedIn, switchOnAsDirector } from '../setup/host.js';
 import { commitAuthor } from '../setup/project-files.js';
 import { readEnrolled, verify, sign, ownKey } from '../state/signing.js';
-import { delegationReview } from '../frontdesk/learning.js';
-import { answersToOffer, offerDue, sittingSince, sittingSpent } from '../delegation/offer.js';
 import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/lock.js';
 import { namesOf, readProject, isInsideFolder, projectForFolder, registeredProjects } from '../lib/projects.js';
 import { findCommand, hasTestScript } from '../checks/find-command.js';
@@ -90,15 +88,7 @@ import { stopEngine, endRun, stopWords } from '../engine/stop.js';
 import { engineRoutes, engineDirOf } from '../engine/routes.js';
 import { engineRunner } from '../engine/runner.js';
 import { resumesOf, runLive, settlingResume, sleepWatch } from '../engine/recovery.js';
-import { rollOf } from '../delegation/blind.js';
-import { recordOnly, cardContext, historyOf } from '../delegation/record-only.js';
-import { branchHead, cardDiff, cardFacts, commitsAfter, pathsSoFar } from '../delegation/facts.js';
-import { repeatExclusions } from '../delegation/asked.js';
-import { pieceCards, readerView } from '../delegation/view.js';
-import { prepareReaderFolder } from '../delegation/reader.js';
-import { setupStamp } from '../delegation/stamp.js';
-import { ruleSet } from '../delegation/rules.js';
-import { exclusionsHash } from '../delegation/candidates.js';
+import { pathsSoFar } from '../lib/branch-paths.js';
 import { dispatchRun, MERGE_WORK } from '../engine/dispatch-run.js';
 import { PARKED_SEND_BACK_SAYS } from '../engine/words.js';
 import { SEND_BACK } from '../lib/calm-words.js';
@@ -129,7 +119,7 @@ import { writeProfileViews } from '../profile/store.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { pendingDir } from '../hooks/pending.js';
 import { branchOf } from '../hooks/session-start.js';
-import { SLUG, paceOf, questionIdOf } from '../lib/build-loop.js';
+import { SLUG, questionIdOf } from '../lib/build-loop.js';
 import { ROOT as OWN_ROOT } from '../lineage/check.js';
 import { checkProvenance, removeProvenance, sessionProvenance, engineProvenance } from '../lineage/provenance.js';
 import { brokerDecision } from '../engine/broker/rules.js';
@@ -901,7 +891,7 @@ const PLACED_ROUTES = [
   '/desk/read', '/desk/act', '/desk/watch',
   '/local/undo', '/local/move',
   '/survey/carry-on', '/survey/archive', '/survey/restore', '/premium/card', '/premium/check', '/premium/state', '/premium/failed',
-  '/engine-switch', '/compact-window', '/rules/offer',
+  '/engine-switch', '/compact-window',
 ];
 
 // The marks a session sends (ruling P5-19), each with its fields and what each must be.
@@ -3993,7 +3983,6 @@ export async function startHelper({
   const engineRun = engineRoutes({
     refresh: (project) => (refreshMirror ?? refreshFetchMirror)(project),
     baseOf: (project) => (baseOfMirror ?? baseOfFetchMirror)(project),
-    readerViewOf: (project, card) => engineHosts.find((h) => h.project === project)?.seals.viewFor(card) ?? null,
     briefOf: (project) => buildViews(listEvents(stateDir(project), { report: () => {} }), ownKeyOnly(), { now }).brief,
     projects: () => registeredProjects().map(({ project, record }) => ({ project, folder: record.folder })),
     engineFor: (project) => {
@@ -4345,9 +4334,7 @@ export async function startHelper({
     '/state/import': stateRoute(doStateImport, { write: true }),
     // With `cards`, the card events too, every one the state holds: the board numbers its list
     // from them, and the front desk's `again <n>` must find the board's card n. `stop` says STOP is
-    // on, for the front desk in the sandbox, which can't read it, to offer the Lift STOP card. With
-    // `review`, the delegation review worked out from the project's events, { due, since, proposals }
-    // (ruling F41), for the front desk's `review`, which can't list them. With `answers`, the
+    // on, for the front desk in the sandbox, which can't read it, to offer the Lift STOP card. With `answers`, the
     // card-answer events, for the front desk's `views work` to tell a feature the director's Not now
     // holds. Read-only, so STOP lets it through.
     // A stuck work's card, written for the watcher (scripts/watcher/stuck-cards.js) when the Bosun closed its stuck wake
@@ -4392,9 +4379,9 @@ export async function startHelper({
         foremanRuns.delete(pass);
       }
     }, { write: true }),
-    '/state/views': stateRoute(async ({ project, cards, review, answers }) => {
+    '/state/views': stateRoute(async ({ project, cards, answers }) => {
       const views = await writeViews(project, { now });
-      const events = cards === true || review === true || answers === true ? listEvents(stateDir(project), { report: () => {} }) : [];
+      const events = cards === true || answers === true ? listEvents(stateDir(project), { report: () => {} }) : [];
       return {
         ok: true,
         views,
@@ -4405,31 +4392,8 @@ export async function startHelper({
         ...(stopped() ? { stop: true } : {}),
         ...(cards === true ? { cards: events.filter((e) => e.kind === 'card') } : {}),
         ...(answers === true ? { answers: events.filter((e) => e.kind === 'card-answer') } : {}),
-        ...(review === true ? { review: delegationReview(events, { now, enrolled: readEnrolled(), views }) } : {}),
       };
     }),
-    // A rule offered after the latest answer that earns it (delegated decisions design, section 11.1). The helper composes it from
-    // its own record and the piece's own change, so nothing a caller sends shapes it, and proposes it as a `rule` record
-    // that decides nothing.
-    '/rules/offer': stateRoute(async ({ project }) => {
-      const events = listEvents(stateDir(project), { report: () => {} });
-      const views = await writeViews(project, { now });
-      const outcomes = cardOutcomes(events, readEnrolled());
-      const sitting = sittingSince({ views, outcomes, now });
-      const piece = engineHosts.find((h) => h.project === project)?.factsOfPiece;
-      const [answer] = typeof piece === 'function' && !sittingSpent({ events, sitting }) ? answersToOffer({ views, outcomes, sitting }) : [];
-      if (answer !== undefined) {
-        const facts = await piece(answer.work, views);
-        if (stopped()) return STOP_REFUSAL;
-        const rule = offerDue({ events, answer, sitting, now, views, outcomes, facts, project });
-        if (rule === null) return { ok: true, offer: null };
-        const event = makeEvent({ kind: 'rule', data: rule, now });
-        await writeEvent({ project, event, now });
-        await freshViews(() => writeViews(project, { now }));
-        return { ok: true, offer: { event, why: answer.why } };
-      }
-      return { ok: true, offer: null };
-    }, { write: true }),
     // The label of a question's verified answer, from the views alone, else null. Reading is free under STOP; saying an answer
     // needs no change (noChange) writes a small marker, so STOP refuses it.
     '/state/answer': stateRoute(async ({ project, questionId, noChange, cwd }) => {
@@ -4740,12 +4704,12 @@ export async function startHelper({
       try { engine = engineFor(project); } catch { engine = null; }
       if (!engine) continue;
       try {
-        const { runner, dispatcher, checks, inStep, seals, factsOfPiece } = engineDesk(project, engine);
+        const { runner, dispatcher, checks, inStep } = engineDesk(project, engine);
         const host = startEngineHost({
           engine, spawn, now, held: stopped, wake: engineHosts.length === 0,
           write: (kind, data) => engineWrite(project, kind, data),
           cursorFile: path.join(stateDir(project), '..', 'engine', 'cursor.json'),
-          workOf: (runId) => engineRunOf(project, runId) ?? dispatcher.workOf(runId) ?? seals.readerOf(runId),
+          workOf: (runId) => engineRunOf(project, runId) ?? dispatcher.workOf(runId),
           resumes: (runId) => resumesOf(engineRunRecords(project).filter((e) => e.data.runId === runId)),
           over: (runId) => {
             const records = engineRunRecords(project).filter((e) => e.data.runId === runId);
@@ -4756,7 +4720,7 @@ export async function startHelper({
           prOf: (runId) => engineRun.openedBy(project, runId),
         });
         host.onAsk((event) => { runner.onAsk(event).catch(() => {}); });
-        engineHosts.push({ project, engine, host, runner, dispatcher, checks, inStep, seals, factsOfPiece });
+        engineHosts.push({ project, engine, host, runner, dispatcher, checks, inStep });
       } catch {
         // An engine that can't be followed gets no host; the other projects' hosts start all the same.
       }
@@ -4778,7 +4742,6 @@ export async function startHelper({
         try { startEngineHosts(); } catch { /* looked at again next time */ }
         if (engineHosts.length === 0) return;
         sleeping.beat().then(engineTick).catch(() => {});
-        sealTick();
         try { room?.tend(); } catch { /* tried again next time */ }
       }, dispatchMs);
       dispatchWatch.unref?.();
@@ -4916,7 +4879,7 @@ export async function startHelper({
   }
 
   // One sweep of the local queue. What was sent back, asked or said is kept for each head, so a change waiting says each once.
-  async function sweepLocal(project, dispatcher, write, onCard) {
+  async function sweepLocal(project, dispatcher, write) {
     const ctx = await contextFor(project);
     const adapter = await ctx.adapter();
     const { folder } = recordOf(project);
@@ -5015,7 +4978,6 @@ export async function startHelper({
             target: { pr: change.n, sha: change.head },
           });
           await write('card', card);
-          onCard({ id: `${change.n}:${change.head}`, kind: 'approval', work: marked.work ?? MERGE_WORK, level, branch: change.branch });
           once(key);
         },
         async wait(change, reason) {
@@ -5173,44 +5135,9 @@ export async function startHelper({
     const write = (kind, data) => engineWrite(project, kind, data);
     const record = registeredProjects().find((p) => p.project === project)?.record;
     const folder = record?.folder;
-    // The seals beside the cards (scripts/delegation/record-only.js), ticked apart from engineTick.
-    const factsOf = async (card) => {
-      const adapter = await adapterNow();
-      return cardFacts({ card, git: gitRoute({ run }), baseCommit: await adapter.branchHead(await defaultBranchOf(project, adapter)) });
-    };
-    const seals = recordOnly({
-      file: path.join(files, 'shadow.json'), write, now, stopped: () => closing || stopped(),
-      factsOf,
-      contextOf: (card) => {
-        const config = engineConfigOf(project, folder);
-        return cardContext({ views: views(), card, testCommand: config?.testsNotCounting ? null : config?.testCommand });
-      },
-      stampOf: () => setupStamp({ bindings: engineConfigOf(project, folder)?.routing, packDigest: packTreeDigest(path.join(engineDir(), 'pack')), exclusionsHash: exclusionsHash() }),
-      rulesOf: () => ruleSet(project, views().rules),
-      history: () => {
-        const events = listEvents(stateDir(project), { report: () => {} });
-        return historyOf({ events, enrolled: ownKeyOnly(), views: buildViews(events, ownKeyOnly(), { now }) });
-      },
-      engine, readViews: views,
-      onMatch: (match) => runner.onMatch(match),
-      viewOf: async (card, facts) => {
-        const asked = views().questions?.[card.id]?.question?.data;
-        return readerView({ question: asked?.what, options: asked?.options, brief: views().brief, diff: await cardDiff({ card, git: gitRoute({ run }), facts }), cards: pieceCards({ views: views(), work: card.work, card: card.id }), seed: card.id });
-      },
-      gate: () => ({ running: engineRunsGoing(project).length, pace: paceOf({ pace: { value: settings().pace } }).building, incident: Boolean(openRedMain(views())) }),
-      startReader: async ({ card }) => {
-        const place = prepareReaderFolder({ project });
-        return place.ok ? engineRun.startReader({ project, card, folder: place.folder, bindings: engineConfigOf(project, folder)?.routing ?? {} }) : place;
-      },
-      trusted: fromInstalledPack,
-    });
-    const ownCard = (kind) => async (data) => {
-      await write('question', data);
-      seals.onCard({ id: data.id, kind, work: data.work, level: data.level });
-    };
     let sweepTrouble = null;
     const dispatcher = dispatchRun({
-      engine, project, folder, file: path.join(files, 'dispatch.json'), readViews: views, settings, stopped, now, write, onCard: seals.onCard,
+      engine, project, folder, file: path.join(files, 'dispatch.json'), readViews: views, settings, stopped, now, write,
       config: () => engineConfigOf(project, folder),
       start: (args) => engineRun.start(args),
       readyOf: () => engineRun.readyAll(project),
@@ -5244,7 +5171,7 @@ export async function startHelper({
       isLocal: () => readProject(project)?.host === 'local',
       localQueue: async () => {
         try {
-          await oneAtATime(`merge:${project}`, () => sweepLocal(project, dispatcher, write, seals.onCard));
+          await oneAtATime(`merge:${project}`, () => sweepLocal(project, dispatcher, write));
           sweepTrouble = null;
         } catch (error) {
           const line = error instanceof Error ? error.message : 'the helper didn\'t say why';
@@ -5254,8 +5181,8 @@ export async function startHelper({
       },
     });
     const runner = engineRunner({
-      engine, file: path.join(files, 'router.json'), readViews: views, write, stopped, now, settings, noteSleep: () => sleeping.beat(), onCard: seals.onCard, onReaderAsk: seals.onReaderAsk, blindRoll: rollOf,
-      workOf: (runId) => engineRunOf(project, runId) ?? dispatcher.workOf(runId) ?? seals.readerOf(runId),
+      engine, file: path.join(files, 'router.json'), readViews: views, write, stopped, now, settings, noteSleep: () => sleeping.beat(),
+      workOf: (runId) => engineRunOf(project, runId) ?? dispatcher.workOf(runId),
       titleOf: (work) => (work === MERGE_WORK ? 'the changes waiting to be added' : views().work?.[work]?.work?.data?.title ?? work),
       endRun: async (runId) => endRun({ engine, run: { id: runId, folder: (await engine.inspect(runId))?.folder ?? null }, ...engineStopWith }),
       openedOf: (pr) => engineRun.openedOf(project, pr),
@@ -5264,7 +5191,6 @@ export async function startHelper({
       prTitleOf: async (pr) => (await (await contextFor(project)).adapter().then((adapter) => adapter.prState(pr))).title ?? null,
       release: (work) => dispatcher.release(work),
       admittedTo: (work, key) => dispatcher.admittedTo(work, key),
-      comingBack: (work) => dispatcher.comingBack(work),
       retrying: (runId) => dispatcher.retrying(runId),
       retriesAdmitted: () => dispatcher.retriesAdmitted(),
       delivered: (work, key) => dispatcher.delivered(work, key),
@@ -5275,9 +5201,6 @@ export async function startHelper({
       takeBack: (args) => dispatcher.takeBack(args),
       notReady: (pr) => dispatcher.notReady(pr),
       localChange: (pr) => dispatcher.localChange(pr),
-      headOf: (place) => branchHead({ card: place, git: gitRoute({ run }) }),
-      commitsSince: (place, head) => commitsAfter({ card: place, git: gitRoute({ run }), head }),
-      exclusionsOf: async (place) => repeatExclusions(await factsOf(place)),
       endLeft: (folder) => endRun({ engine, run: { folder }, ...engineStopWith }),
       lostCleared: (work, key) => dispatcher.lostCleared(work, key),
       stoppedRuns: () => stoppedRunsOf(project),
@@ -5328,7 +5251,7 @@ export async function startHelper({
       note: (words) => write('note', { about: 'engine', words }),
       record: (kind, data) => engineWrite(project, kind, data),
       states: () => signedOf(project, 'checks-state').map((e) => e.data),
-      card: ownCard('checks'),
+      card: (data) => write('question', data),
       answerOf: (id) => views().questions?.[id]?.answer?.label ?? null,
       // A fix's work is its incident's, and no piece of the queue: it has ended when the incident has.
       ended: (work) => {
@@ -5363,7 +5286,7 @@ export async function startHelper({
       const watch = folderWatch({
         project, folder, file: path.join(files, 'folder.json'), stopped, git: gitRoute({ run }),
         branchOf: async () => defaultBranchOf(project, await adapterNow()),
-        card: ownCard('folder'),
+        card: (data) => write('question', data),
         answerOf: (id) => views().questions?.[id]?.answer?.label ?? null,
         stuck: (id) => { const asked = views().questions?.[id]?.question?.data; return asked !== null && typeof asked === 'object' && questionProblem(asked, { recorded: true }) !== null; },
         note: (words) => write('note', { about: 'engine', words }),
@@ -5402,12 +5325,7 @@ export async function startHelper({
         }
       };
     })();
-    // A piece's change as its latest run left it, for a rule's scope; a run the engine can't place gives nothing to read.
-    const factsOfPiece = async (work, seen) => {
-      const seenRun = await Promise.resolve().then(() => engine.inspect(seen.runs?.[work]?.at(-1)?.data?.runId)).catch(() => null);
-      return factsOf({ branch: seenRun?.branch, folder: seenRun?.folder });
-    };
-    return { runner, dispatcher, checks, inStep, seals, factsOfPiece };
+    return { runner, dispatcher, checks, inStep };
   }
   // --- safekeeping (spec 8.2): what would be lost with this computer, for every project, engine or none ---
 
@@ -5606,8 +5524,6 @@ export async function startHelper({
     await Promise.allSettled(engineHosts.map(({ project }) => engineWrite(project, 'note', { about: 'engine', words })));
   }
 
-  // The seals' look for every project, never awaited by a tick of the engine: a hang there stops no delivery.
-  const sealTick = () => Promise.all(engineHosts.map(({ seals }) => seals.tick()));
 
   // Waits, too, for work queued after an answer (the mirror's tidy): on Windows a folder
   // a git process is working in can't be removed. Photographing and comparing stop after the
@@ -5625,7 +5541,7 @@ export async function startHelper({
       await renewing;
       await engineStopping?.catch(() => {});
       await Promise.race([
-        Promise.allSettled([...engineHosts.map(({ checks }) => checks.stop()), ...engineHosts.map(({ seals }) => seals.settled())]),
+        Promise.allSettled(engineHosts.map(({ checks }) => checks.stop())),
         new Promise((resolve) => { setTimeout(resolve, CHECK_END_MS).unref?.(); }),
       ]);
       await Promise.allSettled(engineHosts.map(({ host }) => host.stop()));
@@ -5917,5 +5833,5 @@ export async function startHelper({
   safekeepingWatch.unref?.();
 
   // `engine.start` is the helper's own way to start a run (the dispatcher's): no route starts one.
-  return { address, close, engine: { start: (args) => engineRun.start(args), tick: () => engineTick(), seal: () => sealTick() }, safekeeping: { tick: () => safekeepingRound() }, move: { tick: () => moveRound() } };
+  return { address, close, engine: { start: (args) => engineRun.start(args), tick: () => engineTick() }, safekeeping: { tick: () => safekeepingRound() }, move: { tick: () => moveRound() } };
 }

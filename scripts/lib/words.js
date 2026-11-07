@@ -1,6 +1,6 @@
-// scripts/delegation/words.js
-// One way of saying two questions use the same words (delegated decisions design, section 7.4): case, width, runs of
-// white space, invisible marks and end punctuation make no difference, and every script is kept.
+// scripts/lib/words.js
+// One way of saying two questions use the same words: case, width, runs of white space, invisible marks and end
+// punctuation make no difference, and every script is kept. Alike open questions are one card (scripts/state/joiners.js).
 
 export function normaliseWords(text) {
   return String(text ?? '').normalize('NFKC').replace(/\p{Cf}/gu, '').toLowerCase().replace(/\s+/gu, ' ').trim().replace(/[\p{P}\s]+$/u, '');
@@ -25,7 +25,7 @@ export function sameChoice(a, b) {
   return sameOptions(a.options, b.options);
 }
 
-// Whether two open questions are one question asked twice (delegated decisions design, section 8.5): the same words too,
+// Whether two open questions are one question asked twice: the same words too,
 // and never by a step's topic label.
 export function alike(a, b) {
   if (!sameChoice(a, b)) return false;

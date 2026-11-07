@@ -125,7 +125,7 @@ export function orderFor(entry, { settings = {}, raised = false, config = {}, an
 }
 
 // dispatchRun({ engine, project, folder, file, readViews, settings, stopped, now, start, write, readyOf, mainGreen,
-//   stoppedRuns, fixedRuns, prMerged, designOf, orderOf, repoOf, queueFolder, queuePlace, openedBy, onCard }) -> { tick, workOf, sentBack(work, reason, tail), queueDue, enter, admittedTo, delivered, drop, startAdmitted, onStarted, carryOver, ... }.
+//   stoppedRuns, fixedRuns, prMerged, designOf, orderOf, repoOf, queueFolder, queuePlace, openedBy }) -> { tick, workOf, sentBack(work, reason, tail), queueDue, enter, admittedTo, delivered, drop, startAdmitted, onStarted, carryOver, ... }.
 // - `start({ project, order, branch?, carryOn? })` the helper's own start; `readyOf()` the pull requests marked ready,
 //   { [pr]: { work, head } }; `settings()` the project's settings in force; `write(kind, data)` a record;
 // - `mainGreen()` whether the main line's checks read green: true, false, or null when they can't be read (or are
@@ -147,7 +147,7 @@ export function orderFor(entry, { settings = {}, raised = false, config = {}, an
 // - `notReady(pr)` takes a pull request off what `readyOf` lists: the director sent it back, so only its rework marks it again.
 // - `engine.liveRunOf({ work, since })`, where the engine has it, says of a start that may have happened: { runId },
 //   null for none, undefined when it can't say. Without it the answer is undefined, so a card comes and not a second start.
-export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped: allStop = () => false, moving = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), mainGreen = async () => null, stoppedRuns: stoppedByAll = () => [], fixedRuns = () => [], prMerged = async () => null, prState = null, designOf = () => null, orderOf = () => null, repoOf = () => null, repoName = () => null, queueFolder = async () => ({ ok: false, refused: 'no folder for the merge queue' }), queuePlace = null, openedBy = () => null, localQueue = null, isLocal = () => true, onCard = () => {}, branchPaths = async () => [], notReady = () => {}, } = {}) {
+export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped: allStop = () => false, moving = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), mainGreen = async () => null, stoppedRuns: stoppedByAll = () => [], fixedRuns = () => [], prMerged = async () => null, prState = null, designOf = () => null, orderOf = () => null, repoOf = () => null, repoName = () => null, queueFolder = async () => ({ ok: false, refused: 'no folder for the merge queue' }), queuePlace = null, openedBy = () => null, localQueue = null, isLocal = () => true, branchPaths = async () => [], notReady = () => {}, } = {}) {
   const stopped = () => allStop() || moving();
   let state = readState(file);
   // The runs All stop cancelled: each waits for a Carry on, with no card.
@@ -173,7 +173,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     try { theirs = routerCardsNow(); } catch { /* it reads as none, so a hold shows as having no card */ }
     return [...ownCards({ state, views }), ...theirs];
   };
-  // A question of the dispatcher's own, and then a word to the seals, whose trouble is never the card's. Owed until it is
+  // A question of the dispatcher's own. Owed until it is
   // written, so a record that refuses it costs a tick and never the card (`owedTick`).
   async function askDirector(kind, data) {
     state.owed[data.id] = { kind, data };
@@ -181,7 +181,6 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     await write('question', data);
     delete state.owed[data.id];
     keep();
-    try { onCard({ id: data.id, kind, work: data.work, level: data.level }); } catch { /* it costs a seal, never a card */ }
   }
   async function owedTick() {
     const views = readViews() ?? {};
