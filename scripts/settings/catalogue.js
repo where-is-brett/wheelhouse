@@ -112,7 +112,7 @@ export const OWN_GITHUB_APP = { label: 'Your own GitHub App', group: 'advanced',
 // Retired keys: settings a parked piece owned (design section 4.1). Old records and profiles may
 // still hold them; the catalogue accepts any value for them and nothing reads them. A lift-out part
 // retires a key by deleting its SETTINGS entry and adding one line here (or to RETIRED_PATTERNS).
-// RETIRED maps a key to the name of the piece that retired it, for example { capRequests: 'copilot' }.
+// RETIRED maps a key to the name of the piece that retired it, for example { someKey: 'some-piece' }.
 export const RETIRED = Object.freeze({});
 // Families of retired keys: [{ pattern: RegExp, piece: string }].
 export const RETIRED_PATTERNS = Object.freeze([]);
