@@ -8,6 +8,7 @@ export const DATA_HEADING = 'The data, before and after';
 export const HEADINGS = Object.freeze(['What changed', 'Why', 'Decided on its own', 'Decisions followed', 'How it was checked', 'What it looks like', DATA_HEADING]);
 
 export const TEST_DATA = 'On test data.';
+export const NOT_COMPARED = 'Nothing was compared.';
 export const REAL_DATA = 'On a read-only sample of real data.';
 
 const countWords = (text) => String(text).split(/\s+/).filter(Boolean).length;
@@ -19,6 +20,9 @@ function cut(text, n) {
   return `${whole.split(/\s+/).filter(Boolean).slice(0, Math.max(1, n)).join(' ')}…`;
 }
 const line = (text, n) => cut(String(text ?? '').replace(/\s+/g, ' '), n);
+
+// A name or value of the project's, as code, so nothing in it reads as the note's own marks.
+const code = (text) => `\`${String(text).replace(/`/g, "'").replace(/\s+/g, ' ')}\``;
 
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const list = (items) => items.join(', ');
@@ -59,29 +63,35 @@ function checked({ report, review, notes }, k) {
   return out.join('\n');
 }
 
-// What it looks like: the pages whose pictures Wheelhouse keeps, which "Show me" opens.
+// What it looks like: the pages the change touches.
 function looks(previews, k) {
   if (previews.length === 0) return 'Nothing on a page changed.';
-  const pages = previews.slice(0, Math.max(1, Math.floor(5 * k))).map((p) => p.page);
-  return `Pictures of ${list(pages)} are kept by Wheelhouse, on desktop and phone. Say "Show me" to open them.`;
+  const pages = previews.slice(0, Math.max(1, Math.floor(5 * k))).map((p) => code(p.page));
+  return `The change touches ${list(pages)}.`;
 }
 
-// The data section: the comparison in the director's terms, then which data it ran on, last.
+// The data section: the comparison in the director's terms, then which data it ran on, last. With nothing compared it says why
+// (a failure, a check that could not be made, or the session's own reason) and ends "Nothing was compared."
 function dataSection(data, k) {
   const out = [];
   if (data.comparison === undefined) {
-    out.push(`No comparison was made: ${line(data.none ?? 'the data could not be compared', Math.max(4, Math.round(30 * k)))}`);
+    if (typeof data.failure === 'string') out.push(`The data command failed: ${line(data.failure, Math.max(4, Math.round(30 * k)))}`);
+    else if (typeof data.unavailable === 'string') out.push(`The data check could not be made: ${line(data.unavailable, Math.max(4, Math.round(30 * k)))}`);
+    if (typeof data.none === 'string') out.push(`${data.failure !== undefined || data.unavailable !== undefined ? "The session's reason" : 'No comparison was made'}: ${line(data.none, Math.max(4, Math.round(30 * k)))}`);
+    else if (data.failure === undefined && data.unavailable === undefined) out.push('No comparison was made.');
   } else {
     const { counts, changed, unexpected } = data.comparison;
-    const rows = counts.slice(0, Math.max(1, Math.floor(6 * k))).map((c) => `${c.table}: ${c.before ?? 'none'} to ${c.after ?? 'none'}`);
+    const rows = counts.slice(0, Math.max(1, Math.floor(6 * k))).map((c) => `${code(c.table)}: ${c.before ?? 'none'} to ${c.after ?? 'none'}`);
     out.push(`Rows: ${rows.join('; ')}${counts.length > rows.length ? `; and ${counts.length - rows.length} more tables` : ''}.`);
-    for (const c of changed.slice(0, Math.max(1, Math.floor(5 * k)))) out.push(`- ${c.table} ${c.key}, ${c.column}: ${line(JSON.stringify(c.before), 6)} to ${line(JSON.stringify(c.after), 6)}`);
-    if (changed.length > Math.max(1, Math.floor(5 * k))) out.push(`- and ${changed.length - Math.max(1, Math.floor(5 * k))} more changed values.`);
+    const shown = Math.max(1, Math.floor(5 * k));
+    for (const c of changed.slice(0, shown)) out.push(`- ${code(c.table)} ${code(c.key)}, ${code(c.column)}: ${code(line(JSON.stringify(c.before), 6))} to ${code(line(JSON.stringify(c.after), 6))}`);
+    if (changed.length > shown) out.push(`- and ${changed.length - shown} more changed values.`);
     if (unexpected.length === 0) out.push('Nothing moved that was not expected.');
     else for (const u of unexpected.slice(0, Math.max(1, Math.floor(4 * k)))) out.push(`Unexpected: ${line(u, Math.max(6, Math.round(20 * k)))}`);
   }
   if (typeof data.realRefused === 'string') out.push(`The real-data route was not used: ${line(data.realRefused, Math.max(4, Math.round(20 * k)))}`);
-  out.push(data.route === 'real' ? REAL_DATA : TEST_DATA);
+  if (data.comparison === undefined) out.push(NOT_COMPARED);
+  else out.push(data.route === 'real' ? REAL_DATA : TEST_DATA);
   return out.join('\n');
 }
 
@@ -104,7 +114,8 @@ function build({ report, calls, followed, review, previews, data, notes }, k) {
 // - `followed`: the decisions of the director's it followed, each { question, answer };
 // - `review`: the independent review's { verdict, findings, blocking, lenses? }, or null while none has run;
 // - `previews`: the pages whose pictures are kept, each { page };
-// - `data`: null with no data work; else { route: 'test' | 'real', comparison?, none?, realRefused? };
+// - `data`: null with no data work; else { route: 'test' | 'real', comparison?, none?, failure?, unavailable?, realRefused? }:
+//   `failure` is why the helper's data command failed, `unavailable` why the check could not be made, `none` the session's reason;
 // - `notes`: lines for "How it was checked" about a check that couldn't be made.
 // Within REPORT_WORDS words: when the parts run over, each is cut shorter until the note fits.
 export function proofNote({ report, calls = [], followed = [], review = null, previews = [], data = null, notes = [] }) {
@@ -113,5 +124,7 @@ export function proofNote({ report, calls = [], followed = [], review = null, pr
     const note = build(input, k);
     if (countWords(note) <= REPORT_WORDS) return note;
   }
-  return build(input, 0.01);
+  const smallest = build(input, 0.01);
+  // Over the limit even so: cut hard, so a note is never longer than a report may be.
+  return countWords(smallest) <= REPORT_WORDS ? smallest : `${cut(smallest, REPORT_WORDS - 1)}\n`;
 }

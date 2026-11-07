@@ -34,6 +34,9 @@ test('the note has the headings in order and stays within the report\'s word lim
   assert.deepEqual(headingsOf(note), [...HEADINGS]);
   assert.ok(words(note) <= REPORT_WORDS, `${words(note)} words`);
   assert.ok(note.trimEnd().endsWith('On test data.'));
+  // Even when every part is long, the last build is cut hard before it is returned over the limit.
+  const huge = proofNote(base({ notes: Array.from({ length: 2 }, () => long), report: { fields: fields({ concerns: Array.from({ length: 9 }, () => long) }), body: long, goal: long } }));
+  assert.ok(words(huge) <= REPORT_WORDS);
   // A short note is whole, not cut.
   const short = proofNote(base());
   assert.ok(short.includes('next high tide'));
@@ -54,8 +57,8 @@ test('a note with data work says which data it ran on, last', () => {
   const comparison = { counts: [{ table: 'boats', before: 3, after: 4 }], changed: [{ table: 'boats', key: 'w-tide-1', column: 'status', before: 'new', after: 'ready' }], unexpected: ['crews moved, and the change was not expected to touch it'] };
   const real = proofNote(base({ data: { route: 'real', comparison } }));
   assert.ok(real.trimEnd().endsWith('On a read-only sample of real data.'));
-  assert.ok(real.includes('boats: 3 to 4'));
-  assert.ok(real.includes('w-tide-1'));
+  assert.ok(real.includes('`boats`: 3 to 4'));
+  assert.ok(real.includes('`w-tide-1`'));
   assert.ok(real.includes('crews moved'));
   const test = proofNote(base({ data: { route: 'test', comparison: { counts: [{ table: 'boats', before: 3, after: 3 }], changed: [], unexpected: [] } } }));
   assert.ok(test.trimEnd().endsWith('On test data.'));
@@ -63,7 +66,19 @@ test('a note with data work says which data it ran on, last', () => {
   // Data work with no comparison says why, and still names its data.
   const none = proofNote(base({ data: { route: 'test', none: 'The project names no data command' } }));
   assert.ok(none.includes('No comparison was made: The project names no data command'));
-  assert.ok(none.trimEnd().endsWith('On test data.'));
+  assert.ok(none.trimEnd().endsWith('Nothing was compared.'));
+  assert.ok(!none.includes('On test data.'));
+  // A failure, and a check that could not be made, are said as such beside the session's reason.
+  const failed = proofNote(base({ data: { route: 'test', failure: 'it could not run', none: 'Only adds a column' } }));
+  assert.ok(failed.includes('The data command failed: it could not run'));
+  assert.ok(failed.includes("The session's reason: Only adds a column"));
+  const missed = proofNote(base({ data: { route: 'test', unavailable: 'All stop is on', none: 'Only adds a column' } }));
+  assert.ok(missed.includes('## The data, before and after\n\nThe data check could not be made: All stop is on'));
+  assert.ok(missed.trimEnd().endsWith('Nothing was compared.'));
+  // Names and values are code, so nothing in them reads as the note's own marks.
+  const odd = proofNote(base({ data: { route: 'test', comparison: { counts: [{ table: 'a`b', before: 1, after: 2 }], changed: [{ table: 'a', key: '**k**', column: 'c', before: '<x>', after: '`y`' }], unexpected: [] } } }));
+  assert.ok(odd.includes("`a'b`: 1 to 2"));
+  assert.ok(odd.includes('`**k**`'));
   // A real route that was refused is said, and the note falls back to test data.
   const refused = proofNote(base({ data: { route: 'test', realRefused: 'no signed approval', comparison: { counts: [], changed: [], unexpected: [] } } }));
   assert.ok(refused.includes('The real-data route was not used: no signed approval'));
@@ -76,8 +91,8 @@ test('the note says what it decided, what it followed, how it was checked and wh
   const reviewed = proofNote(base({ review: { verdict: 'FINDINGS', findings: 2, blocking: 0, lenses: ['security', 'accessibility'] }, previews: [{ page: '/tides' }] }));
   assert.ok(reviewed.includes('2 findings, none blocking'));
   assert.ok(reviewed.includes('security, accessibility'));
-  assert.ok(reviewed.includes('/tides'));
-  assert.ok(reviewed.includes('Show me'));
+  assert.ok(reviewed.includes('The change touches `/tides`.'));
+  assert.ok(!reviewed.includes('Show me'));
   const clean = proofNote(base({ review: { verdict: 'CLEAN', findings: 0, blocking: 0 } }));
   assert.ok(clean.includes('reviewed independently and found nothing'));
   const waiting = proofNote(base());

@@ -168,9 +168,11 @@ const checksOk = (c) => isObject(c) && Object.keys(c).every((k) => CHECKS_KEYS.i
   && (c.network === undefined || typeof c.network === 'boolean');
 // The project's one read-only command that prints its tables as JSON (scripts/proof/data.js), and which data it may run on:
 // `test` (the default) or `real`, which runs only once the director has approved the route (scripts/host/data-route.js).
-const DATA_CHECK_KEYS = ['command', 'route'];
+// `paths` adds glob patterns for files that are data work in this project, beyond the migration places every project has.
+const DATA_CHECK_KEYS = ['command', 'route', 'paths'];
 const dataCheckOk = (d) => isObject(d) && Object.keys(d).every((k) => DATA_CHECK_KEYS.includes(k))
-  && testCommandOk(d.command) && (d.route === undefined || ['test', 'real'].includes(d.route));
+  && testCommandOk(d.command) && (d.route === undefined || ['test', 'real'].includes(d.route))
+  && (d.paths === undefined || globs(d.paths));
 const SAFEKEEPING_KEYS = ['days', 'hereDays'];
 const safekeepingOk = (s) => isObject(s) && Object.keys(s).every((k) => SAFEKEEPING_KEYS.includes(k))
   && (s.days === undefined || positiveWhole(s.days)) && (s.hereDays === undefined || positiveWhole(s.hereDays));
@@ -239,7 +241,17 @@ export function classifyChange({ paths, config }) {
 
 // The files whose change is a database or schema change, and those that say what others depend on (a described API, a
 // data contract, the command line's own options). These are the facts a change carries by its files alone.
-const DATA_MODEL_FILES = Object.freeze(['**/migrations/**', '**/migrate/**', '**/schema.prisma', '**/schema.rb', '**/structure.sql']);
+const DATA_MODEL_FILES = Object.freeze([
+  '**/migrations/**', '**/migrate/**', '**/schema.prisma', '**/schema.rb', '**/structure.sql',
+  '**/db/migration/**', '**/alembic/versions/**', '**/drizzle/**/*.sql', '**/prisma/schema/*.prisma',
+]);
+
+// The changed files that are a database or schema change: the defaults above, and any `paths` the project's `dataCheck` adds.
+// Stray .sql files and seeds are not counted: only the places a migration tool keeps its files.
+export function dataModelPaths(paths, config = null) {
+  const patterns = [...DATA_MODEL_FILES, ...(config?.dataCheck?.paths ?? [])];
+  return paths.filter((file) => matchesAny(patterns, file));
+}
 const PUBLIC_INTERFACE_FILES = Object.freeze([
   '**/openapi.json', '**/openapi.yaml', '**/openapi.yml', '**/swagger.json', '**/swagger.yaml', '**/swagger.yml',
   '**/*.proto', '**/*.graphql', 'bin/**', '**/cli.*', '**/cli/**',
@@ -253,7 +265,7 @@ export function classifyDiff({ paths, read, config = readConfig(null) }) {
   const found = [];
   const add = (kind, files) => { if (files.length > 0) found.push({ kind, paths: files }); };
   add('major-dependency', paths.filter((file) => isManifest(file) && changesDependencies(file, read)));
-  add('data-model', paths.filter((file) => matchesAny(DATA_MODEL_FILES, file)));
+  add('data-model', dataModelPaths(paths, config));
   add('public-interface', paths.filter((file) => matchesAny(PUBLIC_INTERFACE_FILES, file)));
   return { ...classifyChange({ paths, config }), directorLevel: found };
 }

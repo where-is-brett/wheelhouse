@@ -2,25 +2,19 @@
 // The data snapshot a project's command prints, and the comparison of two (design section 7).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { compareSnapshots, dataSnapshot, parseSnapshot } from '../../../scripts/proof/data.js';
+import { compareSnapshots, parseSnapshot } from '../../../scripts/proof/data.js';
 
 const table = (name, rows, sample = []) => ({ name, rows, sample });
 const snap = (...tables) => ({ tables });
 
-test('a snapshot is read from the command\'s output, noise before it passed over', async () => {
+test('a snapshot is read from the command\'s output, noise before it passed over', () => {
   const printed = JSON.stringify(snap(table('boats', 3, [{ key: 'w-tide-1', values: { status: 'new' } }])));
-  const got = await dataSnapshot({ command: 'print-data', cwd: '/x', env: { A: '1' }, run: async (args) => {
-    assert.deepEqual(args, { command: 'print-data', cwd: '/x', env: { A: '1' } });
-    return { code: 0, stdout: `Connecting...\n${printed}\n`, stderr: '' };
-  } });
-  assert.deepEqual(got, snap(table('boats', 3, [{ key: 'w-tide-1', values: { status: 'new' } }])));
+  assert.deepEqual(parseSnapshot(`Connecting...\n${printed}\n`), snap(table('boats', 3, [{ key: 'w-tide-1', values: { status: 'new' } }])));
   assert.deepEqual(parseSnapshot(JSON.stringify({ tables: [{ name: 'a', rows: 0 }] })), snap(table('a', 0)));
 });
 
-test('a command that fails, or prints something that is not tables, is an error in plain words', async () => {
-  await assert.rejects(dataSnapshot({ command: 'x', cwd: '/', run: async () => ({ code: 1, stdout: '', stderr: 'no route to the database' }) }), /failed: no route/);
-  await assert.rejects(dataSnapshot({ command: 'x', cwd: '/', run: async () => ({ code: 0, stdout: 'hello', stderr: '' }) }), /did not print the tables/);
-  await assert.rejects(dataSnapshot({ command: '', cwd: '/', run: async () => ({}) }), /missing/);
+test('output that is not tables is an error in plain words', () => {
+  assert.throws(() => parseSnapshot('hello'), /did not print the tables/);
   assert.throws(() => parseSnapshot('{"tables":[{"name":"a","rows":-1}]}'), /row count/);
   assert.throws(() => parseSnapshot('{"tables":[{"name":"a","rows":1},{"name":"a","rows":1}]}'), /twice/);
 });

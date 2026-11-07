@@ -341,9 +341,9 @@ test('open-pr opens against the default branch and keeps the number', async () =
   const opened = await openPr({ client, worktree: tree, argv: ['--title', 'Add the sign-in page'] });
   assert.deepEqual(opened, { number: 7, already: false });
   assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0], {
-    cwd: tree, head: 'feature/login-page', title: 'Add the sign-in page', body: calls[0].body, session: 'sess-abc_1',
-  });
+  const { body, ...sent } = calls[0];
+  assert.deepEqual(sent, { cwd: tree, head: 'feature/login-page', title: 'Add the sign-in page', session: 'sess-abc_1' });
+  assert.equal(typeof body, 'string');
   // The body is the proof note (scripts/proof/note.js), which carries the report's words and the brief's goal.
   assert.ok(calls[0].body.startsWith('## What changed\n\nShipped the sign-in page.'));
   assert.ok(calls[0].body.includes('Let people sign in'));

@@ -46,7 +46,9 @@ function helper(dataAnswer) {
   };
   return { client, calls };
 }
-const open = (client, tree) => openPr({ client, worktree: tree, argv: ['--title', 'Show the next tide'] });
+// The session's own reading of the files is given here, never run: no repository history in a test worktree.
+const unread = async () => null;
+const open = (client, tree, extra = {}) => openPr({ client, worktree: tree, argv: ['--title', 'Show the next tide'], localChange: unread, ...extra });
 const withReport = (tree, extra, text = 'The tide table shows the next high tide for each harbour.') => {
   write(featurePaths(tree).report, `${fence(fields(extra))}\n${text}\n`);
 };
@@ -64,7 +66,7 @@ test('open-pr makes the note the pull request body', async () => {
   assert.ok(body.includes('Round times to the minute'), 'the decision log is in it');
   assert.ok(body.includes('Which harbours first?') && body.includes('The two largest'));
   assert.ok(body.includes('14 tests pass'));
-  assert.ok(body.includes('/tides'), 'the page the change touches is named');
+  assert.ok(body.includes('`/tides`'), 'the page the change touches is named');
   assert.ok(words(body) <= REPORT_WORDS);
   assert.ok(!body.includes('The data, before and after'), 'no data work, no data section');
   assert.equal(calls.data.length, 1);
@@ -81,8 +83,8 @@ test('data work shows its before and after, on the data the helper ran it on', a
   await open(client, tree);
   const body = calls.opened[0].body;
   assert.ok(body.includes('## The data, before and after'));
-  assert.ok(body.includes('boats: 3 to 4'));
-  assert.ok(body.includes('w-tide-1, status'));
+  assert.ok(body.includes('`boats`: 3 to 4'));
+  assert.ok(body.includes('`w-tide-1`, `status`'));
   assert.ok(body.includes('Nothing moved that was not expected'));
   assert.ok(body.trimEnd().endsWith('On test data.'));
   assert.ok(words(body) <= REPORT_WORDS);
@@ -96,7 +98,7 @@ test('data work shows its before and after, on the data the helper ran it on', a
   assert.ok(second.calls.opened[0].body.trimEnd().endsWith('On a read-only sample of real data.'));
 });
 
-test('report-check refuses data work with no data comparison and no reason', async () => {
+test('open-pr refuses data work with no data comparison and no reason', async () => {
   const tree = feature();
   withReport(tree, {});
   const { client, calls } = helper({ ok: true, dataWork: true, changes: [{ status: 'A', path: 'db/migrations/002_status.sql' }], ran: false, why: 'this project names no data command' });
@@ -107,7 +109,8 @@ test('report-check refuses data work with no data comparison and no reason', asy
   await open(client, tree);
   assert.equal(calls.opened.length, 1);
   assert.ok(calls.opened[0].body.includes('No comparison was made: The table is rebuilt on every start'));
-  assert.ok(calls.opened[0].body.trimEnd().endsWith('On test data.'));
+  assert.ok(calls.opened[0].body.trimEnd().endsWith('Nothing was compared.'));
+  assert.ok(!calls.opened[0].body.includes('On test data.'));
   // A report that says its change moves data (expect) and has no comparison needs a reason too, though the files don't show it.
   const declared = feature();
   withReport(declared, { data: { expect: ['boats'] } });
@@ -132,6 +135,59 @@ test('a data check the helper could not make does not stop the pull request, and
   const plain = helper();
   await open(plain.client, old);
   assert.equal(plain.calls.opened.length, 1);
+});
+
+test('data work is found by the session\'s own reading of the files when the helper cannot answer', async () => {
+  const migration = async () => ({ dataWork: true, changes: [{ status: 'A', path: 'db/migrations/002_status.sql' }] });
+  const tree = feature();
+  withReport(tree, {});
+  for (const answer of [{ ok: false, refused: 'All stop is on' }, () => { throw new Error('the helper is not running'); }, undefined]) {
+    const { client, calls } = helper(answer);
+    await assert.rejects(open(client, tree, { localChange: migration }), /"data"/);
+    assert.equal(calls.opened.length, 0);
+  }
+  // With the reason, it opens, and the data section (not one buried line) says the check could not be made.
+  withReport(tree, { data: { none: 'The migration only adds a column' } });
+  const { client, calls } = helper({ ok: false, refused: 'All stop is on' });
+  await open(client, tree, { localChange: migration });
+  const body = calls.opened[0].body;
+  assert.ok(body.includes('## The data, before and after\n\nThe data check could not be made: All stop is on'));
+  assert.ok(body.includes("The session's reason: The migration only adds a column"));
+  assert.ok(body.trimEnd().endsWith('Nothing was compared.'));
+  // A helper that takes too long is the same.
+  const slowTree = feature();
+  withReport(slowTree, { data: { none: 'The migration only adds a column' } });
+  const slow = helper(() => new Promise(() => {}));
+  await open(slow.client, slowTree, { localChange: migration, dataMs: 20 });
+  assert.ok(slow.calls.opened[0].body.includes('The data check could not be made: it took too long'));
+  // Not data work by the session's reading either: no data section, and the check's absence is one line.
+  const plain = feature();
+  withReport(plain, {});
+  const none = helper({ ok: false, refused: 'All stop is on' });
+  await open(none.client, plain, { localChange: async () => ({ dataWork: false, changes: [] }) });
+  assert.ok(!none.calls.opened[0].body.includes('The data, before and after'));
+  assert.ok(none.calls.opened[0].body.includes('The data check could not be made: All stop is on'));
+});
+
+test('a data command that failed is printed as a failure beside the session\'s reason', async () => {
+  const tree = feature();
+  const failed = { ok: true, dataWork: true, changes: [], ran: false, failed: true, why: 'the data command could not be run: it failed' };
+  withReport(tree, { data: { none: 'It only adds a column' } });
+  const { client, calls } = helper(failed);
+  await open(client, tree);
+  const body = calls.opened[0].body;
+  assert.ok(body.includes('The data command failed: the data command could not be run: it failed'));
+  assert.ok(body.includes("The session's reason: It only adds a column"));
+  // Without a reason it is refused, and says it failed.
+  const bare = feature();
+  withReport(bare, {});
+  await assert.rejects(open(helper(failed).client, bare), /the data command failed/);
+  // Where the comparison was made, a reason in the report is not used.
+  const ranTree = feature();
+  withReport(ranTree, { data: { none: 'ignored' } });
+  const ran = helper({ ok: true, dataWork: true, changes: [], ran: true, route: 'test', before: snap(3), after: snap(3) });
+  await open(ran.client, ranTree);
+  assert.ok(!ran.calls.opened[0].body.includes('ignored'));
 });
 
 test('the report reads `followed` and `data`, and refuses them in a wrong shape', () => {

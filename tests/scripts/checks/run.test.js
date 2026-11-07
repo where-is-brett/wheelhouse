@@ -332,6 +332,60 @@ test('endCheck with nothing running says so', () => {
   assert.equal(endCheck('nothing-running'), false);
 });
 
+// Held at the fetch of its folder, so a test can reach it while it prepares.
+function holdAtFetch() {
+  let reached;
+  const preparing = new Promise((resolve) => { reached = resolve; });
+  let carry;
+  const held = new Promise((resolve) => { carry = resolve; });
+  const git = (options) => {
+    const inner = safeGit(options);
+    return async (args, more) => {
+      if (args[0] === 'fetch') { reached(); await held; }
+      return inner(args, more);
+    };
+  };
+  return { git, preparing, release: carry };
+}
+
+test('a run that must not be repeated is red at once, and runs once', unix, async () => {
+  await withHome(async () => {
+    const got = await check('echo ran >> MARKS; exit 3', { extra: { once: true } });
+    assert.equal(got.result, 'failed', got.tail);
+    assert.equal(got.runs, 1, 'a red command is not run a second time');
+  });
+});
+
+test('a data run and a normal check of one project each keep their own handle, and endCheck ends both', unix, async () => {
+  await withHome(async () => {
+    const data = holdAtFetch();
+    const normal = holdAtFetch();
+    const dataRun = check('echo ran >> MARKS', { git: data.git, work: 'data-feature/x' });
+    const normalRun = check('echo ran >> MARKS', { git: normal.git, work: 'w-1' });
+    await Promise.all([data.preparing, normal.preparing]);
+    assert.equal(endCheck('p'), true);
+    data.release();
+    normal.release();
+    assert.equal((await dataRun).result, 'could-not-run');
+    assert.equal((await normalRun).result, 'could-not-run');
+    assert.equal(endCheck('p'), false, 'both handles went when their runs ended');
+  });
+});
+
+test('one run ending leaves the handle of the other that is still under way', unix, async () => {
+  await withHome(async () => {
+    const held = holdAtFetch();
+    const slow = check('echo ran >> MARKS', { git: held.git, work: 'w-1' });
+    await held.preparing;
+    const quick = await check('echo ran >> MARKS', { work: 'data-feature/x' });
+    assert.equal(quick.result, 'passed', quick.tail);
+    // The data run's end did not delete the normal check's handle: All stop still reaches it.
+    assert.equal(endCheck('p'), true);
+    held.release();
+    assert.equal((await slow).result, 'could-not-run');
+  });
+});
+
 test('a signal stops a check as endCheck does', unix, async () => {
   await withHome(async () => {
     const stop = new AbortController();

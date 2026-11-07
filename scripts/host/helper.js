@@ -33,7 +33,7 @@ import { run as realRun, withoutGitVars } from '../lib/run.js';
 import { approvalCounts, checkCounts, gateDecision, reviewCounts } from '../gate/conditions.js';
 import { decisionsWaiting, questionsOf, readHandled, markHandled } from '../gate/open-questions.js';
 import { setDecisionStatus } from './decision-status.js';
-import { classifyChange, classifyDiff, readConfig, isModelName, CI_FILES, PLUGIN_MANIFEST } from '../gate/guardrails.js';
+import { classifyChange, dataModelPaths, readConfig, isModelName, CI_FILES, PLUGIN_MANIFEST } from '../gate/guardrails.js';
 import { scrub } from './adapter.js';
 import { hide, cleanDeep } from '../lib/clean.js';
 import { findKey } from './keys.js';
@@ -81,6 +81,8 @@ import { keptCommand, notCounting } from '../checks/not-counting.js';
 import { commandDigest } from '../checks/record.js';
 import { runCheck } from '../checks/run.js';
 import { dataComparison } from './data-route.js';
+import { withDataRun, stopDataRuns } from '../checks/data-run.js';
+import { DATA_HEADING } from '../proof/note.js';
 import { parseSnapshot } from '../proof/data.js';
 import { checkRunner } from '../checks/runner.js';
 import { checksConfig, checksSettings } from '../checks/settings.js';
@@ -381,6 +383,8 @@ const NO_HOOKS = ['-c', `core.hooksPath=${NO_FILE}`];
 const MERGE_ONLY = [
   ...NO_HOOKS, '-c', `core.attributesFile=${NO_FILE}`, '-c', 'core.fsmonitor=false', '-c', 'merge.renormalize=false',
 ];
+// How long each run of a data command may take, prepare step included.
+const DATA_RUN_MINUTES = 5;
 const FULL_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
 // The patch-id of what `head` changes from its merge base with `base` (design section 12):
@@ -2703,18 +2707,15 @@ export async function startHelper({
     }));
   }
 
-  // The data before and after of a pushed feature branch (design section 7 of the director's way of working): `{ cwd, branch }`.
-  // Reads the default branch's configuration and what the branch changed in the fetch mirror, no key and no session in either,
-  // and says whether the change is data work (a migration or schema file). Where the project names a read-only data command, it
-  // runs at the merge base and at the branch's head in the checks' own sandbox on test data (data-route.js), or on the real
-  // route only once the director's signed approval names that command and only where this computer holds read-only access,
-  // which no code here sets up. Gives { ok, dataWork, changes, ran, route?, before?, after?, why?, realRefused? }. Refused under STOP.
-  async function doDataCheck({ project, branch }, ctx) {
-    if (stopped()) return STOP_REFUSAL;
+  // What a pushed feature branch changed, read in the fetch mirror (no key, no session): the default branch's configuration, the
+  // branch's head, its merge base with the default branch, the changed files and whether they are data work (a migration or
+  // schema file, scripts/gate/guardrails.js dataModelPaths). Gives { ok, config, head, base, changes, dataWork, mirror } or
+  // { ok: false, refused }.
+  async function readChange({ project, branch }, ctx) {
     if (!plainBranch(branch) || !FEATURE_BRANCH.test(branch)) return { ok: false, refused: 'the branch must be a feature branch' };
     const configured = await doConfig({ project }, ctx);
     if (configured?.ok !== true) return { ok: false, refused: configured?.refused ?? 'the default branch\'s configuration could not be read' };
-    const refreshed = await refreshFetchMirror(project);
+    const refreshed = await (refreshMirror ?? refreshFetchMirror)(project);
     if (refreshed?.ok === false) return { ok: false, refused: refreshed.refused };
     const mirror = fetchMirrorOf(project);
     const inFetchMirror = local(mirror);
@@ -2731,22 +2732,59 @@ export async function startHelper({
     const parts = listed.stdout.split('\0');
     const changes = [];
     for (let i = 0; i + 1 < parts.length; i += 2) changes.push({ status: parts[i], path: parts[i + 1] });
-    const dataWork = classifyDiff({ paths: changes.map((c) => c.path), read: () => null, config: configured.config }).directorLevel.some((d) => d.kind === 'data-model');
-    if (configured.config.dataCheck === undefined) return { ok: true, dataWork, changes, ran: false, why: 'this project names no data command' };
-    const runTest = async (commit, command) => {
-      const got = await check({
-        project, commit, main: false, work: `data-${branch}`, source: mirror, settings: { testCommand: command, prepare: null, minutes: 5, network: false },
-      });
-      if (got.result !== 'passed') throw new Error(got.result === 'timed-out' ? 'it ran out of time' : `it ${got.result === 'could-not-run' ? 'could not run' : 'failed'}`);
-      return parseSnapshot(got.tail);
-    };
-    // No read-only credential is set up by any code here, so the real route has no runner and is refused in plain words.
-    const compared = await dataComparison({ config: configured.config, approvals: signedOf(project, 'data-route-approved'), runTest, runReal: null, base, head });
+    const dataWork = dataModelPaths(changes.map((c) => c.path), configured.config).length > 0;
+    return { ok: true, config: configured.config, head, base, changes, dataWork, mirror };
+  }
+
+  // The words that refuse a pull request for data work whose body has no data section, or null. The section is the proof note's
+  // (scripts/proof/note.js), which gives the comparison or the reason there is none; a body without it can't have either.
+  async function dataSectionMissing({ project, branch, body }, ctx) {
+    let read;
+    try {
+      read = await oneAtATime(`data:${project}`, () => readChange({ project, branch }, ctx));
+    } catch {
+      return null;
+    }
+    if (read?.ok !== true || read.dataWork !== true) return null;
+    if (typeof body === 'string' && body.includes(`## ${DATA_HEADING}`)) return null;
+    return `this change is data work (${dataModelPaths(read.changes.map((c) => c.path), read.config).slice(0, 3).join(', ')}), so its pull request needs the data before and after, or the reason there is none: open it with the feature command open-pr`;
+  }
+
+  // The data before and after of a pushed feature branch (design section 7 of the director's way of working): `{ cwd, branch }`.
+  // Where the project names a read-only data command, it runs at the merge base and at the branch's head in the checks' own
+  // sandbox on test data (data-route.js): holding the computer-wide check turn, with the project's own prepare step (the check's
+  // settings) before each run and the command itself offline, run once, in a folder the runner's sweep keeps while it runs, and
+  // ended by All stop. The real route runs only once the director's signed approval names that command and only where this
+  // computer holds read-only access, which no code here sets up. Gives
+  // { ok, dataWork, changes, ran, failed?, route?, before?, after?, why?, realRefused? }. Refused under STOP.
+  async function doDataCheck({ project, branch }, ctx) {
+    if (stopped()) return STOP_REFUSAL;
+    const read = await readChange({ project, branch }, ctx);
+    if (read.ok !== true) return read;
+    const { config, head, base, changes, dataWork, mirror } = read;
+    if (config.dataCheck === undefined) return { ok: true, dataWork, changes, ran: false, why: 'this project names no data command' };
+    const work = `data-${branch}`;
+    const named = checksSettings(config);
+    const compared = await withDataRun({ project, work, stopped }, ({ signal }) => {
+      const runTest = async (commit, command) => {
+        const got = await check({
+          project, commit, main: false, work, source: mirror, signal,
+          settings: { testCommand: command, prepare: named.prepare, minutes: DATA_RUN_MINUTES, network: false, once: true },
+        });
+        if (got.result !== 'passed') throw new Error(got.result === 'timed-out' ? 'it ran out of time' : `it ${got.result === 'could-not-run' ? 'could not run' : 'failed'}`);
+        return parseSnapshot(got.tail);
+      };
+      // No read-only credential is set up by any code here, so the real route has no runner and is refused in plain words.
+      // Before a `runReal` is ever given, the real route must run only approved code, pinned by a content hash of the command
+      // and what it runs, with the network limited to the database. Until then it stays null.
+      return dataComparison({ config, approvals: signedOf(project, 'data-route-approved'), runTest, runReal: null, base, head });
+    });
+    if (compared === null) return STOP_REFUSAL;
     return { ok: true, dataWork, changes, ...compared };
   }
 
   // git in the mirror with no key, no system or user configuration and no system attributes.
-  const local = (mirror) =>(args, options = {}) => unkeyed('git', args, {
+  const local = (mirror) => (args, options = {}) => unkeyed('git', args, {
     cwd: mirror, input: '', ...options, env: { GIT_ATTR_NOSYSTEM: '1', ...options.env },
   });
 
@@ -4559,6 +4597,10 @@ export async function startHelper({
       if (/^feature\/by-hand-/.test(spelled.branch)) return { ok: false, refused: HAND_BRANCH_REFUSAL };
       const provenance = sessionProvenance({ project: body.project, sessionId: body.session });
       if (provenance === null) return { ok: false, refused: NO_PROVENANCE };
+      // Data work comes with its data section (the proof note's), or with the reason there is none, so posting here directly
+      // can't leave it out. Where the change can't be read (the branch or the mirror is not there), nothing is refused here.
+      const dataRefused = await dataSectionMissing({ project: body.project, branch: spelled.branch, body: body.body }, ctx);
+      if (dataRefused !== null) return { ok: false, refused: dataRefused };
       if (stopped()) return STOP_REFUSAL;
       // What built it is recorded in the signed state, never in the body (build-loop design, section 13: no pull
       // request names a model), and before the pull request opens, so the gate always finds it. A body that
@@ -4754,6 +4796,7 @@ export async function startHelper({
   let engineStopping = null;
   let stopSeen = false;
   function stopEngines(reason = 'All stop') {
+    stopDataRuns();
     if (engineHosts.length === 0) return Promise.resolve(null);
     // Not waited for: a check waiting its turn behind another process's runs on until that one ends.
     for (const { checks } of engineHosts) checks.stop().catch(() => {});

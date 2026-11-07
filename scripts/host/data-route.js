@@ -23,7 +23,9 @@ export const routeApproved = ({ approvals, command }) => (
 // - `config`: the default branch's configuration (its `dataCheck`);
 // - `approvals`: the verified records of the director's approval;
 // - `runTest(commit, command)` and `runReal(commit, command)`: run the command at a commit and give its snapshot, or throw;
-//   `runReal` is absent where no read-only access exists.
+//   `runReal` is absent where no read-only access exists, and no code gives one yet. Before one may be given, the real route
+//   must run only approved code, pinned by a content hash of the command and what it runs, with its network limited to the
+//   database; without both, an approved command could still be made to do something else.
 export async function dataComparison({ config, approvals = [], runTest, runReal = null, base, head }) {
   const check = config?.dataCheck;
   if (check === undefined || typeof check.command !== 'string') return { ran: false, why: 'this project names no data command' };
@@ -44,6 +46,6 @@ export async function dataComparison({ config, approvals = [], runTest, runReal 
     const after = await run(head, check.command);
     return { ran: true, route, before, after, ...(realRefused === undefined ? {} : { realRefused }) };
   } catch (error) {
-    return { ran: false, why: `the data command could not be run: ${String(error?.message ?? error).slice(0, 200)}`, ...(realRefused === undefined ? {} : { realRefused }) };
+    return { ran: false, failed: true, why: `the data command could not be run: ${String(error?.message ?? error).slice(0, 200)}`, ...(realRefused === undefined ? {} : { realRefused }) };
   }
 }

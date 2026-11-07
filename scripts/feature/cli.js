@@ -36,7 +36,7 @@ import { featureWorktree } from '../hooks/feature-status.js';
 import { branchOf } from '../hooks/session-start.js';
 import { helperClient } from '../host/helper-client.js';
 import { REPORT_WORDS } from '../lib/build-loop.js';
-import { readConfig } from '../gate/guardrails.js';
+import { dataModelPaths, readConfig } from '../gate/guardrails.js';
 import { BUILD_QUESTION_LABELS, BUILD_QUESTION_OPTIONS, isConfiguredBuildCommand } from '../protection/windows-builds.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { appendCall, readLog } from '../decisions/log.js';
@@ -578,39 +578,92 @@ function keptSession(file) {
   }
 }
 
-// What the helper makes of the pushed branch for the proof note (design section 7 of the director's way of working): whether the
-// change is data work and, where the project names a read-only data command, the data before and after. A check the helper
-// can't make never stops the pull request: the note says so, and the merge gate judges the change's files itself.
-async function dataFacts({ client, worktree, branch }) {
-  if (typeof client?.dataCheck !== 'function') return { made: false, silent: true };
+// How long the session waits for the helper's data check, which fits inside the session's own tool limit.
+export const DATA_CHECK_MS = 100 * 1000;
+
+// What the change is, read by the session's own git against the merge base with the host's default branch, for when the helper
+// can't say: { changes: [{ status, path }], dataWork }, or null when it can't be read. The same data-model places the helper
+// uses (guardrails.js dataModelPaths), plus any `paths` the branch's own configuration adds, which only widens what counts.
+async function localChangeOf(worktree) {
+  const fenced = safeGit({ cwd: worktree, reach: 'local', look: 'each', list: 'project', timeoutMs: 30 * 1000, caller: 'feature' });
+  const git = (args) => fenced(args, { env: { GIT_TERMINAL_PROMPT: '0' }, input: '' });
   try {
-    const got = await client.dataCheck({ cwd: worktree, branch });
-    if (got?.ok !== true) return { made: false, why: got?.refused ?? 'the helper gave no answer' };
-    return { made: true, ...got };
-  } catch (error) {
-    return { made: false, why: String(error?.message ?? error).slice(0, 200) };
+    let base = null;
+    for (const ref of ['origin/HEAD', 'origin/main', 'origin/master']) {
+      const got = await git(['merge-base', 'HEAD', ref]);
+      if (got.code === 0 && /^[0-9a-f]{40,64}$/.test(got.stdout.trim())) {
+        base = got.stdout.trim();
+        break;
+      }
+    }
+    if (base === null) return null;
+    const listed = await git(['diff', '--name-status', '-z', '--no-renames', '--no-ext-diff', base, 'HEAD']);
+    if (listed.code !== 0) return null;
+    const parts = listed.stdout.split('\0');
+    const changes = [];
+    for (let i = 0; i + 1 < parts.length; i += 2) changes.push({ status: parts[i], path: parts[i + 1] });
+    let config = null;
+    try {
+      config = readConfig(fs.readFileSync(path.join(worktree, '.claude', 'wheelhouse.json'), 'utf8'));
+    } catch { /* none, or one that can't be read: the defaults alone */ }
+    return { changes, dataWork: dataModelPaths(changes.map((c) => c.path), config).length > 0 };
+  } catch {
+    return null;
   }
 }
 
+// What the helper makes of the pushed branch for the proof note (design section 7 of the director's way of working): whether the
+// change is data work and, where the project names a read-only data command, the data before and after. A check the helper
+// can't make (it refuses, fails, is not there or takes too long) never stops the pull request, but the session then reads the
+// change's files itself, so data work is still found and still needs its comparison or its reason.
+async function dataFacts({ client, worktree, branch, dataMs, localChange }) {
+  let why;
+  if (typeof client?.dataCheck !== 'function') {
+    why = "the helper's data check is not there";
+  } else {
+    let timer;
+    try {
+      const got = await Promise.race([
+        client.dataCheck({ cwd: worktree, branch }),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('it took too long')), dataMs); }),
+      ]);
+      if (got?.ok === true) return { made: true, ...got };
+      why = got?.refused ?? 'the helper gave no answer';
+    } catch (error) {
+      why = String(error?.message ?? error).slice(0, 200);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  const local = await localChange(worktree);
+  return { made: false, why, ...(local === null ? {} : local) };
+}
+
 // The proof note for the piece: the report's words, the calls it logged, the decisions it followed, the pages it touches and,
-// for data work, the data before and after. Throws a CliError when the change is data work (the helper says so, or the report
-// says its change moves data) and there is neither a comparison nor a reason in the report's `data`.
+// for data work, the data before and after. Throws a CliError when the change is data work (the helper says so, or the session's
+// own reading of the files does, or the report says its change moves data) and there is neither a comparison nor a reason in
+// the report's `data`. A reason is taken where nothing could be compared: no data command, or a command that failed or a check
+// that could not be made, which the note then prints as such beside the reason. Where the comparison was made, a reason is ignored.
 function proofFor({ worktree, checked, facts }) {
   const { fields, body } = checked;
   const data = fields.data;
-  const declared = data !== undefined;
   const comparable = facts.made && facts.ran === true;
-  if ((facts.dataWork === true || declared) && !comparable && data?.none === undefined) {
-    throw new CliError('The pull request is not opened: this change is data work and no before-and-after of the data could be made'
-      + `${facts.why ? ` (${facts.why})` : ''}. Add "data": { "none": "<why there is nothing to compare>" } to report.md, `
+  const failure = facts.made && facts.ran === false && facts.failed === true ? facts.why : undefined;
+  const unavailable = facts.made ? undefined : facts.why;
+  const isData = facts.dataWork === true || data !== undefined;
+  if (isData && !comparable && data?.none === undefined) {
+    const because = failure !== undefined ? `the data command failed: ${failure}` : unavailable !== undefined ? `the data check could not be made: ${unavailable}` : (facts.why ?? 'there is no data command');
+    throw new CliError(`The pull request is not opened: this change is data work and no before-and-after of the data could be made (${because}). `
+      + 'Add "data": { "none": "<why there is nothing to compare>" } to report.md, '
       + 'or { "expect": ["<the tables this change is meant to move>"] } where the project\'s data command can run.');
   }
   let note = null;
-  if (facts.dataWork === true || declared) {
+  if (isData) {
     const route = facts.route === 'real' ? 'real' : 'test';
+    const refused = facts.realRefused ? { realRefused: facts.realRefused } : {};
     note = comparable
-      ? { route, comparison: compareSnapshots(facts.before, facts.after, { expect: data?.expect ?? [] }), ...(facts.realRefused ? { realRefused: facts.realRefused } : {}) }
-      : { route, none: data.none, ...(facts.realRefused ? { realRefused: facts.realRefused } : {}) };
+      ? { route, comparison: compareSnapshots(facts.before, facts.after, { expect: data?.expect ?? [] }), ...refused }
+      : { route, none: data.none, ...(failure === undefined ? {} : { failure }), ...(unavailable === undefined ? {} : { unavailable }), ...refused };
   }
   const pages = touchedPages(Array.isArray(facts.changes) ? facts.changes : []);
   return proofNote({
@@ -620,7 +673,7 @@ function proofFor({ worktree, checked, facts }) {
     review: null,
     previews: pages.map((page) => ({ page })),
     data: note,
-    notes: facts.made || facts.silent ? [] : [`The data check could not be made${facts.why ? `: ${facts.why}` : ''}.`],
+    notes: !isData && unavailable !== undefined ? [`The data check could not be made: ${unavailable}.`] : [],
   });
 }
 
@@ -631,7 +684,7 @@ function proofFor({ worktree, checked, facts }) {
 // nothing is opened until the report passes the `report` check. The branch is pushed first,
 // through the helper, since the host opens a pull request only from a branch it holds. The
 // helper places the project from the worktree's folder.
-export async function openPr({ client, worktree, argv }) {
+export async function openPr({ client, worktree, argv, dataMs = DATA_CHECK_MS, localChange = localChangeOf }) {
   const found = flagsOf(argv, ['title']);
   const title = needed(found, 'title');
   if (!safeFeatureFolder(worktree)) throw new CliError(FOLDER);
@@ -645,7 +698,7 @@ export async function openPr({ client, worktree, argv }) {
   const session = keptSession(p.session);
   // The host opens a pull request only from a branch it holds.
   await push({ client, worktree });
-  const note = proofFor({ worktree, checked, facts: await dataFacts({ client, worktree, branch: head }) });
+  const note = proofFor({ worktree, checked, facts: await dataFacts({ client, worktree, branch: head, dataMs, localChange }) });
   const opened = await client.openPr({ cwd: worktree, head, title, body: note, ...(session ? { session } : {}) });
   if (opened?.ok !== true) throw new CliError(opened?.refused ?? 'The host helper did not open the pull request');
   const number = opened.result?.number;

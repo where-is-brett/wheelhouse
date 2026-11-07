@@ -8,6 +8,8 @@ import path from 'node:path';
 import { checkRunner, CHECK_TRY_AGAIN as TRY_AGAIN, CHECK_LEAVE_IT as LEAVE_IT, KEEP_REPORTING } from '../../../scripts/checks/runner.js';
 import { commandDigest } from '../../../scripts/checks/record.js';
 import { checksStanding, keepQueue, readQueue } from '../../../scripts/checks/standing.js';
+import { withDataRun } from '../../../scripts/checks/data-run.js';
+import { checkPaths } from '../../../scripts/checks/folder.js';
 import { CARRY_ON, GET_THEM_PASSING } from '../../../scripts/setup/first-check.js';
 import { enrol, makeSigningKey } from '../../../scripts/state/signing.js';
 import { tempFolder } from '../../helpers/homes.js';
@@ -319,6 +321,34 @@ test('running says whether a check is under way, for a helper deciding whether i
   release();
   await runner.idle();
   assert.equal(runner.running(), false);
+}));
+
+test('a tick during a data run keeps the data run\'s folder, and sweeps it once the run is over', () => withHome(async () => {
+  const { runner } = world();
+  const folder = checkPaths('p', { work: 'data-feature/x' }).tree;
+  const other = checkPaths('p', { work: 'ended-work' }).tree;
+  fs.mkdirSync(folder, { recursive: true });
+  fs.mkdirSync(other, { recursive: true });
+  await withDataRun({ project: 'p', work: 'data-feature/x', turn: (fn) => fn() }, async () => {
+    await settled(runner);
+    await settled(runner);
+    assert.equal(fs.existsSync(folder), true, 'the data run\'s folder survives the runner\'s sweep');
+    assert.equal(fs.existsSync(other), false, 'a folder no work holds is swept as before');
+  });
+  await settled(runner);
+  assert.equal(fs.existsSync(folder), false, 'once the run is over it is swept like any other');
+}));
+
+test('All stop reaches a data run through the runner', () => withHome(async () => {
+  const { runner } = world();
+  let seen;
+  let release;
+  const run = withDataRun({ project: 'p', work: 'data-feature/x', turn: (fn) => fn() }, ({ signal }) => new Promise((resolve) => { seen = signal; release = resolve; }));
+  await until(() => seen !== undefined);
+  await runner.stop();
+  assert.equal(seen.aborted, true);
+  release();
+  await run;
 }));
 
 test('a stopped check is could-not-run and runs after All stop lifts', () => withHome(async () => {

@@ -3,14 +3,8 @@
 // read-only command that prints its tables as JSON:
 //   { "tables": [ { "name": "orders", "rows": 120, "sample": [ { "key": "o-1", "values": { "status": "paid" } } ] } ] }
 // It is run at the base commit and at the head, and the two prints are compared. Nothing here writes to any data: the command
-// is the project's own read-only one, and where it runs (test data, or the real route once the director approved it) is the
+// is the project's own read-only one, printed as one line of JSON, last. Where it runs (test data, or the real route once the director approved it) is the
 // helper's to say (scripts/host/data-route.js).
-import { spawn } from 'node:child_process';
-
-// The most a command may print, and how long it may run.
-const MOST_OUTPUT = 4 * 1024 * 1024;
-const MOST_MS = 5 * 60 * 1000;
-
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const isText = (x) => typeof x === 'string' && x !== '';
 
@@ -47,28 +41,6 @@ export function parseSnapshot(text) {
     return { tables };
   }
   throw new Error('The data command did not print the tables as JSON');
-}
-
-// The default way a command runs: through the shell, in `cwd`, with exactly `env`, its output kept to a limit.
-function runShell({ command, cwd, env }) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, { shell: true, cwd, env, stdio: ['ignore', 'pipe', 'pipe'], timeout: MOST_MS });
-    let out = '';
-    let err = '';
-    child.stdout.on('data', (d) => { if (out.length < MOST_OUTPUT) out += d; });
-    child.stderr.on('data', (d) => { if (err.length < 4096) err += d; });
-    child.on('error', reject);
-    child.on('close', (code) => resolve({ code, stdout: out, stderr: err }));
-  });
-}
-
-// Runs the project's data command and reads what it printed: { tables: [{ name, rows, sample: [{ key, values }] }] }. `env` is
-// all the command gets (no part of this process's own). Throws in plain words when the command fails or prints something else.
-export async function dataSnapshot({ command, cwd, env = {}, run = runShell }) {
-  if (!isText(command)) throw new Error('The data command is missing');
-  const got = await run({ command, cwd, env });
-  if (got.code !== 0) throw new Error(`The data command failed${isText(got.stderr) ? `: ${got.stderr.trim().slice(0, 200)}` : ''}`);
-  return parseSnapshot(got.stdout);
 }
 
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);

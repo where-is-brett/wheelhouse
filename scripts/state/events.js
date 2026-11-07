@@ -44,7 +44,8 @@ export const PLAIN_KINDS = [
 // hook of a front-desk session the director typed in can make one; nothing an agent writes counts.
 // `data-route-approved` is the director's one approval of a read-only route to a project's real data, naming the one command
 // that may run on it (scripts/host/data-route.js). Signed, so only the director's own word makes one; the helper alone
-// reads it, and no agent can write one.
+// reads it, and no agent can write one. A caller can't send one through /state/record either (checkRecord): a process with
+// this computer's key could otherwise mint it. Only the helper, from the director's own words, will record it.
 // `by-hand` ties the director's answer on the card for changes made by hand to the one local change the helper opened for it,
 // at the commit that was pressed on: signed, so only the helper's own tie lets that answer approve work (scripts/state/views.js).
 export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file', 'usage-card', 'premium-card', 'premium-check', 'premium-failed', 'provenance', 'check', 'checks-state', 'checks-found', 'change', 'by-hand', 'decision-answer', 'data-route-approved'];
@@ -957,6 +958,7 @@ export function checkRecord(event, { enrolled, held = [], computer = computerId(
   if (event.kind === 'check' || event.kind === 'checks-state' || event.kind === 'checks-found') return 'only the helper records a check';
   if (event.kind === 'change') return 'only the helper records a local change';
   if (event.kind === 'by-hand') return 'only the helper records the change it opened for changes made by hand';
+  if (event.kind === 'data-route-approved') return 'only the helper records the approval of a route to the real data';
   if (event.kind === 'shadow') return 'only the helper records a seal';
   if (event.kind === 'match') return 'only the helper records a close match';
   if (held.some((e) => canonicalJson(e) !== canonicalJson(event))) return 'another event in the state carries this record\'s id, so it was not recorded';
