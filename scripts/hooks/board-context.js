@@ -64,7 +64,9 @@ import { startedAsScript } from '../lib/started-as-script.js';
 import { HEADINGS, NOT_CHECKED, NONE_CHANGED, briefingIn } from '../desk/context.js';
 import { deskClient, unreached } from '../desk/client.js';
 import { isDecisionCard } from '../decisions/pending.js';
-import { takeNote } from '../decisions/answer.js';
+import { startedByScript } from '../decisions/answer.js';
+import { parseReply } from '../decisions/reply.js';
+import { ownWords } from '../lib/own-words.js';
 import { isBuildQuestion } from '../protection/windows-builds.js';
 import { gapHours, visitLearning, earlierSurvey, offerAgainDue, OFFER_AGAIN_MS } from '../desk/visit.js';
 
@@ -165,9 +167,14 @@ export function decisionsLine(views, pending) {
   return [listed.length === 0 ? null : decisionsLead(said), toCome === 0 ? null : `Decisions not shown yet: ${toCome}.`, DECISIONS_TAIL].filter(Boolean).join(' ');
 }
 
-async function decisionLineOf(desk) {
+// `typed` is the director's own words in this prompt. A decision that reply answers is left out, as the prompt hook records it
+// beside this hook in the same turn, and the line would otherwise show it as waiting.
+async function decisionLineOf(desk, typed) {
   const got = await desk.read('waiting');
-  return got?.ok === true && isRecord(got.data?.views) ? decisionsLine(got.data.views, got.data.decisions?.pending) : null;
+  if (got?.ok !== true || !isRecord(got.data?.views)) return null;
+  const pending = Array.isArray(got.data.decisions?.pending) ? got.data.decisions.pending : [];
+  const reply = typeof typed === 'string' ? parseReply(typed, pending) : { kind: 'none' };
+  return decisionsLine(got.data.views, reply.kind === 'answer' ? pending.filter((d) => d.n !== reply.n) : pending);
 }
 
 // What the director answered since the First Mate's last turn, and how the cards of a question that was stopped stand now.
@@ -371,10 +378,11 @@ export async function decide(input, deps = {}) {
     const sessionId = typeof input.session_id === 'string' ? input.session_id : null;
     const open = sessionId === null ? null : attempt(() => readOpen(sessionId), null);
     if (writes && sessionId !== null) attempt(() => clearOpen(sessionId));
-    // What the prompt hook made of a reply (scripts/decisions/answer.js) is told once, ahead of the decisions that wait.
-    const replyNote = writes && sessionId !== null ? attempt(() => takeNote(sessionId), null) : null;
-    const decisionLine = await within(() => decisionLineOf(desk), waitMs);
-    const notes = [replyNote, decisionLine, ...((await within(() => cardNotes({ project, input, since: seen.promptAt, at, desk, open }), waitMs)) ?? [])].filter((line) => typeof line === 'string');
+    // What the prompt hook makes of a reply (scripts/decisions/answer.js) it tells in its own context for this turn. Here the
+    // reply is only read, under the same guards, to leave out the decision it answers.
+    const typed = !writes || startedByScript(env) ? null : attempt(() => ownWords(input.prompt), null);
+    const decisionLine = await within(() => decisionLineOf(desk, typed), waitMs);
+    const notes = [decisionLine, ...((await within(() => cardNotes({ project, input, since: seen.promptAt, at, desk, open }), waitMs)) ?? [])].filter((line) => typeof line === 'string');
     const reserve = (cards === null ? 0 : cards.length + 2) + notes.reduce((sum, line) => sum + line.length + 2, 0);
     // A survey not worked out in time is left to the briefing view, which takes the record's latest.
     const survey = want === 'briefing' ? (await within(() => surveyOf({ project, client, desk }), learnWaitMs)) ?? undefined : null;

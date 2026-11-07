@@ -6,6 +6,8 @@ import { composeCard } from '../../../scripts/cards/compose.js';
 import { setupLine } from '../../../scripts/state/card-lines.js';
 import { inHome, P, raise, raiseBuildQuestion, typedAnswer, keep } from '../../helpers/decisions-world.js';
 import { makeEvent } from '../../../scripts/state/events.js';
+import { cardOutcomes } from '../../../scripts/state/views.js';
+import { readEnrolled } from '../../../scripts/state/signing.js';
 
 test('numbers count up and restart only when none waits', async () => {
   await inHome(() => {
@@ -84,6 +86,44 @@ test('an answer by an unsigned record decides nothing', async () => {
     assert.ok(sig);
     assert.equal(readDecisions(P, { events: [card, unsigned] }).pending.length, 1);
     assert.equal(readDecisions(P, { events: [card, signed] }).pending.length, 0);
+  });
+});
+
+test('a decision-answer names the option chosen, and is strict about it', async () => {
+  await inHome(() => {
+    const card = raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');
+    const now = () => new Date('2026-11-08T02:00:00.000Z');
+    const data = { question: card.data.question, n: 1, label: 'B', option: 'Weekly', words: '', where: 'chat' };
+    assert.ok(makeEvent({ kind: 'decision-answer', data, now }).sig);
+    const refused = (changed) => assert.throws(() => makeEvent({ kind: 'decision-answer', data: changed, now }), /decision-answer/);
+    const { option, ...noOption } = data;
+    assert.ok(option);
+    refused(noOption);
+    refused({ ...data, option: '' });
+    refused({ ...data, label: 'own', words: 'weekly' });
+    refused({ ...data, option: 'x'.repeat(201) });
+    refused({ ...data, extra: 1 });
+    assert.ok(makeEvent({ kind: 'decision-answer', data: { ...data, label: 'own', option: '', words: 'weekly, not daily' }, now }));
+  });
+});
+
+test('the card shows the option\'s words, whichever of the reply and the action it earns counts first', async () => {
+  await inHome(() => {
+    const card = raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');
+    const at = () => new Date('2026-11-08T02:00:00.000Z');
+    // Both made in the same instant, many times over: the ids fall either way round, and the outcome is the same.
+    const firsts = new Set();
+    for (let i = 0; i < 40; i += 1) {
+      const reply = makeEvent({ kind: 'decision-answer', data: { question: card.data.question, n: 1, label: 'B', option: 'Weekly', words: '', where: 'chat' }, now: at });
+      const click = makeEvent({ kind: 'action', data: { action: 'answer', question: card.data.question, questionId: 'q-w-tide-1-1', questionHash: 'a'.repeat(64), label: 'Weekly' }, now: at });
+      firsts.add(reply.id < click.id);
+      const [outcome] = cardOutcomes([card, reply, click], readEnrolled()).filter((o) => o.card.id === card.id);
+      assert.deepEqual([outcome.decided.label, outcome.decided.where], ['Weekly', 'chat']);
+    }
+    assert.equal(firsts.size, 2, 'both orders of id were tried');
+    const own = typedAnswer(card, { n: 1, label: 'own', words: 'weekly, not daily' }, '2026-11-08T03:00:00.000Z');
+    const [owned] = cardOutcomes([card, own], readEnrolled());
+    assert.equal(owned.decided.label, 'in their own words');
   });
 });
 

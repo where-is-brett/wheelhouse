@@ -31,11 +31,29 @@ test('a reply code and a letter answer that code\'s decision', () => {
   assert.deepEqual(parseReply('m3tx: use monthly', two), { kind: 'answer', n: 2, label: 'own', words: 'use monthly' });
 });
 
-test('"why" and "why 2 what about cost" ask why', () => {
+test('"why", "why?", "why 2" and "why 2?" ask why, and nothing longer does', () => {
   assert.deepEqual(parseReply('why', one), { kind: 'why', n: 1, words: '' });
-  assert.deepEqual(parseReply('why 2 what about cost', two), { kind: 'why', n: 2, words: 'what about cost' });
-  assert.deepEqual(parseReply('2 why', two), { kind: 'why', n: 2, words: '' });
+  assert.deepEqual(parseReply('Why?', one), { kind: 'why', n: 1, words: '' });
+  assert.deepEqual(parseReply('why 2', two), { kind: 'why', n: 2, words: '' });
+  assert.deepEqual(parseReply('why #2?', two), { kind: 'why', n: 2, words: '' });
   assert.deepEqual(parseReply('why', two).candidates, [1, 2]);
+  assert.deepEqual(parseReply('why 7', two), { kind: 'refused', n: 7, reason: 'not-waiting' });
+  // A sentence that starts with why is the director talking.
+  for (const text of ['Why is the build slow?', 'why 2 what about cost', 'why not both', '2 why']) assert.equal(parseReply(text, two).kind, 'none', text);
+});
+
+test('a letter is followed by the end, or by a mark that closes there: "2 a.m. works" is no answer', () => {
+  for (const text of ['2 a.m. works', 'a.m.', 'A-list customers', 'B2B sales first', 'a/b test']) assert.equal(parseReply(text, two).kind, 'none', text);
+  assert.equal(parseReply('a.m. works', one).kind, 'none');
+  assert.deepEqual(parseReply('B.', one), { kind: 'answer', n: 1, label: 'B', words: '' });
+  assert.deepEqual(parseReply('2 B, but later', two), { kind: 'answer', n: 2, label: 'B', words: 'but later' });
+});
+
+test('own words after "n:" need a space after the colon: "2:30 is fine" and "1:1 with Sam" are no answer', () => {
+  for (const text of ['2:30 is fine', '1:1 with Sam', '2:weekly', '1:30pm']) assert.equal(parseReply(text, two).kind, 'none', text);
+  assert.equal(parseReply('7:30 is fine', two).kind, 'none');
+  assert.deepEqual(parseReply('2: weekly', two), { kind: 'answer', n: 2, label: 'own', words: 'weekly' });
+  assert.deepEqual(parseReply('1 : weekly', two), { kind: 'answer', n: 1, label: 'own', words: 'weekly' });
 });
 
 test('words with no number or letter are not an answer, even with one waiting', () => {

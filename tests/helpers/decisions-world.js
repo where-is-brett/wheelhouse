@@ -61,5 +61,6 @@ export function raise(ask, at, { labels = ['Daily', 'Weekly', 'Monthly'], projec
 
 // The director's typed reply as the record keeps it, signed, at `at`.
 export function typedAnswer(card, { n, label, words = '' }, at, project = P) {
-  return keep(makeEvent({ kind: 'decision-answer', data: { question: card.data.question, n, label, words, where: 'chat' }, now: () => new Date(at) }), project);
+  const option = label === 'own' ? '' : card.data.options['ABCD'.indexOf(label)];
+  return keep(makeEvent({ kind: 'decision-answer', data: { question: card.data.question, n, label, option, words, where: 'chat' }, now: () => new Date(at) }), project);
 }

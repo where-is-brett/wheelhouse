@@ -48,3 +48,22 @@ test('blocksIn finds each block from its first line to its Reply line', () => {
   assert.deepEqual(blocksIn(text), [decisionText(decision)]);
   assert.deepEqual(blocksIn('Nothing to decide.'), []);
 });
+
+test('blocksIn finds a block wrapped in Markdown, so it is still held to the printed text', () => {
+  const printed = decisionText(decision);
+  const lines = printed.split('\n');
+  const wrapped = {
+    bold: [`**${lines[0]}**`, ...lines.slice(1)].join('\n'),
+    heading: [`## ${lines[0]}`, ...lines.slice(1)].join('\n'),
+    bullet: [`- ${lines[0]}`, ...lines.slice(1)].join('\n'),
+    quote: lines.map((l) => `> ${l}`).join('\n'),
+    fence: `\`\`\`\n${printed}\n\`\`\``,
+  };
+  for (const [name, text] of Object.entries(wrapped)) {
+    const found = blocksIn(`Here you are.\n\n${text}\n\nThanks.`);
+    assert.equal(found.length, 1, name);
+    // Only a fenced block, whose own lines are untouched, equals the printed words.
+    assert.equal(found[0] === printed, name === 'fence', name);
+  }
+  assert.equal(blocksIn(`1. ${printed}`).length, 1);
+});

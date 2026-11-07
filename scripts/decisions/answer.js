@@ -7,8 +7,8 @@
 //   - the session's role is front-desk (a feature, foreman or other session's prompts are never replies);
 //   - the session was not started by a script: a headless `claude -p` session's prompt is a script's words.
 // A reply that could mean more than one decision, that names no waiting decision, or that answers one already answered
-// is never recorded. It leaves a note for the First Mate (board-context.js shows it once), which says what waits or when
-// and how the decision was answered. Silence, a timeout or a missing reply is never an answer: nothing here reads a clock
+// is never recorded. It gives a note for the First Mate, which the prompt hook returns as that same turn's context: what
+// waits, or when and how the decision was answered. Silence, a timeout or a missing reply is never an answer: nothing here reads a clock
 // to decide anything.
 //
 // A reply is signed into the record as a decision-answer. For a decision made from a question of the build, a letter also
@@ -16,11 +16,11 @@
 // are not one of the options.
 import fs from 'node:fs';
 import path from 'node:path';
-import { sessionRole, roleFile } from '../lib/role.js';
+import { sessionRole } from '../lib/role.js';
 import { ownWords } from '../lib/own-words.js';
 import { helperClient } from '../host/helper-client.js';
 import { helperGrace } from '../lib/helper-grace.js';
-import { withinBudget, BUDGET_MS } from '../hooks/pending.js';
+import { withinBudget, pendingDir, BUDGET_MS } from '../hooks/pending.js';
 import { earned, keepEarned, sendKept } from '../hooks/prompt-record.js';
 import { whenSaid } from '../cards/answered.js';
 import { readDecisions } from './pending.js';
@@ -40,46 +40,34 @@ export function startedByScript(env = process.env) {
   return STARTER_VARIABLES.some((name) => typeof env?.[name] === 'string' && env[name] !== '');
 }
 
-// --- The note for the First Mate ---
+// --- Answers kept to send ---
 
-const noteFile = (sessionId) => {
-  const role = roleFile(sessionId);
-  return role === null ? null : path.join(path.dirname(role), 'decision-note.json');
-};
-
-// Keeps a note for the session's next prompt. Never throws.
-export function keepNote(sessionId, text) {
-  const file = noteFile(sessionId);
-  if (file === null || typeof text !== 'string' || text === '') return false;
+// The decision-answers kept on this computer that the helper has not taken yet, as { text, at, label, words }. A reply typed
+// while the helper was down, or just now, counts as an answer already: signing a second one would decide the same decision twice.
+function keptAnswers(project) {
+  const folder = pendingDir(project);
+  let names;
   try {
-    let notes = [];
+    names = fs.readdirSync(folder).filter((n) => n.endsWith('.json'));
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const name of names) {
     try {
-      const held = JSON.parse(fs.readFileSync(file, 'utf8'))?.notes;
-      if (Array.isArray(held)) notes = held.filter((n) => typeof n === 'string');
+      const { route, body } = JSON.parse(fs.readFileSync(path.join(folder, name), 'utf8'));
+      const event = body?.event;
+      if (route === 'record' && event?.kind === 'decision-answer' && typeof event.data?.question === 'string') {
+        out.push({ text: event.data.question, at: event.at, label: event.data.label, words: event.data.words ?? '' });
+      }
     } catch {
-      // None kept yet.
+      // A file that cannot be read is sendPending's to set aside.
     }
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, `${JSON.stringify({ notes: [...notes, text] })}\n`);
-    return true;
-  } catch {
-    return false;
   }
+  return out;
 }
 
-// The notes kept for the session, once: they are removed as they are read. Null when there are none.
-export function takeNote(sessionId) {
-  const file = noteFile(sessionId);
-  if (file === null) return null;
-  try {
-    const notes = JSON.parse(fs.readFileSync(file, 'utf8'))?.notes;
-    fs.rmSync(file, { force: true });
-    const kept = Array.isArray(notes) ? notes.filter((n) => typeof n === 'string' && n !== '') : [];
-    return kept.length === 0 ? null : kept.join(' ');
-  } catch {
-    return null;
-  }
-}
+const pick = ({ at, label, words }) => ({ at, label, words, where: 'chat' });
 
 // --- What each outcome says ---
 
@@ -111,7 +99,11 @@ export async function recordAnswer({
   if (typed === null) return { recorded: false };
 
   const held = decisions ?? readDecisions(project);
-  const { pending, answered } = held;
+  // An answer kept to send counts as given: its decision no longer waits, and a second reply to it meets "already answered".
+  const kept = keptAnswers(project);
+  const keptFor = (d) => kept.find((k) => k.text === d.text);
+  const pending = held.pending.filter((d) => keptFor(d) === undefined);
+  const answered = [...held.answered, ...held.pending.filter((d) => keptFor(d) !== undefined).map((d) => ({ n: d.n, id: d.id, text: d.text, code: d.code, options: d.options, ...pick(keptFor(d)) }))];
   let reply = parseReply(typed, pending);
   // A numbered reply to a decision answered already, with nothing else waiting for it, is told so.
   if (reply.kind === 'none' && /^\s*(?:reply\s+)?#?[1-9]/i.test(typed)) {
@@ -119,10 +111,7 @@ export async function recordAnswer({
     if (late.kind === 'answer' || late.kind === 'why') reply = { kind: 'refused', n: late.n, reason: 'not-waiting' };
   }
 
-  const finish = (result, note) => {
-    if (note !== undefined) keepNote(sessionId, note);
-    return { ...result, ...(note === undefined ? {} : { note }) };
-  };
+  const finish = (result, note) => ({ ...result, ...(note === undefined ? {} : { note }) });
 
   if (reply.kind === 'none') return { recorded: false };
   if (reply.kind === 'ambiguous') {
@@ -143,22 +132,33 @@ export async function recordAnswer({
   }
 
   const decision = pending.find((d) => d.n === reply.n);
-  const data = { question: decision.text, n: decision.n, label: reply.label, words: reply.words, where: 'chat' };
+  const option = reply.label === 'own' ? undefined : decision.options[LETTERS.indexOf(reply.label)];
+  const data = { question: decision.text, n: decision.n, label: reply.label, option: option?.label ?? '', words: reply.words, where: 'chat' };
   const api = client ?? helperClient({ timeout: budget });
   const left = withinBudget(Date.now() + budget);
+  // The reply is made first and the action it earns a moment later, so the reply is always what decides.
   const clock = () => now;
+  const after = () => new Date(now.getTime() + 1);
   const queued = [keepEarned(project, { made: { kind: 'decision-answer', data } }, { now: clock })];
-  if (reply.label !== 'own' && /^Answer question q-/.test(decision.line ?? '')) {
-    const option = decision.options[LETTERS.indexOf(reply.label)];
+  if (option !== undefined && /^Answer question q-/.test(decision.line ?? '')) {
     try {
-      const got = option === undefined ? null : await earned({ project, question: decision.text, label: option.label, client: api, now: clock, left });
-      if (got) queued.push(keepEarned(project, got, { now: clock }));
+      const got = await earned({ project, question: decision.text, label: option.label, client: api, now: after, left });
+      if (got) queued.push(keepEarned(project, got, { now: after }));
     } catch {
       // The decision-answer stands; the build's own signed answer is then missing, and the First Mate says so.
     }
   }
-  for (const kept of queued) await sendKept(api, left, kept);
-  const note = `The director answered decision ${decision.n} ${howAnswered({ label: reply.label, words: reply.words })}, and it is recorded. State it as a fact, in one plain line, and carry on from it.`;
-  keepNote(sessionId, note);
-  return { recorded: true, note };
+  let sent = true;
+  for (const record of queued) {
+    try {
+      if (!(await sendKept(api, left, record))) sent = false;
+    } catch {
+      sent = false;
+    }
+  }
+  const how = howAnswered({ label: reply.label, words: reply.words });
+  const note = sent
+    ? `The director answered decision ${decision.n} ${how}, and it is recorded. State it as a fact, in one plain line, and carry on from it.`
+    : `The director answered decision ${decision.n} ${how}. The helper could not take it just now, so it is kept on this computer and will be sent. Say so in one plain line, and carry on from it.`;
+  return { recorded: true, sent, note };
 }
