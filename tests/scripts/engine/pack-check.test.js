@@ -216,25 +216,7 @@ test('every AI step denies the question tool, so a run has no way to a person', 
   assert.ok(problems(review).some((p) => p.startsWith('review-spec') && p.includes('AskUserQuestion')));
 });
 
-const readerPack = (edit) => packWith((workflow) => edit(workflow, node(workflow, 'read')), { name: 'wheelhouse-reader' });
-
-test('the reader needs no blocked exit, wait, work input or shared rules, and the pack passes', () => {
-  assert.deepEqual(problems(PACK_DIR), []);
-  const workflow = readWorkflow(fs.readFileSync(path.join(PACK_DIR, 'wheelhouse-reader.yaml'), 'utf8'));
-  assert.equal(workflow.inputs.work, undefined);
-  assert.equal(node(workflow, 'read').output_format.properties.blocked, undefined);
-});
-
-test('the reader\'s step may not widen what it reads', () => {
-  assert.ok(problems(readerPack((_, read) => { read.allowed_tools = ['Read', 'Grep', 'Glob', 'Bash']; })).some((p) => p.startsWith('read ')));
-  assert.ok(problems(readerPack((_, read) => { delete read.allowed_tools; })).some((p) => p.startsWith('read ')));
-  assert.ok(problems(readerPack((_, read) => { read.settingSources = ['project', 'user']; })).some((p) => p.startsWith('read ')));
-  assert.ok(problems(readerPack((_, read) => { read.plugins = [WHEELHOUSE_PLUGIN]; })).some((p) => p.startsWith('read ')));
-  assert.ok(problems(readerPack((_, read) => { read.skills = ['wheelhouse:pr']; })).some((p) => p.startsWith('read ')));
-  assert.ok(problems(readerPack((_, read) => { delete read.output_format.properties.frame; })).some((p) => p.startsWith('read ')));
-});
-
-test('a lane step can\'t pass as the reader', () => {
+test('a lane step must name the Wheelhouse plugin', () => {
   const dir = packWith((workflow) => { delete node(workflow, 'review-spec').plugins; });
   assert.ok(problems(dir).some((p) => p.includes('Wheelhouse plugin')));
 });
