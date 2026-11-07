@@ -55,15 +55,23 @@ async function oldProject() {
 
 // `failOpen`: 'before' makes the first request to open a pull request fail with nothing made; 'after' makes it fail once the host
 // has made it (the answer was lost).
-function host(remote, { visibility = true, failOpen = null } = {}) {
+// `listing: false` is a host that can list only open requests (no `requestsOn`). `said` overrides the state a request is reported
+// in, by number (for a host that answers 'unknown').
+function host(remote, { visibility = true, failOpen = null, listing = true } = {}) {
   const prs = new Map();
   const merges = [];
   const opened = [];
+  const said = new Map();
   let failed = false;
+  const listed = (branch) => [...prs.entries()].filter(([, pr]) => pr.headRef === branch)
+    .map(([number, pr]) => ({ number, branch: pr.headRef, head: pr.headSha, fork: false, state: said.get(number) ?? pr.state }));
   return {
     merges,
     opened,
     prs,
+    said,
+    // As the adapter answers: null where the host can't list requests that are not open.
+    requestsOn: async (branch) => (listing ? listed(branch) : null),
     defaultBranch: async () => 'main',
     login: async () => 'ann-oneil',
     isPublic: async () => {
@@ -84,7 +92,7 @@ function host(remote, { visibility = true, failOpen = null } = {}) {
     },
     prState: async (number) => {
       const pr = prs.get(number);
-      return pr ? { ...pr } : null;
+      return pr ? { ...pr, state: said.get(number) ?? pr.state } : null;
     },
     closePr: async (number) => { prs.set(number, { ...prs.get(number), state: 'closed' }); return { number }; },
     ciState: async (sha) => ({ sha, state: 'success' }),
@@ -284,6 +292,76 @@ test('a pull request found on the helper\'s branch with a different head is left
     const notes = listEvents(stateDir(PROJECT), { report: () => {} }).filter((e) => e.kind === 'note' && /was left alone/.test(e.data?.words ?? ''));
     assert.equal(notes.length, 1);
   }, { failOpen: 'after' });
+});
+
+test('a request the host reports in a state it does not know is waited on and asked about again, never taken as turned down', async () => {
+  await working(async ({ client, adapter }) => {
+    closed('w-tide-1');
+    decided('q-w-tide-1-1', 'w-tide-1', '2026-11-06T09:00:00.000Z', { ask: 'Which digest rhythm?' });
+    assert.equal((await client.decisions.batch({ project: PROJECT, date: '2026-11-07' })).step, 'opened');
+    adapter.said.set(8, 'unknown');
+    for (let i = 0; i < 2; i += 1) {
+      const waiting = await client.decisions.batch({ project: PROJECT, date: '2026-11-07' });
+      assert.equal(waiting.step, 'waiting', JSON.stringify(waiting));
+      assert.equal(waiting.pr, 8);
+    }
+    assert.deepEqual(adapter.merges, []);
+    // Once the host says, it carries on: the records were not declined.
+    adapter.said.delete(8);
+    const merged = await client.decisions.batch({ project: PROJECT, date: '2026-11-07' });
+    assert.equal(merged.step, 'merged', JSON.stringify(merged));
+    assert.equal(adapter.opened.length, 1);
+    assert.equal(listEvents(stateDir(PROJECT), { report: () => {} }).filter((e) => e.kind === 'note' && /will not be added again/.test(e.data?.words ?? '')).length, 0);
+  });
+});
+
+test('a pull request opened and then closed before its number was kept is not made again, and its records are declined', async () => {
+  await working(async ({ client, adapter }) => {
+    closed('w-tide-1');
+    decided('q-w-tide-1-1', 'w-tide-1', '2026-11-06T09:00:00.000Z', { ask: 'Which digest rhythm?' });
+    const lost = await client.decisions.batch({ project: PROJECT, date: '2026-11-07' }).catch((e) => ({ ok: false, error: e.message }));
+    assert.notEqual(lost.step, 'opened');
+    assert.equal(adapter.opened.length, 1);
+    await adapter.closePr(8);
+    assert.deepEqual(await client.decisions.batch({ project: PROJECT, date: '2026-11-07' }), { ok: true, step: 'none' });
+    assert.equal(adapter.opened.length, 1, 'no second pull request');
+    assert.deepEqual(await client.decisions.batch({ project: PROJECT, date: '2026-11-08' }), { ok: true, step: 'none' });
+    assert.equal(adapter.opened.length, 1);
+    assert.deepEqual(adapter.merges, []);
+    assert.equal(listEvents(stateDir(PROJECT), { report: () => {} }).filter((e) => e.kind === 'note' && /will not be added again/.test(e.data?.words ?? '')).length, 1);
+  }, { failOpen: 'after' });
+});
+
+test('a pull request opened and merged before its number was kept marks its records batched', async () => {
+  await working(async ({ client, adapter }) => {
+    closed('w-tide-1');
+    decided('q-w-tide-1-1', 'w-tide-1', '2026-11-06T09:00:00.000Z', { ask: 'Which digest rhythm?' });
+    await client.decisions.batch({ project: PROJECT, date: '2026-11-07' }).catch(() => null);
+    adapter.prs.get(8).state = 'merged';
+    assert.deepEqual(await client.decisions.batch({ project: PROJECT, date: '2026-11-07' }), { ok: true, step: 'none' });
+    assert.equal(adapter.opened.length, 1);
+    assert.equal(listEvents(stateDir(PROJECT), { report: () => {} }).filter((e) => e.kind === 'note' && /will not be added again/.test(e.data?.words ?? '')).length, 0);
+  }, { failOpen: 'after' });
+});
+
+test('on a host that cannot list closed requests, a change whose pull request is not known is declined rather than made again', async () => {
+  await working(async ({ client, adapter }) => {
+    closed('w-tide-1');
+    decided('q-w-tide-1-1', 'w-tide-1', '2026-11-06T09:00:00.000Z', { ask: 'Which digest rhythm?' });
+    const lost = await client.decisions.batch({ project: PROJECT, date: '2026-11-07' }).catch((e) => ({ ok: false, error: e.message }));
+    assert.notEqual(lost.step, 'opened');
+    assert.deepEqual(await client.decisions.batch({ project: PROJECT, date: '2026-11-07' }), { ok: true, step: 'none' });
+    assert.deepEqual(adapter.opened, []);
+    assert.equal(listEvents(stateDir(PROJECT), { report: () => {} }).filter((e) => e.kind === 'note' && /will not be added again/.test(e.data?.words ?? '')).length, 1);
+  }, { failOpen: 'before', listing: false });
+  // Where its pull request is still open, it is found among the open ones and carried on.
+  await working(async ({ client, adapter }) => {
+    closed('w-tide-1');
+    decided('q-w-tide-1-1', 'w-tide-1', '2026-11-06T09:00:00.000Z', { ask: 'Which digest rhythm?' });
+    await client.decisions.batch({ project: PROJECT, date: '2026-11-07' }).catch(() => null);
+    assert.equal((await client.decisions.batch({ project: PROJECT, date: '2026-11-07' })).step, 'merged');
+    assert.equal(adapter.opened.length, 1);
+  }, { failOpen: 'after', listing: false });
 });
 
 test('every record the change took is marked batched once it merges, so none is made twice', async () => {

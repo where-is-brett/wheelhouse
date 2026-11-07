@@ -495,6 +495,11 @@ function inspect(worktree) {
   const brief = readBriefOrSay(worktree);
   if (parsed.fields.work !== brief.work) missing.push(`report.md names the work "${parsed.fields.work}", not "${brief.work}"`);
   if (parsed.words > REPORT_WORDS) missing.push(`The report is ${parsed.words} words: cut it to ${REPORT_WORDS} or fewer`);
+  for (const f of parsed.fields.followed ?? []) {
+    if (!QUESTION_ID.test(f.question)) {
+      missing.push(`report.md "followed" names each decision by its question id, as ask printed it (the form q-<work>-<number>, for example "q-${brief.work}-1"), not by its words: ${quoted(f.question)}`);
+    }
+  }
 
   const kept = readCapped(p.rulings, RULINGS_BYTES);
   if (kept === null) {
@@ -760,38 +765,35 @@ function proofFor({ worktree, checked, facts }) {
   });
 }
 
-const plainWords = (x) => String(x ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
-
-// The decisions of this piece the director answered "private": each question's id and its words, as the piece asked it. What a
-// decision was is the director's to keep out of the project, so nothing the pull request carries may name one. The helper's
-// record says which; a question it can't be asked about is not counted private here.
-async function privateOnes({ worktree, client }) {
-  if (typeof client?.state?.answer !== 'function') return new Set();
-  const hidden = new Set();
-  const asked = readQuestions(featurePaths(worktree).questions, { maxBytes: QUESTIONS_BYTES }).questions.filter((q) => q.kind === 'question');
-  for (const q of asked) {
-    try {
-      const said = await client.state.answer({ cwd: worktree, questionId: q.id });
-      if (said?.ok === true && said.decision?.private === true) {
-        hidden.add(plainWords(q.id));
-        hidden.add(plainWords(q.what));
+// The report's `followed` entries as the note prints them: each names its question by id (the report check sees to that), and what a
+// decision was is the director's to keep out of a public project where they answered it private. So the helper is asked how each
+// id was answered, this piece's or another's, and an entry about a private answer is left out whole, whatever its `answer` says.
+// The question's words come from the id. Where an answer can't be read, nothing is opened: it can't be known to be public.
+async function followedFor({ worktree, client, fields }) {
+  const followed = Array.isArray(fields.followed) ? fields.followed : [];
+  if (followed.length === 0) return [];
+  const words = new Map(readQuestions(featurePaths(worktree).questions, { maxBytes: QUESTIONS_BYTES }).questions
+    .filter((q) => q.kind === 'question').map((q) => [q.id, q.what]));
+  const kept = [];
+  const isPrivate = new Map();
+  for (const entry of followed) {
+    if (!isPrivate.has(entry.question)) {
+      let said;
+      try {
+        said = typeof client?.state?.answer === 'function' ? await client.state.answer({ cwd: worktree, questionId: entry.question }) : null;
+      } catch (error) {
+        said = { ok: false, refused: error.message };
       }
-    } catch { /* not asked of a helper that is down: the brief tells the session to leave them out too */ }
+      if (said?.ok !== true) {
+        throw new CliError(`The pull request is not opened: how the director answered ${entry.question} (in "followed") could not be read, so it can't be known whether they kept it private. `
+          + `${typeof said?.refused === 'string' ? `${said.refused}. ` : ''}Run open-pr again once the host helper answers, or take that entry out of "followed".`);
+      }
+      isPrivate.set(entry.question, said.decision?.private === true);
+    }
+    if (isPrivate.get(entry.question)) continue;
+    kept.push({ ...entry, question: words.get(entry.question) ?? entry.question });
   }
-  return hidden;
-}
-
-// The report's fields without any `followed` or `rework` entry about a private decision.
-function withoutPrivate(fields, hidden) {
-  if (hidden.size === 0) return fields;
-  const out = { ...fields };
-  if (Array.isArray(fields.followed)) out.followed = fields.followed.filter((f) => !hidden.has(plainWords(f.question)));
-  if (fields.rework !== undefined) {
-    const kept = reworksIn(fields).filter((r) => !hidden.has(plainWords(r.question)));
-    if (kept.length === 0) delete out.rework;
-    else out.rework = kept;
-  }
-  return out;
+  return kept;
 }
 
 // Opens the pull request from the worktree's branch against the default branch (the helper
@@ -813,10 +815,11 @@ export async function openPr({ client, worktree, argv, dataClient = client, data
   const checked = await inspectWithAnswers(worktree, client);
   if (checked.missing.length > 0) throw new CliError(`The pull request is not opened until the report passes. ${checked.missing.join(' ')}`);
   const session = keptSession(p.session);
+  // Read before anything is pushed: an answer that can't be read stops the pull request here.
+  const followed = await followedFor({ worktree, client, fields: checked.fields });
   // The host opens a pull request only from a branch it holds.
   await push({ client, worktree });
-  const hidden = await privateOnes({ worktree, client });
-  const note = proofFor({ worktree, checked: { ...checked, fields: withoutPrivate(checked.fields, hidden) }, facts: await dataFacts({ client: dataClient, worktree, branch: head, declared: checked.fields.data !== undefined, dataMs, localChange }) });
+  const note = proofFor({ worktree, checked: { ...checked, fields: { ...checked.fields, followed } }, facts: await dataFacts({ client: dataClient, worktree, branch: head, declared: checked.fields.data !== undefined, dataMs, localChange }) });
   const opened = await client.openPr({ cwd: worktree, head, title, body: note, ...(session ? { session } : {}) });
   if (opened?.ok !== true) throw new CliError(opened?.refused ?? 'The host helper did not open the pull request');
   const number = opened.result?.number;

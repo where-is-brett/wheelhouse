@@ -272,6 +272,13 @@ export function githubCommands({ call, attempt, json, repo, fromAddress, refusal
       }));
     },
 
+    // The pull requests with this head branch, in any state, as the adapter's request values with a state.
+    async requestsOn(branch) {
+      const requests = await ask(['pr', 'list', ...R, '--state', 'all', '--head', branch, '--json', 'number,headRefName,headRefOid,isCrossRepository,state', '--limit', '20']);
+      if (!Array.isArray(requests)) throw new Error('GitHub did not list the pull requests of the branch');
+      return requests.map((r) => ({ number: r.number, branch: r.headRefName, head: r.headRefOid, fork: r.isCrossRepository === true, state: STATE[r.state] ?? 'unknown' }));
+    },
+
     // The files a pull request changes and its commits' subjects, oldest first.
     async requestDetails(number) {
       const pr = await ask(['pr', 'view', String(number), ...R, '--json', 'files,commits']);

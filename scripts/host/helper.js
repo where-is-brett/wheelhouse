@@ -3716,18 +3716,36 @@ export async function startHelper({
     // A change pushed whose pull request was never recorded (the host refused, or the helper stopped after the push): the pull
     // request is found by its branch and adopted when its head is the commit that was kept, or opened now when there is none.
     // A merge still checks the head and the files again, so adopting takes nothing on trust.
+    // A pull request that was opened and then turned down before its number was kept is not opened again: the host is asked for
+    // every request on the branch, in any state. A host that can only list the open ones can't rule that out, so there a change
+    // with no open pull request is declined, not made again: the records stay in the signed record, and a duplicate that brings
+    // back what the director turned down is the worse of the two.
+    const decline = async (ids, words) => {
+      kept = { ...kept, declined: [...new Set([...kept.declined, ...ids])], pending: null };
+      keepBatches(project, kept);
+      await say(words);
+    };
     if (kept.open === null && kept.pending !== null) {
       const wait = kept.pending;
-      const found = (await adapter.openRequests()).find((r) => r.branch === wait.branch && !r.fork);
+      const listed = await adapter.requestsOn(wait.branch);
+      const on = (listed ?? (await adapter.openRequests()).map((r) => ({ ...r, state: 'open' }))).filter((r) => r.branch === wait.branch && !r.fork);
+      const ours = on.filter((r) => r.head === wait.head);
       let number;
-      if (found === undefined) {
-        number = (await adapter.openPr({ head: wait.branch, base: defaultBranch, title: DECISION_TITLE(wait.branch.slice(-10)), body: DECISION_BODY })).number;
-      } else if (found.head === wait.head) {
-        number = found.number;
-      } else {
-        kept = { ...kept, declined: [...new Set([...kept.declined, ...wait.ids])], pending: null };
+      if (on.some((r) => r.state === 'unknown')) {
+        return { ok: true, step: 'waiting', why: 'the host would not say what became of the change that keeps the decision records' };
+      } else if (ours.some((r) => r.state === 'merged')) {
+        kept = { ...kept, batched: [...new Set([...kept.batched, ...wait.ids])], pending: null };
         keepBatches(project, kept);
-        await say(`A change that keeps decision records (${wait.branch}) was found with other work in it, so it was left alone and its records won't be batched again.`);
+      } else if (ours.some((r) => r.state === 'closed')) {
+        await decline(wait.ids, 'The change that kept the decisions of an earlier day was closed, so those decision records will not be added again.');
+      } else if (ours.some((r) => r.state === 'open')) {
+        number = ours.find((r) => r.state === 'open').number;
+      } else if (on.some((r) => r.state === 'open')) {
+        await decline(wait.ids, `A change that keeps decision records (${wait.branch}) was found with other work in it, so it was left alone and its records will not be batched again.`);
+      } else if (listed === null) {
+        await decline(wait.ids, 'A change that keeps decision records was pushed but its pull request was never recorded, and this host cannot say whether it was turned down, so those decision records will not be added again.');
+      } else {
+        number = (await adapter.openPr({ head: wait.branch, base: defaultBranch, title: DECISION_TITLE(wait.branch.slice(-10)), body: DECISION_BODY })).number;
       }
       if (number !== undefined) {
         kept = { ...kept, open: { pr: number, head: wait.head, base: wait.base, branch: wait.branch, ids: wait.ids }, pending: null };
@@ -3748,12 +3766,15 @@ export async function startHelper({
           return { ok: true, step: 'merged', pr: kept.open.pr };
         }
         return { ok: true, step: 'waiting', pr: kept.open.pr, why: merged?.refused ?? 'the gate gave no answer' };
-      } else {
+      } else if (pr?.state === 'closed') {
         // Closed without merging: the director or the host turned it down, so its records are not batched again. A note says so;
         // it makes no card.
         kept = { ...kept, declined: [...new Set([...kept.declined, ...kept.open.ids])], open: null };
         keepBatches(project, kept);
         await say('The change that kept the decisions of an earlier day was closed, so those decision records will not be added again.');
+      } else {
+        // Any other answer (the host's 'unknown', or none) is not a turning down: the change is asked about again later.
+        return { ok: true, step: 'waiting', pr: kept.open.pr, why: 'the host would not say what became of the change' };
       }
     }
     const day = typeof date === 'string' && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(date) ? date : dayOf(new Date(now().getTime() - 24 * 60 * 60 * 1000));

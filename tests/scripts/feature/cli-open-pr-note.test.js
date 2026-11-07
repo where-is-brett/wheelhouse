@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { openPr, CliError } from '../../../scripts/feature/cli.js';
+import { ask, openPr, CliError } from '../../../scripts/feature/cli.js';
 import { featurePaths, parseReport } from '../../../scripts/feature/files.js';
 import { HEADINGS } from '../../../scripts/proof/note.js';
 import { REPORT_WORDS } from '../../../scripts/lib/build-loop.js';
@@ -56,8 +56,10 @@ const withReport = (tree, extra, text = 'The tide table shows the next high tide
 test('open-pr makes the note the pull request body', async () => {
   const tree = feature();
   write(featurePaths(tree).decisions, `${JSON.stringify({ v: 1, at: '2026-11-08T01:00:00.000Z', decided: 'Round times to the minute', options: ['Minute', 'Second'], why: 'Seconds add noise', kind: 'structure' })}\n`);
-  withReport(tree, { followed: [{ question: 'Which harbours first?', answer: 'The two largest' }] });
+  const asked = await ask({ worktree: tree, argv: ['--what', 'Which harbours first?', '--why', 'It decides what users see', '--option', 'A=Use A', '--option', 'B=Use B', '--cost', 'A=An hour', '--undo', 'A=yes', '--cost', 'B=An hour', '--undo', 'B=yes', '--because', 'It is simplest', '--meanwhile', 'I build the rest', '--recommend', 'A', '--level', '3'] });
+  withReport(tree, { followed: [{ question: asked.id, answer: 'The two largest' }] });
   const { client, calls } = helper({ ok: true, dataWork: false, changes: [{ status: 'M', path: 'src/pages/tides/index.tsx' }, { status: 'M', path: 'src/lib/x.ts' }], ran: false, why: 'this project names no data command' });
+  client.state = { answer: async () => ({ ok: true, answer: 'A', decision: { at: '2026-11-08T01:00:00.000Z', option: 'A', words: '', private: false } }) };
   assert.deepEqual(await open(client, tree), { number: 7, already: false });
   const body = calls.opened[0].body;
   assert.deepEqual([...body.matchAll(/^## (.+)$/gm)].map((m) => m[1]), HEADINGS.slice(0, 6));

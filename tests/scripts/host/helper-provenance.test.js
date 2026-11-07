@@ -358,9 +358,8 @@ test('a feature session\'s commands work through the helper where the Wheelhouse
           'q-login-page-1', 'There is no answer yet.', 'The report is whole.', 'Opened pull request #7', '',
         ].join('\n'));
         // Each request carried the worktree's folder and no project: the helper placed it.
-        // The answer, then `report` and `open-pr` each reading the answer again (a different one needs its rework reported), `open-pr`
-        // reading it once more to leave out a private one, and the push and the pull request.
-        assert.equal(sent.length, 6);
+        // The answer, then `report` and `open-pr` each reading the answer again (a different one needs its rework reported), and the push and the pull request.
+        assert.equal(sent.length, 5);
         assert.deepEqual(sent.find((args) => 'refspec' in args), { cwd: tree, dir: tree, refspec: 'feature/login-page' });
         for (const args of sent) {
           assert.equal(args.cwd, tree);

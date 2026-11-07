@@ -5,7 +5,7 @@
 // standard input. Commands that would otherwise ask for confirmation get --yes.
 import { gitlabHistory } from './gitlab-history.js';
 import {
-  stateOf, mergedResults as mergedResultsOf, prStateOf, requestOf, issueOf, fileOf, subjectsOf, previewOf,
+  stateOf, mergedResults as mergedResultsOf, prStateOf, requestOf, branchRequestOf, issueOf, fileOf, subjectsOf, previewOf,
   approvalRefusal, approvalsLeft, statusIn, MERGE_KEY_REFUSED, publicOf,
 } from './gitlab-shared.js';
 
@@ -143,6 +143,13 @@ export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal
       const requests = await ask(['mr', 'list', ...R, '--per-page', '100', '--output', 'json']);
       if (!Array.isArray(requests)) throw new Error('GitLab did not list the open merge requests');
       return requests.map(requestOf);
+    },
+
+    // The merge requests with this source branch, in any state.
+    async requestsOn(branch) {
+      const requests = await ask(['api', `${project}/merge_requests?state=all&source_branch=${encodeURIComponent(branch)}&per_page=20`]);
+      if (!Array.isArray(requests)) throw new Error('GitLab did not list the merge requests of the branch');
+      return requests.map(branchRequestOf);
     },
 
     // The files a merge request changes, with lines counted from each diff, and its commits'

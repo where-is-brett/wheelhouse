@@ -110,6 +110,17 @@ export const cases = [
       { number: 4, title: 'First', body: 'Words', branch: 'one', head: '46322a2e182ab8e1bcace1b058b1818f5c93f61f', draft: false, fork: false },
       { number: 9, title: 'Second', body: '', branch: 'two', head: SHA, draft: true, fork: true },
     ] },
+  { name: 'requestsOn lists the requests of a branch in any state, sorted, and says unknown for a state it does not know', call: (a) => a.requestsOn('wheelhouse/decisions-2026-11-07'),
+    ...answers(json(text([
+      { iid: 9, source_branch: 'wheelhouse/decisions-2026-11-07', sha: SHA, source_project_id: 1, target_project_id: 1, state: 'closed' },
+      { iid: 4, source_branch: 'wheelhouse/decisions-2026-11-07', sha: SHA, source_project_id: 1, target_project_id: 1, state: 'merged' },
+      { iid: 11, source_branch: 'wheelhouse/decisions-2026-11-07', sha: SHA, source_project_id: 2, target_project_id: 1, state: 'locked' },
+    ]))),
+    expect: [
+      { number: 4, branch: 'wheelhouse/decisions-2026-11-07', head: SHA, fork: false, state: 'merged' },
+      { number: 9, branch: 'wheelhouse/decisions-2026-11-07', head: SHA, fork: false, state: 'closed' },
+      { number: 11, branch: 'wheelhouse/decisions-2026-11-07', head: SHA, fork: true, state: 'unknown' },
+    ] },
   { name: 'requestDetails counts lines and orders commits oldest first', call: (a) => a.requestDetails(4),
     ...answers([{ stdout: rs('mr-changes.json') }, { status: 200, body: rs('mr-diffs.json') }], json(rs('mr-commits.json'))),
     expect: { files: [{ path: 'src/a.js', additions: 2, deletions: 1 }, { path: 'README.md', additions: 1, deletions: 1 }], commits: ['First change', 'Second change'] } },

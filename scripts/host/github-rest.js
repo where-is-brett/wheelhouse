@@ -267,6 +267,17 @@ export function githubRestCommands({ send, repo }) {
       }));
     },
 
+    // The pull requests with this head branch, in any state.
+    async requestsOn(branch) {
+      const owner = String(repo).split('/')[0];
+      const requests = await get(`${project}/pulls?state=all&head=${encodeURIComponent(`${owner}:${branch}`)}&per_page=${PAGE}`);
+      if (!Array.isArray(requests)) throw new Error('GitHub did not list the pull requests of the branch');
+      return requests.map((r) => ({
+        number: r.number, branch: r.head?.ref, head: r.head?.sha, fork: r.head?.repo?.full_name !== r.base?.repo?.full_name,
+        state: r.merged_at ? 'merged' : (STATE[String(r.state).toUpperCase()] ?? 'unknown'),
+      }));
+    },
+
     // The changed files, paged until a short page, and the commits' subjects, oldest first.
     async requestDetails(number) {
       const files = [];

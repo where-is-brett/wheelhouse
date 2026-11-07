@@ -13,7 +13,7 @@ import { MERGE_SECONDS, READ_SECONDS, request } from './curl.js';
 import { adapterFrom, refusalOf, scrub, settle } from './adapter.js';
 import { gitlabHistory } from './gitlab-history.js';
 import {
-  mergedResults as mergedResultsOf, stateOf, prStateOf, requestOf, issueOf, fileOf, subjectsOf, previewOf,
+  mergedResults as mergedResultsOf, stateOf, prStateOf, requestOf, branchRequestOf, issueOf, fileOf, subjectsOf, previewOf,
   approvalRefusal, approvalsLeft, MERGE_KEY_REFUSED, publicOf,
 } from './gitlab-shared.js';
 
@@ -196,6 +196,13 @@ export function gitlabRestCommands({ send, repo }) {
       const requests = await get(`${project}/merge_requests?state=opened&per_page=${PAGE}`);
       if (!Array.isArray(requests)) throw new Error('GitLab did not list the open merge requests');
       return requests.map(requestOf);
+    },
+
+    // The merge requests with this source branch, in any state.
+    async requestsOn(branch) {
+      const requests = await get(`${project}/merge_requests?state=all&source_branch=${encodeURIComponent(branch)}&per_page=${PAGE}`);
+      if (!Array.isArray(requests)) throw new Error('GitLab did not list the merge requests of the branch');
+      return requests.map(branchRequestOf);
     },
 
     // The changed files, paged until a short page (the old /changes is deprecated), and the commits' subjects.

@@ -237,6 +237,15 @@ export function adapterFrom(c) {
       const requests = await c.openRequests();
       return requests.map((r) => ({ ...r, head: requestHead(r.head) })).sort((x, y) => x.number - y.number).slice(0, MOST_REQUESTS);
     },
+    // Every request that has `branch` as its head, in any state, sorted by number: { number, branch, head, fork, state } with state
+    // 'open', 'closed' (turned down), 'merged' or 'unknown'. Null where the host can't list requests that are not open.
+    requestsOn: async (branch) => {
+      if (typeof c.requestsOn !== 'function') return null;
+      const requests = await c.requestsOn(text(branch, 'branch'));
+      return requests.map((r) => ({
+        number: r.number, branch: r.branch, head: requestHead(r.head), fork: r.fork === true, state: ['open', 'closed', 'merged'].includes(r.state) ? r.state : 'unknown',
+      })).sort((x, y) => x.number - y.number).slice(0, MOST_REQUESTS);
+    },
     // A request's changed files and its commit subjects (oldest first, at most 50 each).
     requestDetails: async (number) => {
       const details = await c.requestDetails(wholeNumber(number));
