@@ -51,8 +51,10 @@ export function toolHomes({ env = process.env, userHome = os.homedir(), exists =
   return Object.fromEntries(Object.entries(TOOL_HOMES).filter(([name, folder]) => env[name] === undefined && exists(path.join(userHome, folder))).map(([name, folder]) => [name, path.join(userHome, folder)]));
 }
 
-// The checks running in this process, by project, so All stop can end them.
+// The checks running in this process, by project and work, so All stop can end them and a data run's handle and a normal
+// check's never replace each other.
 const running = new Map();
+const runKey = (project, main, work) => `${project}\u0000${main ? 'main' : `work:${work ?? ''}`}`;
 
 // The Xcode a check's tools come from: `xcode-select` may point at the Command Line Tools, which have no `xctest`. The one
 // in the environment, else the one chosen if it is a full Xcode, else Xcode where it usually is, else none.
@@ -198,11 +200,12 @@ async function oneCheck({
   let ended = false;
   const watch = (fn) => { stop = fn; };
   const endIt = () => { ended = true; stop?.(); };
-  running.set(project, endIt);
+  const key = runKey(project, main, work);
+  running.set(key, endIt);
   if (signal?.aborted) ended = true;
   signal?.addEventListener('abort', endIt, { once: true });
   const over = () => {
-    running.delete(project);
+    if (running.get(key) === endIt) running.delete(key);
     signal?.removeEventListener('abort', endIt);
   };
   let paths;
@@ -241,6 +244,8 @@ async function oneCheck({
     // Tests with no host stand in for the real ones, so only their pass says anything.
     if (isHostless(testCommand)) return answer(word === 'passed' ? 'passed' : 'could-not-run', first.output);
     if (word !== null) return answer(word, explained(first));
+    // A run that must not be repeated (a data run) is red at once: nothing here runs a command twice.
+    if (settings.once === true) return answer(wordOf(first) ?? 'failed', explained(first));
     const hosted = secondTryOf(testCommand);
     if (hosted !== null && TESTS_REFUSED.test(first.output)) {
       const second = await attempt(hosted);
@@ -257,8 +262,7 @@ async function oneCheck({
 // Ends a project's running check, everything it started included. Its result is could-not-run, and it runs again after All
 // stop lifts. True when one was running.
 export function endCheck(project) {
-  const end = running.get(project);
-  if (end === undefined) return false;
-  end();
-  return true;
+  const ends = [...running].filter(([key]) => key.startsWith(`${project}\u0000`)).map(([, end]) => end);
+  for (const end of ends) end();
+  return ends.length > 0;
 }

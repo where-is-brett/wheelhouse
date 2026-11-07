@@ -6,6 +6,7 @@
 // changed command or the director's Try again, so it can't keep running or keep raising cards. On a project whose checks
 // run on the host nothing is run or reported: the runner only watches for host checks that have stopped reporting.
 import { sweepHeads } from './folder.js';
+import { dataWorksInUse, stopDataRuns } from './data-run.js';
 import { checksRanLine, countingEnds, mayStopCounting } from './not-counting.js';
 import { dueChecks, withCheckTurn } from './queue.js';
 import { writeCheck } from './record.js';
@@ -375,7 +376,8 @@ export function checkRunner({
     const due = dueChecks({ main: f.main, heads: heads.map((h) => h.commit), results: results(), digest: f.digest, notCounting: readNotCounting(f) })
       .filter(({ commit }) => (held[`${commit}:${f.digest}`] ?? 0) < NOT_RAN_LIMIT).map((c) => ({ ...c, work: workOf(c.commit) }));
     // Ended work's folders go while no check runs.
-    await sweep(project, heads.map((h) => h.work)).catch(() => {});
+    // A data run's folder is in use while it runs, and is kept (data-run.js).
+    await sweep(project, [...heads.map((h) => h.work), ...dataWorksInUse(project)]).catch(() => {});
     if (due.length === 0 || stopped() || active !== null) return;
     // A check whose record can't be kept counts as one that couldn't run, or it would run again on every tick.
     active = checkOne(due[0], f).catch(async () => {
@@ -407,6 +409,7 @@ export function checkRunner({
     // All stop: ends the check under way. Its result is could-not-run, and it runs again after All stop lifts.
     async stop() {
       abort?.abort();
+      stopDataRuns(project);
       await active;
     },
     idle: async () => { await active; },

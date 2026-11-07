@@ -42,9 +42,13 @@ export const PLAIN_KINDS = [
 // `decision-answer` is the director's own typed reply to a decision shown as a chat message (scripts/decisions/answer.js):
 // the question, its number, the letter chosen (or `own` for their own words) and their words. Signed, so only the prompt
 // hook of a front-desk session the director typed in can make one; nothing an agent writes counts.
+// `data-route-approved` is the director's one approval of a read-only route to a project's real data, naming the one command
+// that may run on it (scripts/host/data-route.js). Signed, so only the director's own word makes one; the helper alone
+// reads it, and no agent can write one. A caller can't send one through /state/record either (checkRecord): a process with
+// this computer's key could otherwise mint it. Only the helper, from the director's own words, will record it.
 // `by-hand` ties the director's answer on the card for changes made by hand to the one local change the helper opened for it,
 // at the commit that was pressed on: signed, so only the helper's own tie lets that answer approve work (scripts/state/views.js).
-export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file', 'usage-card', 'premium-card', 'premium-check', 'premium-failed', 'provenance', 'check', 'checks-state', 'checks-found', 'change', 'by-hand', 'decision-answer'];
+export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file', 'usage-card', 'premium-card', 'premium-check', 'premium-failed', 'provenance', 'check', 'checks-state', 'checks-found', 'change', 'by-hand', 'decision-answer', 'data-route-approved'];
 // Plain kinds only the helper itself records, from what it read itself: no caller writes one
 // through /state/write. The survey (design section 15, ruling A1) is taken and recorded in the
 // helper, when setup finishes and when it is taken again. A column-ready record (design section 14.6) is the
@@ -874,6 +878,13 @@ function checkDecisionAnswer(data) {
   if (data.where !== 'chat') bad('needs where to be chat');
 }
 
+// The director's approval of a read-only route to the project's real data: the one command that may run on it.
+function checkDataRouteApproved(data) {
+  const bad = (why) => { throw new Error(`A data-route-approved event ${why}`); };
+  if (!isPlain(data) || Object.keys(data).join() !== 'command') bad('needs only the command');
+  if (typeof data.command !== 'string' || data.command.trim() === '' || data.command.length > 500 || /[\r\n]/.test(data.command)) bad('needs the data command, on one line of at most 500 characters');
+}
+
 // What a shown record must carry: the reply code, the question put to the director
 // and the labels of the options offered (two to six).
 function checkShown(data) {
@@ -899,6 +910,7 @@ export function makeEvent({ kind, data, now = () => new Date() }) {
   if (kind === 'change') checkChange(data);
   if (kind === 'by-hand') checkByHand(data);
   if (kind === 'decision-answer') checkDecisionAnswer(data);
+  if (kind === 'data-route-approved') checkDataRouteApproved(data);
   if (Object.hasOwn(PLAIN_SHAPES, kind)) checkPlain(kind, data);
   const event = {
     v: 1,
@@ -946,6 +958,7 @@ export function checkRecord(event, { enrolled, held = [], computer = computerId(
   if (event.kind === 'check' || event.kind === 'checks-state' || event.kind === 'checks-found') return 'only the helper records a check';
   if (event.kind === 'change') return 'only the helper records a local change';
   if (event.kind === 'by-hand') return 'only the helper records the change it opened for changes made by hand';
+  if (event.kind === 'data-route-approved') return 'only the helper records the approval of a route to the real data';
   if (event.kind === 'shadow') return 'only the helper records a seal';
   if (event.kind === 'match') return 'only the helper records a close match';
   if (held.some((e) => canonicalJson(e) !== canonicalJson(event))) return 'another event in the state carries this record\'s id, so it was not recorded';
