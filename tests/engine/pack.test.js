@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { buildPack } from '../../scripts/engine/pack-build.js';
-import { nodesOf, NO_PERSON_LINE, LOOP_LINE, READ_ONLY, RULES_MARK } from '../../scripts/engine/pack-check.js';
+import { nodesOf, NO_PERSON_LINE, LOOP_LINE, RULES_MARK } from '../../scripts/engine/pack-check.js';
 import { LANE_WORKFLOWS } from '../../scripts/engine/archon/adapter.js';
 import { REVIEW_STEPS, FEATURE_REVIEW } from '../../scripts/engine/routes.js';
 import { LANE_CAPS } from '../../scripts/engine/order.js';
@@ -24,7 +24,7 @@ function built() {
 }
 const LABELS = ['wh.kind', 'wh.level', 'wh.topic', 'wh.work', 'wh.recommend'];
 
-const ALL = [LANE_WORKFLOWS.bug, LANE_WORKFLOWS.feature, LANE_WORKFLOWS['fix-main'], 'wheelhouse-hello', LANE_WORKFLOWS.quick, LANE_WORKFLOWS.reader, 'wheelhouse-slice-task', LANE_WORKFLOWS.slice, 'wheelhouse-small-task', LANE_WORKFLOWS.small];
+const ALL = [LANE_WORKFLOWS.bug, LANE_WORKFLOWS.feature, LANE_WORKFLOWS['fix-main'], 'wheelhouse-hello', LANE_WORKFLOWS.quick, 'wheelhouse-slice-task', LANE_WORKFLOWS.slice, 'wheelhouse-small-task', LANE_WORKFLOWS.small];
 // Check 77's mean tokens for one implement round, on the mid-sized model.
 const ROUND_TOKENS = 127000;
 
@@ -41,8 +41,7 @@ test('every AI step carries its prompt with the shared rules, and no prompt file
     for (const { node } of nodesOf(read(name).nodes)) {
       assert.equal(node.prompt_file, undefined, node.id);
       if (node.prompt === undefined) continue;
-      // The reader can't ask, and has no order: the shared rules would tell it to read one and take a blocked exit.
-      if (!READ_ONLY.has(name)) assert.ok(node.prompt.includes(NO_PERSON_LINE) && node.prompt.includes(LOOP_LINE), `${node.id} has the rules`);
+      assert.ok(node.prompt.includes(NO_PERSON_LINE) && node.prompt.includes(LOOP_LINE), `${node.id} has the rules`);
       assert.ok(!node.prompt.includes(RULES_MARK) && !node.prompt.startsWith('<!--'), node.id);
     }
   }
