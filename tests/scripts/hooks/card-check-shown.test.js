@@ -98,17 +98,3 @@ test('the question picker is refused for a decision, with the way to show it', a
     assert.equal(out.hookSpecificOutput.permissionDecisionReason, DECISION_IN_CHAT);
   });
 });
-
-test('an exact copy of a decision that fails the shape is sent back, and one that fits passes', () => {
-  const fits = {
-    n: 1, question: 'Which colour?', work: null, why: 'It is yours.', options: [{ label: 'Red', says: 'Red.', cost: 'An hour', undo: 'Can be undone' }, { label: 'Blue', says: 'Blue.', cost: 'An hour', undo: 'Can be undone' }],
-    recommend: 'Red', because: 'it is bold.', meanwhile: 'Nothing waits.',
-  };
-  assert.deepEqual(checkShown(decisionText(fits), [fits]), { ok: true });
-  const long = { ...fits, why: 'w'.repeat(1500) };
-  const checked = checkShown(decisionText(long), [long]);
-  assert.equal(checked.ok, false);
-  assert.match(checked.reason, /Decision 1 doesn't fit the shape.*phone screen takes 1400 characters/);
-  const partly = { ...fits, options: [{ ...fits.options[0], cost: undefined }, fits.options[1]] };
-  assert.match(checkShown(decisionText(partly), [partly]).reason, /Option "Red" doesn't say what it costs/);
-});

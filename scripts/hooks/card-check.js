@@ -13,8 +13,8 @@
 // A decision (an answer card or a product question, scripts/decisions/pending.js) is shown as a chat message, never through the
 // question picker: the picker is refused for one, saying to print `decision show <n>`. On Stop, in a front-desk session, every
 // "Decision needed" block in the First Mate's last message must be exactly one waiting decision's text (checkShown), or the
-// turn is sent back with the reason. An exact copy must also fit the decision's shape (`shapeProblems` in scripts/cards/compose.js,
-// which `cli.js ask` and `act question` apply before a decision is ever recorded). That check blocks by design and fails open: a record that can't be read lets the message go.
+// turn is sent back with the reason. A decision's shape (`shapeProblems` in scripts/cards/compose.js) is judged before it is recorded, by
+// `cli.js ask` and `act question`, so one on the record has passed. That check blocks by design and fails open: a record that can't be read lets the message go.
 // Before the form check, in a project's folder, two more refusals (one card, one answer): a question whose card the
 // director has already decided is refused with what counted and where, and, for the front desk with a live pane beside
 // it, a card the pane gives buttons to is held back unless the director asked for it in the chat. A call that goes
@@ -32,7 +32,7 @@
 import tools from '../../adapters/claude-code/tools.js';
 import { runAndExit, answer, projectOf, beingSetUp, readTailEntries } from './kit.js';
 import { looksLikeBaseline, holdsFigures, cardHash, readShown, cardText, sweepStale } from '../lib/measures-clicks.js';
-import { whatProblem, NO_REPLY_CODE, shapeProblems } from '../cards/compose.js';
+import { whatProblem, NO_REPLY_CODE } from '../cards/compose.js';
 import { TO_KNOW_MORE, TO_CHANGE_IT, SUGGEST, SHOW_ME, NOT_NOW, SEND_BACK } from '../lib/calm-words.js';
 import { CARD } from '../lib/front-desk.js';
 import {
@@ -309,14 +309,7 @@ const trimmed = (text) => text.split(/\r\n|[\n\r]/).map((l) => l.trimEnd()).join
 export function checkShown(lastMessage, pending) {
   const waiting = Array.isArray(pending) ? pending : [];
   for (const block of blocksIn(lastMessage)) {
-    const exact = waiting.find((d) => trimmed(block) === trimmed(decisionText(d)));
-    if (exact !== undefined) {
-      // An exact copy still has to fit the shape (design section 6.2). A decision raised before cost and undo were asked for has
-      // neither on any option, and is judged on the rest.
-      const problems = shapeProblems(exact, { costAndUndo: exact.options.some((o) => o.cost !== undefined || o.undo !== undefined) });
-      if (problems.length === 0) continue;
-      return { ok: false, reason: `Decision ${exact.n} doesn't fit the shape, so the director doesn't see it: ${problems.join(' ')} It goes back to the agent that raised it; leave it out of your message.` };
-    }
+    if (waiting.some((d) => trimmed(block) === trimmed(decisionText(d)))) continue;
     const named = Number(/^Decision needed \(([1-9][0-9]*)\)/.exec(block)?.[1]);
     const meant = waiting.find((d) => d.n === named) ?? (waiting.length === 1 ? waiting[0] : undefined);
     if (meant !== undefined) return { ok: false, reason: `Show decision ${meant.n} exactly as printed: run \`decision show ${meant.n}\` and copy its text word for word, with nothing added inside it.` };

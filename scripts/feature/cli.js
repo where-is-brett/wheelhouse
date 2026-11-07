@@ -23,7 +23,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { safeGit } from '../lib/safe-git.js';
-import { QUESTION_ID, QUESTION_KINDS, featurePaths, parseReport, questionTrail, readQuestions } from './files.js';
+import { QUESTION_ID, QUESTION_KINDS, appendLine, featurePaths, parseReport, questionTrail, readQuestions } from './files.js';
 import {
   planIn, planInside, readBrief, readCapped, readPlan, readPrRecord, safeFeatureFolder, writeWhole, SMALL_BYTES,
 } from './status.js';
@@ -261,29 +261,29 @@ export async function ask({ worktree, argv, client }) {
   const question = { id, kind, what, why, ...rest };
   // A decision that fails its shape goes back to this session; the director never sees it (design section 6.2).
   if (kind === 'question') {
-    const problems = [...flagProblems, ...shapeProblems({ what, why, ...rest })];
+    const problems = [...flagProblems, ...shapeProblems({ what, why, ...rest, work: brief.work })];
     if (problems.length > 0) sendBack(p.questions, problems);
   }
   const problem = kind === 'extra-plan' ? null : questionProblem({ ...question, work: brief.work, ...(about === undefined ? {} : { decides: about }) });
   if (problem !== null) throw new CliError(`This question can't be put to the director as a card, so it wasn't asked: ${problem}`);
-  const kept = readCapped(p.questions, QUESTIONS_BYTES);
-  // A file that is there but can't be read (a link, a folder) must not be replaced.
-  if (kept === null && exists(p.questions)) throw new CliError("questions.jsonl can't be added to");
-  const before = kept ?? '';
-  const lead = before === '' || before.endsWith('\n') ? '' : '\n';
-  writeWhole(p.questions, `${before}${lead}${JSON.stringify(question)}\n`);
+  addLine(p.questions, question);
   return { id };
+}
+
+// Adds one line to questions.jsonl by appending, so the foreman's own line written at the same time is kept.
+function addLine(file, object) {
+  try {
+    appendLine(file, object);
+  } catch {
+    throw new CliError("questions.jsonl can't be added to");
+  }
 }
 
 // Writes the failed try into questions.jsonl, which counts the tries in a row, and sends the problems back to the session. On the
 // third failure in a row it also says to stop trying and send one plain message (`stuck`).
 function sendBack(file, problems) {
-  const kept = readCapped(file, QUESTIONS_BYTES);
-  if (kept === null && exists(file)) throw new CliError("questions.jsonl can't be added to");
-  const before = kept ?? '';
-  const lead = before === '' || before.endsWith('\n') ? '' : '\n';
   const failures = questionTrail(file, { maxBytes: QUESTIONS_BYTES }).failures + 1;
-  writeWhole(file, `${before}${lead}${JSON.stringify({ sentBack: true, at: new Date().toISOString(), problems })}\n`);
+  addLine(file, { sentBack: true, at: new Date().toISOString(), problems });
   const said = failures >= STUCK_AFTER
     ? [...problems, `That is ${failures} tries in a row that failed. Stop trying: send one plain message with \`stuck --why "<what keeps failing>"\`, then carry on with what does not depend on the answer.`]
     : problems;
@@ -317,13 +317,8 @@ export function stuck({ worktree, argv, now = () => new Date() }) {
   const why = needed(found, 'why');
   readBriefOrSay(worktree);
   if (!safeFeatureFolder(worktree)) throw new CliError(FOLDER);
-  const file = featurePaths(worktree).questions;
-  const kept = readCapped(file, QUESTIONS_BYTES);
-  if (kept === null && exists(file)) throw new CliError("questions.jsonl can't be added to");
-  const before = kept ?? '';
-  const lead = before === '' || before.endsWith('\n') ? '' : '\n';
   const line = { stuck: true, at: now().toISOString(), why };
-  writeWhole(file, `${before}${lead}${JSON.stringify(line)}\n`);
+  addLine(featurePaths(worktree).questions, line);
   return line;
 }
 

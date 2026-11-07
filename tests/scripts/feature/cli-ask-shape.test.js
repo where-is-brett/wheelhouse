@@ -23,6 +23,7 @@ function feature() {
   return tree;
 }
 
+const NOTE_AT = '2026-11-08T05:00:00.000Z';
 const base = ['--what', 'How often should the tide digest go out?', '--why', 'It decides what visitors of harbour-demo get', '--level', '3'];
 const options = (...labels) => labels.flatMap((l) => ['--option', `${l}=Send it ${l}`]);
 const costs = (...labels) => labels.flatMap((l) => ['--cost', `${l}=A day`]);
@@ -157,6 +158,25 @@ test('stuck writes one plain message and starts the count again', async () => {
   const code = await main(['stuck', '--why', 'Still failing'], { cwd: tree, out: (t) => { out += t; }, err: () => {}, client: {} });
   assert.equal(code, 0);
   assert.match(out, /Noted/);
+});
+
+test('only failed decisions count in a row: a passing extra-plan line does not reset the count', async () => {
+  const tree = feature();
+  const bad = without(GOOD, '--meanwhile');
+  await sentBack(tree, bad);
+  await ask({ worktree: tree, argv: ['--kind', 'extra-plan', '--plan', 'p.md', ...base, ...options('queue', 'drop'), '--recommend', 'queue'] });
+  await sentBack(tree, bad);
+  assert.equal(questionTrail(featurePaths(tree).questions).failures, 2);
+});
+
+test('the ask is added to the file by appending, so a line written meanwhile is kept', async () => {
+  const tree = feature();
+  const file = featurePaths(tree).questions;
+  fs.writeFileSync(file, `${JSON.stringify({ stuck: true, at: NOTE_AT, why: 'earlier' })}\n`);
+  await ask({ worktree: tree, argv: GOOD });
+  const lines = fs.readFileSync(file, 'utf8').trim().split('\n');
+  assert.equal(lines.length, 2);
+  assert.equal(JSON.parse(lines[0]).stuck, true);
 });
 
 test('--cost and the other shape flags belong to a plain question only', async () => {

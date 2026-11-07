@@ -57,10 +57,27 @@ test('a message over 1400 characters or 18 lines is sent back with its length', 
   assert.ok(text.split('\n').length <= PHONE_LIMIT.lines);
 });
 
-test('a decision raised before cost and undo were asked for is judged on the rest', () => {
-  const old = whole({ options: [{ label: 'Daily', says: 'Daily' }, { label: 'Weekly', says: 'Weekly' }] });
-  assert.equal(shapeProblems(old).length, 4);
-  assert.deepEqual(shapeProblems(old, { costAndUndo: false }), []);
+test('a question an older brief wrote is judged on its options, recommendation and length alone', () => {
+  const old = whole({ options: [{ label: 'Daily', says: 'Daily' }, { label: 'Weekly', says: 'Weekly' }], because: undefined, meanwhile: undefined });
+  assert.equal(shapeProblems(old).length, 6);
+  assert.deepEqual(shapeProblems(old, { older: true }), []);
+  assert.match(shapeProblems({ ...old, recommendation: undefined }, { older: true }).join('\n'), /which option you recommend/);
+});
+
+test('every problem names the flag that puts it right', () => {
+  const problems = shapeProblems({ what: 'q', why: 'y', options: [{ label: 'A', says: 'a' }] }).join('\n');
+  for (const flag of ['--option', '--cost "A=<cost>"', '--undo "A=yes|no|partly"', '--recommend', '--because', '--meanwhile']) assert.ok(problems.includes(flag), flag);
+});
+
+test('what waits is measured as the card shows it: holds, else the work', () => {
+  // An empty holds (as pending.js gives for a card with none) falls back to the work.
+  const a = shapeProblems(whole({ holds: '', work: 'the harbour tide digest page' }));
+  assert.deepEqual(a, []);
+  // The message is 353 characters without a why; with 1047 more it is exactly 1400 when nothing waits, and 48 over with a 60-letter work.
+  const why = 'x'.repeat(1047);
+  const base = { options: [option('Daily'), option('Weekly')], recommendation: 'Weekly', because: 'Visitors plan their week, not their day.', meanwhile: 'I build the sending, which both need.', what: 'How often should the tide digest go out?', why };
+  assert.deepEqual(shapeProblems({ ...base, holds: '', work: undefined }), []);
+  assert.equal(shapeProblems({ ...base, holds: '', work: 'w'.repeat(60) }).length, 1);
 });
 
 test('the composer carries each option\'s cost and undo, the reason, what waits and the meanwhile line into the card', () => {

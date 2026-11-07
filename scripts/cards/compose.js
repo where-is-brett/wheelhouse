@@ -667,29 +667,33 @@ export const PHONE_LIMIT = Object.freeze({ chars: 1400, lines: 18 });
 const OPTIONS = Object.freeze({ fewest: 2, most: 4 });
 const missing = (x) => typeof x !== 'string' || x.trim() === '';
 
-// What is wrong with a decision's shape, one sentence for each, or an empty list when it passes. `input` is a question as the
-// session wrote it, or a waiting decision as pending.js gives it: { what | question, why, options: [{ label, says, cost, undo }],
-// recommendation | recommend, because, holds, meanwhile }. The decision's chat message is measured as the First Mate prints it.
-// `costAndUndo: false` leaves out each option's cost and undo, for a decision raised before they were asked for.
-export function shapeProblems(input, { costAndUndo = true } = {}) {
+// What is wrong with a decision's shape, one sentence for each (naming the flag of `cli.js ask` that puts it right), or an empty
+// list when it passes. `input` is a question as the session wrote it: { what | question, why, options: [{ label, says, cost, undo }],
+// recommendation | recommend, because, holds, meanwhile, work }. The decision's chat message is measured as the First Mate prints it:
+// what waits is `holds`, else the work, else "nothing else".
+// `older: true` is for a question written under an older brief, whose options carry no cost or undo: it is judged on its options,
+// its recommendation and its length alone.
+export function shapeProblems(input, { older = false } = {}) {
   const problems = [];
   const given = isPlain(input) ? input : {};
   const options = Array.isArray(given.options) ? given.options.filter(isPlain) : [];
-  const named = (o) => `"${flat(o.label) || '(no label)'}"`;
-  if (options.length < OPTIONS.fewest || options.length > OPTIONS.most) problems.push(`Give two to four options; there ${options.length === 1 ? 'is 1' : `are ${options.length}`}.`);
-  if (costAndUndo) {
+  const named = (o) => flat(o.label) || '(no label)';
+  if (options.length < OPTIONS.fewest || options.length > OPTIONS.most) {
+    problems.push(`Give two to four options; there ${options.length === 1 ? 'is 1' : `are ${options.length}`} (--option "<label>=<what it means>").`);
+  }
+  if (!older) {
     for (const o of options) {
-      if (missing(o.cost)) problems.push(`Option ${named(o)} doesn't say what it costs: time, money, tokens or complexity.`);
-      if (missing(o.undo)) problems.push(`Option ${named(o)} doesn't say whether it can be undone: yes, no or partly.`);
+      if (missing(o.cost)) problems.push(`Option "${named(o)}" doesn't say what it costs: time, money, tokens or complexity; add --cost "${named(o)}=<cost>".`);
+      if (missing(o.undo)) problems.push(`Option "${named(o)}" doesn't say whether it can be undone: add --undo "${named(o)}=yes|no|partly".`);
     }
   }
   const recommend = given.recommendation ?? given.recommend;
-  if (missing(recommend)) problems.push('Say which option you recommend.');
+  if (missing(recommend)) problems.push('Say which option you recommend: add --recommend "<label>".');
   else if (!options.some((o) => o.label === recommend)) problems.push(`The recommendation "${flat(recommend)}" is not one of the options (${options.map((o) => flat(o.label)).join(', ')}).`);
-  if (missing(given.because)) problems.push('Say why you recommend it, in the director\'s terms.');
-  if (missing(given.meanwhile)) problems.push('Say what you go on with while it waits.');
+  if (!older && missing(given.because)) problems.push('Say why you recommend it, in the director\'s terms: add --because "<why>".');
+  if (!older && missing(given.meanwhile)) problems.push('Say what you go on with while it waits: add --meanwhile "<what you go on with>".');
   const text = decisionText({
-    n: 1, question: given.what ?? given.question, work: given.holds ?? given.work, why: given.why, options, recommend, because: given.because, meanwhile: given.meanwhile,
+    n: 1, question: given.what ?? given.question, work: given.holds || given.work, why: given.why, options, recommend, because: given.because, meanwhile: given.meanwhile,
   });
   const lines = text.split('\n').length;
   if (text.length > PHONE_LIMIT.chars || lines > PHONE_LIMIT.lines) {

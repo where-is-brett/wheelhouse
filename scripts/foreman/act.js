@@ -132,7 +132,7 @@ import { amendBrief, renderBrief } from '../feature/brief.js';
 import { approvedDocument, placeApproved } from '../feature/approved.js';
 import { report as reportCheck, STUCK_AFTER } from '../feature/cli.js';
 import {
-  briefHash, ensureIgnored, featurePaths, parseBrief, parseReport, questionTrail, readQuestions, readStatus, writeStatus,
+  briefHash, ensureIgnored, featurePaths, parseBrief, parseReport, appendLine, questionTrail, QUESTIONS_READ_BYTES, readQuestions, readStatus, writeStatus,
 } from '../feature/files.js';
 import {
   buildStatus, loadFeature, readCapped, readPrRecord, safeFeatureFolder, validSlice, writeWhole,
@@ -832,7 +832,7 @@ function featureQuestion(ctx, views, work, rest) {
   if (named === null || named.work !== work || named.foreman) refuse(`${oneLine(id, 60)} isn't one of ${work}'s own question ids`);
   liveFeature(views, work);
   const worktree = worktreeOf(ctx.project, views, work);
-  const q = readQuestions(featurePaths(worktree).questions).questions.find((x) => x.id === id);
+  const q = readQuestions(featurePaths(worktree).questions, { maxBytes: QUESTIONS_READ_BYTES }).questions.find((x) => x.id === id);
   if (!q) refuse(`${work}'s questions file has no question ${id}`);
   return q;
 }
@@ -857,7 +857,7 @@ async function question(ctx, work, rest) {
   // A decision that doesn't fit the shape is never recorded, so the director never sees it: it goes back to the session that raised
   // it, with what is missing (design section 6.2). One already on file is left as it is.
   const onFile = kept !== undefined && same(keptBody, kept.question.data.id === q.id ? data : { ...data, id: kept.question.data.id });
-  const problems = q.kind === 'question' && !onFile ? shapeProblems(q) : [];
+  const problems = q.kind === 'question' && !onFile ? shapeProblems({ ...q, work }, { older: !q.options.some((o) => o.cost !== undefined || o.undo !== undefined) }) : [];
   if (problems.length > 0) {
     await sendQuestionBack(ctx, views, work, q, problems);
     return;
@@ -887,7 +887,7 @@ async function stuckNote(ctx, work, rest) {
   if (typeof at !== 'string' || more.length > 0) refuse('Give the time the wake names: stuck-note <work> <time>');
   const views = await ctx.views();
   liveFeature(views, work);
-  const line = questionTrail(featurePaths(worktreeOf(ctx.project, views, work)).questions).stuck.find((n) => n.at === at);
+  const line = questionTrail(featurePaths(worktreeOf(ctx.project, views, work)).questions, { maxBytes: QUESTIONS_READ_BYTES }).stuck.find((n) => n.at === at);
   if (line === undefined) refuse(`${work}'s questions file has no stuck message written at ${oneLine(at, 40)}`);
   const noted = stateEvents(ctx.project).some((e) => e.kind === 'note' && e.data?.about === 'stuck' && e.data.work === work && e.data.at === at);
   if (noted) {
@@ -903,12 +903,8 @@ async function stuckNote(ctx, work, rest) {
 async function sendQuestionBack(ctx, views, work, q, problems) {
   const worktree = worktreeOf(ctx.project, views, work);
   const file = featurePaths(worktree).questions;
-  const kept = readCapped(file, 8 * 1024 * 1024);
-  if (kept === null && lstatOf(file) !== null) refuse(`${work}'s questions file can't be added to`);
-  const before = kept ?? '';
-  const failures = questionTrail(file).failures + 1;
-  const lead = before === '' || before.endsWith('\n') ? '' : '\n';
-  writeWhole(file, `${before}${lead}${JSON.stringify({ sentBack: true, at: ctx.now().toISOString(), problems })}\n`);
+  if (lstatOf(file)?.isFile() !== true) refuse(`${work}'s questions file can't be added to`);
+  const failures = questionTrail(file, { maxBytes: QUESTIONS_READ_BYTES }).failures + 1;
   const stuck = failures >= STUCK_AFTER
     ? ` That is ${failures} tries in a row that failed: stop trying and send one plain message with \`stuck --why "<what keeps failing>"\`.`
     : ' Ask it again with the shape put right.';
@@ -916,11 +912,18 @@ async function sendQuestionBack(ctx, views, work, q, problems) {
   const event = {
     type: 'build', work, id, detail: { next: `Your question ${q.id} wasn't put to the director: ${problems.join(' ')}${stuck}` },
   };
+  // The session is woken first, and the try is counted only once it has heard: a wake that fails leaves nothing behind.
   const wake = writeWake(ctx.project, { to: 'feature', work, events: [event], digest: [], dropped: 0 }, { now: ctx.now });
   try {
     await ctx.waker(await ctx.config()).wakeFeature(work, wake);
   } catch (error) {
+    fs.rmSync(wake, { force: true });
     refuse(`Question ${q.id} fails its shape (${oneLine(problems.join(' '), 300)}) and ${work}'s session wasn't woken: ${oneLine(error instanceof Error ? error.message : 'unknown error', 200)}`);
+  }
+  try {
+    appendLine(file, { sentBack: true, at: ctx.now().toISOString(), problems });
+  } catch {
+    refuse(`${work}'s questions file can't be added to`);
   }
   ctx.say(`Question ${q.id} wasn't recorded: it fails its shape. Sent back to ${work}'s session: ${oneLine(problems.join(' '), 300)}`);
 }

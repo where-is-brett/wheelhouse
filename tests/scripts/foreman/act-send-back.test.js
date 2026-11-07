@@ -25,7 +25,10 @@ const WHOLE = {
   recommendation: 'Weekly', level: 3, because: 'Visitors plan their week', meanwhile: 'I build the sending, which both need', holds: 'the digest',
 };
 // A line a session wrote by hand or before the shape was asked for: its options say nothing of cost or undo.
-const NO_COST = { ...WHOLE, id: 'q-mine-2', options: WHOLE.options.map(({ label, says }) => ({ label, says })) };
+// It names a cost on one option, so it is a decision of the new kind, and the rest is missing.
+const NO_COST = { ...WHOLE, id: 'q-mine-2', options: [{ label: 'Daily', says: 'Every day', cost: 'A day' }, { label: 'Weekly', says: 'Once a week' }] };
+// A question an older brief wrote: no option carries a cost or undo, and it has no reason or meanwhile line.
+const OLDER = { id: 'q-mine-5', kind: 'question', what: 'Which date format?', why: 'Users read it', options: [{ label: 'UK', says: '19 October 2026' }, { label: 'ISO', says: '2026-10-19' }], recommendation: 'UK', level: 3 };
 
 async function scene(questions) {
   const checkout = await project();
@@ -68,8 +71,8 @@ test('act question returns the problems to the session instead of making a stop-
   assert.equal(waker.woken[0].work, 'mine');
   assert.equal(event.work, 'mine');
   assert.match(event.detail.next, /Your question q-mine-2 wasn't put to the director/);
-  assert.match(event.detail.next, /Option "Daily" doesn't say what it costs/);
-  assert.match(event.detail.next, /Option "Weekly" doesn't say whether it can be undone/);
+  assert.match(event.detail.next, /Option "Weekly" doesn't say what it costs.*add --cost "Weekly=<cost>"/);
+  assert.match(event.detail.next, /Option "Daily" doesn't say whether it can be undone.*add --undo "Daily=yes\|no\|partly"/);
   assert.match(event.detail.next, /Ask it again with the shape put right/);
   assert.doesNotMatch(event.detail.next, /stuck/);
   assert.equal(questionTrail(featurePaths(wt).questions).failures, 1);
@@ -110,12 +113,23 @@ test('act stuck-note records the session\'s stuck line as one note, and not agai
   assert.equal((await act(['stuck-note', 'mine', '2026-11-08T07:00:00.000Z'], { client: fake.client })).code, 1);
 }));
 
-test('a session that cannot be woken is told so, and nothing is recorded', async () => withHome(async () => {
-  const { views } = await scene([NO_COST]);
+test('a question an older brief wrote is recorded, not sent back', async () => withHome(async () => {
+  const { views } = await scene([OLDER]);
+  const fake = fakeClient({ views });
+  const waker = wakes();
+  const r = await act(['question', 'mine', 'q-mine-5'], { client: fake.client, wakerFor: waker.wakerFor });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(fake.writes.length, 1);
+  assert.deepEqual(waker.woken, []);
+}));
+
+test('a session that cannot be woken is told so, nothing is recorded, and the failure is not counted', async () => withHome(async () => {
+  const { views, wt } = await scene([NO_COST]);
   const fake = fakeClient({ views });
   const r = await act(['question', 'mine', 'q-mine-2'], { client: fake.client, wakerFor: () => ({ wakeFeature: async () => { throw new Error('no session'); } }) });
   assert.equal(r.code, 1);
   assert.match(r.err, /fails its shape/);
   assert.match(r.err, /session wasn't woken/);
   assert.deepEqual(fake.writes, []);
+  assert.equal(questionTrail(featurePaths(wt).questions).failures, 0, 'the session never heard it, so it is not a failed try');
 }));

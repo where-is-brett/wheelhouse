@@ -281,7 +281,8 @@ function scanQuestions(file, { maxBytes = READ_BYTES } = {}) {
         failures = 0;
       } else if (validQuestion(q)) {
         questions.push(q);
-        failures = 0;
+        // Only a decision that passed ends a run of failed ones: an extra plan or a build-command question is no decision.
+        if (q.kind === 'question') failures = 0;
       } else skipped += 1;
     } catch {
       skipped += 1;
@@ -293,6 +294,36 @@ function scanQuestions(file, { maxBytes = READ_BYTES } = {}) {
 export function readQuestions(file, opts) {
   const { questions, skipped, truncated } = scanQuestions(file, opts);
   return { questions, skipped, truncated };
+}
+
+// The most of questions.jsonl that is read where sent-back lines may have lengthened it.
+export const QUESTIONS_READ_BYTES = 8 * 1024 * 1024;
+
+// Adds one line to `file` by appending, so a line the other side writes at the same time is kept (the session and the foreman both
+// add to questions.jsonl). A link or anything but a regular file is refused. A file that doesn't end in a newline gets one first.
+export function appendLine(file, object) {
+  const flags = fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT | (fs.constants.O_NOFOLLOW ?? 0);
+  const fd = fs.openSync(file, flags, 0o644);
+  try {
+    const { size, isFile } = (() => { const st = fs.fstatSync(fd); return { size: st.size, isFile: st.isFile() }; })();
+    if (!isFile) throw new Error(`${path.basename(file)} isn't a regular file`);
+    let lead = '';
+    if (size > 0) {
+      const reader = openRegular(file);
+      if (reader !== null) {
+        try {
+          const last = Buffer.alloc(1);
+          fs.readSync(reader, last, 0, 1, size - 1);
+          if (last[0] !== 10) lead = '\n';
+        } finally {
+          fs.closeSync(reader);
+        }
+      }
+    }
+    fs.writeSync(fd, `${lead}${JSON.stringify(object)}\n`);
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 // The tries of a session that failed the shape: `failures` in a row at the end of the file, and the `stuck` messages it sent.

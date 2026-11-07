@@ -38,7 +38,7 @@
 import { reviewClear } from '../lib/review-verdict.js';
 import fs from 'node:fs';
 import path from 'node:path';
-import { featurePaths, briefHash, parseBrief, parseReport, questionTrail, readQuestions, readStatus } from '../feature/files.js';
+import { featurePaths, briefHash, parseBrief, parseReport, questionTrail, QUESTIONS_READ_BYTES, readQuestions, readStatus } from '../feature/files.js';
 import { readCapped, safeFeatureFolder } from '../feature/status.js';
 import { SLUG } from '../lib/build-loop.js';
 import { stateDir } from '../lib/paths.js';
@@ -190,8 +190,8 @@ function readFeature(work, worktree, checkout) {
 
   const p = featurePaths(worktree);
   const status = readStatus(p.status);
-  const asked = readQuestions(p.questions);
-  const stuckNotes = questionTrail(p.questions).stuck;
+  const asked = readQuestions(p.questions, { maxBytes: QUESTIONS_READ_BYTES });
+  const stuckNotes = questionTrail(p.questions, { maxBytes: QUESTIONS_READ_BYTES }).stuck;
   const brief = readCapped(p.brief, BRIEF_BYTES);
   let appetite = null;
   if (brief !== null) {
