@@ -5,7 +5,7 @@
 // rules: never the default branch, the lock held, All stop off. A comment, or a pull request's text edited, that reads
 // as the merge queue's verdict passes only with a signed CLEAN review of that head. A merge passes only with the permit. Anything not on the list
 // is refused, with a plain reason, and never forwarded.
-import { reviewCounts, approvalCounts, incidentReason, checkCounts } from '../../gate/conditions.js';
+import { reviewCounts, approvalCounts, incidentReason, checkCounts, decisionReason } from '../../gate/conditions.js';
 import { NO_HOST_APPROVAL } from '../../host/host-approval.js';
 
 // The merge queue's verdict comment carries this marker (check 76).
@@ -288,7 +288,8 @@ const refuse = (reason) => ({ allow: false, reason: `Wheelhouse's broker refused
 // redMain (whether a red-main incident is open), runBranch (the branch of the run a rerun names, as the host says),
 // checksHere (whether the project's checks run on this computer), check (the signed check of the call's head, or null),
 // digest (the command now on the default branch), notCounting (whether the project's tests aren't counting yet),
-// hostApproval (undefined where the person's approval on GitHub isn't needed, else whether it is there) }.
+// hostApproval (undefined where the person's approval on GitHub isn't needed, else whether it is there),
+// decisions ({ work, waiting } from decisionsWaiting, undefined for a restore, null when it couldn't be read) }.
 export function brokerDecision(call, ctx = {}) {
   if (!call || call.kind === 'other') {
     const named = Array.isArray(call?.words) && call.words.length > 0 ? ` (gh ${call.words.join(' ')})` : '';
@@ -315,6 +316,10 @@ export function brokerDecision(call, ctx = {}) {
   // A merge: the permit.
   const incident = incidentReason(ctx.incident);
   if (incident) return refuse(incident);
+  // A decision of the director's still open on the piece, or answered otherwise and not yet applied, holds its merge here as at
+  // the gate (design section 6.4). `decisions` is left out only for a restore; one that can't be read refuses.
+  const decision = decisionReason(ctx.decisions);
+  if (decision !== null) return refuse(decision);
   if (!reviewed) return refuse(`there is no signed CLEAN review of ${head.slice(0, 7)}`);
   const needsApproval = ctx.shownFirst === true || ctx.level === 4 || ctx.guardrail === true;
   // `releaseApproved` is the helper's finding that this is the update's own reviewed change and that the director's signed

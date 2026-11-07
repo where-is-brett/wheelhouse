@@ -67,6 +67,27 @@ test('answered and applied is allowed', () => {
   }
 });
 
+test('marking the rework applied does not lift the hold without a review of the head made after the answer', () => {
+  const dir = handledDir();
+  try {
+    const at = '2026-11-08T09:00:00.000Z';
+    const views = viewsOf(answered('Daily', at));
+    markHandled(dir, ID, at);
+    const handled = readHandled(dir, [ID]);
+    const held = { id: ID, why: 'unapplied' };
+    // No review at all, a review from before the answer (the head the piece was built on), or one at the same moment.
+    assert.deepEqual(decisionsWaiting({ views, work: WORK, review: null, handled }), [held]);
+    assert.deepEqual(decisionsWaiting({ views, work: WORK, review: review('2026-11-08T08:00:00.000Z'), handled }), [held]);
+    assert.deepEqual(decisionsWaiting({ views, work: WORK, review: review(at), handled }), [held]);
+    // A review carried from an earlier head keeps its own time, so it does not count either.
+    assert.deepEqual(decisionsWaiting({ views, work: WORK, review: { carried: true, record: review('2026-11-08T08:00:00.000Z') }, handled }), [held]);
+    // The rework's new head, reviewed after the answer, with the mark: allowed.
+    assert.deepEqual(decisionsWaiting({ views, work: WORK, review: review('2026-11-08T10:00:00.000Z'), handled }), []);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('answered with the recommendation and --no-change is allowed', () => {
   const dir = handledDir();
   try {

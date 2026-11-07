@@ -40,17 +40,35 @@ export function waitingWords(ids, numbers) {
   return `Waiting on decisions ${ns.slice(0, -1).join(', ')} and ${ns.at(-1)}`;
 }
 
-// Sets the status on `sha`: pending while any of `waiting` (what decisionsWaiting gave) holds, success when none does and the
-// piece has decisions at all (`any`). Said once for a commit and what it waits on, so a merge tried again posts nothing new.
-// `posted` is the caller's memory of that, a Map. `events` and `enrolled` give the numbers, read only when pending is posted.
-// A refusal (a host that takes no status, a key that may not) is not an error: the gate holds the merge either way.
-// Returns what was posted, `{ state, description }`, or null.
+// Whether the head already carries a decision status that is not success: the host's own word, read each time, so a pending
+// status never outlives its decision (a question withdrawn or joined after it was posted, a helper restarted since).
+// `null` when the host can't say.
+async function carriesPending(adapter, sha) {
+  if (typeof adapter.checkContexts !== 'function') return null;
+  try {
+    const contexts = await adapter.checkContexts(sha);
+    if (!Array.isArray(contexts)) return null;
+    return contexts.some((c) => c?.name === DECISION_CONTEXT && c.state !== 'success');
+  } catch {
+    return null;
+  }
+}
+
+// Sets the status on `sha`: pending while any of `waiting` (what decisionsWaiting gave) holds. When none does, success is posted
+// whenever the head carries a decision status that isn't success (read from the host, never from memory); a host that can't say
+// is posted to only if the piece has decisions at all (`any`). Pending is said once for a commit and what it waits on, so a merge
+// tried again posts nothing new: `posted` is the caller's memory of that, a Map. `events` and `enrolled` give the numbers, read
+// only when pending is posted. A refusal (a host that takes no status, a key that may not) is not an error: the gate holds the
+// merge either way. Returns what was posted, `{ state, description }`, or null.
 export async function setDecisionStatus({ adapter, sha, waiting, any, events, enrolled, posted }) {
   if (typeof adapter?.setStatus !== 'function' || typeof sha !== 'string' || sha === '') return null;
   const holding = (Array.isArray(waiting) ? waiting : []).filter((w) => isPlain(w) && w.why !== 'late' && typeof w.id === 'string');
-  if (holding.length === 0 && any !== true) return null;
+  if (holding.length === 0) {
+    const pending = await carriesPending(adapter, sha);
+    if (pending === false || (pending === null && any !== true)) return null;
+  }
   const key = holding.length === 0 ? 'clear' : holding.map((w) => w.id).sort().join(',');
-  if (posted?.get(sha) === key) return null;
+  if (holding.length > 0 && posted?.get(sha) === key) return null;
   const description = holding.length === 0 ? CLEARED_WORDS : waitingWords(holding.map((w) => w.id), decisionNumbers(typeof events === 'function' ? events() : [], enrolled));
   const state = holding.length === 0 ? 'success' : 'pending';
   try {
@@ -60,7 +78,8 @@ export async function setDecisionStatus({ adapter, sha, waiting, any, events, en
     return null;
   }
   if (posted instanceof Map) {
-    posted.set(sha, key);
+    if (holding.length === 0) posted.delete(sha);
+    else posted.set(sha, key);
     while (posted.size > MOST_KEPT) posted.delete(posted.keys().next().value);
   }
   return { state, description };
