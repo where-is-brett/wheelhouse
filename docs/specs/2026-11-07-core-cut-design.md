@@ -2,7 +2,7 @@
 
 # The core cut: design (7 November 2026)
 
-**Status:** draft, for the director's approval. Design only: nothing is built, and no build plan is written, until the director approves it and answers the open questions in section 9.
+**Status:** draft, for the director's approval. The director answered its open questions on 7 November 2026 (section 9); the design as a whole still awaits their approval. Design only: nothing is built, and no build plan is written, until then.
 
 ## 1. In plain words
 
@@ -60,6 +60,7 @@ On 29 October 2026 the director chose to build on a maintained open-source engin
 | **STOP and the sandbox** | `scripts/engine/stop.js`, `scripts/hooks/stop-guard.js`, `stop-word.js`, `tool-guard.js`, `read-only-shell.js`, `scripts/protection/` | Guardrails the system enforces, not the prompt (section 2.2) |
 | **Local hosting** (`home.git`) | `scripts/host/local/`, `scripts/setup/local.js` | A project with no code host is kept and merged on this computer |
 | **GitHub hosting** | `scripts/host/github*.js`, `app-manifest.json`, `app.json` | The host most projects use |
+| **GitLab hosting** | `scripts/host/gitlab*.js`, `adapter-for.js`, `company-ca.js`, `connection.js`, setup's host step | The director needs a company GitLab for real use (ruling of 3 November 2026, kept on 7 November 2026). It keeps the host-access design's routes: "use my git as it is" for pushes, and `glab` where it works, else GitLab's REST API through `curl` |
 | **The update command** | `commands/update.md`, `scripts/update/`, `lineage/release.json` | How every computer and project reaches this cut, and every release after it |
 
 Kept alongside, because the core needs them: setup and uninstall (minus the parked steps), the Logbook and the briefing (shown in the chat and by `/wheelhouse:logbook`), the context gauge, Windows at Standard with its Guarded build commands, lineage for Superpowers and Claude Code, and the evaluation.
@@ -85,12 +86,11 @@ Kept alongside, because the core needs them: setup and uninstall (minus the park
 | **The VS Code add-on** | `vscode/`; `scripts/addon/`; `scripts/agents/vscode-held.js`; CI's `addon/validate.js` and `hash.js --check` steps; `release.yml`'s `vsix` job; the `.vsix` hash rule in `CLAUDE.md` | No editor panel. The helper stops answering the add-on's `add-on` proof, so an add-on still installed is inert. The update offers to remove it (section 6) | none |
 | **Delegation and concept learning** | `scripts/delegation/`; `scripts/frontdesk/learning.js`'s proposals; the `chat-question` count; blind cards | Every decision at levels 3 and 4 is the director's card, as before delegation; nothing is decided on their behalf beyond the table of standing answers. Explanations follow the `explanations` setting alone; no "concept you know" cards | `delegationReviewDays`, `blindCards`, `known:*` |
 | **Screenshot approvals** | `scripts/screens/`; the helper's carry-over through `compareCommits` | When a branch is brought up to date after the director approved it, the approval card is asked again, in one click. Previews themselves stay: the director still sees a change before approving it | none |
-| **GitLab** | `scripts/host/gitlab*.js`; the GitLab half of `adapter-for.js`, setup's host step and the host-access design | A GitLab address at setup gets one card offering to keep the project on this computer (local hosting). See question 1 in section 9: this one waits on the director | none |
-| **Windows Locked** | The Windows branch of `scripts/protection/locked.js` and `managed.js`, and the plan to try it | Windows projects use Standard, with the Guarded build commands, as ruling 18 of section 22 already has them. See question 2 in section 9 | none |
+| **Windows Locked** | The Windows branch of `scripts/protection/locked.js` and `managed.js`, and the plan to try it | Windows projects use Standard, with the Guarded build commands, as ruling 18 of section 22 already has them. Decided 7 November 2026 | none |
 
 Parked with them, because they stand on parked pieces:
 
-- **Unattended goals,** which were partly built on Archon's dispatcher, caps and delegation (`scripts/engine/goal-*.js`). See question 3 in section 9.
+- **Unattended goals,** which were partly built on Archon's dispatcher, caps and delegation (`scripts/engine/goal-*.js`). Decided 7 November 2026: they come back later on the own engine, with their own design.
 - **The engine's side of the core** that only an engine behind the connector uses: the dispatcher, the card router (`scripts/engine/runner.js`), the spend meter and its caps, the broker (`scripts/engine/broker/`), the engine room and the pack checks. The own engine has its own queue, pace and usage reading.
 
 ### 4.3 Archon, in detail
@@ -126,7 +126,7 @@ The look is a short report to the director, with a card: stay parked, or bring i
 | **Per-step cost records** | Usage read per session from Claude Code's own records, and the weekly usage view. Nothing per step |
 | **Upstream work,** for free with each upgrade | None. Wheelhouse's own engine gets better only when Wheelhouse works on it |
 
-**An option: teach the own engine to resume after a crash.** The watcher, when it starts and on each tick, looks for feature sessions whose process has gone with no report written. It wakes each one with `--resume` and "carry on from what's there", naming the plan's ticked tasks and the commits on the branch, and counts the resumes: a piece that dies three times becomes a card. **Rough size:** one build part, about a day of build sessions, mostly in `scripts/watcher/` with tests on the fake session. It is the one thing in the table above worth building now. The recommendation is to build it as part 3 of section 8, and the director can say no on the design's approval card.
+**Decided: teach the own engine to resume after a crash.** The watcher, when it starts and on each tick, looks for feature sessions whose process has gone with no report written. It wakes each one with `--resume` and "carry on from what's there", naming the plan's ticked tasks and the commits on the branch, and counts the resumes: a piece that dies three times becomes a card. **Rough size:** one build part, about a day of build sessions, mostly in `scripts/watcher/` with tests on the fake session. It is the one thing in the table above worth building now. The director said yes on 7 November 2026, and it is part 3 of section 8.
 
 ### 4.4 How PR #370, "Watch the crew", fits
 
@@ -167,7 +167,7 @@ All of it happens through one run of the update command, at the release that car
 3. **The VS Code add-on,** where installed: one line on the Update card offers to remove it. Not now leaves it installed and inert.
 4. **Matt Pocock's plugin:** the project-scope install is removed (section 5).
 5. **Copilot, delegation, goals, screenshot approvals:** nothing to move. Their settings and records stay in the record, unread (section 4.1). A Copilot project, if any, gets one card saying Copilot is parked and offering to carry on with Claude Code.
-6. **GitLab and Windows Locked:** as the director answers questions 1 and 2. Until then, nothing changes for a GitLab project.
+6. **GitLab and Windows Locked:** nothing changes for a GitLab project. Windows projects were never offered Locked, so they stay at Standard with nothing to move.
 
 `docs/data.md` (what Wheelhouse keeps and what uninstall removes) is brought up to date in the same release.
 
@@ -180,15 +180,11 @@ All of it happens through one run of the update command, at the release that car
 | The mod | Designed from day one; everything is built, with the mod last | The mod is parked (section 4.2). The core is complete without it |
 | Settings | Settings the director can change, "including from the mod" | Settings are changed in the chat only |
 | The designer's calls from the checks | Approvals by card click "until the mod's first piece" | Approvals by card click, with no end date |
-| Locked on Windows (check 12) | macOS only until tried on Windows with admin rights | Parked: not tried. Question 2 |
-| How Wheelhouse connects to GitHub and GitLab | Two ways, for GitHub and GitLab | GitHub only, unless question 1 keeps GitLab |
-| Changes to CI files | "except a restore on GitLab, which the project key pushes" | The GitLab exception goes with GitLab, unless question 1 keeps it |
+| Locked on Windows (check 12) | macOS only until tried on Windows with admin rights | Parked: not tried. Windows stays at Standard with Guarded build commands (decided 7 November 2026) |
 | Answering a card by typing or from the phone | Reply codes stay beside the mod's card buttons | Reply codes stay; there are no card buttons outside the chat |
 | The interface: Calm | Calm in the pane | The pane is parked. Calm's words and card shape stay in the chat |
 | Suggest a change | Offered "in the pane, the chat and on the phone" | In the chat and on the phone |
 | Comparing screenshots to save a second approval | **Compare them** | Parked: an approval that a later update would have carried over is asked again, in one click |
-| A company's certificate on Windows | Git uses Windows' own store; first try "on a company GitLab" | The mechanism stays for any host. The GitLab sitting waits on question 1 |
-| How Wheelhouse reaches the host, and where its keys live | Covers GitHub and GitLab, `gh` or `glab`, REST through `curl` | Unchanged for GitHub. The GitLab half waits on question 1 |
 | One card, one answer | Panel and chat rules; Copilot's cards in its chat | The chat rules alone. The panel and Copilot parts go |
 | Updating Wheelhouse | D3's "the helper's window with another agent"; D4, Lean's update skill | D3 keeps only the Claude Code route; D4 is parked with Lean |
 
@@ -197,7 +193,7 @@ All of it happens through one run of the update command, at the release that car
 - **Build on a maintained open-source engine** (the director, 29 October 2026; `docs/specs/2026-10-29-wheelhouse-on-archon-design.md`): reversed. Wheelhouse's own engine is the engine, with a date to look again (section 4.3).
 - **Copilot ships in the first public release** (the director, 23 October 2026) and **other agents** (`docs/specs/2026-10-20-other-agents-design.md`, approved 21 October 2026): reversed. Copilot and Lean are parked.
 - **The build loop's lineage** (`docs/specs/2026-10-18-build-loop-design.md`): "Superpowers' and Matt Pocock's skills used as they are" becomes Superpowers alone, with the copies in section 5.
-- **The delegated decisions and unattended goals designs** (1 November 2026): parked, subject to question 3.
+- **The delegated decisions and unattended goals designs** (1 November 2026): parked (decided 7 November 2026). Goals come back later on the own engine, with their own design.
 - **The pane design and the VS Code panel design** (31 October and 4 November 2026): parked.
 
 ## 8. A rough order for the build
@@ -206,51 +202,23 @@ Each part is its own fresh session, run on the build plan the director's approva
 
 1. **The parking frame.** `docs/parked.md`, the `parked/<piece>` tags, and the settings catalogue accepting retired keys unread. Small, and every later part needs it.
 2. **Drop Matt Pocock's plugin.** Copy in the two skills, switch the quick and bug lanes, remove the pin. Independent of the rest.
-3. **The own engine as the only engine.** The update's move off Archon (section 6, item 1), setup without Archon, no Archon upgrades, and the crash resume if the director says yes. The Archon connector's cancel and inspect stay in this release, since the move needs them.
+3. **The own engine as the only engine.** The update's move off Archon (section 6, item 1), setup without Archon, no Archon upgrades, and the own engine's crash resume (section 4.3). The Archon connector's cancel and inspect stay in this release, since the move needs them.
 4. **Lift out Archon and the engine's side of the core**, keeping `contract.js` and `fake.js`. This is the next release after part 3, once the update has moved every project.
 5. **Lift out the mod, the pane, the status line and the courier.** Move the watcher's keep-alive, park Shape 2, chat-only cards. PR #370, re-scoped, follows this part.
 6. **Lift out Copilot, Lean and the VS Code add-on**, with their CI and release jobs.
 7. **Lift out delegation, concept learning, unattended goals and screenshot approvals.**
-8. **GitLab and Windows Locked,** as the director answered.
+8. **Lift out Windows Locked.** GitLab stays as it is.
 9. **The documents and the release.** Section 22 and the other designs marked as section 7 says, `HANDOVER.md`, `CLAUDE.md` and `docs/data.md`. Then a trial of the update on a project already on Wheelhouse, run by an agent, before the director's real use goes on.
 
 Parts 2, 6 and 7 touch separate files and can run side by side. Part 3 must land before part 4, and part 5 before PR #370.
 
-## 9. Open questions for the director
+## 9. Decided 7 November 2026
 
-Each is set out as a card. Until the director answers, the build plan is written with these parts last, so nothing waits.
+The director answered the design's open questions on 7 November 2026, each as recommended:
 
-### Question 1: GitLab
+1. **GitLab stays in the core.** It moves from parked to kept, with the REST route and "use my git as it is" (section 3).
+2. **Locked on Windows is parked.** Windows stays at Standard, with the Guarded build commands (section 4.2).
+3. **Unattended goals are parked** with Archon and delegation, and come back later on the own engine with their own design (section 4.2).
+4. **The own engine learns to resume after a crash,** built as part of the core cut (section 4.3, and part 3 of section 8).
 
-- **What this is.** This design parks GitLab, so Wheelhouse would work with GitHub and with projects kept on this computer only.
-- **Why it comes to you.** On 3 November 2026 you said you need a company GitLab on a locked-down Windows laptop for real use, and ruled how Wheelhouse reaches it (section 22, "How Wheelhouse reaches the host"). Parking GitLab would take that away.
-- **The options.**
-  - **Keep GitLab in the core** (recommended). Its REST route and "use my git as it is" are mostly built for exactly that laptop. The cost is upkeep of the GitLab half of the host adapter, and the sitting on the laptop still to run.
-  - **Park GitLab.** On the laptop, the project is kept on the computer and merged there by Wheelhouse, and you push the main line to the company's GitLab yourself. No merge requests are opened for you.
-  - **Park it now, bring it back when the laptop's real use starts.** This saves upkeep until then, but costs a bring-back design later.
-- **The recommendation.** Keep GitLab in the core. It is your own real use, and parking it leaves that laptop with nothing.
-- **Meanwhile.** Nothing changes for GitLab. The rest of the cut goes ahead.
-
-### Question 2: Locked on Windows
-
-- **What this is.** Locked, the stricter protection level, puts Wheelhouse's rules in a computer-wide file that needs an administrator's password. On Windows it has never been tried.
-- **Why it comes to you.** Section 22 says it is offered on macOS only until tried on Windows with admin rights. Parking it means it is never tried, so a Windows project with real users stays at Standard.
-- **The options.**
-  - **Park it** (recommended). Windows uses Standard with the Guarded build commands, as today. On a company laptop with no admin rights Locked couldn't be set anyway.
-  - **Keep it, and try it on a Windows computer with admin rights.** This needs that computer and a sitting.
-- **The recommendation.** Park it. It changes nothing a Windows project has today.
-- **Meanwhile.** Windows projects stay at Standard.
-
-### Question 3: Unattended goals
-
-- **What this is.** Unattended goals let you leave Wheelhouse working towards a goal while you're away, within a spend you set. Only the report part is built, and it stands on Archon's dispatcher and caps, and on delegation, which this design parks.
-- **Why it comes to you.** You approved the goals design on 1 November 2026, and it wasn't in the list you gave on 7 November 2026.
-- **The options.**
-  - **Park it with Archon and delegation** (recommended). Bring it back later on the own engine, with its own design.
-  - **Keep it.** Rebuild its dispatcher and caps on the own engine now. That is several build parts, and it adds back part of what the cut removes.
-- **The recommendation.** Park it. The core first, then goals on the own engine once real use shows they're needed.
-- **Meanwhile.** No goal can be started (none could before: its sheet part isn't built).
-
-### For the approval card itself
-
-The approval card asks three things alongside **Approve**: questions 1 to 3, and whether to build the crash resume of section 4.3 (recommended: yes).
+The design as a whole still awaits the director's approval.
