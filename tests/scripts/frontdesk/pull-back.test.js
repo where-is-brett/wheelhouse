@@ -99,7 +99,7 @@ test('a call is found by the start of its id, and a wrong or doubtful id is refu
     assert.equal((await say(helper, ['pull-back', first.id.slice(0, 8)])).code, 0);
     const none = await say(helper, ['pull-back', 'deadbeef']);
     assert.equal(none.code, 1);
-    assert.match(none.err, /No logged call/);
+    assert.match(none.err, /recent calls/);
     for (const bad of [[], ['abc'], ['not an id'], ['aaaaaaaa', '--other']]) assert.equal((await say(helper, ['pull-back', ...bad])).code, 1, JSON.stringify(bad));
     assert.equal(helper.held.filter((e) => e.kind === 'ruling').length, 1, 'only the one pull-back wrote');
   });
@@ -111,10 +111,37 @@ test('a call pulled back is not pulled back again', async () => {
     const helper = fakeHelper([first]);
     assert.equal((await say(helper, ['pull-back', first.id])).code, 0);
     // The ruling shows in the rulebook once its confirm card is answered; until then the ruling's own words still mark it.
+    const again = await say(helper, ['pull-back', first.id]);
+    assert.equal(again.code, 1);
+    assert.match(again.err, /already/);
+    assert.equal(helper.held.filter((e) => e.kind === 'ruling').length, 1);
+  });
+});
+
+test('pull-back --change after a ruling exists files only the request, once', async () => {
+  await inHome(async () => {
+    const first = call(1);
+    const helper = fakeHelper([first]);
+    assert.equal((await say(helper, ['pull-back', first.id])).code, 0);
+    const out = await say(helper, ['pull-back', first.id, '--change']);
+    assert.equal(out.code, 0, out.err);
+    assert.equal(helper.held.filter((e) => e.kind === 'ruling').length, 1, 'no second ruling');
+    assert.equal(helper.held.filter((e) => e.kind === 'request').length, 1);
+    assert.equal(out.json.ruling, undefined);
     const again = await say(helper, ['pull-back', first.id, '--change']);
     assert.equal(again.code, 1);
     assert.match(again.err, /already/);
-    assert.equal(helper.held.some((e) => e.kind === 'request'), false);
+    assert.equal(helper.held.filter((e) => e.kind === 'request').length, 1);
+  });
+});
+
+test('a call that is not among the recent calls is said so, not said never to have been logged', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper([call(1)]);
+    const out = await say(helper, ['pull-back', 'deadbeef']);
+    assert.equal(out.code, 1);
+    assert.match(out.err, /recent calls/);
+    assert.equal(/never|was not logged/.test(out.err), false);
   });
 });
 

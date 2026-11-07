@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import './test-home.js';
 import { composeCard, answerInput } from '../../scripts/cards/compose.js';
-import { makeEvent, eventPath } from '../../scripts/state/events.js';
+import { makeEvent, eventPath, confirmationFor } from '../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../scripts/state/signing.js';
 import { stateDir } from '../../scripts/lib/paths.js';
 
@@ -63,4 +63,10 @@ export function raise(ask, at, { labels = ['Daily', 'Weekly', 'Monthly'], projec
 export function typedAnswer(card, { n, label, words = '' }, at, project = P) {
   const option = label === 'own' ? '' : card.data.options['ABCD'.indexOf(label)];
   return keep(makeEvent({ kind: 'decision-answer', data: { question: card.data.question, n, label, option, words, where: 'chat' }, now: () => new Date(at) }), project);
+}
+
+// Switches typed replies on, as the director's confirmed setting does: a `setting` event and its signed confirmation.
+export function turnOn(project = P) {
+  const setting = keep(makeEvent({ kind: 'setting', data: { key: 'typedReplies', value: true, words: 'Answer decisions by typing' }, now: () => new Date('2026-11-01T01:00:00.000Z') }), project);
+  keep(makeEvent({ ...confirmationFor(setting), now: () => new Date('2026-11-01T01:00:01.000Z') }), project);
 }
