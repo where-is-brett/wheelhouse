@@ -4,7 +4,7 @@
 // letter while exactly one decision waits. Anything that could mean more than one decision, or none, is never an answer:
 // it is ambiguous, refused or nothing, and nothing is recorded from it.
 //
-//   parseReply(text, pending) -> { kind: 'answer', n, label, words }
+//   parseReply(text, pending) -> { kind: 'answer', n, label, words, private? }   `private: true` for a letter followed by "private"
 //                              | { kind: 'why', n, words }
 //                              | { kind: 'ambiguous', candidates }
 //                              | { kind: 'refused', n, reason }     reason: 'beyond-options' or 'not-waiting'
@@ -69,10 +69,25 @@ function whyOf(text, pending) {
   return { kind: 'why', n, words };
 }
 
+// A trailing "private" after a letter ("2 B private") keeps the answer out of the project's files (design section 6.6). It counts
+// only straight after a letter and nothing else: words before it ("B, but keep it private") or the director's own words are
+// theirs and are never read as the mark.
+const PRIVATE_TAIL = /^(.*\S)\s+private[.!]?$/is;
+
 export function parseReply(text, pending) {
   if (typeof text !== 'string' || !Array.isArray(pending) || pending.length === 0) return none;
   const typed = text.replace(/\p{Cf}/gu, '').trim().replace(/^reply\b[\s:,-]*/i, '');
   if (typed === '') return none;
+  const tail = PRIVATE_TAIL.exec(typed);
+  if (tail !== null) {
+    const head = readReply(tail[1], pending);
+    if (head.kind === 'answer' && head.label !== 'own' && head.words === '') return { ...head, private: true };
+    if (head.kind === 'refused' && head.reason === 'beyond-options') return head;
+  }
+  return readReply(typed, pending);
+}
+
+function readReply(typed, pending) {
 
   const why = whyOf(typed, pending);
   if (why !== null) return why;
