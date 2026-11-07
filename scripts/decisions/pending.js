@@ -78,6 +78,7 @@ function decisionOf(card, n, events) {
     options: optionsOf(data),
     recommend: typeof data.recommend === 'string' ? data.recommend : null,
     work: workOf(data, events),
+    holds: flat(parts.holds),
     why: flat(parts.why),
     because: becauseOf(data),
     meanwhile: flat(parts.meanwhile),

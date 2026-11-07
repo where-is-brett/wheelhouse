@@ -265,6 +265,14 @@ function switchedLines(views, { since }) {
   return engine?.value === 'archon' && typeof at === 'string' && (!since || at >= since) ? [SWITCHED_LINE] : [];
 }
 
+// The stuck notes of the record, oldest first: { work, at, words, recorded } each.
+function stuckNotes(events) {
+  return events
+    .filter((e) => e.kind === 'note' && e.data?.about === 'stuck' && typeof e.data.work === 'string' && typeof e.data.words === 'string')
+    .map((e) => ({ work: e.data.work, at: typeof e.data.at === 'string' ? e.data.at : e.at, words: e.data.words, recorded: e.at }))
+    .sort((a, b) => Date.parse(a.recorded) - Date.parse(b.recorded));
+}
+
 // One card of the waiting list by its id: its numbered item, the card event, its text and the
 // buttons a press offers, the 12-character hash a pane press names and the sha256 of its data.
 function cardOf(got, id, preview) {
@@ -336,7 +344,9 @@ const VIEWS = {
     const decisions = typeof source.events === 'function' ? { decisions: decisionsFrom(source.events(), source.enrolled?.() ?? []) } : {};
     // With `calls: true`, the calls the agents logged on their own side of the decision line, for the director to pull one back.
     const calls = args.calls === true && typeof source.events === 'function' ? { calls: callsFrom(source.events()) } : {};
-    return { ok: true, data: { ...got, numbered, ...given, ...decisions, ...calls }, lines };
+    // With `stuck: true`, the notes recording that a feature session sent its plain "stuck" message (`act stuck-note`), oldest first.
+    const stuck = args.stuck === true && typeof source.events === 'function' ? { stuck: stuckNotes(source.events()) } : {};
+    return { ok: true, data: { ...got, numbered, ...given, ...decisions, ...calls, ...stuck }, lines };
   },
 
   async card(args, source) {

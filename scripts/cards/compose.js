@@ -23,6 +23,7 @@ import { normaliseWords } from '../lib/words.js';
 import { BUILD_QUESTION_OPTIONS } from '../protection/windows-builds.js';
 import { baselineWording } from '../lib/measures-clicks.js';
 import { DIRECTOR_LEVEL, sideOf } from '../decisions/line.js';
+import { decisionText } from '../decisions/message.js';
 
 // The kind in plain words, at most CARD.header characters; the director reads these.
 export const HEADERS = Object.freeze({
@@ -476,6 +477,8 @@ export function composeCard(input) {
   if (input.parked !== undefined && (input.parked !== true || kind !== 'approval')) fail(kind, 'parked', 'belongs to an approval card only, as true');
   const because = words(kind, 'because', input.because);
   const meanwhile = words(kind, 'meanwhile', input.meanwhile);
+  if (input.holds !== undefined && kind !== 'answer' && kind !== 'question') fail(kind, 'holds', 'belongs to a question or an answer card only');
+  const holds = input.holds === undefined ? undefined : words(kind, 'holds', input.holds);
   const ask = input.ask === undefined ? undefined : words(kind, 'ask', input.ask);
   const size = input.size === undefined ? undefined : words(kind, 'size', input.size);
   if (input.suggest !== undefined && typeof input.suggest !== 'boolean') fail(kind, 'suggest', 'must be true or false');
@@ -516,6 +519,7 @@ export function composeCard(input) {
     because: clause(because),
     why,
     meanwhile,
+    ...(holds === undefined ? {} : { holds }),
     ...(checks === undefined ? {} : { checks }),
     ...(changed === undefined ? {} : { changed }),
     line,
@@ -622,10 +626,17 @@ function plainAnswerInput(data, work, { joiners = [], saidBefore = null } = {}) 
     level: data.level,
     what: `${said === null ? '' : `You said this before: ${said}. `}${flat(data.what)}${bundle}${others}`,
     why: flat(data.why),
-    options: data.options.map((o) => ({ label: o?.label, says: foreman ? foremanSays(o) : flat(o?.says) || o?.label })),
+    options: data.options.map((o) => ({
+      label: o?.label,
+      says: foreman ? foremanSays(o) : flat(o?.says) || o?.label,
+      ...(typeof o?.cost === 'string' ? { cost: flat(o.cost) } : {}),
+      ...(typeof o?.undo === 'string' ? { undo: flat(o.undo) } : {}),
+    })),
     recommend: offered ?? data.recommendation,
-    because: offered !== undefined ? 'it is what you said before' : foreman ? `the Bosun recommends it for ${work}` : data.work === HAND_WORK ? HAND_BECAUSE : `the session building ${work} recommends it`,
-    meanwhile: MEANWHILE,
+    // The reason the session gave for its recommendation is the card's, when it gave one.
+    because: offered !== undefined ? 'it is what you said before' : foreman ? `the Bosun recommends it for ${work}` : data.work === HAND_WORK ? HAND_BECAUSE : typeof data.because === 'string' && data.because.trim() !== '' ? flat(data.because) : `the session building ${work} recommends it`,
+    meanwhile: typeof data.meanwhile === 'string' && data.meanwhile.trim() !== '' ? flat(data.meanwhile) : MEANWHILE,
+    ...(typeof data.holds === 'string' && data.holds.trim() !== '' ? { holds: flat(data.holds) } : {}),
     ...(data.level === 4 ? { checks: flat(data.checks) || CHECKS_UNSAID } : {}),
     target: { questionId: data.id },
     // A build-command question's commands, so its own Not now is offered (see offered).
@@ -647,4 +658,46 @@ export function questionProblem(data, { recorded = false } = {}) {
   } catch (error) {
     return error.message;
   }
+}
+
+// --- The shape of a decision (design section 6.2) ---
+
+// What fits a phone screen: the decision's chat message, in characters and lines.
+export const PHONE_LIMIT = Object.freeze({ chars: 1400, lines: 18 });
+const OPTIONS = Object.freeze({ fewest: 2, most: 4 });
+const missing = (x) => typeof x !== 'string' || x.trim() === '';
+
+// What is wrong with a decision's shape, one sentence for each (naming the flag of `cli.js ask` that puts it right), or an empty
+// list when it passes. `input` is a question as the session wrote it: { what | question, why, options: [{ label, says, cost, undo }],
+// recommendation | recommend, because, holds, meanwhile, work }. The decision's chat message is measured as the First Mate prints it:
+// what waits is `holds`, else the work, else "nothing else".
+// `older: true` is for a question written under an older brief, whose options carry no cost or undo: it is judged on its options,
+// its recommendation and its length alone.
+export function shapeProblems(input, { older = false } = {}) {
+  const problems = [];
+  const given = isPlain(input) ? input : {};
+  const options = Array.isArray(given.options) ? given.options.filter(isPlain) : [];
+  const named = (o) => flat(o.label) || '(no label)';
+  if (options.length < OPTIONS.fewest || options.length > OPTIONS.most) {
+    problems.push(`Give two to four options; there ${options.length === 1 ? 'is 1' : `are ${options.length}`} (--option "<label>=<what it means>").`);
+  }
+  if (!older) {
+    for (const o of options) {
+      if (missing(o.cost)) problems.push(`Option "${named(o)}" doesn't say what it costs: time, money, tokens or complexity; add --cost "${named(o)}=<cost>".`);
+      if (missing(o.undo)) problems.push(`Option "${named(o)}" doesn't say whether it can be undone: add --undo "${named(o)}=yes|no|partly".`);
+    }
+  }
+  const recommend = given.recommendation ?? given.recommend;
+  if (missing(recommend)) problems.push('Say which option you recommend: add --recommend "<label>".');
+  else if (!options.some((o) => o.label === recommend)) problems.push(`The recommendation "${flat(recommend)}" is not one of the options (${options.map((o) => flat(o.label)).join(', ')}).`);
+  if (!older && missing(given.because)) problems.push('Say why you recommend it, in the director\'s terms: add --because "<why>".');
+  if (!older && missing(given.meanwhile)) problems.push('Say what you go on with while it waits: add --meanwhile "<what you go on with>".');
+  const text = decisionText({
+    n: 1, question: given.what ?? given.question, work: given.holds || given.work, why: given.why, options, recommend, because: given.because, meanwhile: given.meanwhile,
+  });
+  const lines = text.split('\n').length;
+  if (text.length > PHONE_LIMIT.chars || lines > PHONE_LIMIT.lines) {
+    problems.push(`The decision is ${text.length} characters and ${lines} lines; a phone screen takes ${PHONE_LIMIT.chars} characters and ${PHONE_LIMIT.lines} lines. Cut it down.`);
+  }
+  return problems;
 }

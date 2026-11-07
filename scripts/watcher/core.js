@@ -96,7 +96,7 @@ export const DIGEST_CAP = 200;
 export const FOREMAN_TYPES = Object.freeze([
   'work-ready', 'amended', 'question', 'extra-plan', 'answer', 'merge-ready', 'stuck', 'review-overdue',
   'over-appetite', 'clash', 'stop', 'incident', 'brief-tampered', 'plan-ready', 'report', 'lift-incident', 'incident-fix',
-  'approval', 'ci-push',
+  'approval', 'ci-push', 'stuck-note',
 ]);
 export const FEATURE_TYPES = Object.freeze(['ci-red', 'findings', 'conflict', 'review-needed', 'brief-changed', 'answer', 'build']);
 export const DIGEST_TYPES = Object.freeze(['task-done', 'review-passed', 'ci-running', 'pushed', 'progress', 'skipped-lines']);
@@ -309,6 +309,14 @@ function featureEvents(prev, next, settled, out) {
     for (const q of questions.own) if (!asked.has(q)) out.push({ type: 'question', work, id: q, detail: {} });
     const split = new Set(list(pf?.extraPlans));
     for (const q of extraPlans.own) if (!split.has(q)) out.push({ type: 'extra-plan', work, id: q, detail: {} });
+
+    // A session's own plain "stuck" message, once for each time it wrote one.
+    const noted = new Set(list(pf?.stuckNotes).filter(isPlain).map((n) => n.at));
+    for (const n of list(f.stuckNotes)) {
+      if (isPlain(n) && text(n.at) !== null && text(n.why) !== null && !noted.has(n.at)) {
+        out.push({ type: 'stuck-note', work, id: `stuck-note:${work}:${n.at}`, detail: { at: n.at, why: n.why } });
+      }
+    }
 
     const skippedOf = (x, ownQ, ownP) => (Number.isInteger(x?.skipped) ? x.skipped : 0) + ownQ.stray + ownP.stray;
     const skipped = skippedOf(f, questions, extraPlans);

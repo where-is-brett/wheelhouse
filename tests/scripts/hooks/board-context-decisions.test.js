@@ -8,7 +8,8 @@ import { writeProject } from '../../../scripts/lib/projects.js';
 import { recordRole } from '../../../scripts/lib/role.js';
 import { markSeen } from '../../../scripts/briefing/seen.js';
 import { wheelhouseHome } from '../../../scripts/lib/paths.js';
-import { inHome as inHomeOff, turnOn, P, raise, typedAnswer } from '../../helpers/decisions-world.js';
+import { makeEvent } from '../../../scripts/state/events.js';
+import { inHome as inHomeOff, keep, turnOn, P, raise, typedAnswer } from '../../helpers/decisions-world.js';
 // Typed replies are off until the director rules; these tests are of the behaviour with them on, and say so where they mean off.
 const inHome = (fn) => inHomeOff(async (home) => { turnOn(); return fn(home); });
 
@@ -103,6 +104,21 @@ test('under the same guards: a script-started or non-front-desk session leaves t
     recordRole('s-feature', 'feature');
     const feature = await decide({ cwd: repo, session_id: 's-feature', hook_event_name: 'UserPromptSubmit', prompt: '1 B' }, { now: at(NOW), env: {}, client });
     assert.equal(feature, undefined);
+  });
+});
+
+test('an agent\'s stuck note is shown once, as a plain message naming the piece, the time and its words', async () => {
+  await inHome(async (home) => {
+    const repo = register(home);
+    keep(makeEvent({ kind: 'note', data: { about: 'stuck', work: 'w-tide-1', at: '2026-11-08T11:59:30.000Z', words: 'The meanwhile line keeps failing' }, now: () => new Date('2026-11-08T11:59:40.000Z') }));
+    // An older note, from before the director's last prompt, and a note about something else, are not shown.
+    keep(makeEvent({ kind: 'note', data: { about: 'stuck', work: 'w-tide-2', at: '2026-11-08T10:00:00.000Z', words: 'Old' }, now: () => new Date('2026-11-08T10:00:10.000Z') }));
+    keep(makeEvent({ kind: 'note', data: { about: 'engine', words: 'Something else' }, now: () => new Date('2026-11-08T11:59:50.000Z') }));
+    const text = contextOf(await ask(repo, 'What is going on?'));
+    assert.match(text, /w-tide-1 is stuck: its session says "The meanwhile line keeps failing" \(sent 2026-11-08T11:59:30\.000Z\)/);
+    assert.ok(!text.includes('w-tide-2') && !text.includes('Something else'));
+    // The next prompt does not bring it back.
+    assert.equal(await ask(repo, 'And now?'), undefined);
   });
 });
 

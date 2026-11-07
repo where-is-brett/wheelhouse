@@ -204,7 +204,8 @@ export function writeStatus(file, status) {
 
 // --- The questions ---
 
-const QUESTION_KEYS = ['id', 'kind', 'what', 'why', 'options', 'recommendation', 'level', 'plan', 'commands'];
+const QUESTION_KEYS = ['id', 'kind', 'what', 'why', 'options', 'recommendation', 'level', 'plan', 'commands', 'because', 'holds', 'meanwhile'];
+const OPTION_KEYS = ['label', 'says', 'cost', 'undo'];
 
 // `q-<work>-<n>`, the same id the state's question record carries.
 export const QUESTION_ID = /^q-([a-z0-9-]+)-[0-9]+$/;
@@ -222,7 +223,9 @@ function validQuestion(q) {
     && isText(q.what)
     && isText(q.why)
     && Array.isArray(q.options) && q.options.length > 0
-    && q.options.every((o) => isPlain(o) && Object.keys(o).length === 2 && isText(o.label) && typeof o.says === 'string')
+    && q.options.every((o) => isPlain(o) && hasOnly(o, OPTION_KEYS) && isText(o.label) && typeof o.says === 'string'
+      && (o.cost === undefined || isText(o.cost)) && (o.undo === undefined || isText(o.undo)))
+    && (q.because === undefined || isText(q.because)) && (q.holds === undefined || isText(q.holds)) && (q.meanwhile === undefined || isText(q.meanwhile))
     && isText(q.recommendation)
     && [1, 2, 3, 4].includes(q.level)
     && (q.kind === 'extra-plan' ? isText(q.plan) : q.plan === undefined || typeof q.plan === 'string')
@@ -230,15 +233,20 @@ function validQuestion(q) {
     && (q.kind === 'build-command' ? isBuildQuestion(q) : q.commands === undefined);
 }
 
+// Two other kinds of line share the file and are never questions: `{ sentBack: true, at, problems }`, written when a decision
+// failed its shape and went back to the session (design section 6.2), and `{ stuck: true, at, why }`, the session's one plain
+// message that it can't get the shape right. Neither is skipped. `failures` is how many sent-back lines come in a row at the end of
+// the file, after the last question or stuck message: a question that passes, or a stuck message, starts the count again.
+//
 // The questions in `file`, one JSON object per line. Lines that are not a valid
 // question are skipped and counted. No more than `maxBytes` of the file is read;
 // a line the limit cuts short counts as skipped, and `truncated` says the limit
 // was reached. A missing file holds none.
-export function readQuestions(file, { maxBytes = READ_BYTES } = {}) {
+function scanQuestions(file, { maxBytes = READ_BYTES } = {}) {
   let text;
   let cut = false;
   const fd = openRegular(file);
-  if (fd === null) return { questions: [], skipped: 0, truncated: false };
+  if (fd === null) return { questions: [], skipped: 0, truncated: false, failures: 0, stuck: [] };
   try {
     try {
       const size = fs.fstatSync(fd).size;
@@ -250,7 +258,7 @@ export function readQuestions(file, { maxBytes = READ_BYTES } = {}) {
       fs.closeSync(fd);
     }
   } catch {
-    return { questions: [], skipped: 0, truncated: false };
+    return { questions: [], skipped: 0, truncated: false, failures: 0, stuck: [] };
   }
   let skipped = 0;
   if (cut) {
@@ -261,17 +269,67 @@ export function readQuestions(file, { maxBytes = READ_BYTES } = {}) {
     if (rest.trim() !== '') skipped += 1;
   }
   const questions = [];
+  const stuck = [];
+  let failures = 0;
   for (const line of text.split('\n')) {
     if (line.trim() === '') continue;
     try {
       const q = JSON.parse(line);
-      if (validQuestion(q)) questions.push(q);
-      else skipped += 1;
+      if (isPlain(q) && q.sentBack === true && hasOnly(q, ['sentBack', 'at', 'problems'])) failures += 1;
+      else if (isPlain(q) && q.stuck === true && hasOnly(q, ['stuck', 'at', 'why']) && isText(q.why)) {
+        stuck.push({ at: q.at, why: q.why });
+        failures = 0;
+      } else if (validQuestion(q)) {
+        questions.push(q);
+        // Only a decision that passed ends a run of failed ones: an extra plan or a build-command question is no decision.
+        if (q.kind === 'question') failures = 0;
+      } else skipped += 1;
     } catch {
       skipped += 1;
     }
   }
-  return { questions, skipped, truncated: cut };
+  return { questions, skipped, truncated: cut, failures, stuck };
+}
+
+export function readQuestions(file, opts) {
+  const { questions, skipped, truncated } = scanQuestions(file, opts);
+  return { questions, skipped, truncated };
+}
+
+// The most of questions.jsonl that is read where sent-back lines may have lengthened it.
+export const QUESTIONS_READ_BYTES = 8 * 1024 * 1024;
+
+// Adds one line to `file` by appending, so a line the other side writes at the same time is kept (the session and the foreman both
+// add to questions.jsonl). A link or anything but a regular file is refused. A file that doesn't end in a newline gets one first.
+export function appendLine(file, object) {
+  const flags = fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT | (fs.constants.O_NOFOLLOW ?? 0);
+  const fd = fs.openSync(file, flags, 0o644);
+  try {
+    const { size, isFile } = (() => { const st = fs.fstatSync(fd); return { size: st.size, isFile: st.isFile() }; })();
+    if (!isFile) throw new Error(`${path.basename(file)} isn't a regular file`);
+    let lead = '';
+    if (size > 0) {
+      const reader = openRegular(file);
+      if (reader !== null) {
+        try {
+          const last = Buffer.alloc(1);
+          fs.readSync(reader, last, 0, 1, size - 1);
+          if (last[0] !== 10) lead = '\n';
+        } finally {
+          fs.closeSync(reader);
+        }
+      }
+    }
+    fs.writeSync(fd, `${lead}${JSON.stringify(object)}\n`);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+// The tries of a session that failed the shape: `failures` in a row at the end of the file, and the `stuck` messages it sent.
+export function questionTrail(file, opts) {
+  const { failures, stuck } = scanQuestions(file, opts);
+  return { failures, stuck };
 }
 
 // --- The decision log ---

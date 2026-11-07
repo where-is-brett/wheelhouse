@@ -412,7 +412,8 @@ test('a question goes from the feature file to state, a click answers it, and on
     // 1. The session writes the question, and pauses that feature.
     const asked = await session(world, s, [
       'ask', '--what', 'Export as CSV or as Excel?', '--why', 'It decides what users download',
-      '--option', 'CSV=A CSV file', '--option', 'Excel=An Excel workbook', '--recommend', 'CSV', '--level', '3',
+      '--option', 'CSV=A CSV file', '--option', 'Excel=An Excel workbook', '--cost', 'CSV=An hour', '--cost', 'Excel=Two days', '--undo', 'CSV=yes', '--undo', 'Excel=partly',
+      '--recommend', 'CSV', '--because', 'It opens in any tool', '--meanwhile', 'I build the export screen, which both need', '--level', '3',
     ]);
     assert.equal(asked.code, 0, asked.err);
     const id = asked.out.trim();

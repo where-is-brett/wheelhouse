@@ -127,12 +127,12 @@ import {
   ForemanError, NO_PLAN, PLANS_WHILE_HELD, SAYS_CHARS, TamperedBrief, checkoutOf, clashFor, featureOf, haltFor, haltOf, laneOf, loadConfig, loadViews, oneLine,
   builderCapOf, openPrWait, pausedBy, planOf, projectHere, queueToStart, queuedAgain, recordedBriefOf, slotFor, stateEvents, waitText, whyText, worktreeOf,
 } from './wake.js';
-import { questionProblem } from '../cards/compose.js';
+import { questionProblem, shapeProblems } from '../cards/compose.js';
 import { amendBrief, renderBrief } from '../feature/brief.js';
 import { approvedDocument, placeApproved } from '../feature/approved.js';
-import { report as reportCheck } from '../feature/cli.js';
+import { report as reportCheck, STUCK_AFTER } from '../feature/cli.js';
 import {
-  briefHash, ensureIgnored, featurePaths, parseBrief, parseReport, readQuestions, readStatus, writeStatus,
+  briefHash, ensureIgnored, featurePaths, parseBrief, parseReport, appendLine, questionTrail, QUESTIONS_READ_BYTES, readQuestions, readStatus, writeStatus,
 } from '../feature/files.js';
 import {
   buildStatus, loadFeature, readCapped, readPrRecord, safeFeatureFolder, validSlice, writeWhole,
@@ -832,7 +832,7 @@ function featureQuestion(ctx, views, work, rest) {
   if (named === null || named.work !== work || named.foreman) refuse(`${oneLine(id, 60)} isn't one of ${work}'s own question ids`);
   liveFeature(views, work);
   const worktree = worktreeOf(ctx.project, views, work);
-  const q = readQuestions(featurePaths(worktree).questions).questions.find((x) => x.id === id);
+  const q = readQuestions(featurePaths(worktree).questions, { maxBytes: QUESTIONS_READ_BYTES }).questions.find((x) => x.id === id);
   if (!q) refuse(`${work}'s questions file has no question ${id}`);
   return q;
 }
@@ -844,6 +844,9 @@ async function question(ctx, work, rest) {
   // A build-command question carries the commands it asks for, which a grant reads from state.
   const data = {
     id: q.id, work, what: q.what, why: q.why, options: q.options, recommendation: q.recommendation, level: q.level,
+    ...(q.because === undefined ? {} : { because: q.because }),
+    ...(q.holds === undefined ? {} : { holds: q.holds }),
+    ...(q.meanwhile === undefined ? {} : { meanwhile: q.meanwhile }),
     ...(q.kind === 'build-command' ? { commands: q.commands } : {}),
   };
   // The question as it stands now: the one recorded under this id, or the latest that replaced it.
@@ -851,6 +854,14 @@ async function question(ctx, work, rest) {
     .sort((a, b) => String(a.question.at).localeCompare(String(b.question.at))).at(-1);
   const { replaces, ...keptBody } = kept?.question?.data ?? {};
   let at;
+  // A decision that doesn't fit the shape is never recorded, so the director never sees it: it goes back to the session that raised
+  // it, with what is missing (design section 6.2). One already on file is left as it is.
+  const onFile = kept !== undefined && same(keptBody, kept.question.data.id === q.id ? data : { ...data, id: kept.question.data.id });
+  const problems = q.kind === 'question' && !onFile ? shapeProblems({ ...q, work }, { older: !q.options.some((o) => o.cost !== undefined || o.undo !== undefined) }) : [];
+  if (problems.length > 0) {
+    await sendQuestionBack(ctx, views, work, q, problems);
+    return;
+  }
   if (kept !== undefined && same(keptBody, kept.question.data.id === q.id ? data : { ...data, id: kept.question.data.id })) {
     ctx.say(`Question ${q.id} is recorded already.`);
     at = kept.question.at;
@@ -867,6 +878,54 @@ async function question(ctx, work, rest) {
     at = ctx.now().toISOString();
   }
   await offerUnattended(ctx, views, work, { ...data, at });
+}
+
+// Records the session's own plain "stuck" message (cli.js stuck: a line in its questions.jsonl, named here by the time it was
+// written) as one note in the state, which the front desk shows once. A message already noted is not written again.
+async function stuckNote(ctx, work, rest) {
+  const [at, ...more] = rest;
+  if (typeof at !== 'string' || more.length > 0) refuse('Give the time the wake names: stuck-note <work> <time>');
+  const views = await ctx.views();
+  liveFeature(views, work);
+  const line = questionTrail(featurePaths(worktreeOf(ctx.project, views, work)).questions, { maxBytes: QUESTIONS_READ_BYTES }).stuck.find((n) => n.at === at);
+  if (line === undefined) refuse(`${work}'s questions file has no stuck message written at ${oneLine(at, 40)}`);
+  const noted = stateEvents(ctx.project).some((e) => e.kind === 'note' && e.data?.about === 'stuck' && e.data.work === work && e.data.at === at);
+  if (noted) {
+    ctx.say(`${work}'s stuck message of ${at} is already noted.`);
+    return;
+  }
+  await ctx.write('note', { about: 'stuck', work, at, words: line.why });
+  ctx.say(`Noted that ${work}'s session says it is stuck: ${oneLine(line.why, 200)}`);
+}
+
+// Sends a decision that fails its shape back to the session that raised it, on its next wake: what is missing, and, after
+// STUCK_AFTER failed tries in a row (counted in the session's questions.jsonl), to say it is stuck. Nothing reaches state.
+async function sendQuestionBack(ctx, views, work, q, problems) {
+  const worktree = worktreeOf(ctx.project, views, work);
+  const file = featurePaths(worktree).questions;
+  if (lstatOf(file)?.isFile() !== true) refuse(`${work}'s questions file can't be added to`);
+  const failures = questionTrail(file, { maxBytes: QUESTIONS_READ_BYTES }).failures + 1;
+  const stuck = failures >= STUCK_AFTER
+    ? ` That is ${failures} tries in a row that failed: stop trying and send one plain message with \`stuck --why "<what keeps failing>"\`.`
+    : ' Ask it again with the shape put right.';
+  const id = `shape-back:${work}:${q.id}:${ctx.now().getTime()}`;
+  const event = {
+    type: 'build', work, id, detail: { next: `Your question ${q.id} wasn't put to the director: ${problems.join(' ')}${stuck}` },
+  };
+  // The session is woken first, and the try is counted only once it has heard: a wake that fails leaves nothing behind.
+  const wake = writeWake(ctx.project, { to: 'feature', work, events: [event], digest: [], dropped: 0 }, { now: ctx.now });
+  try {
+    await ctx.waker(await ctx.config()).wakeFeature(work, wake);
+  } catch (error) {
+    fs.rmSync(wake, { force: true });
+    refuse(`Question ${q.id} fails its shape (${oneLine(problems.join(' '), 300)}) and ${work}'s session wasn't woken: ${oneLine(error instanceof Error ? error.message : 'unknown error', 200)}`);
+  }
+  try {
+    appendLine(file, { sentBack: true, at: ctx.now().toISOString(), problems });
+  } catch {
+    refuse(`${work}'s questions file can't be added to`);
+  }
+  ctx.say(`Question ${q.id} wasn't recorded: it fails its shape. Sent back to ${work}'s session: ${oneLine(problems.join(' '), 300)}`);
 }
 
 // --- Build commands on Windows (design section 12.2) ---
@@ -1574,7 +1633,7 @@ async function restart(ctx, work, rest) {
 // --- The command line ---
 
 const COMMANDS = {
-  start, 'plan-ready': planReady, build, pause, resume, question, 'extra-plan': extraPlan, ask, amend, merge, close, restart,
+  start, 'plan-ready': planReady, build, pause, resume, question, 'extra-plan': extraPlan, 'stuck-note': stuckNote, ask, amend, merge, close, restart,
 };
 const USAGE = `Commands: ${Object.keys(COMMANDS).join(', ')}, each followed by the work id`;
 

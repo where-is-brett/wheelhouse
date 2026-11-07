@@ -182,6 +182,21 @@ async function decisionLineOf(desk, typed) {
   return decisionsLine(got.data.views, reply.kind === 'answer' ? pending.filter((d) => d.n !== reply.n) : pending);
 }
 
+// The most stuck messages one line names.
+const STUCK_NOTES = 3;
+
+// A feature session's own plain message that it is stuck (the note `act stuck-note` records), told once: those recorded since the
+// First Mate's last turn began, or in the last day when there was none. Null when there are none.
+export async function stuckLine(desk, since, at) {
+  const from = Number.isFinite(Date.parse(since)) ? Date.parse(since) : at.getTime() - 24 * HOUR_MS;
+  const got = await desk.read('waiting', { stuck: true });
+  const notes = (Array.isArray(got?.data?.stuck) ? got.data.stuck : [])
+    .filter((e) => isRecord(e) && typeof e.work === 'string' && typeof e.words === 'string' && Date.parse(e.recorded) > from)
+    .slice(0, STUCK_NOTES);
+  if (notes.length === 0) return null;
+  return notes.map((e) => `${e.work} is stuck: its session says "${e.words.replace(/\s+/g, ' ').trim()}" (sent ${e.at}).`).join(' ');
+}
+
 // What the director answered since the First Mate's last turn, and how the cards of a question that was stopped stand now.
 // Neither names a card's id: a card goes by its subject.
 export { SINCE_LEAD };
@@ -387,7 +402,8 @@ export async function decide(input, deps = {}) {
     // reply is only read, under the same guards, to leave out the decision it answers.
     const typed = !writes || startedByScript(env) ? null : attempt(() => ownWords(input.prompt), null);
     const decisionLine = await within(() => decisionLineOf(desk, typed), waitMs);
-    const notes = [decisionLine, ...((await within(() => cardNotes({ project, input, since: seen.promptAt, at, desk, open }), waitMs)) ?? [])].filter((line) => typeof line === 'string');
+    const stuck = await within(() => stuckLine(desk, seen.promptAt, at), waitMs);
+    const notes = [decisionLine, stuck, ...((await within(() => cardNotes({ project, input, since: seen.promptAt, at, desk, open }), waitMs)) ?? [])].filter((line) => typeof line === 'string');
     const reserve = (cards === null ? 0 : cards.length + 2) + notes.reduce((sum, line) => sum + line.length + 2, 0);
     // A survey not worked out in time is left to the briefing view, which takes the record's latest.
     const survey = want === 'briefing' ? (await within(() => surveyOf({ project, client, desk }), learnWaitMs)) ?? undefined : null;

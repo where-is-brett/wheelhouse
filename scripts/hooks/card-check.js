@@ -13,7 +13,8 @@
 // A decision (an answer card or a product question, scripts/decisions/pending.js) is shown as a chat message, never through the
 // question picker: the picker is refused for one, saying to print `decision show <n>`. On Stop, in a front-desk session, every
 // "Decision needed" block in the First Mate's last message must be exactly one waiting decision's text (checkShown), or the
-// turn is sent back with the reason. That check blocks by design and fails open: a record that can't be read lets the message go.
+// turn is sent back with the reason. A decision's shape (`shapeProblems` in scripts/cards/compose.js) is judged before it is recorded, by
+// `cli.js ask` and `act question`, so one on the record has passed. That check blocks by design and fails open: a record that can't be read lets the message go.
 // Before the form check, in a project's folder, two more refusals (one card, one answer): a question whose card the
 // director has already decided is refused with what counted and where, and, for the front desk with a live pane beside
 // it, a card the pane gives buttons to is held back unless the director asked for it in the chat. A call that goes

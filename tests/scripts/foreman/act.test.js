@@ -1017,7 +1017,9 @@ test('build waits while the feature\'s own pull request is open', () => withHome
 // --- questions ---
 
 const QUESTION = {
-  id: 'q-mine-1', kind: 'question', what: 'Which date format?', why: 'Users read it', options: [{ label: 'UK', says: '19 October 2026' }, { label: 'ISO', says: '2026-10-19' }], recommendation: 'UK', level: 3,
+  id: 'q-mine-1', kind: 'question', what: 'Which date format?', why: 'Users read it',
+  options: [{ label: 'UK', says: '19 October 2026', cost: 'An hour', undo: 'Can be undone' }, { label: 'ISO', says: '2026-10-19', cost: 'An hour', undo: 'Can be undone' }],
+  recommendation: 'UK', level: 3, because: 'Users here read dates that way', meanwhile: 'I build the parts that do not depend on it',
 };
 const QUESTION_OF = (work) => ({ ...QUESTION, id: `q-${work}-1` });
 const EXTRA = {
