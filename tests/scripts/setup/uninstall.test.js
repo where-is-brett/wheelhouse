@@ -38,7 +38,6 @@ import { writeKey, readKey } from '../../../scripts/host/keys.js';
 import { caFile } from '../../../scripts/host/company-ca.js';
 import { openInstaller } from '../../../scripts/setup/tools.js';
 import { startHelper } from '../../../scripts/host/helper.js';
-import { registerLean, LEAN_FOLDER } from '../../../scripts/lean/project.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { standInTools, guardedRun } from '../../helpers/host-stand-ins.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
@@ -864,32 +863,6 @@ test('a folder half set up elsewhere keeps this computer\'s things: the last pro
     assert.equal(got.last, false);
     assert.equal(got.changes.some((c) => c.what === 'helper' || c.put === 'delete-key' || c.change?.step === 6), false);
     closeRun(other.id, { at: NOW, by: 'uninstall' });
-    assert.equal((await plan(world)).last, true);
-  });
-});
-
-test('a Lean project on this computer keeps this computer\'s key, id and trusted list: the last project counts Lean projects (ruling P5-47)', async () => {
-  await withHome(async () => {
-    const world = makeWorld();
-    fullSetup(world);
-    writeText(signingKeyFile(), 'key');
-    writeText(enrolledFile(), '[]\n');
-    const lean = fs.realpathSync.native(tempFolder('wh-lean shop '));
-    registerLean({ project: 'lean-shop', folder: lean, now: NOW });
-    const got = await plan(world);
-    assert.equal(got.last, false);
-    assert.equal(got.changes.some((c) => c.what === 'helper' || c.put === 'delete-key' || c.change?.step === 6), false);
-    const targets = got.changes.map((c) => c.target);
-    for (const kept of [signingKeyFile(), enrolledFile(), keysDir(), path.join(wheelhouseHome(), 'projects', 'lean-shop')]) {
-      assert.equal(targets.includes(kept), false, kept);
-    }
-    // Uninstall in the Lean folder, or a folder inside it, plans nothing and says why in one line.
-    fs.mkdirSync(path.join(lean, 'src'));
-    for (const folder of [lean, path.join(lean, 'src')]) {
-      await assert.rejects(uninstallPlan({ folder, userHome: world.userHome, platform: 'darwin', run: launchEnv({}) }), (e) => e.message === LEAN_FOLDER);
-    }
-    // With the Lean project gone, the Claude Code project is the last again, as before.
-    fs.rmSync(path.join(wheelhouseHome(), 'projects', 'lean-shop'), { recursive: true });
     assert.equal((await plan(world)).last, true);
   });
 });
@@ -2955,7 +2928,7 @@ test('uninstall removes the login start', async () => {
   await withHome(async () => {
     const world = makeWorld();
     fullSetup(world, { through: 6 });
-    const entry = loginEntry({ platform: 'darwin', node: '/usr/local/bin/node', root: '/opt/wheelhouse', script: 'scripts/agents/copilot/start-helper.js', home: world.userHome });
+    const entry = loginEntry({ platform: 'darwin', node: '/usr/local/bin/node', root: '/opt/wheelhouse', script: 'scripts/host/start-helper.js', home: world.userHome });
     await installLoginStart({ entry, run: async () => ({ code: 1, stdout: '', stderr: 'not run' }), now: NOW });
     const got = await plan(world);
     assert.deepEqual(of(got, 'computer').filter((c) => c.put === 'remove-login-start'), [{ phase: 'computer', put: 'remove-login-start', kind: 'launch-agent', target: entry.path }]);

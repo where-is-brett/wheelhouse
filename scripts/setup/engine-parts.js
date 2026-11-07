@@ -12,12 +12,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { engineDir, archonHome } from '../lib/paths.js';
 import { archonSettingsFile, archonSettingsOk, writeArchonSettings } from '../engine/archon/build.js';
-import { engineWanted, engineInstalled, POLICY_FILE, ARCHON_CONFIG_FILE, ENGINE_FILES, WORKTREE_PATH, mirrorRulesFile } from '../engine/parts.js';
+import { engineInstalled, POLICY_FILE, ARCHON_CONFIG_FILE, ENGINE_FILES, WORKTREE_PATH, mirrorRulesFile } from '../engine/parts.js';
 
 // What only reads, kept in scripts/engine/parts.js so the mod's bridge can reach it without setup's writers.
-export { engineWanted, engineInstalled, POLICY_FILE, ARCHON_CONFIG_FILE, ENGINE_FILES, WORKTREE_PATH, mirrorRulesFile };
+// Setup installs Archon on no computer and starts no project on it: from core cut part 3B the own engine is the only
+// engine (design 6 item 1). The parts below stay for the update's move and uninstall until part 4 lifts them out.
+export const engineWanted = () => false;
+export { engineInstalled, POLICY_FILE, ARCHON_CONFIG_FILE, ENGINE_FILES, WORKTREE_PATH, mirrorRulesFile };
 import { installEngine } from '../engine/install.js';
-import { agentEngineChanges, applyAgentEngine } from '../agents/engine-parts.js';
 import { newId } from './journal.js';
 
 export const PLUGIN_SCOPE = Object.freeze({ install: true, plugin: 'wheelhouse@wheelhouse', scope: 'user' });
@@ -52,25 +54,22 @@ const read = (file) => {
 
 
 // Step 2's changes for the engine: the engine's folder (built and checked), Archon's own settings naming Claude as the
-// assistant its steps run with, the broker's launcher, and what the project's `agent` needs in the engine folder
-// (scripts/agents/engine-parts.js), each only when it isn't in as it should be.
-export function engineChanges({ engine = engineDir(), home = archonHome(), node, root, agent = null } = {}) {
+// assistant its steps run with, and the broker's launcher, each only when it isn't in as it should be.
+export function engineChanges({ engine = engineDir(), home = archonHome(), node, root } = {}) {
   const changes = [];
   if (!engineInstalled(engine)) changes.push({ kind: 'folder', target: engine, action: 'engine', tool: 'archon' });
   if (!archonSettingsOk(home)) changes.push({ kind: 'file', target: archonSettingsFile(home), action: 'archon-settings' });
   const launcher = brokerLauncher(engine);
   if (read(launcher) !== brokerText({ node, root })) changes.push({ kind: 'file', target: launcher, action: 'broker' });
-  changes.push(...agentEngineChanges(agent, { engine }));
   return changes;
 }
 
 // Makes step 2's engine changes. A refused install throws its plain reason; the engine folder is as it was.
-export async function applyEngine(changes, { record, run, fetch, arch, platform, install = installEngine, node, root, engine = engineDir(), agentApply = applyAgentEngine } = {}) {
+export async function applyEngine(changes, { record, run, fetch, arch, platform, install = installEngine, node, root, engine = engineDir() } = {}) {
   if (changes.some((c) => c.action === 'engine')) {
     const got = await install({ platform, arch, fetch, run, record, folder: engine });
     if (got?.ok !== true) throw new Error(got?.refused ?? 'the build engine was not installed');
   }
-  for (const c of changes.filter((x) => x.action === 'agent-engine')) await agentApply(c, { engine, record, fetch, arch, platform, run });
   // Archon's settings live in its own home, with its run history, which uninstall keeps or deletes whole on its own
   // card, so the journal doesn't hold them.
   for (const c of changes.filter((x) => x.action === 'archon-settings')) writeArchonSettings(path.dirname(c.target));

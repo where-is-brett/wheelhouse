@@ -3,7 +3,7 @@
 // file per event under events/, committed and never pushed. Every project has one at
 // stateDir(project), and the director's personal settings one at profileDir(). It is opened, never
 // cloned: made when its folder is absent or empty, and otherwise used only when it has no remote
-// and is on its own branch. Lean projects worked this way first (scripts/lean/project.js).
+// and is on its own branch.
 import fs from 'node:fs';
 import path from 'node:path';
 import { stateDir, profileDir } from '../lib/paths.js';

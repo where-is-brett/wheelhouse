@@ -13,7 +13,6 @@ import { waitLongerOnTheHelper } from '../../helpers/until.js';
 import { run } from '../../../scripts/lib/run.js';
 import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
-import { registerLean } from '../../../scripts/lean/project.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { stopState, liftStop } from '../../../scripts/lib/stop.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
@@ -178,7 +177,7 @@ test('the Windows script is constant and the text travels base64 in the environm
 
 // --- POST /confirm on a real helper ---
 
-// A computer with a home of its own, an enrolled key, a Lean project, and a helper whose window is askInWindow on
+// A computer with a home of its own, an enrolled key, a project kept on this computer, and a helper whose window is askInWindow on
 // macOS with a stand-in `run`: each osascript call is noted in `windows` and answered by `answer`. The helper's own
 // `run` is the guard, so no host tool runs.
 // With `adapter`, the project is a host project instead (`o__p` on a local bare remote), whose host is that adapter.
@@ -196,7 +195,7 @@ async function computer(answer, { adapter } = {}) {
     });
     await openTestRecord({ env: LOCAL_PATHS, project: HOST_PROJECT, remoteUrl: remote.url });
   } else {
-    registerLean({ project: PROJECT, folder, now: () => T0 });
+    writeProject(PROJECT, { folder, remoteUrl: null, host: 'local', repo: 'local/shop', connection: { mode: 'none' } });
   }
   const project = remote ? HOST_PROJECT : PROJECT;
   const own = makeSigningKey();
@@ -213,8 +212,8 @@ async function computer(answer, { adapter } = {}) {
     run: hostGuard,
     askWindow,
     address: testAddress(home),
-    envFor: adapter ? async () => ({}) : async () => { throw new Error('no connection on this computer'); },
-    adapterFor: adapter ? async () => adapter : async () => { throw new Error('no adapter on this computer'); },
+    envFor: async () => ({}),
+    adapterFor: adapter ? async () => adapter : async () => ({}),
     now: () => new Date(T0.getTime() + 1000 * (tick += 1)),
   });
   const client = helperClient({ address: helper.address });

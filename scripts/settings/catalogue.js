@@ -78,9 +78,6 @@ export const SETTINGS = {
   // The most a run may take before it stops, by kind of work: minutes, and tokens.
   capMinutes: { label: 'Minutes a run may take', group: 'advanced', check: checkCaps, default: { quick: 20, small: 60, slice: 120, bug: 30 }, home: 'project' },
   capTokens: { label: 'Tokens a run may use', group: 'advanced', check: checkCaps, default: { quick: 1000000, small: 4000000, slice: 10000000, bug: 2000000 }, home: 'project' },
-  // The most of the AI plan's counted credits (AI credits, not whole requests) the engine's runs may use in a month: 0 is none at
-  // all, so work routed to such a plan waits until the director allows some.
-  capRequests: { label: 'AI credits a month', group: 'advanced', check: wholeBetween(0, 10000), default: 0, home: 'project' },
   bundleApprovals: { label: 'Bundle approvals', group: 'advanced', levels: [false, true], default: false, home: 'project' },
   // About one question card in five shows its options before the recommendation (scripts/delegation/blind.js).
   blindCards: { label: 'Blind cards', group: 'advanced', levels: [false, true], default: true, home: 'project' },
@@ -113,7 +110,7 @@ export const OWN_GITHUB_APP = { label: 'Your own GitHub App', group: 'advanced',
 // still hold them; the catalogue accepts any value for them and nothing reads them. A lift-out part
 // retires a key by deleting its SETTINGS entry and adding one line here (or to RETIRED_PATTERNS).
 // RETIRED maps a key to the name of the piece that retired it, for example { someKey: 'some-piece' }.
-export const RETIRED = Object.freeze({});
+export const RETIRED = Object.freeze({ capRequests: 'copilot' });
 // Families of retired keys: [{ pattern: RegExp, piece: string }].
 export const RETIRED_PATTERNS = Object.freeze([]);
 const SHIPPED = { RETIRED, RETIRED_PATTERNS };

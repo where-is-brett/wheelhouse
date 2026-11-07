@@ -5,7 +5,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { engineDir, archonHome } from '../../lib/paths.js';
 import { PERMISSION_MODE } from './build.js';
-import { copilotCliPaths } from './copilot-cli.js';
 
 // The switches that keep Archon's usage reporting off. They are applied last, so nothing overrides them.
 export const TELEMETRY = Object.freeze({ ARCHON_TELEMETRY_DISABLED: '1', DO_NOT_TRACK: '1', POSTHOG_API_KEY: 'off' });
@@ -59,20 +58,15 @@ function mirrorConfig(engine) {
 // plugin's hooks run on (without it Claude Code doesn't load the plugin and Archon's steps fail), then the system
 // folders: never the caller's PATH and never a folder holding a real gh, so a node folder with a gh beside it is
 // swapped for a `node` link of Wheelhouse's own under <engine>/node/bin. WHEELHOUSE_ROOT is the plugin's folder, for the
-// pack's script steps. COPILOT_BIN_PATH names the Copilot CLI in the engine folder and COPILOT_HOME its clean home
-// (copilot-cli.js), each only when it is there; the caller's own COPILOT_HOME never passes. `baseEnv`, `platform`,
+// pack's script steps. `baseEnv`, `platform`,
 // `nodeDir` and `root` are for tests.
-export function archonEnv({ engine = engineDir(), home = archonHome(), claudeBin, copilotBin, nodeDir = path.dirname(process.execPath), baseEnv = process.env, platform = process.platform, root = PLUGIN_ROOT } = {}) {
+export function archonEnv({ engine = engineDir(), home = archonHome(), claudeBin, nodeDir = path.dirname(process.execPath), baseEnv = process.env, platform = process.platform, root = PLUGIN_ROOT } = {}) {
   const env = {};
   for (const name of KEPT) if (baseEnv[name] !== undefined) env[name] = baseEnv[name];
   const node = holdsGh(nodeDir) ? nodeLink(engine, nodeDir, platform) : nodeDir;
   env.PATH = [path.join(engine, 'broker', 'bin'), path.join(engine, 'bun', 'bin'), node, ...SYSTEM_PATH].join(path.delimiter);
   env.ARCHON_HOME = home;
   if (claudeBin) env.CLAUDE_BIN_PATH = claudeBin;
-  const copilot = copilotCliPaths(engine);
-  const bin = copilotBin ?? (fs.existsSync(copilot.bin) ? copilot.bin : null);
-  if (bin) env.COPILOT_BIN_PATH = bin;
-  if (fs.statSync(copilot.home, { throwIfNoEntry: false })?.isDirectory()) env.COPILOT_HOME = copilot.home;
   // gh's config folder named as one that isn't there, so a real gh in a system folder on PATH, after the broker's,
   // finds no sign-in in the caller's folder; the broker's gh reads none (check 81).
   env.GH_CONFIG_DIR = path.join(engine, 'broker', 'no-gh-config');

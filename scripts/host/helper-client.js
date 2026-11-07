@@ -53,15 +53,6 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     cards: {
       chatClick: post('/cards/chat-click'), // { project | cwd, card, hash, label, proof, commit?, text? } -> { ok, id }: a click in the chat, as an unsigned card-answer naming its proof; never signed. `text`, the director's words, only with Suggest a change…
     },
-    // A Lean project's git store (scripts/lean/store.js). A refusal may add `card` (the id of a card the helper raised:
-    // the main version moved outside the helper, or an approval the window must confirm), `needs` and `reasons`.
-    // A merge runs the project's tests and may wait for another window's merge: give the client a long timeout.
-    lean: {
-      status: post('/lean/status'), // { project | cwd } -> { ok, adopted, main?, moved?, recorded?, card?, stop, copy, test, realUsers }; answered under STOP
-      merge: post('/lean/merge'), //   { project | cwd, branch, commit } -> { ok, merge, tests: 'passed' | 'none', copy }: only an approved commit, after its tests pass
-      undo: post('/lean/undo'), //     { project | cwd, merge } or { project | cwd, moved: true } -> { ok, undo, copy }: on the director's click on Undo (or Undo it)
-      copy: post('/lean/copy'), //     { project | cwd } -> { ok, pushed, commit, refused? }: the main version and the state's branch to the copy folder
-    },
     // { project | cwd, card, hash } -> { ok, recorded, choice, id?, kind?, step? }: the card, by its id in the state and the
     // sha256 of its data, shown in the helper's own window; a deciding click there is signed by the helper with proof
     // `window`. One window at a time on this computer, so this may wait for a click: give the client a long timeout.
@@ -104,7 +95,6 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       undo: post('/local/undo'), // { project, merge } or { project, moved: true } -> { undo }, or { ok: false, needs: 'window' } with the card that asks; on the signed click in the helper's window
     },
     merge: post('/merge'), //        { project, number, stop, bypass, reviewRequired?, approvalRequired?, touchesGuardrails? } -> a refusal's needs?: { approval: { pr, commit } } names the director's approval it lacks, and releaseApproval? says why a release pull request needs it (not one of the reasons)
-    review: post('/review/run'), //   { project, number } -> { ok, started } or { ok, running }: the helper's own reviewer, in a clean session, of the open pull request's head; refused under STOP, where the agent's clean session isn't switched on, and for a head with a signed review or three failed runs (one review per commit); the signed review, or a note saying why there is none, follows in the background
     // The build engine's runs (scripts/engine/routes.js). A step names its run, never its project.
     goalBaseline: post('/goal-baseline'), // { project | cwd, goal } -> { ok, runId, head }: starts the run of a goal's checks on the main line; its `goal-check` record says how it went
     goalDraft: post('/goal-draft'), // { project | cwd, pieces } -> { ok, pieces: [{ work, hash }], left?, spend?, says? }: the pieces a goal's sheet lists, or what the last goal left, and the spend to propose

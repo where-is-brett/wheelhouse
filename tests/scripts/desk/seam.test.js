@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const FRONT_ENDS = [
   'scripts/frontdesk/cli.js', 'scripts/hooks/board-context.js', 'scripts/mod/bridge.js', 'scripts/mod/status.js', 'scripts/mod/press.js',
-  'scripts/mod/reply.js', 'scripts/mod/settings-pane.js', 'scripts/mod/courier.js', 'scripts/lean/cli.js', 'scripts/agents/copilot/hook-entry.js',
+  'scripts/mod/reply.js', 'scripts/mod/settings-pane.js', 'scripts/mod/courier.js',
 ];
 const READERS = ['localViews', 'listEvents', 'readProfileViews', 'loadBoardInputs'];
 
@@ -33,7 +33,7 @@ test('no front end reads ~/.wheelhouse or the helper\'s views itself', () => {
 });
 
 test('each front end goes through the desk', () => {
-  // The courier is handed what it follows by the bridge; the Copilot entry loads the desk only when the stop word is typed.
+  // The courier is handed what it follows by the bridge.
   for (const file of FRONT_ENDS.filter((f) => f !== 'scripts/mod/courier.js')) {
     const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
     assert.match(source, /(?:from |import\()'(?:\.\.\/)+desk\/[a-z-]+\.js'/, `${file} uses the desk`);

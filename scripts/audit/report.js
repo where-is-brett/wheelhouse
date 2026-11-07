@@ -29,7 +29,6 @@
 //   level     data.allowance      a command an Ask allowance let through, with data.pr
 //   report    data.provenance     the versions: wheelhouse, register, claudeCode, vscode, runtime, cli, models
 //   any       tier: 'lean'        on the event or in its data: Lean's entry
-import { LEVELS, PROOFS, REVIEW_KINDS } from '../lib/copilot-numbers.js';
 import { verify, readEnrolled } from '../state/signing.js';
 import { listEvents } from '../state/events.js';
 import { stateDir } from '../lib/paths.js';
@@ -39,6 +38,10 @@ import { startedAsScript } from '../lib/started-as-script.js';
 import { adapterOf } from '../host/adapter-for.js';
 import { childEnv } from '../host/connection.js';
 import { keepingProtection, protectionLogPlace } from './protection-log.js';
+
+const LEVELS = Object.freeze(['sandbox', 'guarded', 'ask', 'unattended']);
+const PROOFS = Object.freeze(['chat-click', 'hook-click', 'policy-hook', 'window', 'add-on', 'host', 'signed-hook']);
+const REVIEW_KINDS = Object.freeze(['chat-review', 'clean-session', 'subagent']);
 
 export const GAP_KINDS = Object.freeze(['no-approval', 'approval-not-merged', 'other-commit', 'external-pipeline', 'protection-change', 'merge-not-on-host']);
 
@@ -70,8 +73,8 @@ function plainReason(error, doing) {
 }
 
 const isLean = (event) => event?.tier === 'lean' || event?.data?.tier === 'lean';
-// Lean's kind for one of its entries: leanToEvents (scripts/state/lean-record.js) keeps an approval, a review and
-// the like as a `note`, with the Lean kind in `data.lean`; a card or a merge keeps its own state kind.
+// Lean's kind for one of its entries: an old record keeps an approval, a review and the like as a `note`, with
+// the Lean kind in `data.lean`; a card or a merge keeps its own state kind.
 const leanKind = (event) => event?.data?.lean ?? event?.kind;
 const when = (event) => (typeof event?.at === 'string' ? event.at : null);
 

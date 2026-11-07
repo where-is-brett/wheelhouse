@@ -128,20 +128,17 @@ test("a helper started again writes none of the engine's records twice", async (
   } finally { p.cleanup(); }
 });
 
-test('the real helper gives Archon only to a project whose engine setting is Archon', () => {
+test('the real helper gives Archon to no project, even one whose stored engine setting is Archon', () => {
   const made = [];
   const engineFor = engineForProject({
     adapter: () => { made.push(1); return { name: 'archon' }; },
-    views: (project) => ({ project: project === 'o__on' || project === 'o__waiting' ? { engine: { key: 'engine', value: 'archon' } } : {}, profile: {} }),
-    // The engine can build o__on; o__waiting's switch hasn't merged yet (scripts/engine/switch.js).
-    ready: (project) => project === 'o__on',
+    views: (project) => ({ project: project === 'o__on' ? { engine: { key: 'engine', value: 'archon' } } : {}, profile: {} }),
+    ready: () => true,
     platform: 'darwin',
   });
-  assert.equal(engineFor('o__waiting'), null);
+  assert.equal(engineFor('o__on'), null);
   assert.equal(engineFor('o__off'), null);
-  assert.equal(engineFor('o__on').name, 'archon');
-  assert.equal(engineFor('o__on'), engineFor('o__on'));
-  assert.equal(made.length, 1, 'one adapter for every project');
+  assert.equal(made.length, 0);
 });
 
 test("the real helper's Archon reads the pack built into the engine's folder, with Wheelhouse's run layer", () => {

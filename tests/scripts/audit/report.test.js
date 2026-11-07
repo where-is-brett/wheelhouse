@@ -5,7 +5,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { auditReport, renderAudit, GAP_KINDS, main } from '../../../scripts/audit/report.js';
 import { makeEvent } from '../../../scripts/state/events.js';
-import { leanToEvents } from '../../../scripts/state/lean-record.js';
 import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
 import { HOST_UNREACHABLE } from '../../../scripts/host/company-ca.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
@@ -323,15 +322,16 @@ test('a Lean entry does not cover a change that has records of its own at the me
   });
 });
 
-test('events made from Lean\'s own record lines list as Lean\'s approvals and reviews, labelled and never counted', async () => {
+test('events kept from an old Lean record list as Lean\'s approvals and reviews, labelled and never counted', async () => {
   await withHome(async () => {
     const line = { card: null, choice: null, commit: C.slice(0, 12), proof: 'chat-click', by: 'chat', tier: 'lean' };
-    // leanToEvents turns an approval and a review into notes that carry Lean's kind in data.lean; moveUp writes them with
-    // the change they are about, so the pull request is added here as it will be there.
-    const made = leanToEvents([
-      { ...line, at: '2026-10-10T00:10:00Z', kind: 'review', choice: 'clean', proof: 'chat-review' },
-      { ...line, at: '2026-10-10T00:20:00Z', kind: 'approval', card: 'merge-thing', choice: 'Approve' },
-    ], { project: 'owner-name' });
+    // An old record keeps an approval and a review as notes that carry Lean's kind in data.lean, with the change they
+    // are about added.
+    const data = { ...line, clicked: true, text: 'kept' };
+    const made = [
+      plain('note', { ...data, lean: 'review', choice: 'clean', proof: 'chat-review' }, '2026-10-10T00:10:00.000Z'),
+      plain('note', { ...data, lean: 'approval', card: 'merge-thing', choice: 'Approve' }, '2026-10-10T00:20:00.000Z'),
+    ];
     assert.deepEqual(made.map((e) => [e.kind, e.data.lean]), [['note', 'review'], ['note', 'approval']]);
     const events = made.map((e) => ({ ...e, data: { ...e.data, pr: 9 } }));
     const r = await report(events, stub({ requests: [merged(9, D)] }));

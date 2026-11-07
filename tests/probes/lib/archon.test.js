@@ -19,7 +19,6 @@ test('archonEnv sets the three telemetry switches and ARCHON_HOME', () => {
   assert.equal(env.DO_NOT_TRACK, '1');
   assert.equal(env.POSTHOG_API_KEY, 'off');
   assert.equal(env.CLAUDE_BIN_PATH, '/opt/claude');
-  assert.equal(env.COPILOT_BIN_PATH, undefined);
 });
 
 test('archonEnv puts bun on PATH and no gh', () => {
@@ -37,9 +36,8 @@ test('archonEnv adds a gh folder only when one is passed', () => {
   assert.equal(env.PATH.split(path.delimiter)[1], '/tmp/x/broker');
 });
 
-test('archonEnv names the Copilot CLI and the node it needs', () => {
-  const env = archonEnv({ ...base, copilotBin: '/p/node_modules/.bin/copilot', nodeDir: '/n/bin' });
-  assert.equal(env.COPILOT_BIN_PATH, '/p/node_modules/.bin/copilot');
+test('archonEnv puts the node it needs on PATH', () => {
+  const env = archonEnv({ ...base, nodeDir: '/n/bin' });
   assert.ok(env.PATH.split(path.delimiter).includes('/n/bin'));
 });
 

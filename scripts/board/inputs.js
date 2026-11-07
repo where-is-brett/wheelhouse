@@ -39,7 +39,6 @@ import { HELPER_WAIT_MS } from '../lib/core-numbers.js';
 import { helperGrace } from '../lib/helper-grace.js';
 import { phonePushResult } from '../lib/setup-run.js';
 import { readSeen } from '../briefing/seen.js';
-import { readLean } from '../lean/project.js';
 import { readStatus } from '../safekeeping/readings.js';
 import { readFrontDeskModel } from '../lib/front-desk-model.js';
 import { agentSandboxLine } from '../agents/sandbox-line.js';
@@ -154,7 +153,7 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
   const waitMs = Number.isInteger(asked) && asked > FACTS_MARGIN_MS && asked <= most ? asked : most;
   const found = attempt(() => (typeof cwd === 'string' && path.isAbsolute(cwd) ? projectOf(cwd) : null));
   if (!found) return { none: NOT_A_PROJECT };
-  const { project, record, locked, lean } = found;
+  const { project, record, locked } = found;
   // The time as a Date: an unreadable clock gives an invalid one, which the model names.
   const clock = () => attempt(() => new Date(typeof now === 'function' ? now() : now), new Date(NaN));
   const clockRead = !Number.isNaN(clock().getTime());
@@ -166,8 +165,8 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
     project: isRecord(views?.settings) ? views.settings : {}, profile: isRecord(profileViews?.settings) ? profileViews.settings : {}, now: clock,
   }));
   const factor = settings?.unusualFactor?.value;
-  // The agent the project runs on here: a Lean project's record names it, else the project's configuration.
-  const usageAgent = attempt(() => (lean === true ? readLean(project)?.agent : agentInFolder(record.folder, { computerId: computerId() }))) ?? null;
+  // The agent the project runs on here, from the project's configuration.
+  const usageAgent = attempt(() => agentInFolder(record.folder, { computerId: computerId() })) ?? null;
   const usage = offline
     ? glanceUsage(clock, clockRead, typeof usageAgent === 'string' && usageAgent !== 'claude-code')
     : attempt(() => usageFigures({ project, now: clock, factor, agent: usageAgent }));
@@ -211,23 +210,15 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
     frontDeskModel: offline ? null : attempt(() => readFrontDeskModel({ project, folder: record.folder })),
     // The agent's sandbox on this computer, for an agent whose adapter says (agentSandboxLine).
     agentSandbox: !offline && typeof usageAgent === 'string' ? attempt(() => agentSandboxLine(usageAgent)) : undefined,
-    // Lean projects keep their own copy step, and have no status.
     // The watcher's own record of how its wakes are going (scripts/watcher/main.js); a small file, so the glance reads it too.
     watcher: attempt(() => readWatcherHealth(project)),
     now: clock(),
-    safekeeping: lean === true ? null : attempt(() => readStatus(project)),
+    safekeeping: attempt(() => readStatus(project)),
   }));
   const health = Array.isArray(lines) && typeof known.engineRoom === 'string' ? [...lines, { level: 'watch', text: known.engineRoom }] : lines;
 
   // What is new is counted from the last briefing. The glance counts nothing new, so offline it isn't read.
   const since = offline ? null : attempt(() => readSeen(project, { now: clock }).briefedAt);
-  // A Lean project's agent lines (ruling P5-31): the agent its record names, at Lean, where Node.js runs this
-  // board, with the helper's block only while the helper answers. A project on a code host gets none until its
-  // tier is placed.
-  const leanAgent = lean === true ? attempt(() => readLean(project)?.agent) : undefined;
-  const agent = typeof leanAgent === 'string'
-    ? { name: leanAgent, tier: 'lean', helper: known.helperUp === true, node: true, platform: process.platform }
-    : undefined;
-  const model = boardModel({ project, views, profileUnconfirmed: profileViews?.unconfirmed, events, usage, health, settings, sources, hostUnreachable: known.away, agent, local: record.host === 'local', now: clock, since });
+  const model = boardModel({ project, views, profileUnconfirmed: profileViews?.unconfirmed, events, usage, health, settings, sources, hostUnreachable: known.away, local: record.host === 'local', now: clock, since });
   return { project, model, usage, sources, settings };
 }

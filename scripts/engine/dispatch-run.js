@@ -3,7 +3,7 @@
 // through the helper's own start (no route starts a run). Each piece gets its work order, with the project's caps and
 // the work's decision level; the merge queue is started from here too, one run at a time, and a queue run Archon's own
 // ruling step started counts as that run: the helper folds its start into it. A queue that stays unable to start brings
-// one card. Work held because it would use the plan's counted requests brings one card for each hold. New work whose
+// one card. New work whose
 // start is refused keeps its turn, is tried once more after a while, and then brings one card. A red main line's incident
 // comes first each tick (section 7.7, fix-main.js): one fix run for it, the incident closed once the main line reads green,
 // and one card when a fix didn't make it green or can't start. A feature runs its slices one after another (feature.js): each next one
@@ -30,7 +30,7 @@ import { dispatch, MERGE_WORK, MERGE_QUEUE_EVERY_MS } from './dispatcher.js';
 import { goalRule, goalInForce, gateStart, goalDoneOf, orderGoal, areasOf, fixAreas, goalStep, lastEnded, lastCheckHolds, pieceCovered, unfinishedOf } from './goal.js';
 import { goalMeter, goalRuns, shareAtStart } from './goal-meter.js';
 import { GOAL_CHECK_TRIES } from './goal-limits.js';
-import { goalHeldWords, goalWindingWords, goalEndedWords, goalRedsWords, goalRunLeftWords, goalPieceChangedWords, goalCheckedAgainWords, reservedUnreadWords, LIMIT_HOLD_WORDS, noCardBehindWords, restartRefusedWords, restartCardWords, restartUnsureWords, restartStrandedWords, failedCardWords, prLeftOpenWords, areasInScopeWords, areaCardWords, AREA_CARD_WHY, ALLOW_ONCE_SAYS, areaStoppedWords, wakeLateWords, STOPPED_RESTART_WORDS, ORPHAN_LEFT_WORDS, RESTART_UNSURE_AGAIN, START_ANYWAY, cutOffStoppedWords, cutOffWords, waitsOnItselfWords, startAnywayWords, startRefusedWords, startCardWords, unmarkedPrWords, START_STOP_SAYS, NO_FIX_TESTS, NO_FIX_ORDER, noFixWords, queueStuckWords, QUEUE_STUCK_WHY, QUEUE_PASSED_WORDS, requestsUsedWords, REQUESTS_UNCONFIRMED_WORDS, requestsStoppedWords } from './words.js';
+import { goalHeldWords, goalWindingWords, goalEndedWords, goalRedsWords, goalRunLeftWords, goalPieceChangedWords, goalCheckedAgainWords, reservedUnreadWords, LIMIT_HOLD_WORDS, noCardBehindWords, restartRefusedWords, restartCardWords, restartUnsureWords, restartStrandedWords, failedCardWords, prLeftOpenWords, areasInScopeWords, areaCardWords, AREA_CARD_WHY, ALLOW_ONCE_SAYS, areaStoppedWords, wakeLateWords, STOPPED_RESTART_WORDS, ORPHAN_LEFT_WORDS, RESTART_UNSURE_AGAIN, START_ANYWAY, cutOffStoppedWords, cutOffWords, waitsOnItselfWords, startAnywayWords, startRefusedWords, startCardWords, unmarkedPrWords, START_STOP_SAYS, NO_FIX_TESTS, NO_FIX_ORDER, noFixWords, queueStuckWords, QUEUE_STUCK_WHY, QUEUE_PASSED_WORDS } from './words.js';
 import { workOrder, ORDER_LANES } from './order.js';
 import { limitsFor } from './caps.js';
 import { ENGINE_QUESTIONS } from './router.js';
@@ -46,15 +46,13 @@ import { areaAnswer, areaQuestion, ALLOW_ONCE } from './areas.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const isText = (x) => typeof x === 'string' && x.trim() !== '';
-const EMPTY = () => ({ areas: {}, allowed: {}, mergeRun: null, mergeRuns: [], lastStart: null, seenReady: [], queueDue: false, sentBack: {}, acted: {}, clashAsked: {}, reds: {}, redActed: {}, redAsked: {}, redNoted: {}, requestsAsked: null, requestsFor: null, queueFault: null, unmarkedSeen: {}, noTestsSaid: false, fixes: {}, features: {}, shipped: {}, closedPrs: [], reserved: {}, released: {}, stranded: {}, topCard: null, noCardSaid: {}, quietSeen: {}, owed: {}, cutOffAsked: {}, cutOffFor: {}, waived: {}, returning: [], admitted: [], carryOver: {}, restartCards: 0, limitSaid: false, goalSpend: null, goalQueueRuns: [], goalRun: null, goalCancelled: [] });
+const EMPTY = () => ({ areas: {}, allowed: {}, mergeRun: null, mergeRuns: [], lastStart: null, seenReady: [], queueDue: false, sentBack: {}, acted: {}, clashAsked: {}, reds: {}, redActed: {}, redAsked: {}, redNoted: {}, queueFault: null, unmarkedSeen: {}, noTestsSaid: false, fixes: {}, features: {}, shipped: {}, closedPrs: [], reserved: {}, released: {}, stranded: {}, topCard: null, noCardSaid: {}, quietSeen: {}, owed: {}, cutOffAsked: {}, cutOffFor: {}, waived: {}, returning: [], admitted: [], carryOver: {}, restartCards: 0, limitSaid: false, goalSpend: null, goalQueueRuns: [], goalRun: null, goalCancelled: [] });
 // The dispatcher's own questions take numbers from here, apart from the card router's.
 const OWN_QUESTIONS = ENGINE_QUESTIONS + 90000;
 export { MERGE_WORK };
 const KEPT_MERGE_RUNS = 20;
 export const TRY_AGAIN = 'Try again';
 export const LEAVE_IT = 'Leave it';
-export const KEEP_OFF = 'Keep it off';
-export const ALLOW_SOME = 'Allow some';
 export const FIX_FORWARD = 'Fix it forward';
 export const LEAVE_RED = 'Leave it';
 export const undoLabel = (pr) => `Undo #${pr}`;
@@ -118,8 +116,6 @@ const canTest = (config) => isText(config?.testCommand) || config?.testsNotCount
 // The Logbook's line when no work can start because Wheelhouse can't run the project's tests.
 export const NO_TESTS_WORDS = 'Build work waits: Wheelhouse doesn\'t know how to run this project\'s tests, so it couldn\'t tell when a change is done. Setup can add the command.';
 
-// The words of the card for work held for the plan's counted requests, when the engine gives none of its own.
-export const REQUESTS_WORDS = 'Some work would use your AI plan\'s counted AI credits, and the cap on them is 0, so that work waits until you allow some.';
 
 // The order for one piece of work from its record: the title is its goal; the done checks are the record's own, or
 // the project's tests passing when it has none. `config` is { routing (the pack's bindings), testCommand, pages? };
@@ -165,7 +161,7 @@ export function orderFor(entry, { settings = {}, raised = false, config = {}, an
 //   tree by pid, for a run that won't cancel when its goal ends, as at a cap.
 // - `engine.liveRunOf({ work, since })`, where the engine has it, says of a start that may have happened: { runId },
 //   null for none, undefined when it can't say. Without it the answer is undefined, so a card comes and not a second start.
-export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped: allStop = () => false, moving = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), spentThisMonth = () => 0, mainGreen = async () => null, stoppedRuns: stoppedByAll = () => [], fixedRuns = () => [], prMerged = async () => null, prState = null, designOf = () => null, orderOf = () => null, repoOf = () => null, repoName = () => null, queueFolder = async () => ({ ok: false, refused: 'no folder for the merge queue' }), queuePlace = null, openedBy = () => null, localQueue = null, isLocal = () => true, onCard = () => {}, branchPaths = async () => [], notReady = () => {}, areasHeld = () => ({}), settleAreas = () => {}, allowance = () => null, goalStarted = async () => {}, goalCheck = async () => ({ ok: false, refused: 'nothing runs a goal\'s checks here' }), endRun = async () => ({ ended: [], survivors: [] }) } = {}) {
+export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped: allStop = () => false, moving = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), mainGreen = async () => null, stoppedRuns: stoppedByAll = () => [], fixedRuns = () => [], prMerged = async () => null, prState = null, designOf = () => null, orderOf = () => null, repoOf = () => null, repoName = () => null, queueFolder = async () => ({ ok: false, refused: 'no folder for the merge queue' }), queuePlace = null, openedBy = () => null, localQueue = null, isLocal = () => true, onCard = () => {}, branchPaths = async () => [], notReady = () => {}, areasHeld = () => ({}), settleAreas = () => {}, allowance = () => null, goalStarted = async () => {}, goalCheck = async () => ({ ok: false, refused: 'nothing runs a goal\'s checks here' }), endRun = async () => ({ ended: [], survivors: [] }) } = {}) {
   const stopped = () => allStop() || moving();
   let state = readState(file);
   // The runs All stop cancelled and those a goal's end did: each waits for a Carry on, with no card.
@@ -282,12 +278,12 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     return record;
   }
   // Reads the goal's spend, ahead of every start of the tick, and keeps it beside what it was at Start. The share at Start
-  // is taken from the first reading fresh at Start; counted requests start from the month's count when the goal is first seen.
+  // is taken from the first reading fresh at Start.
   async function meterTick(views) {
     const goal = goalInForce(views);
     if (goal === null) return;
     if (state.goalSpend?.goal !== goal.id) {
-      state.goalSpend = { goal: goal.id, shareAtStart: null, requestsAtStart: null, meter: null };
+      state.goalSpend = { goal: goal.id, shareAtStart: null, meter: null };
       state.goalQueueRuns = [];
       queueRead.clear();
     }
@@ -295,12 +291,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     let reading = null;
     try { reading = allowance(); } catch { /* the tokens stand alone */ }
     kept.shareAtStart ??= shareAtStart(reading, goal);
-    let used = null;
-    try { if (engine.countsRequests?.(config()?.routing ?? {}) === true) used = await spentThisMonth(); } catch { /* the tokens still count */ }
-    if (used !== null) kept.requestsAtStart ??= used;
-    // A count below the one at Start is a new month's, or the provider's correction: it counts from there.
-    if (used !== null && used < kept.requestsAtStart) kept.requestsAtStart = 0;
-    const requests = used === null ? null : used - kept.requestsAtStart;
+    const requests = null;
     kept.meter = await goalMeter({ goal, views, inspect: readForMeter, queueRuns: state.goalQueueRuns, capOf, reading, shareAtStart: kept.shareAtStart, requests, now: now() });
     kept.readAt = kept.meter.points === null ? null : reading.shareAt;
     keep();
@@ -1881,54 +1872,6 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     return Object.fromEntries(Object.entries(kept).map(([pr, k]) => [pr, k.ready]));
   }
 
-  // Work held for the plan's counted requests: one card for each hold, in the engine's own words where the cap is none. A
-  // hold ends when nothing is held and its card has been answered, or when what holds it changes, answered or not, since the
-  // card's words no longer stand: a new cap, or the count confirmed. All stop, an incident and a limit hide a hold, and end none. An unconfirmed count holds whatever the cap, so that card
-  // offers no number: it can only keep the work or end it.
-  async function requestsTick(views, held, s) {
-    const label = views.questions?.[state.requestsAsked]?.answer?.label;
-    const answered = typeof label === 'string';
-    const forget = () => {
-      Object.assign(state, { requestsAsked: null, requestsFor: null });
-      keep();
-    };
-    if (held.length === 0) {
-      if (answered && !stopped() && !incidentOpen(views) && !atLimit(views)) forget();
-      return;
-    }
-    const unconfirmed = held.some((h) => h.why === 'requests-unconfirmed');
-    const cap = Number.isFinite(s.capRequests) ? s.capRequests : 0;
-    const key = unconfirmed ? 'unconfirmed' : `cap:${cap}`;
-    // A card from the version before kept no key, and said the cap was none.
-    if (state.requestsAsked && (state.requestsFor ?? 'cap:0') === key) {
-      if (unconfirmed && label === STOP_HERE) {
-        for (const { work } of held) {
-          const words = requestsStoppedWords(titleOf(views, work));
-          await write('report', { work, outcome: 'closed', summary: words, rulings: [] });
-          await write('note', { about: 'engine', work, words });
-        }
-        forget();
-      }
-      return;
-    }
-    state.restartCards += 1;
-    const id = `q-${held[0].work}-${RESTART_QUESTIONS + state.restartCards}`;
-    Object.assign(state, { requestsAsked: id, requestsFor: key });
-    keep();
-    await askDirector('requests', {
-      id, work: held[0].work, level: 3,
-      what: unconfirmed ? engine.words?.requestsUnconfirmed ?? REQUESTS_UNCONFIRMED_WORDS : cap > 0 ? requestsUsedWords(cap) : engine.words?.requestsHeld ?? REQUESTS_WORDS,
-      why: unconfirmed ? 'Whether that work waits or ends is yours to decide; nothing of the plan\'s requests is used either way.' : 'Spending your plan\'s requests is yours to allow; nothing is spent without your yes.',
-      options: [
-        { label: KEEP_OFF, says: 'That work keeps waiting, and nothing of the plan\'s requests is used.' },
-        unconfirmed
-          ? { label: STOP_HERE, says: 'The work held now ends here, and nothing of it starts.' }
-          : { label: ALLOW_SOME, says: 'The settings show how many AI credits a month the build may use; you choose the number there.' },
-      ],
-      recommendation: KEEP_OFF,
-    });
-  }
-
   // A limit that holds other work is said once, until it has lifted.
   async function limitTick(limited) {
     if (limited === state.limitSaid) return;
@@ -1981,9 +1924,6 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     const leftAt = leftAlone(ready);
     const waiting = Object.entries(ready).filter(([pr, r]) => !ended(r.work) && !closedPrs.has(Number(pr)) && !Object.hasOwn(state.features[r.work]?.merged ?? {}, pr) && leftAt[pr] !== r.head);
     const newReady = waiting.some(([pr]) => !state.seenReady.includes(pr));
-    const requests = typeof engine.countsRequests === 'function'
-      ? { counts: () => engine.countsRequests(config()?.routing ?? {}) === true, used: await spentThisMonth(), cap: Number.isFinite(s.capRequests) ? s.capRequests : 0, confirmed: engine.requestsConfirmed === true }
-      : null;
     const queueStatus = await mergeQueueStatus();
     const limited = atLimit(views);
     await limitTick(limited).catch(() => {});
@@ -1992,7 +1932,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       incident: Array.isArray(views.incidents?.open) && views.incidents.open.length > 0,
       capsReached: false, limited,
       mergeQueue: { running: queueHolds(queueStatus), lastStart: state.lastStart, waiting: waiting.length, newReady: newReady || state.queueDue === true },
-      requests, sentBack: [
+      sentBack: [
         ...Object.entries(state.sentBack).filter(([work, times]) => state.acted[work] !== times).map(([work, times]) => ({ work, times })),
         ...Object.entries(state.reds).filter(([work, red]) => state.redActed[work] !== red.times).map(([work, red]) => ({ work, times: red.times, reason: 'red' })),
       ], waiting: [...waitingNow(views)], reserved: reservedFiles(), returning: state.returning.map((e) => ({ ...e, ...(notYet(e) ? { asked: e.asked ?? e.key } : {}), ...(e.fresh === true ? { filesFree: true } : {}) })), admitted: state.admitted, stoppedFeatures: stoppedFeaturesOf(views, reports), waived: Object.keys(state.waived).filter((work) => state.waived[work] === views.work?.[work]?.work?.at), goal: goalNow(views), now: now(),
@@ -2131,7 +2071,6 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       await startingQueue;
     }
     if (state.queueFault) await queueFaultTick(views, waiting, queueStatus).catch(() => {});
-    await requestsTick(views, decided.hold.filter((h) => h.why === 'requests' || h.why === 'requests-unconfirmed'), s).catch(() => {});
     // What stands behind a card, for the goal's next look: a piece held so isn't one that can run. Kept, so a restart knows it.
     if (state.goalRun !== null && state.goalRun.state !== 'ended') {
       state.goalRun.behind = decided.hold.filter((h) => ['parked', 'clash', 'dependency'].includes(h.why)).map((h) => h.work);

@@ -13,7 +13,7 @@ import { shortHome, testAddress, withHome } from '../../helpers/homes.js';
 import { run } from '../../../scripts/lib/run.js';
 import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
-import { registerLean } from '../../../scripts/lean/project.js';
+import { writeProject } from '../../../scripts/lib/projects.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { pressCard } from '../../../scripts/mod/press.js';
 import { cardButtons } from '../../../scripts/mod/buttons.js';
@@ -203,7 +203,7 @@ async function computer(choose) {
   fs.writeFileSync(path.join(folder, '.git', 'HEAD'), 'ref: refs/heads/main\n');
   const before = process.env.WHEELHOUSE_HOME;
   process.env.WHEELHOUSE_HOME = home;
-  registerLean({ project: 'shop', folder, now: () => T0 });
+  writeProject('shop', { folder, remoteUrl: null, host: 'local', repo: 'local/shop', connection: { mode: 'none' } });
   const own = makeSigningKey();
   enrol({ computer: own.computer, publicKey: own.publicKey, enrolledAt: T0.toISOString() });
   let tick = 0;
@@ -211,8 +211,8 @@ async function computer(choose) {
     run: hostGuard,
     askWindow: async (card) => ({ choice: choose(card) }),
     address: testAddress(home),
-    envFor: async () => { throw new Error('no connection on this computer'); },
-    adapterFor: async () => { throw new Error('no adapter on this computer'); },
+    envFor: async () => ({}),
+    adapterFor: async () => ({}),
     now: () => new Date(T1.getTime() + 1000 * (tick += 1)),
   });
   return {

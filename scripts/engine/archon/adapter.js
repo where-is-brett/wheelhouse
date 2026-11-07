@@ -18,18 +18,11 @@
 import fs from 'node:fs';
 import { archonCli, archonCommand } from './cli.js';
 import { roomCommand } from '../room.js';
-import { ARCHON_SOURCE, BUN_PIN, CANCEL_PATCH_MARK, CLI_PATCH_MARK, PATCH_MARK, enginePaths, launcherText } from './build.js';
+import { ARCHON_SOURCE, BUN_PIN, CANCEL_PATCH_MARK, PATCH_MARK, enginePaths, launcherText } from './build.js';
 import { normaliseAsk, askOccurrence } from './asks.js';
 import { readRecord, readOutputs, readTaskReviews } from './record.js';
 import { readyWorkItem } from './work-item.js';
 import { failureKind, ownerLostAsk } from '../recovery.js';
-import { PACK_FORMS, COPILOT_SUFFIX, PROVIDER as COPILOT } from './copilot-pack.js';
-import { checkRequests as meterCheck, readGitHubFigure, requestsFile as accountFile } from './copilot-meter.js';
-import { readAccountModels, requestRates } from '../../agents/copilot/column.js';
-import { engineHomeProblem } from '../../agents/copilot/engine-home.js';
-import { sandboxNow } from '../../agents/copilot/sandbox-test.js';
-import { copilotCliInstalled, copilotCliPaths } from './copilot-cli.js';
-import { signInOf } from '../../../adapters/copilot/sessions.js';
 import { brokerProblem } from '../parts.js';
 import path from 'node:path';
 import { engineDir, archonHome, projectSlug } from '../../lib/paths.js';
@@ -51,8 +44,8 @@ const MERGE_QUEUE = LANE_WORKFLOWS.merge;
 const READER = LANE_WORKFLOWS.reader;
 const GOAL_CHECK = LANE_WORKFLOWS['goal-check'];
 
-// The forms of the pack this engine's runs may start, beside the pack's own (pack-build.js): a Copilot project's twins.
-export const ENGINE_PACK_FORMS = PACK_FORMS;
+// The forms of the pack this engine's runs may start, beside the pack's own (pack-build.js): none.
+export const ENGINE_PACK_FORMS = Object.freeze([]);
 
 // The run's message when work carries on after a cancel: a cancelled run can't be resumed (check 78), so a fresh run
 // starts on the same branch, over what the last one left, and every step runs again.
@@ -102,21 +95,6 @@ export function bindingsFor(bindings) {
     out.push(`@${name}=${model(value, `@${name}`)}`);
   }
   return out;
-}
-
-const onCopilot = (model) => new RegExp(`^${COPILOT}(?:[:/]|$)`, 'i').test(String(model));
-
-// The workflow a run starts: the lane's own, or its Copilot twin (copilot-pack.js) when the run's models are all on
-// Copilot. A Copilot run binds every tier, since a tier left unbound falls back to Claude's own model; a run whose
-// models are on more than one provider is refused. { workflow } or { refused }.
-export function workflowFor(workflow, bindings) {
-  const models = [...Object.values(bindings?.tiers ?? {}), ...Object.values(bindings?.aliases ?? {})];
-  const copilot = models.filter(onCopilot);
-  // A goal's check run has no model step, so it has no twin.
-  if (workflow === MERGE_QUEUE || workflow === GOAL_CHECK || copilot.length === 0) return { workflow };
-  if (copilot.length !== models.length) return { refused: 'A run\'s models must all be on one provider, and these are on more than one' };
-  if (!TIERS.every((tier) => onCopilot(bindings.tiers?.[tier]))) return { refused: 'A run on Copilot binds every tier (small, medium and large), so none falls back to another provider' };
-  return { workflow: `${workflow}${COPILOT_SUFFIX}` };
 }
 
 // The cursor rule of the attention stream (check 78, Archon's Operate page): a bookmark or the end of the snapshot
@@ -226,22 +204,9 @@ function refusal(action, result) {
 // `cli` is archonCli or a stand-in; `streamer(args, { signal })` gives a long command's lines (archonStreamer);
 // `run` runs Bun's version check; `pins` are the pinned Archon and Bun (build.js); `now` gives the time; `home` is
 // ARCHON_HOME and `worktreeBases` the absolute folders the config's `worktree.path` places worktrees in.
-// Why a Copilot step can't start in `engine`, or null. Copilot steps have no sandbox, so its guards, registered as the
-// CLI's own hooks in its clean home, are what stand: with the program or the home missing or stale, the CLI would run
-// from the director's own Copilot home, with none of them.
-export function copilotEngineProblem(engine) {
-  if (!copilotCliInstalled(engine)) return 'Copilot\'s command-line program isn\'t in the build engine\'s folder, so no Copilot step can start';
-  let resolver = '';
-  try { resolver = fs.readFileSync(enginePaths(engine).cliResolver, 'utf8'); } catch { /* read as unpatched */ }
-  if (!resolver.includes(CLI_PATCH_MARK)) return 'The build engine was built before Wheelhouse\'s Copilot patch, so its Copilot steps would run without the pinned program and its guards; setup builds the engine again';
-  return engineHomeProblem({ engine });
-}
-
 export function archonAdapter({
   cli = archonCli, streamer, run = defaultRun, packDir, configFile, engine = engineDir(), home = archonHome(), worktreeBases = [],
   pins = { archon: ARCHON_SOURCE, bun: BUN_PIN }, now = () => new Date().toISOString(),
-  copilotProblem = () => copilotEngineProblem(engine),
-  copilotLevel = () => (sandboxNow().level ? 'sandbox' : null),
 } = {}) {
   const stream = streamer ?? archonStreamer({ cli });
   const answered = new Set();
@@ -297,30 +262,6 @@ export function archonAdapter({
 
   return {
     name: 'archon',
-    // Copilot's plan counts AI credits for each prompt sent (checks 74 and 79): a run routed to it uses the monthly credits. Its
-    // count isn't confirmed against GitHub's own figure yet (check 79's Copilot half), so no such run starts.
-    countsRequests: (routing = {}) => [...Object.values(routing.tiers ?? {}), ...Object.values(routing.aliases ?? {})].some(onCopilot),
-    requestsConfirmed: false,
-    // The count of this month's requests the cap reads (copilot-meter.js): GitHub's own, checked once a day against
-    // the meter's estimate. `estimate()` is the meter's count, `kept` what the last check kept, `run` runs `gh` with
-    // the director's own sign-in. Not one of the interface's methods: only a provider that counts requests has it.
-    checkRequests({ estimate, kept = null, run: ghRun = run, now: at = new Date() } = {}) {
-      return meterCheck({ read: () => readGitHubFigure({ run: ghRun }), estimate, kept, now: at });
-    },
-    // The file that count is kept in: one for the account signed in to the engine's clean home.
-    requestsFile() {
-      let signIn = null;
-      try { signIn = signInOf(copilotCliPaths(engine).home); } catch { /* the account can't be told */ }
-      return accountFile(engine, signIn);
-    },
-    // The agent whose steps a run with these models takes, when its steps read Wheelhouse's own skill copies rather
-    // than the kits the session start checks, or null. Its hold is re-checked where the run starts (routes.js).
-    stepAgent: (bindings) => (workflowFor('wheelhouse-quick', bindings).workflow?.endsWith(COPILOT_SUFFIX) ? 'copilot' : null),
-    words: {
-      requestsHeld: 'Some work is set to use Copilot, and every Copilot prompt uses your plan\'s monthly AI credits (a short prompt costs a fraction of one), since your plan has no free model. The cap is 0, so no Copilot runs until you allow some.',
-      requestsUnconfirmed: 'Some work is set to use Copilot, and every Copilot prompt uses your plan\'s monthly AI credits. Wheelhouse can\'t yet check its count of them against GitHub\'s own figure, so no Copilot runs for now, whatever the cap.',
-    },
-
     // The continuation host's process (spec 6.3): it carries an answered run on. Given to the host to start, with
     // archonEnv as its whole environment.
     // The engine room's console (scripts/engine/room.js): `archon serve` on this computer only.
@@ -393,13 +334,7 @@ export function archonAdapter({
       if (order.carryOn && !order.branch) return refusedWith('Carrying on needs the branch the work was on');
       let models;
       try { models = bindingsFor(order.bindings); } catch (error) { return refusedWith(error.message); }
-      const chosen = workflowFor(workflow, order.bindings);
-      if (chosen.refused) return refusedWith(chosen.refused);
-      if (chosen.workflow.endsWith(COPILOT_SUFFIX)) {
-        const problem = copilotProblem();
-        if (problem) return refusedWith(problem);
-      }
-      const args = ['workflow', 'run', chosen.workflow];
+      const args = ['workflow', 'run', workflow];
       if (order.carryOn) args.push(CARRY_ON);
       args.push('--detach', '--workflow-source', packDir, '--config', configFile);
       if (order.project) args.push('--cwd', order.project);
@@ -422,8 +357,7 @@ export function archonAdapter({
       // Not started in the project (--cwd names it), so Bun reads nothing of the project's own.
       const result = await cli(args, { json: true, timeout: START_MS });
       if (result.json?.ok === true && typeof result.json.runId === 'string') {
-        // A Copilot run says the level it ran at, for the helper's `level` record (scripts/audit/report.js reads it).
-        return { ok: true, runId: result.json.runId, branch: result.json.branch ?? order.branch ?? null, ...(chosen.workflow.endsWith(COPILOT_SUFFIX) ? { level: copilotLevel() } : {}) };
+        return { ok: true, runId: result.json.runId, branch: result.json.branch ?? order.branch ?? null };
       }
       const error = String(result.json?.error ?? result.stderr ?? '').trim().split('\n')[0];
       const said = refusedWith(`The engine didn't start the run${error ? ` (${error})` : ''}`);
@@ -504,7 +438,7 @@ export function archonAdapter({
     async inspect(runId) {
       const result = await cli(['workflow', 'get', runId, '--verbose'], { json: true, timeout: CALL_MS });
       const json = result.code === 0 && result.json?.ok !== false ? result.json : null;
-      return { ...readRecord(json, { rates: requestRates(readAccountModels(engine)) }), failure: failureOf(json), failedStep: failedStepOf(json), folder: worktreeOf(json?.working_path, { home, worktreeBases }), ...(result.json ? {} : { unread: true }) };
+      return { ...readRecord(json), failure: failureOf(json), failedStep: failedStepOf(json), folder: worktreeOf(json?.working_path, { home, worktreeBases }), ...(result.json ? {} : { unread: true }) };
     },
 
     // Each finished step's whole output, by its id (record.js), for the helper to sign a review from Archon's own

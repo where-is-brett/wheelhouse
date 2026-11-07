@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { wayBack, quiet, forever } from '../helpers/way-back.js';
 import { redMainIncident } from '../../scripts/engine/fix-main.js';
-import { STOP_HERE, KEEP_OFF, LEAVE_IT, LEAVE_RED } from '../../scripts/engine/dispatch-run.js';
+import { STOP_HERE, LEAVE_IT, LEAVE_RED } from '../../scripts/engine/dispatch-run.js';
 
 const MINUTE = 60 * 1000;
 const SEEDS = 40;
@@ -61,7 +61,7 @@ const openCards = (w) => Object.values(w.questions).filter((q) => !q.answer);
 const unfinished = (w) => Object.keys(w.work).filter((id) => !w.reports[id]);
 const going = (w) => Object.keys(w.runs).some((work) => w.stateOf(work) === 'started') || (w.engine.queueRuns({ folder: 'qf' }) ?? []).length > 0;
 // What leaves work waiting by the director's own choice is no silence.
-const chosen = (w) => Object.values(w.questions).some((q) => [KEEP_OFF, LEAVE_IT, LEAVE_RED].includes(q.answer?.label));
+const chosen = (w) => Object.values(w.questions).some((q) => [LEAVE_IT, LEAVE_RED].includes(q.answer?.label));
 const silent = (w) => unfinished(w).length > 0 && !going(w) && openCards(w).length === 0 && !chosen(w);
 
 async function walk(seed) {

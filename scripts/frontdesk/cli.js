@@ -8,7 +8,7 @@
 //                   card asks yet, the card for each click the merge gate waits for, and one for
 //                   each lineage hold. Under STOP, the Lift STOP card alone. With --here (the director
 //                   asked to answer in the chat) the cards given are marked, for two minutes, to be
-//                   asked in the chat once, though a live panel would answer them
+//                   asked in the chat once
 //   card            composes one card from the composer's input and records it ({ question, id });
 //                   with `revises`, the id of a card of its kind waiting now or closed by a later
 //                   head, and `changed`, one line saying what changed, it is a revised card that
@@ -113,7 +113,7 @@ import { FINISHED_WORDS, prsOfWork, workFinished } from '../desk/work-prs.js';
 import { isOpen, surveyLines, whyNext, workLines, RECENT_MS, RECENT_LEAD, recentLines } from '../desk/views.js';
 import { answeredWords } from '../cards/answered.js';
 import { markHere } from '../lib/session-files.js';
-import { paneLine, sinceLine } from '../cards/panel-words.js';
+import { sinceLine } from '../cards/panel-words.js';
 
 // How far back `views waiting` looks for answers, and its lead (scripts/desk/views.js).
 export { RECENT_MS, RECENT_LEAD };
@@ -506,7 +506,7 @@ async function buildLoopCards({ client, cwd, views, words, now, problems }) {
 // not a failure: the cards waiting are still given. Under STOP the visit's one card is Lift STOP:
 // the helper writes nothing, so no card is made, and the cards waiting stay on the board, counted
 // in `left`, for the visit after STOP is lifted.
-export async function cards({ client, cwd, now, onAsked, hold }) {
+export async function cards({ client, cwd, now, onAsked }) {
   const problems = [];
   let { views, stop, names } = await viewsOf(client, cwd);
   const words = await wordsOf(client, cwd, views, now, names);
@@ -567,21 +567,17 @@ export async function cards({ client, cwd, now, onAsked, hold }) {
   if (made > 0 || decided) ({ views, cards: events } = await viewsOf(client, cwd, { cards: decided }));
   const chosen = cardsForVisit(withPutBack(views, again, events), { room: lift === null ? CARD.questions : 0 });
   problems.push(...await markAsked(client, cwd, chosen.ids, stop));
-  // Cards a live panel answers are marked asked as usual, but the chat is told of the panel instead of being given them.
-  if (lift === null && chosen.ids.length > 0 && typeof hold === 'function' && await hold(chosen.ids)) {
-    return { panel: paneLine(chosen.ids.length), left: chosen.left, ...(chosen.heldBack > 0 ? { heldBack: chosen.heldBack } : {}), ...withProblems(problems) };
-  }
   if (typeof onAsked === 'function') await onAsked(chosen.ids);
   return { questions: [...(lift === null ? [] : [lift]), ...chosen.questions], left: chosen.left, ...(chosen.heldBack > 0 ? { heldBack: chosen.heldBack } : {}), ...withProblems(problems) };
 }
 
 // The director's Show them: the cards held back are named as pulled, which spends none of the day's budget, then this
 // visit's cards come as `cards` gives them. It raises cards and decides nothing.
-export async function pullCards({ client, cwd, now, onAsked, hold }) {
+export async function pullCards({ client, cwd, now, onAsked }) {
   const { views } = await viewsOf(client, cwd);
   const ids = Array.isArray(views.cardsWaiting?.ids) ? views.cardsWaiting.ids : [];
   if (ids.length > 0) await write(client, cwd, 'note', { about: 'cards-pulled', ids });
-  return cards({ client, cwd, now, onAsked, hold });
+  return cards({ client, cwd, now, onAsked });
 }
 
 // The director's End goal and narrowing, through the desk: neither needs the director's signature, since each only
@@ -723,12 +719,11 @@ function decidedBefore(outcomes, data, at) {
 
 // The card the board numbers n, as it was composed (in plain words then), with its id, recorded as
 // asked again. The id lets a press that names a card by number and id be checked against it.
-export async function again({ client, cwd, n, onAsked, hold }) {
+export async function again({ client, cwd, n, onAsked }) {
   const { views, stop, cards: events } = await viewsOf(client, cwd, { cards: true });
   const found = cardNumbered(views, n, { events });
   if (found === null) throw new CliError(`The Logbook has no card ${n} to ask again; a question from the build is asked once \`cards\` has made its card`);
   const problems = withProblems(await markAsked(client, cwd, [found.id], stop));
-  if (typeof hold === 'function' && await hold([found.id])) return { panel: paneLine(1), ...problems };
   if (typeof onAsked === 'function') await onAsked([found.id]);
   return { questions: [asQuestion(found)], id: found.id, ...problems };
 }
@@ -1186,7 +1181,7 @@ export function levelCard(event, words) {
 // it isn't due again until the next period, but only when every proposal and its card were
 // recorded: otherwise it stays due, and a level whose card wasn't written gets it from the
 // board-context hook on the next visit. Under STOP nothing is written, so it is refused.
-export async function review({ client, cwd, now, hold, makeId = () => crypto.randomUUID() }) {
+export async function review({ client, cwd, now, makeId = () => crypto.randomUUID() }) {
   const got = await recordOf(client, cwd, { review: true });
   if (got.stop === true) throw new CliError('All stop is on, so the review waits until it is lifted');
   if (!isPlain(got.review) || !Array.isArray(got.review.proposals)) throw new CliError('The host helper gave no review');
@@ -1233,9 +1228,6 @@ export async function review({ client, cwd, now, hold, makeId = () => crypto.ran
       problems.push(`The review wasn't recorded as done, so it stays due: ${error.message}`);
     }
   }
-  if (asked.length > 0 && typeof hold === 'function' && await hold(asked.map((c) => c.id))) {
-    return { panel: paneLine(asked.length), left: made.length - asked.length, ...withProblems(problems) };
-  }
   return { questions: asked.map((c) => c.question), left: made.length - asked.length, ...withProblems(problems) };
 }
 
@@ -1269,8 +1261,7 @@ export async function view({ client, cwd, name, now, since: from }) {
   if (name === 'brief') return views.brief ? [briefText(views.brief.brief)] : ['This project has no signed brief.'];
   if (name === 'rulebook') {
     const rules = (Array.isArray(views.rulebook) ? views.rulebook : []).filter((r) => r?.status !== 'superseded');
-    // A Lean ruling confirmed by a click in the chat (ruling P5-52) says what that proof is.
-    const status = (r) => (r.status !== 'accepted' ? 'waiting for the director to confirm it' : r.proof === 'chat-click' ? 'in force, by a click in the chat, not proven' : 'in force');
+    const status = (r) => (r.status !== 'accepted' ? 'waiting for the director to confirm it' : 'in force');
     return listed(rules.map((r) => `${flat(r.words)} (${status(r)})`), 'The rulebook is empty.');
   }
   if (name === 'waiting') {
@@ -1352,7 +1343,7 @@ export async function preview({ client, cwd, n }) {
 
 // What the helper's window answers for `card`: `lift-stop` for the Lift STOP card the helper composes itself, or a
 // card's id in the state, named with the hash of its data as the state holds it, so the window shows that card and
-// no other (the caller's own text is never shown). Posts /confirm as the Lean command does; a refusal is said as is.
+// no other (the caller's own text is never shown). Posts /confirm; a refusal is said as is.
 export async function confirm({ client, cwd, card }) {
   if (typeof card !== 'string' || card === '') throw new CliError('Give the card\'s id, or lift-stop: confirm <card>');
   let got;
@@ -1483,18 +1474,6 @@ export async function main(argv, {
       return 0;
     }
     // `--here` on cards, again and pull-cards: the cards handed out are marked to be asked in the chat, once (here.json).
-    // A session with no Claude Code session id is another agent's: where a live VS Code panel answers the project's cards,
-    // they are held back from the chat and the chat is told of the panel, and `--here` asks them in the chat once. The
-    // panel is asked of the desk, since this command can't read the home; any failure asks the cards in the chat.
-    const askPanel = async (vscode) => {
-      try {
-        const got = await deskOf(helper, here).read('waiting', { vscode });
-        const said = got?.ok === true ? got.data?.vscode : null;
-        return isPlain(said) ? { applies: said.applies === true, held: said.held === true } : { applies: false, held: false };
-      } catch {
-        return { applies: false, held: false };
-      }
-    };
     const hereMark = async (args) => {
       const wanted = args.includes('--here');
       const left = args.filter((a) => a !== '--here');
@@ -1503,14 +1482,13 @@ export async function main(argv, {
       if (typeof session === 'string' && session !== '') {
         return wanted ? { left, onAsked: (ids) => { if (ids.length > 0) markHere(session, ids, stamp); } } : { left };
       }
-      if (!wanted) return { left, hold: async (ids) => (await askPanel({ ids })).held };
-      if (!(await askPanel({})).applies) throw new CliError('The session isn\'t known, so the cards can\'t be asked here.');
-      return { left, onAsked: async (ids) => { if (ids.length > 0) await askPanel({ ids, here: true }); } };
+      if (!wanted) return { left };
+      throw new CliError('The session isn\'t known, so the cards can\'t be asked here.');
     };
     if (command === 'pull-cards') {
-      const { left, onAsked, hold } = await hereMark(rest);
+      const { left, onAsked } = await hereMark(rest);
       only(left, 0, 'pull-cards takes no arguments');
-      json(await pullCards({ client: helper, cwd: here, now, onAsked, hold }));
+      json(await pullCards({ client: helper, cwd: here, now, onAsked }));
       return 0;
     }
     if (command === 'end-goal') {
@@ -1538,16 +1516,16 @@ export async function main(argv, {
       return 0;
     }
     if (command === 'cards') {
-      const { left, onAsked, hold } = await hereMark(rest);
+      const { left, onAsked } = await hereMark(rest);
       only(left, 0, 'cards takes no arguments');
-      json(await cards({ client: helper, cwd: here, now, onAsked, hold }));
+      json(await cards({ client: helper, cwd: here, now, onAsked }));
     } else if (command === 'card') {
       only(rest, 0, 'card takes no arguments: give the card as JSON on standard input');
       json(await card({ client: helper, cwd: here, input: parsed(await stdin()), now }));
     } else if (command === 'again') {
-      const { left, onAsked, hold } = await hereMark(rest);
+      const { left, onAsked } = await hereMark(rest);
       if (left.length !== 1 || !/^[1-9][0-9]{0,8}$/.test(left[0])) throw new CliError('Give the card\'s number in the Logbook: again <n> [--here]');
-      json(await again({ client: helper, cwd: here, n: Number(left[0]), onAsked, hold }));
+      json(await again({ client: helper, cwd: here, n: Number(left[0]), onAsked }));
     } else if (command === 'why') {
       if (rest.length !== 1 || !/^[1-9][0-9]{0,8}$/.test(rest[0])) throw new CliError('Give the card\'s number in the Logbook: why <n>');
       lines(await why({ client: helper, cwd: here, n: Number(rest[0]) }));
@@ -1569,7 +1547,7 @@ export async function main(argv, {
       json(await similar({ client: helper, cwd: here, text: rest.length > 0 ? rest.join(' ') : await stdin() }));
     } else if (command === 'review') {
       only(rest, 0, 'review takes no arguments');
-      json(await review({ client: helper, cwd: here, now, hold: (await hereMark([])).hold, ...(makeId ? { makeId } : {}) }));
+      json(await review({ client: helper, cwd: here, now, ...(makeId ? { makeId } : {}) }));
     } else if (command === 'preview') {
       if (rest.length !== 1 || !/^[1-9][0-9]{0,8}$/.test(rest[0])) throw new CliError('Give the pull request\'s number: preview <n>');
       lines(await preview({ client: helper, cwd: here, n: Number(rest[0]) }));

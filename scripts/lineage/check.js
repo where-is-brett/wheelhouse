@@ -16,7 +16,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stateDir } from '../lib/paths.js';
-import { agentsNamedAbove, readsOwnCopies } from '../agents/names.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { fingerprintTree } from './fingerprint.js';
 import { MANIFEST_PATH, UPSTREAMS, checkInstalled, claudeHome as defaultClaudeHome, locateInstalled, readManifest } from './manifest.js';
@@ -224,14 +223,7 @@ export function inspectLineage({ projectDir, root = ROOT, claudeHome = defaultCl
   return { ...result, manifest: manifest !== null, upstreams };
 }
 
-// Whether this copy of Wheelhouse carries its skill copies: Locked's managed copy doesn't (LOCKED_FOLDERS), so it can't
-// check them, and a check there would call every one missing.
-export function hasCopies(root = ROOT) {
-  return fs.existsSync(path.join(root, 'skills'));
-}
-
-// What a project's steps read when they use Wheelhouse's own skill copies rather than the kits (Archon design, section
-// 7.1): each copy in `root` against the manifest's fingerprint, in inspectLineage's shape. A manifest with no copies
+// The skill copies Wheelhouse carries (skills/): each copy in `root` against the manifest's fingerprint, in inspectLineage's shape. A manifest with no copies
 // can't be checked, which is a mismatch at its own path.
 export function inspectCopies({ root = ROOT } = {}) {
   let copies = null;
@@ -258,8 +250,7 @@ export function inspectCopies({ root = ROOT } = {}) {
 // left out, so it writes no hold and no warning. Anything else that differs still holds. The kits
 // left out are given as `pending`, so the session's provenance still says what it loaded.
 //
-// `inspect` is what the hold goes by: the installed kits unless told otherwise (recheckCopies, or a session start in a
-// project whose agent reads Wheelhouse's own skill copies).
+// `inspect` is what the hold goes by: the installed kits unless told otherwise.
 export function checkLineage({ project, projectDir, root = ROOT, claudeHome = defaultClaudeHome(), locate = locateInstalled, now = () => new Date(), pinsPending = false, inspect = inspectLineage }) {
   const file = holdFile(project);
   const inspected = inspect({ projectDir, root, claudeHome, locate });
@@ -358,24 +349,6 @@ export async function recordLift({ project, views, computer, now = () => new Dat
   }
 }
 
-// Where a run of a project whose steps read Wheelhouse's own copies starts: the hold goes by those copies, not the kits,
-// and lifts here by itself once they match, with its card closed; a mismatch writes it, and the state hears once. Only
-// for a project whose agent is known to be one that reads them, which the caller has settled (ruling P8-33). `write(kind,
-// data)` puts a record in the state; `views` holds the project's lineage holds. Gives checkLineage's answer.
-export async function recheckCopies({ project, projectDir, root = ROOT, views, computer, write, now = () => new Date() }) {
-  const result = checkLineage({ project, projectDir, root, now, inspect: inspectCopies });
-  if (!result.ok) {
-    if (result.kept && !result.recorded) {
-      await write('lineage-hold', holdEvent(now().toISOString(), result.mismatches));
-      markRecorded(project, result.set);
-    }
-    return result;
-  }
-  const client = { state: { write: async (body) => { await write(body.kind, body.data); return { ok: true }; } } };
-  await recordLift({ project, views, computer, now, client });
-  return result;
-}
-
 const shown = (relative) => ({ '*': 'not installed', '@commit': 'another commit' }[relative] ?? relative);
 
 // The first NAMED_PATHS of an upstream's paths as the warning names them, then "and N more".
@@ -434,17 +407,6 @@ export function report(result) {
   return ['These installed files still differ from Wheelhouse\'s manifest, so edits and commands stay held. Once they match, the hold lifts at the next session start.', ...lines].join('\n');
 }
 
-export const MATCHED_COPIES = 'Wheelhouse\'s own skill copies match its manifest. A hold lifts at the next run\'s start or session start, whose check finds them matching; this command changes nothing.';
-export const BOTH_CHECKS = 'This project\'s configuration names an agent that reads Wheelhouse\'s own skill copies. On a computer that runs it, the hold goes by those copies once the default branch agrees; anywhere else, by the installed kits. This command can\'t see which computer this is, so it gives both.';
-
-// What the command prints for inspectCopies's result.
-export function copiesReport(result) {
-  if (result.ok) return MATCHED_COPIES;
-  if (!result.manifest) return `Wheelhouse's manifest ${MANIFEST_PATH} can't be read, so its own skill copies can't be checked. Edits and commands stay held.`;
-  const lines = result.mismatches.map((m) => `- ${m.upstream}: ${shown(m.path)}`);
-  return ['These skill copies still differ from Wheelhouse\'s manifest, so edits and commands stay held. Once they match, the hold lifts at the next run\'s start or session start.', ...lines].join('\n');
-}
-
 function realFolder(folder) {
   try {
     return fs.realpathSync.native(folder);
@@ -477,13 +439,8 @@ export function main(args, { cwd = process.cwd(), write = (line) => process.stdo
     return 1;
   }
   const result = inspectLineage({ projectDir: installedFolder(folder, { claudeHome, locate }), root, claudeHome, locate });
-  if (!Object.values(agentsNamedAbove(folder) ?? {}).some(readsOwnCopies)) {
-    write(`${report(result)}\n`);
-    return result.ok ? 0 : 1;
-  }
-  const copies = inspectCopies({ root });
-  write(`${[BOTH_CHECKS, `By the installed kits: ${report(result)}`, `By Wheelhouse's own skill copies: ${copiesReport(copies)}`].join('\n')}\n`);
-  return result.ok && copies.ok ? 0 : 1;
+  write(`${report(result)}\n`);
+  return result.ok ? 0 : 1;
 }
 
 if (startedAsScript(import.meta.url)) {

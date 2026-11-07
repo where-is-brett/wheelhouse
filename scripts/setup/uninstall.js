@@ -140,7 +140,6 @@ import {
   wheelhouseHome, jobFolder, jobsDir, keysDir, profileDir, oldProfileDir, projectsDir, stateDir, oldStateDir, computerId, engineDir, archonHome,
 } from '../lib/paths.js';
 import { projectForFolder, registeredProjects } from '../lib/projects.js';
-import { LEAN_FOLDER, registeredLeanProjects } from '../lean/project.js';
 import { loginStartRecord } from '../lib/login-start.js';
 import { listHash } from '../lib/setup-writes.js';
 import { joinedRepo, runClosed, HEALTH_STEP } from '../lib/setup-run.js';
@@ -650,16 +649,13 @@ export async function uninstallPlan({
   if (typeof folder !== 'string' || !path.isAbsolute(folder)) throw new Error('Uninstall needs the project\'s folder, as a full path');
   const real = realOr(folder);
   const own = projectForFolder(real);
-  // A Lean project is removed through its own install, never here (ruling P5-47).
-  if (own?.lean === true) throw new Error(LEAN_FOLDER);
   const slug = own?.project ?? null;
   const local = own?.record.host === 'local';
   const journal = readJournal();
   const mine = (r) => typeof r?.folder === 'string' && keyOf(realOr(r.folder)) === keyOf(real);
-  // The last project on this computer: no other registered, a Lean project among them (whose
-  // signed records need this computer's key and id, ruling P5-47), and no other folder whose setup
+  // The last project on this computer: no other registered, and no other folder whose setup
   // run isn't closed, so a half set-up folder keeps what it needs (ruling R114).
-  const others = [...registeredProjects(), ...registeredLeanProjects()].filter((p) => p.project !== slug);
+  const others = registeredProjects().filter((p) => p.project !== slug);
   const settingUp = new Set(journal.runs.filter((r) => typeof r?.folder === 'string' && !runClosed(r) && !mine(r)).map((r) => keyOf(realOr(r.folder))));
   const last = others.length === 0 && settingUp.size === 0;
 

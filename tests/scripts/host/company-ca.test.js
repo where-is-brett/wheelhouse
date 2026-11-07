@@ -27,8 +27,8 @@ import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, tempFolder } from '../../helpers/homes.js';
 
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
-// Where code that could switch a check off would be: the scripts, and the adapters and the editor extension where they exist.
-const CODE_FOLDERS = ['scripts', 'adapters', 'vscode', 'hooks'].map((name) => path.join(ROOT, name)).filter((dir) => fs.existsSync(dir));
+// Where code that could switch a check off would be: the scripts and the hooks.
+const CODE_FOLDERS = ['scripts', 'hooks'].map((name) => path.join(ROOT, name)).filter((dir) => fs.existsSync(dir));
 const BASE = 'https://git.example.org:8443';
 const GLAB_HOST = 'git.example.org:8443';
 const TOKEN = 'glpat-STANDINTOKEN0123456789';

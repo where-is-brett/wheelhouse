@@ -317,7 +317,7 @@ test('the merge route answers to the main line and to a main version moved outsi
   assert.equal(changeOf(n).state, 'open');
 }, { check: checks((commit, onMain) => (onMain ? 'could-not-run' : 'passed')) }));
 
-test('a project with no host gets the engine and its dispatcher without a mirror rule, and its ready change is merged', { timeout: 120000 }, () => gitAloneWorld(async (world) => {
+test('a project with no host gets the engine and its dispatcher without a mirror rule, and its ready change is merged', { skip: 'Archon is no longer in force from core cut part 3B; this goes with the code it tests in a later part', timeout: 120000 }, () => gitAloneWorld(async (world) => {
   const { helper, home } = world;
   assert.equal(fs.existsSync(path.join(engineDir(), 'mirrors', 'rules.json')), false, 'no https rule is written for a project kept on this computer');
   const { n } = await readyChange(world, 'card-9', 'export const price = (c) => (c / 100).toFixed(2);\n');

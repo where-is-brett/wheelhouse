@@ -518,7 +518,7 @@ function setSetting(slug, key, value) {
 
 const LOGIN_LINE = 'Start Wheelhouse\'s helper when you sign in, and again within a minute if it stops, so the build carries on with no session open';
 
-test('login start is listed when a project uses the new engine', async () => {
+test('login start is listed when a project uses the new engine', { skip: 'Archon is no longer in force from core cut part 3B; this goes with the code it tests in a later part' }, async () => {
   await withProject(async ({ folder, user, config }) => {
     setSetting(SLUG, 'engine', 'archon');
     const fake = fakeRun();
@@ -558,7 +558,7 @@ test('a computer with neither condition gets no login start', async () => {
   });
 });
 
-test('an older Wheelhouse at user scope is brought up to date under the same Go ahead', async () => {
+test('an older Wheelhouse at user scope is brought up to date under the same Go ahead', { skip: 'Archon is no longer in force from core cut part 3B; this goes with the code it tests in a later part' }, async () => {
   const { engineWanted, pluginScopeChanges, applyPluginScope, PLUGIN_SCOPE, installedPluginsFile, pluginUpdateLine, ownVersion, olderVersion, engineLine, ENGINE_LINE_WITH_UPDATE, ENGINE_LINE_WITH_PLUGIN } = await import('../../../scripts/setup/engine-parts.js');
   assert.equal(olderVersion('0.1.2', '0.2.0'), true);
   assert.equal(olderVersion('0.2.0', '0.2.0'), false);
@@ -586,7 +586,7 @@ test('an older Wheelhouse at user scope is brought up to date under the same Go 
   });
 });
 
-test('on a computer that runs the engine, step 6 adds Wheelhouse at user scope and the login start, on its one card', async () => {
+test('on a computer that runs the engine, step 6 adds Wheelhouse at user scope and the login start, on its one card', { skip: 'Archon is no longer in force from core cut part 3B; this goes with the code it tests in a later part' }, async () => {
   const { engineWanted, pluginScopeChanges, applyPluginScope, PLUGIN_SCOPE, PLUGIN_SCOPE_LINE, installedPluginsFile, ownVersion } = await import('../../../scripts/setup/engine-parts.js');
   await withProject(async ({ folder, user, config }) => {
     const fake = fakeRun();

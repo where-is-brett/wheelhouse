@@ -20,8 +20,6 @@
 //
 // The answers write to the project's records, which step 3 sets up, so until the folder is a
 // registered project with its records in place, the step waits rather than ask.
-import { engineWanted } from './engine-parts.js';
-import { chosenHost } from './local.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { SETUP_TITLES } from '../state/card-lines.js';
@@ -176,22 +174,14 @@ export function waitForProject(n) {
 
 const PHASE = { launched: 'launched', before: 'before-launch' };
 
-// The settings a project set up from v0.2.0 on the Mac starts with: the new engine, for quick changes.
-export const ENGINE_WRITES = Object.freeze([
-  { kind: 'setting', data: { key: 'engine', value: 'archon' } },
-  { kind: 'setting', data: { key: 'engineLanes', value: ['quick'] } },
-]);
-
 // The first question: what the product is and who uses it. Its answer records the product's
 // glossary entry and its phase. Its id names the phase, so a real-users answer given again asks
 // it again, and the phase recorded follows the answer (Task 9's review). With no README words to
 // offer, Still taking shape takes their place, so the card always has two options of its own, as
 // AskUserQuestion needs: it records a plain entry saying the product is new.
-// On a computer that runs the build engine, the same answer starts the project on it for quick changes (Archon
-// design, section 17, step 2): `engine` is then the settings it records beside the phase.
-function productAsk(name, { described, realUsers, engine = false }) {
+function productAsk(name, { described, realUsers }) {
   const phase = realUsers ? PHASE.launched : PHASE.before;
-  const settings = [{ kind: 'setting', data: { key: 'phase', value: phase } }, ...(engine ? ENGINE_WRITES : [])];
+  const settings = [{ kind: 'setting', data: { key: 'phase', value: phase } }];
   const entry = (plain) => ({ kind: 'glossary', data: { term: name, plain } });
   const shaping = 'A new product, still taking shape.';
   const options = [
@@ -275,9 +265,7 @@ export function questionsStep() {
       const real = answers['3.real-users'];
       if (!real) return { wait: PROJECT_WAIT_MS, why: 'step 3 has not asked whether the product has real users yet' };
       const realUsers = real.label === REAL_USERS.yes;
-      // The new engine builds on GitHub only (Archon design, section 16): a GitLab project stays on the old engine.
-      const onGitlab = project?.record?.host === 'gitlab' || chosenHost(answers) === 'gitlab';
-      const asked = productAsk(name, { described: readmeDescription(ctx.folder), realUsers, engine: !onGitlab && engineWanted({ platform: ctx.platform ?? process.platform }) });
+      const asked = productAsk(name, { described: readmeDescription(ctx.folder), realUsers });
       // The description doesn't depend on the phase: an answer given under the other phase's id
       // (the card was asked before the real-users answer settled) stands, and the phase recorded follows real-users.
       const other = `product-${realUsers ? PHASE.before : PHASE.launched}`;

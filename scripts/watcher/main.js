@@ -48,6 +48,7 @@ import { makeBundler, readCursor, route, step, writeCursor } from './core.js';
 import { readHandled } from './handled.js';
 import { INTERVALS, LOOKBACK_MS, observe } from './sources.js';
 import { makeRecovery } from './recover.js';
+import { findLostSessions, resumeLost } from './resume.js';
 import { raiseStuckCards } from './stuck-cards.js';
 import { makeWaker, watcherDir, watcherFolder, writeJsonFile, writeWake } from './waker.js';
 import { foremanTools } from '../foreman/tools.js';
@@ -142,6 +143,7 @@ export async function runWatcher({
   signal,
   handled = () => new Set(),
   recovery = null,
+  resume = null,
   log = (message) => process.stderr.write(`${message}\n`),
 }) {
   const every = { ...INTERVALS, ...intervals };
@@ -278,6 +280,17 @@ export async function runWatcher({
           else await wake.wakeFeature(bundle.work, file);
         }
         await wake.pump();
+        // A feature session that died mid-run, its records now settled by the pump, is started again, or its card raised.
+        try {
+          if (resume !== null) await resume({ wake });
+          else if (typeof wake.resumeFeature === 'function') {
+            await resumeLost({
+              project, lost: await findLostSessions({ project, now }), now, resume: wake.resumeFeature, client, log,
+            });
+          }
+        } catch (error) {
+          log(`Feature sessions that stopped couldn't be started again: ${error.message}`);
+        }
         // A stuck wake the Bosun closed idle, without asking, still reaches the director.
         try {
           await raiseStuckCards({ project, client });

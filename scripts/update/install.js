@@ -14,6 +14,7 @@ import { MARKETPLACE, MARKETPLACE_PATH, claudeHome as defaultClaudeHome } from '
 import { SETTINGS_FILE, claudeIn, reinstall } from '../lineage/release.js';
 import { accountCatalogue, moveAccountRef, restoreAccountRef } from './account-settings.js';
 import { backup, restore } from './journal.js';
+import { undoMove } from './engine-move.js';
 
 const FULL_SHA = /^[0-9a-f]{40}$/;
 // Any release tag the update names: plain, or a pre-release named on purpose.
@@ -272,6 +273,9 @@ export async function putBack({
 }) {
   const note = readNote(journal);
   const kept = restore(journal);
+  let moved = null;
+  try { moved = JSON.parse(fs.readFileSync(path.join(journal.folder, 'finish.json'), 'utf8')); } catch { moved = null; }
+  undoMove(moved);
   const account = note.accountRef ? restoreAccountRef({ claudeHome, from: note.accountRef.from, to: note.accountRef.to, marketplace }) : { ok: true };
   const aside = account.line ? ` ${account.line}` : '';
   const dir = projectDir ?? note.projectDir;

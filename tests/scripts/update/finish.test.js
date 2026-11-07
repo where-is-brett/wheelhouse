@@ -8,6 +8,7 @@ import {
   finish, helperCard, main, realRefreshes, STOP_IT, LEAVE_IT, WAIT_LONGER, ASK_AGAIN_MS,
 } from '../../../scripts/update/finish.js';
 import { openJournal } from '../../../scripts/update/journal.js';
+import { moveOffArchon } from '../../../scripts/update/engine-move.js';
 import { RESTART_LINE } from '../../../scripts/update/old-helper.js';
 import { readOwnFilesState } from '../../../scripts/health/own-files.js';
 import { startRun, markStep, addChanges, applyJsonKey } from '../../../scripts/setup/journal.js';
@@ -65,7 +66,7 @@ const oldStandIn = ({ proof = PROOF } = {}) => ({
   reprove: async () => proof,
 });
 
-const quietRefresh = () => ({ local: async () => null, locked: async () => null, agent: async () => null, engine: async () => null });
+const quietRefresh = () => ({ local: async () => null, locked: async () => null });
 
 // The job's state when it runs finish: the checks done and the finish step running.
 function setUp(name = 'proj') {
@@ -108,6 +109,9 @@ function deps(h, extra = {}) {
       old: oldStandIn(),
       heldNow: () => true,
       shape: async () => 1,
+      move: async () => null,
+      addon: async () => null,
+      parked: async () => null,
       watcher: {
         stopWatcher: async (project) => { watcherCalls.push(['stop', project]); return { stopped: false, why: 'not running' }; },
         startWatcher: (project, o) => { watcherCalls.push(['start', project, o.pluginRoot]); return { started: true }; },
@@ -143,7 +147,6 @@ test('finish: the director\'s own local entries are kept', () => withHome(async 
     options.refresh = {
       ...realRefreshes({ project: 'proj', folder: p.folder, newRoot: options.newRoot, claudeHome: p.claudeHome, platform: 'darwin', address: '/h/new.sock' }),
       locked: async () => null,
-      agent: async () => null,
       engine: async () => null,
     };
     const got = await finish({ ...options, journal });
@@ -195,17 +198,15 @@ test('finish: a refresh that fails is left, the others stand, and a second run d
   const refresh = {
     local: async () => { ran.push('local'); return { ok: true, wrote: [] }; },
     locked: async () => { ran.push('locked'); return ran.filter((r) => r === 'locked').length === 1 ? { ok: false, line: 'Locked\'s password was refused.' } : { ok: true, wrote: [] }; },
-    agent: async () => { ran.push('agent'); return null; },
-    engine: async () => { ran.push('engine'); return null; },
   };
   const { options } = deps(h, { refresh });
   const first = await finish({ ...options, journal });
   assert.equal(first.ok, false);
   assert.match(first.line, /password was refused/);
-  assert.deepEqual(ran, ['local', 'locked', 'agent', 'engine']);
+  assert.deepEqual(ran, ['local', 'locked']);
   const second = await finish({ ...options, journal });
   assert.equal(second.ok, true, second.line);
-  assert.deepEqual(ran.slice(4), ['locked'], 'only the refresh left ran again');
+  assert.deepEqual(ran.slice(2), ['locked'], 'only the refresh left ran again');
 }));
 
 test('finish: a current helper is not asked to retire, and the watcher is restarted from the new folder', () => withHome(async () => {
@@ -351,12 +352,11 @@ test('finish: the watcher is stopped only through stopWatcher, and started only 
   assert.deepEqual(killed, [], 'finish itself ends no process');
 }));
 
-test('finish: the last line adds the add-on and the Shape 2 foreman when they apply', () => withHome(async () => {
+test('finish: the last line adds the Shape 2 foreman when it applies', () => withHome(async () => {
   const journal = setUp();
   const h = helper({ version: '0.2.7' });
-  const { options } = deps(h, { addonNewer: async () => true, shape: async () => 2 });
+  const { options } = deps(h, { shape: async () => 2 });
   const got = await finish({ ...options, journal });
-  assert.match(got.line, /VS Code add-on/);
   assert.match(got.line, /Restart the foreman/);
 }));
 
@@ -459,26 +459,32 @@ test('main: refuses bad arguments', async () => {
   assert.equal(errs.length, 2);
 });
 
-test('finish: the files written in Copilot\'s clean home are recorded with their hashes', () => withHome(async (home) => {
-  const folder = temp('wh-finish-copilot-');
-  try {
-    fs.mkdirSync(path.join(folder, '.claude'), { recursive: true });
-    fs.writeFileSync(path.join(folder, '.claude', 'wheelhouse.json'), JSON.stringify({ v: 1, agents: { [computerId()]: 'copilot' } }));
-    fs.mkdirSync(path.join(home, 'engine'), { recursive: true });
-    const clean = path.join(home, 'engine', 'copilot-home');
-    const written = [path.join(clean, 'config.json'), path.join(clean, 'hooks', 'wheelhouse.json')];
-    const writeHome = () => {
-      for (const f of written) { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, `{"at":"${f}"}\n`); }
-      return clean;
-    };
-    const journal = setUp();
-    const h = helper({ version: '0.2.7' });
-    const { options } = deps(h, { folder });
-    options.refresh = { ...quietRefresh(), agent: realRefreshes({ project: 'proj', folder, newRoot: options.newRoot, claudeHome: options.claudeHome, platform: 'darwin', writeHome }).agent };
-    const got = await finish({ ...options, journal });
-    assert.equal(got.ok, true, got.line);
-    const record = readOwnFilesState().updates.at(-1);
-    assert.deepEqual(record.wrote.map((w) => w.file).sort(), [...written].sort());
-    assert.ok(record.wrote.every((w) => typeof w.hash === 'string' && w.hash !== ''));
-  } finally { fs.rmSync(folder, { recursive: true, force: true }); }
+test('finish: a project on Archon moves to the own engine after the hand-over, and a second run cancels and queues nothing again', () => withHome(async () => {
+  const journal = setUp();
+  const h = helper({ version: '0.2.7' });
+  const cancels = [];
+  const writes = [];
+  const connector = { inspect: async () => ({ status: 'running', branch: 'feature/x' }), act: async (runId, how) => { cancels.push([runId, how]); return { ok: true }; } };
+  const views = async () => ({ runs: { x: [{ kind: 'run', data: { runId: 'r1', state: 'running', work: 'x', engine: 'archon' } }] }, asks: {}, questions: {} });
+  const client = { state: { write: async (body) => { writes.push(body); return { ok: true }; } } };
+  const move = (args) => moveOffArchon({ ...args, client, stored: () => 'archon', views, connector, othersOnArchon: () => true });
+  const { options } = deps(h, { move });
+  const first = await finish({ ...options, journal });
+  assert.equal(first.ok, true, first.line);
+  assert.match(first.line, /own engine/);
+  assert.deepEqual(cancels, [['r1', { cancel: true }]]);
+  assert.equal(writes.filter((w) => w.kind === 'card').length, 1);
+  await finish({ ...options, journal });
+  assert.equal(cancels.length, 1, 'not cancelled twice');
+  assert.equal(writes.filter((w) => w.kind === 'card').length, 1, 'one removal card');
+}));
+
+test('finish: a move Archon does not answer holds the update until it runs again', () => withHome(async () => {
+  const journal = setUp();
+  const h = helper({ version: '0.2.7' });
+  const move = async () => ({ done: false, lines: ['Archon did not answer about run r1, so the move waits: run the update again.'] });
+  const { options } = deps(h, { move });
+  const got = await finish({ ...options, journal });
+  assert.equal(got.ok, false);
+  assert.match(got.line, /did not answer/);
 }));

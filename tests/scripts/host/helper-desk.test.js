@@ -1,6 +1,6 @@
 // tests/scripts/host/helper-desk.test.js
 // The desk's three routes on the helper's socket (spec 5.4): /desk/read, /desk/act and /desk/watch,
-// each with `v: 'desk/1'`, placed by `project` or `cwd`, for a project on a code host and a Lean one.
+// each with `v: 'desk/1'`, placed by `project` or `cwd`, for a project on a code host.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -12,7 +12,6 @@ import { helperClient } from '../../../scripts/host/helper-client.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { setStop } from '../../../scripts/lib/stop.js';
-import { registerLean } from '../../../scripts/lean/project.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
 import { eventPath, listEvents, makeEvent } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
@@ -139,27 +138,6 @@ test('a cwd inside the project is placed', inProject(async (client, p) => {
   assert.equal(got.ok, true, got.refused);
   assert.equal(got.data.numbered.length, 1);
 }));
-
-test('a Lean project is served', async () => {
-  const home = shortHome();
-  const folder = path.join(home, 'shop');
-  try {
-    await as(home, async () => {
-      fs.mkdirSync(path.join(folder, '.git'), { recursive: true });
-      fs.writeFileSync(path.join(folder, '.git', 'HEAD'), 'ref: refs/heads/main\n');
-      registerLean({ project: 'shop', folder, now: () => T0 });
-      const own = makeSigningKey();
-      enrol({ computer: own.computer, publicKey: own.publicKey, enrolledAt: T0.toISOString() });
-      await withHelper(async (client) => {
-        const got = await client.desk.read({ v, project: 'shop', view: 'waiting' });
-        assert.equal(got.ok, true, got.refused);
-        const asked = await client.desk.act({ v, project: 'shop', command: 'request', args: { words: 'Add a dark mode', via: 'app' } });
-        assert.equal(asked.ok, true, asked.refused);
-        assert.equal(listEvents(stateDir('shop'), { report: () => {} }).filter((e) => e.kind === 'request').length, 1);
-      });
-    });
-  } finally { fs.rmSync(home, { recursive: true, force: true }); }
-});
 
 test('under STOP, a declared form doesn\'t let an act that needs no evidence write', inProject(async (client) => {
   setStop({ by: 'prompt', now: at(3) });

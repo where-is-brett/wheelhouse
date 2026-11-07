@@ -1,8 +1,8 @@
 // scripts/engine/pins.js
 // The build engine's pins (Archon design, sections 14.1 and 16): Archon from source at its tag and commit, with
 // Wheelhouse's patches, and the digests of what that build must hold; and the pinned Bun, by its own checksums.
-// Archon is built from source (check 75), so no release binary is pinned. Moving a pin is an upgrade
-// (scripts/lineage/upgrade.js): the build again at the new pin, then the safety subset and the counted evaluation.
+// Archon is built from source (check 75), so no release binary is pinned. Archon gets no further upgrades (core cut,
+// design 4.3): the lineage manifest no longer carries these pins, and they stay only for the installer that reads them.
 import { ARCHON_SOURCE, BUN_PIN, PATCHES } from './archon/build.js';
 
 // The SHA-256 of each patch file under scripts/engine/archon/patch/, in the order they are applied.
@@ -29,10 +29,3 @@ export const ENGINE_PINS = Object.freeze({
   bun: BUN_PIN,
 });
 
-// The pins as the lineage manifest carries them.
-export function manifestPins(pins = ENGINE_PINS) {
-  return {
-    archon: { tag: pins.archon.tag, commit: pins.archon.commit, patches: pins.archon.patches.map(({ name, sha256 }) => ({ name, sha256 })), built: { ...pins.archon.built } },
-    bun: { version: pins.bun.version, sums: { ...pins.bun.sums } },
-  };
-}

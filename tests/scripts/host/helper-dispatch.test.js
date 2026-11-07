@@ -285,7 +285,7 @@ test('stayAwake is on for exactly a goal\'s life', async () => {
   } finally { p.cleanup(); }
 });
 
-test('through the helper: the draft, the sheet\'s card, and a click on that card that earns the start', async () => {
+test('through the helper: the draft, the sheet\'s card, and a click on that card that earns the start', { skip: 'Archon is no longer in force from core cut part 3B; this goes with the code it tests in a later part' }, async () => {
   const p = await setUp();
   const engine = fakeEngine({ artefacts: p.artefacts });
   const at = '2026-11-01T01:00:00.000Z';
@@ -367,7 +367,7 @@ test('an agent written before this part is loaded again once when the helper sta
   try {
     await as(p.home, async () => {
       const user = shortHome();
-      const entry = loginEntry({ platform: 'darwin', node: '/opt/node', root: '/opt/wheelhouse', script: 'scripts/agents/copilot/start-helper.js', home: user });
+      const entry = loginEntry({ platform: 'darwin', node: '/opt/node', root: '/opt/wheelhouse', script: 'scripts/host/start-helper.js', home: user });
       const older = { ...entry, content: entry.content.replace('  <key>StartInterval</key>\n  <integer>60</integer>\n', '') };
       await installLoginStart({ entry: older, run });
       calls.length = 0;

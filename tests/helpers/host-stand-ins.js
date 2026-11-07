@@ -1,5 +1,5 @@
 // tests/helpers/host-stand-ins.js
-// The programs no test may reach for real (ruling R139; `copilot` is among them, and `curl` is the
+// The programs no test may reach for real (ruling R139; `curl` is the
 // trials' one network call), each found first on the PATH as a stand-in that notes its arguments in
 // a log and refuses. Code the test can't hand a stand-in of its
 // own runs these by name: the helper's own routes (the board's host facts read protection with `gh

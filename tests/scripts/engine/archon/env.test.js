@@ -70,12 +70,11 @@ test("archonEnv sets ARCHON_HOME outside the Wheelhouse home, and keeps no token
   assert.ok(!home.startsWith(wheelhouseHome() + path.sep));
   assert.equal(engineDir(), path.join(wheelhouseHome(), 'engine'));
   const { engine, nodeDir } = setup();
-  const env = archonEnv({ engine, nodeDir, claudeBin: '/c/claude', copilotBin: '/c/copilot', baseEnv: {
+  const env = archonEnv({ engine, nodeDir, claudeBin: '/c/claude', baseEnv: {
     HOME: '/h', LANG: 'C', GH_TOKEN: 't', GITHUB_TOKEN: 't', GITLAB_TOKEN: 't', ANTHROPIC_API_KEY: 'k', GH_HOST: 'x', SSH_AUTH_SOCK: '/s',
   } });
   assert.equal(env.ARCHON_HOME, home);
   assert.equal(env.CLAUDE_BIN_PATH, '/c/claude');
-  assert.equal(env.COPILOT_BIN_PATH, '/c/copilot');
   assert.equal(env.HOME, '/h');
   for (const name of ['GH_TOKEN', 'GITHUB_TOKEN', 'GITLAB_TOKEN', 'ANTHROPIC_API_KEY', 'GH_HOST', 'SSH_AUTH_SOCK']) assert.equal(env[name], undefined);
   // gh's config folder is one of the engine's that isn't there, never the caller's (check 81).

@@ -26,10 +26,7 @@ const MAC_ROOT = '/plugins/wheelhouse';
 const RECORDED = JSON.parse(fs.readFileSync(path.join(ROOT, 'tests', 'fixtures', 'agents', 'claude-argv.json'), 'utf8'));
 const sessions = adapterFor('claude-code').sessions;
 const T0 = '2026-10-19T09:00:00.000Z';
-// Copilot's sessions refuse while their switch is off (ruling P8-1).
-const SWITCHED_OFF = /aren't switched on yet/;
-
-// Stand-ins for gh, glab, copilot and claude come first on the PATH; the tests that name them assert none ran.
+// Stand-ins for gh, glab and claude come first on the PATH; the tests that name them assert none ran.
 const hostStandIns = standInTools();
 after(() => hostStandIns.restore());
 
@@ -239,61 +236,51 @@ test('a project that names Claude Code for this computer starts it too', () => w
   assert.equal(named.calls[0].file, 'claude');
 }));
 
-test('a project that names an agent with no adapter for this computer starts nothing, and keeps the wake', () => withHome(async () => {
+test('a project that names another agent for this computer still starts Claude Code, the only agent', () => withHome(async () => {
   await project();
-  const refused = waker({ config: configOf2({ agents: { [computerId()]: 'model-x', 'other-computer': 'claude-code' } }) });
-  await refused.w.wakeForeman(foremanWake());
-  assert.equal(refused.calls.length, 0, 'no session starts for an agent with no adapter');
-  assert.equal(refused.w.waiting().length, 1, 'the wake is kept to go again');
-  assert.match(refused.w.waiting()[0].lastError, /no adapter for the agent "model-x"/);
+  const named = waker({ config: configOf2({ agents: { [computerId()]: 'copilot', 'other-computer': 'claude-code' } }) });
+  await named.w.wakeForeman(foremanWake());
+  assert.equal(named.calls.length, 1, 'a session starts');
+  assert.equal(named.calls[0].file, 'claude');
 }));
 
-test('the agent comes from the default branch\'s configuration, never from the working copy', () => withHome(async () => {
+test('a working copy that names another agent changes nothing: the session is Claude Code\'s', () => withHome(async () => {
   const checkout = await project();
-  // The working copy names another agent for this computer (an edit nobody has merged): nothing changes.
   agentsFile(checkout, { [computerId()]: 'model-x' });
-  assert.equal(agentOfProject(checkout, { computerId: computerId() }), 'model-x', 'setup can still read the working copy');
+  assert.equal(agentOfProject(checkout, { computerId: computerId() }), 'claude-code');
   const w = waker();
   await w.w.wakeForeman(foremanWake());
   assert.equal(w.calls.length, 1);
   assert.equal(w.calls[0].file, 'claude');
   const long = foremanSession({ project: P, config: projectConfig(), pluginRoot: MAC_ROOT, platform: 'darwin', env: {}, claude: { kind: 'direct', file: 'claude' } });
   assert.equal(long.file, 'claude');
-  // And the other way: the default branch names one, the working copy does not.
-  fs.rmSync(path.join(checkout, '.claude', 'wheelhouse.json'));
-  const other = waker({ config: configOf2({ agents: { [computerId()]: 'model-x' } }) });
-  await other.w.wakeForeman(foremanWake());
-  assert.equal(other.calls.length, 0);
 }));
 
-test('agentOfConfig reads the computer\'s entry and defaults to Claude Code', () => {
+test('agentOfConfig gives Claude Code, whatever the configuration\'s agents map holds', () => {
   assert.equal(agentOfConfig({}, { computerId: 'c1' }), 'claude-code');
-  assert.equal(agentOfConfig({ agents: { c1: 'model-x' } }, { computerId: 'c1' }), 'model-x');
+  assert.equal(agentOfConfig({ agents: { c1: 'model-x' } }, { computerId: 'c1' }), 'claude-code');
   assert.equal(agentOfConfig({ agents: { c1: 'model-x' } }, { computerId: 'c2' }), 'claude-code');
-  assert.equal(agentOfConfig({ agents: { c1: 'model-x' } }), 'claude-code');
   assert.equal(agentOfConfig({ agents: ['model-x'] }, { computerId: '0' }), 'claude-code');
   assert.equal(agentOfConfig({ agents: { c1: '' } }, { computerId: 'c1' }), 'claude-code');
   assert.equal(agentOfConfig(null, { computerId: 'c1' }), 'claude-code');
 });
 
-test('when this computer\'s id can\'t be read, a configuration with an agents map chooses nothing and one without it gives Claude Code', () => withHome(async (home) => {
+test('a configuration with an agents map gives Claude Code\'s sessions even when this computer\'s id can\'t be read', () => withHome(async (home) => {
   const blocker = path.join(home, 'a-file');
   fs.mkdirSync(home, { recursive: true });
   fs.writeFileSync(blocker, 'x');
   const before = process.env.WHEELHOUSE_HOME;
   process.env.WHEELHOUSE_HOME = path.join(blocker, 'inside'); // a home that can't be made, with no computer.json in it
-  let withoutMap;
+  let named;
   try {
-    assert.throws(() => computerId());
-    assert.throws(() => sessionsOfProject({ agents: { c1: 'claude-code' } }), /id can't be read/);
-    withoutMap = sessionsOfProject({});
+    named = sessionsOfProject({ agents: { c1: 'claude-code' } });
   } finally {
     process.env.WHEELHOUSE_HOME = before;
   }
-  assert.equal(withoutMap, sessions);
+  assert.equal(named, sessions);
 }));
 
-test('the foreman\'s long session asks the project\'s adapter too', () => withHome(async () => {
+test('the foreman\'s long session is Claude Code\'s', () => withHome(async () => {
   const checkout = await project();
   const call = foremanSession({ project: P, config: projectConfig(), pluginRoot: MAC_ROOT, platform: 'darwin', env: { PATH: '/bin' }, claude: { kind: 'direct', file: 'claude' } });
   assert.equal(call.file, 'claude');
@@ -302,10 +289,6 @@ test('the foreman\'s long session asks the project\'s adapter too', () => withHo
   assert.equal(call.options.env.WHEELHOUSE_ROLE, 'foreman');
   assert.equal(sessionsOfProject(projectConfig()), sessions);
   assert.equal(sessionsOfProject(null), sessions);
-
-  assert.throws(() => foremanSession({
-    project: P, config: projectConfig({ agents: { [computerId()]: 'model-x' } }), pluginRoot: MAC_ROOT, platform: 'darwin', env: {}, claude: { kind: 'direct', file: 'claude' },
-  }), /no adapter for the agent "model-x"/);
 }));
 
 test('a builder model that can\'t be passed is refused before the worktree is labelled or a grant is recorded', () => withHome(async () => {
@@ -366,39 +349,4 @@ test('the waker asks the project\'s adapter for the mode checks', () => withHome
   // A check that throws refuses the waker, as a bad mode does.
   const refusing = { ...stood, checkForeman: () => { throw new Error('The adapter will not start a foreman'); } };
   assert.throws(() => waker({ sessions: refusing }), /will not start a foreman/);
-}));
-
-// A waker made for a project with no `agents` map, whose held configuration is then given one naming this
-// computer's agent: the configuration changes after the waker was made, as the bad-mode test changes the mode.
-async function copilotProject() {
-  const checkout = await project();
-  const held = configOf2();
-  const made = waker({ config: held });
-  held.agents = { [computerId()]: 'copilot' };
-  return { checkout, held, ...made };
-}
-
-test('the waker refuses a Copilot project\'s foreman wake while Copilot\'s sessions are switched off', () => withHome(async () => {
-  hostStandIns.reset();
-  const { w, calls } = await copilotProject();
-  await assert.rejects(w.wakeForeman(foremanWake()), SWITCHED_OFF);
-  assert.equal(calls.length, 0, 'no session was started');
-  assert.deepEqual(w.waiting(), [], 'nothing was recorded for the refused wake, as with a bad mode');
-  assert.deepEqual(hostStandIns.calls(), [], 'no host program ran, claude included');
-  // A waker made for such a project is refused as it is made, as a bad mode is.
-  assert.throws(() => waker({ config: configOf2({ agents: { [computerId()]: 'copilot' } }) }), SWITCHED_OFF);
-}));
-
-test('the waker refuses a Copilot project\'s feature wake while Copilot\'s sessions are switched off', () => withHome(async () => {
-  hostStandIns.reset();
-  const { checkout, w, calls } = await copilotProject();
-  const worktree = path.join(checkout, '.claude', 'worktrees', 'wt-1');
-  fs.mkdirSync(featurePaths(worktree).dir, { recursive: true });
-  fs.writeFileSync(featurePaths(worktree).brief, 'The brief.\n');
-  const bundle = { to: 'feature', work: 'login-page', events: [{ type: 'ci-red', id: 'x' }], digest: [], dropped: 0 };
-  await assert.rejects(w.wakeFeature('login-page', writeWake(P, bundle, { now: () => new Date(T0) })), SWITCHED_OFF);
-  await assert.rejects(w.startFeature({ work: 'login-page', worktree, briefFile: featurePaths(worktree).brief }), SWITCHED_OFF);
-  assert.equal(calls.length, 0, 'no session was started');
-  assert.deepEqual(w.waiting(), []);
-  assert.deepEqual(hostStandIns.calls(), []);
 }));

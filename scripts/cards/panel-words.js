@@ -1,7 +1,7 @@
 // scripts/cards/panel-words.js
-// The two lines a session is told about the panel beside the chat, in one place so the hooks, the front desk's card
-// commands and the editor add-on's board tool say them the same way: which cards wait in the panel, and what the
-// director answered there since the session's last turn. It imports only the answered words, so the add-on can load it.
+// The two lines a session is told about the panel beside the chat, in one place so the hooks and the front desk's card
+// commands say them the same way: which cards wait in the panel, and what the director answered there since the
+// session's last turn.
 import { answeredWords, subjectOf } from './answered.js';
 
 export const PANE_LEAD = 'These cards are in the panel beside the chat: ';

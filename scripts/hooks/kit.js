@@ -120,12 +120,7 @@ export function findRepoRoot(cwd) {
       // repository has no main working folder to name.
       const mainGit = path.resolve(gitdir, common);
       if (path.basename(mainGit) === '.git') return path.dirname(mainGit);
-      // A Lean project's folder is a worktree of its store, a bare repository in Wheelhouse's home (scripts/lean/
-      // store.js): the folder itself is the project's, when it is the folder the Lean record names and the pointer
-      // leads into that project's own store.
-      const lean = projectForFolder(realPath(dir));
-      const ownStore = lean?.lean === true ? path.join(wheelhouseHome(), 'projects', lean.project, 'git') : null;
-      return ownStore !== null && sameFolder(lean.record.folder, dir) && sameFolder(ownStore, mainGit) ? dir : null;
+      return null;
     }
     const up = path.dirname(dir);
     if (up === dir) return null;
@@ -133,7 +128,7 @@ export function findRepoRoot(cwd) {
   }
 }
 
-// The registered project `cwd` belongs to, whether it is Locked, and whether it is a Lean one. Reads files only.
+// The registered project `cwd` belongs to, and whether it is Locked. Reads files only.
 export function projectOf(cwd, { dir = managedDir() } = {}) {
   const root = findRepoRoot(cwd);
   if (root === null) return null;
@@ -141,8 +136,7 @@ export function projectOf(cwd, { dir = managedDir() } = {}) {
   if (!found) return null;
   // By the record's folder, as lockedByPath does: a rewritten .git file can move `root`, not the record.
   const locked = lockedProjects({ dir }).some((folder) => sameFolder(folder, found.record.folder));
-  // A Lean project (scripts/lean/project.js) says so; a project with a project.json keeps the shape it had.
-  return { project: found.project, record: found.record, locked, ...(found.lean === true ? { lean: true } : {}) };
+  return { project: found.project, record: found.record, locked };
 }
 
 // Whether the folder lies inside a registered project's main folder, worked out

@@ -6,6 +6,7 @@
 import { composeCard } from '../cards/compose.js';
 import { NOT_NOW } from '../lib/calm-words.js';
 import { RELEASE_LABEL } from '../state/card-lines.js';
+import { ADDON_ON_CARD } from './addon.js';
 import { LEAVE_IT, STOP_IT, WAIT_LONGER, helperCard } from './finish.js';
 
 export const UPDATE = 'Update';
@@ -23,8 +24,8 @@ const flat = (text) => String(text).replace(/\s+/g, ' ').trim();
 // change when it is ready) and 'review' when Wheelhouse's review is enough. `put` is 'undo' for a put-back; `carryOn` for an
 // update part-way. `locked` says this computer has Locked, which shows a password window; `others` are the other projects
 // whose Locked stays on an older release. `account` is { from, to } when the account's settings name the catalogue at an old release,
-// which the update changes (one line, named on the card). `removes` names the dropped plugins installed for this project, which the update removes. `hash` is the full hash of the plan the card is for.
-export function updateCard({ from, to, says, approval = 'review', locked = false, others = [], put = 'release', carryOn = false, account = null, removes = [], hash }) {
+// which the update changes (one line, named on the card). `removes` names the dropped plugins installed for this project, which the update removes. `addon` is true where VS Code lists the Wheelhouse add-on, which the update removes, on the director's click of this card. `hash` is the full hash of the plan the card is for.
+export function updateCard({ from, to, says, approval = 'review', locked = false, others = [], put = 'release', carryOn = false, account = null, removes = [], addon = false, hash }) {
   const back = put === 'undo';
   const title = carryOn ? `Carry on with the update to ${to}` : back ? `Put Wheelhouse back to ${to} \u00b7 ${from} \u2192 ${to}` : `Update Wheelhouse \u00b7 ${from} \u2192 ${to}`;
   const happens = [
@@ -37,6 +38,7 @@ export function updateCard({ from, to, says, approval = 'review', locked = false
   for (const name of removes) {
     happens.push(`${name} is installed for this project; the update removes it, since Wheelhouse carries the two skills it needs. One you installed for your whole account is left.`);
   }
+  if (addon === true) happens.push(ADDON_ON_CARD);
   if (approval === 'card') {
     happens.push(`${to} changes more than its pins, so once the change is ready you approve it, as you approve any change to the safety rules (a card here in Claude Code, the helper's window with another agent). Update starts it; it is not that approval.`);
   }

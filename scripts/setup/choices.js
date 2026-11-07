@@ -201,8 +201,7 @@ export function setupTime(toRun, list = []) {
   return list.length === 0 && toRun.length > 0 && toRun.every((n) => n === HEALTH_STEP) ? 'about a minute' : 'about 5 minutes';
 }
 
-// `agentLine` is the engine's line for a project on another agent (scripts/agents/engine-parts.js), in place of the core's.
-export function oneCard({ folder, list, product, platform, toRun, count, facts = null, claudeHome = null, hosts, agentLine = null }) {
+export function oneCard({ folder, list, product, platform, toRun, count, facts = null, claudeHome = null, hosts }) {
   const name = product?.name ?? productName(folder);
   // Only the health check left, nothing to choose: a run parked near its end (one v0.1.1 left at
   // its phone card, carried on after the update), whose card names what is left.
@@ -221,7 +220,7 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
   }
   if (keptHere && toRun.includes(3) && !fs.existsSync(path.join(folder, '.git'))) lines.push(STARTED_LINE('main'));
   // The plugin's update is step 6's, so the line names it only while step 6 is still to run.
-  if (toRun.includes(2) && engineWanted({ platform, hosts })) lines.push(agentLine ?? engineLine(undefined, { claudeHome: toRun.includes(6) ? claudeHome : null }));
+  if (toRun.includes(2) && engineWanted({ platform, hosts })) lines.push(engineLine(undefined, { claudeHome: toRun.includes(6) ? claudeHome : null }));
   if (toRun.includes(6)) lines.push('On this computer: usage counted here only, and 30 days of chat history kept (older history is deleted).');
   if (toRun.includes(7)) {
     const kept = compactionLine(compactionRules({ claudeHome, projectDir: folder }));

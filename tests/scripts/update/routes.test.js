@@ -41,6 +41,7 @@ function setup(over = {}) {
     kind: async () => 'pins-only',
     locked: async () => ({ locked: false, others: [] }),
     startRunner: (args) => started.push(args),
+    addon: async () => false,
     clicked: () => true,
     ...over,
   });
@@ -66,6 +67,18 @@ test('plan: a project with the dropped plugin installed at project scope has the
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(openJournal('p1').folder, 'plan.json'), 'utf8')).plan.removes, ["Matt Pocock's skills"]);
   const none = setup({ retired: () => [] });
   assert.doesNotMatch((await none.routes['/update/plan']({ folder: none.folder })).card.question, /removes it/);
+}));
+
+test('plan: where VS Code lists the add-on the card and the plan say the update removes it, and nowhere else', () => withHome(async () => {
+  const t = setup({ addon: async () => true });
+  const got = await t.routes['/update/plan']({ folder: t.folder });
+  assert.match(got.card.question, /add-on is installed in VS Code on this computer; the update removes it/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(openJournal('p1').folder, 'plan.json'), 'utf8')).plan.addon, true);
+  const none = setup();
+  const plain = await none.routes['/update/plan']({ folder: none.folder });
+  assert.doesNotMatch(plain.card.question, /add-on/);
+  assert.equal('addon' in JSON.parse(fs.readFileSync(path.join(openJournal('p1').folder, 'plan.json'), 'utf8')).plan, false);
+  assert.notEqual(plain.hash, got.hash, 'the click is for the plan that named it');
 }));
 
 test('plan: with nothing newer it gives the one line and no card', () => withHome(async () => {

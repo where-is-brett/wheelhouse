@@ -1225,64 +1225,10 @@ const agentFixture = () => {
   return { fixture, copy: addCopy(fixture) };
 };
 
-test('a Claude session start in a project both configurations put on Copilot goes by the copies, not the kits', async () => {
-  await withHome(async () => {
-    const folder = tempFolder('wh-ss-project-');
-    const { fixture } = agentFixture();
-    const f = fake();
-    agentProject(f, folder, { checkout: 'copilot', branch: 'copilot' });
-    assert.doesNotMatch(text(await lineageRun(f, fixture, folder)), /Lineage/);
-    assert.equal(fs.existsSync(holdFile(P)), false, 'no hold from the kits');
-  });
-});
-
-test('that session start lifts a hold the kits wrote, and closes its card', async () => {
-  await withHome(async () => {
-    const folder = tempFolder('wh-ss-project-');
-    const { fixture } = agentFixture();
-    checkLineage({ project: P, projectDir: folder, root: fixture.root, claudeHome: fixture.claudeHome });
-    assert.equal(fs.existsSync(holdFile(P)), true);
-    const f = fake({ views: { ...VIEWS, lineageHolds: [{ id: 'h1', computer: computerId() }] } });
-    agentProject(f, folder, { checkout: 'copilot', branch: 'copilot' });
-    await lineageRun(f, fixture, folder);
-    assert.equal(fs.existsSync(holdFile(P)), false);
-    assert.deepEqual(f.calls.writes.filter((w) => w.kind === 'lineage-lift').map((w) => w.data.holds), [['h1']]);
-  });
-});
-
-test('that session start holds on a copy that differs, says so, and records it once', async () => {
-  await withHome(async () => {
-    const folder = tempFolder('wh-ss-project-');
-    const { fixture, copy } = agentFixture();
-    fs.appendFileSync(path.join(copy, 'SKILL.md'), 'changed\n');
-    const f = fake();
-    agentProject(f, folder, { checkout: 'copilot', branch: 'copilot' });
-    assert.match(text(await lineageRun(f, fixture, folder)), /^Lineage: Wheelhouse's own skill copies differ from its manifest \(skills\/pr\)\. Edits and commands are held/m);
-    const held = JSON.parse(fs.readFileSync(holdFile(P), 'utf8'));
-    assert.deepEqual(held.mismatches.map((m) => m.path), ['skills/pr']);
-    await lineageRun(f, fixture, folder);
-    assert.equal(f.calls.writes.filter((w) => w.kind === 'lineage-hold').length, 1);
-  });
-});
-
-test('its provenance still says what the session loaded: the kits', async () => {
-  await withHome(async () => {
-    const folder = tempFolder('wh-ss-project-');
-    const { fixture } = agentFixture();
-    const f = fake();
-    agentProject(f, folder, { checkout: 'copilot', branch: 'copilot' });
-    await lineageRun(f, fixture, folder);
-    const kept = JSON.parse(fs.readFileSync(path.join(process.env.WHEELHOUSE_HOME, 'projects', P, 'sessions', 's1', 'provenance.json'), 'utf8'));
-    assert.deepEqual(kept.upstreams, { superpowers: null });
-    assert.equal(kept.fingerprints, 'mismatch');
-  });
-});
-
-test('a session start leaves the hold to the kits unless both configurations name the agent (ruling P8-33)', async () => {
+test('a project whose configurations still name a parked agent is held by the kits like any other', async () => {
   for (const named of [
+    { checkout: 'copilot', branch: 'copilot' },
     { checkout: 'copilot', branch: 'claude-code' },
-    { checkout: 'claude-code', branch: 'copilot' },
-    { checkout: 'copilot', branch: null },
     { checkout: null, branch: 'copilot' },
     { checkout: 'claude-code', branch: 'claude-code' },
   ]) {
@@ -1297,18 +1243,7 @@ test('a session start leaves the hold to the kits unless both configurations nam
   }
 });
 
-test('a helper that doesn\'t answer leaves the hold to the kits, as the default branch can\'t be read', async () => {
-  await withHome(async () => {
-    const folder = tempFolder('wh-ss-project-');
-    const { fixture } = agentFixture();
-    const f = fake({ startsUp: false });
-    agentProject(f, folder, { checkout: 'copilot', branch: 'copilot' });
-    await lineageRun(f, fixture, folder);
-    assert.equal(fs.existsSync(holdFile(P)), true);
-  });
-});
-
-test('a Claude project\'s check never waits for the helper', async () => {
+test('the check never waits for the helper', async () => {
   await withHome(async () => {
     const folder = tempFolder('wh-ss-project-');
     const { fixture } = agentFixture();
@@ -1318,34 +1253,6 @@ test('a Claude project\'s check never waits for the helper', async () => {
     f.client.health = async () => { held ??= fs.existsSync(holdFile(P)); return { ok: true }; };
     await lineageRun(f, fixture, folder);
     assert.equal(held, true, 'the hold was written before the helper was asked');
-  });
-});
-
-test('a copy of Wheelhouse with no skills folder, as Locked\'s managed copy has none, leaves the hold alone', async () => {
-  await withHome(async () => {
-    const folder = tempFolder('wh-ss-project-');
-    const { fixture, copy } = agentFixture();
-    const f = fake();
-    agentProject(f, folder, { checkout: 'copilot', branch: 'copilot' });
-    fs.rmSync(path.dirname(copy), { recursive: true });
-    await lineageRun(f, fixture, folder);
-    assert.equal(fs.existsSync(holdFile(P)), false, 'no hold written');
-    fs.mkdirSync(path.dirname(holdFile(P)), { recursive: true });
-    fs.writeFileSync(holdFile(P), '{"at":"t","mismatches":[]}\n');
-    await lineageRun(f, fixture, folder);
-    assert.equal(fs.existsSync(holdFile(P)), true, 'and none lifted');
-  });
-});
-
-test('a compaction leaves the hold alone in a project on Copilot too', async () => {
-  await withHome(async () => {
-    const folder = tempFolder('wh-ss-project-');
-    const { fixture } = agentFixture();
-    checkLineage({ project: P, projectDir: folder, root: fixture.root, claudeHome: fixture.claudeHome });
-    const f = fake();
-    agentProject(f, folder, { checkout: 'copilot', branch: 'copilot' });
-    await lineageRun(f, fixture, folder, {}, { source: 'compact' });
-    assert.equal(fs.existsSync(holdFile(P)), true);
   });
 });
 

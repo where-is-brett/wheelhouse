@@ -225,10 +225,6 @@ export const noFixWords = (why) => `The main line's checks are red, and no fix h
 export const queueStuckWords = (why) => `The merge queue can't start: ${why}. Finished work waits and nothing of it is added; Wheelhouse keeps trying meanwhile.`;
 export const QUEUE_STUCK_WHY = 'Trouble that doesn\'t pass by itself often needs a person: a connection to sign in to again, or a repository that moved. Whether to be asked again is yours to decide, at level 3.';
 export const QUEUE_PASSED_WORDS = 'The merge queue\'s trouble has passed, so the card about it needs no answer.';
-// Work held for the plan's counted requests, past the words for a cap of none.
-export const requestsUsedWords = (cap) => `Some work would use your AI plan's counted AI credits, and this month's cap of ${cap} is used up, so that work waits until next month or until you allow more.`;
-export const REQUESTS_UNCONFIRMED_WORDS = 'Some work would use your AI plan\'s counted AI credits, and Wheelhouse can\'t yet check its count of them against the plan\'s own figure, so that work can\'t run for now, whatever the cap.';
-export const requestsStoppedWords = (title) => `${title} stops here, as you chose; none of it had started and no AI credits were used.`;
 export const STOPPED_RESTART_WORDS = (title) => `${title} stays stopped, as you chose; what it has done so far is kept on its branch.`;
 // Said after that line, of a run the engine may have started all the same and Wheelhouse couldn't end.
 export const ORPHAN_LEFT_WORDS = "A run of it may still be going in the build engine; Wheelhouse couldn't end it.";
