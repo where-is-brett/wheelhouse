@@ -267,6 +267,9 @@ export const outboxFile = (project) => path.join(watcherDir(project), 'outbox.js
 const outboxLock = (project) => path.join(watcherDir(project), 'outbox.lock');
 export const runningFile = (project, target) => path.join(watcherDir(project), 'running', `${target}.json`);
 export const sessionFile = (project, work) => path.join(watcherDir(project), 'sessions', `${work}.json`);
+// A feature session that died without finishing its run (crash resume, resume.js): `{ at, why, code }`, where `at` is
+// when the run began.
+export const lostFile = (project, work) => path.join(watcherDir(project), 'lost', `${work}.json`);
 export const grantsUsedFile = (project) => path.join(watcherDir(project), 'grants-used.json');
 // The level the project's builders last ran at on this computer, as the last `level` record named it (ruling P8-5).
 export const levelFile = (project) => path.join(watcherDir(project), 'level.json');
@@ -1056,6 +1059,19 @@ export function makeWaker({
       settle(entries, 'failed', why);
       if (entries.length === 0) onError(`The ${nameOf(target)} session's run failed: ${why}`);
     }
+    return result?.ok === true;
+  }
+
+  // Leaves a lost marker for a feature session that died without finishing its run, for the watcher's crash resume
+  // (resume.js) to find once its record has gone. `at` is when the run began, so one death is counted once.
+  function markLost(target, { at, why, code = null }) {
+    if (target === 'foreman' || typeof at !== 'string') return;
+    try {
+      watcherFolder(project, 'lost');
+      writeJsonFile(lostFile(project, nameOf(target)), { at, why, code });
+    } catch (error) {
+      onError(`The ${nameOf(target)} session stopped, and that couldn't be noted for its resume: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
   }
 
   // Ends a record that has ended: its wakes go again (an overrun counts as a failure). A run whose output was kept
@@ -1070,14 +1086,19 @@ export function makeWaker({
     if (kept?.premium === true && state.ended.state !== 'starting' && await premiumRefused(target, kept, null, ids)) {
       return;
     }
+    // A running session whose process went while no one watched: unless its kept output shows it finished its run,
+    // it is lost, and the crash resume starts it again.
+    const lost = state.why === 'gone' && state.ended.state === 'running';
     if (state.why === 'overran') {
       const minutes = Math.round(maxRunOf(target) / MINUTE);
       onError(`The ${nameOf(target)} session ran past its ${minutes} minutes`);
       settle(ids, 'failed', 'its session ran past its time');
     } else if (kept !== null && state.ended.state !== 'starting' && readerOf() !== null) {
-      await finishRun(readerOf(), target, kept, null, ids);
+      const finished = await finishRun(readerOf(), target, kept, null, ids);
+      if (lost && !finished) markLost(target, { at: state.ended.at, why: 'gone' });
     } else {
       settle(ids, 'again');
+      if (lost) markLost(target, { at: state.ended.at, why: 'gone' });
     }
   }
 
@@ -1207,13 +1228,17 @@ export function makeWaker({
         const mine = forget(target, started.pid);
         if (kept?.premium === true && mine && await premiumRefused(target, kept, code, entries)) {
           // Rests the premium model, and its wake goes again on the most capable model.
-        } else if (kept !== null && typeof adapter.afterRun === 'function') {
-          // A record already ended elsewhere (endRecord) has been read there.
-          if (mine) await finishRun(adapter, target, kept, code, entries);
-        } else if (code === 0) settleEnded(target, entries);
-        else {
-          settle(entries, 'failed', `its session exited with code ${code}`);
-          if (entries.length === 0) onError(`The ${target.slice('feature-'.length)} session exited with code ${code}`);
+        } else {
+          if (kept !== null && typeof adapter.afterRun === 'function') {
+            // A record already ended elsewhere (endRecord) has been read there.
+            if (mine) await finishRun(adapter, target, kept, code, entries);
+          } else if (code === 0) settleEnded(target, entries);
+          else {
+            settle(entries, 'failed', `its session exited with code ${code}`);
+            if (entries.length === 0) onError(`The ${target.slice('feature-'.length)} session exited with code ${code}`);
+          }
+          // A feature session that exited with an error died mid-run: the crash resume starts it again.
+          if (mine && code !== 0) markLost(target, { at, why: 'exited', code: Number.isInteger(code) ? code : null });
         }
         return deliver();
       })).catch(() => {});
@@ -1697,6 +1722,47 @@ export function makeWaker({
           },
         });
         return { pid, sessionId: named };
+      });
+    },
+    // Starts a lost feature session again by its kept session id, with `prompt` (crash resume, resume.js). Gives
+    // `{ pid, sessionId }`; `{ live: true }` when its session already runs, so nothing is started; `{ skipped: true }` on
+    // a project whose sessions the watcher does not start. Throws when it can't be started now (STOP, no session id
+    // kept, a worktree that isn't the feature's, or files that steer agents waiting for the director's card).
+    async resumeFeature({ work, prompt } = {}) {
+      mayStart('checkFeature');
+      if (typeof work !== 'string' || !SLUG.test(work)) throw new Error('A work id is lower-case letters, digits and hyphens');
+      if (typeof prompt !== 'string' || prompt.trim() === '') throw new Error('A resume needs its prompt');
+      return serial(async () => {
+        if (stopped()) throw new Error('All stop is on: no session is started');
+        if (shape === 2) return { skipped: true };
+        const kept = readJson(sessionFile(project, work));
+        const sessionId = typeof kept?.sessionId === 'string' && kept.sessionId !== '' ? kept.sessionId : null;
+        if (sessionId === null) throw new Error(`The ${work} session has no session id kept`);
+        const worktree = kept.worktree;
+        if (!featureWorktreeOk(project, worktree)) throw new Error("This isn't a feature worktree of the project");
+        const target = targetOf(work);
+        const state = await stateOf(target);
+        if (state?.live) return { live: true };
+        if (state?.ended) await endRecord(target, state);
+        if (await controlHeld(work, worktree, [])) throw new Error("the files in its folder that steer agents are new or changed, or can't be checked, so its session waits for the director's card");
+        sessionsOf().checkFeature(config);
+        const feature = await levelInputs(work, worktree);
+        const column = columnNow();
+        const pid = await launch({
+          target,
+          cwd: worktree,
+          check: (adapter) => adapter.checkFeature(config),
+          build: (adapter) => withPremiumOutput(adapter, work, column, adapter.featureResumeCall({
+            config, project, work, sessionId, prompt: withColumn(adapter, prompt, column), allowed: feature.allowed, env: baseEnv, claude, platform,
+            ...feature.inputs, ...roleOf(column, 'feature'),
+          })),
+          file: featurePaths(worktree).brief,
+          beforeRun: (call) => {
+            if (stopped()) throw new Error('All stop is on: no session is started');
+            feature.recordUsed(call);
+          },
+        });
+        return { pid, sessionId };
       });
     },
     // Delivers what has been waiting: a session has ended, STOP has lifted, a wait has passed.
