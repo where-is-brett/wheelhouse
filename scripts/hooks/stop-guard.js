@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
 import fs from 'node:fs';
-import { answer, runAndExit, pluginRoots, projectOf, registeredByPath, worktreeRoot, lockedByPath, beingSetUp } from './kit.js';
+import { answer, runAndExit, pluginRoots, projectOf, registeredByPath, worktreeRoot, lockedByPath, beingSetUp, isWhy, WHY_TOOLS } from './kit.js';
 import { words } from './shell-words.js';
 import { QUESTION_ID } from '../feature/files.js';
 import { stopState, NO_HELPER_STOP } from '../lib/stop.js';
@@ -197,6 +197,12 @@ export async function decide(input, {
   dir, projectOf: find = projectOf, pluginRoot = PLUGIN_ROOT, self = SELF, platform = process.platform,
   readTools = READ_TOOLS, haltTools = HALT_TOOLS, notifyTools = NOTIFY_TOOLS, bypass = true, writeVia = 'self', helperUp, env = process.env,
 } = {}) {
+  // A why session is read-only: every tool but reading and searching is refused, wherever it runs. This hook's matcher is every
+  // tool, so a tool the tool guard's matcher doesn't name (a task, an agent, the web, a skill) is refused here.
+  if (isWhy(env)) {
+    if (input.hook_event_name === 'SessionEnd') return undefined;
+    return WHY_TOOLS.includes(input.tool_name) ? undefined : answer.deny(`A why session only explains: it reads and searches, and ${input.tool_name} is not one of those. Say what you found instead.`);
+  }
   const cwd = input.cwd;
   const found = find(cwd, { dir });
   const byPath = found ? false : registeredByPath(cwd);
