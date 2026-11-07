@@ -142,11 +142,11 @@ function fakeHelper({ events = [], stop = false, head = FULL, pr, profile = {}, 
 async function run(helper, argv, input, opts) {
   return runWith(helper, argv, input, opts);
 }
-async function runWith(helper, argv, input, { cwd = CWD, ready, env } = {}) {
+async function runWith(helper, argv, input, { cwd = CWD, ready, env, ask } = {}) {
   let out = '';
   let err = '';
   const code = await main(argv, {
-    cwd, client: helper.client, input, env: env ?? {}, ...(ready ? { columnsReady: ready } : {}), now: () => NOW, out: (t) => { out += t; }, err: (t) => { err += t; },
+    cwd, client: helper.client, input, env: env ?? {}, ...(ready ? { columnsReady: ready } : {}), ...(ask ? { ask } : {}), now: () => NOW, out: (t) => { out += t; }, err: (t) => { err += t; },
   });
   let json;
   try { json = JSON.parse(out); } catch { json = undefined; }
@@ -1223,10 +1223,53 @@ test('why n notes a Why? answer for card n and says the one sentence to put befo
     assert.deepEqual(helper.writes(), [{ cwd: CWD, kind: 'card-answer', data: { question: two.data.question, label: WHY, where: 'chat' } }]);
     // It never gives the card again, and a Why? decides nothing: the card still waits.
     assert.deepEqual(helper.views().waiting.map((c) => [c.id, c.asked?.label]).sort(), [[one.id, undefined], [two.id, WHY]].sort());
-    for (const bad of [['why', '9'], ['why', '0'], ['why', 'x'], ['why'], ['why', '1', '2']]) {
+    for (const bad of [['why', '9'], ['why', '0'], ['why', 'x'], ['why']]) {
       assert.equal((await run(helper, bad)).code, 1, bad.join(' '));
     }
     assert.equal(helper.writes().length, 1);
+  });
+});
+
+test('why n [words] adds a read-only session copy\'s answer when the card is a waiting decision, and asks it what the director said', async () => {
+  await inHome(async () => {
+    const own = {
+      id: 'q-export-csv-1000002', work: 'export-csv', what: 'Should the export carry headers?', why: 'It changes what customers download.',
+      options: [{ label: 'Headers', says: 'The first row names each column.' }, { label: 'No headers', says: 'Only the data.' }],
+      recommendation: 'Headers', level: 3,
+    };
+    const helper = fakeHelper({ events: [questionEvent(own)] });
+    await run(helper, ['cards']);
+    const asked = [];
+    const ask = async (body) => { asked.push(body); return { answer: 'It read the sample file and found no row names.', fork: 'f-1' }; };
+    const out = await runWith(helper, ['why', '1', 'Why', 'headers?'], undefined, { ask });
+    assert.equal(out.code, 0, out.err);
+    const lines = out.out.trimEnd().split('\n');
+    assert.equal(lines[0], 'Noted that you asked why about card 1.');
+    assert.match(lines[1], /^Say /, 'the instant answer comes first');
+    assert.match(lines.at(-2), /^The session that raised this decision answers/);
+    assert.equal(lines.at(-1), 'It read the sample file and found no row names.');
+    assert.deepEqual(asked, [{ cwd: CWD, n: 1, words: 'Why headers?' }]);
+    // It only explains: the decision still waits.
+    const shown = await run(helper, ['decision', 'show', '1']);
+    assert.equal(shown.code, 0, shown.err);
+
+    // A copy that can't be asked says so in its own line, and the Why? still works.
+    const failed = await runWith(helper, ['why', '1'], undefined, { ask: async () => { throw new Error('no session'); } });
+    assert.equal(failed.code, 0, failed.err);
+    assert.match(failed.out, /couldn't be asked: no session/);
+    const fell = await runWith(helper, ['why', '1'], undefined, { ask: async () => ({ fallback: 'That piece has finished.' }) });
+    assert.match(fell.out, /That piece has finished\./);
+  });
+});
+
+test('why n on a card that is no decision never asks a session copy', async () => {
+  await inHome(async () => {
+    const one = cardEvent(PRODUCT(1), 1);
+    const helper = fakeHelper({ events: [one] });
+    let asked = false;
+    const out = await runWith(helper, ['why', '1', 'but why?'], undefined, { ask: async () => { asked = true; return { answer: 'x' }; } });
+    assert.equal(out.code, 0, out.err);
+    assert.equal(asked, false);
   });
 });
 

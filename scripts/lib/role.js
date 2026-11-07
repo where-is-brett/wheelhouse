@@ -14,7 +14,7 @@ import { featureSlug } from '../hooks/session-start.js';
 import { FOREMAN_PROMPT_LEAD } from '../foreman/start.js';
 import { ROLE_VARIABLE } from '../watcher/waker.js';
 
-export const ROLES = Object.freeze(['foreman', 'front-desk', 'feature']);
+export const ROLES = Object.freeze(['foreman', 'front-desk', 'feature', 'why']);
 
 const SAFE_ID = /^[A-Za-z0-9._-]+$/;
 
@@ -36,9 +36,11 @@ function recorded(sessionId) {
   }
 }
 
-// 'foreman', 'feature' or 'front-desk'. `prompt` counts only while no role is recorded, that is,
-// for the session's first prompt; `cwd` is the session's folder.
+// 'foreman', 'feature', 'why' or 'front-desk'. `prompt` counts only while no role is recorded, that is,
+// for the session's first prompt; `cwd` is the session's folder. A why session (a read-only copy that explains a
+// decision) is known by its environment alone, before anything recorded or any folder is looked at.
 export function sessionRole({ sessionId, env = process.env, prompt, cwd } = {}) {
+  if (env?.[ROLE_VARIABLE] === 'why') return 'why';
   if (env?.[ROLE_VARIABLE] === 'foreman') return 'foreman';
   const kept = recorded(sessionId);
   if (kept !== null) return kept;

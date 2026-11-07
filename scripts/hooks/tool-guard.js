@@ -1004,8 +1004,17 @@ function queuePlace(cwd) {
   }
 }
 
+// The tools a "why" session may use (adapters/claude-code/sessions.js whyCall): the copy that explains a decision reads and
+// searches, and nothing else.
+const WHY_TOOLS = ['Read', 'Grep', 'Glob'];
+// Whether the session is a "why" copy, by the role variable in any spelling: the call that starts one sets it, and a
+// session started any other way has it taken out (sessionEnv).
+const isWhy = (env) => Object.entries(env ?? {}).some(([name, value]) => name.toUpperCase() === 'WHEELHOUSE_ROLE' && value === 'why');
+
 export async function decide(input, { dir, projectOf: find = projectOf, home = os.homedir(), platform = process.platform, pluginRoot = PLUGIN_ROOT, entrypoint = process.env.CLAUDE_CODE_ENTRYPOINT, projectDir = process.env.CLAUDE_PROJECT_DIR, env = process.env, engineHome = archonHome() } = {}) {
   const tool = input.tool_name;
+  // A why session is read-only: every tool but reading and searching is refused, wherever it runs.
+  if (isWhy(env) && !WHY_TOOLS.includes(tool)) return answer.deny(`A why session only explains: it reads and searches, and ${tool} is not one of those. Say what you found instead.`);
   const isConnector = typeof tool === 'string' && (tool.startsWith('mcp__') || RESOURCE_TOOLS.includes(tool));
   if (!isConnector && !SHELL_TOOLS.includes(tool) && !FILE_TOOLS.includes(tool)) return undefined;
   // A step that reads only (read-only-shell.js), wherever it runs: its shell may only read.
